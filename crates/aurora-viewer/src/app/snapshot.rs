@@ -185,6 +185,9 @@ pub(super) struct Snapshots {
     detail_ready: bool,
     /// The time of day the photo's light shows over the user's.
     light_time: Option<snapshot::light::HeldTime>,
+    /// The world frozen by the photo mode (`SnapshotUi::freeze_world`):
+    /// the instant and the shaders' clock it shows.
+    world_freeze: Option<snapshot::Hold>,
     /// The free camera flies, started by the window.
     free_flying: bool,
     /// The Controls window was opened by the free camera: it closes with it.
@@ -249,7 +252,7 @@ struct DemoPhoto {
     /// viewfinder…), the setting itself left alone.
     style: Option<crate::settings::PhotoWindowStyle>,
     /// AURORA_DEMO_SNAPSHOT=viewfinder[-essential|-hidden][-menu|-help|
-    /// -drawer][-mf|-afc][-point][-focus|-shoot]: the viewfinder, its
+    /// -drawer][-mf|-afc][-point][-frozen][-focus|-shoot]: the viewfinder, its
     /// display, a panel open, its focus mode, and the own avatar focused
     /// (then the photo taken) at AURORA_DEMO_SNAPSHOT_FRAME.
     viewfinder: Option<DemoViewfinder>,
@@ -273,6 +276,8 @@ struct DemoViewfinder {
     pad: bool,
     timer: bool,
     ael: bool,
+    /// The world frozen (avatars, animations, objects, particles…).
+    frozen: bool,
     controls: crate::snapshot::viewfinder::OnScreen,
     /// The camera tilted clockwise (degrees; 0: straight): 20° with
     /// `tilt`, a quarter turn with `tilt90` (the level turns the other
@@ -321,6 +326,7 @@ impl Default for Snapshots {
             detail_wait: None,
             detail_ready: false,
             light_time: None,
+            world_freeze: None,
             free_flying: false,
             free_opened_controls: false,
             settings_changed: false,
@@ -348,15 +354,51 @@ impl App {
     /// At the start of a frame: the instant the world shows while a photo
     /// is drawn in several parts, the first part's from its frame to the
     /// last part's (`snapshot::Hold`); None otherwise.
+    /// The world frozen by the photo mode shows its instant throughout,
+    /// the photo's parts included.
     pub(super) fn photo_hold(&mut self, now: Instant) -> Option<snapshot::Hold> {
         let clock = self.start.elapsed().as_secs_f32();
-        let job = self.snapshots.job.as_mut()?;
-        let now = snapshot::Hold {
+        let frozen = self.photo_freeze_world(now, clock);
+        let Some(job) = self.snapshots.job.as_mut() else {
+            return frozen;
+        };
+        let now = frozen.unwrap_or(snapshot::Hold {
             at: now,
             clock,
             later: false,
-        };
-        snapshot::Hold::for_part(job.tiles.len(), job.next, &mut job.hold, now)
+        });
+        snapshot::Hold::for_part(job.tiles.len(), job.next, &mut job.hold, now).or(frozen)
+    }
+
+    /// The world frozen for the photo (issue #1154), from the switch to the
+    /// photo mode's end: what moves holds still (avatars, animations,
+    /// objects, particles, flexible prims, animated textures, water,
+    /// clouds), the camera flies on. LLFloater360Capture::freezeWorld
+    /// (indra/newview/llfloater360capture.cpp, originally LGPL 2.1) pauses
+    /// every character, sets FreezeTime and stops the particles and the
+    /// clouds the same way.
+    fn photo_freeze_world(&mut self, now: Instant, clock: f32) -> Option<snapshot::Hold> {
+        if !self.panels.snapshot || !self.in_world() {
+            self.snapshots.ui.freeze_world = false;
+        }
+        let wanted = self.snapshots.ui.freeze_world;
+        if wanted != self.snapshots.world_freeze.is_some() {
+            self.snapshots.world_freeze = wanted.then_some(snapshot::Hold {
+                at: now,
+                clock,
+                later: false,
+            });
+            self.world.freeze_motion(wanted.then_some(now));
+            // every avatar and animated object holds its pose
+            // (LLCharacter::requestPause)
+            self.scene.pause_all_skeletons = wanted;
+        }
+        self.snapshots.world_freeze
+    }
+
+    /// Whether the photo mode holds the world still.
+    pub(super) fn photo_world_frozen(&self) -> bool {
+        self.snapshots.world_freeze.is_some()
     }
 
     /// Before a frame is laid out: the photo frame it carries, if any.
@@ -2170,6 +2212,7 @@ LUT_3D_SIZE {n}
                     pad: has("pad"),
                     timer: has("timer"),
                     ael: has("ael"),
+                    frozen: has("frozen"),
                     controls: if has("hover") {
                         crate::snapshot::viewfinder::OnScreen::Hover
                     } else if has("nocontrols") {
@@ -2278,6 +2321,7 @@ LUT_3D_SIZE {n}
                 if v.tilt != 0.0 {
                     self.camera.roll = v.tilt.to_radians();
                 }
+                self.snapshots.ui.freeze_world = v.frozen;
                 let vf = &mut self.snapshots.vf;
                 vf.ae_lock = v.ael;
                 vf.menu = v.menu;

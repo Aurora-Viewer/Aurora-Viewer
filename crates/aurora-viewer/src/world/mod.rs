@@ -1242,6 +1242,29 @@ impl World {
         self.objects.expire_corrections(now);
     }
 
+    /// Freeze the world at `at` for a photo, or thaw it (issue #1154,
+    /// LLFloater360Capture::freezeWorld, indra/newview/llfloater360capture.cpp,
+    /// originally LGPL 2.1): the objects and the avatars that move keep their
+    /// place, ours with them (the agent places it, not a report).
+    pub fn freeze_motion(&mut self, at: Option<Instant>) {
+        let Some(at) = at else {
+            self.objects.release_poses();
+            return;
+        };
+        let own = self
+            .objects
+            .index_of_uuid(&self.agent_id)
+            .and_then(|idx| self.objects.get(idx))
+            .filter(|o| o.parent_id == 0 && self.agent.has_local_control())
+            .and_then(|o| {
+                Some((
+                    o.key,
+                    (self.agent.position - self.region_offset(o.key.region)?, self.agent.body_rotation()),
+                ))
+            });
+        self.objects.hold_poses(at, own);
+    }
+
     /// A region that blocks flying lands our avatar when it arrives there or
     /// when the region's flags change (process_agent_movement_complete and
     /// process_region_info, indra/newview/llviewermessage.cpp): a flight

@@ -756,6 +756,8 @@ pub struct Scene {
     /// Skeletons whose animations are paused while something they carry is
     /// selected (build/anim_pause.rs), set by the app each frame.
     pub paused_skeletons: HashSet<Uuid>,
+    /// Every skeleton holds its pose: the photo mode's frozen world.
+    pub pause_all_skeletons: bool,
     pub ik_edit: ik::EditRequest,
     pub poser: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
@@ -1382,6 +1384,7 @@ impl Scene {
             particles: particles::ParticleManager::default(),
             movement_preview: None,
             paused_skeletons: HashSet::new(),
+            pause_all_skeletons: false,
             ik_edit: ik::EditRequest::default(),
             poser: HashMap::new(),
             synchronize_animations: false,
@@ -2279,7 +2282,11 @@ impl Scene {
 
     fn object_transform_raw(world: &World, idx: usize, now: Instant, depth: u32, cache: Option<&XfCache>) -> Option<Xf> {
         let o = world.objects.get(idx)?;
-        let (p, mut r) = if o.full_id == world.agent_id && world.agent.has_local_control() {
+        // (the photo mode's frozen world holds our avatar too)
+        let held = world.objects.held_pose(o);
+        let (p, mut r) = if let Some(pose) = held {
+            pose
+        } else if o.full_id == world.agent_id && world.agent.has_local_control() {
             // The agent is already in main-region coordinates. Its object
             // can still belong to the previous/next region during an arrival.
             (
@@ -4981,7 +4988,7 @@ impl Scene {
             // The static layer freezes the displayed pose, while normal motion
             // clocks keep running so Stop restores the current animation phase.
             motions.set_paused(
-                self.paused_skeletons.contains(&owner) || (owner == world.agent_id && self.ik_edit.active),
+                self.pause_all_skeletons || self.paused_skeletons.contains(&owner) || (owner == world.agent_id && self.ik_edit.active),
                 now,
             );
             motions.ik.edit = if owner == world.agent_id {

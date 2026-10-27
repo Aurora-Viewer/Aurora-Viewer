@@ -7261,6 +7261,12 @@ impl App {
         } else {
             now.duration_since(self.last_frame).as_secs_f32().min(0.1)
         };
+        // the photo mode's frozen world: the camera and the interface keep
+        // the frame's time, what moves in the world gets none
+        let frozen = self.photo_world_frozen();
+        let world_dt = if frozen { 0.0 } else { dt };
+        // the rez effects and the loading of what the camera finds go on
+        let effects_now = move || if frozen { Instant::now() } else { world_now() };
         self.last_frame = now;
         if let Some(t) = self.quit_at
             && now >= t
@@ -7625,7 +7631,10 @@ impl App {
             }
             let at = self.camera.forward();
             let step_back = self.settings.walk_backwards_without_turning;
-            self.world.agent.body_turn = self.world.update_bodies(world_now(), dt, at, ml, step_back);
+            // (Body::update turns a little even without time: held apart)
+            if !frozen {
+                self.world.agent.body_turn = self.world.update_bodies(world_now(), dt, at, ml, step_back);
+            }
             self.trace_own_motion();
             self.update_pointing();
             self.update_look_at(w as f32, h as f32);
@@ -8233,7 +8242,7 @@ impl App {
             }
             self.frame_profile.lap(Lap::Media);
             // avatars still loading: clouds (Firestorm) and progress bars
-            self.scene.update_loading(&self.world, world_now());
+            self.scene.update_loading(&self.world, effects_now());
             // the rez effect of what appears (Preferences › Aurora;
             // AURORA_REZ_EFFECT=0|1 overrides it): its grid stands for the
             // clouds of the avatars it draws
@@ -8242,7 +8251,7 @@ impl App {
             self.scene.rez.enabled = rez_env.unwrap_or(!self.settings.classic_rez_effect && !self.settings.reduce_motion);
             self.scene.rez.log = self.demo;
             let covered = matches!(self.screen, Screen::Loading { .. }) || self.tp_overlay.as_ref().is_some_and(|o| o.end.is_none());
-            self.scene.update_rez(&mut gfx.renderer, &self.world, &cull, covered, world_now());
+            self.scene.update_rez(&mut gfx.renderer, &self.world, &cull, covered, effects_now());
             // the demo avatars have no real bakes: no clouds offline unless
             // AURORA_DEMO_CLOUD is set
             static DEMO_CLOUD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -8552,7 +8561,7 @@ impl App {
         // cloud scroll (LLEnvironment::updateCloudScroll: rate / 100 per
         // second), held still by the photo's light (pauseCloudScroll)
         if !self.photo_clouds_paused() {
-            self.world.cloud_scroll += sky_frame.cloud_scroll_rate * dt / 100.0;
+            self.world.cloud_scroll += sky_frame.cloud_scroll_rate * world_dt / 100.0;
         }
         self.world.cloud_scroll = glam::Vec2::new(
             self.world.cloud_scroll.x.rem_euclid(1024.0),
@@ -8609,7 +8618,7 @@ impl App {
                 &mut gfx.renderer,
                 &mut scene.textures,
                 &mut self.world,
-                dt,
+                world_dt,
                 self.camera.position,
                 max_particles,
                 self.settings.draw_distance,
@@ -8698,6 +8707,10 @@ impl App {
             } else {
                 world_clock()
             },
+            // (objects still rez in while the world is frozen: the camera
+            // finds new ones)
+            anim_at: hold.filter(|_| !frozen).map(|h| h.at),
+            tex_anim_at: hold.map(|h| h.at),
             sun_dir: env.sun_dir,
             sun_visible: env.sun_visible,
             sun_color: env.sun_color,

@@ -774,6 +774,9 @@ impl Viewfinder {
                 }
             });
         y += 24.0;
+        if panel.freeze_world {
+            line(&mut y, "snowflake", aurora_i18n::tr!("photo-vf-world-frozen"), p.ink);
+        }
         if panel.light.clouds_paused {
             line(&mut y, "cloud-filled", aurora_i18n::tr!("photo-vf-clouds-frozen"), p.ink);
         }
@@ -1439,7 +1442,16 @@ impl Viewfinder {
                     ) {
                         s.viewfinder.pad = !s.viewfinder.pad;
                     }
-                    // four above the shutter, five under it
+                    if dock_button(
+                        ui,
+                        p,
+                        Face::Icon("snowflake"),
+                        aurora_i18n::tr!("photo-freeze-world-tip"),
+                        panel.freeze_world,
+                    ) {
+                        panel.freeze_world = !panel.freeze_world;
+                    }
+                    // five above the shutter, five under it
                     ui.add_space(6.0);
                     self.shutter_button(ui, p, out);
                     ui.add_space(6.0);
@@ -2127,6 +2139,14 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
         Box::new(|_, panel| {
             panel.freeze = !panel.freeze;
             Some(Out::Panel(Action::Freeze(panel.freeze)))
+        }),
+    ));
+    v.push((
+        aurora_i18n::tr!("photo-freeze-world"),
+        yes_no(panel.freeze_world),
+        Box::new(|_, panel| {
+            panel.freeze_world = !panel.freeze_world;
+            None
         }),
     ));
     v.push((
