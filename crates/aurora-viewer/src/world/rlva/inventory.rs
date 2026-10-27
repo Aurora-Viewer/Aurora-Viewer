@@ -8,30 +8,75 @@ use super::super::{
 use super::Command;
 use aurora_net::outfits::OutfitLink;
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, PoisonError};
 use uuid::Uuid;
 
-/// The folders of every "…this" lock, resolved on first use and shared by
-/// the checks of one pass (the watchdog's attachments, a folder tree): the
-/// resolution walks the whole inventory, and once per attachment and per
-/// rule it cost tens of ms a frame with a large inventory. Build one per
-/// pass, never keep it: the rules, the inventory and what is worn change.
+type LockedFolders = HashMap<(Uuid, String), Vec<Uuid>>;
+
+/// The folders of every "…this" lock, shared by the checks of one pass (the
+/// watchdog's attachments, a folder tree). Resolving them walks the whole
+/// inventory, so the result is kept across passes while what it reads stays
+/// the same ([`LockInputs`]), as RlvFolderLocks keeps its lookups until
+/// onNeedsLookupRefresh marks them dirty (rlvlocks.cpp).
 #[derive(Default)]
-pub(crate) struct FolderLocks(std::cell::OnceCell<HashMap<(Uuid, String), Vec<Uuid>>>);
+pub(crate) struct FolderLocks(std::cell::OnceCell<Arc<LockedFolders>>);
 
 impl FolderLocks {
     fn folders(&self, world: &World, source: Uuid, option: &str) -> &[Uuid] {
-        let all = self.0.get_or_init(|| {
-            world.rlva_context_folders_of(
-                world
-                    .rlva
+        let all = self.0.get_or_init(|| world.rlva_locked_folders());
+        all.get(&(source, option.to_owned())).map_or(&[], Vec::as_slice)
+    }
+}
+
+/// What the lock checks read besides the time: the rules, the inventory,
+/// the folded-folder naming, the worn attachments (item and point) and the
+/// issuers resolved to their items. Equal inputs give equal answers.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub(crate) struct LockInputs {
+    rules: u64,
+    inventory: u64,
+    legacy_naming: bool,
+    worn: Vec<(Uuid, u8)>,
+    sources: Vec<(Uuid, Uuid)>,
+}
+
+/// The last resolution of [`FolderLocks`] and its inputs.
+#[derive(Default)]
+pub(crate) struct LockedFoldersCache(pub(super) Mutex<Option<(LockInputs, Arc<LockedFolders>)>>);
+
+impl World {
+    pub(super) fn rlva_lock_inputs(&self, worn: impl IntoIterator<Item = (Uuid, u8)>) -> LockInputs {
+        let mut worn: Vec<_> = worn.into_iter().collect();
+        worn.sort_unstable();
+        LockInputs {
+            rules: self.rlva.revision,
+            inventory: self.inventory.generation,
+            legacy_naming: self.rlva.preferences.legacy_naming,
+            worn,
+            sources: self.rlva.watchdog.sources.iter().map(|(source, item)| (*source, *item)).collect(),
+        }
+    }
+
+    fn rlva_locked_folders(&self) -> Arc<LockedFolders> {
+        let inputs = self.rlva_lock_inputs(self.rlva_worn_attachment_points());
+        let cache = &self.rlva.locked_folders.0;
+        if let Some((cached, folders)) = cache.lock().unwrap_or_else(PoisonError::into_inner).as_ref()
+            && *cached == inputs
+        {
+            return folders.clone();
+        }
+        let folders = Arc::new(
+            self.rlva_context_folders_of(
+                self.rlva
                     .rules
                     .iter()
                     .flat_map(|(source, rules)| rules.iter().map(move |r| (*source, r)))
                     .filter(|(_, r)| r.behaviour.contains("this"))
                     .map(|(source, r)| (source, r.option.as_str())),
-            )
-        });
-        all.get(&(source, option.to_owned())).map_or(&[], Vec::as_slice)
+            ),
+        );
+        *cache.lock().unwrap_or_else(PoisonError::into_inner) = Some((inputs, folders.clone()));
+        folders
     }
 }
 
@@ -173,6 +218,13 @@ fn visible(name: &str) -> bool {
 
 fn folded(name: &str, legacy: bool) -> bool {
     super::naming::folded(name, legacy)
+}
+
+/// The rules `rlva_folder_signature_in` can match: the global shared and
+/// unshared wear locks, and the `attach…this` / `detach…this` folder locks.
+fn folder_rule(name: &str) -> bool {
+    matches!(name, "sharedwear" | "sharedunwear" | "unsharedwear" | "unsharedunwear")
+        || ((name.starts_with("attach") || name.starts_with("detach")) && name.contains("this"))
 }
 
 fn folded_parent(inv: &Inventory, mut id: Uuid, legacy: bool) -> Uuid {
@@ -458,6 +510,17 @@ impl World {
         add: bool,
         except: Uuid,
     ) -> std::collections::BTreeSet<(Uuid, String, String)> {
+        // The watchdog asks this for every worn attachment, twice a frame:
+        // with no folder rule at all (RLVa on, nothing locked) the answer is
+        // empty, without walking the folder's ancestors.
+        if !self
+            .rlva
+            .rules
+            .iter()
+            .any(|(source, rules)| *source != except && rules.iter().any(|r| folder_rule(&r.behaviour)))
+        {
+            return Default::default();
+        }
         let folder = folded_parent(&self.inventory, folder, self.rlva.preferences.legacy_naming);
         let mut ancestors = Vec::new();
         let mut id = folder;
@@ -466,7 +529,9 @@ impl World {
             let Some(f) = self.inventory.folders.get(&id) else { break };
             id = f.info.parent;
         }
-        let shared = path(&self.inventory, folder).is_some();
+        // Under #RLV exactly when `path` would name it, without building the
+        // path: the walk above reaches the shared root, or stops before it.
+        let shared = shared_root(&self.inventory).is_some_and(|root| ancestors.contains(&root));
         // The nearest rule of each issuer wins; an exception granted by one
         // issuer cannot release another issuer's subtree lock.
         let mut nearest = std::collections::BTreeMap::<Uuid, (usize, bool, Vec<(String, String)>)>::new();

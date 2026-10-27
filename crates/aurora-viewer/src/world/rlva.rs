@@ -453,6 +453,7 @@ pub struct Rlva {
     pub wardrobe: wardrobe::Wardrobe,
     pub visuals: effects::Visuals,
     pub watchdog: watchdog::Watchdog,
+    pub(crate) locked_folders: inventory::LockedFoldersCache,
     pub recovery: Vec<NetCommand>,
     pub environment: Option<(Uuid, super::eep::SkyFrame)>,
     pub environment_water: Option<super::eep::WaterFrame>,
