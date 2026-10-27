@@ -4722,6 +4722,10 @@ failure. Grid validation and any paid upload are performed by the human.
   - `group-titles` on `avatars/1`: reveals the group-title dropdown with
     All except mine selected. The separate hide-own-title switch is absent;
     check None / Only mine / All except mine / All and the French labels.
+  - `recent` on `inventory`: reveals "Recent tab shows" behind the Recent
+    tab's cog, on "Since last logout"; `recent-period` sets it to a week
+    first, its days and hours beside the choice. The inventory window's own
+    preferences show the same choice under its Recent tab switch.
   - `search=<text>`: the window's search filled in. Every row whose name,
     help or choices have a word starting with each word typed shows under
     its page and group, its control live, its "go to" arrow and the group's

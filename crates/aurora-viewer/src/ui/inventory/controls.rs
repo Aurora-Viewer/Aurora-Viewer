@@ -50,6 +50,12 @@ pub(super) fn preferences_for_tab(ui: &mut egui::Ui, p: &Palette, prefs: &mut In
         &mut prefs.show_library,
     );
     changed |= check(ui, p, aurora_i18n::tr!("ui-inventory-controls-recent-tab"), &mut prefs.show_recent);
+    if prefs.show_recent {
+        ui.horizontal(|ui| {
+            ui.add_space(4.0);
+            changed |= recent_period(ui, &mut prefs.recent_hours);
+        });
+    }
     changed |= check(ui, p, aurora_i18n::tr!("ui-inventory-controls-worn-tab"), &mut prefs.show_worn);
     changed |= check(
         ui,
@@ -94,6 +100,57 @@ pub(super) fn preferences_for_tab(ui: &mut egui::Ui, p: &Palette, prefs: &mut In
         aurora_i18n::tr!("ui-inventory-controls-outfit-folders"),
         &mut prefs.search_outfits,
     );
+    changed
+}
+
+/// How far back the Recent tab goes (`InventoryPreferences::recent_hours`):
+/// since the last logout, or a set number of days and hours, like the
+/// "Since Logoff" box and the spinners of floater_inventory_view_finder.xml.
+pub fn recent_period(ui: &mut egui::Ui, hours: &mut u32) -> bool {
+    let mut changed = false;
+    let mut since_logout = *hours == 0;
+    egui::ComboBox::from_id_salt(ui.scope_id().with("inventory_recent_period"))
+        .selected_text(if since_logout {
+            aurora_i18n::tr!("ui-inventory-controls-since-last-logout")
+        } else {
+            aurora_i18n::tr!("ui-inventory-recent-set-period")
+        })
+        .show_ui(ui, |ui| {
+            changed |= ui
+                .selectable_value(&mut since_logout, true, aurora_i18n::tr!("ui-inventory-controls-since-last-logout"))
+                .changed();
+            changed |= ui
+                .selectable_value(&mut since_logout, false, aurora_i18n::tr!("ui-inventory-recent-set-period"))
+                .changed();
+        });
+    if since_logout {
+        *hours = 0;
+        return changed;
+    }
+    // a period starts at a week, and never falls to 0 ("since logout")
+    let total = if *hours == 0 {
+        7 * 24
+    } else {
+        (*hours).min(super::view::RECENT_HOURS_MAX)
+    };
+    let (mut days, mut rest) = (total / 24, total % 24);
+    changed |= ui
+        .add(
+            egui::DragValue::new(&mut days)
+                .custom_parser(aurora_i18n::parse_number)
+                .range(0..=10_000)
+                .suffix(aurora_i18n::tr!("status-days")),
+        )
+        .changed();
+    changed |= ui
+        .add(
+            egui::DragValue::new(&mut rest)
+                .custom_parser(aurora_i18n::parse_number)
+                .range(0..=23)
+                .suffix(aurora_i18n::tr!("status-hours")),
+        )
+        .changed();
+    *hours = (days * 24 + rest).max(1);
     changed
 }
 
@@ -398,13 +455,11 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
                         prefs.filter_defaults.clone_from(f);
                     }
                 });
-                ui.label(
-                    RichText::new(aurora_i18n::tr!(
-                        "ui-inventory-controls-recent-since-your-last-logout-24-hours-on-first"
-                    ))
-                    .size(12.0)
-                    .color(p.muted),
-                );
+                let note = match prefs.recent_hours {
+                    0 => aurora_i18n::tr!("ui-inventory-controls-recent-since-your-last-logout-24-hours-on-first").to_owned(),
+                    hours => aurora_i18n::tr!("ui-inventory-recent-note-period", days = hours / 24, hours = hours % 24),
+                };
+                ui.label(RichText::new(note).size(12.0).color(p.muted));
             });
     });
 }
