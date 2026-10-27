@@ -1,5 +1,15 @@
 # Aurora Viewer architecture
 
+`world/bridge.rs` inspects an existing attachment before writing scripts.
+The `Verify` phase requires matching controller, query and IK replies from the
+selected worn root, current region, folder and protocol version. A current
+bridge resumes directly, including after a normal reattachment at login.
+Missing scripts, an old version, failed bounded verification or explicit Repair
+enter the existing update path. `save_pending` is set only after a confirmed
+script compilation and is retained across interrupted updates until the save
+delay has completed. An incomplete upload retains its update intent across
+circuit changes. A changed HTTP-in URL never makes an unchanged bridge need saving.
+
 Scene context menus adapt their live catalogue to the inventory arrangement
 resolver/editor (`ui/context/customize.rs`). Seven independent profiles in
 `Settings::world_context_menus` cover land, objects, self, other avatars, own

@@ -34,6 +34,9 @@ const TIMEOUT: Duration = Duration::from_secs(60);
 // A worn bridge that moved keeps its scripts: it only renews its HTTP-in URLs.
 // Without a hello by then, reinstall it as the old Attach path did at once.
 const RELOCATION_TIMEOUT: Duration = Duration::from_secs(30);
+// Existing scripts may be restored or briefly stopped at login. Try owner-only
+// discovery and one bounded restart before deciding that they need repair.
+const VERIFY_TIMEOUT: Duration = Duration::from_secs(30);
 // FSLSLBridge::processDetach and FSLSLBridgeReAttachTimer wait five seconds
 // after detachment. An inventory asset UUID change is not a save receipt.
 const STORE_DELAY: Duration = Duration::from_secs(5);
@@ -107,6 +110,7 @@ enum Phase {
     Copy,
     Attach,
     Listing,
+    Verify,
     Script,
     Upload,
     Starting,
@@ -182,6 +186,10 @@ pub struct Bridge {
     poll: Option<Instant>,
     probe: Option<(Uuid, Instant)>,
     refresh_inventory: bool,
+    /// Explicit Repair or a set of uploads not fully acknowledged yet.
+    force_update: bool,
+    /// At least one confirmed script write still needs an inventory save.
+    save_pending: bool,
     user_detached: bool,
     mutation: Option<Uuid>,
     upload: Option<Uuid>,
@@ -368,7 +376,7 @@ impl Bridge {
             return Some(rejection.message());
         }
         Some(match self.phase {
-            Phase::Starting | Phase::Handshake => match self.boot {
+            Phase::Starting | Phase::Handshake | Phase::Verify => match self.boot {
                 Some((false, _)) => aurora_i18n::tr!("bridge-waiting-permissions"),
                 Some((true, false)) => aurora_i18n::tr!("bridge-waiting-url"),
                 Some((true, true)) => aurora_i18n::tr!("bridge-waiting-handshake"),
@@ -402,7 +410,7 @@ impl Bridge {
         self.watch = Watch::default();
         self.query_watch = Watch::default();
         // A query hello is valid from compilation until the next save or move.
-        if !matches!(phase, Phase::Starting | Phase::Handshake | Phase::Ready) {
+        if !matches!(phase, Phase::Starting | Phase::Handshake | Phase::Verify | Phase::Ready) {
             self.query = None;
         }
         if !matches!(phase, Phase::Attach | Phase::Handshake) {
@@ -424,6 +432,7 @@ impl Bridge {
         self.pending = None;
     }
     pub fn retry(&mut self, now: Instant) {
+        self.force_update = true;
         self.user_detached = false;
         self.mutation = None;
         self.upload = None;
@@ -456,6 +465,10 @@ impl Bridge {
             {
                 let release = self.release();
                 self.retry(now);
+                // A user removal already saves the object. Wearing it again
+                // should verify the existing scripts rather than reinstall them.
+                self.force_update = false;
+                self.save_pending = false;
                 self.user_detached = true;
                 self.error = Some(aurora_i18n::tr!("bridge-detached").into());
                 self.enter(Phase::Failed, now);
@@ -464,6 +477,7 @@ impl Bridge {
             }
             NetCommand::RezAttachments(items) if self.user_detached && items.iter().any(|item| item.item_id == self.item) => {
                 self.retry(now);
+                self.force_update = false;
                 false
             }
             _ => false,
@@ -637,6 +651,9 @@ impl Bridge {
             self.rejection = Some(HandshakeError::Folder);
             return false;
         }
+        if self.phase == Phase::Verify && (self.query.is_none() || self.ik_candidate_relay(world).is_none()) {
+            return false;
+        }
         self.rejection = None;
         if self.ready()
             && self
@@ -650,7 +667,7 @@ impl Bridge {
             self.candidate = None;
             return false;
         }
-        if self.phase == Phase::Starting {
+        if matches!(self.phase, Phase::Starting | Phase::Verify) && self.save_pending {
             // Compilation is not proof that state_entry/permissions/HTTP-in
             // have run. Let the new script finish startup before saving it.
             self.detached = None;
@@ -750,17 +767,16 @@ impl Bridge {
         }
         if matches!(
             self.phase,
-            Phase::Attach | Phase::Listing | Phase::Starting | Phase::Handshake | Phase::Ready
+            Phase::Attach | Phase::Listing | Phase::Verify | Phase::Starting | Phase::Handshake | Phase::Ready
         ) {
             self.accept_query(world);
             self.accept_ik(world);
         }
         // Ready mode only walks our attachment list; provisioning polls at
         // most four times a second, never scanning the entire inventory per frame.
-        if matches!(
-            self.phase,
-            Phase::Attach | Phase::Listing | Phase::Starting | Phase::Handshake | Phase::Ready
-        ) && self.accept_candidate(world, now)
+        if (matches!(self.phase, Phase::Verify | Phase::Starting | Phase::Handshake | Phase::Ready)
+            || (self.phase == Phase::Attach && self.relocated))
+            && self.accept_candidate(world, now)
         {
             if self.ready() {
                 self.accept_ik(world);
@@ -791,6 +807,15 @@ impl Bridge {
             return;
         }
         if self.phase == Phase::Failed {
+            return;
+        }
+        if self.phase == Phase::Verify
+            && (self.rejection == Some(HandshakeError::Version)
+                || self.since.is_some_and(|since| now.duration_since(since) >= VERIFY_TIMEOUT))
+        {
+            self.force_update = true;
+            self.enter(Phase::Listing, now);
+            self.request_contents(world);
             return;
         }
         if matches!(
@@ -1062,7 +1087,7 @@ impl Bridge {
                     self.request_contents(world);
                 }
             }
-            Phase::Starting | Phase::Handshake => {
+            Phase::Starting | Phase::Handshake | Phase::Verify => {
                 self.discover(world, now);
                 // An upload's running flag can be lost when the simulator
                 // restores a saved attachment. Query the actual task state;
@@ -1090,6 +1115,7 @@ impl Bridge {
                     now
                 });
                 if now.duration_since(detached) >= STORE_DELAY {
+                    self.save_pending = false;
                     self.candidate = None;
                     self.attach(world, Phase::Restore, now);
                 } else if self
@@ -1297,6 +1323,16 @@ impl Bridge {
                     self.script = script;
                     self.query_script = query;
                     self.ik.script = ik;
+                    if self.phase == Phase::Listing && !self.force_update {
+                        self.enter(Phase::Verify, now);
+                        return true;
+                    }
+                    self.candidate = None;
+                    self.query_candidate = None;
+                    self.ik.clear_candidate();
+                    // Keep the update intent until every upload is confirmed;
+                    // a circuit change during compilation must finish it.
+                    self.force_update = true;
                     let folder = self.folder.to_string();
                     let mut upload = |item: Uuid, source: &str| {
                         let request = Uuid::new_v4();
@@ -1361,9 +1397,11 @@ impl Bridge {
                     self.ik.upload = None;
                 }
                 if result.as_ref().is_ok_and(|r| r.compiled) {
+                    self.save_pending = true;
                     // An early hello can arrive before the HTTP upload reply.
                     // Keep it; Starting validates it against the exact object.
                     if self.upload.is_none() && self.query_upload.is_none() && self.ik.upload.is_none() {
+                        self.force_update = false;
                         self.endpoint = None;
                         self.enter(Phase::Starting, now);
                     }
@@ -1378,7 +1416,7 @@ impl Bridge {
                 running: false,
                 ..
             } if *object_id == self.object
-                && matches!(self.phase, Phase::Starting | Phase::Handshake)
+                && matches!(self.phase, Phase::Starting | Phase::Handshake | Phase::Verify)
                 && ((*item_id == self.script && !self.restarted)
                     || (*item_id == self.query_script && !self.query_restarted)
                     || (*item_id == self.ik.script && !self.ik.restarted)) =>

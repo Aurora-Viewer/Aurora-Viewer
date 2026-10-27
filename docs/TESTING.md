@@ -1740,6 +1740,14 @@ Reconnect with Aurora: the same inventory object must be worn automatically,
 all three services must recover, and Movelock, IK, script/object information,
 posing consent and portals must still work after crossings and teleports.
 
+Existing-bridge reuse: reconnect to Aurora while the current bridge is still
+worn. It must verify all three services without compiling scripts or temporarily
+detaching the object. Reconnect after the other viewer detached it: there must
+be only the necessary attachment, with no second save detach/reattach cycle.
+An actual bridge update or explicit Repair still compiles and saves once.
+The factory regressions count script writes, attachments and detachments for
+both reuse paths, each service's version mismatch and an unfinished update save.
+
 Bridge 1.35 repairs four invalid unary `!` operations on keys in the query
 script's posing-consent paths. The human grid check is to let an existing
 attachment upgrade, confirm all three scripts are running, then request Script

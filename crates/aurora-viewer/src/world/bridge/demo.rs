@@ -404,7 +404,10 @@ impl Demo {
         Some(NetEvent::Chat(chat))
     }
     pub fn handshake(&self, bridge: &Bridge, world: &World) -> Option<NetEvent> {
-        if !self.installed || self.startup_stalled || !matches!(bridge.phase, Phase::Starting | Phase::Handshake | Phase::Ready) {
+        if !self.installed
+            || self.startup_stalled
+            || !matches!(bridge.phase, Phase::Verify | Phase::Starting | Phase::Handshake | Phase::Ready)
+        {
             return None;
         }
         let host = if self.invalid_endpoint {
