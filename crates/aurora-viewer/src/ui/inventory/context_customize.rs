@@ -1,4 +1,5 @@
-//! Interactive presentation of native inventory commands. Editing never executes one.
+//! Interactive presentation of native commands, shared by inventory and scene menus.
+//! Editing never executes a command.
 use super::menu_layout::{
     Direction, Entry, HIDDEN, ICON_SLOTS, Kind, LOCK, Layout, Profile, Resolved, TEXT, bar, can_hide, children, hidden_zone, icon_zone,
 };
@@ -150,7 +151,8 @@ struct Editor {
     focus: bool,
 }
 #[derive(Default)]
-pub(super) struct State {
+pub(crate) struct State {
+    pub(crate) help: std::collections::BTreeMap<String, String>,
     root: Option<(Uuid, Id, String)>,
     frame: u64,
     right_frame: Option<u64>,
@@ -164,13 +166,13 @@ pub(super) struct State {
     submenus: Vec<egui::LayerId>,
     /// Offline capture fixture: the first pointer frame of a held drag.
     demo_drag: Option<u64>,
-    pub(super) notecard: Option<super::context_notecards::Mode>,
+    pub(crate) notecard: Option<super::context_notecards::Mode>,
     queries: std::collections::BTreeMap<String, String>,
     #[cfg(test)]
     rects: std::collections::BTreeMap<String, egui::Rect>,
 }
 impl State {
-    fn relock(&mut self, ctx: &egui::Context, profile: &mut Profile) {
+    pub(crate) fn relock(&mut self, ctx: &egui::Context, profile: &mut Profile) {
         profile.locked = true;
         if let Some((_, root, scope)) = self.root.take() {
             if egui::DragAndDrop::payload::<Dragged>(ctx).is_some_and(|drag| drag.root == root && drag.scope == scope) {
@@ -200,7 +202,7 @@ impl State {
 
     /// Dismissal can bypass the popup body (closed inventory, replaced popup,
     /// or a native window move). Editing must end even on those frames.
-    fn finish_frame(&mut self, ctx: &egui::Context, profile: &mut Profile) {
+    pub(crate) fn finish_frame(&mut self, ctx: &egui::Context, profile: &mut Profile) {
         if self.root.is_some() && (lost_window_focus(ctx) || self.frame != ctx.cumulative_frame_nr()) {
             self.dismiss(ctx, profile);
         }
@@ -214,7 +216,7 @@ impl State {
         }
     }
 
-    pub(super) fn prepare(&mut self, ctx: &egui::Context, item: Uuid, root: Id, scope: &str, prefs: &mut super::menu_layout::Preferences) {
+    pub(crate) fn prepare(&mut self, ctx: &egui::Context, item: Uuid, root: Id, scope: &str, prefs: &mut super::menu_layout::Preferences) {
         if let Some((previous_item, previous_root, previous_scope)) = &self.root
             && (*previous_item != item || *previous_root != root || previous_scope != scope || ctx.cumulative_frame_nr() > self.frame + 1)
             && let Some(profile) = prefs.profiles.get_mut(previous_scope)
@@ -244,7 +246,7 @@ impl State {
     }
 }
 
-pub(super) fn show(
+pub(crate) fn show(
     ui: &mut Ui,
     p: &Palette,
     item: Uuid,
@@ -348,6 +350,13 @@ pub(super) fn show(
     }
     keyboard(ui, available, profile, state);
     let mut resolved = profile.layout.resolve(available);
+    // Scene menus start with text actions. Keep a saved top bar only when
+    // it contains commands; extra bars can still be added while organizing.
+    if scope.starts_with("scene:") && resolved.get("top").is_none_or(Vec::is_empty) {
+        for rows in resolved.values_mut() {
+            rows.retain(|entry| entry.id != "bar:top");
+        }
+    }
     if profile.locked {
         super::menu_layout::hide_empty_groups(&mut resolved);
     }
@@ -407,6 +416,8 @@ pub(super) fn show(
     if !view.profile.locked
         && !right_dismissed
         && ui.input(|i| i.pointer.any_click())
+        // Fixed controls can precede this editor in the same popup.
+        && !menu::clicks_kept_row(ui.ctx(), root)
         && pos.is_some_and(|pos| !view.state.regions.iter().any(|rect| rect.contains(pos)))
     {
         view.state.dismiss(ui.ctx(), view.profile);
@@ -706,6 +717,9 @@ impl View<'_> {
         }
     }
     fn interact(&mut self, ui: &mut Ui, response: &Response, entry: &Entry, zone: &str, depth: usize, icon: bool) {
+        if let Some(help) = self.state.help.get(&entry.id) {
+            let _ = response.clone().on_hover_text(help);
+        }
         if entry.id == "asset-uuid" {
             let _ = response.clone().on_hover_text(aurora_i18n::tr!("inventory-copy-asset-uuid-help"));
         }
@@ -759,6 +773,7 @@ impl View<'_> {
                             response,
                             !self.profile.locked || self.profile.layout.filters.contains(&entry.id),
                             icon,
+                            self.scope.starts_with("scene:"),
                             |ui| {
                                 self.state.submenus.push(ui.layer_id());
                                 menu::distinct_surface(ui);
@@ -925,7 +940,12 @@ impl View<'_> {
             #[cfg(test)]
             self.state.rects.insert("footer:reset".into(), reset.rect);
             if reset.clicked() {
-                let old = self.profile.reset();
+                let old = if self.scope.starts_with("scene:") {
+                    self.profile.open.clear();
+                    std::mem::take(&mut self.profile.layout)
+                } else {
+                    self.profile.reset()
+                };
                 self.state.queries.clear();
                 self.state.remember(old, &self.profile.layout);
                 self.state.editor = None;

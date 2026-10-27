@@ -1,5 +1,67 @@
 # Aurora Viewer architecture
 
+Scene context menus adapt their live catalogue to the inventory arrangement
+resolver/editor (`ui/context/customize.rs`). Seven independent profiles in
+`Settings::world_context_menus` cover land, objects, self, other avatars, own
+attachments, other attachments and HUDs. Explicit command keys omit picked
+identities and coordinates; the current catalogue supplies all commands and
+permissions on each frame. Lists and radial pagination use the same saved
+placements. The radial editor opens the shared list editor, with the same
+groups, filters, icon bars, hidden shelf, undo/redo and protected lock control.
+The scene voice header sits outside that catalogue and the scrollable body,
+so customization cannot move/hide it. Avatar technical actions use separate
+display, information, reset, moderation and disturbance groups (#1135).
+Clicked attachments keep object and wearer targets explicit; derender actions
+belong to disturbance for objects, attachments, HUDs and other avatars.
+Checkable scene commands use live check marks and retain the popup/submenu
+hierarchy (including radial paths); ordinary commands explicitly close it.
+The shared editor gives scene submenus outside-click dismissal instead of
+closing on every selection. `context/toggle_tests.rs` exercises actual render
+choices, sound/particle/block toggles, custom nested groups and dismissal.
+Particle context clicks capture `scene/particles.rs::ParticleHit` before the
+asynchronous object-depth read (`app/click_pick.rs`). Particle geometry follows
+the rendered billboard, velocity-aligned quad or ribbon; cached source owners
+survive emitter removal. `app/context_menu.rs` checks the captured hit against
+foreground depth and can open a particle-only menu against the sky. Touch and
+particle metadata use the original click ray, not the camera after readback.
+Clicks retain an Arc-backed list of up to 128 distinct emitting linksets.
+Context facts combine those with the clicked emitter and current object names:
+Particles exposes object/owner filters and named children for other emitters.
+`world/particle_filters.rs`, stored in `Settings::particle_filters`, keeps both
+rule sets independent of mutes, derender and sound blocking. The particle
+simulation applies them without affecting avatars or other communication;
+Avatar > Disturbance > Block particles controls that same owner rule.
+`App::new` returns a boxed application: the event loop retains a pointer rather
+than another full application value on Windows' startup stack.
+Scene reset clears only the current profile. `context/notecards.rs` validates
+bounded versioned snapshots of all seven scene profiles, reuses the inventory's
+COPY-aware picker and native transfers, and applies only correlated successful
+imports, relocked. Inventory and scene documents have separate formats.
+`context/object_profile.rs` renders the shared `build/ui/general.rs` editor
+directly, with a private heap-allocated BuildTool holding only the requested
+root and its drafts, keeping App small enough for the Windows startup stack. Native properties update both editors; outgoing changes use the existing
+build commands and the normal permission/RLVa checks. The profile holds a live
+simulator selection until closed; unrelated deselections preserve that root,
+and closing releases it unless the build tools still select it. Group selection
+and deed confirmation reuse `build/ui/floaters.rs` with separate widget IDs.
+`context/object_profile_tests.rs` exercises actual pointer/keyboard editing,
+sale and permission messages, target changes, HUD roots and selection lifetime.
+Group names use the existing cached GroupNames request and pathfinding attributes
+come from object flags. `context/pathfinding.rs`
+shows searchable, virtualized RegionObjects / CharacterProperties lists from
+`aurora-net/src/pathfinding.rs`, with correlated asynchronous requests scoped to
+the clicked object's region; this reader does not edit navmesh or terrain.
+`scene/mesh_inspection.rs` briefly requests the highest LOD for an avatar's worn
+meshes, bounds failed streaming to five seconds and restores the inspector's
+manual LOD without changing object or account preferences.
+`context/avatar_textures.rs`
+inspects live avatar bakes through the existing asynchronous UI image stream,
+retaining masked identifiers and read-only thumbnails.
+Land sitting uses the ordinary autopilot with a 0.7 m arrival callback;
+interrupted/failed approaches never sit. Outfit category removal resolves the
+confirmed COF and current attachment points and uses the existing appearance
+policy, preserving body parts and RLVa removal restrictions.
+
 The application constructor returns its runtime state on the heap, avoiding
 large return-value temporaries on the Windows startup stack as editors grow.
 

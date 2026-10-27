@@ -58,6 +58,7 @@ pub mod open_ims;
 pub mod outfit;
 pub mod parcel_visibility;
 pub mod parked;
+pub mod particle_filters;
 pub mod place_details;
 pub mod place_snapshots;
 pub mod pointat;

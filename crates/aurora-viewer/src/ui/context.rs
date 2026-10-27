@@ -18,13 +18,24 @@ use crate::world::objects::ObjKey;
 use glam::Vec3;
 use uuid::Uuid;
 
+mod customize;
 mod entries;
+pub use customize::{Customization, Preferences};
+mod avatar_textures;
+pub use avatar_textures::AvatarTexturesUi;
+mod object_profile;
+pub use object_profile::ObjectProfileUi;
 mod multi;
+mod notecards;
+mod pathfinding;
+pub use pathfinding::PathfindingUi;
 mod pie;
 
 #[cfg(test)]
 #[path = "context/sound_tests.rs"]
 mod sound_tests;
+#[cfg(test)]
+mod toggle_tests;
 
 pub use multi::avatars_menu;
 
@@ -182,7 +193,7 @@ pub struct Facts {
     /// Rendering exception: 0 normal, 1 never fully, 2 always fully.
     pub render: u8,
     pub blocked: bool,
-    /// Their particles are blocked (LLMute::flagParticles).
+    /// The independent owner particle filter is enabled.
     pub particles_blocked: bool,
     /// Asset blacklist owner categories: 1 worn, 2 rezzed, 4 gesture.
     pub sound_blocks: u8,
@@ -193,9 +204,10 @@ pub struct Facts {
     pub edit_linked: bool,
     /// ShowPropertyLines, shared with the World menu and terrain editor.
     pub property_lines: bool,
-    /// The owner of the particle under the right click
-    /// (LLPickInfo::mParticleOwnerID), when it is not us.
-    pub particle_owner: Option<Uuid>,
+    /// The clicked emitter and distinct emitters whose particles crossed the click.
+    pub particle_sources: Vec<ParticleMenuSource>,
+    /// A particle over the sky: show only the Particles submenu.
+    pub particle_only: bool,
     /// "Put on ▸ Attach" and "Attach HUD" (LLVOAvatarSelf::buildMenus).
     pub attach_points: Vec<AttachChoice>,
     /// Voice is enabled: "Call" works (LLAvatarActions::canCall).
@@ -206,8 +218,22 @@ pub struct Facts {
     pub worn: bool,
     pub avatar_travel: bool,
     pub following: bool,
+    /// Removable clothing types and occupied attachment points in our outfit.
+    pub removable_clothing: Vec<u8>,
+    pub removable_points: Vec<u8>,
+
     /// "Freeze" / "Eject" of the avatar, and whether the eject may ban.
     pub moderation: crate::world::land_moderation::Rights,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParticleMenuSource {
+    pub object: Uuid,
+    pub owner: Uuid,
+    pub name: String,
+    pub clicked: bool,
+    pub object_blocked: bool,
+    pub owner_blocked: bool,
 }
 
 /// One attachment point of "Put on ▸ Attach" or "Attach HUD".
@@ -222,6 +248,22 @@ pub struct AttachChoice {
 
 #[derive(Debug, Clone)]
 pub enum CtxAction {
+    /// Reopen this menu in the shared arrangement editor.
+    CustomizeMenu(Box<ContextMenu>),
+    SitAt(Vec3),
+    SitStand,
+    LookAtAvatar(Uuid),
+    EditPbr(Uuid),
+    ObjectProfile(Uuid),
+    Pathfinding {
+        id: Uuid,
+        characters: bool,
+    },
+    ResetMeshLod(Uuid),
+    ShowAvatarTextures(Uuid),
+    TakeOffClothing(u8),
+    DetachAt(u8),
+    DetachAll,
     ResetHudScale(ObjKey),
     ForgetHudScale(ObjKey),
     SetHudMoveLock(ObjKey, bool),
@@ -310,9 +352,8 @@ pub enum CtxAction {
     /// Mute or unmute a resident (or everyone, None) in nearby voice for
     /// everyone, as its moderator (LLFloaterIMContainer::moderateVoice).
     ModerateVoice(Option<Uuid>, bool),
-    /// Block / unblock only a resident's particles (LLMute::flagParticles,
-    /// as the block list's "Block particles").
-    ToggleParticleMute(Uuid),
+    /// Toggle the local owner particle filter, without creating a mute entry.
+    ToggleOwnerParticleFilter(Uuid),
     /// One persistent owner category in the sound blacklist (ON blocks it).
     SetOwnerSoundBlock {
         owner: Uuid,
@@ -398,9 +439,12 @@ pub enum CtxAction {
     /// "Drop" one of our attachments (Attachment.Drop): asked first
     /// (AttachmentDrop), then ObjectDrop.
     Drop(ObjKey),
-    /// "Block particle owner" (Particle.Mute): the owner of the particle
-    /// under the right click.
-    BlockParticleOwner(Uuid),
+    /// Local particle-only filtering, independent of mute/derender.
+    SetParticleBlock {
+        id: Uuid,
+        owner: bool,
+        blocked: bool,
+    },
     /// "Add to / Remove from favorites" of our attachment's inventory item
     /// (Object.SetFavorite).
     AttachmentFavorite(Uuid),
@@ -516,24 +560,40 @@ pub fn avatar_position(world: &World, id: &Uuid) -> Option<Vec3> {
 const HOVERED: &str = "world_context_menu_hovered";
 
 /// Draw the world menu; `menu` becomes `None` once it closed.
-pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f: &Facts, use_pie: bool) {
+#[allow(clippy::too_many_arguments)]
+pub fn show(
+    ctx: &egui::Context,
+    p: &Palette,
+    menu: &mut Option<ContextMenu>,
+    f: &Facts,
+    use_pie: bool,
+    prefs: &mut Preferences,
+    customization: &mut Customization,
+) -> bool {
+    if menu.is_none() && !customization.active() {
+        return false;
+    }
+    let saved_before = prefs.clone();
     if menu::dismiss_on_window_change(ctx) {
         *menu = None;
         ctx.data_mut(|d| d.remove::<Option<usize>>(egui::Id::unique(HOVERED)));
-        return;
+        customization.close(ctx, prefs);
+        return *prefs != saved_before;
     }
     let Some(m) = menu.clone() else {
-        return;
+        customization.close(ctx, prefs);
+        return *prefs != saved_before;
     };
     let mut open = true;
     let entries = entries::world_menu(&m.target, f, m.point);
-    let hovered = if use_pie {
+    let hovered = if use_pie && !customization.force_list() {
         let voice = match m.target {
             Target::Avatar { id, own: false, .. } => f.voice_volume.map(|v| (id, v)),
             _ => None,
         };
+        let (entries, customized) = customize::radial_entries(&m, f, &entries, prefs);
         let mut radial = m;
-        let hovered = pie::show(ctx, p, &mut radial, &entries, voice, &mut open);
+        let hovered = pie::show(ctx, p, &mut radial, &entries, voice, &mut open, customized);
         *menu = Some(radial);
         hovered
     } else {
@@ -542,10 +602,18 @@ pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f:
             m.pie_input_frame = None;
         }
         menu::popup_at(ctx, egui::Id::unique("world_context_menu"), m.pos, &mut open, p, |ui| {
-            if let Target::Avatar { id, own: false, .. } = m.target {
-                voice_row(ui, p, id, f.voice_volume);
+            // This header is outside the arrangement catalogue: it cannot be
+            // dragged, hidden or moved into an icon bar. Moderation is grouped
+            // with the other scene actions instead of extending this header.
+            if let Target::Avatar { id, own: false, .. } = m.target
+                && let Some(voice) = f.voice_volume
+            {
+                voice_control(ui, p, id, voice);
+                menu::separator(ui, p);
             }
-            entries::draw_list(ui, p, &entries);
+            // The editor resets its UI's height. A child UI starts below the
+            // fixed header, so that reset cannot rewind onto the voice row.
+            ui.scope(|ui| customization.show(ui, p, &m, f, &entries, prefs));
         })
     };
     // UISndPieMenuSliceHighlight0..7 when an enabled row gets hovered (the
@@ -559,8 +627,10 @@ pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f:
     }
     if !open {
         *menu = None;
+        customization.close(ctx, prefs);
         ctx.data_mut(|d| d.remove::<Option<usize>>(egui::Id::unique(HOVERED)));
     }
+    *prefs != saved_before
 }
 
 /// Where an avatar menu of a list is opened: each place has its own
@@ -604,11 +674,19 @@ fn voice_row(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: Option<menu::Voice
 
 /// The voice row alone, its changes handed to the app.
 fn voice_edit(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: menu::VoiceVolume) {
+    voice_control(ui, p, id, voice);
+    voice_moderation(ui, p, id, voice);
+}
+
+fn voice_control(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: menu::VoiceVolume) {
     match menu::voice_volume(ui, p, voice) {
         Some(menu::VoiceEdit::Volume(v)) => request(ui.ctx(), CtxAction::SetVoiceVolume(id, v)),
         Some(menu::VoiceEdit::ToggleMute) => request(ui.ctx(), CtxAction::ToggleVoiceMute(id)),
         None => {}
     }
+}
+
+fn voice_moderation(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: menu::VoiceVolume) {
     // menu_conversation.xml's moderator entries (ModerateVoiceMuteSelected /
     // UnMuteSelected, ModerateVoiceMute / Unmute)
     if let Some(moderated) = voice.moderated {
@@ -1406,7 +1484,17 @@ mod tests {
                         events,
                         ..Default::default()
                     },
-                    |ui| show(ui.ctx(), &theme.palette(), &mut current, &facts, false),
+                    |ui| {
+                        show(
+                            ui.ctx(),
+                            &theme.palette(),
+                            &mut current,
+                            &facts,
+                            false,
+                            &mut Default::default(),
+                            &mut Default::default(),
+                        );
+                    },
                 );
                 output.textures_delta.clear();
                 output
@@ -1569,6 +1657,105 @@ mod tests {
         assert!(matches!(&take_requests(&ctx)[..], [CtxAction::Profile(id)] if *id == tess));
         frame(Vec::new());
         assert!(!egui::Popup::is_id_open(&ctx, popup.get()));
+    }
+
+    #[test]
+    fn scene_voice_header_stays_above_customizable_rows() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let id = Uuid::from_u128(123);
+        let facts = Facts {
+            voice_volume: Some(menu::VoiceVolume {
+                volume: 0.5,
+                muted: false,
+                can_mute: true,
+                moderated: None,
+            }),
+            ..Default::default()
+        };
+        let mut prefs = Preferences::default();
+        let mut customization = Customization::default();
+        for editing in [false, true] {
+            let mut current = Some(ContextMenu {
+                target: Target::Avatar {
+                    id,
+                    own: false,
+                    attachment: Some(Uuid::from_u128(456)),
+                },
+                pos: egui::pos2(80.0, 80.0),
+                point: Vec3::ZERO,
+                pie_path: Vec::new(),
+                pie_input_frame: None,
+            });
+            if editing {
+                customization.edit(&ctx, current.as_ref().expect("menu"), &facts, &mut prefs);
+            }
+            let mut output = egui::FullOutput::default();
+            for _ in 0..4 {
+                // This layout/input test has no renderer to apply texture deltas.
+                output = crate::ui::login::test_output(ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        show(ui.ctx(), &p, &mut current, &facts, false, &mut prefs, &mut customization);
+                    },
+                ));
+            }
+            let volume = text_rect(&output.shapes, "100 %").expect("volume");
+            let profile = text_rect(&output.shapes, aurora_i18n::tr!("common-view-profile")).expect("profile");
+            assert!(
+                volume.bottom() < profile.top(),
+                "editing={editing}: {volume:?} overlaps {profile:?}"
+            );
+            let saved = prefs.clone();
+            let slider = egui::pos2(profile.left() + 12.0, volume.center().y);
+            let mute = egui::pos2(volume.right() + 16.0, volume.center().y);
+            for (at, is_mute) in [(slider, false), (mute, true)] {
+                take_requests(&ctx);
+                for pressed in [true, false] {
+                    let _ = crate::ui::login::test_output(ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                            events: vec![
+                                egui::Event::PointerMoved(at),
+                                egui::Event::PointerButton {
+                                    pos: at,
+                                    button: egui::PointerButton::Primary,
+                                    pressed,
+                                    modifiers: Default::default(),
+                                },
+                            ],
+                            ..Default::default()
+                        },
+                        |ui| {
+                            show(ui.ctx(), &p, &mut current, &facts, false, &mut prefs, &mut customization);
+                        },
+                    ));
+                }
+                let actions = take_requests(&ctx);
+                if is_mute {
+                    assert!(
+                        matches!(&actions[..], [CtxAction::ToggleVoiceMute(who)] if *who == id),
+                        "{actions:?}"
+                    );
+                } else {
+                    assert!(
+                        !actions.is_empty()
+                            && actions
+                                .iter()
+                                .all(|a| matches!(a, CtxAction::SetVoiceVolume(who, v) if *who == id && *v < 0.5)),
+                        "{actions:?}"
+                    );
+                }
+                assert!(current.is_some(), "voice controls leave the scene menu open");
+                assert_eq!(prefs, saved, "fixed voice controls never customize the menu");
+            }
+            customization.close(&ctx, &mut prefs);
+        }
     }
 
     const MINE: u32 = flags::OBJECT_YOU_OWNER | flags::OBJECT_ANY_OWNER | flags::OBJECT_MODIFY | flags::OBJECT_COPY;

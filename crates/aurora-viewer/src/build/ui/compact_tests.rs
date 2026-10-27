@@ -24,6 +24,8 @@ fn fixture() -> (World, BuildTool, BuildSettings) {
     tool.props.insert(
         id,
         ObjectProps {
+            object_id: id,
+            full: true,
             name: "Presentation test".into(),
             owner_id: world.agent_id,
             creator_id: world.agent_id,

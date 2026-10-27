@@ -77,6 +77,21 @@ pub fn cof(inv: &Inventory) -> Option<Uuid> {
     system_folder(inv, super::outfit::FT_CURRENT_OUTFIT)
 }
 
+/// Confirmed clothing only: required body parts never enter Take Off.
+pub fn worn_clothing(inv: &Inventory) -> Vec<(Uuid, u8)> {
+    let Some(cof) = cof(inv) else { return Vec::new() };
+    let mut items: Vec<_> = folder_links(inv, cof)
+        .into_iter()
+        .filter(|link| !link.folder)
+        .filter_map(|link| inv.items.get(&link.target))
+        .filter(|item| item.asset_type == 5 && (4..=16).contains(&(item.flags & 0xff)))
+        .map(|item| (item.id, (item.flags & 0xff) as u8))
+        .collect();
+    items.sort_unstable();
+    items.dedup();
+    items
+}
+
 pub fn base(inv: &Inventory) -> Option<Uuid> {
     let folder = inv.folders.get(&cof(inv)?)?;
     folder.items.iter().filter_map(|id| inv.items.get(id)).find_map(|it| {
@@ -1277,6 +1292,31 @@ mod tests {
         let mut inv = Inventory::default();
         seed_demo(&mut inv, Uuid::from_u128(1));
         inv
+    }
+
+    #[test]
+    fn context_take_off_clothing_uses_confirmed_links_and_never_body_parts() {
+        let mut inv = fixture();
+        let confirmed = worn_clothing(&inv);
+        assert!(!confirmed.is_empty());
+        assert!(
+            confirmed
+                .iter()
+                .all(|(id, kind)| inv.items[id].asset_type == 5 && (4..=16).contains(kind))
+        );
+        let mut unworn = inv.items[&confirmed[0].0].clone();
+        unworn.id = Uuid::from_u128(999);
+        inv.items.insert(unworn.id, unworn);
+        assert_eq!(worn_clothing(&inv), confirmed, "unworn clothing is excluded");
+        let (change, _) = plan(
+            &inv,
+            Action::RemoveItems(confirmed.iter().map(|(id, _)| *id).collect()),
+            &HashMap::new(),
+        )
+        .expect("remove clothing");
+        let remaining: Vec<_> = change.links.iter().filter_map(|link| inv.items.get(&link.target)).collect();
+        assert!(remaining.iter().any(|item| item.asset_type == 13), "required body parts survive");
+        assert!(remaining.iter().all(|item| item.asset_type != 5));
     }
 
     #[test]

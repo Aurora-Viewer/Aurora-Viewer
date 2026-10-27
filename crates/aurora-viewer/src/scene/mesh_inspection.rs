@@ -4,6 +4,27 @@
 use super::*;
 use crate::world::objects::ObjKey;
 
+/// A bounded force-high request, independent of the inspector's chosen LOD.
+pub(super) struct LodReset {
+    id: Uuid,
+    frame: u32,
+    since: Instant,
+}
+
+pub(super) fn effective_lod(
+    overrides: &HashMap<ObjKey, u8>,
+    resets: &HashMap<ObjKey, LodReset>,
+    object: &Object,
+    hud: bool,
+    automatic: u8,
+) -> u8 {
+    if object.visual_volume().is_mesh() && resets.get(&object.key).is_some_and(|reset| reset.id == object.full_id) {
+        3
+    } else {
+        display_lod(overrides, object, hud, automatic)
+    }
+}
+
 pub struct MeshInfo {
     /// Lowest through highest. Missing/failed levels differ from a true zero.
     pub triangles: [Option<usize>; 4],
@@ -23,6 +44,61 @@ pub(super) fn display_lod(overrides: &HashMap<ObjKey, u8>, object: &Object, hud:
 }
 
 impl Scene {
+    /// reset_mesh_lod (indra/newview/llviewermenu.cpp): force each worn mesh
+    /// through its highest LOD briefly, then resume its ordinary selection.
+    pub fn reset_mesh_lods(&mut self, world: &mut World, roots: &[Uuid], now: Instant) {
+        let indices: Vec<_> = roots
+            .iter()
+            .filter_map(|id| world.objects.index_of_uuid(id))
+            .flat_map(|root| crate::build::family(world, root))
+            .collect();
+        for index in indices {
+            let Some(object) = world.objects.get(index).filter(|object| object.visual_volume().is_mesh()) else {
+                continue;
+            };
+            let key = object.key;
+            self.mesh_lod_resets.insert(
+                key,
+                LodReset {
+                    id: object.full_id,
+                    frame: self.frame,
+                    since: now,
+                },
+            );
+            if let Some(object) = world.objects.get_mut_untracked(index) {
+                object.render.needs_records = true;
+            }
+            self.sets.dirty.insert(index);
+        }
+    }
+
+    pub(super) fn finish_mesh_lod_resets(&mut self, world: &mut World, now: Instant) {
+        let finished: Vec<_> = self
+            .mesh_lod_resets
+            .iter()
+            .filter_map(|(key, reset)| {
+                let index = world.objects.index_of(key);
+                let valid = index
+                    .and_then(|index| world.objects.get(index))
+                    .is_some_and(|object| object.full_id == reset.id && object.visual_volume().is_mesh());
+                let high = index
+                    .and_then(|index| self.gpu.get(index))
+                    .is_some_and(|gpu| matches!(gpu.geom, Some(GeomKey::Mesh { lod: 3, .. })));
+                let expired = now.saturating_duration_since(reset.since) >= std::time::Duration::from_secs(5);
+                (!valid || self.frame.wrapping_sub(reset.frame) > 0 && (high || expired)).then_some(*key)
+            })
+            .collect();
+        for key in finished {
+            self.mesh_lod_resets.remove(&key);
+            if let Some(index) = world.objects.index_of(&key) {
+                if let Some(object) = world.objects.get_mut_untracked(index) {
+                    object.render.needs_records = true;
+                }
+                self.sets.dirty.insert(index);
+            }
+        }
+    }
+
     /// Retain at most one mesh's four levels. The normal async streaming,
     /// decoding, upload and cache eviction paths are shared with rendering.
     pub fn inspect_mesh(&mut self, world: &World, primary: Option<ObjKey>) {
@@ -269,6 +345,76 @@ mod tests {
                 "unchanged choice was scheduled again"
             );
         }
+    }
+
+    #[test]
+    fn mesh_reset_temporarily_forces_high_and_restores_manual_lod_even_when_stationary() {
+        let (mut world, mut scene, idx) = fixture();
+        let object = world.objects.get(idx).unwrap();
+        let (key, id) = (object.key, object.full_id);
+        scene.gpu.resize_with(world.objects.slots.len(), ObjGpu::default);
+        scene.set_mesh_lod_override(&mut world, &[key], Some(0));
+        let now = Instant::now();
+        scene.reset_mesh_lods(&mut world, &[id], now);
+        assert_eq!(
+            effective_lod(
+                &scene.mesh_lod_overrides,
+                &scene.mesh_lod_resets,
+                world.objects.get(idx).unwrap(),
+                false,
+                1
+            ),
+            3
+        );
+        scene.gpu[idx].geom = Some(GeomKey::Mesh {
+            id: crate::demo::FACE_SELECTION_MESH,
+            lod: 3,
+        });
+        scene.finish_mesh_lod_resets(&mut world, now);
+        assert!(!scene.mesh_lod_resets.is_empty(), "at least one forced synchronization");
+        scene.frame = scene.frame.wrapping_add(1);
+        world.objects.get_mut_untracked(idx).unwrap().render.needs_records = false;
+        scene.sets.dirty.remove(idx);
+        scene.finish_mesh_lod_resets(&mut world, now);
+        assert!(scene.mesh_lod_resets.is_empty());
+        assert!(scene.sets.dirty.contains(idx));
+        assert!(world.objects.get(idx).unwrap().render.needs_records);
+        assert_eq!(
+            effective_lod(
+                &scene.mesh_lod_overrides,
+                &scene.mesh_lod_resets,
+                world.objects.get(idx).unwrap(),
+                false,
+                1
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn mesh_reset_is_bounded_on_failed_streaming_and_never_follows_a_reused_identity() {
+        let (mut world, mut scene, idx) = fixture();
+        let object = world.objects.get(idx).unwrap();
+        let (key, id) = (object.key, object.full_id);
+        let now = Instant::now();
+        scene.reset_mesh_lods(&mut world, &[id], now);
+        scene.frame = scene.frame.wrapping_add(1);
+        scene.finish_mesh_lod_resets(&mut world, now + std::time::Duration::from_secs(6));
+        assert!(scene.mesh_lod_resets.is_empty());
+        scene.reset_mesh_lods(&mut world, &[id], now);
+        world.objects.get_mut_untracked(idx).unwrap().full_id = Uuid::new_v4();
+        assert_eq!(
+            effective_lod(
+                &scene.mesh_lod_overrides,
+                &scene.mesh_lod_resets,
+                world.objects.get(idx).unwrap(),
+                false,
+                1
+            ),
+            1
+        );
+        scene.finish_mesh_lod_resets(&mut world, now);
+        assert!(!scene.mesh_lod_resets.contains_key(&key));
     }
 
     #[test]

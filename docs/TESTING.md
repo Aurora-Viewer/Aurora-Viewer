@@ -1038,7 +1038,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SCULPT_ZERO=1` | Subtype-zero sculpt classification beside torus and sphere controls |
 | `AURORA_DEMO_SCULPT_MISSING=1\|late` | A sculpt whose map is missing: the sphere placeholder, then its torus with `late` |
 | `AURORA_DEMO_TEXTURE_MISSING=1` | Boxes whose texture is missing: the Legacy Viewer's grey, never the rez grid for ever |
-| `AURORA_DEMO_OBJECT_MENU=<mode>` | The object menu's entries: scripts, Return, Put on, particle owner, Link, Drop |
+| `AURORA_DEMO_OBJECT_MENU=<mode>` | Object actions, scene menu customization/notecards, object profile and pathfinding readers |
 
 **Beacon details.** `AURORA_DEMO_BEACONS=1` adds seven labelled sources, including an invisible scripted cube. `lines`, `highlights` and `off` isolate the two render modes; `hidden-particles` keeps the source marker while hiding emitted particles. `parcels` frames the terrain boundaries and ownership colours. `owned` opens My land with an offline parcel and group contributions. Check each source switch, Scripted versus Touch, width, both master switches off, and closing/reopening the floater without losing the active filters. The grid check compares real sound/particle/media sources, linked children, attachments, neighbouring parcels and the personal holdings list with the Legacy Viewer.
 
@@ -1917,32 +1917,87 @@ copied / scripts observed. Name conflicts and non-copyable contents stop the
 operation before any unlinking. Copying a script does not keep its runtime
 memory; replacing the root does not automatically copy the Linkset Data.
 
-**`AURORA_DEMO_OBJECT_MENU=list|particle|scripts|scripts-run|return|return-yes|wear|particle-block|link|drop`**
-— at frame 600, a violet bell of ours (scripted, touch text "Ring the
+Scene menu customization: `customize` unlocks the object menu at frame 740;
+`customize-land`, `customize-self`, `customize-avatar` and
+`customize-other-attachment` open the respective editor at the same frame.
+`avatar-menu` and `attachment-menu` open the locked menus. These four avatar
+scenarios simulate nearby voice membership without starting an audio session:
+verify the volume stays above all movable rows, including while editing, and
+does not overlap Profile. Technical actions are grouped under Display,
+Information, Reset, Moderation (with rights) and Disturbance. A clicked
+attachment's object actions are separate from its wearer's actions.
+`customize-hud` additionally needs
+`AURORA_DEMO_HUDS=1`. Capture at frame 820 or later. `pbr` opens the object's
+native Materials section with PBR selected. The lock button enters editing;
+drag rows into groups, icon bars or the hidden shelf, right-click a row for
+organization choices, and use Finish to resume normal commands. Verify that
+closing/reopening relocks, each target kind retains its own layout, a different
+object receives commands, and list/radial menus share visibility and ordering.
+`textures` opens the read-only baked-texture grid directly at frame 740.
+Show Textures on an avatar or attachment opens the same grid;
+changing avatars replaces the inspected bakes without exposing full asset UUIDs.
+
+**`AURORA_DEMO_OBJECT_MENU=list|particle|scripts|scripts-run|return|return-yes|wear|particle-block|link|drop|customize|customize-land|customize-self|customize-avatar|customize-other-attachment|avatar-menu|attachment-menu|customize-hud|pbr|textures|profile|profile-no-mod|profile-other|profile-sale|profile-hud|reset-lod|menu-export|menu-load|region-objects|characters`**
+`profile` opens the bell's actual demo ObjectProperties in the directly editable
+General form: name/description, group and share/deed, everyone/next-owner rights,
+click action, sale type/price and search inclusion, plus actual pathfinding flags.
+`profile-no-mod` revokes the effective Modify flag while retaining owner metadata
+rights; `profile-other` shows another resident's object; `profile-sale` starts
+with a copy for sale at L$25; `profile-hud`, with `AURORA_DEMO_HUDS=1`, opens the
+HUD root without waiting for its children's properties. Names commit on Enter
+or focus loss; sale drafts use Apply. Check both Profile and General remain
+consistent, group names resolve, permissions disable controls as appropriate,
+and selecting another object does not redirect profile edits. Open/Pay/Buy use
+the explicit native object interactions; Details opens Inspect Objects.
+`region-objects` and `characters` pass synthetic LLSD through the same
+parser and reply correlation as the live capabilities, reveal the bell and show
+its selected details. Search, select, refresh, Profile, Inspect, Zoom and Copy UUID
+are available; these lists are read-only. `menu-export` opens the seven-profile
+notecard naming dialog; `menu-load` opens the shared searchable COPY-aware picker.
+`reset-lod` invokes our avatar's transient worn-mesh LOD reset. Capture these
+windows at frame 860. On the grid, the human should save menus of several types,
+alter their arrangements, import the notecard and confirm all seven restore,
+locked; an inventory-menu notecard must be rejected without changing scene menus.
+Verify object properties on own/other objects and attachments/HUDs, and the two
+pathfinding lists in supported/unsupported regions, including a non-character
+absent from the character list. Navmesh editing and terrain rows are not covered
+by this read-only implementation.
+
+At frame 600, a violet bell of ours (scripted, touch text "Ring the
 bell", sit text "Lie down"), a teal crate of ours and a cloud of large
 amber particles another resident owns stand in a row 5 m ahead, where the
 camera looks. At frame 700 the right click opens the menu of the bell
 (`list`: "Ring the bell" and "Lie down" as labels, Return enabled, the
 script actions and Put on in their submenus), or lands on the particles
-(`particle`: the menu of what is behind, with "Ignore particle owner"
-enabled). At frame 740: `scripts` chooses Reset scripts (the "modify
+(`particle`: the menu of what is behind, with contextual Particles controls).
+Particle clicks retain all intersected sources/owners sampled at the press while
+object depth is read asynchronously. Velocity-aligned quads and ribbons use
+the displayed geometry; particles against the sky expose only the Particles
+submenu. At frame 740: `scripts` chooses Reset scripts (the "modify
 scripts" question), `scripts-run` answers it yes (the Reset progress
 window lists the bell's script, then "Done."); `return` / `return-yes`
 choose Return (the question; answered yes, the bell goes); `wear` chooses
 Put on ▸ Attach to ▸ Right Arm ▸ Right Hand: the avatar walks to the bell,
 then attaches it (it leaves the world: the demo has no item to wear it
-from); `particle-block` blocks the particles' owner: People opens on the
-Blocked tab with Nova Exemple. `link` selects the crate and the bell in
+from); `particle-block` filters the particles' owner locally without muting
+the resident. Particles exposes the clicked emitter directly and other
+intersected emitting linksets under their object names, with independent
+object/owner choices; unknown names resolve asynchronously from properties.
+Avatar > Disturbance > Block particles shares the owner filter. Verify that
+chat, voice, sounds and avatar rendering stay unchanged, toggles stay open,
+and rules survive reopening/restart. `link` selects the crate and the bell in
 the build tools at frame 650: the menu then has Link enabled (Object ▸)
 and "Take multiple ▸" instead of Take. `drop`, with `AURORA_DEMO_WORN=1`,
 opens the worn backpack's menu and chooses Drop (the question). The log
 writes `demo object menu: <action>` and, at frame 900, `demo object menu
-result: …` (bell in the world or gone, particle owner, block, queue
-lines). Capture with `AURORA_FPS_LIMIT=60` at frames 760 (menus), 780
-(questions), 800 (queue window, block list) and 1000 (wear); a submenu
+result: …` (bell in the world or gone, particle owner, filter, mute state,
+remaining owner particles and queue lines). After `particle-block`, expect
+`blocked=true`, `muted=false` and `live owner particles=0`.
+Capture with `AURORA_FPS_LIMIT=60` at frames 760 (menus), 780
+(questions), 800 (queue window, filtered particles) and 1000 (wear); a submenu
 opens under `AURORA_DEMO_POINTER` (one point every 60 frames from frame
 300: the eighth point is at frame 720). Our attachments' menu (favorites,
-Drop, Block particle owner) is `AURORA_DEMO_WORN=menu`.
+Drop, particle filters) is `AURORA_DEMO_WORN=menu`.
 
 
 ## HUDs
@@ -6204,7 +6259,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   file is left as it was. `particles`: capture 690 shows the fountain's
   particles; "Block particles" at frame 700 makes them go at once, and the
   menu opened at frame 720 shows the entry checked (capture 780); the log
-  says `demo social menu: particles of … blocked: true`. `card`: "Give my
+  says `demo social menu: particles of … blocked: true`. This uses the same
+  independent local owner filter as the contextual Particles submenu, with
+  no mute entry or effect on the resident's avatar or communications. `card`: "Give my
   calling card" at frame 600: "You have offered a calling card to …", then
   the demo server accepts it, "Your calling card was accepted." (capture
   640). `card-offer`: the wolf offers us his calling card at frame 600,

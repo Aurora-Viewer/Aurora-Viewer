@@ -16,6 +16,14 @@ pub(super) struct Entry {
     pub kind: Kind,
 }
 
+impl Entry {
+    /// Checkable settings are applied live; keep their menu and submenu open
+    /// for another change (human preference over the Legacy default).
+    pub(super) fn keeps_open(&self) -> bool {
+        self.checked.is_some() || matches!(self.kind, Kind::Action(CtxAction::CustomizeMenu(_)))
+    }
+}
+
 #[derive(Clone)]
 pub(super) enum Kind {
     Action(CtxAction),
@@ -106,6 +114,10 @@ impl Builder {
 
 pub(super) fn world_menu(target: &Target, f: &Facts, point: Vec3) -> Vec<Entry> {
     let mut entries = Builder::default();
+    if f.particle_only {
+        particles_submenu(&mut entries, f);
+        return entries.0;
+    }
     if f.object.local_preview {
         if let Target::Object { key, full_id, .. } = target {
             preview_menu(&mut entries, f, *key, *full_id, point, false);
@@ -127,6 +139,9 @@ pub(super) fn world_menu(target: &Target, f: &Facts, point: Vec3) -> Vec<Entry> 
         } => attachment_other_menu(&mut entries, f, *id, *attachment, point),
         Target::Avatar { id, .. } => avatar_menu(&mut entries, f, *id, point),
         Target::Ground => land_menu(&mut entries, f, point),
+    }
+    if matches!(target, Target::Avatar { own: true, .. }) {
+        particles_submenu(&mut entries, f);
     }
     entries.0
 }
@@ -155,13 +170,14 @@ fn preview_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, point: Vec3,
     }
 }
 
+#[cfg(test)]
 pub(super) fn draw_list(ui: &mut egui::Ui, p: &crate::theme::Palette, entries: &[Entry]) {
     use super::menu;
     for entry in entries {
         match &entry.kind {
             Kind::Action(action) => {
                 let clicked = match entry.checked {
-                    Some(checked) if entry.enabled && matches!(action, CtxAction::SetOwnerSoundBlock { .. }) => {
+                    Some(checked) if entry.enabled => {
                         let mut on = checked;
                         menu::toggle(ui, p, entry.icon, &entry.label, &mut on)
                     }
@@ -189,7 +205,12 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
     let o = &f.object;
     ui.item_if("click-filled", touch_label(o), o.touch, CtxAction::Touch(key.local_id));
     ui.item("pencil-filled", aurora_i18n::tr!("common-edit"), CtxAction::Edit(id));
-    ui.todo("paint-filled", aurora_i18n::tr!("ui-context-edit-pbr-material"));
+    ui.item_if(
+        "paint-filled",
+        aurora_i18n::tr!("ui-context-edit-pbr-material"),
+        f.object.edit,
+        CtxAction::EditPbr(f.object.id),
+    );
     // Object.Build: the Create tool (LLToolCompCreate), like the land menu
     ui.item("box", aurora_i18n::tr!("common-build"), CtxAction::Build);
     ui.item_if("package", aurora_i18n::tr!("common-open"), o.open, CtxAction::Open(id));
@@ -205,18 +226,23 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
     ui.item_if("man-filled", aurora_i18n::tr!("common-stand-up"), o.stand, CtxAction::StandUp);
     ui.separator();
     ui.submenu("box", aurora_i18n::tr!("common-object"), true, |ui| {
-        ui.todo("info-circle-filled", aurora_i18n::tr!("common-profile"));
+        ui.item(
+            "info-circle-filled",
+            aurora_i18n::tr!("common-profile"),
+            CtxAction::ObjectProfile(id),
+        );
         ui.item("zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2"), CtxAction::Inspect(id));
         ui.item("code", aurora_i18n::tr!("ui-context-script-information"), CtxAction::ScriptInfo(id));
         ui.item("box", aurora_i18n::tr!("ui-context-object-information"), CtxAction::ObjectInfo(id));
         ui.separator();
         // two objects or more: a right click on a selected one keeps them;
         // one alone has nothing to link to
-        if o.roots > 1 {
-            ui.item_if("link", aurora_i18n::tr!("ui-context-link"), o.link, CtxAction::Link(id));
-        } else {
-            ui.disabled("link", aurora_i18n::tr!("ui-context-link"));
-        }
+        ui.item_if(
+            "link",
+            aurora_i18n::tr!("ui-context-link"),
+            o.roots > 1 && o.link,
+            CtxAction::Link(id),
+        );
         ui.item_if("unlink", aurora_i18n::tr!("ui-context-unlink"), o.unlink, CtxAction::Unlink(id));
         ui.check(
             "cube-3d-sphere",
@@ -237,10 +263,16 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
         }
     });
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point, None));
-    // Pathfinding.Linksets.Select / Characters.Select: the pathfinding
-    // windows are not in Aurora yet
-    ui.todo("list-details-filled", aurora_i18n::tr!("ui-context-show-in-region-objects"));
-    ui.todo("walk", aurora_i18n::tr!("ui-context-show-in-characters"));
+    ui.item(
+        "list-details-filled",
+        aurora_i18n::tr!("ui-context-show-in-region-objects"),
+        CtxAction::Pathfinding { id, characters: false },
+    );
+    ui.item(
+        "walk",
+        aurora_i18n::tr!("ui-context-show-in-characters"),
+        CtxAction::Pathfinding { id, characters: true },
+    );
     ui.separator();
     put_on_submenu(ui, f, id);
     ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
@@ -250,12 +282,16 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
             aurora_i18n::tr!("common-report"),
             CtxAction::ReportAbuse(ReportTarget::Object(id)),
         );
-        let (icon, label) = if o.blocked {
-            ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
-        } else {
-            ("ban", aurora_i18n::tr!("common-ignore"))
-        };
-        ui.item(icon, label, CtxAction::ToggleBlockObject { id, name: o.name.clone() });
+        ui.check(
+            "ban",
+            aurora_i18n::tr!("common-ignore"),
+            o.blocked,
+            true,
+            CtxAction::ToggleBlockObject { id, name: o.name.clone() },
+        );
+        ui.separator();
+        derender_items(ui, id, aurora_i18n::tr!("ui-context-derender"), true);
+        particles_submenu(ui, f);
     });
     ui.separator();
     ui.item(
@@ -263,7 +299,6 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
         aurora_i18n::tr!("ui-context-refresh-textures"),
         CtxAction::RefreshTextures(id),
     );
-    derender_items(ui, id, aurora_i18n::tr!("ui-context-derender"), true);
     // Object.EnableReturn: any object that is not worn
     ui.item("arrow-back-up", aurora_i18n::tr!("ui-context-return"), CtxAction::Return(id));
     if o.roots > 1 {
@@ -283,7 +318,6 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
     ui.separator();
     ui.item_if("trash-filled", aurora_i18n::tr!("common-delete"), o.delete, CtxAction::Delete(id));
     ui.separator();
-    particle_owner_item(ui, f, aurora_i18n::tr!("ui-context-ignore-particle-owner"));
     // Avatar.ResetSkeleton, shown for an animated object (its skeleton)
     if let Some(skeleton) = o.animesh {
         ui.item(
@@ -306,15 +340,52 @@ fn touch_label(o: &super::ObjectFacts) -> &str {
     }
 }
 
-/// "Block particle owner" (Particle.Mute, EnableMuteParticle): the owner
-/// of the particle the right click landed on, when it is not us.
-fn particle_owner_item(ui: &mut Builder, f: &Facts, label: &str) {
-    ui.item_if(
-        "sparkles-filled",
-        label,
-        f.particle_owner.is_some(),
-        CtxAction::BlockParticleOwner(f.particle_owner.unwrap_or_default()),
-    );
+/// Contextual particle controls: direct entries for the clicked emitter,
+/// named child groups for every other emitter intersected by the same click.
+fn particles_submenu(ui: &mut Builder, f: &Facts) {
+    if f.particle_sources.is_empty() {
+        return;
+    }
+    ui.submenu("sparkles-filled", aurora_i18n::tr!("scene-particles-menu"), true, |ui| {
+        for source in f.particle_sources.iter().filter(|s| s.clicked) {
+            particle_filter_items(ui, source);
+        }
+        if f.particle_sources.iter().any(|s| s.clicked) && f.particle_sources.iter().any(|s| !s.clicked) {
+            ui.separator();
+        }
+        for source in f.particle_sources.iter().filter(|s| !s.clicked) {
+            ui.submenu("box", &source.name, true, |ui| particle_filter_items(ui, source));
+        }
+    });
+}
+
+fn particle_filter_items(ui: &mut Builder, source: &super::ParticleMenuSource) {
+    for (id, owner, checked, label) in [
+        (
+            source.object,
+            false,
+            source.object_blocked,
+            aurora_i18n::tr!("scene-particles-block-object"),
+        ),
+        (
+            source.owner,
+            true,
+            source.owner_blocked,
+            aurora_i18n::tr!("scene-particles-block-owner"),
+        ),
+    ] {
+        ui.check(
+            "sparkles-filled",
+            label,
+            checked,
+            !id.is_nil(),
+            CtxAction::SetParticleBlock {
+                id,
+                owner,
+                blocked: !checked,
+            },
+        );
+    }
 }
 
 /// "Put on" (menu_object.xml Put On): Wear, Add, and the attachment points
@@ -446,7 +517,12 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         f.object.edit,
         CtxAction::EditAttachment(key),
     );
-    ui.todo("paint-filled", aurora_i18n::tr!("ui-context-edit-pbr-material"));
+    ui.item_if(
+        "paint-filled",
+        aurora_i18n::tr!("ui-context-edit-pbr-material"),
+        f.object.edit,
+        CtxAction::EditPbr(f.object.id),
+    );
     ui.item_if(
         "paperclip",
         aurora_i18n::tr!("common-detach"),
@@ -457,14 +533,10 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     ui.separator();
     sit_stand(ui, f);
     appearance_submenu(ui, f);
-    take_off_submenu(ui);
+    take_off_submenu(ui, f);
     ui.separator();
     // Self.ToggleSitStand
-    ui.item(
-        "armchair",
-        aurora_i18n::tr!("ui-context-sit-stand"),
-        if f.seated { CtxAction::StandUp } else { CtxAction::SitGround },
-    );
+    ui.item("armchair", aurora_i18n::tr!("ui-context-sit-stand"), CtxAction::SitStand);
     // enable_fly_land: flying already, or not sitting (LLAgent::enableFlying)
     ui.item_if(
         "plane-departure-filled",
@@ -479,7 +551,12 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     );
     ui.separator();
     community_submenu(ui, f.me);
-    ui.todo("info-circle-filled", aurora_i18n::tr!("ui-context-object-profile"));
+    ui.item_if(
+        "info-circle-filled",
+        aurora_i18n::tr!("ui-context-object-profile"),
+        !f.object.id.is_nil(),
+        CtxAction::ObjectProfile(f.object.id),
+    );
     ui.item_if(
         "zoom-scan-filled",
         aurora_i18n::tr!("ui-context-inspect-2"),
@@ -498,13 +575,20 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         !f.object.id.is_nil(),
         CtxAction::ObjectInfo(f.object.id),
     );
-    derender_items(
-        ui,
-        f.object.id,
-        aurora_i18n::tr!("ui-context-derender-temporarily"),
-        !f.object.id.is_nil(),
+    ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
+        derender_items(
+            ui,
+            f.object.id,
+            aurora_i18n::tr!("ui-context-derender-temporarily"),
+            !f.object.id.is_nil(),
+        );
+        particles_submenu(ui, f);
+    });
+    ui.item(
+        "photo-filled",
+        aurora_i18n::tr!("ui-context-show-textures"),
+        CtxAction::ShowAvatarTextures(f.me),
     );
-    ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
     ui.item_if(
         "refresh",
         aurora_i18n::tr!("ui-context-refresh-textures"),
@@ -519,8 +603,6 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         f.object.drop,
         CtxAction::Drop(key),
     );
-    ui.separator();
-    particle_owner_item(ui, f, aurora_i18n::tr!("ui-context-block-particle-owner"));
 }
 
 fn avatar_navigation(ui: &mut Builder, f: &Facts, id: Uuid) {
@@ -539,22 +621,15 @@ fn avatar_navigation(ui: &mut Builder, f: &Facts, id: Uuid) {
 }
 
 fn sound_block_items(ui: &mut Builder, f: &Facts, owner: Uuid) {
-    let state = |flag| {
-        if f.sound_blocks & flag != 0 {
-            aurora_i18n::tr!("sound-block-state-on")
-        } else {
-            aurora_i18n::tr!("sound-block-state-off")
-        }
-    };
     for (flag, label) in [
-        (1, aurora_i18n::tr!("ui-context-block-worn-sounds", state = state(1))),
-        (2, aurora_i18n::tr!("ui-context-block-rezzed-sounds", state = state(2))),
-        (4, aurora_i18n::tr!("ui-context-block-gesture-sounds", state = state(4))),
+        (1, aurora_i18n::tr!("ui-context-block-worn-sounds")),
+        (2, aurora_i18n::tr!("ui-context-block-rezzed-sounds")),
+        (4, aurora_i18n::tr!("ui-context-block-gesture-sounds")),
     ] {
         let on = f.sound_blocks & flag != 0;
         ui.check(
             "volume-off",
-            &label,
+            label,
             on,
             true,
             CtxAction::SetOwnerSoundBlock { owner, flag, blocked: !on },
@@ -562,8 +637,10 @@ fn sound_block_items(ui: &mut Builder, f: &Facts, owner: Uuid) {
     }
 }
 
-/// menu_avatar_other.xml
-fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
+/// Legacy menu_avatar_other.xml / menu_attachment_other.xml actions, grouped
+/// deliberately for Aurora (human request and #1135). Keep frequent social
+/// actions direct and technical/safety actions out of their click path.
+fn avatar_social_items(ui: &mut Builder, f: &Facts, id: Uuid) {
     ui.item("user-filled", aurora_i18n::tr!("common-view-profile"), CtxAction::Profile(id));
     avatar_navigation(ui, f, id);
     ui.item_if(
@@ -592,30 +669,25 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
         aurora_i18n::tr!("common-offer-teleport"),
         CtxAction::OfferTeleport(id),
     );
+}
+
+fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
+    avatar_social_items(ui, f, id);
+    avatar_groups(ui, f, id, None, point);
+}
+
+fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid, point: Vec3) {
+    avatar_social_items(ui, f, id);
+    avatar_groups(ui, f, id, Some(attachment), point);
+}
+
+fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>, point: Vec3) {
     ui.separator();
-    ui.todo("eye-filled", aurora_i18n::tr!("common-look-toward-avatar"));
-    ui.separator();
-    reset_skeleton_items(ui, id);
-    ui.todo("restore", aurora_i18n::tr!("ui-context-reset-mesh-lod-2"));
-    ui.separator();
-    ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
-        let (icon, label) = if f.blocked {
-            ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
-        } else {
-            ("ban", aurora_i18n::tr!("common-ignore"))
-        };
-        ui.item(icon, label, CtxAction::ToggleBlock(id));
-        ui.separator();
-        sound_block_items(ui, f, id);
-        ui.separator();
-        // Avatar.ReportAbuse: showFromObject on the avatar
-        ui.item(
-            "flag-filled",
-            aurora_i18n::tr!("common-report"),
-            CtxAction::ReportAbuse(ReportTarget::Object(id)),
-        );
-        moderation_items(ui, f, id);
-    });
+    ui.item(
+        "eye-filled",
+        aurora_i18n::tr!("common-look-toward-avatar"),
+        CtxAction::LookAtAvatar(id),
+    );
     ui.item(
         "zoom-in-filled",
         aurora_i18n::tr!("common-zoom-2"),
@@ -623,172 +695,162 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
     );
     ui.item("coin-filled", aurora_i18n::tr!("common-pay"), CtxAction::PayResident(id));
     ui.separator();
-    // Firestorm "Always Display Full Detail / Never Display Full Detail / Remove From Display Exceptions"
-    if let Some((c, silhouette)) = f.complexity {
-        let text = aurora_i18n::tr!(
-            "ui-context-complexity",
-            value0 = crate::ui::hud::group_digits(c).to_string(),
-            value1 = (if silhouette { " (silhouette)" } else { "" }).to_string()
+    if let Some(object) = attachment {
+        ui.submenu("box", aurora_i18n::tr!("ui-context-clicked-object"), true, |ui| {
+            ui.item(
+                "info-circle-filled",
+                aurora_i18n::tr!("ui-context-object-profile"),
+                CtxAction::ObjectProfile(object),
+            );
+            ui.item(
+                "zoom-scan-filled",
+                aurora_i18n::tr!("ui-context-inspect-2"),
+                CtxAction::Inspect(object),
+            );
+            ui.item("code", aurora_i18n::tr!("ui-context-script-info"), CtxAction::ScriptInfo(object));
+            ui.item(
+                "box",
+                aurora_i18n::tr!("ui-context-object-information"),
+                CtxAction::ObjectInfo(object),
+            );
+            ui.separator();
+            ui.item(
+                "refresh",
+                aurora_i18n::tr!("ui-context-refresh-textures"),
+                CtxAction::RefreshTextures(object),
+            );
+            save_as_submenu(ui);
+        });
+    }
+    avatar_moderation(ui, f, id);
+    let display = f
+        .complexity
+        .map(|(c, silhouette)| {
+            aurora_i18n::tr!(
+                "ui-context-complexity",
+                value0 = crate::ui::hud::group_digits(c).to_string(),
+                value1 = (if silhouette { " (silhouette)" } else { "" }).to_string()
+            )
+            .to_string()
+        })
+        .unwrap_or_else(|| aurora_i18n::tr!("ui-context-display-options").into());
+    ui.submenu("gauge-filled", &display, true, |ui| {
+        for (mode, icon, label) in [
+            (2u8, "user-scan", aurora_i18n::tr!("ui-context-always-show-full-detail")),
+            (1, "ghost-filled", aurora_i18n::tr!("ui-context-never-fully-render")),
+            (
+                0,
+                "adjustments-filled",
+                aurora_i18n::tr!("ui-context-display-according-to-your-preferences"),
+            ),
+        ] {
+            ui.check(icon, label, f.render == mode, true, CtxAction::SetRender(id, mode));
+        }
+        ui.separator();
+        ui.item(
+            "photo-filled",
+            aurora_i18n::tr!("ui-context-show-textures"),
+            CtxAction::ShowAvatarTextures(id),
         );
-        ui.info("gauge-filled", &text);
-    }
-    for (mode, icon, label) in [
-        (2u8, "user-scan", aurora_i18n::tr!("ui-context-always-show-full-detail")),
-        (1, "ghost-filled", aurora_i18n::tr!("ui-context-never-fully-render")),
-        (
-            0,
-            "adjustments-filled",
-            aurora_i18n::tr!("ui-context-display-according-to-your-preferences"),
-        ),
-    ] {
-        ui.check(icon, label, f.render == mode, true, CtxAction::SetRender(id, mode));
-    }
-    // the Inspect window on everything the avatar wears (each worn
-    // object's own menu inspects that one, menu_attachment_other.xml)
-    ui.item_if(
-        "zoom-scan-filled",
-        aurora_i18n::tr!("ui-context-inspect-2"),
-        f.worn,
-        CtxAction::InspectAvatar(id),
-    );
-    ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
-    derender_items(ui, id, aurora_i18n::tr!("ui-context-derender-temporarily"), true);
-    ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
-    ui.item(
-        "refresh",
-        aurora_i18n::tr!("ui-context-refresh-textures"),
-        CtxAction::RefreshAvatarTextures(id),
-    );
-    ui.separator();
-    // only the particle flag of their block list entry, checked while it
-    // is on (the block list's "Block particles", LLMute::flagParticles);
-    // the Legacy Viewer's "Block Particle Owner" needs a clicked particle
-    ui.check(
-        "sparkles-filled",
-        aurora_i18n::tr!("common-block-particles"),
-        f.particles_blocked,
+        ui.item(
+            "refresh",
+            aurora_i18n::tr!("ui-context-refresh-textures"),
+            CtxAction::RefreshAvatarTextures(id),
+        );
+    });
+    ui.submenu(
+        "info-circle-filled",
+        aurora_i18n::tr!("ui-context-information-options"),
         true,
-        CtxAction::ToggleParticleMute(id),
+        |ui| {
+            ui.item_if(
+                "zoom-scan-filled",
+                aurora_i18n::tr!("ui-context-inspect-2"),
+                f.worn,
+                CtxAction::InspectAvatar(id),
+            );
+            ui.item("code", aurora_i18n::tr!("ui-context-script-information"), CtxAction::ScriptInfo(id));
+        },
     );
+    ui.submenu("restore", aurora_i18n::tr!("ui-context-reset-options"), true, |ui| {
+        reset_skeleton_items(ui, id);
+        ui.item(
+            "restore",
+            aurora_i18n::tr!("ui-context-reset-mesh-lod-2"),
+            CtxAction::ResetMeshLod(id),
+        );
+    });
+    ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
+        ui.item(
+            "flag-filled",
+            aurora_i18n::tr!("common-report"),
+            CtxAction::ReportAbuse(ReportTarget::Object(id)),
+        );
+        ui.check(
+            "ban",
+            aurora_i18n::tr!("common-ignore"),
+            f.blocked,
+            true,
+            CtxAction::ToggleBlock(id),
+        );
+        ui.separator();
+        if let Some(object) = attachment {
+            // Derender on a clicked attachment has always targeted that
+            // object, not its wearer. Make that distinction explicit.
+            ui.submenu("box", aurora_i18n::tr!("ui-context-clicked-object"), true, |ui| {
+                derender_items(ui, object, aurora_i18n::tr!("ui-context-derender-temporarily"), true);
+            });
+        } else {
+            derender_items(ui, id, aurora_i18n::tr!("ui-context-derender-temporarily"), true);
+        }
+        ui.check(
+            "sparkles-filled",
+            aurora_i18n::tr!("common-block-particles"),
+            f.particles_blocked,
+            true,
+            CtxAction::ToggleOwnerParticleFilter(id),
+        );
+        sound_block_items(ui, f, id);
+        particles_submenu(ui, f);
+    });
 }
 
-/// Avatar.Freeze / Avatar.Eject, visible only with the rights on the land
-/// the avatar stands on (on_visible Avatar.EnableFreezeEject).
+/// Visible only with the corresponding land/nearby-voice moderation rights.
+fn avatar_moderation(ui: &mut Builder, f: &Facts, id: Uuid) {
+    let voice = f.voice_volume.and_then(|v| v.moderated);
+    if !f.moderation.allowed && voice.is_none() {
+        return;
+    }
+    ui.submenu("shield-filled", aurora_i18n::tr!("ui-context-moderation-options"), true, |ui| {
+        moderation_items(ui, f, id);
+        if let Some(muted) = voice {
+            ui.check(
+                "microphone-off",
+                aurora_i18n::tr!("ui-context-voice-mute-for-everyone"),
+                muted,
+                true,
+                CtxAction::ModerateVoice(Some(id), !muted),
+            );
+            ui.item(
+                "microphone-off",
+                aurora_i18n::tr!("ui-context-voice-mute-everyone"),
+                CtxAction::ModerateVoice(None, true),
+            );
+            ui.item(
+                "microphone-filled",
+                aurora_i18n::tr!("ui-context-voice-unmute-everyone"),
+                CtxAction::ModerateVoice(None, false),
+            );
+        }
+    });
+}
+
+/// Avatar.Freeze / Avatar.Eject, visible only with rights on the avatar's land.
 fn moderation_items(ui: &mut Builder, f: &Facts, id: Uuid) {
     if f.moderation.allowed {
         ui.item("snowflake", aurora_i18n::tr!("ui-context-freeze"), CtxAction::Freeze(id));
         ui.item("player-eject-filled", aurora_i18n::tr!("ui-context-eject"), CtxAction::Eject(id));
     }
-}
-
-/// menu_attachment_other.xml: the avatar's entries, then those of the
-/// attachment clicked, in Firestorm's order. Entries it hides unless they
-/// apply (Dump XML, Block Particle Owner, Freeze / Eject without the
-/// rights, Remove From Display Exceptions without an exception) are left
-/// out the same way.
-fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid, point: Vec3) {
-    ui.item("user-filled", aurora_i18n::tr!("common-view-profile"), CtxAction::Profile(id));
-    avatar_navigation(ui, f, id);
-    ui.item_if(
-        "user-plus",
-        aurora_i18n::tr!("common-become-friends"),
-        !f.friend,
-        CtxAction::AddFriend(id),
-    );
-    contact_set_entries(ui, f, id);
-    ui.item("message-circle-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
-    // Avatar.GiveCard (enabled like RLV.CanShowName: always here)
-    ui.item(
-        "id-filled",
-        aurora_i18n::tr!("ui-context-give-my-calling-card"),
-        CtxAction::GiveCallingCard(id),
-    );
-    ui.item_if("phone-filled", aurora_i18n::tr!("common-voice-call"), f.voice, CtxAction::Call(id));
-    // Avatar.InviteToGroup (enabled like RLV.CanShowName: always here)
-    ui.item(
-        "users-plus",
-        aurora_i18n::tr!("ui-context-invite-to-group"),
-        CtxAction::InviteToGroup(id),
-    );
-    ui.todo("eye-filled", aurora_i18n::tr!("common-look-toward-avatar"));
-    ui.separator();
-    reset_skeleton_items(ui, id);
-    ui.todo("restore", aurora_i18n::tr!("ui-context-reset-mesh-lod-2"));
-    ui.separator();
-    ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
-        let (icon, label) = if f.blocked {
-            ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
-        } else {
-            ("ban", aurora_i18n::tr!("common-ignore"))
-        };
-        ui.item(icon, label, CtxAction::ToggleBlock(id));
-        ui.separator();
-        sound_block_items(ui, f, id);
-        ui.separator();
-        ui.item(
-            "flag-filled",
-            aurora_i18n::tr!("common-report"),
-            CtxAction::ReportAbuse(ReportTarget::Object(id)),
-        );
-        moderation_items(ui, f, id);
-    });
-    ui.item(
-        "zoom-in-filled",
-        aurora_i18n::tr!("common-zoom-2"),
-        CtxAction::Zoom(point, Some(id)),
-    );
-    // Avatar.Pay: the wearer is paid
-    ui.item("coin-filled", aurora_i18n::tr!("common-pay"), CtxAction::PayResident(id));
-    ui.separator();
-    ui.todo("info-circle-filled", aurora_i18n::tr!("ui-context-object-profile"));
-    ui.separator();
-    // Avatar.SetImpostorMode 2 / 1, and 0 once there is an exception
-    ui.check(
-        "user-scan",
-        aurora_i18n::tr!("ui-context-always-show-full-detail"),
-        f.render == 2,
-        true,
-        CtxAction::SetRender(id, 2),
-    );
-    ui.check(
-        "ghost-filled",
-        aurora_i18n::tr!("ui-context-never-fully-render"),
-        f.render == 1,
-        true,
-        CtxAction::SetRender(id, 1),
-    );
-    if f.render != 0 {
-        ui.item(
-            "adjustments-filled",
-            aurora_i18n::tr!("ui-context-remove-from-display-exceptions"),
-            CtxAction::SetRender(id, 0),
-        );
-    }
-    ui.item(
-        "zoom-scan-filled",
-        aurora_i18n::tr!("ui-context-inspect-2"),
-        CtxAction::Inspect(attachment),
-    );
-    ui.item(
-        "code",
-        aurora_i18n::tr!("ui-context-script-info"),
-        CtxAction::ScriptInfo(attachment),
-    );
-    ui.item(
-        "box",
-        aurora_i18n::tr!("ui-context-object-information"),
-        CtxAction::ObjectInfo(attachment),
-    );
-    // the worn object, not its wearer (the selection's root)
-    derender_items(ui, attachment, aurora_i18n::tr!("ui-context-derender-temporarily"), true);
-    ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
-    // the attachment's textures (Object.TexRefresh), not the avatar's bakes
-    ui.item(
-        "refresh",
-        aurora_i18n::tr!("ui-context-refresh-textures"),
-        CtxAction::RefreshTextures(attachment),
-    );
-    save_as_submenu(ui);
 }
 
 /// Object.Derender / Object.DerenderPermanent (derenderObject on the
@@ -816,7 +878,7 @@ fn save_as_submenu(ui: &mut Builder) {
 /// menu_avatar_self.xml
 fn self_menu(ui: &mut Builder, f: &Facts, id: Uuid) {
     sit_stand(ui, f);
-    take_off_submenu(ui);
+    take_off_submenu(ui, f);
     appearance_submenu(ui, f);
     community_submenu(ui, id);
     // not in Firestorm's menu: kept from Aurora's (fly is in menu_attachment_self.xml)
@@ -834,8 +896,12 @@ fn self_menu(ui: &mut Builder, f: &Facts, id: Uuid) {
         CtxAction::ToggleFly,
     );
     ui.item("camera-filled", aurora_i18n::tr!("ui-context-reset-camera"), CtxAction::ResetCamera);
-    ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
-    ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
+    ui.item("code", aurora_i18n::tr!("ui-context-script-information"), CtxAction::ScriptInfo(id));
+    ui.item(
+        "photo-filled",
+        aurora_i18n::tr!("ui-context-show-textures"),
+        CtxAction::ShowAvatarTextures(id),
+    );
     ui.item(
         "refresh",
         aurora_i18n::tr!("ui-context-refresh-textures"),
@@ -849,12 +915,47 @@ fn sit_stand(ui: &mut Builder, f: &Facts) {
     ui.item_if("man-filled", aurora_i18n::tr!("common-stand-up"), f.seated, CtxAction::StandUp);
 }
 
-fn take_off_submenu(ui: &mut Builder) {
+fn take_off_submenu(ui: &mut Builder, f: &Facts) {
     ui.submenu("shirt-filled", aurora_i18n::tr!("common-remove"), true, |ui| {
-        ui.todo("shirt-filled", aurora_i18n::tr!("common-clothing"));
-        ui.todo("device-desktop-filled", "HUD");
-        ui.todo("paperclip", aurora_i18n::tr!("common-detach"));
-        ui.todo("circle-x-filled", aurora_i18n::tr!("ui-context-detach-all"));
+        ui.submenu(
+            "shirt-filled",
+            aurora_i18n::tr!("common-clothing"),
+            !f.removable_clothing.is_empty(),
+            |ui| {
+                for kind in 4u8..=16 {
+                    if let Some(label) = crate::world::appearance::wearables().get(usize::from(kind)) {
+                        ui.item_if(
+                            "shirt-filled",
+                            label,
+                            f.removable_clothing.contains(&kind),
+                            CtxAction::TakeOffClothing(kind),
+                        );
+                    }
+                }
+            },
+        );
+        for (hud, icon, label) in [
+            (true, "device-desktop-filled", aurora_i18n::tr!("scene-menu-huds")),
+            (false, "paperclip", aurora_i18n::tr!("common-detach")),
+        ] {
+            let points: Vec<_> = f.attach_points.iter().filter(|p| (p.group == 9) == hud).collect();
+            ui.submenu(icon, label, points.iter().any(|p| f.removable_points.contains(&p.id)), |ui| {
+                for point in &points {
+                    ui.item_if(
+                        icon,
+                        &point.label,
+                        f.removable_points.contains(&point.id),
+                        CtxAction::DetachAt(point.id),
+                    );
+                }
+            });
+        }
+        ui.item_if(
+            "circle-x-filled",
+            aurora_i18n::tr!("ui-context-detach-all"),
+            !f.removable_points.is_empty(),
+            CtxAction::DetachAll,
+        );
     });
 }
 
@@ -889,7 +990,11 @@ fn appearance_submenu(ui: &mut Builder, f: &Facts) {
         );
         ui.separator();
         reset_skeleton_items(ui, f.me);
-        ui.todo("restore", aurora_i18n::tr!("ui-context-reset-mesh-lod"));
+        ui.item(
+            "restore",
+            aurora_i18n::tr!("ui-context-reset-mesh-lod"),
+            CtxAction::ResetMeshLod(f.me),
+        );
         // Avatar › Avatar Health › "Force Appearance Update (Rebake)" in
         // Firestorm's menu bar, next to the resets here (Ctrl+Alt+R)
         ui.item("reload", aurora_i18n::tr!("ui-context-rebake"), CtxAction::Rebake);
@@ -951,8 +1056,13 @@ fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
         aurora_i18n::tr!("common-about-land"),
         CtxAction::AboutLand(point),
     );
-    // Land.Sit walks there first (autopilot): not in Aurora yet
-    ui.todo("armchair", aurora_i18n::tr!("ui-context-sit-here"));
+    // LLLandSit::handleEvent / near_sit_down_point.
+    ui.item_if(
+        "armchair",
+        aurora_i18n::tr!("ui-context-sit-here"),
+        !f.seated && !f.flying,
+        CtxAction::SitAt(point),
+    );
     if f.seated {
         ui.item("man-filled", aurora_i18n::tr!("common-stand-up"), CtxAction::StandUp);
     }
@@ -982,12 +1092,205 @@ fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
         CtxAction::SetPropertyLines(!f.property_lines),
     );
     ui.separator();
-    particle_owner_item(ui, f, aurora_i18n::tr!("ui-context-ignore-particle-owner"));
+    particles_submenu(ui, f);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn particle_source(object: u128, owner: u128, name: &str, clicked: bool) -> super::super::ParticleMenuSource {
+        super::super::ParticleMenuSource {
+            object: Uuid::from_u128(object),
+            owner: Uuid::from_u128(owner),
+            name: name.into(),
+            clicked,
+            object_blocked: false,
+            owner_blocked: false,
+        }
+    }
+
+    #[test]
+    fn particles_show_primary_controls_and_distinct_named_intersected_emitters() {
+        for target in [
+            object_target(),
+            Target::Ground,
+            Target::Attachment {
+                key: ObjKey { region: 1, local_id: 42 },
+            },
+            Target::Avatar {
+                id: Uuid::from_u128(4),
+                own: false,
+                attachment: None,
+            },
+        ] {
+            let mut facts = Facts {
+                particle_sources: vec![
+                    particle_source(1, 10, "Clicked emitter", true),
+                    particle_source(2, 20, "Smoke", false),
+                    particle_source(3, 30, "Sparkles", false),
+                ],
+                ..Default::default()
+            };
+            facts.particle_sources[1].object_blocked = true;
+            facts.particle_sources[2].owner_blocked = true;
+            let entries = rows(world_menu(&target, &facts, Vec3::ZERO));
+            assert!(
+                !entries
+                    .iter()
+                    .any(|e| e.label == aurora_i18n::tr!("ui-context-ignore-particle-owner"))
+            );
+            let menu = entries
+                .iter()
+                .find(|e| e.label == aurora_i18n::tr!("scene-particles-menu"))
+                .expect("Particles");
+            let Kind::Submenu(children) = &menu.kind else { panic!("submenu") };
+            assert!(
+                matches!(children[0].kind, Kind::Action(CtxAction::SetParticleBlock { id, owner: false, blocked: true }) if id == Uuid::from_u128(1))
+            );
+            assert!(
+                matches!(children[1].kind, Kind::Action(CtxAction::SetParticleBlock { id, owner: true, blocked: true }) if id == Uuid::from_u128(10))
+            );
+            for (name, object, owner) in [("Smoke", 2, 20), ("Sparkles", 3, 30)] {
+                let entry = children.iter().find(|e| e.label == name).expect("named emitter");
+                let Kind::Submenu(actions) = &entry.kind else {
+                    panic!("source submenu")
+                };
+                assert_eq!(actions.len(), 2);
+                assert!(
+                    matches!(actions[0].kind, Kind::Action(CtxAction::SetParticleBlock { id, owner: false, .. }) if id == Uuid::from_u128(object))
+                );
+                assert!(
+                    matches!(actions[1].kind, Kind::Action(CtxAction::SetParticleBlock { id, owner: true, .. }) if id == Uuid::from_u128(owner))
+                );
+                assert_eq!(actions[0].checked, Some(object == 2));
+                assert_eq!(actions[1].checked, Some(object == 3));
+            }
+        }
+        assert!(
+            !rows(world_menu(&object_target(), &Facts::default(), Vec3::ZERO))
+                .iter()
+                .any(|e| e.label == aurora_i18n::tr!("scene-particles-menu"))
+        );
+    }
+
+    #[test]
+    fn particles_over_sky_show_only_the_particle_menu() {
+        let facts = Facts {
+            particle_sources: vec![particle_source(1, 10, "Smoke", false)],
+            particle_only: true,
+            ..Default::default()
+        };
+        let entries = world_menu(&Target::Ground, &facts, Vec3::ZERO);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].label, aurora_i18n::tr!("scene-particles-menu"));
+    }
+
+    #[test]
+    fn derender_is_grouped_in_disturbance_and_keeps_the_clicked_target() {
+        let avatar = Uuid::from_u128(7);
+        let object = Uuid::from_u128(8);
+        let key = ObjKey { region: 1, local_id: 42 };
+        let mut facts = Facts::default();
+        facts.object.id = object;
+        for target in [
+            Target::Object {
+                key,
+                full_id: object,
+                offset: Vec3::ZERO,
+            },
+            Target::Attachment { key },
+            Target::Avatar {
+                id: avatar,
+                own: false,
+                attachment: None,
+            },
+            Target::Avatar {
+                id: avatar,
+                own: false,
+                attachment: Some(object),
+            },
+        ] {
+            let menu = world_menu(&target, &facts, Vec3::ZERO);
+            assert!(!menu.iter().any(|e| matches!(e.kind, Kind::Action(CtxAction::Derender { .. }))));
+            let disturbance = menu
+                .into_iter()
+                .find(|e| e.label == aurora_i18n::tr!("ui-context-disturbance"))
+                .expect("disturbance");
+            let Kind::Submenu(children) = disturbance.kind else {
+                panic!("submenu")
+            };
+            let actions = rows(children);
+            let expected = if matches!(target, Target::Avatar { attachment: None, .. }) {
+                avatar
+            } else {
+                object
+            };
+            for permanent in [false, true] {
+                assert!(
+                    actions.iter().any(
+                        |e| matches!(e.kind, Kind::Action(CtxAction::Derender { id, permanent: p }) if id == expected && p == permanent)
+                    )
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn avatar_moderation_group_tracks_land_and_voice_rights_independently() {
+        let id = Uuid::from_u128(7);
+        let target = Target::Avatar {
+            id,
+            own: false,
+            attachment: None,
+        };
+        for land in [false, true] {
+            for voice in [None, Some(false), Some(true)] {
+                let mut facts = Facts::default();
+                facts.moderation.allowed = land;
+                facts.voice_volume = Some(crate::ui::menu::VoiceVolume {
+                    volume: 0.5,
+                    muted: false,
+                    can_mute: true,
+                    moderated: voice,
+                });
+                let menu = world_menu(&target, &facts, Vec3::ZERO);
+                let group = menu
+                    .into_iter()
+                    .find(|e| e.label == aurora_i18n::tr!("ui-context-moderation-options"));
+                assert_eq!(group.is_some(), land || voice.is_some());
+                let actions = rows(group.into_iter().collect());
+                assert_eq!(
+                    actions
+                        .iter()
+                        .any(|e| matches!(e.kind, Kind::Action(CtxAction::Freeze(who)) if who == id)),
+                    land
+                );
+                assert_eq!(
+                    actions
+                        .iter()
+                        .any(|e| matches!(e.kind, Kind::Action(CtxAction::Eject(who)) if who == id)),
+                    land
+                );
+                let commands: Vec<_> = actions
+                    .iter()
+                    .filter_map(|e| {
+                        if let Kind::Action(CtxAction::ModerateVoice(who, muted)) = e.kind {
+                            Some((who, muted))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                assert_eq!(
+                    commands,
+                    voice
+                        .map(|muted| vec![(Some(id), !muted), (None, true), (None, false)])
+                        .unwrap_or_default()
+                );
+            }
+        }
+    }
 
     #[test]
     fn avatar_navigation_addresses_the_wearer_and_keeps_stop_available() {
@@ -1076,16 +1379,15 @@ mod tests {
     }
 
     #[test]
-    fn attachment_of_another_avatar_has_firestorms_entries_in_order() {
-        // menu_attachment_other.xml, without the entries it hides
-        let target = Target::Avatar {
-            id: Uuid::from_u128(7),
-            own: false,
-            attachment: Some(Uuid::from_u128(8)),
-        };
-        let mut f = Facts::default();
-        let expected = |exception: bool| {
-            let mut keys = vec![
+    fn avatar_and_attachment_menus_group_technical_actions_below_social_actions() {
+        for attachment in [None, Some(Uuid::from_u128(8))] {
+            let target = Target::Avatar {
+                id: Uuid::from_u128(7),
+                own: false,
+                attachment,
+            };
+            let f = Facts::default();
+            let mut expected = tr(&[
                 "common-view-profile",
                 "ui-context-go-to-avatar",
                 "common-follow",
@@ -1095,53 +1397,42 @@ mod tests {
                 "ui-context-give-my-calling-card",
                 "common-voice-call",
                 "ui-context-invite-to-group",
+                "common-offer-teleport",
+                "-",
                 "common-look-toward-avatar",
-                "-",
-                "ui-context-reset-skeleton",
-                "ui-context-reset-skeleton-and-animations",
-                "ui-context-reset-mesh-lod-2",
-                "-",
-                "ui-context-disturbance>",
                 "common-zoom-2",
                 "common-pay",
                 "-",
-                "ui-context-object-profile",
-                "-",
-                "ui-context-always-show-full-detail",
-                "ui-context-never-fully-render",
-            ];
-            if exception {
-                keys.push("ui-context-remove-from-display-exceptions");
-            }
-            keys.extend([
-                "ui-context-inspect-2",
-                "ui-context-script-info",
-                "ui-context-object-information",
-                "ui-context-derender-temporarily",
-                "ui-context-derender-blacklist",
-                "ui-context-show-textures",
-                "ui-context-refresh-textures",
-                "common-save-as>",
             ]);
-            tr(&keys)
-        };
-        assert_eq!(labels(&world_menu(&target, &f, Vec3::ZERO)), expected(false));
-        // "Remove from display exceptions" only with an exception
-        f.render = 2;
-        assert_eq!(labels(&world_menu(&target, &f, Vec3::ZERO)), expected(true));
-        // the avatar itself keeps menu_avatar_other.xml
-        let avatar = Target::Avatar {
-            id: Uuid::from_u128(7),
-            own: false,
-            attachment: None,
-        };
-        assert_ne!(labels(&world_menu(&avatar, &f, Vec3::ZERO)), expected(true));
+            if attachment.is_some() {
+                expected.extend(tr(&["ui-context-clicked-object>"]));
+            }
+            expected.extend(tr(&[
+                "ui-context-display-options>",
+                "ui-context-information-options>",
+                "ui-context-reset-options>",
+                "ui-context-disturbance>",
+            ]));
+            assert_eq!(labels(&world_menu(&target, &f, Vec3::ZERO)), expected);
+            let all = rows(world_menu(&target, &f, Vec3::ZERO));
+            assert!(
+                all.iter()
+                    .any(|e| matches!(e.kind, Kind::Action(CtxAction::Zoom(_, Some(id))) if id == Uuid::from_u128(7))),
+                "zoom follows the wearer from either avatar menu"
+            );
+            for mode in [0, 1, 2] {
+                assert!(
+                    all.iter()
+                        .any(|e| matches!(e.kind, Kind::Action(CtxAction::SetRender(_, m)) if m == mode))
+                );
+            }
+        }
     }
 
     #[test]
     fn inspect_and_derender_act_on_the_avatar_or_on_the_worn_object() {
         let find = |entries: Vec<Entry>, key: &'static str, permanent: bool| {
-            entries
+            rows(entries)
                 .into_iter()
                 .find(|e| {
                     e.label == aurora_i18n::text(key)
@@ -1226,7 +1517,7 @@ mod tests {
     }
 
     #[test]
-    fn our_attachment_has_firestorms_entries_in_order() {
+    fn our_attachment_keeps_legacy_actions_with_derender_grouped_in_disturbance() {
         // menu_attachment_self.xml, without the entries it hides
         let key = ObjKey { region: 1, local_id: 42 };
         let f = Facts::default();
@@ -1253,14 +1544,11 @@ mod tests {
             "ui-context-inspect-2",
             "ui-context-script-information",
             "ui-context-object-information",
-            "ui-context-derender-temporarily",
-            "ui-context-derender-blacklist",
+            "ui-context-disturbance>",
             "ui-context-show-textures",
             "ui-context-refresh-textures",
             "-",
             "ui-context-drop",
-            "-",
-            "ui-context-block-particle-owner",
         ]);
         assert_eq!(got, expected);
         // sitting: "Fly / Land" is greyed (enable_fly_land)
@@ -1288,7 +1576,7 @@ mod tests {
     }
 
     /// Every row of a menu with its submenus, depth first.
-    fn rows(entries: Vec<Entry>) -> Vec<Entry> {
+    pub(super) fn rows(entries: Vec<Entry>) -> Vec<Entry> {
         let mut out = Vec::new();
         for e in entries {
             if let Kind::Submenu(children) = &e.kind {
@@ -1315,16 +1603,9 @@ mod tests {
             .filter(|e| matches!(e.kind, Kind::Unavailable))
             .map(|e| e.label)
             .collect();
-        // the PBR material editor, the object profile, the pathfinding
-        // windows and the exporters are windows of their own. Script info
+        // The pathfinding windows and exporters are separate subsystems. Script info
         // is available through the Aurora bridge.
-        let expected = tr(&[
-            "ui-context-edit-pbr-material",
-            "common-profile",
-            "ui-context-show-in-region-objects",
-            "ui-context-show-in-characters",
-            "common-save-as",
-        ]);
+        let expected = tr(&["common-save-as"]);
         let mut left_sorted = left.clone();
         left_sorted.sort();
         let mut expected_sorted = expected;
@@ -1435,31 +1716,14 @@ mod tests {
     }
 
     #[test]
-    fn the_particle_owner_and_the_animesh_skeleton_rows() {
-        let owner = Uuid::from_u128(77);
+    fn particle_menus_preserve_animesh_skeleton_actions() {
         let mut f = Facts::default();
-        let menu = |f: &Facts| world_menu(&object_target(), f, Vec3::ZERO);
-        assert!(!row(menu(&f), "ui-context-ignore-particle-owner").enabled);
-        // no reset skeleton on a prim that drives no skeleton
-        assert!(!labels(&menu(&f)).contains(&aurora_i18n::text("ui-context-reset-skeleton").to_string()));
-        f.particle_owner = Some(owner);
         f.object.animesh = Some(ID);
-        let block = row(menu(&f), "ui-context-ignore-particle-owner");
-        assert!(block.enabled && matches!(block.kind, Kind::Action(CtxAction::BlockParticleOwner(o)) if o == owner));
-        assert!(matches!(
-            row(menu(&f), "ui-context-reset-skeleton").kind,
-            Kind::Action(CtxAction::ResetSkeleton { avatar, animations: false }) if avatar == ID
-        ));
-        // the land menu blocks the same owner
-        let land = row(world_menu(&Target::Ground, &f, Vec3::ZERO), "ui-context-ignore-particle-owner");
-        assert!(land.enabled);
-        // and our attachments' menu
-        let key = ObjKey { region: 1, local_id: 42 };
-        let att = row(
-            world_menu(&Target::Attachment { key }, &f, Vec3::ZERO),
-            "ui-context-block-particle-owner",
+        f.particle_sources.push(particle_source(1, 10, "Emitter", true));
+        let entries = world_menu(&object_target(), &f, Vec3::ZERO);
+        assert!(
+            matches!(row(entries, "ui-context-reset-skeleton").kind, Kind::Action(CtxAction::ResetSkeleton { avatar, animations: false }) if avatar == ID)
         );
-        assert!(att.enabled);
     }
 
     #[test]
@@ -1487,7 +1751,7 @@ mod tests {
     fn a_residents_menus_invite_add_to_contact_sets_and_block_particles() {
         let id = Uuid::from_u128(7);
         let find = |entries: Vec<Entry>, key: &'static str| {
-            entries
+            rows(entries)
                 .into_iter()
                 .find(|e| e.label == aurora_i18n::text(key))
                 .unwrap_or_else(|| panic!("{key} missing"))
@@ -1548,7 +1812,7 @@ mod tests {
             let row = find(world_menu(&target, &f, Vec3::ZERO), "common-block-particles");
             assert!(row.enabled);
             assert_eq!(row.checked, Some(blocked));
-            assert!(matches!(row.kind, Kind::Action(CtxAction::ToggleParticleMute(i)) if i == id));
+            assert!(matches!(row.kind, Kind::Action(CtxAction::ToggleOwnerParticleFilter(i)) if i == id));
         }
     }
 }
@@ -1657,7 +1921,7 @@ mod bridge_query_tests {
                 },
                 ..Facts::default()
             };
-            let entries = world_menu(&target, &facts, Vec3::ZERO);
+            let entries = super::tests::rows(world_menu(&target, &facts, Vec3::ZERO));
             let index = entries
                 .iter()
                 .position(|e| matches!(e.kind, Kind::Action(CtxAction::ScriptInfo(id)) if id == object))

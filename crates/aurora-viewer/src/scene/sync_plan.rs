@@ -238,6 +238,7 @@ pub(super) struct SyncCtx<'a> {
     lod_factor: f32,
     fov_y: f32,
     mesh_lod_overrides: &'a HashMap<crate::world::objects::ObjKey, u8>,
+    mesh_lod_resets: &'a HashMap<crate::world::objects::ObjKey, super::mesh_inspection::LodReset>,
     mat_gen: u64,
     mat_changes: &'a super::mat_changes::MatChanges,
 }
@@ -306,8 +307,9 @@ impl SyncCtx<'_> {
             at: g.center,
             bounds: g.radius,
             shown: level(g.geom)?,
-            asked: super::mesh_inspection::display_lod(
+            asked: super::mesh_inspection::effective_lod(
                 self.mesh_lod_overrides,
+                self.mesh_lod_resets,
                 o,
                 false,
                 lod_for(radius, distance, self.lod_factor, self.fov_y),
@@ -445,8 +447,9 @@ impl SyncCtx<'_> {
         }
         let (pos, _, hud) = self.transform(idx)?;
         let (radius, distance) = self.lod_metrics(idx, o, pos);
-        let lod = super::mesh_inspection::display_lod(
+        let lod = super::mesh_inspection::effective_lod(
             self.mesh_lod_overrides,
+            self.mesh_lod_resets,
             o,
             hud,
             lod_for(radius, distance, self.lod_factor, self.fov_y),
@@ -495,8 +498,9 @@ impl SyncCtx<'_> {
         }
         let (pos, _, hud) = xf;
         let metrics = if hud { (0.0, 0.0) } else { self.lod_metrics(idx, o, pos) };
-        let lod = super::mesh_inspection::display_lod(
+        let lod = super::mesh_inspection::effective_lod(
             self.mesh_lod_overrides,
+            self.mesh_lod_resets,
             o,
             hud,
             lod_for(metrics.0, metrics.1, self.lod_factor, self.fov_y),
@@ -608,6 +612,7 @@ impl Scene {
             lod_factor: self.lod_factor,
             fov_y: self.fov_y,
             mesh_lod_overrides: &self.mesh_lod_overrides,
+            mesh_lod_resets: &self.mesh_lod_resets,
             mat_gen: self.materials.generation,
             mat_changes: &self.mat_changes,
         }

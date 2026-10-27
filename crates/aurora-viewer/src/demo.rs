@@ -7410,6 +7410,14 @@ pub fn voice_levels(
     mode: Option<&str>,
 ) -> std::collections::HashMap<Uuid, (f32, bool)> {
     let mut m = std::collections::HashMap::new();
+    // Menu fixtures use the ordinary per-frame participant list. A one-shot
+    // calls.voice_peers insertion would be replaced before the menu is drawn.
+    if matches!(
+        object_menu::mode(),
+        Some("avatar-menu" | "attachment-menu" | "customize-avatar" | "customize-other-attachment")
+    ) {
+        m.insert(DEMO_NOVA, (0.0, false));
+    }
     let t = t as f32;
     let mode = match mode {
         Some("cycle") => Some(if t.rem_euclid(9.0) < 4.0 {

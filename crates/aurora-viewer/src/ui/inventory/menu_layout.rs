@@ -3,34 +3,34 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-pub(super) const ICON_SLOTS: usize = 8;
-pub(super) const TEXT: &str = "text";
-pub(super) const HIDDEN: &str = "hidden";
-pub(super) const LOCK: &str = "lock";
-pub(super) const SHARED: &str = "shared";
-pub(super) fn children(id: &str) -> String {
+pub(crate) const ICON_SLOTS: usize = 8;
+pub(crate) const TEXT: &str = "text";
+pub(crate) const HIDDEN: &str = "hidden";
+pub(crate) const LOCK: &str = "lock";
+pub(crate) const SHARED: &str = "shared";
+pub(crate) fn children(id: &str) -> String {
     format!("children:{id}")
 }
-pub(super) fn icon_zone(id: &str) -> String {
+pub(crate) fn icon_zone(id: &str) -> String {
     match id {
         "bar:top" => "top".into(),
         "bar:bottom" => "bottom".into(),
         _ => format!("icons:{id}"),
     }
 }
-pub(super) fn bar(zone: &str) -> bool {
+pub(crate) fn bar(zone: &str) -> bool {
     matches!(zone, "top" | "bottom") || zone.starts_with("icons:bar:custom:")
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum Direction {
+pub(crate) enum Direction {
     #[default]
     Vertical,
     Horizontal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Kind {
+pub(crate) enum Kind {
     Action(usize),
     Lock,
     Group { direction: Direction, open: bool },
@@ -39,7 +39,7 @@ pub(super) enum Kind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Entry {
+pub(crate) struct Entry {
     pub id: String,
     pub label: String,
     pub icon: String,
@@ -71,7 +71,7 @@ impl Entry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct Group {
+pub(crate) struct Group {
     pub name: String,
     pub direction: Direction,
     /// A newly created, unused group remains until explicitly removed.
@@ -80,7 +80,7 @@ pub(super) struct Group {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
-pub(super) struct Layout {
+pub(crate) struct Layout {
     pub placements: BTreeMap<String, String>,
     pub orders: BTreeMap<String, Vec<String>>,
     pub slots: BTreeMap<String, BTreeMap<String, usize>>,
@@ -94,7 +94,7 @@ pub(super) struct Layout {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
-pub(super) struct Profile {
+pub(crate) struct Profile {
     pub layout: Layout,
     pub open: BTreeMap<String, bool>,
     pub locked: bool,
@@ -204,7 +204,7 @@ impl Default for Profile {
 }
 
 impl Profile {
-    pub(super) fn reset(&mut self) -> Layout {
+    pub(crate) fn reset(&mut self) -> Layout {
         let defaults = Self::default();
         self.open = defaults.open;
         std::mem::replace(&mut self.layout, defaults.layout)
@@ -251,11 +251,11 @@ impl Profile {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
-    pub(super) profiles: BTreeMap<String, Profile>,
+    pub(crate) profiles: BTreeMap<String, Profile>,
 }
 
 impl Preferences {
-    pub(super) fn unify(&mut self) {
+    pub(crate) fn unify(&mut self) {
         // Choose the pre-migration user arrangement before adding defaults;
         // a previously blank profile must not become "customized" merely
         // because the folder UUID is now hidden there.
@@ -333,7 +333,7 @@ impl Preferences {
 }
 
 /// Presentation-only filtering; stored dividers retain their independent identities.
-pub(super) fn visible_rows<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> Vec<&'a Entry> {
+pub(crate) fn visible_rows<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> Vec<&'a Entry> {
     let mut rows = Vec::new();
     let mut divider = None;
     for entry in entries {
@@ -351,11 +351,11 @@ pub(super) fn visible_rows<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> 
     rows
 }
 
-pub(super) type Resolved = BTreeMap<String, Vec<Entry>>;
+pub(crate) type Resolved = BTreeMap<String, Vec<Entry>>;
 
 /// Locked menus omit groups without live descendants, without changing saved layout.
 /// Disabled actions and the layout lock still count; dividers and empty bars do not.
-pub(super) fn hide_empty_groups(resolved: &mut Resolved) {
+pub(crate) fn hide_empty_groups(resolved: &mut Resolved) {
     fn has_options(entry: &Entry, resolved: &Resolved, depth: usize) -> bool {
         if depth > 32 {
             return false;
@@ -386,7 +386,7 @@ fn order_key(ranks: &BTreeMap<&str, usize>, id: &str) -> usize {
         .get(id)
         .map_or_else(|| if id == "bar:top" { 0 } else { usize::MAX }, |rank| rank.saturating_add(1))
 }
-pub(super) fn hidden_zone(resolved: &Resolved, zone: &str) -> bool {
+pub(crate) fn hidden_zone(resolved: &Resolved, zone: &str) -> bool {
     let mut zone = zone;
     for _ in 0..25 {
         if zone == HIDDEN {
@@ -405,7 +405,7 @@ pub(super) fn hidden_zone(resolved: &Resolved, zone: &str) -> bool {
     false
 }
 /// A container cannot be hidden if that would also hide the layout lock.
-pub(super) fn can_hide(resolved: &Resolved, id: &str) -> bool {
+pub(crate) fn can_hide(resolved: &Resolved, id: &str) -> bool {
     if id == LOCK {
         return false;
     }

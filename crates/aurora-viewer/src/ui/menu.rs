@@ -608,6 +608,7 @@ pub(crate) fn editable_submenu(
     response: &egui::Response,
     editing: bool,
     click_only: bool,
+    persistent: bool,
     body: impl FnOnce(&mut Ui),
 ) {
     if click_only {
@@ -634,6 +635,14 @@ pub(crate) fn editable_submenu(
         submenu = submenu.config(
             egui::containers::menu::MenuConfig::new()
                 .close_behavior(PopupCloseBehavior::IgnoreClicks)
+                .style(style(p)),
+        );
+    } else if persistent {
+        // Scene checkable choices stay open until an action explicitly closes
+        // them. Preserve the hierarchy's normal outside-click dismissal.
+        submenu = submenu.config(
+            egui::containers::menu::MenuConfig::new()
+                .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
                 .style(style(p)),
         );
     }
@@ -952,7 +961,7 @@ fn keep_open_id(layer: LayerId) -> Id {
 
 /// A click this frame lands on the voice row the menu `popup` drew last
 /// frame: a menu that closes on any click stays open for it.
-fn clicks_kept_row(ctx: &egui::Context, popup: Id) -> bool {
+pub(crate) fn clicks_kept_row(ctx: &egui::Context, popup: Id) -> bool {
     let layer = LayerId::new(egui::Order::Foreground, popup);
     let Some((frame, rect)) = ctx.data(|d| d.get_temp::<(u64, egui::Rect)>(keep_open_id(layer))) else {
         return false;
@@ -1125,7 +1134,15 @@ mod tests {
                                 });
                             }
                             _ => {
-                                crate::ui::context::show(ui.ctx(), &p, world, &Default::default(), *kind == 4);
+                                crate::ui::context::show(
+                                    ui.ctx(),
+                                    &p,
+                                    world,
+                                    &Default::default(),
+                                    *kind == 4,
+                                    &mut Default::default(),
+                                    &mut Default::default(),
+                                );
                                 *shown = world.is_some();
                             }
                         }

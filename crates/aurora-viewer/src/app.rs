@@ -335,6 +335,10 @@ pub struct App {
     right_gesture: RightGesture,
     /// Open right-click menu.
     context_menu: Option<ui::context::ContextMenu>,
+    context_customization: ui::context::Customization,
+    avatar_textures: ui::context::AvatarTexturesUi,
+    object_profile: ui::context::ObjectProfileUi,
+    pathfinding_ui: ui::context::PathfindingUi,
     /// What a left-button drag does (steer the avatar, orbit a focus point).
     mouse_mode: MouseMode,
     /// Build tools (selection, manipulators, create, terraform).
@@ -1088,6 +1092,10 @@ impl App {
             script_clicks: Default::default(),
             right_gesture: RightGesture::default(),
             context_menu: None,
+            context_customization: Default::default(),
+            avatar_textures: Default::default(),
+            object_profile: Default::default(),
+            pathfinding_ui: Default::default(),
             mouse_mode: MouseMode::None,
             build: Default::default(),
             ik_editor: Default::default(),
@@ -1402,6 +1410,9 @@ impl App {
     }
 
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
+        if !self.object_profile.retain_selection(&self.world, &mut cmd) {
+            return;
+        }
         if self.blender_live.local_command(&cmd, &self.world) {
             return;
         }
@@ -2506,6 +2517,16 @@ impl App {
             self.group_profile_ui.on_created(&mut self.world, *group, *success, message);
             return;
         }
+        if let NetEvent::Pathfinding {
+            request,
+            region,
+            kind,
+            result,
+        } = ev
+        {
+            self.pathfinding_ui.reply(request, region, kind, result);
+            return;
+        }
         if let NetEvent::ServerReleaseNotes(page) = ev {
             // LLFloaterAbout::handleServerReleaseNotes, then LLWeb::loadURL
             match page {
@@ -2592,6 +2613,12 @@ impl App {
                 return;
             }
             if ui::inventory::context_notecards::saved(&mut self.inventory_ui, request, &result) {
+                if let Ok(item) = result {
+                    self.world.inventory.add_items(vec![item]);
+                }
+                return;
+            }
+            if self.context_customization.notecards.saved(request, &result) {
                 if let Ok(item) = result {
                     self.world.inventory.add_items(vec![item]);
                 }
@@ -2705,6 +2732,16 @@ impl App {
                 return;
             }
             if ui::inventory::context_notecards::loaded(&mut self.inventory_ui, &mut self.settings.inventory, item, &result) {
+                self.settings.save();
+            }
+            if let Some(menus) = self.context_customization.notecards.loaded(item, &result) {
+                self.context_customization
+                    .close(&self.egui_ctx, &mut self.settings.world_context_menus);
+                if self.context_menu.take().is_some() {
+                    self.build.release_menu_selection(&self.world);
+                    self.flush_build();
+                }
+                self.settings.world_context_menus = menus;
                 self.settings.save();
             }
             if crate::build::ui::layout_notecard_loaded(&mut self.build, &mut self.world, &mut self.settings.build, item, &result) {
@@ -2861,7 +2898,9 @@ impl App {
                 self.world.ik_targets.on_properties(&props);
                 self.report_abuse_properties(&props);
                 self.world.on_hud_properties(&props);
+                self.scene.particles.on_properties(&props);
                 self.interactions.on_properties(&props);
+                self.object_profile.on_properties(&props);
                 let props = self.area_search_build_properties(props, &area_reads);
                 self.build.on_properties(props);
             }
@@ -6701,6 +6740,7 @@ impl App {
             }
         }
         let mut images: Vec<uuid::Uuid> = self.profile_ui.wanted_images.drain().collect();
+        images.extend(self.avatar_textures.wanted_images.drain());
         images.extend(self.place_images.drain());
         images.extend(self.land_ui.wanted_images.drain());
         images.extend(self.region_ui.wanted_images.drain());
@@ -8539,6 +8579,7 @@ impl App {
                 self.camera.position,
                 max_particles,
                 self.settings.draw_distance,
+                &self.settings.particle_filters,
                 &mut out,
                 &mut scene.parts,
             );
@@ -8728,6 +8769,7 @@ impl App {
             && (ui::color_picker::demo::mode().is_some()
                 || self.chat_ui.demo_reorder.is_some()
                 || std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some()
+                || std::env::var("AURORA_DEMO_OBJECT_MENU").is_ok_and(|mode| mode.starts_with("customize"))
                 || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
                     matches!(
                         v.as_str(),
@@ -13724,13 +13766,40 @@ impl App {
                 } else {
                     self.settings.use_pie_menu
                 };
-                ui::context::show(&ctx, &p, &mut self.context_menu, &facts, use_pie);
+                if ui::context::show(
+                    &ctx,
+                    &p,
+                    &mut self.context_menu,
+                    &facts,
+                    use_pie,
+                    &mut self.settings.world_context_menus,
+                    &mut self.context_customization,
+                ) {
+                    self.settings.save();
+                }
                 if had_menu && self.context_menu.is_none() {
                     // LLViewerMenuHolderGL::hideMenus drops the menu's selection
                     self.build.release_menu_selection(&self.world);
                     self.flush_build();
                 }
+                if let Some(command) =
+                    self.context_customization
+                        .notecards
+                        .show(&ctx, &p, &mut self.world.inventory, &self.settings.world_context_menus)
+                {
+                    self.send(command);
+                }
                 self.object_menu_ui(&ctx, &p);
+                self.avatar_textures.show(&ctx, &p, &self.world, &self.ui_images);
+                self.object_profile_window(&ctx, &p);
+
+                if let Some(command) = self.pathfinding_ui.show(&ctx, &p, &mut self.world) {
+                    if self.demo {
+                        self.pathfinding_ui.demo(&self.world, command);
+                    } else {
+                        self.send(command);
+                    }
+                }
                 self.land_moderation_ui(&ctx, &p);
                 if let Some((ids, text)) = self.delete_confirm.clone()
                     && let Some(yes) = ui::context::delete_confirm(&ctx, &p, &text)

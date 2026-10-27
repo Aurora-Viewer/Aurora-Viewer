@@ -394,11 +394,11 @@ impl BuildTool {
 
     /// Roots of the selection, or the prims when only children are selected
     /// (LLPanelPermissions: SEND_ONLY_ROOTS falls back to individuals).
-    fn prop_targets(&self, world: &World) -> Vec<usize> {
+    pub(super) fn prop_targets(&self, world: &World) -> Vec<usize> {
         let roots: Vec<usize> = self
             .sel_prims(world)
             .into_iter()
-            .filter(|&i| world.objects.get(i).is_some_and(|o| o.parent_id == 0))
+            .filter(|&i| super::root_of(world, i) == i)
             .collect();
         if roots.is_empty() { self.sel_prims(world) } else { roots }
     }
