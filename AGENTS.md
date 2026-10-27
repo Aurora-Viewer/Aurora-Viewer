@@ -758,6 +758,22 @@ token: if it says so, give your human `gh auth refresh -s project`, to run
 once in their terminal (it opens GitHub to grant the right; never ask for a
 token). Run it alone, with no `cd` or `;`, like the `gh issue` commands.
 
+**The `triage` label** marks an open issue whose Priority the project
+manager has not set yet. The Issue triage workflow
+(`.github/workflows/issue-triage.yml`, `scripts/issue-triage.ps1`) puts it
+on every new issue and removes it as soon as a Priority is set; it puts it
+back if someone removes it before that. The issues opened by the authors
+listed in the script (`$Exempt`) never get it.
+
+- **Never add or remove `triage` yourself**, and never set a Priority to
+  make it go: the label is the project manager's to-do list.
+- An issue in triage can still be read, typed, labelled and answered (the
+  rules above). Do not propose it as the next work while it has no
+  Priority; work on it when your human asks for it directly.
+- A label that looks out of step with the Priority: run the workflow by
+  hand (`gh workflow run issue-triage.yml -f issue=<n> -f dry_run=false`),
+  or tell your human.
+
 **Find the issue of your task.** A task does not have to start from an issue
 for one to exist: the gap may already be filed, alone or as the sub-issue of
 an epic (for example #655, "Legacy Viewer parity"). At the start of every

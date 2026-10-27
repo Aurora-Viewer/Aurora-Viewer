@@ -102,7 +102,11 @@ a review or that left the queue.
   `Refs #<n>`), or says `No issue`. The agents move the Status with
   `scripts/issue-board.ps1`, which
   needs the `project` right on your `gh` account, once per machine:
-  `gh auth refresh -s project`.
+  `gh auth refresh -s project`. Every new issue gets the `triage` label
+  until the project manager sets its Priority (Issue triage workflow); the
+  issues opened by the authors listed in `scripts/issue-triage.ps1`
+  (`$Exempt`) skip it. Actions › Issue triage › Run workflow applies the rule
+  to every open issue, as a dry run unless you untick the box.
 - **Dependabot** opens dependency update PRs every week; an agent can check
   them for you, and merges them if you agree.
 - **The wiki** is generated: after each merge that touches a guide, a
