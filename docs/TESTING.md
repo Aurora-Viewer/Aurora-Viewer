@@ -1062,6 +1062,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_BUILD_FRAME=<n>` | Start frame of the build script |
 | `AURORA_DEMO_BUILD_FOCUS=off\|on` | Focus and camera following while editing |
 | `AURORA_DEMO_BUILD_EDGE=<edge>` | Move to the edge, hold then release |
+| `AURORA_DEMO_BUILD_ECHO=<ms>` | The demo answers transform edits a round trip late |
 | `AURORA_DEMO_BUILD_TAB=<tab>` | Tab of the build window; `features:light-picker` opens the projector texture picker |
 | `AURORA_DEMO_BUILD_SIZE=<width>,<height>` | Initial dimensions of the construction window |
 | `AURORA_DEMO_PARTICLE_EDITOR=1\|fountain\|inject` | Build › Edit particles on the object selected by `AURORA_DEMO_BUILD` |
@@ -1705,6 +1706,13 @@ release; the camera must then be stopped. Combine with
 `AURORA_DEMO_BUILD_FOCUS=off` to check the focus on the object, then without
 this variable to check the initial focus on the avatar. The HUDs and enabled
 following keep their behaviour.
+
+**`AURORA_DEMO_BUILD_ECHO=<ms>`** — the demo's report of each transform edit
+(MultipleObjectUpdate) arrives that many milliseconds after it was sent, like
+a simulator a round trip away; 250 is a typical value. Stretch an object
+quickly with Ctrl+Shift and release: it must stay at its final size and
+place, without going back to an earlier size for a moment (issue #1193).
+Moves, rotations and the Edit window's fields must not jump back either.
 
 **`AURORA_DEMO_BUILD_TAB=general|rights|object|transform|shape|features|texture[:pbr|bp|bp-normal|bp-specular|media]|contents`**
 — section of the build window shown by the script. General includes object
