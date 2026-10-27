@@ -348,6 +348,9 @@ pub enum Action {
     Import,
     /// Aurora's held shortcut for dragging a visible HUD with the left button.
     HudDrag,
+    /// HUD attachments shown or hidden (the Legacy Viewer's View › Show HUD
+    /// Attachments, Alt+Shift+H, `View.ShowHUDAttachments`).
+    ShowHuds,
     /// "Show transparency" (Firestorm Ctrl+Alt+T).
     ShowTransparency,
     Beacons,
@@ -472,7 +475,10 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
             ),
             (
                 aurora_i18n::tr!("preferences-group-huds"),
-                vec![(Action::HudDrag, aurora_i18n::tr!("ui-options-practical-movement-key"))],
+                vec![
+                    (Action::ShowHuds, aurora_i18n::tr!("keybinds-show-huds")),
+                    (Action::HudDrag, aurora_i18n::tr!("ui-options-practical-movement-key")),
+                ],
             ),
             (
                 aurora_i18n::tr!("common-appearance"),
@@ -727,6 +733,8 @@ impl KeyBindings {
                     None,
                 ],
             ),
+            // menu_viewer.xml: Show HUD Attachments, shortcut="alt|shift|H"
+            (Action::ShowHuds, [kalt(K::KeyH, false, true), None]),
             // Aurora's direct HUD gesture must leave Alt to Firestorm's camera (#266).
             (Action::HudDrag, [k(K::ControlLeft), None]),
             (
