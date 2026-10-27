@@ -457,7 +457,7 @@ impl Scene {
     /// Exact edit surfaces along the whole cursor ray, including hidden and
     /// occluded prims. Reuses hover's bounds index and the rendered triangles;
     /// the wheel never waits for a GPU depth readback.
-    pub fn edit_ray_hits(&self, world: &World, ray: (Vec3, Vec3), hud: bool, select_probes: bool) -> Vec<usize> {
+    pub fn edit_ray_hits(&self, world: &World, ray: (Vec3, Vec3), hud: bool, select_probes: bool, select_limit: Option<f32>) -> Vec<usize> {
         let mut candidates = Vec::new();
         if hud {
             let own = world.objects.index_of_uuid(&world.agent_id);
@@ -482,7 +482,8 @@ impl Scene {
                 return None;
             }
             let hit = self.face_hit(world, idx, ray, now, true)?;
-            if !hit.t.is_finite() || (!hud && (ray.0 + ray.1 * hit.t).distance(world.agent.position) > crate::build::MAX_SELECT_DISTANCE) {
+            if !hit.t.is_finite() || (!hud && select_limit.is_some_and(|max| (ray.0 + ray.1 * hit.t).distance(world.agent.position) > max))
+            {
                 return None;
             }
             Some((idx, hit.t))
@@ -1423,6 +1424,8 @@ impl Scene {
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
+    /// LimitSelectDistance on, at the Legacy Viewer's default distance.
+    const LIMIT: Option<f32> = Some(crate::build::MAX_SELECT_DISTANCE);
     #[test]
     fn world_click_posed_attachment_cannot_intercept_with_its_bind_pose() {
         use aurora_render::{Drawn, DrawnFace};
@@ -1950,7 +1953,7 @@ pub(super) mod tests {
                 );
             }
             assert_eq!(
-                scene.edit_ray_hits(&world, ray, false, enabled),
+                scene.edit_ray_hits(&world, ray, false, enabled, LIMIT),
                 if enabled { vec![front, back] } else { vec![back] }
             );
         }
@@ -1973,7 +1976,7 @@ pub(super) mod tests {
         }
         let ray = (world.agent.position, Vec3::X);
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::IGNORE;
-        assert_eq!(scene.edit_ray_hits(&world, ray, false, false), [front, back]);
+        assert_eq!(scene.edit_ray_hits(&world, ray, false, false, LIMIT), [front, back]);
         // Bounds still cover this corner, but the only remaining triangle does not.
         let key = scene.gpu[front].geom.unwrap();
         let GeomState::Ready(geom) = &mut scene.geoms.get_mut(&key).unwrap().state else {
@@ -1981,10 +1984,10 @@ pub(super) mod tests {
         };
         Arc::get_mut(geom).unwrap().pick_faces[0].as_mut().unwrap().indices = vec![0, 2, 1];
         let ray = (Vec3::new(0.0, -0.4, 50.4), Vec3::X);
-        assert!(scene.edit_ray_hits(&world, ray, false, false).is_empty());
+        assert!(scene.edit_ray_hits(&world, ray, false, false, LIMIT).is_empty());
         assert!(
             scene
-                .edit_ray_hits(&world, (Vec3::new(0.0, 2.0, 50.0), Vec3::X), false, false)
+                .edit_ray_hits(&world, (Vec3::new(0.0, 2.0, 50.0), Vec3::X), false, false, LIMIT)
                 .is_empty()
         );
     }
@@ -1998,15 +2001,17 @@ pub(super) mod tests {
             scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
         }
         world.objects.get_mut(back).unwrap().position.x = 200.0;
-        assert_eq!(scene.edit_ray_hits(&world, ray, false, false), [front]);
+        assert_eq!(scene.edit_ray_hits(&world, ray, false, false, LIMIT), [front]);
+        // LimitSelectDistance off: the far prim stays on the stack
+        assert_eq!(scene.edit_ray_hits(&world, ray, false, false, None), [front, back]);
         world.objects.get_mut(back).unwrap().position.x = 7.0;
         let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
         scene.gpu[front].hud = true;
         scene.gpu[front].owner_avatar = Some(own);
-        assert_eq!(scene.edit_ray_hits(&world, ray, false, false), [back]);
-        assert_eq!(scene.edit_ray_hits(&world, ray, true, false), [front]);
+        assert_eq!(scene.edit_ray_hits(&world, ray, false, false, LIMIT), [back]);
+        assert_eq!(scene.edit_ray_hits(&world, ray, true, false, LIMIT), [front]);
         scene.gpu[front].owner_avatar = Some(back);
-        assert!(scene.edit_ray_hits(&world, ray, true, false).is_empty());
+        assert!(scene.edit_ray_hits(&world, ray, true, false, LIMIT).is_empty());
     }
 
     #[test]

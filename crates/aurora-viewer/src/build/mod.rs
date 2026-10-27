@@ -54,8 +54,12 @@ use uuid::Uuid;
 pub const FLAGS_CREATE_SELECTED: u32 = 1 << 1;
 /// REGION_FLAGS_BLOCK_TERRAFORM (llregionflags.h).
 pub const REGION_FLAGS_BLOCK_TERRAFORM: u32 = 1 << 6;
-/// MaxSelectDistance (LimitSelectDistance on).
+/// MaxSelectDistance and MaxDragDistance defaults (settings.xml).
 pub const MAX_SELECT_DISTANCE: f32 = 128.0;
+pub const MAX_DRAG_DISTANCE: f32 = 48.0;
+/// LLToolPlacer::raycastForNewObjPos: the simulator ray's length through
+/// an object hit while the select distance is not limited.
+const UNLIMITED_PLACEMENT_RAY: f32 = 129.0;
 /// SL prim size limits (llmath/xform.h: DEFAULT_MIN_PRIM_SCALE / MAX).
 pub const MIN_PRIM_SCALE: f32 = 0.01;
 pub const MAX_PRIM_SCALE: f32 = 64.0;
@@ -136,6 +140,41 @@ pub struct BuildSettings {
     pub show_physics_shape: bool,
     /// FSCopyObjKeySeparator for "Copy UUID".
     pub copy_key_separator: String,
+    /// LimitSelectDistance. Off by default, unlike the Legacy Viewer: the
+    /// simulator keeps its own limits, so nothing near or far is out of reach.
+    pub limit_select_distance: bool,
+    /// MaxSelectDistance (m from the avatar).
+    pub max_select_distance: f32,
+    /// LimitDragDistance.
+    pub limit_drag_distance: bool,
+    /// MaxDragDistance (m from the start point of one move).
+    pub max_drag_distance: f32,
+}
+
+impl BuildSettings {
+    /// MaxSelectDistance while LimitSelectDistance is on.
+    pub fn select_limit(&self) -> Option<f32> {
+        self.limit_select_distance
+            .then(|| sane_distance(self.max_select_distance, MAX_SELECT_DISTANCE))
+    }
+
+    /// MaxDragDistance while LimitDragDistance is on (LLManipTranslate::handleHover).
+    pub fn drag_limit(&self) -> Option<f32> {
+        self.limit_drag_distance
+            .then(|| sane_distance(self.max_drag_distance, MAX_DRAG_DISTANCE))
+    }
+}
+
+/// The spinners' range of the Legacy Viewer's preferences (0.001 .. 1024 m);
+/// an edited settings file falls back to the default.
+pub const DISTANCE_LIMIT_RANGE: std::ops::RangeInclusive<f32> = 0.001..=1024.0;
+
+fn sane_distance(value: f32, default: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(*DISTANCE_LIMIT_RANGE.start(), *DISTANCE_LIMIT_RANGE.end())
+    } else {
+        default
+    }
 }
 
 #[cfg(test)]
@@ -244,7 +283,14 @@ mod hud_tests {
         assert!(tool.select_for_menu(&mut world, &s, child));
         tool.open_build(Tool::Edit);
         world.agent.position = Vec3::splat(1000.0);
-        tool.prune(&world, Instant::now());
+        tool.prune(
+            &world,
+            &BuildSettings {
+                limit_select_distance: true,
+                ..Default::default()
+            },
+            Instant::now(),
+        );
         assert!(tool.hud_selected(&world));
         tool.close(&mut world, &mut BuildSettings::default());
         assert!(tool.selection.is_empty());
@@ -362,6 +408,10 @@ impl Default for BuildSettings {
             sync_materials: false,
             show_physics_shape: false,
             copy_key_separator: ",".into(),
+            limit_select_distance: false,
+            max_select_distance: MAX_SELECT_DISTANCE,
+            limit_drag_distance: true,
+            max_drag_distance: MAX_DRAG_DISTANCE,
         }
     }
 }
@@ -1106,7 +1156,7 @@ impl BuildTool {
 
     /// Forget objects that are gone; drop a selection left far behind
     /// (LLSelectMgr::deselectAllIfTooFar).
-    fn prune(&mut self, world: &World, now: Instant) {
+    fn prune(&mut self, world: &World, s: &BuildSettings, now: Instant) {
         // Parent changes are authoritative only after simulator object updates.
         // Former roots become one whole-object selection after a successful link.
         if !self.selection_linked
@@ -1122,8 +1172,9 @@ impl BuildTool {
         if !self.selection.is_empty()
             && !self.attachment_selected(world)
             && !self.manip.dragging()
+            && let Some(max) = s.select_limit()
             && let Some(b) = self.bounds(world, now)
-            && b.center.distance(world.agent.position) > MAX_SELECT_DISTANCE
+            && b.center.distance(world.agent.position) > max
         {
             self.deselect_all(world);
             self.status = aurora_i18n::tr!("build-mod-selection-too-far-away-deselected").into();
@@ -1437,7 +1488,7 @@ impl BuildTool {
             let Some((p, _, hud)) = crate::scene::Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
-            if hud != self.cam.hud.is_some() || (!hud && p.distance(world.agent.position) > MAX_SELECT_DISTANCE) {
+            if hud != self.cam.hud.is_some() || (!hud && s.select_limit().is_some_and(|max| p.distance(world.agent.position) > max)) {
                 continue;
             }
             // what avatars wear is left out of a rectangle drawn in the
@@ -1495,7 +1546,7 @@ impl BuildTool {
             self.sync_hud_zoom(world);
             return;
         }
-        self.prune(world, now);
+        self.prune(world, s, now);
         self.pick_up_created(world, s);
         self.sync_hud_zoom(world);
         self.refresh_costs(world);
@@ -1767,13 +1818,29 @@ impl BuildTool {
 
     /// The ray of LLToolPlacer::raycastForNewObjPos (region-local): from the
     /// camera to the land point, or through the object hit.
-    fn placement_ray(&self, world: &World, point: Vec3, target: Option<usize>, cursor: (f32, f32), off: Vec3) -> (Vec3, Vec3, Uuid, bool) {
+    #[allow(clippy::too_many_arguments)]
+    fn placement_ray(
+        &self,
+        world: &World,
+        s: &BuildSettings,
+        point: Vec3,
+        target: Option<usize>,
+        cursor: (f32, f32),
+        off: Vec3,
+    ) -> (Vec3, Vec3, Uuid, bool) {
         // flora and avatars are not surfaces to build on
         let target = target.filter(|&i| world.objects.get(i).is_some_and(|o| !o.is_avatar() && !o.is_tree()));
         let (_, dir) = self.cam.ray(cursor.0, cursor.1);
         let ray_start = self.cam.eye - off + self.cam.at * (0.1 + 0.01);
         match target.and_then(|i| world.objects.get(i)) {
-            Some(o) => (ray_start, ray_start + dir * MAX_SELECT_DISTANCE, o.full_id, false),
+            Some(o) => {
+                // Without the limit, the Legacy Viewer's 129 m ray stops short
+                // of a surface seen from farther away: reach past the hit.
+                let length = s
+                    .select_limit()
+                    .unwrap_or_else(|| UNLIMITED_PLACEMENT_RAY.max((point - off).distance(ray_start) + 1.0));
+                (ray_start, ray_start + dir * length, o.full_id, false)
+            }
             None => (ray_start, point - off, Uuid::nil(), true),
         }
     }
@@ -1783,14 +1850,14 @@ impl BuildTool {
         let Some(point) = hit else {
             return;
         };
-        if point.distance(world.agent.position) > MAX_SELECT_DISTANCE {
+        if s.select_limit().is_some_and(|max| point.distance(world.agent.position) > max) {
             self.status = aurora_i18n::tr!("build-mod-too-far-away-to-create-an-object-here").into();
             return;
         }
         let Some((handle, off)) = Self::region_at(world, point) else {
             return;
         };
-        let (ray_start, ray_end, target_id, bypass) = self.placement_ray(world, point, target, cursor, off);
+        let (ray_start, ray_end, target_id, bypass) = self.placement_ray(world, s, point, target, cursor, off);
         let random = Uuid::new_v4().as_u128() as u32;
         let n = shapes::shapes().len();
         let plant = s.create_shape == n || s.create_shape == n + 1;
@@ -1864,8 +1931,13 @@ impl BuildTool {
             self.status = aurora_i18n::tr!("build-mod-select-the-objects-to-copy-first").into();
             return;
         }
+        // raycastForNewObjPos refuses the duplicate's surface too
+        if s.select_limit().is_some_and(|max| point.distance(world.agent.position) > max) {
+            self.status = aurora_i18n::tr!("build-mod-too-far-away-to-create-an-object-here").into();
+            return;
+        }
         let Some((_, off)) = Self::region_at(world, point) else { return };
-        let (ray_start, ray_end, ray_target, bypass) = self.placement_ray(world, point, target, cursor, off);
+        let (ray_start, ray_end, ray_target, bypass) = self.placement_ray(world, s, point, target, cursor, off);
         let mut by_region: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
         for r in roots {
             if let Some(o) = world.objects.get(r) {

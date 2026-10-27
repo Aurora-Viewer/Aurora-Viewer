@@ -152,6 +152,10 @@ fn a_worn_selection_is_kept_apart_and_cannot_be_deleted_taken_copied_or_linked()
     // nor left behind when the avatar walks away with it
     tool.open_build(Tool::Edit);
     world.agent.position += Vec3::splat(1000.0);
-    tool.prune(&world, Instant::now());
+    let limited = BuildSettings {
+        limit_select_distance: true,
+        ..Default::default()
+    };
+    tool.prune(&world, &limited, Instant::now());
     assert_eq!(tool.selection, vec![key]);
 }
