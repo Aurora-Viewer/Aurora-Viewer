@@ -732,16 +732,6 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                 aurora_i18n::tr!("build-material-tint-needs-pbr"),
             );
         }
-        if !editable {
-            ui.add(
-                egui::Label::new(
-                    RichText::new(aurora_i18n::tr!("build-material-tint-needs-pbr"))
-                        .size(super::common::SMALL)
-                        .color(p.muted),
-                )
-                .wrap(),
-            );
-        }
         glow(ui, p, tool, world, sel);
         if let Some(v) = check(ui, p, mat.double_sided, false, aurora_i18n::tr!("common-double-sided"), editable) {
             tool.edit_gltf(world, sel, |o| o.double_sided = Some(v));
@@ -1030,16 +1020,6 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
             editable && spec.is_some(),
             aurora_i18n::tr!("build-material-tint-needs-specular"),
         );
-        if spec.is_none() {
-            ui.add(
-                egui::Label::new(
-                    RichText::new(aurora_i18n::tr!("build-material-tint-needs-specular"))
-                        .size(super::common::SMALL)
-                        .color(p.muted),
-                )
-                .wrap(),
-            );
-        }
         if spec.is_some() {
             let (gl, gl_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.specular_exp).unwrap_or(51)));
             let (env_i, env_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.env_intensity).unwrap_or(0)));
