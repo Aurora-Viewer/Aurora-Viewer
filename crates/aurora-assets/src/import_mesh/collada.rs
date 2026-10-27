@@ -327,8 +327,18 @@ pub fn parse_with_options(data: &[u8], skeleton: &crate::Skeleton, assume_meters
                 };
                 let mut faces = faces;
                 if let Some((_, weights)) = &skin {
+                    // LLDAELoader writes mSkinWeights[position] in source
+                    // order: the last source vertex at a position wins.
+                    let mut last = HashMap::new();
+                    for (face, original) in faces.iter().zip(&position_indices) {
+                        for (vertex, original) in face.vertices.iter().zip(original) {
+                            let entry = last.entry(vertex.position.map(|v| (v + 0.0).to_bits())).or_insert(*original);
+                            *entry = (*entry).max(*original);
+                        }
+                    }
                     for (face, original) in faces.iter_mut().zip(position_indices) {
                         for (vertex, original) in face.vertices.iter_mut().zip(original) {
+                            let original = last.get(&vertex.position.map(|v| (v + 0.0).to_bits())).copied().unwrap_or(original);
                             let influences = weights
                                 .get(original)
                                 .ok_or_else(|| AssetError::invalid("skin weights do not match geometry"))?;
@@ -357,6 +367,7 @@ pub fn parse_with_options(data: &[u8], skeleton: &crate::Skeleton, assume_meters
                 let mut models = Vec::new();
                 let (center, size) = normalization_with_flat_scale(&faces, geometry_basis.x_axis.truncate().length())?;
                 if skin.is_some() {
+                    super::skin::share_weights(&mut faces, center, size);
                     super::skin::complete_weights(&mut faces, size);
                 }
                 for (index, group) in faces.chunks(8).enumerate() {
