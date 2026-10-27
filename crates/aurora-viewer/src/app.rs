@@ -13122,7 +13122,11 @@ impl App {
                 if self.camera.mouselook() {
                     let c = ctx.content_rect().center();
                     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("xhair")));
-                    painter.circle_stroke(c, 4.0, egui::Stroke::new(1.5, p.ink));
+                    // LLToolGun::draw: in the middle of the world view
+                    let demo = ui::crosshair::demo(&self.settings.crosshair);
+                    let crosshair = demo.as_ref().unwrap_or(&self.settings.crosshair);
+                    let picture = ui::crosshair::picture(&ctx, crosshair);
+                    ui::crosshair::draw(&painter, c, crosshair, picture.as_ref());
                     if self.settings.camera.show_mouselook_instructions {
                         // LLViewerWindow::drawMouselookInstructions: the way
                         // out, half transparent above the bottom bar (the

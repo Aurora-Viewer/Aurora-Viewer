@@ -441,6 +441,7 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details) |
+| `AURORA_DEMO_CROSSHAIR=dot\|cross\|circle\|legacy\|off\|image:<file>` | The mouselook crosshair in that shape for the session (see Details) |
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` or `remote` | Teleport after loading |
 | `AURORA_TP_SCREEN=legacy` or `alt` | The teleport screen of before 2026-10-17, to compare |
@@ -466,6 +467,18 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
+- **`AURORA_DEMO_CROSSHAIR=dot|cross|circle|legacy|off|image:<file>`**: the crosshair of
+  Preferences › Camera › Mouselook › Crosshair in that shape for the
+  session, nothing saved (`cross` and `circle` with their centre dot; `off`:
+  none, as with "Show the crosshair" off; `image:<file>`: that picture, as
+  if chosen with "Choose image", 16 px on its longer side, a dot while it
+  loads or if it cannot be read, with a warning in the log). Combine it with
+  `AURORA_DEMO_CAMERA=ml` and a capture at frame 650: the mark sits exactly
+  in the middle of the window, white with a dark outline; `legacy` shows the
+  Legacy Viewer's four corners (crosshairs.tga) at twice their size (the
+  default 16 px). The preferences' preview shows the same mark over a dark
+  and a bright patch: `AURORA_DEMO_OPTIONS=camera/2:crosshair` opens the
+  group and scrolls down to its last row, the image.
 - **`AURORA_DEMO_AVATAR_TRAVEL=<mode>`**: at frame 600, `menu` opens
   the violet wolf's avatar menu; the other modes dispatch Go to or Follow. `go`
   keeps the initial destination and ends within 2 m; `follow` keeps the
