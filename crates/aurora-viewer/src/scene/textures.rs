@@ -1666,6 +1666,19 @@ impl TextureStreamer {
         self.entries.get(id).is_some_and(Entry::unavailable)
     }
 
+    /// A face with this texture shows what it will show for now: loaded,
+    /// not coming (`is_unavailable`), or drawn without a download (the
+    /// blank and the built-in transparent textures, local ones), which
+    /// never have an entry and so never count as loaded.
+    pub fn is_settled(&self, id: &Uuid) -> bool {
+        id.is_nil()
+            || *id == aurora_prim::te::BLANK_TEXTURE
+            || is_builtin_transparent(id)
+            || self.local_slots.contains_key(id)
+            || self.is_loaded(id)
+            || self.is_unavailable(id)
+    }
+
     /// Discard level on the GPU (None until the first upload).
     pub fn decoded_level(&self, id: &Uuid) -> Option<u8> {
         self.entries.get(id)?.decoded
