@@ -121,6 +121,25 @@ pub(crate) fn simulator_roots() -> Vec<reqwest::Certificate> {
     roots
 }
 
+/// Asset requests under way at once (24). `AURORA_FETCH_SLOTS=<n>` (1 to
+/// 256) changes it for one launch, to measure a cold-cache arrival when the
+/// link is not the limit; the Legacy Viewer keeps up to 5 pipelined
+/// requests on each of its 8 to 12 connections per class.
+fn fetch_slots() -> usize {
+    const DEFAULT: usize = 24;
+    match std::env::var("AURORA_FETCH_SLOTS").ok().map(|v| v.trim().parse::<usize>()) {
+        Some(Ok(n)) if (1..=256).contains(&n) => {
+            log::info!("asset fetch: {n} requests at once (AURORA_FETCH_SLOTS)");
+            n
+        }
+        Some(_) => {
+            log::warn!("AURORA_FETCH_SLOTS: expected 1 to 256, using {DEFAULT}");
+            DEFAULT
+        }
+        None => DEFAULT,
+    }
+}
+
 impl NetClient {
     pub fn new() -> Result<NetClient, NetError> {
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -163,9 +182,10 @@ impl NetClient {
         // decoding, a 30 s connect timeout and up to 10 redirects. Some
         // assets are served with an odd Content-Encoding that must not
         // make the fetch fail.
+        let fetch_slots = fetch_slots();
         let asset_http = reqwest::Client::builder()
             .user_agent(aurora_version::user_agent())
-            .pool_max_idle_per_host(32)
+            .pool_max_idle_per_host(fetch_slots.max(32))
             .connect_timeout(std::time::Duration::from_secs(30))
             .gzip(false)
             .redirect(reqwest::redirect::Policy::limited(10))
@@ -173,7 +193,7 @@ impl NetClient {
             .tls_danger_accept_invalid_hostnames(true)
             .build()
             .map_err(|e| NetError::Http(e.to_string()))?;
-        let (fetcher, fetch_results) = Fetcher::new(rt.handle(), asset_http, 24, stats.clone());
+        let (fetcher, fetch_results) = Fetcher::new(rt.handle(), asset_http, fetch_slots, stats.clone());
 
         let shared_caps_http = caps_http.clone();
         let shared = session::Shared {

@@ -7474,6 +7474,7 @@ What the inventory must show with these scenarios:
 | `AURORA_TEXTURE_TODO=0` or `check` | Texture streaming that walks every texture as before, or check of its to-do list |
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
 | `AURORA_WORN_RANK=avatar` | Meshes worn by other avatars downloaded in the rank of their avatar, not their own size (off by default) |
+| `AURORA_FETCH_SLOTS=<n>` | Asset requests under way at once for this launch (24 by default, 1 to 256) |
 | `AURORA_SYNC_SLICE=1` or `alt` | Scene sync by slice of all the objects, as before |
 | `AURORA_PENDING_PARK=0` | Every object waiting for its geometry asked about by the sync's round, as before |
 | `AURORA_SYNC_CHECK=1` | What the scene sync visits each frame |
