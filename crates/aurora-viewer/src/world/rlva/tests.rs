@@ -1720,3 +1720,131 @@ fn rlva_watchdog_folder_locks_resolved_once_match_single_checks() {
     world.rlva_watchdog_tick(std::time::Instant::now());
     assert!(world.rlva.watchdog.rejected.is_empty(), "nothing worn is rejected");
 }
+
+/// The watchdog keeps its lock checks, and the folder locks their inventory
+/// walk, while nothing they read changes: a rule, an inventory move or a
+/// worn change makes them run again, with the same answers as before.
+#[test]
+fn rlva_watchdog_checks_run_again_only_after_a_change() {
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::inventory::{InvFolder, InvItem};
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva_configure(true);
+    world.movement_complete = true;
+    let add_folder = |world: &mut crate::world::World, id: Uuid, parent: Uuid, name: &str| {
+        world.inventory.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent,
+                    name: name.into(),
+                    type_default: -1,
+                    ..Default::default()
+                },
+                children: vec![],
+                items: vec![],
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(parent) = world.inventory.folders.get_mut(&parent) {
+            parent.children.push(id);
+        }
+    };
+    let root = Uuid::from_u128(0xF000);
+    world.inventory.root = root;
+    add_folder(&mut world, root, Uuid::nil(), "My Inventory");
+    let rlv = Uuid::from_u128(0xF001);
+    let collar = Uuid::from_u128(0xF002);
+    let clothes = Uuid::from_u128(0xF003);
+    add_folder(&mut world, rlv, root, "#RLV");
+    add_folder(&mut world, collar, rlv, "Collar");
+    add_folder(&mut world, clothes, root, "Clothes");
+    let item = |n: u128, parent: Uuid| InvItem {
+        id: Uuid::from_u128(n),
+        parent,
+        asset_type: 6,
+        flags: 5,
+        ..Default::default()
+    };
+    let collar_item = Uuid::from_u128(0xC000);
+    let shirt = Uuid::from_u128(0xC001);
+    world.inventory.add_items(vec![item(0xC000, collar), item(0xC001, clothes)]);
+    for n in 0..2000 {
+        world.inventory.add_items(vec![item(0xD000 + n, clothes)]);
+    }
+    let handle = world.main_region.unwrap();
+    for (n, worn) in [collar_item, shirt].into_iter().enumerate() {
+        world.objects.upsert(
+            handle,
+            crate::demo::outfit_attachment(&aurora_net::AttachRequest {
+                item_id: worn,
+                owner_id: world.agent_id,
+                point: n as u8 + 1,
+                add: true,
+                flags: 0,
+                group_mask: 0,
+                everyone_mask: 0,
+                next_owner_mask: 0,
+                name: String::new(),
+                desc: String::new(),
+            }),
+        );
+    }
+    let tick = |world: &mut crate::world::World| {
+        world.rlva_watchdog_tick(std::time::Instant::now());
+        world.rlva_watchdog_tick(std::time::Instant::now());
+        world.rlva.watchdog.checked.as_ref().expect("checked").locked.clone()
+    };
+    let resolution = |world: &crate::world::World| {
+        let cache = world.rlva.locked_folders.0.lock().expect("cache");
+        cache.as_ref().map(|(_, folders)| std::sync::Arc::as_ptr(folders))
+    };
+    assert!(tick(&mut world).is_empty(), "no rule, nothing locked");
+    command(&mut world.rlva, collar_item, "@detachallthis=n");
+    assert_eq!(tick(&mut world), BTreeSet::from([collar_item]), "a new rule is checked at once");
+    let first = resolution(&world);
+    assert!(first.is_some());
+    assert_eq!(tick(&mut world), BTreeSet::from([collar_item]));
+    assert_eq!(resolution(&world), first, "nothing changed: the inventory is not walked again");
+    world.inventory.add_items(vec![item(0xC001, collar)]);
+    assert_eq!(
+        tick(&mut world),
+        BTreeSet::from([collar_item, shirt]),
+        "moved into the locked folder"
+    );
+    assert_ne!(resolution(&world), first, "an inventory change resolves the locks again");
+    world.objects.upsert(
+        handle,
+        crate::demo::outfit_attachment(&aurora_net::AttachRequest {
+            item_id: Uuid::from_u128(0xD000),
+            owner_id: world.agent_id,
+            point: 3,
+            add: true,
+            flags: 0,
+            group_mask: 0,
+            everyone_mask: 0,
+            next_owner_mask: 0,
+            name: String::new(),
+            desc: String::new(),
+        }),
+    );
+    world.rlva_watchdog_tick(std::time::Instant::now());
+    assert!(
+        world
+            .rlva
+            .watchdog
+            .checked
+            .as_ref()
+            .expect("checked")
+            .allowed
+            .contains_key(&Uuid::from_u128(0xD000)),
+        "the new attachment is in the checks"
+    );
+    command(&mut world.rlva, collar_item, "@detachallthis=y");
+    assert!(tick(&mut world).is_empty(), "a removed rule is checked at once");
+}

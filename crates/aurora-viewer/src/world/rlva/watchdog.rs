@@ -1,6 +1,7 @@
 //! Attachment lock recovery, following RlvAttachmentLockWatchdog (rlvlocks.cpp,
 //! originally LGPL 2.1). Restore requests use the exact lost item and point;
 //! they never grant a general exception to scripted or user wear operations.
+use super::inventory::LockInputs;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -37,6 +38,18 @@ pub struct Watchdog {
     pub expected_detach: BTreeMap<Uuid, Instant>,
     saved: BTreeMap<Uuid, Instant>,
     initialized: bool,
+    pub(super) checked: Option<Checked>,
+}
+
+/// The lock checks of a pass and what they read: they run again only when
+/// the rules, the inventory or what is worn changed, as the reference
+/// watchdog acts on attach and detach events instead of polling each frame.
+pub(super) struct Checked {
+    inputs: LockInputs,
+    known: Vec<(Uuid, u8)>,
+    pending: Vec<(Uuid, u8)>,
+    pub(super) locked: BTreeSet<Uuid>,
+    pub(super) allowed: BTreeMap<Uuid, bool>,
 }
 
 pub struct Notice {
@@ -277,36 +290,61 @@ impl super::super::World {
             .collect();
         self.rlva.watchdog.sources.extend(bindings);
         self.rlva.watchdog.sources.retain(|source, _| self.rlva.rules.contains_key(source));
-        // every attachment, every frame: the folder locks are resolved once
-        let locks = super::inventory::FolderLocks::default();
-        let locked: BTreeSet<_> = self
+        let inputs = self.rlva_lock_inputs(current.iter().map(|(item, attachment)| (*item, attachment.point)));
+        let known: Vec<_> = self.rlva.watchdog.known.iter().map(|(item, a)| (*item, a.point)).collect();
+        let pending: Vec<_> = self
             .rlva
             .watchdog
-            .known
+            .pending
             .iter()
-            .chain(current.iter())
-            .filter_map(|(item, attachment)| {
-                // The snapshot already resolves each point. Do not rebuild
-                // the world's worn-item map for every attachment each frame.
-                let allowed = self.rlva_attachment_remove_at(*item, attachment.point, Uuid::nil())
-                    && self
-                        .inventory
-                        .items
-                        .get(item)
-                        .is_none_or(|it| self.rlva_folder_allowed_in(&locks, it.parent, false, Uuid::nil()));
-                (!allowed).then_some(*item)
-            })
+            .map(|(item, p)| (*item, p.attachment.point))
             .collect();
-        let allowed = current
-            .iter()
-            .map(|(item, attachment)| (*item, self.rlva_can_add_in(&locks, *item, attachment.point, Uuid::nil())))
-            .collect();
+        let checked = match self.rlva.watchdog.checked.take() {
+            Some(checked) if checked.inputs == inputs && checked.known == known && checked.pending == pending => checked,
+            _ => {
+                // the folder locks are resolved once for every attachment
+                let locks = super::inventory::FolderLocks::default();
+                let locked = self
+                    .rlva
+                    .watchdog
+                    .known
+                    .iter()
+                    .chain(current.iter())
+                    .filter_map(|(item, attachment)| {
+                        // The snapshot already resolves each point. Do not
+                        // rebuild the world's worn-item map per attachment.
+                        let allowed = self.rlva_attachment_remove_at(*item, attachment.point, Uuid::nil())
+                            && self
+                                .inventory
+                                .items
+                                .get(item)
+                                .is_none_or(|it| self.rlva_folder_allowed_in(&locks, it.parent, false, Uuid::nil()));
+                        (!allowed).then_some(*item)
+                    })
+                    .collect();
+                let allowed = current
+                    .iter()
+                    .map(|(item, attachment)| (*item, self.rlva_can_add_in(&locks, *item, attachment.point, Uuid::nil())))
+                    .collect();
+                Checked {
+                    inputs,
+                    known,
+                    pending,
+                    locked,
+                    allowed,
+                }
+            }
+        };
         let inventory = &self.inventory.items;
         self.rlva.watchdog.deny_locked_replacement = !self.rlva.preferences.replace_unlocked;
-        let notices = self
-            .rlva
-            .watchdog
-            .observe(current.clone(), &locked, &allowed, |item| inventory.contains_key(item), now);
+        let notices = self.rlva.watchdog.observe(
+            current.clone(),
+            &checked.locked,
+            &checked.allowed,
+            |item| inventory.contains_key(item),
+            now,
+        );
+        self.rlva.watchdog.checked = Some(checked);
         for notice in notices {
             let point = self
                 .avatar_lib
@@ -321,7 +359,9 @@ impl super::super::World {
                 point
             ));
         }
-        let cof = super::super::appearance::cof(&self.inventory).filter(|id| super::super::appearance::loaded(&self.inventory, *id));
+        // The links only matter for rejected items: most passes have none.
+        let cof = super::super::appearance::cof(&self.inventory)
+            .filter(|id| !self.rlva.watchdog.rejected.is_empty() && super::super::appearance::loaded(&self.inventory, *id));
         let links = cof.map(|id| super::super::appearance::folder_links(&self.inventory, id));
         if let Some(links) = &links {
             self.rlva
