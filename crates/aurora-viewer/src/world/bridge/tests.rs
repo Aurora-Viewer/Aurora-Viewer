@@ -13,6 +13,8 @@ struct Simulator {
     ik_uploads: usize,
     ik_discoveries: usize,
     attaches: usize,
+    detaches: usize,
+    hello_versions: [Option<&'static str>; 3],
     unready_edits: usize,
 }
 impl Simulator {
@@ -39,10 +41,21 @@ impl Simulator {
             ik_uploads: 0,
             ik_discoveries: 0,
             attaches: 0,
+            detaches: 0,
+            hello_versions: [None; 3],
             unready_edits: 0,
         }
     }
-    fn event(&mut self, event: NetEvent) {
+    fn event(&mut self, mut event: NetEvent) {
+        if let NetEvent::Chat(chat) = &mut event {
+            for (index, tag) in ["<auroraBridge>", "<auroraBridgeQuery>", "<auroraBridgeIK>"].iter().enumerate() {
+                if chat.message.starts_with(tag)
+                    && let Some(version) = self.hello_versions[index]
+                {
+                    chat.message = chat.message.replacen(&format!(">{VERSION}|"), &format!(">{version}|"), 1);
+                }
+            }
+        }
         self.bridge.receive(&mut self.world, event, self.now, self.now);
     }
     fn step(&mut self) {
@@ -113,6 +126,9 @@ impl Simulator {
                         });
                     }
                     _ => {
+                        if let NetCommand::DetachAttachments(items) = &command {
+                            self.detaches += usize::from(items.contains(&self.bridge.item));
+                        }
                         if let NetCommand::ScriptDialogReply {
                             channel: ik::CONTROL,
                             label,
@@ -125,10 +141,13 @@ impl Simulator {
                         if let NetCommand::SaveScript { target, .. } = &command {
                             if target.item == self.bridge.query_script {
                                 self.query_uploads += 1;
+                                self.hello_versions[1] = None;
                             } else if target.item == self.bridge.ik.script {
                                 self.ik_uploads += 1;
+                                self.hello_versions[2] = None;
                             } else {
                                 self.uploads += 1;
+                                self.hello_versions[0] = None;
                             }
                         }
                         let events = self
@@ -278,6 +297,198 @@ fn quiet_bridge_discovery_is_addressed_throttled_and_requires_the_current_worn_r
     sim.world.main_region = Some(sim.world.main_region.expect("region") + 65536);
     sim.bridge.discover(&sim.world, sim.now);
     assert!(sim.bridge.commands.is_empty(), "do not send into another region");
+}
+
+#[test]
+fn login_reuses_an_up_to_date_worn_bridge_without_uploading_or_saving_it() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    let before = (
+        sim.uploads,
+        sim.query_uploads,
+        sim.ik_uploads,
+        sim.attaches,
+        sim.detaches,
+        sim.copies,
+    );
+    let item = sim.bridge.item;
+    sim.bridge = Bridge::default();
+    sim.world.hand_contacts.relay = None;
+    sim.ready();
+    assert_eq!(sim.bridge.item, item);
+    assert_eq!(
+        (
+            sim.uploads,
+            sim.query_uploads,
+            sim.ik_uploads,
+            sim.attaches,
+            sim.detaches,
+            sim.copies
+        ),
+        before,
+        "a healthy existing bridge must not be rewritten, detached or reattached"
+    );
+    assert!(sim.bridge.query_endpoint().is_some());
+    assert!(sim.world.hand_contacts.relay.is_some());
+    assert!(!sim.bridge.save_pending);
+}
+
+#[test]
+fn an_old_version_in_any_bridge_service_is_updated_then_saved_once() {
+    for service in 0..3 {
+        let mut sim = Simulator::new();
+        sim.ready();
+        let uploads = (sim.uploads, sim.query_uploads, sim.ik_uploads);
+        let detaches = sim.detaches;
+        let attaches = sim.attaches;
+        sim.hello_versions[service] = Some("1.37");
+        sim.bridge = Bridge::default();
+        sim.world.hand_contacts.relay = None;
+        for _ in 0..200 {
+            sim.step();
+            if sim.bridge.locked() {
+                break;
+            }
+        }
+        assert!(sim.bridge.locked(), "service {service} must recover after its update");
+        assert_eq!(
+            (sim.uploads, sim.query_uploads, sim.ik_uploads),
+            (uploads.0 + 1, uploads.1 + 1, uploads.2 + 1)
+        );
+        assert_eq!(sim.detaches, detaches + 1, "save updated scripts exactly once");
+        assert_eq!(sim.attaches, attaches + 1);
+        assert!(!sim.bridge.save_pending);
+    }
+}
+
+#[test]
+fn failed_compilation_does_not_request_a_save_of_unchanged_scripts() {
+    let mut sim = Simulator::new();
+    sim.bridge.object = Uuid::new_v4();
+    let request = Uuid::new_v4();
+    sim.bridge.upload = Some(request);
+    sim.bridge.enter(Phase::Upload, sim.now);
+    sim.event(NetEvent::ScriptSaved {
+        request,
+        target: ScriptTarget {
+            object: sim.bridge.object,
+            item: Uuid::new_v4(),
+        },
+        result: Ok(aurora_net::scripts::ScriptSaved {
+            asset: Uuid::nil(),
+            compiled: false,
+            errors: vec!["Synthetic compilation error".into()],
+        }),
+    });
+    assert!(!sim.bridge.save_pending);
+    assert_eq!(sim.bridge.phase, Phase::Failed);
+    assert!(
+        !sim.bridge
+            .commands
+            .iter()
+            .any(|command| matches!(command, NetCommand::DetachAttachments(_)))
+    );
+}
+
+#[test]
+fn an_interrupted_update_is_saved_even_when_login_verification_can_reuse_it() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    let uploads = sim.uploads;
+    let detaches = sim.detaches;
+    // The running scripts are current, but this session wrote them before
+    // losing the circuit. Verification cannot discard the pending save.
+    sim.bridge = Bridge {
+        agent: sim.world.agent_id,
+        region: sim.world.main_region,
+        since: Some(sim.now),
+        save_pending: true,
+        ..Default::default()
+    };
+    sim.world.hand_contacts.relay = None;
+    sim.ready();
+    assert_eq!(sim.uploads, uploads, "do not rewrite scripts already verified current");
+    assert_eq!(sim.detaches, detaches + 1, "retain the outstanding save");
+    assert!(!sim.bridge.save_pending);
+}
+
+#[test]
+fn ready_bridge_retries_discovery_until_the_delayed_ik_script_answers() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    let copies = sim.copies;
+    let uploads = sim.uploads;
+    let relay = sim.world.hand_contacts.relay.take().expect("initial IK relay");
+    sim.bridge.commands.clear();
+    sim.bridge.probe = Some((sim.bridge.object, sim.now));
+    sim.now += DISCOVERY_INTERVAL;
+    sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
+    let commands = std::mem::take(&mut sim.bridge.commands);
+    let probe = commands
+        .iter()
+        .find(|command| {
+            matches!(
+                command,
+                NetCommand::ScriptDialogReply {
+                    channel: DISCOVERY_CHANNEL,
+                    ..
+                }
+            )
+        })
+        .expect("a ready controller still discovers a late IK relay");
+    let replies = sim
+        .demo
+        .reply(&sim.bridge, &sim.world, probe, false, false, false)
+        .expect("probe response");
+    for reply in replies {
+        sim.event(reply);
+    }
+    sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
+    let restored = sim.world.hand_contacts.relay.as_ref().expect("IK relay rediscovered");
+    assert_eq!(restored.root, relay.root);
+    assert_eq!(restored.region, relay.region);
+    assert_eq!((sim.copies, sim.uploads), (copies, uploads));
+    sim.bridge.commands.clear();
+    sim.now += DISCOVERY_INTERVAL;
+    sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
+    assert!(
+        !sim.bridge.commands.iter().any(|command| matches!(
+            command,
+            NetCommand::ScriptDialogReply {
+                channel: DISCOVERY_CHANNEL,
+                ..
+            }
+        )),
+        "discovery stops once all three services are present"
+    );
+}
+
+#[test]
+fn login_restores_the_bridge_detached_by_its_script_on_another_viewer() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    let item = sim.bridge.item;
+    let before = (sim.uploads, sim.query_uploads, sim.ik_uploads, sim.attaches, sim.detaches);
+    let command = NetCommand::DetachAttachments(vec![item]);
+    // The script detaches on another viewer: Aurora never observes a user
+    // command that would deliberately pause the bridge for this new session.
+    for event in sim
+        .demo
+        .reply(&sim.bridge, &sim.world, &command, false, false, false)
+        .expect("script detach")
+    {
+        sim.event(event);
+    }
+    sim.bridge = Bridge::default();
+    sim.world.hand_contacts.relay = None;
+    sim.ready();
+    assert_eq!(sim.bridge.item, item);
+    assert_eq!(sim.copies, 1, "reuse the existing inventory object at login");
+    assert!(!sim.bridge.user_detached);
+    assert!(sim.world.hand_contacts.relay.is_some());
+    assert_eq!((sim.uploads, sim.query_uploads, sim.ik_uploads), (before.0, before.1, before.2));
+    assert_eq!(sim.attaches, before.3 + 1, "only attach the object missing from the new login");
+    assert_eq!(sim.detaches, before.4, "an existing current bridge needs no save detachment");
 }
 
 #[test]

@@ -13,6 +13,12 @@ pub(super) struct Service {
     candidate: Option<ChatMessage>,
 }
 
+impl Service {
+    pub(super) fn clear_candidate(&mut self) {
+        self.candidate = None;
+    }
+}
+
 impl Bridge {
     pub(super) fn ik_event(&mut self, world: &mut World, event: &NetEvent, now: Instant) -> bool {
         let NetEvent::Chat(chat) = event else { return false };
@@ -42,31 +48,30 @@ impl Bridge {
         true
     }
 
+    pub(super) fn ik_candidate_relay(&self, world: &World) -> Option<super::super::hand_ik::relay::Relay> {
+        let chat = self.ik.candidate.as_ref()?;
+        let root = world.worn_attachment(&self.item).and_then(|i| world.objects.get(i))?;
+        if root.full_id != chat.source_id || Some(root.key.region) != world.main_region || self.folder.is_nil() {
+            return None;
+        }
+        let body = chat.message.strip_prefix("<auroraBridgeIK>")?.strip_suffix("</auroraBridgeIK>")?;
+        let fields: Vec<_> = body.split('|').collect();
+        if fields.len() != 3 || fields[0] != VERSION || fields[1].parse::<Uuid>().ok()? != self.folder {
+            return None;
+        }
+        let session = fields[2].parse::<Uuid>().ok().filter(|id| !id.is_nil())?;
+        Some(super::super::hand_ik::relay::Relay {
+            root: root.full_id,
+            region: root.key.region,
+            session,
+        })
+    }
+
     pub(super) fn accept_ik(&mut self, world: &mut World) {
         if self.phase != Phase::Ready {
             return;
         }
-        let Some(chat) = self.ik.candidate.as_ref() else { return };
-        let Some(root) = world.worn_attachment(&self.item).and_then(|i| world.objects.get(i)) else {
-            return;
-        };
-        if root.full_id != chat.source_id || Some(root.key.region) != world.main_region || self.folder.is_nil() {
-            return;
-        }
-        let parsed = || {
-            let body = chat.message.strip_prefix("<auroraBridgeIK>")?.strip_suffix("</auroraBridgeIK>")?;
-            let fields: Vec<_> = body.split('|').collect();
-            if fields.len() != 3 || fields[0] != VERSION || fields[1].parse::<Uuid>().ok()? != self.folder {
-                return None;
-            }
-            let session = fields[2].parse::<Uuid>().ok().filter(|id| !id.is_nil())?;
-            Some(super::super::hand_ik::relay::Relay {
-                root: root.full_id,
-                region: root.key.region,
-                session,
-            })
-        };
-        if let Some(relay) = parsed()
+        if let Some(relay) = self.ik_candidate_relay(world)
             && world.hand_contacts.relay.as_ref() != Some(&relay)
         {
             self.commands.push(relay.command("discover"));
