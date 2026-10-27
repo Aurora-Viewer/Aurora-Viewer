@@ -7101,6 +7101,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1` or `hud` | World or HUD chime; interface and media sounds audible |
 | `AURORA_DEMO_SOUND_EXPLORER=1\|all\|blacklist\|blacklist-ignored\|avatar-menu\|avatar-menu-mixed\|avatar-menu-pie` | Sound Explorer, separate blacklist categories, ignored objects or avatar sound-category switches |
+| `AURORA_DEMO_ANIMATION_EXPLORER=1\|blacklist` | Animation explorer with a stand-in preview, or a blacklisted animation |
 | `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
 | `AURORA_PERCEPTUAL_VOLUME=0` or `1` | The volume sliders' perceptual curve forced off or on for this launch |
@@ -7407,6 +7408,16 @@ What the inventory must show with these scenarios:
   submenu or activate its controls. On the grid, check the real sounds, the
   separate blacklist rows and persistence after relog. Sound filtering is local
   and does not use the Bridge; blocking an object does not inherit to rez descendants.
+
+- **`AURORA_DEMO_ANIMATION_EXPLORER=1|blacklist`** opens the Animation
+  explorer over three rows: a plaza object named "Dance ball" still dancing
+  our avatar (selected, so the stand-in avatar dances), a "Greeter HUD" whose
+  motion stopped at once (its "Played" time counts up) and our own stand.
+  Check "No owned animations", the column sorts, the preview's orbit, zoom
+  and reset, and that Stop / Stop and revoke / Blacklist animation act on the
+  selected row. `blacklist` instead opens the Asset blacklist with the HUD's
+  motion as an Animation row, held in memory only. Grid validation still
+  needs real pose balls, HUDs and a relog for the saved blacklist.
 
 - **`AURORA_DEMO_STREAM_TITLE=[window|history|text][,stop]`**: the demo
   parcel's radio changes title every 6 seconds, one title too long for the

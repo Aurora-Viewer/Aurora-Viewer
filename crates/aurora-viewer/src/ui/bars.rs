@@ -990,7 +990,14 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             super::sound_explorer::WINDOW,
             &mut panels.sound_explorer,
         );
-        menu::todo(ui, p, "run", aurora_i18n::tr!("ui-bars-animation-explorer"));
+        flip_window(
+            ui,
+            p,
+            "run",
+            aurora_i18n::tr!("ui-bars-animation-explorer"),
+            super::animation_explorer::WINDOW,
+            &mut panels.animation_explorer,
+        );
         flip_window(
             ui,
             p,

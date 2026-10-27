@@ -1,6 +1,6 @@
-//! Derender and the asset blacklist of objects, residents and sounds. Port of
-//! FSAssetBlacklist (indra/newview/fsassetblacklist.cpp) for its object and
-//! resident entries, and of the derender list of LLViewerObjectList
+//! Derender and the asset blacklist of objects, residents, sounds and
+//! animations. Port of FSAssetBlacklist (indra/newview/fsassetblacklist.cpp)
+//! for its object, resident, sound and animation entries, and of the derender list of LLViewerObjectList
 //! (mDerendered, addDerenderedItem / resetDerenderList,
 //! indra/newview/llviewerobjectlist.cpp, originally LGPL 2.1).
 //!
@@ -35,6 +35,7 @@ const MAGIC_ID: Uuid = Uuid::from_u128(0x3c11_5e51_04f4_523c_9fa6_98af_f103_4730
 /// LLAssetType values of the file's entries Aurora acts on.
 const AT_OBJECT: i32 = 6;
 const AT_SOUND: i32 = 1;
+const AT_ANIMATION: i32 = 20;
 const AT_PERSON: i32 = 45;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +44,8 @@ pub enum Kind {
     Resident,
     /// 0: asset UUID; 1/2/4: owner's worn/rezzed/gesture sounds.
     Sound(u8),
+    /// An animation asset, never played on any avatar (AT_ANIMATION).
+    Animation,
 }
 
 impl Kind {
@@ -51,6 +54,7 @@ impl Kind {
             Kind::Object => AT_OBJECT,
             Kind::Resident => AT_PERSON,
             Kind::Sound(_) => AT_SOUND,
+            Kind::Animation => AT_ANIMATION,
         }
     }
 }
@@ -110,9 +114,8 @@ pub struct Restore {
 #[derive(Default)]
 pub struct Derender {
     entries: HashMap<Uuid, Entry>,
-    /// The file's entries of other asset types (textures,
-    /// animations): Aurora does not act on them and writes them back as
-    /// they came.
+    /// The file's entries of other asset types (textures): Aurora does
+    /// not act on them and writes them back as they came.
     other: Vec<(String, Llsd)>,
     hidden: HashMap<ObjKey, Hidden>,
     path: Option<PathBuf>,
@@ -192,12 +195,13 @@ impl Derender {
             if id.is_nil() {
                 continue;
             }
-            // Derender entries and sound asset/owner categories share the
-            // legacy file; preserve unsupported asset types below.
+            // Derender entries, sound asset/owner categories and animations
+            // share the legacy file; preserve unsupported asset types below.
             let kind = match value.get("asset_type").as_i32() {
                 AT_OBJECT => Kind::Object,
                 AT_PERSON => Kind::Resident,
                 AT_SOUND => Kind::Sound(value.get("asset_blacklist_flag").as_i32() as u8),
+                AT_ANIMATION => Kind::Animation,
                 _ => {
                     list.other.push((key.clone(), value.clone()));
                     continue;
@@ -266,6 +270,11 @@ impl Derender {
                     .entries
                     .get(&owner)
                     .is_some_and(|e| matches!(e.kind, Kind::Sound(flags) if flags & flag != 0)))
+    }
+
+    /// FSAssetBlacklist::isBlacklisted(id, AT_ANIMATION).
+    pub fn animation_blocked(&self, id: &Uuid) -> bool {
+        self.entries.get(id).is_some_and(|e| e.kind == Kind::Animation)
     }
 
     pub fn owner_sound_flags(&self, owner: Uuid) -> u8 {
@@ -664,6 +673,25 @@ mod tests {
         // LLDate keeps hundredths of a second
         assert_eq!(parse_date("2023-11-14 22:13:20.53"), 1_700_000_000);
         assert_eq!(parse_date("garbage"), 0);
+    }
+
+    #[test]
+    fn animation_entries_persist_as_the_legacy_asset_type_and_never_derender() {
+        let dir = std::env::temp_dir().join(format!("aurora-animation-blacklist-{}", Uuid::new_v4()));
+        let path = dir.join(FILE);
+        let anim = Uuid::from_u128(404);
+        let mut list = Derender::load(path.clone());
+        list.add(anim, entry(Kind::Animation, true));
+        let saved = aurora_llsd::from_xml(&std::fs::read(&path).expect("saved")).expect("llsd");
+        assert_eq!(saved.get(&mask(anim).to_string()).get("asset_type").as_i32(), AT_ANIMATION);
+        let mut list = Derender::load(path.clone());
+        assert!(list.animation_blocked(&anim));
+        assert!(!list.animation_blocked(&Uuid::from_u128(405)));
+        assert!(!list.contains(&anim), "an animation never hides an object");
+        assert!(!list.sound_blocked(anim, Uuid::nil(), 0));
+        list.remove(&[anim]);
+        assert!(!Derender::load(path).animation_blocked(&anim));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

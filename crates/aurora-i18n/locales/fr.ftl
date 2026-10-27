@@ -190,6 +190,20 @@ sound-explorer-block-rezzed = Bloquer les sons des objets posés
 sound-explorer-block-gestures = Bloquer les sons des gestes
 sound-explorer-unknown = Propriétaire inconnu
 sound-explorer-empty = Aucun son ne correspond aux filtres. Les sons apparaissent lorsqu’ils sont joués.
+animation-explorer-played-by = Jouée par
+animation-explorer-played = Jouée
+animation-explorer-priority = Priorité
+animation-explorer-still-playing = En cours
+animation-explorer-seconds-ago = { $seconds ->
+    [one] il y a { $seconds } seconde
+   *[other] il y a { $seconds } secondes
+    }
+animation-explorer-unknown-priority = inconnue
+animation-explorer-stop-revoke = Arrêter et révoquer
+animation-explorer-blacklist = Bloquer l’animation
+animation-explorer-no-owned = Masquer mes animations
+animation-explorer-no-owned-help = Masque les animations que joue votre propre avatar, comme celles de votre AO ou les animations par défaut.
+animation-explorer-empty = Aucune animation pour l'instant. Elles apparaissent ici quand un objet ou un résident en joue une sur votre avatar.
 toolbar-command-asset-blacklist = Liste noire des ressources
 toolbar-command-phototools = Outils photo
 toolbar-command-phototools-camera = Caméra des outils photo

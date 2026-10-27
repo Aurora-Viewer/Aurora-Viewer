@@ -1,6 +1,7 @@
 //! egui user interface.
 
 pub mod about;
+pub mod animation_explorer;
 pub mod ao;
 pub mod appearance;
 pub mod area_search;
@@ -171,6 +172,8 @@ pub struct Panels {
     pub search: bool,
     pub area_search: bool,
     pub sound_explorer: bool,
+    /// "Animation explorer" (World menu).
+    pub animation_explorer: bool,
     pub avatar_render_settings: bool,
     /// "Asset blacklist" (World menu): the derendered objects and residents.
     pub asset_blacklist: bool,
@@ -232,6 +235,7 @@ impl Panels {
             search: false,
             area_search: false,
             sound_explorer: false,
+            animation_explorer: false,
             avatar_render_settings: false,
             asset_blacklist: false,
             money_tracker: false,

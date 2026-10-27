@@ -25,6 +25,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 mod about;
+mod animation_explorer;
 mod ao;
 mod app_links;
 mod area_search;
@@ -557,6 +558,8 @@ pub struct App {
     inspect_ui: ui::inspect::InspectUi,
     area_search_ui: ui::area_search::AreaSearchUi,
     sound_explorer_ui: ui::sound_explorer::SoundExplorer,
+    animation_explorer_ui: ui::animation_explorer::AnimationExplorer,
+    animation_explorer: animation_explorer::ExplorerState,
     avatar_render_settings_ui: ui::avatar_render_settings::AvatarRenderSettings,
     area_search_feed: area_search::Feed,
     /// "Asset blacklist" (World menu).
@@ -1232,6 +1235,8 @@ impl App {
             inspect_ui: Default::default(),
             area_search_ui: Default::default(),
             sound_explorer_ui: Default::default(),
+            animation_explorer_ui: Default::default(),
+            animation_explorer: Default::default(),
             avatar_render_settings_ui: Default::default(),
             area_search_feed: Default::default(),
             blacklist_ui: Default::default(),
@@ -2427,6 +2432,9 @@ impl App {
         self.scene.sounds.clear(self.audio_engine.as_ref());
         self.scene.sounds.history = Default::default();
         self.sound_explorer_ui = Default::default();
+        self.world.animation_log.clear();
+        self.animation_explorer_ui = Default::default();
+        self.animation_explorer = Default::default();
         self.avatar_render_settings_ui = Default::default();
         self.blender_live.stop();
         self.clear_blender_preview();
@@ -14273,6 +14281,7 @@ impl App {
                 self.blacklist_window(&ctx, &p);
                 self.area_search_window(&ctx, &p);
                 self.sound_explorer_window(&ctx, &p);
+                self.animation_explorer_window(&ctx, &p);
                 self.avatar_render_settings_window(&ctx, &p);
                 self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
                 self.grid_status_window(&ctx, &p);
@@ -16055,6 +16064,9 @@ impl ApplicationHandler for App {
             }
             if let Ok(mode) = std::env::var("AURORA_DEMO_SOUND_EXPLORER") {
                 self.demo_sound_explorer(&mode);
+            }
+            if let Ok(mode) = std::env::var("AURORA_DEMO_ANIMATION_EXPLORER") {
+                self.demo_animation_explorer(&mode);
             }
             // AURORA_DEMO_OBJECT_CHAT: two notices among the lines, each with
             // its topic's icon when compact

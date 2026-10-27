@@ -1467,6 +1467,12 @@ impl AnimStreamer {
         e.anim.clone()
     }
 
+    /// An animation already loaded, without asking for it (the Animation
+    /// explorer's priority column).
+    pub fn peek(&self, id: &Uuid) -> Option<Arc<BoundAnim>> {
+        self.entries.get(id).and_then(|e| e.anim.clone())
+    }
+
     /// Gestures wait for preloads to succeed or fail before running steps.
     pub fn asset_settled(&self, id: &Uuid) -> bool {
         self.entries.get(id).is_some_and(|entry| entry.state >= 3)

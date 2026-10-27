@@ -190,6 +190,20 @@ sound-explorer-block-rezzed = Block rezzed sounds
 sound-explorer-block-gestures = Block gesture sounds
 sound-explorer-unknown = Unknown owner
 sound-explorer-empty = No sounds match these filters. Sounds appear here when they play.
+animation-explorer-played-by = Played by
+animation-explorer-played = Played
+animation-explorer-priority = Priority
+animation-explorer-still-playing = Still playing
+animation-explorer-seconds-ago = { $seconds ->
+    [one] { $seconds } second ago
+   *[other] { $seconds } seconds ago
+    }
+animation-explorer-unknown-priority = unknown
+animation-explorer-stop-revoke = Stop and revoke
+animation-explorer-blacklist = Blacklist animation
+animation-explorer-no-owned = No owned animations
+animation-explorer-no-owned-help = Hide the animations your own avatar plays, like your animation overrider or the default animations.
+animation-explorer-empty = No animations yet. They appear here when an object or a resident plays one on your avatar.
 toolbar-command-asset-blacklist = Asset blacklist
 toolbar-command-phototools = Phototools
 toolbar-command-phototools-camera = Phototools camera
