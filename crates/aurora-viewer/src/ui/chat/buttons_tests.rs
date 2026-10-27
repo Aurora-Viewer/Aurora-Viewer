@@ -513,8 +513,8 @@ fn the_rail_shows_conversations() {
 }
 
 /// The head (Aurora, Compact) of a resident's conversation, a role group's
-/// and a conference's: call, add people, profile, teleport, close,
-/// members, find, and the rows of its "…".
+/// and a conference's: call, add people, profile, add friend, teleport,
+/// close, members, find, and the rows of its "…".
 #[test]
 fn the_head_acts() {
     for style in [ChatStyle::Aurora, ChatStyle::Compact] {
@@ -525,7 +525,7 @@ fn the_head_acts() {
             has(&h.take(), |a| matches!(a, ConvAction::Call(id) if *id == BOB)),
             "{style:?}: call"
         );
-        h.press(control_id("head-user-plus"));
+        h.press(control_id("head-message-circle-plus"));
         assert!(
             has(&h.take(), |a| matches!(a, ConvAction::PickPeople(id) if *id == BOB)),
             "{style:?}: add"
@@ -577,10 +577,30 @@ fn the_head_acts() {
                 .any(|a| matches!(a, crate::ui::context::CtxAction::AddFriend(id) if *id == BOB)),
             "{style:?}: … › become friends"
         );
+        // the friendship offer of the head, only to a stranger
+        h.press(control_id("head-user-plus"));
+        assert!(
+            crate::ui::context::take_requests(&h.frames.ctx)
+                .iter()
+                .any(|a| matches!(a, crate::ui::context::CtxAction::AddFriend(id) if *id == BOB)),
+            "{style:?}: add friend"
+        );
+        h.world.social.friends.push(crate::world::social::Friend {
+            id: BOB,
+            online: true,
+            rights_given: 1,
+            rights_has: 1,
+        });
+        h.settle();
+        assert!(
+            h.shown(control_id("head-user-plus")).is_none(),
+            "{style:?}: a friend is not offered friendship"
+        );
+        h.world.social.friends.clear();
         // a role group: members, no adding (like Firestorm)
         h.open(Some(GROUP));
         assert!(
-            h.shown(control_id("head-user-plus")).is_none(),
+            h.shown(control_id("head-message-circle-plus")).is_none(),
             "{style:?}: a role group adds nobody"
         );
         let open = h.st.members_open;
@@ -589,7 +609,7 @@ fn the_head_acts() {
         // a conference: adding, and its members' panel
         h.open(Some(MEETING));
         h.st.members_open = true;
-        h.press(control_id("head-user-plus"));
+        h.press(control_id("head-message-circle-plus"));
         assert!(
             has(&h.take(), |a| matches!(a, ConvAction::PickPeople(id) if *id == MEETING)),
             "{style:?}"

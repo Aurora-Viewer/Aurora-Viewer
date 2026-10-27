@@ -344,7 +344,18 @@ fn buttons(ui: &mut egui::Ui, p: &Palette, call: &Call, st: &mut ChatUi, actions
         actions.push(ConvAction::ListOutputDevices);
     }
     output_menu(&output, p, st, actions);
-    if add && round(ui, p, "call-add", "user-plus", aurora_i18n::tr!("ui-call-add-people"), side, false).clicked() {
+    if add
+        && round(
+            ui,
+            p,
+            "call-add",
+            super::head::ADD_PEOPLE_ICON,
+            aurora_i18n::tr!("ui-call-add-people"),
+            side,
+            false,
+        )
+        .clicked()
+    {
         actions.push(ConvAction::PickPeople(call.conversation()));
     }
     let hang_up = aurora_i18n::tr!("ui-call-hang-up");

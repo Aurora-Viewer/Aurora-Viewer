@@ -128,7 +128,14 @@ pub(super) fn show(
                 ui.add_space(8.0);
                 let size = egui::vec2(ui.available_width(), 26.0);
                 let label = aurora_i18n::tr!("ui-call-add");
-                let add = crate::ui::widgets::action_button(ui, p, "user-plus", label, crate::ui::widgets::ActionKind::Flat, size);
+                let add = crate::ui::widgets::action_button(
+                    ui,
+                    p,
+                    super::head::ADD_PEOPLE_ICON,
+                    label,
+                    crate::ui::widgets::ActionKind::Flat,
+                    size,
+                );
                 if add.on_hover_text(aurora_i18n::tr!("ui-call-add-people")).clicked() {
                     actions.push(ConvAction::PickPeople(conversation));
                 }

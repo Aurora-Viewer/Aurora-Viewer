@@ -1218,6 +1218,7 @@ common-add = Ajouter
 common-add-to-contact-set = Ajouter au cercle
 common-add-to-favorites = Ajouter aux favoris
 ui-chat-add-friend-coming-soon = Ajouter en ami (à venir)
+ui-chat-add-friend = Ajouter ce résident en ami
 ui-land-sound-add-the-music-stream-url-to-the-saved-streams = Ajouter l'URL du flux de musique à la liste des flux enregistrés
 ui-contacts-add-or-remove-a-group-from-favorites = Ajouter ou supprimer un groupe des favoris
 ui-appearance-add-more = Ajouter plus…

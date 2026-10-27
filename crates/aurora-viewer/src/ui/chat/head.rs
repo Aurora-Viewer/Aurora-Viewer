@@ -2,7 +2,8 @@
 //! picture, its name and a line on it (the resident's user name and status,
 //! a group's participants and call, the nearby chat's region and who hears
 //! us), then its actions: call (green while in the call), the resident's
-//! profile, the members' panel, find, and the menu of the others (those of
+//! profile and, while they are not our friend, a friendship offer, the
+//! members' panel, find, and the menu of the others (those of
 //! Firestorm's IM toolbar, FSFloaterIM, kept in `header::more_menu`).
 
 use super::{ChatUi, ConvAction, find, header, presence, sidebar};
@@ -15,6 +16,10 @@ use uuid::Uuid;
 pub(super) const HEIGHT: f32 = 48.0;
 const PIC: f32 = 32.0;
 const TOOL: f32 = 30.0;
+/// Adding people to a conversation, wherever it is offered: the
+/// conversation's bubble with a plus, apart from the friendship offer's
+/// `user-plus`.
+pub(super) const ADD_PEOPLE_ICON: &str = "message-circle-plus";
 
 /// What the head says of the conversation shown.
 struct Identity {
@@ -223,6 +228,13 @@ pub(super) fn show(
             if tool(ui, p, slot(), "user-filled", aurora_i18n::tr!("common-profile"), Tone::Plain).clicked() {
                 actions.push(ConvAction::Profile(other));
             }
+            // the friendship offer of FSFloaterIM's add_friend_btn, hidden
+            // (not greyed, as there) once they are our friend
+            if !world.social.is_friend(&other)
+                && tool(ui, p, slot(), "user-plus", aurora_i18n::tr!("ui-chat-add-friend"), Tone::Plain).clicked()
+            {
+                crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::AddFriend(other));
+            }
             if tool(ui, p, slot(), "send-filled", aurora_i18n::tr!("common-offer-teleport"), Tone::Plain).clicked() {
                 actions.push(ConvAction::OfferTeleport(other));
             }
@@ -233,7 +245,7 @@ pub(super) fn show(
     // (FSFloaterIM's add_participant_panel, isInviteAllowed)
     if let Some(other) = selected
         && can_add_people(world, &other)
-        && tool(ui, p, slot(), "user-plus", aurora_i18n::tr!("ui-call-add-people"), Tone::Plain).clicked()
+        && tool(ui, p, slot(), ADD_PEOPLE_ICON, aurora_i18n::tr!("ui-call-add-people"), Tone::Plain).clicked()
     {
         actions.push(ConvAction::PickPeople(other));
     }

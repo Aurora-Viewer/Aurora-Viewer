@@ -325,7 +325,7 @@ pub(super) fn more_items(
             Some(other) if group => {
                 if workspace
                     && super::head::can_add_people(world, &other)
-                    && menu::item(ui, p, "user-plus", aurora_i18n::tr!("ui-call-add-people"))
+                    && menu::item(ui, p, super::head::ADD_PEOPLE_ICON, aurora_i18n::tr!("ui-call-add-people"))
                 {
                     actions.push(ConvAction::PickPeople(other));
                 }
@@ -339,7 +339,7 @@ pub(super) fn more_items(
                 if workspace && menu::item(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport")) {
                     actions.push(ConvAction::OfferTeleport(other));
                 }
-                if workspace && menu::item(ui, p, "user-plus", aurora_i18n::tr!("ui-call-add-people")) {
+                if workspace && menu::item(ui, p, super::head::ADD_PEOPLE_ICON, aurora_i18n::tr!("ui-call-add-people")) {
                     actions.push(ConvAction::PickPeople(other));
                 }
                 if !workspace {
