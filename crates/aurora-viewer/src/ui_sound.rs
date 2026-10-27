@@ -43,6 +43,15 @@ pub enum UiSound {
     PieMenuHide,
     /// UISndPieMenuSliceHighlight0..7.
     PieMenuSlice(u8),
+    /// The radar's alerts (UISndRadarChatEnter… FIRE-6069, played by
+    /// FSRadar::updateRadarList as each crossing is reported).
+    RadarChatEnter,
+    RadarChatLeave,
+    RadarDrawEnter,
+    RadarDrawLeave,
+    RadarRegionEnter,
+    RadarRegionLeave,
+    RadarAgeAlert,
     Restart,
     /// The region restart notice of an OpenSim grid (UISndRestartOpenSim).
     RestartOpenSim,
@@ -58,6 +67,17 @@ pub enum UiSound {
     WindowClose,
     WindowOpen,
 }
+
+/// The sounds of the radar's alerts.
+pub const RADAR_SOUNDS: [UiSound; 7] = [
+    UiSound::RadarChatEnter,
+    UiSound::RadarChatLeave,
+    UiSound::RadarDrawEnter,
+    UiSound::RadarDrawLeave,
+    UiSound::RadarRegionEnter,
+    UiSound::RadarRegionLeave,
+    UiSound::RadarAgeAlert,
+];
 
 /// Catalog entry: Firestorm setting name (without `UISnd`), localized label,
 /// default UUID and default `PlayModeUISnd<name>`.
@@ -80,6 +100,7 @@ const START_IM: Uuid = u(0xc825dfbc_9827_7e02_6507_3713d18916c1);
 const WINDOW_OPEN: Uuid = u(0xc80260ba_41fd_8a46_768a_6bf236360e3a);
 const WINDOW_CLOSE: Uuid = u(0x2c346eda_b60c_ab33_1119_b8941916a499);
 const PIE_SLICE_0: Uuid = u(0xd9f73cf8_17b4_6f7a_1565_7951226c305d);
+const NEARBY_CHAT: Uuid = u(0xa3f48b85_c29f_1f97_ebb6_644b7c053512);
 
 macro_rules! e {
     ($s:expr, $n:literal, $l:expr, $u:expr, $p:literal) => {
@@ -97,7 +118,7 @@ use UiSound as S;
 
 /// Every interface sound, in the order of the preferences list.
 #[rustfmt::skip]
-pub const CATALOG: [Entry; 44] = [
+pub const CATALOG: [Entry; 51] = [
     e!(S::Click, "Click", aurora_i18n::tr!("ui-sound-click-button-pressed"), CLICK, true),
     e!(S::ClickRelease, "ClickRelease", aurora_i18n::tr!("ui-sound-click-button-released"), CLICK, true),
     e!(S::BadKeystroke, "BadKeystroke", aurora_i18n::tr!("ui-sound-key-rejected"), u(0x2ca849ba_2885_4bc3_90ef_d4987a5b983a), true),
@@ -125,7 +146,7 @@ pub const CATALOG: [Entry; 44] = [
     e!(S::NewIncomingImSession, "NewIncomingIMSession", aurora_i18n::tr!("ui-sound-private-message-received"), NEW_SESSION, true),
     e!(S::NewIncomingGroupImSession, "NewIncomingGroupIMSession", aurora_i18n::tr!("ui-sound-group-message-received"), NEW_SESSION, true),
     e!(S::NewIncomingConfImSession, "NewIncomingConfIMSession", aurora_i18n::tr!("ui-sound-conference-message-received"), NEW_SESSION, true),
-    e!(S::NearbyChat, "NearbyChat", aurora_i18n::tr!("ui-sound-nearby-chat-received"), u(0xa3f48b85_c29f_1f97_ebb6_644b7c053512), false),
+    e!(S::NearbyChat, "NearbyChat", aurora_i18n::tr!("ui-sound-nearby-chat-received"), NEARBY_CHAT, false),
     e!(S::Typing, "Typing", aurora_i18n::tr!("ui-sound-typing-avatars"), u(0x5e191c7b_8996_9ced_a177_b2ac32bfea06), true),
     e!(S::FriendOnline, "FriendOnline", aurora_i18n::tr!("ui-sound-friend-online"), ALERT, false),
     e!(S::FriendOffline, "FriendOffline", aurora_i18n::tr!("ui-sound-friend-offline"), ALERT, false),
@@ -142,6 +163,13 @@ pub const CATALOG: [Entry; 44] = [
     e!(S::MicToggle, "MicToggle", aurora_i18n::tr!("ui-sound-microphone-on-off"), PIE_SLICE_0, false),
     e!(S::TrackerBeacon, "TrackerBeacon", aurora_i18n::tr!("ui-sound-destination-beacon"), ALERT, false),
     e!(S::Snapshot, "Snapshot", aurora_i18n::tr!("ui-sound-photo-taken"), u(0x3d09f582_3851_c0e0_f5ba_277ac5c73fb4), true),
+    e!(S::RadarChatEnter, "RadarChatEnter", aurora_i18n::tr!("ui-sound-radar-chat-enter"), NEARBY_CHAT, false),
+    e!(S::RadarChatLeave, "RadarChatLeave", aurora_i18n::tr!("ui-sound-radar-chat-leave"), NEARBY_CHAT, false),
+    e!(S::RadarDrawEnter, "RadarDrawEnter", aurora_i18n::tr!("ui-sound-radar-draw-enter"), NEARBY_CHAT, false),
+    e!(S::RadarDrawLeave, "RadarDrawLeave", aurora_i18n::tr!("ui-sound-radar-draw-leave"), NEARBY_CHAT, false),
+    e!(S::RadarRegionEnter, "RadarSimEnter", aurora_i18n::tr!("ui-sound-radar-region-enter"), NEARBY_CHAT, false),
+    e!(S::RadarRegionLeave, "RadarSimLeave", aurora_i18n::tr!("ui-sound-radar-region-leave"), NEARBY_CHAT, false),
+    e!(S::RadarAgeAlert, "RadarAgeAlert", aurora_i18n::tr!("ui-sound-radar-age-alert"), NEARBY_CHAT, false),
 ];
 
 impl UiSound {
@@ -293,6 +321,19 @@ impl UiSoundSettings {
         mode.plays(m.new_session, focused).then_some(sound)
     }
 
+    /// Every alert of the radar plays its sound.
+    pub fn radar_sounds(&self) -> bool {
+        RADAR_SOUNDS.into_iter().all(|s| self.plays(s))
+    }
+
+    /// Turn the seven alert sounds of the radar on or off at once (the entry
+    /// of the radar's options menu; one by one in the preferences).
+    pub fn set_radar_sounds(&mut self, on: bool) {
+        for s in RADAR_SOUNDS {
+            self.set_plays(s, on);
+        }
+    }
+
     /// The sounds loaded at login (init_audio preloads the UI sounds).
     pub fn preload(&self) -> Vec<Uuid> {
         let mut v: Vec<Uuid> = CATALOG.iter().map(|e| self.uuid(e.sound)).filter(|id| !id.is_nil()).collect();
@@ -346,6 +387,24 @@ mod tests {
         assert_eq!(s.resolve(S::NewIncomingGroupImSession, false), Some(NEW_SESSION));
         assert!(!s.preload().contains(&Uuid::nil()));
         assert_eq!(s.resolve(S::ObjectRezIn, false), Some(u(0x3c8fc726_1fd6_862d_fa01_16c5b2568db6)));
+        // the radar's sounds: off, the nearby chat sound once turned on
+        assert_eq!(s.resolve(S::RadarRegionEnter, false), None);
+        assert_eq!(s.resolve(S::RadarAgeAlert, true), Some(NEARBY_CHAT));
+        assert_eq!(S::RadarRegionLeave.entry().name, "RadarSimLeave");
+    }
+
+    #[test]
+    fn the_radar_sounds_at_once() {
+        let mut s = UiSoundSettings::default();
+        assert!(!s.radar_sounds());
+        s.set_plays(S::RadarChatEnter, true);
+        // one of seven is not all of them
+        assert!(!s.radar_sounds());
+        s.set_radar_sounds(true);
+        assert!(s.radar_sounds());
+        assert!(RADAR_SOUNDS.iter().all(|r| s.resolve(*r, false) == Some(NEARBY_CHAT)));
+        s.set_radar_sounds(false);
+        assert!(s.play.is_empty());
     }
 
     #[test]

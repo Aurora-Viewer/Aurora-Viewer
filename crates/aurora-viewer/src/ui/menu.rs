@@ -19,6 +19,9 @@ const PAD: f32 = 8.0;
 const ICON: f32 = 15.0;
 const RIGHT: f32 = 22.0;
 const MIN_W: f32 = 180.0;
+/// Where the text of a row starts: a line under an entry (its value) lines
+/// up with it.
+pub const TEXT_INDENT: f32 = PAD + ICON + PAD;
 
 /// Tooltip of the entries Firestorm has but Aurora does not do yet.
 pub fn not_yet() -> &'static str {

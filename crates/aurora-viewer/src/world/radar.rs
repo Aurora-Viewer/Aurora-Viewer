@@ -26,6 +26,14 @@ pub const LEFT_BEHIND_SECS: f64 = 10.0;
 /// Profiles asked per sweep: a crowded region does not send a hundred
 /// requests at once (Firestorm asks for all of them as the entries appear).
 const PROFILES_PER_SWEEP: usize = 4;
+/// Avatars per alert to scripts: what fits in the 255 bytes of a button
+/// label (FSRADAR_MAX_AVATARS_PER_ALERT).
+const AVATARS_PER_SCRIPT_ALERT: usize = 6;
+/// Default channel of the alerts to scripts (RadarAlertChannel).
+pub const SCRIPT_ALERT_CHANNEL: i32 = -777_777_777;
+/// A sound our own object triggers to ask for every avatar on that channel
+/// (RadarLegacyChannelAlertRefreshUUID, the Phoenix radar scripts' request).
+pub const SCRIPT_ALERT_SYNC_SOUND: Uuid = Uuid::from_u128(0x76c78607_93f9_f55a_5238_e19b1a181389);
 
 /// The typing animation (ANIM_AGENT_TYPE).
 pub const ANIM_AGENT_TYPE: Uuid = Uuid::from_u128(0xc541c47f_e0c0_058b_ad1a_d6ae3a4584d9);
@@ -93,6 +101,20 @@ impl Event {
             | Event::AgeAlert(id, _) => id,
         }
     }
+
+    /// The interface sound of the alert (UISndRadar*).
+    pub fn sound(&self) -> crate::ui_sound::UiSound {
+        use crate::ui_sound::UiSound as S;
+        match self {
+            Event::ChatEnter(..) => S::RadarChatEnter,
+            Event::ChatLeave(_) => S::RadarChatLeave,
+            Event::DrawEnter(..) => S::RadarDrawEnter,
+            Event::DrawLeave(_) => S::RadarDrawLeave,
+            Event::RegionEnter(..) => S::RadarRegionEnter,
+            Event::RegionLeave(_) => S::RadarRegionLeave,
+            Event::AgeAlert(..) => S::RadarAgeAlert,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -107,6 +129,14 @@ pub struct Radar {
     /// Avatars of the last sweep, hidden ones included (the "total" of the
     /// list's title).
     pub total: usize,
+    /// New in the list at the last sweep, with whether they are in our
+    /// region; gone from it at the last sweep.
+    arrived: Vec<(Uuid, bool)>,
+    departed: Vec<Uuid>,
+    /// A script asked for every avatar (`SCRIPT_ALERT_SYNC_SOUND`).
+    sync_asked: bool,
+    /// Number of the last alert to scripts (mRadarFrameCount).
+    script_frame: u32,
 }
 
 /// True when `range` is known and within `limit`.
@@ -161,6 +191,8 @@ impl Radar {
     ) -> Vec<Event> {
         self.last_sweep = Some(now);
         self.leave_regions(my_region, gaps, draw_distance, now);
+        self.arrived.clear();
+        self.departed.clear();
         let mut events = Vec::new();
         let mut present = HashSet::with_capacity(seen.len());
         for s in seen {
@@ -203,7 +235,10 @@ impl Radar {
             }
             let (first_seen, profile_asked, age_checked) = match old {
                 Some(e) => (e.first_seen, e.profile_asked, e.age_checked),
-                None => (now, false, false),
+                None => {
+                    self.arrived.push((s.id, same_region));
+                    (now, false, false)
+                }
             };
             self.entries.insert(
                 s.id,
@@ -238,9 +273,51 @@ impl Radar {
             if e.same_region {
                 events.push(Event::RegionLeave(*id));
             }
+            self.departed.push(*id);
             false
         });
         events
+    }
+
+    /// A script of ours asked for every avatar around
+    /// (FSRadar::requestRadarChannelAlertSync): the next alert to scripts
+    /// lists all of them as entering.
+    pub fn ask_script_sync(&mut self) {
+        self.sync_asked = true;
+    }
+
+    /// The button labels of the alerts to scripts for the last sweep
+    /// (FSRadar::updateRadarList, steps 2b and 3b): `frame,count,key,…` for
+    /// the arrivals, `frame,-count,key,…` for the departures, six keys a
+    /// message. Without the exit alerts, only arrivals in our region are
+    /// reported (the Phoenix scripts' convention). A sync asked by a script
+    /// adds every avatar already there, whatever the settings.
+    pub fn script_alerts(&mut self, enter: bool, leave: bool) -> Vec<String> {
+        let sync = std::mem::take(&mut self.sync_asked);
+        let mut entering: Vec<Uuid> = Vec::new();
+        if enter || sync {
+            entering.extend(self.arrived.iter().filter(|(_, here)| leave || *here).map(|(id, _)| *id));
+        }
+        if sync {
+            let new: HashSet<Uuid> = self.arrived.iter().map(|(id, _)| *id).collect();
+            entering.extend(self.entries.keys().filter(|id| !new.contains(id)));
+        }
+        let mut labels = Vec::new();
+        for (ids, sign) in [(entering, ""), (if leave { self.departed.clone() } else { Vec::new() }, "-")] {
+            if ids.is_empty() {
+                continue;
+            }
+            self.script_frame = self.script_frame.wrapping_add(1);
+            for chunk in ids.chunks(AVATARS_PER_SCRIPT_ALERT) {
+                let mut label = format!("{},{sign}{}", self.script_frame, chunk.len());
+                for id in chunk {
+                    label.push(',');
+                    label.push_str(&id.to_string());
+                }
+                labels.push(label);
+            }
+        }
+        labels
     }
 
     /// An avatar seen since `at` at least (the demo's residents arrived
@@ -586,5 +663,90 @@ mod tests {
         let age = |who: &Uuid| if *who == id(1) { Some(3) } else { Some(4000) };
         assert_eq!(radar.age_alerts(7, age), vec![Event::AgeAlert(id(1), 3)]);
         assert_eq!(radar.age_alerts(7, age), vec![]);
+    }
+
+    #[test]
+    fn alerts_to_scripts() {
+        let key = |n: u128| id(n).to_string();
+        let mut radar = Radar::default();
+        // off: nothing, even for an arrival
+        sweep(&mut radar, vec![at(1, HERE, 30.0), at(2, THERE, 300.0)], 0.0);
+        assert!(radar.script_alerts(false, false).is_empty());
+        // entries only: the arrivals in our region
+        sweep(
+            &mut radar,
+            vec![at(1, HERE, 30.0), at(2, THERE, 300.0), at(3, HERE, 50.0), at(4, THERE, 400.0)],
+            1.0,
+        );
+        assert_eq!(radar.script_alerts(true, false), vec![format!("1,1,{}", key(3))]);
+        // with the exits: every arrival, then the departures, each list
+        // with its own number
+        sweep(&mut radar, vec![at(1, HERE, 30.0), at(5, THERE, 500.0)], 2.0);
+        let labels = radar.script_alerts(true, true);
+        assert_eq!(labels[0], format!("2,1,{}", key(5)));
+        assert!(labels[1].starts_with("3,-3,"));
+        for gone in [2, 3, 4] {
+            assert!(labels[1].contains(&key(gone)));
+        }
+        // nothing moved: nothing sent
+        sweep(&mut radar, vec![at(1, HERE, 30.0), at(5, THERE, 500.0)], 3.0);
+        assert!(radar.script_alerts(true, true).is_empty());
+    }
+
+    #[test]
+    fn a_script_sync_lists_everyone_six_at_a_time() {
+        let mut radar = Radar::default();
+        let crowd: Vec<Sighting> = (1..=8).map(|n| at(n, HERE, n as f32)).collect();
+        sweep(&mut radar, crowd.clone(), 0.0);
+        assert!(radar.script_alerts(false, false).is_empty());
+        radar.ask_script_sync();
+        sweep(&mut radar, crowd.clone(), 1.0);
+        let labels = radar.script_alerts(false, false);
+        assert_eq!(labels.len(), 2);
+        assert!(labels[0].starts_with("1,6,") && labels[1].starts_with("1,2,"));
+        assert_eq!(labels.iter().map(|l| l.split(',').count() - 2).sum::<usize>(), 8);
+        // one sync per request
+        sweep(&mut radar, crowd, 2.0);
+        assert!(radar.script_alerts(false, false).is_empty());
+    }
+
+    #[test]
+    fn the_demo_walker_crosses_every_range_in_and_out() {
+        use crate::demo::{RADAR_WALKER, radar_walk};
+        let me = Vec3::new(132.0, 126.0, 33.0);
+        let mut radar = Radar::default();
+        let mut crossings = Vec::new();
+        for t in 0..=31 {
+            let aurora_net::NetEvent::CoarseLocations { positions, .. } = radar_walk(me, f64::from(t)) else {
+                panic!("the walk is a list of coarse locations");
+            };
+            let seen = positions
+                .into_iter()
+                .map(|(id, position)| Sighting {
+                    id,
+                    position,
+                    ..at(0, HERE, 0.0)
+                })
+                .collect();
+            let events = radar.sweep(seen, me, Some(HERE), &HashMap::new(), 96.0, f64::from(t));
+            crossings.extend(events.into_iter().filter(|e| e.avatar() == RADAR_WALKER).map(|e| match e {
+                Event::RegionEnter(..) => "region in",
+                Event::DrawEnter(..) => "draw in",
+                Event::ChatEnter(..) => "chat in",
+                Event::ChatLeave(_) => "chat out",
+                Event::DrawLeave(_) => "draw out",
+                Event::RegionLeave(_) => "region out",
+                Event::AgeAlert(..) => "age",
+            }));
+        }
+        assert_eq!(crossings, ["draw in", "region in", "chat in", "chat out", "draw out", "region out"]);
+    }
+
+    #[test]
+    fn every_event_has_its_sound() {
+        use crate::ui_sound::UiSound as S;
+        assert_eq!(Event::RegionEnter(id(1), None).sound(), S::RadarRegionEnter);
+        assert_eq!(Event::ChatLeave(id(1)).sound(), S::RadarChatLeave);
+        assert_eq!(Event::AgeAlert(id(1), 2).sound(), S::RadarAgeAlert);
     }
 }
