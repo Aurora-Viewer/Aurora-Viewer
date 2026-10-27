@@ -129,7 +129,9 @@ are planned or in progress: they are not in the viewer yet.
   is visible and draws thousands of objects in a handful of calls, while a
   dedicated render thread keeps the frames coming.
 - **Faster arrivals**: what you are looking at downloads first, and after a
-  teleport the region shows about a second sooner.
+  teleport the region shows about a second sooner. Downloads keep pace with
+  your connection, so avatars come out of the cloud about three times
+  sooner, already textured.
 - **Fewer hitches in a crowd**: avatars, their outfits and changing
   materials are updated without the little stutters of a busy place.
 - **It holds on**: a network blip no longer logs you out (Aurora reconnects
@@ -137,6 +139,8 @@ are planned or in progress: they are not in the viewer yet.
   viewer: Aurora stays within the video memory your graphics driver grants it.
 - **Your whole inventory, ready**: it loads in the background from login on,
   so its folders are already filled when you open them.
+- **Your whole outfit, every time**: every attachment is worn at login and at
+  each outfit change, even in a busy region.
 - **The right graphics card on a laptop**: on a PC with an integrated and a
   dedicated GPU, Aurora picks the dedicated one, and you can choose the card
   in Preferences, from the login screen on.
@@ -192,7 +196,9 @@ are planned or in progress: they are not in the viewer yet.
   smoothed between two server updates.
 - **Mouselook that plays right**: hold the right button to zoom, and
   scripted weapons and HUDs hear your clicks — even a scripted attachment
-  worn under a mesh body.
+  worn under a mesh body. Hold Alt to free the cursor and click a window or a
+  HUD. Pick your crosshair: a dot, a cross, a circle, the Legacy corners or
+  your own picture, with its size and colour.
 - **Little comforts**: walk backward without turning around, log back in
   still flying, Quickjump to jump and land without the animation delay,
   animations that pause while you edit an attachment, and Help › Grid status
@@ -234,6 +240,13 @@ are planned or in progress: they are not in the viewer yet.
   on-screen camera pad, and a 2 s or 10 s self-timer to get into your pose.
 - **Up to 8K**: 4K by default, in PNG, JPEG or BMP, to disk, inventory or the
   profile feed ([how to use it](#photos)).
+- **Freeze the world**: every avatar, animation and moving thing holds still
+  while your camera stays free, to line up the perfect angle on a pose.
+- **Camera presets**: save a whole shot by name and bring it back in one
+  click: where the camera stands (held by your avatar, at a place, or
+  following an object), the lens, the filters and the light.
+- **Quiet snapshots**: like the Legacy Viewer, the shutter is heard around you
+  and your avatar plays the snapshot animation; one switch keeps both quiet.
 - **Isolate your subject**: your avatar alone, or the avatars and objects you
   click, on a transparent background: a PNG ready for a poster or a profile,
   with soft hair and glass kept partly transparent.
@@ -277,6 +290,12 @@ are planned or in progress: they are not in the viewer yet.
   into neighbouring regions, filter by ownership, sale, physical, phantom,
   temporary or distance, sort the results, then inspect an object, zoom to
   it or copy its UUID.
+- **A particle editor**: Build › Edit particles shapes an effect on the
+  selected prim, live, then puts the matching script into it or copies it,
+  with no `llParticleSystem` written by hand.
+- **Animation explorer**: World › Animation explorer shows which object or
+  resident plays an animation on you, previews it on a stand-in avatar, and
+  stops it, revokes the object's permissions or blocks it for good.
 
 ### An interface made for today
 
@@ -285,7 +304,8 @@ are planned or in progress: they are not in the viewer yet.
 - **Conversations made for today**: a Contacts tab, conversations you can
   reorder, group pictures, and nearby chat as cards with the speaker's
   picture. Unread conversations flash softly, "is typing…" shows, and an item
-  someone gives you appears as a card in their conversation. A thumbnail per
+  someone gives you appears as a card in their conversation, like the L$ they
+  pay you, with their message. A thumbnail per
   open conversation waits beside the chat bar with its unread count, and
   nearby chat can also rise in bubbles above the speakers' heads (off by
   default).
@@ -305,7 +325,8 @@ are planned or in progress: they are not in the viewer yet.
 - **Write with ease**: a spell checker with suggestions in the chat bars,
   conversations and notecards, auto-replace (`brb`…) if you like, `@` to
   mention someone in the conversation, names completed as you type, and `/`
-  in nearby chat to find and play a gesture.
+  in nearby chat to find and play a gesture. Arabic and Hebrew read right to
+  left, in name tags, bubbles, floating text and conversations.
 - **GIFs in the conversation**: a GIF picker next to the emoji button, with
   GIPHY and KLIPY. It appears once you add your own free key in
   Preferences › Chat › GIF.
@@ -324,6 +345,7 @@ are planned or in progress: they are not in the viewer yet.
 - **Right-click menus that do it all**: Inspect an avatar, Derender and the
   asset blacklist, invite to a group, add to a contact set, block particles,
   give a calling card, and the object menus' entries working as you expect.
+  Arrange the menus of objects, land, avatars, attachments and HUDs yourself.
 - **A quick library** (`Ctrl+Space`): textures, PBR materials, objects, animations,
   sounds, notecards, landmarks and scripts from `#Aurora/Aurora Library`, with
   search, folders, favourites and recent use. Check several actual item types
@@ -336,9 +358,12 @@ are planned or in progress: they are not in the viewer yet.
   filter chips, with columns you resize and choose. Coloured icons by item
   type, and a CMT button that shows your rights, the next owner's, or both.
   A second inventory window opens beside the first to sort between faraway
-  folders, and folders opened in their own window get the same layout.
+  folders, and folders opened in their own window get the same layout. The
+  Recent tab can cover a set period, such as the last week.
 - **Outfits at hand**: the outfit menu on the outfit folders, and a
-  double-click in the inventory to put something on or take it off.
+  double-click in the inventory to put something on or take it off. Group
+  your outfits in folders right from Appearance, in the list and the
+  gallery.
 - **One search for everything**: type once and residents, places, events,
   groups and classifieds come back together, with type chips, filters on
   one line and the details beside the results.
@@ -389,8 +414,8 @@ are planned or in progress: they are not in the viewer yet.
   stay visible and options for neighbouring parcels of the same owner or
   group.
 - **Immersive mode**: the whole interface hidden but the chat, for photos,
-  events or simply enjoying the world; two faint buttons bring back the name
-  tags or leave the mode.
+  events or simply enjoying the world; faint buttons bring back the name
+  tags, hide your HUDs too, or leave the mode.
 - **Aurora team and Linden Lab marks**: their name tags, lists, chat lines
   and profiles show who works on Aurora and who works at Linden Lab.
 - **Link safety check**: web links in chat and profiles are marked trusted,
@@ -409,6 +434,9 @@ are planned or in progress: they are not in the viewer yet.
   Credential Manager, as a hash only.
 - **Try it without an account**: an offline demo mode simulates a server
   locally, with no grid connection.
+- **Just for fun**: name tags that jiggle like jelly under the pointer, and a
+  click combo counter that bursts into northern lights. Both off by default,
+  in Preferences › Just for fun.
 
 ### Open
 
@@ -458,8 +486,9 @@ The texture memory budget is set automatically from the detected VRAM.
   automatic hover height, Quickjump, rebake, skeleton reset and animation
   controls; gestures with
   playback, editing, chat triggers and shortcuts; mouselook zoom on the
-  right button and script controls for weapons and HUDs; a built-in AO with
-  swimming and water walking.
+  right button, a free cursor with Alt, custom crosshairs and script controls
+  for weapons and HUDs; an Animation explorer; a built-in AO with swimming
+  and water walking.
 - **[LiveMesh](docs/BLENDER_LIVE.md)** — an optional Blender 2.93+
   plug-in previews geometry, weight and shape-key edits through a local
   connection, without uploading assets. Rigged meshes follow your avatar;
@@ -475,13 +504,15 @@ The texture memory budget is set automatically from the detected VRAM.
   a Sound Explorer with local previews, source camera and sound blocking;
   walk-through portals shared with other Aurora users, with friend/group
   access and protection against portals appearing on top of someone;
-  parcel content isolation, and a grid status window.
+  parcel content isolation, a grid status window, and a live particle
+  editor.
 - **Photos and camera** — a full-screen viewfinder with face autofocus, lens
   rings, focus peaking, a live histogram, exposure lock and a self-timer;
   snapshots up to 8K to disk, inventory or
   the profile feed; isolation of your avatar or chosen subjects on a
   transparent background; 66 stackable filters and effects with their own
-  sliders, and your `.cube` LUTs; depth of field, a maximum-quality photo mode with 8× MSAA,
+  sliders, and your `.cube` LUTs; camera presets, a frozen world, quiet
+  snapshots; depth of field, a maximum-quality photo mode with 8× MSAA,
   temporary lighting controls, keyboard free camera and a combined camera /
   movement Controls window.
 - **Social** — local chat as cards or classic lines, messenger-style IMs and
