@@ -39,6 +39,7 @@ mod poser;
 mod sound_explorer;
 // Bug report form (disabled, see main.rs):
 // mod bug_report;
+mod alt_graph;
 mod avatar_health;
 mod blender_live;
 mod blender_shape;
@@ -330,6 +331,8 @@ pub struct App {
     /// Right-click menu of the text fields (Cut, Copy, Paste…).
     text_menu: ui::text_menu::TextMenu,
     alt: bool,
+    /// AltGr held: Ctrl + Alt for the mouse only (app/alt_graph.rs).
+    alt_graph: bool,
     left_down: bool,
     /// An unhandled world press may start steering when the right button joins.
     world_mouse_walk_pending: bool,
@@ -1113,6 +1116,7 @@ impl App {
             numeric_drag: Default::default(),
             text_menu: Default::default(),
             alt: false,
+            alt_graph: false,
             left_down: false,
             world_mouse_walk_pending: false,
             clicks: Default::default(),
@@ -3382,10 +3386,11 @@ impl App {
     fn beacon_hover(&self) -> bool {
         let ppp = self.egui_ctx.pixels_per_point();
         let at = egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp);
+        let (alt, ctrl) = self.mouse_alt_ctrl();
         matches!(self.screen, Screen::World)
             && !self.camera.mouselook()
-            && !self.alt
-            && !self.ctrl
+            && !alt
+            && !ctrl
             && !self.shift
             && !self.color_pipette()
             && !self.exit_prompt.open
@@ -3400,30 +3405,34 @@ impl App {
     }
 
     /// The camera drag a left click would start under the pointer, like
-    /// LLToolCamera::handleHover (lltoolfocus.cpp): Alt held over the world,
-    /// or the build Focus tool. AltGr alone (right Alt, typed as Ctrl + Alt)
-    /// is a character key, not the camera.
+    /// LLToolCamera::handleHover (lltoolfocus.cpp): Alt held over the world
+    /// (AltGr as Ctrl + Alt, app/alt_graph.rs), or the build Focus tool.
     fn camera_tool_hover(&self, ctx: &egui::Context) -> Option<crate::camera::ToolMode> {
         use crate::camera::ToolMode;
         let focus_tool = self.build.open && self.build.tool == crate::build::Tool::Focus;
-        let alt_gr = self.alt_gr_alone();
+        // (AltGr typing a character in a field leaves the cursor as it is)
+        let (alt, ctrl) = if ctx.egui_wants_keyboard_input() {
+            (self.alt, self.ctrl)
+        } else {
+            self.mouse_alt_ctrl()
+        };
         if !matches!(self.screen, Screen::World)
             || self.mouse_mode != MouseMode::None
             || self.camera.mouselook()
-            || !(focus_tool || (self.alt && !alt_gr))
+            || !(focus_tool || alt)
             || ctx.is_pointer_over_egui()
             || ctx.egui_wants_pointer_input()
         {
             return None;
         }
-        Some(if focus_tool && !self.ctrl && !self.shift {
+        Some(if focus_tool && !ctrl && !self.shift {
             match self.build.focus_mode {
                 crate::build::FocusMode::Zoom => ToolMode::Zoom,
                 crate::build::FocusMode::Orbit => ToolMode::Orbit,
                 crate::build::FocusMode::Pan => ToolMode::Pan,
             }
         } else {
-            ToolMode::from_mods(self.ctrl, self.shift)
+            ToolMode::from_mods(ctrl, self.shift)
         })
     }
 
@@ -3450,8 +3459,10 @@ impl App {
                 self.camera.look(dx, dy, s, &mut self.world.agent);
             }
         } else if self.mouse_mode != MouseMode::None {
-            // LLToolCamera: steering is the zoom tool on our avatar
-            let focus_tool = self.build.open && self.build.tool == crate::build::Tool::Focus && !self.ctrl && !self.shift;
+            // LLToolCamera: steering is the zoom tool on our avatar; the
+            // modifiers held now choose the drag (AltGr: Ctrl + Alt)
+            let (_, ctrl) = self.mouse_alt_ctrl();
+            let focus_tool = self.build.open && self.build.tool == crate::build::Tool::Focus && !ctrl && !self.shift;
             let mode = match self.mouse_mode {
                 MouseMode::Steer => crate::camera::ToolMode::Zoom,
                 _ if focus_tool => match self.build.focus_mode {
@@ -3459,7 +3470,7 @@ impl App {
                     crate::build::FocusMode::Orbit => crate::camera::ToolMode::Orbit,
                     crate::build::FocusMode::Pan => crate::camera::ToolMode::Pan,
                 },
-                _ => crate::camera::ToolMode::from_mods(self.ctrl, self.shift),
+                _ => crate::camera::ToolMode::from_mods(ctrl, self.shift),
             };
             let width = self.gfx.as_ref().map(|g| g.renderer.size().0 as f32).unwrap_or(1280.0);
             self.camera.drag(mode, dx, dy, width, &mut self.world.agent);
@@ -3521,7 +3532,8 @@ impl App {
                     self.shift = shift;
                     self.alt = alt;
                 }
-                Step::Press => self.on_left_press(),
+                Step::AltGraph(held) => self.alt_graph = held,
+                Step::Press => self.with_mouse_mods(Self::on_left_press),
                 Step::Release => self.on_left_release(),
                 Step::RightButton(pressed) => self.mouse_input(MouseButton::Right, pressed, false),
                 Step::Drag(dx, dy) => self.camera_mouse_delta(dx, dy),
@@ -17555,6 +17567,7 @@ impl ApplicationHandler for App {
                 // (the release of a button held when the focus goes never comes)
                 self.alt_cursor.left_button(false);
                 self.alt = false;
+                self.alt_graph = false;
                 self.ctrl = false;
                 self.shift = false;
                 self.right_drag = false;
@@ -17570,6 +17583,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event: ke, .. } => {
                 self.last_input = Instant::now();
+                self.track_alt_graph(ke);
                 // Clear held controls before a dialog, capture or web/media
                 // page can return early after receiving the native release.
                 if ke.state == ElementState::Released
