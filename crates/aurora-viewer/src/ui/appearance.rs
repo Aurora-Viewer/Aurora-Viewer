@@ -1113,20 +1113,20 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
                 st.selected_item = Some(it.id);
             }
             item_menu(&resp, p, it, actions);
-            if edit && st.selected_item == Some(it.id) {
+            // a body part has none of these buttons: no empty row under it
+            if edit && st.selected_item == Some(it.id) && it.asset_type != 13 {
                 ui.horizontal(|ui| {
-                    if it.asset_type != 13
-                        && icon_button(
-                            ui,
-                            p,
-                            "circle-x-filled",
-                            if it.asset_type == 6 {
-                                aurora_i18n::tr!("common-detach")
-                            } else {
-                                aurora_i18n::tr!("common-remove")
-                            },
-                        )
-                        .clicked()
+                    if icon_button(
+                        ui,
+                        p,
+                        "circle-x-filled",
+                        if it.asset_type == 6 {
+                            aurora_i18n::tr!("common-detach")
+                        } else {
+                            aurora_i18n::tr!("common-remove")
+                        },
+                    )
+                    .clicked()
                     {
                         actions.push(Action::Remove(it.id));
                     }
