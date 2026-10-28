@@ -35,6 +35,9 @@ pub struct NotifUi {
     pub anchor: Option<egui::Pos2>,
     /// (notification id, expiry time)
     toasts: Vec<(u64, f64)>,
+    /// The scripted windows whose toast the user hid with its cross: they
+    /// wait in the list, not brought back (`update_toasts`).
+    hidden: HashSet<u64>,
     last_seen: u64,
     /// Profile pictures the cards of friends and messages want.
     pub wanted_pics: HashSet<Uuid>,
@@ -631,12 +634,15 @@ fn button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, primary: bool, size
 /// The toasts that new arrivals start and those that end. A toast-only
 /// notice (a friend online) leaves the list with its toast. In do not
 /// disturb (`dnd`) only the script menus toast, the others wait in the list
-/// (LLScreenChannel::addToast; #491).
+/// (LLScreenChannel::addToast; #491). A scripted object's window
+/// (`Notification::stays_until_answered`) has no time: its toast stays
+/// until answered, whatever comes after it, and is only kept in while the
+/// list is open, the view must stay clear or do not disturb holds it.
 fn update_toasts(list: &mut Notifications, nui: &mut NotifUi, now: f64, message_seconds: f64, hidden: bool, dnd: bool) {
     // new arrivals become toasts (unless the list is open or the view must
     // stay clear, or they were already seen where they arrived: a card in
     // the conversation in sight)
-    for n in list.list.iter().filter(|n| n.id > nui.last_seen) {
+    for n in list.list.iter().filter(|n| n.id > nui.last_seen && !n.stays_until_answered()) {
         if !nui.open && !hidden && !n.read && !n.quiet && (!dnd || super::notification_center::dnd_shows(n)) {
             nui.toasts.push((n.id, now + toast_seconds(n, message_seconds)));
         }
@@ -644,17 +650,58 @@ fn update_toasts(list: &mut Notifications, nui: &mut NotifUi, now: f64, message_
     if let Some(last) = list.list.iter().map(|n| n.id).max() {
         nui.last_seen = nui.last_seen.max(last);
     }
+    // a scripted object's window, from its arrival until answered or hidden
+    // by its cross (seen in the list or not, it is still waiting)
+    nui.hidden.retain(|id| list.list.iter().any(|n| n.id == *id));
+    let mut back = false;
+    for n in list
+        .list
+        .iter()
+        .filter(|n| n.stays_until_answered() && !n.quiet && !nui.hidden.contains(&n.id))
+    {
+        if !nui.toasts.iter().any(|(id, _)| *id == n.id) {
+            nui.toasts.push((n.id, now));
+            back = true;
+        }
+    }
+    if back {
+        nui.toasts.sort_by_key(|(id, _)| *id);
+    }
     nui.toasts.retain(|(id, until)| {
-        list.list.iter().any(|n| {
-            n.id == *id && (*until > now || matches!(n.data, Data::Dialog { .. })) && (!dnd || super::notification_center::dnd_shows(n))
-        })
+        list.list
+            .iter()
+            .any(|n| n.id == *id && (n.stays_until_answered() || (*until > now && (!dnd || super::notification_center::dnd_shows(n)))))
     });
-    if nui.toasts.len() > MAX_TOASTS {
-        let extra = nui.toasts.len() - MAX_TOASTS;
-        nui.toasts.drain(..extra);
+    // the oldest information gives way; a scripted window waits its turn
+    // (`shown_toasts`)
+    let pinned = |id: u64| list.list.iter().any(|n| n.id == id && n.stays_until_answered());
+    while nui.toasts.iter().filter(|(id, _)| !pinned(*id)).count() > MAX_TOASTS {
+        if let Some(i) = nui.toasts.iter().position(|(id, _)| !pinned(*id)) {
+            nui.toasts.remove(i);
+        }
     }
     let toasts = &nui.toasts;
     list.list.retain(|n| !n.transient || toasts.iter().any(|(id, _)| *id == n.id));
+}
+
+/// The toasts drawn (oldest first) and how many wait behind them: the
+/// scripted windows first (the newest three), the newest others in the
+/// room left, as Aurora's center does (`notification_center::visible`). In
+/// do not disturb only the script menus come out; the rest waits there.
+fn shown_toasts(list: &Notifications, nui: &NotifUi, dnd: bool) -> (Vec<u64>, usize) {
+    let drawn: Vec<(u64, bool)> = nui
+        .toasts
+        .iter()
+        .filter_map(|(id, _)| list.list.iter().find(|n| n.id == *id))
+        .filter(|n| !dnd || super::notification_center::dnd_shows(n))
+        .map(|n| (n.id, n.stays_until_answered()))
+        .collect();
+    let mut keep: Vec<u64> = drawn.iter().rev().filter(|t| t.1).take(MAX_TOASTS).map(|t| t.0).collect();
+    let room = MAX_TOASTS - keep.len();
+    keep.extend(drawn.iter().rev().filter(|t| !t.1).take(room).map(|t| t.0));
+    keep.sort_unstable();
+    let behind = drawn.len() - keep.len();
+    (keep, behind)
 }
 
 /// List under the bell and toasts; returns the answers to apply.
@@ -785,7 +832,7 @@ pub fn show(
             .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-10.0, anchor.y.min(screen.height()) + 6.0))
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing.y = 6.0;
-                let ids: Vec<u64> = nui.toasts.iter().map(|(id, _)| *id).collect();
+                let (ids, behind) = shown_toasts(list, nui, dnd);
                 for id in ids.into_iter().rev() {
                     if let Some(n) = list.list.iter_mut().find(|n| n.id == id) {
                         let r = if matches!(n.data, Data::Presence { .. } | Data::Message { .. }) {
@@ -794,11 +841,31 @@ pub fn show(
                             card(ui, p, icons, world, n, true, false)
                         };
                         match r {
-                            // closing a toast only hides it: the offer waits in the list
-                            Some(Response::Dismiss) if !matches!(n.data, Data::Dialog { .. }) => nui.toasts.retain(|(t, _)| *t != id),
+                            // closing a toast only hides it: the offer waits in
+                            // the list (a scripted window too, until answered)
+                            Some(Response::Dismiss) if !matches!(n.data, Data::Dialog { .. }) => {
+                                nui.toasts.retain(|(t, _)| *t != id);
+                                nui.hidden.insert(id);
+                            }
                             Some(r) => answers.push((id, r)),
                             None => {}
                         }
+                    }
+                }
+                if behind > 0 {
+                    let more = ui
+                        .add(
+                            egui::Label::new(
+                                RichText::new(aurora_i18n::tr!("ui-notifications-more", count = behind))
+                                    .size(12.0)
+                                    .strong()
+                                    .color(p.violet_light),
+                            )
+                            .sense(egui::Sense::click()),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if more.clicked() {
+                        nui.open = true;
                     }
                 }
             });
@@ -1140,6 +1207,50 @@ mod tests {
         update_toasts(&mut list, &mut nui, 1.0, 30.0, false, true);
         assert_eq!(nui.toasts.iter().map(|t| t.0).collect::<Vec<_>>(), vec![menu]);
         assert!(list.list.iter().any(|n| n.id == message));
+    }
+
+    /// Every window of a scripted object keeps its toast until answered,
+    /// not only llDialog: no time runs out, the information arriving after
+    /// it never pushes it out, and it is back after the open list, mouselook
+    /// or do not disturb. Its cross hides it for good (it waits in the list).
+    #[test]
+    fn every_scripted_window_keeps_its_toast_until_answered() {
+        let mut list = Notifications::default();
+        let mut nui = NotifUi::default();
+        let windows = super::super::notification_center::tests::scripted_windows(&mut list);
+        update_toasts(&mut list, &mut nui, 0.0, 30.0, false, false);
+        let infos: Vec<u64> = (0..4).map(|i| list.push(Kind::Info, format!("n{i}"), "", Data::None)).collect();
+        update_toasts(&mut list, &mut nui, 0.1, 30.0, false, false);
+        let ids = |nui: &NotifUi| nui.toasts.iter().map(|t| t.0).collect::<Vec<_>>();
+        // the oldest information gave way, not a scripted window
+        assert_eq!(ids(&nui), [windows.clone(), infos[1..].to_vec()].concat());
+        // the newest three scripted windows drawn, the rest behind
+        assert_eq!(shown_toasts(&list, &nui, false), (windows[1..].to_vec(), 4));
+        // long after: only they are left
+        update_toasts(&mut list, &mut nui, TOAST_OFFER * 4.0, 30.0, false, false);
+        assert_eq!(ids(&nui), windows);
+        // the list opened (everything read), then closed: back
+        nui.toasts.clear();
+        list.mark_all_read();
+        update_toasts(&mut list, &mut nui, 200.0, 30.0, false, false);
+        assert_eq!(ids(&nui), windows);
+        // mouselook keeps them (drawn once it ends); do not disturb draws
+        // only the text box
+        update_toasts(&mut list, &mut nui, 201.0, 30.0, true, false);
+        assert_eq!(ids(&nui), windows);
+        update_toasts(&mut list, &mut nui, 202.0, 30.0, false, true);
+        assert_eq!(shown_toasts(&list, &nui, true), (vec![windows[0]], 0));
+        assert_eq!(shown_toasts(&list, &nui, false).0, windows[1..].to_vec());
+        // hidden by its cross: stays in the list, not brought back
+        nui.toasts.retain(|t| t.0 != windows[3]);
+        nui.hidden.insert(windows[3]);
+        update_toasts(&mut list, &mut nui, 203.0, 30.0, false, false);
+        assert_eq!(ids(&nui), windows[..3].to_vec());
+        assert!(list.listed().any(|n| n.id == windows[3]));
+        // answered: gone
+        list.list.retain(|n| n.id != windows[0]);
+        update_toasts(&mut list, &mut nui, 204.0, 30.0, false, false);
+        assert_eq!(ids(&nui), windows[1..3].to_vec());
     }
 
     /// Run the Conversations floater for a few frames.

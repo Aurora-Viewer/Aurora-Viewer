@@ -341,3 +341,115 @@ fn mark_all_read_clears_the_count_and_keeps_what_waits() {
     assert!(list.list.iter().all(|n| n.read));
     assert_eq!(bell_count(&list, &c), 0);
 }
+
+/// The windows a scripted object sends besides llDialog: llTextBox,
+/// llRequestPermissions, llLoadURL and an object's llGiveInventory.
+pub(crate) fn scripted_windows(list: &mut Notifications) -> Vec<u64> {
+    let object = Uuid::from_u128(9);
+    vec![
+        list.push(
+            Kind::Script,
+            "Sign",
+            "Your name?",
+            Data::TextBox {
+                sender: ([127, 0, 0, 1], 13000).into(),
+                object,
+                channel: -6,
+            },
+        ),
+        list.push(
+            Kind::Permissions,
+            "Dance ball",
+            "Animate your avatar",
+            Data::Permissions {
+                task: object,
+                item: Uuid::from_u128(10),
+                questions: 0x10,
+                region: 1,
+                experience: None,
+            },
+        ),
+        list.push(Kind::Url, "Kiosk", "Our shop", Data::Url("https://example.invalid/".into())),
+        list.push(
+            Kind::Inventory,
+            "Gift dispenser",
+            "A notecard",
+            Data::Inventory {
+                from: Uuid::from_u128(11),
+                tx: Uuid::from_u128(12),
+                asset_type: 7,
+                object: Uuid::nil(),
+                task: true,
+                task_offer: None,
+            },
+        ),
+    ]
+}
+
+/// Every window of a scripted object stays rolled out until answered, not
+/// only llDialog: no time runs, the information arriving after it does not
+/// push it away, and it is back once the list closes, the view clears or
+/// do not disturb ends, even read in the list meanwhile.
+#[test]
+fn every_scripted_window_stays_out_until_answered() {
+    let mut list = Notifications::default();
+    let mut c = CenterUi::default();
+    let windows = scripted_windows(&mut list);
+    for i in 0..4 {
+        info(&mut list, &format!("n{i}"));
+    }
+    update(&list, &mut c, at(0.0), 30.0);
+    let pinned = |c: &CenterUi| {
+        c.peek
+            .iter()
+            .filter(|p| p.pinned && p.folding.is_none())
+            .map(|p| p.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(pinned(&c), windows);
+    // the newest three shown, the fourth waits behind "+ N more", the
+    // information after them too
+    let (shown, _) = visible(&c);
+    assert_eq!(shown.iter().map(|p| p.id).collect::<Vec<_>>(), windows[1..].to_vec());
+    // long after: still out
+    update(&list, &mut c, at(SHOW_ANSWER * 5.0), 30.0);
+    update(&list, &mut c, at(SHOW_ANSWER * 5.0 + FOLD + 0.1), 30.0);
+    assert_eq!(pinned(&c), windows);
+    assert_eq!(c.peek.len(), windows.len());
+    // the list opened (everything read), then closed: back out
+    update(&list, &mut c, Moment { open: true, ..at(100.0) }, 30.0);
+    assert!(c.peek.is_empty());
+    list.read_all();
+    update(&list, &mut c, at(100.1), 30.0);
+    assert_eq!(pinned(&c), windows);
+    // mouselook, then back
+    update(&list, &mut c, Moment { hidden: true, ..at(101.0) }, 30.0);
+    assert!(c.peek.is_empty());
+    update(&list, &mut c, at(101.1), 30.0);
+    assert_eq!(pinned(&c), windows);
+    // do not disturb keeps all but the text box in, until it ends
+    update(&list, &mut c, Moment { dnd: true, ..at(102.0) }, 30.0);
+    assert_eq!(pinned(&c), vec![windows[0]]);
+    update(&list, &mut c, at(102.1), 30.0);
+    assert_eq!(pinned(&c), windows);
+    // answered: it folds away and stays away
+    list.list.retain(|n| n.id != windows[1]);
+    update(&list, &mut c, at(103.0), 30.0);
+    update(&list, &mut c, at(103.0 + FOLD + 0.1), 30.0);
+    assert_eq!(pinned(&c), vec![windows[0], windows[2], windows[3]]);
+}
+
+/// A scripted window that arrives while the list is open or in mouselook
+/// comes out once they end.
+#[test]
+fn a_scripted_window_kept_in_comes_out_afterwards() {
+    for kept in [Moment { open: true, ..at(0.0) }, Moment { hidden: true, ..at(0.0) }] {
+        let mut list = Notifications::default();
+        let mut c = CenterUi::default();
+        let windows = scripted_windows(&mut list);
+        update(&list, &mut c, kept, 30.0);
+        assert!(c.peek.is_empty());
+        update(&list, &mut c, at(0.1), 30.0);
+        assert_eq!(c.peek.iter().map(|p| p.id).collect::<Vec<_>>(), windows);
+    }
+}

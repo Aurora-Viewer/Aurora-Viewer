@@ -49,8 +49,9 @@ pub struct Peek {
     pub left: f64,
     /// When it started to fold back into the bell.
     pub folding: Option<f64>,
-    /// A script menu: it stays out until answered, like Firestorm's script
-    /// toasts (no time left, no fold).
+    /// A scripted object's window (`Notification::stays_until_answered`):
+    /// it stays out until answered, like the Legacy Viewer's script
+    /// floaters (no time left, no fold).
     pub pinned: bool,
 }
 
@@ -114,12 +115,18 @@ pub fn show_seconds(n: &Notification, message_seconds: f64) -> f64 {
     }
 }
 
-/// Shows in do not disturb as well: a script menu (#491). The Legacy Viewer
-/// opens its script floater whatever the status (LLScriptHandler::
-/// processNotification) and keeps only the other toasts back
-/// (LLScreenChannel::addToast).
+/// Shows in do not disturb as well: a script menu or text box (#491). The
+/// Legacy Viewer opens its script floater for both (ScriptDialog) whatever
+/// the status (LLScriptHandler::processNotification) and keeps only the
+/// other toasts back (LLScreenChannel::addToast).
 pub fn dnd_shows(n: &Notification) -> bool {
-    matches!(n.data, Data::Dialog { .. })
+    matches!(n.data, Data::Dialog { .. } | Data::TextBox { .. })
+}
+
+/// A scripted object's window out of the way of the list, the clear view or
+/// do not disturb, which can be shown now.
+fn may_show(n: &Notification, m: &Moment) -> bool {
+    !m.open && !m.hidden && (!m.dnd || dnd_shows(n))
 }
 
 /// Rolls out as a card: what is listed, and a message kept out of the bell
@@ -136,8 +143,9 @@ pub fn bell_count(list: &Notifications, c: &CenterUi) -> usize {
 
 /// Advance the cards: new arrivals unroll (unless the bell is paused, a
 /// script menu excepted, the view must stay clear or the list is open), time
-/// runs out unless the panel
-/// is hovered, a card that ran out (or was answered) folds into the bell.
+/// runs out unless the panel is hovered, a card that ran out (or was
+/// answered) folds into the bell. A scripted object's window has no time: it
+/// stays out until answered, and comes back after whatever kept it in.
 /// Returns whether something moves (a repaint is needed).
 pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds: f64) -> bool {
     let dt = c.last_time.map_or(0.0, |t| (m.now - t).max(0.0));
@@ -157,14 +165,14 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
         }
     }
     for n in list.list.iter().filter(|n| n.id > c.last_seen && card(n)) {
-        if !n.read && !n.quiet && (!m.dnd || dnd_shows(n)) && !m.hidden && !m.open {
+        if !n.stays_until_answered() && !n.read && !n.quiet && may_show(n, &m) {
             let total = show_seconds(n, message_seconds);
             c.peek.push(Peek {
                 id: n.id,
                 total,
                 left: total,
                 folding: None,
-                pinned: matches!(n.data, Data::Dialog { .. }),
+                pinned: false,
             });
         }
     }
@@ -176,10 +184,30 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
         c.peek.clear();
     } else if m.dnd {
         // the bell is paused: only the script menus stay out (#491)
-        c.peek.retain(|p| p.pinned);
+        c.peek
+            .retain(|p| p.pinned && list.list.iter().find(|n| n.id == p.id).is_none_or(dnd_shows));
+    }
+    // a scripted object's window stays out until answered: when it arrives,
+    // and again once the list closes, the view clears or do not disturb
+    // ends (seen in the list or not, it is still waiting)
+    let mut back = false;
+    for n in list.list.iter().filter(|n| n.stays_until_answered() && !n.quiet && card(n)) {
+        if may_show(n, &m) && !c.peek.iter().any(|p| p.id == n.id) {
+            c.peek.push(Peek {
+                id: n.id,
+                total: SHOW_ANSWER,
+                left: SHOW_ANSWER,
+                folding: None,
+                pinned: true,
+            });
+            back = true;
+        }
+    }
+    if back {
+        c.peek.sort_by_key(|p| p.id);
     }
     for p in c.peek.iter_mut() {
-        let gone = !list.list.iter().any(|n| n.id == p.id && !n.read && card(n));
+        let gone = !list.list.iter().any(|n| n.id == p.id && (p.pinned || !n.read) && card(n));
         if p.folding.is_none() {
             if !m.hovered && !p.pinned {
                 p.left -= dt;
@@ -982,4 +1010,4 @@ fn hhmm(secs: u64) -> String {
 pub mod presence;
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

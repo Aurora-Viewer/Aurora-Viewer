@@ -5568,6 +5568,71 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
         });
         return ev;
     }
+    // `scripted`: every window a scripted object sends (llDialog, llTextBox,
+    // llRequestPermissions, llLoadURL, llGiveInventory), then four pieces of
+    // information after them; the windows stay out until answered
+    if menu == "scripted" {
+        let sender: std::net::SocketAddr = ([127, 0, 0, 1], 13000).into();
+        let owner = aurora_i18n::tr!("demo-violet-wolf");
+        ev.push(NetEvent::ScriptDialog {
+            sender,
+            object_id: Uuid::from_u128(0xF0),
+            object_name: aurora_i18n::tr!("demo-fountain").into(),
+            owner_name: owner.into(),
+            message: aurora_i18n::tr!("demo-choose-a-color-for-the-water").into(),
+            channel: -4242,
+            buttons: vec![
+                aurora_i18n::tr!("demo-purple").into(),
+                aurora_i18n::tr!("demo-turquoise").into(),
+                aurora_i18n::tr!("demo-amber").into(),
+            ],
+        });
+        ev.push(NetEvent::ScriptDialog {
+            sender,
+            object_id: Uuid::from_u128(0xF2),
+            object_name: aurora_i18n::tr!("demo-land-script-sign").into(),
+            owner_name: owner.into(),
+            message: aurora_i18n::tr!("demo-scripted-textbox").into(),
+            channel: -4244,
+            buttons: vec!["!!llTextBox!!".into()],
+        });
+        ev.push(NetEvent::ScriptQuestion {
+            task_id: Uuid::from_u128(0xF3),
+            item_id: Uuid::from_u128(0xF4),
+            object_name: aurora_i18n::tr!("demo-keywords-object-name").into(),
+            owner_name: owner.into(),
+            questions: 0x10,
+            experience: Uuid::nil(),
+            region: 0,
+        });
+        ev.push(NetEvent::LoadUrl {
+            object_name: aurora_i18n::tr!("demo-shop").into(),
+            object_id: Uuid::from_u128(0xF5),
+            message: aurora_i18n::tr!("demo-scripted-url").into(),
+            url: "https://example.invalid/shop".into(),
+        });
+        ev.push(NetEvent::InstantMessage(aurora_net::InstantMessage {
+            from_agent_id: DEMO_GIVER,
+            from_name: aurora_i18n::tr!("demo-gift-dispenser").into(),
+            to_agent_id: Uuid::nil(),
+            dialog: crate::world::notifications::im::TASK_INVENTORY_OFFERED,
+            session_id: Uuid::from_u128(0xF6),
+            message: aurora_i18n::tr!("received-filing-demo-object").into(),
+            offline: false,
+            from_group: false,
+            binary_bucket: vec![7],
+            timestamp: 0,
+        }));
+        for info in [
+            aurora_i18n::tr!("demo-notifs-paid"),
+            aurora_i18n::tr!("demo-notifs-group-notice"),
+            aurora_i18n::tr!("demo-group-notice-sandbox"),
+            aurora_i18n::tr!("demo-group-notice-rules"),
+        ] {
+            ev.push(im(crate::world::notifications::im::MESSAGEBOX, info, Vec::new()));
+        }
+        return ev;
+    }
     let (object_name, message, buttons) = if !menu.is_empty() {
         let mut buttons = [
             aurora_i18n::tr!("status-close"),
@@ -5648,6 +5713,20 @@ mod notification_tests {
         }
         let events = notification_samples(false, true, None);
         assert!(matches!(events.as_slice(), [NetEvent::InstantMessage(im)] if im.dialog == 4));
+        // every scripted window, then the information after them
+        let events = notification_samples(false, false, Some("scripted"));
+        assert!(matches!(
+            events.as_slice(),
+            [
+                NetEvent::ScriptDialog { .. },
+                NetEvent::ScriptDialog { buttons, .. },
+                NetEvent::ScriptQuestion { .. },
+                NetEvent::LoadUrl { .. },
+                NetEvent::InstantMessage(gift),
+                ..
+            ] if buttons[0] == "!!llTextBox!!" && gift.dialog == crate::world::notifications::im::TASK_INVENTORY_OFFERED
+        ));
+        assert_eq!(events.len(), 9);
     }
 }
 
