@@ -1336,7 +1336,7 @@ fn a_friend_s_plate_takes_the_friends_color_unless_a_set_colors_it() {
         }),
         ..c.clone()
     };
-    let _ = ctx.run_ui(Default::default(), |ui| {
+    let mut output = ctx.run_ui(Default::default(), |ui| {
         let painter = ui.ctx().layer_painter(egui::LayerId::background());
         let mut env = paint::Env::new(&painter, &p, &icons, 0.0);
         assert_eq!(paint::surface_tint(&env, &friend), None, "the option off: the plain surface");
@@ -1368,4 +1368,5 @@ fn a_friend_s_plate_takes_the_friends_color_unless_a_set_colors_it() {
             "the set's background alone, no mix"
         );
     });
+    output.textures_delta.clear();
 }
