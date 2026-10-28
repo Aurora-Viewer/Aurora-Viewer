@@ -261,6 +261,12 @@ fn hours(unix: i64, offset: i64, seconds: bool, twelve: bool) -> String {
     }
 }
 
+/// The time of `unix` as the clock writes it (its zone, 12 or 24 hours),
+/// without seconds nor zone: when the session's places were reached.
+pub(crate) fn time_of(s: SystemIsland, unix: i64) -> String {
+    hours(unix, offset(s.clock_zone, unix), false, twelve_hours(s.clock_format))
+}
+
 /// The clock's text, now: the time and SLT, or local time and its zone.
 pub(crate) fn text(s: SystemIsland) -> String {
     let unix = now_unix();

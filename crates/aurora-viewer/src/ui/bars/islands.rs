@@ -1084,6 +1084,7 @@ mod tests {
             parcel: "Aurora Plaza",
             tp_back: None,
             tp_forward: None,
+            tp_session: Default::default(),
             maturity: "",
             position: glam::Vec3::new(132.0, 126.0, 33.0),
             fps: 60.0,

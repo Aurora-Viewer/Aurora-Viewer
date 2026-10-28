@@ -258,7 +258,6 @@ pub fn dropdown_placed(
     place: Option<(egui::RectAlign, f32)>,
     body: impl FnOnce(&mut Ui),
 ) -> bool {
-    use egui::containers::menu::MenuConfig;
     if dismiss_on_window_change(&resp.ctx) {
         return false;
     }
@@ -268,9 +267,38 @@ pub fn dropdown_placed(
     } else {
         close
     };
+    placed(Popup::menu(resp), p, close, place, body)
+}
+
+/// [`dropdown_placed`] opened by its caller instead of by a click on
+/// `resp` (a button held down, a right click): `open` opens it this frame.
+/// It stays open until a click outside or an entry closes it. Returns
+/// whether the menu is open.
+pub fn dropdown_held(
+    resp: &egui::Response,
+    p: &Palette,
+    open: bool,
+    place: Option<(egui::RectAlign, f32)>,
+    body: impl FnOnce(&mut Ui),
+) -> bool {
+    if dismiss_on_window_change(&resp.ctx) {
+        return false;
+    }
+    let popup = Popup::menu(resp).open_memory(open.then_some(egui::SetOpenCommand::Bool(true)));
+    placed(popup, p, PopupCloseBehavior::CloseOnClickOutside, place, body)
+}
+
+fn placed(
+    popup: Popup<'_>,
+    p: &Palette,
+    close: PopupCloseBehavior,
+    place: Option<(egui::RectAlign, f32)>,
+    body: impl FnOnce(&mut Ui),
+) -> bool {
+    use egui::containers::menu::MenuConfig;
     // the tag hands the same style and rule to the sub-menus
     let config = MenuConfig::new().close_behavior(close).style(style(p));
-    let mut popup = Popup::menu(resp);
+    let mut popup = popup;
     if let Some((align, gap)) = place {
         popup = popup.align(align).gap(gap);
     }
@@ -357,6 +385,14 @@ pub fn picture_row(
     selected: bool,
 ) -> egui::Response {
     row_lead(ui, p, Lead::Picture(picture, fallback), label, true, End::Keys(detail), selected)
+}
+
+/// A row of a list holding the place we are in (the arrows' teleport
+/// list): its `detail` muted at the right end; the `current` row is lit
+/// like a hovered entry and takes no click.
+pub fn current_row(ui: &mut Ui, p: &Palette, icon: &str, label: &str, detail: &str, current: bool) -> egui::Response {
+    let sense = if current { Sense::hover() } else { Sense::click() };
+    row_lead_sensed(ui, p, Lead::Icon(icon), label, true, End::Keys(detail), current, sense)
 }
 
 /// [`picture_row`] with a Tabler icon: a resident to mention, a gesture.
