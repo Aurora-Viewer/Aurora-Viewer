@@ -387,7 +387,7 @@ fn local_paintmap(ui: &mut egui::Ui, p: &Palette, v: &View, world: &mut World) {
         p,
         aurora_i18n::tr!("region-paintmap"),
         aurora_i18n::tr!("region-paintmap-desc"),
-        220.0,
+        260.0,
         |ui| {
             if ui
                 .add_enabled(

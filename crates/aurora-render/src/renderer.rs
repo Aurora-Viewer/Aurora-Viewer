@@ -1872,6 +1872,45 @@ fn uniform_entry(binding: u32, visibility: wgpu::ShaderStages) -> wgpu::BindGrou
     }
 }
 
+/// Shadows do not bind the scene frame group. Their paintmap sampler lives
+/// with the light's parameters, so alpha terrain can use the same mixer.
+pub(crate) fn shadow_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("shadow params"),
+        entries: &[
+            uniform_entry(0, wgpu::ShaderStages::VERTEX),
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    })
+}
+
+pub(crate) fn shadow_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    buffer: &wgpu::Buffer,
+    sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("shadow vp"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
+}
+
 pub(crate) fn make_view(
     device: &wgpu::Device,
     label: &str,
@@ -2503,10 +2542,7 @@ impl Backend {
                 },
             ],
         });
-        let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("shadow params"),
-            entries: &[uniform_entry(0, wgpu::ShaderStages::VERTEX)],
-        });
+        let shadow_layout = shadow_layout(&device);
         let post_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("post"),
             entries: &[
@@ -2584,16 +2620,7 @@ impl Backend {
             .collect();
         let shadow_bind_groups = shadow_buffers
             .iter()
-            .map(|b| {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("shadow vp"),
-                    layout: &shadow_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: b.as_entire_binding(),
-                    }],
-                })
-            })
+            .map(|b| shadow_bind_group(&device, &shadow_layout, b, &lin_clamp))
             .collect();
         let records_bind_group = Self::make_records_bg(&device, &records_layout, &scene);
 

@@ -1672,6 +1672,7 @@ struct ShadowParams {
 };
 
 @group(3) @binding(0) var<uniform> shadow_params: ShadowParams;
+@group(3) @binding(1) var shadow_clamp: sampler;
 
 @vertex
 fn vs_shadow(in: VsIn) -> ShadowOut {

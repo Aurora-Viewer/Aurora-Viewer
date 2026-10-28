@@ -56,7 +56,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
         input.comp = 0.0;
         input.record = id.x + 5u;
     }}
-    let material = terrain_material(input, vec3<f32>(0.01, 0.0, 0.0), vec3<f32>(0.0, 0.01, 0.0), false);
+    let material = terrain_material(input, vec3<f32>(0.01, 0.0, 0.0), vec3<f32>(0.0, 0.01, 0.0), false, lin_clamp);
     result[id.x * 4u] = material.color;
     result[id.x * 4u + 1u] = vec4<f32>(material.orm, material.cutoff);
     result[id.x * 4u + 2u] = vec4<f32>(material.normal, 1.0);
@@ -388,6 +388,7 @@ fn pbr_terrain_shadow_depth_and_paintmap_holes_agree_on_gpu() {
 @group(0) @binding(2) var tex_pages: texture_2d_array<f32>;
 @group(0) @binding(3) var tex_sampler: sampler;
 @group(0) @binding(4) var lin_clamp: sampler;
+@group(3) @binding(1) var shadow_clamp: sampler;
 fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
     let uv = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
     var o: ShadowOut;
@@ -521,89 +522,121 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
         ..Default::default()
     });
     let clamp_sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
+    let layout_entries = [
+        wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+            binding: 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+            binding: 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2Array,
+                multisampled: false,
+            },
+            count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+            binding: 3,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+            binding: 4,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        },
+    ];
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: None,
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2Array,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 4,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
+        entries: &layout_entries,
     });
+    let group_entries = [
+        wgpu::BindGroupEntry {
+            binding: 0,
+            resource: record_buffer.as_entire_binding(),
+        },
+        wgpu::BindGroupEntry {
+            binding: 1,
+            resource: locations.as_entire_binding(),
+        },
+        wgpu::BindGroupEntry {
+            binding: 2,
+            resource: wgpu::BindingResource::TextureView(&texture_view),
+        },
+        wgpu::BindGroupEntry {
+            binding: 3,
+            resource: wgpu::BindingResource::Sampler(&sampler),
+        },
+        wgpu::BindGroupEntry {
+            binding: 4,
+            resource: wgpu::BindingResource::Sampler(&clamp_sampler),
+        },
+    ];
     let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: &layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: record_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: locations.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(&texture_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: wgpu::BindingResource::Sampler(&clamp_sampler),
-            },
-        ],
+        entries: &group_entries,
     });
+    // Omit the scene-only sampler from the shadow pass, as the real backend
+    // does. A mistaken dependency on lin_clamp must fail pipeline creation.
+    let shadow_resources_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &layout_entries[..4],
+    });
+    let shadow_resources = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &shadow_resources_layout,
+        entries: &group_entries[..4],
+    });
+    // Exercise the actual shadow layout and bind-group constructor, too:
+    // this pass deliberately has no scene frame group to supply samplers.
+    let shadow_layout = crate::renderer::shadow_layout(&device);
+    let shadow_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: 80,
+        usage: wgpu::BufferUsages::UNIFORM,
+        mapped_at_creation: false,
+    });
+    let shadow_group = crate::renderer::shadow_bind_group(&device, &shadow_layout, &shadow_buffer, &clamp_sampler);
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: None,
-        bind_group_layouts: &[Some(&layout)],
+        bind_group_layouts: &[Some(&layout), None, None, Some(&shadow_layout)],
+        immediate_size: 0,
+    });
+    let shadow_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[Some(&shadow_resources_layout), None, None, Some(&shadow_layout)],
         immediate_size: 0,
     });
     let mut depth_maps = Vec::new();
     for (vs, fs) in [("shadow_vertex", "fs_shadow"), ("depth_vertex", "fs_terrain_depth")] {
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(fs),
-            layout: Some(&pipeline_layout),
+            layout: Some(if fs == "fs_shadow" {
+                &shadow_pipeline_layout
+            } else {
+                &pipeline_layout
+            }),
             vertex: wgpu::VertexState {
                 module: &module,
                 entry_point: Some(vs),
@@ -665,7 +698,8 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
                 ..Default::default()
             });
             pass.set_pipeline(&pipeline);
-            pass.set_bind_group(0, &group, &[]);
+            pass.set_bind_group(0, if fs == "fs_shadow" { &shadow_resources } else { &group }, &[]);
+            pass.set_bind_group(3, &shadow_group, &[]);
             for case in 0..if fs == "fs_shadow" { 6 } else { 5 } {
                 pass.set_viewport(0.0, (case * 8) as f32, 64.0, 8.0, 0.0, 1.0);
                 pass.draw(0..3, case..case + 1);

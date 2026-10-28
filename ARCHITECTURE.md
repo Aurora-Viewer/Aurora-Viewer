@@ -44,6 +44,9 @@ and stage a 2048-pixel mip chain (1024 on small upload pools). Per-region GPU
 records reference the clamped map without changing geometry. Frozen CPU weights
 survive scene recreation; staging chunks are released after each upload.
 These local maps never enter estate messages.
+The shadow pass owns its clamp sampler alongside the light parameters;
+GPU mask tests use the production resource constructors and omit the scene's
+sampler to verify that shadows have no dependency on the scene frame group.
 
 `scene/physics_shapes.rs` connects the build inspector's saved physics eye to
 selected collision geometry. Mesh header ranges include `physics_mesh` and

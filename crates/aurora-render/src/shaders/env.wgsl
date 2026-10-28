@@ -225,7 +225,7 @@ fn terrain_weights(c: f32) -> vec4<f32> {
     return vec4<f32>(af * a1, af * (1.0 - a1), (1.0 - af) * a2, (1.0 - af) * (1.0 - a2));
 }
 
-fn terrain_mix_weights(in: TerrainOut, dx: vec3<f32>, dy: vec3<f32>) -> vec4<f32> {
+fn terrain_mix_weights(in: TerrainOut, dx: vec3<f32>, dy: vec3<f32>, clamp_sampler: sampler) -> vec4<f32> {
     let rec = records[in.record];
     if (rec.flags.z != 0u) {
         // LLTerrainPaintMap stores slots 2..4 in linear RGB; slot 1 is the
@@ -234,7 +234,7 @@ fn terrain_mix_weights(in: TerrainOut, dx: vec3<f32>, dy: vec3<f32>) -> vec4<f32
         let loc = tex_loc[slot];
         // Clamp each mip level at region edges; detail maps use repeat.
         let uv = in.region_pos.xy / rec.mat_uv.xy;
-        var other = max(textureSampleGrad(tex_pages[loc >> 16u], lin_clamp, uv, loc & 0xffffu, dx.xy / rec.mat_uv.xy, dy.xy / rec.mat_uv.xy).rgb, vec3<f32>(0.0));
+        var other = max(textureSampleGrad(tex_pages[loc >> 16u], clamp_sampler, uv, loc & 0xffffu, dx.xy / rec.mat_uv.xy, dy.xy / rec.mat_uv.xy).rgb, vec3<f32>(0.0));
         other /= max(1.0, dot(other, vec3<f32>(1.0)));
         return vec4<f32>(max(0.0, 1.0 - dot(other, vec3<f32>(1.0))), other);
     }
@@ -319,13 +319,13 @@ fn terrain_layer(rec: DrawRecord, p: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, n:
     return result;
 }
 
-fn terrain_material(in: TerrainOut, dx: vec3<f32>, dy: vec3<f32>, alpha_only: bool) -> TerrainMaterial {
+fn terrain_material(in: TerrainOut, dx: vec3<f32>, dy: vec3<f32>, alpha_only: bool, clamp_sampler: sampler) -> TerrainMaterial {
     let rec = records[in.record];
     let n = normalize(in.normal);
     var tangent = in.tangent;
     if (dot(tangent, tangent) < 0.000001) { tangent = terrain_tangent(n); }
     var result = TerrainMaterial(vec4<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), 0.0);
-    let weights = terrain_mix_weights(in, dx, dy);
+    let weights = terrain_mix_weights(in, dx, dy, clamp_sampler);
     var planes = pow(abs(n), vec3<f32>(8.0));
     planes /= dot(planes, vec3<f32>(1.0));
     planes = max(planes - vec3<f32>(0.01), vec3<f32>(0.0));
@@ -402,7 +402,7 @@ fn terrain_shaded(in: TerrainOut) -> Shaded {
     let pbr = (records[in.record].flags.x & FLAG_PBR) != 0u;
     let geo = normalize(in.normal);
     var material = TerrainMaterial(vec4<f32>(1.0), vec3<f32>(1.0, 1.0, 0.0), geo, vec3<f32>(0.0), 0.0);
-    if (pbr) { material = terrain_material(in, dx, dy, false); }
+    if (pbr) { material = terrain_material(in, dx, dy, false, lin_clamp); }
     let variance = normal_variance(material.normal);
     surface_occlusion = normal_map_occlusion(geo, material.normal, in.world_pos, 1.0 / in.clip.w);
     screen_surface = true;
@@ -462,7 +462,7 @@ fn terrain_depth_mask(in: TerrainOut) {
     let dx = dpdx(in.region_pos);
     let dy = dpdy(in.region_pos);
     if ((records[in.record].flags.x & FLAG_ALPHA_MASK) != 0u) {
-        let material = terrain_material(in, dx, dy, true);
+        let material = terrain_material(in, dx, dy, true, lin_clamp);
         if (material.color.a < material.cutoff) { discard; }
     }
 }
@@ -479,7 +479,7 @@ fn terrain_shadow_mask(in: ShadowOut) {
         surface.region_pos = in.region_pos;
         surface.comp = in.comp;
         surface.record = in.record;
-        let material = terrain_material(surface, dx, dy, true);
+        let material = terrain_material(surface, dx, dy, true, shadow_clamp);
         if (material.color.a < material.cutoff) { discard; }
     }
 }
