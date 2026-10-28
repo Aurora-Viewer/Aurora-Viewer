@@ -607,12 +607,13 @@ pub fn seed_long_names(inv: &mut Inventory) {
     inv.sort_all();
 }
 
-/// `AURORA_DEMO_INVENTORY=big[:<items>][,recent][,search=<text>][,toggle=<s>][,churn=<ms>]`:
+/// `AURORA_DEMO_INVENTORY=big[:<items>][,recent][,search=<text>][,toggle=<s>][,churn=<ms>][,replace]`:
 /// a big inventory (`seed_big`) to measure what the Inventory window costs.
 /// `recent` opens the Recent tab, `search` filters the list, `toggle` opens
 /// and closes the window every `s` seconds (closed and open alternate in one
 /// run), `churn` changes one item every `ms` milliseconds, as the server's
-/// inventory updates do.
+/// inventory updates do, `replace` opens Replace links on the first object
+/// (`BIG_LINKED`), which a link of every fifty items points to.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Big {
     pub items: usize,
@@ -620,7 +621,12 @@ pub struct Big {
     pub search: String,
     pub toggle: f32,
     pub churn_ms: u64,
+    pub replace: bool,
 }
+
+/// The first object of `seed_big`: the links of every block of fifty items
+/// point to the object that starts the block, and the first one is this.
+pub const BIG_LINKED: Uuid = Uuid::from_u128(21_000_000);
 
 pub fn parse_big(mode: &str) -> Option<Big> {
     let mut parts = mode.split(',');
@@ -636,10 +642,12 @@ pub fn parse_big(mode: &str) -> Option<Big> {
         search: String::new(),
         toggle: 0.0,
         churn_ms: 0,
+        replace: false,
     };
     for part in parts {
         match part.split_once('=') {
             None if part == "recent" => big.recent = true,
+            None if part == "replace" => big.replace = true,
             Some(("search", text)) => big.search = text.into(),
             Some(("toggle", s)) => big.toggle = s.parse().unwrap_or(0.0),
             Some(("churn", ms)) => big.churn_ms = ms.parse().unwrap_or(0),
@@ -842,7 +850,7 @@ mod tests {
         assert_eq!(parse_big("big").map(|b| b.items), Some(30_000));
         assert_eq!(parse_big("big:5000").map(|b| b.items), Some(5_000));
         assert_eq!(parse_big("bigger"), None);
-        let big = parse_big("big:800,recent,search=jacket,toggle=4,churn=250").expect("big mode");
+        let big = parse_big("big:800,recent,search=jacket,toggle=4,churn=250,replace").expect("big mode");
         assert_eq!(
             big,
             Big {
@@ -851,6 +859,7 @@ mod tests {
                 search: "jacket".into(),
                 toggle: 4.0,
                 churn_ms: 250,
+                replace: true,
             }
         );
     }

@@ -27,6 +27,12 @@ pub(super) fn show(
         }
         return;
     }
+    if let EditDialog::ReplaceLinks(picker) = &mut dialog {
+        if super::replace_links::show(ctx, p, icons, inv, st, prefs, facts, picker, actions) {
+            st.dialog = Some(dialog);
+        }
+        return;
+    }
     let mut open = true;
     let mut done = false;
     let title = match &dialog {
@@ -35,9 +41,9 @@ pub(super) fn show(
         EditDialog::Delete(_, false) => aurora_i18n::tr!("ui-inventory-dialogs-delete-selection"),
         EditDialog::Empty(_) => aurora_i18n::tr!("common-empty-trash"),
         EditDialog::Ungroup(_) => aurora_i18n::tr!("ui-inventory-dialogs-ungroup-folder"),
-        EditDialog::ReplaceLinks(..) => aurora_i18n::tr!("common-replace-links"),
         EditDialog::Discard(..) | EditDialog::SaveEmbedded(..) => aurora_i18n::tr!("ui-inventory-dialogs-save-changes"),
         EditDialog::Share(..) => aurora_i18n::tr!("ui-inventory-dialogs-share-selection"),
+        EditDialog::ReplaceLinks(..) => aurora_i18n::tr!("common-replace-links"),
         EditDialog::CopyEmbedded(..) => aurora_i18n::tr!("notecard-copy-inventory"),
     };
     let properties = matches!(dialog, EditDialog::Properties(_));
@@ -178,89 +184,8 @@ pub(super) fn show(
                     }
                 });
             }
-            // a modal of its own (`share`)
-            EditDialog::Share(..) => done = true,
-            EditDialog::ReplaceLinks(old, selected) => {
-                if st.fetch_all {
-                    ui.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-all-folders-before-replacing"));
-                }
-                ui.label(aurora_i18n::tr!(
-                    "ui-inventory-dialogs-replace-links-to-with",
-                    value0 = rules::name(inv, *old).to_string()
-                ));
-                let old_type = inv.items.get(old).map(|it| (it.asset_type, it.flags & 0xff));
-                let mut candidates: Vec<_> = inv
-                    .items
-                    .values()
-                    .filter(|it| {
-                        it.id != *old && !matches!(it.asset_type, 24 | 25) && !rules::library(inv, it.id) && !rules::in_type(inv, it.id, 14)
-                    })
-                    .filter(|it| {
-                        old_type
-                            .is_some_and(|(kind, subtype)| it.asset_type == kind && (!matches!(kind, 5 | 13) || it.flags & 0xff == subtype))
-                    })
-                    .collect();
-                view::set_picker_sort(ctx, prefs.sort);
-                let order = view::picker_order(ctx, inv);
-                candidates.sort_by_key(|it| order.rank(it.id));
-                egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-                    for it in candidates {
-                        if ui.selectable_label(*selected == Some(it.id), &it.name).clicked() {
-                            *selected = Some(it.id);
-                        }
-                    }
-                });
-                if ui
-                    .add_enabled(
-                        selected.is_some() && st.pending.is_none() && !st.fetch_all && !facts.appearance_busy,
-                        egui::Button::new(aurora_i18n::tr!("ui-inventory-dialogs-replace")),
-                    )
-                    .clicked()
-                    && let Some(new) = *selected
-                {
-                    let mut change = Mutation::default();
-                    for link in inv.items.values().filter(|it| {
-                        it.asset_type == 24
-                            && it.asset_id == *old
-                            && !rules::in_type(inv, it.id, 14)
-                            && (rules::mutable(inv, it.id, &prefs.protected) || rules::in_type(inv, it.id, 46))
-                    }) {
-                        let replacement = &inv.items[&new];
-                        let outfit = rules::in_type(inv, link.id, 47) || rules::in_type(inv, link.id, 46);
-                        let desc = if outfit {
-                            if replacement.asset_type == 5 {
-                                link.desc.clone()
-                            } else {
-                                String::new()
-                            }
-                        } else {
-                            replacement.desc.clone()
-                        };
-                        change.operations.push(Operation::Links {
-                            parent: link.parent,
-                            links: vec![aurora_net::outfits::OutfitLink {
-                                target: new,
-                                name: replacement.name.clone(),
-                                desc,
-                                folder: false,
-                                inv_type: replacement.inv_type,
-                            }],
-                        });
-                        change.operations.push(Operation::Delete {
-                            id: link.id,
-                            folder: false,
-                        });
-                        change.removed.push(link.id);
-                        change.refresh.push(link.parent);
-                    }
-                    if change.operations.is_empty() {
-                        st.message = aurora_i18n::tr!("ui-inventory-dialogs-no-editable-links-in-the-loaded-folders").into();
-                    } else {
-                        actions.push(InvAction::Edit(change));
-                    }
-                    done = true;
-                }
-            }
+            // windows of their own (`share`, `replace_links::show`)
+            EditDialog::Share(..) | EditDialog::ReplaceLinks(..) => done = true,
             EditDialog::Delete(ids, purge) => {
                 ui.add_space(4.0);
                 ui.label(

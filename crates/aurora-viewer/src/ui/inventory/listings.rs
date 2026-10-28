@@ -328,8 +328,7 @@ mod tests {
         world.inventory = inventory();
         let mut main = InventoryUi::default();
         let mut window = main.take_listings_panel();
-        window.state.dialog = Some(EditDialog::ReplaceLinks(Uuid::from_u128(8_400_102), None));
-        window.state.fetch_all = true;
+        window.state.begin_replace_links(Uuid::from_u128(8_400_102));
         main.put_listings_panel(window);
         let ctx = egui::Context::default();
         let theme = crate::theme::Theme::default();
