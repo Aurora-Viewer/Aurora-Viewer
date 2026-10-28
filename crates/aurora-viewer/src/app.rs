@@ -864,6 +864,18 @@ fn ui_scale(settings: &Settings) -> f32 {
         .map_or(settings.ui_scale, |s| s.clamp(0.75, 2.0))
 }
 
+/// The text size, or AURORA_TEXT_SIZE for this launch (brought into the
+/// range of the Preferences, never saved).
+fn text_scale(settings: &Settings) -> f32 {
+    std::env::var("AURORA_TEXT_SIZE")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|s| s.is_finite())
+        .map_or(settings.font_scale, |s| {
+            s.clamp(crate::settings::FONT_SCALE_MIN, crate::settings::FONT_SCALE_MAX)
+        })
+}
+
 /// The colour vision the interface adapts to: the preferences', or in demo
 /// mode `AURORA_DEMO_COLORBLIND` (a capture's, never saved).
 fn wanted_vision(settings: &Settings) -> crate::colorblind::Vision {
@@ -991,7 +1003,7 @@ impl App {
         crate::colorblind::set(wanted_vision(&settings));
         crate::high_contrast::set(wanted_high_contrast(&settings));
         crate::interface_colors::set(wanted_interface_colors(&settings));
-        let skin = Skin::load(&egui_ctx, "aurora", settings.font_scale);
+        let skin = Skin::load(&egui_ctx, "aurora", text_scale(&settings));
         crate::crash::update(&skin.theme, &settings);
         let palette = skin.theme.palette();
         egui_ctx.set_zoom_factor(ui_scale(&settings));
@@ -7404,7 +7416,7 @@ impl App {
             }
             self.logo_rx = None;
         }
-        if self.skin.maybe_reload(&self.egui_ctx, self.settings.font_scale) {
+        if self.skin.maybe_reload(&self.egui_ctx, text_scale(&self.settings)) {
             crate::crash::update(&self.skin.theme, &self.settings);
             self.palette = self.skin.theme.palette();
             self.cursors.set_palette(&self.palette);
@@ -9410,7 +9422,7 @@ impl App {
                 self.palette = self.skin.theme.palette();
                 self.cursors.set_palette(&self.palette);
             }
-            self.skin.theme.apply(&self.egui_ctx, self.settings.font_scale);
+            self.skin.theme.apply(&self.egui_ctx, text_scale(&self.settings));
             ui::colors::set(&self.settings.colors);
             crate::keywords::set(&self.keyword_settings());
             crate::spelling::configure(&self.egui_ctx, &self.settings.spelling);
@@ -12428,8 +12440,8 @@ impl App {
             }
         }
         if self.demo && self.frame_count >= 600 && std::env::var("AURORA_DEMO_OPTIONS").is_ok_and(|mode| mode == "2:text-size") {
-            let phase = ((self.frame_count - 600) / 180) % 4;
-            let scale = [0.8, 1.0, 1.4, 1.0][phase as usize];
+            let phase = ((self.frame_count - 600) / 180) % 5;
+            let scale = [0.8, 1.0, 1.4, 2.0, 1.0][phase as usize];
             if self.settings.font_scale != scale {
                 self.settings.font_scale = scale;
                 res.changed = true;

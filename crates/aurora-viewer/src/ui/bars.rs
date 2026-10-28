@@ -2107,7 +2107,8 @@ fn tool_button(
     {
         // centered on the letters' ink like the icons beside it: the line box
         // of a font sits lower than its capitals
-        let size = if look.dock { 13.0 } else { 12.0 };
+        // an icon, not a label: icon-sized whatever the text size
+        let size = if look.dock { 13.0 } else { 12.0 } / super::fonts::scale(ui.ctx());
         // bold like the worn names: the letters weigh as much as the filled
         // icons of the other buttons
         let format = super::widgets::bold_format(ui, egui::FontId::proportional(size), tint);
