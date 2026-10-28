@@ -387,7 +387,10 @@ mod tests {
         for f in &mut Arc::make_mut(o.te.as_mut().unwrap()).faces {
             f.color[3] = 0.0;
         }
-        world.objects.get_mut(body).unwrap().update_flags = 0;
+        // a mesh body without a script
+        let o = world.objects.get_mut(body).unwrap();
+        o.click_action = crate::interaction::code::TOUCH;
+        o.update_flags = 0;
         scene.gpu[body].rigged = true;
         scene.gpu[body].owner_avatar = wearer;
         scene.gpu[clicker].owner_avatar = wearer;
