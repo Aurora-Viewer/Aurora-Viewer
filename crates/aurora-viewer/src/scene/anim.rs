@@ -214,12 +214,26 @@ pub struct BoundAnim {
     /// The highest priority of its joints and itself (mMaxPriority): the
     /// strongest animation gives the hand pose.
     max_priority: i32,
+    /// LLMotion::addJointState's mJointSignature: per joint driven, its
+    /// position and rotation bits, `0xff >> (7 - priority)` when keyed.
+    signature: Vec<(usize, [u8; 2])>,
 }
 
 impl BoundAnim {
     pub fn bind(anim: Animation, rig: &Rig) -> BoundAnim {
-        let joints = anim.joints.iter().map(|j| rig.names.get(&j.joint_name).copied()).collect();
+        let joints: Vec<Option<usize>> = anim.joints.iter().map(|j| rig.names.get(&j.joint_name).copied()).collect();
         let max_priority = anim.joints.iter().map(|j| j.priority).fold(anim.base_priority, i32::max);
+        let signature = anim
+            .joints
+            .iter()
+            .zip(&joints)
+            .filter_map(|(jm, j)| {
+                let priority = if jm.priority >= 0 { jm.priority } else { anim.base_priority };
+                let bits = if priority < 0 { 0 } else { 0xffu8 >> (7 - priority.min(7)) };
+                let keyed = |keys: bool| if keys { bits } else { 0 };
+                j.map(|j| (j, [keyed(!jm.pos_keys.is_empty()), keyed(!jm.rot_keys.is_empty())]))
+            })
+            .collect();
         let position_top = anim
             .joints
             .iter()
@@ -236,6 +250,7 @@ impl BoundAnim {
             joints,
             position_top,
             max_priority,
+            signature,
         }
     }
 }
@@ -389,6 +404,9 @@ pub struct Controller {
     /// The live morph weights of the last frame (live_morphs.rs):
     /// expressions and hand poses.
     live_morphs: Vec<(i32, f32)>,
+    /// The joint signature of the motions already updated this frame
+    /// (LLMotionController::mJointSignature), position and rotation bits.
+    joint_signature: Vec<[u8; 2]>,
 }
 
 /// A joint state of a default motion: (joint, priority, weight, local
@@ -1405,13 +1423,37 @@ impl Controller {
         if strongest > 0.0 {
             self.live_morphs.push((default_motions::CLOSED_MOUTH, -strongest));
         }
-        // LLKeyframeMotion::onUpdate's "Hand Pose": that of the animation of
-        // highest priority; among equals the last one updated, the oldest
+        // LLKeyframeMotion::applyKeyframes's "Hand Pose": that of the
+        // animation of highest priority; among equals the last one updated,
+        // the oldest
         if self.control {
             return;
         }
         let mut request: Option<(i32, u32)> = None;
+        self.joint_signature.clear();
         for m in self.motions.iter().filter(|m| default_motions::emote_param(&m.id).is_none()) {
+            // LLMotionController::updateMotionsByType: a motion at full
+            // weight that adds no joint (or no higher priority on one) to
+            // those of the newer motions is not updated, so it asks for no
+            // pose. An older stand under a newer animation of its priority
+            // leaves the hands to it; one without joints only asks while it
+            // eases in or out.
+            if m.weight >= 1.0 {
+                let mut adds = false;
+                for &(j, bits) in &m.anim.signature {
+                    if self.joint_signature.len() <= j {
+                        self.joint_signature.resize(j + 1, [0; 2]);
+                    }
+                    let held = &mut self.joint_signature[j];
+                    for (held, bits) in held.iter_mut().zip(bits) {
+                        adds |= bits & !*held != 0;
+                        *held |= bits;
+                    }
+                }
+                if !adds {
+                    continue;
+                }
+            }
             if request.is_none_or(|(p, _)| m.anim.max_priority >= p) {
                 request = Some((m.anim.max_priority, m.anim.anim.hand_pose));
             }
@@ -2531,8 +2573,21 @@ mod tests {
         assert!((c.rot[elbow] * Vec3::X - Quat::from_rotation_z(-0.7) * Vec3::X).length() < 1e-5);
     }
 
-    /// A looping animation that names an expression and a hand pose.
-    fn carrier(rig: &Rig, emote: &str, hand_pose: u32, priority: i32) -> Arc<BoundAnim> {
+    /// A looping animation that names an expression and a hand pose, and
+    /// turns `joint` (none: an animation without joints).
+    fn carrier(rig: &Rig, emote: &str, hand_pose: u32, priority: i32, joint: Option<&str>) -> Arc<BoundAnim> {
+        let joints = joint
+            .map(|name| aurora_assets::JointMotion {
+                joint_name: name.into(),
+                priority: -1,
+                rot_keys: vec![aurora_assets::anim::RotKey {
+                    time: 0.0,
+                    rotation: Quat::IDENTITY,
+                }],
+                pos_keys: Vec::new(),
+            })
+            .into_iter()
+            .collect();
         let anim = Animation {
             base_priority: priority,
             duration: 1.0,
@@ -2543,7 +2598,7 @@ mod tests {
             ease_in: 0.0,
             ease_out: 0.0,
             hand_pose,
-            joints: Vec::new(),
+            joints,
         };
         Arc::new(BoundAnim::bind(anim, rig))
     }
@@ -2562,7 +2617,7 @@ mod tests {
         let mut streamer = AnimStreamer::new(PathBuf::new());
         default_motions::register(&mut streamer, &rig);
         let id = Uuid::from_u128(9);
-        let anim = carrier(&rig, "Express_Smile", 3, 4);
+        let anim = carrier(&rig, "Express_Smile", 3, 4, Some("mWristLeft"));
         let mut get = |m: &Uuid| if *m == id { Some(anim.clone()) } else { streamer.get(m) };
         let mut c = Controller::default();
         let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
@@ -2621,34 +2676,47 @@ mod tests {
     }
 
     /// The hand pose of the strongest animation wins; among equals the
-    /// oldest one (the last updated in mActiveMotions).
+    /// oldest one (the last updated in mActiveMotions), unless a newer one
+    /// drives all its joints: then the older one is not updated (#661, an
+    /// animation played over an AO stand of the same priority).
     #[test]
     fn the_strongest_animation_gives_the_hand_pose() {
         let rig = rig();
-        let (a, b, d) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
-        let (fist, point, peace) = (carrier(&rig, "", 3, 2), carrier(&rig, "", 2, 4), carrier(&rig, "", 12, 4));
-        let get = |m: &Uuid| {
-            Some(match m.as_u128() {
-                1 => fist.clone(),
-                2 => point.clone(),
-                _ => peace.clone(),
-            })
-        };
+        let wrist = Some("mWristLeft");
+        let clips = [
+            carrier(&rig, "", 3, 2, wrist),
+            carrier(&rig, "", 2, 4, wrist),
+            carrier(&rig, "", 12, 4, wrist),
+            carrier(&rig, "", 5, 4, Some("mHead")),
+            carrier(&rig, "", 8, 6, None),
+        ];
+        let get = |m: &Uuid| (m.as_u128() as usize).checked_sub(1).and_then(|i| clips.get(i)).cloned();
+        let id = |n: u128| Uuid::from_u128(n);
         let mut c = Controller::default();
         let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
         let t0 = Instant::now();
         let at = |s: f32| t0 + Duration::from_secs_f32(s);
-        for s in [0.0, 0.5] {
-            c.sync(&[signal(a, 1, t0), signal(b, 2, t0)], at(s), get);
-            c.evaluate(&rig, at(s), None, &mut out);
-        }
+        let mut play = |c: &mut Controller, playing: &[PlayingAnimation], from: f32| {
+            for s in [from, from + 0.5] {
+                c.sync(playing, at(s), get);
+                c.evaluate(&rig, at(s), None, &mut out);
+            }
+        };
+        let (fist, point) = (signal(id(1), 1, t0), signal(id(2), 2, t0));
+        play(&mut c, &[fist, point], 0.0);
         assert_eq!((morph(&c, 102), morph(&c, 103)), (1.0, 0.0));
-        // a newer animation of the same priority does not take it
-        for s in [1.0, 1.5] {
-            c.sync(&[signal(a, 1, t0), signal(b, 2, t0), signal(d, 3, at(1.0))], at(s), get);
-            c.evaluate(&rig, at(s), None, &mut out);
-        }
-        assert_eq!((morph(&c, 102), morph(&c, 791)), (1.0, 0.0));
+        // a newer animation of the same priority on the same joints takes it
+        let peace = signal(id(3), 3, at(1.0));
+        play(&mut c, &[fist, point, peace], 1.0);
+        assert_eq!((morph(&c, 102), morph(&c, 791)), (0.0, 1.0));
+        // one on another joint does not: both are updated, the older wins
+        let other = signal(id(4), 4, at(2.0));
+        play(&mut c, &[fist, point, peace, other], 2.0);
+        assert_eq!((morph(&c, 791), morph(&c, 667)), (1.0, 0.0));
+        // nor does one without joints once eased in, however strong
+        let jointless = signal(id(5), 5, at(3.0));
+        play(&mut c, &[fist, point, peace, other, jointless], 3.0);
+        assert_eq!((morph(&c, 791), morph(&c, 670)), (1.0, 0.0));
     }
 
     /// LLBreatheMotionRot turns the chest when no stronger animation does;

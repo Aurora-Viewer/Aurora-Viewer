@@ -2973,8 +2973,10 @@ tests do not establish that this report uses an invalid joint or index.
   `780` (reset).
 - **`AURORA_DEMO_EMOTE`** (issue #661), with `AURORA_DEMO_CLASSIC=1`: from
   frame 240 the avatar in front of the start position plays a looping
-  animation without joints whose header names an expression and a hand
-  pose, as uploaded animations do. Every 240 frames it is off for one frame
+  animation whose header names an expression and a hand pose, as uploaded
+  animations do (it holds mFaceRoot at rest: as in the Legacy Viewer, an
+  animation without joints would only hold the hands while it eases in).
+  Every 240 frames it is off for one frame
   and starts again, which plays its expression again: it eases in for
   0.3 s, holds, then eases out by 2.8 s, while the hands keep the pose. The
   expression is the animation state without `express_` (`smile`,
