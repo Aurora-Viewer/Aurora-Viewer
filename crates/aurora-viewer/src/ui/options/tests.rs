@@ -123,6 +123,7 @@ const BEFORE: &[&str] = &[
     "place_bar_rights_text",
     "favorites_access",
     "show_net_stats",
+    "show_balance",
     "standalone_place_details",
     "loading_backdrop",
     "reduce_motion",

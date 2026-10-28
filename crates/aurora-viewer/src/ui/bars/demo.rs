@@ -13,7 +13,9 @@
 //! they live: `row` (the row under the islands, `folded`: folded to its
 //! tab, `rowdrag`: a pill dragged at frame 650), `dock` (the dock's
 //! button; `favorites` then opens its grid); `chatname`: a resident's name
-//! of the chat pills clicked at frame 700. The system island: `systip`
+//! of the chat pills clicked at frame 700. The balance: `nobalance` (hidden,
+//! with either bars), `balancemenu` (the account island's right click).
+//! The system island: `systip`
 //! (its detailed tooltip shown), `sysmenu` (its right click),
 //! `netgraph` (Firestorm's traffic indicator shown), `tplist` (earlier
 //! places in the session, the back arrow's list of them open), `sysperf` /
@@ -46,6 +48,8 @@ pub enum Open {
     Star,
     Status,
     Emoji,
+    /// The account island's right click (the balance shown or hidden).
+    Account,
     /// The system island's right click.
     System,
     /// The back arrow's list of the session's places, the demo's earlier
@@ -79,6 +83,8 @@ pub struct DemoBars {
     pub tip: bool,
     /// The traffic indicator shown or hidden, whatever is saved.
     pub net_stats: Option<bool>,
+    /// The balance shown or hidden, whatever is saved.
+    pub show_balance: Option<bool>,
     /// The clock's time and seconds, whatever is saved.
     pub clock_zone: Option<crate::settings::ClockZone>,
     pub clock_seconds: Option<bool>,
@@ -162,6 +168,8 @@ pub fn parse(value: &str) -> DemoBars {
             "sysmenu" => d.open = Some(Open::System),
             "tplist" => d.open = Some(Open::TpList),
             "netgraph" => d.net_stats = Some(true),
+            "nobalance" => d.show_balance = Some(false),
+            "balancemenu" => d.open = Some(Open::Account),
             "clocklocal" => d.clock_zone = Some(crate::settings::ClockZone::Local),
             "clock12" => d.clock_format = Some(crate::settings::ClockFormat::H12),
             "clock24" => d.clock_format = Some(crate::settings::ClockFormat::H24),

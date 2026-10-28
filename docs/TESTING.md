@@ -4009,7 +4009,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
-| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the clock, the interface hidden, immersive mode, the chat bar autohidden |
+| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the balance hidden, the clock, the interface hidden, immersive mode, the chat bar autohidden |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and Windows notifications for messages, mentions and offers arriving in the background |
@@ -6131,6 +6131,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   at frame 300, the mockup's row or tile under the pointer from frame 700.
   `chatname`: the newest resident's name of the chat pills clicked at
   frame 700, its profile opens (an object's name inspects the object).
+  The balance (#1340): `nobalance` (hidden whatever is saved, with either
+  bars: the account island keeps the picture alone, 8 px from the system
+  island; the Legacy bars show no balance), `balancemenu` (the account
+  island's right click, under the island from frame 300: "Show the L$
+  balance" checked, then "Buy L$…").
   The system island: `systip` (its detailed tooltip shown, the network's
   last minute under its losses and bandwidth), `sysmenu` (its right click,
   under the island at its right end as the mockup draws it, from frame
