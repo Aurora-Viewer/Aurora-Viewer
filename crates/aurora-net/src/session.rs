@@ -2651,8 +2651,12 @@ impl Session<'_> {
                 let http = self.sh.caps_http.clone();
                 let events = self.sh.events.clone();
                 let owner = self.agent_id();
+                let moves = self.inventory_move_tx.clone();
                 tokio::spawn(async move {
-                    let result = crate::outfits::categories::mutate(&http, &cap, &fetch_cap, owner, change).await;
+                    let result = crate::outfits::categories::mutate(&http, &cap, &fetch_cap, owner, change, |movement| {
+                        inventory_moves::submit(moves, movement)
+                    })
+                    .await;
                     let _ = events.send(NetEvent::OutfitUpdated { request, result });
                 });
             }
