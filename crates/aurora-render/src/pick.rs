@@ -428,7 +428,14 @@ impl DepthPick {
     /// The depth under a pixel of the last frame, waiting for the GPU: what
     /// a click did before [`Self::submit_clicks`], kept to compare with it
     /// (AURORA_CLICK_PICK).
-    pub fn blocking(&self, device: &wgpu::Device, queue: &wgpu::Queue, depth: &wgpu::TextureView, px: PickPixel) -> Option<Vec3> {
+    pub fn blocking(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        lost: &crate::device_lost::DeviceLost,
+        depth: &wgpu::TextureView,
+        px: PickPixel,
+    ) -> Option<Vec3> {
         if px.x >= px.width || px.y >= px.height {
             return None;
         }
@@ -444,7 +451,9 @@ impl DepthPick {
         encoder.copy_buffer_to_buffer(&self.out[1], 0, &readback, 0, BYTES);
         queue.submit([encoder.finish()]);
         readback.map_async(wgpu::MapMode::Read, .., |_| {});
-        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        if !lost.wait(device) {
+            return None;
+        }
         let depth = {
             let view = readback.get_mapped_range(..).ok()?;
             let b = view.get(..4)?;

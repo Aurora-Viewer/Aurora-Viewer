@@ -3922,6 +3922,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_UPDATE=<mode>` | Interactive update mock-up on the login screen |
 | `AURORA_DEMO_GPU_DRIVER=old\|aged` | Out of date graphics driver warning on the login screen |
 | `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
+| `AURORA_DEMO_GPU_LOST=<frame>` | The GPU device is taken as lost at that frame, as after a driver reset |
 | `AURORA_DEMO_SAFE_GRAPHICS=offer\|active` | The safe graphics card on the login screen |
 | `AURORA_DEMO_UPDATE_MAINTENANCE=<mode>` | Announces a cache invalidation and/or a reset |
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
@@ -5529,6 +5530,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   With `AURORA_FPS_LIMIT=60`, frame 600 comes about 10 s after the start.
   The window's close button during the stall closes at once (the exit
   prompt cannot be drawn).
+- **`AURORA_DEMO_GPU_LOST=<frame>`**, with `AURORA_DEMO=1`: the GPU device is
+  taken as lost at that frame, as the device-lost callback does after a
+  driver reset (the log says `GPU device lost (Unknown): AURORA_DEMO_GPU_LOST
+  at frame …`). No frame is drawn any more (the image stays as it was) and
+  nothing waits on the GPU: a photo asked then fails instead of ending the
+  session with a Rust panic (#1237). At once the native box "the graphics
+  card was lost" shows, with what to try; its OK closes the viewer, logged
+  out, and the crash session holds `gpu-lost.txt`: the report says
+  `| Crash | GPU device lost |` and `| GPU device lost | yes … |`, and the
+  next start offers the safe graphics. The window's close button closes at
+  once too. A real loss cannot be caused here: the flag is set as the
+  callback would set it, wgpu's own device stays alive.
 - **`AURORA_DEMO_SAFE_GRAPHICS=offer|active`**, with `AURORA_DEMO=1` and
   `AURORA_DEMO_LOGIN=cards` or `empty`: the login screen's safe graphics
   card, above the driver warning. `offer` is what a start after a GPU stall,

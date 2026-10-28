@@ -10,6 +10,12 @@
 //! The Legacy Viewer has no such notice: its LLWatchdog
 //! (indra/llcommon/llwatchdog.cpp) ends a viewer whose main loop stops,
 //! which only happens here if the main thread itself is stuck.
+//!
+//! When the card is lost for good (`Renderer::device_lost`: a driver reset,
+//! the card removed), nothing will ever be drawn again: a box says so at
+//! once, with what to try, and its OK closes the viewer the same way. The
+//! session is reported as "GPU device lost", and the next start offers the
+//! safe graphics too. The Legacy Viewer has no notice either.
 
 use super::*;
 use std::sync::Arc;
@@ -44,6 +50,8 @@ pub(super) struct GpuStall {
     notice: Option<Notice>,
     /// When the user last chose to keep waiting.
     waited_at: Option<Instant>,
+    /// The device loss has been noted and its box shown.
+    lost: bool,
     /// Closing was asked from the notice.
     pub(super) close: bool,
 }
@@ -58,6 +66,23 @@ impl App {
     pub(super) fn gpu_stall_frame(&mut self, renderer: &aurora_render::Renderer) {
         let now = Instant::now();
         let stall = &mut self.gpu_stall;
+        if renderer.device_lost() {
+            if !std::mem::replace(&mut stall.lost, true) {
+                log::error!("the graphics card is lost: notice shown, the viewer closes after it");
+                crate::crash::gpu_lost();
+                if let Some(notice) = stall.notice.take() {
+                    withdraw(&notice);
+                }
+                let (title, body) = lost_text();
+                stall.notice = show(title, body, false);
+            }
+            // its one button closes; a box that could not be shown, at once
+            if stall.notice.as_ref().is_none_or(|n| n.answer.try_recv().is_ok()) {
+                stall.notice = None;
+                stall.close = true;
+            }
+            return;
+        }
         match renderer.stalled_for() {
             Some(stalled) => {
                 if !stall.noted && stalled >= NOTICE_AFTER {
@@ -69,7 +94,8 @@ impl App {
                     crate::crash::gpu_stalled(stalled.as_secs());
                 }
                 if notice_due(stalled, stall.notice.is_some(), stall.waited_at, now) {
-                    stall.notice = Some(show(stalled.as_secs()));
+                    let (title, body) = text(stalled.as_secs());
+                    stall.notice = show(title, body, true);
                 }
             }
             None => {
@@ -119,8 +145,17 @@ pub(super) fn text(seconds: u64) -> (String, String) {
     )
 }
 
-/// Opens the box on its own thread: nothing here waits for the answer.
-fn show(seconds: u64) -> Notice {
+/// The device loss box's title and text.
+pub(super) fn lost_text() -> (String, String) {
+    (
+        aurora_i18n::tr!("app-gpu-lost-title").to_string(),
+        aurora_i18n::tr!("app-gpu-lost").to_string(),
+    )
+}
+
+/// Opens the box on its own thread: nothing here waits for the answer. A
+/// box that does not `ask` has OK alone, answered as Close.
+fn show(title: String, body: String, ask: bool) -> Option<Notice> {
     let (tx, answer) = std::sync::mpsc::channel();
     let thread = Arc::new(AtomicU32::new(0));
     let withdrawn = Arc::new(AtomicBool::new(false));
@@ -129,19 +164,23 @@ fn show(seconds: u64) -> Notice {
         thread: thread.clone(),
         withdrawn,
     };
-    let (title, body) = text(seconds);
     let spawned = std::thread::Builder::new().name("aurora-gpu-notice".into()).spawn(move || {
         thread.store(platform::thread_id(), Ordering::Release);
-        let _ = tx.send(if platform::ask(&title, &body) {
-            Answer::Wait
+        let wait = if ask {
+            platform::ask(&title, &body)
         } else {
-            Answer::Close
-        });
+            platform::tell(&title, &body);
+            false
+        };
+        let _ = tx.send(if wait { Answer::Wait } else { Answer::Close });
     });
-    if let Err(e) = spawned {
-        log::warn!("graphics card notice not shown: {e}");
+    match spawned {
+        Ok(_) => Some(notice),
+        Err(e) => {
+            log::warn!("graphics card notice not shown: {e}");
+            None
+        }
     }
-    notice
 }
 
 /// The GPU answered again: the box closes as if "keep waiting" was chosen.
@@ -154,7 +193,8 @@ fn withdraw(notice: &Notice) {
 mod platform {
     use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumThreadWindows, IDYES, MB_ICONWARNING, MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO, MessageBoxW, PostMessageW, WM_COMMAND,
+        EnumThreadWindows, IDYES, MB_ICONERROR, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO, MESSAGEBOX_RESULT,
+        MESSAGEBOX_STYLE, MessageBoxW, PostMessageW, WM_COMMAND,
     };
 
     pub fn thread_id() -> u32 {
@@ -162,22 +202,30 @@ mod platform {
         unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() }
     }
 
-    /// Yes: keep waiting. A box with no Cancel button cannot be dismissed
-    /// any other way than by an answer.
-    pub fn ask(title: &str, body: &str) -> bool {
+    fn message_box(title: &str, body: &str, style: MESSAGEBOX_STYLE) -> MESSAGEBOX_RESULT {
         let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
         let (title, body) = (wide(title), wide(body));
         // SAFETY: both strings are zero-terminated and outlive the call; no
         // owner window (the viewer's belongs to the main thread).
-        let answer = unsafe {
+        unsafe {
             MessageBoxW(
                 std::ptr::null_mut(),
                 body.as_ptr(),
                 title.as_ptr(),
-                MB_YESNO | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND,
+                style | MB_TOPMOST | MB_SETFOREGROUND,
             )
-        };
-        answer == IDYES
+        }
+    }
+
+    /// Yes: keep waiting. A box with no Cancel button cannot be dismissed
+    /// any other way than by an answer.
+    pub fn ask(title: &str, body: &str) -> bool {
+        message_box(title, body, MB_YESNO | MB_ICONWARNING) == IDYES
+    }
+
+    /// OK alone: returns when it is pressed.
+    pub fn tell(title: &str, body: &str) {
+        message_box(title, body, MB_OK | MB_ICONERROR);
     }
 
     /// The box's own answer to its Yes button: unlike a click on the button
@@ -214,6 +262,15 @@ mod platform {
             == rfd::MessageDialogResult::Yes
     }
 
+    pub fn tell(title: &str, body: &str) {
+        rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Error)
+            .set_title(title)
+            .set_description(body)
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show();
+    }
+
     pub fn close(_thread: u32) {}
 }
 
@@ -237,6 +294,13 @@ mod tests {
         let (title, body) = text(12);
         assert!(!title.is_empty());
         assert!(body.contains("12"));
+        assert!(body.lines().count() >= 5, "{body}");
+    }
+
+    #[test]
+    fn the_loss_text_says_what_to_try() {
+        let (title, body) = lost_text();
+        assert!(!title.is_empty());
         assert!(body.lines().count() >= 5, "{body}");
     }
 }

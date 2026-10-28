@@ -65,6 +65,9 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
             "Startup or event loop failure".to_owned(),
             "startup or event loop failure".to_owned(),
         )
+    } else if dir.join("gpu-lost.txt").exists() {
+        // The viewer closed itself after the device loss (app/gpu_stall.rs).
+        ("GPU device lost".to_owned(), "GPU device lost".to_owned())
     } else if !stall.is_empty() {
         // The GPU still had a frame when the session ended (the window
         // answered, the user closed it from the notice or by other means).
@@ -682,6 +685,23 @@ mod tests {
         // handled (the process went on and ended another way): not the cause
         std::fs::write(dir.join("exit-code.txt"), "0xC0000005").unwrap();
         assert!(!build_at(&record, &dir, None).body.contains("Out of memory ("));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_session_closed_after_the_device_loss_says_so() {
+        let (dir, record) = session();
+        std::fs::write(dir.join("gpu-lost.txt"), []).unwrap();
+        let summary = build_at(&record, &dir, None);
+        assert_eq!(summary.title, "Crash: GPU device lost (0.7.1+3.gabcdef)");
+        assert!(summary.body.contains("| Crash | GPU device lost |"), "{}", summary.body);
+        // a render thread that panicked on the loss keeps its panic
+        std::fs::write(
+            dir.join("panic.txt"),
+            "Rust panic: panicked at wgpu-30.0.1/src/backend/wgpu_core.rs:349:9:\nError in Device::poll\n",
+        )
+        .unwrap();
+        assert!(build_at(&record, &dir, None).body.contains("| Crash | Rust panic |"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

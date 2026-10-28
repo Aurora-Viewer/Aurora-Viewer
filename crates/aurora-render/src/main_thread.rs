@@ -34,6 +34,7 @@
 //! flight.
 
 use crate::arena::{GeometryArena, MeshAlloc, RecordStore};
+use crate::device_lost::DeviceLost;
 use crate::gpu_cull::{CullTables, GpuCull};
 use crate::packet::{FramePacket, FrameResult, SceneGpu, Spent, SurfaceState, capture_for};
 use crate::render_thread::{Done, Host, Job, thread_wanted};
@@ -219,6 +220,10 @@ pub struct Renderer {
     pub histogram_request: Option<f32>,
     /// The last histogram counted, from black to white.
     pub histogram: Option<Box<[u32; crate::HISTOGRAM_BINS]>>,
+    /// Set by the device-lost callback (device_lost.rs).
+    lost: DeviceLost,
+    /// AURORA_DEMO_GPU_LOST: the frame the device is taken as lost at.
+    demo_lost: Option<u64>,
 }
 
 impl Renderer {
@@ -345,11 +350,17 @@ impl Renderer {
             }
         }));
         // A driver reset (TDR), a removed card or another program taking the
-        // GPU: said in the log, where the crash report finds it. `Destroyed`
-        // is the device's own end at shutdown.
-        device.set_device_lost_callback(|reason, message| match reason {
+        // GPU: said in the log, where the crash report finds it, and nothing
+        // waits on the device any more (device_lost.rs). `Destroyed` is the
+        // device's own end at shutdown.
+        let lost = DeviceLost::default();
+        let on_lost = lost.clone();
+        device.set_device_lost_callback(move |reason, message| match reason {
             wgpu::DeviceLostReason::Destroyed => log::info!("GPU device released: {message}"),
-            _ => log::error!("GPU device lost ({reason:?}): {message}"),
+            _ => {
+                on_lost.set();
+                log::error!("GPU device lost ({reason:?}): {message}");
+            }
         });
         let info = GpuInfo {
             name: ainfo.name.clone(),
@@ -405,6 +416,7 @@ impl Renderer {
             tex_layout: textures.layout.clone(),
             scene: scene_gpu(&records, &cull, &textures, &geometry, &palette_buffer, &skin_bind_buffer, 0),
             anim_clock,
+            lost: lost.clone(),
         })?;
         let msaa_supported = backend.msaa_supported().to_vec();
         let can_capture = backend.can_capture();
@@ -465,6 +477,11 @@ impl Renderer {
             snapshot: None,
             histogram_request: None,
             histogram: None,
+            lost,
+            demo_lost: crate::device_lost::demo_frame(
+                std::env::var_os("AURORA_DEMO").is_some(),
+                std::env::var("AURORA_DEMO_GPU_LOST").ok().as_deref(),
+            ),
         })
     }
 
@@ -677,6 +694,12 @@ impl Renderer {
     /// more, the viewer should close.
     pub fn failed(&self) -> bool {
         self.failed
+    }
+
+    /// The GPU device is lost for good (driver reset, card removed): nothing
+    /// is drawn any more, the viewer should close.
+    pub fn device_lost(&self) -> bool {
+        self.lost.get()
     }
 
     /// How long the GPU has kept the frame in the render thread's hands,
@@ -901,6 +924,23 @@ impl Renderer {
     pub fn render(&mut self, params: FrameParams, lists: &DrawLists, ui: Option<crate::EguiFrame>) -> RenderStats {
         let t0 = Instant::now();
         let mut ui = ui;
+        if self.demo_lost == Some(self.frames) && !self.lost.get() {
+            self.lost.set();
+            log::error!("GPU device lost (Unknown): AURORA_DEMO_GPU_LOST at frame {}", self.frames);
+        }
+        if self.lost.get() {
+            // nothing reaches a lost device: no frame is built, the photo
+            // asked is answered as failed, the clicks as on nothing
+            self.writes.clear();
+            self.fail_picks();
+            if self.snapshot_request.take().is_some() {
+                self.snapshot = Some(None);
+            }
+            return RenderStats {
+                render_thread: self.host.threaded(),
+                ..Default::default()
+            };
+        }
         if !self.failed && !self.render_thread_free() {
             // the GPU still has the frame before: this one is not built,
             // the caller goes on (input, network, the stall notice)

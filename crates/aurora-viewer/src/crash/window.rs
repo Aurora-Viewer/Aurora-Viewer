@@ -60,6 +60,8 @@ pub fn show(dir: &Path, record: super::Record, summary: super::summary::Summary)
             aurora_i18n::tr!("crash-reason-oom")
         } else if dir.join("native.txt").metadata().is_ok_and(|m| m.len() > 0) {
             aurora_i18n::tr!("crash-reason-native")
+        } else if dir.join("gpu-lost.txt").exists() {
+            aurora_i18n::tr!("crash-reason-gpu-lost")
         } else if dir.join("gpu-stall.txt").metadata().is_ok_and(|m| m.len() > 0) {
             aurora_i18n::tr!("crash-reason-gpu")
         } else if dir.join("freeze.txt").metadata().is_ok_and(|m| m.len() > 0) {

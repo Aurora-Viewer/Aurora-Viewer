@@ -1534,6 +1534,15 @@ app-gpu-stall =
     • at the next start, choose the safe graphics that Aurora will offer.
 
     Keep waiting? Yes keeps waiting; No closes Aurora (you are logged out properly).
+app-gpu-lost-title = Aurora Viewer: the graphics card was lost
+app-gpu-lost =
+    The graphics card stopped working for Aurora: its driver was reset (it took too long to draw an image, or its video memory was full), or the card was removed or taken by another program. Nothing can be drawn any more: Aurora closes when you press OK (you are logged out properly).
+
+    What to try:
+    • update the graphics card driver;
+    • lower the size of very large photos, or the graphics quality;
+    • close the other programs that use the graphics card a lot;
+    • at the next start, choose the safe graphics that Aurora will offer.
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora does not have an animation overrider (AO) yet.
 cmdline-mod-use-hover-height-in-appearance = Adjust your avatar's hover height through Appearance → Hover Height.
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora recommends against opening this link. If it asks you to log in or pay, it is very likely a scam: never give it your password or payment information.
@@ -7632,6 +7641,7 @@ crash-reason-native = Native crash
 crash-reason-unknown = Unexpected shutdown
 crash-reason-freeze = Frozen, then ended
 crash-reason-gpu = Graphics card not responding
+crash-reason-gpu-lost = Graphics card lost (driver reset)
 crash-reason-thread = A part of the viewer stopped working
 crash-reason-oom = Out of memory
 crash-send-report = Send a crash report

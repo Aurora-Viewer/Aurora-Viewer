@@ -1537,6 +1537,15 @@ app-gpu-stall =
     • au prochain démarrage, choisir les graphismes de secours qu'Aurora proposera.
 
     Continuer d'attendre ? Oui continue d'attendre ; Non ferme Aurora (vous êtes déconnecté proprement).
+app-gpu-lost-title = Aurora Viewer : la carte graphique a été perdue
+app-gpu-lost =
+    La carte graphique a cessé de fonctionner pour Aurora : son pilote a été réinitialisé (une image trop longue à dessiner, ou sa mémoire vidéo pleine), ou la carte a été retirée ou prise par un autre programme. Plus rien ne peut être affiché : Aurora se ferme quand vous appuyez sur OK (vous êtes déconnecté proprement).
+
+    À essayer :
+    • mettre à jour le pilote de la carte graphique ;
+    • réduire la taille des très grandes photos, ou la qualité graphique ;
+    • fermer les autres programmes qui utilisent beaucoup la carte graphique ;
+    • au prochain démarrage, choisir les graphismes de secours qu'Aurora proposera.
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora n'a pas encore d'animation overrider (AO).
 cmdline-mod-use-hover-height-in-appearance = Ajustez la hauteur de survol de votre avatar dans Apparence → Hauteur de survol.
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora vous déconseille d'ouvrir ce lien. S'il vous demande de vous connecter ou de payer, c'est très probablement une arnaque : ne donnez jamais votre mot de passe ni vos informations de paiement.
@@ -7625,6 +7634,7 @@ crash-reason-native = Plantage natif
 crash-reason-unknown = Arrêt inattendu
 crash-reason-freeze = Figé, puis arrêté
 crash-reason-gpu = Carte graphique sans réponse
+crash-reason-gpu-lost = Carte graphique perdue (pilote réinitialisé)
 crash-reason-thread = Une partie du viewer a cessé de fonctionner
 crash-reason-oom = Mémoire insuffisante
 crash-send-report = Envoyer un rapport de plantage
