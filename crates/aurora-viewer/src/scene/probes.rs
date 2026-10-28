@@ -98,6 +98,9 @@ pub struct ProbeManager {
     pub level: u8,
     /// Cube slots including the default probe's.
     pub slots: u32,
+    /// "HDR and Emissive" the captures were drawn with: when it changes
+    /// they are all drawn again (`refresh`).
+    pub hdr: bool,
     probes: HashMap<Key, Probe>,
     default_complete: bool,
     default_last: Option<Instant>,
@@ -112,6 +115,7 @@ impl Default for ProbeManager {
         ProbeManager {
             level: level::FULL,
             slots: 32,
+            hdr: true,
             probes: HashMap::new(),
             default_complete: false,
             default_last: None,
@@ -132,6 +136,19 @@ impl ProbeManager {
         self.updating = None;
         self.last_scan = None;
         self.pass = None;
+    }
+
+    /// Draw every capture again, the default probe first then the closest,
+    /// each kept and shown until its new capture replaces it.
+    /// handleEnableHDR resets the Legacy Viewer's probes instead: the
+    /// reflections and the ambient light they give went away and came back
+    /// one probe at a time, the whole scene seeming to reload.
+    pub fn refresh(&mut self) {
+        for p in self.probes.values_mut() {
+            p.last_update = None;
+        }
+        self.default_last = None;
+        self.updating = None;
     }
 
     /// Probes for the debug overlay: (origin, radius, kind: 0 automatic,

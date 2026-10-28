@@ -43,6 +43,17 @@ const IRR_CAPTURE_MIPS: u32 = CAPTURE_MIPS - 1;
 /// `@workgroup_size` of the filter shader, in x and y.
 const WORKGROUP: u32 = 8;
 
+/// How the filtering stores each stage of a probe (probe_filter.wgsl).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Store {
+    /// As computed (skies without a probe ambiance).
+    Plain = 0,
+    /// GL_R11F_G11F_B10F, as the Legacy Viewer (LEGACY_FORMAT).
+    Legacy = 1,
+    /// GL_RGB8, the Legacy Viewer without HDR (LDR_FORMAT).
+    Ldr = 2,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct ProbeHeader {
@@ -187,11 +198,12 @@ pub(crate) struct Probes {
     pub buffer: wgpu::Buffer,
     /// Trilinear sampler of the probe array (scene shaders, binding 11).
     pub sampler: wgpu::Sampler,
-    /// [plain, as the Legacy Viewer stores its probes] (LEGACY_FORMAT of
-    /// probe_filter.wgsl)
-    mip_pipeline: [wgpu::ComputePipeline; 2],
-    radiance_pipeline: [wgpu::ComputePipeline; 2],
-    irradiance_pipeline: wgpu::ComputePipeline,
+    /// [plain, as the Legacy Viewer stores its probes, in 8 bits without
+    /// HDR] (`Store`: LEGACY_FORMAT, LDR_FORMAT of probe_filter.wgsl)
+    mip_pipeline: [wgpu::ComputePipeline; 3],
+    radiance_pipeline: [wgpu::ComputePipeline; 3],
+    /// [plain, in 8 bits]
+    irradiance_pipeline: [wgpu::ComputePipeline; 2],
     /// Scratch mip `i` into scratch mip `i + 1`.
     mip_bgs: Vec<wgpu::BindGroup>,
     /// The scratch cube into mip `m` of a slot's radiance: [slot][m].
@@ -200,8 +212,8 @@ pub(crate) struct Probes {
     irradiance_bgs: Vec<wgpu::BindGroup>,
     /// Irradiance capture mip `i` into mip `i + 1`.
     irr_mip_bgs: Vec<wgpu::BindGroup>,
-    /// (stored as the Legacy Viewer does)
-    irr_source_pipeline: wgpu::ComputePipeline,
+    /// [stored as the Legacy Viewer does, in 8 bits]
+    irr_source_pipeline: [wgpu::ComputePipeline; 2],
     /// The irradiance capture into a slot's irradiance: [slot].
     irr_source_bgs: Vec<wgpu::BindGroup>,
     /// Read back by the GPU test.
@@ -343,28 +355,33 @@ impl Probes {
             label: Some("probe filter"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/probe_filter.wgsl").into()),
         });
-        let pipeline = |layout: &wgpu::BindGroupLayout, entry: &str, legacy_format: bool| {
+        let pipeline = |layout: &wgpu::BindGroupLayout, entry: &str, store: Store| {
             let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(entry),
                 bind_group_layouts: &[Some(layout)],
                 immediate_size: 0,
             });
+            let flag = |on: bool| if on { 1.0 } else { 0.0 };
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&pl),
                 module: &module,
                 entry_point: Some(entry),
                 compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &[("LEGACY_FORMAT", if legacy_format { 1.0 } else { 0.0 })],
+                    constants: &[
+                        ("LEGACY_FORMAT", flag(store == Store::Legacy)),
+                        ("LDR_FORMAT", flag(store == Store::Ldr)),
+                    ],
                     ..Default::default()
                 },
                 cache: None,
             })
         };
-        let mip_pipeline = [false, true].map(|legacy| pipeline(&mip_layout, "cs_mip", legacy));
-        let radiance_pipeline = [false, true].map(|legacy| pipeline(&radiance_layout, "cs_radiance", legacy));
-        let irradiance_pipeline = pipeline(&radiance_layout, "cs_irradiance", false);
-        let irr_source_pipeline = pipeline(&radiance_layout, "cs_irradiance_capture", true);
+        let all = [Store::Plain, Store::Legacy, Store::Ldr];
+        let mip_pipeline = all.map(|store| pipeline(&mip_layout, "cs_mip", store));
+        let radiance_pipeline = all.map(|store| pipeline(&radiance_layout, "cs_radiance", store));
+        let irradiance_pipeline = [Store::Plain, Store::Ldr].map(|store| pipeline(&radiance_layout, "cs_irradiance", store));
+        let irr_source_pipeline = [Store::Legacy, Store::Ldr].map(|store| pipeline(&radiance_layout, "cs_irradiance_capture", store));
         // the six faces of one mip of a cube, `first` being its first layer
         let faces = |texture: &wgpu::Texture, label: &str, mip: u32, first: u32| {
             texture.create_view(&wgpu::TextureViewDescriptor {
@@ -501,13 +518,14 @@ impl Probes {
     /// irradiance into `slot`; with `irr_capture` (a sky with a probe
     /// ambiance, the six faces of the irradiance capture drawn too), the
     /// irradiance comes from the irradiance capture and every stage is
-    /// stored as the Legacy Viewer stores its probes.
+    /// stored as the Legacy Viewer stores its probes. Without `hdr` every
+    /// stage is stored in 8 bits, whatever the sky.
     ///
     /// One compute pass, a dispatch per mip for its six faces. As render
     /// passes, one per face and mip, there were 90 of them, and wgpu pays
     /// for each when the encoder is finished: the frame of a sixth face
     /// spent 1 ms there instead of 0.25.
-    pub fn filter(&self, encoder: &mut wgpu::CommandEncoder, slot: u32, irr_capture: bool) {
+    pub fn filter(&self, encoder: &mut wgpu::CommandEncoder, slot: u32, irr_capture: bool, hdr: bool) {
         let slot = slot.min(self.slots - 1) as usize;
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("probe filter"),
@@ -518,24 +536,29 @@ impl Probes {
             pass.set_bind_group(0, bg, &[]);
             pass.dispatch_workgroups(groups, groups, 6);
         };
-        let legacy = usize::from(irr_capture);
-        pass.set_pipeline(&self.mip_pipeline[legacy]);
+        let store = match (hdr, irr_capture) {
+            (false, _) => Store::Ldr,
+            (true, true) => Store::Legacy,
+            (true, false) => Store::Plain,
+        };
+        let ldr = usize::from(store == Store::Ldr);
+        pass.set_pipeline(&self.mip_pipeline[store as usize]);
         for (mip, bg) in (1..CAPTURE_MIPS).zip(&self.mip_bgs) {
             dispatch(&mut pass, bg, CAPTURE_RES >> mip);
         }
-        pass.set_pipeline(&self.radiance_pipeline[legacy]);
+        pass.set_pipeline(&self.radiance_pipeline[store as usize]);
         for (mip, bg) in (0..PROBE_MIPS).zip(&self.radiance_bgs[slot]) {
             dispatch(&mut pass, bg, PROBE_RES >> mip);
         }
         if irr_capture {
-            pass.set_pipeline(&self.mip_pipeline[legacy]);
+            pass.set_pipeline(&self.mip_pipeline[store as usize]);
             for (mip, bg) in (1..IRR_CAPTURE_MIPS).zip(&self.irr_mip_bgs) {
                 dispatch(&mut pass, bg, IRR_CAPTURE_RES >> mip);
             }
-            pass.set_pipeline(&self.irr_source_pipeline);
+            pass.set_pipeline(&self.irr_source_pipeline[ldr]);
             dispatch(&mut pass, &self.irr_source_bgs[slot], IRRADIANCE_RES);
         } else {
-            pass.set_pipeline(&self.irradiance_pipeline);
+            pass.set_pipeline(&self.irradiance_pipeline[ldr]);
             dispatch(&mut pass, &self.irradiance_bgs[slot], IRRADIANCE_RES);
         }
     }
@@ -939,7 +962,7 @@ mod tests {
         let plain = [0.5, 2.0, 0.125];
         let mut encoder = device.create_command_encoder(&Default::default());
         capture(&probes, &mut encoder, [plain; 6]);
-        probes.filter(&mut encoder, 3, false);
+        probes.filter(&mut encoder, 3, false, true);
         queue.submit([encoder.finish()]);
         for face in 0..6 {
             for mip in 0..PROBE_MIPS {
@@ -968,7 +991,7 @@ mod tests {
         // mirror-like mip: each face shows its own color, the rough ones mix them
         let mut encoder = device.create_command_encoder(&Default::default());
         capture(&probes, &mut encoder, FACES);
-        probes.filter(&mut encoder, 1, false);
+        probes.filter(&mut encoder, 1, false, true);
         queue.submit([encoder.finish()]);
         for (face, color) in FACES.into_iter().enumerate() {
             let sharp = read(&device, &queue, &probes.array, 0, 6 + face as u32);
@@ -986,7 +1009,7 @@ mod tests {
         let mut encoder = device.create_command_encoder(&Default::default());
         capture(&probes, &mut encoder, [plain; 6]);
         capture_into(&mut encoder, [grey; 6], |face| probes.irr_capture_target(face));
-        probes.filter(&mut encoder, 5, true);
+        probes.filter(&mut encoder, 5, true, true);
         queue.submit([encoder.finish()]);
         for face in 0..6 {
             let radiance = read(&device, &queue, &probes.array, 0, 5 * 6 + face);
@@ -994,6 +1017,24 @@ mod tests {
             let irradiance = read(&device, &queue, &probes.irradiance, 0, 5 * 6 + face);
             let off = irradiance.iter().position(|t| !close(*t, stored));
             assert_eq!(off, None, "irradiance face {face}: {:?}", off.map(|i| irradiance[i]));
+        }
+        // without HDR every stage is 8 bits: clamped to 1, in 1 / 255 steps
+        // (0.5 -> 128 / 255, 0.125 -> 32 / 255), with or without the
+        // irradiance capture
+        let ldr = [128.0 / 255.0, 1.0, 32.0 / 255.0];
+        for (slot, irr_capture) in [(6, false), (7, true)] {
+            let mut encoder = device.create_command_encoder(&Default::default());
+            capture(&probes, &mut encoder, [plain; 6]);
+            capture_into(&mut encoder, [plain; 6], |face| probes.irr_capture_target(face));
+            probes.filter(&mut encoder, slot, irr_capture, false);
+            queue.submit([encoder.finish()]);
+            for face in 0..6 {
+                for (texture, mip) in [(&probes.array, 0), (&probes.array, PROBE_MIPS - 1), (&probes.irradiance, 0)] {
+                    let texels = read(&device, &queue, texture, mip, slot * 6 + face);
+                    let off = texels.iter().position(|t| !close(*t, ldr));
+                    assert_eq!(off, None, "slot {slot} face {face} mip {mip}: {:?}", off.map(|i| texels[i]));
+                }
+            }
         }
     }
 }

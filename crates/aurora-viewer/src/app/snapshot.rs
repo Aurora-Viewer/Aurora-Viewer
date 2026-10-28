@@ -1808,6 +1808,7 @@ LUT_3D_SIZE {n}
                 profile_posted: self.snapshots.message_profile,
                 email,
                 exposure: self.settings.exposure,
+                hdr: self.settings.hdr_emissive,
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
             };
             self.viewfinder_ui(ctx, p, projector, renderer, &view);
@@ -1872,6 +1873,7 @@ LUT_3D_SIZE {n}
                 profile_posted: s.message_profile,
                 email,
                 exposure: self.settings.exposure,
+                hdr: self.settings.hdr_emissive,
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
             };
             let mut open = self.panels.snapshot;

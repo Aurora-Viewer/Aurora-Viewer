@@ -474,18 +474,20 @@ fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
     // roughness from normal derivatives washes out terrain relief.
     let rough = clamp(material.orm.g, 0.03, 1.0);
     let ao = select(1.0, material.orm.r, frame.sky_ll.z > 0.5);
+    // pbrterrainF.glsl writes its emissive only with HAS_EMISSIVE
+    let emissive = select(material.emissive, vec3<f32>(0.0), deferred_emissive_off());
     var color: vec3<f32>;
     if (is_classic_sky()) {
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
         color = (ll_classic_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, a)
-            + material.emissive) * ll_final_scale()
+            + emissive) * ll_final_scale()
             + ll_classic_pbr_local(material.color.rgb, metal, rough, n, v, in.world_pos, in.clip.xy);
         color = ll_haze(color + material.color.rgb * water_caustics(in.world_pos, n), a);
         if (camera_underwater() || (water_fx_on(256u) && in.world_pos.z < camera_water_level())) {
             color = apply_fog(color * water_scene_light(in.world_pos), in.world_pos);
         }
     } else {
-        color = shade_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, false) + material.emissive;
+        color = shade_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, false) + emissive;
         color += material.color.rgb * water_caustics(in.world_pos, n);
         color = apply_fog(color * water_scene_light(in.world_pos), in.world_pos);
     }
