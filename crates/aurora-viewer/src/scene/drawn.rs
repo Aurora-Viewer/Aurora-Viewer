@@ -368,4 +368,60 @@ mod tests {
             Some(on_clothing)
         );
     }
+
+    /// #1241: an invisible clicker (every face at alpha 0, no draw record)
+    /// worn partly inside a mesh body without a script. The Legacy Viewer's
+    /// transparent pick never sees the rigged body: the click reaches the
+    /// clicker 15 cm under the body's surface, every time, not only when an
+    /// animation brings it within the click tolerance. Without an action it
+    /// stops nothing.
+    #[test]
+    fn a_touch_reaches_an_invisible_clicker_inside_a_mesh_body() {
+        let (mut world, mut scene, body, clicker) = super::super::picking::tests::scene_with_two_objects();
+        let wearer = world.objects.avatars().next().map(|(idx, _)| idx);
+        // the body's face at x = 2.5, the clicker's 15 cm behind it
+        let o = world.objects.get_mut(clicker).unwrap();
+        o.position = Vec3::new(3.15, 0.0, 50.0);
+        o.click_action = crate::interaction::code::TOUCH;
+        o.update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        for f in &mut Arc::make_mut(o.te.as_mut().unwrap()).faces {
+            f.color[3] = 0.0;
+        }
+        // a mesh body without a script
+        let o = world.objects.get_mut(body).unwrap();
+        o.click_action = crate::interaction::code::TOUCH;
+        o.update_flags = 0;
+        scene.gpu[body].rigged = true;
+        scene.gpu[body].owner_avatar = wearer;
+        scene.gpu[clicker].owner_avatar = wearer;
+        scene.gpu[clicker].built_faces = 1;
+        scene.gpu[clicker].faces.clear();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let on_body = Vec3::new(2.5, 0.0, 50.0);
+        let drawn = Drawn {
+            opaque: Some(DrawnFace {
+                record: 0,
+                point: on_body,
+                st: glam::Vec2::splat(0.5),
+                normal: -Vec3::X,
+                binormal: Vec3::Z,
+            }),
+            ..Default::default()
+        };
+        let depth = scene.touch_depth(&world, &drawn, Some(ray), Some(on_body), 100.0);
+        assert!(
+            depth.is_some_and(|p| (p.x - 2.65).abs() < 1e-3),
+            "the clicker under the body: {depth:?}"
+        );
+        let hit = scene.action_point(&world, Some(ray), depth, false, 100.0).expect("a point");
+        assert_eq!(scene.interaction_at_ray(&world, hit, ray, true), Some(clicker));
+        let designated = scene.designated(&world, Gesture::Touch, &drawn, Some(ray), Some(hit), Some(on_body), false);
+        assert_eq!(designated, None, "the body without a script lets the touch through");
+
+        // an invisible attachment with nothing to do stops nothing
+        let o = world.objects.get_mut(clicker).unwrap();
+        o.click_action = crate::interaction::code::NONE;
+        o.update_flags = 0;
+        assert_eq!(scene.touch_depth(&world, &drawn, Some(ray), Some(on_body), 100.0), Some(on_body));
+    }
 }

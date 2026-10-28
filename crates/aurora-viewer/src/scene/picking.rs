@@ -1172,12 +1172,16 @@ impl Scene {
         let mut found = false;
         for (idx, g) in self.pick_objects(None) {
             let Some(o) = world.objects.get(idx) else { continue };
-            if g.faces.is_empty()
-                || g.hud
-                || g.rigged
-                || (g.owner_avatar.is_some() && !g.is_avatar && o.visual_volume().is_mesh())
-                || Some(idx) == wearer
-                || o.click_action == crate::interaction::code::IGNORE
+            if g.hud || g.rigged || Some(idx) == wearer || o.click_action == crate::interaction::code::IGNORE {
+                continue;
+            }
+            // an invisible clicker under the mesh, often partly inside the
+            // body it is worn on (#1241): its alpha-0 faces count, as in the
+            // Legacy Viewer's transparent pick, which never sees the rigged
+            // mesh in front of it
+            let clicker = !g.is_avatar && self.invisible_clicker(world, idx, g, o);
+            if (g.faces.is_empty() && !clicker)
+                || (g.owner_avatar.is_some() && !g.is_avatar && o.visual_volume().is_mesh() && !(clicker && worn_unrigged_mesh(o, g)))
             {
                 continue;
             }
@@ -1189,7 +1193,7 @@ impl Scene {
                     g.center + Vec3::new(0.35, 0.35, 1.0),
                 )
             } else if ray_may_hit(g, ray) {
-                self.hit_distance(world, idx, ray, now, false, None)
+                self.hit_distance(world, idx, ray, now, clicker, None)
             } else {
                 None
             };
@@ -1248,6 +1252,16 @@ impl Scene {
             }
         }
         if found { Some(ray.0 + ray.1 * nearest) } else { depth }
+    }
+
+    /// An object that `transparent_action_point` reaches through its hidden
+    /// faces: one the GPU does not draw whole (alpha 0, the transparent
+    /// texture) with something to do with a left click, the invisible
+    /// clickers of LLToolPie::handleMouseDown's transparent pick.
+    fn invisible_clicker(&self, world: &World, idx: usize, g: &ObjGpu, o: &Object) -> bool {
+        o.click_action != crate::interaction::code::DISABLED
+            && (self.see_through_face(g, true) || g.faces.len() < g.built_faces)
+            && crate::interaction::target(world, idx, &HashMap::new()).is_some()
     }
 
     /// Whether an object has a face `transparent_action_point` looks at:
