@@ -89,11 +89,26 @@ impl Choice {
     }
 }
 
+/// Eligibility follows the encoded dimensions, not the source file's size.
+fn texture_needs_size_limit(image: &DecodedImage) -> bool {
+    let (width, height) = import_texture::dimensions(
+        image.width,
+        image.height,
+        import_texture::Options {
+            max_width: 2048,
+            max_height: 2048,
+            ..Default::default()
+        },
+    );
+    width > 1024 || height > 1024
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
     pub max_width: u32,
     pub max_height: u32,
+    pub limit_texture_size: bool,
     pub lossless_small: bool,
     pub next_modify: bool,
     pub next_copy: bool,
@@ -125,6 +140,7 @@ impl Default for Preferences {
         Self {
             max_width: 1024,
             max_height: 1024,
+            limit_texture_size: false,
             lossless_small: true,
             next_modify: false,
             next_copy: false,
@@ -910,6 +926,18 @@ impl Imports {
                 Worker::Loaded(request, mut entries) if self.pending_files == Some(request) => {
                     self.pending_files = None;
                     for entry in &mut entries {
+                        // Capture the latest choice on admission, not when the
+                        // asynchronous file dialog/load started. Existing rows
+                        // keep their independent choices.
+                        if let Some(Source::Texture(image)) = &entry.source {
+                            let maximum = if self.load_preferences.limit_texture_size && texture_needs_size_limit(image) {
+                                1024
+                            } else {
+                                2048
+                            };
+                            entry.options.max_width = maximum;
+                            entry.options.max_height = maximum;
+                        }
                         if let Some(source) = &entry.source {
                             entry.folder = Self::default_folder(world, prefs, source.kind());
                         }

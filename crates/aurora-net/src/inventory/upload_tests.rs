@@ -223,6 +223,67 @@ async fn a_photo_uploads_as_a_snapshot_texture_with_its_permissions() {
     assert_eq!(body["expected_upload_cost"].as_i32(), 10);
 }
 #[tokio::test]
+async fn large_texture_upload_keeps_confirmed_fee_when_preliminary_price_is_lower() {
+    for (kind, inventory_type) in [(Kind::Texture, 0), (Kind::Snapshot, 15)] {
+        for (preliminary, paid) in [(Some(10), Some(50)), (Some(0), Some(0)), (Some(50), None), (None, Some(50))] {
+            let asset = Uuid::from_u128(3);
+            let (base, task) = server(|base| {
+                let mut offer = llsd_map! {"state"=>"upload", "uploader"=>format!("{base}/binary")};
+                if let Some(price) = preliminary {
+                    offer.insert("upload_price", price);
+                }
+                let mut ack = llsd_map! {"state"=>"complete", "new_inventory_item"=>Uuid::from_u128(2), "new_asset"=>asset};
+                if let Some(price) = paid {
+                    ack.insert("upload_price", price);
+                }
+                vec![(200, offer), (200, ack), (200, item(0, inventory_type, asset))]
+            })
+            .await;
+            let upload_request = Request {
+                kind,
+                expected_cost: 50,
+                ..request()
+            };
+            let expected_data = upload_request.data.clone();
+            let receipt = upload(
+                &reqwest::Client::new(),
+                &base,
+                &format!("{base}/fetch"),
+                Uuid::from_u128(4),
+                upload_request,
+            )
+            .await
+            .expect("the preliminary base fee must not block a confirmed 2K upload");
+            assert_eq!(receipt.cost, paid.unwrap_or(50));
+            assert_eq!(receipt.item.inv_type, inventory_type);
+            let requests = task.await.expect("server");
+            assert_eq!(requests.len(), 3, "one negotiation, one transfer, one inventory verification");
+            let body = aurora_llsd::from_xml(&requests[0].1).expect("negotiation");
+            assert_eq!(body["expected_upload_cost"].as_i32(), 50, "keep the user's confirmed fee");
+            assert_eq!(requests[1].1, expected_data);
+        }
+    }
+}
+
+#[tokio::test]
+async fn negative_preliminary_upload_fee_prevents_binary_transfer() {
+    let (base, task) = server(|base| {
+        vec![(
+            200,
+            llsd_map! {"state"=>"upload", "uploader"=>format!("{base}/binary"), "upload_price"=>-1},
+        )]
+    })
+    .await;
+    assert_eq!(
+        upload(&reqwest::Client::new(), &base, &base, Uuid::nil(), request())
+            .await
+            .expect_err("invalid price"),
+        Error::Response
+    );
+    assert_eq!(task.await.expect("server").len(), 1);
+}
+
+#[tokio::test]
 async fn changed_fee_prevents_binary_transfer_and_unknown_outcome_never_retries() {
     let (base, task) = server(|base| {
         vec![(

@@ -476,6 +476,7 @@ fn texture(
     image: &DecodedImage,
     empty_alpha: bool,
     options: &mut import_texture::Options,
+    prefs: &mut Preferences,
     preview: &Option<egui::TextureHandle>,
     actions: &mut Vec<Action>,
     generation: &mut u64,
@@ -505,26 +506,17 @@ fn texture(
                 selection(ui, target, index, label);
             }
         });
-    ui.horizontal(|ui| {
-        ui.label(aurora_i18n::tr!("import-max-size"));
-        for (axis, value) in [("X", &mut options.max_width), ("Y", &mut options.max_height)] {
-            egui::ComboBox::from_id_salt(("import_dimension", axis))
-                .selected_text(value.to_string())
-                .show_ui(ui, |ui| {
-                    for size in [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048] {
-                        selection(ui, value, size, size.to_string());
-                    }
-                });
+    if texture_needs_size_limit(image) {
+        let mut limit_size = options.max_width.max(options.max_height) <= 1024;
+        if widgets::switch_labeled(ui, p, &mut limit_size, aurora_i18n::tr!("import-max-size")).changed() {
+            let maximum = if limit_size { 1024 } else { 2048 };
+            options.max_width = maximum;
+            options.max_height = maximum;
+            prefs.limit_texture_size = limit_size;
         }
-    });
+    }
     let (width, height) = import_texture::dimensions(image.width, image.height, *options);
-    ui.label(aurora_i18n::tr!(
-        "import-texture-size",
-        source_width = image.width,
-        source_height = image.height,
-        width = width,
-        height = height
-    ));
+    ui.label(aurora_i18n::tr!("import-texture-size", width = width, height = height));
     if width * height <= 128 * 128 {
         checkbox(ui, p, &mut options.lossless_small, aurora_i18n::tr!("import-lossless"));
     }

@@ -228,6 +228,7 @@ pub(super) fn show(
                                             image,
                                             entry.empty_alpha,
                                             &mut entry.options,
+                                            prefs,
                                             &entry.preview,
                                             actions,
                                             &mut entry.preview_generation,

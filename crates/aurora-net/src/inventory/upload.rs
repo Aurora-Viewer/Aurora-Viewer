@@ -309,8 +309,12 @@ pub async fn upload(http: &reqwest::Client, cap: &str, fetch: &str, owner: Uuid,
     if offer["state"].as_str() != "upload" || offer["uploader"].as_str().is_empty() {
         return Err(Error::Rejected);
     }
+    // LLViewerAssetUpload::AssetInventoryUploadCoproc (indra/newview/llviewerassetupload.cpp)
+    // reads the paid price after the binary upload. The preliminary response can
+    // still carry the base texture fee before the server knows the image size.
+    // Keep the confirmed expected_upload_cost; only an increase needs reconfirmation.
     if let Llsd::Integer(n) = &offer["upload_price"]
-        && *n != request.expected_cost
+        && (*n < 0 || *n > request.expected_cost)
     {
         return Err(if *n >= 0 { Error::PriceChanged(Some(*n)) } else { Error::Response });
     }
