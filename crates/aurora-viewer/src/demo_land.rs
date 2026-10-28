@@ -476,11 +476,23 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
         LandCommand::Select { .. } => vec![selected()],
         LandCommand::Update { update, .. } => {
             let mut g = PARCEL.lock();
-            if let Some(p) = g.as_mut() {
+            let voice = g.as_mut().map(|p| {
                 crate::world::land::apply_update(p, update);
-            }
+                (p.local_id, p.flags)
+            });
             drop(g);
-            vec![selected()]
+            let mut out = vec![selected()];
+            // the simulator tells the agents on the parcel of its voice
+            // settings (ParcelVoiceInfo), as the grid does
+            if let Some((local_id, flags)) = voice {
+                out.push(NetEvent::ParcelVoiceInfo {
+                    handle: super::HANDLE,
+                    local_id,
+                    allowed: flags & pf::ALLOW_VOICE_CHAT != 0,
+                    use_estate: Some(flags & pf::USE_ESTATE_VOICE_CHAN != 0),
+                });
+            }
+            out
         }
         LandCommand::AccessListRequest { flags, .. } => {
             let e = |id: Uuid, time: i32| AccessEntry { id, time, flags: 0 };
