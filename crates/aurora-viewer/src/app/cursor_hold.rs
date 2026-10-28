@@ -14,8 +14,12 @@ pub(super) enum HoldKind {
     /// LLToolGun::handleSelect: the cursor goes to the centre of the window
     /// and comes back there (handleDeselect).
     Mouselook,
-    /// LLToolCamera::handleMouseUp: the cursor comes back where the drag
-    /// started.
+    /// LLToolCamera::handleMouseUp on a valid click point (Alt+click, focus
+    /// tool): the cursor comes back at the centre, where the camera turned
+    /// the clicked point, so it is still over what was clicked.
+    Focus,
+    /// LLToolCamera::handleMouseUp otherwise (avatar steering, a click with
+    /// no point): the cursor comes back where the drag started.
     Drag { origin: (f32, f32) },
 }
 
@@ -47,8 +51,9 @@ impl CursorHold {
     }
 
     /// Take the cursor; None when it is already held (a drag that turns into
-    /// mouselook keeps its first hold).
-    pub(super) fn take(&mut self, mouselook: bool, cursor: (f32, f32)) -> Option<HoldKind> {
+    /// mouselook keeps its first hold). `focus`: the camera drag began on a
+    /// valid focus point.
+    pub(super) fn take(&mut self, mouselook: bool, focus: bool, cursor: (f32, f32)) -> Option<HoldKind> {
         // a hold asked after a postponed give-back keeps the cursor
         self.pending = None;
         if self.kind.is_some() {
@@ -56,6 +61,8 @@ impl CursorHold {
         }
         let kind = if mouselook {
             HoldKind::Mouselook
+        } else if focus {
+            HoldKind::Focus
         } else {
             HoldKind::Drag { origin: cursor }
         };
@@ -70,7 +77,7 @@ impl CursorHold {
         let kind = self.kind.take()?;
         Some(match kind {
             _ if focus_lost => Return::Stay,
-            HoldKind::Mouselook => Return::Center,
+            HoldKind::Mouselook | HoldKind::Focus => Return::Center,
             HoldKind::Drag { origin } => Return::At(origin),
         })
     }
@@ -149,20 +156,26 @@ impl App {
     /// give it back.
     pub(super) fn set_mouselook_grab(&mut self, on: bool) {
         if on {
-            self.hold_cursor();
+            self.hold_cursor(false);
         } else {
             self.release_cursor(false);
         }
     }
 
-    fn hold_cursor(&mut self) {
+    /// Hide and lock the cursor for a camera drag that focused on the clicked
+    /// point: it comes back at the centre, over that point.
+    pub(super) fn hold_focus_cursor(&mut self) {
+        self.hold_cursor(true);
+    }
+
+    fn hold_cursor(&mut self, focus: bool) {
         if self.gfx.is_none() || self.clicks.scripted() {
             // AURORA_DEMO_CLICKS: several camera drags a second must not
             // take the real cursor of someone using the PC
             return;
         }
         let mouselook = self.camera.mouselook();
-        let Some(kind) = self.cursor_hold.take(mouselook, self.cursor_pos) else {
+        let Some(kind) = self.cursor_hold.take(mouselook, focus, self.cursor_pos) else {
             return;
         };
         if kind == HoldKind::Mouselook {
@@ -245,7 +258,7 @@ mod tests {
     #[test]
     fn mouselook_gives_the_cursor_back_at_the_centre() {
         let mut hold = CursorHold::default();
-        assert_eq!(hold.take(true, (10.0, 900.0)), Some(HoldKind::Mouselook));
+        assert_eq!(hold.take(true, false, (10.0, 900.0)), Some(HoldKind::Mouselook));
         assert!(hold.held());
         assert_eq!(hold.give_back(false), Some(Return::Center));
         assert!(!hold.held());
@@ -255,25 +268,37 @@ mod tests {
     #[test]
     fn a_drag_gives_the_cursor_back_where_it_started() {
         let mut hold = CursorHold::default();
-        assert_eq!(hold.take(false, (40.0, 50.0)), Some(HoldKind::Drag { origin: (40.0, 50.0) }));
+        assert_eq!(hold.take(false, false, (40.0, 50.0)), Some(HoldKind::Drag { origin: (40.0, 50.0) }));
         assert_eq!(hold.give_back(false), Some(Return::At((40.0, 50.0))));
+    }
+
+    #[test]
+    fn a_focus_drag_gives_the_cursor_back_at_the_centre() {
+        // the camera turned the clicked point to the centre: the cursor
+        // reappears over it, not over what is now at the press position
+        let mut hold = CursorHold::default();
+        assert_eq!(hold.take(false, true, (40.0, 50.0)), Some(HoldKind::Focus));
+        assert_eq!(hold.give_back(false), Some(Return::Center));
+        // losing the focus still leaves it where it is
+        hold.take(false, true, (40.0, 50.0));
+        assert_eq!(hold.give_back(true), Some(Return::Stay));
     }
 
     #[test]
     fn a_second_take_keeps_the_first_hold() {
         let mut hold = CursorHold::default();
-        hold.take(false, (40.0, 50.0));
-        assert_eq!(hold.take(true, (0.0, 0.0)), None);
+        hold.take(false, false, (40.0, 50.0));
+        assert_eq!(hold.take(true, false, (0.0, 0.0)), None);
         assert_eq!(hold.give_back(false), Some(Return::At((40.0, 50.0))));
     }
 
     #[test]
     fn losing_the_focus_shows_the_cursor_where_it_is() {
         let mut hold = CursorHold::default();
-        hold.take(true, (0.0, 0.0));
+        hold.take(true, false, (0.0, 0.0));
         assert_eq!(hold.give_back(true), Some(Return::Stay));
         // mouselook takes it again once the window has the focus back
-        assert_eq!(hold.take(true, (0.0, 0.0)), Some(HoldKind::Mouselook));
+        assert_eq!(hold.take(true, false, (0.0, 0.0)), Some(HoldKind::Mouselook));
     }
 
     #[test]
@@ -321,7 +346,7 @@ mod tests {
     #[test]
     fn a_postponed_give_back_is_kept_until_done_and_cancelled_by_a_new_hold() {
         let mut hold = CursorHold::default();
-        assert!(hold.take(false, (10.0, 20.0)).is_some());
+        assert!(hold.take(false, false, (10.0, 20.0)).is_some());
         // asked while the window was busy: still held, give-back pending
         hold.pending = Some(false);
         assert!(hold.held());
@@ -330,7 +355,7 @@ mod tests {
         assert!(!hold.held());
         // a new hold before the frame gave the window back drops the pending give-back
         hold.pending = Some(true);
-        assert!(hold.take(true, (0.0, 0.0)).is_some());
+        assert!(hold.take(true, false, (0.0, 0.0)).is_some());
         assert_eq!(hold.pending, None);
     }
 }

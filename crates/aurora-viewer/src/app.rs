@@ -4137,7 +4137,7 @@ impl App {
                 self.camera.alt_focus(p, object, ray, &mut self.world.agent, &self.settings.camera);
                 self.camera.begin_drag(false);
                 self.mouse_mode = MouseMode::FocusOrbit;
-                self.set_mouselook_grab(true);
+                self.hold_focus_cursor();
             }
         } else if let (Some(p), Some(ray)) = (avatar_hit, ray) {
             // ClickOnAvatarKeepsCamera (LLToolPie::handleLeftClickPick).
@@ -6007,7 +6007,13 @@ impl App {
         }
         self.camera.begin_drag(false);
         self.mouse_mode = MouseMode::FocusOrbit;
-        self.set_mouselook_grab(true);
+        // LLToolCamera::handleMouseUp: a click on the sky focused nothing,
+        // the cursor comes back where it was pressed
+        if hit.is_some() {
+            self.hold_focus_cursor();
+        } else {
+            self.set_mouselook_grab(true);
+        }
         self.left_down = true;
         true
     }
