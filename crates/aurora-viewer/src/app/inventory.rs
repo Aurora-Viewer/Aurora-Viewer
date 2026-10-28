@@ -3,6 +3,7 @@
 use super::*;
 use crate::ui::inventory::InvAction;
 use crate::world::inventory::actions as rules;
+use std::collections::VecDeque;
 use uuid::Uuid;
 
 impl App {
@@ -72,12 +73,28 @@ impl App {
                 &mut prefs.warn_task_move
             };
             if *warn && !task_inventory::approved(request.approved, scripted) {
-                self.task_transfer = Some(ui::inventory::task_drop::PendingTransfer { request, scripted });
+                // the items of one drop share the dialog of their object and folder
+                let mut request = Some(request);
+                for pending in &mut self.task_transfer {
+                    request = request.and_then(|r| pending.join(r));
+                }
+                if let Some(request) = request {
+                    self.task_transfer
+                        .push_back(ui::inventory::task_drop::PendingTransfer::new(request, scripted));
+                }
                 return;
             }
-            if request.ignore_warning && request.approved == Some(scripted) {
+            if *warn && request.ignore_warning && request.approved == Some(scripted) {
                 *warn = false;
                 self.settings.save();
+                // the dialogs still waiting for this warning need no answer now
+                let (released, waiting): (VecDeque<_>, VecDeque<_>) = std::mem::take(&mut self.task_transfer)
+                    .into_iter()
+                    .partition(|pending| pending.scripted == scripted);
+                self.task_transfer = waiting;
+                for waiting in released.into_iter().flat_map(|pending| pending.requests) {
+                    self.take_task_inventory(waiting);
+                }
             }
         }
         let Some(o) = self

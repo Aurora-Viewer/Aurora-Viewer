@@ -171,6 +171,10 @@ impl DemoSim {
             if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("contents-move-plain,")) {
                 items.retain(|i| i.asset_type != 10);
             }
+            // a second no-copy item, for the shared move warning
+            if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("contents-move-many,")) {
+                items[1].owner_mask &= !perm::COPY;
+            }
             (1, items)
         })
     }

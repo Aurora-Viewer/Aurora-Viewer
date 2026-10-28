@@ -8046,6 +8046,10 @@ task-transfer-attachment-no-copy = Un élément non copiable ne peut pas être r
 task-transfer-no-permission = Les permissions de cet élément et de son objet ne permettent pas ce transfert.
 task-transfer-title = Déplacer le contenu vers l’inventaire
 task-transfer-warning = Cet élément ne sera pas copié : il sera retiré du contenu de l’objet et déplacé dans votre inventaire.
+task-transfer-warning-many = { $count ->
+    [one] { $count } élément ne sera pas copié : il sera retiré du contenu de l’objet et déplacé dans votre inventaire.
+   *[other] { $count } éléments ne seront pas copiés : ils seront retirés du contenu de l’objet et déplacés dans votre inventaire.
+    }
 task-transfer-scripted-warning = Cet objet contient des scripts. Retirer cet élément peut perturber leur fonctionnement ou rendre l’objet inutilisable.
 task-transfer-ignore = Ne plus afficher cet avertissement
 task-transfer-destination = Ce dossier ne peut pas recevoir cet élément.

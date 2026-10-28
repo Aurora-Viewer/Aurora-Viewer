@@ -8053,6 +8053,10 @@ task-transfer-attachment-no-copy = A no-copy item cannot be removed from an atta
 task-transfer-no-permission = The permissions of this item and its object do not allow this transfer.
 task-transfer-title = Move contents to inventory
 task-transfer-warning = This item will not be copied: it will be removed from the object's contents and moved to your inventory.
+task-transfer-warning-many = { $count ->
+    [one] { $count } item will not be copied: it will be removed from the object's contents and moved to your inventory.
+   *[other] { $count } items will not be copied: they will be removed from the object's contents and moved to your inventory.
+    }
 task-transfer-scripted-warning = This object contains scripts. Removing this item may disrupt them or make the object unusable.
 task-transfer-ignore = Do not show this warning again
 task-transfer-destination = This folder cannot receive this item.

@@ -1374,7 +1374,10 @@ the cube to test its deletion by hand.
 `AURORA_DEMO_BUILD=contents-copy,object:118` opens Contents and the
 inventory, then copies an item at frame 645. `contents-move` offers the
 confirmation of the removal of the non-copyable texture (with a warning for
-scripts); `contents-move-plain` shows the case without scripts. Screenshot
+scripts); `contents-move-plain` shows the case without scripts.
+`contents-move-many` selects every item and drops them together on the
+inventory: the copyable one goes at once, the two no-copy ones share one
+warning that lists them. Screenshot
 at 670. The user's warning choices still apply. `contents-ready` opens both
 windows to test the drag by hand: copyable script and non-copyable texture.
 While holding the mouse button, the native cursor keeps a copy or move
