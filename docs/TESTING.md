@@ -6347,7 +6347,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `manage:pbr-mask` uses a holed PBR material on the ground: colour, depth,
   picking, sun and projector shadows must all respect its alpha mask.
   `manage:pbr-paint` creates the experimental local blend map from the advanced
-  terrain fold; `manage:pbr-paint-reset` resets it while work is pending.
+  terrain fold and scrolls its controls into view; `manage:pbr-paint-reset`
+  resets it while work is pending and shows the same controls.
   The map freezes blend weights locally, uses linear RGB with the first layer
   as the remainder, and never sends an estate edit. Reset returns to live
   height/noise composition. Add `classic` to check the same controls there.

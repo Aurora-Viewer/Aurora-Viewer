@@ -16,6 +16,7 @@ pub(super) struct SurfaceUi {
     previews: crate::ui::texture_library::previews::Previews,
     pub pick_before: Option<Uuid>,
     pub demo_mode: u8,
+    pub demo_paint_scroll: bool,
     demo_tick: u8,
 }
 
@@ -131,11 +132,13 @@ pub(super) fn demo_step(s: &mut RegionUi, v: &View, world: &mut World) {
         if let Some(region) = world.regions.get_mut(&v.handle) {
             if s.surface.demo_tick >= 5 && matches!(s.surface.demo_mode, 4 | 5) && region.heightmap.received_fraction() >= 1.0 {
                 region.terrain_surface.request_paint();
+                s.surface.demo_paint_scroll = true;
                 s.surface.demo_mode = if s.surface.demo_mode == 4 { 0 } else { 7 };
                 s.surface.demo_tick = 0;
             }
             if s.surface.demo_tick == 30 && s.surface.demo_mode == 7 {
                 region.terrain_surface.clear_paint();
+                s.surface.demo_paint_scroll = true;
                 s.surface.demo_mode = 0;
             }
         }
