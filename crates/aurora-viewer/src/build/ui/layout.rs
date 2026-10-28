@@ -446,6 +446,15 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
                         }
                         floaters::distance_controls(ui, p, s);
                     });
+                    widgets::divider(ui, p);
+                    common::section(ui, p, aurora_i18n::tr!("build-layout-handles"));
+                    ui.scope(|ui| {
+                        if tool.ui.layout.organizing {
+                            ui.visuals_mut().disabled_alpha = 1.0;
+                            ui.disable();
+                        }
+                        floaters::handle_controls(ui, p, s);
+                    });
                     if !tool.ui.notecards.message.is_empty() {
                         common::small(ui, p, &tool.ui.notecards.message);
                     }

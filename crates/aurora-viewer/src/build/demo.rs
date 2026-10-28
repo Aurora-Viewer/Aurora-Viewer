@@ -37,6 +37,7 @@
 //! `:media` (e.g. `texture:bp`); `:bp-normal` / `:bp-specular` select empty
 //! legacy map channels, and opens `+weights`, `+grid`, `+media`
 //! (e.g. `general+weights+grid`); `contents+permissions` opens bulk rights.
+//! `AURORA_DEMO_BUILD_HANDLES=<percent>` sets the edit handle size.
 //! `AURORA_DEMO_BUILD_FOCUS=off|on` focuses the selected object before the
 //! drag, with edit camera tracking disabled/enabled.
 //! `AURORA_DEMO_BUILD_EDGE=left|right|top|bottom` moves the cursor to an
@@ -105,7 +106,7 @@ fn handle_px(tool: &BuildTool, world: &World, s: &BuildSettings, part: Part) -> 
     let g = f.grid;
     let cam = &tool.cam;
     let c = f.pivot;
-    let len = cam.meters_for_pixels(c, 50.0);
+    let len = super::manip::arrow_length(cam, &f, c);
     let unit = |i: usize| {
         let mut v = Vec3::ZERO;
         v[i] = 1.0;
@@ -124,7 +125,7 @@ fn handle_px(tool: &BuildTool, world: &World, s: &BuildSettings, part: Part) -> 
             c + g.rotation * v
         }
         Part::Ring(i) => {
-            let r = cam.depth(c).max(0.01) * (100.0 / cam.height * cam.fov_y).tan();
+            let r = super::manip::ring_radius(cam, &f, c);
             let a = g.rotation * unit(i);
             // the ring point facing the camera most
             let to_cam = (cam.eye - c).normalize_or_zero();
@@ -133,7 +134,7 @@ fn handle_px(tool: &BuildTool, world: &World, s: &BuildSettings, part: Part) -> 
         }
         Part::Free => c,
         Part::Roll => {
-            let r = cam.depth(c).max(0.01) * (100.0 / cam.height * cam.fov_y).tan();
+            let r = super::manip::ring_radius(cam, &f, c);
             c + cam.up * r * 1.08
         }
         Part::Corner(k) => {
@@ -147,6 +148,16 @@ fn handle_px(tool: &BuildTool, world: &World, s: &BuildSettings, part: Part) -> 
         Part::Face(i, pos) => b.center + b.rotation * unit(i) * b.half[i] * if pos { 1.0 } else { -1.0 },
     };
     cam.project_px(p)
+}
+
+/// AURORA_DEMO_BUILD_HANDLES: the edit handle size, in percent.
+pub fn apply_handle_size(s: &mut BuildSettings) {
+    if let Some(percent) = std::env::var("AURORA_DEMO_BUILD_HANDLES")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+    {
+        s.gizmo_scale = percent / 100.0;
+    }
 }
 
 /// AURORA_DEMO_BUILD_TAB: the floater tab (and texture sub-tab) to show.

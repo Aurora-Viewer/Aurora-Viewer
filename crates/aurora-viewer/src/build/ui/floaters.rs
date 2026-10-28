@@ -102,6 +102,27 @@ pub(super) fn ruler_controls(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettin
     });
 }
 
+/// Aurora: the size of the edit handles, in percent of the Legacy Viewer's
+/// fixed screen sizes (#1328).
+pub(super) fn handle_controls(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
+    ui.spacing_mut().slider_width = (ui.available_width() - 80.0).clamp(40.0, 170.0);
+    let range = crate::build::GIZMO_SCALE_RANGE;
+    ui.horizontal(|ui| {
+        label(ui, p, aurora_i18n::tr!("build-ui-floaters-handle-size"));
+        let mut percent = (s.gizmo_scale() * 100.0).round();
+        if ui
+            .add(
+                egui::Slider::new(&mut percent, range.start() * 100.0..=range.end() * 100.0)
+                    .custom_parser(aurora_i18n::parse_number)
+                    .step_by(10.0),
+            )
+            .changed()
+        {
+            s.gizmo_scale = percent / 100.0;
+        }
+    });
+}
+
 /// The Build 1 preferences' "Limit select distance" and "Limit drag
 /// distance" (panel_preferences_firestorm.xml): a switch and its distance in
 /// metres, greyed while the switch is off.
