@@ -183,7 +183,7 @@ impl Who {
         let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
         let avatar = if object {
             uuid::Uuid::nil()
-        } else if line.kind == ChatKind::Own {
+        } else if line.kind.is_own() {
             env.world.agent_id
         } else {
             line.source
@@ -212,7 +212,7 @@ fn name_color(env: &LineEnv, th: &Thread, line: &ChatLine, who: &Who) -> Color32
     if who.object {
         return crate::ui::colors::sender_color(line);
     }
-    if line.kind == ChatKind::Own {
+    if line.kind.is_own() {
         return p.teal;
     }
     if th.moderators.is_some_and(|m| m.contains(&line.source)) {
@@ -233,13 +233,13 @@ fn body(env: &LineEnv, line: &ChatLine, name: &str) -> (String, Color32, bool) {
         } else {
             line.text.clone()
         };
-        return (text, color, emote || matches!(line.kind, ChatKind::Local(ChatType::Whisper)));
+        return (text, color, emote || line.kind.volume() == Some(ChatType::Whisper));
     }
     if emote {
         return (format!("{name}{}", &line.text[3..]), tone.unwrap_or(p.violet_pale), true);
     }
-    let whisper = matches!(line.kind, ChatKind::Local(ChatType::Whisper));
-    let shout = matches!(line.kind, ChatKind::Local(ChatType::Shout));
+    let whisper = line.kind.volume() == Some(ChatType::Whisper);
+    let shout = line.kind.volume() == Some(ChatType::Shout);
     let color = tone.or_else(|| crate::ui::colors::keyword_color(line)).unwrap_or_else(|| {
         if whisper {
             p.muted
@@ -269,9 +269,9 @@ fn tags(ui: &mut egui::Ui, p: &Palette, th: &Thread, line: &ChatLine, who: &Who)
             p.violet_pale,
         );
     }
-    match line.kind {
-        ChatKind::Local(ChatType::Shout) => tag(ui, aurora_i18n::tr!("ui-chat-tag-shouts"), None, p.warn),
-        ChatKind::Local(ChatType::Whisper) => tag(ui, aurora_i18n::tr!("ui-chat-tag-whispers"), None, p.muted),
+    match line.kind.volume() {
+        Some(ChatType::Shout) => tag(ui, aurora_i18n::tr!("ui-chat-tag-shouts"), None, p.warn),
+        Some(ChatType::Whisper) => tag(ui, aurora_i18n::tr!("ui-chat-tag-whispers"), None, p.muted),
         _ => {}
     }
 }
@@ -587,7 +587,7 @@ pub(super) fn message_menu(ui: &mut egui::Ui, env: &LineEnv, th: &mut Thread, ta
 /// The message names us: an explicit mention, or our display or user name
 /// as a word of its text.
 fn mentions(env: &LineEnv, me: &[String], line: &ChatLine) -> bool {
-    if matches!(line.kind, ChatKind::Own | ChatKind::System) || line.kind.is_card() || line.origin != Origin::Live {
+    if matches!(line.kind, ChatKind::Own(_) | ChatKind::System) || line.kind.is_card() || line.origin != Origin::Live {
         return false;
     }
     let agent = env.world.agent_id;

@@ -552,7 +552,7 @@ fn preview(world: &World, line: &crate::world::ChatLine, named: bool) -> String 
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
     if emote || line.kind.is_notice() {
         text
-    } else if line.kind == crate::world::ChatKind::Own {
+    } else if line.kind.is_own() {
         aurora_i18n::tr!("ui-chat-preview-you", text = text.as_str()).to_owned()
     } else if named && let Some(first) = name.split_whitespace().next() {
         format!("{first} : {text}")

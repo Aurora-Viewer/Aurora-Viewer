@@ -14,7 +14,7 @@ use super::{
 };
 use crate::theme::Palette;
 use crate::ui::give_drop;
-use crate::world::{ChatKind, ChatLine, World};
+use crate::world::{ChatLine, World};
 use std::collections::{HashMap, VecDeque};
 use uuid::Uuid;
 
@@ -552,7 +552,7 @@ impl NewLines {
                 .max(first);
             // (without the focus, what is shown is not seen yet)
             self.seen.insert(conv, from);
-            let mine = |seq: u64| lines.get((seq - first) as usize).is_none_or(|l| l.kind == ChatKind::Own);
+            let mine = |seq: u64| lines.get((seq - first) as usize).is_none_or(|l| l.kind.is_own());
             match (from..next).find(|&seq| !mine(seq)) {
                 Some(seq) => {
                     self.at.insert(conv, seq);
@@ -571,7 +571,7 @@ impl NewLines {
             while seq
                 .checked_sub(first)
                 .and_then(|i| lines.get(i as usize))
-                .is_some_and(|l| l.kind == ChatKind::Own)
+                .is_some_and(|l| l.kind.is_own())
             {
                 *seq += 1;
             }

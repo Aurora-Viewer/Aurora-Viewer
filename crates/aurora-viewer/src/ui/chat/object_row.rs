@@ -282,7 +282,7 @@ pub(super) mod tests {
         for kind in [
             ChatKind::Local(ChatType::Normal),
             ChatKind::Local(ChatType::Shout),
-            ChatKind::Own,
+            ChatKind::OWN,
             ChatKind::Im,
             ChatKind::Invite(1),
             ChatKind::InventoryOffer(1),

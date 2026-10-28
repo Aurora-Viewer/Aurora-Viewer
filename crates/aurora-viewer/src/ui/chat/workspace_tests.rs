@@ -1606,7 +1606,7 @@ fn the_new_line_marks_what_arrived_while_away() {
     nl.frame(jane, 6, true, 10, &lines, 2);
     assert_eq!(nl.at(jane), Some(14), "above the first line that arrived away");
     // we answer, Jane answers, under our eyes: it stays
-    lines.push_back(line("Me", Uuid::nil(), ChatKind::Own, "mine"));
+    lines.push_back(line("Me", Uuid::nil(), ChatKind::OWN, "mine"));
     nl.frame(jane, 7, true, 10, &lines, 0);
     lines.push_back(line("Jane", JANE, ChatKind::Im, "reply"));
     nl.frame(jane, 8, true, 10, &lines, 1);
@@ -1622,7 +1622,7 @@ fn the_new_line_marks_what_arrived_while_away() {
     assert_eq!(nl.at(jane), Some(18), "the focus away counts as away");
     // only our own lines arrived while away (written from elsewhere): none
     nl.frame(bob, 24, true, 0, &VecDeque::new(), 0);
-    lines.push_back(line("Me", Uuid::nil(), ChatKind::Own, "from elsewhere"));
+    lines.push_back(line("Me", Uuid::nil(), ChatKind::OWN, "from elsewhere"));
     nl.frame(jane, 25, true, 10, &lines, 0);
     assert_eq!(nl.at(jane), None, "no line above our own");
     assert_eq!(nl.at(bob), None, "each conversation its own");
@@ -1663,7 +1663,7 @@ fn the_menu_boundary_ignores_our_replies_and_survives_focus_changes() {
     let mut nl = super::NewLines::default();
     nl.frame(Some(JANE), 1, true, 100, &lines, 0);
     nl.pause_at(Some(JANE), 101);
-    lines.push_back(line("Me", Uuid::nil(), ChatKind::Own, "our reply"));
+    lines.push_back(line("Me", Uuid::nil(), ChatKind::OWN, "our reply"));
     nl.frame(Some(JANE), 2, false, 100, &lines, 0);
     assert_eq!(nl.at(Some(JANE)), Some(102));
     lines.push_back(line("Jane", JANE, ChatKind::Im, "arrived during the menu"));

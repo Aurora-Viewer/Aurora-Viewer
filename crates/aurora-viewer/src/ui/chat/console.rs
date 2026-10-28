@@ -46,7 +46,7 @@ fn same_sender(a: &ChatLine, b: &ChatLine) -> bool {
         && a.source == b.source
         && a.from == b.from
         && is_object(a.kind) == is_object(b.kind)
-        && (a.kind == ChatKind::Own) == (b.kind == ChatKind::Own)
+        && a.kind.is_own() == b.kind.is_own()
 }
 
 fn is_object(kind: ChatKind) -> bool {
@@ -68,7 +68,7 @@ fn name_color(p: &Palette, line: &ChatLine, world: &World) -> Color32 {
     if is_object(line.kind) {
         return crate::ui::colors::sender_color(line);
     }
-    if line.kind == ChatKind::Own {
+    if line.kind.is_own() {
         return p.teal;
     }
     p.ink
@@ -224,11 +224,7 @@ fn card<'a>(
                 ui.painter().galley(r.min, galley, p.ink);
                 names.push((r, first));
                 // a member of the Aurora team (objects never are)
-                let author = if first.kind == ChatKind::Own {
-                    world.agent_id
-                } else {
-                    first.source
-                };
+                let author = if first.kind.is_own() { world.agent_id } else { first.source };
                 if !matches!(first.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
                     crate::ui::staff::after_name(ui, p, crate::world::staff::mark(world, &author), 9.5);
                 }
@@ -325,9 +321,11 @@ fn compact_card<'a>(
 fn tags(ui: &mut egui::Ui, p: &Palette, line: &ChatLine) {
     match line.kind {
         ChatKind::Im => thread::tag(ui, aurora_i18n::tr!("people-sheet-im"), Some(p.raised), p.muted),
-        ChatKind::Local(ChatType::Shout) => thread::tag(ui, aurora_i18n::tr!("ui-chat-tag-shouts"), None, p.warn),
-        ChatKind::Local(ChatType::Whisper) => thread::tag(ui, aurora_i18n::tr!("ui-chat-tag-whispers"), None, p.muted),
-        _ => {}
+        _ => match line.kind.volume() {
+            Some(ChatType::Shout) => thread::tag(ui, aurora_i18n::tr!("ui-chat-tag-shouts"), None, p.warn),
+            Some(ChatType::Whisper) => thread::tag(ui, aurora_i18n::tr!("ui-chat-tag-whispers"), None, p.muted),
+            _ => {}
+        },
     }
 }
 
