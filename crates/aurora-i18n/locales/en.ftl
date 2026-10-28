@@ -5813,6 +5813,7 @@ common-voice-connected = Voice connected
 voice-voice-disconnected = Voice disconnected
 common-voice-disabled = Voice disabled
 voice-voice-disabled-on-this-parcel = Voice disabled on this parcel
+voice-voice-disabled-in-this-region = Voice disabled in this region
 voice-voice-unavailable-in-this-region = Voice unavailable in this region
 ui-parcel-icons-voice-disabled-in-this-region-you-will-not-hear = Voice disabled in this region: you will not hear anyone speaking.
 ui-parcel-icons-voice-disabled-on-this-parcel-you-will-not-hear = Voice disabled on this parcel: you will not hear anyone speaking.

@@ -5818,6 +5818,7 @@ common-voice-connected = Voix connectée
 voice-voice-disconnected = Voix déconnectée
 common-voice-disabled = Voix désactivée
 voice-voice-disabled-on-this-parcel = Voix désactivée sur cette parcelle
+voice-voice-disabled-in-this-region = Voix désactivée dans cette région
 voice-voice-unavailable-in-this-region = Voix indisponible dans cette région
 ui-parcel-icons-voice-disabled-in-this-region-you-will-not-hear = Voix interdite dans cette région : vous n'entendrez personne parler.
 ui-parcel-icons-voice-disabled-on-this-parcel-you-will-not-hear = Voix interdite sur cette parcelle : vous n'entendrez personne parler.
