@@ -2232,6 +2232,10 @@ pub struct MicButton<'a> {
     pub open_processing: bool,
     /// Toggle mode: microphone switched on.
     pub on: bool,
+    /// Why speaking is forbidden here (region or parcel without voice): the
+    /// microphone is greyed and inert, its options stay open (the Speak
+    /// command's is_enabled_function, Agent.IsActionAllowed).
+    pub denied: Option<String>,
     /// Hold-to-talk mode (else click toggles).
     pub hold: bool,
     /// Hold mode: button pressed this frame (output).
@@ -2312,11 +2316,13 @@ fn mic_button(
         let zone = egui::Rect::from_min_max(egui::pos2(arrow_left, rect.top()), egui::pos2(arrow_left + arrow_w, rect.bottom()));
         ui.interact(zone, ui.scope_id().with("mic_arrow"), egui::Sense::click())
     });
+    let denied = mic.denied.is_some();
     if mic.hold {
-        mic.held = resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down());
-    } else if resp.clicked() {
+        mic.held = !denied && resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down());
+    } else if resp.clicked() && !denied {
         mic.on = !mic.on;
     }
+    let hovered = resp.hovered() && !denied;
     // The panel keeps its open state itself. egui's memory holds a single
     // open pop-up, and the list of a device combo is one: kept there, the
     // panel would close as soon as such a list unfolds.
@@ -2325,7 +2331,7 @@ fn mic_button(
     let on_arrow = arrow.as_ref().is_some_and(|r| r.hovered());
     let radius = ui.visuals().window_corner_radius;
     let live = mic.talking;
-    if let Some(fill) = tool_fill(p, live, resp.hovered() || on_arrow || open) {
+    if let Some(fill) = tool_fill(p, live, hovered || on_arrow || open) {
         ui.painter().rect_filled(rect, radius, fill);
     }
     // own level, along the bottom of the button: it follows the voice
@@ -2351,7 +2357,9 @@ fn mic_button(
     } else {
         "microphone-off"
     };
-    let tint = if live || resp.hovered() {
+    let tint = if denied {
+        p.muted_dim
+    } else if live || hovered {
         p.ink
     } else if mic.connected {
         p.muted
@@ -2397,12 +2405,14 @@ fn mic_button(
     } else {
         aurora_i18n::tr!("ui-bars-microphone-muted")
     };
-    let mut tip = if mic.hold {
+    let mut tip = if let Some(why) = &mic.denied {
+        why.clone()
+    } else if mic.hold {
         aurora_i18n::tr!("ui-bars-hold-to-talk", state = state.to_string())
     } else {
         aurora_i18n::tr!("extra-click-to-enable-mute-microphone", state = state.to_string())
     };
-    if let Some((light, why)) = &mic.voice_dot {
+    if let Some((light, why)) = mic.voice_dot.as_ref().filter(|_| !denied) {
         // what the top bar's voice light said
         let (_, name) = voice_state(p, *light);
         tip.push_str(&format!("\n{name}"));
@@ -3075,6 +3085,11 @@ mod tests {
         changed: bool,
         listed: bool,
         open_prefs: bool,
+        /// The microphone's state, kept from frame to frame.
+        on: bool,
+        hold: bool,
+        held: bool,
+        denied: Option<String>,
     }
 
     impl Bench {
@@ -3084,6 +3099,9 @@ mod tests {
             let devices = ["Device A".to_owned(), "Device B".to_owned()];
             let mut mic = MicButton {
                 connected: true,
+                on: self.on,
+                hold: self.hold,
+                denied: self.denied.clone(),
                 input_device: self.input.clone(),
                 output_device: self.output.clone(),
                 input_devices: &devices,
@@ -3109,6 +3127,8 @@ mod tests {
             self.changed = mic.devices_changed;
             self.listed = mic.list_devices;
             self.open_prefs = mic.open_prefs;
+            self.on = mic.on;
+            self.held = mic.held;
             output
         }
 
@@ -3151,6 +3171,44 @@ mod tests {
         fn arrow() -> egui::Pos2 {
             BUTTON + egui::vec2(WIDTH / 2.0 + 8.0 + MIC_ARROW / 2.0, 11.0)
         }
+    }
+
+    #[test]
+    fn a_microphone_the_land_forbids_stays_off_and_keeps_its_options() {
+        let centre = BUTTON + egui::vec2(WIDTH / 2.0, 11.0);
+        let mut bench = Bench {
+            denied: Some(aurora_i18n::tr!("voice-voice-disabled-on-this-parcel").into()),
+            ..Default::default()
+        };
+        // a first frame lays the button out
+        bench.frame(vec![]);
+        bench.click(centre);
+        assert!(!bench.on, "a click does not switch it on");
+        bench.hold = true;
+        bench.frame(vec![
+            egui::Event::PointerMoved(centre),
+            egui::Event::PointerButton {
+                pos: centre,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default(),
+            },
+        ]);
+        assert!(!bench.held, "holding it does not talk");
+        bench.frame(vec![egui::Event::PointerButton {
+            pos: centre,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        bench.click(Bench::arrow());
+        assert!(bench.panel_shown(), "its options stay open");
+
+        // allowed again, the same click switches it on
+        let mut bench = Bench::default();
+        bench.frame(vec![]);
+        bench.click(centre);
+        assert!(bench.on);
     }
 
     /// The landmark star alone at `STAR`: a frame with `events`, its

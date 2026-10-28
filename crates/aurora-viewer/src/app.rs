@@ -3770,9 +3770,30 @@ impl App {
         channel(0) * channel(5)
     }
 
+    /// Why we may not speak where we stand (LLAgent::isActionAllowed("speak"),
+    /// indra/newview/llagent.cpp): the region or the parcel forbids nearby
+    /// voice. A call has its own channel and is never denied.
+    fn speak_denied(&self) -> Option<String> {
+        if self.world.calls.active.is_some() {
+            return None;
+        }
+        let region_flags = self.world.main().and_then(|r| r.info.as_ref()).map(|i| i.region_flags);
+        crate::voice::spatial_voice_denied(region_flags, self.world.parcel.as_deref())
+    }
+
+    /// Switch the microphone (toggle mode), unless speaking is denied here
+    /// (toggle_voice, indra/newview/llviewerinput.cpp).
+    fn toggle_mic(&mut self) {
+        if self.speak_denied().is_none() {
+            self.mic_on = !self.mic_on;
+        }
+    }
+
     /// Voice transmission wanted (microphone button / push-to-talk).
     fn talking(&self) -> bool {
-        if self.settings.audio.mic_hold {
+        if self.speak_denied().is_some() {
+            false
+        } else if self.settings.audio.mic_hold {
             self.mic_button_held || self.settings.keybinds.held(Action::PushToTalk, &self.down, self.mods())
         } else {
             self.mic_on
@@ -3795,7 +3816,7 @@ impl App {
         }
         // push-to-talk key in toggle mode: each press switches the microphone
         if !self.settings.audio.mic_hold && self.settings.keybinds.held_actions_of(&input).contains(&Action::PushToTalk) {
-            self.mic_on = !self.mic_on;
+            self.toggle_mic();
         }
         if self
             .settings
@@ -3841,7 +3862,7 @@ impl App {
                 }
             }
             Action::Chat => self.chat_ui.focus_request = true,
-            Action::ToggleMic => self.mic_on = !self.mic_on,
+            Action::ToggleMic => self.toggle_mic(),
             // the shortcuts of the windows, like their toolbar buttons: a
             // minimized window expands (LLFloaterReg::toggleInstance)
             Action::Conversations => ui::widgets::toggle_floater(&self.egui_ctx, "conversations", &mut self.panels.chat),
@@ -5567,6 +5588,12 @@ impl App {
             && !self.settings.audio.mic_hold
         {
             self.mic_on = on;
+        }
+        // the land forbids voice: the microphone goes off, without the
+        // toggle's sound (LLWebRTCVoiceClient::leaveChannel(true))
+        if self.mic_on && self.speak_denied().is_some() {
+            self.mic_on = false;
+            self.mic_was = false;
         }
         let world = &self.world;
         self.voice.apply_blocks(|id| world.voice_blocked(id));
@@ -13188,6 +13215,7 @@ impl App {
                 }
                 let mut mic = ui::bars::MicButton {
                     on: self.mic_on,
+                    denied: self.speak_denied(),
                     hold: self.settings.audio.mic_hold,
                     talking: self.talking() || demo_bars.voice,
                     level: if demo_bars.voice { 0.62 } else { self.voice_level },
@@ -13897,7 +13925,12 @@ impl App {
                         }
                         ui::chat::ConvAction::Call(id) => a.ctx_action = Some(ui::context::CtxAction::Call(id)),
                         ui::chat::ConvAction::HangUp => self.world.end_call(),
-                        ui::chat::ConvAction::ToggleMic => self.mic_on = !self.mic_on,
+                        ui::chat::ConvAction::ToggleMic => {
+                            // toggle_mic, written out: the skin's icons stay borrowed
+                            if self.speak_denied().is_none() {
+                                self.mic_on = !self.mic_on;
+                            }
+                        }
                         ui::chat::ConvAction::AnswerCall { session, answer } => self.world.answer_call_invite(session, answer),
                         ui::chat::ConvAction::PickPeople(conversation) => self.call_invite_ui.pick_for(conversation),
                         ui::chat::ConvAction::AddPeople(conversation, ids) => self.call_invite_ui.add(&mut self.world, conversation, ids),
