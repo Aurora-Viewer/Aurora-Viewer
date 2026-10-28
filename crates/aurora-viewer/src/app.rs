@@ -9085,6 +9085,7 @@ impl App {
             self.portal_drop_demo_input(&mut raw);
             self.give_demo_input(&mut raw, vp, (w, h));
             self.contents_drop_demo_input(&mut raw, vp, (w, h));
+            self.wearable_drop_demo_input(&mut raw);
             ui::inventory::drag::demo::input(&ctx, self.frame_count, &self.world.inventory, &self.inventory_ui, &mut raw);
             self.gesture_demo_input(&mut raw);
             self.suggest_demo_input(&mut raw);

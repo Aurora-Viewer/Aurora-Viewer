@@ -6681,9 +6681,13 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 skin, hair, eyes, shirt, pants, shoes, socks, jacket, gloves, undershirt,
 underpants, skirt, alpha, tattoo or universal item. Optional modes are
 `readonly`, `nocopy`, `dirty` (the unsaved-changes dialog), `preview` (a real
-local texture/mask change), `save-as` and
+local texture/mask change), `save-as`,
 `save` (a changed asset saved through the normal offline acknowledgement at
-frame 650). Capture after frame 760 for save feedback. Check texture slots,
+frame 650), `drag` (an inventory texture carried over the first texture row
+from frame 700, without a press: capture at frame 712 for the violet outline)
+and `drop` (the same, released there at frame 720: the swatch, the avatar
+preview and Save follow; capture after frame 900). Capture after frame 760 for
+save feedback. Check texture slots,
 shared clothing tint, sex-filtered parameter groups, the fixed save controls,
 the picker and its permissions, cancellation, and the existing shape/physics
 editors when switching. No grid traffic is used.
