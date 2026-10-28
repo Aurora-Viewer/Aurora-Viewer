@@ -1255,6 +1255,12 @@ impl Camera {
             }
             ToolMode::Zoom => {
                 if dx != 0.0 {
+                    // LLToolCamera::handleHover -> cameraOrbitAround turns
+                    // the agent in avatar follow. Keep that steering turn
+                    // when ClickOnAvatarKeepsCamera retains a detached focus.
+                    if steering && !self.focus_on_avatar {
+                        agent.yaw -= dx * k;
+                    }
                     self.orbit_around(-dx * k, agent);
                 }
                 if dy != 0.0 && outside_y {
@@ -3050,6 +3056,66 @@ mod tests {
         cam.set_camera_pos_and_focus(g.position + Vec3::new(-8.0, -8.0, 5.0), g.position, Some((id, g)), &s);
         settle(&mut cam, &mut w, &s);
         (w, cam, s, idx)
+    }
+
+    #[test]
+    fn mouse_steering_turns_the_drawn_avatar_with_follow_or_kept_focus() {
+        for follow in [true, false] {
+            for dx in [-256.0, 256.0] {
+                let (mut w, mut cam, s, _) = focused_object();
+                w.agent.yaw = 0.0;
+                w.agent.reset_motion();
+                if follow {
+                    cam.set_focus_on_avatar(true, false, false, &mut w.agent, &s);
+                    settle(&mut cam, &mut w, &s);
+                }
+                w.update_bodies(Instant::now(), 1.0 / 60.0, cam.forward(), false, false);
+                let heading = w.agent.yaw;
+                let body = w.bodies[&w.agent_id].rotation;
+                let focus = (cam.focus_point(), cam.focus_object_id());
+                let distance = cam.position.distance(cam.target);
+                cam.begin_drag(true);
+                cam.drag(ToolMode::Zoom, 2.0, 0.0, 1280.0, &mut w.agent);
+                assert_eq!(w.agent.yaw, heading, "a click inside the drag threshold must not turn");
+                cam.drag(ToolMode::Zoom, dx, 0.0, 1280.0, &mut w.agent);
+                let expected = heading - dx * TAU / 1280.0;
+                assert!((w.agent.yaw - expected).abs() < 1e-5, "follow={follow}, dx={dx}");
+                assert_eq!((cam.focus_point(), cam.focus_object_id()), focus);
+                assert_eq!(cam.focus_on_avatar, follow);
+                let mut turning = false;
+                for _ in 0..120 {
+                    let input = FrameInput {
+                        steering: true,
+                        ..frame(1.0 / 60.0)
+                    };
+                    cam.update(&mut w, &s, &input);
+                    let turn = w.update_bodies(input.now, input.dt, cam.forward(), false, false);
+                    turning |= turn == if dx < 0.0 { 1 } else { -1 };
+                }
+                assert!(turning, "the drawn body must request the matching turn animation");
+                assert!(body.angle_between(w.bodies[&w.agent_id].rotation) > 0.5);
+                assert!((cam.position.distance(cam.target) - distance).abs() < 0.02);
+                cam.end_drag();
+                cam.drag(ToolMode::Zoom, dx, 0.0, 1280.0, &mut w.agent);
+                assert!((w.agent.yaw - expected).abs() < 1e-5, "release ends steering");
+            }
+        }
+    }
+
+    #[test]
+    fn focus_drag_and_vertical_steering_do_not_turn_the_avatar() {
+        for mode in [ToolMode::Zoom, ToolMode::Orbit, ToolMode::Pan] {
+            let (mut w, mut cam, _, _) = focused_object();
+            let heading = w.agent.yaw;
+            cam.begin_drag(false);
+            cam.drag(mode, 256.0, 0.0, 1280.0, &mut w.agent);
+            assert_eq!(w.agent.yaw, heading, "{mode:?} keeps independent camera control");
+            cam.begin_drag(true);
+            cam.drag(ToolMode::Zoom, 0.0, 40.0, 1280.0, &mut w.agent);
+            assert_eq!(w.agent.yaw, heading, "vertical steering only tilts the view");
+            cam.orbit_drag(256.0, 0.0, 1.0, &mut w.agent);
+            assert_eq!(w.agent.yaw, heading, "right drag keeps independent camera control");
+        }
     }
 
     #[test]
