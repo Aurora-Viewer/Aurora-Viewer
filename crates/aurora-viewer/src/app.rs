@@ -5447,6 +5447,7 @@ impl App {
             agent_id: self.world.agent_id,
             grid,
             region: self.world.main_region,
+            region_flags: main.and_then(|r| r.info.as_ref()).map(|i| i.region_flags),
             caps: main.map(|r| &*r.caps),
             voice_server: main.map(|r| r.voice_server.as_str()).unwrap_or(""),
             parcel: self.world.parcel.as_deref(),

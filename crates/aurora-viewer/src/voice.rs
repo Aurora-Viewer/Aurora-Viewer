@@ -38,6 +38,8 @@ pub struct VoiceInputs<'a> {
     /// Grid id for the STUN servers ("agni" / "aditi").
     pub grid: &'a str,
     pub region: Option<u64>,
+    /// Current region permissions, unknown until its handshake arrives.
+    pub region_flags: Option<u32>,
     pub caps: Option<&'a HashMap<String, String>>,
     /// SimulatorFeatures VoiceServerType ("" until known).
     pub voice_server: &'a str,
@@ -124,15 +126,30 @@ impl Voice {
             return Err(aurora_i18n::tr!("voice-vivox-region-voice-is-not-supported").into());
         }
         let signaling = caps.get("VoiceSignalingRequest").cloned();
-        // a call does not depend on the parcel's voice settings
-        if let Some(call) = v.call {
+        let (key, channel) = Self::channel(region, v.region_flags, v.parcel, v.call)?;
+        Ok((key, channel, provision, signaling))
+    }
+
+    /// LLWebRTCVoiceClient::voiceConnectionCoro (indra/newview/llvoicewebrtc.cpp):
+    /// spatial voice needs both region and parcel permission; calls are independent.
+    fn channel(
+        region: u64,
+        region_flags: Option<u32>,
+        parcel: Option<&aurora_net::ParcelInfo>,
+        call: Option<&CallChannel>,
+    ) -> Result<(ChannelKey, ChannelKind), String> {
+        if let Some(call) = call {
             let kind = ChannelKind::Multiagent {
                 channel_id: call.id.clone(),
                 credentials: call.credentials.clone(),
             };
-            return Ok((ChannelKey::Call(call.id.clone()), kind, provision, signaling));
+            return Ok((ChannelKey::Call(call.id.clone()), kind));
         }
-        let parcel = v.parcel.ok_or_else(|| aurora_i18n::tr!("voice-waiting-for-parcel").to_owned())?;
+        let flags = region_flags.ok_or_else(|| aurora_i18n::tr!("voice-waiting-for-region").to_owned())?;
+        if flags & aurora_net::region_flags::ALLOW_VOICE == 0 {
+            return Err(aurora_i18n::tr!("voice-voice-disabled-in-this-region").into());
+        }
+        let parcel = parcel.ok_or_else(|| aurora_i18n::tr!("voice-waiting-for-parcel").to_owned())?;
         if parcel.flags & parcel_flags::ALLOW_VOICE_CHAT == 0 {
             return Err(aurora_i18n::tr!("voice-voice-disabled-on-this-parcel").into());
         }
@@ -142,8 +159,6 @@ impl Voice {
             ChannelKind::Local {
                 parcel_local_id: parcel_id,
             },
-            provision,
-            signaling,
         ))
     }
 
@@ -379,6 +394,80 @@ pub(crate) fn listener_rotation(view: glam::Mat4) -> Quat {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nearby_voice_requires_both_region_and_parcel_permission() {
+        for estate in [false, true] {
+            for region_voice in [false, true] {
+                for parcel_voice in [false, true] {
+                    let parcel = aurora_net::ParcelInfo {
+                        local_id: 42,
+                        flags: if parcel_voice { parcel_flags::ALLOW_VOICE_CHAT } else { 0 }
+                            | if estate { parcel_flags::USE_ESTATE_VOICE_CHAN } else { 0 },
+                        ..Default::default()
+                    };
+                    let flags =
+                        aurora_net::region_flags::ALLOW_DAMAGE | if region_voice { aurora_net::region_flags::ALLOW_VOICE } else { 0 };
+                    let channel = Voice::channel(7, Some(flags), Some(&parcel), None);
+                    if region_voice && parcel_voice {
+                        let parcel_id = (!estate).then_some(42);
+                        let (key, kind) = channel.expect("region and parcel allow voice");
+                        assert_eq!(
+                            key,
+                            ChannelKey::Local {
+                                region: 7,
+                                parcel: parcel_id
+                            }
+                        );
+                        assert!(matches!(kind, ChannelKind::Local { parcel_local_id } if parcel_local_id == parcel_id));
+                    } else {
+                        let expected = if region_voice {
+                            aurora_i18n::tr!("voice-voice-disabled-on-this-parcel")
+                        } else {
+                            aurora_i18n::tr!("voice-voice-disabled-in-this-region")
+                        };
+                        assert_eq!(channel.err().as_deref(), Some(expected));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nearby_voice_waits_for_current_region_and_parcel_permissions() {
+        let parcel = aurora_net::ParcelInfo {
+            flags: parcel_flags::ALLOW_VOICE_CHAT,
+            ..Default::default()
+        };
+        assert_eq!(
+            Voice::channel(7, None, Some(&parcel), None).err(),
+            Some(aurora_i18n::tr!("voice-waiting-for-region").to_owned())
+        );
+        assert_eq!(
+            Voice::channel(7, Some(aurora_net::region_flags::ALLOW_VOICE), None, None).err(),
+            Some(aurora_i18n::tr!("voice-waiting-for-parcel").to_owned())
+        );
+    }
+
+    #[test]
+    fn calls_ignore_spatial_permissions_and_hangup_checks_them_again() {
+        let parcel = aurora_net::ParcelInfo::default();
+        let call = CallChannel {
+            id: "test-call".into(),
+            credentials: String::new(),
+        };
+        for flags in [None, Some(0), Some(aurora_net::region_flags::ALLOW_VOICE)] {
+            for parcel in [None, Some(&parcel)] {
+                let (key, kind) = Voice::channel(7, flags, parcel, Some(&call)).expect("calls are independent of land");
+                assert_eq!(key, ChannelKey::Call(call.id.clone()));
+                assert!(matches!(kind, ChannelKind::Multiagent { channel_id, .. } if channel_id == call.id));
+                assert!(
+                    Voice::channel(7, flags, parcel, None).is_err(),
+                    "hangup must not join forbidden nearby voice"
+                );
+            }
+        }
+    }
 
     #[test]
     fn no_moderation_off_the_nearby_channel() {

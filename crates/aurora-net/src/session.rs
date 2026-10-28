@@ -84,9 +84,38 @@ const PING_INTERVAL: Duration = Duration::from_secs(5);
 /// sends terrain or objects (it waits for RegionHandshakeReply).
 const HANDSHAKE_WARN_DELAY: Duration = Duration::from_secs(10);
 
+#[derive(Clone, Copy)]
+struct ParcelVoice {
+    local_id: i32,
+    allowed: bool,
+    channel_region: Option<Uuid>,
+}
+
+impl ParcelVoice {
+    /// LLWebRTCVoiceClient::setSpatialChannel (indra/newview/llvoicewebrtc.cpp).
+    fn apply(self, region_id: Uuid, parcel: &mut ParcelInfo) {
+        if parcel.local_id != self.local_id {
+            return;
+        }
+        parcel.flags &= !parcel_flags::ALLOW_VOICE_CHAT;
+        if self.allowed {
+            parcel.flags |= parcel_flags::ALLOW_VOICE_CHAT;
+        }
+        if !region_id.is_nil() {
+            parcel.flags &= !parcel_flags::USE_ESTATE_VOICE_CHAN;
+            if self.channel_region == Some(region_id) {
+                parcel.flags |= parcel_flags::USE_ESTATE_VOICE_CHAN;
+            }
+        }
+    }
+}
+
 struct Sim {
     circuit: Circuit,
     handle: RegionHandle,
+    region_id: Uuid,
+    /// Voice permission arriving before the initial agent-parcel properties.
+    pending_voice: Option<ParcelVoice>,
     name: String,
     size: (u32, u32),
     seed: Option<String>,
@@ -127,6 +156,8 @@ impl Sim {
         Sim {
             circuit: Circuit::new(addr),
             handle,
+            region_id: Uuid::nil(),
+            pending_voice: None,
             name: String::new(),
             size: (256, 256),
             seed: None,
@@ -219,8 +250,8 @@ struct Session<'a> {
     viewer_stats: crate::viewer_stats::Schedule,
     regions_visited: std::collections::HashSet<u64>,
     cam_requested_at: Option<Instant>,
-    /// Agent parcel in the main region: (local id, environment version).
-    agent_parcel: Option<(i32, i32)>,
+    /// Last confirmed agent parcel in the main region, including its geometry.
+    agent_parcel: Option<Arc<ParcelInfo>>,
     /// Teleport by region name waiting for its MapBlockReply (lowercase name, position).
     pending_named_tp: Option<(String, Uuid)>,
     /// Object cache of each region, its files read and written off this
@@ -578,6 +609,9 @@ impl Session<'_> {
         self.set_seed(addr, seed);
         if changed {
             self.agent_parcel = None;
+            if let Some(sim) = self.sims.get_mut(&addr) {
+                sim.pending_voice = None;
+            }
             // capabilities of a neighbour we already know: no new caps event
             if self.sims.get(&addr).is_some_and(|s| !s.caps.is_empty()) {
                 self.update_agent_language();
@@ -926,6 +960,9 @@ impl Session<'_> {
     /// the agent enters another parcel or its environment version changes
     /// (LLViewerParcelMgr::processParcelProperties).
     fn on_parcel_properties(&mut self, sim: SocketAddr, b: &Llsd) {
+        if b["ParcelData"][0]["RequestResult"].as_i32() == crate::land::PARCEL_RESULT_NO_DATA {
+            return;
+        }
         // COLLISION_NOT_IN_GROUP / BANNED / NOT_ON_LIST_PARCEL_SEQ_ID: ban lines
         let seq = b["ParcelData"][0]["SequenceID"].as_i32();
         if matches!(seq, -20000 | -30000 | -40000) {
@@ -954,35 +991,38 @@ impl Session<'_> {
             return;
         }
         let info = crate::land::parse_parcel_properties(b);
+        if matches!(
+            info.sequence_id,
+            crate::land::SELECTED_PARCEL_SEQ_ID | crate::land::HOVERED_PARCEL_SEQ_ID
+        ) || info.sequence_id >= BUILD_PARCEL_SEQ
+        {
+            self.refresh_agent_parcel(sim, &info);
+        }
         if info.sequence_id == crate::land::SELECTED_PARCEL_SEQ_ID {
             // the About Land selection, in whichever region it lies
-            if info.request_result != crate::land::PARCEL_RESULT_NO_DATA {
-                let handle = self.handle_of(sim);
-                let result = info.request_result;
-                emit(
-                    self.sh,
-                    NetEvent::Land(crate::land::LandEvent::Selected {
-                        handle,
-                        info: Arc::new(info),
-                        result,
-                    }),
-                );
-            }
+            let handle = self.handle_of(sim);
+            let result = info.request_result;
+            emit(
+                self.sh,
+                NetEvent::Land(crate::land::LandEvent::Selected {
+                    handle,
+                    info: Arc::new(info),
+                    result,
+                }),
+            );
             return;
         }
         if info.sequence_id == crate::land::HOVERED_PARCEL_SEQ_ID {
             // the hover tips' parcel (LLViewerParcelMgr::processParcelProperties
             // keeps it apart from the agent's and the selection's)
-            if info.request_result != crate::land::PARCEL_RESULT_NO_DATA {
-                let handle = self.handle_of(sim);
-                emit(
-                    self.sh,
-                    NetEvent::HoverParcel {
-                        handle,
-                        parcel: Arc::new(info),
-                    },
-                );
-            }
+            let handle = self.handle_of(sim);
+            emit(
+                self.sh,
+                NetEvent::HoverParcel {
+                    handle,
+                    parcel: Arc::new(info),
+                },
+            );
             return;
         }
         if info.sequence_id >= BUILD_PARCEL_SEQ {
@@ -1003,11 +1043,97 @@ impl Session<'_> {
             // other regions, hover requests
             return;
         }
+        // LLViewerParcelMgr::processParcelProperties accepts sequence zero
+        // unconditionally, otherwise only a newer agent-parcel notification.
+        if info.sequence_id != 0 && self.agent_parcel.as_ref().is_some_and(|p| info.sequence_id <= p.sequence_id) {
+            return;
+        }
+        self.publish_agent_parcel(Arc::new(info));
+    }
+
+    /// LLViewerParcelMgr::processParcelProperties also unpacks a selected or
+    /// hovered parcel into the agent parcel when both region and local id match.
+    /// Keep the agent's bitmap, bounds and notification sequence: a selection
+    /// can describe a rectangle instead of the parcel occupied by the agent.
+    fn refresh_agent_parcel(&mut self, sim: SocketAddr, info: &ParcelInfo) {
+        if self.main != Some(sim) {
+            return;
+        }
+        let Some(current) = self.agent_parcel.as_ref().filter(|p| p.local_id == info.local_id) else {
+            return;
+        };
+        let mut updated = info.clone();
+        updated.sequence_id = current.sequence_id;
+        updated.request_result = current.request_result;
+        updated.bitmap.clone_from(&current.bitmap);
+        updated.aabb_min = current.aabb_min;
+        updated.aabb_max = current.aabb_max;
+        // Keep the shared snapshot on identical refreshes: its identity is
+        // used by the viewer's parcel visibility cache.
+        if &updated == current.as_ref() {
+            return;
+        }
+        self.publish_agent_parcel(Arc::new(updated));
+    }
+
+    fn publish_agent_parcel(&mut self, mut info: Arc<ParcelInfo>) {
+        if let Some(sim) = self.main.and_then(|addr| self.sims.get_mut(&addr))
+            && let Some(voice) = sim.pending_voice.take()
+        {
+            voice.apply(sim.region_id, Arc::make_mut(&mut info));
+        }
         let (local_id, version) = (info.local_id, info.env_version);
-        emit(self.sh, NetEvent::AgentParcel(Arc::new(info)));
-        if self.agent_parcel != Some((local_id, version)) {
-            self.agent_parcel = Some((local_id, version));
+        let environment_changed = self.agent_parcel.as_ref().map(|p| (p.local_id, p.env_version)) != Some((local_id, version));
+        self.agent_parcel = Some(info.clone());
+        emit(self.sh, NetEvent::AgentParcel(info));
+        if environment_changed {
             self.request_environment(Some(local_id));
+        }
+    }
+
+    /// LLViewerParcelVoiceInfo::post (indra/newview/llvoiceclient.cpp): the
+    /// simulator also pushes voice changes without a ParcelProperties reply.
+    /// Keep only the spatial permission/channel kind, never call credentials.
+    fn on_parcel_voice_info(&mut self, sim: SocketAddr, body: &Llsd) {
+        if self.main != Some(sim) {
+            return;
+        }
+        let Llsd::Integer(local_id) = body["parcel_local_id"] else {
+            return;
+        };
+        let (allowed, channel_region) = match &body["voice_credentials"]["channel_uri"] {
+            Llsd::String(uri) | Llsd::Uri(uri) => (!uri.is_empty(), Uuid::parse_str(uri).ok()),
+            Llsd::Uuid(id) => (true, Some(*id)),
+            _ => return,
+        };
+        let voice = ParcelVoice {
+            local_id,
+            allowed,
+            channel_region,
+        };
+        let Some(current) = self.agent_parcel.as_ref() else {
+            if let Some(sim) = self.sims.get_mut(&sim) {
+                sim.pending_voice = Some(voice);
+            }
+            return;
+        };
+        if current.local_id != local_id {
+            return;
+        }
+        let mut updated = (**current).clone();
+        let region_id = self.sims.get(&sim).map_or(Uuid::nil(), |sim| sim.region_id);
+        voice.apply(region_id, &mut updated);
+        if updated.flags != current.flags {
+            self.agent_parcel = Some(Arc::new(updated));
+            emit(
+                self.sh,
+                NetEvent::ParcelVoiceInfo {
+                    handle: self.handle_of(sim),
+                    local_id,
+                    allowed,
+                    use_estate: (!region_id.is_nil()).then_some(channel_region == Some(region_id)),
+                },
+            );
         }
     }
 
@@ -3408,6 +3534,7 @@ impl Session<'_> {
                 let sim = e.sim;
                 self.on_parcel_properties(sim, b);
             }
+            "ParcelVoiceInfo" => self.on_parcel_voice_info(e.sim, b),
             "LandStatReply" => {
                 let sim = e.sim;
                 self.on_land_stat_reply(sim, b);
@@ -4840,6 +4967,7 @@ impl Session<'_> {
         let (handle, size) = match self.sims.get_mut(&from) {
             Some(sim) => {
                 sim.name = field_str(&r.sim_name);
+                sim.region_id = m.region_info2.region_id;
                 sim.handshake_seen = true;
                 (sim.handle, sim.size)
             }
@@ -5268,6 +5396,318 @@ mod socket_tests {
 #[cfg(test)]
 mod event_queue_tests {
     use super::*;
+
+    fn parcel_event(sim: SocketAddr, sequence: i32, local_id: i32, flags: u32) -> EqEvent {
+        EqEvent {
+            sim,
+            message: "ParcelProperties".into(),
+            body: aurora_llsd::llsd_map! {
+                "ParcelData" => Llsd::Array(vec![aurora_llsd::llsd_map! {
+                    "RequestResult" => crate::land::PARCEL_RESULT_SUCCESS,
+                    "SequenceID" => sequence,
+                    "LocalID" => local_id,
+                    "ParcelFlags" => Llsd::Binary(flags.to_be_bytes().to_vec()),
+                    "Name" => "Updated parcel",
+                    "Bitmap" => Llsd::Binary(vec![0x42; 512]),
+                    "AABBMin" => Llsd::Array(vec![0.into(), 0.into(), 0.into()]),
+                    "AABBMax" => Llsd::Array(vec![128.into(), 128.into(), 0.into()]),
+                    "SeeAVs" => flags != 0,
+                    "AnyAVSounds" => flags != 0,
+                    "GroupAVSounds" => flags != 0,
+                    "MusicURL" => "https://music.invalid/live",
+                    "MediaURL" => "https://media.invalid/page"
+                }]),
+                "ParcelEnvironmentBlock" => Llsd::Array(vec![aurora_llsd::llsd_map! {
+                    "ParcelEnvironmentVersion" => 3
+                }]),
+                "ParcelExtendedFlags" => Llsd::Array(vec![aurora_llsd::llsd_map! {
+                    "Flags" => Llsd::Binary((if flags != 0 { crate::land::PEF_OBSCURE_MOAP } else { 0 }).to_be_bytes().to_vec())
+                }])
+            },
+        }
+    }
+
+    fn parcel_block<'a>(event: &'a mut EqEvent, name: &str) -> &'a mut Llsd {
+        let Llsd::Map(blocks) = &mut event.body else { panic!("event map") };
+        let Some(Llsd::Array(rows)) = blocks.get_mut(name) else {
+            panic!("parcel block")
+        };
+        rows.first_mut().expect("parcel row")
+    }
+
+    fn voice_event(sim: SocketAddr, local_id: i32, uri: Llsd) -> EqEvent {
+        EqEvent {
+            sim,
+            message: "ParcelVoiceInfo".into(),
+            body: aurora_llsd::llsd_map! {
+                "parcel_local_id" => local_id,
+                "voice_credentials" => aurora_llsd::llsd_map! { "channel_uri" => uri }
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn parcel_voice_notifications_disable_reenable_and_switch_spatial_channels() {
+        use crate::parcel_flags as pf;
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = "127.0.0.1:13001".parse().unwrap();
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main, "127.0.0.1:13002".parse().unwrap());
+        let region = Uuid::from_u128(1247);
+        let mut handshake = RegionHandshake::default();
+        handshake.region_info2.region_id = region;
+        session.on_region_handshake(main, handshake);
+        session.on_eq_event(parcel_event(
+            main,
+            7,
+            42,
+            pf::SOUND_LOCAL | pf::ALLOW_VOICE_CHAT | pf::USE_ESTATE_VOICE_CHAN,
+        ));
+        let original = session.agent_parcel.clone().unwrap();
+        received.try_iter().for_each(drop);
+        for (uri, expected) in [
+            (Llsd::from(""), pf::SOUND_LOCAL),
+            (
+                Llsd::from(region.to_string()),
+                pf::SOUND_LOCAL | pf::ALLOW_VOICE_CHAT | pf::USE_ESTATE_VOICE_CHAN,
+            ),
+            (Llsd::from(format!("{region}-42")), pf::SOUND_LOCAL | pf::ALLOW_VOICE_CHAT),
+            (Llsd::from(""), pf::SOUND_LOCAL),
+            (
+                Llsd::Uuid(region),
+                pf::SOUND_LOCAL | pf::ALLOW_VOICE_CHAT | pf::USE_ESTATE_VOICE_CHAN,
+            ),
+        ] {
+            session.on_eq_event(voice_event(main, 42, uri.clone()));
+            assert!(received.try_iter().any(|(_, e)| matches!(e, NetEvent::ParcelVoiceInfo {
+                handle: 10, local_id: 42, allowed, use_estate: Some(estate)
+            } if allowed == (expected & pf::ALLOW_VOICE_CHAT != 0) && estate == (expected & pf::USE_ESTATE_VOICE_CHAN != 0))));
+            let updated = session.agent_parcel.clone().unwrap();
+            assert_eq!(updated.flags, expected);
+            assert_eq!(updated.bitmap, original.bitmap);
+            assert_eq!(updated.music_url, original.music_url);
+            session.on_eq_event(voice_event(main, 42, uri));
+            assert!(received.is_empty(), "identical voice notification preserves live caches");
+            assert!(Arc::ptr_eq(session.agent_parcel.as_ref().unwrap(), &updated));
+        }
+    }
+
+    #[tokio::test]
+    async fn parcel_voice_notifications_reject_other_parcels_regions_and_malformed_data() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = "127.0.0.1:13001".parse().unwrap();
+        let other = "127.0.0.1:13002".parse().unwrap();
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main, other);
+        session.on_eq_event(parcel_event(main, 7, 0, crate::parcel_flags::ALLOW_VOICE_CHAT));
+        let original = session.agent_parcel.clone().unwrap();
+        received.try_iter().for_each(drop);
+        let mut missing_id = voice_event(main, 0, "".into());
+        if let Llsd::Map(body) = &mut missing_id.body {
+            body.remove("parcel_local_id");
+        }
+        for event in [
+            voice_event(other, 0, "".into()),
+            voice_event(main, 42, "".into()),
+            voice_event(main, 0, Llsd::Undef),
+            missing_id,
+        ] {
+            session.on_eq_event(event);
+            assert!(received.is_empty());
+            assert!(Arc::ptr_eq(session.agent_parcel.as_ref().unwrap(), &original));
+        }
+    }
+
+    #[tokio::test]
+    async fn early_parcel_voice_notifications_wait_for_the_matching_agent_parcel() {
+        for local_id in [42, 43] {
+            let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+            let main = "127.0.0.1:13001".parse().unwrap();
+            let (events, received) = crossbeam_channel::unbounded();
+            let sh = shared(crate::EventSender(events));
+            let mut session = two_regions(&sh, sock, main, "127.0.0.1:13002".parse().unwrap());
+            session.on_eq_event(voice_event(main, 42, "".into()));
+            assert!(received.is_empty());
+            session.on_eq_event(parcel_event(main, 7, local_id, crate::parcel_flags::ALLOW_VOICE_CHAT));
+            let current = session.agent_parcel.as_ref().unwrap();
+            assert_eq!(current.flags & crate::parcel_flags::ALLOW_VOICE_CHAT != 0, local_id != 42);
+            assert!(session.sims[&main].pending_voice.is_none());
+            // A later confirmed properties update is authoritative again.
+            session.on_eq_event(parcel_event(main, 8, local_id, crate::parcel_flags::ALLOW_VOICE_CHAT));
+            assert_ne!(
+                session.agent_parcel.as_ref().unwrap().flags & crate::parcel_flags::ALLOW_VOICE_CHAT,
+                0
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn parcel_selection_refreshes_live_permissions_without_replacing_agent_geometry() {
+        use crate::{land, parcel_flags as pf};
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = "127.0.0.1:13001".parse().unwrap();
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main, "127.0.0.1:13002".parse().unwrap());
+        let mut initial = parcel_event(main, 7, 42, 0);
+        parcel_block(&mut initial, "ParcelData").insert("MusicURL", "https://music.invalid/old");
+        parcel_block(&mut initial, "ParcelData").insert("MediaURL", "https://media.invalid/old");
+        session.on_eq_event(initial);
+        let original = session.agent_parcel.clone().expect("agent parcel");
+        received.try_iter().for_each(drop);
+
+        let flags = pf::ALLOW_VOICE_CHAT
+            | pf::USE_ESTATE_VOICE_CHAN
+            | pf::SOUND_LOCAL
+            | pf::ALLOW_FLY
+            | pf::CREATE_OBJECTS
+            | pf::ALLOW_OTHER_SCRIPTS
+            | pf::RESTRICT_PUSHOBJECT;
+        for sequence in [land::SELECTED_PARCEL_SEQ_ID, land::HOVERED_PARCEL_SEQ_ID, BUILD_PARCEL_SEQ + 1] {
+            for flags in [flags, 0] {
+                let mut event = parcel_event(main, sequence, 42, flags);
+                // A selection rectangle/hover must not become the agent's parcel mask.
+                parcel_block(&mut event, "ParcelData").insert("Bitmap", Llsd::Binary(Vec::new()));
+                parcel_block(&mut event, "ParcelData").insert("AABBMax", Llsd::Array(vec![4.into(), 4.into(), 0.into()]));
+                session.on_eq_event(event);
+                let events: Vec<_> = received.try_iter().map(|(_, event)| event).collect();
+                let NetEvent::AgentParcel(parcel) = &events[0] else {
+                    panic!("live permissions before selection observers")
+                };
+                assert_eq!(parcel.flags, flags);
+                assert_eq!(parcel.see_avatars, flags != 0);
+                assert_eq!(parcel.any_av_sounds, flags != 0);
+                assert_eq!(parcel.group_av_sounds, flags != 0);
+                assert_eq!(parcel.media.obscure_moap, flags != 0);
+                assert_eq!(parcel.music_url, "https://music.invalid/live");
+                assert_eq!(parcel.media_url, "https://media.invalid/page");
+                assert_eq!(parcel.bitmap, original.bitmap);
+                assert_eq!(parcel.aabb_max, original.aabb_max);
+                assert_eq!(parcel.sequence_id, original.sequence_id);
+                assert_eq!(events.len(), 2);
+                assert!(match &events[1] {
+                    NetEvent::Land(land::LandEvent::Selected { .. }) => sequence == land::SELECTED_PARCEL_SEQ_ID,
+                    NetEvent::HoverParcel { .. } => sequence == land::HOVERED_PARCEL_SEQ_ID,
+                    NetEvent::SelectedParcel { .. } => sequence == BUILD_PARCEL_SEQ + 1,
+                    _ => false,
+                });
+                let current = session.agent_parcel.clone().unwrap();
+                session.on_eq_event(parcel_event(main, sequence, 42, flags));
+                assert!(!received.try_iter().any(|(_, e)| matches!(e, NetEvent::AgentParcel(_))));
+                assert!(
+                    Arc::ptr_eq(session.agent_parcel.as_ref().unwrap(), &current),
+                    "identical refresh preserves live caches"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn parcel_replies_for_other_land_or_regions_cannot_change_live_permissions() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = "127.0.0.1:13001".parse().unwrap();
+        let other = "127.0.0.1:13002".parse().unwrap();
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main, other);
+        session.on_eq_event(parcel_event(main, crate::land::SELECTED_PARCEL_SEQ_ID, 42, 0));
+        assert!(session.agent_parcel.is_none(), "a selection alone cannot locate the agent");
+        assert!(!received.try_iter().any(|(_, e)| matches!(e, NetEvent::AgentParcel(_))));
+        session.on_eq_event(parcel_event(main, 7, 42, 0));
+        let original = session.agent_parcel.clone().unwrap();
+        received.try_iter().for_each(drop);
+        for sequence in [
+            crate::land::SELECTED_PARCEL_SEQ_ID,
+            crate::land::HOVERED_PARCEL_SEQ_ID,
+            BUILD_PARCEL_SEQ + 1,
+        ] {
+            for (sim, local_id) in [(main, 43), (other, 42)] {
+                session.on_eq_event(parcel_event(sim, sequence, local_id, crate::parcel_flags::ALLOW_VOICE_CHAT));
+                assert!(!received.try_iter().any(|(_, e)| matches!(e, NetEvent::AgentParcel(_))));
+                assert!(Arc::ptr_eq(session.agent_parcel.as_ref().unwrap(), &original));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn parcel_notifications_reject_no_data_and_old_sequences_but_accept_zero() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = "127.0.0.1:13001".parse().unwrap();
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main, "127.0.0.1:13002".parse().unwrap());
+        session.on_eq_event(parcel_event(main, 7, 42, 0));
+        let original = session.agent_parcel.clone().unwrap();
+        received.try_iter().for_each(drop);
+        for sequence in [
+            0,
+            8,
+            crate::land::SELECTED_PARCEL_SEQ_ID,
+            crate::land::HOVERED_PARCEL_SEQ_ID,
+            BUILD_PARCEL_SEQ + 1,
+        ] {
+            let mut event = parcel_event(main, sequence, 42, crate::parcel_flags::ALLOW_VOICE_CHAT);
+            parcel_block(&mut event, "ParcelData").insert("RequestResult", crate::land::PARCEL_RESULT_NO_DATA);
+            session.on_eq_event(event);
+            assert!(received.is_empty());
+            assert!(Arc::ptr_eq(session.agent_parcel.as_ref().unwrap(), &original));
+        }
+        for sequence in [6, 7] {
+            session.on_eq_event(parcel_event(main, sequence, 43, crate::parcel_flags::ALLOW_VOICE_CHAT));
+            assert!(received.is_empty());
+            assert!(Arc::ptr_eq(session.agent_parcel.as_ref().unwrap(), &original));
+        }
+        for (sequence, local_id) in [(8, 43), (0, 42)] {
+            session.on_eq_event(parcel_event(main, sequence, local_id, crate::parcel_flags::ALLOW_VOICE_CHAT));
+            assert!(
+                received
+                    .try_iter()
+                    .any(|(_, e)| matches!(e, NetEvent::AgentParcel(p) if p.local_id == local_id))
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn parcel_selection_reloads_the_live_environment_only_when_its_version_changes() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = "127.0.0.1:13001".parse().unwrap();
+        let (events, _) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main, "127.0.0.1:13002".parse().unwrap());
+        session.on_eq_event(parcel_event(main, 7, 42, 0));
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        session.sims.get_mut(&main).unwrap().caps = Arc::new(HashMap::from([(
+            "ExtEnvironment".into(),
+            format!("http://{}/environment", server.local_addr().unwrap()),
+        )]));
+        let mut event = parcel_event(main, crate::land::SELECTED_PARCEL_SEQ_ID, 42, 0);
+        parcel_block(&mut event, "ParcelEnvironmentBlock").insert("ParcelEnvironmentVersion", 4);
+        session.on_eq_event(event);
+        let (mut stream, _) = tokio::time::timeout(Duration::from_secs(5), server.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut request = vec![0; 4096];
+        let size = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut request))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&request[..size]).starts_with("GET /environment?parcelid=42 "));
+        let body = aurora_llsd::to_xml(&Llsd::new_map());
+        stream
+            .write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes())
+            .await
+            .unwrap();
+        stream.write_all(&body).await.unwrap();
+        let mut event = parcel_event(main, crate::land::SELECTED_PARCEL_SEQ_ID, 42, 0);
+        parcel_block(&mut event, "ParcelEnvironmentBlock").insert("ParcelEnvironmentVersion", 4);
+        session.on_eq_event(event);
+        assert!(tokio::time::timeout(Duration::from_millis(200), server.accept()).await.is_err());
+        assert_eq!(session.agent_parcel.as_ref().unwrap().env_version, 4);
+    }
 
     #[tokio::test]
     async fn remote_teleport_flags_reach_the_viewer_and_old_circuits_cannot_replace_own_animations() {
