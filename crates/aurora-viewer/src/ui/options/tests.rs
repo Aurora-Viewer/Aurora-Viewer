@@ -302,6 +302,7 @@ const BEFORE: &[&str] = &[
     "ground_feet_max_avatars",
     "plates_hover_expand",
     "plates_friends_only_full",
+    "plates_friend_tint",
     "plate_click",
     "plate_shift_click",
     "plate_ctrl_click",
@@ -1080,7 +1081,8 @@ fn the_name_colors_wait_for_their_switch() {
     let p = crate::theme::Theme::default().palette();
     let d = Settings::default();
     let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
-    assert!(!s.colors.relation_names && !s.classic_name_tags);
+    assert!(s.colors.relation_names && !s.classic_name_tags);
+    s.colors.relation_names = false;
     let id = egui::Id::unique((
         "preferences-row",
         Page::Avatars,

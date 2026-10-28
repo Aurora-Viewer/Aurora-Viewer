@@ -148,6 +148,7 @@ impl App {
         self.plate_hover = self.plate_pointer(ctx).and_then(|pointer| plate_at(&self.name_tags, pointer));
         self.plates.hovered = self.plate_hover;
         self.plates.expand_on_hover = self.settings.plates_hover_expand;
+        self.plates.friend_tint = self.settings.plates_friend_tint;
         self.plates.still = self.settings.reduce_motion;
         self.plates.jiggle = self.settings.plates_jiggle || (self.demo && demo_jiggle());
         self.plates.click_combo = self.combo_on();
