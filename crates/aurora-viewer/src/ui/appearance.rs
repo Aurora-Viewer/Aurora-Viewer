@@ -568,6 +568,31 @@ fn sensed_row(
     })
 }
 
+/// A wearable type worn by nothing, at the pitch, icon and text place of
+/// `row` (the dummy items of LLCOFWearables::addClothingTypesDummies).
+fn not_worn_row(ui: &mut egui::Ui, p: &Palette, icon_name: &str, text: &str) {
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), super::inventory::AURORA_ROW_HEIGHT),
+        egui::Sense::hover(),
+    );
+    if let Some(t) = icons::global(icon_name) {
+        ui.painter().image(
+            t.id(),
+            egui::Rect::from_center_size(egui::pos2(rect.left() + 11.0, rect.center().y), Vec2::splat(16.0)),
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            p.muted_dim,
+        );
+    }
+    let mut job = egui::text::LayoutJob::single_section(
+        text.to_owned(),
+        egui::TextFormat::simple(egui::FontId::proportional(12.0), p.muted_dim),
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width((rect.width() - 30.0).max(20.0));
+    let galley = ui.painter().layout_job(job);
+    let pos = egui::pos2(rect.left() + 25.0, rect.center().y - galley.size().y * 0.5);
+    ui.painter().galley(pos, galley, p.muted_dim);
+}
+
 fn item_menu(response: &egui::Response, p: &Palette, it: &InvItem, actions: &mut Vec<Action>) {
     menu::context_menu(response, p, |ui| {
         let editable = matches!(it.asset_type, 5 | 13);
@@ -1160,24 +1185,19 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
             .filter(|(k, _)| if st.edit_tab == 0 { *k >= 4 } else { *k < 4 })
         {
             if !present.contains(&(kind as u32)) {
-                ui.horizontal(|ui| {
-                    icon(ui, if st.edit_tab == 0 { "shirt-filled" } else { "man-filled" }, 16.0, p.muted_dim);
-                    let ending = match kind {
-                        0 | 1 | 4 | 8 | 12 => "e",
-                        6 | 7 | 15 => "es",
-                        2 | 3 | 9 => "s",
-                        _ => "",
-                    };
-                    ui.label(
-                        RichText::new(aurora_i18n::tr!(
-                            "ui-appearance-not-worn",
-                            name = name.to_string(),
-                            ending = ending.to_string()
-                        ))
-                        .size(12.0)
-                        .color(p.muted_dim),
-                    );
-                });
+                let ending = match kind {
+                    0 | 1 | 4 | 8 | 12 => "e",
+                    6 | 7 | 15 => "es",
+                    2 | 3 | 9 => "s",
+                    _ => "",
+                };
+                not_worn_row(
+                    ui,
+                    p,
+                    if st.edit_tab == 0 { "shirt-filled" } else { "man-filled" },
+                    &aurora_i18n::tr!("ui-appearance-not-worn", name = name.to_string(), ending = ending.to_string()),
+                );
+                row_gap(ui);
             }
         }
     }
