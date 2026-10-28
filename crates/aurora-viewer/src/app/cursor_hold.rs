@@ -3,10 +3,29 @@
 //! back whatever ends the hold. Alt held in mouselook gives it back for as
 //! long as it is held (LLToolCompGun::handleHover, indra/newview/lltoolcomp.cpp,
 //! originally LGPL 2.1).
+//!
+//! While held the cursor is the tool's (the mouse capture of LLToolGun and
+//! LLToolCamera): the windows neither see it hover, nor get its clicks or its
+//! wheel. Windows and X11 cannot lock it, only confine it to the window, so
+//! mouselook brings it back to the centre whenever it moves
+//! (LLToolGun::handleHover → LLViewerWindow::moveCursorToCenter,
+//! indra/newview/lltoolgun.cpp): it never drifts over a window (#1343).
 
 use super::App;
+use winit::event::{ElementState, WindowEvent};
 use winit::keyboard::KeyCode;
 use winit::window::CursorGrabMode;
+
+/// A pointer event the windows must not see while the camera holds the
+/// cursor. A release still reaches them: a press they saw before the hold
+/// ends there, and a release alone does nothing.
+pub(super) fn held_from_ui(event: &WindowEvent) -> bool {
+    match event {
+        WindowEvent::CursorMoved { .. } | WindowEvent::MouseWheel { .. } => true,
+        WindowEvent::MouseInput { state, .. } => *state == ElementState::Pressed,
+        _ => false,
+    }
+}
 
 /// Why the camera took the cursor: it decides where the cursor reappears.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -194,6 +213,27 @@ impl App {
             log::warn!("camera: the cursor could not be locked ({e}), it is only hidden");
         }
         g.window.set_cursor_visible(false);
+        // the windows stop seeing it now: a window it was over loses its hover
+        if let Some(g) = &mut self.gfx {
+            g.egui_state.egui_input_mut().events.push(egui::Event::PointerGone);
+        }
+    }
+
+    /// The hidden mouselook cursor moved (it can only be confined): back to
+    /// the centre, like LLToolGun::handleHover. The view turns from the raw
+    /// motion, which the move back does not produce.
+    pub(super) fn recenter_mouselook_cursor(&mut self) {
+        if self.cursor_hold.kind != Some(HoldKind::Mouselook) {
+            return;
+        }
+        let Some(g) = &self.gfx else {
+            return;
+        };
+        let size = g.window.inner_size();
+        let center = (size.width as f32 / 2.0, size.height as f32 / 2.0);
+        if (self.cursor_pos.0 - center.0).abs() > 0.5 || (self.cursor_pos.1 - center.1).abs() > 0.5 {
+            self.move_cursor(center);
+        }
     }
 
     /// Give the cursor back. `focus_lost`: like LLViewerWindow::handleFocusLost,
