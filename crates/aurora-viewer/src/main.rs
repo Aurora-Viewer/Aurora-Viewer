@@ -26,6 +26,7 @@ mod cli;
 mod cmdline;
 mod colorblind;
 mod crash;
+mod creation_permissions;
 mod credentials;
 mod cursors;
 mod deep_profile;

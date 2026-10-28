@@ -277,6 +277,7 @@ impl Filters {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InventoryPreferences {
+    pub creation_permissions: crate::creation_permissions::Defaults,
     pub explorer: ExplorerPreferences,
     /// One menu arrangement is shared by all inventory types and accounts.
     pub context_menus: super::menu_layout::Preferences,
@@ -314,6 +315,7 @@ impl Default for InventoryPreferences {
     fn default() -> Self {
         Self {
             explorer: ExplorerPreferences::default(),
+            creation_permissions: Default::default(),
             context_menus: Default::default(),
             notecard_view: Default::default(),
             protected: HashSet::new(),

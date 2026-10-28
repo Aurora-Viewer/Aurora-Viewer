@@ -281,6 +281,15 @@ pub(super) fn new_menu(
             }
         },
     );
+    entry(
+        ui,
+        p,
+        "shield-lock-filled",
+        aurora_i18n::tr!("inventory-default-permissions"),
+        true,
+        InvAction::DefaultPermissions,
+        actions,
+    );
 }
 
 pub(super) fn show(

@@ -220,6 +220,7 @@ impl App {
             parent: folder,
             kind: NewItem::Script,
             name: script_name().into(),
+            permissions: None,
         });
     }
 

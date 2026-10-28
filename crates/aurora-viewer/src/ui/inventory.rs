@@ -27,6 +27,7 @@ pub(crate) mod context_customize;
 pub(crate) mod context_notecards;
 mod controls;
 pub(crate) use controls::recent_period;
+pub(crate) mod default_permissions;
 mod delete;
 pub(crate) mod menu_layout;
 pub use delete::demo_events as delete_demo_events;
@@ -103,6 +104,7 @@ pub fn show_document(
 }
 
 pub enum InvAction {
+    DefaultPermissions,
     ExportMenuNotecard {
         name: String,
         text: String,
@@ -392,6 +394,7 @@ pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
 
 #[derive(Default)]
 pub struct InventoryUi {
+    pub default_permissions_open: bool,
     context_folders: std::cell::RefCell<context_catalog::FolderCache>,
     pub marketplace_commands: std::collections::HashMap<Uuid, Vec<crate::ui::marketplace_listings::OptionState>>,
     /// Save live splitter changes once the pointer is released.

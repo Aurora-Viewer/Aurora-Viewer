@@ -1937,6 +1937,7 @@ pub enum NetCommand {
         parent: Uuid,
         kind: crate::inventory::operations::NewItem,
         name: String,
+        permissions: Option<crate::inventory::upload::Permissions>,
     },
     PreviewInventoryItem(crate::inventory::InvItem),
     PreviewTaskNotecard {
@@ -2048,6 +2049,7 @@ pub enum NetCommand {
         kind: u8,
         name: String,
         data: Vec<u8>,
+        permissions: Option<crate::inventory::upload::Permissions>,
     },
     RestoreInventoryObject(crate::inventory::InvItem),
     SaveInventoryContent {
@@ -2063,6 +2065,7 @@ pub enum NetCommand {
         parent: Uuid,
         name: String,
         data: Vec<u8>,
+        permissions: Option<crate::inventory::upload::Permissions>,
     },
     /// A new environment settings item holding `data` (LLSettingsVOBase::
     /// createInventoryItem): CreateInventoryItem, then the asset through

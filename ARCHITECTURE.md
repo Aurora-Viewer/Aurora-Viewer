@@ -1458,6 +1458,14 @@ inventory operation/progress path. Library, protected, foreign-owned items and
 links are excluded. Its controls and type filters are shared with
 `build/ui/contents_permissions.rs`.
 
+`creation_permissions.rs` stores independent creation defaults and resolves them
+before asynchronous uploads, including new scripts in object contents. The
+inventory's New menu opens `ui/inventory/default_permissions.rs`, which edits
+these defaults and the existing import preferences. The import Permissions tab
+keeps its controls and payment setting; both entry points share the same grid.
+Creation callbacks in `aurora-net/session/asset_imports.rs` apply group/everyone
+masks only to the matching newly created owned item, via UpdateInventoryItem.
+
 `ui/inventory/view.rs` also publishes the main inventory's saved sort into
 the UI context each frame. Texture/material trees inherit that sort directly;
 independent inventory selectors share an immutable order projection, cached by
