@@ -447,6 +447,8 @@ pub struct App {
     empty_lists: DrawLists,
     quit_at: Option<Instant>,
     exit_prompt: ui::exit::ExitPrompt,
+    /// saves the window layout shortly after it changes (ui/layout.rs)
+    layout_autosave: ui::layout::Autosave,
     loading_stage: String,
     move_complete_at: Option<Instant>,
     /// Teleport diagnostics still to log (seconds after the arrival).
@@ -1176,6 +1178,7 @@ impl App {
             empty_lists: DrawLists::default(),
             quit_at: None,
             exit_prompt: Default::default(),
+            layout_autosave: Default::default(),
             loading_stage: String::new(),
             move_complete_at: None,
             tp_checks: Vec::new(),
@@ -9240,6 +9243,10 @@ impl App {
             }
             windows_ms += t.elapsed().as_secs_f32() * 1000.0;
         });
+        // a capture leaves the user's layout as it is (as at exit)
+        if self.capture.is_none() {
+            self.layout_autosave.after_pass(&ctx, Instant::now());
+        }
         if self.ik_editor.take_binding_paste_request() {
             let text = egui_state.clipboard_text().unwrap_or_default();
             self.ik_editor.paste_binding(&self.world, &text);

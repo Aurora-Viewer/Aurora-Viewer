@@ -1,7 +1,7 @@
-//! UI layout kept between sessions (Firestorm saves floater rects): egui's
-//! memory (window positions and sizes, collapsed floaters) is written to
-//! `ui_layout.ron` on exit and restored at startup. Which panels are open
-//! lives in the settings.
+//! UI layout kept between sessions (the Legacy Viewer saves floater rects):
+//! egui's memory (window positions and sizes, collapsed floaters) is written
+//! to `ui_layout.ron` shortly after each change (`Autosave`) and on exit, and
+//! restored at startup. Which panels are open lives in the settings.
 //!
 //! Each window retains one of eight invisible perimeter anchors and its
 //! signed offset in the room where windows may move. Existing default rects
@@ -23,7 +23,10 @@ use crate::theme::Palette;
 use anchor::Anchor;
 use egui::{Align2, Id, Pos2, Rect, Vec2};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 fn path() -> PathBuf {
     crate::settings::config_dir().join("ui_layout.ron")
@@ -53,23 +56,124 @@ fn restore(ctx: &egui::Context, saved: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Save the layout now (on exit, after a restored backup).
 pub fn save(ctx: &egui::Context) {
-    if let Some(text) = text(ctx) {
-        let p = path();
-        if let Some(dir) = p.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        // write then rename: never leave a half-written file
-        let _ = crate::atomic_file::write(&p, text.as_bytes());
-    }
+    let (generation, mem) = snapshot(ctx);
+    write(generation, &mem);
 }
 
 /// The layout as `ui_layout.ron` holds it (and a settings backup).
 pub fn text(ctx: &egui::Context) -> Option<String> {
+    let (_, mem) = snapshot(ctx);
+    ron::to_string(&mem).inspect_err(|e| log::warn!("ui layout not saved: {e}")).ok()
+}
+
+/// Order of the saves: each snapshot takes the next number, and the file
+/// only takes a snapshot newer than the last one written (or than a reset),
+/// so a background save finishing after the exit's never brings an older
+/// layout back.
+static ISSUED: AtomicU64 = AtomicU64::new(0);
+static WRITTEN: Mutex<Written> = Mutex::new(Written { generation: 0, text: None });
+
+struct Written {
+    generation: u64,
+    /// What the file holds, to skip writing the same layout again.
+    text: Option<String>,
+}
+
+/// The current layout, with the windows' anchors up to date. Cheap enough
+/// for the frame (a clone); serializing it is left to `write`.
+fn snapshot(ctx: &egui::Context) -> (u64, egui::Memory) {
     let room = move_area(ctx);
     windows(ctx, |w| w.refresh_anchors(room));
-    let mem = ctx.memory(|m| m.clone());
-    ron::to_string(&mem).inspect_err(|e| log::warn!("ui layout not saved: {e}")).ok()
+    (next_generation(), ctx.memory(|m| m.clone()))
+}
+
+fn next_generation() -> u64 {
+    ISSUED.fetch_add(1, Ordering::Relaxed) + 1
+}
+
+fn write(generation: u64, mem: &egui::Memory) {
+    write_to(&WRITTEN, &path(), generation, mem);
+}
+
+fn write_to(state: &Mutex<Written>, p: &Path, generation: u64, mem: &egui::Memory) {
+    let text = match ron::to_string(mem) {
+        Ok(text) => text,
+        Err(e) => {
+            log::warn!("ui layout not saved: {e}");
+            return;
+        }
+    };
+    let mut written = state.lock().unwrap_or_else(PoisonError::into_inner);
+    if generation <= written.generation {
+        return;
+    }
+    written.generation = generation;
+    if written.text.as_deref() == Some(text.as_str()) {
+        return;
+    }
+    if let Some(dir) = p.parent()
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
+        log::warn!("ui layout not saved: {e}");
+        return;
+    }
+    // write then rename: never leave a half-written file
+    match crate::atomic_file::write(p, text.as_bytes()) {
+        Ok(()) => written.text = Some(text),
+        Err(e) => log::warn!("ui layout not saved: {e}"),
+    }
+}
+
+/// How long the layout must stay still before it is saved: a window moved
+/// several times in a row is written once.
+const AUTOSAVE_DELAY: Duration = Duration::from_secs(2);
+
+/// Saves the layout shortly after the user changes it (a window moved,
+/// resized or collapsed, a column widened, the viewer window resized), on a
+/// background thread: a crash or a forced close no longer loses the
+/// arrangement of the session (#1319). The Legacy Viewer keeps the floater
+/// rects in its settings and writes them at exit only
+/// (LLFloater::storeRectControl, indra/llui/llfloater.cpp;
+/// LLAppViewer::cleanup, indra/newview/llappviewer.cpp): a clean exit gives
+/// the same file, an abrupt one no longer loses it.
+#[derive(Default)]
+pub struct Autosave {
+    due: Option<Instant>,
+    room: Option<Rect>,
+}
+
+impl Autosave {
+    /// Call it after each egui pass.
+    pub fn after_pass(&mut self, ctx: &egui::Context, now: Instant) {
+        let room = move_area(ctx);
+        let released = ctx.input(|i| i.pointer.any_released()) && (ctx.is_pointer_over_egui() || ctx.egui_is_using_pointer());
+        let resized = self.room.is_some_and(|r| r != room);
+        self.room = Some(room);
+        if self.mark(released || resized, now) {
+            let (generation, mem) = snapshot(ctx);
+            let spawned = std::thread::Builder::new()
+                .name("aurora-layout-save".into())
+                .spawn(move || write(generation, &mem));
+            if let Err(e) = spawned {
+                log::warn!("ui layout not saved: {e}");
+            }
+        }
+    }
+
+    /// Whether the layout is due for a save this frame: `changed` pushes the
+    /// save back by `AUTOSAVE_DELAY`.
+    fn mark(&mut self, changed: bool, now: Instant) -> bool {
+        if changed {
+            self.due = Some(now + AUTOSAVE_DELAY);
+        }
+        if self.due.is_some_and(|due| now >= due) {
+            self.due = None;
+            return true;
+        }
+        false
+    }
 }
 
 /// Takes a layout from a settings backup, at once and for the next
@@ -82,10 +186,19 @@ pub fn apply(ctx: &egui::Context, saved: &str) -> Result<(), String> {
 
 /// Forget the saved layout ("Reset everything").
 pub fn forget(ctx: &egui::Context) {
-    let _ = std::fs::remove_file(path());
+    discard(&WRITTEN, &path(), next_generation());
     let options = ctx.options(|o| o.clone());
     ctx.memory_mut(|m| *m = egui::Memory::default());
     ctx.options_mut(|o| *o = options);
+}
+
+/// Remove the file; a background save still on its way, older than
+/// `generation`, does not write it back.
+fn discard(state: &Mutex<Written>, p: &Path, generation: u64) {
+    let mut written = state.lock().unwrap_or_else(PoisonError::into_inner);
+    written.generation = written.generation.max(generation);
+    written.text = None;
+    let _ = std::fs::remove_file(p);
 }
 
 /// Room left between a window and the bars or the edges of the screen, and
@@ -1206,5 +1319,68 @@ mod tests {
         assert_eq!(uncovered(title(100.0, 60.0, 300.0), room, &islands), 300.0);
         // partly off the screen: only what is on it counts
         assert_eq!(uncovered(title(1200.0, 300.0, 300.0), room, &islands), 80.0);
+    }
+
+    /// The save waits for the layout to stay still, each change pushing it
+    /// back, and comes once.
+    #[test]
+    fn the_autosave_waits_for_the_layout_to_settle() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let mut autosave = Autosave::default();
+        assert!(!autosave.mark(false, at(0)), "nothing changed, nothing to save");
+        assert!(!autosave.mark(true, at(0)));
+        assert!(!autosave.mark(false, at(1_000)));
+        // moved again: the delay starts over
+        assert!(!autosave.mark(true, at(1_500)));
+        assert!(!autosave.mark(false, at(3_000)));
+        assert!(autosave.mark(false, at(3_500)));
+        assert!(!autosave.mark(false, at(10_000)), "saved once");
+    }
+
+    /// A layout with the window `id` at `x`.
+    fn layout_at(id: &str, x: f32) -> egui::Memory {
+        let ctx = egui::Context::default();
+        // the second pass records the window's place
+        for _ in 0..2 {
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                egui::Window::new(id)
+                    .id(Id::unique(id))
+                    .default_pos(Pos2::new(x, 50.0))
+                    .show(ui.ctx(), |ui| ui.label("x"));
+            });
+        }
+        ctx.memory(|m| m.clone())
+    }
+
+    fn saved_x(p: &Path, id: &str) -> f32 {
+        let saved = std::fs::read_to_string(p).expect("saved layout");
+        let ctx = egui::Context::default();
+        restore(&ctx, &saved).expect("readable layout");
+        ctx.memory(|m| m.area_rect(Id::unique(id))).expect("saved window").min.x
+    }
+
+    /// A background save that ends after a newer one (the exit's) or after a
+    /// reset never brings its older layout back.
+    #[test]
+    fn an_older_layout_never_replaces_a_newer_one() {
+        let dir = crate::settings::config_dir().join(format!("layout-autosave-{}", uuid::Uuid::new_v4()));
+        let p = dir.join("ui_layout.ron");
+        let state = Mutex::new(Written { generation: 0, text: None });
+        let moved = layout_at("autosave", 300.0);
+        write_to(&state, &p, 2, &moved);
+        write_to(&state, &p, 1, &layout_at("autosave", 100.0));
+        assert_eq!(saved_x(&p, "autosave"), 300.0);
+        // the same layout again: the file is left as it is
+        let modified = std::fs::metadata(&p).and_then(|m| m.modified()).expect("modified");
+        write_to(&state, &p, 3, &moved);
+        assert_eq!(std::fs::metadata(&p).and_then(|m| m.modified()).expect("modified"), modified);
+        // reset, then a save taken before it arrives
+        discard(&state, &p, 5);
+        write_to(&state, &p, 4, &layout_at("autosave", 100.0));
+        assert!(!p.exists(), "the reset layout stays forgotten");
+        write_to(&state, &p, 6, &layout_at("autosave", 200.0));
+        assert_eq!(saved_x(&p, "autosave"), 200.0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
