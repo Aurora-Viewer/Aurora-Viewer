@@ -2307,6 +2307,7 @@ ui-login-last-location = Last location
 ui-land-access-ban-lines-will-appear-if-this-box-is-not = Ban lines will appear if this box is not checked
 ui-profile-there-are-unsaved-changes = There are unsaved changes.
 ui-appearance-move-layer-down = Move layer down
+ui-appearance-drag-layer-hint = Drag to reorder layers, or select one for its arrows
 ui-inventory-controls-description = Description
 common-description = Description:
 ui-minimap-destination = Destination

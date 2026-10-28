@@ -2310,6 +2310,7 @@ ui-login-last-location = Dernière position
 ui-land-access-ban-lines-will-appear-if-this-box-is-not = Des lignes d'interdiction seront créées si cette case n'est pas cochée
 ui-profile-there-are-unsaved-changes = Des modifications ne sont pas enregistrées.
 ui-appearance-move-layer-down = Descendre le calque
+ui-appearance-drag-layer-hint = Glissez pour réordonner les calques, ou sélectionnez-en un pour ses flèches
 ui-inventory-controls-description = Description
 common-description = Description :
 ui-minimap-destination = Destination
