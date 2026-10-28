@@ -494,7 +494,10 @@ pub struct DrawLists {
     pub hud_blend: Vec<DrawCmd>,
     pub hud_debug_red: Vec<DrawCmd>,
     pub hud_debug_blue: Vec<DrawCmd>,
+    /// Classic terrain (detail textures).
     pub terrain: Vec<DrawCmd>,
+    /// PBR terrain (glTF materials), opaque: its own shader.
+    pub terrain_pbr: Vec<DrawCmd>,
     /// PBR terrain whose alpha needs to be tested in the depth prepass.
     pub terrain_mask: Vec<DrawCmd>,
     pub opaque: Vec<DrawCmd>,
@@ -542,6 +545,8 @@ pub struct DrawLists {
     /// static reflection probe captures (LLViewerWindow::cubeSnapshot).
     pub probe: Vec<ShadowCaster>,
     pub reflection_terrain: Vec<DrawCmd>,
+    /// `reflection_terrain` of the PBR regions (their own shader).
+    pub reflection_terrain_pbr: Vec<DrawCmd>,
     /// Particles, sorted back to front.
     pub particles: Vec<ParticleInstance>,
     /// Non-blended faces with glow (LL PASS_GLOW): drawn again to
@@ -632,6 +637,7 @@ impl DrawLists {
         self.hud_debug_red.clone_from(&src.hud_debug_red);
         self.hud_debug_blue.clone_from(&src.hud_debug_blue);
         self.terrain.clone_from(&src.terrain);
+        self.terrain_pbr.clone_from(&src.terrain_pbr);
         self.terrain_mask.clone_from(&src.terrain_mask);
         self.portal_clipping = src.portal_clipping;
         self.opaque.clone_from(&src.opaque);
@@ -652,6 +658,7 @@ impl DrawLists {
         self.reflection.clone_from(&src.reflection);
         self.probe.clone_from(&src.probe);
         self.reflection_terrain.clone_from(&src.reflection_terrain);
+        self.reflection_terrain_pbr.clone_from(&src.reflection_terrain_pbr);
         self.particles.clone_from(&src.particles);
         self.water_events.clone_from(&src.water_events);
         self.water_contacts.clone_from(&src.water_contacts);
@@ -679,6 +686,7 @@ impl DrawLists {
         self.hud_debug_red.clear();
         self.hud_debug_blue.clear();
         self.terrain.clear();
+        self.terrain_pbr.clear();
         self.terrain_mask.clear();
         self.portal_clipping = false;
         self.opaque.clear();
@@ -698,6 +706,7 @@ impl DrawLists {
         self.reflection.clear();
         self.probe.clear();
         self.reflection_terrain.clear();
+        self.reflection_terrain_pbr.clear();
         self.particles.clear();
         self.water_events.clear();
         self.water_contacts.clear();
@@ -726,6 +735,7 @@ impl DrawLists {
             + self.hud_debug_red.len()
             + self.hud_debug_blue.len()
             + self.terrain.len()
+            + self.terrain_pbr.len()
             + self.terrain_mask.len()
             + self.opaque.len()
             + self.creation_preview.len()
@@ -1661,6 +1671,7 @@ mod tests {
         scene.hud_debug_blue.push(cmd(24));
         scene.terrain.push(cmd(1));
         scene.terrain_mask.push(cmd(27));
+        scene.terrain_pbr.push(cmd(28));
         scene.creation_preview.push(cmd(25));
         scene.physics_shapes.push(cmd(26));
         scene.blend.extend([cmd(7), cmd(8), cmd(9)]);
@@ -1716,6 +1727,7 @@ mod tests {
         assert_eq!(packet.blend_depth, 1);
         assert_eq!((packet.terrain.len(), packet.glow.len(), packet.select_root.len()), (1, 1, 1));
         assert_eq!(packet.terrain_mask[0].record, 27);
+        assert_eq!(packet.terrain_pbr[0].record, 28);
         assert_eq!(packet.select_faces[0].record, 6);
         assert_eq!(packet.hud_select_faces[0].record, 22);
         assert_eq!((packet.particles.len(), packet.impostor_sprites.len()), (1, 1));

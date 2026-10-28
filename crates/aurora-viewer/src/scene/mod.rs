@@ -4065,11 +4065,19 @@ impl Scene {
                 if self.reflections {
                     // with its bounds: each reflection pass keeps the chunks
                     // in its own frustum
-                    self.lists.reflection_terrain.push(cmd.with_bounds(c.center, c.radius));
+                    let reflected = cmd.with_bounds(c.center, c.radius);
+                    if r.surface.pbr {
+                        self.lists.reflection_terrain_pbr.push(reflected);
+                    } else {
+                        self.lists.reflection_terrain.push(reflected);
+                    }
                 }
                 if view.sphere_visible(c.center, c.radius) {
+                    // one shader per kind of terrain (env.wgsl)
                     if r.surface.masked {
                         self.lists.terrain_mask.push(cmd);
+                    } else if r.surface.pbr {
+                        self.lists.terrain_pbr.push(cmd);
                     } else {
                         self.lists.terrain.push(cmd);
                     }

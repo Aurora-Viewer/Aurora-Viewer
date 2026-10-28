@@ -27,7 +27,7 @@ pub(super) struct SurfaceGpu {
     layers: Option<[u32; 4]>,
     pub texture_ids: Vec<Uuid>,
     slots: [u32; 4],
-    pbr: bool,
+    pub pbr: bool,
     pub masked: bool,
     paint_slot: Option<(Uuid, u32)>,
 }

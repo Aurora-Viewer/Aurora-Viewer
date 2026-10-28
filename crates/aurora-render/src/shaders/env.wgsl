@@ -145,7 +145,20 @@ fn fs_sky_g(in: SkyOut) -> GOut {
 
 // --------------------------------------------------------------- terrain
 
+// Classic terrain (four detail textures). The PBR terrain has its own
+// stage (TerrainPbrOut, vs_terrain_pbr, fs_terrain_pbr): one shader each, so
+// that textured regions keep the cost of the classic one (its varyings,
+// implicit-gradient samples and registers).
 struct TerrainOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) comp: f32,
+    @location(4) @interpolate(flat) record: u32,
+};
+
+struct TerrainPbrOut {
     @invariant @builtin(position) clip: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -186,13 +199,28 @@ fn vs_terrain(in: VsIn) -> TerrainOut {
     // (lighting, shadows and fog keep region coordinates)
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.normal = vertex_normal(rec, in);
-    if ((rec.flags.x & FLAG_PBR) != 0u) {
-        let raw = vec4<f32>(terrain_direction(vec4<u32>(round(in.weights * 255.0))), in.normal.w);
-        out.tangent0 = terrain_transform_tangent(records[rec.tex.x], out.normal, raw);
-        out.tangent1 = terrain_transform_tangent(records[rec.tex.y], out.normal, raw);
-        out.tangent2 = terrain_transform_tangent(records[rec.tex.z], out.normal, raw);
-        out.tangent3 = terrain_transform_tangent(records[rec.tex.w], out.normal, raw);
-    }
+    // region metres; the composition in uv.x (world/terrain.rs build_chunk)
+    out.uv = in.pos.xy;
+    out.comp = in.uv.x;
+    out.record = in.instance;
+    return out;
+}
+
+@vertex
+fn vs_terrain_pbr(in: VsIn) -> TerrainPbrOut {
+    let rec = records[in.instance];
+    // the position of vs_terrain, operation for operation (same prepass)
+    let model = eye_model(rec, in);
+    let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
+    var out: TerrainPbrOut;
+    out.clip = frame.eye_view_proj * ep;
+    out.world_pos = ep.xyz + frame.eye.xyz;
+    out.normal = vertex_normal(rec, in);
+    let raw = vec4<f32>(terrain_direction(vec4<u32>(round(in.weights * 255.0))), in.normal.w);
+    out.tangent0 = terrain_transform_tangent(records[rec.tex.x], out.normal, raw);
+    out.tangent1 = terrain_transform_tangent(records[rec.tex.y], out.normal, raw);
+    out.tangent2 = terrain_transform_tangent(records[rec.tex.z], out.normal, raw);
+    out.tangent3 = terrain_transform_tangent(records[rec.tex.w], out.normal, raw);
     out.uv = in.pos.xy;
     out.region_pos = in.pos;
     out.comp = in.uv.x;
@@ -252,7 +280,7 @@ fn terrain_noise_weights(c: f32, noise: f32, dx: vec2<f32>, dy: vec2<f32>, clamp
     return vec4<f32>(f * a, f * (1.0 - a), (1.0 - f) * b, (1.0 - f) * (1.0 - b));
 }
 
-fn terrain_mix_weights(in: TerrainOut, dx: vec3<f32>, dy: vec3<f32>, blend_dx: vec2<f32>, blend_dy: vec2<f32>, clamp_sampler: sampler) -> vec4<f32> {
+fn terrain_mix_weights(in: TerrainPbrOut, dx: vec3<f32>, dy: vec3<f32>, blend_dx: vec2<f32>, blend_dy: vec2<f32>, clamp_sampler: sampler) -> vec4<f32> {
     let rec = records[in.record];
     if (rec.flags.z != 0u) {
         // LLTerrainPaintMap stores slots 2..4 in linear RGB; slot 1 is the
@@ -350,7 +378,7 @@ fn terrain_layer(rec: DrawRecord, p: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, n:
     return result;
 }
 
-fn terrain_material(in: TerrainOut, dx: vec3<f32>, dy: vec3<f32>, blend_dx: vec2<f32>, blend_dy: vec2<f32>, alpha_only: bool, clamp_sampler: sampler) -> TerrainMaterial {
+fn terrain_material(in: TerrainPbrOut, dx: vec3<f32>, dy: vec3<f32>, blend_dx: vec2<f32>, blend_dy: vec2<f32>, alpha_only: bool, clamp_sampler: sampler) -> TerrainMaterial {
     let rec = records[in.record];
     let n = normalize(in.normal);
     let tangents = array<vec4<f32>, 4>(in.tangent0, in.tangent1, in.tangent2, in.tangent3);
@@ -375,16 +403,14 @@ fn terrain_material(in: TerrainOut, dx: vec3<f32>, dy: vec3<f32>, blend_dx: vec2
     return result;
 }
 
-fn terrain_legacy_color(in: TerrainOut, dx: vec2<f32>, dy: vec2<f32>) -> vec3<f32> {
+fn terrain_color(in: TerrainOut) -> vec3<f32> {
     let rec = records[in.record];
     // uv is region-space meters; detail textures repeat every uv_st.x meters
     let tc = in.uv / max(rec.uv_st.x, 0.1);
-    let tx = dx / max(rec.uv_st.x, 0.1);
-    let ty = dy / max(rec.uv_st.x, 0.1);
-    let t0 = terrain_sample(rec.tex.x, tc, tx, ty).rgb;
-    let t1 = terrain_sample(rec.tex.y, tc, tx, ty).rgb;
-    let t2 = terrain_sample(rec.tex.z, tc, tx, ty).rgb;
-    let t3 = terrain_sample(rec.tex.w, tc, tx, ty).rgb;
+    let t0 = sample_tex(rec.tex.x, tc).rgb;
+    let t1 = sample_tex(rec.tex.y, tc).rgb;
+    let t2 = sample_tex(rec.tex.z, tc).rgb;
+    let t3 = sample_tex(rec.tex.w, tc).rgb;
     let w = terrain_weights(clamp(in.comp, 0.0, 3.0));
     let w0 = w.x;
     let w1 = w.y;
@@ -428,21 +454,16 @@ fn terrain_legacy_color(in: TerrainOut, dx: vec2<f32>, dy: vec2<f32>) -> vec3<f3
     return light_tiles_checked(debug_view(apply_fog(col*water_scene_light(in.world_pos), in.world_pos), in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
 }
 
-fn terrain_shaded(in: TerrainOut) -> Shaded {
+fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
     let dx = dpdx(in.region_pos);
     let dy = dpdy(in.region_pos);
     let blend_dx = dpdx(vec2<f32>(in.comp, in.blend_noise));
     let blend_dy = dpdy(vec2<f32>(in.comp, in.blend_noise));
-    let pbr = (records[in.record].flags.x & FLAG_PBR) != 0u;
     let geo = normalize(in.normal);
-    var material = TerrainMaterial(vec4<f32>(1.0), vec3<f32>(1.0, 1.0, 0.0), geo, vec3<f32>(0.0), 0.0);
-    if (pbr) { material = terrain_material(in, dx, dy, blend_dx, blend_dy, false, lin_clamp); }
+    let material = terrain_material(in, dx, dy, blend_dx, blend_dy, false, lin_clamp);
     surface_occlusion = normal_map_occlusion(geo, material.normal, in.world_pos, 1.0 / in.clip.w);
     screen_surface = true;
     contact_surface = true;
-    if (!pbr) {
-        return Shaded(vec4<f32>(terrain_legacy_color(in, dx.xy, dy.xy), 1.0), geo, 1.0, 0.0);
-    }
     if (material.color.a < material.cutoff) { discard; }
     let n = material.normal;
     let v = normalize(frame.camera_pos.xyz - in.world_pos);
@@ -474,7 +495,24 @@ fn terrain_shaded(in: TerrainOut) -> Shaded {
 
 @fragment
 fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
-    let shaded = terrain_shaded(in);
+    let col = terrain_color(in);
+    if (reflection_clip(in.world_pos)) {
+        discard;
+    }
+    return vec4<f32>(col, 1.0);
+}
+
+@fragment
+fn fs_terrain_g(in: TerrainOut) -> GOut {
+    var o: GOut;
+    o.color = vec4<f32>(terrain_color(in), 1.0);
+    o.gbuf = vec4<f32>(oct_encode(normalize(in.normal)), 1.0, 0.0);
+    return o;
+}
+
+@fragment
+fn fs_terrain_pbr(in: TerrainPbrOut) -> @location(0) vec4<f32> {
+    let shaded = terrain_pbr_shaded(in);
     if (reflection_clip(in.world_pos)) {
         discard;
     }
@@ -482,9 +520,9 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
 }
 
 @fragment
-fn fs_terrain_g(in: TerrainOut) -> GOut {
+fn fs_terrain_pbr_g(in: TerrainPbrOut) -> GOut {
     var o: GOut;
-    let shaded = terrain_shaded(in);
+    let shaded = terrain_pbr_shaded(in);
     o.color = shaded.color;
     o.gbuf = gbuffer(shaded);
     return o;
@@ -492,7 +530,7 @@ fn fs_terrain_g(in: TerrainOut) -> GOut {
 
 // Match the main terrain mask before writing either single-sample depth or
 // MSAA depth. Alpha-only sampling skips ORM, normal and emissive maps.
-fn terrain_depth_mask(in: TerrainOut) {
+fn terrain_depth_mask(in: TerrainPbrOut) {
     let dx = dpdx(in.region_pos);
     let dy = dpdy(in.region_pos);
     let blend_dx = dpdx(vec2<f32>(in.comp, in.blend_noise));
@@ -540,7 +578,7 @@ fn terrain_shadow_mask(in: TerrainShadowOut) {
     let blend_dx = dpdx(vec2<f32>(in.comp, in.blend_noise));
     let blend_dy = dpdy(vec2<f32>(in.comp, in.blend_noise));
     if ((records[in.record].flags.x & (FLAG_TERRAIN | FLAG_PBR | FLAG_ALPHA_MASK)) == (FLAG_TERRAIN | FLAG_PBR | FLAG_ALPHA_MASK)) {
-        var surface: TerrainOut;
+        var surface: TerrainPbrOut;
         surface.normal = in.normal;
         surface.region_pos = in.region_pos;
         surface.comp = in.comp;
@@ -557,19 +595,28 @@ fn fs_shadow_terrain(in: TerrainShadowOut) {
     portal_clip(records[in.record], in.world_pos);
 }
 
+// Masked PBR terrain only: the other terrain is drawn by vs_depth.
 @fragment
-fn fs_terrain_depth(in: TerrainOut) {
+fn fs_terrain_depth(in: TerrainPbrOut) {
     terrain_depth_mask(in);
 }
 
 @fragment
-fn fs_terrain_depth_normal(in: TerrainOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+fn fs_terrain_depth_normal(in: TerrainPbrOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     terrain_depth_mask(in);
     return depth_normal(in.normal, front);
 }
 
+// Picking gives the region metres as the surface coordinates of a hit (the
+// vertex uv holds the composition): classic and opaque PBR terrain.
 @fragment
 fn fs_terrain_pick(in: TerrainOut) -> @location(0) vec4<u32> {
+    return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.uv.x), bitcast<u32>(in.uv.y));
+}
+
+// Masked PBR terrain: its holes are no targets.
+@fragment
+fn fs_terrain_pick_mask(in: TerrainPbrOut) -> @location(0) vec4<u32> {
     terrain_depth_mask(in);
     return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.uv.x), bitcast<u32>(in.uv.y));
 }

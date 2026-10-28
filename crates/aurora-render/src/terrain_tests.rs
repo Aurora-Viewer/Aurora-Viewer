@@ -19,7 +19,7 @@ fn pbr_terrain_samples_all_layers_maps_and_triplanar_normals_on_gpu() {
         source[start..end].to_owned()
     };
     let start = env.find("const TERRAIN_ALPHA_RAMP:").unwrap();
-    let end = env.find("fn terrain_legacy_color").unwrap();
+    let end = env.find("fn terrain_color(").unwrap();
     // Direct bindings model the detail and ramp pages here. The production
     // binding-array path is covered by scene_shader_is_valid; sampling is unchanged.
     let terrain_vertex = env[..env.find("fn vs_terrain(").unwrap()].rfind("@vertex").unwrap();
@@ -50,7 +50,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
         return;
     }}
     let compositions = array<f32, 8>(0.0, 1.0, 2.0, 3.0, 0.5, 1.5, 2.5, 0.0);
-    var input: TerrainOut;
+    var input: TerrainPbrOut;
     input.normal = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), id.x == 7u);
     input.region_pos = vec3<f32>(f32(id.x) * 3.0, 2.0, 20.0);
     input.comp = compositions[min(id.x, 7u)];
@@ -98,7 +98,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
 }}
 "#,
         declaration(common, "DrawRecord"),
-        declaration(env, "TerrainOut"),
+        declaration(env, "TerrainPbrOut"),
         &common[common.find("fn srgb_to_linear(").unwrap()..common.find("fn sample_tex(").unwrap()],
         functions
     );
@@ -526,9 +526,9 @@ fn shadow_surface(vi: u32, sample_index: u32) -> TerrainShadowOut {
 @vertex fn shadow_vertex(@builtin(vertex_index) vi: u32, @builtin(instance_index) sample_index: u32) -> TerrainShadowOut {
     return shadow_surface(vi, sample_index);
 }
-@vertex fn depth_vertex(@builtin(vertex_index) vi: u32, @builtin(instance_index) sample_index: u32) -> TerrainOut {
+@vertex fn depth_vertex(@builtin(vertex_index) vi: u32, @builtin(instance_index) sample_index: u32) -> TerrainPbrOut {
     let s = shadow_surface(vi, sample_index);
-    var o: TerrainOut;
+    var o: TerrainPbrOut;
     o.clip = s.clip;
     o.normal = s.normal;
     o.region_pos = s.region_pos;
@@ -541,12 +541,12 @@ fn shadow_surface(vi: u32, sample_index: u32) -> TerrainShadowOut {
     );
     for text in [
         structure(common, "DrawRecord"),
-        structure(env, "TerrainOut"),
+        structure(env, "TerrainPbrOut"),
         structure(env, "TerrainShadowOut"),
         common[common.find("const FLAG_FULLBRIGHT:").unwrap()..common.find("@group(0)").unwrap()].to_owned(),
         common[common.find("fn srgb_to_linear(").unwrap()..common.find("fn in_reflection_pass(").unwrap()].to_owned(),
         wgsl_function(env, "terrain_transform_tangent").to_owned(),
-        env[env.find("const TERRAIN_ALPHA_RAMP:").unwrap()..env.find("fn terrain_legacy_color").unwrap()].to_owned(),
+        env[env.find("const TERRAIN_ALPHA_RAMP:").unwrap()..env.find("fn terrain_color(").unwrap()].to_owned(),
         wgsl_function(object, "portal_clip").to_owned(),
         wgsl_function(env, "terrain_shadow_mask").to_owned(),
         wgsl_function(env, "terrain_depth_mask").to_owned(),

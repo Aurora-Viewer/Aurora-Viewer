@@ -26,7 +26,9 @@ reserves space in the transcript or bar without growing the containing window.
 
 `scene/terrain_surface.rs` streams and detects each region's four ground
 assets, retaining classic texture composition or four shared PBR material
-records. `shaders/env.wgsl` mixes their linear colour, ORM, normal and emissive
+records. Classic and PBR terrain have their own shaders, pipelines and draw
+lists (`terrain`, `terrain_pbr`, `terrain_mask`), shadows included
+(`fs_shadow_terrain`). `shaders/env.wgsl` mixes their linear colour, ORM, normal and emissive
 maps with triplanar projection and the Legacy Viewer's 8 m default repeats.
 Terrain maps request the reference 2048 px decode priority. Asset UVs convert
 the decoder's top-down rows to GL coordinates, including their gradients.

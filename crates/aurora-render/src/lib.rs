@@ -944,6 +944,8 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
         let scene = position_steps(include_str!("shaders/env.wgsl"), "vs_terrain");
         assert_eq!(prepass.len(), 3, "{prepass:?}");
         assert_eq!(prepass, scene);
+        // the opaque PBR terrain shares that prepass
+        assert_eq!(position_steps(include_str!("shaders/env.wgsl"), "vs_terrain_pbr"), scene);
     }
 
     /// The same for the objects: the depth prepasses draw the opaque faces
@@ -974,6 +976,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
             (object, "DepthNormalOut"),
             (object, "VsOut"),
             (env, "TerrainOut"),
+            (env, "TerrainPbrOut"),
         ] {
             let start = src.find(&format!("struct {name} {{")).unwrap_or_else(|| panic!("{name} not found"));
             let body = &src[start..];
