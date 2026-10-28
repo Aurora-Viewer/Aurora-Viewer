@@ -355,7 +355,7 @@ impl Emoji {
         flush(ui, &mut run);
     }
 
-    /// A one-line text field (the conversation input) whose emoji show in
+    /// A wrapping text field (the conversation input) whose emoji show in
     /// colour, as in the history. egui's text only has one-colour glyphs, so
     /// the emoji are laid out blank (same size as in `inline`) and their
     /// images drawn over them: editing, cursor and selection stay egui's.
@@ -369,7 +369,8 @@ impl Emoji {
     ) -> egui::text_edit::TextEditOutput {
         // without emoji, egui's own layout
         if !text.chars().any(|c| self.has(c)) {
-            return build(egui::TextEdit::singleline(text)).show(ui);
+            let edit = egui::TextEdit::multiline(text).desired_rows(1).return_key(None);
+            return build(edit).show(ui);
         }
         // what TextEdit uses when given no font nor colour
         let font = egui::FontSelection::default().resolve(ui.style());
@@ -391,13 +392,13 @@ impl Emoji {
             f.valign = egui::Align::Center;
             f
         };
-        let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _wrap_width: f32| {
+        let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
             let text = text.as_str();
             let mut job = egui::text::LayoutJob {
                 keep_trailing_whitespace: true,
-                break_on_newline: false,
                 ..Default::default()
             };
+            job.wrap.max_width = wrap_width;
             // runs of text and runs of emoji (with their variation selectors
             // and joiners, which `inline` does not draw either)
             let mut start = 0;
@@ -415,10 +416,14 @@ impl Emoji {
             }
             ui.fonts_mut(|f| f.layout_job(job))
         };
-        let out = build(egui::TextEdit::singleline(text).layouter(&mut layouter)).show(ui);
+        let edit = egui::TextEdit::multiline(text).desired_rows(1).return_key(None);
+        let out = build(edit.layouter(&mut layouter)).show(ui);
         let painter = ui.painter().with_clip_rect(out.text_clip_rect);
         for placed in &out.galley.rows {
             let mid_y = out.galley_pos.y + placed.pos.y + placed.row.size.y / 2.0;
+            if mid_y + picture_side < out.text_clip_rect.top() || mid_y - picture_side > out.text_clip_rect.bottom() {
+                continue;
+            }
             for g in &placed.row.glyphs {
                 if !self.has(g.chr) {
                     continue;

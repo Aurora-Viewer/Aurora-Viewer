@@ -17,6 +17,7 @@ mod gif_picker;
 mod head;
 mod header;
 pub mod history;
+pub(crate) mod input;
 mod input_history;
 mod invite_card;
 mod keys;
@@ -3002,7 +3003,7 @@ fn classic_pane(
             });
         ui.add_space(4.0);
     }
-    let input_h = INPUT_H;
+    let input_h = input::height(ui.ctx(), egui::Id::unique(("conv_input", st.selected)), INPUT_H);
     // Ctrl+F opens the find field of the conversation shown (in
     // the head's row), when the keyboard is in this window, or
     // nowhere with the pointer over it
@@ -3071,16 +3072,12 @@ fn classic_pane(
             // leave exactly the send button + spacing (else the row overflows
             // and the resizable window grows every frame)
             let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x).floor().max(40.0);
+            input::prepare(ui, conv_input);
             let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
             let nav = super::emoji::codes::keys(ui, conv_input);
             let suggest_nav = if nav.is_none() { suggest::keys(ui, conv_input) } else { None };
-            preserve_pasted_lines(ui, conv_input);
-            let mut output = emoji.text_field(ui, &mut draft, |edit| {
-                edit.id(conv_input)
-                    .hint_text(hint)
-                    .desired_width(field_w)
-                    .min_size(egui::vec2(field_w, INPUT_H))
-                    .align(egui::Align2::LEFT_CENTER)
+            let mut output = input::show(ui, Some(&mut *emoji), conv_input, &mut draft, field_w, INPUT_H, |edit| {
+                edit.id(conv_input).hint_text(hint)
             });
             if recalled {
                 output.response.mark_changed();
@@ -3096,7 +3093,10 @@ fn classic_pane(
             suggest::after(ui, p, &mut output, &mut draft, suggest_nav, &mut st.suggest, scope);
             let has_text = !draft.trim().is_empty();
             send_clicked = send_button(ui, p, icons, has_text).clicked() && has_text;
-            output.response
+            output
+                .response
+                .response
+                .on_hover_text(aurora_i18n::tr!("ui-chat-compose-shortcuts"))
         })
         .inner;
     // the strip between the lines and the field: egui reaches
@@ -3694,7 +3694,7 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
 /// The "Nearby chat" input bar; returns a message to send.
 pub fn bar(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, gestures: &crate::gestures::Manager, width: f32) -> Option<OutgoingChat> {
     ui.label(RichText::new(aurora_i18n::tr!("common-nearby-chat")).size(12.0).color(p.muted));
-    bar_input(ui, p, st, gestures, None, |edit| edit.desired_width(width))
+    bar_input(ui, p, st, gestures, None, width, |edit| edit.desired_width(width))
 }
 
 /// `build`, then the chat field's id (the app gives it the keyboard).
@@ -3716,28 +3716,6 @@ pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
     egui::TextEdit::store_state(ctx, id, state);
 }
 
-/// Keep pasted transcript paragraphs in the compact chat editors, as
-/// LLChatEntry::paste (indra/llui/llchatentry.cpp) does. egui's single-line
-/// Paste replaces line breaks with spaces; its ordinary text insertion
-/// retains them with the same selection replacement and undo handling.
-fn preserve_pasted_lines(ui: &egui::Ui, field: egui::Id) {
-    if !ui.memory(|m| m.has_focus(field)) {
-        return;
-    }
-    ui.input_mut(|i| {
-        for event in &mut i.events {
-            if let egui::Event::Paste(text) = event
-                && text.contains(['\r', '\n'])
-                // A bare return is ignored by Text insertion; keep its
-                // normal single-line Paste behavior instead.
-                && !matches!(text.as_str(), "\n" | "\r" | "\r\n")
-            {
-                *event = egui::Event::Text(text.replace("\r\n", "\n").replace('\r', "\n"));
-            }
-        }
-    });
-}
-
 /// The local chat's field, Firestorm's chat bar (LLFloaterIMNearbyChat):
 /// Enter says, Ctrl+Enter shouts, Shift+Enter whispers, `/channel` and the
 /// gestures' completion; Enter on an empty field returns to movement. Shared
@@ -3749,21 +3727,20 @@ pub(crate) fn bar_input(
     st: &mut ChatUi,
     gestures: &crate::gestures::Manager,
     emoji: Option<&mut super::emoji::Emoji>,
+    width: f32,
     build: impl FnOnce(egui::TextEdit<'_>) -> egui::TextEdit<'_>,
 ) -> Option<OutgoingChat> {
     let mut out = None;
     // the shortcuts (Enter, Ctrl / Shift + Enter, /channel) are a tooltip:
     // written in the empty field they crowded the bar (the human's request)
     let build = identified(build);
+    input::prepare(ui, bar_input_id());
     let recalled = st.input_history.entry(None).or_default().recall(ui, bar_input_id(), &mut st.input);
     let nav = super::emoji::codes::keys(ui, bar_input_id());
     let suggest_nav = if nav.is_none() { suggest::keys(ui, bar_input_id()) } else { None };
-    preserve_pasted_lines(ui, bar_input_id());
     let mut emoji = emoji;
-    let mut output = match emoji.as_deref_mut() {
-        Some(emoji) => emoji.text_field(ui, &mut st.input, build),
-        None => build(egui::TextEdit::singleline(&mut st.input)).show(ui),
-    };
+    let minimum = ui.spacing().interact_size.y;
+    let mut output = input::show(ui, emoji.as_deref_mut(), bar_input_id(), &mut st.input, width, minimum, build);
     if recalled {
         output.response.mark_changed();
     }
@@ -3795,7 +3772,7 @@ pub(crate) fn bar_input(
         }
     }
     st.has_focus = resp.has_focus();
-    // Modified Enter does not surrender egui's single-line field focus.
+    // The editor leaves ordinary Enter to this send path.
     let enter = !focusing && (resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt);
     // Enter, even on an empty bar, ends the typing (sendChat → stopTyping)
     let said = typing::says_aloud(&st.input, st.type_during_emote, st.colon_emote);

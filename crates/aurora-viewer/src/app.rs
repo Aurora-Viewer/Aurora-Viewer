@@ -7283,7 +7283,10 @@ impl App {
         }
         // AURORA_DEMO_EMOJI_CODES: the keyboard given to the input again once
         // the demo's start has settled (it takes it back at the start)
-        if self.demo && self.frame_count == 700 && std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some() {
+        if self.demo
+            && self.frame_count == 700
+            && (std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some() || std::env::var_os("AURORA_DEMO_CHAT_INPUT").is_some())
+        {
             self.chat_ui.conv_focus_request = true;
         }
         // AURORA_DEMO_SPELLING=menu|replace: the chat bar takes the keyboard,
@@ -8927,6 +8930,7 @@ impl App {
             && (ui::color_picker::demo::mode().is_some()
                 || self.chat_ui.demo_reorder.is_some()
                 || std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some()
+                || std::env::var_os("AURORA_DEMO_CHAT_INPUT").is_some()
                 || std::env::var("AURORA_DEMO_OBJECT_MENU").is_ok_and(|mode| mode.starts_with("customize"))
                 || std::env::var("AURORA_DEMO_MARKETPLACE_LISTINGS").is_ok_and(|mode| mode.starts_with("menu-"))
                 || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
@@ -17023,6 +17027,18 @@ impl ApplicationHandler for App {
             // suggestions (`ui/emoji/codes.rs`)
             if let Ok(text) = std::env::var("AURORA_DEMO_EMOJI_CODES") {
                 self.panels.chat = true;
+                *self.chat_ui.draft_mut(self.chat_ui.selected) = text;
+                self.chat_ui.conv_focus_request = true;
+            }
+            // Paragraph drafts in both editors, without a grid or clipboard.
+            if let Ok(mode) = std::env::var("AURORA_DEMO_CHAT_INPUT") {
+                self.panels.chat = true;
+                let text = if mode == "long" {
+                    "A long paragraph with café and emoji 🙂 that wraps within the chat field.\n".repeat(12)
+                } else {
+                    "First paragraph with café 🙂\n\nSecond paragraph\nCtrl+Shift+Enter adds a new line".into()
+                };
+                self.chat_ui.input.clone_from(&text);
                 *self.chat_ui.draft_mut(self.chat_ui.selected) = text;
                 self.chat_ui.conv_focus_request = true;
             }

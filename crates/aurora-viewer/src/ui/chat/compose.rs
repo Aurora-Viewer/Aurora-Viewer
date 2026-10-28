@@ -18,10 +18,13 @@ use egui::RichText;
 /// The line of who is typing, and the least height of the box.
 const TYPING_H: f32 = 18.0;
 pub(super) const BOX_H: f32 = 42.0;
-/// What the field takes under the messages: the typing line, the box and
-/// the margin under it.
-pub(super) const HEIGHT: f32 = TYPING_H + BOX_H + 12.0;
 const BUTTON: f32 = 28.0;
+
+/// What the field takes under the messages: typing line, box and margin.
+pub(super) fn height(ctx: &egui::Context, conversation: Option<uuid::Uuid>) -> f32 {
+    let field = egui::Id::unique(("conv_input", conversation));
+    TYPING_H + BOX_H.max(super::input::height(ctx, field, BUTTON) + 8.0) + 12.0
+}
 
 /// The volume of what we say in the nearby chat.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -154,17 +157,12 @@ pub(super) fn show(
                             None => aurora_i18n::tr!("ui-chat-write-local").to_owned(),
                             Some(id) => aurora_i18n::tr!("ui-chat-write-to", name = world.session_title(&id)),
                         };
+                        super::input::prepare(ui, conv_input);
                         let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
                         let nav = crate::ui::emoji::codes::keys(ui, conv_input);
                         let suggest_nav = if nav.is_none() { suggest::keys(ui, conv_input) } else { None };
-                        super::preserve_pasted_lines(ui, conv_input);
-                        let mut output = emoji.text_field(ui, &mut draft, |edit| {
-                            edit.id(conv_input)
-                                .hint_text(hint)
-                                .frame(egui::Frame::NONE)
-                                .desired_width(field_w)
-                                .min_size(egui::vec2(field_w, BUTTON))
-                                .align(egui::Align2::LEFT_CENTER)
+                        let mut output = super::input::show(ui, Some(&mut *emoji), conv_input, &mut draft, field_w, BUTTON, |edit| {
+                            edit.id(conv_input).hint_text(hint).frame(egui::Frame::NONE)
                         });
                         if recalled {
                             output.response.mark_changed();
@@ -184,7 +182,10 @@ pub(super) fn show(
                         }
                         let has_text = !draft.trim().is_empty();
                         send_clicked = send_button(ui, p, has_text).clicked() && has_text;
-                        output.response
+                        output
+                            .response
+                            .response
+                            .on_hover_text(aurora_i18n::tr!("ui-chat-compose-shortcuts"))
                     })
                     .inner
                 });
