@@ -4105,12 +4105,13 @@ impl App {
                 self.set_mouselook_grab(true);
             }
         } else if let (Some(p), Some(ray)) = (avatar_hit, ray) {
-            // click on our avatar (LLToolPie -> LLToolCamera): the camera goes
-            // back to it unless ClickOnAvatarKeepsCamera; hold and drag to steer
-            let object = own_idx.and_then(|i| crate::camera::pick_focus_object(&self.world, i, now));
+            // ClickOnAvatarKeepsCamera (LLToolPie::handleLeftClickPick).
+            // Unlike LLToolCamera::pickCallback (lltoolfocus.cpp), keep the
+            // focus too when enabled: a plain press must not reframe (#1243).
             let s = &self.settings.camera;
-            self.camera.alt_focus(p, object, ray, &mut self.world.agent, s);
             if !s.click_avatar_keeps_camera {
+                let object = own_idx.and_then(|i| crate::camera::pick_focus_object(&self.world, i, now));
+                self.camera.alt_focus(p, object, ray, &mut self.world.agent, s);
                 self.camera.set_focus_on_avatar(true, true, true, &mut self.world.agent, s);
             }
             self.begin_mouse_steer();
