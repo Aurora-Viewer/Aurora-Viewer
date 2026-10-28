@@ -18,6 +18,7 @@ pub mod drawn;
 pub mod fetch_priority;
 mod flexible;
 mod foot_scope;
+mod foot_support;
 pub mod geometry_need;
 mod grounding;
 mod hand_ik;
@@ -728,6 +729,7 @@ pub struct Scene {
     auto_hover: auto_hover::AutoHover,
     remote_soles: auto_hover::RemoteSoles,
     foot_scope: foot_scope::Scope,
+    foot_support: foot_support::FootSupport,
     sculpt_watch: Option<sculpt_watch::SculptWatch>,
     /// Optional local-only diagnostic toggle, exposed in Hover Height by
     /// AURORA_TEST_NEUTRAL_POSE, initially off. Keep evaluating the real motion controller
@@ -1520,6 +1522,7 @@ impl Scene {
             auto_hover: Default::default(),
             remote_soles: Default::default(),
             foot_scope: foot_scope::Scope::from_environment(),
+            foot_support: Default::default(),
             neutral_pose_test: (std::env::var("AURORA_TEST_NEUTRAL_POSE").as_deref() == Ok("1")).then_some(false),
         }
     }
@@ -2005,6 +2008,7 @@ impl Scene {
     pub fn clear(&mut self, renderer: &mut Renderer) {
         self.remote_soles = Default::default();
         self.foot_scope.clear();
+        self.release_foot_support();
         self.flexibles.clear();
         let mut gpus = std::mem::take(&mut self.gpu);
         for (idx, g) in gpus.iter_mut().enumerate() {
@@ -5013,6 +5017,12 @@ impl Scene {
         }
         self.pose_owners = owners;
         self.stats.posed = work.len();
+        let grounded: Vec<usize> = work
+            .iter()
+            .filter(|w| w.1.ground.is_some())
+            .filter_map(|w| world.objects.index_of_uuid(&w.3))
+            .collect();
+        self.update_foot_support(world, &grounded, now);
         // Keep the scene available for read-only support traces on pose workers.
         let mut pal = std::mem::take(&mut self.palettes);
         let mut chunks: Vec<Option<&mut [[[f32; 4]; 4]]>> = pal.chunks_mut(anim::PALETTE_JOINTS).map(Some).collect();

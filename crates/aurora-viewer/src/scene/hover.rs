@@ -261,6 +261,19 @@ impl PickIndex {
     pub fn ray_candidates(&self, ray: (Vec3, Vec3), out: &mut Vec<usize>) {
         self.candidates(&Probe { ray, depth: None }, out);
     }
+
+    /// The objects whose bounds reach the box `min`..`max`, those without
+    /// bounds included (`foot_support`).
+    pub fn box_candidates(&self, min: Vec3, max: Vec3, out: &mut Vec<usize>) {
+        out.clear();
+        out.extend(
+            self.entries
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| e.pickable() && (e.always || e.center.clamp(min, max).distance_squared(e.center) <= e.radius * e.radius))
+                .map(|(i, _)| i),
+        );
+    }
     fn note(&mut self, e: PickEntry, by: Disturbed) {
         if !self.disturbed && self.watch.is_some_and(|probe| e.concerns(&probe)) {
             self.disturbed = true;
