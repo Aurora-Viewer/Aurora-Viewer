@@ -133,6 +133,12 @@ pub(super) fn demo(s: &mut RegionUi, v: &View, world: &World) {
     if d.pbr {
         let mut t = terrain;
         advanced::switch_kind(s, TerrainKind::Textures, TerrainKind::Materials, &mut t);
+        if d.pick_material {
+            t.textures = [crate::demo::pbr_materials()[0].0; 4];
+            s.manage.picking = Some(0);
+            s.texture
+                .open_materials(&aurora_i18n::tr!("region-terrain-material-title", n = 1_i64), t.textures[0]);
+        }
         s.manage.terrain.set(&terrain, t);
     }
     let heights = d.ask == Some(Ask::TextureHeights);
@@ -869,6 +875,134 @@ pub(super) fn picked_texture(s: &mut RegionUi, v: &View, world: &World, asset: U
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::region::{MaterialInfo, advanced::MaterialProblem};
+    use aurora_assets::{AlphaMode, PbrMaterial};
+    use aurora_net::{NetCommand, NetEvent, estate::EstateCommand};
+    use std::collections::HashSet;
+    use std::sync::Arc;
+
+    #[test]
+    fn terrain_pbr_picker_loads_previews_and_validates_all_four_draft_slots() {
+        let ctx = egui::Context::default();
+        let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        let mut world = World::new(avatars.clone());
+        for event in crate::demo::events() {
+            if matches!(
+                event,
+                NetEvent::LoggedIn(_) | NetEvent::MainRegionChanged { .. } | NetEvent::RegionHandshake(_)
+            ) {
+                let _ = world.apply(event);
+            }
+        }
+        world.estate.region = Some(Arc::new(crate::demo::region::region_details()));
+        world.estate.transforms = Some(Ok([Default::default(); 4]));
+        let handle = world.main_region.unwrap();
+        let mut s = RegionUi::default();
+        let v = s.view(&world, handle);
+        let server = server_terrain(&world, &v).unwrap();
+        let mut now = server;
+        advanced::switch_kind(&mut s, TerrainKind::Textures, TerrainKind::Materials, &mut now);
+        s.manage.terrain.set(&server, now);
+        s.advanced.shown_kind = Some(TerrainKind::Materials);
+        let mut scene = crate::scene::Scene::new(std::env::temp_dir(), avatars);
+        let _inline = crate::scene::jobs::execute_inline_on_this_thread();
+        let p = crate::theme::Theme::default().palette();
+        let assets = std::array::from_fn::<_, 4, _>(|i| Uuid::from_u128(1100 + i as u128));
+        let maps = std::array::from_fn::<_, 4, _>(|i| Uuid::from_u128(1200 + i as u128));
+        for (slot, asset) in assets.into_iter().enumerate() {
+            // Accept a material not present in the region handshake, then close
+            // its picker before loading: validation still has to request it.
+            s.manage.picking = Some(slot);
+            picked_texture(&mut s, &v, &world, asset);
+            let now = s.manage.terrain.shown(&server);
+            s.prepare_materials(&ctx, &mut scene);
+            assert!(s.wanted_materials.contains(&asset));
+            assert_eq!(s.material_info.get(&asset), Some(&MaterialInfo::Pending));
+            assert_eq!(
+                advanced::material_problem(&s, &now.textures),
+                Some((slot, MaterialProblem::NotLoaded))
+            );
+            apply_terrain(&mut s, &v, &mut world);
+            assert!(world.estate.take_commands().is_empty(), "pending materials must not be sent");
+            s.ask = None;
+            scene.materials.insert(
+                asset,
+                PbrMaterial {
+                    base_color_texture: Some(maps[slot]),
+                    ..Default::default()
+                },
+            );
+            s.prepare_materials(&ctx, &mut scene);
+            assert!(advanced::material_problem(&s, &now.textures).is_none());
+
+            s.texture.open_materials("Terrain material", asset);
+            s.wanted_images.clear();
+            let mut rendered = false;
+            for _ in 0..3 {
+                // The production app prepares the region before showing it;
+                // RegionUi drains the picker's requested maps after drawing.
+                s.prepare_materials(&ctx, &mut scene);
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1200.0, 900.0))),
+                        ..Default::default()
+                    },
+                    |_| {
+                        s.texture.show(&ctx, &p, &mut world, &HashMap::new());
+                    },
+                );
+                s.wanted_images.extend(s.texture.wanted_images.drain());
+                rendered |= output.shapes.iter().any(|shape| matches!(shape.shape, egui::Shape::Callback(_)));
+            }
+            assert!(rendered, "terrain material preview must reach the GPU painter");
+            assert_eq!(
+                s.wanted_images,
+                HashSet::from([maps[slot]]),
+                "request only the selected material's maps"
+            );
+            s.texture.open = false;
+        }
+        assert_eq!(s.manage.terrain.shown(&server).textures, assets);
+        // Preserve the reference terrain constraints while fixing loading.
+        for (material, problem) in [
+            (
+                PbrMaterial {
+                    double_sided: true,
+                    ..Default::default()
+                },
+                MaterialProblem::DoubleSided,
+            ),
+            (
+                PbrMaterial {
+                    alpha_mode: AlphaMode::Blend,
+                    ..Default::default()
+                },
+                MaterialProblem::Blend,
+            ),
+        ] {
+            scene.materials.insert(assets[2], material);
+            s.prepare_materials(&ctx, &mut scene);
+            assert_eq!(advanced::material_problem(&s, &assets), Some((2, problem)));
+            apply_terrain(&mut s, &v, &mut world);
+            assert!(world.estate.take_commands().is_empty());
+            s.ask = None;
+        }
+        scene.materials.insert(
+            assets[2],
+            PbrMaterial {
+                alpha_mode: AlphaMode::Mask,
+                ..Default::default()
+            },
+        );
+        s.prepare_materials(&ctx, &mut scene);
+        apply_terrain(&mut s, &v, &mut world);
+        assert!(s.ask.is_none());
+        let commands = world.estate.take_commands();
+        assert!(matches!(commands.as_slice(), [
+            NetCommand::Estate(EstateCommand::SetTerrain { handle: h, terrain, .. }),
+            NetCommand::Estate(EstateCommand::TerrainTransforms { .. }),
+        ] if *h == handle && terrain.textures == assets));
+    }
 
     /// The mockup's corners, in the composition's numbering.
     #[test]

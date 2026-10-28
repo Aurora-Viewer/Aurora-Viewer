@@ -6329,7 +6329,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   saves a flat 256 × 256 RAW file where asked, Upload… reads one and the
   demo simulator takes it. `pbr` turns the terrain's slots to PBR
   materials (the bar counts 4 changes) with that fold open on the four
-  materials' transforms, which the demo simulator keeps. `classic`
+  materials' transforms, which the demo simulator keeps.
+  `manage:pick-material` opens the first terrain material picker on the
+  demo's tiled PBR material. Its sphere must load without a persistent
+  "Loading…" label; OK keeps the selection and Apply validates all four
+  slots. Add `classic` to check the same picker from the classic Terrain tab.
+  `classic`
   opens the classic window (the Legacy Viewer's eight tabs) on the tab of
   the section asked (`terrain`: Terrain, `scripts` or `interventions`:
   Debug, `people`: Access, none: Region).

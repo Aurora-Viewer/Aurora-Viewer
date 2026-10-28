@@ -186,6 +186,8 @@ pub struct ManageDemo {
     pub advanced: bool,
     /// The terrain turned to PBR materials.
     pub pbr: bool,
+    /// Open a terrain material picker with the demo's tiled material.
+    pub pick_material: bool,
 }
 
 /// The menus' and About Land's request to open the window.
@@ -199,6 +201,31 @@ pub fn take_open_request(ctx: &egui::Context) -> bool {
 }
 
 impl RegionUi {
+    /// Prepare the selected PBR preview and validate the server and draft slots
+    /// through the same streamer (LLPanelRegionTerrainInfo::validateMaterials).
+    pub(crate) fn prepare_materials(&mut self, ctx: &egui::Context, scene: &mut crate::scene::Scene) {
+        use crate::scene::meshes::MaterialStatus;
+
+        self.texture.prepare_material_preview(ctx, scene);
+        if self.advanced.shown_kind == Some(advanced::TerrainKind::Materials)
+            && let Some(draft) = self.manage.terrain.editing()
+        {
+            // Keep loading after OK even if the user leaves the terrain page.
+            self.wanted_materials.extend(draft.textures.into_iter().filter(|id| !id.is_nil()));
+        }
+        for id in &self.wanted_materials {
+            let info = match scene.materials.resolve(id) {
+                MaterialStatus::Pending => MaterialInfo::Pending,
+                MaterialStatus::Missing => MaterialInfo::Missing,
+                MaterialStatus::Loaded(m) => MaterialInfo::Loaded {
+                    double_sided: m.double_sided,
+                    blend: m.alpha_mode == aurora_assets::AlphaMode::Blend,
+                },
+            };
+            self.material_info.insert(*id, info);
+        }
+    }
+
     /// AURORA_DEMO_REGION: the page and "View as" of a capture, and on
     /// Manage its section, changes and question.
     pub fn demo(&mut self, page: Page, as_resident: bool, manage: ManageDemo) {

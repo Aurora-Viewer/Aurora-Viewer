@@ -38,6 +38,8 @@
 //! and the x send), `raw` the terrain's (a download answers a flat RAW
 //! file, an upload is taken), `pbr` turns the terrain to PBR materials with
 //! that fold open (the simulator keeps the transforms it is sent).
+//! `pick-material` opens the first terrain picker with the demo's tiled PBR
+//! material, also with `classic`.
 
 use super::{DEMO_AGENT, DEMO_LOUP, DEMO_NOVA, DEMO_TESS};
 use crate::ui::region::{Ask, EstateWideDialog, Home, InterventionDialog, ManageDemo, Page, PeopleAsk, PeopleDemo, PeopleList, XpList};
@@ -121,6 +123,11 @@ fn parse(v: &str) -> Scenario {
                 s.manage.section = Some(2);
                 s.manage.advanced = true;
                 s.manage.pbr = true;
+            }
+            "pick-material" => {
+                s.manage.section = Some(2);
+                s.manage.pbr = true;
+                s.manage.pick_material = true;
             }
             "environment" => s.manage.section = Some(5),
             "experiences" => s.manage.section = Some(6),
@@ -1073,6 +1080,9 @@ mod tests {
         assert!(t.object.is_nil() && t.spawns.is_empty());
         assert_eq!(raw_file().len(), 851_968);
         assert!(parse("manage:pbr").manage.pbr);
+        let picker = parse("manage:pick-material:classic");
+        assert!(picker.manage.pbr && picker.manage.pick_material && picker.classic);
+        assert_eq!(picker.manage.section, Some(2));
     }
 
     /// The lists change as `estateexperiencedelta` says.
