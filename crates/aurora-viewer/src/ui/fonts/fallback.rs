@@ -29,13 +29,26 @@ pub struct Candidate {
     pub script: &'static str,
     /// A character of the script the face must be able to draw.
     pub probe: char,
-    /// File names separated by `|`, whatever the directory and the case.
+    /// File names separated by `|`, whatever the directory and the case. A
+    /// `#n` suffix asks for face `n` of a collection only, instead of its
+    /// first face that draws `probe`.
     pub files: &'static str,
 }
 
 impl Candidate {
     fn files(&self) -> impl Iterator<Item = &'static str> {
         self.files.split('|')
+    }
+}
+
+/// A file of [`Candidate::files`]: its name and the face it asks for.
+fn face_spec(spec: &str) -> (&str, Option<u32>) {
+    match spec.rsplit_once('#') {
+        Some((file, face)) => match face.parse() {
+            Ok(face) => (file, Some(face)),
+            Err(_) => (spec, None),
+        },
+        None => (spec, None),
     }
 }
 
@@ -47,7 +60,10 @@ const fn candidate(script: &'static str, probe: char, files: &'static str) -> Ca
 /// checked on Windows 11), then macOS (Firestorm's list) and common Linux
 /// ones, both untested. Japanese comes before Korean and Chinese for the Han
 /// characters they share, as in Firestorm (meiryo, MSGOTHIC, gulim, simhei,
-/// msyh).
+/// msyh). For Japanese, the UI faces of the collections come first (Meiryo
+/// UI, Yu Gothic UI, MS UI Gothic): their kana are proportional, where the
+/// first faces give every kana a full em and space the Japanese interface
+/// out like typewriter text.
 #[rustfmt::skip]
 pub const CANDIDATES: &[Candidate] = &[
     candidate("Georgian, Armenian", 'ღ', "segoeui.ttf|sylfaen.ttf|ARIALUNI.TTF|Arial Unicode.ttf|DejaVuSans.ttf|FreeSans.ttf"),
@@ -55,7 +71,7 @@ pub const CANDIDATES: &[Candidate] = &[
     candidate("Hebrew", 'א', "segoeui.ttf|tahoma.ttf|arial.ttf|ArialHB.ttc|NotoSansHebrew-Regular.ttf|DejaVuSans.ttf"),
     candidate("symbols, mathematical letters", '𝓐', "seguisym.ttf|cambria.ttc|STIXGeneral.otf|STIXTwoMath.otf|NotoSansMath-Regular.ttf|DejaVuSans.ttf"),
     candidate("box drawing, dingbats", '░', "seguisym.ttf|Apple Symbols.ttf|DejaVuSans.ttf|NotoSansSymbols2-Regular.ttf"),
-    candidate("Japanese", 'あ', "meiryo.ttc|YuGothR.ttc|YuGothM.ttc|msgothic.ttc|ヒラギノ角ゴシック W3.ttc|NotoSansCJK-Regular.ttc|NotoSansCJKjp-Regular.otf"),
+    candidate("Japanese", 'あ', "meiryo.ttc#2|YuGothM.ttc#1|msgothic.ttc#1|meiryo.ttc|YuGothR.ttc|YuGothM.ttc|msgothic.ttc|ヒラギノ角ゴシック W3.ttc|NotoSansCJK-Regular.ttc|NotoSansCJKjp-Regular.otf"),
     candidate("Korean", '한', "malgun.ttf|gulim.ttc|AppleSDGothicNeo.ttc|NotoSansCJK-Regular.ttc|NotoSansCJKkr-Regular.otf"),
     candidate("Chinese (simplified)", '们', "msyh.ttc|simsun.ttc|simhei.ttf|PingFang.ttc|NotoSansCJK-Regular.ttc|NotoSansCJKsc-Regular.otf"),
     candidate("Chinese (traditional)", '們', "msjh.ttc|mingliub.ttc|PingFang.ttc|NotoSansCJKtc-Regular.otf"),
@@ -182,11 +198,12 @@ fn scan() -> Vec<SystemFace> {
     let start = std::time::Instant::now();
     let files = index_files(&super::font_dirs());
     let mut maps: HashMap<&'static str, memmap2::Mmap> = HashMap::new();
-    let chosen = select(CANDIDATES, |file, probe| {
+    let chosen = select(CANDIDATES, |spec, probe| {
+        let (file, face) = face_spec(spec);
         if !maps.contains_key(file) {
             maps.insert(file, map_file(files.get(&file.to_lowercase())?)?);
         }
-        face_with(maps.get(file)?, probe)
+        face_with(maps.get(file)?, probe, face)
     });
     let mut faces = Vec::with_capacity(chosen.len());
     let mut kept: HashMap<&'static str, &'static [u8]> = HashMap::new();
@@ -235,7 +252,7 @@ fn scan() -> Vec<SystemFace> {
 fn select(candidates: &[Candidate], mut probe: impl FnMut(&'static str, char) -> Option<u32>) -> Vec<(&'static str, u32, &'static str)> {
     let mut out: Vec<(&'static str, u32, &'static str)> = Vec::new();
     for c in candidates {
-        let Some((file, index)) = c.files().find_map(|f| probe(f, c.probe).map(|i| (f, i))) else {
+        let Some((file, index)) = c.files().find_map(|f| probe(f, c.probe).map(|i| (face_spec(f).0, i))) else {
             continue;
         };
         if !out.iter().any(|(f, i, _)| f.eq_ignore_ascii_case(file) && *i == index) {
@@ -289,14 +306,18 @@ fn map_file(path: &Path) -> Option<memmap2::Mmap> {
 }
 
 /// The first face of a font file (a collection has several) that has an
-/// outline for `c`.
+/// outline for `c`, or face `only` if it has one.
 ///
 /// This is also what keeps a damaged file away from egui, which panics on a
 /// face it cannot open: ttf-parser wants the same header and table directory
 /// as egui's parser, and the `head`, `hhea` and `maxp` tables on top.
-fn face_with(data: &[u8], c: char) -> Option<u32> {
+fn face_with(data: &[u8], c: char, only: Option<u32>) -> Option<u32> {
     let faces = ttf_parser::fonts_in_collection(data).unwrap_or(1).min(64);
-    (0..faces).find(|&i| ttf_parser::Face::parse(data, i).is_ok_and(|face| draws(&face, c)))
+    let usable = |i: u32| ttf_parser::Face::parse(data, i).is_ok_and(|face| draws(&face, c));
+    match only {
+        Some(i) => (i < faces && usable(i)).then_some(i),
+        None => (0..faces).find(|&i| usable(i)),
+    }
 }
 
 /// A glyph with an outline: egui draws outlines only, so a face that has
@@ -384,11 +405,29 @@ mod tests {
     #[test]
     fn embedded_font_draws_its_probe_and_no_other_script() {
         let noto = include_bytes!("../../../assets/fonts/NotoSans-Regular.ttf");
-        assert_eq!(face_with(noto, 'A'), Some(0));
-        assert_eq!(face_with(noto, 'Я'), Some(0));
-        assert_eq!(face_with(noto, 'ღ'), None);
-        assert_eq!(face_with(noto, '中'), None);
-        assert_eq!(face_with(b"not a font", 'A'), None);
+        assert_eq!(face_with(noto, 'A', None), Some(0));
+        assert_eq!(face_with(noto, 'Я', None), Some(0));
+        assert_eq!(face_with(noto, 'ღ', None), None);
+        assert_eq!(face_with(noto, '中', None), None);
+        assert_eq!(face_with(b"not a font", 'A', None), None);
+        assert_eq!(face_with(noto, 'A', Some(0)), Some(0));
+        // a single font has no second face
+        assert_eq!(face_with(noto, 'A', Some(1)), None);
+    }
+
+    #[test]
+    fn a_face_suffix_asks_for_that_face_of_the_collection() {
+        assert_eq!(face_spec("meiryo.ttc#2"), ("meiryo.ttc", Some(2)));
+        assert_eq!(face_spec("YuGothM.ttc"), ("YuGothM.ttc", None));
+        assert_eq!(face_spec("odd#name.ttf"), ("odd#name.ttf", None));
+        // the face asked for is the one kept, under the file's own name
+        let list = [candidate('あ', "ui.ttc#1|ui.ttc")];
+        let chosen = select(&list, |spec, _| match face_spec(spec) {
+            ("ui.ttc", Some(1)) => Some(1),
+            ("ui.ttc", None) => Some(0),
+            _ => None,
+        });
+        assert_eq!(chosen.iter().map(|c| (c.0, c.1)).collect::<Vec<_>>(), [("ui.ttc", 1)]);
     }
 
     #[test]
