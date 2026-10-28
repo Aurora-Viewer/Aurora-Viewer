@@ -1323,6 +1323,9 @@ Suggested order (1, 2, 5, 7, 8, 10, 11, 13 and 15 are done): 17 and 19, then the
 
 ## Rendering
 
+- 🔧 Bake-on-mesh faces white once rezzed (human report, 2026-10-28; task `bom-rezzed-faces`; no matching issue): a face textured with a "use baked" placeholder (BAKED_HEAD…) was given a nil texture whenever no wearer's bake replaced it, so it drew white on the ground. Like LLViewerObject::getBakedTextureForMagicId, only a worn object that is neither a HUD nor an animated object takes its wearer's bake (`Scene::bake_wearer`); on the ground, on a HUD and on an animesh the placeholder is drawn as the texture asset it is. Demo: `AURORA_DEMO_BOM_REZZED=1` (a box of placeholders on the ground, with striped stand-ins for the grid's placeholder textures).
+  - ⬜ to check on the grid: a BOM mesh body part rezzed on the ground shows the channel textures; worn again, the avatar's bakes; a HUD with a BOM face shows the channel texture
+
 - 🟡 Crash in `egui_wgpu::Renderer::render` while driving in mouselook ([#1235](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/1235), crash reports of 2026-10-28, 11 occurrences; task `egui-empty-frame-panic`). The labels (`label_depth`), the glass and the previews leave empty meshes under empty clips in the interface's primitives. When a frame has nothing else (mouselook hides the windows), egui-wgpu's `update_buffers` keeps the buffer slices of an earlier frame, and `render`, which takes one slice per mesh, panics as soon as that earlier frame had fewer meshes. Such a frame now hands `render` its paint callbacks only (`ui_frame::paint_jobs`); GPU test `a_frame_of_empty_meshes_renders_without_slices` reproduces the panic, then its fix. Validated by the human in demo on 2026-10-28 (mouselook with the crosshair off, labels around).
   - ⬜ to check on the grid by the reporter: long drives in mouselook with floating texts around, no crash
 
