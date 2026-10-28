@@ -1,10 +1,10 @@
-// Aurora LSL Bridge v1.38. Movelock physics follow the Legacy Viewer's movelockMe
+// Aurora LSL Bridge v1.39. Movelock physics follow the Legacy Viewer's movelockMe
 // (EBEDD1D2-A320-43f5-88CF-DD47BBCA5DFB.lsltxt, originally LGPL 2.1).
 // Mono's 64 KB holds this compiled controller too, with little to spare: the
 // read-only queries run in query.lsl, so a busy region cannot halt Movelock
 // with a Stack-Heap Collision. Keep new services out of this script.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.38";
+string VERSION = "1.39";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -591,7 +591,10 @@ setLock(integer yes) {
     if (yes) {
         llSetForce(ZERO_VECTOR, FALSE);
         gIntegral = ZERO_VECTOR;
-        gAnchor = llGetPos();
+        // 10 cm below, as movelockMe: the floor stops the avatar, so the
+        // motor presses it down instead of balancing it against gravity,
+        // which bobbed it up and down by a few centimetres (#1248).
+        gAnchor = llGetPos() - <0, 0, 0.1>;
         llSetVehicleType(VEHICLE_TYPE_SLED);
         llSetVehicleFloatParam(VEHICLE_LINEAR_FRICTION_TIMESCALE, 0.05);
         llSetVehicleFloatParam(VEHICLE_ANGULAR_FRICTION_TIMESCALE, 0.05);
