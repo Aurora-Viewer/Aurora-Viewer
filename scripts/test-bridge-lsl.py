@@ -47,6 +47,7 @@ class Simulator:
         self.serial = 100
         self.requests = []
         self.listeners = {}
+        self.targets = []
         self.reset()
 
     def reset(self):
@@ -80,11 +81,12 @@ class Simulator:
             "llSetTimerEvent": self.set_timer,
             "llDetachFromAvatar": self.detach,
             "llResetScript": self.reset_request,
+            "llMoveToTarget": lambda target, tau: self.targets.append((target, tau)),
         }
         for name in (
             "llReleaseURL", "llTakeControls", "llReleaseControls",
             "llSetForce", "llStopMoveToTarget", "llSetVehicleType",
-            "llSetVehicleFloatParam", "llMoveToTarget", "llTargetRemove",
+            "llSetVehicleFloatParam", "llTargetRemove",
             "llSetLinkPrimitiveParamsFast",
         ):
             functions[name] = lambda *args: None
@@ -181,7 +183,7 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(sim.messages, [])
                 await sim.probe()
                 self.assertEqual(len(sim.messages), 1)
-                self.assertIn("1.38|", sim.messages[0])
+                self.assertIn("1.39|", sim.messages[0])
                 await sim.probe()
                 self.assertEqual(len(sim.messages), 1, "duplicate probes must be throttled")
 
@@ -343,6 +345,14 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sim.responses[-1][1], 200)
         self.assertEqual(sim.script.gEnabled, 1)
         self.assertEqual(sim.script.gLocked, 1)
+        # As movelockMe: the anchor sits 10 cm below the avatar so the floor,
+        # not a gravity balance, holds it (#1248), and later ticks keep it.
+        await sim.event("timer")
+        await sim.event("timer")
+        self.assertTrue(sim.targets)
+        for target, tau in sim.targets:
+            self.assertAlmostEqual(target[2], 24.9, places=4)
+            self.assertEqual((target[0], target[1], tau), (128.0, 128.0, 0.05))
 
         sim = Simulator("query.lsl")
         await sim.start()
