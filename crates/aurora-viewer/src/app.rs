@@ -10633,7 +10633,10 @@ impl App {
             if let Some(action) = action {
                 self.env_shortcut(action);
             }
-            log::info!("demo env keys: Ctrl+Shift+{v} -> {action:?}, time of day {}", self.panels.time_of_day);
+            log::info!(
+                "demo env keys: Ctrl+Shift+{v} -> {action:?}, time of day {}",
+                self.panels.time_of_day
+            );
         }
         if self.demo {
             self.particle_editor_demo();
