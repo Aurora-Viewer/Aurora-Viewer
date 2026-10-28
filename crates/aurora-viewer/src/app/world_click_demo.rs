@@ -199,8 +199,15 @@ impl App {
             let own = mode.starts_with("worn-own");
             let covered = matches!(
                 mode,
-                "worn-other-covered" | "worn-other-under" | "worn-other-hidden-under" | "worn-other-hidden-mesh-under"
+                "worn-other-covered"
+                    | "worn-other-under"
+                    | "worn-other-hidden-under"
+                    | "worn-other-hidden-mesh-under"
+                    | "worn-other-hidden-inside"
             );
+            // `worn-other-hidden-inside`: a small clicker sunk into the body,
+            // its faces well under the rigged mesh's surface (#1241)
+            let inside = mode == "worn-other-hidden-inside";
             // `worn-other-hidden*`: every face of the scripted attachment at
             // alpha 0, the invisible clickers of a headpat or a slapper
             let hidden = mode.starts_with("worn-other-hidden");
@@ -259,7 +266,13 @@ impl App {
                         if own || mode.starts_with("worn-other") {
                             // on the body, inside the wearer's box
                             o.position = OWN_PRIM;
-                            o.scale = Vec3::splat(if covered { 0.25 } else { 0.6 });
+                            o.scale = Vec3::splat(if inside {
+                                0.1
+                            } else if covered {
+                                0.25
+                            } else {
+                                0.6
+                            });
                         }
                         if hidden && let Some(te) = o.texture_entry.as_mut() {
                             for f in &mut std::sync::Arc::make_mut(te).faces {

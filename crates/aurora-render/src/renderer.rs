@@ -1499,6 +1499,9 @@ pub(crate) struct Backend {
     /// Inverse view-projection of the last rendered frame (picking).
     last_inv_vp: Mat4,
     msaa_supported: Vec<u32>,
+    /// Set by the device-lost callback: the GPU is never waited on again
+    /// (device_lost.rs).
+    lost: crate::device_lost::DeviceLost,
 }
 
 /// What the main thread's `Renderer` creates the backend from.
@@ -1520,6 +1523,7 @@ pub(crate) struct BackendInit {
     /// The scene's buffers at the start (first records bind group).
     pub scene: SceneGpu,
     pub anim_clock: crate::tex_anim::AnimClock,
+    pub lost: crate::device_lost::DeviceLost,
 }
 
 fn skin_layout() -> wgpu::VertexBufferLayout<'static> {
@@ -2358,6 +2362,7 @@ impl Backend {
             tex_layout,
             scene,
             anim_clock,
+            lost,
         } = init;
         let caps = surface.get_capabilities(&adapter);
         let format = caps
@@ -2858,6 +2863,7 @@ impl Backend {
             shadow_path: crate::shadow_cull::path::NEW,
             last_inv_vp: Mat4::IDENTITY,
             msaa_supported,
+            lost,
         };
         r.rebuild_bind_groups();
         Ok(r)
@@ -7305,6 +7311,7 @@ impl Backend {
         // tags, floating texts), which the HUD attachments cover
         let mut extra_cmds = Vec::new();
         let mut window_glass = false;
+        let mut meshes_uploaded = false;
         let sd = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [self.config.width, self.config.height],
             pixels_per_point: ui.as_ref().map_or(1.0, |ui| ui.pixels_per_point),
@@ -7369,6 +7376,7 @@ impl Backend {
             extra_cmds = self
                 .egui
                 .update_buffers(&self.device, &self.queue, &mut encoder, &ui.primitives, &sd);
+            meshes_uploaded = crate::ui_frame::meshes_uploaded(&ui.primitives);
         }
         let draw_ui = |encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, primitives: &[egui::ClippedPrimitive]| {
             let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -7388,7 +7396,8 @@ impl Backend {
                 multiview_mask: None,
             });
             let mut pass = pass.forget_lifetime();
-            self.egui.render(&mut pass, primitives, &sd);
+            let jobs = crate::ui_frame::paint_jobs(primitives, meshes_uploaded);
+            self.egui.render(&mut pass, &jobs, &sd);
         };
         if !self.label_depth.enabled() {
             // AURORA_LABEL_OCCLUSION=0: over the scene, by egui-wgpu
@@ -7547,8 +7556,10 @@ impl Backend {
         let mut captured = None;
         if let Some((buf, w, h, row)) = capture {
             buf.map_async(wgpu::MapMode::Read, .., |_| {});
-            let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-            if let Ok(view) = buf.get_mapped_range(..) {
+            // (a device lost before: no image, the photo fails)
+            if self.lost.wait(&self.device)
+                && let Ok(view) = buf.get_mapped_range(..)
+            {
                 let bgra = matches!(
                     self.config.format,
                     wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
@@ -7592,7 +7603,7 @@ impl Backend {
             self.queue.present(t);
             stats.presented = true;
         }
-        let _ = self.device.poll(wgpu::PollType::Poll);
+        self.lost.poll(&self.device);
         // a click answered by now goes back with this frame's result
         self.depth_pick.harvest_clicks();
         self.drawn_pick.harvest();
@@ -7700,7 +7711,8 @@ impl Backend {
             height: self.scene_size().1,
             inv_view_proj: self.last_inv_vp,
         };
-        self.depth_pick.blocking(&self.device, &self.queue, &self.targets.depth_ss, px)
+        self.depth_pick
+            .blocking(&self.device, &self.queue, &self.lost, &self.targets.depth_ss, px)
     }
 }
 

@@ -325,8 +325,9 @@ pub struct FaceDraw {
     /// Legacy material alpha mode (`legacy_mat::alpha_mode`).
     pub legacy_alpha: Option<u8>,
     pub two_sided: bool,
-    /// The smaller of the texture entry's two scales: every texture of the
-    /// face is loaded for it (`texture_importance::per_repeats`).
+    /// The smaller of the texture entry's two scales, or of the frame grid of
+    /// its texture animation: every texture of the face is loaded for it
+    /// (`texture_importance::per_repeats`).
     pub repeats: f32,
     /// TE glow > 0: also drawn in the glow pass.
     pub glow: bool,
@@ -3520,8 +3521,9 @@ impl Scene {
             let mut aux_tex = [Uuid::nil(); 3];
             // texture streaming: the face's repeats, the texture entry's
             // smaller scale for every map (LLViewerTextureList::
-            // updateImageDecodePriority: glTF transforms not counted)
-            let repeats = tf.scale_s.abs().min(tf.scale_t.abs());
+            // updateImageDecodePriority: glTF transforms not counted), or
+            // the frame grid of a texture animation (below)
+            let mut repeats = tf.scale_s.abs().min(tf.scale_t.abs());
             let mut two_sided = false;
             // GLTF material?
             let mut base_tex = tf.texture;
@@ -3675,6 +3677,15 @@ impl Scene {
                 rec.flags[3] = a.packed;
                 rec.anim = a.anim;
                 rec.anim_xf = a.constants;
+                // A flipbook shows one frame of its texture at a time: it is
+                // loaded for the frame's size on screen (#1229). The Legacy
+                // Viewer does so only at rate 0, where the frame goes into the
+                // texture entry's scale (LLVOVolume::animateTextures); a running
+                // animation keeps the entry's scale there, and a 4 x 4 grid
+                // loads four times too coarse each way.
+                if let Some(r) = a.frame_repeats {
+                    repeats = r;
+                }
             }
             rec.set_hud_zoom(hud_zoom);
             rec.set_anchor(anchor.map(|a| a.matrix));

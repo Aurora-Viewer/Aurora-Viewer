@@ -111,6 +111,13 @@ pub fn glyph(ui: &mut egui::Ui, name: &str, color: Color32, size: f32) {
 }
 
 pub fn navigation(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, selected: bool) -> egui::Response {
+    navigation_beside(ui, p, icon, label, selected, 0.0)
+}
+
+/// A `navigation` entry whose label is cut `room` before its right end,
+/// where the caller paints a count: at a large text size the label would
+/// run under it.
+pub fn navigation_beside(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, selected: bool, room: f32) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::click());
     if selected || response.hovered() {
         ui.painter().rect_filled(
@@ -137,7 +144,7 @@ pub fn navigation(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, selec
     let galley = egui::WidgetText::from(label).into_galley(
         ui,
         Some(egui::TextWrapMode::Truncate),
-        (rect.width() - 42.0).max(1.0),
+        (rect.width() - 42.0 - room).max(1.0),
         egui::FontId::proportional(12.0),
     );
     super::paint_row_text(

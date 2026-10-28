@@ -118,12 +118,7 @@ pub fn short_date(seconds: i64, now: i64) -> String {
     }
     let (year, month, day) = aurora_net::profile::civil_from_days(seconds.div_euclid(86400));
     let (this_year, _, _) = aurora_net::profile::civil_from_days(now.div_euclid(86400));
-    let month = crate::ui::land::months()[(month as usize).clamp(1, 12) - 1];
-    if year == this_year {
-        format!("{day} {month}")
-    } else {
-        format!("{day} {month} {year}")
-    }
+    crate::ui::land::day_month((year != this_year).then_some(year), month as usize, i64::from(day))
 }
 
 /// The name of an item's type, as the type column shows it: "Clothing ·

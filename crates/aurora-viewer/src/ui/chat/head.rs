@@ -14,6 +14,8 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 pub(super) const HEIGHT: f32 = 48.0;
+/// From the middle of the title to the middle of the line under it.
+const LINE_GAP: f32 = 17.0;
 const PIC: f32 = 32.0;
 const TOOL: f32 = 30.0;
 /// Adding people to a conversation, wherever it is offered: the
@@ -105,7 +107,8 @@ pub(super) fn show(
 ) {
     let who = identity(world, st);
     let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, HEIGHT), egui::Sense::hover());
+    let gap = crate::ui::widgets::two_lines_gap(ui, &egui::FontId::proportional(14.0), &egui::FontId::proportional(12.0), LINE_GAP);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, HEIGHT + gap - LINE_GAP), egui::Sense::hover());
     ui.painter().hline(
         rect.x_range(),
         rect.bottom() - 0.5,
@@ -276,7 +279,7 @@ pub(super) fn show(
     let title_y = if who.subtitle.is_empty() {
         rect.center().y
     } else {
-        rect.center().y - 8.0
+        rect.center().y - gap * 8.0 / LINE_GAP
     };
     let title_font = egui::FontId::new(14.0, crate::ui::fonts::semibold(ui.ctx()));
     // a member of the Aurora team's tag after the name, cut before it
@@ -311,7 +314,7 @@ pub(super) fn show(
         crate::ui::widgets::paint_elided(
             ui,
             &who.subtitle,
-            egui::pos2(text_left, rect.center().y + 9.0),
+            egui::pos2(text_left, rect.center().y + gap * 9.0 / LINE_GAP),
             text_right - text_left,
             egui::FontId::proportional(12.0),
             p.muted_dim,

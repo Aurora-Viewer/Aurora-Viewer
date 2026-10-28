@@ -1202,7 +1202,7 @@ same colour, intensity, range and falloff, and its projector controls become
 disabled. Cancel instead restores its texture and projector settings. Use
 `features` without the suffix to inspect the light before or after editing.
 
-`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|mouselook-gun|mouselook-touch|ground`:
+`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|worn-other-hidden-inside|mouselook-gun|mouselook-touch|ground`:
 install the fixture at frame 600, issue a real left press at 700 and release
 at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
 or later. `avatar-keep-camera` starts from an off-centre side view and enables
@@ -1250,7 +1250,10 @@ opaque: the press goes through the rigged mesh to the prim (`ObjectGrab
 `worn-other-hidden` and `worn-other-hidden-mesh` make the prim or the mesh
 invisible (every face at alpha 0, an invisible clicker), and the `-under`
 variants of both put it under the opaque rigged mesh: every press must touch
-it (`ObjectGrab 975`).
+it (`ObjectGrab 975`). `worn-other-hidden-inside` shrinks the invisible prim
+to 10 cm, sunk into the chest well under the rigged mesh's surface, like a
+clicker worn partly inside a mesh body (#1241): the press must touch it too
+(`ObjectGrab 975`); before the fix it touched nothing.
 `mouselook-gun` makes a script take the mouselook button
 (ScriptControlChange) and enters mouselook: the press and release send only
 `demo server: click bits 0x40000000` then `0x80000000`. `mouselook-touch`
@@ -3922,6 +3925,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_UPDATE=<mode>` | Interactive update mock-up on the login screen |
 | `AURORA_DEMO_GPU_DRIVER=old\|aged` | Out of date graphics driver warning on the login screen |
 | `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
+| `AURORA_DEMO_GPU_LOST=<frame>` | The GPU device is taken as lost at that frame, as after a driver reset |
 | `AURORA_DEMO_SAFE_GRAPHICS=offer\|active` | The safe graphics card on the login screen |
 | `AURORA_DEMO_UPDATE_MAINTENANCE=<mode>` | Announces a cache invalidation and/or a reset |
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
@@ -4841,8 +4845,8 @@ failure. Grid validation and any paid upload are performed by the human.
   greyed and dimmed while their row is off. Combine with
   `AURORA_DEMO_LOGIN=empty` and `--language fr|en` for preference captures.
   `2:text-size` opens Appearance and cycles the text-size preference through
-  0.8, 1.0, 1.4 and 1.0 every 180 frames after frame 600. Capture frames
-  700, 880, 1060 and 1240 to compare the preview, navigation, window titles,
+  0.8, 1.0, 1.4, 2.0 and 1.0 every 180 frames after frame 600. Capture
+  frames 700, 880, 1060, 1240 and 1420 to compare the preview, navigation, window titles,
   world labels and conversations, including inline emoji. Changes use the
   normal live preference path and only affect the demo profile.
   The Preferences window must retain its size throughout the cycle,
@@ -5543,6 +5547,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   With `AURORA_FPS_LIMIT=60`, frame 600 comes about 10 s after the start.
   The window's close button during the stall closes at once (the exit
   prompt cannot be drawn).
+- **`AURORA_DEMO_GPU_LOST=<frame>`**, with `AURORA_DEMO=1`: the GPU device is
+  taken as lost at that frame, as the device-lost callback does after a
+  driver reset (the log says `GPU device lost (Unknown): AURORA_DEMO_GPU_LOST
+  at frame …`). No frame is drawn any more (the image stays as it was) and
+  nothing waits on the GPU: a photo asked then fails instead of ending the
+  session with a Rust panic (#1237). At once the native box "the graphics
+  card was lost" shows, with what to try; its OK closes the viewer, logged
+  out, and the crash session holds `gpu-lost.txt`: the report says
+  `| Crash | GPU device lost |` and `| GPU device lost | yes … |`, and the
+  next start offers the safe graphics. The window's close button closes at
+  once too. A real loss cannot be caused here: the flag is set as the
+  callback would set it, wgpu's own device stays alive.
 - **`AURORA_DEMO_SAFE_GRAPHICS=offer|active`**, with `AURORA_DEMO=1` and
   `AURORA_DEMO_LOGIN=cards` or `empty`: the login screen's safe graphics
   card, above the driver warning. `offer` is what a start after a GPU stall,
@@ -7315,7 +7331,7 @@ What the inventory must show with these scenarios:
   are marked everywhere Aurora shows a resident: on the name plate, green
   to violet curtains of light rise from behind the top edge, the border's
   colours flow around it over a soft halo, and the full and compact plates
-  carry the "Aurora Staff" tag over their top left edge (the far pill keeps
+  carry the "Aurora Viewer" tag over their top left edge (the far pill keeps
   the light alone); after the name in People (Nearby, Friends, Recent,
   Contact sets, the radar table), in the Conversations window (the name of
   a message, the head of a conversation) and on the profile, the same tag
@@ -7671,6 +7687,7 @@ What the inventory must show with these scenarios:
 | `AURORA_MEDIA_DEBUG=1` | Media diagnostics |
 | `AURORA_FONT_FALLBACK=0` | Without the system fallback fonts |
 | `AURORA_UI_FONT=<font>`, `AURORA_UI_SCALE=<scale>` | Interface font and scale for this launch, without changing the Preferences |
+| `AURORA_TEXT_SIZE=<size>` | Text size for this launch, without changing the Preferences |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Forces the texture memory budget |
 | `AURORA_VRAM_BUDGET_MB=<n>` | The driver's video memory budget taken as n MB, a smaller card on a large one |
 | `AURORA_TEXTURE_SIZING=screen` | Textures sized by their object's diameter on screen times the repeats, as before the Legacy Viewer's sizing |
@@ -8187,6 +8204,14 @@ What the inventory must show with these scenarios:
   name, buttons, menu rows) centred alike with every font; the test
   `the_place_island_centres_its_badge_and_texts_with_every_font` measures
   the place island.
+- **`AURORA_TEXT_SIZE=<size>`**: the text size (0.8 to 2, Preferences ›
+  Appearance › Text size) of this launch, never saved: to capture any
+  scenario at a large text size, for example the Conversations window and
+  the inventory at 2 (`AURORA_DEMO_INVENTORY=1`, 1920 × 1080). What to look
+  for: no line drawn over another (a conversation's name and the line under
+  it, a sidebar label and its count, a footer's hint and its buttons),
+  initials and the AO glyph inside their tile like the icons beside them,
+  windows that keep their size.
 - **`AURORA_PRESENT_MODE=immediate|mailbox|fifo|fifo-relaxed`**: replaces
   the present mode chosen from vertical sync
   (`aurora-render/src/present.rs`: without sync `Mailbox`, otherwise

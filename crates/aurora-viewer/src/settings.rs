@@ -1214,6 +1214,13 @@ pub(crate) fn foot_height_limit(value: f32) -> f32 {
     }
 }
 
+/// Limits of Preferences › Appearance › Text size, a multiplier of every
+/// interface font. The Legacy Viewer stops at +2 points (FSFontSizeAdjustment,
+/// panel_preferences_UI.xml, about 1.2×); Aurora goes up to twice the size for
+/// visually impaired users (#1227), on top of the interface scale.
+pub(crate) const FONT_SCALE_MIN: f32 = 0.8;
+pub(crate) const FONT_SCALE_MAX: f32 = 2.0;
+
 /// The default strength of the bloom (half of the light over its threshold).
 pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
 
@@ -2352,7 +2359,7 @@ impl Settings {
         self.ui_scale = self.ui_scale.clamp(0.75, 2.0);
         self.mouse_sensitivity = self.mouse_sensitivity.clamp(0.1, 5.0);
         self.texture_budget_mb = self.texture_budget_mb.clamp(256, 32768);
-        self.font_scale = self.font_scale.clamp(0.8, 1.4);
+        self.font_scale = self.font_scale.clamp(FONT_SCALE_MIN, FONT_SCALE_MAX);
         self.hover_tips.delay = if self.hover_tips.delay.is_finite() {
             self.hover_tips.delay.clamp(0.0, MAX_HOVER_TIP_DELAY)
         } else {

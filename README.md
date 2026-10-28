@@ -391,7 +391,7 @@ are planned or in progress: they are not in the viewer yet.
 - **Your colours**: pick the accent, window background and text colours in
   Preferences; Aurora keeps them readable.
 - **A clock in the bars**, with your local time and its zone.
-- **English and French**, following the system language or your choice,
+- **English, French and Japanese**, following the system language or your choice,
   applied at once.
 - **A clean way out**: on closing, a dialog over a blurred background offers
   Quit, Log out (back to the login screen) and Cancel. Esc cancels; the
@@ -607,7 +607,7 @@ Manager) and, when you tick it, a 30-day MFA authorization.
 
 ### Language
 
-The interface is available in English and French: system language detection,
+The interface is available in English, French and Japanese: system language detection,
 a choice saved in Preferences and applied at once. Fluent catalogues make it
 possible to add a language; see [the translation guide](docs/TRANSLATING.md).
 
@@ -927,7 +927,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 |---|---|
 | `--title <text>` | Names the window "Aurora Viewer <version> - <text> (Dev)" and its log file |
 | `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
-| `--language <code>` | Forces the language of this instance (`en`, `fr`, or another language added to the catalogues), without changing the saved choice |
+| `--language <code>` | Forces the language of this instance (`en`, `fr`, `ja`, or another language added to the catalogues), without changing the saved choice |
 | `--grid <name>` | Selects the login grid: `agni`, `aditi`, a saved grid name/nickname or a login URI (`--loginuri <uri>` too) |
 | `--login <first> <last> <password>` | Logs in with this account as soon as the login screen opens |
 | `<slurl>`, `--url <slurl>` | Starts at this place, or hands it to the viewer already running; must come last |
@@ -1016,6 +1016,30 @@ Behaviour follows the Legacy Viewer: its sources are expected next to the reposi
 [FirestormViewer/phoenix-firestorm](https://github.com/FirestormViewer/phoenix-firestorm)).
 
 Questions and ideas are welcome on [Discord](https://discord.gg/TK4nbMGmKt).
+
+## AI use
+
+Aurora is made by people: developers, QA testers who test each version on
+the grid, a project manager, a community manager and moderators. Some
+contributors use AI coding assistants to help write code, and we say so
+openly.
+
+- **No AI in the viewer you download**: no AI feature, no AI model, nothing
+  sent to an AI service.
+- **AI never sees your password**: the AI tools run only on the developers'
+  computers while they write code. Your password goes from your computer to
+  Linden Lab, and nowhere else.
+- **[AGENTS.md](AGENTS.md) is not part of the viewer**: it holds the
+  guidelines for contributors who use AI, so that those tools follow strict
+  rules. Its first rule forbids them to connect to Second Life or to handle
+  any user name or password.
+- **No AI-generated art**: images, sounds, icons and design are made by
+  people.
+- **Every change is tested by a person** before it is merged, then by QA
+  testers on the grid.
+
+Questions and answers, and the details:
+[AI use policy](https://aurora-viewer.org/ai-policy/).
 
 ## Privacy
 

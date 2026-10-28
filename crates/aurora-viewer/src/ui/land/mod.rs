@@ -964,17 +964,41 @@ pub(crate) fn months() -> [&'static str; 12] {
     ]
 }
 
+/// A short date in the language's order: "14 Oct" (Japanese "10月14日"),
+/// with the year when one is given. `month` counts from 1.
+pub(crate) fn day_month(year: Option<i64>, month: usize, day: i64) -> String {
+    let month = months()[month.clamp(1, 12) - 1];
+    match year {
+        Some(year) => aurora_i18n::tr!("date-day-month-year", day = day.to_string(), month = month, year = year.to_string()),
+        None => aurora_i18n::tr!("date-day-month", day = day.to_string(), month = month),
+    }
+}
+
 /// time_stamp_template of the French skin: "Sat 18 Jun 2022 11:19:10".
 fn claim_date(secs: i64) -> String {
     let (y, m, d, w, h, mi, s) = slt_parts(secs);
-    format!("{} {d} {} {y} {h:02}:{mi:02}:{s:02}", weekdays()[w], months()[m - 1])
+    aurora_i18n::tr!(
+        "land-claim-date",
+        weekday = weekdays()[w],
+        day = d.to_string(),
+        month = months()[m - 1],
+        year = y.to_string(),
+        time = format!("{h:02}:{mi:02}:{s:02}")
+    )
 }
 
 /// process_covenant_reply with the French LTime strings:
 /// "Wed Jun 05 21:18:48 2024".
 pub(crate) fn covenant_date(secs: i64) -> String {
     let (y, m, d, w, h, mi, s) = slt_parts(secs);
-    format!("{} {} {d:02} {h:02}:{mi:02}:{s:02} {y}", weekdays()[w], months()[m - 1])
+    aurora_i18n::tr!(
+        "land-covenant-date",
+        weekday = weekdays()[w],
+        day = format!("{d:02}"),
+        month = months()[m - 1],
+        year = y.to_string(),
+        time = format!("{h:02}:{mi:02}:{s:02}")
+    )
 }
 
 /// LLResMgr::getMonetaryString with the selected thousands separator.
@@ -991,19 +1015,19 @@ mod tests {
         // 2022-06-18 18:19:10 UTC = 11:19:10 PDT, a Saturday
         assert_eq!(
             claim_date(1_655_576_350),
-            if aurora_i18n::language() == "fr" {
-                "sam. 18 juin 2022 11:19:10"
-            } else {
-                "Sat 18 Jun 2022 11:19:10"
+            match aurora_i18n::language() {
+                "fr" => "sam. 18 juin 2022 11:19:10",
+                "ja" => "2022年6月18日（土）11:19:10",
+                _ => "Sat 18 Jun 2022 11:19:10",
             }
         );
         // 2024-06-06 04:18:48 UTC = Wed 5 June 21:18:48 PDT
         assert_eq!(
             covenant_date(1_717_647_528),
-            if aurora_i18n::language() == "fr" {
-                "mer. juin 05 21:18:48 2024"
-            } else {
-                "Wed Jun 05 21:18:48 2024"
+            match aurora_i18n::language() {
+                "fr" => "mer. juin 05 21:18:48 2024",
+                "ja" => "2024年6月05日（水）21:18:48",
+                _ => "Wed Jun 05 21:18:48 2024",
             }
         );
     }

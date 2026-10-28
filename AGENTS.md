@@ -41,9 +41,10 @@ else's work.
    they write to you** (French or English). PRs, issues and commits made
    before this rule stay as they are: do not translate them. Interface text
    and network messages meant for the user go through `aurora_i18n::tr!`:
-   add the key and its English and French versions in the same PR, never a
-   hard-coded label. Variables and plurals follow
-   [docs/TRANSLATING.md](docs/TRANSLATING.md).
+   add the key and its English, French and Japanese versions in the same
+   PR (every catalogue of `crates/aurora-i18n/locales/`; a missing one fails
+   the parity test), never a hard-coded label. Variables, plurals and the
+   Japanese rules follow [docs/TRANSLATING.md](docs/TRANSLATING.md).
 
 ## 2. Reference behaviour: Firestorm
 

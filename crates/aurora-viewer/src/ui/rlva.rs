@@ -81,11 +81,12 @@ impl Tools {
                     ui.label(tr!("rlva-tools-local-replies"));
                     actions.clear_log = ui.button(tr!("rlva-tools-clear-log")).clicked();
                 });
+                // the input and its button measure what the text size gives them
+                let (mut list, footer) = super::widgets::above_footer(ui);
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .stick_to_bottom(true)
-                    .max_height((ui.available_height() - 70.0).max(40.0))
-                    .show(ui, |ui| {
+                    .show(&mut list, |ui| {
                         for entry in &world.rlva.diagnostics.entries {
                             let color = if entry.outcome == Outcome::Rejected { p.danger } else { p.ink };
                             ui.add(
@@ -100,41 +101,43 @@ impl Tools {
                             .on_hover_text(source_name(world, entry.source));
                         }
                     });
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut self.input)
-                        .font(egui::TextStyle::Monospace)
-                        .hint_text(tr!("rlva-tools-input-hint"))
-                        .char_limit(4096)
-                        .desired_width(f32::INFINITY),
-                );
-                if response.has_focus() {
-                    let (up, down) = ui.input_mut(|input| {
-                        (
-                            input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
-                            input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
-                        )
-                    });
-                    if (up || down) && !self.history.is_empty() {
-                        self.browsing = match (self.browsing, up) {
-                            (None, true) => Some(self.history.len() - 1),
-                            (Some(index), true) => Some(index.saturating_sub(1)),
-                            (Some(index), false) => (index + 1 < self.history.len()).then_some(index + 1),
-                            _ => None,
-                        };
-                        self.input = self.browsing.map(|index| self.history[index].clone()).unwrap_or_default();
+                footer.show(ui, |ui| {
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.input)
+                            .font(egui::TextStyle::Monospace)
+                            .hint_text(tr!("rlva-tools-input-hint"))
+                            .char_limit(4096)
+                            .desired_width(f32::INFINITY),
+                    );
+                    if response.has_focus() {
+                        let (up, down) = ui.input_mut(|input| {
+                            (
+                                input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                                input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                            )
+                        });
+                        if (up || down) && !self.history.is_empty() {
+                            self.browsing = match (self.browsing, up) {
+                                (None, true) => Some(self.history.len() - 1),
+                                (Some(index), true) => Some(index.saturating_sub(1)),
+                                (Some(index), false) => (index + 1 < self.history.len()).then_some(index + 1),
+                                _ => None,
+                            };
+                            self.input = self.browsing.map(|index| self.history[index].clone()).unwrap_or_default();
+                        }
                     }
-                }
-                let enter = response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                if (enter || ui.button(tr!("rlva-tools-run")).clicked()) && !self.input.trim().is_empty() {
-                    let text = std::mem::take(&mut self.input);
-                    if self.history.len() >= 64 {
-                        self.history.remove(0);
+                    let enter = response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                    if (enter || ui.button(tr!("rlva-tools-run")).clicked()) && !self.input.trim().is_empty() {
+                        let text = std::mem::take(&mut self.input);
+                        if self.history.len() >= 64 {
+                            self.history.remove(0);
+                        }
+                        self.history.push(text.clone());
+                        self.browsing = None;
+                        actions.input = Some(text);
+                        response.request_focus();
                     }
-                    self.history.push(text.clone());
-                    self.browsing = None;
-                    actions.input = Some(text);
-                    response.request_focus();
-                }
+                });
             } else {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.filter)
@@ -188,7 +191,10 @@ impl Tools {
                 }
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show_rows(
                     ui,
-                    ui.spacing().interact_size.y * 2.0,
+                    // a command over its source, at the current text size
+                    ui.text_style_height(&egui::TextStyle::Monospace)
+                        + ui.spacing().item_spacing.y
+                        + ui.text_style_height(&egui::TextStyle::Small),
                     rows.len(),
                     |ui, range| {
                         for (source, command) in &rows[range] {

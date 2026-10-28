@@ -340,21 +340,23 @@ pub fn text_shadow(painter: &egui::Painter, pos: Pos2, align: egui::Align2, text
     painter.text(pos, align, text, font, color)
 }
 
-/// Cardinal letters on the map border (LLFloaterMap::draw), `rot` = angle
-/// of east (radians, counter-clockwise).
+/// Cardinal letters on the map border (LLFloaterMap::draw, translated like
+/// the floater_map_north… labels of floater_map.xml), `rot` = angle of east
+/// (radians, counter-clockwise).
 pub fn draw_directions(painter: &egui::Painter, rect: Rect, rot: f32) {
+    use aurora_i18n::tr;
     let font = egui::FontId::proportional(12.0);
-    let pad = painter.layout_no_wrap("N".into(), font.clone(), LETTERS).size().x * 0.5;
+    let pad = painter.layout_no_wrap(tr!("map-dir-n").into(), font.clone(), LETTERS).size().x * 0.5;
     let minor = 12.0 < 0.07 * rect.width().min(rect.height());
     let dirs: [(&str, f32, bool); 8] = [
-        ("E", 0.0, true),
-        ("NE", FRAC_PI_4, false),
-        ("N", FRAC_PI_2, true),
-        ("NO", 3.0 * FRAC_PI_4, false),
-        ("O", PI, true),
-        ("SO", 5.0 * FRAC_PI_4, false),
-        ("S", 3.0 * FRAC_PI_2, true),
-        ("SE", 7.0 * FRAC_PI_4, false),
+        (tr!("map-dir-e"), 0.0, true),
+        (tr!("map-dir-ne"), FRAC_PI_4, false),
+        (tr!("map-dir-n"), FRAC_PI_2, true),
+        (tr!("map-dir-nw"), 3.0 * FRAC_PI_4, false),
+        (tr!("map-dir-w"), PI, true),
+        (tr!("map-dir-sw"), 5.0 * FRAC_PI_4, false),
+        (tr!("map-dir-s"), 3.0 * FRAC_PI_2, true),
+        (tr!("map-dir-se"), 7.0 * FRAC_PI_4, false),
     ];
     let c = rect.center();
     for (label, a, major) in dirs {

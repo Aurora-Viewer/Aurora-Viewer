@@ -1017,6 +1017,18 @@ number-decimal-separator = .
 number-thousands-separator = ,
 profile-date = { $month }/{ $day }/{ $year }
 profile-date-hidden = { $month }/{ $day }
+date-day-month = { $day } { $month }
+date-day-month-year = { $day } { $month } { $year }
+land-claim-date = { $weekday } { $day } { $month } { $year } { $time }
+land-covenant-date = { $weekday } { $month } { $day } { $time } { $year }
+map-dir-n = N
+map-dir-ne = NE
+map-dir-e = E
+map-dir-se = SE
+map-dir-s = S
+map-dir-sw = SW
+map-dir-w = W
+map-dir-nw = NW
 profile-birth-age = { $date }{ "\u000A(" }{ $age })
 profile-age-parts = { $years } { $months }
 profile-age-total = { $age }; { $days }
@@ -1534,6 +1546,15 @@ app-gpu-stall =
     • at the next start, choose the safe graphics that Aurora will offer.
 
     Keep waiting? Yes keeps waiting; No closes Aurora (you are logged out properly).
+app-gpu-lost-title = Aurora Viewer: the graphics card was lost
+app-gpu-lost =
+    The graphics card stopped working for Aurora: its driver was reset (it took too long to draw an image, or its video memory was full), or the card was removed or taken by another program. Nothing can be drawn any more: Aurora closes when you press OK (you are logged out properly).
+
+    What to try:
+    • update the graphics card driver;
+    • lower the size of very large photos, or the graphics quality;
+    • close the other programs that use the graphics card a lot;
+    • at the next start, choose the safe graphics that Aurora will offer.
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora does not have an animation overrider (AO) yet.
 cmdline-mod-use-hover-height-in-appearance = Adjust your avatar's hover height through Appearance → Hover Height.
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora recommends against opening this link. If it asks you to log in or pay, it is very likely a scam: never give it your password or payment information.
@@ -2156,7 +2177,7 @@ common-trash-folder-not-found = Trash folder not found.
 common-body = Body
 ui-options-matches = Matches
 ui-appearance-items-neck = Neck
-ui-environment-lie-down = Lie down
+ui-environment-lie-down = Sunset
 ui-bars-sunset = Sunset
 common-color = Color
 ui-contacts-friend-list-color-based-on-contact-set = Friend list color based on contact set
@@ -5233,7 +5254,7 @@ ui-options-on-other-avatars = On other avatars
 common-area = Area:
 build-ui-tools-area-m2 = { "Area: " }{ $area }{ " m²" }
 ui-hud-area-m2 = { "Area: " }{ $value0 }{ " m²" }
-nameplate-aurora-staff = Aurora Staff
+nameplate-aurora-staff = Aurora Viewer
 nameplate-aurora-staff-tooltip = A member of the Aurora Viewer team
 nameplate-linden-lab = Linden Lab
 nameplate-linden-lab-tooltip = A Linden Lab employee
@@ -7090,7 +7111,7 @@ extra-none = none
 extra-new-script = New Script
 extra-rendering-info = RENDERING INFO
 extra-location = Location
-extra-chair = Chair
+extra-chair = Flesh
 extra-media = Media
 extra-test-square = Test->Square
 extra-test-triangle = Test->Triangle
@@ -7633,6 +7654,7 @@ crash-reason-native = Native crash
 crash-reason-unknown = Unexpected shutdown
 crash-reason-freeze = Frozen, then ended
 crash-reason-gpu = Graphics card not responding
+crash-reason-gpu-lost = Graphics card lost (driver reset)
 crash-reason-thread = A part of the viewer stopped working
 crash-reason-oom = Out of memory
 crash-send-report = Send a crash report

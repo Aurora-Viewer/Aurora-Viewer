@@ -1253,8 +1253,16 @@ fn sidebar(
             }
             let total = st.counts.total_modified();
             let on = !searching && st.modified_view;
-            let entry = super::widgets::navigation(ui, p, "pencil-filled", aurora_i18n::tr!("ui-options-modified-settings"), on);
-            paint_chip(ui, p, entry.rect, (total > 0).then_some(total), false);
+            let chip = (total > 0).then_some(total);
+            let entry = super::widgets::navigation_beside(
+                ui,
+                p,
+                "pencil-filled",
+                aurora_i18n::tr!("ui-options-modified-settings"),
+                on,
+                chip_room(ui, chip),
+            );
+            paint_chip(ui, p, entry.rect, chip, false);
             if entry.clicked() {
                 st.query.clear();
                 st.modified_view = true;
@@ -1275,8 +1283,9 @@ fn sidebar(
                         if dim {
                             ui.multiply_opacity(0.4);
                         }
-                        let entry = super::widgets::navigation(ui, p, page.icon(), page.name(), on);
-                        paint_chip(ui, p, entry.rect, nav_chip(st, page, searching), searching);
+                        let chip = nav_chip(st, page, searching);
+                        let entry = super::widgets::navigation_beside(ui, p, page.icon(), page.name(), on, chip_room(ui, chip));
+                        paint_chip(ui, p, entry.rect, chip, searching);
                         entry
                     })
                     .inner;
@@ -1299,18 +1308,32 @@ fn nav_chip(st: &OptionsUi, page: Page, searching: bool) -> Option<usize> {
     (n > 0).then_some(n)
 }
 
+fn chip_galley(ui: &egui::Ui, n: usize, ink: egui::Color32) -> std::sync::Arc<egui::Galley> {
+    let font = egui::FontId::new(10.5, super::fonts::semibold(ui.ctx()));
+    ui.painter().layout_no_wrap(n.to_string(), font, ink)
+}
+
+fn chip_width(galley: &egui::Galley) -> f32 {
+    (galley.size().x + 10.0).max(18.0)
+}
+
+/// What a sidebar entry's label leaves at its right for `paint_chip`: the
+/// pill, its margin and a gap.
+fn chip_room(ui: &egui::Ui, n: Option<usize>) -> f32 {
+    n.map_or(0.0, |n| chip_width(&chip_galley(ui, n, egui::Color32::PLACEHOLDER)) + 12.0)
+}
+
 /// A count in a pill at the right end of a sidebar entry: violet for the
 /// modified settings, teal for the search's hits.
 fn paint_chip(ui: &egui::Ui, p: &Palette, entry: Rect, n: Option<usize>, hit: bool) {
     let Some(n) = n else { return };
-    let font = egui::FontId::new(10.5, super::fonts::semibold(ui.ctx()));
     let (ink, face) = if hit {
         (p.bar, p.teal)
     } else {
         (p.violet_pale, p.violet.gamma_multiply(0.24))
     };
-    let galley = ui.painter().layout_no_wrap(n.to_string(), font, ink);
-    let w = (galley.size().x + 10.0).max(18.0);
+    let galley = chip_galley(ui, n, ink);
+    let w = chip_width(&galley);
     let pill = Rect::from_center_size(pos2(entry.right() - 8.0 - w / 2.0, entry.center().y), vec2(w, 17.0));
     ui.painter().rect_filled(pill, ui.visuals().window_corner_radius, face);
     super::widgets::paint_ink_centered(ui.painter(), galley, pill.center(), ink);
@@ -1575,15 +1598,28 @@ fn footer_bar(
         }
     }
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        if super::widgets::primary_button_sized(ui, p, aurora_i18n::tr!("common-close"), vec2(96.0, 28.0)).clicked() {
+        let close_label = aurora_i18n::tr!("common-close");
+        // as wide as its label at a large text size, rather than cut
+        let close_w = ui
+            .painter()
+            .layout_no_wrap(close_label.to_owned(), egui::FontId::proportional(12.0), p.on_accent)
+            .size()
+            .x
+            + ui.spacing().button_padding.x * 2.0
+            + 8.0;
+        if super::widgets::primary_button_sized(ui, p, close_label, vec2(close_w.max(96.0), 28.0)).clicked() {
             *close = true;
         }
         ui.add_space(6.0);
-        ui.label(
-            RichText::new(aurora_i18n::tr!("ui-options-changes-apply-immediately"))
-                .size(11.5)
-                .color(p.muted),
+        // the hint gives way to the buttons when they leave it no room
+        let hint = ui.painter().layout_no_wrap(
+            aurora_i18n::tr!("ui-options-changes-apply-immediately").to_owned(),
+            egui::FontId::proportional(11.5),
+            p.muted,
         );
+        if hint.size().x <= ui.available_width() {
+            ui.label(hint);
+        }
     });
 }
 

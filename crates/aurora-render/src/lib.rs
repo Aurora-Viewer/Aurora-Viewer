@@ -12,6 +12,7 @@ mod bloom;
 mod contact_shadows;
 mod cutout;
 mod dedicated;
+mod device_lost;
 mod dof;
 mod drawn_pick;
 mod exposure;

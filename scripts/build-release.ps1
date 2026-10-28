@@ -28,7 +28,8 @@ New-Item -ItemType Directory -Force -Path $rel -ErrorAction Stop | Out-Null
 # Double-click launcher (build-release.bat 42 builds PR 42). It runs the
 # script of the last build, so it is always main's latest version; when that
 # build lacks it (a PR branched before it existed), it first puts src back on
-# GitHub's main, and only then falls back to the repository's copy.
+# GitHub's main, and only then falls back to the repository's copy, which
+# it also runs when src is no longer a Git worktree (recreated below).
 # Only written once: cmd reads a .bat from disk while running it.
 $bat = Join-Path $rel 'build-release.bat'
 if (-not (Test-Path -LiteralPath $bat)) {
@@ -36,6 +37,7 @@ if (-not (Test-Path -LiteralPath $bat)) {
         '@echo off'
         'set "S=%~dp0src\scripts\build-release.ps1"'
         'if not exist "%S%" (git -C "%~dp0src" fetch origin main --quiet && git -C "%~dp0src" checkout --detach --force --quiet origin/main)'
+        'git -C "%~dp0src" rev-parse --git-dir >nul 2>nul || set "S="'
         "if not exist `"%S%`" set `"S=$(Join-Path $p.Main 'scripts\build-release.ps1')`""
         'powershell -NoProfile -ExecutionPolicy Bypass -File "%S%" %*'
         'pause'
@@ -55,12 +57,35 @@ if ($Pr) {
     $what = 'main'
 }
 
+# A src\ that is no longer a worktree of this repository (repository
+# recloned or moved, worktree pruned: its .git points to metadata Git no
+# longer has) is recreated; its target\ is set aside, then put back.
+$kept = Join-Path $rel 'target.kept'
+if (Test-Path -LiteralPath $src) {
+    $common = $null
+    if (Test-Path -LiteralPath (Join-Path $src '.git')) {
+        $common = git -C $src rev-parse --path-format=absolute --git-common-dir 2>$null
+        if ($LASTEXITCODE -ne 0) { $common = $null }
+    }
+    if (-not $common -or [IO.Path]::GetFullPath($common.Trim()) -ne [IO.Path]::GetFullPath((Join-Path $p.Main '.git'))) {
+        Write-Host 'RELEASE\src is no longer a worktree of this repository: recreating it (its build cache is kept).' -ForegroundColor Yellow
+        $srcTarget = Join-Path $src 'target'
+        if ((Test-Path -LiteralPath $srcTarget) -and -not (Test-Path -LiteralPath $kept)) {
+            Move-Item -LiteralPath $srcTarget -Destination $kept -ErrorAction Stop
+        }
+        Remove-Item -LiteralPath $src -Recurse -Force -ErrorAction Stop
+    }
+}
+
 # reset the reserved worktree on it; target\ is ignored by git, so kept
-if (Test-Path -LiteralPath (Join-Path $src '.git')) {
+if (Test-Path -LiteralPath $src) {
     Invoke-Checked 'git checkout' { git -C $src checkout --detach --force --quiet $sha }
     Invoke-Checked 'git clean' { git -C $src clean -fd --quiet }
 } else {
+    # forgets a src\ deleted by hand, whose registration would block the add
+    Invoke-Checked 'git worktree prune' { git -C $p.Main worktree prune }
     Invoke-Checked 'git worktree add' { git -C $p.Main worktree add --detach $src $sha }
+    if (Test-Path -LiteralPath $kept) { Move-Item -LiteralPath $kept -Destination (Join-Path $src 'target') -ErrorAction Stop }
 }
 
 Write-Host "Building $what ($($sha.Substring(0, 9))) in --release…" -ForegroundColor Cyan

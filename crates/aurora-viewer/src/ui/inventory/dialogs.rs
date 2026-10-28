@@ -745,7 +745,14 @@ pub(super) fn preview(
                         ui.label(RichText::new(aurora_i18n::tr!("notecard-read-only")).color(p.muted));
                     }
                     let documents = matches!(it.asset_type, 7 | 10);
-                    let footer_height = ui.spacing().interact_size.y
+                    // the Save row is as tall as its button: its text and
+                    // padding once a large text size outgrows interact_size
+                    let save_row = ui
+                        .spacing()
+                        .interact_size
+                        .y
+                        .max(ui.text_style_height(&egui::TextStyle::Button) + ui.spacing().button_padding.y * 2.0);
+                    let footer_height = save_row
                         + ui.spacing().item_spacing.y * 2.0
                         + if st.preview_message.is_empty() {
                             0.0

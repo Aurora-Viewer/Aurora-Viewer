@@ -1020,6 +1020,18 @@ number-decimal-separator = ,
 number-thousands-separator = { "\u00A0" }
 profile-date = { $day }/{ $month }/{ $year }
 profile-date-hidden = { $day }/{ $month }
+date-day-month = { $day } { $month }
+date-day-month-year = { $day } { $month } { $year }
+land-claim-date = { $weekday } { $day } { $month } { $year } { $time }
+land-covenant-date = { $weekday } { $month } { $day } { $time } { $year }
+map-dir-n = N
+map-dir-ne = NE
+map-dir-e = E
+map-dir-se = SE
+map-dir-s = S
+map-dir-sw = SO
+map-dir-w = O
+map-dir-nw = NO
 profile-birth-age = { $date }{ "\u000A(" }{ $age })
 profile-age-parts = { $years } { $months }
 profile-age-total = { $age }; { $days }
@@ -1537,6 +1549,15 @@ app-gpu-stall =
     • au prochain démarrage, choisir les graphismes de secours qu'Aurora proposera.
 
     Continuer d'attendre ? Oui continue d'attendre ; Non ferme Aurora (vous êtes déconnecté proprement).
+app-gpu-lost-title = Aurora Viewer : la carte graphique a été perdue
+app-gpu-lost =
+    La carte graphique a cessé de fonctionner pour Aurora : son pilote a été réinitialisé (une image trop longue à dessiner, ou sa mémoire vidéo pleine), ou la carte a été retirée ou prise par un autre programme. Plus rien ne peut être affiché : Aurora se ferme quand vous appuyez sur OK (vous êtes déconnecté proprement).
+
+    À essayer :
+    • mettre à jour le pilote de la carte graphique ;
+    • réduire la taille des très grandes photos, ou la qualité graphique ;
+    • fermer les autres programmes qui utilisent beaucoup la carte graphique ;
+    • au prochain démarrage, choisir les graphismes de secours qu'Aurora proposera.
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora n'a pas encore d'animation overrider (AO).
 cmdline-mod-use-hover-height-in-appearance = Ajustez la hauteur de survol de votre avatar dans Apparence → Hauteur de survol.
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora vous déconseille d'ouvrir ce lien. S'il vous demande de vous connecter ou de payer, c'est très probablement une arnaque : ne donnez jamais votre mot de passe ni vos informations de paiement.
@@ -5238,7 +5259,7 @@ ui-options-on-other-avatars = Sur les autres avatars
 common-area = Surface :
 build-ui-tools-area-m2 = { "Surface : " }{ $area }{ " m²" }
 ui-hud-area-m2 = { "Surface : " }{ $value0 }{ " m²" }
-nameplate-aurora-staff = Staff Aurora
+nameplate-aurora-staff = Aurora Viewer
 nameplate-aurora-staff-tooltip = Membre de l'équipe d'Aurora Viewer
 nameplate-linden-lab = Linden Lab
 nameplate-linden-lab-tooltip = Membre du personnel de Linden Lab
@@ -7626,6 +7647,7 @@ crash-reason-native = Plantage natif
 crash-reason-unknown = Arrêt inattendu
 crash-reason-freeze = Figé, puis arrêté
 crash-reason-gpu = Carte graphique sans réponse
+crash-reason-gpu-lost = Carte graphique perdue (pilote réinitialisé)
 crash-reason-thread = Une partie du viewer a cessé de fonctionner
 crash-reason-oom = Mémoire insuffisante
 crash-send-report = Envoyer un rapport de plantage

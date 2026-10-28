@@ -1145,7 +1145,7 @@ fn preferences_keep_their_height_when_text_size_changes() {
         ] {
             state.page = page;
             state.query = query.to_owned();
-            for scale in [1.0, 1.2, 1.4, 0.8, 1.0] {
+            for scale in [1.0, 1.2, 1.4, 2.0, 0.8, 1.0] {
                 settings.font_scale = scale;
                 theme.apply(&ctx, scale);
                 for _ in 0..30 {
