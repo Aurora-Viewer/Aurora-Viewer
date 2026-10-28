@@ -21,6 +21,8 @@ use uuid::Uuid;
 pub(super) const WIDTH: f32 = 232.0;
 pub(super) const RAIL: f32 = 58.0;
 const ENTRY_H: f32 = 44.0;
+/// From the middle of an entry's name to the middle of its subtitle.
+const LINE_GAP: f32 = 17.0;
 const PIC: f32 = 32.0;
 /// The glyph on an entry's square (nearby chat, a group without insignia).
 const GLYPH: f32 = 17.0;
@@ -740,7 +742,8 @@ fn ghost(ctx: &egui::Context, p: &Palette, st: &ChatUi, e: Entry, rail: bool, pi
 /// in its tooltip).
 fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) -> Picked {
     let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, ENTRY_H), egui::Sense::hover());
+    let gap = crate::ui::widgets::two_lines_gap(ui, &egui::FontId::proportional(13.0), &egui::FontId::proportional(11.0), LINE_GAP);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, ENTRY_H + gap - LINE_GAP), egui::Sense::hover());
     // a conversation's entry drags, to its place or out of the window; the
     // nearby chat's, pinned, out of the window (#910)
     let sense = if e.close.is_some() || id == entry_id(Pinned::Local) {
@@ -847,19 +850,24 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
         egui::FontId::proportional(13.0)
     };
     let has_sub = e.sub.as_ref().is_some_and(|s| !s.is_empty());
-    let name_y = if has_sub { rect.center().y - 8.0 } else { rect.center().y };
+    let name_y = if has_sub {
+        rect.center().y - gap * 8.0 / LINE_GAP
+    } else {
+        rect.center().y
+    };
+    let sub_y = rect.center().y + gap * 9.0 / LINE_GAP;
     let cut = crate::ui::widgets::paint_elided(ui, e.name, egui::pos2(x, name_y), right - x, font, name_color);
     if let Some(sub) = e.sub.as_ref().filter(|s| !s.is_empty()) {
         let mut sx = x;
         if let Some((icon, color)) = e.sub_icon {
-            let r = egui::Rect::from_min_size(egui::pos2(sx, rect.center().y + 3.0), egui::Vec2::splat(11.0));
+            let r = egui::Rect::from_min_size(egui::pos2(sx, sub_y - 6.0), egui::Vec2::splat(11.0));
             super::thread::paint_icon(ui.painter(), icon, r, color);
             sx += 14.0;
         }
         crate::ui::widgets::paint_elided(
             ui,
             sub,
-            egui::pos2(sx, rect.center().y + 9.0),
+            egui::pos2(sx, sub_y),
             right - sx,
             egui::FontId::proportional(11.0),
             p.muted_dim,

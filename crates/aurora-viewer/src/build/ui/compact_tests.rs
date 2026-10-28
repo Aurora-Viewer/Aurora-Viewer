@@ -1395,6 +1395,7 @@ fn pbr_number_scrubbing_keeps_the_chosen_inspector_width() {
         (1.25, 1.125, 1.0),
         (1.0, 1.25, 1.0),
         (1.0, 1.0, 1.4),
+        (1.0, 1.0, 2.0),
     ] {
         for width in [344.0, 390.0] {
             let mut inspector = material_inspector();

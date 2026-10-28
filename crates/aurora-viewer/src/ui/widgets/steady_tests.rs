@@ -6,7 +6,7 @@ use super::elide_tests::Frames;
 use crate::theme::Palette;
 
 /// Run `show` on fresh state from `new` for 30 frames, at the interface
-/// scales 1 / 1.25 / 1.5, with the text 1.4 times larger, and at each of
+/// scales 1 / 1.25 / 1.5, with the text 1.4 and 2 times larger, and at each of
 /// `sizes`, the floater `id` placed at that size: its rect never changes
 /// after the first two frames, and every text `bottom` (its bottom-most
 /// button) is drawn inside it.
@@ -18,7 +18,7 @@ pub(crate) fn assert_window_steady<S>(
     mut show: impl FnMut(&mut S, &egui::Context, &Palette),
 ) {
     let p = crate::theme::Theme::default().palette();
-    for (zoom, text) in [(1.0f32, 1.0f32), (1.25, 1.0), (1.5, 1.0), (1.0, 1.4)] {
+    for (zoom, text) in [(1.0f32, 1.0f32), (1.25, 1.0), (1.5, 1.0), (1.0, 1.4), (1.0, 2.0)] {
         for &size in sizes {
             let mut frames = Frames::new();
             crate::theme::Theme::default().apply(&frames.ctx, text);

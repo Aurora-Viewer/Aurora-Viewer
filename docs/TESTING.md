@@ -4840,8 +4840,8 @@ failure. Grid validation and any paid upload are performed by the human.
   greyed and dimmed while their row is off. Combine with
   `AURORA_DEMO_LOGIN=empty` and `--language fr|en` for preference captures.
   `2:text-size` opens Appearance and cycles the text-size preference through
-  0.8, 1.0, 1.4 and 1.0 every 180 frames after frame 600. Capture frames
-  700, 880, 1060 and 1240 to compare the preview, navigation, window titles,
+  0.8, 1.0, 1.4, 2.0 and 1.0 every 180 frames after frame 600. Capture
+  frames 700, 880, 1060, 1240 and 1420 to compare the preview, navigation, window titles,
   world labels and conversations, including inline emoji. Changes use the
   normal live preference path and only affect the demo profile.
   The Preferences window must retain its size throughout the cycle,
@@ -7627,6 +7627,7 @@ What the inventory must show with these scenarios:
 | `AURORA_MEDIA_DEBUG=1` | Media diagnostics |
 | `AURORA_FONT_FALLBACK=0` | Without the system fallback fonts |
 | `AURORA_UI_FONT=<font>`, `AURORA_UI_SCALE=<scale>` | Interface font and scale for this launch, without changing the Preferences |
+| `AURORA_TEXT_SIZE=<size>` | Text size for this launch, without changing the Preferences |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Forces the texture memory budget |
 | `AURORA_VRAM_BUDGET_MB=<n>` | The driver's video memory budget taken as n MB, a smaller card on a large one |
 | `AURORA_TEXTURE_SIZING=screen` | Textures sized by their object's diameter on screen times the repeats, as before the Legacy Viewer's sizing |
@@ -8143,6 +8144,14 @@ What the inventory must show with these scenarios:
   name, buttons, menu rows) centred alike with every font; the test
   `the_place_island_centres_its_badge_and_texts_with_every_font` measures
   the place island.
+- **`AURORA_TEXT_SIZE=<size>`**: the text size (0.8 to 2, Preferences ›
+  Appearance › Text size) of this launch, never saved: to capture any
+  scenario at a large text size, for example the Conversations window and
+  the inventory at 2 (`AURORA_DEMO_INVENTORY=1`, 1920 × 1080). What to look
+  for: no line drawn over another (a conversation's name and the line under
+  it, a sidebar label and its count, a footer's hint and its buttons),
+  initials and the AO glyph inside their tile like the icons beside them,
+  windows that keep their size.
 - **`AURORA_PRESENT_MODE=immediate|mailbox|fifo|fifo-relaxed`**: replaces
   the present mode chosen from vertical sync
   (`aurora-render/src/present.rs`: without sync `Mailbox`, otherwise
