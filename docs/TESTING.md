@@ -913,9 +913,12 @@ when unfocused") is ignored during a screenshot.
   `demo sit tp: arrived, seated false, parent 0, seat animation false`
   (before the fix: `parent 150, seat animation true`, the avatar drawn
   seated far out of the region).
-- **`AURORA_DEMO_MMO="x,y[,1|2]"`**: left press on the avatar then right
-  button held (steering with the mouse); `1`: right arrow instead,
-  `2`: double right click (running). Additional comma-separated flags:
+- **`AURORA_DEMO_MMO="x,y[,1|2|3]"`**: left press on the avatar then right
+  button held (steering with the mouse); `1`: right arrow instead (the
+  avatar slides right, its yaw unchanged), `2`: double right click
+  (running), `3`: down arrow instead (the avatar backs up without turning:
+  the `backing up from` and `after walking` yaws match, #1259). Additional
+  comma-separated flags:
   `world` enables the world mouse-walk preference for this demo; `world-off`
   disables it. Aim at land or a noninteractive object to compare both.
   `left-first` releases the left button before the right; by default the

@@ -211,9 +211,6 @@ impl RightGesture {
 
 /// SL timings (llviewerinput.cpp): double-tap window / nudge phase, auto-fly.
 const NUDGE_TIME: f32 = 0.25;
-/// How fast the avatar turns toward the camera / walking direction while
-/// steering with the left button (rad/s).
-const STEER_TURN_RATE: f32 = 9.0;
 const FLY_TIME: f32 = 0.5;
 /// Radians: a change of the viewing angle below this is not sent in AgentFOV
 /// (an eased FOV zoom creeps toward its target for ever).
@@ -3660,7 +3657,7 @@ impl App {
     /// Walk bindings taking part in double-tap running: 0 forward, 1 back,
     /// 2 left, 3 right (turn keys only when they strafe).
     fn run_group(&self, input: &Input) -> Option<u8> {
-        // steering with the left button: left / right walk too (camera-relative)
+        // steering with the left button: left / right slide
         let strafe = self.mouse_mode == MouseMode::Steer || self.shift != self.settings.arrows_strafe;
         self.settings.keybinds.held_actions_of(input).into_iter().find_map(|a| match a {
             Action::Forward => Some(0),
@@ -6555,27 +6552,17 @@ impl App {
             return;
         }
         if self.mouse_mode == MouseMode::Steer {
-            // Mouse steering (LLToolCamera): the avatar faces the
-            // camera; the arrows are camera-relative and turn the avatar toward
-            // where it walks (→ = turn right and walk), the camera stays put
-            let x = i.forward as i32 - i.back as i32;
-            let y = (i.turn_left || i.strafe_left) as i32 - (i.turn_right || i.strafe_right) as i32;
-            // + right button = walk forward (MMO style)
-            let x = if self.right_drag && x == 0 && y == 0 { 1 } else { x };
-            let moving = x != 0 || y != 0;
-            let heading = self.world.agent.yaw + self.camera.orbit_yaw;
-            let target = if moving { heading + (y as f32).atan2(x as f32) } else { heading };
-            let d = (target - self.world.agent.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
-            let step = STEER_TURN_RATE * dt;
-            let turn = d.clamp(-step, step);
-            self.world.agent.yaw += turn;
-            self.camera.orbit_yaw -= turn;
-            i.forward = moving;
-            i.back = false;
+            // Mouse steering (LLToolCamera::mMouseSteering): the mouse turns
+            // the avatar itself (cameraOrbitAround), forward and back keep
+            // their meaning and the turn keys slide instead (agent_turn_left /
+            // agent_turn_right, indra/newview/llviewerinput.cpp). No turn
+            // toward the keys: backing up must not spin the avatar (#1259).
+            i.strafe_left |= i.turn_left;
+            i.strafe_right |= i.turn_right;
             i.turn_left = false;
             i.turn_right = false;
-            i.strafe_left = false;
-            i.strafe_right = false;
+            // + right button = walk forward (LLToolCamera::handleRightMouseDown)
+            i.forward |= self.right_drag;
         }
         i.run = self.temp_run.is_some() || self.joystick.running;
         if self.world.rlva.has("temprun") {
@@ -6593,7 +6580,7 @@ impl App {
             }
             s.get_or_insert(now).elapsed().as_secs_f32() < NUDGE_TIME
         };
-        i.nudge_fb = since(&mut self.fb_since, i.forward || i.back) && self.mouse_mode != MouseMode::Steer;
+        i.nudge_fb = since(&mut self.fb_since, i.forward || i.back) && !self.mouse_walks();
         i.nudge_lr = since(&mut self.lr_since, i.strafe_left || i.strafe_right);
         // Native joystick translation uses moveAt/moveLeft, without the
         // keyboard's initial nudge (LLViewerJoystick::agentPush/Slide).
@@ -10987,7 +10974,18 @@ impl App {
                 (10, _) if flag("quick") || flag("right-before-left") => {}
                 // third value 1: hold the right arrow instead of the right button
                 (10, _) if c.get(2) == Some(&1.0) => {
+                    self.demo_release_keyboard();
                     self.down.insert(Input::key(KeyCode::ArrowRight));
+                }
+                // third value 3: hold the down arrow (backing up must not turn, #1259)
+                (10, _) if c.get(2) == Some(&3.0) => {
+                    self.demo_release_keyboard();
+                    self.down.insert(Input::key(KeyCode::ArrowDown));
+                    log::info!(
+                        "demo mmo: backing up from pos {:?}, yaw {:.2}",
+                        self.world.agent.position,
+                        self.world.agent.yaw
+                    );
                 }
                 // third value 2: double right click, held the second time (run)
                 (11, _) if c.get(2) == Some(&2.0) => self.mouse_input(MouseButton::Right, false, false),
@@ -11001,6 +10999,7 @@ impl App {
                         self.mouse_input(MouseButton::Right, false, false);
                     }
                     self.down.remove(&Input::key(KeyCode::ArrowRight));
+                    self.down.remove(&Input::key(KeyCode::ArrowDown));
                     log::info!(
                         "demo mmo: after walking, mode {:?}, pos {:?}, yaw {:.2}, camera yaw {:.2}, running {running} (after release {})",
                         self.mouse_mode,
@@ -11018,6 +11017,16 @@ impl App {
                 _ => {}
             }
         }
+    }
+
+    /// Demo keys reach the avatar: the text field the demo windows opened
+    /// with (the conversation's chat input) lets the keyboard go.
+    fn demo_release_keyboard(&self) {
+        self.egui_ctx.memory_mut(|m| {
+            if let Some(id) = m.focused() {
+                m.surrender_focus(id);
+            }
+        });
     }
 
     /// AURORA_PROFILE: the frame's counters and the settings that change its
