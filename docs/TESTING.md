@@ -3053,6 +3053,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | EEP environment of the region and the parcel |
 | `AURORA_DEMO_ENV_SELECT=<mode>` | Environment picker |
 | `AURORA_DEMO_ENV_EDITOR=<mode>` | Sky, water and day cycle editors |
+| `AURORA_DEMO_ENV_KEYS=u\|y\|n\|x\|j` | World › Environment shortcut pressed (Ctrl+Shift + the letter) |
 | `AURORA_DEMO_DOF=<f>:<m>[:debug]` | Depth of field at this aperture and focus distance |
 
 ### Details
@@ -3275,6 +3276,13 @@ both open states and the selection count. Capture at frame 620.
   fade). `lighting`: "Personal lighting" also opens, a sky is
   chosen (2600) then modified (2900). `list`: the list of skies unfolded
   (2500).
+- **`AURORA_DEMO_ENV_KEYS=u|y|n|x|j`**: at frame 300, Ctrl+Shift + the
+  letter goes through the shortcut table as World › Environment's
+  shortcuts (#1264): `u` Sunrise, `y` Midday, `n` Sunset, `x` Midnight,
+  `j` Use Shared Environment. The log line `demo env keys:` gives the action
+  found and the time of day after it; capture after the sky's transition
+  (`AURORA_CAPTURE_FRAMES=620`). `j` with `AURORA_DEMO_TOD=2` must bring
+  back the region's sky (time of day 0).
 - **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|beacons|water|item|item-save|day|day-play|day-edit|day-notrans|parcel|region|custom|custom-follow`**: sky,
   water and day cycle editors (`app/env_editor.rs`, `app/env_day_editor.rs`).
   `day`: the day cycle editor opens on the user's "my day cycle" (frame

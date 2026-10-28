@@ -10610,6 +10610,31 @@ impl App {
                 );
             }
         }
+        // AURORA_DEMO_ENV_KEYS="u" (y, n, x, j): Ctrl+Shift + that letter at
+        // frame 300, through the shortcut table, as World › Environment's
+        // shortcuts (#1264)
+        if self.demo
+            && self.frame_count == 300
+            && let Ok(v) = std::env::var("AURORA_DEMO_ENV_KEYS")
+        {
+            let code = match v.as_str() {
+                "u" => KeyCode::KeyU,
+                "n" => KeyCode::KeyN,
+                "x" => KeyCode::KeyX,
+                "j" => KeyCode::KeyJ,
+                _ => KeyCode::KeyY,
+            };
+            let mods = Mods {
+                ctrl: true,
+                shift: true,
+                alt: false,
+            };
+            let action = self.settings.keybinds.triggered(&Input::key(code), mods);
+            if let Some(action) = action {
+                self.env_shortcut(action);
+            }
+            log::info!("demo env keys: Ctrl+Shift+{v} -> {action:?}, time of day {}", self.panels.time_of_day);
+        }
         if self.demo {
             self.particle_editor_demo();
         }
