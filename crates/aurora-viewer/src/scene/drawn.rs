@@ -406,7 +406,10 @@ mod tests {
             ..Default::default()
         };
         let depth = scene.touch_depth(&world, &drawn, Some(ray), Some(on_body), 100.0);
-        assert!(depth.is_some_and(|p| (p.x - 2.65).abs() < 1e-3), "the clicker under the body: {depth:?}");
+        assert!(
+            depth.is_some_and(|p| (p.x - 2.65).abs() < 1e-3),
+            "the clicker under the body: {depth:?}"
+        );
         let hit = scene.action_point(&world, Some(ray), depth, false, 100.0).expect("a point");
         assert_eq!(scene.interaction_at_ray(&world, hit, ray, true), Some(clicker));
         let designated = scene.designated(&world, Gesture::Touch, &drawn, Some(ray), Some(hit), Some(on_body), false);
