@@ -2780,9 +2780,15 @@ pub fn bottom_bar(
     // autohidden (#1009), the toolbar takes the whole bar
     let chat_shown = chat.bar_shown();
     chat.bar_hovered = false;
+    let editor_height = if chat_shown {
+        super::chat::input::height(ui.ctx(), super::chat::bar_input_id(), ui.spacing().interact_size.y)
+    } else {
+        0.0
+    };
+    let bar_height = layout.bottom_bar_height.max(editor_height + 6.0);
     let resp = egui::Panel::bottom("bottom_bar")
         .frame(bar_frame(p).inner_margin(egui::Margin::symmetric(8, 3)))
-        .exact_size(layout.bottom_bar_height)
+        .exact_size(bar_height)
         .show(ui, |ui| {
             glass = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
             ui.set_min_width(ui.available_width());
@@ -2915,6 +2921,66 @@ pub fn bottom_bar(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_chat_bar_bounds_paragraphs_and_releases_space_when_cleared() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let settings = crate::settings::Settings::default();
+        let mut panels = Panels::from_settings(&settings);
+        let mut chat = super::super::chat::ChatUi::default();
+        let mut toolbar = super::super::toolbar::ToolbarUi::default();
+        let mut toolbar_settings = super::super::toolbar::ToolbarSettings::default();
+        let mut width = 0.0;
+        let field = super::super::chat::bar_input_id();
+        let mut frame = |text: &str| {
+            chat.input = text.into();
+            let mut reserved = 0.0;
+            for _ in 0..4 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0))),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let (_, _, height, _) = bottom_bar(
+                            ui,
+                            &crate::theme::Theme::default().palette(),
+                            &Icons::default(),
+                            &Layout::default(),
+                            &mut toolbar,
+                            &mut toolbar_settings,
+                            &mut panels,
+                            &mut chat,
+                            &crate::gestures::Manager::default(),
+                            0,
+                            None,
+                            false,
+                            false,
+                            false,
+                            &mut width,
+                            &mut MicButton::default(),
+                            false,
+                            false,
+                            None,
+                            &favorites::View::default(),
+                        );
+                        reserved = height;
+                    },
+                );
+                output.textures_delta.clear();
+            }
+            (ctx.read_response(field).unwrap().interact_rect, reserved)
+        };
+        let (empty, before) = frame("");
+        let (expanded, after) = frame("one\ntwo\nthree\nfour\nfive\nsix");
+        assert!(expanded.height() > empty.height() + 10.0);
+        assert!(expanded.height() <= 100.0);
+        assert!(after < before, "the world reserves the taller bar");
+        let (cleared, last) = frame("");
+        assert!((cleared.height() - empty.height()).abs() < 0.5);
+        assert_eq!(last, before);
+    }
 
     #[test]
     fn toolbar_microphone_options_still_open_when_the_arrow_does_not_fit() {

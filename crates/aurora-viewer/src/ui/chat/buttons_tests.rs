@@ -787,8 +787,8 @@ fn pasted_transcripts_keep_paragraphs_when_sent_in_every_style() {
                 assert_eq!(h.st.draft_mut(conversation), &expected, "{style:?}, {conversation:?}");
                 let after = h.shown(field).expect("chat field");
                 assert!(
-                    (before.height() - after.height()).abs() < 0.5,
-                    "a pasted transcript keeps the compact editor: {before:?} -> {after:?}"
+                    after.height() > before.height() && after.height() < before.height() * 4.0,
+                    "a pasted transcript expands the editor within its row limit: {before:?} -> {after:?}"
                 );
                 h.frame(history_events(egui::Key::Z, egui::Modifiers::CTRL | egui::Modifiers::COMMAND));
                 assert_eq!(h.st.draft_mut(conversation), "replace me", "undo restores the replaced draft");
@@ -831,6 +831,136 @@ fn pasted_transcripts_keep_paragraphs_in_the_nearby_chat_bar() {
         .bar_frame(history_events(egui::Key::Enter, egui::Modifiers::NONE))
         .expect("send the transcript");
     assert_eq!(sent.message, text);
+}
+
+/// The explicit paragraph chord wins over completion and sending, including
+/// in the narrower detached panes. Shift+Enter whispers only in nearby chat;
+/// in IMs and sessions it neither completes, inserts nor sends anything.
+#[test]
+fn paragraph_chord_edits_without_sending_in_every_conversation_style() {
+    for style in ALL {
+        for conversation in [None, Some(JANE), Some(GROUP), Some(MEETING)] {
+            for detached in [false, true] {
+                let mut h = H::new(style);
+                h.open(conversation);
+                if detached {
+                    h.st.pop_out(conversation);
+                    crate::ui::widgets::place_floater(
+                        &h.frames.ctx,
+                        &super::popout::floater_id(conversation),
+                        egui::pos2(100.0, 100.0),
+                        egui::vec2(500.0, 500.0),
+                    );
+                    h.st.conv_focus_request = true;
+                    h.settle();
+                }
+                h.type_text("first :hea");
+                if conversation.is_some() {
+                    h.history_key(egui::Key::Enter, egui::Modifiers::SHIFT);
+                    assert_eq!(h.st.draft_mut(conversation), "first :hea", "Shift+Enter leaves completion alone");
+                    assert!(!h.take().iter().any(|a| matches!(a, ConvAction::Local(_) | ConvAction::Im { .. })));
+                }
+                h.history_key(egui::Key::Enter, egui::Modifiers::CTRL | egui::Modifiers::SHIFT);
+                assert_eq!(h.st.draft_mut(conversation), "first :hea\n", "{style:?}, detached={detached}");
+                assert!(!h.take().iter().any(|a| matches!(a, ConvAction::Local(_) | ConvAction::Im { .. })));
+                h.type_text("second 🙂");
+                h.history_key(egui::Key::Enter, egui::Modifiers::SHIFT);
+                if conversation.is_some() {
+                    assert_eq!(
+                        h.st.draft_mut(conversation),
+                        "first :hea\nsecond 🙂",
+                        "Shift+Enter preserves the draft"
+                    );
+                    assert!(!h.take().iter().any(|a| matches!(a, ConvAction::Local(_) | ConvAction::Im { .. })));
+                    let field = egui::Id::unique(("conv_input", conversation));
+                    assert!(h.frames.ctx.memory(|m| m.has_focus(field)), "Shift+Enter preserves focus");
+                    h.history_key(egui::Key::Enter, egui::Modifiers::NONE);
+                }
+                assert!(
+                    h.take().iter().any(|a| match a {
+                        ConvAction::Local(out) => out.message == "first :hea\nsecond 🙂" && out.chat_type == aurora_net::ChatType::Whisper,
+                        ConvAction::Im { to, text } => Some(*to) == conversation && text == "first :hea\nsecond 🙂",
+                        _ => false,
+                    }),
+                    "{style:?}, {conversation:?}, detached={detached}: the expected send shortcut"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn paragraph_chord_replaces_selection_and_undoes_without_sending() {
+    for style in ALL {
+        let mut h = H::new(style);
+        h.open(None);
+        h.type_text("replace me");
+        for _ in 0..65 {
+            h.frame(Vec::new());
+        }
+        h.history_key(egui::Key::A, egui::Modifiers::CTRL | egui::Modifiers::COMMAND);
+        h.history_key(egui::Key::Enter, egui::Modifiers::CTRL | egui::Modifiers::SHIFT);
+        assert_eq!(h.st.draft_mut(None), "\n");
+        assert!(!h.take().iter().any(|a| matches!(a, ConvAction::Local(_))));
+        h.history_key(egui::Key::Z, egui::Modifiers::CTRL | egui::Modifiers::COMMAND);
+        assert_eq!(h.st.draft_mut(None), "replace me");
+    }
+}
+
+#[test]
+fn paragraph_editor_wraps_scrolls_and_collapses_in_every_style() {
+    for style in ALL {
+        let mut h = H::new(style);
+        h.open(Some(JANE));
+        let field = egui::Id::unique(("conv_input", Some(JANE)));
+        let rect = |h: &H| h.frames.ctx.read_response(field).unwrap().interact_rect;
+        let before = rect(&h);
+        let text = "A wrapping sentence with café and an emoji 🙂. ".repeat(100);
+        h.frame(vec![egui::Event::Paste(text.clone())]);
+        h.settle();
+        let expanded = rect(&h);
+        assert!(expanded.height() > before.height() + 10.0, "{style:?}: wraps");
+        assert!(expanded.height() <= 100.0, "{style:?}: bounded viewport {expanded:?}");
+        for _ in 0..30 {
+            h.frame(Vec::new());
+        }
+        assert_eq!(rect(&h), expanded, "{style:?}: neither field nor window keeps growing");
+        assert_eq!(h.st.draft_mut(Some(JANE)), &text);
+        h.enter(egui::Modifiers::NONE);
+        assert!(
+            h.take()
+                .iter()
+                .any(|a| matches!(a, ConvAction::Im { text: sent, .. } if sent == text.trim()))
+        );
+        assert!(
+            (rect(&h).height() - before.height()).abs() < 0.5,
+            "{style:?}: collapses after sending"
+        );
+    }
+}
+
+#[test]
+fn nearby_bar_paragraph_chord_keeps_focus_and_volume_shortcuts() {
+    let mut h = H::new(ChatStyle::Aurora);
+    h.st.keep_focus = true;
+    h.st.focus_request = true;
+    h.bar_frame(Vec::new());
+    h.bar_frame(Vec::new());
+    h.bar_frame(vec![egui::Event::Paste("first\r\nsecond\rthird".into())]);
+    assert!(
+        h.bar_frame(history_events(egui::Key::Enter, egui::Modifiers::CTRL | egui::Modifiers::SHIFT))
+            .is_none()
+    );
+    h.bar_frame(vec![egui::Event::Paste("\nlast 🙂".into())]);
+    assert_eq!(h.st.input, "first\nsecond\nthird\n\nlast 🙂");
+    assert!(h.frames.ctx.memory(|m| m.has_focus(super::bar_input_id())));
+    let sent = h.bar_frame(history_events(egui::Key::Enter, egui::Modifiers::CTRL)).unwrap();
+    assert_eq!(sent.message, "first\nsecond\nthird\n\nlast 🙂");
+    assert_eq!(sent.chat_type, aurora_net::ChatType::Shout);
+    h.bar_frame(Vec::new());
+    h.bar_frame(vec![egui::Event::Text("whisper".into())]);
+    let sent = h.bar_frame(history_events(egui::Key::Enter, egui::Modifiers::SHIFT)).unwrap();
+    assert_eq!(sent.chat_type, aurora_net::ChatType::Whisper);
 }
 
 /// Incoming group messages must leave the original sender available to

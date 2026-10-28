@@ -3965,6 +3965,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
+| `AURORA_DEMO_CHAT_INPUT=1\|long` | Paragraph drafts in the conversation and nearby-chat inputs |
 | `AURORA_DEMO_SPELLING=1\|menu\|replace` | Misspelled words underlined in the chat bar and Conversations; their suggestions; auto-replace while typing |
 | `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|clips\|services\|links\|net` | Picture, GIF and YouTube cards; `clips` shows video files and an animated WebP; `links[:gif\|image\|video]` isolates URL actions; `services[:gyazo,…]` shows service pages and social posts; `net` uses real sites |
@@ -5348,6 +5349,19 @@ failure. Grid validation and any paid upload are performed by the human.
   right-click a selected message and choose Copy message: it must copy the same
   selection as Ctrl+C, including partial first/last messages. With no selection,
   Copy message still copies only its target; Quote still quotes that message.
+- **`AURORA_DEMO_CHAT_INPUT=1|long`** (#1226): open Conversations with a
+  paragraph draft in its field and the nearby-chat bar. `1` shows four lines,
+  including an empty line and emoji; `long` exceeds the four-row viewport.
+  Combine with `AURORA_DEMO_CONV` to check Aurora, Compact, Bubbles and Legacy,
+  private/group IMs and detached conversations. Paste paragraphs and use
+  Ctrl+Shift+Enter: preserve line breaks, replace selected text and support
+  undo without sending. Enter sends, Ctrl+Enter shouts in nearby chat and
+  Shift+Enter whispers only in nearby chat; in private, group and conference
+  conversations it leaves the draft, completion and focus unchanged. The
+  field wraps and grows to four rows, then scrolls;
+  the dock stays in place, while the full Legacy bar reserves its taller
+  layout. Conversation windows keep their size. Sending collapses the field.
+  Capture at frame 750 or later. This fixture uses no grid or system clipboard.
 - **`AURORA_DEMO_EMOJI_CODES=<text>`**: the Conversations window open, its
   input holding `<text>` with the keyboard and the caret at the end
   (`ui/emoji/codes.rs`). With `hi :hea`, the list of suggestions opens

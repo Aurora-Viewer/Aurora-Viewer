@@ -45,8 +45,8 @@ pub fn default_chat_width(screen: Rect) -> f32 {
 /// Where the bottom islands stand on `screen`: the chat island, the dock,
 /// the size of the dock's buttons (their height; square with their icon
 /// alone, the Speak button `DOCK_MIC_W` wide), each button's width, and the
-/// one height of both islands, the buttons' and their margins (the human's
-/// rule: the two islands share their top and their bottom).
+/// resting height of both islands, the buttons' and their margins. Paragraph
+/// entry temporarily raises the chat island while the toolbar stays in place.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Geometry {
     pub chat: Rect,
@@ -63,7 +63,7 @@ impl Geometry {
     /// What the windows keep free above the bottom islands: the islands
     /// and the usual 8 px gap (`islands::work_area`).
     pub fn reserved(&self) -> f32 {
-        MARGIN + self.height + MARGIN
+        MARGIN + self.chat.height().max(self.height) + MARGIN
     }
 }
 
@@ -174,7 +174,7 @@ pub fn bottom(
     let style = row.style;
     // the conversations' thumbnails as high as the chat island's button
     let thumb = |button: f32| button - 4.0;
-    let geo = geometry_styled(
+    let mut geo = geometry_styled(
         screen,
         *chat_width,
         style,
@@ -199,6 +199,11 @@ pub fn bottom(
     // without Conversations keeps a way to the conversations). The geometry
     // stays: nothing moves when the field comes and goes.
     let shown = chat.bar_shown();
+    if shown {
+        let slot = geo.button - 4.0;
+        let editor = crate::ui::chat::input::height(&ctx, crate::ui::chat::bar_input_id(), slot);
+        geo.chat.min.y -= editor - slot;
+    }
     chat.bar_hovered = false;
     let docked = chat.autohide && buttons.iter().any(|b| b.command == "conversations");
     let out = if shown {
@@ -301,16 +306,20 @@ fn chat_island(
     let island = geo.chat;
     // the field and the button, centred in the islands' common height
     let slot = geo.button - 4.0;
-    let top = island.center().y - slot / 2.0;
+    let inset = (geo.height - slot) / 2.0;
+    let top = island.bottom() - inset - slot;
     let button = Rect::from_min_size(Pos2::new(island.right() - PAD - slot, top), Vec2::splat(slot));
     let field_right = if with_button { button.left() - GAP } else { island.right() - PAD };
-    let field = Rect::from_min_max(Pos2::new(island.left() + PAD, top), Pos2::new(field_right, top + slot));
+    let field = Rect::from_min_max(
+        Pos2::new(island.left() + PAD, island.top() + inset),
+        Pos2::new(field_right, island.bottom() - inset),
+    );
     let radius = ui.visuals().window_corner_radius;
     ui.painter().rect_filled(field, radius, p.field);
 
     // the emoji, at the field's end
     let smile = Rect::from_center_size(
-        Pos2::new(field.right() - FIELD_PAD - EMOJI_ICON / 2.0, field.center().y),
+        Pos2::new(field.right() - FIELD_PAD - EMOJI_ICON / 2.0, top + slot / 2.0),
         Vec2::splat(EMOJI_ICON),
     );
     let smile_resp = ui.interact(smile.expand(4.0), Id::unique("chat_island_emoji"), Sense::click());
@@ -336,7 +345,7 @@ fn chat_island(
     );
     // egui paints a placeholder in the weak text colour, whatever its own
     child.visuals_mut().weak_text_color = Some(p.muted_dim);
-    let out = crate::ui::chat::bar_input(&mut child, p, chat, gestures, emoji.as_deref_mut(), |edit| {
+    let out = crate::ui::chat::bar_input(&mut child, p, chat, gestures, emoji.as_deref_mut(), text.width(), |edit| {
         edit.frame(egui::Frame::NONE.inner_margin(centre))
             .font(egui::FontId::proportional(12.5))
             .text_color(p.ink)
@@ -624,6 +633,55 @@ mod tests {
             "{speak:?} {g:?}"
         );
         assert_eq!(speak.height(), g.button);
+    }
+
+    #[test]
+    fn paragraph_chat_grows_upwards_and_keeps_toolbar_on_its_baseline() {
+        let mut bench = Bench::shown();
+        // Area sizing precedes the editor's first height measurement, which
+        // its parent applies on the next frame. Capture a settled baseline.
+        for _ in 0..20 {
+            bench.frame(vec![]);
+        }
+        let field = crate::ui::chat::bar_input_id();
+        let before = bench.ctx.read_response(field).unwrap().interact_rect;
+        let background = |bench: &Bench| {
+            let center = bench.ctx.read_response(field).unwrap().interact_rect.center();
+            let fill = crate::theme::Theme::default().palette().field;
+            bench
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::Shape::Rect(r) if r.fill == fill && r.rect.contains(center) => Some(r.rect),
+                    _ => None,
+                })
+                .expect("the chat field's background")
+        };
+        let anchored = background(&bench);
+        let speak = || Id::unique("dock_speak_rect");
+        let toolbar = bench.ctx.data(|d| d.get_temp::<Rect>(speak())).unwrap();
+        bench.chat.input = "one 🙂\ntwo\nthree\nfour\nfive\nsix".into();
+        // Measure after the scrollbar's appearance animation settles.
+        for _ in 0..20 {
+            bench.frame(vec![]);
+        }
+        let expanded = bench.ctx.read_response(field).unwrap().interact_rect;
+        assert!(expanded.top() < before.top() - 10.0, "{before:?} -> {expanded:?}");
+        // The short editor is vertically centred inside the field. Compare
+        // its background's anchor, rather than the text's interaction rect.
+        assert!((background(&bench).bottom() - anchored.bottom()).abs() < 0.5);
+        assert!(expanded.height() <= 100.0);
+        assert_eq!(bench.ctx.data(|d| d.get_temp::<Rect>(speak())).unwrap(), toolbar);
+        for _ in 0..30 {
+            bench.frame(vec![]);
+        }
+        assert_eq!(bench.ctx.read_response(field).unwrap().interact_rect, expanded);
+        bench.chat.input.clear();
+        // Let the scrollbar's disappearance animation settle as well.
+        for _ in 0..20 {
+            bench.frame(vec![]);
+        }
+        assert_eq!(bench.ctx.read_response(field).unwrap().interact_rect, before);
     }
 
     /// One viewer frame of the bottom islands on a 1536 × 864 screen.

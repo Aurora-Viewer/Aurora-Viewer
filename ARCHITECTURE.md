@@ -16,9 +16,13 @@ only until initial agent-parcel properties arrive and is cleared on region chang
 
 Chat message menus retain the selected transcript text alongside their target
 (`ui/chat/line_menu.rs`), so Copy agrees with the keyboard through message arrival
-and eviction. The compact conversation and nearby-chat fields route multiline
-pastes through ordinary text insertion, retaining paragraph boundaries in drafts,
-undo, clipboard copies and outgoing messages without enlarging the editor.
+and eviction. `ui/chat/input.rs` shares a wrapping paragraph editor across
+conversation panes and nearby-chat bars. Native paste/undo preserves line breaks;
+Ctrl+Shift+Enter inserts one before completion or sending handles Enter.
+Shift+Enter whispers only in nearby chat; other conversations consume it
+before completion/editing/sending, preserving the draft and focus.
+The editor grows to four visible rows, then scrolls. Its measured bounded height
+reserves space in the transcript or bar without growing the containing window.
 
 `scene/physics_shapes.rs` connects the build inspector's saved physics eye to
 selected collision geometry. Mesh header ranges include `physics_mesh` and
@@ -1906,6 +1910,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `high_contrast.rs` | High contrast (#906, Preferences › Accessibility): process-wide (`set` / `current`), read by `Theme::palette`, which then takes its palette instead of the skin's (before the colour blindness adaptation): opaque black surfaces, white text, one light violet accent, states apart by lightness. `Palette::high_contrast` gives buttons, fields, windows, islands and dividers a light border (`Theme::apply`, `widgets::border_stroke`). Its tests measure the WCAG ratios of every text / surface pair |
 | `interface_colors.rs` | Interface colours (Preferences › Appearance › Skin): the user's accent, windows' background and text, process-wide (`set` / `current`), applied by `Theme::palette` over the skin's colours (not in high contrast, before the colour blindness adaptation). The other roles follow by the skin's own relations: the accent family in OKLCH (lightness step, chroma ratio, hue turn), the surfaces and the muted texts by their place between the background and the text in OKLab, so that the skin's bases give back every colour exactly. Lightness moves until text reads 4.5:1 on the panel and the accent 3:1, and so do the states and the links' teal (hue kept); `on_panel` does the same for the chat's configurable colours and the name tags (`ui/colors.rs`, `text`); `on_accent` switches to navy when white no longer reads |
 | `ui/chat/input_history.rs` | Sent-message recall per conversation, shared by both nearby chat fields, with independent browsing and drafts per editor. Ctrl+Up/Down applies in every chat style; in memory, without a count limit, consecutive duplicates skipped. |
+| `ui/chat/input.rs` | Paragraph editing shared by conversations and nearby-chat bars: native multiline paste/undo, Ctrl+Shift+Enter insertion before completion/sending, wrapping and a four-row scrolling viewport whose measured height reserves space in its parent. |
 | `ui/chat/suggest.rs`, `app/suggest_demo.rs` | The chat fields' suggestions (#980), in every chat style: `@` lists the residents of the conversation to mention (nearby chat: within chat range, taken by the app only while a nearby field asks; an IM or a session: its members) and writes `@Name`, sent as the mention link; `/` lists the nearby chat's matching gestures under `completion.rs`'s inline completion; the optional name prediction of residents around. Options of Preferences › Chat; `AURORA_DEMO_MENTION` scenario. |
 | `ui/chat/keys.rs` | The keyboard of the Conversations tabs (#651), in every chat style: Alt + the arrows go round the conversations as the list shows them while the keyboard is in the window; Ctrl+W closes the conversation shown and shows the next one, or the window on a tab that cannot be closed. |
 | `ui/chat/latest.rs` | The button back to the latest messages (#558), in every chat style: it fades in over the bottom of a conversation's lines once the reader is away from the end (`view.rs` keeps how far, and from which line the messages are new), says how many came in since, and puts the scroll offset past the end, where the scroll area sticks to it again. |
