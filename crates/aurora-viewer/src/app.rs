@@ -3862,6 +3862,9 @@ impl App {
             Action::RefreshAttachments => self.refresh_attachments(),
             Action::PhotoWindow => ui::widgets::toggle_floater(&self.egui_ctx, ui::snapshot::WINDOW, &mut self.panels.snapshot),
             Action::PhotoToDisk => self.photo_to_disk(),
+            Action::EnvSunrise | Action::EnvMidday | Action::EnvSunset | Action::EnvMidnight | Action::EnvShared => {
+                self.env_shortcut(action)
+            }
             // held actions are read every frame
             _ => {}
         }
@@ -11587,6 +11590,40 @@ impl App {
         }
     }
 
+    /// World › Environment's shortcuts (`World.EnvSettings`), like its menu
+    /// entries; greyed by RLVa's @setenv (menu_viewer.xml: RLV.EnableIfNot).
+    fn env_shortcut(&mut self, action: Action) {
+        let Some(time) = action.time_of_day() else {
+            return;
+        };
+        if self.world.eep.rlva_locked {
+            return;
+        }
+        if time == 0 {
+            self.world.eep.clear_local();
+        }
+        self.panels.time_of_day = time;
+    }
+
+    /// The keys of World › Environment's shortcuts, as its menu writes them
+    /// (`ui::bars::StatusInfo::env_keys`).
+    fn env_keys(&self) -> [String; 6] {
+        let keys = |action| {
+            self.settings.keybinds.get(action)[0]
+                .as_ref()
+                .map(|b| b.label())
+                .unwrap_or_default()
+        };
+        [
+            keys(Action::EnvShared),
+            keys(Action::EnvSunrise),
+            keys(Action::EnvMidday),
+            keys(Action::EnvSunset),
+            keys(Action::EnvMidnight),
+            String::new(),
+        ]
+    }
+
     /// The keys of Show User Interface, as the menus write them.
     fn interface_keys(&self) -> String {
         self.settings.keybinds.get(crate::keybinds::Action::ToggleInterface)[0]
@@ -12875,6 +12912,7 @@ impl App {
                     tp_forward: self.world.tp_history.next().map(|e| e.region.clone()),
                     status: self.world.status.modes(),
                     local_env: self.world.eep.has_local(),
+                    env_keys: self.env_keys(),
                     double_click: self.double_click_action(),
                     quickjump: self.settings.quickjump,
                     quiet_snapshots: !self.settings.snapshot.sound,

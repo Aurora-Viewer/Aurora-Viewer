@@ -1097,6 +1097,7 @@ mod tests {
             ban_lines: 0,
             parcel_icons: Vec::new(),
             local_env: false,
+            env_keys: Default::default(),
             double_click: Default::default(),
             quickjump: false,
             quiet_snapshots: false,

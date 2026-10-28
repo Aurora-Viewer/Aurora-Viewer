@@ -190,6 +190,9 @@ pub struct StatusInfo<'a> {
     pub parcel_icons: Vec<super::parcel_icons::ParcelIcon>,
     /// A local environment is shown (selector, preset, personal lighting).
     pub local_env: bool,
+    /// The keys of World › Environment's shortcuts, by `Panels::time_of_day`
+    /// (0 Use shared environment; the legacy midday has none).
+    pub env_keys: [String; 6],
     /// What a double click on the ground does (Me › Double-click on the ground).
     pub double_click: crate::autopilot::DoubleClick,
     /// Quickjump is on (Me › Quickjump).
@@ -934,13 +937,14 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         menu::submenu(ui, p, "sunset-2-filled", aurora_i18n::tr!("common-environment"), true, |ui| {
             // back to the region / parcel EEP cycle, in real time
             let shared = !st.local_env;
-            if menu::check(
+            if menu::check_keys(
                 ui,
                 p,
                 "world-filled",
                 aurora_i18n::tr!("ui-bars-use-shared-environments"),
                 shared,
                 true,
+                &st.env_keys[0],
             ) {
                 panels.time_of_day = 0;
                 *action = BarAction::SharedEnvironment;
@@ -957,7 +961,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             let labels = time_of_day();
             for i in crate::world::env::TIME_OF_DAY_ORDER {
                 let n = i as usize;
-                if menu::check(ui, p, icons[n], labels[n], panels.time_of_day == i, true) {
+                if menu::check_keys(ui, p, icons[n], labels[n], panels.time_of_day == i, true, &st.env_keys[n]) {
                     panels.time_of_day = i;
                 }
             }
