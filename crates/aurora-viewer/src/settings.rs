@@ -539,6 +539,9 @@ pub struct Settings {
     /// the user's choice only, not the window's state at exit. Off, the
     /// frame rate of the bars opens it.
     pub show_perf: bool,
+    /// Conversations and the mini-map open with the session: the window's
+    /// last open or close, or the switch of Preferences › Layout › Startup
+    /// turned since (`ui::StartupWindows`).
     pub show_chat: bool,
     pub show_minimap: bool,
     /// FSUseStandalonePlaceDetailsFloater: landmarks, place links and history

@@ -274,6 +274,9 @@ pub struct App {
     /// The viewer's part of Linden Lab's viewer statistics (app/viewer_stats.rs).
     viewer_stats: viewer_stats::Tracker,
     panels: Panels,
+    /// Conversations and the mini-map as last frame left them (their
+    /// startup settings follow an open or a close only).
+    startup_windows: ui::StartupWindows,
     chat_ui: ChatUi,
     toolbar_ui: ui::toolbar::ToolbarUi,
     /// The skin's toolbar as the dock of the islands has it by default.
@@ -1081,6 +1084,7 @@ impl App {
             demo_mfa_challenge: None,
             relogin: Default::default(),
             viewer_stats: Default::default(),
+            startup_windows: ui::StartupWindows::new(&panels),
             panels,
             chat_ui: ChatUi::default(),
             toolbar_ui: Default::default(),
@@ -14929,8 +14933,7 @@ impl App {
                 self.draw_env_editor(&ctx, &p);
                 self.draw_day_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);
-                self.settings.show_chat = self.panels.chat;
-                self.settings.show_minimap = self.panels.minimap;
+                self.startup_windows.remember(&self.panels, &mut self.settings);
                 self.settings.audio.stream_title_window = self.panels.stream_title;
                 self.settings.show_people = self.panels.people;
                 self.settings.people_tab = self.panels.people_tab;
