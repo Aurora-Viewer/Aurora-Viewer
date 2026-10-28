@@ -1306,6 +1306,40 @@ mod tests {
         assert_eq!(f.quiet_frame(&all, &state), vec![avatar, att, att_child, hud]);
     }
 
+    /// A report that moves a prim of a worn linkset fades in, the prim
+    /// placed by the sync at each frame while its root stays on its anchor;
+    /// once faded, the prim is placed once more, back on the anchor. Nothing
+    /// else visits it (its wearer's followers stop at the anchored root):
+    /// left in the world where the last fading frame put it, it trailed
+    /// behind its walking wearer until the next report.
+    #[test]
+    fn a_faded_correction_puts_a_worn_prim_back_on_its_anchor() {
+        let mut f = Fixture::new();
+        let mut state = State::default();
+        let avatar = f.add(9000, 0, true);
+        let att = f.add(9001, 9000, false);
+        let att_child = f.add(9002, 9001, false);
+        let all = [avatar, att, att_child];
+        f.frame(&state);
+        state.anchored.extend([att, att_child]);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar]);
+        // a script moves the prim: the gap fades in, placed by the sync
+        let at = f.world.objects.get(att_child).expect("worn prim").position;
+        f.update(att_child, |u| u.position = at + Vec3::X * 0.05);
+        assert!(f.world.objects.get(att_child).expect("worn prim").has_motion());
+        state.anchored.remove(&att_child);
+        assert_eq!(f.frame(&state), vec![avatar, att_child]);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, att_child]);
+        // faded: placed once more, back on its anchor, then left to the GPU
+        f.world
+            .objects
+            .expire_corrections(std::time::Instant::now() + std::time::Duration::from_secs(1));
+        assert!(!f.world.objects.get(att_child).expect("worn prim").has_motion());
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, att_child]);
+        state.anchored.insert(att_child);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar]);
+    }
+
     /// A rigged root moves by itself and its plain prims are anchored: an
     /// update of the root still reaches them, though the root was already
     /// listed with its followers.

@@ -487,18 +487,40 @@ impl Object {
     }
 
     fn reported(&self) -> motion::Reported {
+        let (velocity, acceleration) = self.linear_motion();
         motion::Reported {
             position: self.position,
             rotation: self.rotation,
-            velocity: self.velocity,
-            acceleration: self.acceleration,
+            velocity,
+            acceleration,
             angular_velocity: self.angular_velocity,
         }
     }
 
-    /// The simulator reported a motion (any velocity, acceleration or spin).
+    /// LLVOVolume::isAttachment: a prim worn by an avatar (trees, grass and
+    /// avatars use the state for something else).
+    pub fn is_attachment(&self) -> bool {
+        self.pcode == aurora_prim::params::LL_PCODE_VOLUME && self.state != 0
+    }
+
+    /// Velocity and acceleration the object moves with. An attachment only
+    /// spins (LLViewerObject::idleUpdate returns before
+    /// interpolateLinearMotion): a velocity in the update of a worn prim
+    /// would carry it away from its point, in the point's frame, until the
+    /// next update.
+    fn linear_motion(&self) -> (Vec3, Vec3) {
+        if self.is_attachment() {
+            (Vec3::ZERO, Vec3::ZERO)
+        } else {
+            (self.velocity, self.acceleration)
+        }
+    }
+
+    /// The simulator reported a motion the object follows (velocity,
+    /// acceleration or spin).
     fn extrapolates(&self) -> bool {
-        self.velocity != Vec3::ZERO || self.acceleration != Vec3::ZERO || self.angular_velocity != Vec3::ZERO
+        let (velocity, acceleration) = self.linear_motion();
+        velocity != Vec3::ZERO || acceleration != Vec3::ZERO || self.angular_velocity != Vec3::ZERO
     }
 
     /// Whether `predicted` changes from a frame to the next: a reported
@@ -850,7 +872,9 @@ impl ObjectStore {
 
     /// End the corrections that have faded: the objects that do not move
     /// otherwise are still again, at the place of their last report, and
-    /// the scene hears of it.
+    /// the scene places them once more. A prim of a worn linkset was placed
+    /// by the sync while it faded; nothing else would put it back on its
+    /// anchor, and it would stay in the world behind its walking wearer.
     pub fn expire_corrections(&mut self, now: Instant) {
         if self.correcting.is_empty() {
             return;
@@ -864,6 +888,7 @@ impl ObjectStore {
                 Some(c) if c.active(now) => true,
                 Some(_) => {
                     o.correction = None;
+                    o.render.needs_records = true;
                     self.touched.note(idx);
                     false
                 }
@@ -2107,6 +2132,48 @@ mod tests {
         near(drawn(&s), Vec3::X * 16.0);
         s.advance_motion(2, 1.0);
         near(drawn(&s), Vec3::X * 19.2);
+    }
+
+    #[test]
+    fn a_worn_prim_spins_but_never_drifts_with_a_reported_velocity() {
+        let mut s = ObjectStore::default();
+        let now = Instant::now();
+        s.upsert(1, update(1, AVATAR, ""));
+        // worn on the mouth (point 11), its update carrying a velocity
+        let mut worn = update(10, PRIM, "");
+        worn.parent_id = 1;
+        worn.state = 0xB0;
+        worn.position = Vec3::X * 0.2;
+        worn.velocity = Vec3::Y * 0.5;
+        worn.acceleration = Vec3::Z * -9.8;
+        let idx = s.upsert(1, worn.clone());
+        let o = s.get(idx).expect("worn prim");
+        assert_eq!(o.attachment_point(), 11);
+        assert!(o.is_attachment());
+        // nothing moves it: placed from its point's anchor
+        assert!(!o.has_motion());
+        s.advance_motion(1, 2.0);
+        near(s.predicted(s.get(idx).expect("worn prim"), now).0, Vec3::X * 0.2);
+        // llTargetOmega still turns it, on the spot
+        worn.angular_velocity = Vec3::Z * std::f32::consts::FRAC_PI_2;
+        s.upsert(1, worn.clone());
+        assert!(s.get(idx).expect("worn prim").has_motion());
+        s.advance_motion(1, 1.0);
+        let (position, rotation) = s.predicted(s.get(idx).expect("worn prim"), now);
+        near(position, Vec3::X * 0.2);
+        assert!(
+            rotation.abs_diff_eq(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2), 1e-4),
+            "{rotation:?}"
+        );
+        // the same prim on the ground goes its way
+        worn.parent_id = 0;
+        worn.state = 0;
+        worn.acceleration = Vec3::ZERO;
+        worn.angular_velocity = Vec3::ZERO;
+        let ground = s.upsert(1, worn);
+        assert!(!s.get(ground).expect("prim").is_attachment());
+        s.advance_motion(1, 2.0);
+        near(s.predicted(s.get(ground).expect("prim"), now).0, Vec3::X * 0.2 + Vec3::Y);
     }
 
     #[test]
