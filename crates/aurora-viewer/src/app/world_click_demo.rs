@@ -17,7 +17,15 @@ fn mode() -> Option<&'static str> {
 
 impl App {
     pub(super) fn world_click_demo_steps(&mut self) {
-        let Some(mode) = mode().filter(|_| self.demo) else { return };
+        let Some(spec) = mode().filter(|_| self.demo) else { return };
+        let mode = spec.strip_suffix("-keep-camera").unwrap_or(spec);
+        if mode.starts_with("avatar") || spec.ends_with("-keep-camera") {
+            // Camera comparisons need a stationary subject even when another
+            // demo/device left movement inputs active before this fixture.
+            self.down.clear();
+            self.controls_held.clear();
+            self.settings.joystick.enabled = false;
+        }
         if self.frame_count == 580 {
             // Saved panels must not cover the actual world press under test.
             self.panels.ao = false;
@@ -29,6 +37,12 @@ impl App {
             self.panels.settings = false;
         }
         if self.frame_count == 600 {
+            if mode.starts_with("avatar") || spec.ends_with("-keep-camera") {
+                self.stop_autopilot(true);
+            }
+            if spec.ends_with("-keep-camera") || mode == "avatar-return" {
+                self.settings.camera.click_avatar_keeps_camera = spec.ends_with("-keep-camera");
+            }
             self.world_click_fixture(mode);
         }
         if mode == "mouselook-touch" && self.frame_count == 690 {
@@ -45,7 +59,14 @@ impl App {
             self.world.apply(panel);
         }
         if (680..=700).contains(&self.frame_count) && !mode.starts_with("mouselook-") {
-            let cursor = if mode == "ground" {
+            let cursor = if mode.starts_with("avatar") {
+                self.world
+                    .objects
+                    .avatars()
+                    .find(|(_, o)| (o.full_id == self.world.agent_id) != mode.contains("other"))
+                    .and_then(|(idx, _)| Scene::object_transform(&self.world, idx, Instant::now(), 0))
+                    .and_then(|(pos, _, _)| self.build.cam.project_px(pos + Vec3::Z * 0.4))
+            } else if mode == "ground" {
                 // the plaza's floor, below the avatar
                 self.gfx.as_ref().map(|g| {
                     let (w, h) = g.renderer.size();
@@ -67,7 +88,10 @@ impl App {
                     _ => 971,
                 };
                 self.world.objects.index_of_uuid(&crate::demo::action_id(local)).and_then(|idx| {
-                    let pos = if matches!(mode, "worn-mesh" | "worn-own") || (mode.starts_with("worn-other") && mode != "worn-other-link") {
+                    let pos = if mode == "worn-mesh"
+                        || mode.starts_with("worn-own")
+                        || (mode.starts_with("worn-other") && mode != "worn-other-link")
+                    {
                         // A known point of the synthetic chest mesh, outside
                         // the classic body's silhouette. Its bounds' centre
                         // is inside the wearer and correctly hits the body.
@@ -95,6 +119,7 @@ impl App {
             self.ctrl = mode.contains("-ctrl");
             self.shift = mode.contains("-shift");
             log::info!("demo world click: mode={mode}, cursor={:?}", self.cursor_pos);
+            self.world_click_camera_note("before", spec);
             let over_ui = self.ui_takes_pointer();
             log::info!("demo world click UI: over_ui={over_ui}");
             self.mouse_input(MouseButton::Left, true, over_ui);
@@ -109,6 +134,7 @@ impl App {
         if self.frame_count == 740 {
             self.alt = false;
             self.ctrl = false;
+            self.world_click_camera_note("after", spec);
             let focus = self.camera.focus_point();
             let target = focus
                 .and_then(|p| self.scene.pick_at(&self.world, p, Instant::now()))
@@ -122,8 +148,39 @@ impl App {
         }
     }
 
+    fn world_click_camera_note(&self, phase: &str, spec: &str) {
+        log::info!(
+            "demo world click camera: {phase} {spec}, position={:?}, target={:?}, fov={}, object={:?}",
+            self.camera.position,
+            self.camera.target,
+            self.camera.fov_y,
+            self.camera.focus_object_id()
+        );
+    }
+
     fn world_click_fixture(&mut self, mode: &str) {
         let mode = mode.strip_suffix("-ctrl").unwrap_or(mode);
+        if mode.starts_with("avatar") {
+            let target = self
+                .world
+                .objects
+                .avatars()
+                .find(|(_, o)| (o.full_id == self.world.agent_id) != mode.contains("other"));
+            if let Some((idx, o)) = target {
+                let id = o.full_id;
+                if let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0) {
+                    self.settings.set_render_exception(id, 2);
+                    let focus = pos + Vec3::new(-0.3, 0.2, 0.5);
+                    self.camera.set_view(
+                        focus + Vec3::new(1.7, -2.3, 0.9),
+                        focus,
+                        &mut self.world.agent,
+                        &self.settings.camera,
+                    );
+                }
+            }
+            return;
+        }
         if mode.starts_with("mouselook-") {
             // a weapon took the mouselook button (llTakeControls, passed on)
             if mode == "mouselook-gun" {
@@ -139,7 +196,7 @@ impl App {
         }
         if mode.starts_with("worn-") {
             // `worn-own`: the prim is ours (issue #488)
-            let own = mode == "worn-own";
+            let own = mode.starts_with("worn-own");
             let covered = matches!(
                 mode,
                 "worn-other-covered" | "worn-other-under" | "worn-other-hidden-under" | "worn-other-hidden-mesh-under"
@@ -193,6 +250,9 @@ impl App {
                         o.state = 0x10; // chest
                         o.click_action = crate::interaction::code::TOUCH;
                         o.update_flags = ui::context::flags::HANDLE_TOUCH; // no move/modify rights
+                        if mode == "worn-own-passive" {
+                            o.update_flags = 0;
+                        }
                         if mode == "worn-prim" {
                             o.scale = Vec3::splat(0.5);
                         }

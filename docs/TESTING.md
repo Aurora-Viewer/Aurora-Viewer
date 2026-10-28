@@ -1205,7 +1205,16 @@ disabled. Cancel instead restores its texture and projector settings. Use
 `AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|mouselook-gun|mouselook-touch|ground`:
 install the fixture at frame 600, issue a real left press at 700 and release
 at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
-or later. `camera-zero` puts a zero-alpha Blend texture before the Buy cube;
+or later. `avatar-keep-camera` starts from an off-centre side view and enables
+Preferences › Camera › Behavior › “Click my avatar: keep camera” for the run:
+a plain body click must preserve position, target, lens and tracked object.
+`avatar-return` disables the option and must return to avatar follow.
+`avatar-alt-keep-camera` must still retarget with Alt held; `avatar-other-keep-camera`
+must leave the view unchanged on another resident. The `-keep-camera` suffix
+also works with `worn-own` (scripted touch) and `worn-own-passive` (no script):
+both keep the camera, while only the scripted attachment receives a touch.
+`demo world click camera` logs the view immediately before and after the press;
+capture frames 690 and 780 to compare. `camera-zero` puts a zero-alpha Blend texture before the Buy cube;
 `camera-te` uses an invisible scripted TE face. Alt-focus must reach the cube
 behind both; `camera-glass` instead reaches the translucent solid pane.
 `camera-mask` uses a fully transparent Mask texel and also reaches the cube.
