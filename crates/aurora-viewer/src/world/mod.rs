@@ -797,6 +797,8 @@ impl World {
             .and_then(|h| self.regions.get(&h))
             .map(|r| r.name.clone())
             .unwrap_or_default();
+        // the arrows' list names the place by its parcel too
+        self.tp_history.name_parcel(&self.parcel_name);
         let title = tphistory::location_title(&self.parcel_name, &region);
         if title.is_empty() {
             return;
@@ -2094,7 +2096,16 @@ impl World {
                     } else {
                         self.regions.get(&handle).map(|r| r.name.clone()).unwrap_or_default()
                     };
-                    self.tp_history.arrived(tphistory::TpEntry { region, handle, position });
+                    let at = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_secs() as i64);
+                    self.tp_history.arrived(tphistory::TpEntry {
+                        region,
+                        handle,
+                        position,
+                        parcel: String::new(),
+                        at,
+                    });
                     // LLViewerParcelMgr::onTeleportFinished: a local teleport keeps
                     // the agent parcel (the simulator only sends ParcelProperties
                     // when the parcel changes)

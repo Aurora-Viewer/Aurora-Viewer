@@ -1,6 +1,7 @@
 //! Teleport history: the navigation bar's back / forward list (behaviour of
 //! LLTeleportHistory: arrivals after a teleport are recorded, going back or
-//! forward moves within the list without truncating it) and the dated,
+//! forward moves within the list without truncating it, goToItem jumps to
+//! any of its places) and the dated,
 //! saved history of the Places window (LLTeleportHistoryStorage,
 //! `teleport_history.txt` of the account, one LLSD notation line per place;
 //! indra/newview/llteleporthistory.cpp, llteleporthistorystorage.cpp,
@@ -19,6 +20,26 @@ pub struct TpEntry {
     pub handle: RegionHandle,
     /// Region-local position.
     pub position: Vec3,
+    /// The parcel, once it is known (empty until then, or hidden by RLVa).
+    pub parcel: String,
+    /// Arrival, in seconds since the epoch (UTC).
+    pub at: i64,
+}
+
+impl TpEntry {
+    /// LLTeleportHistoryItem::mTitle: "Parcel, Region".
+    pub fn title(&self) -> String {
+        location_title(&self.parcel, &self.region)
+    }
+}
+
+/// The places of the session, oldest first, and the one we are in: what
+/// the arrows' list shows (LLTeleportHistory::getItems,
+/// getCurrentItemIndex).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Session<'a> {
+    pub items: &'a [TpEntry],
+    pub current: usize,
 }
 
 #[derive(Debug, Default)]
@@ -54,6 +75,33 @@ impl TeleportHistory {
         self.pending = None;
     }
 
+    /// The demo's earlier places, oldest first: the next arrival comes after
+    /// them.
+    pub fn seeded(items: Vec<TpEntry>) -> TeleportHistory {
+        let current = items.len().saturating_sub(1);
+        TeleportHistory {
+            items,
+            current,
+            pending: None,
+        }
+    }
+
+    pub fn session(&self) -> Session<'_> {
+        Session {
+            items: &self.items,
+            current: self.current,
+        }
+    }
+
+    /// The parcel of the current place, once ParcelProperties brought it
+    /// (LLTeleportHistory::updateCurrentLocation after the teleport
+    /// finished signal of LLViewerParcelMgr).
+    pub fn name_parcel(&mut self, parcel: &str) {
+        if let Some(e) = self.items.get_mut(self.current) {
+            e.parcel = parcel.trim().to_owned();
+        }
+    }
+
     /// Update the current entry's region name once it is known.
     pub fn name_current(&mut self, handle: RegionHandle, name: &str) {
         if let Some(e) = self.items.get_mut(self.current)
@@ -74,6 +122,7 @@ impl TeleportHistory {
         let current = self.items.get_mut(self.current)?;
         let previous = current.clone();
         current.region = region.to_owned();
+        current.parcel.clear();
         Some(previous)
     }
 
@@ -83,13 +132,19 @@ impl TeleportHistory {
 
     /// Start travelling back; returns the destination.
     pub fn go_back(&mut self) -> Option<TpEntry> {
-        let i = self.current.checked_sub(1)?;
-        self.pending = Some(i);
-        self.items.get(i).cloned()
+        self.go_to(self.current.checked_sub(1)?)
     }
 
     pub fn go_forward(&mut self) -> Option<TpEntry> {
-        let i = self.current + 1;
+        self.go_to(self.current + 1)
+    }
+
+    /// LLTeleportHistory::goToItem: start travelling to the place `i` of
+    /// the list; none for the place we are in or past the end.
+    pub fn go_to(&mut self, i: usize) -> Option<TpEntry> {
+        if i == self.current {
+            return None;
+        }
         let e = self.items.get(i).cloned()?;
         self.pending = Some(i);
         Some(e)
@@ -309,6 +364,8 @@ mod tests {
             region: n.into(),
             handle: 0,
             position: Vec3::ZERO,
+            parcel: String::new(),
+            at: 0,
         }
     }
 
@@ -333,6 +390,34 @@ mod tests {
         assert_eq!(h.previous().map(|x| x.region.clone()), Some("D".into()));
         h.purge();
         assert!(h.previous().is_none() && h.next().is_none());
+    }
+
+    /// The arrows' list: a jump to any place keeps the list whole, the
+    /// place we are in is not a destination, and the parcel names the
+    /// current place once it is known.
+    #[test]
+    fn jump_to_any_place_of_the_session() {
+        let mut h = TeleportHistory::default();
+        for n in ["A", "B", "C", "D"] {
+            h.arrived(e(n));
+        }
+        assert!(h.go_to(3).is_none(), "the place we are in");
+        assert!(h.go_to(9).is_none());
+        assert_eq!(h.go_to(0).map(|x| x.region), Some("A".into()));
+        h.arrived(e("A"));
+        let s = h.session();
+        assert_eq!((s.items.len(), s.current), (4, 0));
+        assert_eq!(h.next().map(|x| x.region.clone()), Some("B".into()));
+        h.name_parcel(" Plaza ");
+        assert_eq!(h.session().items[0].title(), "Plaza, A");
+        // RLVa hides the place: the parcel goes with the region's name
+        h.replace_current_region("(Hidden)");
+        assert_eq!(h.session().items[0].title(), "(Hidden)");
+        // the demo's earlier places: the next arrival comes after them
+        let mut d = TeleportHistory::seeded(vec![e("X"), e("Y")]);
+        d.arrived(e("Z"));
+        assert_eq!(d.session().current, 2);
+        assert_eq!(d.previous().map(|x| x.region.clone()), Some("Y".into()));
     }
 
     const DAY: f64 = 86_400.0;

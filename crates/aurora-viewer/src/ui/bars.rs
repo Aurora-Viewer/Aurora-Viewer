@@ -12,6 +12,7 @@ pub mod islands;
 mod place;
 pub mod side;
 pub(crate) mod sizing;
+mod tp_list;
 
 use super::Panels;
 use super::icons::Icons;
@@ -76,6 +77,8 @@ pub enum BarAction {
     /// Teleport history (navigation bar arrows).
     TeleportBack,
     TeleportForward,
+    /// A place of the arrows' list, by its index in the session's history.
+    TeleportHistoryItem(usize),
     /// Voice light clicked: open "Sound and voice".
     VoicePrefs,
     /// Location typed or pasted in the navigation bar (SLURL, Region/x/y/z...).
@@ -171,6 +174,8 @@ pub struct StatusInfo<'a> {
     /// Destinations of the back / forward arrows (None = disabled).
     pub tp_back: Option<String>,
     pub tp_forward: Option<String>,
+    /// Every place of the session, for the arrows' list.
+    pub tp_session: crate::world::tphistory::Session<'a>,
     pub maturity: &'a str,
     pub position: glam::Vec3,
     pub fps: f32,
@@ -1314,27 +1319,46 @@ fn paint_icon(ui: &egui::Ui, icons: &Icons, name: &str, rect: egui::Rect, size: 
 
 /// Back / forward arrow of the navigation bar; `dest` is the history entry
 /// it leads to (None = disabled).
-fn nav_arrow(ui: &mut egui::Ui, p: &Palette, icons: &Icons, left: bool, dest: Option<&str>) -> bool {
+/// A back / forward arrow: whether it was clicked, and the place chosen
+/// in its list of the session's places.
+fn nav_arrow(ui: &mut egui::Ui, p: &Palette, icons: &Icons, left: bool, st: &StatusInfo) -> (bool, Option<BarAction>) {
+    let dest = if left { st.tp_back.as_deref() } else { st.tp_forward.as_deref() };
     let (rect, resp) = ui.allocate_exact_size(TOP_SLOT, egui::Sense::click());
     let enabled = dest.is_some();
-    if enabled && resp.hovered() {
+    let hot = resp.hovered() || egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
+    if enabled && hot {
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     let col = if !enabled {
         p.muted_dim.gamma_multiply(0.6)
-    } else if resp.hovered() {
+    } else if hot {
         p.ink
     } else {
         p.muted
     };
     paint_icon(ui, icons, if left { "arrow-left" } else { "arrow-right" }, rect, TOP_ICON, col);
+    let resp = resp.on_hover_text(arrow_tip(left, dest, st));
+    if left {
+        islands::demo_open(ui.ctx(), &resp, demo::Open::TpList);
+    }
+    let (clicked, chosen) = tp_list::arrow(ui, p, &resp, st, None);
+    (clicked && enabled, chosen)
+}
+
+/// The tooltip of a back / forward arrow: where it leads, and how to list
+/// the session's places when there are some.
+fn arrow_tip(left: bool, dest: Option<&str>, st: &StatusInfo) -> String {
     let tip = match dest {
         Some(d) if left => aurora_i18n::tr!("ui-bars-back", d = d.to_string()),
         Some(d) => aurora_i18n::tr!("ui-bars-next", d = d.to_string()),
         None if left => aurora_i18n::tr!("ui-bars-no-previous-destination").to_owned(),
         None => aurora_i18n::tr!("ui-bars-no-next-destination").to_owned(),
     };
-    resp.on_hover_text(tip).clicked() && enabled
+    if dest.is_some() && tp_list::has_list(st) {
+        format!("{tip}\n{}", aurora_i18n::tr!("ui-bars-tp-list-tip"))
+    } else {
+        tip
+    }
 }
 
 /// Circled "i" (About Land) at the start of the location field.
@@ -1671,11 +1695,18 @@ pub fn top_bars(
                 }
                 status_dot(ui, p, st.status, &mut action);
                 // back / forward through the teleport history, home (Firestorm navigation bar)
-                if nav_arrow(ui, p, icons, true, st.tp_back.as_deref()) {
-                    action = BarAction::TeleportBack;
-                }
-                if nav_arrow(ui, p, icons, false, st.tp_forward.as_deref()) {
-                    action = BarAction::TeleportForward;
+                for left in [true, false] {
+                    let (clicked, chosen) = nav_arrow(ui, p, icons, left, st);
+                    if clicked {
+                        action = if left {
+                            BarAction::TeleportBack
+                        } else {
+                            BarAction::TeleportForward
+                        };
+                    }
+                    if let Some(a) = chosen {
+                        action = a;
+                    }
                 }
                 let home = icon_button_response(ui, p, icons, "Home_Off", aurora_i18n::tr!("common-go-home"), TOP_ICON);
                 if home.clicked() {

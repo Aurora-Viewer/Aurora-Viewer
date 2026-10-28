@@ -3145,6 +3145,10 @@ impl App {
                 // the demo's teleport history: several days, never saved
                 if self.demo {
                     self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(crate::demo::place::history());
+                    // earlier places in the session, for the arrows' list
+                    if crate::ui::bars::demo::get().open == Some(crate::ui::bars::demo::Open::TpList) {
+                        self.world.tp_history = crate::world::tphistory::TeleportHistory::seeded(crate::demo::place::session());
+                    }
                 }
                 // web profiles know who we are (LLStartup: LLViewerMedia::openIDSetup)
                 let (openid_url, openid_token) = (l.raw["openid_url"].as_str(), l.raw["openid_token"].as_str());
@@ -6236,12 +6240,9 @@ impl App {
         self.was_teleporting = true;
     }
 
-    fn teleport_history(&mut self, back: bool) {
-        let dest = if back {
-            self.world.tp_history.go_back()
-        } else {
-            self.world.tp_history.go_forward()
-        };
+    /// Teleport to `dest`, a place of the navigation history the arrows or
+    /// their list chose (LLTeleportHistory::goToItem).
+    fn teleport_history(&mut self, dest: Option<crate::world::tphistory::TpEntry>) {
         if let Some(e) = dest {
             self.world.system_notice(
                 aurora_i18n::tr!("app-teleporting-to-2", value0 = e.region.to_string()),
@@ -11423,8 +11424,18 @@ impl App {
                     self.send(cmd);
                 }
             }
-            BarAction::TeleportBack => self.teleport_history(true),
-            BarAction::TeleportForward => self.teleport_history(false),
+            BarAction::TeleportBack => {
+                let dest = self.world.tp_history.go_back();
+                self.teleport_history(dest);
+            }
+            BarAction::TeleportForward => {
+                let dest = self.world.tp_history.go_forward();
+                self.teleport_history(dest);
+            }
+            BarAction::TeleportHistoryItem(i) => {
+                let dest = self.world.tp_history.go_to(i);
+                self.teleport_history(dest);
+            }
             BarAction::TeleportTo(text) => self.teleport_to_text(&text),
             BarAction::SetStatus(m) => {
                 self.world.set_away(m.away);
@@ -12968,6 +12979,7 @@ impl App {
                     },
                     tp_back: self.world.tp_history.previous().map(|e| e.region.clone()),
                     tp_forward: self.world.tp_history.next().map(|e| e.region.clone()),
+                    tp_session: self.world.tp_history.session(),
                     status: self.world.status.modes(),
                     local_env: self.world.eep.has_local(),
                     env_keys: self.env_keys(),

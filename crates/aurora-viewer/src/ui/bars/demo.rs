@@ -15,7 +15,8 @@
 //! button; `favorites` then opens its grid); `chatname`: a resident's name
 //! of the chat pills clicked at frame 700. The system island: `systip`
 //! (its detailed tooltip shown), `sysmenu` (its right click),
-//! `netgraph` (Firestorm's traffic indicator shown), `sysperf` /
+//! `netgraph` (Firestorm's traffic indicator shown), `tplist` (earlier
+//! places in the session, the back arrow's list of them open), `sysperf` /
 //! `sysnet` (Performance opened from the island at frame 300, by its frame
 //! rate / its network, under the island); the clock: `clocklocal` (local
 //! time, whatever is saved: a click then does not change it), `noseconds`
@@ -47,6 +48,9 @@ pub enum Open {
     Emoji,
     /// The system island's right click.
     System,
+    /// The back arrow's list of the session's places, the demo's earlier
+    /// places before the arrival.
+    TpList,
 }
 
 /// What `AURORA_DEMO_BARS` asks for (nothing without it).
@@ -156,6 +160,7 @@ pub fn parse(value: &str) -> DemoBars {
             "chatname" => d.click_name = true,
             "systip" => d.tip = true,
             "sysmenu" => d.open = Some(Open::System),
+            "tplist" => d.open = Some(Open::TpList),
             "netgraph" => d.net_stats = Some(true),
             "clocklocal" => d.clock_zone = Some(crate::settings::ClockZone::Local),
             "clock12" => d.clock_format = Some(crate::settings::ClockFormat::H12),
