@@ -50,6 +50,9 @@ pub mod auto_hover;
 /// (AURORA_DEMO_BLEND_SHADOWS).
 #[path = "demo_blend_shadows.rs"]
 pub mod blend_shadows;
+/// A box of bake-on-mesh placeholders on the ground (AURORA_DEMO_BOM_REZZED).
+#[path = "demo_bom_rezzed.rs"]
+pub mod bom_rezzed;
 /// Voice calls with a simulated voice server (AURORA_DEMO_CALL).
 #[path = "demo_calls.rs"]
 pub mod calls;
@@ -5499,6 +5502,7 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(sculpt::events());
     ev.extend(plants::events());
     ev.extend(blend_shadows::events());
+    ev.extend(bom_rezzed::events());
     ev
 }
 
@@ -7796,6 +7800,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     }
     if let Some(species) = plants::texture(id) {
         return Some(species);
+    }
+    if let Some(placeholder) = bom_rezzed::texture(id) {
+        return Some(placeholder);
     }
     if let Some(pane) = blend_shadows::texture(id) {
         return Some(pane);

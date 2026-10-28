@@ -3488,6 +3488,7 @@ impl Scene {
         let old_tex: Vec<Uuid> = std::mem::take(&mut g.tex_ids);
         g.material_ids.clear();
         let wearer = Self::wearer_avatar(world, idx);
+        let bake_wearer = Self::bake_wearer(world, idx, g.hud);
         let rigged_owner = match g.geom {
             Some(GeomKey::Mesh { id, .. }) => match self.meshes.meta(&id).and_then(|m| m.skin).filter(|s| !s.joint_names.is_empty()) {
                 Some(skin) => {
@@ -3650,11 +3651,14 @@ impl Scene {
                     legacy_alpha = Some(lm.diffuse_alpha_mode);
                 }
             }
-            // texture (with bake-on-mesh redirection)
+            // texture (with bake-on-mesh redirection); without a bake wearer
+            // the placeholder stays, an ordinary texture asset
             let mut source = TexSource::Asset;
-            if let Some((bake_te, bake)) = avatar::bake_slot_for(&base_tex) {
-                match wearer.and_then(|(aid, a)| self.shown_bake(renderer, world, a, bake_te).map(|t| (aid, t))) {
-                    Some((aid, tid)) => {
+            if let Some((bake_te, bake)) = avatar::bake_slot_for(&base_tex)
+                && let Some((aid, a)) = bake_wearer
+            {
+                match self.shown_bake(renderer, world, a, bake_te) {
+                    Some(tid) => {
                         base_tex = tid;
                         source = world.bake_source(aid, bake, tid);
                     }
@@ -3750,6 +3754,16 @@ impl Scene {
             idx = world.objects.parent_of(o)?;
         }
         None
+    }
+
+    /// The avatar whose bakes replace the "use baked" placeholders of object
+    /// `idx`: its wearer, unless it is a HUD or an animated object, whose
+    /// skeleton is its own. On the ground, on a HUD or on an animesh the
+    /// placeholder is drawn as the texture asset it is
+    /// (LLViewerObject::getBakedTextureForMagicId, llviewerobject.cpp).
+    fn bake_wearer(world: &World, idx: usize, hud: bool) -> Option<(Uuid, usize)> {
+        let wearer = Self::wearer_avatar(world, idx)?;
+        (!hud && Self::skeleton_owner(world, idx) == Some(wearer)).then_some(wearer)
     }
 
     /// LLVOAvatarSelf::updateAttachmentVisibility uses the root attachment's
@@ -5607,6 +5621,38 @@ fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
 mod tests {
     use super::*;
     use aurora_net::NetEvent;
+
+    #[test]
+    fn bakes_replace_placeholders_only_on_worn_non_hud_non_animesh_objects() {
+        let mut w = World::new(Arc::new(AvatarLibrary::load()));
+        for e in crate::demo::events().into_iter().chain(crate::demo::animesh_events()) {
+            w.apply(e);
+        }
+        let index = |local: u32| {
+            w.objects
+                .iter()
+                .find(|(_, o)| o.key.local_id == local)
+                .map(|(i, _)| i)
+                .expect("fixture object")
+        };
+        let avatar = index(9001);
+        let wearer = Some((w.objects.get(avatar).expect("avatar").full_id, avatar));
+        // a rigged mesh worn by the avatar takes its bakes, not on a HUD
+        assert_eq!(Scene::bake_wearer(&w, index(9100), false), wearer);
+        assert_eq!(Scene::bake_wearer(&w, index(9100), true), None);
+        // an animesh, worn (9203) or on the ground (9200, 9202), has none
+        for animesh in [9203, 9200, 9202] {
+            assert_eq!(Scene::bake_wearer(&w, index(animesh), false), None, "{animesh}");
+        }
+        // nor has an ordinary object on the ground
+        let ground = w
+            .objects
+            .iter()
+            .find(|(_, o)| o.parent_id == 0 && !o.is_avatar() && o.extra.extended_mesh_flags.is_none())
+            .map(|(i, _)| i)
+            .expect("ground object");
+        assert_eq!(Scene::bake_wearer(&w, ground, false), None);
+    }
 
     #[test]
     fn first_person_visibility_uses_attachment_roots_and_preserves_huds_and_other_avatars() {

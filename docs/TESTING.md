@@ -1091,6 +1091,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SCULPT_ZERO=1` | Subtype-zero sculpt classification beside torus and sphere controls |
 | `AURORA_DEMO_SCULPT_MISSING=1\|late` | A sculpt whose map is missing: the sphere placeholder, then its torus with `late` |
 | `AURORA_DEMO_TEXTURE_MISSING=1` | Boxes whose texture is missing: the Legacy Viewer's grey, never the rez grid for ever |
+| `AURORA_DEMO_BOM_REZZED=1` | A box of bake-on-mesh placeholders on the ground: the placeholder textures, never white |
 | `AURORA_DEMO_OBJECT_MENU=<mode>` | Object actions, scene menu customization/notecards, object profile and pathfinding readers |
 
 **Beacon details.** `AURORA_DEMO_BEACONS=1` adds seven labelled sources, including an invisible scripted cube. `lines`, `highlights` and `off` isolate the two render modes; `hidden-particles` keeps the source marker while hiding emitted particles. `parcels` frames the terrain boundaries and ownership colours. `owned` opens My land with an offline parcel and group contributions. Check each source switch, Scripted versus Touch, width, both master switches off, and closing/reopening the floater without losing the active filters. The grid check compares real sound/particle/media sources, linked children, attachments, neighbouring parcels and the personal holdings list with the Legacy Viewer.
@@ -1204,6 +1205,14 @@ the grid only while the texture is asked for, then the plain grey the Legacy
 Viewer draws for a missing texture (the dark box: a faint dark veil). Before
 the fix they stayed the grid for as long as they were in view. Capture with
 `AURORA_FPS_LIMIT=60` around frame 700.
+
+`AURORA_DEMO_BOM_REZZED=1` places a box ahead of the start view (x=135,
+y=129.5) whose faces carry the bake-on-mesh placeholders of the head, the upper
+body and the lower body, like a BOM body part rezzed out. The demo stands in
+for the grid's placeholder textures with diagonal stripes: orange (head), teal
+(upper body) and violet (lower body). Not worn, the box shows them, as the
+Legacy Viewer does; before the fix its faces were white. On the grid the
+placeholders are the real "baked" channel textures.
 
 `AURORA_DEMO_PROJECTOR=1`, `AURORA_DEMO_BUILD=move,object:9712` and
 `AURORA_DEMO_BUILD_TAB=features:light-picker` select a light and open its
