@@ -157,6 +157,7 @@ pub(super) fn show(
                         let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
                         let nav = crate::ui::emoji::codes::keys(ui, conv_input);
                         let suggest_nav = if nav.is_none() { suggest::keys(ui, conv_input) } else { None };
+                        super::preserve_pasted_lines(ui, conv_input);
                         let mut output = emoji.text_field(ui, &mut draft, |edit| {
                             edit.id(conv_input)
                                 .hint_text(hint)

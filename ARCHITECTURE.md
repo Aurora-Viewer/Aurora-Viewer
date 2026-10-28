@@ -14,6 +14,12 @@ Its voice-only event preserves local music/media overrides and other properties.
 It is scoped to the current circuit and parcel; an early notification is kept
 only until initial agent-parcel properties arrive and is cleared on region change.
 
+Chat message menus retain the selected transcript text alongside their target
+(`ui/chat/line_menu.rs`), so Copy agrees with the keyboard through message arrival
+and eviction. The compact conversation and nearby-chat fields route multiline
+pastes through ordinary text insertion, retaining paragraph boundaries in drafts,
+undo, clipboard copies and outgoing messages without enlarging the editor.
+
 `scene/physics_shapes.rs` connects the build inspector's saved physics eye to
 selected collision geometry. Mesh header ranges include `physics_mesh` and
 `physics_convex`; the mesh streamer fetches these only while inspecting.

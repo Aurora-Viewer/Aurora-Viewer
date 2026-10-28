@@ -688,6 +688,151 @@ fn the_message_menu_acts() {
     }
 }
 
+#[test]
+fn selected_messages_copy_from_the_menu_even_after_eviction() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        for conversation in [None, Some(JANE)] {
+            for reverse in [false, true] {
+                let mut h = H::new(style);
+                let messages = [
+                    line("Jane", JANE, ChatKind::Im, "first selected message"),
+                    line("Bob", BOB, ChatKind::Im, "second selected message"),
+                ];
+                let expected = messages
+                    .iter()
+                    .map(|l| format!("{}{}", super::copy_prefix(l, &l.from), l.text))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if let Some(id) = conversation {
+                    h.world.social.session_mut(id).lines = messages.into();
+                } else {
+                    h.world.chat = messages.into();
+                }
+                h.open(conversation);
+                let first = h.text_rect("first selected message");
+                let last = h.text_rect("second selected message");
+                let (a, b) = (
+                    egui::pos2(first.left() + 1.0, first.center().y),
+                    egui::pos2(last.right() + 2.0, last.center().y),
+                );
+                let (from, to) = if reverse { (b, a) } else { (a, b) };
+                let button = |pos, pressed| egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                };
+                h.frame(vec![egui::Event::PointerMoved(from), button(from, true)]);
+                for k in 1..=4 {
+                    h.frame(vec![egui::Event::PointerMoved(from + (to - from) * (k as f32 / 4.0))]);
+                }
+                h.frame(vec![button(to, false)]);
+                let copied = |output: egui::PlatformOutput| {
+                    output.commands.into_iter().find_map(|c| match c {
+                        egui::OutputCommand::CopyText(t) => Some(t),
+                        _ => None,
+                    })
+                };
+                assert_eq!(
+                    copied(h.frame_out(vec![egui::Event::Copy])),
+                    Some(expected.clone()),
+                    "{style:?}, {conversation:?}"
+                );
+                h.right_click(last.center());
+                // The menu keeps the selection that was actually clicked,
+                // even if incoming traffic evicts both selected messages.
+                let (lines, clock) = if let Some(id) = conversation {
+                    let session = h.world.social.session_mut(id);
+                    (&mut session.lines, &mut session.clock)
+                } else {
+                    (&mut h.world.chat, &mut h.world.chat_clock)
+                };
+                for _ in 0..2 {
+                    lines.pop_front();
+                    clock.popped_front();
+                }
+                lines.push_back(line("Bob", BOB, ChatKind::Im, "new arrival"));
+                clock.pushed_back();
+                h.settle();
+                let pos = h.text_rect(aurora_i18n::tr!("ui-chat-copy-message")).center();
+                h.frame(vec![egui::Event::PointerMoved(pos), button(pos, true)]);
+                assert_eq!(
+                    copied(h.frame_out(vec![button(pos, false)])),
+                    Some(expected),
+                    "{style:?}, {conversation:?}, reverse={reverse}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn pasted_transcripts_keep_paragraphs_when_sent_in_every_style() {
+    for style in ALL {
+        for conversation in [None, Some(JANE)] {
+            for text in ["Jane: first\nBob: second", "Jane: café 🙂\r\nBob: 猫\rthird"] {
+                let mut h = H::new(style);
+                h.open(conversation);
+                let expected = text.replace("\r\n", "\n").replace('\r', "\n");
+                let field = egui::Id::unique(("conv_input", conversation));
+                let before = h.shown(field).expect("chat field");
+                h.type_text("replace me");
+                // egui creates an undo checkpoint after one stable second.
+                for _ in 0..65 {
+                    h.frame(Vec::new());
+                }
+                h.frame(history_events(egui::Key::A, egui::Modifiers::CTRL | egui::Modifiers::COMMAND));
+                h.frame(vec![egui::Event::Paste(text.into())]);
+                h.settle();
+                assert_eq!(h.st.draft_mut(conversation), &expected, "{style:?}, {conversation:?}");
+                let after = h.shown(field).expect("chat field");
+                assert!(
+                    (before.height() - after.height()).abs() < 0.5,
+                    "a pasted transcript keeps the compact editor: {before:?} -> {after:?}"
+                );
+                h.frame(history_events(egui::Key::Z, egui::Modifiers::CTRL | egui::Modifiers::COMMAND));
+                assert_eq!(h.st.draft_mut(conversation), "replace me", "undo restores the replaced draft");
+                h.frame(history_events(egui::Key::A, egui::Modifiers::CTRL | egui::Modifiers::COMMAND));
+                h.frame(vec![egui::Event::Paste(text.into())]);
+                h.frame(history_events(egui::Key::A, egui::Modifiers::CTRL | egui::Modifiers::COMMAND));
+                let output = h.frame_out(vec![egui::Event::Copy]);
+                assert!(
+                    output
+                        .commands
+                        .iter()
+                        .any(|c| matches!(c, egui::OutputCommand::CopyText(t) if *t == expected)),
+                    "copying the pasted draft retains its paragraphs"
+                );
+                h.enter(Default::default());
+                let actions = h.take();
+                assert!(
+                    actions.iter().any(|action| match action {
+                        ConvAction::Local(out) => conversation.is_none() && out.message == expected,
+                        ConvAction::Im { to, text } => Some(*to) == conversation && *text == expected,
+                        _ => false,
+                    }),
+                    "{style:?}, {conversation:?}: the outgoing message retains its paragraphs"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn pasted_transcripts_keep_paragraphs_in_the_nearby_chat_bar() {
+    let mut h = H::new(ChatStyle::Aurora);
+    h.st.focus_request = true;
+    h.bar_frame(Vec::new());
+    h.bar_frame(Vec::new());
+    let text = "Jane: café\nBob: second line";
+    h.bar_frame(vec![egui::Event::Paste(text.into())]);
+    assert_eq!(h.st.input, text);
+    let sent = h
+        .bar_frame(history_events(egui::Key::Enter, egui::Modifiers::NONE))
+        .expect("send the transcript");
+    assert_eq!(sent.message, text);
+}
+
 /// Incoming group messages must leave the original sender available to
 /// block, both at the live end and while reading older messages (#557).
 #[test]

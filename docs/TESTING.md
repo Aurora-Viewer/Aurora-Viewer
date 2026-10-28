@@ -5341,6 +5341,13 @@ failure. Grid validation and any paid upload are performed by the human.
   colour), inverted in my own bubbles (light, violet text), nothing outside
   the selected characters; with the classic lines
   (Preferences › Aurora › Conversations) as with the bubbles.
+  For #1225, drag across several messages, copy with Ctrl+C, paste into the
+  conversation field and send: the resulting message must retain separate
+  paragraphs and author names. Repeat in a private IM and the nearby-chat bar,
+  with and without emoji, in all four conversation styles. In Aurora/Compact,
+  right-click a selected message and choose Copy message: it must copy the same
+  selection as Ctrl+C, including partial first/last messages. With no selection,
+  Copy message still copies only its target; Quote still quotes that message.
 - **`AURORA_DEMO_EMOJI_CODES=<text>`**: the Conversations window open, its
   input holding `<text>` with the keyboard and the caret at the end
   (`ui/emoji/codes.rs`). With `hi :hea`, the list of suggestions opens

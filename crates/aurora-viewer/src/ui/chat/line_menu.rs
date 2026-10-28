@@ -11,6 +11,8 @@ use uuid::Uuid;
 
 pub(super) struct Target {
     pub line: ChatLine,
+    /// Snapshot of the transcript selection when its message menu opened.
+    pub selected_text: Option<String>,
     /// None: the message or an inline link; Some: its sender's menu.
     pub sender: Option<Uuid>,
 }
@@ -23,7 +25,7 @@ struct Open {
     popup: Id,
 }
 
-fn open(response: &Response, id: Id, line: &ChatLine, sender: Option<Uuid>, seq: Option<u64>) {
+fn open(response: &Response, id: Id, line: &ChatLine, sender: Option<Uuid>, seq: Option<u64>, selected_text: Option<String>) {
     if let Some(pos) = response.interact_pointer_pos() {
         response.ctx.data_mut(|d| {
             d.insert_temp(
@@ -31,6 +33,7 @@ fn open(response: &Response, id: Id, line: &ChatLine, sender: Option<Uuid>, seq:
                 Open {
                     target: Arc::new(Target {
                         line: line.clone(),
+                        selected_text,
                         sender,
                     }),
                     pos,
@@ -45,18 +48,24 @@ fn open(response: &Response, id: Id, line: &ChatLine, sender: Option<Uuid>, seq:
 
 pub(super) fn sender(response: &Response, id: Id, avatar: Uuid, line: &ChatLine) {
     if response.secondary_clicked() {
-        open(response, id, line, Some(avatar), super::select::current_seq());
+        open(response, id, line, Some(avatar), super::select::current_seq(), None);
     }
 }
 
-pub(super) fn message<'l>(response: &Response, id: Id, drawn: &[super::select::Row], line_of: impl Fn(u64) -> Option<&'l ChatLine>) {
+pub(super) fn message<'l>(
+    response: &Response,
+    id: Id,
+    drawn: &[super::select::Row],
+    line_of: impl Fn(u64) -> Option<&'l ChatLine>,
+    selected_text: impl Fn(u64) -> Option<String>,
+) {
     if response.secondary_clicked()
         && let Some((seq, line)) = response
             .interact_pointer_pos()
             .and_then(|pos| drawn.iter().find(|row| row.rect.contains(pos)))
             .and_then(|row| line_of(row.seq).map(|line| (row.seq, line)))
     {
-        open(response, id, line, None, Some(seq));
+        open(response, id, line, None, Some(seq), selected_text(seq));
     }
 }
 
@@ -104,6 +113,7 @@ pub(super) fn highlight(ui: &mut Ui, id: Id, seq: u64, line: &ChatLine, p: &Pale
                     Open {
                         target: Arc::new(Target {
                             line: line.clone(),
+                            selected_text: None,
                             sender: None,
                         }),
                         pos,
