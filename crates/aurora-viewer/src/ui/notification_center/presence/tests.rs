@@ -147,6 +147,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         seated: false,
         ping_ms: 38,
         balance: Some(1000),
+        show_balance: true,
         voice: (crate::voice::VoiceLight::Off, String::new()),
         slurl: String::new(),
         status: Default::default(),

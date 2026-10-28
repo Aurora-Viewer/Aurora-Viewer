@@ -99,6 +99,8 @@ pub enum BarAction {
     TeleportHistory,
     /// The balance, or Me › Buy L$ (LLStatusBar::onClickBuyCurrency).
     BuyCurrency,
+    /// The balance shown or hidden (its right click, the account island's).
+    ShowBalance(bool),
     /// Me › Double-click on the ground (Firestorm's "DoubleClick Teleport"
     /// of its movement menu, Advanced.SetDoubleClickAction).
     SetDoubleClick(crate::autopilot::DoubleClick),
@@ -183,6 +185,8 @@ pub struct StatusInfo<'a> {
     pub seated: bool,
     pub ping_ms: u32,
     pub balance: Option<i32>,
+    /// The balance shown (`show_balance`, #1340).
+    pub show_balance: bool,
     /// Voice connection light and its explanation.
     pub voice: (crate::voice::VoiceLight, String),
     /// SLURL of the current position (shown when the location is edited).
@@ -348,6 +352,18 @@ pub(super) fn home_menu(resp: &egui::Response, p: &Palette, can_set_home: bool) 
         set = menu::item_if(ui, p, "home-check", aurora_i18n::tr!("world-set-home-here"), can_set_home);
     });
     set
+}
+
+/// The balance's right click (the account island's in the islands): the
+/// Legacy Viewer's "Show Currency Balance" of its status bar menu
+/// (menu_hide_navbar.xml, FSShowCurrencyBalanceInStatusbar), then Buy L$.
+pub(super) fn balance_menu(ui: &mut egui::Ui, p: &Palette, shown: bool, action: &mut BarAction) {
+    if menu::check(ui, p, "coin-filled", aurora_i18n::tr!("ui-bars-show-balance"), shown, true) {
+        *action = BarAction::ShowBalance(!shown);
+    }
+    if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("currency-menu")) {
+        *action = BarAction::BuyCurrency;
+    }
 }
 
 /// Local time of day choices (index = `Panels::time_of_day`; shown in the
@@ -1768,8 +1784,8 @@ pub fn top_bars(
                             ..island
                         });
                     }
-                    if let Some(b) = st.balance {
-                        // a click opens the L$ purchase
+                    if let Some(b) = st.balance.filter(|_| st.show_balance) {
+                        // a click opens the L$ purchase, a right click hides it
                         let balance = ui
                             .add(egui::Label::new(small(format!("{b} L$"), p.ink)).sense(egui::Sense::click()))
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1777,6 +1793,7 @@ pub fn top_bars(
                         if balance.clicked() {
                             action = BarAction::BuyCurrency;
                         }
+                        menu::context_menu(&balance, p, |ui| balance_menu(ui, p, st.show_balance, &mut action));
                     }
                     // the conversations' thumbnails, left of the balance as
                     // the Legacy Viewer's chiclets (#1134)

@@ -884,6 +884,10 @@ pub struct Settings {
     /// Firestorm's traffic indicator (ShowNetStats, off by default): a
     /// small curve of the network in the system island.
     pub show_net_stats: bool,
+    /// The L$ balance in the top bar (the Legacy Viewer's
+    /// FSShowCurrencyBalanceInStatusbar, on by default; #1340): hidden, it
+    /// stays out of sight on a stream.
+    pub show_balance: bool,
     /// People › Near you as Firestorm's radar table (`ui/people/radar.rs`)
     /// instead of the rows grouped by range and the sheet of
     /// `ui/people/nearby.rs`.
@@ -1744,6 +1748,7 @@ impl Default for Settings {
             immersive_name_tags: false,
             immersive_huds: true,
             show_net_stats: false,
+            show_balance: true,
             classic_people: false,
             classic_restart_alert: false,
             classic_chat_lines: false,

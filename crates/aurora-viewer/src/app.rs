@@ -11544,6 +11544,10 @@ impl App {
                 self.settings.system_island = shown;
                 self.settings.save();
             }
+            BarAction::ShowBalance(on) => {
+                self.settings.show_balance = on;
+                self.settings.save();
+            }
             BarAction::NetStats(on) => {
                 self.settings.show_net_stats = on;
                 self.settings.save();
@@ -12990,6 +12994,11 @@ impl App {
                     seated: self.world.agent.is_sitting(),
                     ping_ms: self.net.stats.ping_ms.load(std::sync::atomic::Ordering::Relaxed),
                     balance: self.world.balance,
+                    show_balance: if self.demo {
+                        ui::bars::demo::get().show_balance.unwrap_or(self.settings.show_balance)
+                    } else {
+                        self.settings.show_balance
+                    },
                     voice: (self.voice.light, self.voice.status.clone()),
                     slurl: if self.world.rlva.has("showloc") {
                         String::new()
