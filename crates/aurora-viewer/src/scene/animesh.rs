@@ -541,6 +541,13 @@ impl super::Scene {
                 vec![sphere("mHead", Vec3::new(-0.105, 0.0, 0.07), Vec3::splat(0.03))],
             ));
         }
+        if demo.sheer {
+            // two torso shells 1.5 cm apart: the layer, then the dress over it
+            for (id, grow) in [(crate::demo::SHEER_LAYER_MESH, 0.015), (crate::demo::SHEER_DRESS_MESH, 0.03)] {
+                let radii = Vec3::new(0.2, 0.25, 0.34) + grow;
+                meshes.push((id, vec![sphere("mChest", Vec3::new(0.0, 0.0, -0.05), radii)]));
+            }
+        }
         for (id, faces) in meshes {
             self.meshes.insert_demo_skin(
                 id,

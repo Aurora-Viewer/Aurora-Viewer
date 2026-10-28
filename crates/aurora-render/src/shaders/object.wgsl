@@ -681,6 +681,11 @@ fn fs_depth_mask_normal(in: VsOut, @builtin(front_facing) front: bool) -> @locat
     return depth_normal(in.normal, front);
 }
 
+// Alpha from which fs_depth_contact writes depth: half covered; 1/255 for
+// the rigged fringes of `RiggedBlendDepth::Layers` (#1300), the Legacy
+// Viewer's MINIMUM_ALPHA.
+override DEPTH_CONTACT_ALPHA: f32 = 0.5;
+
 // Depth of the blended faces opaque enough to cast contact shadows (half
 // covered, as the impostor pictures keep them), drawn over a copy of the
 // prepass (contact_shadows.rs).
@@ -693,7 +698,7 @@ fn depth_contact(in: VsOut) {
         return;
     }
     portal_clip(rec, in.world_pos);
-    if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < 0.5) {
+    if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < DEPTH_CONTACT_ALPHA) {
         discard;
     }
 }
