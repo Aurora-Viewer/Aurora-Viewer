@@ -7162,8 +7162,11 @@ offline; the files and snapshots uploaded in demo stay offline.
   Options after commas: `recent` (Recent tab), `search=<text>`,
   `toggle=<s>` (opens and closes the window every `s` seconds, to compare
   closed and open in one run; each change is logged as
-  `demo inventory window open=…`) and `churn=<ms>` (one item changes every
-  `ms` milliseconds, like the server's inventory updates). With
+  `demo inventory window open=…`), `churn=<ms>` (one item changes every
+  `ms` milliseconds, like the server's inventory updates) and `replace`
+  (opens Replace links on the first object, which a link of every fifty
+  items points to: with `big:300000`, about 120,000 objects to choose
+  from; the frame rate must stay that of the window closed). With
   `AURORA_PROFILE=1` and `AURORA_FPS_LIMIT=120`, read `u_inventory`: in the
   dev build, the window open costs about 0.4 ms per frame (12.9 ms before
   only the rows in sight were laid out) and no slow frame when it opens; an

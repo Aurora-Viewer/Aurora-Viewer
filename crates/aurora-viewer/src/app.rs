@@ -16885,6 +16885,9 @@ impl ApplicationHandler for App {
                     self.inventory_ui.open_folders(open);
                     self.inventory_ui.tab = if big.recent { 2 } else { 0 };
                     self.inventory_ui.search.clone_from(&big.search);
+                    if big.replace {
+                        self.inventory_ui.begin_replace_links(crate::world::inventory::demo::BIG_LINKED);
+                    }
                 }
                 // the "…-show" offers: the window opens on the kept item
                 self.panels.inventory = !crate::demo::show_accepted_scene();

@@ -4678,6 +4678,14 @@ ui-land-media-replace-texture = Remplacer la texture :
 ui-appearance-gallery-replace-contents-with-what-you-are-currently-wearing = { "Remplacer le contenu de « " }{ $name }{ " » par ce que vous portez actuellement ?" }
 common-replace-links = Remplacer les liens
 ui-inventory-dialogs-replace-links-to-with = { "Remplacer les liens vers « " }{ $value0 }{ " » par :" }
+ui-inventory-dialogs-replace-links-drop = Glissez ici un élément depuis une fenêtre d’inventaire, ou choisissez-le ci-dessous.
+ui-inventory-dialogs-replace-links-filter = Filtrer les éléments par nom…
+ui-inventory-dialogs-replace-links-none = Aucun élément de ce type ne correspond au filtre.
+ui-inventory-dialogs-replace-links-refused = Cet élément ne peut pas remplacer ces liens : choisissez un élément du même type, hors de la Corbeille et de la Bibliothèque.
+ui-inventory-dialogs-replace-links-found = { $count ->
+    [one] { $number } lien à remplacer
+   *[other] { $number } liens à remplacer
+    }
 world-notifications-override-your-animations = Remplacer vos animations
 ui-appearance-gallery-replace-your-outfit = Remplacer votre tenue
 demo-met-at-the-beach-very-friendly = Rencontré à la plage, très sympa.

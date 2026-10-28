@@ -2253,6 +2253,12 @@ paths. The list is computed in parallel, guarded by generation and drawn
 only for the visible rows; the move reuses the existing inventory
 mutations, with a check of the rights on validation.
 
+`ui/inventory/replace_links.rs` is the Replace links window
+(LLFloaterLinkReplace): the new target is dropped from an inventory window
+on its field, or picked from the items of the same kind, filtered by name.
+Like Move to, its list is built in parallel once per inventory generation
+and drawn only for the visible rows.
+
 Parent changes go through `aurora-net/src/session/inventory_moves.rs`
 (reliable UDP MoveInventoryItem / MoveInventoryFolder, like Firestorm).
 Moves alone publish `InventoryMoved` as soon as they are sent: the tree

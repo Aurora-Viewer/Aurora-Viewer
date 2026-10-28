@@ -44,6 +44,7 @@ pub(crate) mod permissions;
 mod progress;
 pub(crate) mod properties;
 mod received;
+mod replace_links;
 mod rows;
 pub(crate) mod task_drop;
 pub mod thumbnail;
@@ -299,7 +300,7 @@ pub enum EditDialog {
     Delete(Vec<Uuid>, bool),
     Empty(Uuid),
     Ungroup(Uuid),
-    ReplaceLinks(Uuid, Option<Uuid>),
+    ReplaceLinks(Box<replace_links::ReplaceLinks>),
     CopyEmbedded(Uuid, char),
     SaveEmbedded(Uuid),
 }
@@ -550,6 +551,13 @@ impl InventoryUi {
 
     pub fn begin_move_to(&mut self, id: Uuid) {
         self.move_to = Some(move_to::MoveTo::new(self.selected_ids(id)));
+    }
+
+    /// Replace links to `id` (an original), once the whole inventory is
+    /// loaded.
+    pub fn begin_replace_links(&mut self, id: Uuid) {
+        self.dialog = Some(EditDialog::ReplaceLinks(Box::new(replace_links::ReplaceLinks::new(id))));
+        self.fetch_all = true;
     }
 
     pub fn filter_move_to(&mut self, filter: &str) {

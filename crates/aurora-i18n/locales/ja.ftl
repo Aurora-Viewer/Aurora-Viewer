@@ -4573,6 +4573,13 @@ ui-land-media-replace-texture = 置き換えるテクスチャ：
 ui-appearance-gallery-replace-contents-with-what-you-are-currently-wearing = 「{ $name }」の中身を、現在着用しているものに置き換えますか？
 common-replace-links = リンクを置き換える
 ui-inventory-dialogs-replace-links-to-with = 「{ $value0 }」へのリンクの置き換え先：
+ui-inventory-dialogs-replace-links-drop = インベントリウィンドウからここにアイテムをドラッグするか、下の一覧から選択してください。
+ui-inventory-dialogs-replace-links-filter = アイテム名で絞り込み…
+ui-inventory-dialogs-replace-links-none = このフィルタに該当する同じ種類のアイテムはありません。
+ui-inventory-dialogs-replace-links-refused = このアイテムではリンクを置き換えられません。ごみ箱とライブラリ以外にある、同じ種類のアイテムを選択してください。
+ui-inventory-dialogs-replace-links-found = { $count ->
+   *[other] 置き換えるリンク：{ $number }個
+    }
 world-notifications-override-your-animations = アニメーションを上書きする
 ui-appearance-gallery-replace-your-outfit = アウトフィットを置き換える
 demo-met-at-the-beach-very-friendly = ビーチで知り合いました。とても気さくな人です。

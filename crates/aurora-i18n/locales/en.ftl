@@ -4673,6 +4673,14 @@ ui-land-media-replace-texture = Replace texture:
 ui-appearance-gallery-replace-contents-with-what-you-are-currently-wearing = Replace "{ $name }" contents with what you are currently wearing?
 common-replace-links = Replace links
 ui-inventory-dialogs-replace-links-to-with = Replace links to "{ $value0 }" with:
+ui-inventory-dialogs-replace-links-drop = Drag an item here from an inventory window, or choose it below.
+ui-inventory-dialogs-replace-links-filter = Filter items by name…
+ui-inventory-dialogs-replace-links-none = No item of this kind matches the filter.
+ui-inventory-dialogs-replace-links-refused = This item cannot replace these links: choose an item of the same kind, outside the Trash and the Library.
+ui-inventory-dialogs-replace-links-found = { $count ->
+    [one] { $number } link to replace
+   *[other] { $number } links to replace
+    }
 world-notifications-override-your-animations = Override your animations
 ui-appearance-gallery-replace-your-outfit = Replace your outfit
 demo-met-at-the-beach-very-friendly = Met at the beach; very friendly.
