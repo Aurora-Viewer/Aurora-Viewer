@@ -964,7 +964,7 @@ mod tests {
         let p = crate::theme::Theme::default().palette();
         let frame = |s: &mut RegionUi, scene: &mut crate::scene::Scene, world: &mut World, events: Vec<egui::Event>| {
             s.prepare_materials(&ctx, scene);
-            let output = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1200.0, 1200.0))),
                     events,
@@ -974,6 +974,8 @@ mod tests {
                     terrain(ui, &p, s, &v, world, &HashMap::new());
                 },
             );
+            // no painter here: egui 0.37 panics on unapplied texture deltas
+            output.textures_delta.clear();
             super::super::surface::update_preview(s, &v, world);
             output
         };
@@ -1080,7 +1082,7 @@ mod tests {
                 // The production app prepares the region before showing it;
                 // RegionUi drains the picker's requested maps after drawing.
                 s.prepare_materials(&ctx, &mut scene);
-                let output = ctx.run_ui(
+                let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1200.0, 900.0))),
                         ..Default::default()
@@ -1089,6 +1091,8 @@ mod tests {
                         s.texture.show(&ctx, &p, &mut world, &HashMap::new());
                     },
                 );
+                // no painter here: egui 0.37 panics on unapplied texture deltas
+                output.textures_delta.clear();
                 s.wanted_images.extend(s.texture.wanted_images.drain());
                 rendered |= output.shapes.iter().any(|shape| matches!(shape.shape, egui::Shape::Callback(_)));
             }
