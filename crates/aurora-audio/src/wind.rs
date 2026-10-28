@@ -133,6 +133,13 @@ pub(crate) struct WindGen {
     freq: f32,
     pan_right: f32,
     last: f32,
+    /// Step towards the last synthesised sample, and the output frames of
+    /// that step still to write: a buffer that ends inside the step carries
+    /// it into the next one. LLWindGen restarts at every buffer, which FMOD
+    /// sizes in whole steps; ours have any length (the 44.1 kHz resampler
+    /// asks odd ones).
+    delta: f32,
+    pending: usize,
     rng: u32,
 }
 
@@ -150,6 +157,8 @@ impl WindGen {
             freq: s.freq,
             pan_right: s.pan_right,
             last: 0.0,
+            delta: 0.0,
+            pending: 0,
             rng: 0x9e37_79b9,
         }
     }
@@ -175,6 +184,7 @@ impl WindGen {
         if self.gain < 1e-5 && target.gain <= 0.0 {
             self.gain = 0.0;
             self.last = 0.0;
+            self.pending = 0;
             return;
         }
         // If the frequency is not changing much, no need to interpolate it
@@ -187,6 +197,24 @@ impl WindGen {
         }
         let mut frames = out.as_chunks_mut::<2>().0.iter_mut();
         loop {
+            // Finish the step in progress before synthesising the next
+            // sample; synthesise only for frames this buffer still has, as
+            // windGenerate's `while (numsamples)`: a sample computed past the
+            // end would be lost, the filter a step ahead of the output, a
+            // seam heard as a crackle at every buffer.
+            while self.pending > 0 {
+                let Some(frame) = frames.next() else {
+                    return;
+                };
+                self.pending -= 1;
+                self.last += self.delta;
+                let right = self.last * self.pan_right;
+                frame[0] += self.last - right;
+                frame[1] += right;
+            }
+            if frames.len() == 0 {
+                return;
+            }
             let white = self.white();
             // Pinking filter (Paul Kellet's economy method, the PKE
             // coefficients of llwindgen.h).
@@ -209,16 +237,8 @@ impl WindGen {
             let sample = filtered * self.gain;
 
             // Interpolate between the synthesised samples.
-            let delta = (sample - self.last) / SUB_SAMPLES as f32;
-            for _ in 0..SUB_SAMPLES {
-                let Some(frame) = frames.next() else {
-                    return;
-                };
-                self.last += delta;
-                let right = self.last * self.pan_right;
-                frame[0] += self.last - right;
-                frame[1] += right;
-            }
+            self.delta = (sample - self.last) / SUB_SAMPLES as f32;
+            self.pending = SUB_SAMPLES;
         }
     }
 
@@ -312,6 +332,36 @@ mod tests {
             &mut out[..20],
         );
         assert!(g.freq > start && g.freq < 600.0 * 0.9, "{start} -> {}", g.freq);
+    }
+
+    #[test]
+    fn buffer_boundaries_leave_no_seam() {
+        // The same sound whatever the buffers: in one piece, in the even
+        // buffers of a 48 kHz device, and in the odd and tiny ones the
+        // 44.1 kHz resampler asks. (Starting at the target frequency: a
+        // glide is decided per buffer, as in LLWindGen.)
+        let target = WindTarget::from_wind([-6.0, 1.0, 0.0], 1.0);
+        let render = |sizes: &[usize]| {
+            let mut g = WindGen::new(RATE);
+            g.freq = target.freq;
+            let mut out = vec![0.0; RATE as usize * 2];
+            let mut pos = 0;
+            for &frames in sizes.iter().cycle() {
+                if pos == out.len() {
+                    break;
+                }
+                let end = (pos + frames * 2).min(out.len());
+                g.mix_into(target, &mut out[pos..end]);
+                pos = end;
+            }
+            out
+        };
+        let whole = render(&[RATE as usize]);
+        for sizes in [&[480][..], &[485], &[484, 485, 1, 486]] {
+            let pieces = render(sizes);
+            let worst = whole.iter().zip(&pieces).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+            assert!(worst < 1e-6, "{sizes:?}: {worst}");
+        }
     }
 
     #[test]

@@ -6,9 +6,9 @@
 //! survives device changes (channels, sinks and playing sounds are kept).
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample};
@@ -34,6 +34,103 @@ pub struct OutputInfo {
     /// opened, so the system default is used instead.
     pub fallback: bool,
 }
+
+/// Sound queued in the output device (s): four of WASAPI's usual 10 ms
+/// periods, so that a callback held back by up to about 30 ms (the viewer
+/// loading a region on every core) still finds sound to play instead of
+/// leaving a gap, heard as a tick in a continuous sound such as the wind
+/// while flying. The callbacks keep the device period; only the latency
+/// grows, still under the Legacy Viewer's (FMOD's default mixing buffers,
+/// 4 × 1024 frames, about 90 ms).
+const OUTPUT_QUEUE_SECS: f64 = 0.04;
+
+/// Health of the playing stream: written by the stream callback, read by the
+/// output thread. A callback that comes later than the sound queued in the
+/// device leaves it silent for a moment (a tick); counting those tells a
+/// starved output from a defect of the sound itself.
+struct StreamHealth {
+    /// The device reported the stream lost.
+    failed: AtomicBool,
+    /// Sound queued in the device (µs; 0 when the device chose).
+    queued_us: u32,
+    /// Callbacks that came after the queued sound had run out.
+    gaps: AtomicU32,
+    /// Longest wait between two callbacks (µs).
+    worst_gap_us: AtomicU32,
+    /// Longest mix in a callback (µs).
+    worst_mix_us: AtomicU32,
+    /// Shortest callback buffer, the device period (µs).
+    period_us: AtomicU32,
+}
+
+impl StreamHealth {
+    fn new(queued: Duration) -> Self {
+        Self {
+            failed: AtomicBool::new(false),
+            queued_us: micros(queued),
+            gaps: AtomicU32::new(0),
+            worst_gap_us: AtomicU32::new(0),
+            worst_mix_us: AtomicU32::new(0),
+            period_us: AtomicU32::new(u32::MAX),
+        }
+    }
+
+    /// Longest wait the device survives: the sound queued, and at least two
+    /// periods when the device chose its own buffer.
+    fn tolerance_us(&self) -> u32 {
+        self.queued_us.max(self.period_us.load(Ordering::Relaxed).saturating_mul(2))
+    }
+
+    /// Called at the end of each callback that began at `start`.
+    fn record(&self, start: Instant, previous: Option<Instant>, frames: usize, rate: u32) {
+        let period = frames as u64 * 1_000_000 / u64::from(rate.max(1));
+        self.period_us
+            .fetch_min(u32::try_from(period).unwrap_or(u32::MAX).max(1), Ordering::Relaxed);
+        self.worst_mix_us.fetch_max(micros(start.elapsed()), Ordering::Relaxed);
+        if let Some(previous) = previous {
+            let gap = micros(start.duration_since(previous));
+            self.worst_gap_us.fetch_max(gap, Ordering::Relaxed);
+            if gap > self.tolerance_us() {
+                self.gaps.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Logs and resets what happened since the last report.
+    fn report(&self, secs: u64) {
+        let ms = |us: u32| us as f32 / 1000.0;
+        let gaps = self.gaps.swap(0, Ordering::Relaxed);
+        let gap = ms(self.worst_gap_us.swap(0, Ordering::Relaxed));
+        let mix = ms(self.worst_mix_us.swap(0, Ordering::Relaxed));
+        let tolerance = ms(self.tolerance_us());
+        if gaps > 0 {
+            log::warn!(
+                "audio output: {gaps} callbacks too late in {secs} s, the sound cut (longest wait {gap:.1} ms for {tolerance:.1} ms queued, longest mix {mix:.2} ms)"
+            );
+        } else {
+            log::debug!("audio output: longest wait {gap:.1} ms for {tolerance:.1} ms queued, longest mix {mix:.2} ms");
+        }
+    }
+}
+
+fn micros(d: Duration) -> u32 {
+    u32::try_from(d.as_micros()).unwrap_or(u32::MAX)
+}
+
+/// The output buffer to ask for. WASAPI's shared mode takes any length
+/// (cpal reports only the device period as its range there); other hosts
+/// keep their own choice.
+fn output_buffer(rate: u32) -> (cpal::BufferSize, Duration) {
+    if cfg!(windows) && rate > 0 {
+        let frames = (f64::from(rate) * OUTPUT_QUEUE_SECS).round() as u32;
+        (cpal::BufferSize::Fixed(frames), Duration::from_secs_f64(OUTPUT_QUEUE_SECS))
+    } else {
+        (cpal::BufferSize::Default, Duration::ZERO)
+    }
+}
+
+/// How often the output thread reports the stream's health.
+const HEALTH_REPORT: Duration = Duration::from_secs(5);
 
 /// Requests to the output thread.
 enum OutputCmd {
@@ -106,7 +203,7 @@ fn output_main(
     loop {
         let mut reopen_now = false;
         match open_stream(&mixer, wanted.as_deref(), &reference) {
-            Ok((stream, new_info, failed)) => {
+            Ok((stream, new_info, health)) => {
                 log::info!(
                     "audio output: {} ({} Hz, {} ch)",
                     new_info.device_name,
@@ -117,7 +214,12 @@ fn output_main(
                 if let Some(tx) = ready.take() {
                     let _ = tx.send(Ok(()));
                 }
+                let mut last_report = Instant::now();
                 loop {
+                    if last_report.elapsed() >= HEALTH_REPORT {
+                        health.report(last_report.elapsed().as_secs());
+                        last_report = Instant::now();
+                    }
                     match ctl.recv_timeout(Duration::from_millis(250)) {
                         Ok(OutputCmd::SetDevice(name)) => {
                             if name != wanted {
@@ -127,7 +229,7 @@ fn output_main(
                             }
                         }
                         Err(RecvTimeoutError::Timeout) => {
-                            if failed.load(Ordering::Relaxed) {
+                            if health.failed.load(Ordering::Relaxed) {
                                 log::warn!("audio output lost; reopening the device");
                                 break;
                             }
@@ -164,19 +266,19 @@ fn open_stream(
     mixer: &Arc<Mutex<Mixer>>,
     name: Option<&str>,
     reference: &EchoReference,
-) -> Result<(cpal::Stream, OutputInfo, Arc<AtomicBool>), AudioError> {
+) -> Result<(cpal::Stream, OutputInfo, Arc<StreamHealth>), AudioError> {
     let picked = devices::pick(Direction::Output, name).ok_or(AudioError::NoDevice)?;
     match open_device(mixer, &picked.device, reference) {
-        Ok((stream, mut info, failed)) => {
+        Ok((stream, mut info, health)) => {
             info.fallback = picked.fallback;
-            Ok((stream, info, failed))
+            Ok((stream, info, health))
         }
         Err(e) if name.is_some() && !picked.fallback => {
             log::warn!("audio output device {name:?} cannot be opened ({e}); using the default");
             let picked = devices::pick(Direction::Output, None).ok_or(AudioError::NoDevice)?;
-            let (stream, mut info, failed) = open_device(mixer, &picked.device, reference)?;
+            let (stream, mut info, health) = open_device(mixer, &picked.device, reference)?;
             info.fallback = true;
-            Ok((stream, info, failed))
+            Ok((stream, info, health))
         }
         Err(e) => Err(e),
     }
@@ -186,18 +288,20 @@ fn open_device(
     mixer: &Arc<Mutex<Mixer>>,
     device: &cpal::Device,
     reference: &EchoReference,
-) -> Result<(cpal::Stream, OutputInfo, Arc<AtomicBool>), AudioError> {
+) -> Result<(cpal::Stream, OutputInfo, Arc<StreamHealth>), AudioError> {
     let supported = device.default_output_config().map_err(|e| AudioError::Device(e.to_string()))?;
-    let config = supported.config();
-    let failed = Arc::new(AtomicBool::new(false));
+    let mut config = supported.config();
+    let queued;
+    (config.buffer_size, queued) = output_buffer(config.sample_rate);
+    let health = Arc::new(StreamHealth::new(queued));
     let stream = match supported.sample_format() {
-        SampleFormat::F32 => build::<f32>(device, &config, mixer, &failed, reference),
-        SampleFormat::I16 => build::<i16>(device, &config, mixer, &failed, reference),
-        SampleFormat::U16 => build::<u16>(device, &config, mixer, &failed, reference),
-        SampleFormat::I32 => build::<i32>(device, &config, mixer, &failed, reference),
-        SampleFormat::F64 => build::<f64>(device, &config, mixer, &failed, reference),
-        SampleFormat::I8 => build::<i8>(device, &config, mixer, &failed, reference),
-        SampleFormat::U8 => build::<u8>(device, &config, mixer, &failed, reference),
+        SampleFormat::F32 => build::<f32>(device, &config, mixer, &health, reference),
+        SampleFormat::I16 => build::<i16>(device, &config, mixer, &health, reference),
+        SampleFormat::U16 => build::<u16>(device, &config, mixer, &health, reference),
+        SampleFormat::I32 => build::<i32>(device, &config, mixer, &health, reference),
+        SampleFormat::F64 => build::<f64>(device, &config, mixer, &health, reference),
+        SampleFormat::I8 => build::<i8>(device, &config, mixer, &health, reference),
+        SampleFormat::U8 => build::<u8>(device, &config, mixer, &health, reference),
         other => Err(AudioError::Device(format!("unsupported device sample format {other:?}"))),
     }?;
     stream.play().map_err(|e| AudioError::Device(e.to_string()))?;
@@ -207,14 +311,14 @@ fn open_device(
         channels: config.channels,
         fallback: false,
     };
-    Ok((stream, info, failed))
+    Ok((stream, info, health))
 }
 
 fn build<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     mixer: &Arc<Mutex<Mixer>>,
-    failed: &Arc<AtomicBool>,
+    health: &Arc<StreamHealth>,
     reference: &EchoReference,
 ) -> Result<cpal::Stream, AudioError>
 where
@@ -224,20 +328,26 @@ where
     adapter.tap = Some(RenderTap::new(reference.clone()));
     let reference = reference.clone();
     let mixer = mixer.clone();
-    let failed = failed.clone();
+    let health = health.clone();
+    let callback_health = health.clone();
+    let (rate, channels) = (config.sample_rate, usize::from(config.channels).max(1));
+    let mut previous = None;
     device
         .build_output_stream::<T, _, _>(
             *config,
             move |data: &mut [T], info| {
+                let start = Instant::now();
                 let timestamp = info.timestamp();
                 let delay = timestamp.playback.duration_since(timestamp.callback).as_millis().min(500) as i32;
                 reference.delay(delay);
                 let mut m = mixer.lock();
                 adapter.fill(&mut m, data);
+                drop(m);
+                callback_health.record(start, previous.replace(start), data.len() / channels, rate);
             },
             move |err| match err.kind() {
                 cpal::ErrorKind::DeviceNotAvailable | cpal::ErrorKind::StreamInvalidated | cpal::ErrorKind::HostUnavailable => {
-                    failed.store(true, Ordering::Relaxed);
+                    health.failed.store(true, Ordering::Relaxed);
                 }
                 _ => log::debug!("audio stream: {err}"),
             },
@@ -323,6 +433,48 @@ mod tests {
     use crate::Channel;
     use crate::mixer::{ClipVoice, Command, SharedParams};
     use cpal::Sample;
+
+    #[test]
+    fn health_counts_callbacks_later_than_the_queued_sound() {
+        let ms = Duration::from_millis;
+        let t0 = Instant::now();
+        // The device chose its buffer; 441 frames at 44.1 kHz: a 10 ms period.
+        let h = StreamHealth::new(Duration::ZERO);
+        h.record(t0, None, 441, 44_100);
+        h.record(t0 + ms(10), Some(t0), 441, 44_100);
+        h.record(t0 + ms(25), Some(t0 + ms(10)), 441, 44_100);
+        assert_eq!(h.gaps.load(Ordering::Relaxed), 0, "jitter under two periods");
+        h.record(t0 + ms(55), Some(t0 + ms(25)), 1323, 44_100);
+        assert_eq!(h.gaps.load(Ordering::Relaxed), 1);
+        assert_eq!(h.worst_gap_us.load(Ordering::Relaxed), 30_000);
+        assert_eq!(
+            h.period_us.load(Ordering::Relaxed),
+            10_000,
+            "a refill after a wait is not the period"
+        );
+        h.report(5);
+        assert_eq!(h.gaps.load(Ordering::Relaxed), 0, "a report starts a new count");
+        assert_eq!(h.worst_gap_us.load(Ordering::Relaxed), 0);
+
+        // 40 ms queued: a 30 ms wait is absorbed, a 50 ms one is not.
+        let h = StreamHealth::new(ms(40));
+        h.record(t0, None, 441, 44_100);
+        h.record(t0 + ms(30), Some(t0), 1323, 44_100);
+        assert_eq!(h.gaps.load(Ordering::Relaxed), 0);
+        h.record(t0 + ms(80), Some(t0 + ms(30)), 1764, 44_100);
+        assert_eq!(h.gaps.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn output_buffer_queues_forty_ms_on_windows() {
+        let (size, queued) = output_buffer(44_100);
+        if cfg!(windows) {
+            assert_eq!(size, cpal::BufferSize::Fixed(1764));
+            assert_eq!(queued, Duration::from_millis(40));
+        } else {
+            assert_eq!(size, cpal::BufferSize::Default);
+        }
+    }
 
     #[test]
     fn adapter_resamples_and_maps_channels() {
