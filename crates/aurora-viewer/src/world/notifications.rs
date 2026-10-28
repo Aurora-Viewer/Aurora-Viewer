@@ -305,6 +305,22 @@ impl Notification {
         )
     }
 
+    /// A scripted object's window waiting for its answer (llDialog,
+    /// llTextBox, llRequestPermissions, llLoadURL, an object's
+    /// llGiveInventory): its toast or card stays out until answered or
+    /// closed, never folded away by time, by the open list, by mouselook or
+    /// by do not disturb (it comes back once they end), like the Legacy
+    /// Viewer's script floaters (LLScriptFloaterManager: ScriptDialog,
+    /// LoadWebPage, ObjectGiveItem). Its permission question fades there
+    /// (ScriptQuestion, a notify toast): kept out too here, on the human's
+    /// request (2026-10-28), as it is a scripted object's window as well.
+    pub fn stays_until_answered(&self) -> bool {
+        matches!(
+            self.data,
+            Data::Dialog { .. } | Data::TextBox { .. } | Data::Permissions { .. } | Data::Url(_) | Data::Inventory { task: true, .. }
+        )
+    }
+
     /// Clicking the card itself acts (opens the conversation): a friend
     /// online opens an IM (LLAvatarActions::startIM, respond_on_mousedown),
     /// a message its conversation.

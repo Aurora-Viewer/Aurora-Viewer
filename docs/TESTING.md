@@ -1074,7 +1074,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_ACTIONS=<mode>` | Cursors, object clicks, buying and paying |
 | `AURORA_DEMO_HOVER_TIPS=<form>[:all][:noland]` | World tooltips over objects, avatars and land |
 | `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks, scripted attachments and the left button's script clicks |
-| `AURORA_DEMO_DIALOG=<mode>` | llDialog menu |
+| `AURORA_DEMO_DIALOG=<mode>` | llDialog menu, every scripted object's window |
 | `AURORA_DEMO_BUILD="<script>"` | Script of the build tools |
 | `AURORA_DEMO_BEACONS=1` | Object beacons and World overlays |
 | `AURORA_DEMO_REPLACE_PRIM=1\|script` | Replacement board, script-only case |
@@ -1702,7 +1702,7 @@ Transaction windows, with the same variable:
   the next owner.
 - `buy-empty`: offers contents that cannot be sold and disables the purchase.
 
-**`AURORA_DEMO_DIALOG=12|4|long|links`** — llDialog menu of twelve answers in
+**`AURORA_DEMO_DIALOG=12|4|long|links|scripted`** — llDialog menu of twelve answers in
 three columns, arranged from the bottom to the top like Firestorm; `4`: four
 answers, to check the incomplete last row; `long`: long label truncated,
 with the full text on hover. Block and Ignore buttons under the menu.
@@ -1710,7 +1710,14 @@ with the full text on hover. Block and Ignore buttons under the menu.
 `secondlife:///app/.../about` links and a region by its `app/region` link;
 they show as names (a person or group mark before them, the region with its
 badge), clickable. With `AURORA_DEMO_NOTIFS=legacy` and a capture before
-frame 700, the same menu in the Legacy toasts.
+frame 700, the same menu in the Legacy toasts. `scripted`: every window a
+scripted object sends at once (an llDialog menu, an llTextBox, an
+llRequestPermissions question, an llLoadURL link and an object's
+llGiveInventory), then four pieces of information. The windows stay out
+until answered, in both notification styles: the newest three shown, the
+others behind "+ N more", the information folding away after its time;
+open and close the list, or go into mouselook and back, and they come out
+again.
 
 **`AURORA_DEMO_BUILD="mode,x,y[,part,dx,dy]"`** — script of the build
 tools. Modes: `move`, `rotate`, `stretch`, `face`, `align`, `grab`,
