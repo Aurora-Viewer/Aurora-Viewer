@@ -159,9 +159,11 @@ mod tests {
         let mut prefs = super::super::InventoryPreferences::default();
         let mut actions = Vec::new();
         let mut frame = |events| {
-            ctx.run_ui(input(events), |ui| {
+            let mut output = ctx.run_ui(input(events), |ui| {
                 super::super::context::new_menu(ui, &theme.palette(), uuid::Uuid::nil(), false, &mut st, &mut prefs, &mut actions);
-            })
+            });
+            output.textures_delta.clear();
+            output
         };
         let mut output = frame(Vec::new());
         for _ in 0..4 {
@@ -206,9 +208,11 @@ mod tests {
         let mut imports = imports::Preferences::default();
         let mut open = true;
         let mut frame = |events| {
-            ctx.run_ui(input(events), |ui| {
+            let mut output = ctx.run_ui(input(events), |ui| {
                 show(ui.ctx(), &theme.palette(), &mut open, &mut creation, &mut imports)
-            })
+            });
+            output.textures_delta.clear();
+            output
         };
         for _ in 0..8 {
             drop(frame(Vec::new()));
