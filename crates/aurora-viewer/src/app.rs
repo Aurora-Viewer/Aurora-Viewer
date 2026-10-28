@@ -5061,9 +5061,14 @@ impl App {
     }
 
     fn request_exit(&mut self) {
-        if self.gfx.as_ref().is_some_and(|g| g.renderer.stalled_for().is_some()) {
-            // nothing can be drawn while the graphics card holds a frame,
-            // the exit prompt neither: the window's close button closes
+        if self
+            .gfx
+            .as_ref()
+            .is_some_and(|g| g.renderer.stalled_for().is_some() || g.renderer.device_lost())
+        {
+            // nothing can be drawn while the graphics card holds a frame or
+            // once it is lost, the exit prompt neither: the window's close
+            // button closes
             log::warn!("exit asked while the graphics card does not answer: closing without the prompt");
             self.gpu_stall.close = true;
             return;
@@ -9489,7 +9494,9 @@ impl App {
             self.update_acknowledged = true;
             aurora_updater::install::acknowledge_frame();
         }
-        if gfx.renderer.failed() {
+        // (a render thread that panicked on the device's loss: its notice
+        // first, app/gpu_stall.rs)
+        if gfx.renderer.failed() && !gfx.renderer.device_lost() {
             crate::crash::failure("The render thread terminated unexpectedly.");
             // the render thread is gone (its panic is in the log): nothing
             // more can be shown, leave cleanly
