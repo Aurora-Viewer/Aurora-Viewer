@@ -834,11 +834,12 @@ fn pasted_transcripts_keep_paragraphs_in_the_nearby_chat_bar() {
 }
 
 /// The explicit paragraph chord wins over completion and sending, including
-/// in the narrower detached panes. Ordinary modified Enter keeps its volume.
+/// in the narrower detached panes. Shift+Enter whispers only in nearby chat;
+/// in IMs and sessions it neither completes, inserts nor sends anything.
 #[test]
 fn paragraph_chord_edits_without_sending_in_every_conversation_style() {
     for style in ALL {
-        for conversation in [None, Some(JANE)] {
+        for conversation in [None, Some(JANE), Some(GROUP), Some(MEETING)] {
             for detached in [false, true] {
                 let mut h = H::new(style);
                 h.open(conversation);
@@ -854,18 +855,34 @@ fn paragraph_chord_edits_without_sending_in_every_conversation_style() {
                     h.settle();
                 }
                 h.type_text("first :hea");
+                if conversation.is_some() {
+                    h.history_key(egui::Key::Enter, egui::Modifiers::SHIFT);
+                    assert_eq!(h.st.draft_mut(conversation), "first :hea", "Shift+Enter leaves completion alone");
+                    assert!(!h.take().iter().any(|a| matches!(a, ConvAction::Local(_) | ConvAction::Im { .. })));
+                }
                 h.history_key(egui::Key::Enter, egui::Modifiers::CTRL | egui::Modifiers::SHIFT);
                 assert_eq!(h.st.draft_mut(conversation), "first :hea\n", "{style:?}, detached={detached}");
                 assert!(!h.take().iter().any(|a| matches!(a, ConvAction::Local(_) | ConvAction::Im { .. })));
                 h.type_text("second 🙂");
                 h.history_key(egui::Key::Enter, egui::Modifiers::SHIFT);
+                if conversation.is_some() {
+                    assert_eq!(
+                        h.st.draft_mut(conversation),
+                        "first :hea\nsecond 🙂",
+                        "Shift+Enter preserves the draft"
+                    );
+                    assert!(!h.take().iter().any(|a| matches!(a, ConvAction::Local(_) | ConvAction::Im { .. })));
+                    let field = egui::Id::unique(("conv_input", conversation));
+                    assert!(h.frames.ctx.memory(|m| m.has_focus(field)), "Shift+Enter preserves focus");
+                    h.history_key(egui::Key::Enter, egui::Modifiers::NONE);
+                }
                 assert!(
                     h.take().iter().any(|a| match a {
                         ConvAction::Local(out) => out.message == "first :hea\nsecond 🙂" && out.chat_type == aurora_net::ChatType::Whisper,
-                        ConvAction::Im { text, .. } => text == "first :hea\nsecond 🙂",
+                        ConvAction::Im { to, text } => Some(*to) == conversation && text == "first :hea\nsecond 🙂",
                         _ => false,
                     }),
-                    "{style:?}, detached={detached}: Shift+Enter still sends"
+                    "{style:?}, {conversation:?}, detached={detached}: the expected send shortcut"
                 );
             }
         }

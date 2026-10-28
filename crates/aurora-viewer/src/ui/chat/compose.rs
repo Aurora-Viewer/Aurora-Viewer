@@ -157,7 +157,7 @@ pub(super) fn show(
                             None => aurora_i18n::tr!("ui-chat-write-local").to_owned(),
                             Some(id) => aurora_i18n::tr!("ui-chat-write-to", name = world.session_title(&id)),
                         };
-                        super::input::prepare(ui, conv_input);
+                        super::input::prepare(ui, conv_input, local);
                         let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
                         let nav = crate::ui::emoji::codes::keys(ui, conv_input);
                         let suggest_nav = if nav.is_none() { suggest::keys(ui, conv_input) } else { None };

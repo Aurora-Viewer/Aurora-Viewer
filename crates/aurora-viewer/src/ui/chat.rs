@@ -3072,7 +3072,7 @@ fn classic_pane(
             // leave exactly the send button + spacing (else the row overflows
             // and the resizable window grows every frame)
             let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x).floor().max(40.0);
-            input::prepare(ui, conv_input);
+            input::prepare(ui, conv_input, st.selected.is_none());
             let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
             let nav = super::emoji::codes::keys(ui, conv_input);
             let suggest_nav = if nav.is_none() { suggest::keys(ui, conv_input) } else { None };
@@ -3734,7 +3734,7 @@ pub(crate) fn bar_input(
     // the shortcuts (Enter, Ctrl / Shift + Enter, /channel) are a tooltip:
     // written in the empty field they crowded the bar (the human's request)
     let build = identified(build);
-    input::prepare(ui, bar_input_id());
+    input::prepare(ui, bar_input_id(), true);
     let recalled = st.input_history.entry(None).or_default().recall(ui, bar_input_id(), &mut st.input);
     let nav = super::emoji::codes::keys(ui, bar_input_id());
     let suggest_nav = if nav.is_none() { suggest::keys(ui, bar_input_id()) } else { None };

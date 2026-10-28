@@ -12,13 +12,21 @@ const MAX_ROWS: f32 = 4.0;
 /// Before completion reads the keyboard: route an explicit paragraph break
 /// through the editor's native paste handling (selection replacement/undo),
 /// and consume its Enter so the send path cannot also handle it.
-pub(super) fn prepare(ui: &Ui, field: Id) {
+pub(super) fn prepare(ui: &Ui, field: Id, local: bool) {
     if !ui.memory(|m| m.has_focus(field)) {
         return;
     }
     ui.input_mut(|i| {
-        for event in &mut i.events {
+        i.events.retain_mut(|event| {
             match event {
+                // Whisper belongs only to nearby chat. Consume this chord
+                // in IMs/sessions before completion can accept it either.
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if !local && modifiers.shift && !modifiers.ctrl && !modifiers.alt && !modifiers.mac_cmd => return false,
                 egui::Event::Key {
                     key: egui::Key::Enter,
                     pressed: true,
@@ -32,7 +40,8 @@ pub(super) fn prepare(ui: &Ui, field: Id) {
                 }
                 _ => {}
             }
-        }
+            true
+        });
     });
 }
 

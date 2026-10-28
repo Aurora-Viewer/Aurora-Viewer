@@ -19,6 +19,8 @@ Chat message menus retain the selected transcript text alongside their target
 and eviction. `ui/chat/input.rs` shares a wrapping paragraph editor across
 conversation panes and nearby-chat bars. Native paste/undo preserves line breaks;
 Ctrl+Shift+Enter inserts one before completion or sending handles Enter.
+Shift+Enter whispers only in nearby chat; other conversations consume it
+before completion/editing/sending, preserving the draft and focus.
 The editor grows to four visible rows, then scrolls. Its measured bounded height
 reserves space in the transcript or bar without growing the containing window.
 

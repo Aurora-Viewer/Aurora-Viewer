@@ -5356,7 +5356,9 @@ failure. Grid validation and any paid upload are performed by the human.
   private/group IMs and detached conversations. Paste paragraphs and use
   Ctrl+Shift+Enter: preserve line breaks, replace selected text and support
   undo without sending. Enter sends, Ctrl+Enter shouts in nearby chat and
-  Shift+Enter whispers. The field wraps and grows to four rows, then scrolls;
+  Shift+Enter whispers only in nearby chat; in private, group and conference
+  conversations it leaves the draft, completion and focus unchanged. The
+  field wraps and grows to four rows, then scrolls;
   the dock stays in place, while the full Legacy bar reserves its taller
   layout. Conversation windows keep their size. Sending collapses the field.
   Capture at frame 750 or later. This fixture uses no grid or system clipboard.
