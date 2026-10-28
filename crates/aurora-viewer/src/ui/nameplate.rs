@@ -169,6 +169,9 @@ pub enum Presence {
     Online,
     Away,
     Busy,
+    /// Our own plate while our online status is hidden from the friends:
+    /// the hollow ring of the top bar's status dot.
+    Invisible,
 }
 
 impl Presence {
@@ -179,6 +182,7 @@ impl Presence {
             Presence::Online => Status::Online,
             Presence::Away => Status::Away,
             Presence::Busy => Status::Busy,
+            Presence::Invisible => Status::Offline,
         }
     }
 }

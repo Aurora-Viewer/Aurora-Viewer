@@ -266,7 +266,10 @@ fn plate_content(
     let id = o.full_id;
     let own = id == world.agent_id;
     // the source of the Conversations window's dot too (ui/presence.rs)
+    // our own plate says "Invisible" first, as the top bar's dot does:
+    // nothing in the world tells it, the residents around still see us
     let presence = match super::presence::of_avatar(world, &id) {
+        _ if own && world.status.invisible.on => Presence::Invisible,
         Status::Busy => Presence::Busy,
         Status::Away => Presence::Away,
         _ => Presence::Online,
