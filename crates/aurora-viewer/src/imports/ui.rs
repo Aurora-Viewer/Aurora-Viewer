@@ -511,13 +511,7 @@ fn texture(
     options.max_width = maximum;
     options.max_height = maximum;
     let (width, height) = import_texture::dimensions(image.width, image.height, *options);
-    ui.label(aurora_i18n::tr!(
-        "import-texture-size",
-        source_width = image.width,
-        source_height = image.height,
-        width = width,
-        height = height
-    ));
+    ui.label(aurora_i18n::tr!("import-texture-size", width = width, height = height));
     if width * height <= 128 * 128 {
         checkbox(ui, p, &mut options.lossless_small, aurora_i18n::tr!("import-lossless"));
     }

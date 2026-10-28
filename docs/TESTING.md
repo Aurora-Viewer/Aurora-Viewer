@@ -4226,7 +4226,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   The texture inspector has one "Limit size to 1024 × 1024" switch, on by
   default. Off permits 2048 on both axes. With a 2048 × 1024 source opened
   through `AURORA_DEMO_IMPORT_FILE`, check that toggling it changes the
-  preview's dimensions between 1024 × 512 and 2048 × 1024 and updates the fee.
+  upload size between 1024 × 512 and 2048 × 1024 and updates the fee. Only
+  the final power-of-two dimensions are shown, as in `LLFloaterImagePreview`.
   Each type has a dedicated window with the file list at the left and only
   its relevant metadata, preview and controls at the right. There
   are no other type tabs in these windows. Sound uses a shorter window.
