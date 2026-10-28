@@ -6705,7 +6705,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   is disabled; checking the box then "Teleport" disables it in the
   settings of the demo, separate from those of the connected viewer.
 - **`AURORA_DEMO_RESTRICTED=1`**: red parcel icons, damage
-  enabled, health at 72%.
+  enabled, health at 72%. Voice is forbidden too: the microphone button
+  is greyed and does not switch on (its arrow still opens the options);
+  with `AURORA_DEMO_TALK=1` the open microphone goes off on arrival.
 - **`AURORA_DEMO_FREEZE`**: at frame 660 Nova Demo freezes the avatar for
   30 s (`1`) or the given seconds: the alert in the chat and the
   notifications, a red snowflake in front of the parcel icons of the
