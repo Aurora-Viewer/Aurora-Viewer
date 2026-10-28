@@ -188,7 +188,7 @@ struct Face {
     subs: [Option<Line>; 2],
     badges: Badges,
     dot: Option<Presence>,
-    /// A team member's "Aurora Staff" tag, and the time of its light.
+    /// A team member's "Aurora Viewer" tag, and the time of its light.
     staff: Option<(Arc<Galley>, Look, f32)>,
 }
 

@@ -7298,7 +7298,7 @@ What the inventory must show with these scenarios:
   are marked everywhere Aurora shows a resident: on the name plate, green
   to violet curtains of light rise from behind the top edge, the border's
   colours flow around it over a soft halo, and the full and compact plates
-  carry the "Aurora Staff" tag over their top left edge (the far pill keeps
+  carry the "Aurora Viewer" tag over their top left edge (the far pill keeps
   the light alone); after the name in People (Nearby, Friends, Recent,
   Contact sets, the radar table), in the Conversations window (the name of
   a message, the head of a conversation) and on the profile, the same tag
