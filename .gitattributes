@@ -2,3 +2,6 @@
 # and goto in a batch file with Unix line endings.
 *.cmd text eol=crlf
 *.bat text eol=crlf
+
+# Raw grayscale terrain texels must keep their exact bytes.
+*.r8 binary
