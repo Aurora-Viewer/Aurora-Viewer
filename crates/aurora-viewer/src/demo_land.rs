@@ -740,7 +740,10 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
                         location: "Right Hand".into(),
                         objects: vec![o(2, aurora_i18n::tr!("demo-land-script-ao"), 64, 0)],
                     },
-                ],
+                ]
+                .into_iter()
+                .chain(crate::demo::worn::temporary_resources())
+                .collect(),
             ))))]
         }
         LandCommand::ReturnTasks { tasks, .. } => {

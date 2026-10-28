@@ -2127,7 +2127,7 @@ Drop, particle filters) is `AURORA_DEMO_WORN=menu`.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, move, edit |
-| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: menus, Edit, Inspect, inventory double-clicks, pause while edited, temporary detach |
+| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: menus, Edit, Inspect, inventory double-clicks, pause while edited, temporary detach, temporary attachments in Appearance |
 
 ### Details
 
@@ -2220,13 +2220,21 @@ The lock applies to the whole linkset, survives reattachment/relogin for
 ordinary inventory HUDs, and is stored per account in `hud_locks.json`.
 Temporary attachments without a stable inventory item keep an instance lock.
 
-**`AURORA_DEMO_WORN=1|menu|edit|move|freeze|inspect|inventory|library|sound|temporary-detach|temporary-drop`** — our avatar wears on its
+**`AURORA_DEMO_WORN=1|menu|edit|move|freeze|inspect|inventory|library|sound|temporary|temporary-detach|temporary-drop`** — our avatar wears on its
 back (Spine point) a two-prim object, touchable, modifiable, linked to an
 inventory item ("Demo backpack", in the current outfit). No
 access to a grid.
 
 - `1`: worn object only, to test by hand the right click on the object,
   in the inventory and in Appearance › Current outfit.
+- `temporary`: at frame 600 an experience attaches a temporary object
+  ("Arena wristband") to the left hand, its AttachItemID its own object id,
+  and Appearance opens on Worn: the "Temporary attachments (1)" section
+  opens by itself, named by the demo's AttachmentResources answer, with
+  "Worn on Left Hand". Its right click offers Touch, Edit and Detach;
+  Detach sends ObjectDetach and the demo simulator kills the object. The
+  log writes `demo temporary attachments` with the one found. Capture at
+  frame 720.
 - `temporary-detach` / `temporary-drop`: the backpack becomes a temporary
   attachment at frame 600, with a nil AttachItemID; its linked prim starts
   a dance. At frame 900 the simulator kills the root or unparents it,

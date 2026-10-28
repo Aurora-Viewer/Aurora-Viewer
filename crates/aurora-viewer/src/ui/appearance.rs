@@ -33,6 +33,9 @@ pub struct AppearanceUi {
     /// The located outfit and the time it came into view, for its flash.
     flash: Option<(Uuid, f64)>,
     selected_item: Option<Uuid>,
+    /// The temporary attachments counted last frame: one more opens their
+    /// section (`temporary_attachments`).
+    temporary_seen: usize,
     pub save_as: Option<String>,
     /// The folder of My Outfits Save as puts the new outfit in.
     save_in: Option<Uuid>,
@@ -1123,37 +1126,73 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
     }
 }
 
-fn temporary_attachments(ui: &mut egui::Ui, p: &Palette, world: &World) {
-    let temporary_items = aurora_i18n::tr!("ui-appearance-temporary-items");
-    widgets::collapsing(ui, p, "temporary_attachments", temporary_items, false, |ui| {
-        let temporary = world
-            .objects
-            .index_of_uuid(&world.agent_id)
-            .and_then(|idx| world.objects.get(idx))
-            .map(|me| world.objects.children_of(&me.key))
-            .unwrap_or_default();
-        let mut count = 0;
-        for idx in temporary {
-            if let Some(o) = world.objects.get(*idx)
-                && o.attachment_item_id().is_none_or(|id| id.is_nil())
-            {
-                count += 1;
-                ui.label(
-                    RichText::new(aurora_i18n::tr!(
-                        "ui-appearance-temporary-object",
-                        value0 = format!("{}", o.attachment_point())
-                    ))
-                    .size(12.0)
-                    .color(p.muted),
-                );
-            }
-        }
-        if count == 0 {
+/// LLPanelWearing's "Temporary attachments" (tab_temp_attachments): what an
+/// experience or a script attached with no item of ours, named by
+/// AttachmentResources, with LLTempAttachmentsContextMenu (Touch, Edit,
+/// Detach). The section opens by itself when one more arrives, so that it is
+/// not missed under the worn items.
+fn temporary_attachments(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi) {
+    let temporary = world.temp_attachments();
+    let reveal = (temporary.len() > st.temporary_seen).then_some(true);
+    st.temporary_seen = temporary.len();
+    let title = aurora_i18n::tr!("ui-appearance-temporary-items", count = temporary.len());
+    widgets::collapsing_forced(ui, p, "temporary_attachments", title, false, reveal, |ui| {
+        if temporary.is_empty() {
             ui.label(
                 RichText::new(aurora_i18n::tr!("ui-appearance-no-temporary-items"))
                     .size(12.0)
                     .color(p.muted_dim),
             );
+            return;
+        }
+        let labels = items::worn_labels(world);
+        for t in &temporary {
+            // a row like the worn items': the object icon, its name, its point
+            let it = InvItem {
+                id: t.id,
+                name: world
+                    .temp_attachment_names
+                    .get(&t.id)
+                    .map_or_else(|| aurora_i18n::tr!("ui-appearance-temporary-object").into(), str::to_owned),
+                asset_type: 6,
+                inv_type: 6,
+                ..Default::default()
+            };
+            ui.push_id(t.id, |ui| {
+                let resp = row(
+                    ui,
+                    p,
+                    &it,
+                    "",
+                    st.selected_item == Some(t.id),
+                    labels.get(&t.id).map(String::as_str),
+                )
+                .on_hover_text(aurora_i18n::tr!("ui-appearance-temporary-tip"));
+                if resp.clicked() || resp.secondary_clicked() {
+                    st.selected_item = Some(t.id);
+                }
+                temporary_menu(&resp, p, t);
+            });
+            row_gap(ui);
+        }
+    });
+}
+
+/// LLTempAttachmentsContextMenu::updateMenuItemsVisibility: Touch, Edit and
+/// Detach; the inventory entries (Take off, Show original, favorites) do not
+/// apply to an object with no item.
+fn temporary_menu(response: &egui::Response, p: &Palette, t: &crate::world::temp_attachments::TempAttachment) {
+    use crate::ui::context::{CtxAction, request};
+    menu::context_menu(response, p, |ui| {
+        if menu::item_if(ui, p, "click-filled", aurora_i18n::tr!("ui-context-touch"), t.touch) {
+            request(ui.ctx(), CtxAction::Touch(t.key.local_id));
+        }
+        if menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit")) {
+            request(ui.ctx(), CtxAction::EditAttachment(t.key));
+        }
+        // ObjectDetach, as LLSelectMgr::sendDetach: there is no COF link
+        if menu::item(ui, p, "circle-x-filled", aurora_i18n::tr!("common-detach")) {
+            request(ui.ctx(), CtxAction::Detach(t.key));
         }
     });
 }
@@ -1283,6 +1322,10 @@ pub fn show(
     )
     .help(aurora_i18n::tr!("ui-appearance-choose-an-outfit-manage-worn-items-or-save-your"));
     floater.min_size = Vec2::new(390.0, 520.0);
+    if *open && !st.editing && st.tab == 2 {
+        let temporary = world.temp_attachments();
+        world.request_temp_attachment_names(&temporary, std::time::Instant::now());
+    }
     // what the window shows is gathered only when it is drawn
     floater.show(ctx, p, open, |ui| {
         let inv = &world.inventory;
@@ -1464,7 +1507,7 @@ pub fn show(
                     });
             });
         if !st.editing && st.tab == 2 {
-            temporary_attachments(ui, p, world);
+            temporary_attachments(ui, p, world, st);
         }
         if st.editing {
             ui.horizontal(|ui| {

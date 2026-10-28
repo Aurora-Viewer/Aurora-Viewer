@@ -50,6 +50,34 @@ pub fn root() -> ObjectUpdate {
     linkset(ROOT, POINT).swap_remove(0)
 }
 
+/// The temporary attachment of `AURORA_DEMO_WORN=temporary`: the backpack's
+/// shape as an experience attaches it to the left hand, with no item of
+/// ours: its AttachItemID is its own object id (LLViewerObject::isTempAttachment).
+pub const TEMPORARY: u32 = 9320;
+
+pub fn temporary() -> Vec<ObjectUpdate> {
+    let mut objects = linkset(TEMPORARY, 5);
+    objects[0].name_values = format!("AttachItemID STRING RW SV {}", objects[0].full_id);
+    objects
+}
+
+/// The temporary attachment in the demo's AttachmentResources answer, which
+/// names it, when `AURORA_DEMO_WORN=temporary`.
+pub fn temporary_resources() -> Option<aurora_net::land::ScriptAttachment> {
+    (std::env::var("AURORA_DEMO_WORN").as_deref() == Ok("temporary")).then(|| aurora_net::land::ScriptAttachment {
+        location: "Left Hand".into(),
+        objects: vec![aurora_net::land::ScriptObject {
+            id: temporary()[0].full_id,
+            name: aurora_i18n::tr!("demo-worn-temporary-name").into(),
+            owner: DEMO_AGENT,
+            group_owned: false,
+            memory: 64 * 1024,
+            urls: 0,
+            location: None,
+        }],
+    })
+}
+
 pub fn events() -> Vec<NetEvent> {
     vec![NetEvent::ObjectUpdates {
         handle: HANDLE,
