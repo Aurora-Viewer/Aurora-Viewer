@@ -17511,10 +17511,13 @@ impl ApplicationHandler for App {
             && self.profile_ui.focused_web().is_none()
             && self.search_ui.focused_web().is_none()
             && self.media.focus.is_none();
+        // the hidden cursor the camera holds is the tool's (cursor_hold.rs):
+        // it never hovers, clicks or scrolls the windows (#1343)
+        let held_pointer = self.cursor_hold.held() && cursor_hold::held_from_ui(&event);
         let Some(g) = self.gfx.as_mut() else {
             return;
         };
-        let resp = if chat_pass || lens_shortcut {
+        let resp = if chat_pass || lens_shortcut || held_pointer {
             egui_winit::EventResponse {
                 consumed: false,
                 repaint: true,
@@ -17800,6 +17803,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_pos = (position.x as f32, position.y as f32);
+                self.recenter_mouselook_cursor();
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 self.last_input = Instant::now();
