@@ -152,7 +152,8 @@ pub enum ChatKind {
     Im,
     /// Instant message sent by an object (llInstantMessage).
     ObjectIm,
-    Own,
+    /// Ours, with the volume of a nearby line (Normal elsewhere).
+    Own(ChatType),
     /// The card of a teleport offer or request (`teleport_invites.rs`),
     /// by its invitation: never written to the transcript.
     Invite(u64),
@@ -165,6 +166,25 @@ pub enum ChatKind {
 }
 
 impl ChatKind {
+    /// One of our lines that is not a nearby one (an IM, a group's), or
+    /// one said at the normal volume.
+    pub const OWN: ChatKind = ChatKind::Own(ChatType::Normal);
+
+    /// One of our own lines, whatever its volume.
+    pub fn is_own(self) -> bool {
+        matches!(self, ChatKind::Own(_))
+    }
+
+    /// How loud a resident's line was said, ours included (LLChat's
+    /// mChatType): whispered and shouted lines read the same whoever said
+    /// them (FSChatHistory::appendMessage).
+    pub fn volume(self) -> Option<ChatType> {
+        match self {
+            ChatKind::Local(t) | ChatKind::Own(t) => Some(t),
+            _ => None,
+        }
+    }
+
     /// A notice of the viewer rather than someone's message: it stands
     /// apart from the groups of messages.
     pub fn is_notice(self) -> bool {
@@ -3477,7 +3497,9 @@ impl World {
             ChatSourceType::Object => ChatKind::Object(c.chat_type),
             ChatSourceType::Agent => {
                 if c.source_id == self.agent_id {
-                    ChatKind::Own
+                    // said, whispered or shouted: shown like anyone's
+                    // (FSChatHistory::appendMessage styles by mChatType)
+                    ChatKind::Own(c.chat_type)
                 } else {
                     // "We have a real utterance now": no more typing
                     self.nearby_typing.remove(&c.source_id);
@@ -3519,7 +3541,7 @@ impl World {
         // process_chat_from_simulator: every line but ours and the debug
         // channel's (FSKeywords::chatContainsKeyword)
         // (an object's line alerts no more while #741's option is on)
-        if !matches!(kind, ChatKind::Own | ChatKind::Object(ChatType::Debug)) && self.alerts(kind) {
+        if !matches!(kind, ChatKind::Own(_) | ChatKind::Object(ChatType::Debug)) && self.alerts(kind) {
             self.keyword_alert(c.source_id, &from, &c.message, true, attention::Open::NearbyChat);
         }
         // a resident's line, not ours nor an object's: the Conversations
@@ -3528,7 +3550,7 @@ impl World {
         // the bubble above the speaker's head: residents only, ourselves
         // included, never while we are in do not disturb
         // (process_chat_from_simulator, LLVOAvatar::addChat)
-        if matches!(kind, ChatKind::Local(_) | ChatKind::Own) && !self.status.dnd {
+        if matches!(kind, ChatKind::Local(_) | ChatKind::Own(_)) && !self.status.dnd {
             use bubble_chat::Voice;
             let voice = match c.chat_type {
                 ChatType::Whisper => Some(Voice::Whisper),
@@ -4414,7 +4436,7 @@ impl World {
             time: SystemTime::now(),
             from: me,
             text,
-            kind: ChatKind::Own,
+            kind: ChatKind::OWN,
             source: Uuid::nil(),
             origin: Origin::Live,
         };

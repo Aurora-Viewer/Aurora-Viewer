@@ -351,7 +351,7 @@ impl World {
         for part in split_im(&text) {
             self.groups.im(session, dialog::SESSION_SEND, session, part.to_owned());
         }
-        let l = line(me, text, ChatKind::Own, Uuid::nil(), SystemTime::now());
+        let l = line(me, text, ChatKind::OWN, Uuid::nil(), SystemTime::now());
         self.session_push(session, l, false);
         if let Some(s) = self.groups.sessions.get(&session)
             && s.closed

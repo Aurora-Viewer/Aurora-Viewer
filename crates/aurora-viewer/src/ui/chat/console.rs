@@ -38,7 +38,8 @@ pub(super) fn groups<'a>(lines: &[&'a ChatLine]) -> Vec<Vec<&'a ChatLine>> {
     out
 }
 
-/// Two lines under one head: the same resident or object, said in a row;
+/// Two lines under one head: the same resident or object, said in a row
+/// at the same volume (the SHOUTS / WHISPERS tag is the head's, #1323);
 /// notices stand alone.
 fn same_sender(a: &ChatLine, b: &ChatLine) -> bool {
     !a.kind.is_notice()
@@ -46,7 +47,8 @@ fn same_sender(a: &ChatLine, b: &ChatLine) -> bool {
         && a.source == b.source
         && a.from == b.from
         && is_object(a.kind) == is_object(b.kind)
-        && (a.kind == ChatKind::Own) == (b.kind == ChatKind::Own)
+        && a.kind.is_own() == b.kind.is_own()
+        && a.kind.volume() == b.kind.volume()
 }
 
 fn is_object(kind: ChatKind) -> bool {
@@ -68,7 +70,7 @@ fn name_color(p: &Palette, line: &ChatLine, world: &World) -> Color32 {
     if is_object(line.kind) {
         return crate::ui::colors::sender_color(line);
     }
-    if line.kind == ChatKind::Own {
+    if line.kind.is_own() {
         return p.teal;
     }
     p.ink
@@ -224,11 +226,7 @@ fn card<'a>(
                 ui.painter().galley(r.min, galley, p.ink);
                 names.push((r, first));
                 // a member of the Aurora team (objects never are)
-                let author = if first.kind == ChatKind::Own {
-                    world.agent_id
-                } else {
-                    first.source
-                };
+                let author = if first.kind.is_own() { world.agent_id } else { first.source };
                 if !matches!(first.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
                     crate::ui::staff::after_name(ui, p, crate::world::staff::mark(world, &author), 9.5);
                 }
@@ -325,9 +323,11 @@ fn compact_card<'a>(
 fn tags(ui: &mut egui::Ui, p: &Palette, line: &ChatLine) {
     match line.kind {
         ChatKind::Im => thread::tag(ui, aurora_i18n::tr!("people-sheet-im"), Some(p.raised), p.muted),
-        ChatKind::Local(ChatType::Shout) => thread::tag(ui, aurora_i18n::tr!("ui-chat-tag-shouts"), None, p.warn),
-        ChatKind::Local(ChatType::Whisper) => thread::tag(ui, aurora_i18n::tr!("ui-chat-tag-whispers"), None, p.muted),
-        _ => {}
+        _ => match line.kind.volume() {
+            Some(ChatType::Shout) => thread::tag(ui, aurora_i18n::tr!("ui-chat-tag-shouts"), None, p.warn),
+            Some(ChatType::Whisper) => thread::tag(ui, aurora_i18n::tr!("ui-chat-tag-whispers"), None, p.muted),
+            _ => {}
+        },
     }
 }
 
@@ -534,6 +534,17 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Our whisper then our shout: two heads, each with its tag (#1323).
+    #[test]
+    fn a_line_at_another_volume_gets_its_own_head() {
+        let whisper = line(ChatKind::Own(ChatType::Whisper), "Me", 0);
+        let shout = line(ChatKind::Own(ChatType::Shout), "Me", 0);
+        let said = line(ChatKind::OWN, "Me", 0);
+        assert!(!same_sender(&whisper, &shout));
+        assert!(!same_sender(&shout, &said));
+        assert!(same_sender(&said, &line(ChatKind::OWN, "Me", 0)));
     }
 
     /// A card's body leaves the name to the head, except an emote's, whose

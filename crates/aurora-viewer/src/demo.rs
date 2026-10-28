@@ -1223,7 +1223,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
             let emoji_lines = std::env::var("AURORA_DEMO_CONV_EMOJI").is_ok().then(|| {
                 [
                     line(ago(10), name, friend, ChatKind::Im, "🎉🎶🐺"),
-                    line(ago(3), &me, Uuid::nil(), ChatKind::Own, "👍"),
+                    line(ago(3), &me, Uuid::nil(), ChatKind::OWN, "👍"),
                 ]
             });
             let mut lines = vec![
@@ -1231,14 +1231,14 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                     ago(26 * 60),
                     &me,
                     Uuid::nil(),
-                    ChatKind::Own,
+                    ChatKind::OWN,
                     aurora_i18n::tr!("demo-bubbles-concert"),
                 ),
                 line(ago(26 * 60 - 3), name, friend, ChatKind::Im, aurora_i18n::tr!("demo-bubbles-cant")),
                 line(ago(12), name, friend, ChatKind::Im, aurora_i18n::tr!("demo-bubbles-sorry")),
                 line(ago(11), name, friend, ChatKind::Im, aurora_i18n::tr!("demo-bubbles-join")),
-                line(ago(2), &me, Uuid::nil(), ChatKind::Own, aurora_i18n::tr!("demo-bubbles-coming")),
-                line(ago(1), &me, Uuid::nil(), ChatKind::Own, aurora_i18n::tr!("demo-bubbles-send-tp")),
+                line(ago(2), &me, Uuid::nil(), ChatKind::OWN, aurora_i18n::tr!("demo-bubbles-coming")),
+                line(ago(1), &me, Uuid::nil(), ChatKind::OWN, aurora_i18n::tr!("demo-bubbles-send-tp")),
             ];
             if let Some(extra) = emoji_lines {
                 lines.splice(4..4, extra);
@@ -1269,7 +1269,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                             ago(7),
                             &me,
                             Uuid::nil(),
-                            ChatKind::Own,
+                            ChatKind::OWN,
                             "https://www.youtube.com/watch?v=jNQXAC9IVRw&t=5s",
                         ),
                     ]
@@ -1302,7 +1302,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                             ChatKind::Im,
                             &with(aurora_i18n::tr!("demo-previews-teaser"), "https://youtu.be/jNQXAC9IVRw"),
                         ),
-                        line(ago(5), &me, Uuid::nil(), ChatKind::Own, "https://youtube.com/shorts/DemoShort01"),
+                        line(ago(5), &me, Uuid::nil(), ChatKind::OWN, "https://youtube.com/shorts/DemoShort01"),
                     ]
                 } else if mode == "clips" {
                     // video files and an animated WebP (#983): an unknown
@@ -1319,7 +1319,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                             ChatKind::Im,
                             "https://gyazo.com/9f8e7d6c5b4a39281706f5e4d3c2b1a0",
                         ),
-                        line(ago(6), &me, Uuid::nil(), ChatKind::Own, "https://i.imgur.com/DemoClp.gifv"),
+                        line(ago(6), &me, Uuid::nil(), ChatKind::OWN, "https://i.imgur.com/DemoClp.gifv"),
                     ]
                 } else if let Some(only) = mode.strip_prefix("services") {
                     // the pages of image services (#923) and the posts of
@@ -1350,7 +1350,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                     .enumerate()
                     .map(|(i, url)| {
                         let (who, id, kind) = if i % 2 == 1 {
-                            (me.as_str(), Uuid::nil(), ChatKind::Own)
+                            (me.as_str(), Uuid::nil(), ChatKind::OWN)
                         } else {
                             (name, friend, ChatKind::Im)
                         };
@@ -1389,7 +1389,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                             ago(6),
                             &me,
                             Uuid::nil(),
-                            ChatKind::Own,
+                            ChatKind::OWN,
                             &with(aurora_i18n::tr!("demo-previews-teaser"), "https://youtu.be/jNQXAC9IVRw"),
                         ),
                     ]
@@ -1407,7 +1407,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
             // ours, before her automatic response (which the events bring)
             world.conversation_line(
                 DEMO_NOVA,
-                line(ago(1), &me, Uuid::nil(), ChatKind::Own, aurora_i18n::tr!("demo-bubbles-free")),
+                line(ago(1), &me, Uuid::nil(), ChatKind::OWN, aurora_i18n::tr!("demo-bubbles-free")),
             );
             // her automatic response, as world/status.rs writes it
             let reply = aurora_i18n::tr!(
@@ -1439,7 +1439,7 @@ pub fn conv_scroll_lines(world: &mut crate::world::World) {
     let me = world.own_name();
     for n in 1..=40u64 {
         let (from, source, kind) = if n % 3 == 0 {
-            (me.clone(), Uuid::nil(), ChatKind::Own)
+            (me.clone(), Uuid::nil(), ChatKind::OWN)
         } else {
             ("Nova Example".to_owned(), DEMO_FRIEND, ChatKind::Im)
         };
@@ -1642,7 +1642,7 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
     });
     for (minutes, from, text) in group.into_iter().chain(previews) {
         let l = if from.is_nil() {
-            line(ago(minutes), &me, Uuid::nil(), ChatKind::Own, &text)
+            line(ago(minutes), &me, Uuid::nil(), ChatKind::OWN, &text)
         } else {
             line(ago(minutes), &names(from), from, ChatKind::Im, &text)
         };
@@ -1741,8 +1741,8 @@ fn world_name(id: Uuid) -> String {
     }
 }
 
-/// The nearby chat of the scene: a shout, a whisper, our emote and a
-/// mention of us, after the bubbles scenario's lines; then the friend's
+/// The nearby chat of the scene: a shout, a whisper, ours, our emote and
+/// a mention of us, after the bubbles scenario's lines; then the friend's
 /// status of `friend-away` / `friend-offline`.
 pub fn aurora_events(scene: &AuroraScene) -> Vec<NetEvent> {
     let say = |from: Uuid, name: &str, text: String, chat_type| {
@@ -1769,6 +1769,19 @@ pub fn aurora_events(scene: &AuroraScene) -> Vec<NetEvent> {
             aurora_i18n::tr!("demo-violet-wolf"),
             aurora_i18n::tr!("demo-aurora-local-whisper").to_owned(),
             ChatType::Whisper,
+        ),
+        // ours, whispered then shouted, tagged like anyone's (#1323)
+        say(
+            DEMO_AGENT,
+            "Aurora Demo",
+            aurora_i18n::tr!("demo-aurora-local-own-whisper").to_owned(),
+            ChatType::Whisper,
+        ),
+        say(
+            DEMO_AGENT,
+            "Aurora Demo",
+            aurora_i18n::tr!("demo-aurora-local-own-shout").to_owned(),
+            ChatType::Shout,
         ),
         say(
             DEMO_AGENT,

@@ -101,7 +101,7 @@ fn pasted_native_links_preserve_console_line_height() {
         time: std::time::SystemTime::now(),
         from: "Resident".into(),
         source: id,
-        kind: ChatKind::Own,
+        kind: ChatKind::OWN,
         origin: Origin::Live,
         text: String::new(),
     };

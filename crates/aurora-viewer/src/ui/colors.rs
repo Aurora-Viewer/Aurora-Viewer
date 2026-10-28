@@ -58,14 +58,14 @@ pub fn resident_name(world: &World, id: &Uuid, fallback: Color32) -> Color32 {
 }
 
 pub fn contact_chat_color(line: &ChatLine, world: &World) -> Option<Color32> {
-    matches!(line.kind, ChatKind::Local(_) | ChatKind::Im | ChatKind::Own)
+    matches!(line.kind, ChatKind::Local(_) | ChatKind::Im | ChatKind::Own(_))
         .then(|| world.contact_sets.appearance(&line.source).chat_text.map(set_color))
         .flatten()
         .map(crate::interface_colors::on_panel)
 }
 
 pub fn contact_sender_color(line: &ChatLine, world: &World) -> Option<Color32> {
-    matches!(line.kind, ChatKind::Local(_) | ChatKind::Im | ChatKind::Own)
+    matches!(line.kind, ChatKind::Local(_) | ChatKind::Im | ChatKind::Own(_))
         .then(|| {
             let a = world.contact_sets.appearance(&line.source);
             a.chat_name.or(a.ui_name).map(set_color)
@@ -101,7 +101,7 @@ fn is_friend(world: &World, id: &Uuid) -> bool {
 pub fn keyword_color(line: &ChatLine) -> Option<Color32> {
     if matches!(
         line.kind,
-        ChatKind::Own | ChatKind::Object(ChatType::Debug) | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_)
+        ChatKind::Own(_) | ChatKind::Object(ChatType::Debug) | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_)
     ) {
         return None;
     }
@@ -119,7 +119,7 @@ pub fn chat_color(line: &ChatLine, world: &World) -> Color32 {
     }
     let k = get();
     let v = match line.kind {
-        ChatKind::Own => k.chat_mine,
+        ChatKind::Own(_) => k.chat_mine,
         ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_) => k.chat_system,
         ChatKind::ObjectIm => k.chat_object_im,
         ChatKind::Object(t) => match t {
