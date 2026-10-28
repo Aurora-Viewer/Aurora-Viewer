@@ -61,7 +61,7 @@ pub struct RegionInfo {
 }
 
 /// Parcel description from ParcelProperties (About Land).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ParcelInfo {
     pub local_id: i32,
     /// SequenceID of the message (0+ agent parcel, -10000 selection...).
@@ -962,6 +962,13 @@ pub enum NetEvent {
     FreezeAlert(crate::freeze::Alert),
     /// The parcel the agent stands on (main region).
     AgentParcel(Arc<ParcelInfo>),
+    /// A pushed spatial voice change; other local parcel state stays intact.
+    ParcelVoiceInfo {
+        handle: RegionHandle,
+        local_id: i32,
+        allowed: bool,
+        use_estate: Option<bool>,
+    },
     /// About Land: selected parcel, its lists, covenant... (land.rs).
     Land(crate::land::LandEvent),
     /// Region / Estate window (estate.rs).

@@ -3005,6 +3005,32 @@ impl World {
                 self.record_arrival();
                 None
             }
+            NetEvent::ParcelVoiceInfo {
+                handle,
+                local_id,
+                allowed,
+                use_estate,
+            } => {
+                if self.main_region == Some(handle)
+                    && let Some(parcel) = self.parcel.as_mut().filter(|p| p.local_id == local_id)
+                {
+                    use aurora_net::parcel_flags as pf;
+                    let mut flags = parcel.flags & !pf::ALLOW_VOICE_CHAT;
+                    if allowed {
+                        flags |= pf::ALLOW_VOICE_CHAT;
+                    }
+                    if let Some(estate) = use_estate {
+                        flags &= !pf::USE_ESTATE_VOICE_CHAN;
+                        if estate {
+                            flags |= pf::USE_ESTATE_VOICE_CHAN;
+                        }
+                    }
+                    if flags != parcel.flags {
+                        Arc::make_mut(parcel).flags = flags;
+                    }
+                }
+                None
+            }
             NetEvent::RegionIdHandle { region_id, handle } => {
                 self.landmarks.on_region_handle(region_id, handle);
                 None
@@ -4800,6 +4826,59 @@ fn appearance_verdict(a: &AvatarAppearance, own: bool, received: i32) -> Appeara
         };
     }
     AppearanceVerdict::Apply
+}
+
+#[cfg(test)]
+mod parcel_voice_tests {
+    use super::*;
+    use aurora_net::parcel_flags as pf;
+
+    #[test]
+    fn parcel_voice_pushes_only_change_current_voice_flags_and_keep_local_media() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        world.main_region = Some(7);
+        let original = Arc::new(aurora_net::ParcelInfo {
+            local_id: 42,
+            flags: pf::SOUND_LOCAL | pf::CREATE_OBJECTS | pf::ALLOW_VOICE_CHAT | pf::USE_ESTATE_VOICE_CHAN,
+            music_url: "https://music.invalid/local".into(),
+            media_url: "https://media.invalid/local".into(),
+            bitmap: vec![0x42; 512],
+            ..Default::default()
+        });
+        world.parcel = Some(original.clone());
+        let event = |handle, local_id, allowed, use_estate| NetEvent::ParcelVoiceInfo {
+            handle,
+            local_id,
+            allowed,
+            use_estate,
+        };
+        for (handle, local_id) in [(8, 42), (7, 43)] {
+            world.apply(event(handle, local_id, false, Some(false)));
+            assert!(Arc::ptr_eq(world.parcel.as_ref().unwrap(), &original));
+        }
+        for (allowed, estate) in [(false, None), (true, Some(false)), (true, Some(true))] {
+            let before = world.parcel.clone().unwrap();
+            world.apply(event(7, 42, allowed, estate));
+            let current = world.parcel.clone().unwrap();
+            assert_eq!(current.flags & pf::ALLOW_VOICE_CHAT != 0, allowed);
+            assert_eq!(
+                current.flags & pf::USE_ESTATE_VOICE_CHAN != 0,
+                estate.unwrap_or(before.flags & pf::USE_ESTATE_VOICE_CHAN != 0)
+            );
+            assert_eq!(
+                current.flags & (pf::SOUND_LOCAL | pf::CREATE_OBJECTS),
+                pf::SOUND_LOCAL | pf::CREATE_OBJECTS
+            );
+            assert_eq!(current.music_url, original.music_url);
+            assert_eq!(current.media_url, original.media_url);
+            assert_eq!(current.bitmap, original.bitmap);
+            world.apply(event(7, 42, allowed, estate));
+            assert!(Arc::ptr_eq(world.parcel.as_ref().unwrap(), &current));
+        }
+        world.parcel = None;
+        world.apply(event(7, 42, true, Some(true)));
+        assert!(world.parcel.is_none(), "voice alone cannot locate the agent parcel");
+    }
 }
 
 #[cfg(test)]

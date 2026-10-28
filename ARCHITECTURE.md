@@ -1,5 +1,19 @@
 # Aurora Viewer architecture
 
+`aurora-net/src/session.rs` keeps the last confirmed agent parcel. Selected,
+hovered and build-tool property replies refresh its live metadata only when
+the simulator and local parcel id match; its bitmap, bounds and notification
+sequence remain those of the agent parcel. The same `AgentParcel` event feeds
+voice, sound isolation, movement, permission indicators, music and media.
+Identical refreshes retain the shared snapshot and leave live caches intact.
+Environment versions trigger the existing parcel environment request; no-data
+and obsolete agent notifications cannot restore stale permissions.
+`ParcelVoiceInfo` updates spatial voice permission and estate/parcel channel
+selection from server notifications without reading private-call credentials.
+Its voice-only event preserves local music/media overrides and other properties.
+It is scoped to the current circuit and parcel; an early notification is kept
+only until initial agent-parcel properties arrive and is cleared on region change.
+
 `scene/physics_shapes.rs` connects the build inspector's saved physics eye to
 selected collision geometry. Mesh header ranges include `physics_mesh` and
 `physics_convex`; the mesh streamer fetches these only while inspecting.
