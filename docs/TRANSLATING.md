@@ -24,7 +24,10 @@ English. The language and its visibility to scripts are sent to the
 simulator through `UpdateAgentLanguage`, after login, a region change or a
 change to the preferences, following the Legacy Viewer's `LLAgentLanguage::update`.
 
-A new text uses an explicit key and both translations in the same PR:
+A new text uses an explicit key and its version in every catalogue
+(English, French and Japanese) in the same PR, at the same place as in
+`en.ftl`. A key missing from one catalogue fails the parity test, in
+`scripts/check.ps1` and in the merge queue.
 
 ```rust
 ui.label(aurora_i18n::tr!("inventory-empty"));
@@ -39,6 +42,10 @@ resident-online = { $name } is online.
 # fr.ftl
 inventory-empty = L'inventaire est vide.
 resident-online = { $name } est en ligne.
+
+# ja.ftl
+inventory-empty = インベントリは空です。
+resident-online = { $name }さんがオンラインになりました。
 ```
 
 Variable names must be identical in every language.
@@ -60,7 +67,31 @@ inventory-count = { $count ->
     [one] { $count } élément
    *[other] { $count } éléments
     }
+
+# ja.ftl: no plural, plain text
+inventory-count = { $count }個のアイテム
 ```
+
+Japanese, beyond the plural:
+
+- Buttons, menu items, titles and short labels are concise nouns or verb
+  stems (保存, 削除, フレンドに追加), without です／ます nor a final 。;
+  sentences, hints and errors use the polite です／ます form.
+- Japanese punctuation is full width (、。「」（）！？：); no space between
+  Japanese text and a placeable or a number (`{ $seconds }秒`), a space
+  before a Latin unit (`{ $distance } m`).
+- Terms: アバター, インベントリ, フレンド, グループ, 区画 (parcel),
+  リージョン, 不動産 (estate), オブジェクト, 装着 (attach), アウトフィット,
+  容姿 (appearance), 初期設定 (Preferences), 設定 (Aurora's own settings),
+  近くのチャット, テレポート, ランドマーク, スクリプト, テクスチャ, フォルダ,
+  ごみ箱; look an existing one up in `ja.ftl` before choosing a new one.
+  Second Life, Legacy Viewer, L$, LSL, UUID, key names and product names
+  stay in Latin letters.
+- A label quoted in a hint (「…」) is the exact text of that label in
+  `ja.ftl`.
+- A continuation line of a multi-line message cannot start with `*`, `[`
+  or `.`: Fluent reads it as a variant. Reword it (Japanese often starts
+  with the Markdown bold of the English, `**…**`).
 
 `tr!` borrows labels without variables from the cache; a message with
 variables returns a `String`. `Localized<T>` caches an array of labels for
