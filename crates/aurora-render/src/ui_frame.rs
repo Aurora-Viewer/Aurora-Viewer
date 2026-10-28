@@ -275,7 +275,10 @@ mod tests {
         });
         let view = target.create_view(&Default::default());
         let mut quad = egui::Mesh::default();
-        quad.add_colored_rect(egui::Rect::from_min_size(egui::pos2(4.0, 4.0), egui::vec2(8.0, 8.0)), egui::Color32::RED);
+        quad.add_colored_rect(
+            egui::Rect::from_min_size(egui::pos2(4.0, 4.0), egui::vec2(8.0, 8.0)),
+            egui::Color32::RED,
+        );
         let drawn = [ClippedPrimitive {
             clip_rect: egui::Rect::EVERYTHING,
             primitive: Primitive::Mesh(quad),
