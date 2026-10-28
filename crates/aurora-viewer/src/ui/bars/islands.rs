@@ -145,9 +145,11 @@ pub(super) fn ping_text(ms: u32) -> String {
     format!("{ms} ms")
 }
 
-/// The frame rate's text.
+/// The frame rate's text, in whole images a second: the Legacy Viewer
+/// writes a tenth (LLStatusBar::refresh, "%.1f"), which only flickers
+/// (the human's choice, #1246).
 pub(super) fn fps_text(fps: f32) -> String {
-    aurora_i18n::number(f64::from(fps), 1)
+    aurora_i18n::number(f64::from(fps), 0)
 }
 
 /// A readout of the system island: icon then text, `width` wide.
@@ -1494,14 +1496,14 @@ mod tests {
             out.textures_delta.clear();
             w
         };
-        let narrow = width_at(0.0, Item::Fps, 99.9, 0);
+        let narrow = width_at(0.0, Item::Fps, 99.0, 0);
         assert_eq!(width_at(0.5, Item::Fps, 15.0, 0), narrow, "one digit as wide as another");
         let wide = width_at(1.0, Item::Fps, 100.0, 0);
         assert!(wide > narrow);
-        assert_eq!(width_at(2.0, Item::Fps, 99.9, 0), wide);
+        assert_eq!(width_at(2.0, Item::Fps, 99.0, 0), wide);
         assert_eq!(width_at(3.0, Item::Fps, 144.0, 0), wide);
-        assert_eq!(width_at(3.0 + HOLD - 0.5, Item::Fps, 99.9, 0), wide);
-        assert_eq!(width_at(3.0 + HOLD, Item::Fps, 99.9, 0), narrow);
+        assert_eq!(width_at(3.0 + HOLD - 0.5, Item::Fps, 99.0, 0), wide);
+        assert_eq!(width_at(3.0 + HOLD, Item::Fps, 99.0, 0), narrow);
         let ping = width_at(20.0, Item::Ping, 0.0, 99);
         assert!(width_at(21.0, Item::Ping, 0.0, 100) > ping);
         assert!(width_at(22.0, Item::Ping, 0.0, 5) > ping);
