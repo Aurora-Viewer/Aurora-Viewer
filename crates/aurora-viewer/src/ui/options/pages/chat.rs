@@ -110,6 +110,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     );
                 });
             });
+            script_errors(cx);
             cx.group(tr!("ui-options-conversations"), |cx| {
                 cx.toggle(
                     tr!("ui-options-show-contacts-tab"),
@@ -256,6 +257,42 @@ pub fn page(cx: &mut Cx, tab: usize) {
             );
         }),
     }
+}
+
+/// Our objects' script errors (#1263): in the nearby chat
+/// (ShowScriptErrorsLocation 0, on in Aurora) rather than the Script debug
+/// window, and also said on a channel of the user's choice (off, not in the
+/// Legacy Viewer; any channel, 0 being the public chat, but DEBUG_CHANNEL).
+fn script_errors(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-options-script-errors"), |cx| {
+        cx.toggle(
+            tr!("ui-options-script-errors-in-chat"),
+            tr!("ui-options-script-errors-in-chat-hint"),
+            &field!(script_errors_in_chat),
+        );
+        cx.toggle(
+            tr!("ui-options-script-errors-to-channel"),
+            tr!("ui-options-script-errors-to-channel-hint"),
+            &field!(script_errors_to_channel),
+        );
+        let off = !cx.s.script_errors_to_channel;
+        cx.subs(off, |cx| {
+            cx.row(
+                tr!("ui-options-commands-channel"),
+                tr!("ui-options-script-errors-channel-hint"),
+                &field!(script_errors_channel),
+                |ui, s| {
+                    ui.add(
+                        egui::DragValue::new(&mut s.script_errors_channel)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .range(i32::MIN..=i32::MAX - 1),
+                    )
+                    .changed()
+                },
+            );
+        });
+    });
 }
 
 /// The pictures and videos shown under the links of the conversations

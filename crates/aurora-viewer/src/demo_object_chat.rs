@@ -1,7 +1,8 @@
 //! AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy|lines[:on]: the
 //! nearby chat at the arrival, residents talking among objects (#475): a
 //! greeter, a tip jar, a door's emote, a vendor's line said to us with a
-//! link, and our HUD's owner-say. The Conversations window shows the nearby
+//! link, our HUD's owner-say and its script error (#1263; the tip jar's is
+//! not ours: not shown). The Conversations window shows the nearby
 //! chat in the style named, or `lines` the cards above the chat bar (the
 //! window closed). `on` turns the compact object rows on for the run,
 //! nothing saved; `im` shows the friend's conversation instead, with a
@@ -115,6 +116,24 @@ pub fn events(agent: Uuid) -> Vec<NetEvent> {
             tr!("demo-object-chat-ao"),
             object_said,
             ChatType::OwnerSay,
+        ),
+        // a script error of our HUD, in red under its warning sign (#1263),
+        // and the tip jar's, someone else's, never shown
+        say(
+            object(3),
+            agent,
+            tr!("common-demo-hud"),
+            tr!("demo-object-chat-script-error"),
+            object_said,
+            ChatType::Debug,
+        ),
+        say(
+            object(2),
+            stranger,
+            tr!("demo-object-chat-tip-jar"),
+            tr!("demo-object-chat-script-error"),
+            object_said,
+            ChatType::Debug,
         ),
         say(
             object(4),

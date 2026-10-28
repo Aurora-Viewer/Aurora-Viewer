@@ -5669,7 +5669,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   lines: unchanged with `:on` alone, compact with their icons (a phone, the
   "i") with `:on:imlines` (the sub-option "Compact the conversations'
   system lines too", off by default). Above the chat bar, the notices
-  carry their topic's icon too.
+  carry their topic's icon too. After the HUD's owner-say comes its script
+  error (#1263): in red under a red warning sign, in a group of its own, in
+  every style and in the compact rows; the Script debug window does not
+  open, yet lists it. The tip jar's script error is not ours: shown nowhere.
+  With Preferences › Chat › Script errors › "Show script errors in the
+  nearby chat" off, the error leaves the chat and the window opens.
+  `AURORA_DEMO_OPTIONS=chat:script-errors` opens that section: the switch
+  on, "Also say them on a chat channel" off, its channel (1) among its
+  sub-settings.
 - **`AURORA_DEMO_CONV=bubbles[:busy|group|local|legacy]`**: the Conversations
   window as a messenger, placed at 700 x 560 px. Without a suffix, the
   conversation with an online friend over two days: their bubbles on the

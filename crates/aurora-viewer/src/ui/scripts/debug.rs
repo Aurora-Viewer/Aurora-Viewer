@@ -1,5 +1,6 @@
 //! LLFloaterScriptDebug (Firestorm, LGPL 2.1): combined output and per-object
-//! filtering. The world bounds messages, the UI opens when new output arrives.
+//! filtering. The world bounds messages, the UI opens when new output arrives
+//! (not for a script error shown in the nearby chat, #1263).
 
 use crate::{
     theme::Palette,
@@ -12,14 +13,14 @@ use uuid::Uuid;
 #[derive(Default)]
 pub(super) struct Debug {
     pub open: bool,
-    revision: u64,
+    opens: u64,
     selected: Option<Uuid>,
 }
 impl Debug {
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, messages: &mut Messages) {
-        if self.revision != messages.revision {
+        if self.opens != messages.opens {
             self.open = true;
-            self.revision = messages.revision;
+            self.opens = messages.opens;
         }
         if !self.open {
             return;

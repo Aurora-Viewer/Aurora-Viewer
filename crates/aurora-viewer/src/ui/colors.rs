@@ -143,6 +143,12 @@ pub fn chat_color(line: &ChatLine, world: &World) -> Color32 {
     text(v)
 }
 
+/// Text of a script error (ScriptErrorColor), the Aurora red by default:
+/// the same in every style of the chat (#1263).
+pub fn script_error_color() -> Color32 {
+    text(get().chat_errors)
+}
+
 /// Color of a sender's name in the conversation headers.
 pub fn sender_color(line: &ChatLine) -> Color32 {
     let k = get();

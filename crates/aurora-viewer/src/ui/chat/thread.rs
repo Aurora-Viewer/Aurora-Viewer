@@ -439,7 +439,8 @@ fn picture(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, name: &str, wh
     let p = env.p;
     if who.object {
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
-        paint_icon(ui.painter(), "box", rect.shrink(9.0), crate::ui::colors::sender_color(line));
+        let (glyph, tint) = super::object_row::object_glyph(line, p, crate::ui::colors::sender_color(line));
+        paint_icon(ui.painter(), glyph, rect.shrink(9.0), tint);
         return;
     }
     if !who.avatar.is_nil() {

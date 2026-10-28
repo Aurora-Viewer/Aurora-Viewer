@@ -529,6 +529,8 @@ fn color_for(kind: ChatKind, p: &Palette) -> Color32 {
     match kind {
         ChatKind::Own => p.violet_pale,
         ChatKind::Local(_) => p.ink,
+        // a script error in red in the cards and the islands too (#1263)
+        ChatKind::Object(ChatType::Debug) => super::colors::script_error_color(),
         ChatKind::Object(_) | ChatKind::ObjectIm => p.teal.gamma_multiply(0.85),
         ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_) => p.muted,
         ChatKind::Im => p.violet_light,
@@ -845,7 +847,13 @@ fn line_job(
     // a line that holds a keyword takes its colour, name included
     let col = super::colors::contact_chat_color(line, world)
         .or_else(|| super::colors::keyword_color(line))
-        .unwrap_or_else(|| if compact { p.muted } else { color_for(line.kind, p) });
+        .unwrap_or_else(|| {
+            if compact {
+                object_row::text_color(line, p)
+            } else {
+                color_for(line.kind, p)
+            }
+        });
     let mut job = egui::text::LayoutJob::default();
     let small = egui::TextFormat {
         color: p.muted_dim,
@@ -2271,12 +2279,13 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                 ui.horizontal(|ui| {
                     if object {
                         let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
-                        if let Some(t) = env.icons.get("box") {
+                        let (glyph, tint) = object_row::object_glyph(line, p, super::colors::sender_color(line));
+                        if let Some(t) = env.icons.get(glyph) {
                             ui.painter().image(
                                 t.id(),
                                 rect.shrink(2.0),
                                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                                super::colors::sender_color(line),
+                                tint,
                             );
                         }
                     } else {
@@ -3240,8 +3249,9 @@ fn bubble_sender(
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     match who {
         Sender::Object => {
-            if let Some(t) = super::icons::global("box") {
-                painter.image(t.id(), r.shrink(1.0), uv, super::colors::sender_color(line).gamma_multiply(alpha));
+            let (glyph, tint) = object_row::object_glyph(line, p, super::colors::sender_color(line));
+            if let Some(t) = super::icons::global(glyph) {
+                painter.image(t.id(), r.shrink(1.0), uv, tint.gamma_multiply(alpha));
             }
         }
         Sender::Avatar(id) => {

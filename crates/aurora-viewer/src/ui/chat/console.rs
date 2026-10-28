@@ -306,14 +306,17 @@ fn compact_card<'a>(
             let c = visual.left_edge(name.clone().unwrap_or(at..at)).translate(origin.to_vec2());
             let middle = super::object_row::caps_middle(&painter, size, baseline);
             let r = egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, middle), egui::vec2(side, side));
-            thread::paint_icon(&painter, "box", r.shrink(1.0), p.muted_dim);
+            let (glyph, tint) = super::object_row::object_glyph(line, p, p.muted_dim);
+            thread::paint_icon(&painter, glyph, r.shrink(1.0), tint);
         }
         if let Some(range) = name
             && let Some(r) = visual.range_rects(origin, range).first().copied()
         {
             names.push((r, line));
         }
-        let col = crate::ui::colors::keyword_color(line).unwrap_or(p.muted).gamma_multiply(fade);
+        let col = crate::ui::colors::keyword_color(line)
+            .unwrap_or_else(|| super::object_row::text_color(line, p))
+            .gamma_multiply(fade);
         line_extras(ui, p, world, &visual, origin, size, fade, badges, line_links, col, links);
     }
 }
@@ -340,7 +343,8 @@ fn picture(
 ) {
     if is_object(line.kind) {
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
-        thread::paint_icon(ui.painter(), "box", rect.shrink(6.0), crate::ui::colors::sender_color(line));
+        let (glyph, tint) = super::object_row::object_glyph(line, p, crate::ui::colors::sender_color(line));
+        thread::paint_icon(ui.painter(), glyph, rect.shrink(6.0), tint);
         return;
     }
     let id = line.source;
