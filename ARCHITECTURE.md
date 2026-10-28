@@ -202,6 +202,16 @@ Hidden linksets release their draw records and visual asset references before
 geometry preparation. Lights, particles, world labels and beacons share the
 visibility rule. `demo_parcel_visibility.rs` supplies four offline parcels.
 
+`world/sound_parcels.rs` applies the current parcel's bitmap/`SOUND_LOCAL` flag
+and the source region's `ParcelOverlay` sound flag to world audio, independently
+of camera position, visual parcel isolation and About Land's selection. Attached
+sounds use the wearer's position; the ridden vehicle keeps the Legacy Viewer's
+parcel exception while retaining sound-radius checks. `scene/sounds.rs` suspends
+and resumes isolated loops and drops blocked one-shots, including pending and
+already playing triggers. `App` also rejects isolated `SoundTrigger` events
+before asset requests. UI sounds, local previews, music, voice and wind stay on
+their own paths. `demo_sound_parcels.rs` supplies offline boundary scenarios.
+
 `scene/sounds/history.rs` records actual world playback with stable voice IDs,
 owner/source identity and global positions, retaining up to 256 rows. UI sounds
 and independent local previews never enter the log. `ui/sound_explorer.rs` owns

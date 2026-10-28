@@ -3260,6 +3260,11 @@ impl App {
                     return;
                 }
                 if let Some(off) = self.world.region_offset(handle) {
+                    // process_sound_trigger: reject parcel-isolated sounds
+                    // before asking for their assets.
+                    if !self.world.can_hear_sound(off + position) {
+                        return;
+                    }
                     self.scene
                         .sounds
                         .trigger_owned(sound, off + position, None, gain, crate::scene::sounds::Origin { object, owner });
@@ -17065,10 +17070,14 @@ impl ApplicationHandler for App {
                 for id in self.settings.audio.ui.preload() {
                     self.scene.sounds.insert(id, crate::demo::ui_sound(id));
                 }
-                let events = if std::env::var("AURORA_DEMO_SOUND").is_ok_and(|mode| mode == "hud") {
-                    crate::demo::hud::sound_events(id)
-                } else {
-                    crate::demo::sound_events(id)
+                let mode = std::env::var("AURORA_DEMO_SOUND").unwrap_or_default();
+                let events = match mode.as_str() {
+                    "hud" => crate::demo::hud::sound_events(id),
+                    "parcel-open" | "parcel-local" | "parcel-source" => {
+                        self.world.agent.get_off(Vec3::new(132.0, 132.0, self.world.agent.position.z));
+                        crate::demo::sound_parcels::events(id, &mode)
+                    }
+                    _ => crate::demo::sound_events(id),
                 };
                 for ev in events {
                     if let Some(e) = self.world.apply(ev) {
