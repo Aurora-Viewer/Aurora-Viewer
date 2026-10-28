@@ -152,19 +152,31 @@ impl SurfaceGpu {
     }
 }
 
-/// The region override replaces the asset's transform, as
-/// LLTerrainMaterials::makeMaterialsReady does. Otherwise the base-color
-/// transform is shared by all maps (LLDrawPoolTerrain::renderFullShaderPBR).
+/// The region override goes over the asset's transform as
+/// LLTerrainMaterials::makeMaterialsReady applies it (LLGLTFMaterial::
+/// applyOverride, llgltfmaterial.cpp): offset, scale and rotation each
+/// replaced only when the override's differs from the default. The
+/// base-color transform is shared by all maps
+/// (LLDrawPoolTerrain::renderFullShaderPBR).
 fn layer_record(material: &PbrMaterial, override_: TerrainTransform, slots: [u32; 4]) -> DrawRecord {
     let base = material.transforms[0];
-    let transform = if override_ == TerrainTransform::default() {
-        TerrainTransform {
-            scale: base.scale,
-            rotation: base.rotation,
-            offset: base.offset,
-        }
-    } else {
-        override_
+    let default = TerrainTransform::default();
+    let transform = TerrainTransform {
+        scale: if override_.scale != default.scale {
+            override_.scale
+        } else {
+            base.scale
+        },
+        rotation: if override_.rotation != default.rotation {
+            override_.rotation
+        } else {
+            base.rotation
+        },
+        offset: if override_.offset != default.offset {
+            override_.offset
+        } else {
+            base.offset
+        },
     };
     DrawRecord {
         base_color: material.base_color_factor,
@@ -184,8 +196,10 @@ fn layer_record(material: &PbrMaterial, override_: TerrainTransform, slots: [u32
             transform.rotation,
             material.metallic_factor,
             material.roughness_factor,
+            // renderFullShaderPBR: mAlphaCutoff / mBaseColor.mV[3], compared
+            // with the texture alpha times the base color alpha
             if material.alpha_mode == aurora_assets::AlphaMode::Mask {
-                material.alpha_cutoff
+                material.alpha_cutoff / material.base_color_factor[3].max(1e-6)
             } else {
                 0.0
             },
@@ -321,7 +335,8 @@ mod tests {
         assert_eq!(record.base_color, material.base_color_factor);
         assert_eq!(record.tex, [7, 8, 9, 10]);
         assert_eq!(record.uv_st, [0.5, -0.25, 0.1, 0.2]);
-        assert_eq!(record.params, [0.5, 0.6, 0.25, 0.4]);
+        // cutoff 0.4 over the base color alpha 0.8
+        assert_eq!(record.params, [0.5, 0.6, 0.25, 0.5]);
         assert_eq!(&record.emissive[..3], &material.emissive_factor);
         let override_ = TerrainTransform {
             scale: [2.0, 3.0],
@@ -330,6 +345,14 @@ mod tests {
         };
         let record = layer_record(&material, override_, [7, 8, 9, 10]);
         assert_eq!(record.uv_st, [0.25, 0.375, 0.4, 0.6]);
+        assert_eq!(record.params[0], 1.0);
+        // applyOverride: a rotation alone keeps the asset's scale and offset
+        let rotation_only = TerrainTransform {
+            rotation: 1.0,
+            ..Default::default()
+        };
+        let record = layer_record(&material, rotation_only, [7, 8, 9, 10]);
+        assert_eq!(record.uv_st, [0.5, -0.25, 0.1, 0.2]);
         assert_eq!(record.params[0], 1.0);
         let parent = SurfaceGpu {
             pbr: true,

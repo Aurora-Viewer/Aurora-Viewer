@@ -511,11 +511,10 @@ fn pbr_terrain_shadow_depth_and_paintmap_holes_agree_on_gpu() {
 @group(0) @binding(4) var lin_clamp: sampler;
 @group(0) @binding(6) var alpha_ramp: texture_2d_array<f32>;
 @group(3) @binding(1) var shadow_clamp: sampler;
-fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
+fn shadow_surface(vi: u32, sample_index: u32) -> TerrainShadowOut {
     let uv = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
-    var o: ShadowOut;
+    var o: TerrainShadowOut;
     o.clip = vec4<f32>(uv * 2.0 - vec2<f32>(1.0), 0.25, 1.0);
-    o.uv = uv;
     o.record = sample_index;
     o.normal = select(vec3<f32>(0,0,1), vec3<f32>(1,0,0), sample_index == 1u);
     o.region_pos = vec3<f32>(uv.x * 8.0, uv.y * 8.0, uv.x * 8.0);
@@ -524,7 +523,7 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
     o.world_pos = o.region_pos;
     return o;
 }
-@vertex fn shadow_vertex(@builtin(vertex_index) vi: u32, @builtin(instance_index) sample_index: u32) -> ShadowOut {
+@vertex fn shadow_vertex(@builtin(vertex_index) vi: u32, @builtin(instance_index) sample_index: u32) -> TerrainShadowOut {
     return shadow_surface(vi, sample_index);
 }
 @vertex fn depth_vertex(@builtin(vertex_index) vi: u32, @builtin(instance_index) sample_index: u32) -> TerrainOut {
@@ -543,7 +542,7 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
     for text in [
         structure(common, "DrawRecord"),
         structure(env, "TerrainOut"),
-        structure(object, "ShadowOut"),
+        structure(env, "TerrainShadowOut"),
         common[common.find("const FLAG_FULLBRIGHT:").unwrap()..common.find("@group(0)").unwrap()].to_owned(),
         common[common.find("fn srgb_to_linear(").unwrap()..common.find("fn in_reflection_pass(").unwrap()].to_owned(),
         wgsl_function(env, "terrain_transform_tangent").to_owned(),
@@ -551,7 +550,7 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
         wgsl_function(object, "portal_clip").to_owned(),
         wgsl_function(env, "terrain_shadow_mask").to_owned(),
         wgsl_function(env, "terrain_depth_mask").to_owned(),
-        format!("@fragment {}", wgsl_function(object, "fs_shadow")),
+        format!("@fragment {}", wgsl_function(env, "fs_shadow_terrain")),
         format!("@fragment {}", wgsl_function(env, "fs_terrain_depth")),
     ] {
         source.push_str(&text);
@@ -578,12 +577,7 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
     ];
     records[3].flags[2] = 3; // green paintmap selects slot 3, independent of comp
     records[4].flags[0] &= !crate::flags::ALPHA_MASK;
-    records[5] = DrawRecord {
-        tex: [1; 4],
-        flags: [crate::flags::ALPHA_MASK, 0, 0, 0],
-        params: [0.0, 0.0, 0.0, 0.5],
-        ..Default::default()
-    };
+    // (an ordinary masked caster keeps fs_shadow, which never sees terrain)
     for i in 0..4 {
         records.push(DrawRecord {
             tex: [if i < 2 { 1 } else { 2 }, 0, 0, 0],
@@ -775,10 +769,10 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
         immediate_size: 0,
     });
     let mut depth_maps = Vec::new();
-    for (vs, fs) in [("shadow_vertex", "fs_shadow"), ("depth_vertex", "fs_terrain_depth")] {
+    for (vs, fs) in [("shadow_vertex", "fs_shadow_terrain"), ("depth_vertex", "fs_terrain_depth")] {
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(fs),
-            layout: Some(if fs == "fs_shadow" {
+            layout: Some(if fs == "fs_shadow_terrain" {
                 &shadow_pipeline_layout
             } else {
                 &pipeline_layout
@@ -844,9 +838,9 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
                 ..Default::default()
             });
             pass.set_pipeline(&pipeline);
-            pass.set_bind_group(0, if fs == "fs_shadow" { &shadow_resources } else { &group }, &[]);
+            pass.set_bind_group(0, if fs == "fs_shadow_terrain" { &shadow_resources } else { &group }, &[]);
             pass.set_bind_group(3, &shadow_group, &[]);
-            for case in 0..if fs == "fs_shadow" { 6 } else { 5 } {
+            for case in 0..5 {
                 pass.set_viewport(0.0, (case * 8) as f32, 64.0, 8.0, 0.0, 1.0);
                 pass.draw(0..3, case..case + 1);
             }
@@ -877,9 +871,9 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
     assert_eq!(
         &depth_maps[0][..64 * 40],
         &depth_maps[1][..64 * 40],
-        "sun/projector fs_shadow must cut exactly the camera depth holes"
+        "sun/projector fs_shadow_terrain must cut exactly the camera depth holes"
     );
-    for case in 0..6 {
+    for case in 0..5 {
         let kept = depth_maps[0][case * 512..(case + 1) * 512].iter().filter(|v| **v < 0.5).count();
         assert_eq!(kept, if case == 4 { 512 } else { 256 }, "mask case {case}");
     }

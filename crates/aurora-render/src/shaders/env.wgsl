@@ -503,10 +503,38 @@ fn terrain_depth_mask(in: TerrainOut) {
     }
 }
 
+// Terrain shadow casters (the renderer's `shadow_terrain` pipeline, when not
+// drawn depth only): vs_shadow's placement plus the terrain's inputs, so
+// that the other casters keep vs_shadow / fs_shadow without them.
+struct TerrainShadowOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(1) @interpolate(flat) record: u32,
+    @location(2) world_pos: vec3<f32>,
+    @location(3) normal: vec3<f32>,
+    @location(4) region_pos: vec3<f32>,
+    @location(5) comp: f32,
+    @location(6) blend_noise: f32,
+};
+
+@vertex
+fn vs_shadow_terrain(in: VsIn) -> TerrainShadowOut {
+    let rec = records[in.instance];
+    let wp = skinned_model(rec, in) * vec4<f32>(vertex_position(rec, in), 1.0);
+    var out: TerrainShadowOut;
+    out.clip = shadow_params.vp * wp;
+    out.record = in.instance;
+    out.world_pos = wp.xyz;
+    out.normal = vertex_normal(rec, in);
+    out.region_pos = in.pos;
+    out.comp = in.uv.x;
+    out.blend_noise = in.uv.y;
+    return out;
+}
+
 // Sun cascades and projector shadows use the same region coordinates,
 // composition and triplanar alpha as colour, depth and picking. Derivatives
 // precede the material branch so neighbouring fragments can use other modes.
-fn terrain_shadow_mask(in: ShadowOut) {
+fn terrain_shadow_mask(in: TerrainShadowOut) {
     let dx = dpdx(in.region_pos);
     let dy = dpdy(in.region_pos);
     let blend_dx = dpdx(vec2<f32>(in.comp, in.blend_noise));
@@ -521,6 +549,12 @@ fn terrain_shadow_mask(in: ShadowOut) {
         let material = terrain_material(surface, dx, dy, blend_dx, blend_dy, true, shadow_clamp);
         if (material.color.a < material.cutoff) { discard; }
     }
+}
+
+@fragment
+fn fs_shadow_terrain(in: TerrainShadowOut) {
+    terrain_shadow_mask(in);
+    portal_clip(records[in.record], in.world_pos);
 }
 
 @fragment

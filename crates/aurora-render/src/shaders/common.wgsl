@@ -132,7 +132,6 @@ const FLAG_PBR: u32 = 8u;
 const FLAG_HIGHLIGHT: u32 = 16u;
 const FLAG_PLANAR: u32 = 32u;
 const FLAG_TERRAIN: u32 = 64u;
-const FLAG_UNLIT_SHADOWLESS: u32 = 64u;
 const FLAG_SKINNED: u32 = 128u;
 const FLAG_LEGACY_MAT: u32 = 256u;
 const FLAG_EMISSIVE_MASK: u32 = 512u;

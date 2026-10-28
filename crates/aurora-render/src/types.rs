@@ -530,6 +530,10 @@ pub struct DrawLists {
     /// after it, as LLDrawPoolAlpha's emissives).
     pub blend_glow: Vec<bool>,
     pub shadow_casters: Vec<ShadowCaster>,
+    /// Terrain chunks casting shadows: drawn depth only like the opaque
+    /// casters, else with the terrain's own alpha test (`fs_shadow_terrain`),
+    /// never through `fs_shadow`.
+    pub terrain_shadow_casters: Vec<ShadowCaster>,
     /// Opaque and alpha-masked draws for the planar reflection passes
     /// (water and mirror); drawn without face culling, alpha tested.
     /// With their bounds: each reflection pass culls them to its own frustum.
@@ -644,6 +648,7 @@ impl DrawLists {
         self.blend_depth_mode = src.blend_depth_mode;
         self.blend_depth_runs.clone_from(&src.blend_depth_runs);
         self.shadow_casters.clone_from(&src.shadow_casters);
+        self.terrain_shadow_casters.clone_from(&src.terrain_shadow_casters);
         self.reflection.clone_from(&src.reflection);
         self.probe.clone_from(&src.probe);
         self.reflection_terrain.clone_from(&src.reflection_terrain);
@@ -689,6 +694,7 @@ impl DrawLists {
         self.blend_depth_mode = RiggedBlendDepth::default();
         self.blend_depth_runs.clear();
         self.shadow_casters.clear();
+        self.terrain_shadow_casters.clear();
         self.reflection.clear();
         self.probe.clear();
         self.reflection_terrain.clear();

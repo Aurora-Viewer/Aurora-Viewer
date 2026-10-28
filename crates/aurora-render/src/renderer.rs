@@ -831,6 +831,9 @@ struct Pipelines {
     shadow: wgpu::RenderPipeline,
     /// Opaque shadow casters: the same vertices, no fragment shader.
     shadow_depth: wgpu::RenderPipeline,
+    /// Terrain casters with the terrain's alpha test (`fs_shadow_terrain`):
+    /// the other casters keep `fs_shadow` without the terrain's inputs.
+    shadow_terrain: wgpu::RenderPipeline,
     post: wgpu::RenderPipeline,
     /// Faces drawn under a pixel (drawn_pick.rs): culled like the scene's
     /// one-sided and two-sided faces.
@@ -2322,8 +2325,11 @@ struct Ranges {
     /// the alpha test.
     shadow: [(u64, u32); CASCADES],
     shadow_alpha: [(u64, u32); CASCADES],
+    /// Terrain casters of each cascade drawn with the terrain's alpha test.
+    shadow_terrain: [(u64, u32); CASCADES],
     /// Casters of the CPU lists in each projector shadow map.
     spot: [(u64, u32); SPOT_SHADOWS],
+    spot_terrain: [(u64, u32); SPOT_SHADOWS],
 }
 
 impl Backend {
@@ -3521,6 +3527,15 @@ impl Backend {
         // vertex shader alone writes the same depth, without a texture read
         // per fragment
         let shadow_depth = make_pipeline(device, &module, &shadow_pl, shadow_desc("shadow depth", None));
+        let shadow_terrain = make_pipeline(
+            device,
+            &module,
+            &shadow_pl,
+            PipeDesc {
+                vs: "vs_shadow_terrain",
+                ..shadow_desc("shadow terrain", Some("fs_shadow_terrain"))
+            },
+        );
         let post_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("post"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/post.wgsl").into()),
@@ -3616,6 +3631,7 @@ impl Backend {
             refl_obj,
             shadow,
             shadow_depth,
+            shadow_terrain,
             post,
             pick,
             pick_terrain,
@@ -5538,9 +5554,11 @@ impl Backend {
         }
         let mut shadow_lists: [Vec<DrawCmd>; CASCADES] = Default::default();
         let mut shadow_alpha_lists: [Vec<DrawCmd>; CASCADES] = Default::default();
+        let mut shadow_terrain_lists: [Vec<DrawCmd>; CASCADES] = Default::default();
         if f.shadows {
             for (ci, m) in cascades.iter().enumerate() {
-                for c in &lists.shadow_casters {
+                let casters = lists.shadow_casters.iter().map(|c| (false, c));
+                for (terrain, c) in casters.chain(lists.terrain_shadow_casters.iter().map(|c| (true, c))) {
                     if !crate::gpu_cull::in_cascade(m, c.center, c.radius)
                         || !crate::shadow_cull::casts_into(&caster_planes[ci], c.center, c.radius)
                         || (!c.alpha
@@ -5549,7 +5567,9 @@ impl Backend {
                     {
                         continue;
                     }
-                    if c.alpha || !shadow_depth_only {
+                    if terrain && (c.alpha || !shadow_depth_only) {
+                        shadow_terrain_lists[ci].push(c.cmd);
+                    } else if c.alpha || !shadow_depth_only {
                         shadow_alpha_lists[ci].push(c.cmd);
                     } else {
                         shadow_lists[ci].push(c.cmd);
@@ -5559,16 +5579,13 @@ impl Backend {
         }
         // casters of the CPU lists in each projector's shadow map
         let mut spot_lists: [Vec<DrawCmd>; SPOT_SHADOWS] = Default::default();
+        let mut spot_terrain_lists: [Vec<DrawCmd>; SPOT_SHADOWS] = Default::default();
         for (k, vp) in spot_vp.iter().enumerate() {
             let Some(vp) = vp else { continue };
             let planes = crate::gpu_cull::view_planes(*vp).map(|p| p.to_array());
-            spot_lists[k].extend(
-                lists
-                    .shadow_casters
-                    .iter()
-                    .filter(|c| crate::gpu_cull::sphere_in(&planes, c.center, c.radius))
-                    .map(|c| c.cmd),
-            );
+            let inside = |c: &&ShadowCaster| crate::gpu_cull::sphere_in(&planes, c.center, c.radius);
+            spot_lists[k].extend(lists.shadow_casters.iter().filter(inside).map(|c| c.cmd));
+            spot_terrain_lists[k].extend(lists.terrain_shadow_casters.iter().filter(inside).map(|c| c.cmd));
         }
 
         // ---- indirect args
@@ -5723,8 +5740,12 @@ impl Backend {
         for i in 0..CASCADES {
             rg.shadow[i] = push(cpu, &shadow_lists[i]);
             rg.shadow_alpha[i] = push(cpu, &shadow_alpha_lists[i]);
+            rg.shadow_terrain[i] = push(cpu, &shadow_terrain_lists[i]);
         }
         for (range, list) in rg.spot.iter_mut().zip(&spot_lists) {
+            *range = push(cpu, list);
+        }
+        for (range, list) in rg.spot_terrain.iter_mut().zip(&spot_terrain_lists) {
             *range = push(cpu, list);
         }
         let needed = (self.indirect_cpu.len() * std::mem::size_of::<DrawIndexedIndirect>()) as u64;
@@ -5751,7 +5772,8 @@ impl Backend {
             stats.draws += lists.water.len() as u32;
             stats.triangles += lists.water.iter().map(|d| d.index_count as u64 / 3).sum::<u64>();
         }
-        let cpu_casters: [u32; CASCADES] = std::array::from_fn(|i| (shadow_lists[i].len() + shadow_alpha_lists[i].len()) as u32);
+        let cpu_casters: [u32; CASCADES] =
+            std::array::from_fn(|i| (shadow_lists[i].len() + shadow_alpha_lists[i].len() + shadow_terrain_lists[i].len()) as u32);
         stats.shadow_draws = cpu_casters.iter().sum();
         stats.shadow.draws = cpu_casters;
         stats.shadow.cpu_draws = cpu_casters;
@@ -5943,7 +5965,8 @@ impl Backend {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-                if gpu_on || rg.shadow.iter().chain(&rg.shadow_alpha).chain(&rg.spot).any(|r| r.1 > 0) {
+                let cpu_ranges = rg.shadow.iter().chain(&rg.shadow_alpha).chain(&rg.shadow_terrain);
+                if gpu_on || cpu_ranges.chain(&rg.spot).chain(&rg.spot_terrain).any(|r| r.1 > 0) {
                     pass.set_bind_group(1, &self.records_bind_group, &[]);
                     pass.set_bind_group(2, &scene.textures, &[]);
                     pass.set_vertex_buffer(0, scene.vertices.slice(..));
@@ -5971,6 +5994,9 @@ impl Backend {
                                 }
                                 draw_bin(&mut pass, None, bin, bin);
                             }
+                            if let Alpha(_) = step {
+                                draw(&mut pass, &self.pipelines.shadow_terrain, rg.shadow_terrain[ci]);
+                            }
                             match step {
                                 Alpha(0) => pass_mark(&mut pass, MARK_SHADOW_C0_END),
                                 Alpha(1) => pass_mark(&mut pass, MARK_SHADOW_C1_END),
@@ -5994,6 +6020,7 @@ impl Backend {
                                 pass.set_viewport(x as f32, y as f32, half as f32, half as f32, 0.0, 1.0);
                                 pass.set_scissor_rect(x, y, half, half);
                                 pass.set_bind_group(3, &self.shadow_bind_groups[CASCADES + k], &[]);
+                                draw(&mut pass, &self.pipelines.shadow_terrain, rg.spot_terrain[k]);
                                 let (off, count) = rg.spot[k];
                                 if count == 0 && !gpu_on {
                                     continue;

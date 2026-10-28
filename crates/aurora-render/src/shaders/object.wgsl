@@ -1677,10 +1677,6 @@ struct ShadowOut {
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) record: u32,
     @location(2) world_pos: vec3<f32>,
-    @location(3) normal: vec3<f32>,
-    @location(4) region_pos: vec3<f32>,
-    @location(5) comp: f32,
-    @location(6) blend_noise: f32,
 };
 
 struct ShadowParams {
@@ -1700,11 +1696,6 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
     out.uv = diffuse_uv(face_st(in, rec), rec, shadow_params.anim_clock.zw);
     out.record = in.instance;
     out.world_pos = wp.xyz;
-    out.normal = in.normal.xyz;
-    out.region_pos = in.pos;
-    out.comp = in.uv.x;
-    out.blend_noise = in.uv.y;
-    if ((rec.flags.x & FLAG_TERRAIN) != 0u) { out.normal = terrain_direction(in.joints); }
     return out;
 }
 
@@ -1721,11 +1712,9 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
 //   (LLDrawPoolAvatar::renderShadow).
 @fragment
 fn fs_shadow(in: ShadowOut) {
-    terrain_shadow_mask(in);
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
-    let terrain_pbr = (rec.flags.x & (FLAG_TERRAIN | FLAG_PBR)) == (FLAG_TERRAIN | FLAG_PBR);
-    let tex_alpha = sample_tex(select(rec.tex.x, 0u, terrain_pbr), in.uv).a;
+    let tex_alpha = sample_tex(rec.tex.x, in.uv).a;
     let alpha = tex_alpha * rec.base_color.a;
     if ((rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u) {
         if ((rec.flags.x & FLAG_ALPHA_BLEND) == 0u) {

@@ -4055,7 +4055,7 @@ impl Scene {
                     bounds: [0.0; 4],
                 };
                 if shadows {
-                    self.lists.shadow_casters.push(ShadowCaster {
+                    self.lists.terrain_shadow_casters.push(ShadowCaster {
                         cmd,
                         center: c.center,
                         radius: c.radius,

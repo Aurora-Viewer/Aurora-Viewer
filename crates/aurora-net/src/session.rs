@@ -795,10 +795,12 @@ impl Session<'_> {
                             sim.caps.len()
                         )
                     });
+                    // ModifyRegion granted only now: the handshake could not ask it
+                    let modify_new = !sim.caps.contains_key("ModifyRegion") && caps.contains_key("ModifyRegion");
                     let caps = Arc::new(caps);
                     sim.caps = caps.clone();
                     emit(self.sh, NetEvent::Capabilities { handle: sim.handle, caps });
-                    let terrain_handle = sim.handshake_seen.then_some(sim.handle);
+                    let terrain_handle = (sim.handshake_seen && modify_new).then_some(sim.handle);
                     if let Some(handle) = terrain_handle {
                         self.request_terrain_transforms(handle);
                     }
