@@ -3,6 +3,7 @@
 
 pub mod anchors;
 pub mod anim;
+mod anim_box;
 pub mod animesh;
 mod auto_hover;
 pub mod avatar;
@@ -999,6 +1000,11 @@ pub struct Scene {
     pub parts: crate::frame_profile::Parts,
     /// Rest skeleton (shape + joint offsets of worn meshes) per skeleton owner.
     skeletons: FastMap<Uuid, AvatarSkeleton>,
+    /// Rigged extents per joint of each animated object (anim_box.rs).
+    rig_extents: FastMap<Uuid, anim_box::RigExtents>,
+    /// This frame's animated box of each animated object, which the
+    /// detail level of its rigged meshes is judged by (anim_box.rs).
+    anim_boxes: FastMap<Uuid, anim_box::AnimBox>,
     /// Skeleton owner of each object listed in a cached skeleton's members.
     skeleton_member_of: FastMap<usize, Uuid>,
     /// Mesh metadata generation the cached skeletons were checked against.
@@ -1513,6 +1519,8 @@ impl Scene {
             geom_waiting_spare: Vec::new(),
             parts: Default::default(),
             skeletons: Default::default(),
+            rig_extents: Default::default(),
+            anim_boxes: Default::default(),
             skeleton_member_of: Default::default(),
             skeleton_meta_gen: 0,
             motions: Default::default(),
@@ -2622,6 +2630,8 @@ impl Scene {
         let t_part = self.parts.lap(Part::SyncList, t0);
         step(&mut slow, "list");
 
+        // (the animated objects' boxes first: their rigged meshes' level)
+        self.update_anim_boxes(world, now);
         // placement in parallel, one level of the parent chains at a time
         self.xf_cache.next_frame(n);
         let mut plans: Vec<(usize, Plan)> = Vec::with_capacity(list.items.len());
