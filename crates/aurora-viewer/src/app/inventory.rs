@@ -276,6 +276,7 @@ impl App {
             return;
         }
         match action {
+            InvAction::DefaultPermissions => self.inventory_ui.default_permissions_open = true,
             InvAction::ExportMenuNotecard { name, text } => {
                 if let Some(command) = ui::inventory::context_notecards::export(&mut self.inventory_ui, &self.world.inventory, name, text) {
                     self.send(command);
@@ -297,12 +298,28 @@ impl App {
             InvAction::Create { parent, kind, name } => {
                 if rules::destination(&self.world.inventory, parent, &self.settings.inventory.protected) {
                     if let aurora_net::inventory::operations::NewItem::Wearable(kind) = kind {
-                        match crate::world::inventory::wearable::create(kind, &name, self.world.agent_id) {
-                            Ok(data) => self.send(NetCommand::CreateInventoryWearable { parent, kind, name, data }),
+                        match crate::world::inventory::wearable::create_with_permissions(
+                            kind,
+                            &name,
+                            self.world.agent_id,
+                            self.settings.inventory.creation_permissions.wearables.permissions(),
+                        ) {
+                            Ok(data) => self.send(NetCommand::CreateInventoryWearable {
+                                parent,
+                                kind,
+                                name,
+                                data,
+                                permissions: None,
+                            }),
                             Err(reason) => self.inventory_ui.message = reason,
                         }
                     } else {
-                        self.send(NetCommand::CreateInventoryItem { parent, kind, name });
+                        self.send(NetCommand::CreateInventoryItem {
+                            parent,
+                            kind,
+                            name,
+                            permissions: None,
+                        });
                     }
                 }
             }

@@ -4518,6 +4518,12 @@ failure. Grid validation and any paid upload are performed by the human.
   the windows. The build window keeps its width across its six sections,
   including Shape for the advanced settings; long lists scroll in the body,
   the actions stay visible. Modal confirmations keep the blurred background.
+- **`AURORA_DEMO_INVENTORY=default-permissions|aurora-default-permissions`**:
+  opens the shared Default permissions window over the Legacy or Aurora
+  inventory. The final New-menu entry opens the same window. Check creation
+  rows, no-copy/transfer rules and fixed environment-copy controls. Import rows
+  edit the same saved values as the unchanged Permissions tab in import windows.
+  New demo inventory items use their category's selected permissions.
 - **`AURORA_DEMO_INVENTORY=bulk-multi|bulk-folder|bulk-permissions`**: selected items
   and folder context menus expose Bulk permissions; the last mode opens the
   shared type/permission controls directly. Apply/OK use synthetic inventory

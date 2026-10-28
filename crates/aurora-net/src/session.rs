@@ -2450,7 +2450,13 @@ impl Session<'_> {
                 data,
                 copy_name,
             } => self.save_wearable(request, *item, data, copy_name),
-            NetCommand::CreateInventoryWearable { parent, kind, name, data } => self.create_wearable(parent, kind, name, data),
+            NetCommand::CreateInventoryWearable {
+                parent,
+                kind,
+                name,
+                data,
+                permissions,
+            } => self.create_wearable(parent, kind, name, data, permissions),
             NetCommand::CreateSettingsItem {
                 request,
                 parent,
@@ -2570,17 +2576,26 @@ impl Session<'_> {
                 parent,
                 name,
                 data,
+                permissions,
             } => {
-                self.create_notecard_item(request, parent, name, data);
+                self.create_notecard_item(request, parent, name, data, permissions);
             }
-            NetCommand::CreateInventoryItem { parent, kind, name } => {
+            NetCommand::CreateInventoryItem {
+                parent,
+                kind,
+                name,
+                permissions,
+            } => {
                 let (asset, inventory, subtype) = kind.types();
                 let mut m = CreateInventoryItem::default();
                 m.agent_data.agent_id = self.agent_id();
                 m.agent_data.session_id = self.session_id();
                 m.inventory_block.folder_id = parent;
                 m.inventory_block.callback_id = self.inventory_callback(true);
-                m.inventory_block.next_owner_mask = 0x7fffffff;
+                m.inventory_block.next_owner_mask = permissions.map_or(0x7fff_ffff, |rights| rights.next_owner);
+                if let Some(rights) = permissions {
+                    self.remember_creation_permissions(m.inventory_block.callback_id, parent, i32::from(asset), rights);
+                }
                 m.inventory_block.type_ = asset;
                 m.inventory_block.inv_type = inventory;
                 m.inventory_block.wearable_type = subtype;

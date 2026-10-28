@@ -249,6 +249,14 @@ fn creation(c: &mut Catalog, zone: &str, parent: Uuid, enabled: bool) {
             }),
         );
     }
+    c.invoke(
+        "default-permissions",
+        zone,
+        "shield-lock-filled",
+        aurora_i18n::tr!("inventory-default-permissions"),
+        true,
+        InvAction::DefaultPermissions,
+    );
 }
 
 pub(super) fn lock_entry() -> Entry {

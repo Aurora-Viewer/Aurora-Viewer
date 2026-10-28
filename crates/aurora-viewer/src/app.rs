@@ -1459,6 +1459,7 @@ impl App {
     }
 
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
+        self.settings.inventory.creation_permissions.prepare(&mut cmd);
         if !self.object_profile.retain_selection(&self.world, &mut cmd) {
             return;
         }
@@ -1901,11 +1902,19 @@ impl App {
                 self.on_app_event(NetEvent::InventoryEdited { request: *request, result });
                 return;
             }
-            if let NetCommand::CreateInventoryWearable { parent, kind, name, .. } = &cmd {
+            if let NetCommand::CreateInventoryWearable {
+                parent,
+                kind,
+                name,
+                permissions,
+                ..
+            } = &cmd
+            {
                 self.send(NetCommand::CreateInventoryItem {
                     parent: *parent,
                     kind: aurora_net::inventory::operations::NewItem::Wearable(*kind),
                     name: name.clone(),
+                    permissions: *permissions,
                 });
                 return;
             }
@@ -1914,6 +1923,7 @@ impl App {
                 parent,
                 name,
                 data,
+                permissions,
             } = &cmd
             {
                 let item = aurora_net::inventory::InvItem {
@@ -1927,7 +1937,9 @@ impl App {
                     creator: self.world.agent_id,
                     base_mask: 0x7fff_ffff,
                     owner_mask: 0x7fff_ffff,
-                    next_owner_mask: 0x7fff_ffff,
+                    next_owner_mask: permissions.unwrap_or_default().next_owner,
+                    group_mask: permissions.unwrap_or_default().group,
+                    everyone_mask: permissions.unwrap_or_default().everyone,
                     ..Default::default()
                 };
                 self.demo_documents.insert(item.id, data.clone());
@@ -2056,7 +2068,13 @@ impl App {
                 self.task_notecard_saved(*request, *object, *item, result);
                 return;
             }
-            if let NetCommand::CreateInventoryItem { parent, kind, name } = &cmd {
+            if let NetCommand::CreateInventoryItem {
+                parent,
+                kind,
+                name,
+                permissions,
+            } = &cmd
+            {
                 let (asset, inventory, subtype) = kind.types();
                 // a landmark's asset is written by the server from where the
                 // agent stands (the demo region has no id: a version 1
@@ -2082,7 +2100,9 @@ impl App {
                     creator: self.world.agent_id,
                     base_mask: 0x7fffffff,
                     owner_mask: 0x7fffffff,
-                    next_owner_mask: 0x7fffffff,
+                    next_owner_mask: permissions.map_or(0x7fff_ffff, |p| p.next_owner),
+                    group_mask: permissions.map_or(0, |p| p.group),
+                    everyone_mask: permissions.map_or(0, |p| p.everyone),
                     ..Default::default()
                 };
                 self.on_app_event(NetEvent::InventoryCreated(item));
@@ -5646,6 +5666,7 @@ impl App {
                             parent,
                             name,
                             data,
+                            permissions: None,
                         });
                     } else {
                         self.build.ui.notecards.message = aurora_i18n::tr!("session-saving-is-unavailable-in-this-region").into();
@@ -14168,6 +14189,7 @@ impl App {
                 self.show_imports(&ctx, &p);
                 self.show_blender_live(&ctx, &p);
                 let inventory_preferences = self.settings.inventory.clone();
+                let import_preferences = self.settings.imports.clone();
                 let mut open = self.panels.inventory;
                 if !self.inventory_ui.merchant_requested {
                     self.inventory_ui.merchant_requested = true;
@@ -14200,10 +14222,18 @@ impl App {
                     }
                 }
                 self.panels.inventory = open;
+                ui::inventory::default_permissions::show(
+                    &ctx,
+                    &p,
+                    &mut self.inventory_ui.default_permissions_open,
+                    &mut self.settings.inventory.creation_permissions,
+                    &mut self.settings.imports,
+                );
                 ui::inventory::view::set_picker_sort(&ctx, self.settings.inventory.sort);
                 self.show_gestures(&ctx, &p);
                 self.show_texture_library(&ctx, &p);
                 self.inventory_ui.preferences_dirty |= self.settings.inventory != inventory_preferences;
+                self.inventory_ui.preferences_dirty |= self.settings.imports != import_preferences;
                 if self.inventory_ui.preferences_dirty && !ctx.input(|input| input.pointer.any_down()) {
                     self.inventory_ui.preferences_dirty = false;
                     self.settings.save();
@@ -16726,7 +16756,9 @@ impl ApplicationHandler for App {
                 }
                 let configured_view = matches!(
                     view.as_str(),
-                    "permissions"
+                    "default-permissions"
+                        | "aurora-default-permissions"
+                        | "permissions"
                         | "bulk-permissions"
                         | "bulk-multi"
                         | "bulk-folder"
@@ -16792,6 +16824,7 @@ impl ApplicationHandler for App {
                     self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
                     self.inventory_ui.filters_open = view == "filters";
                     self.inventory_ui.preferences_open = view == "preferences";
+                    self.inventory_ui.default_permissions_open = view.ends_with("default-permissions");
                     if view.starts_with("bulk-") {
                         let ids = if view == "bulk-folder" {
                             vec![uuid::Uuid::from_u128(8000)]

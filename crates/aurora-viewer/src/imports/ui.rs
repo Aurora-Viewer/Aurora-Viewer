@@ -15,7 +15,7 @@ mod inspector;
 pub(crate) mod launcher;
 mod material_panel;
 mod mesh_panel;
-mod permission_panel;
+pub(crate) mod permission_panel;
 mod sound_panel;
 #[cfg(test)]
 mod tests;

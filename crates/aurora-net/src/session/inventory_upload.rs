@@ -12,6 +12,7 @@ pub(super) struct Uploads {
 }
 
 struct Upload {
+    permissions: Option<crate::inventory::upload::Permissions>,
     transaction: Uuid,
     parent: Uuid,
     kind: u8,
@@ -88,6 +89,7 @@ impl Session<'_> {
                 import: None,
                 wearable: Some(pending),
                 report: None,
+                permissions: None,
             },
         );
         self.send_main(&message, true);
@@ -131,11 +133,19 @@ impl Session<'_> {
                 import: Some((request, upload)),
                 wearable: None,
                 report: None,
+                permissions: None,
             },
         );
         self.send_main(&message, true);
     }
-    pub(super) fn create_wearable(&mut self, parent: Uuid, kind: u8, name: String, data: Vec<u8>) {
+    pub(super) fn create_wearable(
+        &mut self,
+        parent: Uuid,
+        kind: u8,
+        name: String,
+        data: Vec<u8>,
+        permissions: Option<crate::inventory::upload::Permissions>,
+    ) {
         if kind >= 17 || data.is_empty() || data.len() > 64 * 1024 || self.inventory_uploads.assets.len() >= 8 {
             emit(
                 self.sh,
@@ -170,6 +180,7 @@ impl Session<'_> {
                 import: None,
                 wearable: None,
                 report: None,
+                permissions,
             },
         );
         self.send_main(&m, true);
@@ -204,6 +215,7 @@ impl Session<'_> {
                 import: None,
                 wearable: None,
                 report: Some(Box::new(report)),
+                permissions: None,
             },
         );
         self.send_main(&m, true);
@@ -334,7 +346,15 @@ impl Session<'_> {
             m.inventory_block.folder_id = upload.parent;
             m.inventory_block.callback_id = self.inventory_callback(true);
             m.inventory_block.transaction_id = upload.transaction;
-            m.inventory_block.next_owner_mask = 0x7fff_ffff;
+            m.inventory_block.next_owner_mask = upload.permissions.map_or(0x7fff_ffff, |rights| rights.next_owner);
+            if let Some(rights) = upload.permissions {
+                self.remember_creation_permissions(
+                    m.inventory_block.callback_id,
+                    upload.parent,
+                    if upload.kind < 4 { 13 } else { 5 },
+                    rights,
+                );
+            }
             m.inventory_block.type_ = if upload.kind < 4 { 13 } else { 5 };
             m.inventory_block.inv_type = 18;
             m.inventory_block.wearable_type = upload.kind;

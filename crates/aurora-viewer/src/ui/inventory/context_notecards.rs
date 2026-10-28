@@ -142,6 +142,7 @@ pub(crate) fn export(st: &mut InventoryUi, inv: &Inventory, name: String, text: 
                 parent,
                 name: name.trim().chars().take(63).collect(),
                 data,
+                permissions: None,
             })
         }
         result => {

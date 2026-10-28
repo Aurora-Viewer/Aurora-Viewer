@@ -167,12 +167,18 @@ impl App {
     pub(super) fn new_physics(&mut self) {
         if let Some((parent, name)) = self.physics_ui.begin_create(&self.world) {
             self.appearance_ui.message = aurora_i18n::tr!("physics-creating").into();
-            match crate::world::inventory::wearable::create(KIND, &name, self.world.agent_id) {
+            match crate::world::inventory::wearable::create_with_permissions(
+                KIND,
+                &name,
+                self.world.agent_id,
+                self.settings.inventory.creation_permissions.wearables.permissions(),
+            ) {
                 Ok(data) => self.send(NetCommand::CreateInventoryWearable {
                     parent,
                     kind: KIND,
                     name,
                     data,
+                    permissions: None,
                 }),
                 Err(reason) => {
                     self.physics_ui.creation_failed();

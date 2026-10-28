@@ -11,11 +11,30 @@ use crate::inventory::{
 
 #[derive(Default)]
 pub(super) struct Imports {
+    creation_permissions: HashMap<u32, CreationPermissions>,
     creates: HashMap<u32, Pending>,
     /// New environment settings items waiting for their inventory callback.
     settings: HashMap<u32, SettingsCreate>,
     meshes: Arc<Mutex<HashMap<Uuid, MeshOffer>>>,
     pub balance: Option<i32>,
+}
+
+struct CreationPermissions {
+    started: Instant,
+    parent: Uuid,
+    asset_type: i32,
+    rights: crate::inventory::upload::Permissions,
+}
+
+impl CreationPermissions {
+    fn update(&self, item: &InvItem, owner: Uuid) -> Option<update_inventory_item::InventoryData> {
+        if item.id.is_nil() || item.parent != self.parent || item.asset_type != self.asset_type || item.owner != owner {
+            return None;
+        }
+        let update = permission_update(item, self.rights, 0);
+        ((item.next_owner_mask, item.group_mask, item.everyone_mask) != (update.next_owner_mask, update.group_mask, update.everyone_mask))
+            .then_some(update)
+    }
 }
 struct MeshOffer {
     started: Instant,
@@ -130,6 +149,26 @@ fn permission_update(item: &InvItem, rights: crate::inventory::upload::Permissio
 }
 
 impl Session<'_> {
+    /// LLInventoryCallback creation callbacks apply group/everyone rights only
+    /// after the server has named the new, owned inventory item.
+    pub(super) fn remember_creation_permissions(
+        &mut self,
+        callback: u32,
+        parent: Uuid,
+        asset_type: i32,
+        rights: crate::inventory::upload::Permissions,
+    ) {
+        self.asset_imports.creation_permissions.insert(
+            callback,
+            CreationPermissions {
+                started: Instant::now(),
+                parent,
+                asset_type,
+                rights,
+            },
+        );
+    }
+
     pub(super) fn legacy_asset_ready(&mut self, request: Uuid, upload: Request, transaction: Uuid, asset: Uuid) {
         if upload.expected_cost > 0 && self.asset_imports.balance.is_none_or(|balance| balance < upload.expected_cost) {
             emit(
@@ -431,7 +470,14 @@ impl Session<'_> {
 
     /// LLPreviewNotecard::onSaveComplete / create_inventory_item: use the
     /// server's callback id before uploading, exactly as for settings items.
-    pub(super) fn create_notecard_item(&mut self, request: Uuid, parent: Uuid, name: String, data: Vec<u8>) {
+    pub(super) fn create_notecard_item(
+        &mut self,
+        request: Uuid,
+        parent: Uuid,
+        name: String,
+        data: Vec<u8>,
+        permissions: Option<crate::inventory::upload::Permissions>,
+    ) {
         let caps = self.main_cap("UpdateNotecardAgentInventory").zip(self.main_cap("FetchInventory2"));
         let valid =
             !parent.is_nil() && !name.trim().is_empty() && name.len() <= 255 && crate::inventory::notecard::Notecard::decode(&data).is_ok();
@@ -454,7 +500,10 @@ impl Session<'_> {
         message.inventory_block.callback_id = callback;
         // create_new_item (indra/newview/llviewerinventory.cpp) leaves the
         // transaction null: this new note has no previously uploaded asset.
-        message.inventory_block.next_owner_mask = 0x7fff_ffff;
+        message.inventory_block.next_owner_mask = permissions.map_or(0x7fff_ffff, |rights| rights.next_owner);
+        if let Some(rights) = permissions {
+            self.remember_creation_permissions(callback, parent, 7, rights);
+        }
         message.inventory_block.type_ = 7;
         message.inventory_block.inv_type = 7;
         message.inventory_block.wearable_type = 255;
@@ -517,6 +566,16 @@ impl Session<'_> {
     }
 
     pub(super) fn asset_created(&mut self, callback: u32, item: &InvItem) {
+        if let Some(pending) = self.asset_imports.creation_permissions.remove(&callback)
+            && let Some(update) = pending.update(item, self.agent_id())
+        {
+            let mut message = UpdateInventoryItem::default();
+            message.agent_data.agent_id = self.agent_id();
+            message.agent_data.session_id = self.session_id();
+            message.agent_data.transaction_id = Uuid::new_v4();
+            message.inventory_data.push(update);
+            self.send_main(&message, true);
+        }
         if let Some(pending) = self.asset_imports.settings.remove(&callback) {
             self.settings_created(pending, item);
             return;
@@ -616,6 +675,9 @@ impl Session<'_> {
     }
 
     pub(super) fn expire_asset_imports(&mut self) {
+        self.asset_imports
+            .creation_permissions
+            .retain(|_, pending| pending.started.elapsed() < Duration::from_secs(60));
         self.asset_imports.meshes.lock().retain(|_, pending| !pending.expired());
         self.asset_imports.settings.retain(|_, pending| {
             if pending.started.elapsed() < Duration::from_secs(60) {
@@ -650,6 +712,59 @@ impl Session<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn creation_defaults_only_update_the_expected_owned_item_and_preserve_owner_rights() {
+        let owner = Uuid::from_u128(1);
+        let mut item = InvItem {
+            id: Uuid::from_u128(2),
+            parent: Uuid::from_u128(3),
+            owner,
+            asset_type: 7,
+            owner_mask: 0x7fff_ffff,
+            base_mask: 0x7fff_ffff,
+            next_owner_mask: 0x7fff_ffff,
+            ..Default::default()
+        };
+        let pending = CreationPermissions {
+            started: Instant::now(),
+            parent: item.parent,
+            asset_type: 7,
+            rights: crate::inventory::upload::Permissions {
+                next_owner: 0x8_2000,
+                group: 0x8_c000,
+                everyone: 0x8000,
+            },
+        };
+        let update = pending.update(&item, owner).unwrap();
+        assert_eq!(
+            (update.next_owner_mask, update.group_mask, update.everyone_mask),
+            (0x8_2000, 0x8_c000, 0x8000)
+        );
+        assert_eq!((update.owner_mask, update.base_mask), (item.owner_mask, item.base_mask));
+        for (parent, asset_type, item_owner) in [
+            (Uuid::nil(), 7, owner),
+            (item.parent, 10, owner),
+            (item.parent, 7, Uuid::from_u128(4)),
+        ] {
+            assert!(
+                pending
+                    .update(
+                        &InvItem {
+                            parent,
+                            asset_type,
+                            owner: item_owner,
+                            ..item.clone()
+                        },
+                        owner
+                    )
+                    .is_none()
+            );
+        }
+        item.owner_mask = 0x2000;
+        let update = pending.update(&item, owner).unwrap();
+        assert_eq!((update.next_owner_mask, update.group_mask, update.everyone_mask), (0x2000, 0, 0));
+    }
 
     #[test]
     fn mesh_import_parity_slow_quote_keeps_the_full_transfer_and_confirmation_windows() {

@@ -161,6 +161,7 @@ impl Session<'_> {
         let mut items = Vec::new();
         let mut created = Vec::new();
         for (callback, item) in update.items {
+            self.asset_created(callback, &item);
             let new = self.inventory_callbacks.remove(&callback).is_some_and(|(_, new)| new);
             self.accept_inventory_copy(callback, &item);
             if let Some((editor, notecard, open)) = self.notecard_copies.remove(&callback) {

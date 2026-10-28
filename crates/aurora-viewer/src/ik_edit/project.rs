@@ -484,6 +484,7 @@ impl Editor {
                     parent,
                     name: format!("Aurora IK - {title}"),
                     data,
+                    permissions: None,
                 });
                 self.project.saving = Some((request, Instant::now()));
             }

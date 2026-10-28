@@ -34,6 +34,24 @@ pub fn default_texture(kind: u8) -> Uuid {
 }
 
 pub fn create(kind: u8, name: &str, owner: Uuid) -> Result<Vec<u8>, String> {
+    create_with_permissions(
+        kind,
+        name,
+        owner,
+        aurora_net::inventory::upload::Permissions {
+            next_owner: 0x7fff_ffff,
+            group: 0,
+            everyone: 0,
+        },
+    )
+}
+
+pub fn create_with_permissions(
+    kind: u8,
+    name: &str,
+    owner: Uuid,
+    rights: aurora_net::inventory::upload::Permissions,
+) -> Result<Vec<u8>, String> {
     let Some(kind_name) = TYPES.get(kind as usize) else {
         return Err(aurora_i18n::tr!("world-inventory-wearable-unknown-clothing-type").into());
     };
@@ -60,7 +78,10 @@ pub fn create(kind: u8, name: &str, owner: Uuid) -> Result<Vec<u8>, String> {
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(22);
     let mut out = format!(
-        "LLWearable version {version}\n{name}\n\npermissions 0\n{{\nbase_mask 7fffffff\nowner_mask 7fffffff\ngroup_mask 00000000\neveryone_mask 00000000\nnext_owner_mask 7fffffff\ncreator_id {owner}\nowner_id {owner}\nlast_owner_id {owner}\ngroup_id {}\n}}\nsale_info 0\n{{\nsale_type not\nsale_price 10\n}}\ntype {kind}\nparameters {}\n",
+        "LLWearable version {version}\n{name}\n\npermissions 0\n{{\nbase_mask 7fffffff\nowner_mask 7fffffff\ngroup_mask {:08x}\neveryone_mask {:08x}\nnext_owner_mask {:08x}\ncreator_id {owner}\nowner_id {owner}\nlast_owner_id {owner}\ngroup_id {}\n}}\nsale_info 0\n{{\nsale_type not\nsale_price 10\n}}\ntype {kind}\nparameters {}\n",
+        rights.group,
+        rights.everyone,
+        rights.next_owner,
         Uuid::nil(),
         params.len()
     );
@@ -109,5 +130,21 @@ mod tests {
             assert!(text.len() < 64 * 1024);
         }
         assert!(create(17, "Invalide", Uuid::nil()).is_err());
+    }
+
+    #[test]
+    fn creation_defaults_are_written_into_the_wearable_asset_without_restricting_its_creator() {
+        let rights = aurora_net::inventory::upload::Permissions {
+            next_owner: 0x8_a000,
+            group: 0x8_c000,
+            everyone: 0x8000,
+        };
+        for kind in [0, 4, 15] {
+            let bytes = create_with_permissions(kind, "New wearable", Uuid::from_u128(1), rights).unwrap();
+            let text = String::from_utf8(bytes).unwrap();
+            assert!(text.contains("\nowner_mask 7fffffff\n"));
+            assert!(text.contains("\ngroup_mask 0008c000\neveryone_mask 00008000\nnext_owner_mask 0008a000\n"));
+            aurora_assets::wearable::Wearable::parse(text.as_bytes()).unwrap();
+        }
     }
 }
