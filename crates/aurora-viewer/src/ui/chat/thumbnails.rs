@@ -351,7 +351,7 @@ fn thumbnail(
     let icon = match kind {
         sidebar::Kind::Private => {
             st.wanted_pics.insert(id);
-            sidebar::Icon::Avatar(pics.get(&id), presence::of(world, &id))
+            sidebar::Icon::Avatar(pics.get(&id), presence::of(world, &id), world.social.is_typing(&id))
         }
         sidebar::Kind::Group => {
             let insignia = sidebar::group_insignia(world, &id);

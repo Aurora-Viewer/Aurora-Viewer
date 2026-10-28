@@ -215,8 +215,8 @@ pub(super) fn entry_id(entry: Pinned) -> egui::Id {
 
 /// The picture of an entry.
 pub(super) enum Icon<'a> {
-    /// A resident: their picture and status.
-    Avatar(Option<&'a egui::TextureHandle>, presence::Status),
+    /// A resident: their picture and status, and whether they type to us.
+    Avatar(Option<&'a egui::TextureHandle>, presence::Status, bool),
     /// A group: its insignia, once loaded (none: the group glyph).
     Group(Option<&'a egui::TextureHandle>),
     /// A Tabler icon on a tinted square (nearby chat, Contacts, a conference).
@@ -411,7 +411,7 @@ pub(super) fn show(
                         st.wanted_images.insert(i);
                     }
                     let icon = match kind {
-                        Kind::Private => Icon::Avatar(pics.get(&id), status),
+                        Kind::Private => Icon::Avatar(pics.get(&id), status, world.social.is_typing(&id)),
                         Kind::Group => Icon::Group(insignia.and_then(|i| images.get(&i))),
                         Kind::Conference => Icon::Glyph("users", p.muted),
                     };
@@ -484,7 +484,7 @@ pub(super) fn show(
                     for (id, name) in friends.into_iter().take(8) {
                         st.wanted_pics.insert(id);
                         let e = Entry {
-                            icon: Icon::Avatar(pics.get(&id), presence::of(world, &id)),
+                            icon: Icon::Avatar(pics.get(&id), presence::of(world, &id), false),
                             name_color: world.contact_sets.appearance(&id).ui_name.map(crate::ui::colors::set_color),
                             name: &name,
                             sub: Some(aurora_i18n::tr!("ui-chat-start-im").to_owned()),
@@ -877,14 +877,16 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
     Picked { resp, close }
 }
 
-/// The picture of an entry: a resident's with its status, a group's
-/// insignia, a glyph on a tinted square.
+/// The picture of an entry: a resident's with its status, or their typing
+/// to us; a group's insignia, a glyph on a tinted square.
 pub(super) fn paint_picture(ui: &egui::Ui, p: &Palette, icon: &Icon, name: &str, rect: egui::Rect, ring: Color32) {
     let radius = ui.visuals().window_corner_radius;
     match icon {
-        Icon::Avatar(pic, status) => {
+        Icon::Avatar(pic, status, typing) => {
             crate::ui::widgets::avatar_disc(ui, p, rect, *pic, name, false);
-            if *status != presence::Status::Unknown {
+            if *typing {
+                paint_typing(ui, p, rect, ring);
+            } else if *status != presence::Status::Unknown {
                 presence::paint_dot(ui.painter(), p, rect, *status, ring);
             }
         }
@@ -899,6 +901,32 @@ pub(super) fn paint_picture(ui: &egui::Ui, p: &Palette, icon: &Icon, name: &str,
             );
         }
     }
+}
+
+/// A resident typing to us (#1233), over the bottom of their picture: the
+/// name plates' three bouncing dots (`nameplate::typing_dot`) on a pill
+/// ringed in `ring`, the surface under the picture, like the status dot it
+/// stands in for (whoever types is online). An Aurora addition, the human's
+/// choice: the Legacy Viewer says it in the conversation's tab only.
+fn paint_typing(ui: &egui::Ui, p: &Palette, picture: egui::Rect, ring: Color32) {
+    let w = picture.width();
+    let size = egui::vec2(w * 0.78, (w * 0.42).max(8.0));
+    let pill = egui::Rect::from_center_size(egui::pos2(picture.center().x, picture.bottom() - size.y * 0.3), size);
+    let radius = ui.visuals().window_corner_radius;
+    let painter = ui.painter();
+    painter.rect_filled(pill.expand(1.5), radius, ring);
+    painter.rect_filled(pill, radius, p.raised);
+    // the plates' dots are 1.75 mockup pixels, 5.5 apart, on a 32 point
+    // picture; never smaller than a point and a bit in a thumbnail
+    let s = w / PIC;
+    let (r, step) = ((1.75 * s).max(1.2), (5.5 * s).max(3.6));
+    let now = ui.input(|i| i.time);
+    for k in 0..3 {
+        let (opacity, lift) = crate::ui::nameplate::typing_dot(now, k);
+        let at = pill.center() + egui::vec2((k as f32 - 1.0) * step, lift * s);
+        painter.circle_filled(at, r, p.ink.gamma_multiply(opacity));
+    }
+    ui.ctx().request_repaint();
 }
 
 /// The panel of a call at the bottom of the column, while another
