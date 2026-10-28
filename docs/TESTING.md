@@ -7175,7 +7175,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_STREAM_TITLE=[window\|history\|text][,stop]` | Stream title window with changing titles and their history |
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
-| `AURORA_DEMO_SOUND=1` or `hud` | World or HUD chime; interface and media sounds audible |
+| `AURORA_DEMO_SOUND=1`, `hud` or `parcel-open\|parcel-local\|parcel-source` | World/HUD chime or parcel sound isolation; interface and media sounds audible |
 | `AURORA_DEMO_SOUND_EXPLORER=1\|all\|blacklist\|blacklist-ignored\|avatar-menu\|avatar-menu-mixed\|avatar-menu-pie` | Sound Explorer, separate blacklist categories, ignored objects or avatar sound-category switches |
 | `AURORA_DEMO_ANIMATION_EXPLORER=1\|blacklist` | Animation explorer with a stand-in preview, or a blacklisted animation |
 | `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
@@ -7505,7 +7505,7 @@ What the inventory must show with these scenarios:
   world (`text`: drag it anywhere, right click for the history, the copy
   and the window). `stop` ends the stream after the last title: "No
   stream playing", the history kept. No sound is played.
-- **`AURORA_DEMO_SOUND=1|hud`**: world sounds (looping chime) and interface
+- **`AURORA_DEMO_SOUND=1|hud|parcel-open|parcel-local|parcel-source`**: world sounds (looping chime) and interface
   sounds (taken from the real sound cache if it exists, otherwise a brief
   tick per sound). Without it the media play muted too: the viewer sends
   them a volume of 0, so a video in the demo is silent unless this is set.
@@ -7514,6 +7514,14 @@ What the inventory must show with these scenarios:
   objects. Move the camera away or turn it: the chime stays centered at the
   same volume. Effects volume and mute still control it; hiding the HUDs
   does not stop their sounds.
+  The `parcel-*` scenarios place a looping cube just west of the x=128 m
+  boundary and our avatar on the northeastern parcel (x=132, y=132).
+  `parcel-open`: the neighbour's chime is audible. `parcel-local`: our
+  parcel restricts sounds, so the chime is silent. `parcel-source`: only
+  the source parcel restricts sounds, with the same silence outside it.
+  The cube, other world audio settings and interface sounds remain usable.
+  Live crossings, changing either parcel's restriction and a real rain
+  emitter still need human grid validation.
 - **`AURORA_DEMO_WIND=<x>,<y>[,fly]`**: the demo region gets a uniform wind
   of x, y m/s (default `3,2`; LLWind::getVelocity doubles it, as on the
   grid), and with `fly` our avatar arrives flying. The wind noise plays on

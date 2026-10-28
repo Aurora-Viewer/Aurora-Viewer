@@ -81,6 +81,7 @@ pub mod script_debug;
 pub mod search;
 pub mod sim_console;
 pub mod social;
+pub mod sound_parcels;
 pub mod staff;
 pub mod status;
 pub mod teleport_invites;

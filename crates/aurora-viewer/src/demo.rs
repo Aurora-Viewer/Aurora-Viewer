@@ -188,6 +188,8 @@ pub mod sky;
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
 pub mod social_menu;
+#[path = "demo_sound_parcels.rs"]
+pub mod sound_parcels;
 /// The Aurora team's marks on demo residents (AURORA_DEMO_STAFF).
 #[path = "demo_staff.rs"]
 pub mod staff;

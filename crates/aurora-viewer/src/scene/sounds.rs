@@ -24,6 +24,9 @@ use uuid::Uuid;
 
 pub mod history;
 
+#[cfg(test)]
+mod parcel_tests;
+
 pub const FETCH_KIND_SOUND: u64 = 5 << 60;
 
 /// LL_SOUND_FLAG_*.
@@ -590,19 +593,28 @@ impl SoundManager {
             if s.playing.is_none() && s.pending.is_none() {
                 continue;
             }
+            // getPosGlobal uses the wearer for every attachment, including
+            // linked HUD prims. Parcel isolation follows that world position,
+            // never the HUD's screen position or the camera.
+            let origin = Scene::wearer_avatar(world, idx)
+                .and_then(|(_, wearer)| Scene::object_transform(world, wearer, now, 0))
+                .map_or(pos, |t| t.0);
+            if !world.can_hear_sound(origin) && !same_seat(world, idx) {
+                if let (Some(p), Some(e)) = (s.playing.take(), engine) {
+                    e.stop_world(p.voice);
+                }
+                if s.flags & FLAG_LOOP != 0 {
+                    s.pending = Some(now);
+                } else {
+                    s.pending = None;
+                    s.queued = None;
+                }
+                continue;
+            }
             // LLAudioSourceVO::update places HUD audio at the camera, not
             // in HUD coordinates. Its cut-off still uses the wearer's world
             // position (getPosGlobal / updateMute, llaudiosourcevo.cpp).
-            let within_radius = self.radius.get(id).is_none_or(|radius| {
-                let origin = if hud {
-                    Scene::wearer_avatar(world, idx)
-                        .and_then(|(_, wearer)| Scene::object_transform(world, wearer, now, 0))
-                        .map(|t| t.0)
-                } else {
-                    Some(pos)
-                };
-                origin.is_some_and(|pos| pos.distance(l.pos) < *radius)
-            });
+            let within_radius = self.radius.get(id).is_none_or(|radius| origin.distance(l.pos) < *radius);
             let pos = if hud { l.pos } else { pos };
             active.push((pos.distance(l.pos), 0, *id, pos, within_radius));
         }
@@ -613,12 +625,23 @@ impl SoundManager {
                 e.stop_world(p.voice);
             }
         }
-        for (i, t) in self.triggered.iter_mut().enumerate() {
+        // Recheck delayed and playing triggers as well as their admission:
+        // crossing a parcel border must silence an already accepted sound.
+        self.triggered.retain_mut(|t| {
             if let Some(f) = t.follow
                 && let Some((_, p, false)) = pos_of(&f)
             {
                 t.pos = p;
             }
+            if world.can_hear_sound(t.pos) {
+                return true;
+            }
+            if let (Some(p), Some(e)) = (t.playing, engine) {
+                e.stop_world(p.voice);
+            }
+            false
+        });
+        for (i, t) in self.triggered.iter().enumerate() {
             active.push((t.pos.distance(l.pos), 1, Uuid::from_u128(i as u128), t.pos, true));
         }
         // the nearest within their cut-off radius play
@@ -850,6 +873,28 @@ impl SoundManager {
     pub fn voices(&self) -> usize {
         self.sources.values().filter(|s| s.playing.is_some()).count() + self.triggered.iter().filter(|t| t.playing.is_some()).count()
     }
+}
+
+/// LLAudioSourceVO::updateMute keeps the vehicle we ride audible when its
+/// root has crossed a parcel/region border ahead of the seated avatar.
+fn same_seat(world: &World, source: usize) -> bool {
+    let Some(agent) = world.objects.index_of_uuid(&world.agent_id) else {
+        return false;
+    };
+    if world.objects.get(agent).is_none_or(|o| o.parent_id == 0) {
+        return false;
+    }
+    let root = |mut idx| {
+        for _ in 0..64 {
+            let object = world.objects.get(idx)?;
+            if object.parent_id == 0 {
+                return Some(idx);
+            }
+            idx = world.objects.parent_of(object)?;
+        }
+        None
+    };
+    root(source).zip(root(agent)).is_some_and(|(a, b)| a == b)
 }
 
 #[cfg(test)]
