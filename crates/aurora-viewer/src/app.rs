@@ -687,6 +687,10 @@ pub struct App {
     avatar_pics: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     /// The same textures by picture, for the residents who share one.
     avatar_pic_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
+    /// Interface images (pictures included) first shown from the coarse
+    /// levels of a progressive download, by texture: width held, since
+    /// when. A finer copy replaces their pixels in place.
+    ui_coarse: std::collections::HashMap<uuid::Uuid, (u32, Instant)>,
     /// Other interface images by asset id (profiles: 1st life picture,
     /// group insignias).
     ui_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
@@ -1337,6 +1341,7 @@ impl App {
             system_fonts_pending,
             avatar_pics: Default::default(),
             avatar_pic_images: Default::default(),
+            ui_coarse: Default::default(),
             ui_images: Default::default(),
             ui_image_masks: Default::default(),
             rlva_overlay_slots: Default::default(),
@@ -6874,6 +6879,7 @@ impl App {
         wanted.extend(self.money_tracker_ui.wanted_pics.drain());
         wanted.extend(self.pay_ui.wanted_pics.drain());
         wanted.extend(self.inventory_ui.wanted_pics.drain());
+        self.refine_ui_copies();
         for agent in wanted {
             if self.avatar_pics.contains_key(&agent) {
                 continue;
@@ -6894,33 +6900,15 @@ impl App {
             {
                 let ci = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
                 let t = self.egui_ctx.load_texture(format!("pic-{agent}"), ci, egui::TextureOptions::LINEAR);
-                // the Aurora profile's banner: a few pixels the filter blurs
-                let banner = ui::profile::banner_image(w as usize, h as usize, &rgba);
-                let banner = self
-                    .egui_ctx
-                    .load_texture(format!("banner-{image}"), banner, egui::TextureOptions::LINEAR);
-                self.profile_ui.banners.insert(image, banner);
                 self.avatar_pic_images.insert(image, t.clone());
                 self.avatar_pics.insert(agent, t);
-                if agent == self.world.agent_id && !self.demo {
-                    if let Some(texture) = self.avatar_pics.get(&agent) {
-                        self.login_form.portraits.insert(agent, texture.clone());
-                    }
-                    let path = crate::settings::account_dir(&agent).join("login_portrait.png");
-                    rayon::spawn(move || {
-                        let Some(image) = image::RgbaImage::from_raw(w, h, rgba) else {
-                            return;
-                        };
-                        let image = image::DynamicImage::ImageRgba8(image).resize(512, 512, image::imageops::FilterType::Triangle);
-                        let mut bytes = std::io::Cursor::new(Vec::new());
-                        if image.write_to(&mut bytes, image::ImageFormat::Png).is_ok() {
-                            if let Some(parent) = path.parent() {
-                                let _ = std::fs::create_dir_all(parent);
-                            }
-                            let _ = crate::atomic_file::write(&path, &bytes.into_inner());
-                        }
-                    });
+                if agent == self.world.agent_id
+                    && !self.demo
+                    && let Some(texture) = self.avatar_pics.get(&agent)
+                {
+                    self.login_form.portraits.insert(agent, texture.clone());
                 }
+                self.picture_pixels(image, w, h, rgba);
             }
         }
         let mut images: Vec<uuid::Uuid> = self.profile_ui.wanted_images.drain().collect();
@@ -6983,8 +6971,86 @@ impl App {
                 }
                 let t = self.egui_ctx.load_texture(format!("img-{image}"), ci, egui::TextureOptions::LINEAR);
                 self.ui_images.insert(image, t);
+                self.note_ui_copy(image, w);
             }
         }
+    }
+
+    /// What a profile picture's pixels give besides its texture: the Aurora
+    /// profile's banner, our own login portrait, and whether a finer copy
+    /// is still to come.
+    fn picture_pixels(&mut self, image: uuid::Uuid, w: u32, h: u32, rgba: Vec<u8>) {
+        // the Aurora profile's banner: a few pixels the filter blurs
+        let banner = ui::profile::banner_image(w as usize, h as usize, &rgba);
+        let banner = self
+            .egui_ctx
+            .load_texture(format!("banner-{image}"), banner, egui::TextureOptions::LINEAR);
+        self.profile_ui.banners.insert(image, banner);
+        self.note_ui_copy(image, w);
+        let agent = self.world.agent_id;
+        if self.demo || !self.world.profiles.get(&agent).is_some_and(|p| p.sl_image == image) {
+            return;
+        }
+        let path = crate::settings::account_dir(&agent).join("login_portrait.png");
+        rayon::spawn(move || {
+            let Some(image) = image::RgbaImage::from_raw(w, h, rgba) else {
+                return;
+            };
+            let image = image::DynamicImage::ImageRgba8(image).resize(512, 512, image::imageops::FilterType::Triangle);
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            if image.write_to(&mut bytes, image::ImageFormat::Png).is_ok() {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = crate::atomic_file::write(&path, &bytes.into_inner());
+            }
+        });
+    }
+
+    /// An interface image taken `width` px wide: followed while coarser than
+    /// its texture's UI size (the first levels of a progressive download).
+    fn note_ui_copy(&mut self, image: uuid::Uuid, width: u32) {
+        if self.scene.textures.ui_image_width(&image).is_some_and(|full| width < full) {
+            let since = self.ui_coarse.get(&image).map_or_else(Instant::now, |c| c.1);
+            self.ui_coarse.insert(image, (width, since));
+        } else {
+            self.ui_coarse.remove(&image);
+        }
+    }
+
+    /// Interface images first shown from the coarse levels of a progressive
+    /// download stayed blurred: taken once, their texture was no longer
+    /// asked for. It keeps loading toward its UI size, and each finer copy
+    /// replaces the pixels of the egui texture in place (every clone of the
+    /// handle follows: name plates, lists, profiles).
+    fn refine_ui_copies(&mut self) {
+        // (a texture that never gets finer is given up after that)
+        const FOLLOWED: Duration = Duration::from_secs(300);
+        let coarse: Vec<(uuid::Uuid, u32)> = self.ui_coarse.iter().map(|(id, (w, _))| (*id, *w)).collect();
+        for (image, have) in coarse {
+            match self.scene.textures.take_ui_image(&image) {
+                Some((w, h, rgba)) if w > have && rgba.len() == (w * h * 4) as usize => {
+                    let ci = || egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+                    if let Some(t) = self.ui_images.get_mut(&image) {
+                        t.set(ci(), egui::TextureOptions::LINEAR);
+                        if let Some(mask) = crate::world::rlva::effects::AlphaMask::from_rgba(w, h, &rgba) {
+                            self.ui_image_masks.insert(image, mask);
+                        }
+                    }
+                    if let Some(t) = self.avatar_pic_images.get_mut(&image) {
+                        t.set(ci(), egui::TextureOptions::LINEAR);
+                        self.picture_pixels(image, w, h, rgba);
+                    } else {
+                        self.note_ui_copy(image, w);
+                    }
+                }
+                _ => self.scene.textures.refine_ui_image(image, have, &self.scene.jobs),
+            }
+        }
+        let now = Instant::now();
+        let textures = &self.scene.textures;
+        self.ui_coarse
+            .retain(|id, (_, since)| now.duration_since(*since) < FOLLOWED && !textures.is_unavailable(id));
     }
 
     /// Place profiles and "Places": arrivals saved in the history, landmark
