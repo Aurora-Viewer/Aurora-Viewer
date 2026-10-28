@@ -25,18 +25,21 @@ pub struct MediaHit {
 
 impl MediaManager {
     /// Faces of an object for picking (the prim volume at its LOD, or the
-    /// cached mesh asset), kept while the object's shape is unchanged.
+    /// cached mesh asset), kept while the object's shape is unchanged. A
+    /// local mesh preview counts as the shape, as it replaces the volume in
+    /// VJLocalMeshObject (setVolume).
     fn cpu_faces(&mut self, world: &World, scene: &Scene, idx: usize) -> Option<Arc<Vec<Option<CpuFace>>>> {
         let o = world.objects.get(idx)?;
+        let volume = o.visual_volume();
         let lod = scene.gpu.get(idx).map(|g| g.lod).unwrap_or(3).min(3);
-        let key = o.volume.cache_key() ^ ((lod as u64) << 60);
+        let key = volume.cache_key() ^ ((lod as u64) << 60);
         if let Some((k, faces)) = self.pick_cache.get(&o.full_id)
             && *k == key
         {
             return Some(faces.clone());
         }
-        let faces: Vec<Option<CpuFace>> = if o.volume.is_mesh() {
-            let id = o.volume.sculpt?.texture;
+        let faces: Vec<Option<CpuFace>> = if volume.is_mesh() {
+            let id = volume.sculpt?.texture;
             // the finest level held (no longer read back from the disk cache)
             let mesh = scene.meshes.view(&id)?;
             aurora_assets::mesh::decode_mesh_lod(mesh.lod_section(3)?)
@@ -50,11 +53,11 @@ impl MediaManager {
                     })
                 })
                 .collect()
-        } else if o.volume.is_sculpt() {
+        } else if volume.is_sculpt() {
             return None;
         } else {
             let detail = aurora_prim::volume::DETAIL_SCALES[lod as usize];
-            aurora_prim::generate_volume(&o.volume, detail)
+            aurora_prim::generate_volume(&volume, detail)
                 .faces
                 .into_iter()
                 .map(|f| {
@@ -75,16 +78,17 @@ impl MediaManager {
     }
 
     /// Number of faces (texture entries) of an object: the prim volume's,
-    /// or the mesh asset's submeshes once it is cached.
+    /// or the mesh asset's submeshes once it is cached (the local mesh's
+    /// during a preview).
     pub fn face_count(&mut self, world: &World, scene: &Scene, idx: usize) -> Option<usize> {
-        let o = world.objects.get(idx)?;
-        if o.volume.is_mesh() {
+        let volume = world.objects.get(idx)?.visual_volume();
+        if volume.is_mesh() {
             return self.cpu_faces(world, scene, idx).map(|f| f.len().max(1));
         }
-        if o.volume.is_sculpt() {
+        if volume.is_sculpt() {
             return Some(1);
         }
-        Some(aurora_prim::volume::num_faces(&o.volume).max(1))
+        Some(aurora_prim::volume::num_faces(&volume).max(1))
     }
 
     /// The nearest media face along a ray (objects with media data only),

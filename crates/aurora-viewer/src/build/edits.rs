@@ -142,18 +142,20 @@ impl BuildTool {
         self.highlighted(world).into_iter().map(|(i, _)| i).collect()
     }
 
-    /// Number of faces (texture entries) of a prim.
+    /// Number of faces (texture entries) of a prim: those of the local mesh
+    /// during a preview, which replaces its volume (VJLocalMeshObject).
     pub fn num_faces(&self, world: &World, idx: usize) -> usize {
         let Some(o) = world.objects.get(idx) else { return 1 };
         if let Some(n) = self.face_counts.get(&o.full_id) {
             return (*n).clamp(1, aurora_prim::te::MAX_TES);
         }
-        if o.volume.is_mesh() {
+        let volume = o.visual_volume();
+        if volume.is_mesh() {
             8
-        } else if o.volume.is_sculpt() {
+        } else if volume.is_sculpt() {
             1
         } else {
-            aurora_prim::volume::num_faces(&o.volume).clamp(1, aurora_prim::te::MAX_TES)
+            aurora_prim::volume::num_faces(&volume).clamp(1, aurora_prim::te::MAX_TES)
         }
     }
 
