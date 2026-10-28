@@ -84,6 +84,9 @@ What each part tells the one who fixes it:
 - **Window**: answering until the end, or not answering for the last N s.
 - **GPU device lost**: the renderer's device-lost callback fired (driver
   reset, GPU removed).
+- **Overlay hooks**: the overlay or capture programs that injected their
+  hook into the viewer during the session (Discord, Steam, RivaTuner, OBS
+  game capture), named from the viewer's fixed list only.
 - **Last state**: screen, frame rate, frame time, window size, graphics
   preset, memory, video memory used / budget, texture memory pressure,
   objects, avatars, regions, as noted every 2 seconds.

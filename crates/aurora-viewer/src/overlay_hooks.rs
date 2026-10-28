@@ -10,7 +10,9 @@
 //! code covers DXGI and OpenGL only. The viewer has no way to refuse them
 //! (Discord's exclusions are a fixed list of executable names), so it says
 //! in the log when one appears: a white or frozen window reported by a
-//! tester can then be matched with the hook that arrived at that time.
+//! tester can then be matched with the hook that arrived at that time. The
+//! crash report names the hooks too ("Overlay hooks"), from this fixed list
+//! only.
 
 use std::time::Duration;
 
@@ -71,20 +73,36 @@ pub fn arrived(seen: &mut Vec<&'static str>, loaded: &[String]) -> Vec<&'static 
     new
 }
 
+/// `AURORA_DEMO_OVERLAY_HOOK=<file>`, with `AURORA_DEMO` only: that module
+/// counts as loaded, to show what the log and the crash report say of it.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn demo_hook(demo: bool, var: Option<&str>) -> Option<String> {
+    let file = var?.trim();
+    (demo && !file.is_empty()).then(|| file.to_owned())
+}
+
 /// Starts the background watch (Windows only; nothing elsewhere).
 pub fn start() {
     #[cfg(windows)]
     {
-        let spawned = std::thread::Builder::new().name("aurora-overlay-hooks".into()).spawn(|| {
+        let demo = demo_hook(
+            std::env::var_os("AURORA_DEMO").is_some(),
+            std::env::var("AURORA_DEMO_OVERLAY_HOOK").ok().as_deref(),
+        );
+        let spawned = std::thread::Builder::new().name("aurora-overlay-hooks".into()).spawn(move || {
             let mut seen = Vec::new();
             loop {
-                for hook in arrived(&mut seen, &modules()) {
+                let mut loaded = modules();
+                loaded.extend(demo.clone());
+                for hook in arrived(&mut seen, &loaded) {
                     log::warn!(
                         "overlay hook loaded in the viewer: {} ({}); {}",
                         hook.program,
                         hook.file,
                         hook.advice
                     );
+                    // the crash report names it (crash/summary.rs)
+                    crate::crash::overlay_hook(hook.file);
                 }
                 std::thread::sleep(EVERY);
             }
@@ -139,6 +157,14 @@ mod tests {
         for other in ["DiscordHook.dll", "kernel32.dll", "nvoglv64.dll", ""] {
             assert_eq!(known(other), None, "{other}");
         }
+    }
+
+    #[test]
+    fn the_demo_hook_names_a_module_in_demo_only() {
+        assert_eq!(demo_hook(true, Some(" DiscordHook64.dll ")).as_deref(), Some("DiscordHook64.dll"));
+        assert_eq!(demo_hook(false, Some("DiscordHook64.dll")), None);
+        assert_eq!(demo_hook(true, Some(" ")), None);
+        assert_eq!(demo_hook(true, None), None);
     }
 
     #[test]

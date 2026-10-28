@@ -321,6 +321,21 @@ pub fn gpu_lost() {
     }
 }
 
+/// A known overlay hook arrived in the process (overlay_hooks.rs): its file
+/// name goes to `overlay-hooks.txt`, so the report names it however long
+/// ago it came (the log's tail may no longer hold its line).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn overlay_hook(file: &str) {
+    if let Some(session) = SESSION.get()
+        && let Ok(mut out) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(session.dir.join("overlay-hooks.txt"))
+    {
+        let _ = writeln!(out, "{file}");
+    }
+}
+
 /// The user closed the viewer from the notice while the GPU did not answer:
 /// the session is reported even though it ends through the usual way out.
 pub fn gpu_closed() {
