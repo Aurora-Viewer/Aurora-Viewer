@@ -4,9 +4,9 @@
 
 use crate::build::{BuildTool, Tool};
 use crate::world::World;
-use aurora_net::build::perm;
+use aurora_net::build::{TaskItem, perm};
 use egui::{Id, Key};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 #[derive(Default)]
@@ -196,6 +196,25 @@ pub(super) fn rename_row(ui: &mut egui::Ui, tool: &mut BuildTool, world: &World,
         }
     }
     true
+}
+
+/// The items a drag or "Copy to inventory" of `item` acts on: the whole
+/// selection, in list order, when `item` is part of it; `item` alone otherwise.
+pub(super) fn acted_on(tool: &BuildTool, object: Uuid, item: &TaskItem) -> Vec<TaskItem> {
+    let selection = &tool.ui.contents_selection;
+    if selection.object != Some(object) || selection.items.len() < 2 || !selection.items.contains(&item.item_id) {
+        return vec![item.clone()];
+    }
+    let Some(inv) = tool.contents.objects.get(&object) else {
+        return vec![item.clone()];
+    };
+    let by_id: HashMap<Uuid, &TaskItem> = inv.items.iter().map(|it| (it.item_id, it)).collect();
+    selection
+        .order
+        .iter()
+        .filter(|id| selection.items.contains(id))
+        .filter_map(|id| by_id.get(id).map(|it| (*it).clone()))
+        .collect()
 }
 
 pub(super) fn delete_selected(tool: &mut BuildTool, world: &World) {

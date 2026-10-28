@@ -412,7 +412,7 @@ pub fn show_contents(
                                                 &response,
                                                 world,
                                                 c.target.object,
-                                                &crate::build::task_inventory::from_inventory(c.target.object, item),
+                                                std::slice::from_ref(&crate::build::task_inventory::from_inventory(c.target.object, item)),
                                                 crate::build::task_inventory::owned(
                                                     world,
                                                     c.target.object,

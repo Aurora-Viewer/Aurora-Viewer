@@ -18,6 +18,8 @@
 //!   take an item into inventory or show the move warning (ready stops).
 //!   contents-properties: open a task item in the shared properties panel.
 //!   contents-multi | contents-rename-ready: show task multi-selection or rename.
+//!   contents-move-many: drop every item into inventory at once (two no-copy
+//!   items share one move warning).
 //!   shared | shared-denied: another resident's object with granted / denied editing.
 //! - x, y: click (physical pixels) at frame 220: selects the object there,
 //!   creates a prim, or presses the land brush (held until the capture)
@@ -63,6 +65,8 @@ pub enum Step {
     ContentsProperties,
     ContentsSelection(bool),
     TakeTask(bool),
+    /// Every item, selected and dropped together on the inventory root.
+    TakeAll,
     Cursor(f32, f32),
     Press,
     Release,
@@ -363,6 +367,7 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             260 if matches!(parts[0], "contents-multi" | "contents-rename-ready") => {
                 vec![Step::ContentsSelection(parts[0] == "contents-rename-ready")]
             }
+            260 if parts[0] == "contents-move-many" => vec![Step::TakeAll],
             260 if parts[0] != "contents-ready" => vec![Step::TakeTask(parts[0] == "contents-copy")],
             _ => Vec::new(),
         };

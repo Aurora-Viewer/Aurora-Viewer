@@ -7885,6 +7885,7 @@ task-transfer-attachment-no-copy = コピー不可のアイテムは装着物か
 task-transfer-no-permission = このアイテムとそのオブジェクトの権限では、この移動はできません。
 task-transfer-title = 中身をインベントリに移動
 task-transfer-warning = このアイテムはコピーされません。オブジェクトの中身から削除され、インベントリに移動されます。
+task-transfer-warning-many = { $count }個のアイテムはコピーされません。オブジェクトの中身から削除され、インベントリに移動されます。
 task-transfer-scripted-warning = このオブジェクトにはスクリプトが含まれています。このアイテムを取り出すと、スクリプトが正常に動作しなくなったり、オブジェクトが使えなくなったりする可能性があります。
 task-transfer-ignore = 今後この警告を表示しない
 task-transfer-destination = このフォルダにはこのアイテムを入れられません。

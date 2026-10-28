@@ -760,7 +760,7 @@ pub struct App {
     gesture_state: gestures::State,
     imports: crate::imports::Imports,
     blender_live: crate::blender_live::Live,
-    task_transfer: Option<ui::inventory::task_drop::PendingTransfer>,
+    task_transfer: std::collections::VecDeque<ui::inventory::task_drop::PendingTransfer>,
     /// "Copy to inventory" of objects' contents (app/contents_copy.rs).
     contents_copies: contents_copy::ContentsCopies,
     /// Inventory edits asked by the world (`World::take_inventory_edits`),
@@ -1376,7 +1376,7 @@ impl App {
             gesture_state: Default::default(),
             imports: Default::default(),
             blender_live: Default::default(),
-            task_transfer: None,
+            task_transfer: Default::default(),
             contents_copies: Default::default(),
             world_edits: Default::default(),
             demo_offer_shown: None,
@@ -10802,6 +10802,28 @@ impl App {
                             )));
                         }
                     }
+                    crate::build::demo::Step::TakeAll => {
+                        if let Some(idx) = self.build.contents_target(&self.world)
+                            && let Some(object) = self.world.objects.get(idx).map(|o| o.full_id)
+                            && let Some(inv) = self.build.contents.objects.get(&object)
+                        {
+                            let mut items: Vec<_> = inv.items.iter().filter(|it| !it.is_folder).cloned().collect();
+                            items.sort_by_key(|it| it.name.to_lowercase());
+                            self.build.ui.contents_selection.items = items.iter().map(|it| it.item_id).collect();
+                            // what a drop of the selection on the folder sends (task_drop::target)
+                            for item in items {
+                                self.apply_inventory_action(ui::inventory::InvAction::TakeTask(Box::new(
+                                    crate::build::task_inventory::TransferRequest {
+                                        object,
+                                        item,
+                                        folder: self.world.inventory.root,
+                                        approved: None,
+                                        ignore_warning: false,
+                                    },
+                                )));
+                            }
+                        }
+                    }
                     crate::build::demo::Step::CloseEditor => self.build.close(&mut self.world, &mut self.settings.build),
                     crate::build::demo::Step::Select(idx) => {
                         self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
@@ -14261,7 +14283,7 @@ impl App {
                 }
                 self.show_task_notecards(&ctx, &p);
                 self.show_scripts(&ctx, &p);
-                if let Some(action) = ui::inventory::task_drop::confirm(&ctx, &p, &mut self.task_transfer) {
+                for action in ui::inventory::task_drop::confirm(&ctx, &p, &mut self.task_transfer) {
                     self.apply_inventory_action(action);
                 }
                 if let Some(confirm) = ui::object_actions::confirm_copy(&ctx, &p, &mut self.contents_copies.confirm) {

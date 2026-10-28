@@ -4,15 +4,47 @@ use super::*;
 use crate::build::task_inventory::{self, TransferKind, TransferRequest};
 use aurora_net::build::TaskItem;
 
+/// The dragged rows, one request each in list order
+/// (LLFolderViewModelInventory::startDrag → beginMultiDrag).
 #[derive(Clone)]
 pub struct TaskDrag {
-    pub request: TransferRequest,
+    pub requests: Vec<TransferRequest>,
+    /// Move as soon as one item leaves the object (the cursor).
     pub kind: TransferKind,
 }
 
+/// No-copy items of one object, into one folder, waiting for the warning.
+/// warn_move_inventory attaches the items dropped while its notification is
+/// open to that notification: one answer covers the batch.
 pub struct PendingTransfer {
-    pub request: TransferRequest,
+    pub requests: Vec<TransferRequest>,
     pub scripted: bool,
+    pub ignore_warning: bool,
+}
+
+impl PendingTransfer {
+    pub fn new(request: TransferRequest, scripted: bool) -> Self {
+        Self {
+            requests: vec![request],
+            scripted,
+            ignore_warning: false,
+        }
+    }
+
+    /// Takes `request` into this batch when it has the same object and
+    /// destination; hands it back otherwise.
+    pub fn join(&mut self, request: TransferRequest) -> Option<TransferRequest> {
+        let Some(first) = self.requests.first() else {
+            return Some(request);
+        };
+        if first.object != request.object || first.folder != request.folder {
+            return Some(request);
+        }
+        if !self.requests.iter().any(|r| r.item.item_id == request.item.item_id) {
+            self.requests.push(request);
+        }
+        None
+    }
 }
 
 /// Read after all windows, before egui clears released cargo. Rows precede
@@ -43,23 +75,34 @@ fn target_cursor(ctx: &egui::Context, cursor: egui::CursorIcon) -> bool {
     })
 }
 
-pub fn source(ui: &mut egui::Ui, r: &egui::Response, world: &World, object: Uuid, item: &TaskItem, owned: bool) {
-    let access = task_inventory::kind(world, object, item, owned);
-    if let Err(error) = access {
-        r.clone().on_hover_text(error);
+/// `items`: the row and, when it is part of a multiple selection, every
+/// selected row. One item refused refuses the drag (LLFolderViewModelInventory::
+/// startDrag: `can_drag` of every item).
+pub fn source(ui: &mut egui::Ui, r: &egui::Response, world: &World, object: Uuid, items: &[TaskItem], owned: bool) {
+    let access: Result<Vec<TransferKind>, _> = items.iter().map(|item| task_inventory::kind(world, object, item, owned)).collect();
+    if let Err(error) = &access {
+        r.clone().on_hover_text(*error);
     }
     if r.drag_started() {
-        if let Ok(kind) = access {
-            r.dnd_set_drag_payload(TaskDrag {
-                request: TransferRequest {
+        if let Ok(kinds) = access.as_ref()
+            && !kinds.is_empty()
+        {
+            let kind = kinds
+                .iter()
+                .copied()
+                .find(|kind| *kind != TransferKind::Copy)
+                .unwrap_or(TransferKind::Copy);
+            let requests = items
+                .iter()
+                .map(|item| TransferRequest {
                     object,
                     item: item.clone(),
                     folder: Uuid::nil(),
                     approved: None,
                     ignore_warning: false,
-                },
-                kind,
-            });
+                })
+                .collect();
+            r.dnd_set_drag_payload(TaskDrag { requests, kind });
         } else {
             ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed);
         }
@@ -78,7 +121,11 @@ pub fn target(
     actions: &mut Vec<InvAction>,
 ) {
     let Some(cargo) = r.dnd_hover_payload::<TaskDrag>() else { return };
-    let allowed = task_inventory::destination(inv, folder, &cargo.request.item, &prefs.protected);
+    // Every item accepted or none (LLToolDragAndDrop::dragOrDrop).
+    let allowed = cargo
+        .requests
+        .iter()
+        .all(|request| task_inventory::destination(inv, folder, &request.item, &prefs.protected));
     if !target_cursor(
         ui.ctx(),
         if allowed {
@@ -96,9 +143,11 @@ pub fn target(
     if allowed {
         super::tree::drop_outline(ui, p, r.rect, true);
         if let Some(cargo) = r.dnd_release_payload::<TaskDrag>() {
-            let mut request = cargo.request.clone();
-            request.folder = folder;
-            actions.push(InvAction::TakeTask(Box::new(request)));
+            for request in &cargo.requests {
+                let mut request = request.clone();
+                request.folder = folder;
+                actions.push(InvAction::TakeTask(Box::new(request)));
+            }
         }
     } else {
         // Do not let an enclosing inventory surface accept a rejected row.
@@ -106,8 +155,12 @@ pub fn target(
     }
 }
 
-pub fn confirm(ctx: &egui::Context, p: &Palette, pending: &mut Option<PendingTransfer>) -> Option<InvAction> {
-    let transfer = pending.as_mut()?;
+/// The first waiting batch, one dialog at a time; its answer gives one
+/// action per item (none when cancelled).
+pub fn confirm(ctx: &egui::Context, p: &Palette, pending: &mut std::collections::VecDeque<PendingTransfer>) -> Vec<InvAction> {
+    let Some(transfer) = pending.front_mut() else {
+        return Vec::new();
+    };
     let mut answer = None;
     super::super::widgets::Modal::new(egui::Id::unique("task_inventory_transfer")).show(ctx, |ui| {
         ui.set_max_width(380.0);
@@ -118,14 +171,23 @@ pub fn confirm(ctx: &egui::Context, p: &Palette, pending: &mut Option<PendingTra
                 .color(p.ink),
         );
         ui.add_space(8.0);
-        ui.label(RichText::new(&transfer.request.item.name).strong().color(p.ink));
-        ui.label(aurora_i18n::tr!("task-transfer-warning"));
+        if let [request] = &transfer.requests[..] {
+            ui.label(RichText::new(&request.item.name).strong().color(p.ink));
+            ui.label(aurora_i18n::tr!("task-transfer-warning"));
+        } else {
+            egui::ScrollArea::vertical().max_height(140.0).show(ui, |ui| {
+                for request in &transfer.requests {
+                    ui.label(RichText::new(&request.item.name).strong().color(p.ink));
+                }
+            });
+            ui.label(aurora_i18n::tr!("task-transfer-warning-many", count = transfer.requests.len()));
+        }
         if transfer.scripted {
             ui.label(RichText::new(aurora_i18n::tr!("task-transfer-scripted-warning")).color(p.warn));
         }
         ui.add_space(8.0);
         let ignore = aurora_i18n::tr!("task-transfer-ignore");
-        super::super::widgets::switch_labeled(ui, p, &mut transfer.request.ignore_warning, ignore);
+        super::super::widgets::switch_labeled(ui, p, &mut transfer.ignore_warning, ignore);
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             use super::super::widgets::{ActionKind, action_button};
@@ -141,13 +203,24 @@ pub fn confirm(ctx: &egui::Context, p: &Palette, pending: &mut Option<PendingTra
             answer = Some(false);
         }
     });
-    let answer = answer?;
-    let mut transfer = pending.take()?;
+    let Some(answer) = answer else {
+        return Vec::new();
+    };
+    let Some(transfer) = pending.pop_front() else {
+        return Vec::new();
+    };
     if !answer {
-        return None;
+        return Vec::new();
     }
-    transfer.request.approved = Some(transfer.scripted);
-    Some(InvAction::TakeTask(Box::new(transfer.request)))
+    transfer
+        .requests
+        .into_iter()
+        .map(|mut request| {
+            request.approved = Some(transfer.scripted);
+            request.ignore_warning = transfer.ignore_warning;
+            InvAction::TakeTask(Box::new(request))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -203,6 +276,14 @@ mod tests {
             if !copyable {
                 request.item.owner_mask = 0;
             }
+            // a multiple selection: the first row decides the cursor (it moves or not)
+            let second = TaskItem {
+                item_id: Uuid::from_u128(99002),
+                name: "Second".into(),
+                owner_mask: aurora_net::build::perm::COPY,
+                ..request.item.clone()
+            };
+            let items = [request.item.clone(), second];
             let folder = world
                 .inventory
                 .folders
@@ -228,7 +309,7 @@ mod tests {
                             egui::Rect::from_min_size(egui::pos2(20.0, 20.0), Vec2::new(180.0, 26.0)),
                             egui::Button::new("Source").sense(egui::Sense::click_and_drag()),
                         );
-                        source(ui, &r, &world, request.object, &request.item, true);
+                        source(ui, &r, &world, request.object, &items, true);
                         let r = ui.put(
                             egui::Rect::from_min_size(egui::pos2(20.0, 180.0), Vec2::new(180.0, 26.0)),
                             egui::Button::new("Folder"),
@@ -275,7 +356,14 @@ mod tests {
             if rejected {
                 assert!(actions.is_empty());
             } else {
-                assert!(matches!(&actions[..], [InvAction::TakeTask(req)] if req.folder == folder && req.approved.is_none()));
+                let taken: Vec<_> = actions
+                    .iter()
+                    .map(|action| match action {
+                        InvAction::TakeTask(req) if req.folder == folder && req.approved.is_none() => req.item.item_id,
+                        _ => panic!("one TakeTask into the folder per dragged item"),
+                    })
+                    .collect();
+                assert_eq!(taken, [Uuid::from_u128(99001), Uuid::from_u128(99002)]);
             }
         }
     }
@@ -289,7 +377,7 @@ mod tests {
             egui::DragAndDrop::set_payload(
                 ui.ctx(),
                 TaskDrag {
-                    request: request.clone(),
+                    requests: vec![request.clone()],
                     kind: TransferKind::Copy,
                 },
             );
@@ -325,22 +413,24 @@ mod tests {
     }
 
     #[test]
-    fn warning_cancel_sends_nothing_and_move_carries_explicit_approval() {
+    fn warning_cancel_sends_nothing_and_move_carries_explicit_approval_for_the_batch() {
         for accept in [false, true] {
             let (_, request) = fixture();
+            let mut second = request.clone();
+            second.item.item_id = Uuid::from_u128(99002);
             let ctx = egui::Context::default();
             let p = crate::theme::Theme::default().palette();
-            let mut pending = Some(PendingTransfer { request, scripted: true });
-            let mut action = None;
+            let mut batch = PendingTransfer::new(request, true);
+            assert!(batch.join(second).is_none());
+            let mut pending = std::collections::VecDeque::from([batch]);
+            let mut actions = Vec::new();
             let mut output = ctx.run_ui(input(0.0, Vec::new()), |_| {
-                action = confirm(&ctx, &p, &mut pending);
+                actions.extend(confirm(&ctx, &p, &mut pending));
             });
             output.textures_delta.clear();
             // The modal area obtains its size and fades in after its first frame.
             let mut output = ctx.run_ui(input(0.25, Vec::new()), |_| {
-                if let Some(a) = confirm(&ctx, &p, &mut pending) {
-                    action = Some(a);
-                }
+                actions.extend(confirm(&ctx, &p, &mut pending));
             });
             let pos = output
                 .shapes
@@ -353,17 +443,20 @@ mod tests {
                 })
                 .expect("move button");
             output.textures_delta.clear();
-            assert!(action.is_none() && pending.is_some());
+            assert!(actions.is_empty() && pending.len() == 1);
             if accept {
                 for (time, pressed) in [(0.29, true), (0.33, false)] {
                     let mut output = ctx.run_ui(input(time, vec![egui::Event::PointerMoved(pos), button(pos, pressed)]), |_| {
-                        if let Some(a) = confirm(&ctx, &p, &mut pending) {
-                            action = Some(a);
-                        }
+                        actions.extend(confirm(&ctx, &p, &mut pending));
                     });
                     output.textures_delta.clear();
                 }
-                assert!(matches!(action, Some(InvAction::TakeTask(req)) if req.approved == Some(true)));
+                assert_eq!(actions.len(), 2, "one answer for every item of the drop");
+                assert!(
+                    actions
+                        .iter()
+                        .all(|action| matches!(action, InvAction::TakeTask(req) if req.approved == Some(true)))
+                );
             } else {
                 let mut output = ctx.run_ui(
                     input(
@@ -377,13 +470,31 @@ mod tests {
                         }],
                     ),
                     |_| {
-                        action = confirm(&ctx, &p, &mut pending);
+                        actions.extend(confirm(&ctx, &p, &mut pending));
                     },
                 );
                 output.textures_delta.clear();
-                assert!(action.is_none());
+                assert!(actions.is_empty());
             }
-            assert!(pending.is_none());
+            assert!(pending.is_empty());
         }
+    }
+
+    #[test]
+    fn a_batch_joins_items_of_its_object_and_folder_only() {
+        let (world, request) = fixture();
+        let mut batch = PendingTransfer::new(request.clone(), false);
+        assert!(batch.join(request.clone()).is_none(), "the same item twice");
+        let mut other_item = request.clone();
+        other_item.item.item_id = Uuid::from_u128(99002);
+        assert!(batch.join(other_item).is_none());
+        let mut other_folder = request.clone();
+        other_folder.item.item_id = Uuid::from_u128(99003);
+        other_folder.folder = world.inventory.folders.keys().copied().find(|id| *id != request.folder).unwrap();
+        assert!(batch.join(other_folder).is_some());
+        let mut other_object = request.clone();
+        other_object.object = Uuid::from_u128(5);
+        assert!(batch.join(other_object).is_some());
+        assert_eq!(batch.requests.len(), 2);
     }
 }
