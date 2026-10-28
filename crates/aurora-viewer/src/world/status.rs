@@ -130,10 +130,13 @@ pub struct Invisible {
 }
 
 impl Invisible {
-    /// The status the account was left in. One of the remembered friends
-    /// sees us online again: the rights were changed elsewhere (another
-    /// viewer) and the status no longer holds.
-    pub fn load(path: PathBuf, friends: &[Friend]) -> Invisible {
+    /// The status the account was left in, kept until it is left like the
+    /// Legacy Viewer's per-account GlobalOnlineStatusToggle, whatever the
+    /// buddy list of the login says: `Status::resume_invisible` hides again
+    /// the remembered friends it still shows us to. (The status used to be
+    /// dropped as soon as one of them saw us online, which left all the
+    /// others hidden under "Available".)
+    pub fn load(path: PathBuf) -> Invisible {
         let saved = std::fs::read(&path).ok().and_then(|b| aurora_llsd::from_xml(&b).ok());
         let restore: Vec<Uuid> = saved
             .as_ref()
@@ -146,7 +149,7 @@ impl Invisible {
                     .collect()
             })
             .unwrap_or_default();
-        let on = saved.is_some_and(|v| v["invisible"].as_bool()) && !friends.iter().any(|f| restore.contains(&f.id) && sees_us(f));
+        let on = saved.is_some_and(|v| v["invisible"].as_bool());
         Invisible {
             on,
             restore: if on { restore } else { Vec::new() },
@@ -236,6 +239,36 @@ impl Status {
         show_online_to(social, out, friend, false);
         self.invisible.restore.push(friend);
         self.invisible.save();
+    }
+
+    /// At login, while invisible: a remembered friend whom the buddy list
+    /// still shows us to (a right not applied before we left, or given back
+    /// from another viewer) is hidden again, so that the status says what
+    /// the friends see. The number of friends hidden again.
+    pub(super) fn resume_invisible(&mut self, social: &mut Social, out: &mut Vec<NetCommand>) -> usize {
+        if !self.invisible.on {
+            return 0;
+        }
+        self.invisible
+            .restore
+            .iter()
+            .filter(|id| show_online_to(social, out, **id, false))
+            .count()
+    }
+
+    /// The right to see us online given back by hand to a remembered friend
+    /// while invisible (Contacts, profile, menus): the user's choice for
+    /// that friend, which the status no longer touches, neither at login nor
+    /// when it is left.
+    pub(super) fn rights_set_by_hand(&mut self, friend: Uuid, given: i32) {
+        if !self.invisible.on || given & rights::ONLINE_STATUS == 0 {
+            return;
+        }
+        let before = self.invisible.restore.len();
+        self.invisible.restore.retain(|id| *id != friend);
+        if self.invisible.restore.len() != before {
+            self.invisible.save();
+        }
     }
 
     /// Some automatic response mode is on (getAutoresponseTextForAvatar).
@@ -500,7 +533,7 @@ mod tests {
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         // online + map + modify, online only, map without online, nothing
         world.social.friends = vec![friend(1, 7), friend(2, 1), friend(3, 2), friend(4, 0)];
-        world.status.invisible = Invisible::load(path.clone(), &world.social.friends);
+        world.status.invisible = Invisible::load(path.clone());
         assert!(!world.status.invisible.on);
         let id = Uuid::from_u128;
         world.set_invisible(true);
@@ -512,18 +545,45 @@ mod tests {
         world.status.hide_from_new_friend(&mut world.social, &mut world.groups.out, id(5));
         assert_eq!(rights_sent(&mut world), vec![(id(5), 0)]);
         // the next session finds the status and who to give the right back to
-        let again = Invisible::load(path.clone(), &world.social.friends);
+        let again = Invisible::load(path.clone());
         assert!(again.on);
         assert_eq!(again.restore, vec![id(1), id(2), id(5)]);
         world.set_invisible(false);
         assert_eq!(rights_sent(&mut world), vec![(id(1), 7), (id(2), 1), (id(5), 1)]);
-        assert!(!Invisible::load(path.clone(), &world.social.friends).on);
-        // rights given back from another viewer: the saved status is void
+        assert!(!Invisible::load(path.clone()).on);
+        // the login's buddy list still shows us to a remembered friend (a
+        // right not applied, or given back from another viewer): the status
+        // holds and that friend is hidden again, the others left alone
         world.set_invisible(true);
         rights_sent(&mut world);
         world.social.friends[0].rights_given = 7;
-        let stale = Invisible::load(path, &world.social.friends);
-        assert!(!stale.on && stale.restore.is_empty());
+        world.status.invisible = Invisible::load(path.clone());
+        assert!(world.status.modes().invisible);
+        assert_eq!(world.status.resume_invisible(&mut world.social, &mut world.groups.out), 1);
+        assert_eq!(rights_sent(&mut world), vec![(id(1), 6)]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_friend_shown_by_hand_while_invisible_is_left_to_the_user() {
+        let dir = std::env::temp_dir().join(format!("aurora-invisible-{}", Uuid::new_v4()));
+        let path = dir.join(INVISIBLE_FILE);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.social.friends = vec![friend(1, 1), friend(2, 3)];
+        world.status.invisible = Invisible::load(path.clone());
+        let id = Uuid::from_u128;
+        world.set_invisible(true);
+        rights_sent(&mut world);
+        // a map right changed by hand: still hidden, still remembered
+        world.profile_command(&NetCommand::GrantUserRights { friend: id(2), rights: 0 });
+        // the online right given back by hand to friend 1 (Contacts)
+        world.profile_command(&NetCommand::GrantUserRights { friend: id(1), rights: 1 });
+        assert_eq!(Invisible::load(path.clone()).restore, vec![id(2)]);
+        // not hidden again at the next login, not touched when leaving
+        world.status.invisible = Invisible::load(path);
+        assert_eq!(world.status.resume_invisible(&mut world.social, &mut world.groups.out), 0);
+        world.set_invisible(false);
+        assert_eq!(rights_sent(&mut world), vec![(id(2), 1)]);
         let _ = std::fs::remove_dir_all(dir);
     }
 

@@ -1541,6 +1541,7 @@ impl World {
                 if let Some(f) = self.social.friends.iter_mut().find(|f| f.id == *friend) {
                     f.rights_given = *rights;
                 }
+                self.status.rights_set_by_hand(*friend, *rights);
             }
             _ => {}
         }
@@ -1919,7 +1920,11 @@ impl World {
                 self.contact_sets = contact_sets::ContactSets::load(account.join(contact_sets::CONTACT_SETS_FILE));
                 self.groups.load_favorites(account.join(groups::FAVORITE_GROUPS_FILE));
                 self.group_data.load_read(account.join(group_data::NOTICES_READ_FILE));
-                self.status.invisible = status::Invisible::load(account.join(status::INVISIBLE_FILE), &self.social.friends);
+                self.status.invisible = status::Invisible::load(account.join(status::INVISIBLE_FILE));
+                let hidden = self.status.resume_invisible(&mut self.social, &mut self.groups.out);
+                if hidden > 0 {
+                    log::info!("invisible: hidden again from {hidden} friend(s) the login still showed us to");
+                }
                 let open = account.join(open_ims::FILE);
                 self.reopen_ims = open_ims::load(&open);
                 self.open_ims_path = Some(open);
