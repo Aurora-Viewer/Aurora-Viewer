@@ -235,7 +235,7 @@ impl App {
         if self.clicks.waiting() {
             self.clicks.hold(Held::Button { button, pressed, over_ui });
         } else {
-            self.mouse_button(button, pressed, over_ui);
+            self.with_mouse_mods(|app| app.mouse_button(button, pressed, over_ui));
         }
     }
 
@@ -512,7 +512,9 @@ impl App {
 
     fn replay(&mut self, input: Held) {
         match input {
-            Held::Button { button, pressed, over_ui } => self.mouse_button(button, pressed, over_ui),
+            Held::Button { button, pressed, over_ui } => {
+                self.with_mouse_mods(|app| app.mouse_button(button, pressed, over_ui));
+            }
             Held::Motion(dx, dy) => self.camera_mouse_delta(dx, dy),
             Held::Click(click) => self.run_click(click),
             Held::LeftRelease => self.on_left_release(),

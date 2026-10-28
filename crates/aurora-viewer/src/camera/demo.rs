@@ -62,6 +62,8 @@ pub enum Step {
         shift: bool,
         alt: bool,
     },
+    /// Hold / release AltGr, which winit reports without Ctrl nor Alt.
+    AltGraph(bool),
     Press,
     Release,
     RightButton(bool),
@@ -123,7 +125,7 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
                 _ => {}
             }
         }
-        mode @ ("alt" | "pan" | "zoom" | "crouch-alt" | "crouch-pan" | "crouch-zoom") => {
+        mode @ ("alt" | "altgr" | "pan" | "zoom" | "crouch-alt" | "crouch-pan" | "crouch-zoom") => {
             let (Some(x), Some(y)) = (num(1), num(2)) else {
                 return out;
             };
@@ -132,6 +134,9 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
                 "zoom" | "crouch-zoom" => (false, false, Step::Drag(0.0, -3.0)),
                 _ => (true, false, Step::Drag(6.0, 1.0)),
             };
+            // `altgr`: the orbit of `alt` with AltGr alone held (alt_graph.rs)
+            let altgr = mode == "altgr";
+            let (ctrl, alt) = if altgr { (false, false) } else { (ctrl, true) };
             match frame {
                 560 if mode.starts_with("crouch-") => out.push(Step::Crouch(true)),
                 570 if mode.starts_with("crouch-") => out.push(Step::Crouch(false)),
@@ -140,13 +145,14 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
                     Step::Mods {
                         ctrl: false,
                         shift: false,
-                        alt: true,
+                        alt,
                     },
+                    Step::AltGraph(altgr),
                     Step::Press,
                     Step::Log,
                 ]),
                 601..=660 => {
-                    out.extend([Step::Mods { ctrl, shift, alt: true }, drag]);
+                    out.extend([Step::Mods { ctrl, shift, alt }, drag]);
                     if frame == 630 {
                         out.push(Step::Log);
                     }
@@ -158,6 +164,7 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
                         shift: false,
                         alt: false,
                     },
+                    Step::AltGraph(false),
                     Step::Log,
                 ]),
                 700 => out.extend([Step::Walk(true), Step::Log]),
@@ -474,6 +481,28 @@ mod tests {
         assert!(steps("alt,400,300", 661).contains(&Step::Release));
         assert!(steps("alt,400,300", 700).contains(&Step::Walk(true)));
         assert!(steps("alt", 600).is_empty());
+    }
+
+    #[test]
+    fn altgr_scenario_orbits_with_altgr_alone_held() {
+        let press = steps("altgr,400,300", 600);
+        assert!(press.contains(&Step::AltGraph(true)) && press.contains(&Step::Press));
+        // winit reports neither Ctrl nor Alt while AltGr is held
+        let drag = steps("altgr,400,300", 620);
+        let mods = Step::Mods {
+            ctrl: false,
+            shift: false,
+            alt: false,
+        };
+        assert!(drag.contains(&mods) && drag.contains(&Step::Drag(6.0, 1.0)));
+        assert!(steps("altgr,400,300", 661).contains(&Step::AltGraph(false)));
+        // the orbit of `alt` otherwise (Ctrl + Alt during the drag)
+        let alt = steps("alt,400,300", 620);
+        assert!(alt.contains(&Step::Mods {
+            ctrl: true,
+            shift: false,
+            alt: true,
+        }));
     }
 
     #[test]
