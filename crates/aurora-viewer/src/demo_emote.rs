@@ -1,7 +1,7 @@
 //! A facial expression and a hand pose on the avatar in front of the start
 //! position (AURORA_DEMO_EMOTE, docs/TESTING.md, #661). From frame 240 it
-//! plays a looping animation without joints whose header names an
-//! expression and a hand pose, as uploaded animations do; the animation
+//! plays a looping animation whose header names an expression and a hand
+//! pose, as uploaded animations do; the animation
 //! restarts every 240 frames, which starts its expression again (2.8 s
 //! each time). `signal` signals the expression's built-in UUID next to the
 //! animation instead, as a gesture does; `self` plays it on our own avatar
@@ -66,8 +66,11 @@ fn parse(value: &str) -> Option<Mode> {
     Some(mode)
 }
 
-/// The looping animation: no joints, priority 4 (above the demo idle), the
-/// hand pose, and the expression unless the simulator signals it.
+/// The looping animation: priority 4 (above the demo idle), the hand pose,
+/// and the expression unless the simulator signals it. It holds mFaceRoot at
+/// rest, which moves nothing on the system body: without a joint the motion
+/// would not be updated once eased in, and would leave the hands
+/// (LLMotionController::updateMotionsByType).
 pub fn animation(mode: &Mode) -> Animation {
     let emote_name = if mode.signal {
         String::new()
@@ -87,7 +90,15 @@ pub fn animation(mode: &Mode) -> Animation {
         // (still easing out while it restarts: the hands keep their pose)
         ease_out: 0.5,
         hand_pose: mode.hand,
-        joints: Vec::new(),
+        joints: vec![aurora_assets::JointMotion {
+            joint_name: "mFaceRoot".into(),
+            priority: -1,
+            rot_keys: vec![aurora_assets::anim::RotKey {
+                time: 0.0,
+                rotation: glam::Quat::IDENTITY,
+            }],
+            pos_keys: Vec::new(),
+        }],
     }
 }
 
