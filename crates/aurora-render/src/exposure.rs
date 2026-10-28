@@ -103,6 +103,9 @@ struct ExposureU {
 pub(crate) struct FrameExposure {
     /// The sky is tone mapped (probe ambiance above 0).
     pub(crate) tone_mapped: bool,
+    /// "HDR and Emissive" (`RenderSettings::hdr`): off, the exposure is 1
+    /// at once, without the easing.
+    pub(crate) hdr: bool,
     /// Its hdr scale (`SkyParams::hdr_scale`).
     pub(crate) hdr_scale: f32,
     /// A photo: keep the exposure of the live view.
@@ -320,8 +323,10 @@ impl Exposure {
             self.range = (lo, hi);
             self.next_log = self.next_log.min(now + LOG_AFTER_CHANGE);
         }
-        // an A/B switch shows at once, without the easing
-        let reset = on == self.was_off || Override::from_env() == Override::Alternate;
+        // an A/B switch shows at once, without the easing; and without HDR
+        // there is no exposure to ease (LLPipeline::renderFinalize skips
+        // generateExposure): 1 at once
+        let reset = on == self.was_off || Override::from_env() == Override::Alternate || !f.hdr;
         self.was_off = !on;
         let u = ExposureU {
             inv_view_proj: f.inv_view_proj.to_cols_array_2d(),

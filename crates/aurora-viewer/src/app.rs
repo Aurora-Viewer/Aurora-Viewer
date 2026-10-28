@@ -8827,14 +8827,14 @@ impl App {
         t_part = self.scene.parts.lap(Part::ParamsLights, t_part);
         let probes = if in_world {
             let slots = self.settings.probe_count.clamp(8, 64);
-            if self.probes.slots != slots
-                || self.probes.level != self.settings.reflection_probes
-                || self.probes.hdr != self.settings.hdr_emissive
-            {
+            if self.probes.slots != slots || self.probes.level != self.settings.reflection_probes {
                 self.probes.slots = slots;
                 self.probes.level = self.settings.reflection_probes.min(3);
-                self.probes.hdr = self.settings.hdr_emissive;
                 self.probes.reset();
+            }
+            if self.probes.hdr != self.settings.hdr_emissive {
+                self.probes.hdr = self.settings.hdr_emissive;
+                self.probes.refresh();
             }
             self.probes
                 .update(&self.scene, &self.world, self.camera.position, env.probe_ambiance, world_now())

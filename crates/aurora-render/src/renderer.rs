@@ -7222,10 +7222,12 @@ impl Backend {
             &crate::exposure::FrameExposure {
                 // (no generateExposure without HDR: the exposure stays 1)
                 tone_mapped: !f.sky.no_post && self.settings.hdr,
+                hdr: self.settings.hdr,
                 hdr_scale: f.sky.hdr_scale,
                 // (a cut-out photo's empty background would raise it: the
-                // subject keeps the exposure the whole scene gave it)
-                hold: snapshot.is_some() || f.exposure_lock || f.cutout,
+                // subject keeps the exposure the whole scene gave it;
+                // without HDR there is none to keep)
+                hold: (snapshot.is_some() || f.exposure_lock || f.cutout) && self.settings.hdr,
                 glow: self.glow_drawn,
                 inv_view_proj: unjittered_vp.inverse(),
             },
