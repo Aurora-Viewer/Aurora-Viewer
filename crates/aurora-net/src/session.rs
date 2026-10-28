@@ -795,9 +795,15 @@ impl Session<'_> {
                             sim.caps.len()
                         )
                     });
+                    // ModifyRegion granted only now: the handshake could not ask it
+                    let modify_new = !sim.caps.contains_key("ModifyRegion") && caps.contains_key("ModifyRegion");
                     let caps = Arc::new(caps);
                     sim.caps = caps.clone();
                     emit(self.sh, NetEvent::Capabilities { handle: sim.handle, caps });
+                    let terrain_handle = (sim.handshake_seen && modify_new).then_some(sim.handle);
+                    if let Some(handle) = terrain_handle {
+                        self.request_terrain_transforms(handle);
+                    }
                 }
                 Ok(caps) => log::info!("{} capabilities for {addr} asked again, {} kept", caps.len(), sim.caps.len()),
                 Err(e) => log::warn!("capabilities for {addr} asked again failed, {} kept: {e}", sim.caps.len()),
@@ -857,6 +863,10 @@ impl Session<'_> {
         sim.caps = caps.clone();
         emit(self.sh, NetEvent::Capabilities { handle: sim.handle, caps });
         let features = sim.caps.get("SimulatorFeatures").cloned().map(|u| (sim.handle, u));
+        let terrain_handle = sim.handshake_seen.then_some(sim.handle);
+        if let Some(handle) = terrain_handle {
+            self.request_terrain_transforms(handle);
+        }
         if let Some((handle, url)) = features {
             self.request_features(addr, handle, url);
         }
@@ -5021,6 +5031,7 @@ impl Session<'_> {
         // sending (LLViewerRegion::loadObjectCache): the reply tells it
         // whether there is one.
         self.answer_region_handshake(from, m.region_info2.region_id);
+        self.request_terrain_transforms(handle);
     }
 }
 

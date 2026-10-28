@@ -24,6 +24,42 @@ before completion/editing/sending, preserving the draft and focus.
 The editor grows to four visible rows, then scrolls. Its measured bounded height
 reserves space in the transcript or bar without growing the containing window.
 
+`scene/terrain_surface.rs` streams and detects each region's four ground
+assets, retaining classic texture composition or four shared PBR material
+records. Classic and PBR terrain have their own shaders, pipelines and draw
+lists (`terrain`, `terrain_pbr`, `terrain_mask`), shadows included
+(`fs_shadow_terrain`). `shaders/env.wgsl` mixes their linear colour, ORM, normal and emissive
+maps with triplanar projection and the Legacy Viewer's 8 m default repeats.
+Terrain maps request the reference 2048 px decode priority. Asset UVs convert
+the decoder's top-down rows to GL coordinates, including their gradients.
+`world/terrain.rs` uses the reference default diagonal normal stencil and
+accumulates tangents from indexed triangles. The existing eight-byte parallel
+vertex stream stores both directions as octahedral snorm16 pairs; composition
+and blend noise retain float precision in the main vertex UV fields. Four
+material tangent transforms run before interpolation. The terrain shader keeps
+the reference ORM roughness without additional normal-variance widening.
+Height/noise transitions sample the reference 256-square two-dimensional alpha
+ramp, retained in a reserved bindless texture slot with its linear mip chain.
+Surface edits update records without rebuilding the heightmap meshes.
+`world/terrain.rs::SurfaceState` keeps local previews, applied cover awaiting
+the next handshake, and the region's ModifyRegion transforms separate.
+The network requests those transforms on arrival, even with Region / Estate
+closed. `ui/region/surface.rs` connects asynchronous GPU swatches, live picker
+choices and cover-only cancellation to that state; only Apply sends changes.
+`terrain_tests.rs` verifies the production material mixer, texture transforms,
+triplanar normals and matching camera/shadow alpha masks with GPU samples.
+Masked terrain participates in both sun and projector alpha shadow passes;
+opaque terrain retains the depth-only fast path. `world/terrain_paint.rs`
+implements the Legacy Viewer's experimental local paintmap bake and reset:
+workers interpolate the terrain mesh's composition and blend noise, encode linear RGB weights
+and stage a 2048-pixel mip chain (1024 on small upload pools). Per-region GPU
+records reference the clamped map without changing geometry. Frozen CPU weights
+survive scene recreation; staging chunks are released after each upload.
+These local maps never enter estate messages.
+The shadow pass owns its clamp sampler alongside the light parameters;
+GPU mask tests use the production resource constructors and omit the scene's
+sampler to verify that shadows have no dependency on the scene frame group.
+
 `scene/physics_shapes.rs` connects the build inspector's saved physics eye to
 selected collision geometry. Mesh header ranges include `physics_mesh` and
 `physics_convex`; the mesh streamer fetches these only while inspecting.

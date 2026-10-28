@@ -14346,7 +14346,7 @@ impl App {
                 }
                 let mut open = self.panels.region_estate && self.world.rlva_can_view_region();
                 if open {
-                    self.feed_region_window();
+                    self.feed_region_window(&ctx);
                 }
                 let region_map = open
                     .then_some(self.world.main_region)

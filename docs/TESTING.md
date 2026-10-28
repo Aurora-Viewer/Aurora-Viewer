@@ -6345,7 +6345,37 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   saves a flat 256 × 256 RAW file where asked, Upload… reads one and the
   demo simulator takes it. `pbr` turns the terrain's slots to PBR
   materials (the bar counts 4 changes) with that fold open on the four
-  materials' transforms, which the demo simulator keeps. `classic`
+  materials' transforms, which the demo simulator keeps.
+  `manage:pick-material` opens the first terrain material picker on the
+  demo's tiled PBR material. Its sphere must load without a persistent
+  "Loading…" label; OK keeps the selection and Apply validates all four
+  slots. Add `classic` to check the same picker from the classic Terrain tab.
+  `manage:pbr-ground` starts with a region already using PBR tiles (8 m
+  repeats and a normal map), with all four GPU material swatches visible.
+  `manage:pbr-preview` changes the first layer to a matte green material locally,
+  leaving its picker open and Apply untouched; `manage:pbr-cancel` cancels
+  that picker and restores the tiled ground; `manage:pbr-apply` commits it.
+  All use the real preview/cancel/Apply handlers, offline. Compare captures
+  at frame 760, optionally with `AURORA_DEMO_POS=120,40` for open ground.
+  In either window style, selecting a texture/material must immediately
+  change its swatch and the ground. The Cancel button beside the four swatches
+  restores the committed cover without undoing water-height or elevation edits.
+  `manage:pbr-mask` uses a holed PBR material on the ground: colour, depth,
+  picking, sun and projector shadows must all respect its alpha mask.
+  `manage:pbr-paint` creates the experimental local blend map from the advanced
+  terrain fold and scrolls its controls into view; `manage:pbr-paint-reset`
+  resets it while work is pending and shows the same controls.
+  The map freezes blend weights locally, uses linear RGB with the first layer
+  as the remainder, and never sends an estate edit. Reset returns to live
+  height/noise composition. Add `classic` to check the same controls there.
+  Bakes use 2048 px by default, or 1024 px on a small upload pool; workers
+  prepare and stage all mip levels without a frame-thread image copy.
+  `manage:pbr-slopes` adds a sharp mound and a hollow near `120,40` to check
+  normal-map projection on curved terrain. Terrain uses the reference diagonal
+  normal stencil and mesh-accumulated tangents, encoded in the existing 8-byte
+  parallel vertex stream. Asset sampling converts GL UVs to decoded top-down
+  JPEG2000 rows; local blend maps keep their own region-space row convention.
+  `classic`
   opens the classic window (the Legacy Viewer's eight tabs) on the tab of
   the section asked (`terrain`: Terrain, `scripts` or `interventions`:
   Debug, `people`: Access, none: Region).

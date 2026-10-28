@@ -751,6 +751,11 @@ struct Pipelines {
     hud_debug_blue: wgpu::RenderPipeline,
     sky: wgpu::RenderPipeline,
     terrain: wgpu::RenderPipeline,
+    /// PBR terrain (vs_terrain_pbr / fs_terrain_pbr), masked or not.
+    terrain_pbr: wgpu::RenderPipeline,
+    pre_terrain: wgpu::RenderPipeline,
+    pre_terrain_normal: wgpu::RenderPipeline,
+    pre_terrain_msaa: Option<wgpu::RenderPipeline>,
     opaque: wgpu::RenderPipeline,
     opaque_2s: wgpu::RenderPipeline,
     mask: wgpu::RenderPipeline,
@@ -823,15 +828,21 @@ struct Pipelines {
     pre_msaa: Option<[[wgpu::RenderPipeline; 2]; 2]>,
     refl_sky: wgpu::RenderPipeline,
     refl_terrain: wgpu::RenderPipeline,
+    refl_terrain_pbr: wgpu::RenderPipeline,
     refl_obj: wgpu::RenderPipeline,
     /// Shadow casters with the alpha test of `fs_shadow`.
     shadow: wgpu::RenderPipeline,
     /// Opaque shadow casters: the same vertices, no fragment shader.
     shadow_depth: wgpu::RenderPipeline,
+    /// Terrain casters with the terrain's alpha test (`fs_shadow_terrain`):
+    /// the other casters keep `fs_shadow` without the terrain's inputs.
+    shadow_terrain: wgpu::RenderPipeline,
     post: wgpu::RenderPipeline,
     /// Faces drawn under a pixel (drawn_pick.rs): culled like the scene's
     /// one-sided and two-sided faces.
     pick: wgpu::RenderPipeline,
+    pick_terrain: wgpu::RenderPipeline,
+    pick_terrain_mask: wgpu::RenderPipeline,
     pick_2s: wgpu::RenderPipeline,
     pick_visible: wgpu::RenderPipeline,
     pick_overlay: wgpu::RenderPipeline,
@@ -1872,6 +1883,45 @@ fn uniform_entry(binding: u32, visibility: wgpu::ShaderStages) -> wgpu::BindGrou
     }
 }
 
+/// Shadows do not bind the scene frame group. Their paintmap sampler lives
+/// with the light's parameters, so alpha terrain can use the same mixer.
+pub(crate) fn shadow_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("shadow params"),
+        entries: &[
+            uniform_entry(0, wgpu::ShaderStages::VERTEX),
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    })
+}
+
+pub(crate) fn shadow_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    buffer: &wgpu::Buffer,
+    sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("shadow vp"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
+}
+
 pub(crate) fn make_view(
     device: &wgpu::Device,
     label: &str,
@@ -2251,6 +2301,8 @@ fn ortho_reverse_z(half: f32, near: f32, far: f32) -> Mat4 {
 #[derive(Default, Clone, Copy)]
 struct Ranges {
     terrain: (u64, u32),
+    terrain_pbr: (u64, u32),
+    terrain_mask: (u64, u32),
     opaque: (u64, u32),
     opaque_2s: (u64, u32),
     mask: (u64, u32),
@@ -2273,17 +2325,24 @@ struct Ranges {
     refl_water: (u64, u32),
     water_air: (u64, u32),
     water_air_terrain: (u64, u32),
+    water_air_terrain_pbr: (u64, u32),
     refl_mirror: (u64, u32),
     refl_terrain_water: (u64, u32),
     refl_terrain_mirror: (u64, u32),
     refl_terrain_probe: (u64, u32),
+    refl_terrain_pbr_water: (u64, u32),
+    refl_terrain_pbr_mirror: (u64, u32),
+    refl_terrain_pbr_probe: (u64, u32),
     probe: (u64, u32),
     /// CPU casters of each cascade drawn depth only, then those drawn with
     /// the alpha test.
     shadow: [(u64, u32); CASCADES],
     shadow_alpha: [(u64, u32); CASCADES],
+    /// Terrain casters of each cascade drawn with the terrain's alpha test.
+    shadow_terrain: [(u64, u32); CASCADES],
     /// Casters of the CPU lists in each projector shadow map.
     spot: [(u64, u32); SPOT_SHADOWS],
+    spot_terrain: [(u64, u32); SPOT_SHADOWS],
 }
 
 impl Backend {
@@ -2503,10 +2562,7 @@ impl Backend {
                 },
             ],
         });
-        let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("shadow params"),
-            entries: &[uniform_entry(0, wgpu::ShaderStages::VERTEX)],
-        });
+        let shadow_layout = shadow_layout(&device);
         let post_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("post"),
             entries: &[
@@ -2584,16 +2640,7 @@ impl Backend {
             .collect();
         let shadow_bind_groups = shadow_buffers
             .iter()
-            .map(|b| {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("shadow vp"),
-                    layout: &shadow_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: b.as_entire_binding(),
-                    }],
-                })
-            })
+            .map(|b| shadow_bind_group(&device, &shadow_layout, b, &lin_clamp))
             .collect();
         let records_bind_group = Self::make_records_bg(&device, &records_layout, &scene);
 
@@ -2964,6 +3011,10 @@ impl Backend {
         let terrain = pipe(PipeDesc {
             gbuf: ssr,
             ..base("terrain", "vs_terrain", g("fs_terrain", "fs_terrain_g"))
+        });
+        let terrain_pbr = pipe(PipeDesc {
+            gbuf: ssr,
+            ..base("terrain pbr", "vs_terrain_pbr", g("fs_terrain_pbr", "fs_terrain_pbr_g"))
         });
         let opaque = pipe(PipeDesc {
             gbuf: ssr,
@@ -3355,6 +3406,14 @@ impl Backend {
         let pre_portal_2s = pre("prepass portal 2s", "vs_depth", Some("fs_depth_portal"), None);
         let pre_mask = pre("prepass mask", "vs_main", Some("fs_depth_mask"), Some(wgpu::Face::Back));
         let pre_mask_2s = pre("prepass mask 2s", "vs_main", Some("fs_depth_mask"), None);
+        let pre_terrain = pre("terrain depth", "vs_terrain_pbr", Some("fs_terrain_depth"), Some(wgpu::Face::Back));
+        let pre_terrain_msaa = (samples > 1).then(|| {
+            pipe(PipeDesc {
+                format: None,
+                depth_compare: wgpu::CompareFunction::Greater,
+                ..base("terrain msaa depth", "vs_terrain_pbr", "fs_terrain_depth")
+            })
+        });
         // both sides: a double-sided blended face casts either way, the
         // nearer one keeps the depth
         let pre_contact = pre("prepass contact", "vs_main", Some("fs_depth_contact"), None);
@@ -3375,6 +3434,12 @@ impl Backend {
             pre_n("prepass mask normals", "vs_main", "fs_depth_mask_normal", Some(wgpu::Face::Back)),
             pre_n("prepass mask normals 2s", "vs_main", "fs_depth_mask_normal", None),
         ];
+        let pre_terrain_normal = pre_n(
+            "terrain depth normals",
+            "vs_terrain_pbr",
+            "fs_terrain_depth_normal",
+            Some(wgpu::Face::Back),
+        );
         let pre_normal_portal = [
             pre_n(
                 "prepass portal normals",
@@ -3426,6 +3491,7 @@ impl Backend {
             ..base("reflection sky", "vs_sky", "fs_sky")
         });
         let refl_terrain = refl("reflection terrain", "vs_terrain", "fs_terrain", Vb::Mesh);
+        let refl_terrain_pbr = refl("reflection terrain pbr", "vs_terrain_pbr", "fs_terrain_pbr", Vb::Mesh);
         // faces drawn under a pixel: record, depth and surface coordinates
         let pick_desc = |label: &'static str, cull: Option<wgpu::Face>| PipeDesc {
             cull,
@@ -3436,6 +3502,16 @@ impl Backend {
             ..base(label, "vs_pick", "fs_pick")
         };
         let pick = pipe(pick_desc("drawn pick", Some(wgpu::Face::Back)));
+        let pick_terrain = pipe(PipeDesc {
+            vs: "vs_terrain",
+            fs: Some("fs_terrain_pick"),
+            ..pick_desc("terrain pick", Some(wgpu::Face::Back))
+        });
+        let pick_terrain_mask = pipe(PipeDesc {
+            vs: "vs_terrain_pbr",
+            fs: Some("fs_terrain_pick_mask"),
+            ..pick_desc("terrain mask pick", Some(wgpu::Face::Back))
+        });
         let pick_2s = pipe(pick_desc("drawn pick 2s", None));
         let pick_visible = pipe(PipeDesc {
             fs: Some("fs_pick_visible"),
@@ -3476,6 +3552,15 @@ impl Backend {
         // vertex shader alone writes the same depth, without a texture read
         // per fragment
         let shadow_depth = make_pipeline(device, &module, &shadow_pl, shadow_desc("shadow depth", None));
+        let shadow_terrain = make_pipeline(
+            device,
+            &module,
+            &shadow_pl,
+            PipeDesc {
+                vs: "vs_shadow_terrain",
+                ..shadow_desc("shadow terrain", Some("fs_shadow_terrain"))
+            },
+        );
         let post_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("post"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/post.wgsl").into()),
@@ -3520,6 +3605,10 @@ impl Backend {
             hud_debug_blue,
             sky,
             terrain,
+            terrain_pbr,
+            pre_terrain,
+            pre_terrain_normal,
+            pre_terrain_msaa,
             opaque,
             opaque_2s,
             mask,
@@ -3565,11 +3654,15 @@ impl Backend {
             pre_msaa,
             refl_sky,
             refl_terrain,
+            refl_terrain_pbr,
             refl_obj,
             shadow,
             shadow_depth,
+            shadow_terrain,
             post,
             pick,
+            pick_terrain,
+            pick_terrain_mask,
             pick_2s,
             pick_visible,
             pick_overlay,
@@ -5489,9 +5582,11 @@ impl Backend {
         }
         let mut shadow_lists: [Vec<DrawCmd>; CASCADES] = Default::default();
         let mut shadow_alpha_lists: [Vec<DrawCmd>; CASCADES] = Default::default();
+        let mut shadow_terrain_lists: [Vec<DrawCmd>; CASCADES] = Default::default();
         if f.shadows {
             for (ci, m) in cascades.iter().enumerate() {
-                for c in &lists.shadow_casters {
+                let casters = lists.shadow_casters.iter().map(|c| (false, c));
+                for (terrain, c) in casters.chain(lists.terrain_shadow_casters.iter().map(|c| (true, c))) {
                     if !crate::gpu_cull::in_cascade(m, c.center, c.radius)
                         || !crate::shadow_cull::casts_into(&caster_planes[ci], c.center, c.radius)
                         || (!c.alpha
@@ -5500,7 +5595,9 @@ impl Backend {
                     {
                         continue;
                     }
-                    if c.alpha || !shadow_depth_only {
+                    if terrain && (c.alpha || !shadow_depth_only) {
+                        shadow_terrain_lists[ci].push(c.cmd);
+                    } else if c.alpha || !shadow_depth_only {
                         shadow_alpha_lists[ci].push(c.cmd);
                     } else {
                         shadow_lists[ci].push(c.cmd);
@@ -5510,16 +5607,13 @@ impl Backend {
         }
         // casters of the CPU lists in each projector's shadow map
         let mut spot_lists: [Vec<DrawCmd>; SPOT_SHADOWS] = Default::default();
+        let mut spot_terrain_lists: [Vec<DrawCmd>; SPOT_SHADOWS] = Default::default();
         for (k, vp) in spot_vp.iter().enumerate() {
             let Some(vp) = vp else { continue };
             let planes = crate::gpu_cull::view_planes(*vp).map(|p| p.to_array());
-            spot_lists[k].extend(
-                lists
-                    .shadow_casters
-                    .iter()
-                    .filter(|c| crate::gpu_cull::sphere_in(&planes, c.center, c.radius))
-                    .map(|c| c.cmd),
-            );
+            let inside = |c: &&ShadowCaster| crate::gpu_cull::sphere_in(&planes, c.center, c.radius);
+            spot_lists[k].extend(lists.shadow_casters.iter().filter(inside).map(|c| c.cmd));
+            spot_terrain_lists[k].extend(lists.terrain_shadow_casters.iter().filter(inside).map(|c| c.cmd));
         }
 
         // ---- indirect args
@@ -5536,6 +5630,8 @@ impl Backend {
         let (terrain, water): (&[DrawCmd], &[DrawCmd]) = if f.cutout { (&[], &[]) } else { (&lists.terrain, &lists.water) };
         let mut rg = Ranges {
             terrain: push(cpu, terrain),
+            terrain_pbr: push(cpu, if f.cutout { &[] } else { &lists.terrain_pbr }),
+            terrain_mask: push(cpu, if f.cutout { &[] } else { &lists.terrain_mask }),
             opaque: push(cpu, &lists.opaque),
             opaque_2s: push(cpu, &lists.opaque_two_sided),
             mask: push(cpu, &lists.mask),
@@ -5559,8 +5655,10 @@ impl Backend {
             use crate::occlusion::{CullDraw, KIND_NONE, KIND_PREPASS, KIND_TESTED};
             let mut cull = std::mem::take(&mut self.cull_cpu);
             cull.clear();
-            let lists_kinds: [(&[DrawCmd], u32); 10] = [
+            let lists_kinds: [(&[DrawCmd], u32); 12] = [
                 (&lists.terrain, KIND_NONE),
+                (&lists.terrain_pbr, KIND_NONE),
+                (&lists.terrain_mask, KIND_NONE),
                 (&lists.opaque, KIND_PREPASS),
                 (&lists.opaque_two_sided, KIND_PREPASS),
                 (&lists.mask, KIND_PREPASS),
@@ -5655,6 +5753,7 @@ impl Backend {
         if do_water_air {
             rg.water_air = push(cpu, &cull_to_view(air_vp, &lists.reflection));
             rg.water_air_terrain = push(cpu, &cull_cmds_to_view(air_vp, &lists.reflection_terrain));
+            rg.water_air_terrain_pbr = push(cpu, &cull_cmds_to_view(air_vp, &lists.reflection_terrain_pbr));
         }
         if mirror.is_some() {
             rg.refl_mirror = push(cpu, &cull_to_view(mirror_vp, &lists.reflection));
@@ -5662,18 +5761,25 @@ impl Backend {
         // terrain of the reflection passes, each culled to its own frustum
         if capture.is_some() {
             rg.refl_terrain_probe = push(cpu, &cull_cmds_to_view(probe_vp, &lists.reflection_terrain));
+            rg.refl_terrain_pbr_probe = push(cpu, &cull_cmds_to_view(probe_vp, &lists.reflection_terrain_pbr));
         }
         if do_water_refl {
             rg.refl_terrain_water = push(cpu, &cull_cmds_to_view(water_vp, &lists.reflection_terrain));
+            rg.refl_terrain_pbr_water = push(cpu, &cull_cmds_to_view(water_vp, &lists.reflection_terrain_pbr));
         }
         if mirror.is_some() {
             rg.refl_terrain_mirror = push(cpu, &cull_cmds_to_view(mirror_vp, &lists.reflection_terrain));
+            rg.refl_terrain_pbr_mirror = push(cpu, &cull_cmds_to_view(mirror_vp, &lists.reflection_terrain_pbr));
         }
         for i in 0..CASCADES {
             rg.shadow[i] = push(cpu, &shadow_lists[i]);
             rg.shadow_alpha[i] = push(cpu, &shadow_alpha_lists[i]);
+            rg.shadow_terrain[i] = push(cpu, &shadow_terrain_lists[i]);
         }
         for (range, list) in rg.spot.iter_mut().zip(&spot_lists) {
+            *range = push(cpu, list);
+        }
+        for (range, list) in rg.spot_terrain.iter_mut().zip(&spot_terrain_lists) {
             *range = push(cpu, list);
         }
         let needed = (self.indirect_cpu.len() * std::mem::size_of::<DrawIndexedIndirect>()) as u64;
@@ -5700,7 +5806,8 @@ impl Backend {
             stats.draws += lists.water.len() as u32;
             stats.triangles += lists.water.iter().map(|d| d.index_count as u64 / 3).sum::<u64>();
         }
-        let cpu_casters: [u32; CASCADES] = std::array::from_fn(|i| (shadow_lists[i].len() + shadow_alpha_lists[i].len()) as u32);
+        let cpu_casters: [u32; CASCADES] =
+            std::array::from_fn(|i| (shadow_lists[i].len() + shadow_alpha_lists[i].len() + shadow_terrain_lists[i].len()) as u32);
         stats.shadow_draws = cpu_casters.iter().sum();
         stats.shadow.draws = cpu_casters;
         stats.shadow.cpu_draws = cpu_casters;
@@ -5892,7 +5999,8 @@ impl Backend {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-                if gpu_on || rg.shadow.iter().chain(&rg.shadow_alpha).chain(&rg.spot).any(|r| r.1 > 0) {
+                let cpu_ranges = rg.shadow.iter().chain(&rg.shadow_alpha).chain(&rg.shadow_terrain);
+                if gpu_on || cpu_ranges.chain(&rg.spot).chain(&rg.spot_terrain).any(|r| r.1 > 0) {
                     pass.set_bind_group(1, &self.records_bind_group, &[]);
                     pass.set_bind_group(2, &scene.textures, &[]);
                     pass.set_vertex_buffer(0, scene.vertices.slice(..));
@@ -5920,6 +6028,9 @@ impl Backend {
                                 }
                                 draw_bin(&mut pass, None, bin, bin);
                             }
+                            if let Alpha(_) = step {
+                                draw(&mut pass, &self.pipelines.shadow_terrain, rg.shadow_terrain[ci]);
+                            }
                             match step {
                                 Alpha(0) => pass_mark(&mut pass, MARK_SHADOW_C0_END),
                                 Alpha(1) => pass_mark(&mut pass, MARK_SHADOW_C1_END),
@@ -5943,6 +6054,7 @@ impl Backend {
                                 pass.set_viewport(x as f32, y as f32, half as f32, half as f32, 0.0, 1.0);
                                 pass.set_scissor_rect(x, y, half, half);
                                 pass.set_bind_group(3, &self.shadow_bind_groups[CASCADES + k], &[]);
+                                draw(&mut pass, &self.pipelines.shadow_terrain, rg.spot_terrain[k]);
                                 let (off, count) = rg.spot[k];
                                 if count == 0 && !gpu_on {
                                     continue;
@@ -6022,7 +6134,14 @@ impl Backend {
                 multiview_mask: None,
             });
             bind_mesh(&mut pass, &self.groups.a);
+            let terrain_pipe = if normals.is_some() {
+                &self.pipelines.pre_terrain_normal
+            } else {
+                &self.pipelines.pre_terrain
+            };
             draw(&mut pass, pre_pipes[0], rg.terrain);
+            draw(&mut pass, pre_pipes[0], rg.terrain_pbr);
+            draw(&mut pass, terrain_pipe, rg.terrain_mask);
             let pre = if occl { &self.occlusion.pre1 } else { &self.indirect };
             draw_from(&mut pass, pre_pipes[0], pre, rg.opaque);
             draw_from(&mut pass, pre_pipes[1], pre, rg.opaque_2s);
@@ -6206,7 +6325,7 @@ impl Backend {
                 &self.groups.refl[0],
                 "water reflection",
                 rg.refl_water,
-                rg.refl_terrain_water,
+                (rg.refl_terrain_water, rg.refl_terrain_pbr_water),
                 BIN_REFL_WATER,
             ),
             (
@@ -6215,7 +6334,7 @@ impl Backend {
                 &self.groups.refl[1],
                 "mirror",
                 rg.refl_mirror,
-                rg.refl_terrain_mirror,
+                (rg.refl_terrain_mirror, rg.refl_terrain_pbr_mirror),
                 BIN_REFL_MIRROR,
             ),
         ];
@@ -6250,7 +6369,8 @@ impl Backend {
             bind_mesh(&mut pass, bg);
             pass.set_pipeline(&self.pipelines.refl_sky);
             pass.draw(0..3, 0..1);
-            draw(&mut pass, &self.pipelines.refl_terrain, terrain);
+            draw(&mut pass, &self.pipelines.refl_terrain, terrain.0);
+            draw(&mut pass, &self.pipelines.refl_terrain_pbr, terrain.1);
             draw(&mut pass, &self.pipelines.refl_obj, objects);
             draw_bin(&mut pass, Some(&self.pipelines.refl_obj), bin, bin);
         }
@@ -6285,6 +6405,7 @@ impl Backend {
             pass.set_pipeline(&self.pipelines.refl_sky);
             pass.draw(0..3, 0..1);
             draw(&mut pass, &self.pipelines.refl_terrain, rg.water_air_terrain);
+            draw(&mut pass, &self.pipelines.refl_terrain_pbr, rg.water_air_terrain_pbr);
             draw(&mut pass, &self.pipelines.refl_obj, rg.water_air);
             draw_bin(&mut pass, Some(&self.pipelines.refl_obj), BIN_REFL_WATER, BIN_REFL_WATER);
         }
@@ -6336,6 +6457,7 @@ impl Backend {
                 pass.draw(0..3, 0..1);
                 // the default probe sees sky, terrain and water only
                 draw(&mut pass, &self.pipelines.refl_terrain, rg.refl_terrain_probe);
+                draw(&mut pass, &self.pipelines.refl_terrain_pbr, rg.refl_terrain_pbr_probe);
                 if !c.sky_only {
                     draw(&mut pass, &self.pipelines.refl_obj, rg.probe);
                     draw_bin(&mut pass, Some(&self.pipelines.refl_obj), BIN_PROBE, BIN_PROBE);
@@ -6488,7 +6610,11 @@ impl Backend {
                     multiview_mask: None,
                 });
                 bind_mesh(&mut pass, &self.groups.a);
+                if let Some(terrain) = &self.pipelines.pre_terrain_msaa {
+                    draw(&mut pass, terrain, rg.terrain_mask);
+                }
                 draw(&mut pass, &pipes[0], rg.terrain);
+                draw(&mut pass, &pipes[0], rg.terrain_pbr);
                 for (b, (pipe, r)) in [(&pipes[0], rg.opaque), (&pipes[1], rg.opaque_2s)].into_iter().enumerate() {
                     draw(&mut pass, pipe, r);
                     draw_bin(&mut pass, Some(pipe), b, b);
@@ -6580,6 +6706,8 @@ impl Backend {
             }
             pass_mark(&mut pass, MARK_SKY_END);
             draw(&mut pass, &self.pipelines.terrain, rg.terrain);
+            draw(&mut pass, &self.pipelines.terrain_pbr, rg.terrain_pbr);
+            draw(&mut pass, &self.pipelines.terrain_pbr, rg.terrain_mask);
             pass_mark(&mut pass, MARK_TERRAIN_END);
             let scene_pipes = [
                 (&self.pipelines.opaque, rg.opaque),
@@ -6730,7 +6858,16 @@ impl Backend {
                 draw(pass, wire, rg.select_root);
             }
             if let (true, Some(wire)) = (f.wireframe, &self.pipelines.debug_wire) {
-                for r in [rg.terrain, rg.opaque, rg.opaque_2s, rg.mask, rg.mask_2s, rg.blend] {
+                for r in [
+                    rg.terrain,
+                    rg.terrain_pbr,
+                    rg.terrain_mask,
+                    rg.opaque,
+                    rg.opaque_2s,
+                    rg.mask,
+                    rg.mask_2s,
+                    rg.blend,
+                ] {
                     draw(pass, wire, r);
                 }
                 for b in 0..MAIN_BINS {
@@ -6870,7 +7007,9 @@ impl Backend {
             };
             let layers: [&[(&wgpu::RenderPipeline, (u64, u32), Option<usize>)]; 2] = [
                 &[
-                    (&self.pipelines.pick, rg.terrain, None),
+                    (&self.pipelines.pick_terrain, rg.terrain, None),
+                    (&self.pipelines.pick_terrain, rg.terrain_pbr, None),
+                    (&self.pipelines.pick_terrain_mask, rg.terrain_mask, None),
                     (&self.pipelines.pick, rg.opaque, Some(0)),
                     (&self.pipelines.pick_2s, rg.opaque_2s, Some(1)),
                     (&self.pipelines.pick, rg.mask, Some(2)),

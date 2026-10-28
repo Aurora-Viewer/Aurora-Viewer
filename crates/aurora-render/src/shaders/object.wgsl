@@ -125,7 +125,23 @@ fn lip_delta(rec: DrawRecord, in: VsIn) -> mat2x3<f32> {
 }
 
 fn vertex_position(rec: DrawRecord, in: VsIn) -> vec3<f32> { return in.pos + lip_delta(rec, in)[0]; }
-fn vertex_normal(rec: DrawRecord, in: VsIn) -> vec3<f32> { return in.normal.xyz + lip_delta(rec, in)[1]; }
+
+// Terrain reuses the unskinned parallel stream for two octahedral snorm16
+// directions. See pack_terrain_frame: no extra buffer or vertex stride.
+fn terrain_direction(bytes: vec4<u32>) -> vec3<f32> {
+    let bits = bytes.x | (bytes.y << 8u) | (bytes.z << 16u) | (bytes.w << 24u);
+    let p = unpack2x16snorm(bits);
+    var n = vec3<f32>(p, 1.0 - abs(p.x) - abs(p.y));
+    if (n.z < 0.0) {
+        n = vec3<f32>((vec2<f32>(1.0) - abs(p.yx)) * select(vec2<f32>(1.0), vec2<f32>(-1.0), p < vec2<f32>(0.0)), n.z);
+    }
+    return normalize(n);
+}
+
+fn vertex_normal(rec: DrawRecord, in: VsIn) -> vec3<f32> {
+    if ((rec.flags.x & FLAG_TERRAIN) != 0u) { return terrain_direction(in.joints); }
+    return in.normal.xyz + lip_delta(rec, in)[1];
+}
 
 // The tangent packed in the normal's w (aurora_render::pack_tangent): an
 // angle in 127 steps around the normal, from the axis pair of
@@ -1643,7 +1659,8 @@ fn fs_pick_visible(in: PickOut) -> @location(0) vec4<u32> {
     portal_clip(rec, in.world_pos);
     // An emissive mask uses texture alpha for lighting, not opacity
     // (eval_material): its visible surface must remain a camera target.
-    let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(rec.tex.x, in.uv).a <= 32.0 / 255.0;
+    let terrain_pbr = (rec.flags.x & (FLAG_TERRAIN | FLAG_PBR)) == (FLAG_TERRAIN | FLAG_PBR);
+    let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(select(rec.tex.x, 0u, terrain_pbr), in.uv).a <= 32.0 / 255.0;
     // An opaque glTF material ignores its base color alpha (FaceDraw::
     // fully_transparent): drawn, it stays a target.
     let gltf_opaque = (rec.flags.x & FLAG_PBR) != 0u && (rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) == 0u;
@@ -1668,6 +1685,7 @@ struct ShadowParams {
 };
 
 @group(3) @binding(0) var<uniform> shadow_params: ShadowParams;
+@group(3) @binding(1) var shadow_clamp: sampler;
 
 @vertex
 fn vs_shadow(in: VsIn) -> ShadowOut {

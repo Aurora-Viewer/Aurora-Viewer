@@ -284,7 +284,15 @@ fn height(x: f32, y: f32) -> f32 {
     let dune = 2.5 * (x / 23.0).sin() * (y / 31.0).cos();
     // a beach and a lagoon to the west (water at 20 m)
     let shore = ((x - 75.0) / 9.0).clamp(-6.0, 9.0);
-    21.5 + shore + hill + dune + altitude()
+    static TERRAIN_SLOPES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let slopes = *TERRAIN_SLOPES.get_or_init(|| std::env::var("AURORA_DEMO_REGION").is_ok_and(|v| v.split(':').any(|p| p == "pbr-slopes")));
+    let relief = if slopes {
+        7.0 * (-((x - 123.0).powi(2) / 9.0 + (y - 49.0).powi(2) / 25.0)).exp()
+            - 2.0 * (-((x - 128.0).powi(2) + (y - 46.0).powi(2)) / 8.0).exp()
+    } else {
+        0.0
+    };
+    21.5 + shore + hill + dune + relief + altitude()
 }
 
 fn te(color: [f32; 4], shiny: u8, fullbright: bool, glow: f32) -> Arc<TextureEntry> {
@@ -3988,9 +3996,9 @@ pub fn events() -> Vec<NetEvent> {
             sim_access: 13,
             region_flags: aurora_net::region_flags::ALLOW_VOICE | home::region_flag(),
             terrain_base: [Uuid::nil(); 4],
-            terrain_detail: [Uuid::nil(); 4],
-            terrain_start_height: [20.0, 20.0, 20.0, 20.0],
-            terrain_height_range: [30.0, 30.0, 30.0, 30.0],
+            terrain_detail: region::terrain_ids().unwrap_or([Uuid::nil(); 4]),
+            terrain_start_height: region::terrain_start_height(),
+            terrain_height_range: if region::terrain_ids().is_some() { [120.0; 4] } else { [30.0; 4] },
             size_x: 256,
             size_y: 256,
             is_main: true,
@@ -7878,6 +7886,27 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             metallic_roughness_texture: Some(TEX_ORM_DISC),
             metallic_factor: 1.0,
             roughness_factor: 1.0,
+            ..Default::default()
+        },
+    ));
+    list.push((
+        region::terrain_replacement(),
+        aurora_assets::PbrMaterial {
+            base_color_factor: [0.035, 0.3, 0.055, 1.0],
+            metallic_factor: 0.0,
+            roughness_factor: 0.9,
+            ..Default::default()
+        },
+    ));
+    list.push((
+        region::terrain_mask(),
+        aurora_assets::PbrMaterial {
+            base_color_texture: Some(TEX_HOLES),
+            normal_texture: Some(TEX_BUMPS),
+            metallic_factor: 0.0,
+            roughness_factor: 0.7,
+            alpha_mode: aurora_assets::AlphaMode::Mask,
+            alpha_cutoff: 0.5,
             ..Default::default()
         },
     ));

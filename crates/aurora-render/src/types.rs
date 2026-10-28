@@ -10,7 +10,7 @@ use glam::{Mat4, Vec3, Vec4};
 pub struct Vertex {
     pub pos: [f32; 3],
     /// snorm8 normal; `w` carries extra data: the tangent of an object's
-    /// vertex ([`pack_tangent`]), the composition of the terrain's.
+    /// vertex ([`pack_tangent`]), the handedness of the terrain's frame.
     pub normal: [i8; 4],
     pub uv: [f32; 2],
 }
@@ -93,13 +93,50 @@ pub fn unpack_tangent(normal: [i8; 4]) -> Option<(Vec3, f32)> {
 }
 
 /// Per-vertex skinning data (parallel stream): 4 joint indices and 4
-/// normalized weights.
+/// normalized weights. Terrain uses these same eight bytes for its frame
+/// ([`pack_terrain_frame`]); its records never enable skinning.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable, Default)]
 pub struct SkinVertex {
     /// Mesh joint indices into the record's skin bindings (`flags[2]`).
     pub joints: [u8; 4],
     pub weights: [u8; 4],
+}
+
+/// Terrain has no skeleton: its parallel 8-byte stream holds octahedral
+/// normal/tangent directions (two snorm16 values each). This keeps the
+/// Legacy Viewer's terrain frame without reducing it to snorm8 or deriving
+/// the tangent from the normal. No vertex stride or GPU binding is added.
+pub fn pack_terrain_frame(normal: Vec3, tangent: Vec3) -> SkinVertex {
+    let pack = |v: Vec3| {
+        let v = v / v.abs().element_sum().max(1e-20);
+        let mut p = v.truncate();
+        if v.z < 0.0 {
+            p = (glam::Vec2::ONE - glam::Vec2::new(p.y, p.x).abs())
+                * glam::Vec2::new(if p.x < 0.0 { -1.0 } else { 1.0 }, if p.y < 0.0 { -1.0 } else { 1.0 });
+        }
+        let x = ((p.x.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes();
+        let y = ((p.y.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes();
+        [x[0], x[1], y[0], y[1]]
+    };
+    SkinVertex {
+        joints: pack(normal),
+        weights: pack(tangent),
+    }
+}
+
+pub fn unpack_terrain_frame(frame: SkinVertex) -> (Vec3, Vec3) {
+    let unpack = |bytes: [u8; 4]| {
+        let x = f32::from(i16::from_le_bytes([bytes[0], bytes[1]])) / 32767.0;
+        let y = f32::from(i16::from_le_bytes([bytes[2], bytes[3]])) / 32767.0;
+        let mut n = Vec3::new(x, y, 1.0 - x.abs() - y.abs());
+        if n.z < 0.0 {
+            n.x = (1.0 - y.abs()) * if x < 0.0 { -1.0 } else { 1.0 };
+            n.y = (1.0 - x.abs()) * if y < 0.0 { -1.0 } else { 1.0 };
+        }
+        n.normalize_or(Vec3::Z)
+    };
+    (unpack(frame.joints), unpack(frame.weights))
 }
 
 /// One mesh joint of a skinned mesh (LLMeshSkinInfo): its inverse bind
@@ -121,6 +158,8 @@ pub mod flags {
     pub const PBR: u32 = 8;
     pub const HIGHLIGHT: u32 = 16;
     pub const PLANAR: u32 = 32;
+    /// Terrain records use four shared material record indices for PBR.
+    pub const TERRAIN: u32 = 64;
     /// Vertex positions are skinned with palette `flags[1]`.
     pub const SKINNED: u32 = 128;
     /// Legacy material (LLMaterial): normal / specular maps with their own
@@ -455,7 +494,12 @@ pub struct DrawLists {
     pub hud_blend: Vec<DrawCmd>,
     pub hud_debug_red: Vec<DrawCmd>,
     pub hud_debug_blue: Vec<DrawCmd>,
+    /// Classic terrain (detail textures).
     pub terrain: Vec<DrawCmd>,
+    /// PBR terrain (glTF materials), opaque: its own shader.
+    pub terrain_pbr: Vec<DrawCmd>,
+    /// PBR terrain whose alpha needs to be tested in the depth prepass.
+    pub terrain_mask: Vec<DrawCmd>,
     pub opaque: Vec<DrawCmd>,
     /// Local creation hologram: depth tested, without writing pick depth,
     /// casting shadows or entering reflections / probes.
@@ -489,6 +533,10 @@ pub struct DrawLists {
     /// after it, as LLDrawPoolAlpha's emissives).
     pub blend_glow: Vec<bool>,
     pub shadow_casters: Vec<ShadowCaster>,
+    /// Terrain chunks casting shadows: drawn depth only like the opaque
+    /// casters, else with the terrain's own alpha test (`fs_shadow_terrain`),
+    /// never through `fs_shadow`.
+    pub terrain_shadow_casters: Vec<ShadowCaster>,
     /// Opaque and alpha-masked draws for the planar reflection passes
     /// (water and mirror); drawn without face culling, alpha tested.
     /// With their bounds: each reflection pass culls them to its own frustum.
@@ -497,6 +545,8 @@ pub struct DrawLists {
     /// static reflection probe captures (LLViewerWindow::cubeSnapshot).
     pub probe: Vec<ShadowCaster>,
     pub reflection_terrain: Vec<DrawCmd>,
+    /// `reflection_terrain` of the PBR regions (their own shader).
+    pub reflection_terrain_pbr: Vec<DrawCmd>,
     /// Particles, sorted back to front.
     pub particles: Vec<ParticleInstance>,
     /// Non-blended faces with glow (LL PASS_GLOW): drawn again to
@@ -587,6 +637,8 @@ impl DrawLists {
         self.hud_debug_red.clone_from(&src.hud_debug_red);
         self.hud_debug_blue.clone_from(&src.hud_debug_blue);
         self.terrain.clone_from(&src.terrain);
+        self.terrain_pbr.clone_from(&src.terrain_pbr);
+        self.terrain_mask.clone_from(&src.terrain_mask);
         self.portal_clipping = src.portal_clipping;
         self.opaque.clone_from(&src.opaque);
         self.creation_preview.clone_from(&src.creation_preview);
@@ -602,9 +654,11 @@ impl DrawLists {
         self.blend_depth_mode = src.blend_depth_mode;
         self.blend_depth_runs.clone_from(&src.blend_depth_runs);
         self.shadow_casters.clone_from(&src.shadow_casters);
+        self.terrain_shadow_casters.clone_from(&src.terrain_shadow_casters);
         self.reflection.clone_from(&src.reflection);
         self.probe.clone_from(&src.probe);
         self.reflection_terrain.clone_from(&src.reflection_terrain);
+        self.reflection_terrain_pbr.clone_from(&src.reflection_terrain_pbr);
         self.particles.clone_from(&src.particles);
         self.water_events.clone_from(&src.water_events);
         self.water_contacts.clone_from(&src.water_contacts);
@@ -632,6 +686,8 @@ impl DrawLists {
         self.hud_debug_red.clear();
         self.hud_debug_blue.clear();
         self.terrain.clear();
+        self.terrain_pbr.clear();
+        self.terrain_mask.clear();
         self.portal_clipping = false;
         self.opaque.clear();
         self.creation_preview.clear();
@@ -646,9 +702,11 @@ impl DrawLists {
         self.blend_depth_mode = RiggedBlendDepth::default();
         self.blend_depth_runs.clear();
         self.shadow_casters.clear();
+        self.terrain_shadow_casters.clear();
         self.reflection.clear();
         self.probe.clear();
         self.reflection_terrain.clear();
+        self.reflection_terrain_pbr.clear();
         self.particles.clear();
         self.water_events.clear();
         self.water_contacts.clear();
@@ -677,6 +735,8 @@ impl DrawLists {
             + self.hud_debug_red.len()
             + self.hud_debug_blue.len()
             + self.terrain.len()
+            + self.terrain_pbr.len()
+            + self.terrain_mask.len()
             + self.opaque.len()
             + self.creation_preview.len()
             + self.physics_shapes.len()
@@ -1492,6 +1552,27 @@ impl GpuElement {
 mod tests {
     use super::*;
 
+    #[test]
+    fn terrain_frames_keep_direction_precision_in_the_existing_eight_bytes() {
+        for x in -3..=3 {
+            for y in -3..=3 {
+                for z in -3..=3 {
+                    let n = Vec3::new(x as f32, y as f32, z as f32);
+                    if n.length_squared() == 0.0 {
+                        continue;
+                    }
+                    let n = n.normalize();
+                    let t = n.cross(if n.z.abs() > 0.9 { Vec3::X } else { Vec3::Z }).normalize();
+                    let frame = pack_terrain_frame(n, t);
+                    let (dn, dt) = unpack_terrain_frame(frame);
+                    assert!(dn.distance(n) < 0.0002 && dt.distance(t) < 0.0002, "{n} {t} -> {dn} {dt}");
+                }
+            }
+        }
+        assert_eq!(std::mem::size_of::<SkinVertex>(), 8);
+        assert_eq!(std::mem::size_of::<Vertex>(), 24);
+    }
+
     /// Texture coordinates of a world point, None behind the near plane.
     fn projected(p: &Projector, at: Vec3) -> Option<Vec3> {
         let c = p.matrix * at.extend(1.0);
@@ -1589,6 +1670,8 @@ mod tests {
         scene.hud_debug_red.push(cmd(23));
         scene.hud_debug_blue.push(cmd(24));
         scene.terrain.push(cmd(1));
+        scene.terrain_mask.push(cmd(27));
+        scene.terrain_pbr.push(cmd(28));
         scene.creation_preview.push(cmd(25));
         scene.physics_shapes.push(cmd(26));
         scene.blend.extend([cmd(7), cmd(8), cmd(9)]);
@@ -1643,6 +1726,8 @@ mod tests {
         assert_eq!(packet.blend_glow, [false, true, false]);
         assert_eq!(packet.blend_depth, 1);
         assert_eq!((packet.terrain.len(), packet.glow.len(), packet.select_root.len()), (1, 1, 1));
+        assert_eq!(packet.terrain_mask[0].record, 27);
+        assert_eq!(packet.terrain_pbr[0].record, 28);
         assert_eq!(packet.select_faces[0].record, 6);
         assert_eq!(packet.hud_select_faces[0].record, 22);
         assert_eq!((packet.particles.len(), packet.impostor_sprites.len()), (1, 1));

@@ -3444,6 +3444,18 @@ mod tests {
         assert_eq!(e.px_now(), 300.0);
     }
 
+    #[test]
+    fn terrain_material_maps_request_the_reference_two_kilopixel_resolution() {
+        let mut e = entry(Some(2), 0.0);
+        e.info = Some(file(2048));
+        e.gpu_size = (512, 512);
+        let id = Uuid::from_u128(1);
+        let mut s = pressed(0, vec![(1, e)]);
+        s.note_usage_fixed(&id, super::super::terrain_surface::DECODE_PIXELS);
+        s.recompute_wants();
+        assert_eq!(s.entries[&id].want, 0, "terrain normal maps must upgrade beyond the 512 px preview");
+    }
+
     /// The streamer under memory pressure step `step`, holding `entries`.
     fn pressed(step: u8, entries: Vec<(u128, Entry)>) -> TextureStreamer {
         let mut s = TextureStreamer::new(PathBuf::new());

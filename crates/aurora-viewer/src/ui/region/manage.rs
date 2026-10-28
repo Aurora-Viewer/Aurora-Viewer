@@ -130,9 +130,16 @@ pub(super) fn demo(s: &mut RegionUi, v: &View, world: &World) {
             _ => {}
         }
     }
+    s.surface.demo_mode = d.surface_demo;
     if d.pbr {
         let mut t = terrain;
         advanced::switch_kind(s, TerrainKind::Textures, TerrainKind::Materials, &mut t);
+        if d.pick_material {
+            t.textures = [crate::demo::pbr_materials()[0].0; 4];
+            s.manage.picking = Some(0);
+            s.texture
+                .open_terrain_materials(&aurora_i18n::tr!("region-terrain-material-title", n = 1_i64), t.textures[0]);
+        }
         s.manage.terrain.set(&terrain, t);
     }
     let heights = d.ask == Some(Ask::TextureHeights);
@@ -699,6 +706,9 @@ pub(super) fn terrain(
                 ];
                 let mut choice = usize::from(kind == TerrainKind::Materials);
                 if widgets::segmented(ui, p, &mut choice, &options) {
+                    s.texture.open = false;
+                    s.manage.picking = None;
+                    s.surface.pick_before = None;
                     let to = if choice == 1 {
                         TerrainKind::Materials
                     } else {
@@ -711,7 +721,11 @@ pub(super) fn terrain(
     );
     let kind = s.advanced.kind.unwrap_or(kind);
     s.advanced.shown_kind = Some(kind);
-    swatches(ui, p, s, &now, images, can, kind);
+    let can_cancel = super::surface::pending(s, v, world, now.textures);
+    if swatches(ui, p, s, &now, images, can, kind, can_cancel) {
+        super::surface::cancel_cover(s, v, world);
+        now = s.manage.terrain.shown(&server);
+    }
     for (n, (corner, name)) in corners().into_iter().enumerate() {
         line(ui, p);
         let desc = if n == 0 {
@@ -737,6 +751,7 @@ pub(super) fn terrain(
         match sheet::pending_bar(ui, p, pending) {
             Some(true) => apply_terrain(s, v, world),
             Some(false) => {
+                super::surface::cancel_cover(s, v, world);
                 s.manage.terrain.cancel();
                 s.advanced.transforms.cancel();
             }
@@ -755,19 +770,35 @@ fn swatches(
     images: &HashMap<Uuid, egui::TextureHandle>,
     can: bool,
     kind: TerrainKind,
-) {
+    can_cancel: bool,
+) -> bool {
     let materials = kind == TerrainKind::Materials;
-    const SIZE: Vec2 = Vec2::new(92.0, 56.0);
+    s.surface.ids = if materials { now.textures } else { [Uuid::nil(); 4] };
+    let mut cancel = false;
+    let size = Vec2::new(((ui.available_width() - 108.0) / 4.0).clamp(44.0, 92.0), 56.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         for (i, id) in now.textures.iter().enumerate() {
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 3.0;
                 let sense = if can { Sense::click() } else { Sense::hover() };
-                let (rect, r) = ui.allocate_exact_size(SIZE, sense);
+                let model = s.surface.models[i].as_ref().filter(|(asset, _)| *asset == *id && materials);
+                let (rect, r) = if let Some((_, model)) = model {
+                    let response = aurora_render::preview::paint_hint(
+                        ui,
+                        ui.scope_id().with(("terrain_material", i)),
+                        model.clone(),
+                        crate::ui::texture_library::previews::view(p),
+                        size,
+                    );
+                    (response.rect, response)
+                } else {
+                    ui.allocate_exact_size(size, sense)
+                };
                 let radius = ui.visuals().window_corner_radius;
                 let tex = (!id.is_nil() && !materials).then(|| images.get(id)).flatten();
                 match tex {
+                    None if model.is_some() => {}
                     Some(t) => {
                         let [w, h] = t.size();
                         egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), rect.size()))
@@ -789,6 +820,9 @@ fn swatches(
                     ui.painter()
                         .rect_stroke(rect, radius, egui::Stroke::new(1.0, p.violet_light), egui::StrokeKind::Inside);
                 }
+                #[cfg(test)]
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(egui::Id::unique(("terrain_swatch", i)), rect));
                 let label = match i {
                     0 => aurora_i18n::tr!("region-terrain-texture-low").to_owned(),
                     3 => aurora_i18n::tr!("region-terrain-texture-high").to_owned(),
@@ -796,10 +830,14 @@ fn swatches(
                 };
                 ui.label(RichText::new(label).size(11.0).color(p.muted));
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    if !can {
+                        return;
+                    }
                     s.manage.picking = Some(i);
+                    s.surface.pick_before = Some(*id);
                     if materials {
                         let title = aurora_i18n::tr!("region-terrain-material-title", n = (i + 1) as i64);
-                        s.texture.open_materials(&title, *id);
+                        s.texture.open_terrain_materials(&title, *id);
                     } else {
                         let title = aurora_i18n::tr!("region-terrain-texture-title", n = (i + 1) as i64);
                         s.texture.open(&title, *id);
@@ -807,14 +845,22 @@ fn swatches(
                 }
             });
         }
+        ui.add_enabled_ui(can && can_cancel, |ui| {
+            let response = widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(76.0, 28.0));
+            #[cfg(test)]
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(egui::Id::unique("terrain_cancel_cover"), response.rect));
+            cancel = response.clicked();
+        });
     });
     ui.add_space(4.0);
+    cancel
 }
 
 /// The Terrain panel's "Apply": elevation ranges whose low end is above
 /// their high one are confirmed first (validateTextureHeights, unless
 /// RegionCheckTextureHeights was turned off by "Don't ask").
-fn apply_terrain(s: &mut RegionUi, v: &View, world: &mut World) {
+pub(super) fn apply_terrain(s: &mut RegionUi, v: &View, world: &mut World) {
     // validateMaterials first: each material loaded, single-sided, not blended
     if s.advanced.shown_kind == Some(TerrainKind::Materials)
         && let Some(server) = server_terrain(world, v)
@@ -841,6 +887,7 @@ pub(super) fn send_terrain(s: &mut RegionUi, v: &View, world: &mut World) {
     let Some(server) = server_terrain(world, v) else {
         return;
     };
+    let surface = super::surface::value(s, v, world);
     if let Some(t) = s.manage.terrain.apply(&server) {
         world.estate.set_terrain(v.handle, t);
     }
@@ -851,24 +898,253 @@ pub(super) fn send_terrain(s: &mut RegionUi, v: &View, world: &mut World) {
         let now = s.advanced.transforms.apply(&server).unwrap_or(server);
         world.estate.set_transforms(v.handle, now.0);
     }
+    if let Some(region) = world.regions.get_mut(&v.handle) {
+        region.terrain_surface.applied = surface;
+        region.terrain_surface.preview = None;
+    }
 }
 
 /// The texture the picker chose for the swatch it was opened on.
 pub(super) fn picked_texture(s: &mut RegionUi, v: &View, world: &World, asset: Uuid) {
-    let Some(i) = s.manage.picking.take() else {
-        return;
-    };
-    let Some(server) = server_terrain(world, v) else {
-        return;
-    };
-    let mut now = s.manage.terrain.shown(&server);
-    now.textures[i] = asset;
-    s.manage.terrain.set(&server, now);
+    super::surface::picker_choice(s, v, world, asset, true);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::region::{MaterialInfo, advanced::MaterialProblem};
+    use aurora_assets::{AlphaMode, PbrMaterial};
+    use aurora_net::{NetCommand, NetEvent, estate::EstateCommand};
+    use std::collections::HashSet;
+    use std::sync::Arc;
+
+    #[test]
+    fn terrain_swatches_show_all_four_materials_and_the_adjacent_cancel_restores_the_cover() {
+        let ctx = egui::Context::default();
+        let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        let mut world = World::new(avatars.clone());
+        for event in crate::demo::events() {
+            if matches!(
+                event,
+                NetEvent::LoggedIn(_) | NetEvent::MainRegionChanged { .. } | NetEvent::RegionHandshake(_)
+            ) {
+                let _ = world.apply(event);
+            }
+        }
+        let handle = world.main_region.unwrap();
+        Arc::make_mut(world.regions.get_mut(&handle).unwrap().info.as_mut().unwrap()).owner = world.agent_id;
+        world.estate.region = Some(Arc::new(crate::demo::region::region_details()));
+        let mut scene = crate::scene::Scene::new(std::env::temp_dir(), avatars);
+        let _inline = crate::scene::jobs::execute_inline_on_this_thread();
+        let mut s = RegionUi {
+            manage_region: Some(handle),
+            ..Default::default()
+        };
+        let v = s.view(&world, handle);
+        let server = server_terrain(&world, &v).unwrap();
+        let assets = std::array::from_fn(|i| Uuid::from_u128(2100 + i as u128));
+        for (i, asset) in assets.into_iter().enumerate() {
+            scene.materials.insert(
+                asset,
+                PbrMaterial {
+                    roughness_factor: 0.2 * (i + 1) as f32,
+                    ..Default::default()
+                },
+            );
+        }
+        s.manage.terrain.set(
+            &server,
+            TerrainSettings {
+                textures: assets,
+                ..server
+            },
+        );
+        s.advanced.kind = Some(TerrainKind::Materials);
+        s.advanced.shown_kind = Some(TerrainKind::Materials);
+        let p = crate::theme::Theme::default().palette();
+        let frame = |s: &mut RegionUi, scene: &mut crate::scene::Scene, world: &mut World, events: Vec<egui::Event>| {
+            s.prepare_materials(&ctx, scene);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1200.0, 1200.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    terrain(ui, &p, s, &v, world, &HashMap::new());
+                },
+            );
+            // no painter here: egui 0.37 panics on unapplied texture deltas
+            output.textures_delta.clear();
+            super::super::surface::update_preview(s, &v, world);
+            output
+        };
+        for _ in 0..3 {
+            let _ = frame(&mut s, &mut scene, &mut world, Vec::new());
+        }
+        let output = frame(&mut s, &mut scene, &mut world, Vec::new());
+        assert_eq!(
+            output
+                .shapes
+                .iter()
+                .filter(|shape| matches!(shape.shape, egui::Shape::Callback(_)))
+                .count(),
+            4
+        );
+        assert_eq!(world.regions[&handle].terrain_surface.preview.unwrap().ids, assets);
+        let cancel = ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("terrain_cancel_cover")))
+            .unwrap();
+        let last = ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("terrain_swatch", 3_usize))))
+            .unwrap();
+        assert!(cancel.left() >= last.right(), "Cancel must stand beside the four swatches");
+        for pressed in [true, false] {
+            let _ = frame(
+                &mut s,
+                &mut scene,
+                &mut world,
+                vec![
+                    egui::Event::PointerMoved(cancel.center()),
+                    egui::Event::PointerButton {
+                        pos: cancel.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert_eq!(s.manage.terrain.shown(&server).textures, server.textures);
+        assert!(world.regions[&handle].terrain_surface.preview.is_none());
+        assert!(world.estate.take_commands().is_empty());
+    }
+
+    #[test]
+    fn terrain_pbr_picker_loads_previews_and_validates_all_four_draft_slots() {
+        let ctx = egui::Context::default();
+        let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        let mut world = World::new(avatars.clone());
+        for event in crate::demo::events() {
+            if matches!(
+                event,
+                NetEvent::LoggedIn(_) | NetEvent::MainRegionChanged { .. } | NetEvent::RegionHandshake(_)
+            ) {
+                let _ = world.apply(event);
+            }
+        }
+        world.estate.region = Some(Arc::new(crate::demo::region::region_details()));
+        Arc::make_mut(world.regions.get_mut(&world.main_region.unwrap()).unwrap().info.as_mut().unwrap()).owner = world.agent_id;
+        world.estate.transforms = Some(Ok([Default::default(); 4]));
+        let handle = world.main_region.unwrap();
+        let mut s = RegionUi::default();
+        let v = s.view(&world, handle);
+        let server = server_terrain(&world, &v).unwrap();
+        let mut now = server;
+        advanced::switch_kind(&mut s, TerrainKind::Textures, TerrainKind::Materials, &mut now);
+        s.manage.terrain.set(&server, now);
+        s.advanced.shown_kind = Some(TerrainKind::Materials);
+        let mut scene = crate::scene::Scene::new(std::env::temp_dir(), avatars);
+        let _inline = crate::scene::jobs::execute_inline_on_this_thread();
+        let p = crate::theme::Theme::default().palette();
+        let assets = std::array::from_fn::<_, 4, _>(|i| Uuid::from_u128(1100 + i as u128));
+        let maps = std::array::from_fn::<_, 4, _>(|i| Uuid::from_u128(1200 + i as u128));
+        for (slot, asset) in assets.into_iter().enumerate() {
+            // Accept a material not present in the region handshake, then close
+            // its picker before loading: validation still has to request it.
+            s.manage.picking = Some(slot);
+            picked_texture(&mut s, &v, &world, asset);
+            let now = s.manage.terrain.shown(&server);
+            s.prepare_materials(&ctx, &mut scene);
+            assert!(s.wanted_materials.contains(&asset));
+            assert_eq!(s.material_info.get(&asset), Some(&MaterialInfo::Pending));
+            assert_eq!(
+                advanced::material_problem(&s, &now.textures),
+                Some((slot, MaterialProblem::NotLoaded))
+            );
+            apply_terrain(&mut s, &v, &mut world);
+            assert!(world.estate.take_commands().is_empty(), "pending materials must not be sent");
+            s.ask = None;
+            scene.materials.insert(
+                asset,
+                PbrMaterial {
+                    base_color_texture: Some(maps[slot]),
+                    ..Default::default()
+                },
+            );
+            s.prepare_materials(&ctx, &mut scene);
+            assert!(advanced::material_problem(&s, &now.textures).is_none());
+
+            s.texture.open_terrain_materials("Terrain material", asset);
+            s.wanted_images.clear();
+            let mut rendered = false;
+            for _ in 0..3 {
+                // The production app prepares the region before showing it;
+                // RegionUi drains the picker's requested maps after drawing.
+                s.prepare_materials(&ctx, &mut scene);
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1200.0, 900.0))),
+                        ..Default::default()
+                    },
+                    |_| {
+                        s.texture.show(&ctx, &p, &mut world, &HashMap::new());
+                    },
+                );
+                // no painter here: egui 0.37 panics on unapplied texture deltas
+                output.textures_delta.clear();
+                s.wanted_images.extend(s.texture.wanted_images.drain());
+                rendered |= output.shapes.iter().any(|shape| matches!(shape.shape, egui::Shape::Callback(_)));
+            }
+            assert!(rendered, "terrain material preview must reach the GPU painter");
+            assert_eq!(
+                s.wanted_images,
+                HashSet::from([maps[slot]]),
+                "request only the selected material's maps"
+            );
+            s.texture.open = false;
+        }
+        assert_eq!(s.manage.terrain.shown(&server).textures, assets);
+        // Preserve the reference terrain constraints while fixing loading.
+        for (material, problem) in [
+            (
+                PbrMaterial {
+                    double_sided: true,
+                    ..Default::default()
+                },
+                MaterialProblem::DoubleSided,
+            ),
+            (
+                PbrMaterial {
+                    alpha_mode: AlphaMode::Blend,
+                    ..Default::default()
+                },
+                MaterialProblem::Blend,
+            ),
+        ] {
+            scene.materials.insert(assets[2], material);
+            s.prepare_materials(&ctx, &mut scene);
+            assert_eq!(advanced::material_problem(&s, &assets), Some((2, problem)));
+            apply_terrain(&mut s, &v, &mut world);
+            assert!(world.estate.take_commands().is_empty());
+            s.ask = None;
+        }
+        scene.materials.insert(
+            assets[2],
+            PbrMaterial {
+                alpha_mode: AlphaMode::Mask,
+                ..Default::default()
+            },
+        );
+        s.prepare_materials(&ctx, &mut scene);
+        apply_terrain(&mut s, &v, &mut world);
+        assert!(s.ask.is_none());
+        let commands = world.estate.take_commands();
+        assert!(matches!(commands.as_slice(), [
+            NetCommand::Estate(EstateCommand::SetTerrain { handle: h, terrain, .. }),
+            NetCommand::Estate(EstateCommand::TerrainTransforms { .. }),
+        ] if *h == handle && terrain.textures == assets));
+    }
 
     /// The mockup's corners, in the composition's numbering.
     #[test]

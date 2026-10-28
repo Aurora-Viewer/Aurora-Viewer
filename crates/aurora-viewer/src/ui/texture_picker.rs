@@ -138,6 +138,12 @@ impl TexturePicker {
         self.extra_buttons = true;
     }
 
+    /// Terrain requires a material in every slot; Blank remains available.
+    pub(crate) fn open_terrain_materials(&mut self, title: &str, current: Uuid) {
+        self.open_materials(title, current);
+        self.allow_none = false;
+    }
+
     pub(crate) fn take_preview(&mut self) -> Option<Uuid> {
         self.preview.take()
     }

@@ -62,11 +62,13 @@ mod world_overlays;
 pub use sync_plan::LodInfo;
 pub mod sync_sets;
 pub mod tangents;
+mod terrain_surface;
 pub mod texture_budget;
 pub(crate) mod texture_cache;
 pub mod texture_importance;
 mod texture_load;
 mod texture_ui;
+use terrain_surface::SurfaceGpu;
 pub mod textures;
 pub mod water;
 mod water_contacts;
@@ -647,8 +649,8 @@ struct TerrainChunk {
 
 struct RegionGpu {
     chunks: HashMap<u32, TerrainChunk>,
-    detail_slots: [u32; 4],
-    detail_ids: [Uuid; 4],
+    surface: SurfaceGpu,
+    offset: Vec3,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -2022,9 +2024,7 @@ impl Scene {
                 renderer.free_mesh(c.alloc);
                 renderer.records.free(c.record);
             }
-            for id in r.detail_ids {
-                self.textures.release(&id);
-            }
+            r.surface.free(renderer, &mut self.textures);
         }
         self.water.clear(renderer);
         self.banlines.clear(renderer);
@@ -4031,99 +4031,6 @@ impl Scene {
 
     // ------------------------------------------------------------ terrain & water
 
-    fn sync_terrain(&mut self, renderer: &mut Renderer, world: &mut World) {
-        let handles: Vec<u64> = world.regions.keys().copied().collect();
-        // drop GPU data of vanished regions
-        let stale: Vec<u64> = self.regions.keys().filter(|h| !world.regions.contains_key(h)).copied().collect();
-        for h in stale {
-            if let Some(r) = self.regions.remove(&h) {
-                for (_, c) in r.chunks {
-                    renderer.free_mesh(c.alloc);
-                    renderer.records.free(c.record);
-                }
-                for id in r.detail_ids {
-                    self.textures.release(&id);
-                }
-            }
-        }
-        let mut built = 0;
-        for h in handles {
-            let Some(offset) = world.region_offset(h) else {
-                continue;
-            };
-            let Some(reg) = world.regions.get_mut(&h) else {
-                continue;
-            };
-            let Some(info) = reg.info.clone() else {
-                continue;
-            };
-            let rg = self.regions.entry(h).or_insert_with(|| RegionGpu {
-                chunks: HashMap::new(),
-                detail_slots: [aurora_render::textures::WHITE; 4],
-                detail_ids: [Uuid::nil(); 4],
-            });
-            if rg.detail_ids != info.terrain_detail {
-                for (i, id) in info.terrain_detail.iter().enumerate() {
-                    let old = rg.detail_ids[i];
-                    rg.detail_slots[i] = self.textures.acquire(renderer, *id, TexSource::Asset);
-                    self.textures.release(&old);
-                    rg.detail_ids[i] = *id;
-                }
-                reg.dirty_chunks.extend(0..reg.heightmap.chunk_count());
-            }
-            if reg.dirty_chunks.is_empty() || built > 6 {
-                continue;
-            }
-            let comp = Composition {
-                start_height: info.terrain_start_height,
-                height_range: info.terrain_height_range,
-                origin_x: (h >> 32) as f64,
-                origin_y: (h & 0xFFFF_FFFF) as f64,
-            };
-            let chunks: Vec<u32> = reg.dirty_chunks.iter().copied().take(8).collect();
-            for c in chunks {
-                reg.dirty_chunks.remove(&c);
-                let (v, i) = terrain::build_chunk(&reg.heightmap, &comp, c);
-                let Some(alloc) = renderer.upload_mesh(&v, &i) else {
-                    continue;
-                };
-                let (mut zmin, mut zmax) = (f32::MAX, f32::MIN);
-                for vv in &v {
-                    zmin = zmin.min(vv.pos[2]);
-                    zmax = zmax.max(vv.pos[2]);
-                }
-                let cx_n = reg.heightmap.size_x / CHUNK_CELLS;
-                let x0 = (c % cx_n * CHUNK_CELLS) as f32;
-                let y0 = (c / cx_n * CHUNK_CELLS) as f32;
-                let half = CHUNK_CELLS as f32 * 0.5;
-                let center = offset + Vec3::new(x0 + half, y0 + half, (zmin + zmax) * 0.5);
-                let radius = Vec3::new(half, half, (zmax - zmin) * 0.5).length();
-                let rec = DrawRecord {
-                    model: Mat4::from_translation(offset).to_cols_array_2d(),
-                    uv_st: [12.0, 12.0, 0.0, 0.0],
-                    tex: rg.detail_slots,
-                    ..Default::default()
-                };
-                let record = renderer.records.alloc(rec);
-                if let Some(old) = rg.chunks.insert(
-                    c,
-                    TerrainChunk {
-                        alloc,
-                        record,
-                        center,
-                        radius,
-                    },
-                ) {
-                    renderer.free_mesh(old.alloc);
-                    renderer.records.free(old.record);
-                }
-                built += 1;
-            }
-            // keep detail texture slots current (placeholders become real textures in place)
-            let _ = rg.detail_slots;
-        }
-    }
-
     // ------------------------------------------------------------ culling
 
     /// Build this frame's draw lists.
@@ -4159,20 +4066,32 @@ impl Scene {
                     bounds: [0.0; 4],
                 };
                 if shadows {
-                    self.lists.shadow_casters.push(ShadowCaster {
+                    self.lists.terrain_shadow_casters.push(ShadowCaster {
                         cmd,
                         center: c.center,
                         radius: c.radius,
-                        alpha: false,
+                        alpha: r.surface.masked,
                     });
                 }
                 if self.reflections {
                     // with its bounds: each reflection pass keeps the chunks
                     // in its own frustum
-                    self.lists.reflection_terrain.push(cmd.with_bounds(c.center, c.radius));
+                    let reflected = cmd.with_bounds(c.center, c.radius);
+                    if r.surface.pbr {
+                        self.lists.reflection_terrain_pbr.push(reflected);
+                    } else {
+                        self.lists.reflection_terrain.push(reflected);
+                    }
                 }
                 if view.sphere_visible(c.center, c.radius) {
-                    self.lists.terrain.push(cmd);
+                    // one shader per kind of terrain (env.wgsl)
+                    if r.surface.masked {
+                        self.lists.terrain_mask.push(cmd);
+                    } else if r.surface.pbr {
+                        self.lists.terrain_pbr.push(cmd);
+                    } else {
+                        self.lists.terrain.push(cmd);
+                    }
                     for record in self.land_overlays.records(handle) {
                         self.lists.land_overlay.push(DrawCmd { record, ..cmd });
                     }
@@ -4715,10 +4634,11 @@ impl Scene {
             }
         }
         if usage_phase == 0 {
-            // terrain detail textures: always wanted at decent resolution
+            // LLTerrainMaterials::boost: TERRAIN_DECODE_PRIORITY = 2048²,
+            // for every material map too. A 512 px cap loses terrain relief.
             for r in self.regions.values() {
-                for id in &r.detail_ids {
-                    self.textures.note_usage_fixed(id, 512.0);
+                for id in &r.surface.texture_ids {
+                    self.textures.note_usage_fixed(id, terrain_surface::DECODE_PIXELS);
                 }
             }
             self.textures.recompute_wants();

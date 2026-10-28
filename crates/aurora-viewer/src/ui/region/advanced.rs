@@ -320,6 +320,7 @@ pub(super) fn terrain_fold(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: 
     let owner = v.shown == Role::Owner;
     if kind == TerrainKind::Materials {
         transforms(ui, p, s, world, can);
+        local_paintmap(ui, p, v, world, std::mem::take(&mut s.surface.demo_paint_scroll));
     }
     // the RAW file is the estate owner's, as the bake (owner_or_god)
     let busy = world.estate.raw_busy || s.advanced.raw_file.is_some();
@@ -371,6 +372,47 @@ pub(super) fn terrain_fold(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: 
     if let Some((ok, note)) = &s.advanced.raw_note {
         let color = if *ok { p.muted } else { p.danger };
         ui.add(egui::Label::new(RichText::new(note).size(11.5).color(color)).wrap());
+    }
+}
+
+/// The Legacy Viewer's experimental local paintmap create/delete actions.
+/// This freezes composition locally; Apply never publishes the map.
+fn local_paintmap(ui: &mut egui::Ui, p: &Palette, v: &View, world: &mut World, demo_scroll: bool) {
+    let Some(region) = world.regions.get_mut(&v.handle) else { return };
+    let loaded = region.heightmap.received_fraction() >= 1.0;
+    let state = &mut region.terrain_surface;
+    line(ui, p);
+    srow(
+        ui,
+        p,
+        aurora_i18n::tr!("region-paintmap"),
+        aurora_i18n::tr!("region-paintmap-desc"),
+        260.0,
+        |ui| {
+            if ui
+                .add_enabled(
+                    state.paintmap.is_some() || state.paint_busy(),
+                    egui::Button::new(aurora_i18n::tr!("common-reset")),
+                )
+                .clicked()
+            {
+                state.clear_paint();
+            }
+            let label = if state.paint_busy() {
+                aurora_i18n::tr!("common-loading")
+            } else {
+                aurora_i18n::tr!("region-paintmap-create")
+            };
+            if ui.add_enabled(loaded && !state.paint_busy(), egui::Button::new(label)).clicked() {
+                state.request_paint();
+            }
+        },
+    );
+    if state.paint_failed {
+        why(ui, p, aurora_i18n::tr!("region-paintmap-failed"));
+    }
+    if demo_scroll {
+        ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
     }
 }
 
