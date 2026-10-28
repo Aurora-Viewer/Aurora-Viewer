@@ -872,7 +872,9 @@ impl ObjectStore {
 
     /// End the corrections that have faded: the objects that do not move
     /// otherwise are still again, at the place of their last report, and
-    /// the scene hears of it.
+    /// the scene places them once more. A prim of a worn linkset was placed
+    /// by the sync while it faded; nothing else would put it back on its
+    /// anchor, and it would stay in the world behind its walking wearer.
     pub fn expire_corrections(&mut self, now: Instant) {
         if self.correcting.is_empty() {
             return;
@@ -886,6 +888,7 @@ impl ObjectStore {
                 Some(c) if c.active(now) => true,
                 Some(_) => {
                     o.correction = None;
+                    o.render.needs_records = true;
                     self.touched.note(idx);
                     false
                 }
