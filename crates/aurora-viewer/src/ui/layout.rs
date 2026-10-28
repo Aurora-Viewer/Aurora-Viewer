@@ -1343,12 +1343,13 @@ mod tests {
         let ctx = egui::Context::default();
         // the second pass records the window's place
         for _ in 0..2 {
-            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                 egui::Window::new(id)
                     .id(Id::unique(id))
                     .default_pos(Pos2::new(x, 50.0))
                     .show(ui.ctx(), |ui| ui.label("x"));
             });
+            out.textures_delta.clear();
         }
         ctx.memory(|m| m.clone())
     }
