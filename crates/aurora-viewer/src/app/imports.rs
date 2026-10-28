@@ -776,6 +776,8 @@ impl App {
             object.render.local_scale = scale;
             object.shape_dirty = true;
             object.render.needs_records = true;
+            // counted again from the local mesh (face stepping, texturing)
+            self.build.face_counts.remove(id);
         }
         self.clear_local_mesh_targets(&invalid);
     }
@@ -790,6 +792,7 @@ impl App {
                 object.shape_dirty = true;
                 object.render.needs_records = true;
             }
+            self.build.face_counts.remove(id);
         }
     }
     pub(super) fn apply_local_imports(&mut self, renderer: &mut aurora_render::Renderer) {
