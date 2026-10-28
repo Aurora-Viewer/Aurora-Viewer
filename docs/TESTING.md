@@ -841,7 +841,7 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_KEY=down|up|left|right`**: holds an arrow from frame 235
   (movement, body orientation). `:pulse` (`up:pulse`): held 2 s, released
   2 s, over and over (by the clock: the same at any frame rate).
-- **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,stoplag=<ms>][,aurora|firestorm][,vehicle][,trace][,native-flight]`**:
+- **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,stoplag=<ms>][,aurora|firestorm][,vehicle|crash][,trace][,native-flight]`**:
   instead of moving our avatar at once, the demo sends the keys to a
   stand-in simulator after half the ping; it moves its own copy of the
   avatar with the demo's rules and its reports (terse updates of our
@@ -870,8 +870,8 @@ when unfocused") is ignored during a screenshot.
   release; Aurora's starts within 50 ms (the first frame) and eases to a
   stop over about 0.15 s, 0.2 m on, without coming back (`jitter=40`: the
   same). `trace` writes one `demo link trace` line per frame (keys, drawn
-  position, simulator's position, lead, correction left, camera, drawn
-  animations): with `AURORA_DEMO_KEY=up:pulse`, the speed frame by frame
+  position, simulator's position, lead, correction left, camera and its
+  focus, drawn animations): with `AURORA_DEMO_KEY=up:pulse`, the speed frame by frame
   around each release must fall without a step and never rise again
   (measured 2026-10-16, 60 and 500 fps: at most 0.5 m/s less from a frame
   of 16 ms to the next, no rise, no pull-back; Firestorm's: up to 1.16 m/s
@@ -881,7 +881,17 @@ when unfocused") is ignored during a screenshot.
   up beside it. With `AURORA_DEMO_KEY=up`, the keys held while seated must
   not move the avatar (it stays on the car, extrapolated and smoothed like
   any object), and standing up must start from the simulator's position,
-  then walk at once. Plain `AURORA_DEMO` (no link) has nothing to predict:
+  then walk at once. `crash` (implies `vehicle`): at 3.25 s the car takes
+  the camera like a racing script (rigid behind it, no lag), drives east
+  at 6 m/s, hits a wall at 7 s and another at 11 s on the way back: each
+  impact is a few abrupt reports (thrown back, turned 17° and rolled 7°,
+  spinning) that the next ones undo. The car and the camera following it
+  must swing through the impact without a jolt: the root an avatar sits
+  on is damped every frame (issue #1250). With `trace` (camera and focus
+  per frame), measured on 2026-10-28 at `AURORA_FPS_LIMIT=60`: during an
+  impact the view sweeps 34–38° (49° before the damping), peaking at
+  137–163°/s (189°/s), and the camera's velocity changes by at most
+  21 m/s from a frame to the next (35 m/s). Plain `AURORA_DEMO` (no link) has nothing to predict:
   the setting has no effect there. Any prim of the demo can be sat on
   (right-click › Sit, or `/siton <key>` in the chat bar) and stood up from
   (Stand up), with or without the link: our avatar sits on its top and
