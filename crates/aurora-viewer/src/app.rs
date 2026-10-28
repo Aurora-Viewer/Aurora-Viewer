@@ -2147,6 +2147,15 @@ impl App {
                 });
                 return;
             }
+            // ObjectDetach of a temporary attachment: there is no item to
+            // keep, the simulator kills the object
+            if let NetCommand::DetachObject { handle, local_id } = &cmd {
+                self.world.apply(NetEvent::ObjectsKilled {
+                    handle: *handle,
+                    local_ids: vec![*local_id],
+                });
+                return;
+            }
             // the sample offer of the notification center is "already in the
             // inventory", like a resident's offer on the grid
             if let NetCommand::FetchItems { items, owner } = &cmd

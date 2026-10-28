@@ -642,6 +642,12 @@ impl Land {
         self.send(LandCommand::AttachmentScripts);
     }
 
+    /// LLPanelWearing::requestAttachmentDetails: the same answer, kept by
+    /// the Scripts window if open, names our temporary attachments.
+    pub fn request_attachment_names(&mut self) {
+        self.send(LandCommand::AttachmentScripts);
+    }
+
     /// returnObjectsFromParcel: the objects by their IDs, one message per
     /// parcel of the selection's region.
     pub fn return_tasks(&mut self, local_id: i32, tasks: Vec<Uuid>) {

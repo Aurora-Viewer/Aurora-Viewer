@@ -85,6 +85,7 @@ pub mod sound_parcels;
 pub mod staff;
 pub mod status;
 pub mod teleport_invites;
+pub mod temp_attachments;
 pub mod terrain;
 pub mod tphistory;
 pub mod transcripts;
@@ -242,6 +243,8 @@ pub struct World {
     pub hud_zoom: f32,
     pub hud_scales: hud_scale::HudScales,
     pub hud_locks: hud_lock::HudLocks,
+    /// Names of our temporary attachments (temp_attachments.rs).
+    pub temp_attachment_names: temp_attachments::TempAttachmentNames,
     pub hover_height: hover_height::HoverHeight,
     /// The favourites in the account's order (`favorites.rs`).
     pub favorites: favorites::Favorites,
@@ -596,6 +599,7 @@ impl World {
             hud_zoom: 1.0,
             hud_scales: Default::default(),
             hud_locks: Default::default(),
+            temp_attachment_names: Default::default(),
             hover_height: Default::default(),
             favorites: Default::default(),
             notification_history: Default::default(),
@@ -2933,7 +2937,10 @@ impl World {
             NetEvent::Land(ev) => {
                 if let aurora_net::land::LandEvent::AttachmentScripts(result) = &ev {
                     match result {
-                        Ok((_, attachments)) => self.rlva_controller_resources(attachments),
+                        Ok((_, attachments)) => {
+                            self.temp_attachment_names.learn(attachments);
+                            self.rlva_controller_resources(attachments)
+                        }
                         Err(_) => self.rlva_controller_resources(&[]),
                     }
                 }

@@ -16,6 +16,10 @@ impl App {
             self.demo_temporary_detach_steps(mode == "temporary-detach");
             return;
         }
+        if mode == "temporary" {
+            self.demo_temporary_steps();
+            return;
+        }
         let freeze = mode == "freeze";
         let (edit, inspect) = (matches!(mode.as_str(), "edit" | "move" | "freeze"), mode == "inspect");
         if !(edit || inspect || mode == "menu") {
@@ -81,6 +85,25 @@ impl App {
 
     /// A temporary attachment's linked script starts a dance, then removes
     /// the attachment without sending an animation stop of its own.
+    /// AURORA_DEMO_WORN=temporary: at frame 600 an experience attaches a
+    /// temporary object to the left hand, and Appearance opens on Worn, its
+    /// "Temporary attachments" section named by AttachmentResources.
+    fn demo_temporary_steps(&mut self) {
+        if self.frame_count != 600 {
+            return;
+        }
+        let Some(handle) = self.world.main_region else {
+            return;
+        };
+        self.world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: crate::demo::worn::temporary(),
+        });
+        self.panels.appearance = true;
+        self.appearance_ui.open(2, false);
+        log::info!("demo temporary attachments: {:?}", self.world.temp_attachments());
+    }
+
     fn demo_temporary_detach_steps(&mut self, killed: bool) {
         let agent = self.world.agent_id;
         let anim = crate::demo::CROWD_DANCE_ANIM;
