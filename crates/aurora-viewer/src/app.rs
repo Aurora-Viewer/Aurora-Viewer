@@ -7026,6 +7026,10 @@ impl App {
     fn refine_ui_copies(&mut self) {
         // (a texture that never gets finer is given up after that)
         const FOLLOWED: Duration = Duration::from_secs(300);
+        // (an image dropped meanwhile, a texture refreshed: its next copy is
+        // the one its loader takes)
+        let (pics, images) = (&self.avatar_pic_images, &self.ui_images);
+        self.ui_coarse.retain(|id, _| pics.contains_key(id) || images.contains_key(id));
         let coarse: Vec<(uuid::Uuid, u32)> = self.ui_coarse.iter().map(|(id, (w, _))| (*id, *w)).collect();
         for (image, have) in coarse {
             match self.scene.textures.take_ui_image(&image) {
