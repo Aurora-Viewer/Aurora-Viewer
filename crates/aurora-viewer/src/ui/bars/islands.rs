@@ -118,13 +118,26 @@ fn steady_width(ui: &egui::Ui, s: &str, size: f32) -> f32 {
     ['0', '4', '8'].into_iter().map(probe).fold(0.0, f32::max).ceil()
 }
 
-/// The width a readout keeps whatever its value (#1246): the steady width
-/// of its text, or of the widest values it takes (`room`) when wider, so
-/// that the frame rate falling under 100 does not move the bar.
-pub(super) fn room_width(ui: &egui::Ui, s: &str, room: &[String], size: f32) -> f32 {
-    room.iter()
-        .map(|r| steady_width(ui, r, size))
-        .fold(steady_width(ui, s, size), f32::max)
+/// How long a readout keeps a width it no longer needs, in seconds.
+const HOLD: f64 = 10.0;
+
+/// The width a readout takes (#1246): the widest steady width its text
+/// needed in the last `HOLD` seconds, `id` remembering it. A frame rate
+/// going back and forth across 100 (a latency across 100 ms, a 12-hour
+/// clock across 10:00) does not move the bar, and no margin is kept for a
+/// digit the value never reaches.
+pub(super) fn held_width(ui: &egui::Ui, id: Id, s: &str, size: f32) -> f32 {
+    let w = steady_width(ui, s, size);
+    let ctx = ui.ctx();
+    let now = ctx.input(|i| i.time);
+    let (held, since) = ctx.data(|d| d.get_temp::<(f32, f64)>(id)).unwrap_or((w, now));
+    if w >= held || now - since >= HOLD {
+        // `since`: the last time the held width was needed
+        ctx.data_mut(|d| d.insert_temp(id, (w, now)));
+        w
+    } else {
+        held
+    }
 }
 
 /// The latency's text.
@@ -135,16 +148,6 @@ pub(super) fn ping_text(ms: u32) -> String {
 /// The frame rate's text.
 pub(super) fn fps_text(fps: f32) -> String {
     aurora_i18n::number(f64::from(fps), 1)
-}
-
-/// The values the latency and the frame rate keep room for: three digits
-/// before the decimal point, as the Legacy Viewer's fixed-width boxes.
-pub(super) fn ping_room() -> [String; 1] {
-    [ping_text(100)]
-}
-
-pub(super) fn fps_room() -> [String; 1] {
-    [fps_text(100.0)]
 }
 
 /// A readout of the system island: icon then text, `width` wide.
@@ -436,12 +439,11 @@ fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action
     status.on_hover_text(status_tip(&st.status));
 }
 
-/// The readouts of the system island, and the clock's widest values.
+/// The readouts of the system island.
 struct Readouts {
     clock: String,
     ping: String,
     fps: String,
-    clock_room: [String; 2],
 }
 
 /// The readouts of the system island: clock, latency, frame rate.
@@ -451,7 +453,6 @@ fn readouts(st: &StatusInfo) -> Readouts {
         clock: clock::text(s),
         ping: ping_text(st.ping_ms),
         fps: fps_text(st.fps),
-        clock_room: clock::widest(s),
     }
 }
 
@@ -463,7 +464,7 @@ const AUDIO_W: f32 = SLOT * 3.0 + 2.0 * 2.0;
 const NET_W: f32 = 36.0;
 
 /// What the system island shows, left to right.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Item {
     Clock,
     Ping,
@@ -497,9 +498,9 @@ fn items(st: &StatusInfo) -> Vec<Item> {
 
 fn item_width(ui: &egui::Ui, texts: &Readouts, item: Item) -> f32 {
     match item {
-        Item::Clock => readout_width(room_width(ui, &texts.clock, &texts.clock_room, READOUT)),
-        Item::Ping => readout_width(room_width(ui, &texts.ping, &ping_room(), READOUT)),
-        Item::Fps => readout_width(room_width(ui, &texts.fps, &fps_room(), READOUT)),
+        Item::Clock => readout_width(held_width(ui, Id::unique(("bars_readout", item)), &texts.clock, READOUT)),
+        Item::Ping => readout_width(held_width(ui, Id::unique(("bars_readout", item)), &texts.ping, READOUT)),
+        Item::Fps => readout_width(held_width(ui, Id::unique(("bars_readout", item)), &texts.fps, READOUT)),
         Item::Net => readout_width(NET_W),
         Item::Media => AUDIO_W,
     }
@@ -1468,42 +1469,43 @@ mod tests {
         assert_eq!(items(&st), vec![Item::Clock]);
     }
 
-    /// The readouts keep their width whatever their value (#1246): the
-    /// frame rate and the latency up to three digits, a 12-hour clock at
-    /// every hour, before and after noon.
+    /// A readout keeps the widest width it needed in the last `HOLD`
+    /// seconds (#1246): one digit is as wide as another, the frame rate
+    /// going back and forth across 100 does not move the island, which
+    /// narrows again once it stays under 100; the latency alike.
     #[test]
-    fn the_readouts_keep_their_width() {
+    fn the_readouts_hold_their_width() {
         let ctx = egui::Context::default();
-        let mut st = status(true, true);
-        st.system_island.clock_zone = crate::settings::ClockZone::Slt;
-        st.system_island.clock_format = crate::settings::ClockFormat::H12;
-        st.system_island.clock_seconds = false;
-        let markers = [aurora_i18n::tr!("ui-bars-clock-am"), aurora_i18n::tr!("ui-bars-clock-pm")];
-        let clocks: Vec<String> = (1..=12)
-            .flat_map(|h| markers.iter().map(move |m| format!("{h}:00 {m} SLT")))
-            .collect();
-        let mut out = ctx.run_ui(Default::default(), |ui| {
-            let width = |item, fps: f32, ping: u32, clock: &str| {
+        let st = status(true, true);
+        let width_at = |time: f64, item: Item, fps: f32, ping: u32| {
+            let mut w = 0.0;
+            let input = egui::RawInput {
+                time: Some(time),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
                 let texts = Readouts {
-                    clock: clock.to_owned(),
                     ping: ping_text(ping),
                     fps: fps_text(fps),
                     ..readouts(&st)
                 };
-                item_width(ui, &texts, item)
-            };
-            let fps = [0.0, 9.9, 60.0, 99.9, 100.0, 144.0, 999.9]
-                .map(|f| width(Item::Fps, f, 0, ""))
-                .to_vec();
-            assert!(fps.windows(2).all(|w| w[0] == w[1]), "frame rate: {fps:?}");
-            let ping = [0, 9, 42, 99, 100, 999].map(|ms| width(Item::Ping, 0.0, ms, "")).to_vec();
-            assert!(ping.windows(2).all(|w| w[0] == w[1]), "latency: {ping:?}");
-            let clock: Vec<f32> = clocks.iter().map(|c| width(Item::Clock, 0.0, 0, c)).collect();
-            assert!(clock.windows(2).all(|w| w[0] == w[1]), "clock: {clock:?}");
-            // beyond, the readout grows rather than overflow
-            assert!(width(Item::Fps, 1000.0, 0, "") > fps[0]);
-        });
-        out.textures_delta.clear();
+                w = item_width(ui, &texts, item);
+            });
+            out.textures_delta.clear();
+            w
+        };
+        let narrow = width_at(0.0, Item::Fps, 99.9, 0);
+        assert_eq!(width_at(0.5, Item::Fps, 15.0, 0), narrow, "one digit as wide as another");
+        let wide = width_at(1.0, Item::Fps, 100.0, 0);
+        assert!(wide > narrow);
+        assert_eq!(width_at(2.0, Item::Fps, 99.9, 0), wide);
+        assert_eq!(width_at(3.0, Item::Fps, 144.0, 0), wide);
+        assert_eq!(width_at(3.0 + HOLD - 0.5, Item::Fps, 99.9, 0), wide);
+        assert_eq!(width_at(3.0 + HOLD, Item::Fps, 99.9, 0), narrow);
+        let ping = width_at(20.0, Item::Ping, 0.0, 99);
+        assert!(width_at(21.0, Item::Ping, 0.0, 100) > ping);
+        assert!(width_at(22.0, Item::Ping, 0.0, 5) > ping);
+        assert_eq!(width_at(21.0 + HOLD, Item::Ping, 0.0, 99), ping);
     }
 
     /// Firestorm's thresholds of the traffic indicator: under 1.25 % of
