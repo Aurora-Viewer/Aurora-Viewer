@@ -505,18 +505,11 @@ fn texture(
                 selection(ui, target, index, label);
             }
         });
-    ui.horizontal(|ui| {
-        ui.label(aurora_i18n::tr!("import-max-size"));
-        for (axis, value) in [("X", &mut options.max_width), ("Y", &mut options.max_height)] {
-            egui::ComboBox::from_id_salt(("import_dimension", axis))
-                .selected_text(value.to_string())
-                .show_ui(ui, |ui| {
-                    for size in [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048] {
-                        selection(ui, value, size, size.to_string());
-                    }
-                });
-        }
-    });
+    let mut limit_size = options.max_width.max(options.max_height) <= 1024;
+    widgets::switch_labeled(ui, p, &mut limit_size, aurora_i18n::tr!("import-max-size"));
+    let maximum = if limit_size { 1024 } else { 2048 };
+    options.max_width = maximum;
+    options.max_height = maximum;
     let (width, height) = import_texture::dimensions(image.width, image.height, *options);
     ui.label(aurora_i18n::tr!(
         "import-texture-size",

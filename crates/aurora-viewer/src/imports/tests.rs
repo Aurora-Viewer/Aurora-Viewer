@@ -804,7 +804,7 @@ fn restoring_a_failed_draft_keeps_material_edits_without_sending_or_clearing_the
     assert!(imports.current.is_none() && imports.queue.is_empty());
     assert_eq!(imports.message, "Verify inventory before retrying");
 }
-fn image(w: u32, h: u32) -> Arc<DecodedImage> {
+pub(super) fn image(w: u32, h: u32) -> Arc<DecodedImage> {
     Arc::new(DecodedImage {
         width: w,
         height: h,

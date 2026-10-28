@@ -1,6 +1,92 @@
 use super::*;
 
 #[test]
+fn texture_size_switch_updates_both_axes_preview_and_price() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let pixels = crate::imports::tests::image(2048, 1024);
+    let entry = Entry::new("large.png".into(), Ok(Source::Texture(pixels.clone())), Default::default());
+    let id = entry.id;
+    let mut imports = Imports {
+        open: true,
+        choice: Choice::Texture,
+        active: Some(id),
+        entries: vec![entry],
+        ..Default::default()
+    };
+    let prices = Prices {
+        texture: Some(10),
+        large_texture: Some(50),
+        ..Default::default()
+    };
+    let frame = |imports: &mut Imports, events| {
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                actions = show(
+                    ui.ctx(),
+                    &theme.palette(),
+                    imports,
+                    &mut Preferences::default(),
+                    &world,
+                    &Default::default(),
+                )
+            },
+        );
+        output.textures_delta.clear();
+        (output, actions)
+    };
+    for _ in 0..8 {
+        drop(frame(&mut imports, Vec::new()));
+    }
+    for (limit, dimensions, cost) in [(false, (2048, 1024), 50), (true, (1024, 512), 10)] {
+        let (output, _) = frame(&mut imports, Vec::new());
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("import-max-size") => {
+                    Some(egui::Rect::from_min_size(text.pos, text.galley.size()).center())
+                }
+                _ => None,
+            })
+            .expect("one size-limit switch");
+        let generation = imports.entries[0].preview_generation;
+        let mut preview_requested = false;
+        for pressed in [true, false] {
+            let (_, actions) = frame(
+                &mut imports,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+            preview_requested |= actions
+                .iter()
+                .any(|action| matches!(action, Action::Preview(entry) if *entry == id));
+        }
+        let options = imports.entries[0].options;
+        let maximum = if limit { 1024 } else { 2048 };
+        assert_eq!((options.max_width, options.max_height), (maximum, maximum));
+        assert_eq!(import_texture::dimensions(pixels.width, pixels.height, options), dimensions);
+        assert_eq!(imports.total(&prices), Some(cost));
+        assert!(preview_requested && imports.entries[0].preview_generation > generation);
+    }
+}
+
+#[test]
 fn mesh_inspector_geometry_settles_without_resizing_in_a_short_work_area() {
     let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
     for (work_width, work_height, ppp) in [

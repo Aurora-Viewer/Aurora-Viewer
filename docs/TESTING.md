@@ -4223,6 +4223,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   then opens the chosen flow: RGBA image, PBR material, Collada cube,
   BVH / `.anim` animations and synthetic WAV sound. Check the settings, the
   previews, the camera, the permissions, the selection and the confirmation.
+  The texture inspector has one "Limit size to 1024 × 1024" switch, on by
+  default. Off permits 2048 on both axes. With a 2048 × 1024 source opened
+  through `AURORA_DEMO_IMPORT_FILE`, check that toggling it changes the
+  preview's dimensions between 1024 × 512 and 2048 × 1024 and updates the fee.
   Each type has a dedicated window with the file list at the left and only
   its relevant metadata, preview and controls at the right. There
   are no other type tabs in these windows. Sound uses a shorter window.
