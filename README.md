@@ -1017,6 +1017,30 @@ Behaviour follows the Legacy Viewer: its sources are expected next to the reposi
 
 Questions and ideas are welcome on [Discord](https://discord.gg/TK4nbMGmKt).
 
+## AI use
+
+Aurora is made by people: developers, QA testers who test each version on
+the grid, a project manager, a community manager and moderators. Some
+contributors use AI coding assistants to help write code, and we say so
+openly.
+
+- **No AI in the viewer you download**: no AI feature, no AI model, nothing
+  sent to an AI service.
+- **AI never sees your password**: the AI tools run only on the developers'
+  computers while they write code. Your password goes from your computer to
+  Linden Lab, and nowhere else.
+- **[AGENTS.md](AGENTS.md) is not part of the viewer**: it holds the
+  guidelines for contributors who use AI, so that those tools follow strict
+  rules. Its first rule forbids them to connect to Second Life or to handle
+  any user name or password.
+- **No AI-generated art**: images, sounds, icons and design are made by
+  people.
+- **Every change is tested by a person** before it is merged, then by QA
+  testers on the grid.
+
+Questions and answers, and the details:
+[AI use policy](https://aurora-viewer.org/ai-policy/).
+
 ## Privacy
 
 The Aurora team runs no server: the viewer talks to Linden Lab, and to other
