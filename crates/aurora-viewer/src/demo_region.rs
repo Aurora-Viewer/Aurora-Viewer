@@ -129,6 +129,16 @@ fn parse(v: &str) -> Scenario {
                 s.manage.pbr = true;
                 s.manage.pick_material = true;
             }
+            "pbr-ground" | "pbr-preview" | "pbr-cancel" | "pbr-apply" => {
+                s.manage.section = Some(2);
+                s.manage.pbr_ground = true;
+                s.manage.surface_demo = match part {
+                    "pbr-preview" => 1,
+                    "pbr-cancel" => 2,
+                    "pbr-apply" => 3,
+                    _ => 0,
+                };
+            }
             "environment" => s.manage.section = Some(5),
             "experiences" => s.manage.section = Some(6),
             "covenant" => s.manage.section = Some(7),
@@ -240,6 +250,14 @@ fn parse(v: &str) -> Scenario {
 
 pub fn scenario() -> Option<Scenario> {
     std::env::var("AURORA_DEMO_REGION").ok().map(|v| parse(&v))
+}
+
+pub fn terrain_ids() -> Option<[Uuid; 4]> {
+    scenario().filter(|s| s.manage.pbr_ground).map(|_| [super::MAT_PBR_TILES; 4])
+}
+
+pub fn terrain_replacement() -> Uuid {
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0015)
 }
 
 /// The estate's owner: the avatar when it owns it, else Loup.

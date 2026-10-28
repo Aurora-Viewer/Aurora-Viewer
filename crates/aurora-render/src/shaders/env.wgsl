@@ -152,6 +152,7 @@ struct TerrainOut {
     @location(2) uv: vec2<f32>,
     @location(3) comp: f32,
     @location(4) @interpolate(flat) record: u32,
+    @location(5) region_pos: vec3<f32>,
 };
 
 @vertex
@@ -170,6 +171,7 @@ fn vs_terrain(in: VsIn) -> TerrainOut {
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.normal = in.normal.xyz;
     out.uv = in.uv;
+    out.region_pos = in.pos;
     // composition 0..3 packed in normal.w (-1..1)
     out.comp = (in.normal.w * 0.5 + 0.5) * 3.0;
     out.record = in.instance;
@@ -213,14 +215,111 @@ fn terrain_weights(c: f32) -> vec4<f32> {
     return vec4<f32>(af * a1, af * (1.0 - a1), (1.0 - af) * a2, (1.0 - af) * (1.0 - a2));
 }
 
-fn terrain_color(in: TerrainOut) -> vec3<f32> {
+// LLDrawPoolTerrain::renderFullShaderPBR and pbrterrainUtilF.glsl:
+// 8 m repeats, triplanar sharpness 8, material cutoff .1, plane cutoff .01.
+// Shared material records keep the ordinary bindless texture table and make
+// terrain edits independent of the chunk geometry. Explicit gradients let
+// zero-weight layers/planes leave without sampling any maps.
+struct TerrainMaterial {
+    color: vec4<f32>,
+    orm: vec3<f32>,
+    normal: vec3<f32>,
+    emissive: vec3<f32>,
+    cutoff: f32,
+};
+
+fn terrain_uv(p: vec2<f32>, rec: DrawRecord) -> vec2<f32> {
+    let v = p * rec.uv_st.xy;
+    let c = cos(rec.params.x);
+    let s = sin(rec.params.x);
+    return vec2<f32>(c*v.x+s*v.y, -s*v.x+c*v.y);
+}
+
+fn terrain_sample(slot: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
+    let loc = tex_loc[slot];
+    return textureSampleGrad(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, dx, dy);
+}
+
+fn terrain_layer(rec: DrawRecord, p: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, n: vec3<f32>, planes: vec3<f32>, alpha_only: bool) -> TerrainMaterial {
+    var result = TerrainMaterial(vec4<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), rec.params.w);
+    for (var axis = 0u; axis < 3u; axis++) {
+        if (planes[axis] <= 0.0) { continue; }
+        var uv = p.xy;
+        var ux = dx.xy;
+        var uy = dy.xy;
+        var tangent = vec3<f32>(1.0, 0.0, 0.0);
+        if (axis == 0u) {
+            let sign = select(-1.0, 1.0, n.x >= 0.0);
+            uv = p.yz * vec2<f32>(sign, 1.0);
+            ux = dx.yz * vec2<f32>(sign, 1.0);
+            uy = dy.yz * vec2<f32>(sign, 1.0);
+            tangent = vec3<f32>(0.0, sign, 0.0);
+        } else if (axis == 1u) {
+            let sign = select(1.0, -1.0, n.y >= 0.0);
+            uv = p.xz * vec2<f32>(sign, 1.0);
+            ux = dx.xz * vec2<f32>(sign, 1.0);
+            uy = dy.xz * vec2<f32>(sign, 1.0);
+            tangent = vec3<f32>(sign, 0.0, 0.0);
+        }
+        let tc = terrain_uv(uv, rec) + vec2<f32>(rec.uv_st.z, -rec.uv_st.w);
+        let tx = terrain_uv(ux, rec);
+        let ty = terrain_uv(uy, rec);
+        let color = terrain_sample(rec.tex.x, tc, tx, ty);
+        result.color += vec4<f32>(srgb_to_linear(color.rgb), color.a) * rec.base_color * planes[axis];
+        if (alpha_only) { continue; }
+        let orm = terrain_sample(rec.tex.z, tc, tx, ty).rgb * vec3<f32>(1.0, rec.params.z, rec.params.y);
+        let emission = srgb_to_linear(terrain_sample(rec.tex.w, tc, tx, ty).rgb) * rec.emissive.rgb;
+        var normal = n;
+        if (rec.tex.y != 1u) {
+            let mapped = terrain_sample(rec.tex.y, tc, tx, ty).rgb * 2.0 - vec3<f32>(1.0);
+            let t = normalize(tangent - n * dot(tangent, n));
+            let b = cross(n, t);
+            let mirrored = mapped.xy * select(vec2<f32>(1.0), vec2<f32>(-1.0), rec.uv_st.xy < vec2<f32>(0.0));
+            let c = cos(rec.params.x);
+            let s = sin(rec.params.x);
+            let xy = vec2<f32>(c*mirrored.x-s*mirrored.y, s*mirrored.x+c*mirrored.y);
+            normal = normalize(t*xy.x+b*xy.y+n*mapped.z);
+        }
+        result.orm += orm * planes[axis];
+        result.normal += normal * planes[axis];
+        result.emissive += emission * planes[axis];
+    }
+    return result;
+}
+
+fn terrain_material(in: TerrainOut, dx: vec3<f32>, dy: vec3<f32>, alpha_only: bool) -> TerrainMaterial {
+    let rec = records[in.record];
+    let n = normalize(in.normal);
+    var result = TerrainMaterial(vec4<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), 0.0);
+    var weights = max(terrain_weights(clamp(in.comp, 0.0, 3.0)) - vec4<f32>(0.1), vec4<f32>(0.0));
+    weights /= dot(weights, vec4<f32>(1.0));
+    var planes = pow(abs(n), vec3<f32>(8.0));
+    planes /= dot(planes, vec3<f32>(1.0));
+    planes = max(planes - vec3<f32>(0.01), vec3<f32>(0.0));
+    planes /= dot(planes, vec3<f32>(1.0));
+    for (var layer = 0u; layer < 4u; layer++) {
+        if (weights[layer] <= 0.0) { continue; }
+        let sample = terrain_layer(records[rec.tex[layer]], in.region_pos, dx, dy, n, planes, alpha_only);
+        result.color += sample.color * weights[layer];
+        result.orm += sample.orm * weights[layer];
+        result.normal += sample.normal * weights[layer];
+        result.emissive += sample.emissive * weights[layer];
+        result.cutoff += sample.cutoff * weights[layer];
+    }
+    result.normal = normalize(result.normal + n * 0.000001);
+    return result;
+}
+
+fn terrain_legacy_color(in: TerrainOut, dx: vec2<f32>, dy: vec2<f32>) -> vec3<f32> {
     let rec = records[in.record];
     // uv is region-space meters; detail textures repeat every uv_st.x meters
     let tc = in.uv / max(rec.uv_st.x, 0.1);
-    let t0 = sample_tex(rec.tex.x, tc).rgb;
-    let t1 = sample_tex(rec.tex.y, tc).rgb;
-    let t2 = sample_tex(rec.tex.z, tc).rgb;
-    let t3 = sample_tex(rec.tex.w, tc).rgb;
+    let tx = dx / max(rec.uv_st.x, 0.1);
+    let ty = dy / max(rec.uv_st.x, 0.1);
+    let t0 = terrain_sample(rec.tex.x, tc, tx, ty).rgb;
+    let t1 = terrain_sample(rec.tex.y, tc, tx, ty).rgb;
+    let t2 = terrain_sample(rec.tex.z, tc, tx, ty).rgb;
+    let t3 = terrain_sample(rec.tex.w, tc, tx, ty).rgb;
     let w = terrain_weights(clamp(in.comp, 0.0, 3.0));
     let w0 = w.x;
     let w1 = w.y;
@@ -264,21 +363,92 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
     return light_tiles_checked(debug_view(apply_fog(col*water_scene_light(in.world_pos), in.world_pos), in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
 }
 
+fn terrain_shaded(in: TerrainOut) -> Shaded {
+    let dx = dpdx(in.region_pos);
+    let dy = dpdy(in.region_pos);
+    let pbr = (records[in.record].flags.x & FLAG_PBR) != 0u;
+    let geo = normalize(in.normal);
+    var material = TerrainMaterial(vec4<f32>(1.0), vec3<f32>(1.0, 1.0, 0.0), geo, vec3<f32>(0.0), 0.0);
+    if (pbr) { material = terrain_material(in, dx, dy, false); }
+    let variance = normal_variance(material.normal);
+    surface_occlusion = normal_map_occlusion(geo, material.normal, in.world_pos, 1.0 / in.clip.w);
+    screen_surface = true;
+    contact_surface = true;
+    if (!pbr) {
+        return Shaded(vec4<f32>(terrain_legacy_color(in, dx.xy, dy.xy), 1.0), geo, 1.0, 0.0);
+    }
+    if (material.color.a < material.cutoff) { discard; }
+    let n = material.normal;
+    let v = normalize(frame.camera_pos.xyz - in.world_pos);
+    let dist = distance(in.world_pos, frame.camera_pos.xyz);
+    let sh = sun_shadow(in.world_pos, geo, dist, in.clip.xy);
+    let metal = clamp(material.orm.b, 0.0, 1.0);
+    var rough = clamp(material.orm.g, 0.03, 1.0);
+    if ((frame.light_mode.z & SPECULAR_AA) != 0u) { rough = specular_aa_roughness(rough, variance); }
+    let ao = select(1.0, material.orm.r, frame.sky_ll.z > 0.5);
+    var color: vec3<f32>;
+    if (is_classic_sky()) {
+        let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
+        color = (ll_classic_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, a)
+            + material.emissive) * ll_final_scale()
+            + ll_classic_pbr_local(material.color.rgb, metal, rough, n, v, in.world_pos, in.clip.xy);
+        color = ll_haze(color + material.color.rgb * water_caustics(in.world_pos, n), a);
+        if (camera_underwater() || (water_fx_on(256u) && in.world_pos.z < camera_water_level())) {
+            color = apply_fog(color * water_scene_light(in.world_pos), in.world_pos);
+        }
+    } else {
+        color = shade_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, false) + material.emissive;
+        color += material.color.rgb * water_caustics(in.world_pos, n);
+        color = apply_fog(color * water_scene_light(in.world_pos), in.world_pos);
+    }
+    color = debug_view(color, in.world_pos, n, dist, in.clip.xy);
+    return Shaded(vec4<f32>(light_tiles_checked(color, in.world_pos, in.clip.xy), 1.0), n, rough, metal);
+}
+
 @fragment
 fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
-    let col = terrain_color(in);
+    let shaded = terrain_shaded(in);
     if (reflection_clip(in.world_pos)) {
         discard;
     }
-    return vec4<f32>(col, 1.0);
+    return shaded.color;
 }
 
 @fragment
 fn fs_terrain_g(in: TerrainOut) -> GOut {
     var o: GOut;
-    o.color = vec4<f32>(terrain_color(in), 1.0);
-    o.gbuf = vec4<f32>(oct_encode(normalize(in.normal)), 1.0, 0.0);
+    let shaded = terrain_shaded(in);
+    o.color = shaded.color;
+    o.gbuf = gbuffer(shaded);
     return o;
+}
+
+// Match the main terrain mask before writing either single-sample depth or
+// MSAA depth. Alpha-only sampling skips ORM, normal and emissive maps.
+fn terrain_depth_mask(in: TerrainOut) {
+    let dx = dpdx(in.region_pos);
+    let dy = dpdy(in.region_pos);
+    if ((records[in.record].flags.x & FLAG_ALPHA_MASK) != 0u) {
+        let material = terrain_material(in, dx, dy, true);
+        if (material.color.a < material.cutoff) { discard; }
+    }
+}
+
+@fragment
+fn fs_terrain_depth(in: TerrainOut) {
+    terrain_depth_mask(in);
+}
+
+@fragment
+fn fs_terrain_depth_normal(in: TerrainOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    terrain_depth_mask(in);
+    return depth_normal(in.normal, front);
+}
+
+@fragment
+fn fs_terrain_pick(in: TerrainOut) -> @location(0) vec4<u32> {
+    terrain_depth_mask(in);
+    return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.uv.x), bitcast<u32>(in.uv.y));
 }
 
 // ----------------------------------------------------------------- water

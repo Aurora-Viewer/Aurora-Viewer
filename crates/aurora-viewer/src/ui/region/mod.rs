@@ -16,6 +16,7 @@ mod interventions;
 mod manage;
 mod overview;
 mod people;
+mod surface;
 mod top_objects;
 
 use crate::theme::Palette;
@@ -166,6 +167,7 @@ pub struct RegionUi {
     ask: Option<Ask>,
     /// The terrain textures' picker.
     texture: TexturePicker,
+    surface: surface::SurfaceUi,
     /// Preferences read for this frame (ChangeObjectBonusFactor's
     /// "ignore", RegionCheckTextureHeights) and written back by the dialogs.
     confirm_object_bonus: bool,
@@ -188,6 +190,9 @@ pub struct ManageDemo {
     pub pbr: bool,
     /// Open a terrain material picker with the demo's tiled material.
     pub pick_material: bool,
+    /// An existing PBR region, with an optional live edit/cancel/apply scenario.
+    pub pbr_ground: bool,
+    pub surface_demo: u8,
 }
 
 /// The menus' and About Land's request to open the window.
@@ -224,6 +229,7 @@ impl RegionUi {
             };
             self.material_info.insert(*id, info);
         }
+        self.surface.prepare(ctx, scene, &mut self.wanted_images);
     }
 
     /// AURORA_DEMO_REGION: the page and "View as" of a capture, and on
@@ -279,6 +285,7 @@ impl RegionUi {
     ) -> bool {
         let handle = world.main_region.filter(|_| *open);
         let Some(handle) = handle else {
+            surface::clear_preview(self, world);
             if self.was_open {
                 self.was_open = false;
                 self.ask = None;
@@ -300,6 +307,9 @@ impl RegionUi {
         }
         // what was being changed belongs to the region it was changed for
         if self.manage_region != Some(handle) {
+            surface::clear_preview(self, world);
+            self.texture.open = false;
+            self.surface = Default::default();
             let demo = self.manage.demo.take();
             self.manage = manage::ManageState {
                 demo,
@@ -423,7 +433,13 @@ impl RegionUi {
         };
         if let Some(asset) = self.texture.show(ctx, p, world, images) {
             manage::picked_texture(self, &view, world, asset);
+        } else if !self.texture.open {
+            surface::cancel_picker(self, &view, world);
+        } else if let Some(asset) = self.texture.take_preview() {
+            surface::picker_choice(self, &view, world, asset, false);
         }
+        surface::demo_step(self, &view, world);
+        surface::update_preview(self, &view, world);
         self.wanted_images.extend(self.texture.wanted_images.drain());
         people::dialogs(ctx, p, self, &view, world);
         top_objects::show(ctx, p, self, &view, world);

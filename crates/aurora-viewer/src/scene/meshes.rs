@@ -1024,6 +1024,9 @@ pub struct MaterialStreamer {
     changed: Vec<Uuid>,
 }
 
+/// BLANK_MATERIAL_ASSET_ID has the default glTF appearance without a fetch.
+pub const BLANK_MATERIAL: Uuid = Uuid::from_u128(0x968cbad0_4dad_d64e_71b5_72bf13ad051a);
+
 impl MaterialStreamer {
     pub fn new(cache_dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(cache_dir.join("mat"));
@@ -1055,7 +1058,14 @@ impl MaterialStreamer {
 
     /// The entry of a material, new and listed for `update` when unknown.
     fn entry(&mut self, id: &Uuid) -> &mut MatEntry {
-        let e = self.entries.entry(*id).or_insert_with(MatEntry::new);
+        let e = self.entries.entry(*id).or_insert_with(|| {
+            let mut entry = MatEntry::new();
+            if *id == BLANK_MATERIAL {
+                entry.material = Some(Arc::new(PbrMaterial::default()));
+                entry.state = MatState::Ready;
+            }
+            entry
+        });
         if e.has_work() {
             Self::attend(&mut self.todo, *id, e);
         }

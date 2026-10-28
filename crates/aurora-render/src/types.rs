@@ -121,6 +121,8 @@ pub mod flags {
     pub const PBR: u32 = 8;
     pub const HIGHLIGHT: u32 = 16;
     pub const PLANAR: u32 = 32;
+    /// Terrain records use four shared material record indices for PBR.
+    pub const TERRAIN: u32 = 64;
     /// Vertex positions are skinned with palette `flags[1]`.
     pub const SKINNED: u32 = 128;
     /// Legacy material (LLMaterial): normal / specular maps with their own
@@ -456,6 +458,8 @@ pub struct DrawLists {
     pub hud_debug_red: Vec<DrawCmd>,
     pub hud_debug_blue: Vec<DrawCmd>,
     pub terrain: Vec<DrawCmd>,
+    /// PBR terrain whose alpha needs to be tested in the depth prepass.
+    pub terrain_mask: Vec<DrawCmd>,
     pub opaque: Vec<DrawCmd>,
     /// Local creation hologram: depth tested, without writing pick depth,
     /// casting shadows or entering reflections / probes.
@@ -587,6 +591,7 @@ impl DrawLists {
         self.hud_debug_red.clone_from(&src.hud_debug_red);
         self.hud_debug_blue.clone_from(&src.hud_debug_blue);
         self.terrain.clone_from(&src.terrain);
+        self.terrain_mask.clone_from(&src.terrain_mask);
         self.portal_clipping = src.portal_clipping;
         self.opaque.clone_from(&src.opaque);
         self.creation_preview.clone_from(&src.creation_preview);
@@ -632,6 +637,7 @@ impl DrawLists {
         self.hud_debug_red.clear();
         self.hud_debug_blue.clear();
         self.terrain.clear();
+        self.terrain_mask.clear();
         self.portal_clipping = false;
         self.opaque.clear();
         self.creation_preview.clear();
@@ -677,6 +683,7 @@ impl DrawLists {
             + self.hud_debug_red.len()
             + self.hud_debug_blue.len()
             + self.terrain.len()
+            + self.terrain_mask.len()
             + self.opaque.len()
             + self.creation_preview.len()
             + self.physics_shapes.len()
@@ -1589,6 +1596,7 @@ mod tests {
         scene.hud_debug_red.push(cmd(23));
         scene.hud_debug_blue.push(cmd(24));
         scene.terrain.push(cmd(1));
+        scene.terrain_mask.push(cmd(27));
         scene.creation_preview.push(cmd(25));
         scene.physics_shapes.push(cmd(26));
         scene.blend.extend([cmd(7), cmd(8), cmd(9)]);
@@ -1643,6 +1651,7 @@ mod tests {
         assert_eq!(packet.blend_glow, [false, true, false]);
         assert_eq!(packet.blend_depth, 1);
         assert_eq!((packet.terrain.len(), packet.glow.len(), packet.select_root.len()), (1, 1, 1));
+        assert_eq!(packet.terrain_mask[0].record, 27);
         assert_eq!(packet.select_faces[0].record, 6);
         assert_eq!(packet.hud_select_faces[0].record, 22);
         assert_eq!((packet.particles.len(), packet.impostor_sprites.len()), (1, 1));

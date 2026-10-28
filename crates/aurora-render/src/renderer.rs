@@ -751,6 +751,9 @@ struct Pipelines {
     hud_debug_blue: wgpu::RenderPipeline,
     sky: wgpu::RenderPipeline,
     terrain: wgpu::RenderPipeline,
+    pre_terrain: wgpu::RenderPipeline,
+    pre_terrain_normal: wgpu::RenderPipeline,
+    pre_terrain_msaa: Option<wgpu::RenderPipeline>,
     opaque: wgpu::RenderPipeline,
     opaque_2s: wgpu::RenderPipeline,
     mask: wgpu::RenderPipeline,
@@ -832,6 +835,7 @@ struct Pipelines {
     /// Faces drawn under a pixel (drawn_pick.rs): culled like the scene's
     /// one-sided and two-sided faces.
     pick: wgpu::RenderPipeline,
+    pick_terrain: wgpu::RenderPipeline,
     pick_2s: wgpu::RenderPipeline,
     pick_visible: wgpu::RenderPipeline,
     pick_overlay: wgpu::RenderPipeline,
@@ -2247,6 +2251,7 @@ fn ortho_reverse_z(half: f32, near: f32, far: f32) -> Mat4 {
 #[derive(Default, Clone, Copy)]
 struct Ranges {
     terrain: (u64, u32),
+    terrain_mask: (u64, u32),
     opaque: (u64, u32),
     opaque_2s: (u64, u32),
     mask: (u64, u32),
@@ -3349,6 +3354,14 @@ impl Backend {
         let pre_portal_2s = pre("prepass portal 2s", "vs_depth", Some("fs_depth_portal"), None);
         let pre_mask = pre("prepass mask", "vs_main", Some("fs_depth_mask"), Some(wgpu::Face::Back));
         let pre_mask_2s = pre("prepass mask 2s", "vs_main", Some("fs_depth_mask"), None);
+        let pre_terrain = pre("terrain depth", "vs_terrain", Some("fs_terrain_depth"), Some(wgpu::Face::Back));
+        let pre_terrain_msaa = (samples > 1).then(|| {
+            pipe(PipeDesc {
+                format: None,
+                depth_compare: wgpu::CompareFunction::Greater,
+                ..base("terrain msaa depth", "vs_terrain", "fs_terrain_depth")
+            })
+        });
         // both sides: a double-sided blended face casts either way, the
         // nearer one keeps the depth
         let pre_contact = pre("prepass contact", "vs_main", Some("fs_depth_contact"), None);
@@ -3369,6 +3382,12 @@ impl Backend {
             pre_n("prepass mask normals", "vs_main", "fs_depth_mask_normal", Some(wgpu::Face::Back)),
             pre_n("prepass mask normals 2s", "vs_main", "fs_depth_mask_normal", None),
         ];
+        let pre_terrain_normal = pre_n(
+            "terrain depth normals",
+            "vs_terrain",
+            "fs_terrain_depth_normal",
+            Some(wgpu::Face::Back),
+        );
         let pre_normal_portal = [
             pre_n(
                 "prepass portal normals",
@@ -3430,6 +3449,11 @@ impl Backend {
             ..base(label, "vs_pick", "fs_pick")
         };
         let pick = pipe(pick_desc("drawn pick", Some(wgpu::Face::Back)));
+        let pick_terrain = pipe(PipeDesc {
+            vs: "vs_terrain",
+            fs: Some("fs_terrain_pick"),
+            ..pick_desc("terrain pick", Some(wgpu::Face::Back))
+        });
         let pick_2s = pipe(pick_desc("drawn pick 2s", None));
         let pick_visible = pipe(PipeDesc {
             fs: Some("fs_pick_visible"),
@@ -3514,6 +3538,9 @@ impl Backend {
             hud_debug_blue,
             sky,
             terrain,
+            pre_terrain,
+            pre_terrain_normal,
+            pre_terrain_msaa,
             opaque,
             opaque_2s,
             mask,
@@ -3564,6 +3591,7 @@ impl Backend {
             shadow_depth,
             post,
             pick,
+            pick_terrain,
             pick_2s,
             pick_visible,
             pick_overlay,
@@ -5530,6 +5558,7 @@ impl Backend {
         let (terrain, water): (&[DrawCmd], &[DrawCmd]) = if f.cutout { (&[], &[]) } else { (&lists.terrain, &lists.water) };
         let mut rg = Ranges {
             terrain: push(cpu, terrain),
+            terrain_mask: push(cpu, if f.cutout { &[] } else { &lists.terrain_mask }),
             opaque: push(cpu, &lists.opaque),
             opaque_2s: push(cpu, &lists.opaque_two_sided),
             mask: push(cpu, &lists.mask),
@@ -5553,8 +5582,9 @@ impl Backend {
             use crate::occlusion::{CullDraw, KIND_NONE, KIND_PREPASS, KIND_TESTED};
             let mut cull = std::mem::take(&mut self.cull_cpu);
             cull.clear();
-            let lists_kinds: [(&[DrawCmd], u32); 10] = [
+            let lists_kinds: [(&[DrawCmd], u32); 11] = [
                 (&lists.terrain, KIND_NONE),
+                (&lists.terrain_mask, KIND_NONE),
                 (&lists.opaque, KIND_PREPASS),
                 (&lists.opaque_two_sided, KIND_PREPASS),
                 (&lists.mask, KIND_PREPASS),
@@ -6016,7 +6046,13 @@ impl Backend {
                 multiview_mask: None,
             });
             bind_mesh(&mut pass, &self.groups.a);
+            let terrain_pipe = if normals.is_some() {
+                &self.pipelines.pre_terrain_normal
+            } else {
+                &self.pipelines.pre_terrain
+            };
             draw(&mut pass, pre_pipes[0], rg.terrain);
+            draw(&mut pass, terrain_pipe, rg.terrain_mask);
             let pre = if occl { &self.occlusion.pre1 } else { &self.indirect };
             draw_from(&mut pass, pre_pipes[0], pre, rg.opaque);
             draw_from(&mut pass, pre_pipes[1], pre, rg.opaque_2s);
@@ -6482,6 +6518,9 @@ impl Backend {
                     multiview_mask: None,
                 });
                 bind_mesh(&mut pass, &self.groups.a);
+                if let Some(terrain) = &self.pipelines.pre_terrain_msaa {
+                    draw(&mut pass, terrain, rg.terrain_mask);
+                }
                 draw(&mut pass, &pipes[0], rg.terrain);
                 for (b, (pipe, r)) in [(&pipes[0], rg.opaque), (&pipes[1], rg.opaque_2s)].into_iter().enumerate() {
                     draw(&mut pass, pipe, r);
@@ -6574,6 +6613,7 @@ impl Backend {
             }
             pass_mark(&mut pass, MARK_SKY_END);
             draw(&mut pass, &self.pipelines.terrain, rg.terrain);
+            draw(&mut pass, &self.pipelines.terrain, rg.terrain_mask);
             pass_mark(&mut pass, MARK_TERRAIN_END);
             let scene_pipes = [
                 (&self.pipelines.opaque, rg.opaque),
@@ -6724,7 +6764,7 @@ impl Backend {
                 draw(pass, wire, rg.select_root);
             }
             if let (true, Some(wire)) = (f.wireframe, &self.pipelines.debug_wire) {
-                for r in [rg.terrain, rg.opaque, rg.opaque_2s, rg.mask, rg.mask_2s, rg.blend] {
+                for r in [rg.terrain, rg.terrain_mask, rg.opaque, rg.opaque_2s, rg.mask, rg.mask_2s, rg.blend] {
                     draw(pass, wire, r);
                 }
                 for b in 0..MAIN_BINS {
@@ -6864,7 +6904,8 @@ impl Backend {
             };
             let layers: [&[(&wgpu::RenderPipeline, (u64, u32), Option<usize>)]; 2] = [
                 &[
-                    (&self.pipelines.pick, rg.terrain, None),
+                    (&self.pipelines.pick_terrain, rg.terrain, None),
+                    (&self.pipelines.pick_terrain, rg.terrain_mask, None),
                     (&self.pipelines.pick, rg.opaque, Some(0)),
                     (&self.pipelines.pick_2s, rg.opaque_2s, Some(1)),
                     (&self.pipelines.pick, rg.mask, Some(2)),

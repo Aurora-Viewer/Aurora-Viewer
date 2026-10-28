@@ -43,6 +43,8 @@ mod shadow_merge;
 #[cfg(test)]
 mod specular_aa;
 #[cfg(test)]
+mod terrain_tests;
+#[cfg(test)]
 mod test_gpu;
 pub mod tex_anim;
 pub mod textures;

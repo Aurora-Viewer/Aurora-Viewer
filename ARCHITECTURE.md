@@ -24,6 +24,18 @@ before completion/editing/sending, preserving the draft and focus.
 The editor grows to four visible rows, then scrolls. Its measured bounded height
 reserves space in the transcript or bar without growing the containing window.
 
+`scene/terrain_surface.rs` streams and detects each region's four ground
+assets, retaining classic texture composition or four shared PBR material
+records. `shaders/env.wgsl` mixes their linear colour, ORM, normal and emissive
+maps with triplanar projection and the Legacy Viewer's 8 m default repeats.
+Surface edits update records without rebuilding the heightmap meshes.
+`world/terrain.rs::SurfaceState` keeps local previews, applied cover awaiting
+the next handshake, and the region's ModifyRegion transforms separate.
+The network requests those transforms on arrival, even with Region / Estate
+closed. `ui/region/surface.rs` connects asynchronous GPU swatches, live picker
+choices and cover-only cancellation to that state; only Apply sends changes.
+`terrain_tests.rs` verifies the production material mixer with GPU samples.
+
 `scene/physics_shapes.rs` connects the build inspector's saved physics eye to
 selected collision geometry. Mesh header ranges include `physics_mesh` and
 `physics_convex`; the mesh streamer fetches these only while inspecting.

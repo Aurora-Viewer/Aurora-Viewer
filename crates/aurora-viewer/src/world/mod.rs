@@ -125,6 +125,7 @@ pub struct Region {
     /// Terrain patches received so far: what the grass standing on it was
     /// placed for (scene/plants.rs).
     pub terrain_revision: u64,
+    pub terrain_surface: terrain::SurfaceState,
     pub caps: Arc<HashMap<String, String>>,
     /// Voice server of the region (SimulatorFeatures): "webrtc", "vivox" or empty.
     pub voice_server: String,
@@ -1603,6 +1604,7 @@ impl World {
             wind: Default::default(),
             dirty_chunks: HashSet::new(),
             terrain_revision: 0,
+            terrain_surface: Default::default(),
             caps: Arc::new(HashMap::new()),
             voice_server: String::new(),
             avatar_hover_height: false,
@@ -1954,6 +1956,12 @@ impl World {
                 self.tp_history.name_current(info.handle, &info.name);
                 let r = self.ensure_region(info.handle, (info.size_x, info.size_y));
                 r.name = info.name.clone();
+                if r.info.as_ref().is_some_and(|old| {
+                    old.terrain_start_height != info.terrain_start_height || old.terrain_height_range != info.terrain_height_range
+                }) {
+                    r.dirty_chunks.extend(0..r.heightmap.chunk_count());
+                }
+                r.terrain_surface.applied = None;
                 r.info = Some(info);
                 None
             }
@@ -2950,6 +2958,14 @@ impl World {
             }
             NetEvent::Estate(ev) => {
                 match &ev {
+                    aurora_net::estate::EstateEvent::TerrainTransforms {
+                        handle,
+                        transforms: Ok(transforms),
+                    } => {
+                        if let Some(region) = self.regions.get_mut(handle) {
+                            region.terrain_surface.transforms = *transforms;
+                        }
+                    }
                     aurora_net::estate::EstateEvent::Stats { stats, .. } => self.on_sim_stats_alert(stats),
                     aurora_net::estate::EstateEvent::SimVersion { version, .. } => self.on_sim_version_alert(version),
                     _ => {}

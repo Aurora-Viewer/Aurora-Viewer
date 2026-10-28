@@ -6334,6 +6334,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   demo's tiled PBR material. Its sphere must load without a persistent
   "Loading…" label; OK keeps the selection and Apply validates all four
   slots. Add `classic` to check the same picker from the classic Terrain tab.
+  `manage:pbr-ground` starts with a region already using PBR tiles (8 m
+  repeats and a normal map), with all four GPU material swatches visible.
+  `manage:pbr-preview` changes the first layer to a matte green material locally,
+  leaving its picker open and Apply untouched; `manage:pbr-cancel` cancels
+  that picker and restores the tiled ground; `manage:pbr-apply` commits it.
+  All use the real preview/cancel/Apply handlers, offline. Compare captures
+  at frame 760, optionally with `AURORA_DEMO_POS=120,40` for open ground.
+  In either window style, selecting a texture/material must immediately
+  change its swatch and the ground. The Cancel button beside the four swatches
+  restores the committed cover without undoing water-height or elevation edits.
   `classic`
   opens the classic window (the Legacy Viewer's eight tabs) on the tab of
   the section asked (`terrain`: Terrain, `scripts` or `interventions`:

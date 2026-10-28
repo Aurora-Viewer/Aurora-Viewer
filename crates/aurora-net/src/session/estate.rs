@@ -17,6 +17,13 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 impl Session<'_> {
+    /// LLPBRTerrainFeatures::queueQuery on arrival, also for ordinary residents.
+    pub(super) fn request_terrain_transforms(&self, handle: RegionHandle) {
+        if let Some(url) = self.sim_for_handle(handle).and_then(|addr| self.sim_cap(addr, "ModifyRegion")) {
+            self.estate_get(handle, Some(url), Get::Transforms);
+        }
+    }
+
     pub(super) fn on_estate_command(&mut self, c: EstateCommand) {
         match c {
             EstateCommand::Refresh { handle } => self.refresh_estate(handle),

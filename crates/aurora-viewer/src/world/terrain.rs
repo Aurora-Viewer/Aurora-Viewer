@@ -1,8 +1,32 @@
 //! Region heightmaps, terrain composition (port of the noise logic in
 //! `llvlcomposition.cpp`) and chunk mesh generation.
 
+use aurora_net::estate::TerrainTransform;
 use aurora_prim::noise;
 use aurora_render::Vertex;
+use uuid::Uuid;
+
+/// Local surface changes never overwrite the simulator's region handshake.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SurfaceOverride {
+    pub ids: [Uuid; 4],
+    pub materials: bool,
+    pub transforms: [TerrainTransform; 4],
+}
+
+#[derive(Default)]
+pub struct SurfaceState {
+    pub transforms: [TerrainTransform; 4],
+    pub preview: Option<SurfaceOverride>,
+    /// Keep an applied surface visible until the next region handshake.
+    pub applied: Option<SurfaceOverride>,
+}
+
+impl SurfaceState {
+    pub fn effective(&self) -> Option<SurfaceOverride> {
+        self.preview.or(self.applied)
+    }
+}
 
 pub const CHUNK_CELLS: u32 = 32;
 

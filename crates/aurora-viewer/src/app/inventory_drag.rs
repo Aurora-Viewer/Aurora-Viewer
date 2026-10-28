@@ -806,6 +806,7 @@ mod tests {
                 wind: Default::default(),
                 dirty_chunks: HashSet::new(),
                 terrain_revision: 0,
+                terrain_surface: Default::default(),
                 caps: Arc::new(Default::default()),
                 voice_server: String::new(),
                 avatar_hover_height: false,
