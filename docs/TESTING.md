@@ -3979,6 +3979,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GPU_DRIVER=old\|aged` | Out of date graphics driver warning on the login screen |
 | `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
 | `AURORA_DEMO_GPU_LOST=<frame>` | The GPU device is taken as lost at that frame, as after a driver reset |
+| `AURORA_DEMO_OVERLAY_HOOK=<file>` | An overlay hook DLL counts as loaded in the viewer (Discord, Steam…) |
 | `AURORA_DEMO_SAFE_GRAPHICS=offer\|active` | The safe graphics card on the login screen |
 | `AURORA_DEMO_UPDATE_MAINTENANCE=<mode>` | Announces a cache invalidation and/or a reset |
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
@@ -5612,6 +5613,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   next start offers the safe graphics. The window's close button closes at
   once too. A real loss cannot be caused here: the flag is set as the
   callback would set it, wgpu's own device stays alive.
+- **`AURORA_DEMO_OVERLAY_HOOK=<file>`**, with `AURORA_DEMO=1` (Windows): the
+  overlay hook watch (`overlay_hooks.rs`) counts that module file name as
+  loaded, for example `DiscordHook64.dll`, `GameOverlayRenderer64.dll`,
+  `RTSSHooks64.dll` or `graphics-hook64.dll`. A known one gets its warning
+  in the log (`overlay hook loaded in the viewer: …`) and its line in
+  `overlay-hooks.txt` of the crash session; any other name does nothing.
+  With `AURORA_DEMO_CRASH=freeze`, the report then says
+  `| Overlay hooks | Discord (in-game overlay or Go Live capture), DiscordHook64.dll |`
+  (#1342). Nothing is injected: the image is not touched.
 - **`AURORA_DEMO_SAFE_GRAPHICS=offer|active`**, with `AURORA_DEMO=1` and
   `AURORA_DEMO_LOGIN=cards` or `empty`: the login screen's safe graphics
   card, above the driver warning. `offer` is what a start after a GPU stall,
