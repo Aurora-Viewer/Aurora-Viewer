@@ -12,6 +12,7 @@ fn pbr_terrain_samples_all_layers_maps_and_triplanar_normals_on_gpu() {
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("terrain GPU device");
     let common = include_str!("shaders/common.wgsl");
     let env = include_str!("shaders/env.wgsl");
+    let object = include_str!("shaders/object.wgsl");
     let declaration = |source: &str, name: &str| {
         let start = source.find(&format!("struct {name} {{")).unwrap();
         let end = source[start..].find("};").unwrap() + start + 2;
@@ -21,8 +22,11 @@ fn pbr_terrain_samples_all_layers_maps_and_triplanar_normals_on_gpu() {
     let end = env.find("fn terrain_legacy_color").unwrap();
     // One page is sufficient here. The production binding-array path is also
     // covered by scene_shader_is_valid; all UV/mixing/sample code is unchanged.
-    let tangent = &env[env.find("fn terrain_tangent(").unwrap()..env.find("@vertex\nfn vs_terrain").unwrap()];
-    let functions = format!("{tangent}\n{}", &env[start..end]).replace("tex_pages[loc >> 16u]", "tex_pages");
+    let tangent = &env[env.find("fn terrain_transform_tangent(").unwrap()..env.find("@vertex\nfn vs_terrain").unwrap()];
+    let functions = format!("{}\n{tangent}\n{}", wgsl_function(object, "terrain_direction"), &env[start..end])
+        .replace("tex_pages[loc >> 16u]", "tex_pages")
+        .replace("tex_pages[ramp_loc >> 16u]", "alpha_ramp")
+        .replace("let ramp_loc = tex_loc[6u];", "let ramp_loc = 0u;");
     let source = format!(
         r#"
 {}
@@ -33,30 +37,59 @@ fn pbr_terrain_samples_all_layers_maps_and_triplanar_normals_on_gpu() {
 @group(0) @binding(3) var tex_sampler: sampler;
 @group(0) @binding(4) var<storage, read_write> result: array<vec4<f32>>;
 @group(0) @binding(5) var lin_clamp: sampler;
+@group(0) @binding(6) var alpha_ramp: texture_2d_array<f32>;
 {}
 {}
 @compute @workgroup_size(1)
 fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
+    if (id.x >= 32u) {{
+        let noise = array<f32, 4>(0.1, 0.5, 0.9, 0.5)[id.x - 32u];
+        let c = select(0.5, 1.5, id.x == 35u);
+        result[id.x * 4u] = terrain_noise_weights(c, noise, vec2<f32>(0.0), vec2<f32>(0.0), lin_clamp);
+        return;
+    }}
     let compositions = array<f32, 8>(0.0, 1.0, 2.0, 3.0, 0.5, 1.5, 2.5, 0.0);
     var input: TerrainOut;
     input.normal = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), id.x == 7u);
     input.region_pos = vec3<f32>(f32(id.x) * 3.0, 2.0, 20.0);
     input.comp = compositions[min(id.x, 7u)];
+    input.blend_noise = 0.5;
     input.record = 0u;
     if (id.x >= 8u && id.x < 15u) {{ input.record = id.x - 3u; }}
     if (id.x >= 15u && id.x < 23u) {{
-        let normals = array<vec3<f32>, 8>(vec3<f32>(0,0,1), vec3<f32>(1,0,0), vec3<f32>(-1,0,0), vec3<f32>(0,1,0), vec3<f32>(0,-1,0), vec3<f32>(0,0,1), normalize(vec3<f32>(0.6,-0.2,0.77)), normalize(vec3<f32>(-0.4,0.5,0.768)));
-        input.normal = normals[id.x - 15u];
+        input.normal = terrain_direction(records[id.x - 3u].anim);
         input.comp = 0.0;
         input.record = id.x - 3u;
     }}
-    if (id.x >= 23u) {{
+    if (id.x >= 23u && id.x < 31u) {{
         input.normal = vec3<f32>(0,0,1);
         input.region_pos = vec3<f32>(0.375, 0.875, 20.0);
         input.comp = 0.0;
-        input.record = id.x + 5u;
+        input.record = select(id.x + 5u, id.x + 9u, id.x >= 27u);
     }}
-    let material = terrain_material(input, vec3<f32>(0.01, 0.0, 0.0), vec3<f32>(0.0, 0.01, 0.0), false, lin_clamp);
+    if (id.x == 31u) {{
+        input.normal = vec3<f32>(0,0,1);
+        input.comp = 0.0;
+        input.record = 12u;
+        input.tangent0 = vec4<f32>(0.5,0.25,0.0,1.0);
+    }}
+    if (id.x != 31u) {{
+        let parent = records[input.record];
+        let n = normalize(input.normal);
+        var t = vec3<f32>(n.z, 0.0, -n.x);
+        if (dot(t,t) < 0.000001) {{ t = vec3<f32>(0.0,1.0,0.0); }}
+        let raw = vec4<f32>(normalize(t),1.0);
+        input.tangent0 = terrain_transform_tangent(records[parent.tex.x], n, raw);
+        input.tangent1 = terrain_transform_tangent(records[parent.tex.y], n, raw);
+        input.tangent2 = terrain_transform_tangent(records[parent.tex.z], n, raw);
+        input.tangent3 = terrain_transform_tangent(records[parent.tex.w], n, raw);
+    }}
+    if (id.x >= 15u && id.x < 23u) {{
+        let parent = records[input.record];
+        let raw = vec4<f32>(terrain_direction(vec4<u32>(round(parent.anim_xf * 255.0))), 1.0);
+        input.tangent0 = terrain_transform_tangent(records[parent.tex.x], input.normal, raw);
+    }}
+    let material = terrain_material(input, vec3<f32>(0.01, 0.0, 0.0), vec3<f32>(0.0, 0.01, 0.0), vec2<f32>(0.0), vec2<f32>(0.0), false, lin_clamp);
     result[id.x * 4u] = material.color;
     result[id.x * 4u + 1u] = vec4<f32>(material.orm, material.cutoff);
     result[id.x * 4u + 2u] = vec4<f32>(material.normal, 1.0);
@@ -103,8 +136,22 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
         });
     }
     for i in 0..8 {
+        let normal = [
+            glam::Vec3::Z,
+            glam::Vec3::X,
+            glam::Vec3::NEG_X,
+            glam::Vec3::Y,
+            glam::Vec3::NEG_Y,
+            glam::Vec3::Z,
+            glam::Vec3::new(0.6, -0.2, 0.77).normalize(),
+            glam::Vec3::new(-0.4, 0.5, 0.768).normalize(),
+        ][i as usize];
+        let tangent = glam::Vec3::new(normal.z, 0.0, -normal.x).try_normalize().unwrap_or(glam::Vec3::X);
+        let frame = crate::pack_terrain_frame(normal, tangent);
         records.push(DrawRecord {
             tex: [20 + i; 4],
+            anim: frame.joints.map(u32::from),
+            anim_xf: frame.weights.map(|b| f32::from(b) / 255.0),
             ..Default::default()
         });
     }
@@ -130,6 +177,19 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
             ..Default::default()
         });
     }
+    for i in 0..4 {
+        records.push(DrawRecord {
+            tex: [40 + i; 4],
+            ..Default::default()
+        });
+    }
+    for i in 0..4 {
+        let base = records[32 + i];
+        records.push(DrawRecord {
+            tex: [2, 17, 6, 7],
+            ..base
+        });
+    }
     let record_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
         contents: bytemuck::cast_slice(&records),
@@ -137,7 +197,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
     });
     let locations = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
-        contents: bytemuck::cast_slice(&(0u32..17).collect::<Vec<_>>()),
+        contents: bytemuck::cast_slice(&(0u32..18).collect::<Vec<_>>()),
         usage: wgpu::BufferUsages::STORAGE,
     });
     let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -145,7 +205,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
         size: wgpu::Extent3d {
             width: 4,
             height: 4,
-            depth_or_array_layers: 17,
+            depth_or_array_layers: 18,
         },
         mip_level_count: 1,
         sample_count: 1,
@@ -172,13 +232,32 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
         [5, 0, 0, 255],
         [230, 170, 240, 255],
         [0, 0, 0, 255],
+        [128, 128, 192, 255],
     ];
     let mut texels = Vec::new();
     for (i, pixel) in pixels.into_iter().enumerate() {
+        let mut layer = Vec::new();
         for y in 0..4 {
             for x in 0..4 {
-                texels.push(if i == 16 { [x * 64, y * 64, 0, 255] } else { pixel });
+                layer.push(if i == 16 {
+                    [x * 64, y * 64, 0, 255]
+                } else if i == 17 {
+                    [128 + x * 32, 128 + y * 32, 192, 255]
+                } else {
+                    pixel
+                });
             }
+        }
+        if i >= 16 {
+            // Actual SL asset encode/decode, not a symmetric hand-uploaded
+            // texel: JPEG2000 rows arrive top-down, unlike LLImageRaw.
+            let encoded =
+                aurora_assets::j2k::encode_texture_j2k(4, 4, 4, bytemuck::cast_slice(&layer), true).expect("asymmetric terrain asset");
+            let decoded = aurora_assets::j2k::decode_j2k(&encoded, 0).expect("decode terrain asset");
+            assert_eq!(decoded.data, bytemuck::cast_slice::<[u8; 4], u8>(&layer));
+            texels.extend(decoded.data.as_chunks::<4>().0.iter().copied());
+        } else {
+            texels.extend(layer);
         }
     }
     queue.write_texture(
@@ -205,16 +284,21 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
         address_mode_v: wgpu::AddressMode::Repeat,
         ..Default::default()
     });
-    let clamp_sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
+    let clamp_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+    let ramp_view = alpha_ramp_view(&device, &queue);
     let output = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: 2048,
+        size: 2304,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: 2048,
+        size: 2304,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -246,6 +330,10 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
                 binding: 5,
                 resource: wgpu::BindingResource::Sampler(&clamp_sampler),
             },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: wgpu::BindingResource::TextureView(&ramp_view),
+            },
         ],
     });
     let mut encoder = device.create_command_encoder(&Default::default());
@@ -253,14 +341,29 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(27, 1, 1);
+        pass.dispatch_workgroups(36, 1, 1);
     }
-    encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 2048);
+    encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 2304);
     queue.submit([encoder.finish()]);
     readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("terrain readback"));
     device.poll(wgpu::PollType::wait_indefinitely()).expect("terrain GPU completion");
     let mapped = readback.get_mapped_range(..).expect("terrain samples");
     let samples: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
+    // Independent bilinear samples of IMG_ALPHA_GRAD_2D. A 1D ramp, an
+    // inverted row convention or nearest filtering cannot satisfy these.
+    for (i, expected) in [
+        [0.5984283, 0.3976501, 0.0039062, 0.0000154],
+        [0.3076125, 0.688_466, 0.0039062, 0.0000154],
+        [0.6570212, 0.3390573, 0.0039062, 0.0000154],
+        [0.0024221, 0.3064014, 0.688_466, 0.0027105],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for (got, want) in samples[(32 + i) * 4].into_iter().zip(expected) {
+            assert!((got - want).abs() < 0.0001, "2D terrain ramp {i}: {got} != {want}");
+        }
+    }
     let expected = [
         [0.8, 0.0, 0.0, 1.0],
         [0.0, 0.6, 0.0, 1.0],
@@ -321,13 +424,30 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
         assert!(got.distance(expected) < 0.001, "normal {i}: got {got}, Legacy {expected}");
     }
     let linear = |v: f32| if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
-    for (i, (x, y)) in [(1.0, 3.0), (0.0, 1.0), (2.0, 3.0), (3.0, 1.0)].into_iter().enumerate() {
+    for (i, (x, y)) in [(1.0, 0.0), (0.0, 2.0), (2.0, 0.0), (3.0, 2.0)].into_iter().enumerate() {
         let got = samples[(23 + i) * 4];
         assert!(
             (got[0] - linear(x * 64.0 / 255.0)).abs() < 0.001 && (got[1] - linear(y * 64.0 / 255.0)).abs() < 0.001,
             "terrain KHR rotation/mirror {i}: {got:?}"
         );
     }
+    for (i, v) in [
+        glam::Vec3::new(65.0, 1.0, 129.0),
+        glam::Vec3::new(129.0, -1.0, 129.0),
+        glam::Vec3::new(-129.0, 1.0, 129.0),
+        glam::Vec3::new(129.0, 193.0, 129.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let got = glam::Vec3::from_slice(&samples[(27 + i) * 4 + 2]);
+        assert!(got.distance(v.normalize()) < 0.001, "decoded normal map orientation {i}: {got}");
+    }
+    let expected = glam::Vec3::new(0.5 * 205.0 - 0.25 * 85.0, 0.25 * 205.0 + 0.5 * 85.0, 225.0).normalize();
+    assert!(
+        glam::Vec3::from_slice(&samples[31 * 4 + 2]).distance(expected) < 0.001,
+        "Mikk tangent must remain interpolated"
+    );
 }
 
 /// pbrterrainUtilF.glsl's _t_normal_post_x/y/z followed by mikktspace;
@@ -388,6 +508,7 @@ fn pbr_terrain_shadow_depth_and_paintmap_holes_agree_on_gpu() {
 @group(0) @binding(2) var tex_pages: texture_2d_array<f32>;
 @group(0) @binding(3) var tex_sampler: sampler;
 @group(0) @binding(4) var lin_clamp: sampler;
+@group(0) @binding(6) var alpha_ramp: texture_2d_array<f32>;
 @group(3) @binding(1) var shadow_clamp: sampler;
 fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
     let uv = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
@@ -398,6 +519,7 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
     o.normal = select(vec3<f32>(0,0,1), vec3<f32>(1,0,0), sample_index == 1u);
     o.region_pos = vec3<f32>(uv.x * 8.0, uv.y * 8.0, uv.x * 8.0);
     o.comp = select(0.0, 0.5, sample_index == 2u);
+    o.blend_noise = 0.5;
     o.world_pos = o.region_pos;
     return o;
 }
@@ -411,6 +533,7 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
     o.normal = s.normal;
     o.region_pos = s.region_pos;
     o.comp = s.comp;
+    o.blend_noise = s.blend_noise;
     o.record = s.record;
     return o;
 }
@@ -422,7 +545,7 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
         structure(object, "ShadowOut"),
         common[common.find("const FLAG_FULLBRIGHT:").unwrap()..common.find("@group(0)").unwrap()].to_owned(),
         common[common.find("fn srgb_to_linear(").unwrap()..common.find("fn in_reflection_pass(").unwrap()].to_owned(),
-        wgsl_function(env, "terrain_tangent").to_owned(),
+        wgsl_function(env, "terrain_transform_tangent").to_owned(),
         env[env.find("const TERRAIN_ALPHA_RAMP:").unwrap()..env.find("fn terrain_legacy_color").unwrap()].to_owned(),
         wgsl_function(object, "portal_clip").to_owned(),
         wgsl_function(env, "terrain_shadow_mask").to_owned(),
@@ -435,7 +558,10 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
     }
     // The one-page binding substitution leaves both production fragment
     // entry points and their alpha/gradient/material code unchanged.
-    let source = source.replace("tex_pages[loc >> 16u]", "tex_pages");
+    let source = source
+        .replace("tex_pages[loc >> 16u]", "tex_pages")
+        .replace("tex_pages[ramp_loc >> 16u]", "alpha_ramp")
+        .replace("let ramp_loc = tex_loc[6u];", "let ramp_loc = 0u;");
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("terrain shadow regression"),
         source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -521,7 +647,12 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
         address_mode_v: wgpu::AddressMode::Repeat,
         ..Default::default()
     });
-    let clamp_sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
+    let clamp_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+    let ramp_view = alpha_ramp_view(&device, &queue);
     let layout_entries = [
         wgpu::BindGroupLayoutEntry {
             binding: 0,
@@ -560,6 +691,16 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
             count: None,
         },
         wgpu::BindGroupLayoutEntry {
+            binding: 6,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2Array,
+                multisampled: false,
+            },
+            count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
             binding: 4,
             visibility: wgpu::ShaderStages::FRAGMENT,
             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
@@ -588,6 +729,10 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
             resource: wgpu::BindingResource::Sampler(&sampler),
         },
         wgpu::BindGroupEntry {
+            binding: 6,
+            resource: wgpu::BindingResource::TextureView(&ramp_view),
+        },
+        wgpu::BindGroupEntry {
             binding: 4,
             resource: wgpu::BindingResource::Sampler(&clamp_sampler),
         },
@@ -601,12 +746,12 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
     // does. A mistaken dependency on lin_clamp must fail pipeline creation.
     let shadow_resources_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: None,
-        entries: &layout_entries[..4],
+        entries: &layout_entries[..5],
     });
     let shadow_resources = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: &shadow_resources_layout,
-        entries: &group_entries[..4],
+        entries: &group_entries[..5],
     });
     // Exercise the actual shadow layout and bind-group constructor, too:
     // this pass deliberately has no scene frame group to supply samplers.
@@ -742,4 +887,37 @@ fn shadow_surface(vi: u32, sample_index: u32) -> ShadowOut {
         &depth_maps[0][3 * 512..4 * 512],
         "paintmap selects the inverse alpha layer"
     );
+}
+
+/// Separate texture sizes model two production bindless pages, without
+/// requiring binding-array support on the adapter used by these tests.
+fn alpha_ramp_view(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("reference 2D terrain ramp"),
+        size: wgpu::Extent3d {
+            width: 256,
+            height: 256,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        texture.as_image_copy(),
+        crate::textures::TERRAIN_RAMP_PIXELS,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(256),
+            rows_per_image: Some(256),
+        },
+        texture.size(),
+    );
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    })
 }

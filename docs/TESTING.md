@@ -6354,6 +6354,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   height/noise composition. Add `classic` to check the same controls there.
   Bakes use 2048 px by default, or 1024 px on a small upload pool; workers
   prepare and stage all mip levels without a frame-thread image copy.
+  `manage:pbr-slopes` adds a sharp mound and a hollow near `120,40` to check
+  normal-map projection on curved terrain. Terrain uses the reference diagonal
+  normal stencil and mesh-accumulated tangents, encoded in the existing 8-byte
+  parallel vertex stream. Asset sampling converts GL UVs to decoded top-down
+  JPEG2000 rows; local blend maps keep their own region-space row convention.
   `classic`
   opens the classic window (the Legacy Viewer's eight tabs) on the tab of
   the section asked (`terrain`: Terrain, `scripts` or `interventions`:

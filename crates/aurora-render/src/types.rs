@@ -10,7 +10,7 @@ use glam::{Mat4, Vec3, Vec4};
 pub struct Vertex {
     pub pos: [f32; 3],
     /// snorm8 normal; `w` carries extra data: the tangent of an object's
-    /// vertex ([`pack_tangent`]), the composition of the terrain's.
+    /// vertex ([`pack_tangent`]), the handedness of the terrain's frame.
     pub normal: [i8; 4],
     pub uv: [f32; 2],
 }
@@ -93,13 +93,50 @@ pub fn unpack_tangent(normal: [i8; 4]) -> Option<(Vec3, f32)> {
 }
 
 /// Per-vertex skinning data (parallel stream): 4 joint indices and 4
-/// normalized weights.
+/// normalized weights. Terrain uses these same eight bytes for its frame
+/// ([`pack_terrain_frame`]); its records never enable skinning.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable, Default)]
 pub struct SkinVertex {
     /// Mesh joint indices into the record's skin bindings (`flags[2]`).
     pub joints: [u8; 4],
     pub weights: [u8; 4],
+}
+
+/// Terrain has no skeleton: its parallel 8-byte stream holds octahedral
+/// normal/tangent directions (two snorm16 values each). This keeps the
+/// Legacy Viewer's terrain frame without reducing it to snorm8 or deriving
+/// the tangent from the normal. No vertex stride or GPU binding is added.
+pub fn pack_terrain_frame(normal: Vec3, tangent: Vec3) -> SkinVertex {
+    let pack = |v: Vec3| {
+        let v = v / v.abs().element_sum().max(1e-20);
+        let mut p = v.truncate();
+        if v.z < 0.0 {
+            p = (glam::Vec2::ONE - glam::Vec2::new(p.y, p.x).abs())
+                * glam::Vec2::new(if p.x < 0.0 { -1.0 } else { 1.0 }, if p.y < 0.0 { -1.0 } else { 1.0 });
+        }
+        let x = ((p.x.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes();
+        let y = ((p.y.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes();
+        [x[0], x[1], y[0], y[1]]
+    };
+    SkinVertex {
+        joints: pack(normal),
+        weights: pack(tangent),
+    }
+}
+
+pub fn unpack_terrain_frame(frame: SkinVertex) -> (Vec3, Vec3) {
+    let unpack = |bytes: [u8; 4]| {
+        let x = f32::from(i16::from_le_bytes([bytes[0], bytes[1]])) / 32767.0;
+        let y = f32::from(i16::from_le_bytes([bytes[2], bytes[3]])) / 32767.0;
+        let mut n = Vec3::new(x, y, 1.0 - x.abs() - y.abs());
+        if n.z < 0.0 {
+            n.x = (1.0 - y.abs()) * if x < 0.0 { -1.0 } else { 1.0 };
+            n.y = (1.0 - x.abs()) * if y < 0.0 { -1.0 } else { 1.0 };
+        }
+        n.normalize_or(Vec3::Z)
+    };
+    (unpack(frame.joints), unpack(frame.weights))
 }
 
 /// One mesh joint of a skinned mesh (LLMeshSkinInfo): its inverse bind
@@ -1498,6 +1535,27 @@ impl GpuElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terrain_frames_keep_direction_precision_in_the_existing_eight_bytes() {
+        for x in -3..=3 {
+            for y in -3..=3 {
+                for z in -3..=3 {
+                    let n = Vec3::new(x as f32, y as f32, z as f32);
+                    if n.length_squared() == 0.0 {
+                        continue;
+                    }
+                    let n = n.normalize();
+                    let t = n.cross(if n.z.abs() > 0.9 { Vec3::X } else { Vec3::Z }).normalize();
+                    let frame = pack_terrain_frame(n, t);
+                    let (dn, dt) = unpack_terrain_frame(frame);
+                    assert!(dn.distance(n) < 0.0002 && dt.distance(t) < 0.0002, "{n} {t} -> {dn} {dt}");
+                }
+            }
+        }
+        assert_eq!(std::mem::size_of::<SkinVertex>(), 8);
+        assert_eq!(std::mem::size_of::<Vertex>(), 24);
+    }
 
     /// Texture coordinates of a world point, None behind the near plane.
     fn projected(p: &Projector, at: Vec3) -> Option<Vec3> {

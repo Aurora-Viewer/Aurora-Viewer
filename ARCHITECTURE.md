@@ -28,6 +28,16 @@ reserves space in the transcript or bar without growing the containing window.
 assets, retaining classic texture composition or four shared PBR material
 records. `shaders/env.wgsl` mixes their linear colour, ORM, normal and emissive
 maps with triplanar projection and the Legacy Viewer's 8 m default repeats.
+Terrain maps request the reference 2048 px decode priority. Asset UVs convert
+the decoder's top-down rows to GL coordinates, including their gradients.
+`world/terrain.rs` uses the reference default diagonal normal stencil and
+accumulates tangents from indexed triangles. The existing eight-byte parallel
+vertex stream stores both directions as octahedral snorm16 pairs; composition
+and blend noise retain float precision in the main vertex UV fields. Four
+material tangent transforms run before interpolation. The terrain shader keeps
+the reference ORM roughness without additional normal-variance widening.
+Height/noise transitions sample the reference 256-square two-dimensional alpha
+ramp, retained in a reserved bindless texture slot with its linear mip chain.
 Surface edits update records without rebuilding the heightmap meshes.
 `world/terrain.rs::SurfaceState` keeps local previews, applied cover awaiting
 the next handshake, and the region's ModifyRegion transforms separate.
@@ -39,7 +49,7 @@ triplanar normals and matching camera/shadow alpha masks with GPU samples.
 Masked terrain participates in both sun and projector alpha shadow passes;
 opaque terrain retains the depth-only fast path. `world/terrain_paint.rs`
 implements the Legacy Viewer's experimental local paintmap bake and reset:
-workers interpolate the terrain mesh's composition, encode linear RGB weights
+workers interpolate the terrain mesh's composition and blend noise, encode linear RGB weights
 and stage a 2048-pixel mip chain (1024 on small upload pools). Per-region GPU
 records reference the clamped map without changing geometry. Frozen CPU weights
 survive scene recreation; staging chunks are released after each upload.

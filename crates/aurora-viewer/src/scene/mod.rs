@@ -4615,10 +4615,11 @@ impl Scene {
             }
         }
         if usage_phase == 0 {
-            // terrain detail textures: always wanted at decent resolution
+            // LLTerrainMaterials::boost: TERRAIN_DECODE_PRIORITY = 2048²,
+            // for every material map too. A 512 px cap loses terrain relief.
             for r in self.regions.values() {
                 for id in &r.surface.texture_ids {
-                    self.textures.note_usage_fixed(id, 512.0);
+                    self.textures.note_usage_fixed(id, terrain_surface::DECODE_PIXELS);
                 }
             }
             self.textures.recompute_wants();

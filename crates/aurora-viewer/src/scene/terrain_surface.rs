@@ -8,6 +8,9 @@ use aurora_assets::PbrMaterial;
 use aurora_net::estate::TerrainTransform;
 use std::sync::Arc;
 
+/// LLTerrainMaterials::boost, TERRAIN_DECODE_PRIORITY = 2048 * 2048.
+pub(super) const DECODE_PIXELS: f32 = 2048.0;
+
 #[derive(Clone, Copy, PartialEq)]
 struct Input {
     ids: [Uuid; 4],
@@ -255,8 +258,9 @@ impl Scene {
             }
             let chunks: Vec<_> = region.dirty_chunks.iter().copied().take(8).collect();
             for index in chunks {
-                let (vertices, indices) = terrain::build_chunk(&region.heightmap, &comp, index);
-                let Some(alloc) = renderer.upload_mesh(&vertices, &indices) else {
+                let (vertices, frames, indices) = terrain::build_chunk(&region.heightmap, &comp, index);
+                // Terrain reuses the parallel frame bytes without enabling skinning.
+                let Some(alloc) = renderer.upload_skinned_mesh(&vertices, &frames, &indices) else {
                     continue;
                 };
                 region.dirty_chunks.remove(&index);

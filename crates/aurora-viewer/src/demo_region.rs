@@ -129,7 +129,7 @@ fn parse(v: &str) -> Scenario {
                 s.manage.pbr = true;
                 s.manage.pick_material = true;
             }
-            "pbr-ground" | "pbr-preview" | "pbr-cancel" | "pbr-apply" | "pbr-paint" | "pbr-paint-reset" | "pbr-mask" => {
+            "pbr-ground" | "pbr-preview" | "pbr-cancel" | "pbr-apply" | "pbr-paint" | "pbr-paint-reset" | "pbr-mask" | "pbr-slopes" => {
                 s.manage.section = Some(2);
                 s.manage.pbr_ground = true;
                 s.manage.surface_demo = match part {
@@ -139,6 +139,7 @@ fn parse(v: &str) -> Scenario {
                     "pbr-paint" => 4,
                     "pbr-paint-reset" => 5,
                     "pbr-mask" => 6,
+                    "pbr-slopes" => 8,
                     _ => 0,
                 };
                 s.manage.advanced = part.starts_with("pbr-paint");

@@ -125,7 +125,23 @@ fn lip_delta(rec: DrawRecord, in: VsIn) -> mat2x3<f32> {
 }
 
 fn vertex_position(rec: DrawRecord, in: VsIn) -> vec3<f32> { return in.pos + lip_delta(rec, in)[0]; }
-fn vertex_normal(rec: DrawRecord, in: VsIn) -> vec3<f32> { return in.normal.xyz + lip_delta(rec, in)[1]; }
+
+// Terrain reuses the unskinned parallel stream for two octahedral snorm16
+// directions. See pack_terrain_frame: no extra buffer or vertex stride.
+fn terrain_direction(bytes: vec4<u32>) -> vec3<f32> {
+    let bits = bytes.x | (bytes.y << 8u) | (bytes.z << 16u) | (bytes.w << 24u);
+    let p = unpack2x16snorm(bits);
+    var n = vec3<f32>(p, 1.0 - abs(p.x) - abs(p.y));
+    if (n.z < 0.0) {
+        n = vec3<f32>((vec2<f32>(1.0) - abs(p.yx)) * select(vec2<f32>(1.0), vec2<f32>(-1.0), p < vec2<f32>(0.0)), n.z);
+    }
+    return normalize(n);
+}
+
+fn vertex_normal(rec: DrawRecord, in: VsIn) -> vec3<f32> {
+    if ((rec.flags.x & FLAG_TERRAIN) != 0u) { return terrain_direction(in.joints); }
+    return in.normal.xyz + lip_delta(rec, in)[1];
+}
 
 // The tangent packed in the normal's w (aurora_render::pack_tangent): an
 // angle in 127 steps around the normal, from the axis pair of
@@ -1664,6 +1680,7 @@ struct ShadowOut {
     @location(3) normal: vec3<f32>,
     @location(4) region_pos: vec3<f32>,
     @location(5) comp: f32,
+    @location(6) blend_noise: f32,
 };
 
 struct ShadowParams {
@@ -1685,7 +1702,9 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
     out.world_pos = wp.xyz;
     out.normal = in.normal.xyz;
     out.region_pos = in.pos;
-    out.comp = (in.normal.w * 0.5 + 0.5) * 3.0;
+    out.comp = in.uv.x;
+    out.blend_noise = in.uv.y;
+    if ((rec.flags.x & FLAG_TERRAIN) != 0u) { out.normal = terrain_direction(in.joints); }
     return out;
 }
 

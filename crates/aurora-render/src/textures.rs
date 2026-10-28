@@ -49,7 +49,29 @@ pub const PLACEHOLDER: u32 = 4;
 /// of its own, so that the shader tells it from the loading grey
 /// (`rez_still_grey` in object.wgsl): such a face is no rez grid for ever.
 pub const MISSING: u32 = 5;
-const RESERVED: u32 = 6;
+/// IMG_ALPHA_GRAD_2D, used by the region terrain's height/noise blend.
+pub const TERRAIN_RAMP: u32 = 6;
+/// Decoded top-down L8 pixels from skins/default/textures/alpha_gradient_2d.j2c
+/// (Copyright Linden Research, Inc., originally LGPL 2.1). Kept linear.
+pub const TERRAIN_RAMP_PIXELS: &[u8; 256 * 256] = include_bytes!("terrain_alpha_ramp.r8");
+
+/// LLTerrainPaintMap's height/noise bake, using the same bilinear 2D ramp
+/// and 0.1 layer threshold as pbrterrainF.glsl. Noise is in GL coordinates.
+pub fn terrain_blend_weights(c: f32, noise: f32) -> [f32; 4] {
+    let ramp = |u: f32| {
+        let x = (u * 256.0 - 0.5).clamp(0.0, 255.0);
+        let y = ((1.0 - noise) * 256.0 - 0.5).clamp(0.0, 255.0);
+        let (ix, iy) = (x as usize, y as usize);
+        let texel = |x: usize, y: usize| f32::from(TERRAIN_RAMP_PIXELS[y * 256 + x]) / 255.0;
+        let row = |y| texel(ix, y) + (texel((ix + 1).min(255), y) - texel(ix, y)) * (x - ix as f32);
+        row(iy) + (row((iy + 1).min(255)) - row(iy)) * (y - iy as f32)
+    };
+    let (a, b, f) = (ramp(c), ramp(c - 2.0), ramp(c - 1.0));
+    let w = [f * a, f * (1.0 - a), (1.0 - f) * b, (1.0 - f) * (1.0 - b)].map(|v| (v - 0.1).max(0.0));
+    let sum: f32 = w.iter().sum();
+    w.map(|v| v / sum)
+}
+const RESERVED: u32 = 7;
 /// The white texture is the first one created: page 0, layer 0. Freed slots
 /// point there, so a stale draw record samples white, never a dropped page.
 const WHITE_LOC: u32 = 0;
@@ -1253,6 +1275,18 @@ impl TextureTable {
             );
             debug_assert_eq!(created, Some(slot));
         }
+        let ramp: Vec<u8> = TERRAIN_RAMP_PIXELS.iter().flat_map(|&v| [v, v, v, 255]).collect();
+        let ramp_mips = build_mips(256, 256, ramp, u32::MAX);
+        let levels: Vec<_> = ramp_mips
+            .iter()
+            .map(|(w, h, data)| MipLevel {
+                width: *w,
+                height: *h,
+                data,
+            })
+            .collect();
+        let created = store.create(device, writes, &levels);
+        debug_assert_eq!(created, Some(TERRAIN_RAMP));
         debug_assert_eq!(store.loc[WHITE as usize], WHITE_LOC);
         // the reserved slots are not counted in the statistics
         store.live = 0;
