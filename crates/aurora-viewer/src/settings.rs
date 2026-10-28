@@ -614,6 +614,15 @@ pub struct Settings {
     /// off by default; Preferences > Chat). "/n" before the text works
     /// without it.
     pub show_chat_channel: bool,
+    /// Our own objects' script errors in the nearby chat, with a red
+    /// warning sign, instead of opening the Script debug window, which
+    /// still keeps them (ShowScriptErrorsLocation 0; on, the human's choice
+    /// for #1263, the window in the Legacy Viewer; Preferences > Chat).
+    pub script_errors_in_chat: bool,
+    /// They are also said on `script_errors_channel` (off; #1263, not in
+    /// the Legacy Viewer).
+    pub script_errors_to_channel: bool,
+    pub script_errors_channel: i32,
     /// What objects say in the nearby chat on one small row like the
     /// viewer's notices (#475, off by default; Preferences > Chat). Not in
     /// the Legacy Viewer.
@@ -1638,6 +1647,9 @@ impl Default for Settings {
             font_scale: 1.0,
             chat_timestamps: true,
             show_chat_channel: false,
+            script_errors_in_chat: true,
+            script_errors_to_channel: false,
+            script_errors_channel: 1,
             compact_automated_chat: false,
             compact_im_system_lines: false,
             chat_keep_focus: true,

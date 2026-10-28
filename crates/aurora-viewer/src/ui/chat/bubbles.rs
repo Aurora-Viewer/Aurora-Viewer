@@ -357,12 +357,13 @@ fn sender_picture(
     let p = env.p;
     if object {
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
-        if let Some(t) = env.icons.get("box") {
+        let (glyph, tint) = super::object_row::object_glyph(line, p, super::super::colors::sender_color(line));
+        if let Some(t) = env.icons.get(glyph) {
             ui.painter().image(
                 t.id(),
                 rect.shrink(5.0),
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                super::super::colors::sender_color(line),
+                tint,
             );
         }
         return;

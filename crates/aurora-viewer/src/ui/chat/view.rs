@@ -260,6 +260,9 @@ impl<'a> Grouping<'a> {
                 Some(p) => {
                     p.source != line.source
                         || (p.kind == crate::world::ChatKind::Own) != (line.kind == crate::world::ChatKind::Own)
+                        // an object's script errors under their own warning
+                        // sign, apart from what it says (#1263)
+                        || super::object_row::script_error(p) != super::object_row::script_error(line)
                         || p.origin != line.origin
                         || p.from != line.from
                         || line.time.duration_since(p.time).map(|d| d.as_secs() > gap).unwrap_or(true)
@@ -765,6 +768,21 @@ mod tests {
         let mut g = Grouping::new(Slt::of(old.time));
         assert!(g.look(&old).header);
         assert!(g.look(&new).header);
+        // an object's script errors open a group of their own, under their
+        // warning sign, and what it says next opens the next (#1263)
+        let object = |text: &str, secs, kind| ChatLine {
+            kind: ChatKind::Object(kind),
+            ..line("Demo HUD", text, secs)
+        };
+        let said = [
+            object("ready", 0, aurora_net::ChatType::OwnerSay),
+            object("error", 1, aurora_net::ChatType::Debug),
+            object("error again", 2, aurora_net::ChatType::Debug),
+            object("ready", 3, aurora_net::ChatType::OwnerSay),
+        ];
+        let mut g = Grouping::new(Slt::of(said[0].time));
+        let headers: Vec<bool> = said.iter().map(|l| g.look(l).header).collect();
+        assert_eq!(headers, [true, true, false, true]);
     }
 
     /// Aurora's workspace groups an author's messages within seven

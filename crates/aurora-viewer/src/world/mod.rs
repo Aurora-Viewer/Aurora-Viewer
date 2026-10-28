@@ -3446,7 +3446,7 @@ impl World {
         if self.receive_hand_contacts(&c, Instant::now()) {
             return;
         }
-        if self.script_debug.route(&c, self.agent_id) || self.anti_spam_chat(&c) {
+        if self.script_debug.route(&c, self.agent_id, Instant::now()) || self.anti_spam_chat(&c) {
             return;
         }
         let kind = match c.source_type {

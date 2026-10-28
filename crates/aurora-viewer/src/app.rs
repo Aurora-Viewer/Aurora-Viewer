@@ -2237,6 +2237,17 @@ impl App {
         }
     }
 
+    /// Where the script errors go follows the preferences (#1263), before
+    /// each frame's events and the demo's arrival lines.
+    fn sync_script_debug(&mut self) {
+        let debug = &mut self.world.script_debug;
+        debug.owner_say = self.settings.script_editor.owner_say_debug;
+        debug.in_chat = self.settings.script_errors_in_chat;
+        // (never DEBUG_CHANNEL itself, the errors' own channel)
+        debug.channel = (self.settings.script_errors_to_channel && self.settings.script_errors_channel != i32::MAX)
+            .then_some(self.settings.script_errors_channel);
+    }
+
     /// The conversation transcripts follow the preferences, and know before
     /// the login which grid it is made on (the demo is a grid of its own).
     fn sync_chat_log(&mut self) {
@@ -7427,7 +7438,7 @@ impl App {
         // ---- network events (time-boxed)
         let t_ev = Instant::now();
         self.world.events_this_frame = 0;
-        self.world.script_debug.owner_say = self.settings.script_editor.owner_say_debug;
+        self.sync_script_debug();
         self.world.received_items.enabled = self.settings.sort_received_items;
         self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
         self.world.payments.open_for_friends = self.settings.payment_opens_conversation;
@@ -7487,6 +7498,15 @@ impl App {
         self.perf.events_ms = t_ev.elapsed().as_secs_f32() * 1000.0;
         for anim in std::mem::take(&mut self.world.animation_stops) {
             self.send(NetCommand::AgentAnimation { anim, start: false });
+        }
+        // our script errors said on their channel (#1263), through RLVa's
+        // @sendchannel like any other line
+        for (channel, message) in std::mem::take(&mut self.world.script_debug.outgoing) {
+            self.send(NetCommand::Chat {
+                message,
+                channel,
+                chat_type: aurora_net::ChatType::Normal,
+            });
         }
         self.apply_skeleton_resets();
         self.frame_profile.lap(Lap::Events);
@@ -16062,6 +16082,7 @@ impl ApplicationHandler for App {
                 self.scene.materials.insert(id, m);
             }
             self.sync_chat_log();
+            self.sync_script_debug();
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);

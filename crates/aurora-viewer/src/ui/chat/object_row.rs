@@ -57,9 +57,37 @@ pub(super) fn compact_in(line: &ChatLine, env: &LineEnv) -> bool {
     }
 }
 
-/// The icon of a compact row: the cube of objects, or what a notice is
-/// about, in the icons the interface already gives these things.
+/// One of our objects' script errors, shown in the nearby chat (#1263).
+pub(crate) fn script_error(line: &ChatLine) -> bool {
+    line.kind == ChatKind::Object(aurora_net::ChatType::Debug)
+}
+
+/// The warning sign of a script error.
+const WARNING: &str = "alert-triangle-filled";
+
+/// The sign an object's line shows for its sender, and its tint: the cube
+/// in `cube`, its usual tint, or a script error's warning sign in the
+/// interface's red, in every style (#1263).
+pub(crate) fn object_glyph(line: &ChatLine, p: &crate::theme::Palette, cube: egui::Color32) -> (&'static str, egui::Color32) {
+    if script_error(line) { (WARNING, p.danger) } else { ("box", cube) }
+}
+
+/// The text of a compact row: muted, a script error in its own colour.
+pub(super) fn text_color(line: &ChatLine, p: &crate::theme::Palette) -> egui::Color32 {
+    if script_error(line) {
+        crate::ui::colors::script_error_color()
+    } else {
+        p.muted
+    }
+}
+
+/// The icon of a compact row: the cube of objects (a script error's warning
+/// sign), or what a notice is about, in the icons the interface already
+/// gives these things.
 pub(super) fn icon(world: &World, line: &ChatLine) -> &'static str {
+    if script_error(line) {
+        return WARNING;
+    }
     if line.kind != ChatKind::System {
         return "box";
     }
@@ -147,7 +175,8 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
         ui.allocate_exact_size(egui::vec2(text_left - x, row_h), egui::Sense::hover());
         let middle = caps_middle(ui.painter(), TEXT, baseline);
         let icon = egui::Rect::from_center_size(egui::pos2(left + icon_center, middle), egui::Vec2::splat(ICON));
-        super::thread::paint_icon(ui.painter(), self::icon(world, line), icon, p.muted_dim);
+        let tint = if script_error(line) { p.danger } else { p.muted_dim };
+        super::thread::paint_icon(ui.painter(), self::icon(world, line), icon, tint);
         if !notice {
             let name = sender_name(world, env.own_name, line);
             // the cube names its object under the pointer and inspects it
@@ -190,7 +219,9 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
             ui.add_space(GAP);
         }
         let (text, italics) = if notice { (&line.text[..], false) } else { body(line) };
-        let color = crate::ui::colors::keyword_color(line).or(tone).unwrap_or(p.muted);
+        let color = crate::ui::colors::keyword_color(line)
+            .or(tone)
+            .unwrap_or_else(|| text_color(line, p));
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
             chat_text_marked(ui, p, env.emoji, world, env.want_names, text, TEXT, color, italics, mark);
@@ -514,6 +545,16 @@ pub(super) mod tests {
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         assert_eq!(icon(&world, &line(ChatKind::Object(ChatType::OwnerSay), "hi")), "box");
         assert_eq!(icon(&world, &line(ChatKind::ObjectIm, "hi")), "box");
+        // a script error: the warning sign, in the interface's red (#1263)
+        let p = crate::theme::Theme::default().palette();
+        let error = line(ChatKind::Object(ChatType::Debug), "Script run-time error");
+        assert_eq!(icon(&world, &error), WARNING);
+        assert!(crate::ui::icons::embedded(WARNING));
+        assert_eq!(object_glyph(&error, &p, p.muted), (WARNING, p.danger));
+        assert_eq!(
+            object_glyph(&line(ChatKind::Object(ChatType::Normal), "hi"), &p, p.muted),
+            ("box", p.muted)
+        );
         let topics = [
             (Topic::People, "user-filled"),
             (Topic::Teleport, "plane-departure-filled"),
