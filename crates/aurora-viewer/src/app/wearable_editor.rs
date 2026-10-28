@@ -209,16 +209,18 @@ impl App {
                 draft.edited.textures.insert(*slot, crate::scene::avatar::IMG_INVISIBLE);
             }
         }
-        if variant == "preview" {
+        if matches!(variant, "preview" | "drag" | "drop") {
             let texture = crate::demo::TEX_HOLES;
             let mut image = self.world.inventory.items[&id].clone();
-            image.id = uuid::Uuid::from_u128(0xa0e0_1098_2000_0000_0000_0000_0000_0001);
+            image.id = DEMO_TEXTURE_ITEM;
             image.asset_type = 0;
             image.inv_type = 0;
             image.asset_id = texture;
             image.name = aurora_i18n::tr!("common-texture").into();
             self.world.inventory.add_items(vec![image]);
-            if let Some(slot) = crate::wearable_editor::slots(kind).first() {
+            if let Some(slot) = crate::wearable_editor::slots(kind).first()
+                && variant == "preview"
+            {
                 self.wearable_ui.set_texture(&self.world, *slot, texture);
             }
         }
@@ -230,7 +232,37 @@ impl App {
         }
         self.wearable_ui.changed(&mut self.world);
     }
+
+    /// `AURORA_DEMO_WEARABLE=<type>:drag|drop`: the demo texture carried from
+    /// the inventory over the first texture row from frame 700, without a
+    /// press; `drop` releases it there at frame 720.
+    pub(super) fn wearable_drop_demo_input(&mut self, raw: &mut egui::RawInput) {
+        let Ok(mode) = std::env::var("AURORA_DEMO_WEARABLE") else { return };
+        let drop = mode.ends_with(":drop");
+        if !drop && !mode.ends_with(":drag") || self.frame_count < 700 || drop && self.frame_count > 720 {
+            return;
+        }
+        let ctx = self.egui_ctx.clone();
+        if self.frame_count == 700 {
+            ui::inventory::drag::demo_carry(&ctx, vec![DEMO_TEXTURE_ITEM]);
+        }
+        let Some(pos) = ui::wearable::demo_row(&ctx).map(|row| row.center()) else {
+            return;
+        };
+        raw.events.push(egui::Event::PointerMoved(pos));
+        if drop && self.frame_count == 720 {
+            raw.events.push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+    }
 }
+
+/// The inventory texture of the `preview`, `drag` and `drop` demo modes.
+const DEMO_TEXTURE_ITEM: uuid::Uuid = uuid::Uuid::from_u128(0xa0e0_1098_2000_0000_0000_0000_0000_0001);
 
 fn demo_asset(item: &aurora_net::inventory::InvItem, owner: uuid::Uuid) -> Result<Vec<u8>, String> {
     let kind = (item.flags & 0xff) as u8;

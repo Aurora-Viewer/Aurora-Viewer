@@ -84,6 +84,27 @@ fn texture_allowed(world: &World, draft: &Draft, texture: Uuid) -> bool {
                 .any(|item| matches!(item.asset_type, 0 | 15) && item.asset_id == texture && item.owner_mask & required == required))
 }
 
+/// The texture an inventory entry dragged onto a texture swatch carries: a
+/// texture or a snapshot, through its link (LLTextureCtrl::handleDragAndDrop,
+/// indra/newview/lltexturectrl.cpp, takes DAD_TEXTURE cargo). Folders and
+/// other assets give nothing.
+pub fn dragged_texture(world: &World, item: Uuid) -> Option<Uuid> {
+    let id = crate::world::inventory::actions::original(&world.inventory, item)?;
+    world
+        .inventory
+        .items
+        .get(&id)
+        .filter(|item| matches!(item.asset_type, 0 | 15))
+        .map(|item| item.asset_id)
+}
+
+/// Whether a swatch accepts `texture` now: the same rules as the picker
+/// (LLTextureCtrl::allowDrop refuses a disabled control), so the drop
+/// highlight never promises what `State::set_texture` then refuses.
+pub fn accepts_texture(world: &World, draft: &Draft, slot: u32, texture: Uuid) -> bool {
+    draft.pending.is_none() && draft.can_modify(world) && slots(draft.edited.kind).contains(&slot) && texture_allowed(world, draft, texture)
+}
+
 pub fn slot_label(slot: u32) -> &'static str {
     match slot {
         0 | 23 | 26 | 29 => aurora_i18n::tr!("picker-bom-head"),
