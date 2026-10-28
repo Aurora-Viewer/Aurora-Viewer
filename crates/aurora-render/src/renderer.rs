@@ -7166,6 +7166,7 @@ impl Backend {
         // tags, floating texts), which the HUD attachments cover
         let mut extra_cmds = Vec::new();
         let mut window_glass = false;
+        let mut meshes_uploaded = false;
         let sd = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [self.config.width, self.config.height],
             pixels_per_point: ui.as_ref().map_or(1.0, |ui| ui.pixels_per_point),
@@ -7230,6 +7231,7 @@ impl Backend {
             extra_cmds = self
                 .egui
                 .update_buffers(&self.device, &self.queue, &mut encoder, &ui.primitives, &sd);
+            meshes_uploaded = crate::ui_frame::meshes_uploaded(&ui.primitives);
         }
         let draw_ui = |encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, primitives: &[egui::ClippedPrimitive]| {
             let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -7249,7 +7251,8 @@ impl Backend {
                 multiview_mask: None,
             });
             let mut pass = pass.forget_lifetime();
-            self.egui.render(&mut pass, primitives, &sd);
+            let jobs = crate::ui_frame::paint_jobs(primitives, meshes_uploaded);
+            self.egui.render(&mut pass, &jobs, &sd);
         };
         if !self.label_depth.enabled() {
             // AURORA_LABEL_OCCLUSION=0: over the scene, by egui-wgpu
