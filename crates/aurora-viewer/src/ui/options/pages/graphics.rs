@@ -490,14 +490,21 @@ fn light(cx: &mut Cx) {
         });
     });
     cx.group(tr!("ui-options-exposure-and-glow"), |cx| {
+        // greyed without HDR, as RenderExposure in the Legacy Viewer
+        // (LLFloaterPreference::refreshEnabledState)
+        let hdr = cx.s.hdr_emissive;
         cx.row(tr!("ui-options-exposure"), "", &field!(exposure), |ui, s| {
-            ui.add(
-                egui::Slider::new(&mut s.exposure, 0.25..=4.0)
-                    .custom_parser(aurora_i18n::parse_number)
-                    .logarithmic(true)
-                    .trailing_fill(true),
-            )
-            .changed()
+            let r = ui.add_enabled_ui(hdr, |ui| {
+                ui.add(
+                    egui::Slider::new(&mut s.exposure, 0.25..=4.0)
+                        .custom_parser(aurora_i18n::parse_number)
+                        .logarithmic(true)
+                        .trailing_fill(true),
+                )
+                .changed()
+            });
+            r.response.on_disabled_hover_text(tr!("ui-options-needs-hdr-emissive"));
+            r.inner
         });
         cx.toggle(
             tr!("ui-options-glow"),
@@ -638,9 +645,23 @@ fn image(cx: &mut Cx) {
         );
     });
     cx.group(tr!("ui-options-color-and-sharpness"), |cx| {
+        // "HDR and Emissive" (RenderDisableVintageMode): off, the tone
+        // mapping, its mix and the sharpening are greyed, as in
+        // LLFloaterPreference::refreshEnabledState
+        cx.keywords("HDR Emissive Vintage").toggle(
+            tr!("ui-options-hdr-emissive"),
+            tr!("ui-options-hdr-emissive-help"),
+            &field!(hdr_emissive),
+        );
+        let hdr = cx.s.hdr_emissive;
         // a classic sky is not tone mapped (no_post): the choice would
         // change nothing
-        let mapped = cx.st.sky_tone_mapped;
+        let mapped = cx.st.sky_tone_mapped && hdr;
+        let why = if hdr {
+            tr!("ui-options-tone-mapping-classic-sky")
+        } else {
+            tr!("ui-options-needs-hdr-emissive")
+        };
         cx.keywords("ACES Khronos PBR Neutral").row(
             tr!("ui-options-tone-mapping"),
             tr!("ui-options-tone-mapping-help"),
@@ -651,7 +672,7 @@ fn image(cx: &mut Cx) {
                     changed = super::super::combo(ui, &mut s.tonemapper, &[(0, tr!("ui-options-khronos-pbr-neutral")), (1, "ACES")]);
                 })
                 .response
-                .on_disabled_hover_text(tr!("ui-options-tone-mapping-classic-sky"));
+                .on_disabled_hover_text(why);
                 changed
             },
         );
@@ -670,7 +691,7 @@ fn image(cx: &mut Cx) {
                     )
                     .changed()
                 });
-                r.response.on_disabled_hover_text(tr!("ui-options-tone-mapping-classic-sky"));
+                r.response.on_disabled_hover_text(why);
                 r.inner
             },
         );
@@ -679,13 +700,17 @@ fn image(cx: &mut Cx) {
             tr!("ui-options-enhances-fine-details-amd-cas-0-4-as-in"),
             &field!(sharpen),
             |ui, s| {
-                ui.add(
-                    egui::Slider::new(&mut s.sharpen, 0.0..=1.0)
-                        .custom_parser(aurora_i18n::parse_number)
-                        .step_by(0.05)
-                        .trailing_fill(true),
-                )
-                .changed()
+                let r = ui.add_enabled_ui(hdr, |ui| {
+                    ui.add(
+                        egui::Slider::new(&mut s.sharpen, 0.0..=1.0)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .step_by(0.05)
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                });
+                r.response.on_disabled_hover_text(tr!("ui-options-needs-hdr-emissive"));
+                r.inner
             },
         );
     });

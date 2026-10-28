@@ -1078,6 +1078,11 @@ pub struct Settings {
     /// Share of the tone mapped color over the exposed linear one, on skies
     /// that are not classic (RenderTonemapMix, 0.7 like the Legacy Viewer).
     pub tonemap_mix: f32,
+    /// "HDR and Emissive" (RenderDisableVintageMode, on by default, off in
+    /// the Legacy Viewer's Low and LowMid levels): off, no exposure, tone
+    /// mapping nor sharpening, no emissive on opaque PBR faces and 8-bit
+    /// reflection probes (`RenderSettings::hdr`).
+    pub hdr_emissive: bool,
     /// Optional frame rate cap (on by default at 120 images per second).
     pub fps_cap: bool,
     pub fps_limit: u32,
@@ -1250,7 +1255,7 @@ pub(crate) const TONEMAP_MIX: f32 = 0.7;
 /// an S32 of seconds).
 pub(crate) const GROUP_SNOOZE_MAX_MINUTES: u32 = i32::MAX as u32 / 60;
 
-const SETTINGS_VERSION: u32 = 27;
+const SETTINGS_VERSION: u32 = 28;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1817,6 +1822,7 @@ impl Default for Settings {
             specular_aa: true,
             tonemapper: 1,
             tonemap_mix: TONEMAP_MIX,
+            hdr_emissive: true,
             fps_cap: true,
             fps_limit: 120,
             background_fps_cap: true,
@@ -2312,6 +2318,11 @@ impl Settings {
             // file wrote the former default, off
             self.colors.relation_names = true;
         }
+        if self.settings_version < 28 {
+            // the levels now set HDR and Emissive: a profile still exactly
+            // on Potato or Low turns it off, any other keeps it on
+            crate::graphics_presets::upgrade_hdr_emissive(&mut self);
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -2557,6 +2568,7 @@ impl Settings {
             } else {
                 Tonemapper::KhronosNeutral
             },
+            hdr: self.hdr_emissive,
             shadow_resolution: self.shadow_params().0,
             ssao: self.ssao,
             ao_method: if self.ao_method == 1 {

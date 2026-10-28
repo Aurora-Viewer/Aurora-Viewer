@@ -582,6 +582,10 @@ struct DepthOut {
 // without atmosphere or scene lighting. Keep the shared UV/animation path.
 override HUD_SRGB_TARGET: bool = false;
 
+// A HUD face: drawn straight to the screen, never into the G-buffer, it
+// keeps its emissive without HDR (eval_material, deferred_emissive_off).
+var<private> hud_pass: bool = false;
+
 @fragment
 fn fs_hud(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
@@ -590,6 +594,7 @@ fn fs_hud(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
     // hidden unless double-sided. Per-face rejection preserves the
     // depth-sorted stream shared by translucent HUD materials.
     if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
+    hud_pass = true;
     let mat = eval_material(in, front);
     if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && mat.color.a < rec.params.w) { discard; }
     let blended = (rec.flags.x & FLAG_ALPHA_BLEND) != 0u;
@@ -798,6 +803,9 @@ fn eval_material(in: VsOut, front: bool) -> Material {
     m.ao = select(1.0, mr_s.r, (rec.flags.x & FLAG_PBR) != 0u && frame.sky_ll.z > 0.5);
     // TE glow is not emissive: it only feeds the glow pass (fs_glow)
     m.emissive = rec.emissive.rgb * srgb_to_linear(em_s.rgb);
+    if (deferred_emissive_off() && !hud_pass && (rec.flags.x & (FLAG_PBR | FLAG_ALPHA_BLEND)) == FLAG_PBR) {
+        m.emissive = vec3<f32>(0.0);
+    }
     m.legacy_spec = vec4<f32>(0.0);
     m.legacy_env = 0.0;
     if ((rec.flags.x & FLAG_LEGACY_MAT) != 0u) {

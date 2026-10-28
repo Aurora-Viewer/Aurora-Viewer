@@ -4694,6 +4694,34 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
+    // AURORA_DEMO_PBR_EMISSIVE=1: three dark spheres ahead of the start
+    // position with the same orange emissive, opaque, alpha-masked and
+    // blended: without HDR and Emissive (AURORA_HDR=0) the first two lose
+    // their light, the blended one keeps it (HAS_EMISSIVE)
+    if std::env::var_os("AURORA_DEMO_PBR_EMISSIVE").is_some() {
+        let floor = height(cx, cy) + 0.35;
+        for (k, mat) in MAT_PBR_EMISSIVE.into_iter().enumerate() {
+            let mut t = TextureEntry::default();
+            for f in t.faces.iter_mut() {
+                f.texture = BLANK_TEXTURE;
+                f.color = [1.0, 1.0, 1.0, 1.0];
+            }
+            add(prim(
+                id,
+                Vec3::new(136.0, 124.0 + 2.0 * k as f32, floor + 2.6),
+                Quat::IDENTITY,
+                Vec3::splat(1.2),
+                sphere,
+                Arc::new(t),
+                ExtraParams {
+                    render_materials: (0..6).map(|f| (f, mat)).collect(),
+                    ..Default::default()
+                },
+                "",
+            ));
+            id += 1;
+        }
+    }
     // AURORA_DEMO_SHIMMER=1: a long glossy plate ahead of the start position,
     // its fine normal map repeated many times, seen at a grazing angle: far
     // away its relief is smaller than a pixel and its highlights shimmer as
@@ -7953,6 +7981,14 @@ const MAT_PBR_METAL: [Uuid; 3] = [
 /// Polished metal cube of AURORA_DEMO_PBR_METAL, occluded but for a disc.
 const MAT_PBR_ORM_DISC: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0014);
 
+/// Orange emissive spheres of AURORA_DEMO_PBR_EMISSIVE: opaque, alpha-masked,
+/// blended.
+const MAT_PBR_EMISSIVE: [Uuid; 3] = [
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0030),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0031),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0032),
+];
+
 /// PBR materials of the demo (normally fetched as assets).
 pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
     let mut list = vec![(
@@ -7984,6 +8020,24 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             ..Default::default()
         },
     ));
+    for (mat, (alpha_mode, alpha)) in MAT_PBR_EMISSIVE.into_iter().zip([
+        (aurora_assets::AlphaMode::Opaque, 1.0),
+        (aurora_assets::AlphaMode::Mask, 1.0),
+        (aurora_assets::AlphaMode::Blend, 0.6),
+    ]) {
+        list.push((
+            mat,
+            aurora_assets::PbrMaterial {
+                base_color_factor: [0.08, 0.08, 0.08, alpha],
+                metallic_factor: 0.0,
+                roughness_factor: 0.5,
+                emissive_factor: [1.0, 0.45, 0.1],
+                alpha_mode,
+                alpha_cutoff: 0.5,
+                ..Default::default()
+            },
+        ));
+    }
     list.push((
         region::terrain_replacement(),
         aurora_assets::PbrMaterial {

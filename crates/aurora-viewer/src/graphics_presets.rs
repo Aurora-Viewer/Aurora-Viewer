@@ -70,8 +70,9 @@ impl Preset {
         match self {
             // featuretable "Low": 64 m, LOD 1.5, 3 full avatars at 35 k,
             // 256 particles, no shadows, SSAO, water or probe reflections,
-            // no anti-aliasing, anisotropy or sharpening; glow off as well
-            // (a full-screen pass the oldest cards feel)
+            // no anti-aliasing, anisotropy or sharpening, no HDR and Emissive
+            // (RenderDisableVintageMode 0); glow off as well (a full-screen
+            // pass the oldest cards feel)
             Preset::Potato => Values {
                 draw_distance: 64.0,
                 lod_factor: 1.5,
@@ -93,10 +94,11 @@ impl Preset {
                 sharpen: 0.0,
                 glow: false,
                 avatar_physics_detail: 0.0,
+                hdr_emissive: false,
                 effects: Effects::OFF,
             },
             // "LowMid": 96 m, LOD 2, 5 avatars at 100 k, 2,048 particles,
-            // still nothing of the deferred effects
+            // still nothing of the deferred effects nor HDR and Emissive
             Preset::Low => Values {
                 draw_distance: 96.0,
                 lod_factor: 2.0,
@@ -118,6 +120,7 @@ impl Preset {
                 sharpen: 0.0,
                 glow: true,
                 avatar_physics_detail: 0.75,
+                hdr_emissive: false,
                 effects: Effects::OFF,
             },
             // "Mid": 128 m, 7 avatars at 200 k, 4,096 particles, FXAA,
@@ -144,6 +147,7 @@ impl Preset {
                 sharpen: 0.0,
                 glow: true,
                 avatar_physics_detail: 1.0,
+                hdr_emissive: true,
                 effects: Effects::OFF,
             },
             // "High": 11 avatars at 300 k, sun and moon shadows (detail 1:
@@ -172,6 +176,7 @@ impl Preset {
                 sharpen: 0.4,
                 glow: true,
                 avatar_physics_detail: 1.0,
+                hdr_emissive: true,
                 effects: Effects::HIGH,
             },
             // "Ultra": LOD 3, 16 avatars, 8,192 particles, shadows of the
@@ -206,6 +211,7 @@ impl Preset {
                 sharpen: 0.4,
                 glow: true,
                 avatar_physics_detail: 1.0,
+                hdr_emissive: true,
                 effects: Effects::DELUXE,
             },
         }
@@ -393,12 +399,32 @@ pub(crate) fn upgrade_levels_v21(s: &mut Settings) {
 pub(crate) fn upgrade_physics_detail(s: &mut Settings) {
     for preset in [Preset::Potato, Preset::Low] {
         let level = preset.values();
+        // (files of then all have HDR and Emissive on: upgrade_hdr_emissive)
         let current = Values {
             avatar_physics_detail: level.avatar_physics_detail,
+            hdr_emissive: level.hdr_emissive,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
             s.avatar_physics_detail = level.avatar_physics_detail;
+            return;
+        }
+    }
+}
+
+/// Settings files written before HDR and Emissive could be turned off
+/// (version 28), all with it on: a profile exactly on Potato or Low apart
+/// from it takes the level's (off, as the Legacy Viewer's Low and LowMid);
+/// any other keeps it on.
+pub(crate) fn upgrade_hdr_emissive(s: &mut Settings) {
+    for preset in [Preset::Potato, Preset::Low] {
+        let level = preset.values();
+        let current = Values {
+            hdr_emissive: level.hdr_emissive,
+            ..Values::read(s)
+        };
+        if current.as_shown() == level.as_shown() {
+            s.hdr_emissive = level.hdr_emissive;
             return;
         }
     }
@@ -464,7 +490,15 @@ pub struct Values {
     pub glow: bool,
     /// RenderAvatarPhysicsLODFactor: 0 in Low, 0.75 in LowMid, 1 above.
     pub avatar_physics_detail: f32,
+    /// RenderDisableVintageMode: off in Low and LowMid, on above (a backup
+    /// written before it holds none: on, the default then).
+    #[serde(default = "hdr_on")]
+    pub hdr_emissive: bool,
     pub effects: Effects,
+}
+
+fn hdr_on() -> bool {
+    true
 }
 
 impl Values {
@@ -532,6 +566,7 @@ impl Values {
             sharpen: s.sharpen,
             glow: s.glow,
             avatar_physics_detail: s.avatar_physics_detail,
+            hdr_emissive: s.hdr_emissive,
             effects: Effects {
                 bloom: s.bloom,
                 bloom_strength: s.bloom_strength,
@@ -564,6 +599,7 @@ impl Values {
         s.sharpen = self.sharpen;
         s.glow = self.glow;
         s.avatar_physics_detail = self.avatar_physics_detail;
+        s.hdr_emissive = self.hdr_emissive;
         s.bloom = self.effects.bloom;
         s.bloom_strength = self.effects.bloom_strength;
         s.contact_shadows = self.effects.contact_shadows;
@@ -665,6 +701,44 @@ mod tests {
         Preset::High.apply(&mut s);
         upgrade_physics_detail(&mut s);
         assert_eq!(s.avatar_physics_detail, 1.0);
+    }
+
+    /// RenderDisableVintageMode 0 in the Legacy Viewer's Low and LowMid
+    /// (featuretable.txt), 1 above.
+    #[test]
+    fn the_low_levels_turn_hdr_off_like_the_legacy_viewer() {
+        let hdr = |p: Preset| p.values().hdr_emissive;
+        assert!(!hdr(Preset::Potato) && !hdr(Preset::Low));
+        for p in [Preset::Medium, Preset::High, Preset::Deluxe] {
+            assert!(hdr(p), "{p:?}");
+        }
+        // an older file exactly on Potato or Low (HDR on then, and before
+        // version 24 the physics detail at 1 too) takes the level's
+        for preset in [Preset::Potato, Preset::Low] {
+            let mut s = Settings::default();
+            preset.apply(&mut s);
+            s.hdr_emissive = true;
+            s.avatar_physics_detail = 1.0;
+            upgrade_physics_detail(&mut s);
+            upgrade_hdr_emissive(&mut s);
+            assert_eq!(Preset::matching(&s), Some(preset));
+            assert!(!s.hdr_emissive);
+        }
+        // a custom profile and the higher levels keep it on
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        s.hdr_emissive = true;
+        s.draw_distance = 300.0;
+        upgrade_hdr_emissive(&mut s);
+        assert!(s.hdr_emissive);
+        Preset::Medium.apply(&mut s);
+        upgrade_hdr_emissive(&mut s);
+        assert!(s.hdr_emissive);
+        // a safe graphics backup written before it holds none: on
+        let mut json = serde_json::to_value(Preset::Low.values()).expect("values serialize");
+        json.as_object_mut().expect("an object").remove("hdr_emissive");
+        let read: Values = serde_json::from_value(json).expect("backup without the field");
+        assert!(read.hdr_emissive);
     }
 
     #[test]

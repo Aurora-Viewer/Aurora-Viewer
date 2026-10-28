@@ -98,6 +98,9 @@ pub struct ProbeManager {
     pub level: u8,
     /// Cube slots including the default probe's.
     pub slots: u32,
+    /// "HDR and Emissive" the captures were drawn with (handleEnableHDR
+    /// resets the probes when it changes).
+    pub hdr: bool,
     probes: HashMap<Key, Probe>,
     default_complete: bool,
     default_last: Option<Instant>,
@@ -112,6 +115,7 @@ impl Default for ProbeManager {
         ProbeManager {
             level: level::FULL,
             slots: 32,
+            hdr: true,
             probes: HashMap::new(),
             default_complete: false,
             default_last: None,

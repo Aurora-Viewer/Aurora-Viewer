@@ -138,6 +138,8 @@ struct FrameU {
     spot_fade: [f32; 4],
     /// x: 1 when the shading takes the contact shadows (main view only).
     contact: [f32; 4],
+    /// x: common.wgsl FEATURE_* bits, the same in every pass.
+    features: [u32; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -4751,6 +4753,8 @@ impl Backend {
         u.sky_obj_light = s.object_sunlight.extend(0.0).to_array();
         u.sky_optics = [s.moisture_level, s.droplet_radius, s.ice_level, 0.0];
         u.sky_optics_tex = [s.rainbow_texture, s.halo_texture, 0, 0];
+        // (common.wgsl FEATURE_NO_EMISSIVE)
+        u.features[0] = if self.settings.hdr { 0 } else { 1 };
         for (i, m) in cascades.iter().enumerate() {
             u.cascade_vp[i] = m.to_cols_array_2d();
         }
@@ -5445,8 +5449,13 @@ impl Backend {
             }
             if self.bloom.norm() > 0.0 { strength.clamp(0.0, 1.0) } else { 0.0 }
         };
+        // "HDR and Emissive" off: LLPipeline::renderFinalize skips the
+        // luminance, the exposure, the tone mapping and the CAS for
+        // gammaCorrect, which only encodes and clamps (legacyGamma kept on
+        // skies without a probe ambiance, as no_post below)
+        let hdr = self.settings.hdr;
         let post = PostU {
-            exposure: f.exposure,
+            exposure: if hdr { f.exposure } else { 1.0 },
             // SMAA works on a gamma-encoded 8-bit image
             output_srgb: if self.surface_srgb && self.smaa_targets.is_none() {
                 1.0
@@ -5454,7 +5463,7 @@ impl Backend {
                 0.0
             },
             // classic skies are not tone mapped (Firestorm: no_post + legacy gamma)
-            tonemapper: if f.sky.no_post {
+            tonemapper: if f.sky.no_post || !hdr {
                 2.0
             } else {
                 match self.settings.tonemapper {
@@ -5463,7 +5472,7 @@ impl Backend {
                 }
             },
             fxaa: if self.settings.aa == AntiAliasing::Fxaa { 1.0 } else { 0.0 },
-            sharpen: f.sharpen.clamp(0.0, 1.0),
+            sharpen: if hdr { f.sharpen.clamp(0.0, 1.0) } else { 0.0 },
             glow: if glow_on { 1.0 } else { 0.0 },
             debug_glow: {
                 static DEBUG_GLOW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -5484,7 +5493,11 @@ impl Backend {
             // RenderTonemapMix on skies that are not classic; a classic sky
             // tone mapped all the same (probe ambiance above 0) is not mixed
             // (LLSettingsSky::getTonemapMix, LLSettingsVOSky::applySpecial)
-            tonemap_mix: if f.sky.classic { 0.0 } else { f.tonemap_mix.clamp(0.0, 1.0) },
+            tonemap_mix: if f.sky.classic || !hdr {
+                0.0
+            } else {
+                f.tonemap_mix.clamp(0.0, 1.0)
+            },
             auto_exposure: 1.0,
             cutout: match (f.cutout, snapshot.is_some()) {
                 (false, _) => 0.0,
@@ -6479,7 +6492,8 @@ impl Backend {
                 }
             }
             if c.finish {
-                self.probes.filter(&mut encoder, c.slot, self.probe_irr_faces == 0x3f);
+                self.probes
+                    .filter(&mut encoder, c.slot, self.probe_irr_faces == 0x3f, self.settings.hdr);
             }
         }
 
@@ -7206,7 +7220,8 @@ impl Backend {
             &self.queue,
             &mut encoder,
             &crate::exposure::FrameExposure {
-                tone_mapped: !f.sky.no_post,
+                // (no generateExposure without HDR: the exposure stays 1)
+                tone_mapped: !f.sky.no_post && self.settings.hdr,
                 hdr_scale: f.sky.hdr_scale,
                 // (a cut-out photo's empty background would raise it: the
                 // subject keeps the exposure the whole scene gave it)

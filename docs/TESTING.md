@@ -93,6 +93,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
+| `AURORA_HDR=0\|1` | Overrides "HDR and Emissive" (Graphics › Image) |
 | `AURORA_GRAPHICS_PRESET=potato\|low\|medium\|high\|deluxe` | Applies a graphics level before the overrides above |
 
 `AURORA_DEMO_AVATAR_RENDER_SETTINGS=1` opens World > Avatar render settings
@@ -221,6 +222,16 @@ Preferences › Graphics › Presets (`graphics_presets.rs`) at start, as a
 click on it would, and they are saved with the profile; the single
 overrides of the table then still apply on top (`AURORA_AA=3` with a level
 reads as "Custom" in the page).
+
+`AURORA_HDR=0` turns "HDR and Emissive" off, as Potato and Low do (the
+Legacy Viewer's RenderDisableVintageMode), and is saved with the profile:
+no automatic or manual exposure, no tone mapping nor sharpening, the opaque
+and alpha-masked PBR faces and the PBR terrain without their emissive (the
+blended ones and the HUDs keep it), reflection probes clamped to 1 in 8-bit
+steps. Compare with `AURORA_HDR=1` at the same place: bright skies and
+highlights clip to white instead of rolling off, emissive PBR objects go
+dark, and in Preferences › Graphics › Image the tone mapping, its mix and
+the sharpness are greyed (the exposure too, under Light).
 
 `AURORA_AA`: 0 none, 1 FXAA, 2 to 4 MSAA 2x / 4x / 8x, 5 TAA, 6 SMAA. Without
 it, the demo keeps the setting saved in its profile: 6 (SMAA) for a new
@@ -3087,6 +3098,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` (or `alpha`) | GLTF material override (`alpha`: overrides with a zero base color alpha) |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
+| `AURORA_DEMO_PBR_EMISSIVE=1` | Three orange emissive PBR spheres: opaque, alpha-masked, blended |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
 | `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
@@ -3177,6 +3189,11 @@ both open states and the selection count. Capture at frame 620.
   number of objects).
 - **`AURORA_DEMO_PLANAR=1`**: the tiles must line up from one slab
   to the next.
+- **`AURORA_DEMO_PBR_EMISSIVE=1`**: three dark spheres ahead of the start
+  position with the same orange emissive (PBR), from the right: opaque,
+  alpha-masked and blended. All three glow orange; with `AURORA_HDR=0`
+  ("HDR and Emissive" off) the opaque and masked ones turn dark grey and
+  only the blended one keeps its light, as in the Legacy Viewer.
 - **`AURORA_DEMO_PBR_METAL=1`**: three white metal spheres (PBR, metallic 1,
   roughness 0.05, 0.3 and 0.6) and a polished slab ahead of the start
   position. A white metal has no colour of its own: the polished one

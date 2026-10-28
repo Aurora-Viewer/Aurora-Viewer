@@ -946,6 +946,9 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Ok(v) = std::env::var("AURORA_PROJECTOR_SHADOWS") {
         settings.projector_shadows = v != "0";
     }
+    if let Ok(v) = std::env::var("AURORA_HDR") {
+        settings.hdr_emissive = v != "0";
+    }
     if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
         settings.occlusion_culling = v != "0";
     }
@@ -8824,9 +8827,13 @@ impl App {
         t_part = self.scene.parts.lap(Part::ParamsLights, t_part);
         let probes = if in_world {
             let slots = self.settings.probe_count.clamp(8, 64);
-            if self.probes.slots != slots || self.probes.level != self.settings.reflection_probes {
+            if self.probes.slots != slots
+                || self.probes.level != self.settings.reflection_probes
+                || self.probes.hdr != self.settings.hdr_emissive
+            {
                 self.probes.slots = slots;
                 self.probes.level = self.settings.reflection_probes.min(3);
+                self.probes.hdr = self.settings.hdr_emissive;
                 self.probes.reset();
             }
             self.probes

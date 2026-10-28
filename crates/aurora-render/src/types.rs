@@ -939,6 +939,12 @@ pub struct RenderSettings {
     pub water_effects: crate::WaterEffects,
     pub aa: AntiAliasing,
     pub tonemapper: Tonemapper,
+    /// "HDR and Emissive" (RenderDisableVintageMode, which drives
+    /// RenderHDREnabled and RenderEnableEmissiveBuffer). Off, the Legacy
+    /// Viewer's "vintage" image: no exposure, tone mapping nor sharpening
+    /// (LLPipeline::gammaCorrect), no emissive on the PBR faces drawn into
+    /// its G-buffer (HAS_EMISSIVE) and reflection probes in 8 bits.
+    pub hdr: bool,
     /// Shadow map resolution per cascade (0 = shadows off).
     pub shadow_resolution: u32,
     /// Screen-space ambient occlusion: 0 off, 1 low, 2 high.
@@ -980,6 +986,7 @@ impl Default for RenderSettings {
             // for, not the viewer's default (SMAA, in its own settings)
             aa: AntiAliasing::Msaa(4),
             tonemapper: Tonemapper::KhronosNeutral,
+            hdr: true,
             shadow_resolution: 2048,
             ssao: 1,
             ao_method: AoMethod::Legacy,
