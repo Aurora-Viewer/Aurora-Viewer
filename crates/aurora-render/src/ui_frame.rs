@@ -17,9 +17,42 @@
 //! texels. [`EguiHandOver`] keeps such a twin, a few rows high.
 
 use egui::epaint::{ClippedPrimitive, ClippedShape, Primitive, Tessellator, TextureAtlas};
+use std::borrow::Cow;
 
 /// Height egui gives a new font atlas (`FontsImpl::new`); it only grows.
 const NEW_ATLAS_HEIGHT: usize = 32;
+
+/// Whether `egui_wgpu::Renderer::update_buffers` gives `primitives` slices
+/// of its buffers: it refreshes its index slices only when the frame has
+/// indices, its vertex slices only when it has vertices, and otherwise
+/// keeps those of an earlier frame.
+pub(crate) fn meshes_uploaded(primitives: &[ClippedPrimitive]) -> bool {
+    let (mut vertices, mut indices) = (false, false);
+    for p in primitives {
+        if let Primitive::Mesh(mesh) = &p.primitive {
+            vertices |= !mesh.vertices.is_empty();
+            indices |= !mesh.indices.is_empty();
+        }
+    }
+    vertices && indices
+}
+
+/// What to hand `egui_wgpu::Renderer::render` of `primitives`, part of a
+/// frame whose buffers were updated (`uploaded`: [`meshes_uploaded`]).
+///
+/// `render` takes one slice per mesh, even an empty one under an empty
+/// clip. The labels, the glass and the previews leave such empty meshes in
+/// the frame; when nothing else is left (mouselook hides the windows, the
+/// labels go to `label_depth`), the slices are an earlier frame's and
+/// `render` panics as soon as there are more meshes than slices (#1235).
+/// Such a frame has no triangle to draw: only its paint callbacks remain.
+pub(crate) fn paint_jobs(primitives: &[ClippedPrimitive], uploaded: bool) -> Cow<'_, [ClippedPrimitive]> {
+    if uploaded {
+        return Cow::Borrowed(primitives);
+    }
+    let callbacks = primitives.iter().filter(|p| matches!(p.primitive, Primitive::Callback(_)));
+    Cow::Owned(callbacks.cloned().collect())
+}
 
 /// The interface of a frame as egui left it: shapes still to tessellate
 /// and texture changes.
@@ -208,6 +241,89 @@ mod tests {
         // one textured quad, not a fan of triangles
         assert_eq!(ui.vertices, 4);
         assert_same(&ui.primitives, &ctx.tessellate(circle, out.pixels_per_point));
+    }
+
+    /// A frame left with empty meshes only, after one with fewer meshes:
+    /// egui-wgpu keeps the slices of the first and `render` runs out of them.
+    #[test]
+    fn a_frame_of_empty_meshes_renders_without_slices() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let mut egui = egui_wgpu::Renderer::new(&device, format, Default::default());
+        let sd = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [64, 64],
+            pixels_per_point: 1.0,
+        };
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Empty egui frame test"),
+            size: wgpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = target.create_view(&Default::default());
+        let mut quad = egui::Mesh::default();
+        quad.add_colored_rect(egui::Rect::from_min_size(egui::pos2(4.0, 4.0), egui::vec2(8.0, 8.0)), egui::Color32::RED);
+        let drawn = [ClippedPrimitive {
+            clip_rect: egui::Rect::EVERYTHING,
+            primitive: Primitive::Mesh(quad),
+        }];
+        // what label_depth, the glass and the previews leave behind
+        let emptied = vec![
+            ClippedPrimitive {
+                clip_rect: egui::Rect::NOTHING,
+                primitive: Primitive::Mesh(egui::Mesh::default()),
+            };
+            3
+        ];
+        assert!(meshes_uploaded(&drawn));
+        assert!(!meshes_uploaded(&emptied));
+        let frame = |primitives: &[ClippedPrimitive], egui: &mut egui_wgpu::Renderer, filter: bool| {
+            let mut encoder = device.create_command_encoder(&Default::default());
+            let mut cmds = egui.update_buffers(&device, &queue, &mut encoder, primitives, &sd);
+            let uploaded = meshes_uploaded(primitives);
+            let rendered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut pass = encoder
+                    .begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("egui"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &view,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations::default(),
+                        })],
+                        ..Default::default()
+                    })
+                    .forget_lifetime();
+                let jobs = if filter {
+                    paint_jobs(primitives, uploaded)
+                } else {
+                    Cow::Borrowed(primitives)
+                };
+                egui.render(&mut pass, &jobs, &sd);
+            }));
+            cmds.push(encoder.finish());
+            queue.submit(cmds);
+            rendered.is_ok()
+        };
+        assert!(frame(&drawn, &mut egui, true));
+        // the crash of #1235, then the same frames through paint_jobs
+        assert!(!frame(&emptied, &mut egui, false));
+        assert!(frame(&drawn, &mut egui, true));
+        assert!(frame(&emptied, &mut egui, true));
+        assert!(frame(&drawn, &mut egui, true));
     }
 
     #[test]
