@@ -1,11 +1,21 @@
 # Translating the viewer
 
 Each language has a Fluent catalogue in `crates/aurora-i18n/locales/`.
-French is in `fr.ftl`, English in `en.ftl`. The files are embedded at build
-time; adding `de.ftl`, for example, adds a language to the Preferences
-without changing the Rust code. The file name must be a language
-identifier, such as `de` or `pt-BR`, and `language-name` holds the name
-that its speakers recognise.
+English is in `en.ftl`, French in `fr.ftl` and Japanese in `ja.ftl`. The
+files are embedded at build time; adding `de.ftl`, for example, adds a
+language to the Preferences without changing the Rust code. The file name
+must be a language identifier, such as `de` or `pt-BR`, and `language-name`
+holds the name that its speakers recognise.
+
+The embedded fonts only cover European scripts. Other scripts, Japanese
+included, are drawn by the system fallback fonts (Meiryo UI or Yu Gothic UI
+for Japanese on Windows, see `ui/fonts/fallback.rs`), found before the first
+frame. egui breaks Japanese and Chinese lines between characters. A date is
+a message with named components (`date-day-month`), never an order written
+in the code. Japanese has no plural: a plural select of the English becomes
+plain text (`{ $count }件`), while a select on anything else keeps its
+variants. Japanese uses the official Second Life terms of the Legacy
+Viewer's `xui/ja` interface (インベントリ, 区画, リージョン, 初期設定…).
 
 The saved choice takes precedence over the OS; "System language" follows the
 OS. Regional variants use the exact catalogue if it exists, then the one of
@@ -76,6 +86,7 @@ $env:AURORA_DEMO = '1'
 $env:AURORA_DEMO_OPTIONS = '1'
 cargo run -p aurora-viewer -- --language en --title "Test langue-viewer"
 cargo run -p aurora-viewer -- --language fr --title "Test langue-viewer"
+cargo run -p aurora-viewer -- --language ja --title "Test langue-viewer"
 ```
 
 Remove `--language` to check the saved choice and its change while the

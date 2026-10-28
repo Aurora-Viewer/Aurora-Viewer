@@ -424,16 +424,12 @@ fn week_label(start: &str) -> Option<String> {
 
 /// "6 Oct.", the year added when it is not this one.
 fn day_month(y: i32, m: u32, d: u32) -> String {
-    let month = crate::ui::land::months()[(m.clamp(1, 12) - 1) as usize];
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64);
     let this_year = aurora_net::profile::civil_from_days(now.div_euclid(86_400)).0;
-    if i64::from(y) == this_year {
-        format!("{d} {month}")
-    } else {
-        format!("{d} {month} {y}")
-    }
+    let y = i64::from(y);
+    crate::ui::land::day_month((y != this_year).then_some(y), m as usize, i64::from(d))
 }
 
 /// A small chevron of the card's title: a week earlier or later.

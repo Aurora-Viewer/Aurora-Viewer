@@ -92,14 +92,7 @@ pub fn notice_date(timestamp: u32, now: i64) -> String {
     match days {
         0 => aurora_i18n::tr!("ui-chat-today").to_lowercase(),
         1 => aurora_i18n::tr!("ui-chat-yesterday").to_lowercase(),
-        _ => {
-            let month = crate::ui::land::months()[(m.clamp(1, 12) - 1) as usize];
-            if y == today.0 {
-                format!("{d} {month}")
-            } else {
-                format!("{d} {month} {y}")
-            }
-        }
+        _ => crate::ui::land::day_month((y != today.0).then_some(y), m as usize, i64::from(d)),
     }
 }
 

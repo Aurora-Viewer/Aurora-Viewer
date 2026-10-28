@@ -377,7 +377,8 @@ fn version_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo
         ui.horizontal(|ui| {
             ui.label(RichText::new(aurora_i18n::tr!("ui-login-installed")).size(12.5).color(p.muted));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(RichText::new(format!("v{current}")).size(13.0).strong().color(p.ink));
+                // a beta's long number elides beside a longer translated label
+                ui.add(egui::Label::new(RichText::new(format!("v{current}")).size(13.0).strong().color(p.ink)).truncate());
             });
         });
         ui.add_space(2.0);
