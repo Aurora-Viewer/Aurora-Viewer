@@ -7,7 +7,15 @@ fn texture_size_switch_updates_both_axes_preview_and_price() {
     theme.apply(&ctx, 1.0);
     let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
     let pixels = crate::imports::tests::image(2048, 1024);
-    let entry = Entry::new("large.png".into(), Ok(Source::Texture(pixels.clone())), Default::default());
+    let entry = Entry::new(
+        "large.png".into(),
+        Ok(Source::Texture(pixels.clone())),
+        import_texture::Options {
+            max_width: 2048,
+            max_height: 2048,
+            ..Default::default()
+        },
+    );
     let id = entry.id;
     let mut imports = Imports {
         open: true,
@@ -21,7 +29,8 @@ fn texture_size_switch_updates_both_axes_preview_and_price() {
         large_texture: Some(50),
         ..Default::default()
     };
-    let frame = |imports: &mut Imports, events| {
+    let mut prefs = Preferences::default();
+    let frame = |imports: &mut Imports, prefs: &mut Preferences, events| {
         let mut actions = Vec::new();
         let mut output = ctx.run_ui(
             egui::RawInput {
@@ -29,25 +38,16 @@ fn texture_size_switch_updates_both_axes_preview_and_price() {
                 events,
                 ..Default::default()
             },
-            |ui| {
-                actions = show(
-                    ui.ctx(),
-                    &theme.palette(),
-                    imports,
-                    &mut Preferences::default(),
-                    &world,
-                    &Default::default(),
-                )
-            },
+            |ui| actions = show(ui.ctx(), &theme.palette(), imports, prefs, &world, &Default::default()),
         );
         output.textures_delta.clear();
         (output, actions)
     };
     for _ in 0..8 {
-        drop(frame(&mut imports, Vec::new()));
+        drop(frame(&mut imports, &mut prefs, Vec::new()));
     }
-    for (limit, dimensions, cost) in [(false, (2048, 1024), 50), (true, (1024, 512), 10)] {
-        let (output, _) = frame(&mut imports, Vec::new());
+    for (limit, dimensions, cost) in [(true, (1024, 512), 10), (false, (2048, 1024), 50), (true, (1024, 512), 10)] {
+        let (output, _) = frame(&mut imports, &mut prefs, Vec::new());
         let pos = output
             .shapes
             .iter()
@@ -63,6 +63,7 @@ fn texture_size_switch_updates_both_axes_preview_and_price() {
         for pressed in [true, false] {
             let (_, actions) = frame(
                 &mut imports,
+                &mut prefs,
                 vec![
                     egui::Event::PointerMoved(pos),
                     egui::Event::PointerButton {
@@ -82,7 +83,28 @@ fn texture_size_switch_updates_both_axes_preview_and_price() {
         assert_eq!((options.max_width, options.max_height), (maximum, maximum));
         assert_eq!(import_texture::dimensions(pixels.width, pixels.height, options), dimensions);
         assert_eq!(imports.total(&prices), Some(cost));
+        assert_eq!(prefs.limit_texture_size, limit);
         assert!(preview_requested && imports.entries[0].preview_generation > generation);
+    }
+    for (width, height, visible) in [
+        (240, 180, false),
+        (1024, 1024, false),
+        (1792, 800, false),
+        (1793, 800, true),
+        (2048, 512, true),
+        (512, 2048, true),
+    ] {
+        imports.entries[0].source = Some(Source::Texture(crate::imports::tests::image(width, height)));
+        let (output, _) = frame(&mut imports, &mut prefs, Vec::new());
+        let shown = output.shapes.iter().any(|shape| {
+            matches!(&shape.shape,
+            egui::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("import-max-size"))
+        });
+        assert_eq!(
+            shown, visible,
+            "visibility uses the unrestricted encoded size of {width} × {height}"
+        );
+        assert!(prefs.limit_texture_size, "viewing a file must not replace the remembered choice");
     }
 }
 

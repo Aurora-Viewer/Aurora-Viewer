@@ -4223,8 +4223,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   then opens the chosen flow: RGBA image, PBR material, Collada cube,
   BVH / `.anim` animations and synthetic WAV sound. Check the settings, the
   previews, the camera, the permissions, the selection and the confirmation.
-  The texture inspector has one "Limit size to 1024 × 1024" switch, on by
-  default. Off permits 2048 on both axes. With a 2048 × 1024 source opened
+  The texture inspector shows "Limit size to 1024 × 1024" only when the
+  unrestricted power-of-two width or height would exceed 1024. It is off by
+  default (2048 maximum). Each explicit change is saved; newly added textures
+  capture the latest choice when they join the list, while existing files
+  retain their own limit. Viewing a smaller image hides the switch without
+  replacing that remembered choice. With a 2048 × 1024 source opened
   through `AURORA_DEMO_IMPORT_FILE`, check that toggling it changes the
   upload size between 1024 × 512 and 2048 × 1024 and updates the fee. Only
   the final power-of-two dimensions are shown, as in `LLFloaterImagePreview`.

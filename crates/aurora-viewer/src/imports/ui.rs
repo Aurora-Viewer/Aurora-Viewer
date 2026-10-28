@@ -476,6 +476,7 @@ fn texture(
     image: &DecodedImage,
     empty_alpha: bool,
     options: &mut import_texture::Options,
+    prefs: &mut Preferences,
     preview: &Option<egui::TextureHandle>,
     actions: &mut Vec<Action>,
     generation: &mut u64,
@@ -505,11 +506,15 @@ fn texture(
                 selection(ui, target, index, label);
             }
         });
-    let mut limit_size = options.max_width.max(options.max_height) <= 1024;
-    widgets::switch_labeled(ui, p, &mut limit_size, aurora_i18n::tr!("import-max-size"));
-    let maximum = if limit_size { 1024 } else { 2048 };
-    options.max_width = maximum;
-    options.max_height = maximum;
+    if texture_needs_size_limit(image) {
+        let mut limit_size = options.max_width.max(options.max_height) <= 1024;
+        if widgets::switch_labeled(ui, p, &mut limit_size, aurora_i18n::tr!("import-max-size")).changed() {
+            let maximum = if limit_size { 1024 } else { 2048 };
+            options.max_width = maximum;
+            options.max_height = maximum;
+            prefs.limit_texture_size = limit_size;
+        }
+    }
     let (width, height) = import_texture::dimensions(image.width, image.height, *options);
     ui.label(aurora_i18n::tr!("import-texture-size", width = width, height = height));
     if width * height <= 128 * 128 {

@@ -57,6 +57,67 @@ fn authored_native_animation_opens_the_normal_inspector_without_starting_or_char
 use std::time::{Duration, Instant};
 
 #[test]
+fn texture_size_limit_defaults_off_and_new_rows_capture_the_latest_persisted_choice() {
+    let mut prefs: Preferences = serde_json::from_str(r#"{"max_width":1024,"max_height":1024}"#).expect("old settings");
+    assert!(
+        !prefs.limit_texture_size,
+        "the old implicit size limit is not an explicit new choice"
+    );
+    let ctx = egui::Context::default();
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    let mut imports = Imports::default();
+    for limit in [false, true, false] {
+        let previous: Vec<_> = imports.entries.iter().map(|entry| entry.options).collect();
+        imports.load_preferences = prefs.clone();
+        let request = Uuid::new_v4();
+        imports.pending_files = Some(request);
+        let loaded = vec![
+            Entry::new("large.png".into(), Ok(Source::Texture(image(2048, 1024))), Default::default()),
+            Entry::new("small.png".into(), Ok(Source::Texture(image(240, 180))), Default::default()),
+            Entry::new("rounded.png".into(), Ok(Source::Texture(image(1100, 900))), Default::default()),
+            Entry::new(
+                "material.gltf".into(),
+                Ok(Source::Material {
+                    value: PbrMaterial::default(),
+                    images: Box::new([None, None, None, None]),
+                }),
+                Default::default(),
+            ),
+        ];
+        imports.tx.send(Worker::Loaded(request, loaded)).expect("loaded files");
+        // The user can change the choice while the file worker is running.
+        imports.load_preferences.limit_texture_size = limit;
+        assert!(imports.poll(&ctx, &jobs, &world, &Default::default()).is_empty());
+        for (entry, old) in imports.entries.iter().zip(&previous) {
+            assert_eq!(&entry.options, old, "existing files keep their own limit");
+        }
+        let added = &imports.entries[previous.len()..];
+        let maximum = if limit { 1024 } else { 2048 };
+        assert_eq!((added[0].options.max_width, added[0].options.max_height), (maximum, maximum));
+        for entry in &added[1..3] {
+            assert_eq!(
+                (entry.options.max_width, entry.options.max_height),
+                (2048, 2048),
+                "no unnecessary reduction for small uploads"
+            );
+        }
+        assert_eq!(
+            added[2].source.as_ref().expect("rounded image").dimensions(added[2].options),
+            (1024, 1024)
+        );
+        assert_eq!(
+            added[3].options,
+            import_texture::Options::default(),
+            "material-map defaults stay independent"
+        );
+        prefs.limit_texture_size = limit;
+        prefs = serde_json::from_slice(&serde_json::to_vec(&prefs).expect("save preferences")).expect("restore preferences");
+        assert_eq!(prefs.limit_texture_size, limit);
+    }
+}
+
+#[test]
 fn per_type_permissions_preserve_old_settings_and_transfer_without_copy() {
     use aurora_net::build::perm;
     use permissions::NextOwner;
