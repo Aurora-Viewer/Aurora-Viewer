@@ -38,7 +38,8 @@ pub(super) fn groups<'a>(lines: &[&'a ChatLine]) -> Vec<Vec<&'a ChatLine>> {
     out
 }
 
-/// Two lines under one head: the same resident or object, said in a row;
+/// Two lines under one head: the same resident or object, said in a row
+/// at the same volume (the SHOUTS / WHISPERS tag is the head's, #1323);
 /// notices stand alone.
 fn same_sender(a: &ChatLine, b: &ChatLine) -> bool {
     !a.kind.is_notice()
@@ -47,6 +48,7 @@ fn same_sender(a: &ChatLine, b: &ChatLine) -> bool {
         && a.from == b.from
         && is_object(a.kind) == is_object(b.kind)
         && a.kind.is_own() == b.kind.is_own()
+        && a.kind.volume() == b.kind.volume()
 }
 
 fn is_object(kind: ChatKind) -> bool {
@@ -532,6 +534,17 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Our whisper then our shout: two heads, each with its tag (#1323).
+    #[test]
+    fn a_line_at_another_volume_gets_its_own_head() {
+        let whisper = line(ChatKind::Own(ChatType::Whisper), "Me", 0);
+        let shout = line(ChatKind::Own(ChatType::Shout), "Me", 0);
+        let said = line(ChatKind::OWN, "Me", 0);
+        assert!(!same_sender(&whisper, &shout));
+        assert!(!same_sender(&shout, &said));
+        assert!(same_sender(&said, &line(ChatKind::OWN, "Me", 0)));
     }
 
     /// A card's body leaves the name to the head, except an emote's, whose
