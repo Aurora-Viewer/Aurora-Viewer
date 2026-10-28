@@ -1202,7 +1202,7 @@ same colour, intensity, range and falloff, and its projector controls become
 disabled. Cancel instead restores its texture and projector settings. Use
 `features` without the suffix to inspect the light before or after editing.
 
-`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|mouselook-gun|mouselook-touch|ground`:
+`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|worn-other-hidden-inside|mouselook-gun|mouselook-touch|ground`:
 install the fixture at frame 600, issue a real left press at 700 and release
 at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
 or later. `avatar-keep-camera` starts from an off-centre side view and enables
@@ -1250,7 +1250,10 @@ opaque: the press goes through the rigged mesh to the prim (`ObjectGrab
 `worn-other-hidden` and `worn-other-hidden-mesh` make the prim or the mesh
 invisible (every face at alpha 0, an invisible clicker), and the `-under`
 variants of both put it under the opaque rigged mesh: every press must touch
-it (`ObjectGrab 975`).
+it (`ObjectGrab 975`). `worn-other-hidden-inside` shrinks the invisible prim
+to 10 cm, sunk into the chest well under the rigged mesh's surface, like a
+clicker worn partly inside a mesh body (#1241): the press must touch it too
+(`ObjectGrab 975`); before the fix it touched nothing.
 `mouselook-gun` makes a script take the mouselook button
 (ScriptControlChange) and enters mouselook: the press and release send only
 `demo server: click bits 0x40000000` then `0x80000000`. `mouselook-touch`
