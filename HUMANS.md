@@ -168,9 +168,9 @@ git push origin v0.4.0
 
 ### Publishing a news item
 
-The "News" panel of the login screen displays two files of the repository,
-written by hand: [news/en.md](news/en.md) and [news/fr.md](news/fr.md), one
-per interface language. The viewer reads them on `main` at each start: **no
+The "News" panel of the login screen displays three files of the repository,
+written by hand: [news/en.md](news/en.md), [news/fr.md](news/fr.md) and
+[news/ja.md](news/ja.md), one per interface language. The viewer reads them on `main` at each start: **no
 need to publish a release** to announce something.
 
 Add the news item **at the top** of each file (the most recent first), under
@@ -190,13 +190,14 @@ One or more lines of plain text.
   ignored). A click on the news item opens it in the browser.
 - **Limits**: the first 20 news items are displayed; a title is cut at 120
   characters, a text at 600. Remove the oldest ones from time to time.
-- **Languages**: write the news item in both files. An interface language
+- **Languages**: write the news item in every file. An interface language
   that has no file displays `en.md`.
 
 Since `main` is protected, the change goes through a PR (label `docs`): the
 GitHub pencil on the file, then "Create a new branch and start a pull
-request", or ask an agent. These files are also compiled into the viewer
-(that is what it displays offline as long as it has downloaded nothing), so
+request", or ask an agent. `en.md` and `fr.md` are also compiled into the
+viewer (that is what it displays offline as long as it has downloaded
+nothing; Japanese shows `en.md` there until `ja.md` is compiled in too), so
 the PR goes through the whole CI in the merge queue; a test there checks
 that they read correctly (empty title, text too long).
 
