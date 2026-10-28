@@ -139,15 +139,11 @@ impl Scene {
             .filter_map(|&idx| {
                 let object = world.objects.get(idx)?;
                 let gpu = self.gpu.get(idx)?;
-                if object.pcode != aurora_prim::params::LL_PCODE_VOLUME
-                    || object.update_flags & crate::build::edits::FLAGS_PHANTOM != 0
-                    || gpu.hud
-                    || gpu.rigged
-                    || gpu.owner_avatar.is_some()
-                {
+                if !Self::foot_support_candidate(gpu, object) {
                     return None;
                 }
-                self.face_hit(world, idx, ray, now, true)
+                // (the highest level: the drawn one follows the camera, #1281)
+                self.support_hit(world, idx, ray, now)
                     .filter(|hit| hit.t.is_finite() && (0.0..=reach * 2.0).contains(&hit.t) && hit.normal.is_finite() && hit.normal.z > 0.1)
             })
             .min_by(|a, b| a.t.total_cmp(&b.t));

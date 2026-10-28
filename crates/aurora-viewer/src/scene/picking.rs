@@ -645,6 +645,30 @@ impl Scene {
         include_hidden: bool,
         mode: FacePick,
     ) -> Option<pick::FaceHit> {
+        self.face_hit_in(world, idx, ray, now, include_hidden, mode, None)
+    }
+
+    /// `face_hit` against the full-detail geometry held for foot placement
+    /// (`foot_support`) once it is built, the drawn one until then.
+    pub(super) fn support_hit(&self, world: &World, idx: usize, ray: (Vec3, Vec3), now: Instant) -> Option<pick::FaceHit> {
+        let id = world.objects.get(idx)?.full_id;
+        let held = self.foot_support.key(idx, id).filter(|key| self.geom_ready(key).is_some());
+        self.face_hit_in(world, idx, ray, now, true, FacePick::Surface, held)
+    }
+
+    /// `face_hit_mode` against `geometry` (another detail level of the
+    /// drawn shape), or the drawn geometry.
+    #[allow(clippy::too_many_arguments)] // face_hit_mode's inputs plus the geometry.
+    fn face_hit_in(
+        &self,
+        world: &World,
+        idx: usize,
+        ray: (Vec3, Vec3),
+        now: Instant,
+        include_hidden: bool,
+        mode: FacePick,
+        geometry: Option<GeomKey>,
+    ) -> Option<pick::FaceHit> {
         let o = world.objects.get(idx)?;
         let g = self.gpu.get(idx)?;
         if !self.first_person_object_visible(idx, g) {
@@ -660,9 +684,10 @@ impl Scene {
         if only_hidden && !include_hidden {
             return None;
         }
-        let geom = self.geom_ready(&g.geom?)?;
+        let key = geometry.or(g.geom)?;
+        let geom = self.geom_ready(&key)?;
         let (pos, rot, _) = Self::object_transform(world, idx, now, 0)?;
-        let model = self.drawn_model(g, o, world.visual_scale(idx), g.geom, pos, rot);
+        let model = self.drawn_model(g, o, world.visual_scale(idx), Some(key), pos, rot);
         let inv = model.inverse();
         let counts = &self.exact_tests;
         counts.objects.fetch_add(1, Relaxed);

@@ -1352,6 +1352,9 @@ to the full correction.
 
 `scene/grounding.rs` performs short solid-geometry/terrain traces on the parallel
 pose workers, with region-corrected simulator contact as a streaming fallback.
+The traces hit the highest detail level of the objects under grounded avatars,
+which `scene/foot_support.rs` keeps referenced from the main thread: the drawn
+level follows the camera and must not move the feet (#1281).
 `demo_grounding.rs` authors walking/recovery from explicit source foot paths,
 independently of terrain adaptation, and seeds position once before leaving
 normal controls free. Slope, steps, elevated supports, lift, movement and disabled
