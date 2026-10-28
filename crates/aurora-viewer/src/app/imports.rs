@@ -248,7 +248,7 @@ impl App {
             }
         }
         let was_open = self.imports.open;
-        let actions = crate::imports::ui::show(
+        let mut actions = crate::imports::ui::show(
             ctx,
             palette,
             &mut self.imports,
@@ -256,6 +256,20 @@ impl App {
             &self.world,
             &self.settings.inventory,
         );
+        // The texture picker's Local tab manages the importer's local previews.
+        for request in std::mem::take(&mut self.world.local_asset_requests) {
+            match request {
+                crate::world::LocalAssetRequest::Add { materials } => {
+                    self.imports
+                        .choose_local_files(&self.scene.jobs, ctx, self.settings.imports.texture(), materials)
+                }
+                crate::world::LocalAssetRequest::Remove(id) => actions.push(Action::Remove(id)),
+                crate::world::LocalAssetRequest::Upload(id) => {
+                    self.imports
+                        .upload_local(id, &self.scene.jobs, ctx, self.settings.imports.texture())
+                }
+            }
+        }
         if self.settings.imports != before {
             self.settings.save();
         }

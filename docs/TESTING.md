@@ -1448,8 +1448,12 @@ selected, then the bake's name; it applies the canonical magic UUID. Local conta
 "Local files" folder in diffuse texture and PBR material pickers. It lists the
 local previews already loaded, textures or materials depending on the choice
 requested, and follows the search filter. A click applies the local preview;
-"OK" keeps it, "Cancel" restores it. To show the synthetic local files,
-combine this scenario with `AURORA_DEMO_IMPORTS=local`.
+"OK" keeps it, "Cancel" restores it. Under the list, Add opens a file
+dialog (images, or glTF materials in a material picker) whose files join the
+list as local previews; Remove and Import, greyed until a local file is
+chosen, drop it or open the importer on it. `faces-picker-local` and
+`faces-picker-material-local` open the picker on this tab. To show the
+synthetic local files, combine these scenarios with `AURORA_DEMO_IMPORTS=local`.
 Keep the picker open while changing the main inventory's name/date order,
 "Folders always by name" and "System folders first": its tree and search
 results must follow those options, including in the Aurora Library tab.
