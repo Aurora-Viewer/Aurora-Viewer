@@ -20,9 +20,10 @@ fn pbr_terrain_samples_all_layers_maps_and_triplanar_normals_on_gpu() {
     };
     let start = env.find("const TERRAIN_ALPHA_RAMP:").unwrap();
     let end = env.find("fn terrain_legacy_color").unwrap();
-    // One page is sufficient here. The production binding-array path is also
-    // covered by scene_shader_is_valid; all UV/mixing/sample code is unchanged.
-    let tangent = &env[env.find("fn terrain_transform_tangent(").unwrap()..env.find("@vertex\nfn vs_terrain").unwrap()];
+    // Direct bindings model the detail and ramp pages here. The production
+    // binding-array path is covered by scene_shader_is_valid; sampling is unchanged.
+    let terrain_vertex = env[..env.find("fn vs_terrain(").unwrap()].rfind("@vertex").unwrap();
+    let tangent = &env[env.find("fn terrain_transform_tangent(").unwrap()..terrain_vertex];
     let functions = format!("{}\n{tangent}\n{}", wgsl_function(object, "terrain_direction"), &env[start..end])
         .replace("tex_pages[loc >> 16u]", "tex_pages")
         .replace("tex_pages[ramp_loc >> 16u]", "alpha_ramp")
