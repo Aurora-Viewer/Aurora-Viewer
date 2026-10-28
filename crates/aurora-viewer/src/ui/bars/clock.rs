@@ -261,14 +261,28 @@ fn hours(unix: i64, offset: i64, seconds: bool, twelve: bool) -> String {
     }
 }
 
+/// The clock's offset from UTC and its zone's label, at `unix`.
+fn zone(zone: ClockZone, unix: i64) -> (i64, String) {
+    match zone {
+        ClockZone::Slt => (offset(ClockZone::Slt, unix), "SLT".to_owned()),
+        ClockZone::Local => local(unix),
+    }
+}
+
 /// The clock's text, now: the time and SLT, or local time and its zone.
 pub(crate) fn text(s: SystemIsland) -> String {
     let unix = now_unix();
-    let (offset, label) = match s.clock_zone {
-        ClockZone::Slt => (offset(ClockZone::Slt, unix), "SLT".to_owned()),
-        ClockZone::Local => local(unix),
-    };
+    let (offset, label) = zone(s.clock_zone, unix);
     format!("{} {label}", hours(unix, offset, s.clock_seconds, twelve_hours(s.clock_format)))
+}
+
+/// The clock's texts at 10:00 and 22:00 in its current format, which its
+/// readout keeps room for (#1246): a 12-hour clock's two-digit hours and
+/// the wider of its two markers do not move the bar at 10:00 or at noon.
+pub(crate) fn widest(s: SystemIsland) -> [String; 2] {
+    let (_, label) = zone(s.clock_zone, now_unix());
+    let twelve = twelve_hours(s.clock_format);
+    [10, 22].map(|h| format!("{} {label}", hours(0, h * 3600, s.clock_seconds, twelve)))
 }
 
 /// How far a time `diff` seconds from SLT is: "SLT +9 h", "SLT −8 h",

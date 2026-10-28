@@ -1581,6 +1581,15 @@ fn small(text: impl Into<String>, color: Color32) -> RichText {
     RichText::new(text).size(12.0).color(color)
 }
 
+/// A readout of the navigation bar as wide as its widest values
+/// (`islands::room_width`), its text centred: the frame rate, the latency
+/// or the clock changing does not move what is left of it (#1246).
+fn steady_label(ui: &mut egui::Ui, text: String, room: &[String], color: Color32, sense: egui::Sense) -> egui::Response {
+    let w = islands::room_width(ui, &text, room, 12.0);
+    let h = ui.fonts_mut(|f| f.row_height(&egui::FontId::proportional(12.0)));
+    ui.add_sized(Vec2::new(w, h), egui::Label::new(small(text, color)).sense(sense))
+}
+
 /// The bell of the navigation bar: its count, its style (Preferences ›
 /// Aurora › Notifications) and do not disturb (the paused bell, which a
 /// right click turns on and off, #491).
@@ -1701,8 +1710,7 @@ pub fn top_bars(
                         p.danger
                     };
                     // a click opens (or closes) the performance window
-                    let fps = ui
-                        .add(egui::Label::new(small(aurora_i18n::number((st.fps) as f64, 1), fps_col)).sense(egui::Sense::click()))
+                    let fps = steady_label(ui, islands::fps_text(st.fps), &islands::fps_room(), fps_col, egui::Sense::click())
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .on_hover_text(aurora_i18n::tr!("ui-bars-frames-per-second-click-for-performance-details"));
                     if fps.clicked() {
@@ -1712,12 +1720,17 @@ pub fn top_bars(
                     if voice_light(ui, p, icons, st.voice.0, &st.voice.1) {
                         action = BarAction::VoicePrefs;
                     }
-                    ui.label(small(format!("{} ms", st.ping_ms), p.muted))
-                        .on_hover_text(aurora_i18n::tr!("ui-bars-region-latency"));
+                    steady_label(
+                        ui,
+                        islands::ping_text(st.ping_ms),
+                        &islands::ping_room(),
+                        p.muted,
+                        egui::Sense::hover(),
+                    )
+                    .on_hover_text(aurora_i18n::tr!("ui-bars-region-latency"));
                     // a left click switches SLT and local time
                     let island = st.system_island;
-                    let clock = ui
-                        .add(egui::Label::new(small(clock::text(island), p.muted)).sense(egui::Sense::click()))
+                    let clock = steady_label(ui, clock::text(island), &clock::widest(island), p.muted, egui::Sense::click())
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .on_hover_text(clock::hover_text(island));
                     if clock.clicked() {
