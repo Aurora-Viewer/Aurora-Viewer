@@ -127,6 +127,20 @@ pub(super) fn demo_step(s: &mut RegionUi, v: &View, world: &mut World) {
         return;
     }
     s.surface.demo_tick = s.surface.demo_tick.saturating_add(1);
+    if s.surface.demo_mode >= 4 {
+        if let Some(region) = world.regions.get_mut(&v.handle) {
+            if s.surface.demo_tick >= 5 && matches!(s.surface.demo_mode, 4 | 5) && region.heightmap.received_fraction() >= 1.0 {
+                region.terrain_surface.request_paint();
+                s.surface.demo_mode = if s.surface.demo_mode == 4 { 0 } else { 7 };
+                s.surface.demo_tick = 0;
+            }
+            if s.surface.demo_tick == 30 && s.surface.demo_mode == 7 {
+                region.terrain_surface.clear_paint();
+                s.surface.demo_mode = 0;
+            }
+        }
+        return;
+    }
     let title = aurora_i18n::tr!("region-terrain-material-title", n = 1_i64);
     match s.surface.demo_tick {
         5 => {

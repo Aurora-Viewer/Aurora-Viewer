@@ -4059,7 +4059,7 @@ impl Scene {
                         cmd,
                         center: c.center,
                         radius: c.radius,
-                        alpha: false,
+                        alpha: r.surface.masked,
                     });
                 }
                 if self.reflections {

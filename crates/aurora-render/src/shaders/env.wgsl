@@ -153,7 +153,14 @@ struct TerrainOut {
     @location(3) comp: f32,
     @location(4) @interpolate(flat) record: u32,
     @location(5) region_pos: vec3<f32>,
+    @location(6) tangent: vec3<f32>,
 };
+
+fn terrain_tangent(n: vec3<f32>) -> vec3<f32> {
+    let t = vec3<f32>(n.z, 0.0, -n.x);
+    if (dot(t, t) < 0.000001) { return vec3<f32>(1.0, 0.0, 0.0); }
+    return normalize(t);
+}
 
 @vertex
 fn vs_terrain(in: VsIn) -> TerrainOut {
@@ -170,6 +177,9 @@ fn vs_terrain(in: VsIn) -> TerrainOut {
     // (lighting, shadows and fog keep region coordinates)
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.normal = in.normal.xyz;
+    // Heightfield UVs run along region X/Y. Their tangent is orthogonal to
+    // the heightfield normal and has no Y component (gen_terrain_tangents).
+    out.tangent = terrain_tangent(in.normal.xyz);
     out.uv = in.uv;
     out.region_pos = in.pos;
     // composition 0..3 packed in normal.w (-1..1)
@@ -215,6 +225,23 @@ fn terrain_weights(c: f32) -> vec4<f32> {
     return vec4<f32>(af * a1, af * (1.0 - a1), (1.0 - af) * a2, (1.0 - af) * (1.0 - a2));
 }
 
+fn terrain_mix_weights(in: TerrainOut, dx: vec3<f32>, dy: vec3<f32>) -> vec4<f32> {
+    let rec = records[in.record];
+    if (rec.flags.z != 0u) {
+        // LLTerrainPaintMap stores slots 2..4 in linear RGB; slot 1 is the
+        // remainder. No height/noise threshold is applied to a paintmap.
+        let slot = rec.flags.z;
+        let loc = tex_loc[slot];
+        // Clamp each mip level at region edges; detail maps use repeat.
+        let uv = in.region_pos.xy / rec.mat_uv.xy;
+        var other = max(textureSampleGrad(tex_pages[loc >> 16u], lin_clamp, uv, loc & 0xffffu, dx.xy / rec.mat_uv.xy, dy.xy / rec.mat_uv.xy).rgb, vec3<f32>(0.0));
+        other /= max(1.0, dot(other, vec3<f32>(1.0)));
+        return vec4<f32>(max(0.0, 1.0 - dot(other, vec3<f32>(1.0))), other);
+    }
+    let weights = max(terrain_weights(clamp(in.comp, 0.0, 3.0)) - vec4<f32>(0.1), vec4<f32>(0.0));
+    return weights / dot(weights, vec4<f32>(1.0));
+}
+
 // LLDrawPoolTerrain::renderFullShaderPBR and pbrterrainUtilF.glsl:
 // 8 m repeats, triplanar sharpness 8, material cutoff .1, plane cutoff .01.
 // Shared material records keep the ordinary bindless texture table and make
@@ -232,7 +259,8 @@ fn terrain_uv(p: vec2<f32>, rec: DrawRecord) -> vec2<f32> {
     let v = p * rec.uv_st.xy;
     let c = cos(rec.params.x);
     let s = sin(rec.params.x);
-    return vec2<f32>(c*v.x+s*v.y, -s*v.x+c*v.y);
+    // terrain_texture_transform flips V before and after KHR's rotation.
+    return vec2<f32>(c*v.x-s*v.y, s*v.x+c*v.y);
 }
 
 fn terrain_sample(slot: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
@@ -240,26 +268,25 @@ fn terrain_sample(slot: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec
     return textureSampleGrad(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, dx, dy);
 }
 
-fn terrain_layer(rec: DrawRecord, p: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, n: vec3<f32>, planes: vec3<f32>, alpha_only: bool) -> TerrainMaterial {
+fn terrain_layer(rec: DrawRecord, p: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, n: vec3<f32>, tangent: vec3<f32>, planes: vec3<f32>, alpha_only: bool) -> TerrainMaterial {
     var result = TerrainMaterial(vec4<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), rec.params.w);
+    let scale_sign = select(vec2<f32>(1.0), vec2<f32>(-1.0), rec.uv_st.xy < vec2<f32>(0.0));
+    let tangent_sign = scale_sign.x * scale_sign.y;
     for (var axis = 0u; axis < 3u; axis++) {
         if (planes[axis] <= 0.0) { continue; }
         var uv = p.xy;
         var ux = dx.xy;
         var uy = dy.xy;
-        var tangent = vec3<f32>(1.0, 0.0, 0.0);
         if (axis == 0u) {
             let sign = select(-1.0, 1.0, n.x >= 0.0);
             uv = p.yz * vec2<f32>(sign, 1.0);
             ux = dx.yz * vec2<f32>(sign, 1.0);
             uy = dy.yz * vec2<f32>(sign, 1.0);
-            tangent = vec3<f32>(0.0, sign, 0.0);
         } else if (axis == 1u) {
             let sign = select(1.0, -1.0, n.y >= 0.0);
             uv = p.xz * vec2<f32>(sign, 1.0);
             ux = dx.xz * vec2<f32>(sign, 1.0);
             uy = dy.xz * vec2<f32>(sign, 1.0);
-            tangent = vec3<f32>(sign, 0.0, 0.0);
         }
         let tc = terrain_uv(uv, rec) + vec2<f32>(rec.uv_st.z, -rec.uv_st.w);
         let tx = terrain_uv(ux, rec);
@@ -269,20 +296,25 @@ fn terrain_layer(rec: DrawRecord, p: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, n:
         if (alpha_only) { continue; }
         let orm = terrain_sample(rec.tex.z, tc, tx, ty).rgb * vec3<f32>(1.0, rec.params.z, rec.params.y);
         let emission = srgb_to_linear(terrain_sample(rec.tex.w, tc, tx, ty).rgb) * rec.emissive.rgb;
-        var normal = n;
+        var mapped = vec3<f32>(0.0, 0.0, 1.0);
         if (rec.tex.y != 1u) {
-            let mapped = terrain_sample(rec.tex.y, tc, tx, ty).rgb * 2.0 - vec3<f32>(1.0);
-            let t = normalize(tangent - n * dot(tangent, n));
-            let b = cross(n, t);
-            let mirrored = mapped.xy * select(vec2<f32>(1.0), vec2<f32>(-1.0), rec.uv_st.xy < vec2<f32>(0.0));
-            let c = cos(rec.params.x);
-            let s = sin(rec.params.x);
-            let xy = vec2<f32>(c*mirrored.x-s*mirrored.y, s*mirrored.x+c*mirrored.y);
-            normal = normalize(t*xy.x+b*xy.y+n*mapped.z);
+            mapped = terrain_sample(rec.tex.y, tc, tx, ty).rgb * 2.0 - vec3<f32>(1.0);
         }
+        // pbrterrainUtilF.glsl's axial normal orientation. Blend tangent-space
+        // samples first, then apply the material's transformed Mikk basis once.
+        mapped = vec3<f32>(mapped.xy * select(1.0, -1.0, n[axis] < 0.0), mapped.z);
+        if (axis == 0u) { mapped = vec3<f32>(vec2<f32>(-mapped.y, mapped.x) * tangent_sign, mapped.z); }
+        if (axis == 1u) { mapped = vec3<f32>(-mapped.xy, mapped.z); }
         result.orm += orm * planes[axis];
-        result.normal += normal * planes[axis];
+        result.normal += mapped * planes[axis];
         result.emissive += emission * planes[axis];
+    }
+    if (!alpha_only) {
+        let c = cos(rec.params.x);
+        let s = sin(rec.params.x);
+        let t = normalize(tangent * (c * scale_sign.x) - cross(n, tangent) * (s * scale_sign.y));
+        let b = tangent_sign * cross(n, t);
+        result.normal = normalize(t * result.normal.x + b * result.normal.y + n * result.normal.z);
     }
     return result;
 }
@@ -290,16 +322,17 @@ fn terrain_layer(rec: DrawRecord, p: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, n:
 fn terrain_material(in: TerrainOut, dx: vec3<f32>, dy: vec3<f32>, alpha_only: bool) -> TerrainMaterial {
     let rec = records[in.record];
     let n = normalize(in.normal);
+    var tangent = in.tangent;
+    if (dot(tangent, tangent) < 0.000001) { tangent = terrain_tangent(n); }
     var result = TerrainMaterial(vec4<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), 0.0);
-    var weights = max(terrain_weights(clamp(in.comp, 0.0, 3.0)) - vec4<f32>(0.1), vec4<f32>(0.0));
-    weights /= dot(weights, vec4<f32>(1.0));
+    let weights = terrain_mix_weights(in, dx, dy);
     var planes = pow(abs(n), vec3<f32>(8.0));
     planes /= dot(planes, vec3<f32>(1.0));
     planes = max(planes - vec3<f32>(0.01), vec3<f32>(0.0));
     planes /= dot(planes, vec3<f32>(1.0));
     for (var layer = 0u; layer < 4u; layer++) {
         if (weights[layer] <= 0.0) { continue; }
-        let sample = terrain_layer(records[rec.tex[layer]], in.region_pos, dx, dy, n, planes, alpha_only);
+        let sample = terrain_layer(records[rec.tex[layer]], in.region_pos, dx, dy, n, normalize(tangent), planes, alpha_only);
         result.color += sample.color * weights[layer];
         result.orm += sample.orm * weights[layer];
         result.normal += sample.normal * weights[layer];
@@ -430,6 +463,23 @@ fn terrain_depth_mask(in: TerrainOut) {
     let dy = dpdy(in.region_pos);
     if ((records[in.record].flags.x & FLAG_ALPHA_MASK) != 0u) {
         let material = terrain_material(in, dx, dy, true);
+        if (material.color.a < material.cutoff) { discard; }
+    }
+}
+
+// Sun cascades and projector shadows use the same region coordinates,
+// composition and triplanar alpha as colour, depth and picking. Derivatives
+// precede the material branch so neighbouring fragments can use other modes.
+fn terrain_shadow_mask(in: ShadowOut) {
+    let dx = dpdx(in.region_pos);
+    let dy = dpdy(in.region_pos);
+    if ((records[in.record].flags.x & (FLAG_TERRAIN | FLAG_PBR | FLAG_ALPHA_MASK)) == (FLAG_TERRAIN | FLAG_PBR | FLAG_ALPHA_MASK)) {
+        var surface: TerrainOut;
+        surface.normal = in.normal;
+        surface.region_pos = in.region_pos;
+        surface.comp = in.comp;
+        surface.record = in.record;
+        let material = terrain_material(surface, dx, dy, true);
         if (material.color.a < material.cutoff) { discard; }
     }
 }

@@ -6,6 +6,10 @@ use aurora_prim::noise;
 use aurora_render::Vertex;
 use uuid::Uuid;
 
+#[path = "terrain_paint.rs"]
+mod paint;
+pub use paint::PaintMap;
+
 /// Local surface changes never overwrite the simulator's region handshake.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SurfaceOverride {
@@ -20,6 +24,12 @@ pub struct SurfaceState {
     pub preview: Option<SurfaceOverride>,
     /// Keep an applied surface visible until the next region handshake.
     pub applied: Option<SurfaceOverride>,
+    /// Experimental local paintmap, as LLAdvancedTerrainCreateLocalPaintMap.
+    /// Never sent in estate commands or saved as the region's terrain.
+    pub paintmap: Option<PaintMap>,
+    pub paint_requested: bool,
+    pub paint_failed: bool,
+    pub(super) paint_job: Option<paint::PaintJob>,
 }
 
 impl SurfaceState {
@@ -31,6 +41,7 @@ impl SurfaceState {
 pub const CHUNK_CELLS: u32 = 32;
 
 /// Terrain heights for one region; patches are written as they arrive.
+#[derive(Clone)]
 pub struct Heightmap {
     pub size_x: u32,
     pub size_y: u32,

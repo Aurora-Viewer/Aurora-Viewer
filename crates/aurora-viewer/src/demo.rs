@@ -3989,7 +3989,7 @@ pub fn events() -> Vec<NetEvent> {
             region_flags: aurora_net::region_flags::ALLOW_VOICE | home::region_flag(),
             terrain_base: [Uuid::nil(); 4],
             terrain_detail: region::terrain_ids().unwrap_or([Uuid::nil(); 4]),
-            terrain_start_height: if region::terrain_ids().is_some() { [80.0; 4] } else { [20.0; 4] },
+            terrain_start_height: region::terrain_start_height(),
             terrain_height_range: if region::terrain_ids().is_some() { [120.0; 4] } else { [30.0; 4] },
             size_x: 256,
             size_y: 256,
@@ -7887,6 +7887,18 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             base_color_factor: [0.035, 0.3, 0.055, 1.0],
             metallic_factor: 0.0,
             roughness_factor: 0.9,
+            ..Default::default()
+        },
+    ));
+    list.push((
+        region::terrain_mask(),
+        aurora_assets::PbrMaterial {
+            base_color_texture: Some(TEX_HOLES),
+            normal_texture: Some(TEX_BUMPS),
+            metallic_factor: 0.0,
+            roughness_factor: 0.7,
+            alpha_mode: aurora_assets::AlphaMode::Mask,
+            alpha_cutoff: 0.5,
             ..Default::default()
         },
     ));

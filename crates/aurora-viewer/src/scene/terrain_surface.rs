@@ -13,6 +13,8 @@ struct Input {
     ids: [Uuid; 4],
     materials: Option<bool>,
     transforms: [TerrainTransform; 4],
+    paintmap: Option<Uuid>,
+    size: [u32; 2],
 }
 
 #[derive(Default)]
@@ -24,10 +26,14 @@ pub(super) struct SurfaceGpu {
     slots: [u32; 4],
     pbr: bool,
     pub masked: bool,
+    paint_slot: Option<(Uuid, u32)>,
 }
 
 impl SurfaceGpu {
     pub(super) fn free(self, renderer: &mut Renderer, textures: &mut textures::TextureStreamer) {
+        if let Some((_, slot)) = self.paint_slot {
+            renderer.free_texture(slot);
+        }
         for id in self.texture_ids {
             textures.release(&id);
         }
@@ -44,7 +50,28 @@ impl SurfaceGpu {
         renderer: &mut Renderer,
         textures: &mut textures::TextureStreamer,
         materials: &mut meshes::MaterialStreamer,
+        paintmap: Option<&mut terrain::PaintMap>,
     ) -> bool {
+        if let Some(paintmap) = paintmap {
+            if self.paint_slot.map(|v| v.0) != Some(paintmap.id) {
+                let Some(staged) = paintmap.prepare(renderer.staging_pool()) else {
+                    return false;
+                };
+                let Some(slot) = renderer.textures.create_placeholder() else {
+                    return false;
+                };
+                if !renderer.replace_texture_staged(slot, staged) {
+                    renderer.free_texture(slot);
+                    return false;
+                }
+                if let Some((_, old)) = self.paint_slot.replace((paintmap.id, slot)) {
+                    renderer.free_texture(old);
+                }
+                paintmap.staged = None;
+            }
+        } else if let Some((_, slot)) = self.paint_slot.take() {
+            renderer.free_texture(slot);
+        }
         let loaded = input.ids.map(|id| (!id.is_nil()).then(|| materials.get(&id)).flatten());
         if self.input == Some(input) && self.materials == loaded {
             return false;
@@ -109,10 +136,12 @@ impl SurfaceGpu {
             model: Mat4::from_translation(offset).to_cols_array_2d(),
             uv_st: [12.0, 12.0, 0.0, 0.0],
             tex: self.slots,
+            // Terrain-only record fields: paintmap slot and region extent.
+            mat_uv: self.input.map_or([1.0; 4], |i| [i.size[0] as f32, i.size[1] as f32, 0.0, 0.0]),
             flags: [
                 flags::TERRAIN | if self.pbr { flags::PBR } else { 0 } | if self.masked { flags::ALPHA_MASK } else { 0 },
                 0,
-                0,
+                self.paint_slot.map_or(0, |v| v.1),
                 0,
             ],
             ..Default::default()
@@ -121,7 +150,7 @@ impl SurfaceGpu {
 }
 
 /// The region override replaces the asset's transform, as
-/// LLTerrainMaterials::applyMaterialOverrides does. Otherwise the base-color
+/// LLTerrainMaterials::makeMaterialsReady does. Otherwise the base-color
 /// transform is shared by all maps (LLDrawPoolTerrain::renderFullShaderPBR).
 fn layer_record(material: &PbrMaterial, override_: TerrainTransform, slots: [u32; 4]) -> DrawRecord {
     let base = material.transforms[0];
@@ -182,11 +211,24 @@ impl Scene {
             let Some(offset) = world.region_offset(handle) else { continue };
             let Some(region) = world.regions.get_mut(&handle) else { continue };
             let Some(info) = region.info.clone() else { continue };
+            let comp = Composition {
+                start_height: info.terrain_start_height,
+                height_range: info.terrain_height_range,
+                origin_x: (handle >> 32) as f64,
+                origin_y: (handle & 0xffff_ffff) as f64,
+            };
+            if region.terrain_surface.paint_busy() {
+                region
+                    .terrain_surface
+                    .poll_paint(&region.heightmap, comp, renderer.staging_pool(), renderer.max_texture_dimension());
+            }
             let local = region.terrain_surface.effective();
             let input = Input {
                 ids: local.map_or(info.terrain_detail, |s| s.ids),
                 materials: local.map(|s| s.materials),
                 transforms: local.map_or(region.terrain_surface.transforms, |s| s.transforms),
+                paintmap: region.terrain_surface.paintmap.as_ref().map(|p| p.id),
+                size: [region.heightmap.size_x, region.heightmap.size_y],
             };
             let gpu = self.regions.entry(handle).or_insert_with(|| RegionGpu {
                 chunks: HashMap::new(),
@@ -194,7 +236,13 @@ impl Scene {
                 offset: Vec3::NAN,
             });
             // Surface changes never rebuild terrain geometry or pause streaming.
-            let changed = gpu.surface.sync(input, renderer, &mut self.textures, &mut self.materials);
+            let changed = gpu.surface.sync(
+                input,
+                renderer,
+                &mut self.textures,
+                &mut self.materials,
+                region.terrain_surface.paintmap.as_mut(),
+            );
             let record = gpu.surface.record(offset);
             if changed || gpu.offset != offset {
                 for chunk in gpu.chunks.values() {
@@ -205,12 +253,6 @@ impl Scene {
             if region.dirty_chunks.is_empty() || built > 6 {
                 continue;
             }
-            let comp = Composition {
-                start_height: info.terrain_start_height,
-                height_range: info.terrain_height_range,
-                origin_x: (handle >> 32) as f64,
-                origin_y: (handle & 0xffff_ffff) as f64,
-            };
             let chunks: Vec<_> = region.dirty_chunks.iter().copied().take(8).collect();
             for index in chunks {
                 let (vertices, indices) = terrain::build_chunk(&region.heightmap, &comp, index);

@@ -6344,6 +6344,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   In either window style, selecting a texture/material must immediately
   change its swatch and the ground. The Cancel button beside the four swatches
   restores the committed cover without undoing water-height or elevation edits.
+  `manage:pbr-mask` uses a holed PBR material on the ground: colour, depth,
+  picking, sun and projector shadows must all respect its alpha mask.
+  `manage:pbr-paint` creates the experimental local blend map from the advanced
+  terrain fold; `manage:pbr-paint-reset` resets it while work is pending.
+  The map freezes blend weights locally, uses linear RGB with the first layer
+  as the remainder, and never sends an estate edit. Reset returns to live
+  height/noise composition. Add `classic` to check the same controls there.
+  Bakes use 2048 px by default, or 1024 px on a small upload pool; workers
+  prepare and stage all mip levels without a frame-thread image copy.
   `classic`
   opens the classic window (the Legacy Viewer's eight tabs) on the tab of
   the section asked (`terrain`: Terrain, `scripts` or `interventions`:

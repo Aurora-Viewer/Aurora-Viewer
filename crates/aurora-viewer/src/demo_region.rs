@@ -129,15 +129,19 @@ fn parse(v: &str) -> Scenario {
                 s.manage.pbr = true;
                 s.manage.pick_material = true;
             }
-            "pbr-ground" | "pbr-preview" | "pbr-cancel" | "pbr-apply" => {
+            "pbr-ground" | "pbr-preview" | "pbr-cancel" | "pbr-apply" | "pbr-paint" | "pbr-paint-reset" | "pbr-mask" => {
                 s.manage.section = Some(2);
                 s.manage.pbr_ground = true;
                 s.manage.surface_demo = match part {
                     "pbr-preview" => 1,
                     "pbr-cancel" => 2,
                     "pbr-apply" => 3,
+                    "pbr-paint" => 4,
+                    "pbr-paint-reset" => 5,
+                    "pbr-mask" => 6,
                     _ => 0,
                 };
+                s.manage.advanced = part.starts_with("pbr-paint");
             }
             "environment" => s.manage.section = Some(5),
             "experiences" => s.manage.section = Some(6),
@@ -253,7 +257,27 @@ pub fn scenario() -> Option<Scenario> {
 }
 
 pub fn terrain_ids() -> Option<[Uuid; 4]> {
-    scenario().filter(|s| s.manage.pbr_ground).map(|_| [super::MAT_PBR_TILES; 4])
+    scenario().filter(|s| s.manage.pbr_ground).map(|s| match s.manage.surface_demo {
+        4 | 5 => [
+            super::MAT_PBR_TILES,
+            terrain_replacement(),
+            crate::scene::meshes::BLANK_MATERIAL,
+            super::MAT_PBR_TILES,
+        ],
+        6 => [terrain_mask(); 4],
+        _ => [super::MAT_PBR_TILES; 4],
+    })
+}
+
+pub fn terrain_mask() -> Uuid {
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0016)
+}
+
+pub fn terrain_start_height() -> [f32; 4] {
+    match scenario().filter(|s| s.manage.pbr_ground) {
+        Some(s) if !matches!(s.manage.surface_demo, 4 | 5) => [80.0; 4],
+        _ => [20.0; 4],
+    }
 }
 
 pub fn terrain_replacement() -> Uuid {

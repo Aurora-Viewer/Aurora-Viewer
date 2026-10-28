@@ -34,7 +34,16 @@ the next handshake, and the region's ModifyRegion transforms separate.
 The network requests those transforms on arrival, even with Region / Estate
 closed. `ui/region/surface.rs` connects asynchronous GPU swatches, live picker
 choices and cover-only cancellation to that state; only Apply sends changes.
-`terrain_tests.rs` verifies the production material mixer with GPU samples.
+`terrain_tests.rs` verifies the production material mixer, texture transforms,
+triplanar normals and matching camera/shadow alpha masks with GPU samples.
+Masked terrain participates in both sun and projector alpha shadow passes;
+opaque terrain retains the depth-only fast path. `world/terrain_paint.rs`
+implements the Legacy Viewer's experimental local paintmap bake and reset:
+workers interpolate the terrain mesh's composition, encode linear RGB weights
+and stage a 2048-pixel mip chain (1024 on small upload pools). Per-region GPU
+records reference the clamped map without changing geometry. Frozen CPU weights
+survive scene recreation; staging chunks are released after each upload.
+These local maps never enter estate messages.
 
 `scene/physics_shapes.rs` connects the build inspector's saved physics eye to
 selected collision geometry. Mesh header ranges include `physics_mesh` and
