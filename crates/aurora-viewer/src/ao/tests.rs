@@ -36,6 +36,22 @@ pub(super) fn step(set: &Set, state: State, index: usize) -> Uuid {
 }
 
 #[test]
+fn stock_jump_covers_the_pose_until_the_ao_jump_is_loaded() {
+    let (_, set) = fixture();
+    let asset = step(&set, State::Jumping, 0);
+    let now = Instant::now();
+    let raw = [signal(State::Jumping, now)];
+    let mut r = Runtime::default();
+    let (pose, commands) = r.update(Some(&set), frame(&raw), now, |id| *id != asset, |_| 0);
+    assert!(pose.contains(&raw[0]));
+    assert!(commands.contains(&(asset, true)));
+    let (pose, commands) = r.update(Some(&set), frame(&raw), now + Duration::from_millis(100), |_| true, |_| 0);
+    assert!(pose.iter().any(|a| a.id == asset));
+    assert!(!pose.contains(&raw[0]));
+    assert!(!commands.iter().any(|(id, _)| *id == raw[0].id));
+}
+
+#[test]
 fn native_movelock_uses_standing_cycles_without_stopping_the_constrained_sit() {
     let (_, set) = fixture();
     let mut r = Runtime::default();
