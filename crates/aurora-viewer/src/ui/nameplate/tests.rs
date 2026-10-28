@@ -393,9 +393,11 @@ fn roles_and_their_name_colors() {
     assert_eq!(Role::of(false, false, false, false), Role::Resident);
     let p = Theme::default().palette();
     let roles = [Role::Resident, Role::Own, Role::Friend, Role::Linden, Role::Blocked];
-    // by default every name is in the theme's ink
-    let off = crate::settings::ColorSettings::default();
-    assert!(!off.relation_names);
+    // switched off, every name is in the theme's ink
+    let off = crate::settings::ColorSettings {
+        relation_names: false,
+        ..Default::default()
+    };
     for role in roles {
         assert_eq!(role.name_color(&p, &off), p.ink);
     }
@@ -1318,4 +1320,53 @@ fn a_streak_heats_up_then_holds() {
     assert!(combo::fervor(10) > 0.0 && combo::fervor(10) < combo::fervor(30));
     assert_eq!(combo::fervor(60), 1.0);
     assert_eq!(combo::fervor(5000), 1.0);
+}
+
+#[test]
+fn a_friend_s_plate_takes_the_friends_color_unless_a_set_colors_it() {
+    use crate::world::contact_sets::Appearance;
+    let ctx = egui::Context::default();
+    let p = Theme::default().palette();
+    let icons = crate::ui::icons::Icons::default();
+    let friend = Content { friend: true, ..content() };
+    let in_set = |c: &Content| Content {
+        appearance: std::sync::Arc::new(Appearance {
+            background: Some([1.0, 0.5, 0.0, 1.0]),
+            ..Default::default()
+        }),
+        ..c.clone()
+    };
+    let mut output = ctx.run_ui(Default::default(), |ui| {
+        let painter = ui.ctx().layer_painter(egui::LayerId::background());
+        let mut env = paint::Env::new(&painter, &p, &icons, 0.0);
+        assert_eq!(paint::surface_tint(&env, &friend), None, "the option off: the plain surface");
+        assert_eq!(paint::surface_border(&env, &friend), None);
+        let set = paint::surface_tint(&env, &in_set(&friend));
+        env.friend = Some(Color32::from_rgb(0x81, 0x8C, 0xF8));
+        let tint = paint::surface_tint(&env, &friend).expect("a friend is tinted");
+        assert!(paint::surface_border(&env, &friend).is_some(), "and has a border of the color");
+        assert_eq!(paint::surface_border(&env, &in_set(&friend)), None, "not over a set's background");
+        assert_ne!(tint, env.tint);
+        // another friends' color shows at once
+        env.friend = Some(Color32::from_rgb(0x30, 0xC0, 0x60));
+        assert_ne!(paint::surface_tint(&env, &friend), Some(tint));
+        assert_eq!(paint::surface_tint(&env, &content()), None, "not a friend");
+        assert_eq!(
+            paint::surface_tint(
+                &env,
+                &Content {
+                    blocked: true,
+                    ..friend.clone()
+                }
+            ),
+            None,
+            "blocked"
+        );
+        assert_eq!(
+            paint::surface_tint(&env, &in_set(&friend)),
+            set,
+            "the set's background alone, no mix"
+        );
+    });
+    output.textures_delta.clear();
 }

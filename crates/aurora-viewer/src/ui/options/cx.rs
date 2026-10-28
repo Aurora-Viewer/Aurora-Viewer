@@ -237,6 +237,8 @@ struct Next {
     below: bool,
     /// Its `subs` always show under it, without a cog.
     unfolded: bool,
+    /// Not greyed behind a cog that is off: another setting uses it too.
+    live: bool,
     keywords: String,
 }
 
@@ -393,6 +395,14 @@ impl<'a> Cx<'a> {
     /// to set (a frame rate limit).
     pub fn unfolded(&mut self) -> &mut Self {
         self.next.unfolded = true;
+        self
+    }
+
+    /// The next row stays live behind a cog that is off, when `on`: another
+    /// setting that is on uses its value too (the friends' color, which
+    /// also tints the friends' plates).
+    pub fn live(&mut self, on: bool) -> &mut Self {
+        self.next.live = on;
         self
     }
 
@@ -893,7 +903,7 @@ impl<'a> Cx<'a> {
             self.block = Some((top, shape));
         }
         let cell = self.cell(wide);
-        let parent_off = self.greyed || self.parent.as_ref().is_some_and(|p| p.off) || self.rlva_locked(t);
+        let parent_off = self.greyed || (!next.live && self.parent.as_ref().is_some_and(|p| p.off)) || self.rlva_locked(t);
         let size_key = id.with("control");
         let control = self
             .st

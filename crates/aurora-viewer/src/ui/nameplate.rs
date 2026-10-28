@@ -856,6 +856,9 @@ pub struct Plates {
     waiting: Vec<Uuid>,
     /// Preferences › Aurora › "Full plates for friends only".
     pub friends_only_full: bool,
+    /// Preferences › Avatars › "Tint friends' plates": the friends' color
+    /// of Preferences › Colors, read each frame so a new color shows at once.
+    pub friend_tint: bool,
     /// Preferences › Aurora › "Expand a plate on hover".
     pub expand_on_hover: bool,
     /// The avatar whose plate is under the pointer this frame (set by the
@@ -913,7 +916,8 @@ impl Plates {
         now: f64,
         mut placed: impl FnMut(Uuid, Rect, glam::Vec3),
     ) {
-        let env = paint::Env::new(painter, p, icons, now);
+        let mut env = paint::Env::new(painter, p, icons, now);
+        env.friend = self.friend_tint.then(|| crate::ui::colors::c(crate::ui::colors::get().tag_friend));
         // nearest first (`tags` ends with them): the level of each plate,
         // the complete ones limited in number, and the blur for the first ones
         let mut glass_left = if p.panel_alpha < 255 { MAX_GLASS } else { 0 };
