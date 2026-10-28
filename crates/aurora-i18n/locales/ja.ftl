@@ -1506,6 +1506,15 @@ app-gpu-stall =
     • 次回の起動時に、Auroraが提案するセーフグラフィックを選ぶ。
 
     待ち続けますか？「はい」で待ち続け、「いいえ」でAuroraを閉じます（正しくログアウトされます）。
+app-gpu-lost-title = Aurora Viewer：グラフィックカードが失われました
+app-gpu-lost =
+    グラフィックカードがAuroraで使えなくなりました。ドライバがリセットされた（画像の描画に時間がかかりすぎた、またはビデオメモリが不足した）か、カードが取り外されたか、別のプログラムに占有されています。これ以上何も描画できないため、OKを押すとAuroraを終了します（正しくログアウトされます）。
+
+    次のことをお試しください：
+    • グラフィックカードのドライバを更新する。
+    • 非常に大きな写真のサイズ、またはグラフィックの品質を下げる。
+    • グラフィックカードを多く使うほかのプログラムを閉じる。
+    • 次回の起動時に、Auroraが提案するセーフグラフィックを選ぶ。
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Auroraにはまだアニメーションオーバーライド（AO）がありません。
 cmdline-mod-use-hover-height-in-appearance = アバターのホバーする高さは「容姿 → ホバーする高さ」で調整してください。
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Auroraはこのリンクを開かないことをおすすめします。ログインや支払いを求められた場合、詐欺の可能性が非常に高いです。パスワードや支払い情報は絶対に入力しないでください。
@@ -7489,6 +7498,7 @@ crash-reason-native = ネイティブクラッシュ
 crash-reason-unknown = 予期しない終了
 crash-reason-freeze = フリーズ後に終了
 crash-reason-gpu = グラフィックカードが応答しません
+crash-reason-gpu-lost = グラフィックカードが失われました（ドライバのリセット）
 crash-reason-thread = ビューアの一部が動作を停止しました
 crash-reason-oom = メモリ不足
 crash-send-report = クラッシュレポートを送信
