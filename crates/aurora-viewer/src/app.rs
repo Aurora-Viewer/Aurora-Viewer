@@ -10748,7 +10748,7 @@ impl App {
                             }
                         }
                     }
-                    crate::build::demo::Step::TexturePicker(materials) => {
+                    crate::build::demo::Step::TexturePicker(materials, local) => {
                         let current = self
                             .build
                             .sel_te(&self.world)
@@ -10770,6 +10770,9 @@ impl App {
                                 false,
                             );
                             self.build.ui.pick_target = Some(crate::build::ui::PickTarget::Diffuse);
+                        }
+                        if local {
+                            self.build.ui.picker.show_local_tab();
                         }
                         self.imports.open = false;
                         crate::build::demo::texture_inventory(&mut self.world);

@@ -10,6 +10,7 @@
 //!   faces | faces-invisible | faces-ready: plain / Shift face clicks on
 //!   three prims of two objects (ready stops before the face clicks).
 //!   faces-picker | faces-picker-material: select one face and keep its picker open.
+//!   faces-picker-local | faces-picker-material-local: the same, on its Local tab.
 //!   faces-close: close view of one selected face for material readability.
 //!   faces-complex: closed torus and disconnected mesh islands, with holes.
 //!   create-delete | create-ready: create and select a basic prim, then
@@ -53,7 +54,8 @@ pub enum Step {
     Select(usize),
     SharedRights(usize, bool),
     Face(usize, u8, bool),
-    TexturePicker(bool),
+    /// Materials, Local tab.
+    TexturePicker(bool, bool),
     CloseView,
     CloseEditor,
     CreateAt(Vec3),
@@ -438,15 +440,16 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             215 => vec![Step::Open(Tool::Edit, EditMode::Face, 6), Step::Linked(false)],
             220 => object.into_iter().map(Step::Select).collect(),
             227 => vec![Step::Focus(false)],
-            235 if matches!(parts[0], "faces-close" | "faces-picker" | "faces-picker-material" | "faces-complex") => vec![Step::CloseView],
+            235 if matches!(parts[0], "faces-close" | "faces-complex") || parts[0].starts_with("faces-picker") => vec![Step::CloseView],
             _ if parts[0] == "faces-ready" => Vec::new(),
             240 if parts[0] == "faces-complex" => pick(99620, 0, false),
             240 => pick(99620, u8::MAX, false),
-            250 if matches!(parts[0], "faces-picker" | "faces-picker-material") => {
-                vec![Step::TexturePicker(parts[0] == "faces-picker-material")]
-            }
+            250 if parts[0].starts_with("faces-picker") => vec![Step::TexturePicker(
+                parts[0].starts_with("faces-picker-material"),
+                parts[0].ends_with("-local"),
+            )],
             _ if parts[0] == "faces-close" => Vec::new(),
-            _ if matches!(parts[0], "faces-picker" | "faces-picker-material") => Vec::new(),
+            _ if parts[0].starts_with("faces-picker") => Vec::new(),
             260 if parts[0] == "faces-complex" => pick(99621, 0, true),
             _ if parts[0] == "faces-complex" => Vec::new(),
             260 => pick(99620, 0, true),

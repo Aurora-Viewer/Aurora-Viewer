@@ -256,6 +256,19 @@ impl PlayingAnimation {
     }
 }
 
+/// The Local tab of the texture picker (LLFloaterTexturePicker::onBtnAdd,
+/// onBtnRemove, onBtnUpload, indra/newview/lltexturectrl.cpp).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalAssetRequest {
+    /// Choose files to preview locally: images, or glTF materials.
+    Add {
+        materials: bool,
+    },
+    Remove(Uuid),
+    /// Open the importer on this local file, to upload it.
+    Upload(Uuid),
+}
+
 pub struct World {
     /// mScreen's Y scale (LLVOAvatarSelf::updateCharacter).
     pub hud_aspect: f32,
@@ -379,6 +392,8 @@ pub struct World {
     pub land_credit: i32,
     pub upload_cost: Option<i32>,
     pub local_assets: HashMap<Uuid, (String, bool)>,
+    /// The texture picker's Local tab buttons (drained by the app's importer).
+    pub local_asset_requests: Vec<LocalAssetRequest>,
     /// ExtEnvironment answers of the frame (parcel local id, error), for the
     /// environment editors' "Apply To Parcel / Region" (drained by the app).
     pub environment_answers: Vec<(i32, Result<(), String>)>,
@@ -689,6 +704,7 @@ impl World {
             land_credit: 0,
             upload_cost: None,
             local_assets: HashMap::new(),
+            local_asset_requests: Vec::new(),
             environment_answers: Vec::new(),
             health: 100.0,
             frozen: false,
