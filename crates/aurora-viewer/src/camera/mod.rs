@@ -800,13 +800,20 @@ impl Camera {
             if !steering && self.third_person() {
                 // leaving mouse steering: the pitch fades out
                 self.pitch *= 1.0 - interpolant(0.3, self.dt);
-                if self.orbit_yaw != 0.0 {
-                    agent.yaw += self.orbit_yaw;
-                    self.orbit_yaw = 0.0;
-                }
             }
+            // steering too: the avatar walks where the camera looks
+            self.fold_orbit(agent);
             self.set_focus_on_avatar(true, true, true, agent, s);
             self.fov_zoom = 0.0;
+        }
+    }
+
+    /// The avatar turns to where the orbited follow camera looks; the camera
+    /// stays put.
+    pub fn fold_orbit(&mut self, agent: &mut AgentState) {
+        if self.third_person() && self.orbit_yaw != 0.0 {
+            agent.yaw += self.orbit_yaw;
+            self.orbit_yaw = 0.0;
         }
     }
 
@@ -1220,6 +1227,11 @@ impl Camera {
         let (outside_x, outside_y, steering) = (t.outside_x, t.outside_y, t.steering);
         if !outside_x && !outside_y {
             return;
+        }
+        if steering {
+            // the mouse turns the avatar from where the camera looks, a right
+            // drag orbit included
+            self.fold_orbit(agent);
         }
         let width = width.max(1.0);
         let k = TAU / width;
@@ -2777,6 +2789,32 @@ mod tests {
         cam.orbit_drag(-200.0, 0.0, 1.0, &mut agent);
         cam.reset_view(&mut agent, &keep, true, false, true, false);
         assert!(cam.orbit_yaw > 0.5);
+    }
+
+    #[test]
+    fn mouse_steering_turns_the_avatar_from_where_the_camera_looks() {
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        let mut agent = w.agent.clone();
+        // a right drag orbit, then the left button held on our avatar
+        cam.orbit_drag(-200.0, 0.0, 1.0, &mut agent);
+        let heading = agent.yaw + cam.orbit_yaw;
+        cam.begin_drag(true);
+        cam.drag(ToolMode::Zoom, 0.0, 0.0, 1280.0, &mut agent);
+        assert!(cam.orbit_yaw > 0.5, "a still press changes nothing");
+        cam.drag(ToolMode::Zoom, -40.0, 0.0, 1280.0, &mut agent);
+        assert_eq!(cam.orbit_yaw, 0.0);
+        let turned = TAU / 1280.0 * 40.0;
+        assert!((agent.yaw - (heading + turned)).abs() < 1e-5, "the mouse turns the avatar itself");
+        cam.end_drag();
+        // a key pressed while steering: the avatar walks where the camera looks
+        cam.orbit_drag(-200.0, 0.0, 1.0, &mut agent);
+        let heading = agent.yaw + cam.orbit_yaw;
+        cam.reset_view(&mut agent, &s, true, false, true, true);
+        assert_eq!(cam.orbit_yaw, 0.0);
+        assert!((agent.yaw - heading).abs() < 1e-5);
     }
 
     #[test]
