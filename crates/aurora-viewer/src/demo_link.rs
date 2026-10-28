@@ -14,7 +14,8 @@
 //! `jitter` delays each message by up to that much more (order kept);
 //! `aurora` / `firestorm` force the movement for the session without
 //! touching the saved choice; `vehicle` seats our avatar on a vehicle that
-//! drives back and forth, then stands it up (`vehicle_events`).
+//! drives back and forth, then stands it up (`vehicle_events`); `crash`
+//! does the same faster, under a scripted camera, hitting a wall at each end.
 //! `native-flight` opts into full-speed flight with inertia for navigation
 //! regressions; ordinary ground/vehicle fixtures retain their default model.
 
@@ -36,6 +37,8 @@ pub struct Config {
     /// Aurora's movement forced on or off for the session.
     pub prediction: Option<bool>,
     pub vehicle: bool,
+    /// The vehicle scenario with a scripted camera and two collisions.
+    pub crash: bool,
     /// One `demo link trace` line per frame (`trace`).
     pub trace: bool,
     /// `stoplag=<ms>`: how long the stand-in keeps its walk signal once
@@ -58,6 +61,7 @@ impl Config {
             jitter: 0.0,
             prediction: None,
             vehicle: false,
+            crash: false,
             trace: false,
             stop_lag: 0.0,
             native_flight: false,
@@ -67,6 +71,7 @@ impl Config {
                 "aurora" => cfg.prediction = Some(true),
                 "firestorm" => cfg.prediction = Some(false),
                 "vehicle" => cfg.vehicle = true,
+                "crash" => (cfg.vehicle, cfg.crash) = (true, true),
                 "trace" => cfg.trace = true,
                 "native-flight" => cfg.native_flight = true,
                 _ => {
@@ -443,13 +448,14 @@ impl DemoLink {
     /// sits on it, from 4 s to 16 s it drives back and forth at 4 m/s with a
     /// report every quarter of a second (extrapolated and smoothed like any
     /// object, world/motion.rs), at 17 s the avatar stands up beside it.
-    /// The keys held meanwhile must not move the avatar.
+    /// The keys held meanwhile must not move the avatar. `crash`: see
+    /// [`crash_motion`].
     fn vehicle(&mut self, now: Instant) {
         let quarter = (now.saturating_duration_since(self.start).as_secs_f32() * 4.0) as u32;
         while self.vehicle_step < quarter {
             self.vehicle_step += 1;
             let t = self.vehicle_step as f32 / 4.0;
-            for ev in vehicle_events(t, VEHICLE_ORIGIN) {
+            for ev in vehicle_events(t, VEHICLE_ORIGIN, self.cfg.crash) {
                 self.send(now, Delivery::Event(Box::new(ev), now));
             }
             if t == 3.0 {
@@ -494,13 +500,42 @@ fn vehicle_path(t: f32, origin: Vec3) -> (Vec3, Vec3) {
     )
 }
 
-fn vehicle_prim(t: f32, origin: Vec3) -> ObjectUpdate {
+/// The reports of the `crash` scenario at `t`: position, velocity, rotation
+/// and spin. 17 m east at 6 m/s, a wall at 7 s, 17 m back, a wall at 11 s,
+/// then still. Each impact bounces the car back with a yaw and roll kick
+/// that the next two reports undo, as a simulator reports a collision: a
+/// few abrupt reports whose spin does not match the next one.
+fn crash_motion(t: f32, origin: Vec3) -> (Vec3, Vec3, Quat, Vec3) {
+    const SPEED: f32 = 6.0;
+    let kick = |yaw: f32, roll: f32| Quat::from_rotation_z(yaw) * Quat::from_rotation_x(roll);
+    // (in quarters of a second, the step of the reports)
+    let (x, v, rotation, spin) = match (t * 4.0).round() as i32 {
+        ..=16 => (0.0, 0.0, Quat::IDENTITY, Vec3::ZERO),
+        17..=27 => ((t - 4.0) * SPEED, SPEED, Quat::IDENTITY, Vec3::ZERO),
+        28 => (17.6, -2.0, kick(0.3, 0.12), Vec3::new(-0.8, 0.0, -2.5)),
+        29 => (17.2, -0.8, kick(-0.12, -0.04), Vec3::new(0.3, 0.0, 0.8)),
+        30..=31 => (17.0, 0.0, Quat::IDENTITY, Vec3::ZERO),
+        32..=43 => (17.0 - (t - 8.0) * SPEED, -SPEED, Quat::IDENTITY, Vec3::ZERO),
+        44 => (-0.6, 2.0, kick(-0.3, -0.12), Vec3::new(0.8, 0.0, 2.5)),
+        45 => (-0.2, 0.8, kick(0.12, 0.04), Vec3::new(-0.3, 0.0, -0.8)),
+        _ => (0.0, 0.0, Quat::IDENTITY, Vec3::ZERO),
+    };
+    let (x, y) = (origin.x + x, origin.y);
+    (Vec3::new(x, y, super::floor_at(x, y) + 0.4), Vec3::X * v, rotation, spin)
+}
+
+fn vehicle_prim(t: f32, origin: Vec3, crash: bool) -> ObjectUpdate {
     use aurora_prim::params::{LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE};
-    let (position, velocity) = vehicle_path(t, origin);
+    let (position, velocity, rotation, spin) = if crash {
+        crash_motion(t, origin)
+    } else {
+        let (position, velocity) = vehicle_path(t, origin);
+        (position, velocity, Quat::IDENTITY, Vec3::ZERO)
+    };
     let mut o = super::prim(
         VEHICLE_LOCAL_ID,
         position,
-        Quat::IDENTITY,
+        rotation,
         Vec3::new(2.4, 1.3, 0.6),
         super::shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0),
         super::te([0.85, 0.32, 0.25, 1.0], 0, false, 0.0),
@@ -508,6 +543,7 @@ fn vehicle_prim(t: f32, origin: Vec3) -> ObjectUpdate {
         "",
     );
     o.velocity = velocity;
+    o.angular_velocity = spin;
     o
 }
 
@@ -531,7 +567,7 @@ fn seated_agent(parent: u32, position: Vec3) -> ObjectUpdate {
 }
 
 /// The vehicle scenario's messages at `t` seconds (a quarter-second step).
-fn vehicle_events(t: f32, origin: Vec3) -> Vec<NetEvent> {
+fn vehicle_events(t: f32, origin: Vec3, crash: bool) -> Vec<NetEvent> {
     let update = |objects: Vec<ObjectUpdate>| NetEvent::ObjectUpdates {
         handle: super::HANDLE,
         objects,
@@ -540,13 +576,34 @@ fn vehicle_events(t: f32, origin: Vec3) -> Vec<NetEvent> {
         if t == 2.0 {
             log::info!("demo link: the vehicle appears");
         }
-        return vec![update(vec![vehicle_prim(t, origin)])];
+        return vec![update(vec![vehicle_prim(t, origin, crash)])];
+    }
+    if crash && t == 3.25 {
+        // a racing script's camera: rigid behind the car, no lag
+        // (llSetCameraParams; ids of llfollowcamparams.h)
+        log::info!("demo link: the vehicle takes the camera");
+        return vec![NetEvent::SetFollowCam {
+            handle: super::HANDLE,
+            object: vehicle_prim(t, origin, crash).full_id,
+            properties: vec![
+                (12, 1.0),
+                (7, 6.0),
+                (0, 12.0),
+                (4, 1.0),
+                (5, 0.0),
+                (6, 0.0),
+                (8, 0.0),
+                (9, 0.0),
+                (10, 0.0),
+                (11, 0.0),
+            ],
+        }];
     }
     if t == 3.0 {
         log::info!("demo link: our avatar sits on the vehicle");
         return vec![
             NetEvent::SitResponse {
-                object: vehicle_prim(t, origin).full_id,
+                object: vehicle_prim(t, origin, crash).full_id,
                 camera_eye: Vec3::new(-6.0, 0.0, 2.5),
                 camera_at: Vec3::new(0.0, 0.0, 0.8),
                 force_mouselook: false,
@@ -675,6 +732,26 @@ mod tests {
         assert_eq!(Config::parse("100,aurora").and_then(|c| c.prediction), Some(true));
         assert!(!c.native_flight);
         assert!(Config::parse("100,native-flight").unwrap().native_flight);
+        let c = Config::parse("100,crash").expect("crash");
+        assert!(c.vehicle && c.crash);
+    }
+
+    #[test]
+    fn the_crash_hits_a_wall_at_each_end_then_stops_where_it_started() {
+        let o = VEHICLE_ORIGIN;
+        let at = |t: f32| crash_motion(t, o);
+        assert_eq!(at(5.0).1, Vec3::X * 6.0);
+        // the impacts: thrown back, turned and spinning, undone after
+        for t in [7.0, 11.0] {
+            let (_, velocity, rotation, spin) = at(t);
+            assert!(velocity.x * at(t - 0.25).1.x < 0.0, "bounced at {t}");
+            assert!(rotation.angle_between(Quat::IDENTITY) > 0.2 && spin.length() > 2.0);
+            assert_eq!(at(t + 0.5).2, Quat::IDENTITY);
+        }
+        assert_eq!(at(9.0).1, Vec3::X * -6.0);
+        // standing up beside it as in the plain scenario
+        assert!((at(17.0).0.x - vehicle_path(17.0, o).0.x).abs() < 1e-4);
+        assert_eq!(at(17.0).1, Vec3::ZERO);
     }
 
     #[test]

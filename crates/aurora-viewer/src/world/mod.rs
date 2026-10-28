@@ -1249,8 +1249,10 @@ impl World {
     /// circuit goes silent. A region without a simulator in `sims` (the
     /// offline demo, a region parked or just announced) runs at full rate.
     /// Corrections that have faded end here, and so do the waits of our
-    /// transform edits for their answer (edit_echo.rs).
-    pub fn advance_motion(&mut self, now: Instant, sims: &[aurora_net::stats::SimulatorMotion]) {
+    /// transform edits for their answer (edit_echo.rs). Then the roots
+    /// avatars sit on take a step of their damping, those `selected` in the
+    /// build tools excepted (ObjectStore::damp_seats).
+    pub fn advance_motion(&mut self, now: Instant, sims: &[aurora_net::stats::SimulatorMotion], selected: impl Fn(&ObjKey) -> bool) {
         let dt = now.saturating_duration_since(self.motion_tick).as_secs_f64();
         self.motion_tick = now;
         for &handle in self.regions.keys() {
@@ -1263,6 +1265,7 @@ impl World {
         }
         self.objects.expire_corrections(now);
         self.objects.expire_sent_edits(now);
+        self.objects.damp_seats(now, dt as f32, selected);
     }
 
     /// Freeze the world at `at` for a photo, or thaw it (issue #1154,
