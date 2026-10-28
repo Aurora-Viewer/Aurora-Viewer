@@ -2258,6 +2258,7 @@ ui-login-last-location = 前回の場所
 ui-land-access-ban-lines-will-appear-if-this-box-is-not = このボックスをオフにすると、バンラインが表示されます
 ui-profile-there-are-unsaved-changes = 未保存の変更があります。
 ui-appearance-move-layer-down = レイヤーを下へ移動
+ui-appearance-drag-layer-hint = ドラッグしてレイヤーの順序を変更するか、選択して矢印を使用します
 ui-inventory-controls-description = 説明
 common-description = 説明：
 ui-minimap-destination = 目的地

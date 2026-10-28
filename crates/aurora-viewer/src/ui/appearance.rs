@@ -14,6 +14,7 @@ use uuid::Uuid;
 mod folders;
 mod gallery;
 pub(crate) mod items;
+mod layers;
 mod selection;
 
 #[derive(Default)]
@@ -33,6 +34,8 @@ pub struct AppearanceUi {
     /// The located outfit and the time it came into view, for its flash.
     flash: Option<(Uuid, f64)>,
     selected_item: Option<Uuid>,
+    /// The drag of a worn clothing layer in the outfit editor.
+    layers: layers::Drag,
     /// The temporary attachments counted last frame: one more opens their
     /// section (`temporary_attachments`).
     temporary_seen: usize,
@@ -492,10 +495,23 @@ fn row_gap(ui: &mut egui::Ui) {
 }
 
 fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool, worn: Option<&str>) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(
-        Vec2::new(ui.available_width(), super::inventory::AURORA_ROW_HEIGHT),
-        egui::Sense::click(),
-    );
+    sensed_row(ui, p, it, desc, selected, worn, egui::Sense::click(), None)
+}
+
+/// `row`, dragged as well with `Sense::click_and_drag` (a clothing layer),
+/// its tooltip ending with `hint`.
+#[allow(clippy::too_many_arguments)]
+fn sensed_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    it: &InvItem,
+    desc: &str,
+    selected: bool,
+    worn: Option<&str>,
+    sense: egui::Sense,
+    hint: Option<&str>,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), super::inventory::AURORA_ROW_HEIGHT), sense);
     if selected || response.hovered() {
         ui.painter().rect_filled(
             rect,
@@ -542,10 +558,39 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool,
     if let Some(label) = worn {
         widgets::paint_row_tag(ui, p, label, true, name_end + 6.0, rect.center().y);
     }
-    response.on_hover_text(match worn {
+    let tip = match worn {
         Some(label) => format!("{text} ({label})"),
         None => text,
+    };
+    response.on_hover_text(match hint {
+        Some(hint) => format!("{tip}\n{hint}"),
+        None => tip,
     })
+}
+
+/// A wearable type worn by nothing, at the pitch, icon and text place of
+/// `row` (the dummy items of LLCOFWearables::addClothingTypesDummies).
+fn not_worn_row(ui: &mut egui::Ui, p: &Palette, icon_name: &str, text: &str) {
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), super::inventory::AURORA_ROW_HEIGHT),
+        egui::Sense::hover(),
+    );
+    if let Some(t) = icons::global(icon_name) {
+        ui.painter().image(
+            t.id(),
+            egui::Rect::from_center_size(egui::pos2(rect.left() + 11.0, rect.center().y), Vec2::splat(16.0)),
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            p.muted_dim,
+        );
+    }
+    let mut job = egui::text::LayoutJob::single_section(
+        text.to_owned(),
+        egui::TextFormat::simple(egui::FontId::proportional(12.0), p.muted_dim),
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width((rect.width() - 30.0).max(20.0));
+    let galley = ui.painter().layout_job(job);
+    let pos = egui::pos2(rect.left() + 25.0, rect.center().y - galley.size().y * 0.5);
+    ui.painter().galley(pos, galley, p.muted_dim);
 }
 
 fn item_menu(response: &egui::Response, p: &Palette, it: &InvItem, actions: &mut Vec<Action>) {
@@ -1024,7 +1069,22 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
             });
         }
     }
-    links.sort_by(|a, b| a.desc.cmp(&b.desc).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    links.sort_by(|a, b| {
+        layers::order(a)
+            .cmp(&layers::order(b))
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    layers::furthest_first(inv, &mut links);
+    // each clothing type's layers as shown, furthest from the body first
+    let mut groups: HashMap<u32, Vec<Uuid>> = HashMap::new();
+    for link in &links {
+        if let Some(kind) = layers::clothing_kind(inv, link) {
+            groups.entry(kind).or_default().push(link.target);
+        }
+    }
+    if edit {
+        st.layers.begin(ui.ctx());
+    }
     let q = st.search.trim().to_lowercase();
     let mut present = HashSet::new();
     for link in links
@@ -1049,8 +1109,11 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
             continue;
         }
         present.insert(it.flags & 0xff);
+        // the layers of its type, when it is clothing: the editor moves them
+        let group = (it.asset_type == 5).then(|| groups.get(&(it.flags & 0xff))).flatten();
+        let draggable = edit && group.is_some_and(|g| g.len() > 1);
         ui.push_id(it.id, |ui| {
-            let resp = row(
+            let resp = sensed_row(
                 ui,
                 p,
                 it,
@@ -1061,40 +1124,59 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
                 },
                 st.selected_item == Some(it.id),
                 labels.get(&it.id).map(String::as_str),
+                if draggable {
+                    egui::Sense::click_and_drag()
+                } else {
+                    egui::Sense::click()
+                },
+                draggable.then(|| aurora_i18n::tr!("ui-appearance-drag-layer-hint")),
             );
+            if draggable {
+                st.layers.row(it.id, it.flags & 0xff, &resp);
+            }
             if resp.clicked() {
                 st.selected_item = Some(it.id);
             }
             item_menu(&resp, p, it, actions);
-            if edit && st.selected_item == Some(it.id) {
+            // a body part has none of these buttons: no empty row under it
+            if edit && st.selected_item == Some(it.id) && it.asset_type != 13 {
                 ui.horizontal(|ui| {
-                    if it.asset_type != 13
-                        && icon_button(
-                            ui,
-                            p,
-                            "circle-x-filled",
-                            if it.asset_type == 6 {
-                                aurora_i18n::tr!("common-detach")
-                            } else {
-                                aurora_i18n::tr!("common-remove")
-                            },
-                        )
-                        .clicked()
+                    if icon_button(
+                        ui,
+                        p,
+                        "circle-x-filled",
+                        if it.asset_type == 6 {
+                            aurora_i18n::tr!("common-detach")
+                        } else {
+                            aurora_i18n::tr!("common-remove")
+                        },
+                    )
+                    .clicked()
                     {
                         actions.push(Action::Remove(it.id));
                     }
-                    if it.asset_type == 5 {
-                        if icon_button(ui, p, "caret-up-filled", aurora_i18n::tr!("ui-appearance-move-layer-up")).clicked() {
-                            actions.push(Action::MoveLayer(it.id, true));
-                        }
-                        if icon_button(ui, p, "caret-down-filled", aurora_i18n::tr!("ui-appearance-move-layer-down")).clicked() {
+                    // up goes over the others, away from the body; no arrow
+                    // past either end (LLCOFWearables::buildClothingListItem)
+                    if let Some(group) = group {
+                        let at = group.iter().position(|id| *id == it.id);
+                        if at.is_some_and(|at| at > 0)
+                            && icon_button(ui, p, "caret-up-filled", aurora_i18n::tr!("ui-appearance-move-layer-up")).clicked()
+                        {
                             actions.push(Action::MoveLayer(it.id, false));
+                        }
+                        if at.is_some_and(|at| at + 1 < group.len())
+                            && icon_button(ui, p, "caret-down-filled", aurora_i18n::tr!("ui-appearance-move-layer-down")).clicked()
+                        {
+                            actions.push(Action::MoveLayer(it.id, true));
                         }
                     }
                 });
             }
         });
         row_gap(ui);
+    }
+    if edit && let Some((id, body)) = st.layers.finish(ui, p) {
+        actions.push(Action::PlaceLayer(id, body));
     }
     if edit && st.edit_tab != 1 {
         for (kind, name) in model::wearables()
@@ -1103,24 +1185,19 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
             .filter(|(k, _)| if st.edit_tab == 0 { *k >= 4 } else { *k < 4 })
         {
             if !present.contains(&(kind as u32)) {
-                ui.horizontal(|ui| {
-                    icon(ui, if st.edit_tab == 0 { "shirt-filled" } else { "man-filled" }, 16.0, p.muted_dim);
-                    let ending = match kind {
-                        0 | 1 | 4 | 8 | 12 => "e",
-                        6 | 7 | 15 => "es",
-                        2 | 3 | 9 => "s",
-                        _ => "",
-                    };
-                    ui.label(
-                        RichText::new(aurora_i18n::tr!(
-                            "ui-appearance-not-worn",
-                            name = name.to_string(),
-                            ending = ending.to_string()
-                        ))
-                        .size(12.0)
-                        .color(p.muted_dim),
-                    );
-                });
+                let ending = match kind {
+                    0 | 1 | 4 | 8 | 12 => "e",
+                    6 | 7 | 15 => "es",
+                    2 | 3 | 9 => "s",
+                    _ => "",
+                };
+                not_worn_row(
+                    ui,
+                    p,
+                    if st.edit_tab == 0 { "shirt-filled" } else { "man-filled" },
+                    &aurora_i18n::tr!("ui-appearance-not-worn", name = name.to_string(), ending = ending.to_string()),
+                );
+                row_gap(ui);
             }
         }
     }
@@ -1761,6 +1838,11 @@ pub fn demo_events(frame: u64) -> Vec<egui::Event> {
             modifiers: egui::Modifiers::NONE,
         },
     ]
+}
+
+/// The synthetic drag of `AURORA_DEMO_APPEARANCE=layers-drag|layers-hold`.
+pub fn layer_demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    layers::demo_events(ctx, frame)
 }
 
 /// Local test cards: portrait, landscape and square, with a central disc

@@ -46,17 +46,37 @@ pub enum WearMode {
 #[derive(Clone, Debug)]
 pub enum Action {
     Wear(Uuid, bool),
-    WearOutfits { folders: Vec<Uuid>, append: bool },
-    WearContents { folder: Uuid, mode: WearMode },
+    WearOutfits {
+        folders: Vec<Uuid>,
+        append: bool,
+    },
+    WearContents {
+        folder: Uuid,
+        mode: WearMode,
+    },
     Save(Option<String>),
     SaveIn(String, Uuid),
     Remove(Uuid),
     RemoveItems(Vec<Uuid>),
     Add(Uuid),
-    WearItem { item: Uuid, replace: bool, point: u8 },
-    WearItems { items: Vec<Uuid>, replace: bool, point: u8 },
-    ReplaceWearable { old: Uuid, new: Uuid },
-    DeleteFromOutfit { folder: Uuid, item: Uuid },
+    WearItem {
+        item: Uuid,
+        replace: bool,
+        point: u8,
+    },
+    WearItems {
+        items: Vec<Uuid>,
+        replace: bool,
+        point: u8,
+    },
+    ReplaceWearable {
+        old: Uuid,
+        new: Uuid,
+    },
+    DeleteFromOutfit {
+        folder: Uuid,
+        item: Uuid,
+    },
     ShowOriginal(Uuid),
     Favorite(Uuid),
     Category(Uuid, aurora_net::outfits::categories::Update),
@@ -64,7 +84,12 @@ pub enum Action {
     SaveTo(Uuid),
     RemoveOutfit(Uuid),
     RemoveOutfits(Vec<Uuid>),
+    /// A clothing layer one step closer to the body (true) or further from
+    /// it, over the next one (LLAppearanceMgr::moveWearable).
     MoveLayer(Uuid, bool),
+    /// A clothing layer dropped at a body index of its wearable type, 0
+    /// closest to the body (LLAppearanceMgr::reorderWearable).
+    PlaceLayer(Uuid, usize),
     Revert,
 }
 
@@ -335,6 +360,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             | Action::RemoveOutfits(_)
             | Action::WearOutfits { append: true, .. }
             | Action::MoveLayer(..)
+            | Action::PlaceLayer(..)
     ) {
         for id in worn.keys() {
             if !current.iter().any(|l| l.target == *id) {
@@ -658,7 +684,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             }
             change.links = current;
         }
-        Action::MoveLayer(id, up) => {
+        Action::MoveLayer(id, _) | Action::PlaceLayer(id, _) => {
             let it = inv
                 .items
                 .get(&id)
@@ -678,13 +704,15 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 .collect();
             layers.sort_by(|a, b| a.1.cmp(&b.1));
             if let Some(pos) = layers.iter().position(|l| l.2 == id) {
-                let other = if up {
-                    pos.checked_sub(1)
-                } else {
-                    (pos + 1 < layers.len()).then_some(pos + 1)
+                let to = match action {
+                    Action::MoveLayer(_, true) => pos.checked_sub(1),
+                    Action::MoveLayer(_, false) => (pos + 1 < layers.len()).then_some(pos + 1),
+                    Action::PlaceLayer(_, index) => Some(index.min(layers.len() - 1)),
+                    _ => None,
                 };
-                if let Some(other) = other {
-                    layers.swap(pos, other);
+                if let Some(to) = to {
+                    let layer = layers.remove(pos);
+                    layers.insert(to, layer);
                 }
                 for (order, (i, _, _)) in layers.iter().enumerate() {
                     current[*i].desc = format!("@{}", (it.flags & 0xff) * 100 + order as u32);
@@ -1067,6 +1095,38 @@ pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
     demo_replace(inv, agent, cof, &current);
 }
 
+/// `AURORA_DEMO_APPEARANCE=layers…`: two more tattoos worn over the star
+/// tattoo of `seed_demo`, for the layer order of the outfit editor.
+pub fn seed_demo_layers(inv: &mut Inventory, agent: Uuid) {
+    let cof = Uuid::from_u128(701);
+    let tattoos: Vec<_> = [(724, "Freckles"), (725, "Lipstick")]
+        .into_iter()
+        .map(|(n, name)| InvItem {
+            id: Uuid::from_u128(n),
+            parent: inv.root,
+            name: name.into(),
+            asset_type: 5,
+            inv_type: 18,
+            flags: 14,
+            creator: agent,
+            owner: agent,
+            base_mask: 0x7fffffff,
+            owner_mask: 0x7fffffff,
+            ..Default::default()
+        })
+        .collect();
+    inv.add_items(tattoos.clone());
+    let mut links = folder_links(inv, cof);
+    links.extend(tattoos.iter().map(item_link));
+    // the star tattoo closest to the body, then Freckles, then Lipstick
+    for (order, id) in [714, 724, 725].into_iter().enumerate() {
+        if let Some(link) = links.iter_mut().find(|l| l.target == Uuid::from_u128(id)) {
+            link.desc = format!("@{}", 1400 + order);
+        }
+    }
+    demo_replace(inv, agent, cof, &links);
+}
+
 /// `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]`: the number of generated
 /// outfits added to the Appearance demo (a large wardrobe), 0 without it.
 pub fn demo_outfit_count() -> usize {
@@ -1315,6 +1375,33 @@ mod tests {
         let mut inv = Inventory::default();
         seed_demo(&mut inv, Uuid::from_u128(1));
         inv
+    }
+
+    #[test]
+    fn tattoo_layers_move_one_step_or_to_their_drop() {
+        let mut inv = fixture();
+        seed_demo_layers(&mut inv, Uuid::from_u128(1));
+        let (star, freckles, lipstick) = (Uuid::from_u128(714), Uuid::from_u128(724), Uuid::from_u128(725));
+        // the tattoos closest to the body first
+        let order = |action| {
+            let (change, _) = plan(&inv, action, &HashMap::new()).expect("reorder");
+            let mut tattoos: Vec<_> = change
+                .links
+                .iter()
+                .filter(|l| inv.items.get(&l.target).is_some_and(|it| it.flags & 0xff == 14))
+                .map(|l| (l.desc.clone(), l.target))
+                .collect();
+            tattoos.sort();
+            tattoos.into_iter().map(|(_, id)| id).collect::<Vec<_>>()
+        };
+        assert_eq!(order(Action::MoveLayer(lipstick, true)), [star, lipstick, freckles]);
+        assert_eq!(order(Action::MoveLayer(star, false)), [freckles, star, lipstick]);
+        // already at the edge: nothing moves
+        assert_eq!(order(Action::MoveLayer(star, true)), [star, freckles, lipstick]);
+        assert_eq!(order(Action::PlaceLayer(lipstick, 0)), [lipstick, star, freckles]);
+        assert_eq!(order(Action::PlaceLayer(star, 9)), [freckles, lipstick, star]);
+        // a body part is never reordered
+        assert!(plan(&inv, Action::PlaceLayer(Uuid::from_u128(711), 0), &HashMap::new()).is_err());
     }
 
     #[test]

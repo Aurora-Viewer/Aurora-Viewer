@@ -6829,7 +6829,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|worn|save|edit|menu|duplicates`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|worn|save|edit|layers|layers-drag|layers-hold|menu|duplicates`**
 — opens Appearance with four synthetic outfits:
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
@@ -6870,6 +6870,14 @@ for them (`5 to look up`), as a cold inventory cache.
   click menus;
 - `duplicates`: replays folder answers with repeated links and
   originals coming from other parents.
+- `layers`: the outfit editor with three worn tattoos, listed furthest
+  from the body first as in the Legacy Viewer: Lipstick, Freckles, Star.
+  A tattoo row drags within the tattoos (a violet marker shows where it
+  lands, another type refuses it); a selected one's up arrow moves it over
+  the next, and there is no arrow past either end. `layers-drag` drags
+  Lipstick under Star from frame 701 and drops it at frame 760 (the list
+  then reads Freckles, Star, Lipstick); `layers-hold` holds it over its
+  landing place, for a capture of the marker.
 
 These operations stay offline; creating new clothing and
 new body parts is not available yet.

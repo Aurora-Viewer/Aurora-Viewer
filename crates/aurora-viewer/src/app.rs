@@ -9109,6 +9109,7 @@ impl App {
             raw.events.extend(crate::demo::conv_button::input_events(&ctx, self.frame_count));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::appearance::demo_events(self.frame_count));
+            raw.events.extend(ui::appearance::layer_demo_events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::resize_events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::minimized_events(&ctx, self.frame_count));
@@ -16582,6 +16583,9 @@ impl ApplicationHandler for App {
                 if view.starts_with("folders") {
                     crate::world::outfit_folders::seed_demo(&mut self.world.inventory, self.world.agent_id);
                 }
+                if view.starts_with("layers") {
+                    crate::world::appearance::seed_demo_layers(&mut self.world.inventory, self.world.agent_id);
+                }
                 if matches!(view.as_str(), "gallery-fit" | "gallery-fill") {
                     ui::appearance::demo_previews(&self.egui_ctx, &mut self.world.inventory, &mut self.ui_images);
                     self.settings.appearance_fill_previews = view == "gallery-fill";
@@ -16603,7 +16607,7 @@ impl ApplicationHandler for App {
                         "worn" | "save" => 2,
                         _ => 0,
                     },
-                    view == "edit",
+                    view == "edit" || view.starts_with("layers"),
                 );
                 if view == "save" {
                     self.appearance_ui.begin_save_as(&self.world.inventory);
