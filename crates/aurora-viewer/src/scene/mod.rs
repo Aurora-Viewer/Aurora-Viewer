@@ -4584,11 +4584,12 @@ impl Scene {
         );
         self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
         self.lists.blend_depth_mode = blend_order::depth_mode();
-        if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Split {
-            blend_order::rig_objects(&self.blend_tmp, self.lists.blend_depth, &mut self.lists.blend_depth_runs);
-        } else {
-            blend_order::rig_runs(&self.blend_tmp, self.lists.blend_depth, &mut self.lists.blend_depth_runs);
-        }
+        let runs = match self.lists.blend_depth_mode {
+            aurora_render::RiggedBlendDepth::Layers => blend_order::each_object,
+            aurora_render::RiggedBlendDepth::Split => blend_order::rig_objects,
+            _ => blend_order::rig_runs,
+        };
+        runs(&self.blend_tmp, self.lists.blend_depth, &mut self.lists.blend_depth_runs);
         self.lists.blend.extend(self.blend_tmp.iter().map(|e| e.cmd));
         self.lists.blend_glow.extend(self.blend_tmp.iter().map(|e| e.glow));
         self.lists.shadow_casters.extend(result.casters);

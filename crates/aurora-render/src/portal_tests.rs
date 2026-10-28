@@ -19,6 +19,9 @@ fn portal_aperture_on_gpu_keeps_side_and_corner_geometry_and_matches_picking() {
     // Exercise the actual GTAO entry points too: a colour-only cut leaves
     // invisible limbs in occlusion if a new depth/normal pass omits it.
     let mut normal_passes = String::new();
+    // the alpha threshold depth_contact reads
+    let threshold = object.find("override DEPTH_CONTACT_ALPHA").unwrap();
+    normal_passes.push_str(&object[threshold..threshold + object[threshold..].find('\n').unwrap() + 1]);
     for name in [
         "fs_depth_portal_normal",
         "fs_depth_mask_normal",

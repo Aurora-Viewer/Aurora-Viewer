@@ -711,7 +711,7 @@ struct Targets {
     depth_msaa_tex: Option<wgpu::Texture>,
     /// A copy of the scene depth (same size and samples) the rigged blended
     /// faces draw into, writing their depth as they go
-    /// (`RiggedBlendDepth::Layered`, made on its first use).
+    /// (`RiggedBlendDepth::Layered` and `Layers`, made on its first use).
     blend_layers: Option<(wgpu::Texture, wgpu::TextureView)>,
     /// Single-sample depth from the prepass.
     depth_ss_tex: wgpu::Texture,
@@ -784,6 +784,8 @@ struct Pipelines {
     /// are drawn, then the fainter ones, depth tested only.
     blend_depth_solid: wgpu::RenderPipeline,
     blend_depth_fringe: wgpu::RenderPipeline,
+    /// `Layers`: after each object's fringes, their depth from 1/255.
+    blend_depth_fringe_depth: wgpu::RenderPipeline,
     particles: wgpu::RenderPipeline,
     water_particles: wgpu::RenderPipeline,
     water_particles_under: wgpu::RenderPipeline,
@@ -3162,6 +3164,18 @@ impl Backend {
             constants: &[("BLEND_EARLY_DISCARD", 1.0), ("BLEND_SPLIT", 2.0)],
             ..base("blend rigged fringe", "vs_main", "fs_blend")
         });
+        // `RiggedBlendDepth::Layers` (#1300): after an object's fringes,
+        // their depth from 1/255 (MINIMUM_ALPHA), so that what is drawn
+        // after them and behind them is hidden, as in the Legacy Viewer
+        let blend_depth_fringe_depth = pipe(PipeDesc {
+            fs: Some("fs_depth_contact"),
+            blend: None,
+            write_mask: wgpu::ColorWrites::empty(),
+            depth_write: true,
+            depth_compare: wgpu::CompareFunction::Greater,
+            constants: &[("DEPTH_CONTACT_ALPHA", 0.004)],
+            ..base("blend rigged fringe depth", "vs_main", "fs_blend")
+        });
         let particles = pipe(PipeDesc {
             vb: Vb::Particle,
             cull: None,
@@ -3625,6 +3639,7 @@ impl Backend {
             blend_depth_opaque,
             blend_depth_solid,
             blend_depth_fringe,
+            blend_depth_fringe_depth,
             particles,
             water_particles,
             water_particles_under,
@@ -6792,9 +6807,13 @@ impl Backend {
 
         mark(&mut encoder, MARK_COPY_END);
 
-        // the copy of the depth `RiggedBlendDepth::Layered` draws into, made
-        // on its first use (the size and samples of the scene depth)
-        if lists.blend_depth_mode == RiggedBlendDepth::Layered && lists.blend_depth > 0 && self.targets.blend_layers.is_none() {
+        // the copy of the depth `RiggedBlendDepth::Layered` and `Layers`
+        // draw into, made on its first use (the size and samples of the
+        // scene depth)
+        if matches!(lists.blend_depth_mode, RiggedBlendDepth::Layered | RiggedBlendDepth::Layers)
+            && lists.blend_depth > 0
+            && self.targets.blend_layers.is_none()
+        {
             let size = self.targets.depth_ss_tex.size();
             let samples = self.targets.depth_msaa_tex.as_ref().map_or(1, |t| t.sample_count());
             self.targets.blend_layers = Some(make_view(
@@ -6972,6 +6991,34 @@ impl Backend {
                         );
                         from = end;
                     }
+                }
+                RiggedBlendDepth::Layers => {
+                    // object by object as `Split`, on a copy of the depth,
+                    // each object's fringes then hiding behind them what is
+                    // drawn after them (#1300)...
+                    let t = &self.targets;
+                    if let Some((layers_tex, layers)) = &t.blend_layers {
+                        let scene_depth = t.depth_msaa_tex.as_ref().unwrap_or(&t.depth_ss_tex);
+                        encoder.copy_texture_to_texture(scene_depth.as_image_copy(), layers_tex.as_image_copy(), scene_depth.size());
+                        let mut pass = begin_scene_b_on(&mut encoder, t, "scene b rigged blend", false, true, layers);
+                        bind_mesh(&mut pass, &self.groups.a);
+                        let mut from = 0;
+                        for end in lists.blend_depth_runs.iter().map(|&e| e.min(n_depth)).chain([n_depth]) {
+                            if end <= from {
+                                continue;
+                            }
+                            let run = (b0 + from as u64 * stride, end - from);
+                            blended(&mut pass, &self.pipelines.blend_depth_solid, from, end);
+                            draw(&mut pass, &self.pipelines.blend_depth_fringe, run);
+                            draw(&mut pass, &self.pipelines.blend_depth_fringe_depth, run);
+                            from = end;
+                        }
+                    }
+                    // ...and in the scene depth only where at least half
+                    // covered, for what is drawn after them (#556)
+                    let mut pass = begin_scene_b(&mut encoder, t, "scene b rigged blend depth", false, true);
+                    bind_mesh(&mut pass, &self.groups.a);
+                    draw(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth));
                 }
                 RiggedBlendDepth::Runs => {
                     // their depth where nearly opaque, then run by run

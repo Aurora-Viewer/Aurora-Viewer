@@ -6882,6 +6882,11 @@ pub fn lights_events(n: u32) -> Vec<NetEvent> {
 /// strands mostly opaque with a short soft edge and nothing between them,
 /// drawn in the Legacy Viewer's triangle order like a mesh asset (#935);
 /// `<n>,layered,outer`: listed from the outside in instead.
+/// AURORA_DEMO_SHEER=1 (with or without the others): our avatar also wears
+/// a sheer white dress around the torso, its alpha wavering from texel to
+/// texel between 0.25 and 0.75 (a knit), and under it a red layer (a body
+/// add-on), attached first on the same point so that it is drawn after the
+/// dress (#1300).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HairDemo {
     pub layers: u32,
@@ -6892,6 +6897,7 @@ pub struct HairDemo {
     pub cards: u32,
     pub layered: bool,
     pub outer_first: bool,
+    pub sheer: bool,
 }
 
 pub fn hair_demo() -> Option<HairDemo> {
@@ -6901,9 +6907,10 @@ pub fn hair_demo() -> Option<HairDemo> {
     let cards_args: Vec<&str> = cards_args.collect();
     let layered = cards > 0 && cards_args.contains(&"layered");
     let outer_first = layered && cards_args.contains(&"outer");
+    let sheer = std::env::var("AURORA_DEMO_SHEER").is_ok_and(|v| v.trim() == "1");
     let demo = match std::env::var("AURORA_DEMO_HAIR").ok() {
         Some(v) => hair_demo_from(&v),
-        None if cards > 0 => HairDemo {
+        None if cards > 0 || sheer => HairDemo {
             layers: 0,
             ..hair_demo_from("")
         },
@@ -6914,6 +6921,7 @@ pub fn hair_demo() -> Option<HairDemo> {
         cards,
         layered,
         outer_first,
+        sheer,
         ..demo
     })
 }
@@ -6932,8 +6940,16 @@ fn hair_demo_from(v: &str) -> HairDemo {
         cards: 0,
         layered: false,
         outer_first: false,
+        sheer: false,
     }
 }
+
+/// Knit texture of the dress of AURORA_DEMO_SHEER.
+pub const TEX_SHEER: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0023);
+
+/// Mesh assets of AURORA_DEMO_SHEER: the dress, and the layer under it.
+pub const SHEER_DRESS_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0002_0000_0300);
+pub const SHEER_LAYER_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0002_0000_0301);
 
 /// Strand texture of the hair demo.
 pub const TEX_HAIR: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0020);
@@ -7054,6 +7070,44 @@ pub fn hair_events(demo: HairDemo, crowd: u32) -> Vec<NetEvent> {
         lashes.parent_id = 9000;
         lashes.state = 0x10; // chest
         objects.push(lashes);
+    }
+    if demo.sheer {
+        // the layer attached first (the smaller local id): drawn after the
+        // dress, as a body add-on worn before the clothes over it
+        for (local, mesh, color, texture) in [
+            (200_060, SHEER_LAYER_MESH, [0.85, 0.12, 0.15, 0.95], None),
+            (200_061, SHEER_DRESS_MESH, [1.0, 1.0, 1.0, 1.0], Some(TEX_SHEER)),
+        ] {
+            let mesh = SculptParams {
+                texture: mesh,
+                sculpt_type: LL_SCULPT_TYPE_MESH,
+            };
+            let mut t = (*te(color, 0, false, 0.0)).clone();
+            if let Some(texture) = texture {
+                for f in &mut t.faces {
+                    f.texture = texture;
+                }
+            }
+            let mut worn = prim(
+                local,
+                Vec3::ZERO,
+                Quat::IDENTITY,
+                Vec3::splat(0.1),
+                aurora_prim::VolumeParams {
+                    sculpt: Some(mesh),
+                    ..Default::default()
+                },
+                Arc::new(t),
+                ExtraParams {
+                    sculpt: Some(mesh),
+                    ..Default::default()
+                },
+                "",
+            );
+            worn.parent_id = 9000;
+            worn.state = 0x10; // chest
+            objects.push(worn);
+        }
     }
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }
@@ -7233,12 +7287,30 @@ fn hair_card_layered_texture() -> (Vec<u8>, u32, u32) {
     (px, N, N)
 }
 
+/// Pixels of [`TEX_SHEER`] (RGBA8, 256×256): a white knit whose alpha
+/// wavers between 0.25 and 0.75 from one 4-texel stitch to the next, so
+/// that it crosses one half everywhere, even through the coarser mips.
+fn sheer_texture() -> (Vec<u8>, u32, u32) {
+    const N: u32 = 256;
+    let mut px = Vec::with_capacity((N * N * 4) as usize);
+    for y in 0..N {
+        for x in 0..N {
+            let stitch = (x / 4).wrapping_mul(73_856_093) ^ (y / 4).wrapping_mul(19_349_663);
+            let h = stitch.wrapping_mul(2_654_435_761) >> 24;
+            let alpha = 0.25 + 0.5 * h as f32 / 255.0;
+            px.extend_from_slice(&[245, 243, 240, (255.0 * alpha) as u8]);
+        }
+    }
+    (px, N, N)
+}
+
 /// The procedural texture `id` takes a mip chain (the others are the
 /// 64-texel test panels, kept as they are).
 pub fn local_texture_mips(id: &Uuid) -> bool {
     *id == TEX_HAIR
         || *id == TEX_HAIR_CARD
         || *id == TEX_HAIR_CARD_LAYERED
+        || *id == TEX_SHEER
         || *id == TEX_PROJECTED
         || *id == TEX_FOLIAGE
         || plants::is_texture(id)
@@ -7712,6 +7784,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     }
     if *id == TEX_HAIR_CARD_LAYERED {
         return Some(hair_card_layered_texture());
+    }
+    if *id == TEX_SHEER {
+        return Some(sheer_texture());
     }
     if *id == TEX_HAIR_CARD {
         return Some(hair_card_texture());

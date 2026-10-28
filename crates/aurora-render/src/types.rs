@@ -477,8 +477,21 @@ pub enum RiggedBlendDepth {
     /// behind it no longer shows over it (#935), a soft edge hides nothing
     /// (no shards, #935 after #948), and the scene depth holds the hair
     /// where half covered only (no halo, #556). Within one object the
-    /// fringes come after all of its strands.
+    /// fringes come after all of its strands. But a fainter texel hides
+    /// nothing drawn after it: under a sheer dress whose alpha wavers around
+    /// one half, a layer drawn after it (a body add-on) showed through in
+    /// speckles, hidden where the dress is half covered, over it elsewhere
+    /// (#1300).
     Split,
+    /// `Split`, one object per run, into a copy of the scene depth
+    /// (`Targets::blend_layers`), each run's fringes then writing their depth
+    /// there from 1/255 (#1300): a mesh drawn after another and behind it is
+    /// hidden by any of its texels, as with the Legacy Viewer's 1/255, while
+    /// the texels of one object still never hide each other by a soft edge
+    /// (no shards, #935). The scene depth then takes the rigged faces where
+    /// half covered only, for the glass, water and particles drawn after
+    /// them (no halo, #556).
+    Layers,
 }
 
 /// Visible draws for a frame, built by the world.
@@ -524,8 +537,8 @@ pub struct DrawLists {
     pub blend_depth: usize,
     /// How those rigged faces write their depth.
     pub blend_depth_mode: RiggedBlendDepth,
-    /// `RiggedBlendDepth::Runs` (one attachment point) and `Split` (one
-    /// object): where each run of faces ends
+    /// `RiggedBlendDepth::Runs` (one attachment point), `Split` (one object
+    /// per point) and `Layers` (one object): where each run of faces ends
     /// in the first `blend_depth` entries of `blend` (increasing, the last
     /// one `blend_depth`).
     pub blend_depth_runs: Vec<u32>,
