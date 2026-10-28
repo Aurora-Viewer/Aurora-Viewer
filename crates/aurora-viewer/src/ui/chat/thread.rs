@@ -557,13 +557,19 @@ fn new_separator(ui: &mut egui::Ui, p: &Palette) {
 
 /// Actions for the menu's retained message, even after its row leaves the
 /// viewport or its line is evicted: copy, quote, then its author's menu.
-pub(super) fn message_menu(ui: &mut egui::Ui, env: &LineEnv, th: &mut Thread, line: &ChatLine) {
+pub(super) fn message_menu(ui: &mut egui::Ui, env: &LineEnv, th: &mut Thread, target: &super::line_menu::Target) {
+    let line = &target.line;
     let p = env.p;
     let name = sender_name(env.world, env.own_name, line);
     let who = Who::of(env, line);
     if crate::ui::menu::item(ui, p, "copy-filled", aurora_i18n::tr!("ui-chat-copy-message")) {
-        let prefix = super::copy_prefix(line, &name);
-        ui.ctx().copy_text(format!("{prefix}{}", super::shown_text(env.world, line, &name)));
+        // LLTextEditor::copy (indra/llui/lltexteditor.cpp): a transcript's
+        // selected text takes priority over the message under the menu.
+        let text = target.selected_text.clone().unwrap_or_else(|| {
+            let prefix = super::copy_prefix(line, &name);
+            format!("{prefix}{}", super::shown_text(env.world, line, &name))
+        });
+        ui.ctx().copy_text(text);
     }
     if crate::ui::menu::item(ui, p, "quote-filled", aurora_i18n::tr!("ui-chat-quote-message")) {
         let (text, _, _) = body(env, line, &name);

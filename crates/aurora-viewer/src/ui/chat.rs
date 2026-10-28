@@ -2113,9 +2113,13 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             if matches!(rows, Rows::Thread(_)) {
                 line_menu::demo_mark(ui, &drawn);
                 let first = clock.first;
-                line_menu::message(&content, menu, &drawn, |seq| {
-                    seq.checked_sub(first).and_then(|i| lines.get(i as usize))
-                });
+                line_menu::message(
+                    &content,
+                    menu,
+                    &drawn,
+                    |seq| seq.checked_sub(first).and_then(|i| lines.get(i as usize)),
+                    |seq| selection.of_row(seq).map(|_| copied.text(selection)),
+                );
             }
             shift
         });
@@ -2145,7 +2149,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         if let Some(avatar) = target.sender {
             super::context::chat_sender_menu(ui, p, w, avatar, &target.line);
         } else if let Rows::Thread(th) = &mut rows {
-            thread::message_menu(ui, &env, th, &target.line);
+            thread::message_menu(ui, &env, th, target);
         }
     });
     to_field
@@ -3070,6 +3074,7 @@ fn classic_pane(
             let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
             let nav = super::emoji::codes::keys(ui, conv_input);
             let suggest_nav = if nav.is_none() { suggest::keys(ui, conv_input) } else { None };
+            preserve_pasted_lines(ui, conv_input);
             let mut output = emoji.text_field(ui, &mut draft, |edit| {
                 edit.id(conv_input)
                     .hint_text(hint)
@@ -3711,6 +3716,28 @@ pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
     egui::TextEdit::store_state(ctx, id, state);
 }
 
+/// Keep pasted transcript paragraphs in the compact chat editors, as
+/// LLChatEntry::paste (indra/llui/llchatentry.cpp) does. egui's single-line
+/// Paste replaces line breaks with spaces; its ordinary text insertion
+/// retains them with the same selection replacement and undo handling.
+fn preserve_pasted_lines(ui: &egui::Ui, field: egui::Id) {
+    if !ui.memory(|m| m.has_focus(field)) {
+        return;
+    }
+    ui.input_mut(|i| {
+        for event in &mut i.events {
+            if let egui::Event::Paste(text) = event
+                && text.contains(['\r', '\n'])
+                // A bare return is ignored by Text insertion; keep its
+                // normal single-line Paste behavior instead.
+                && !matches!(text.as_str(), "\n" | "\r" | "\r\n")
+            {
+                *event = egui::Event::Text(text.replace("\r\n", "\n").replace('\r', "\n"));
+            }
+        }
+    });
+}
+
 /// The local chat's field, Firestorm's chat bar (LLFloaterIMNearbyChat):
 /// Enter says, Ctrl+Enter shouts, Shift+Enter whispers, `/channel` and the
 /// gestures' completion; Enter on an empty field returns to movement. Shared
@@ -3731,6 +3758,7 @@ pub(crate) fn bar_input(
     let recalled = st.input_history.entry(None).or_default().recall(ui, bar_input_id(), &mut st.input);
     let nav = super::emoji::codes::keys(ui, bar_input_id());
     let suggest_nav = if nav.is_none() { suggest::keys(ui, bar_input_id()) } else { None };
+    preserve_pasted_lines(ui, bar_input_id());
     let mut emoji = emoji;
     let mut output = match emoji.as_deref_mut() {
         Some(emoji) => emoji.text_field(ui, &mut st.input, build),

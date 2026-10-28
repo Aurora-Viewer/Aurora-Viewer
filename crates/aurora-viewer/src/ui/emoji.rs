@@ -395,6 +395,7 @@ impl Emoji {
             let text = text.as_str();
             let mut job = egui::text::LayoutJob {
                 keep_trailing_whitespace: true,
+                break_on_newline: false,
                 ..Default::default()
             };
             // runs of text and runs of emoji (with their variation selectors
