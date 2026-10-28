@@ -1080,6 +1080,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_REPLACE_PRIM=1\|script` | Replacement board, script-only case |
 | `AURORA_DEMO_BUILD_FRAME=<n>` | Start frame of the build script |
 | `AURORA_DEMO_BUILD_FOCUS=off\|on` | Focus and camera following while editing |
+| `AURORA_DEMO_BUILD_HANDLES=<percent>` | Size of the edit handles |
 | `AURORA_DEMO_BUILD_EDGE=<edge>` | Move to the edge, hold then release |
 | `AURORA_DEMO_BUILD_ECHO=<ms>` | The demo answers transform edits a round trip late |
 | `AURORA_DEMO_BUILD_TAB=<tab>` | Tab of the build window; `features:light-picker` opens the projector texture picker |
@@ -1125,6 +1126,13 @@ shape type, select a linked child, move/rotate/scale it and close construction.
 Only the selected collision shape should appear; materials, picking and shadows
 must stay unchanged. Human grid validation covers uploaded analysed/unanalysed
 meshes, linked parts, None, flexible prims, HUDs and re-opening the inspector.
+
+`AURORA_DEMO_BUILD_HANDLES` sets the construction setting "Edit handles ›
+Size" (50 to 300, in percent) when the script opens the build tools, for
+example `AURORA_DEMO_BUILD=move,object:151` with `150`. Compare the arrows,
+plane squares, rotation rings (`rotate`) and stretch handles (`stretch`)
+with a 100 % capture: everything grows by the same factor, strokes
+included, and a handle can be grabbed anywhere on its larger shape.
 
 `AURORA_DEMO_BUILD_SIZE` sets the compact construction window's initial dimensions
 once for reproducible captures; normal sessions restore saved geometry. There is

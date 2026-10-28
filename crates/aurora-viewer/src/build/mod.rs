@@ -149,9 +149,23 @@ pub struct BuildSettings {
     pub limit_drag_distance: bool,
     /// MaxDragDistance (m from the start point of one move).
     pub max_drag_distance: f32,
+    /// Aurora: size of the edit manipulators (arrows, rings, stretch
+    /// handles) and of their pick areas, as a factor of the Legacy Viewer's
+    /// fixed screen sizes, which it has no setting for (#1328).
+    pub gizmo_scale: f32,
 }
 
 impl BuildSettings {
+    /// `gizmo_scale` within the slider's range; an edited settings file
+    /// falls back to the Legacy Viewer's size.
+    pub fn gizmo_scale(&self) -> f32 {
+        if self.gizmo_scale.is_finite() {
+            self.gizmo_scale.clamp(*GIZMO_SCALE_RANGE.start(), *GIZMO_SCALE_RANGE.end())
+        } else {
+            1.0
+        }
+    }
+
     /// MaxSelectDistance while LimitSelectDistance is on.
     pub fn select_limit(&self) -> Option<f32> {
         self.limit_select_distance
@@ -168,6 +182,8 @@ impl BuildSettings {
 /// The spinners' range of the Legacy Viewer's preferences (0.001 .. 1024 m);
 /// an edited settings file falls back to the default.
 pub const DISTANCE_LIMIT_RANGE: std::ops::RangeInclusive<f32> = 0.001..=1024.0;
+/// The manipulator size slider (`gizmo_scale`).
+pub const GIZMO_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.5..=3.0;
 
 fn sane_distance(value: f32, default: f32) -> f32 {
     if value.is_finite() {
@@ -412,6 +428,7 @@ impl Default for BuildSettings {
             max_select_distance: MAX_SELECT_DISTANCE,
             limit_drag_distance: true,
             max_drag_distance: MAX_DRAG_DISTANCE,
+            gizmo_scale: 1.0,
         }
     }
 }

@@ -4,7 +4,8 @@
 //!
 //! Sizes follow LL: handles keep a constant size on screen (50 px arrows,
 //! 100 px rotation sphere). Aurora uses thicker strokes and 14 px stretch
-//! boxes for readability. Objects follow the mouse locally;
+//! boxes for readability, and scales the whole manipulator, pick areas
+//! included, by the "Manipulator size" setting (`gizmo_scale`). Objects follow the mouse locally;
 //! MultipleObjectUpdate goes out on release (stretching also every
 //! 0.1 s like LLManipScale::sendUpdates).
 
@@ -188,6 +189,8 @@ pub(super) struct Frame {
     pub(super) pivot: Vec3,
     pub(super) grid: Grid,
     prims: usize,
+    /// `BuildSettings::gizmo_scale`: factor of every on-screen size.
+    pub(super) size: f32,
 }
 
 pub(super) fn frame(
@@ -240,6 +243,7 @@ pub(super) fn frame(
         bounds,
         grid,
         prims,
+        size: s.gizmo_scale(),
     })
 }
 
@@ -432,14 +436,14 @@ impl Manip {
                 d.normal = d.axis.cross(cam.at).cross(d.axis).try_normalize().unwrap_or(cam.at);
                 let rel = (g.inverse() * cam.direction_to(f.pivot)).abs();
                 d.snap_axis = g * unit(snap_offset_axis(i, rel));
-                d.snap_offset = cam.meters_for_pixels(d.movers[0].pos, ARROW_PX) * 1.5;
+                d.snap_offset = arrow_length(cam, &f, d.movers[0].pos) * 1.5;
             }
             Part::Plane(i) => {
                 d.normal = g * unit(i);
             }
             Part::Ring(i) => {
                 d.axis = g * unit(i);
-                d.radius = ring_radius(cam, f.pivot);
+                d.radius = ring_radius(cam, &f, f.pivot);
                 let cam_dir = cam.direction_to(f.pivot);
                 d.edge_on = d.axis.dot(cam_dir).abs() < 85f32.to_radians().cos();
                 if let Some(q) = ray_plane(o, dir, f.pivot, d.axis) {
@@ -460,7 +464,7 @@ impl Manip {
                 d.obj_axis = best.1;
             }
             Part::Free => {
-                d.radius = ring_radius(cam, f.pivot);
+                d.radius = ring_radius(cam, &f, f.pivot);
                 d.down_vec = sphere_point(o, dir, f.pivot, d.radius, cam);
             }
             Part::Roll => {}
@@ -568,7 +572,8 @@ impl Manip {
         let pal = p.pal;
         let piv = f.pivot;
         let g = f.grid.rotation;
-        let len = cam.meters_for_pixels(piv, ARROW_PX);
+        let len = arrow_length(cam, f, piv);
+        let k = f.size;
         // guidelines through the pivot (LLManip::renderGuidelines)
         for i in 0..3 {
             let a = g * unit(i);
@@ -598,8 +603,8 @@ impl Manip {
             p.tri_plain(q[0], q[1], q[2], fill);
             p.tri_plain(q[0], q[2], q[3], fill);
             p.flush();
-            for k in 0..4 {
-                p.line(q[k], q[(k + 1) % 4], color, if hl { 3.5 } else { 2.5 });
+            for j in 0..4 {
+                p.line(q[j], q[(j + 1) % 4], color, (if hl { 3.5 } else { 2.5 }) * k);
             }
         }
         // Only positive ends have handles; guidelines show the full axes.
@@ -612,9 +617,9 @@ impl Manip {
                 continue;
             }
             let (shaft, head, width) = if selected {
-                (pal.violet_light, pal.violet_light, STROKE_PX.1)
+                (pal.violet_light, pal.violet_light, STROKE_PX.1 * k)
             } else {
-                (fade(pal.ink, 0.85), axis_color(&pal, i), STROKE_PX.0)
+                (fade(pal.ink, 0.85), axis_color(&pal, i), STROKE_PX.0 * k)
             };
             let a = g * unit(i);
             let sc = self.arrow_scale[i].max(1.0);
@@ -626,7 +631,8 @@ impl Manip {
         if active.is_none()
             && let Some(c) = cam.project(piv)
         {
-            p.painter.circle(c, 5.5, pal.violet_light, Stroke::new(2.0, fade(pal.navy, 0.5)));
+            p.painter
+                .circle(c, 5.5 * k, pal.violet_light, Stroke::new(2.0 * k, fade(pal.navy, 0.5)));
         }
     }
 
@@ -719,8 +725,9 @@ impl Manip {
             return;
         }
         let pal = p.pal;
-        let r = ring_radius(cam, c);
+        let r = ring_radius(cam, f, c);
         let w = 8.0 * r / RING_PX;
+        let stroke = (STROKE_PX.0 * f.size, STROKE_PX.1 * f.size);
         let g = f.grid.rotation;
         let active = drag.map(|d| d.part);
         let to_cam = -cam.direction_to(c);
@@ -734,9 +741,9 @@ impl Manip {
                 // on the circle the roll is picked on, clear of the three rings
                 let wpx = (w / r * rp).max(2.0);
                 let (col, width, k) = if self.hover == Some(Part::Roll) {
-                    (pal.violet_light, STROKE_PX.1, self.ring_scale[3])
+                    (pal.violet_light, stroke.1, self.ring_scale[3])
                 } else {
-                    (fade(pal.muted, 0.75), STROKE_PX.0, 1.0)
+                    (fade(pal.muted, 0.75), stroke.0, 1.0)
                 };
                 p.painter
                     .circle_stroke(sc, (rp + wpx) * k, Stroke::new(width + 2.0, fade(pal.navy, 0.3)));
@@ -760,7 +767,7 @@ impl Manip {
                     c + (u * t.cos() + v * t.sin()) * rr
                 };
                 let color = if hl { pal.violet_light } else { axis_color(&pal, i) };
-                let width = if hl { STROKE_PX.1 + 0.5 } else { STROKE_PX.0 };
+                let width = if hl { stroke.1 + 0.5 } else { stroke.0 };
                 let back = if active.is_some() { 0.3 } else { 0.35 };
                 for k in 0..N {
                     let (q0, q1) = (pt(k), pt(k + 1));
@@ -889,13 +896,13 @@ impl Manip {
             }
             let hl = self.hover == Some(part) || active == Some(part);
             let (fill, outline) = match part {
-                Part::Corner(_) | Part::Face(..) if hl => (pal.violet_light, Stroke::new(2.5, pal.ink)),
-                Part::Corner(_) => (fade(pal.ink, 0.9), Stroke::new(2.0, fade(pal.navy, 0.5))),
-                Part::Face(i, _) => (axis_color(&pal, i), Stroke::new(2.0, fade(pal.navy, 0.5))),
+                Part::Corner(_) | Part::Face(..) if hl => (pal.violet_light, Stroke::new(2.5 * f.size, pal.ink)),
+                Part::Corner(_) => (fade(pal.ink, 0.9), Stroke::new(2.0 * f.size, fade(pal.navy, 0.5))),
+                Part::Face(i, _) => (axis_color(&pal, i), Stroke::new(2.0 * f.size, fade(pal.navy, 0.5))),
                 _ => continue,
             };
             // Slightly larger than LL's 10 px boxes; resting corners fit the pick radius.
-            let size = ARROW_PX * SCALE_BOX_FACTOR * if hl { 1.2 } else { 1.0 };
+            let size = ARROW_PX * SCALE_BOX_FACTOR * f.size * if hl { 1.2 } else { 1.0 };
             p.square(pos, size, fill, outline);
         }
     }
@@ -929,11 +936,19 @@ fn snap_offset_axis(arrow: usize, at_abs: Vec3) -> usize {
     }
 }
 
-fn ring_radius(cam: &Cam, c: Vec3) -> f32 {
+/// Arrow length (m) at `at`: LLManipTranslate's 50 px times the manipulator size.
+pub(super) fn arrow_length(cam: &Cam, f: &Frame, at: Vec3) -> f32 {
+    cam.meters_for_pixels(at, ARROW_PX * f.size)
+}
+
+/// Rotation sphere radius (m) at `c`: LLManipRotate's 100 px times the
+/// manipulator size.
+pub(super) fn ring_radius(cam: &Cam, f: &Frame, c: Vec3) -> f32 {
+    let px = RING_PX * f.size;
     if cam.hud.is_some() {
-        return cam.meters_for_pixels(c, RING_PX);
+        return cam.meters_for_pixels(c, px);
     }
-    cam.depth(c).max(0.01) * (RING_PX / cam.height * cam.fov_y).tan()
+    cam.depth(c).max(0.01) * (px / cam.height * cam.fov_y).tan()
 }
 
 /// Point of the sphere under the mouse (or of its silhouette), as a unit
@@ -1013,7 +1028,7 @@ fn handle_pos(b: &Bounds, part: Part) -> Vec3 {
 fn pick_translate(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
     let piv = f.pivot;
     let g = f.grid.rotation;
-    let len = cam.meters_for_pixels(piv, ARROW_PX);
+    let len = arrow_length(cam, f, piv);
     let at_g = g.inverse() * cam.at;
     let signs = Vec3::new(at_g.x.signum(), at_g.y.signum(), at_g.z.signum());
     let rel = (g.inverse() * cam.direction_to(piv)).abs();
@@ -1042,7 +1057,7 @@ fn pick_translate(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
             continue;
         };
         let (dist, t) = seg_distance(m, a, b);
-        if dist < 10.0 && t > 0.0 && t < 1.0 {
+        if dist < 10.0 * f.size && t > 0.0 && t < 1.0 {
             return Some(part);
         }
     }
@@ -1054,7 +1069,7 @@ fn pick_rotate(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
     if cam.depth(c) <= 0.05 {
         return None;
     }
-    let r = ring_radius(cam, c);
+    let r = ring_radius(cam, f, c);
     let w = 8.0 * r / RING_PX;
     let g = f.grid.rotation;
     let to_cam = -cam.direction_to(c);
@@ -1074,7 +1089,7 @@ fn pick_rotate(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
                 continue;
             };
             let (dist, _) = seg_distance(m, a2, b2);
-            if dist < 8.0 && best.is_none_or(|(d, _)| dist < d) {
+            if dist < 8.0 * f.size && best.is_none_or(|(d, _)| dist < d) {
                 best = Some((dist, Part::Ring(i)));
             }
         }
@@ -1102,7 +1117,7 @@ fn pick_scale(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
         let pos = handle_pos(b, part);
         let Some(s) = cam.project(pos) else { return };
         let distance = s.distance(m);
-        if distance < SCALE_PICK_PX {
+        if distance < SCALE_PICK_PX * f.size {
             let depth = cam.depth(pos);
             // Thin prims have overlapping pick radii: choose the handle
             // nearest the cursor, so a face center can still be grabbed.
@@ -1911,8 +1926,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn plane_handles_are_picked_on_their_square_and_leave_the_arrows() {
+    /// A camera looking at a one-prim selection, with the handles at `size`.
+    fn translate_view(size: f32) -> (Vec3, Cam, Frame) {
         let piv = Vec3::new(10.0, 20.0, 30.0);
         let eye = piv + Vec3::new(6.0, -8.0, 5.0);
         let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 16.0 / 9.0, 0.01);
@@ -1939,7 +1954,14 @@ mod tests {
                 world: true,
             },
             prims: 1,
+            size,
         };
+        (piv, cam, f)
+    }
+
+    #[test]
+    fn plane_handles_are_picked_on_their_square_and_leave_the_arrows() {
+        let (piv, cam, f) = translate_view(1.0);
         let len = cam.meters_for_pixels(piv, ARROW_PX);
         let at = cam.at;
         let signs = Vec3::new(at.x.signum(), at.y.signum(), at.z.signum());
@@ -1953,6 +1975,34 @@ mod tests {
             // The negative guideline must not retain an invisible arrow handle.
             let on_guide = cam.project(piv - unit(i) * len * 0.9).unwrap();
             assert_ne!(pick_translate(&cam, &f, on_guide), Some(Part::Arrow(i)));
+        }
+    }
+
+    #[test]
+    fn handle_size_scales_the_handles_and_their_pick_areas() {
+        let settings = BuildSettings {
+            gizmo_scale: 2.0,
+            ..Default::default()
+        };
+        assert_eq!(settings.gizmo_scale(), 2.0);
+        for (wild, sane) in [(f32::NAN, 1.0), (0.1, 0.5), (10.0, 3.0)] {
+            let s = BuildSettings {
+                gizmo_scale: wild,
+                ..Default::default()
+            };
+            assert_eq!(s.gizmo_scale(), sane);
+        }
+        let (piv, small, f1) = translate_view(1.0);
+        let (_, cam, f2) = translate_view(2.0);
+        // Twice the angle on screen; the tangent of LLManip's sizes adds a little.
+        assert!((arrow_length(&cam, &f2, piv) / arrow_length(&small, &f1, piv) - 2.0).abs() < 0.05);
+        assert!((ring_radius(&cam, &f2, piv) / ring_radius(&small, &f1, piv) - 2.0).abs() < 0.05);
+        // Past the end of a 100 % arrow, on a 200 % one.
+        let len = arrow_length(&small, &f1, piv);
+        for i in 0..3 {
+            let beyond = cam.project(piv + unit(i) * len * 1.6).unwrap();
+            assert_eq!(pick_translate(&small, &f1, beyond), None);
+            assert_eq!(pick_translate(&cam, &f2, beyond), Some(Part::Arrow(i)));
         }
     }
 
