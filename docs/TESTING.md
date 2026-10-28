@@ -1241,6 +1241,13 @@ or later. `avatar-keep-camera` starts from an off-centre side view and enables
 Preferences › Camera › Behavior › “Click my avatar: keep camera” for the run:
 a plain body click must preserve position, target, lens and tracked object.
 `avatar-return` disables the option and must return to avatar follow.
+`avatar-drag` / `avatar-tag-drag` hold a real press on our body / own plate
+at frame 700, drag horizontally at 710–760 and release at 761. Add
+`-keep-camera` to retain the off-centre focus. Capture at 690, 780 and 840:
+the press keeps the view with the option enabled, then both the view and
+the avatar turn; the log records agent and drawn-body yaw before/after.
+The focus object, lens and distance must remain stable during the kept-focus
+drag. Compare `avatar-keep-camera` for a plain click without motion.
 `avatar-alt-keep-camera` must still retarget with Alt held; `avatar-other-keep-camera`
 must leave the view unchanged on another resident. The `-keep-camera` suffix
 also works with `worn-own` (scripted touch) and `worn-own-passive` (no script):
