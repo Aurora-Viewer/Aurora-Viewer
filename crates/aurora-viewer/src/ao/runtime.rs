@@ -607,9 +607,11 @@ impl Runtime {
                 }
                 // Preserve LL transition motions and their finish control flags.
                 // Retain the stock pose while the replacement is downloading.
+                // A replaced jump hides too: LLVOAvatar::startMotion never
+                // starts an overridden motion locally, so a low priority AO
+                // jump is not masked by the stock one (#1284).
                 !state.is_some_and(|s| {
                     !s.transient()
-                        && s != State::Jumping
                         && ((holding && previous_state == Some(s))
                             || remap
                                 .iter()

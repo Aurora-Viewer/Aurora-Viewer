@@ -240,7 +240,10 @@ fn default_reassertion_does_not_restart_the_cycle_and_jump_control_motions_survi
     assert_eq!(first, pose);
     let jump = signal(State::Jumping, now + Duration::from_secs(2));
     let (pose, changes) = runtime.update(Some(&set), frame(&[jump]), now + Duration::from_secs(2), |_| true, |_| 0);
-    assert!(pose.contains(&jump));
+    // The AO jump replaces the stock one locally (#1284); the simulator keeps
+    // its jump control motion, as in the Legacy AO.
+    assert!(pose.iter().any(|a| a.id == step(&set, State::Jumping, 0)));
+    assert!(!pose.contains(&jump));
     assert!(!changes.contains(&(jump.id, false)));
 }
 
