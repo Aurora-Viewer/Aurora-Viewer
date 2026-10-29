@@ -23,6 +23,7 @@ impl App {
             input: self.input,
             yaw: self.world.agent.yaw,
             flying: self.world.agent.flying,
+            automatic_land: self.settings.automatic_land,
             running: self.running(),
             mouselook,
         };
@@ -45,7 +46,8 @@ impl App {
                         self.on_app_event(e);
                     }
                 }
-                Delivery::Landed => self.world.agent.flying = false,
+                Delivery::Landed if self.settings.automatic_land => self.world.agent.flying = false,
+                Delivery::Landed => {}
             }
         }
         self.world.predict_agent(1.0, 0.0);

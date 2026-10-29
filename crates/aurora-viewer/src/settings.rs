@@ -1029,6 +1029,13 @@ pub struct Settings {
     /// Legacy Viewer's `FSDisableTurningAroundWhenWalkingBackwards`, off by
     /// default.
     pub walk_backwards_without_turning: bool,
+    /// Hold Up to start flying (agent_jump, indra/newview/llviewerinput.cpp).
+    /// Aurora splits AutomaticFly into independent takeoff/landing choices;
+    /// both default to on.
+    pub automatic_fly: bool,
+    /// Hold Down on physical support to end flight (LLAgent::propagate,
+    /// indra/newview/llagent.cpp), independently of automatic takeoff.
+    pub automatic_land: bool,
     /// Always fly after a teleport (the Legacy Viewer's FSFlyAfterTeleport,
     /// off); a region that blocks flying still lands the avatar.
     pub fly_after_teleport: bool,
@@ -1806,6 +1813,8 @@ impl Default for Settings {
             arrow_keys_always_move: false,
             letter_keys_move: true,
             walk_backwards_without_turning: false,
+            automatic_fly: true,
+            automatic_land: true,
             fly_after_teleport: false,
             crouch_toggle: false,
             quickjump: false,
@@ -2740,6 +2749,28 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn automatic_flight_preferences_default_on_and_keep_independent_saved_choices() {
+        use super::Settings;
+        for json in ["{}", r#"{"automatic_fly":false}"#, r#"{"automatic_land":false}"#] {
+            let loaded: Settings = serde_json::from_str(json).expect("synthetic older preferences");
+            assert_eq!(loaded.automatic_fly, !json.contains("automatic_fly"));
+            assert_eq!(loaded.automatic_land, !json.contains("automatic_land"));
+        }
+        for automatic_fly in [false, true] {
+            for automatic_land in [false, true] {
+                let original = Settings {
+                    automatic_fly,
+                    automatic_land,
+                    ..Settings::default()
+                };
+                let bytes = serde_json::to_vec(&original).expect("serialize automatic flight choices");
+                let loaded: Settings = serde_json::from_slice(&bytes).expect("restore automatic flight choices");
+                assert_eq!((loaded.automatic_fly, loaded.automatic_land), (automatic_fly, automatic_land));
+            }
+        }
+    }
+
     /// The early read of `allow_overlays` agrees with the full settings and
     /// keeps the overlays out on any doubt.
     #[test]

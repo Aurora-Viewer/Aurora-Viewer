@@ -6657,21 +6657,17 @@ impl App {
         // keyboard's initial nudge (LLViewerJoystick::agentPush/Slide).
         i.nudge_fb &= self.joystick.motion.axes[0] == 0.0;
         i.nudge_lr &= self.joystick.motion.axes[1] == 0.0;
-        // holding jump for 0.5 s on the ground starts flying (AutomaticFly)
         if i.up {
             self.world.agent.record_jump_input(now);
-            let held = self.up_since.get_or_insert(now).elapsed().as_secs_f32();
-            if held > FLY_TIME
-                && self.movement_runtime.native_fly_allowed()
-                && !self.world.rlva.has("fly")
-                && !self.world.agent.flying
-                && !self.world.agent.seated
-                && self.in_world()
-            {
-                self.world.agent.flying = true;
-            }
-        } else {
-            self.up_since = None;
+        }
+        if automatic_fly_held(&mut self.up_since, i.up, self.settings.automatic_fly, now)
+            && self.movement_runtime.native_fly_allowed()
+            && !self.world.rlva.has("fly")
+            && !self.world.agent.flying
+            && !self.world.agent.seated
+            && self.in_world()
+        {
+            self.world.agent.flying = true;
         }
         i.turn_held = if i.turn_left || i.turn_right {
             self.turn_since.get_or_insert(now).elapsed().as_secs_f32()
@@ -7842,7 +7838,7 @@ impl App {
             self.input = input;
         }
         self.update_autopilot(dt);
-        if self.in_world() {
+        if self.in_world() && self.settings.automatic_land {
             self.world.auto_land(&self.input);
         }
         self.update_native_movelock();
@@ -7875,7 +7871,9 @@ impl App {
                     .map_or(floor, |mode| {
                         crate::demo::grounding::simulation_floor(&self.world, &self.scene, &mode)
                     });
-                self.world.agent.simulate_locally(&self.input, ml, Some(floor), dt);
+                self.world
+                    .agent
+                    .simulate_locally(&self.input, ml, Some(floor), dt, self.settings.automatic_land);
                 if let Some(mm) = crate::demo::agent_jitter() {
                     let p = self.world.agent.predicted_position() + crate::demo::agent_jitter_offset(self.frame_count, mm);
                     self.world.agent.constrain_prediction(p, false);
@@ -7986,6 +7984,14 @@ impl App {
             if !self.world.agent.flying && self.world.rlva.has("jump") {
                 c.control_flags &= !control::UP_POS;
             }
+            c.control_flags = self.world.agent.immediate_jump_flags(
+                c.control_flags,
+                !self.settings.automatic_fly
+                    && self.movement_runtime.state == crate::movement::State::Ground
+                    && self.movement_runtime.native_fly_allowed()
+                    && self.world.movement_complete
+                    && !self.world.teleporting,
+            );
             if late_camera_frame.is_some() && self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
                 late_controls = Some(c);
             } else {
@@ -18093,6 +18099,16 @@ fn frame_cap(s: &Settings, focused: bool, in_world: bool, monitor_hz: f32, timed
     if cap.is_finite() { cap } else { 0.0 }
 }
 
+/// agent_jump (indra/newview/llviewerinput.cpp): AutomaticFly. Turning the
+/// option off clears the hold, so enabling it cannot reuse an old press.
+fn automatic_fly_held(since: &mut Option<Instant>, up: bool, enabled: bool, now: Instant) -> bool {
+    if !up || !enabled {
+        *since = None;
+        return false;
+    }
+    now.duration_since(*since.get_or_insert(now)).as_secs_f32() > FLY_TIME
+}
+
 /// Name of the swapchain's presentation mode for the profile and the bug
 /// reports; `unknown` until the renderer has answered a frame.
 fn present_mode_name(mode: Option<aurora_render::wgpu::PresentMode>) -> &'static str {
@@ -18127,6 +18143,24 @@ mod tests {
     use super::{RightGesture, capture_files, frame_cap};
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn automatic_flight_hold_restarts_after_release_or_disabling_the_preference() {
+        use std::time::{Duration, Instant};
+        let start = Instant::now();
+        let mut since = None;
+        let mut held = |ms, up, enabled| super::automatic_fly_held(&mut since, up, enabled, start + Duration::from_millis(ms));
+        assert!(!held(0, true, true));
+        assert!(!held(500, true, true));
+        assert!(held(501, true, true));
+        assert!(!held(600, false, true));
+        assert!(!held(1000, true, true));
+        assert!(held(1501, true, true));
+        assert!(!held(1600, true, false));
+        assert!(!held(3000, true, false));
+        assert!(!held(4000, true, true), "enabling starts a fresh hold");
+        assert!(held(4501, true, true));
+    }
 
     /// Ctrl+P opens the preferences from the login screen, a login field
     /// focused or not, as in the world; it types no "p" in the field.

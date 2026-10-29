@@ -102,6 +102,7 @@ pub struct Keys {
     pub flying: bool,
     pub running: bool,
     pub mouselook: bool,
+    pub automatic_land: bool,
 }
 
 /// What reaches the viewer: an event and when the "network" read it, or
@@ -340,9 +341,10 @@ impl DemoLink {
             let was_flying = self.sim.flying;
             if self.cfg.native_flight {
                 self.sim
-                    .simulate_native_flight(&input, k.mouselook, Some(super::floor_at(p.x, p.y)), dt);
+                    .simulate_native_flight(&input, k.mouselook, Some(super::floor_at(p.x, p.y)), dt, k.automatic_land);
             } else {
-                self.sim.simulate_locally(&input, k.mouselook, Some(super::floor_at(p.x, p.y)), dt);
+                self.sim
+                    .simulate_locally(&input, k.mouselook, Some(super::floor_at(p.x, p.y)), dt, k.automatic_land);
             }
             if was_flying && !self.sim.flying {
                 self.flying = false;
@@ -766,20 +768,20 @@ mod tests {
             ..Default::default()
         };
         for _ in 0..60 {
-            agent.simulate_native_flight(&input, false, None, 1.0 / 60.0);
+            agent.simulate_native_flight(&input, false, None, 1.0 / 60.0, true);
         }
         assert!(agent.velocity.x > 13.0, "NUDGE must not hide native flight speed");
         let before = agent.server_pos;
-        agent.simulate_native_flight(&MoveInput::default(), false, None, 1.0 / 60.0);
+        agent.simulate_native_flight(&MoveInput::default(), false, None, 1.0 / 60.0, true);
         assert!(agent.server_pos.x > before.x && agent.velocity.x > 10.0, "release must coast");
         for _ in 0..300 {
-            agent.simulate_native_flight(&MoveInput::default(), false, None, 1.0 / 60.0);
+            agent.simulate_native_flight(&MoveInput::default(), false, None, 1.0 / 60.0, true);
         }
         assert!(agent.velocity.length() < 0.01);
         let mut ordinary = AgentState::default();
         let mut native = ordinary.clone();
-        ordinary.simulate_locally(&input, false, Some(0.0), 0.1);
-        native.simulate_native_flight(&input, false, Some(0.0), 0.1);
+        ordinary.simulate_locally(&input, false, Some(0.0), 0.1, true);
+        native.simulate_native_flight(&input, false, Some(0.0), 0.1, true);
         assert_eq!(native.server_pos, ordinary.server_pos);
         assert_eq!(native.velocity, ordinary.velocity);
     }
@@ -797,6 +799,7 @@ mod tests {
             flying: false,
             running: false,
             mouselook: false,
+            automatic_land: true,
         };
         keys.input.forward = true;
         let mut first_moving = None;
@@ -830,6 +833,7 @@ mod tests {
             flying: false,
             running: false,
             mouselook: false,
+            automatic_land: true,
         };
         let seat = super::super::action_id(970);
         link.reply(start, super::super::sit_on_prim(970, seat, Vec3::ONE));
