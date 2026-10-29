@@ -13,7 +13,10 @@ pose history are independent of the binding editor and virtual controls.
 
 ## Posing
 
-Open **Build > Poser**, or add Poser to the toolbar. The window follows
+Open **Build > Poser**, or add Poser to the toolbar. In the photo mode's
+viewfinder, which hides the rest of the interface, the dock's wand button
+opens it over the shot (#1389): its joints take their clicks before the
+focus, and a worn HUD keeps its own. The window follows
 the layout validated on 2026-10-24: the subject strip (subject, posing
 status, "Visible to you only" with the full notice as tooltip, Start / Stop),
 the tabs, the joints column on the left and the selected joint on the right,
@@ -64,7 +67,10 @@ Mirror (copies the joint to its counterpart) and Reset joint. The **Whole
 pose** group holds Flip, Left → right, Right → left, T-pose and Reset all.
 Mirror on the Side selector mirrors ongoing edits. The hand presets
 Relaxed, Fist, Open, Point and Pinch follow the Side selector. Undo/redo is independent per subject and retains 64 checkpoints;
-a continuous drag creates one checkpoint. Reset joint / Reset all restore
+a continuous drag creates one checkpoint. The title bar's curved arrows undo
+and redo, as do Ctrl+Z and Ctrl+Y (or Ctrl+Shift+Z), unless a text field has
+the keyboard or the build tools' window is in front of the poser's (their
+Undo then). Gestures bound to these keys wait while the poser is open. Reset joint / Reset all restore
 the captured initial channels. T-pose restores the rig's neutral rotations.
 
 Stop releases a subject's pose while retaining its edits for Start. Closing
@@ -133,9 +139,17 @@ owner-say tag. There are no IMs, software advertisements or capability probes.
 ## Settings and validation
 
 The gear of the title bar opens the settings as a panel over the joint,
-grouped Window (stop on close, DoF while posing), Handling (markers, natural
+grouped Window (stop on close, confirm a close that loses the pose, DoF
+while posing), Handling (markers, natural
 alignment, trackball sensitivity) and Files (overwrite confirmation, BVH,
 pelvis unlock, priority), with the note on the formats' limits.
+
+With stop on close, closing the window (its cross, Ctrl+W, the photo
+viewfinder's wand) loses the edited joints of every subject. When some are
+edited, a dialog asks first: **Minimize** keeps the pose in the window's bar,
+**Close anyway** closes, Escape or a click beside it cancels; "Don't ask
+again" turns the setting off. The Legacy Viewer closes at once
+(`FSFloaterPoser::onClose`); Aurora asks so that no pose is lost by mistake.
 
 Defaults were checked against the local Legacy Viewer source: stop on close,
 joint markers and natural alignment on; DoF in edit, additional BVH, pelvis

@@ -308,6 +308,9 @@ pub struct Floater<'a> {
     /// Resized by its edges, its body keeps this width over height, the
     /// window adding the second value around it (see `keep_aspect`).
     pub aspect: Option<(f32, Vec2)>,
+    /// Its layer: the windows' own (`Middle`), or `Foreground` over an
+    /// overlay whose controls sit there (the photo viewfinder's poser).
+    pub order: egui::Order,
     cascade: Option<CascadeGroup>,
     partial_outside: bool,
     /// A chat window: it stays in immersive mode (`hide_windows`).
@@ -340,6 +343,7 @@ impl<'a> Floater<'a> {
             flush_body: false,
             steady_size: false,
             aspect: None,
+            order: egui::Order::Middle,
             cascade: None,
             partial_outside: false,
             chat: false,
@@ -554,6 +558,7 @@ impl<'a> Floater<'a> {
         // Window retains its normal movement and persisted layout.
         let mut w = egui::Window::new(&self.title)
             .id(window_id)
+            .order(self.order)
             .title_bar(false)
             .fade_in(false)
             .fade_out(false)
@@ -1229,6 +1234,17 @@ pub fn attention_mark(painter: &egui::Painter, p: &Palette, rect: egui::Rect, ra
         Stroke::new(1.5 + 4.0 * wash, p.violet_light),
         egui::StrokeKind::Inside,
     );
+}
+
+/// Is the floater `id` shown in front of the floater `other`? A window not
+/// shown is behind every other, whatever its layer (the poser's goes up
+/// over the photo viewfinder).
+pub fn floater_above(ctx: &egui::Context, id: &str, other: &str) -> bool {
+    let (id, other) = (egui::Id::unique(id), egui::Id::unique(other));
+    ctx.memory(|m| {
+        let place = |want: egui::Id| m.layer_ids().filter(|l| m.areas().is_visible(l)).position(|l| l.id == want);
+        place(id) > place(other)
+    })
 }
 
 /// Is the floater `id` reduced to its title bar?

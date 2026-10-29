@@ -293,6 +293,8 @@ struct DemoViewfinder {
     /// `tilt`, a quarter turn with `tilt90` (the level turns the other
     /// way, the AF frame keeps the head's size).
     tilt: f32,
+    /// The poser opened over the viewfinder (the dock's Poser, #1389).
+    poser: bool,
 }
 
 /// AURORA_DEMO_SNAPSHOT=inventory…: the photo sent to the inventory.
@@ -2253,6 +2255,7 @@ LUT_3D_SIZE {n}
                     } else {
                         0.0
                     },
+                    poser: has("poser"),
                 }
             });
             let style = if kind == "classic" {
@@ -2365,6 +2368,9 @@ LUT_3D_SIZE {n}
                 vf.help = v.help;
                 vf.drawer = v.drawer;
                 vf.hinted = v.menu || v.help || v.drawer || vf.looks;
+                if v.poser && self.ik_editor.toggle_poser() {
+                    crate::ui::widgets::open_floater(&self.egui_ctx, "poser", &mut self.ik_editor.open);
+                }
             }
         }
         if demo.profile {

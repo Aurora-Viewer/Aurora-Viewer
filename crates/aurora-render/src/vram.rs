@@ -23,6 +23,7 @@
 //! They now give their memory back as they go, and the texture budget
 //! counts `usage` (scene/texture_budget.rs in the viewer).
 
+#[cfg(not(target_os = "macos"))]
 use ash::vk;
 
 /// Bytes of the device-local heap, see the module: `budget` is what the
@@ -55,12 +56,18 @@ pub struct VideoMemoryProbe {
     heap: Option<usize>,
 }
 
+/// Where the figures come from, for the log.
+#[cfg(not(target_os = "macos"))]
+const SOURCE: &str = "VK_EXT_memory_budget";
+#[cfg(target_os = "macos")]
+const SOURCE: &str = "MTLDevice working set";
+
 impl VideoMemoryProbe {
     pub fn new(adapter: wgpu::Adapter) -> Self {
         let heap = Self::budget_heap(&adapter);
         match heap.and_then(|h| Self::query(&adapter, h)) {
             Some((budget, usage)) => log::info!(
-                "GPU memory budget: {} MB for this process, {} MB used (VK_EXT_memory_budget)",
+                "GPU memory budget: {} MB for this process, {} MB used ({SOURCE})",
                 budget >> 20,
                 usage >> 20
             ),
@@ -84,6 +91,7 @@ impl VideoMemoryProbe {
     /// The largest device-local heap (the card's own memory on a discrete
     /// GPU, the shared memory on an integrated one), when the extension and
     /// the query it extends are there.
+    #[cfg(not(target_os = "macos"))]
     fn budget_heap(adapter: &wgpu::Adapter) -> Option<usize> {
         // SAFETY: the hal adapter is only borrowed for this call; the
         // queries below read properties and change no state.
@@ -111,6 +119,7 @@ impl VideoMemoryProbe {
     }
 
     /// (budget, usage) of a heap.
+    #[cfg(not(target_os = "macos"))]
     fn query(adapter: &wgpu::Adapter, heap: usize) -> Option<(u64, u64)> {
         // SAFETY: the hal adapter is only borrowed for this call; a physical
         // device query, valid from any thread, with the budget structure the
@@ -127,5 +136,27 @@ impl VideoMemoryProbe {
         let (budget, usage) = (*budget.heap_budget.get(heap)?, *budget.heap_usage.get(heap)?);
         // (a driver that fills nothing in reports no budget)
         (budget > 0).then_some((budget, usage))
+    }
+
+    /// Metal has one pool, the unified memory on Apple Silicon: heap 0.
+    #[cfg(target_os = "macos")]
+    fn budget_heap(adapter: &wgpu::Adapter) -> Option<usize> {
+        Self::query(adapter, 0).map(|_| 0)
+    }
+
+    /// (budget, usage) on Metal: the working set the system recommends for
+    /// this device before performance suffers, and what this process's
+    /// device has allocated. The Legacy Viewer reads a fixed figure once
+    /// (`kCGLRPVideoMemoryMegabytes`, indra/llwindow/llopenglview-objc.mm);
+    /// both are read again here, as on Vulkan.
+    #[cfg(target_os = "macos")]
+    fn query(adapter: &wgpu::Adapter, _heap: usize) -> Option<(u64, u64)> {
+        use objc2_metal::MTLDevice;
+        // SAFETY: the hal adapter is only borrowed for this call; MTLDevice
+        // is thread-safe and these two properties change no state.
+        let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Metal>() }?;
+        let device = hal.raw_device();
+        let budget = device.recommendedMaxWorkingSetSize();
+        (budget > 0).then_some((budget, device.currentAllocatedSize() as u64))
     }
 }

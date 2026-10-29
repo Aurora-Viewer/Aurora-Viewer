@@ -822,6 +822,11 @@ impl ObjectStore {
         log::info!("world thawed: {} objects released", held.poses.len());
     }
 
+    /// The photo mode holds the world still (`hold_poses`).
+    pub fn holds_poses(&self) -> bool {
+        self.held.is_some()
+    }
+
     /// The place `o` is held at while the world is frozen.
     pub fn held_pose(&self, o: &Object) -> Option<(Vec3, Quat)> {
         let held = self.held.as_ref()?.poses.get(&o.key)?;
