@@ -7259,6 +7259,11 @@ offline; the files and snapshots uploaded in demo stay offline.
   The log reports the selection count and visibility at both capture points.
   Manually check held arrows, direction reversal, open-folder boundaries,
   filtered lists, folder windows and arrow editing in search/rename fields.
+- `keyboard-fold`, `aurora-keyboard-fold`: click the demo object at frame
+  650, press Left at 665 (its folder is selected) and 680 (that folder
+  closes), then Right at 700 (it opens again). Capture at 690 (the folder
+  closed and selected) and 720 (open). The log reports the selection and
+  the folder's state at both points.
 - `clipboard`: expanded inventory to test Ctrl+C / Ctrl+X / Ctrl+V on
   items, folders and multiple selections. Choose the destination
   folder (or one of its items) before pasting. The search and

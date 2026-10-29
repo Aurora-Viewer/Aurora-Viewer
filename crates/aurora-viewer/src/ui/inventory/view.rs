@@ -966,6 +966,16 @@ impl TreeState {
         true
     }
 
+    pub fn is_open(&self, id: Uuid, tab: usize) -> bool {
+        !self.closed[tab.min(4)].contains(&id)
+    }
+
+    pub fn set_open(&mut self, id: Uuid, tab: usize, open: bool) {
+        if self.is_open(id, tab) != open {
+            self.toggle(id, tab);
+        }
+    }
+
     pub fn toggle(&mut self, id: Uuid, tab: usize) {
         let closed = &mut self.closed[tab.min(4)];
         if !closed.remove(&id) {
