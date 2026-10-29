@@ -662,6 +662,7 @@ dependencies = [
 name = "aurora-translate"
 version = "0.1.0"
 dependencies = [
+ "crossbeam-channel",
  "log",
  "thiserror 2.0.21",
  "whatlang",

@@ -13,6 +13,7 @@ llama = []
 [dependencies]
 log = "0.4.34"
 thiserror = "2.0.21"
+crossbeam-channel = "0.5.17"
 whatlang = "0.18.0"
 
 [lints]
