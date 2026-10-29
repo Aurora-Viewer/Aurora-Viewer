@@ -658,6 +658,12 @@ fn notifications(cx: &mut Cx) {
             tr!("ui-options-friend-request-prompt-hint"),
             &field!(friend_request_prompt),
         );
+        // #1404: a message to the whole region there too
+        cx.toggle(
+            tr!("ui-options-region-message-prompt"),
+            tr!("ui-options-region-message-prompt-hint"),
+            &field!(region_message_prompt),
+        );
         cx.toggle(tr!("ui-options-toast-im"), tr!("ui-options-toast-im-hint"), &field!(toast_im));
         cx.toggle(tr!("ui-options-toast-group-im"), "", &field!(toast_group_im));
         // only what toasts can stay under the bell

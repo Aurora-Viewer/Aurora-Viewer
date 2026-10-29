@@ -2519,6 +2519,14 @@ ui-friend-prompt-more = { $count ->
     [one] Une autre offre d'amitié attend
    *[other] { $count } autres offres d'amitié attendent
     }
+ui-options-region-message-prompt = Messages de région au milieu de l'écran
+ui-options-region-message-prompt-hint = Une carte que l'on ferme avec OK au lieu d'un toast ; le message reste écrit dans le chat local
+ui-region-message-prompt-sent = a envoyé un message à la région
+ui-region-message-prompt-sent-to = a envoyé un message à { $region }
+ui-region-message-prompt-more = { $count ->
+    [one] Un autre message de région attend
+   *[other] { $count } autres messages de région attendent
+    }
 ui-options-position-top-left = En haut à gauche
 ui-options-position-top-center = En haut au milieu
 ui-options-position-top-right = En haut à droite
@@ -5839,6 +5847,8 @@ demo-restart-toast = Tu viens au concert ce soir ?
 demo-toast-are-you-there = Tu es là ? Viens voir la nouvelle fontaine ✨
 demo-toast-group-message = La réunion commence dans dix minutes sur la scène
 demo-friend-prompt-message = Coucou ! On s'est croisés à la fête du lagon hier soir, on reste en contact ? 🌊
+demo-region-message-restart = La région redémarre dans 10 minutes pour maintenance. Trouvez un endroit sûr ou téléportez-vous au lagon ; nous revenons très vite. Merci de votre patience !
+demo-region-message-event = La soirée dansante commence sur la place dans 5 minutes 🎶
 demo-attention-im = Tu es toujours là ? Je t'attends à la fontaine
 demo-attention-mention = tu viens au concert ?
 demo-attention-group = tu peux ouvrir les portes de la scène ?
@@ -6832,6 +6842,8 @@ world-collisions-scripted-object = { $name } vous a heurté avec un objet script
 world-collisions-physical-object = { $name } vous a heurté avec un objet physique.
 world-region-alerts-version-title = Nouvelle version du simulateur
 world-region-alerts-version-body = La région où vous arrivez tourne sur une autre version du simulateur. Actuelle : { $new }. Précédente : { $old }.
+world-region-message-title = Message de région de { $name }
+world-region-message-line = Message de région de { $name } : { $message }
 app-was-unblocked-because-you-sent-them-an-im = { $name }{ " a été débloqué(e) parce que vous lui avez envoyé un IM." }
 ui-contacts-is-already-your-friend = { $name }{ " fait déjà partie de vos amis." }
 ui-appearance-not-worn = { $name }{ " non porté" }{ $ending }
