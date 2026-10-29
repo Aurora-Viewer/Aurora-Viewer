@@ -2427,7 +2427,7 @@ To check with these scenarios:
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
-| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|shape\|shape-readonly\|shape-apply` | Local Blender bridge, static object placement, LOD import and shape transfer |
+| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_HAND_IK=<mode>` | Local or observed motorcycle contacts on linked targets |
@@ -2483,15 +2483,34 @@ in English and French without changing Blender's 3D selection.
 `objects` adds a belt and neck band, starts the belt hidden and the band
 removed. Toggle the belt and clear the objects; no restore button should
 appear. Each row's Import button opens that object's
-ordinary mesh importer without selecting it first. Check the Connection,
-Objects and Plugins horizontal dividers and the truncated names beside their
-Import buttons. `upload` opens the importer directly with a frozen shell draft.
-Check that Connection status sits beside the title and its port, address and
-start/stop button stay on one line.
-Plugins automatically detects installed Blender executables on a worker. Check
-that paths and per-version plug-in statuses/actions are readable, Refresh rescans,
-and Choose Blender adds a portable executable. Manual ZIP export remains collapsed.
+ordinary mesh importer without selecting it first. Check the Connection and
+Plugins tabs, and the truncated object names beside their Import
+buttons. `upload` opens the importer directly with a frozen shell draft.
+Connection contains status, port, shape and object controls; Plugins contains
+installation and manual ZIP export. `plugins` opens the idle Plugins tab.
+Check readable 16-point body/control text, including paths, hints, tabs and
+manual-install labels, in EN/FR/JA and narrow windows. Switching tabs or reopening
+must preserve the preview, selection and installer state. Port, address and
+start/stop can wrap at narrow widths. Each tab retains its own scroll position.
+Opening LiveMesh must not discover Blender installations or launch Blender probes.
+In Plugins, Search for Blender explicitly detects installed executables on a worker
+and rescans on subsequent clicks. Check that paths and per-version plug-in
+statuses/actions are readable. Install in Blender opens an executable picker;
+choosing one file checks and installs only that executable, even without a prior
+search. Check the choosing/checking/installing states and spinner, then a success
+message naming the Blender version and its updated row. Completion and errors
+stay above the installation list, including after a search with many results.
+Existing rows must remain.
+Cancel must leave the list alone without an empty-search error. Unsupported
+versions, newer installed plug-ins and failures must show an error, not success.
+Manual ZIP export remains collapsed. A fresh Blender scene defaults to a 2-second
+automatic update interval; intervals already saved in `.blend` files are retained.
 Detection alone must not install or enable anything.
+`installer-choose`, `installer-check` and `installer-install` hold synthetic
+installer steps with their spinner and disabled controls. `installer-done`
+shows a successful Blender 5.2.1 installation and `installer-error` a failure.
+These fixtures never open the file picker, discover executables or change a
+Blender profile. Capture the steps and completion in English and French.
 `shape` seeds a synthetic editable shape and sends it once a capable Blender
 client connects; `shape-readonly` removes Modify and must send nothing. Neither
 mode uses account assets or a grid. Run `blender/tests/bridge_shape.py` with

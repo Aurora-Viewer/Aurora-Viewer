@@ -12,101 +12,125 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palet
         "blender_live",
         aurora_i18n::tr!("blender-live-title"),
         egui::pos2(70.0, 110.0),
-        Vec2::new(500.0, 640.0),
+        Vec2::new(560.0, 660.0),
     );
-    floater.min_size = Vec2::new(400.0, 350.0);
+    floater.min_size = Vec2::new(460.0, 350.0);
     floater.show(ctx, p, &mut open, |ui| {
+        let font = egui::FontId::proportional(16.0);
+        ui.style_mut().override_font_id = Some(font.clone());
+        let row_height = (ui.fonts_mut(|fonts| fonts.row_height(&font)) + 12.0).max(32.0);
+        ui.spacing_mut().interact_size.y = row_height;
+        let mut tab = usize::from(live.tab == Tab::Plugins);
+        widgets::stretched_tabs(
+            ui,
+            p,
+            &mut tab,
+            &[
+                (aurora_i18n::tr!("blender-live-connection"), true),
+                (aurora_i18n::tr!("blender-live-plugins"), true),
+            ],
+        );
+        live.tab = if tab == 0 { Tab::Connection } else { Tab::Plugins };
+        ui.add_space(8.0);
         egui::ScrollArea::vertical()
+            .id_salt(("blender_live_tab", tab))
             .max_height(ui.available_height())
             .auto_shrink([false, false])
-            .show(ui, |ui| {
-                let connected = live.server.as_ref().is_some_and(|server| server.shared.status.lock().connected);
-                let label = if connected {
-                    aurora_i18n::tr!("blender-live-connected")
-                } else if live.running() {
-                    aurora_i18n::tr!("blender-live-waiting")
-                } else {
-                    aurora_i18n::tr!("blender-live-stopped")
-                };
-                section_divider(ui, p);
-                ui.horizontal(|ui| {
-                    widgets::section_header(ui, p, "link-filled", aurora_i18n::tr!("blender-live-connection"));
-                    ui.colored_label(if connected { p.violet_light } else { p.muted }, label);
-                });
-                ui.horizontal(|ui| {
-                    ui.label(aurora_i18n::tr!("blender-live-port"));
-                    ui.add_enabled(!live.running(), egui::DragValue::new(&mut live.port).range(1024..=65535));
-                    ui.monospace("127.0.0.1");
-                    if live.running() {
-                        if widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-stop")).clicked() {
-                            live.stop();
-                        }
-                    } else if widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-start")).clicked() {
-                        start = true;
-                    }
-                });
-                shape_controls(live, ui, p);
-                object_list(live, ui, p, can_upload);
-                object_controls(live, ui, p);
-                let error = live
-                    .error
-                    .clone()
-                    .or_else(|| live.server.as_ref().and_then(|s| s.shared.status.lock().error.clone()));
-                if let Some(error) = error {
-                    ui.colored_label(p.danger, aurora_i18n::tr!("blender-live-error", error = error));
-                }
-                section(ui, p, "download-filled", aurora_i18n::tr!("blender-live-plugins"));
-                installer(live, ui, p);
-                widgets::collapsing(
-                    ui,
-                    p,
-                    "blender_live_manual_zip",
-                    aurora_i18n::tr!("blender-live-manual-install"),
-                    false,
-                    |ui| {
-                        ui.label(aurora_i18n::tr!("blender-live-instructions"));
-                        ui.add_enabled_ui(!live.addon.busy, |ui| {
-                            widgets::radio_value(
-                                ui,
-                                p,
-                                &mut live.addon.legacy,
-                                false,
-                                aurora_i18n::tr!("blender-live-package-extension"),
-                            );
-                            widgets::radio_value(ui, p, &mut live.addon.legacy, true, aurora_i18n::tr!("blender-live-package-legacy"));
-                        });
-                        if ui
-                            .add_enabled_ui(!live.addon.busy, |ui| {
-                                widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-save-addon"))
-                            })
-                            .inner
-                            .clicked()
-                        {
-                            live.save_addon = true;
-                        }
-                        if live.addon.saved {
-                            ui.colored_label(p.violet_light, aurora_i18n::tr!("blender-live-addon-saved"));
-                        }
-                        if let Some(error) = &live.addon.error {
-                            ui.colored_label(p.danger, aurora_i18n::tr!("blender-live-addon-error", error = error.as_str()));
-                        }
-                    },
-                );
-                ui.small(aurora_i18n::tr!("blender-live-local-only"));
+            .show(ui, |ui| match live.tab {
+                Tab::Connection => start = connection(live, ui, p, can_upload),
+                Tab::Plugins => plugins(live, ui, p),
             });
     });
     live.open = open;
     start
 }
 
+fn connection(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, can_upload: bool) -> bool {
+    let mut start = false;
+    let connected = live.server.as_ref().is_some_and(|server| server.shared.status.lock().connected);
+    let label = if connected {
+        aurora_i18n::tr!("blender-live-connected")
+    } else if live.running() {
+        aurora_i18n::tr!("blender-live-waiting")
+    } else {
+        aurora_i18n::tr!("blender-live-stopped")
+    };
+    ui.horizontal(|ui| {
+        widgets::glyph(ui, "link-filled", p.violet_light, 18.0);
+        ui.colored_label(if connected { p.violet_light } else { p.muted }, label);
+    });
+    ui.horizontal_wrapped(|ui| {
+        ui.label(aurora_i18n::tr!("blender-live-port"));
+        ui.add_enabled(!live.running(), egui::DragValue::new(&mut live.port).range(1024..=65535));
+        ui.monospace("127.0.0.1");
+        if live.running() {
+            if widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-stop")).clicked() {
+                live.stop();
+            }
+        } else if widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-start")).clicked() {
+            start = true;
+        }
+    });
+    shape_controls(live, ui, p);
+    object_list(live, ui, p, can_upload);
+    object_controls(live, ui, p);
+    let error = live
+        .error
+        .clone()
+        .or_else(|| live.server.as_ref().and_then(|s| s.shared.status.lock().error.clone()));
+    if let Some(error) = error {
+        ui.colored_label(p.danger, aurora_i18n::tr!("blender-live-error", error = error));
+    }
+    ui.add_space(12.0);
+    ui.label(aurora_i18n::tr!("blender-live-local-only"));
+    start
+}
+
+fn plugins(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette) {
+    installer(live, ui, p);
+    ui.add_space(12.0);
+    widgets::collapsing(
+        ui,
+        p,
+        "blender_live_manual_zip",
+        aurora_i18n::tr!("blender-live-manual-install"),
+        false,
+        |ui| {
+            ui.label(aurora_i18n::tr!("blender-live-instructions"));
+            ui.add_enabled_ui(!live.addon.busy, |ui| {
+                widgets::radio_value(
+                    ui,
+                    p,
+                    &mut live.addon.legacy,
+                    false,
+                    aurora_i18n::tr!("blender-live-package-extension"),
+                );
+                widgets::radio_value(ui, p, &mut live.addon.legacy, true, aurora_i18n::tr!("blender-live-package-legacy"));
+            });
+            if ui
+                .add_enabled_ui(!live.addon.busy, |ui| {
+                    widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-save-addon"))
+                })
+                .inner
+                .clicked()
+            {
+                live.save_addon = true;
+            }
+            if live.addon.saved {
+                ui.colored_label(p.violet_light, aurora_i18n::tr!("blender-live-addon-saved"));
+            }
+            if let Some(error) = &live.addon.error {
+                ui.colored_label(p.danger, aurora_i18n::tr!("blender-live-addon-error", error = error.as_str()));
+            }
+        },
+    );
+}
+
 fn installer(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette) {
     use super::installer::Action;
     let installer = &live.installer;
-    if !installer.scanned {
-        live.installer_scan = true;
-    }
+    ui.label(aurora_i18n::tr!("blender-live-bundled-version", version = super::addon::version()));
     ui.horizontal_wrapped(|ui| {
-        ui.label(aurora_i18n::tr!("blender-live-bundled-version", version = super::addon::version()));
         ui.add_enabled_ui(!installer.busy, |ui| {
             if widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-detect")).clicked() {
                 live.installer_scan = true;
@@ -117,21 +141,44 @@ fn installer(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette) {
         });
     });
     if installer.busy {
-        ui.weak(if installer.installing.is_some() {
-            aurora_i18n::tr!("blender-live-installing")
-        } else {
-            aurora_i18n::tr!("blender-live-detecting")
+        use super::installer::Phase;
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.weak(match installer.phase() {
+                Phase::Choosing => aurora_i18n::tr!("blender-live-choosing"),
+                Phase::Scanning => aurora_i18n::tr!("blender-live-detecting"),
+                Phase::Checking => aurora_i18n::tr!("blender-live-checking"),
+                Phase::Installing => aurora_i18n::tr!("blender-live-installing"),
+            });
         });
     } else if installer.scanned && installer.installations.is_empty() {
         ui.weak(aurora_i18n::tr!("blender-live-no-installations"));
     }
+    if let Some(report) = &installer.success {
+        let [major, minor, patch] = report.version;
+        ui.colored_label(
+            p.success,
+            aurora_i18n::tr!("blender-live-install-success", version = format!("{major}.{minor}.{patch}")),
+        );
+        if let Some(backup) = &report.backup {
+            ui.label(aurora_i18n::tr!("blender-live-backup", path = backup.display().to_string()));
+        }
+        ui.label(aurora_i18n::tr!(
+            "blender-live-install-location",
+            path = report.target.display().to_string()
+        ))
+        .on_hover_text(report.profile.display().to_string());
+    }
+    if let Some(error) = &installer.error {
+        ui.colored_label(p.danger, aurora_i18n::tr!("blender-live-installer-error", error = error.as_str()));
+    }
     egui::ScrollArea::vertical()
         .id_salt("blender_installations")
-        .max_height(180.0)
+        .max_height(360.0)
         .show(ui, |ui| {
             for installation in &installer.installations {
                 ui.push_id(&installation.executable, |ui| {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.label(installation.label()).on_hover_text(installation.path_label());
                         let report = &installation.report;
                         let status = if let Some(version) = &report.plugin_version {
@@ -161,25 +208,11 @@ fn installer(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette) {
                             live.installer_target = Some(installation.executable.clone());
                         }
                     });
-                    ui.add(egui::Label::new(egui::RichText::new(installation.path_label()).small().color(p.muted)).truncate())
+                    ui.add(egui::Label::new(egui::RichText::new(installation.path_label()).color(p.muted)).truncate())
                         .on_hover_text(installation.path_label());
                 });
             }
         });
-    if let Some(report) = &installer.success {
-        ui.colored_label(p.success, aurora_i18n::tr!("blender-live-install-success"));
-        if let Some(backup) = &report.backup {
-            ui.small(aurora_i18n::tr!("blender-live-backup", path = backup.display().to_string()));
-        }
-        ui.small(aurora_i18n::tr!(
-            "blender-live-install-location",
-            path = report.target.display().to_string()
-        ))
-        .on_hover_text(report.profile.display().to_string());
-    }
-    if let Some(error) = &installer.error {
-        ui.colored_label(p.danger, aurora_i18n::tr!("blender-live-installer-error", error = error.as_str()));
-    }
 }
 
 fn shape_controls(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette) {
@@ -279,6 +312,7 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
                         }
                         let import_label = aurora_i18n::tr!("blender-live-upload");
                         let import_width = widgets::action_button_fit(ui, "file-upload-filled", import_label);
+                        let row_height = ui.spacing().interact_size.y;
                         let name_width = (ui.available_width() - import_width - ui.spacing().item_spacing.x).max(1.0);
                         let name = if source.link.is_some() {
                             aurora_i18n::tr!("blender-object-linked-prim", number = row.number, name = source.name.as_str())
@@ -289,7 +323,7 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
                         };
                         if ui
                             .add_sized(
-                                Vec2::new(name_width, 26.0),
+                                Vec2::new(name_width, row_height),
                                 egui::Button::selectable(live.selected == Some(source.id), "")
                                     .left_text(&name)
                                     .truncate(),
@@ -305,7 +339,7 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
                             "file-upload-filled",
                             import_label,
                             widgets::ActionKind::Primary,
-                            Vec2::new(import_width, 26.0),
+                            Vec2::new(import_width, row_height),
                             can_upload,
                         )
                         .clicked()

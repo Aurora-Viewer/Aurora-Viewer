@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora LiveMesh", "author": "Aurora Viewer contributors",
-    "version": (0, 14, 1), "blender": (2, 93, 0),
+    "version": (0, 14, 6), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged and static mesh edits live in Aurora Viewer",
 }
@@ -10,6 +10,7 @@ bl_info = {
 _reloading = "bpy" in globals()
 import importlib
 import time
+import traceback
 import bpy
 from bpy.app.handlers import persistent
 from bpy.app.translations import pgettext_iface
@@ -25,6 +26,7 @@ Client = client.Client
 _client = None
 _object_signature = ()
 _dirty = True
+_geometry_dirty = True
 _exporting = False
 _revision = 0
 _last_capture = 0.0
@@ -33,6 +35,9 @@ _last_snapshot = None
 _error = ""
 _material_signature = ()
 _incoming_shape = None
+_last_change = 0.0
+_display_signature = None
+EDIT_QUIET_SECONDS = 0.15
 
 
 def _selected():
@@ -41,20 +46,23 @@ def _selected():
 
 @persistent
 def _changed(_scene, depsgraph):
-    global _dirty
+    global _dirty, _last_change, _geometry_dirty
     if not _client or _exporting:
         return
     watched = set()
+    geometry = set()
     for obj in tracking.active(bpy.context.scene):
         try:
-            watched.update((obj, obj.data))
+            ids = {obj, obj.data}
             parent = obj.parent
             while parent:
-                watched.add(parent)
+                ids.add(parent)
                 parent = parent.parent
             armature = obj.find_armature()
             if armature:
-                watched.update((armature, armature.data))
+                ids.update((armature, armature.data))
+            watched.update(ids)
+            geometry.update(ids)
             for slot in obj.material_slots:
                 if slot.material:
                     watched.add(slot.material)
@@ -64,8 +72,12 @@ def _changed(_scene, depsgraph):
                             watched.update(node.image for node in tree.nodes if node.type == "TEX_IMAGE" and node.image)
         except ReferenceError:
             _dirty = True
+            _geometry_dirty = True
     if any(update.id.original in watched for update in depsgraph.updates):
         _dirty = True
+        _last_change = time.monotonic()
+        if any(update.id.original in geometry for update in depsgraph.updates):
+            _geometry_dirty = True
         if any(isinstance(update.id.original, bpy.types.Image) for update in depsgraph.updates):
             materials.invalidate()
 
@@ -93,6 +105,8 @@ def _handle_size_changed(obj, _context):
 
 def _stop():
     global _client, _error, _material_signature, _object_signature, _force_capture, _last_capture, _last_snapshot
+    global _last_change, _display_signature
+    global _geometry_dirty
     if _client:
         _client.close()
     _client = None
@@ -102,14 +116,70 @@ def _stop():
     _force_capture = False
     _last_capture = 0.0
     _last_snapshot = None
+    _last_change, _display_signature = 0.0, None
+    _geometry_dirty = True
     materials.invalidate()
     if bpy.app.timers.is_registered(_tick):
         bpy.app.timers.unregister(_tick)
 
 
 def _tick():
+    global _error, _dirty, _exporting, _last_capture
+    if _exporting:
+        return 0.1
+    try:
+        return _update()
+    except Exception as error:
+        # An uncaught exception makes Blender unregister the timer. Keep the
+        # connection recoverable, including errors outside the mesh capture.
+        message = pgettext_iface("LiveMesh update failed: {error}").format(error=str(error) or type(error).__name__)
+        if _error != message:
+            traceback.print_exc()
+        _error, _dirty, _exporting = message, True, False
+        _last_capture = time.monotonic()
+        return 0.1
+    finally:
+        _redraw_status()
+
+
+def _redraw_status(context=None):
+    global _display_signature
+    context = context or bpy.context
+    try:
+        status = _client.state()[0] if _client else ""
+    except Exception:
+        status = ""
+    prefs = getattr(context.scene, "aurora_live", None)
+    signature = (status, _error, _revision,
+                 tuple((entry.source_id, entry.name, entry.enabled, entry.error) for entry in prefs.objects) if prefs else ())
+    if signature == _display_signature:
+        return
+    _display_signature = signature
+    # Connection feedback belongs to the sidebar; redrawing every 3D viewport
+    # at 10 Hz needlessly wakes complex scenes even when nothing is edited.
+    for window in context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == "VIEW_3D":
+                for region in area.regions:
+                    if region.type == "UI":
+                        region.tag_redraw()
+
+
+def _editing(context=None):
+    context = context or bpy.context
+    windows = context.window_manager.windows
+    if any(window.screen.is_animation_playing for window in windows):
+        return False
+    if context.mode in {"EDIT_MESH", "SCULPT", "PAINT_WEIGHT", "PAINT_VERTEX", "PAINT_TEXTURE"}:
+        return True
+    return any(operator.bl_idname.startswith("TRANSFORM_OT_")
+               for window in windows for operator in getattr(window, "modal_operators", ()))
+
+
+def _update():
     global _dirty, _revision, _last_capture, _exporting, _error, _material_signature, _object_signature
     global _force_capture, _last_snapshot, _incoming_shape
+    global _geometry_dirty
     if _client is None:
         return None
     status, supported = _client.state()
@@ -145,14 +215,23 @@ def _tick():
     if membership != _object_signature:
         _object_signature = membership
         _request_capture()
-    signature = materials.signature(objects)
+    polling_error = ""
+    try:
+        signature = materials.signature(objects)
+    except Exception as error:
+        # A node's unsupported RNA value must not stop geometry updates.
+        signature = None
+        _dirty = True
+        polling_error = pgettext_iface("LiveMesh material check failed: {error}").format(error=str(error) or type(error).__name__)
     if signature != _material_signature:
         _material_signature = signature
         _dirty = True
     painting = bpy.context.mode == "PAINT_TEXTURE"
     if painting:
         _dirty = True
-    due = prefs.auto_update and _dirty and time.monotonic() - _last_capture >= prefs.interval
+    now = time.monotonic()
+    due = (prefs.auto_update and _dirty and now - _last_capture >= prefs.interval
+           and (not _editing() or now - _last_change >= EDIT_QUIET_SECONDS))
     if supported and (_force_capture or due):
         forced, _force_capture = _force_capture, False
         _exporting = True
@@ -160,8 +239,26 @@ def _tick():
         try:
             if painting:
                 materials.invalidate()
-            value = exporter.snapshot(objects, supported, _revision + 1, prefs.forward, _client.rest_axes(),
-                                      tracking.source_ids(scene), tracking.link_roots(scene))
+            errors = {}
+            packed = hasattr(_client, "features") and "packed-geometry" in _client.features()
+            identities = tracking.source_ids(scene)
+            value = (exporter.material_snapshot(objects, _last_snapshot, identities, _revision + 1, errors)
+                     if packed and not forced and not _geometry_dirty else None)
+            if value is None:
+                value = exporter.snapshot(objects, supported, _revision + 1, prefs.forward, _client.rest_axes(),
+                                          identities, tracking.link_roots(scene), errors=errors, packed=packed)
+            _geometry_dirty = False
+            messages = [polling_error] if polling_error else []
+            for entry in prefs.objects:
+                message = errors.get(entry.object.as_pointer(), "") if tracking.valid(scene, entry.object) else ""
+                prefix = entry.name + ": "
+                if message.startswith(prefix):
+                    message = message[len(prefix):]
+                text = pgettext_iface(message) if message else ""
+                if entry.error != text:
+                    entry.error = text
+                if entry.error:
+                    messages.append(prefix + entry.error)
             # Texture painting can change pixels without a depsgraph event.
             # Compare the prepared payload, sharing its buffers with the worker,
             # so idle paint ticks and unrelated notifications send no revisions.
@@ -170,28 +267,36 @@ def _tick():
                 _revision += 1
                 _client.submit(value)
                 _last_snapshot = content
-            _error = ""
+            _error = "\n".join(messages)
         except (ValueError, RuntimeError, ReferenceError, OverflowError) as error:
             _error = pgettext_iface(str(error))
+            _geometry_dirty = True
         finally:
             _last_capture = time.monotonic()
             _exporting = False
-    # A redraw shows connection errors even when the user is not editing.
-    for window in bpy.context.window_manager.windows:
-        for area in window.screen.areas:
-            if area.type == "VIEW_3D":
-                area.tag_redraw()
+    if hasattr(_client, "issues"):
+        revision, issues = _client.issues()
+        if revision == _revision:
+            captured = {mesh.get("source_id") for mesh in (_last_snapshot or {}).get("meshes", [])}
+            for entry in prefs.objects:
+                if entry.enabled and entry.source_id in captured:
+                    message = issues.get(entry.source_id, "")
+                    text = pgettext_iface(message) if message else ""
+                    if entry.error != text:
+                        entry.error = text
     return 0.1
 
 
 def _settings_changed(_self, _context):
-    global _dirty
+    global _dirty, _geometry_dirty
     _dirty = True
+    _geometry_dirty = True
 
 
 def _request_capture():
-    global _dirty, _error
+    global _dirty, _error, _geometry_dirty
     _dirty, _error = True, ""
+    _geometry_dirty = True
     # Images may have changed while their object was paused or disconnected.
     materials.invalidate()
 
@@ -239,7 +344,7 @@ class AURORA_PG_live(bpy.types.PropertyGroup):
     port: IntProperty(name="Aurora port", default=17655, min=1024, max=65535)
     auto_update: BoolProperty(name="Automatic updates", default=True,
                               description="Send changed objects and materials at the chosen interval; disable for manual updates")
-    interval: FloatProperty(name="Interval (seconds)", default=0.2, min=0.1, max=3600.0, soft_max=60.0, precision=2,
+    interval: FloatProperty(name="Interval (seconds)", default=2.0, min=0.1, max=3600.0, soft_max=60.0, precision=2,
                             description="Minimum time in seconds between automatic updates; unchanged content is not sent")
     forward: EnumProperty(name="Coordinates", items=[
         ("AUTO", "Automatic (Avastar / SL)", "Detect each rig's rest axes; create new rigs facing Blender -Y", 0, 2),
@@ -385,7 +490,11 @@ def _draw_live(layout, context):
     prefs = context.scene.aurora_live
     if _client:
         status, _supported = _client.state()
-        layout.label(text=pgettext_iface(status), translate=False)
+        row = layout.row(align=True)
+        row.label(text=pgettext_iface(status), translate=False)
+        if _error and not any(entry.error for entry in prefs.objects):
+            row.operator_context = "INVOKE_DEFAULT"
+            row.operator("aurora.live_error", text="", icon="ERROR").message = _error
         layout.operator("aurora.live_disconnect", icon="UNLINKED")
     else:
         layout.operator("aurora.live_connect", icon="LINKED")
@@ -410,10 +519,6 @@ def _draw_live(layout, context):
     else:
         layout.label(text="Add selected meshes to start syncing.")
     lods.draw(layout, context)
-    if _error:
-        box = layout.box()
-        box.alert = True
-        box.label(text=_error, icon="ERROR", translate=False)
     layout.label(text="Enable LiveMesh in Aurora first.")
     layout.label(text="Local preview · no asset upload")
 
@@ -438,6 +543,15 @@ _classes = lods.CLASSES + tracking.CLASSES + (AURORA_PG_live, AURORA_OT_receive_
                              AURORA_OT_disconnect, AURORA_OT_refresh, AURORA_PT_live) + tools_ui.CLASSES
 
 _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator") for key, value in {
+    "Synchronization error": "Erreur de synchronisation",
+    "Copy error": "Copier l’erreur", "Error copied": "Erreur copiée",
+    "Copy the complete object name and synchronization error": "Copier le nom complet de l’objet et son erreur de synchronisation",
+    "Show this object's synchronization error and copy its details": "Afficher l’erreur de synchronisation de cet objet et copier les détails",
+    "Update Aurora Viewer to preview this large object": "Mettez à jour Aurora Viewer pour afficher cet objet volumineux",
+    "This object exceeds the LiveMesh transfer limit; reduce its geometry or textures":
+        "Cet objet dépasse la limite de transfert LiveMesh ; réduisez sa géométrie ou ses textures",
+    "LiveMesh update failed: {error}": "Échec de la mise à jour LiveMesh : {error}",
+    "LiveMesh material check failed: {error}": "Échec de la vérification des matériaux LiveMesh : {error}",
     "Connecting to Aurora…": "Connexion à Aurora…", "Connected to Aurora": "Connecté à Aurora",
     "Import / LOD": "Import / LOD", "LOD source": "Source du LOD", "LOD object": "Objet LOD",
     "Existing or automatic": "Existant sinon automatique", "Existing object": "Objet existant",
@@ -635,6 +749,8 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "Use the highlighted entry as the root of its linkset": "Utiliser la ligne active comme root de son linkset",
     "Root #1 · {name}": "Root #1 · {name}", "#{number} · {name}": "#{number} · {name}",
     "Invalid LiveMesh grouping": "Groupement LiveMesh invalide",
+    "Avatar bone weights must be finite": "Les poids des os de l’avatar doivent être finis",
+    "Mesh positions must be finite": "Les positions du maillage doivent être finies",
     "Include this object in Aurora's live preview": "Inclure cet objet dans l’aperçu live Aurora",
     "Remove from synchronization": "Retirer de la synchronisation",
     "Remove this entry from Aurora's preview list; keep the Blender object":

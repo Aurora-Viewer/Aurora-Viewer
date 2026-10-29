@@ -164,6 +164,7 @@ class MaterialWeightTests(unittest.TestCase):
             image.image.pixels.foreach_set([0, 1, 0, 1] * 4)
             image.image.update()
             aurora_live._last_capture = 0
+            aurora_live._last_change = 0
             aurora_live._tick()
             self.assertEqual(len(submitted), 3)
             self.assertNotEqual(submitted[0]["images"][0]["rgba"], submitted[-1]["images"][0]["rgba"])

@@ -88,6 +88,21 @@ try:
     bpy.context.scene.aurora_live.port = args.port
     bpy.ops.aurora.live_connect()
     flush("initial", 2, 4.5)
+    broken = bpy.data.materials.new("Unsupported live material")
+    broken.use_nodes = True
+    output = next(node for node in broken.node_tree.nodes if node.type == "OUTPUT_MATERIAL")
+    diffuse = broken.node_tree.nodes.new("ShaderNodeBsdfDiffuse")
+    broken.node_tree.links.new(diffuse.outputs[0], output.inputs["Surface"])
+    other.data.materials[0] = broken
+    flush("invalid_source_isolated", 1)
+    assert other.name in aurora_live._error and entries[1].error
+    shirt.data.vertices[0].co.x += 0.1
+    shirt.data.update()
+    aurora_live._dirty = True
+    flush("valid_source_still_updates", 1)
+    other.data.materials[0] = blue
+    flush("repaired_source_returns", 2)
+    assert not aurora_live._error and not entries[1].error
     entries[0].enabled = False
     flush("pause_first", 1)
     image.pixels.foreach_set([0, 1, 0, 1] * 4)

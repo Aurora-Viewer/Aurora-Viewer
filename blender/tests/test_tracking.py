@@ -84,6 +84,7 @@ class TrackingTests(unittest.TestCase):
 
     def tick(self):
         aurora_live._last_capture = 0
+        aurora_live._last_change = 0
         aurora_live._tick()
 
     def select(self, obj):
@@ -91,6 +92,109 @@ class TrackingTests(unittest.TestCase):
             selected.select_set(False)
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
+
+    def test_continuous_edits_wait_for_a_quiet_gap_but_manual_refresh_is_immediate(self):
+        tracking.add(bpy.context.scene, [self.shirt])
+        update = SimpleNamespace(updates=[SimpleNamespace(id=SimpleNamespace(original=self.shirt.data))])
+        with patch.object(aurora_live, "_client", self.fake), patch.object(aurora_live, "_editing", return_value=True), patch.object(aurora_live.time, "monotonic", return_value=100) as clock:
+            aurora_live._tick()
+            self.shirt.data.vertices[0].co.x += 0.1
+            for now in [101, 101.1, 101.2, 101.3]:
+                clock.return_value = now
+                aurora_live._changed(bpy.context.scene, update)
+                aurora_live._tick()
+                self.assertEqual(len(self.sent), 1)
+            clock.return_value = 101.46
+            aurora_live._tick()
+            self.assertEqual(len(self.sent), 2)
+            self.shirt.data.vertices[0].co.x += 0.1
+            clock.return_value = 102
+            aurora_live._changed(bpy.context.scene, update)
+            bpy.ops.aurora.live_refresh()
+            self.assertEqual(len(self.sent), 3)
+
+    def test_animation_playback_does_not_wait_indefinitely_for_editing_to_stop(self):
+        context = SimpleNamespace(mode="EDIT_MESH", window_manager=SimpleNamespace(windows=[
+            SimpleNamespace(screen=SimpleNamespace(is_animation_playing=True), modal_operators=[])]))
+        self.assertFalse(aurora_live._editing(context))
+        context.window_manager.windows[0].screen.is_animation_playing = False
+        self.assertTrue(aurora_live._editing(context))
+        context.mode = "OBJECT"
+        self.assertFalse(aurora_live._editing(context))
+        context.window_manager.windows[0].modal_operators = [SimpleNamespace(bl_idname="TRANSFORM_OT_translate")]
+        self.assertTrue(aurora_live._editing(context))
+
+    def test_connection_feedback_redraws_only_the_sidebar_and_only_when_changed(self):
+        calls = []
+        sidebar = SimpleNamespace(type="UI", tag_redraw=lambda: calls.append("sidebar"))
+        viewport = SimpleNamespace(type="WINDOW", tag_redraw=lambda: calls.append("viewport"))
+        area = SimpleNamespace(type="VIEW_3D", regions=[sidebar, viewport], tag_redraw=lambda: calls.append("area"))
+        context = SimpleNamespace(scene=bpy.context.scene,
+                                  window_manager=SimpleNamespace(windows=[SimpleNamespace(screen=SimpleNamespace(areas=[area]))]))
+        with patch.object(aurora_live, "_client", self.fake):
+            aurora_live._redraw_status(context)
+            for _ in range(20):
+                aurora_live._redraw_status(context)
+            self.assertEqual(calls, ["sidebar"])
+            self.fake.state = lambda: ("New connection status", self.names)
+            aurora_live._redraw_status(context)
+            self.assertEqual(calls, ["sidebar", "sidebar"])
+
+    def test_packed_capability_uses_detached_capture_buffers(self):
+        tracking.add(bpy.context.scene, [self.shirt])
+        with patch.object(aurora_live, "_client", self.fake), patch.object(self.fake, "features", return_value={"packed-geometry"}, create=True):
+            self.tick()
+        self.assertIn("_buffers", self.sent[-1]["meshes"][0]["faces"][0])
+
+    def test_acknowledged_idle_frames_do_not_recapture_or_rewrite_scene_feedback(self):
+        tracking.add(bpy.context.scene, [self.shirt])
+        with patch.object(aurora_live, "_client", self.fake), patch.object(self.fake, "issues", side_effect=lambda: (aurora_live._revision, {}), create=True):
+            with patch.object(aurora_live.exporter, "snapshot", wraps=aurora_live.exporter.snapshot) as capture:
+                self.tick()
+                for _ in range(10):
+                    aurora_live._tick()
+                    bpy.context.view_layer.update()
+                self.assertEqual(capture.call_count, 1)
+                self.assertFalse(aurora_live._dirty)
+
+    def test_timer_reentry_does_not_touch_an_in_progress_capture(self):
+        with patch.object(aurora_live, "_exporting", True), patch.object(aurora_live, "_update") as update:
+            self.assertEqual(aurora_live._tick(), 0.1)
+            update.assert_not_called()
+            self.assertTrue(aurora_live._exporting)
+
+    def test_material_changes_reuse_geometry_and_vertex_edits_invalidate_it(self):
+        tracking.add(bpy.context.scene, [self.shirt])
+        with patch.object(aurora_live, "_client", self.fake), patch.object(self.fake, "features", return_value={"packed-geometry"}, create=True):
+            with patch.object(aurora_live.exporter, "_mesh", wraps=aurora_live.exporter._mesh) as geometry:
+                self.tick()
+                original = self.sent[-1]["meshes"][0]["faces"][0]["_buffers"]
+                material = self.shirt.data.materials[0]
+                shader = next(node for node in material.node_tree.nodes if node.type == "BSDF_PRINCIPLED")
+                shader.inputs["Roughness"].default_value = 0.27
+                self.tick()
+                self.assertEqual(geometry.call_count, 1)
+                self.assertIs(self.sent[-1]["meshes"][0]["faces"][0]["_buffers"], original)
+                self.assertAlmostEqual(self.sent[-1]["meshes"][0]["faces"][0]["material"]["roughness"], 0.27)
+                self.shirt.data.vertices[0].co.x += 0.1
+                self.shirt.data.update()
+                bpy.context.view_layer.update()
+                self.tick()
+                self.assertEqual(geometry.call_count, 2)
+
+    def test_idle_texture_paint_reuses_geometry_without_resending_identical_content(self):
+        tracking.add(bpy.context.scene, [self.shirt])
+        with patch.object(aurora_live, "_client", self.fake), patch.object(self.fake, "features", return_value={"packed-geometry"}, create=True):
+            bpy.ops.object.mode_set(mode="TEXTURE_PAINT")
+            try:
+                with patch.object(aurora_live.exporter, "_mesh", wraps=aurora_live.exporter._mesh) as geometry:
+                    self.tick()
+                    self.tick()
+                    self.tick()
+                    self.assertEqual(geometry.call_count, 1)
+                    self.assertEqual(len(self.sent), 1)
+            finally:
+                bpy.ops.object.mode_set(mode="OBJECT")
 
     def test_automatic_updates_batch_geometry_material_and_membership_changes_until_interval(self):
         prefs = bpy.context.scene.aurora_live
@@ -224,6 +328,117 @@ class TrackingTests(unittest.TestCase):
             bpy.ops.aurora.live_refresh()
             self.assertEqual(len(self.sent), 1)
             self.assertFalse(aurora_live._error)
+
+    def test_bad_source_does_not_block_other_edits_and_recovers_after_repair(self):
+        tracking.add(bpy.context.scene, [self.shirt, self.other])
+        material = bpy.data.materials.new("Unsupported live surface")
+        material.use_nodes = True
+        nodes = material.node_tree.nodes
+        output = next(node for node in nodes if node.type == "OUTPUT_MATERIAL")
+        diffuse = nodes.new("ShaderNodeBsdfDiffuse")
+        material.node_tree.links.new(diffuse.outputs[0], output.inputs["Surface"])
+        self.other.data.materials.clear()
+        self.other.data.materials.append(material)
+        with patch.object(aurora_live, "_client", self.fake):
+            self.tick()
+            self.assertEqual([mesh["name"] for mesh in self.sent[-1]["meshes"]], [self.shirt.name])
+            self.assertIn(self.other.name, aurora_live._error)
+            self.assertIn("Principled", bpy.context.scene.aurora_live.objects[1].error)
+            before = self.sent[-1]["meshes"][0]
+            self.shirt.data.vertices[0].co.x += 0.2
+            self.shirt.data.update()
+            bpy.context.view_layer.update()
+            aurora_live._dirty = True
+            self.tick()
+            self.assertNotEqual(before, self.sent[-1]["meshes"][0])
+            self.assertIn(self.other.name, aurora_live._error)
+            shader = next(node for node in nodes if node.type == "BSDF_PRINCIPLED")
+            material.node_tree.links.new(shader.outputs[0], output.inputs["Surface"])
+            self.tick()
+            self.assertEqual(len(self.sent[-1]["meshes"]), 2)
+            self.assertFalse(aurora_live._error)
+            self.assertFalse(bpy.context.scene.aurora_live.objects[1].error)
+
+    def test_material_poll_failure_does_not_stop_geometry_or_hide_the_error(self):
+        tracking.add(bpy.context.scene, [self.shirt])
+        with patch.object(aurora_live, "_client", self.fake):
+            with patch.object(aurora_live.materials, "signature", side_effect=TypeError("Unsupported node value")):
+                self.assertEqual(aurora_live._tick(), 0.1)
+                self.assertEqual(len(self.sent), 1)
+                self.assertIn("Unsupported node value", aurora_live._error)
+                self.shirt.data.vertices[0].co.x += 0.2
+                self.tick()
+                self.assertEqual(len(self.sent), 2)
+            self.tick()
+            self.assertFalse(aurora_live._error)
+
+    def test_unexpected_update_exception_keeps_timer_alive_and_recovers(self):
+        tracking.add(bpy.context.scene, [self.shirt])
+        with patch.object(aurora_live, "_client", self.fake):
+            with patch.object(self.fake, "state", side_effect=AttributeError("Test unexpected failure")):
+                with patch.object(aurora_live.traceback, "print_exc") as report:
+                    self.assertEqual(aurora_live._tick(), 0.1)
+                    self.assertEqual(aurora_live._tick(), 0.1)
+                    report.assert_called_once()
+            self.assertIn("Test unexpected failure", aurora_live._error)
+            self.assertFalse(aurora_live._exporting)
+            aurora_live._last_capture = 0
+            self.assertEqual(aurora_live._tick(), 0.1)
+            self.assertEqual(len(self.sent), 1)
+            self.assertFalse(aurora_live._error)
+
+    def test_error_is_a_row_button_with_a_stable_popup_and_copyable_details(self):
+        calls = []
+
+        class Layout:
+            def __getattr__(self, name):
+                def call(*args, **kwargs):
+                    calls.append((name, args, kwargs))
+                    return SimpleNamespace() if name == "operator" else self
+                return call
+
+        context = SimpleNamespace(scene=bpy.context.scene, preferences=bpy.context.preferences,
+                                  region=SimpleNamespace(width=280))
+        tracking.add(bpy.context.scene, [self.shirt, self.other])
+        entry = bpy.context.scene.aurora_live.objects[1]
+        entry.error = "A detailed export error that must stay readable and copyable"
+        with patch.object(aurora_live, "_error", entry.error), patch.object(aurora_live.lods, "draw"):
+            aurora_live._draw_live(Layout(), context)
+        self.assertFalse(any(call[0] == "label" and call[2].get("text") == entry.error for call in calls))
+        calls.clear()
+        tracking.AURORA_UL_sync_objects.draw_item(None, context, Layout(), None, entry, None, None, "", index=1)
+        self.assertTrue(any(call[0] == "operator" and call[1][0] == "aurora.live_error" and call[2].get("icon") == "ERROR" for call in calls))
+        popup = SimpleNamespace(index=1, message="", layout=Layout())
+        shown = []
+        manager = SimpleNamespace(invoke_props_dialog=lambda operator, width: shown.append(operator.message) or {"RUNNING_MODAL"})
+        fake_context = SimpleNamespace(scene=bpy.context.scene, window_manager=manager)
+        self.assertEqual(tracking.AURORA_OT_sync_error.invoke(popup, fake_context, None), {"RUNNING_MODAL"})
+        expected = self.other.name + "\n\n" + entry.error
+        self.assertEqual(shown, [expected])
+        bpy.context.scene.aurora_live.objects.move(1, 0)
+        bpy.context.scene.aurora_live.objects[0].error = "Repaired while open"
+        calls.clear()
+        tracking.AURORA_OT_sync_error.draw(popup, fake_context)
+        self.assertTrue(any(call[0] == "operator" and call[1][0] == "aurora.live_copy_error" for call in calls))
+        copier = SimpleNamespace(message=popup.message, report=lambda *_args: None)
+        tracking.AURORA_OT_copy_error.execute(copier, fake_context)
+        self.assertEqual(manager.clipboard, expected)
+
+    def test_transport_errors_mark_only_the_named_source_and_ignore_old_revisions(self):
+        tracking.add(bpy.context.scene, [self.shirt, self.other])
+        with patch.object(aurora_live, "_client", self.fake):
+            self.tick()
+            source = bpy.context.scene.aurora_live.objects[1].source_id
+            with patch.object(self.fake, "issues", return_value=(aurora_live._revision - 1, {source: "Old error"}), create=True):
+                aurora_live._tick()
+                self.assertFalse(bpy.context.scene.aurora_live.objects[1].error)
+            with patch.object(self.fake, "issues", return_value=(aurora_live._revision, {source: "Transfer budget exceeded"}), create=True):
+                aurora_live._tick()
+                self.assertFalse(bpy.context.scene.aurora_live.objects[0].error)
+                self.assertEqual(bpy.context.scene.aurora_live.objects[1].error, "Transfer budget exceeded")
+            with patch.object(self.fake, "issues", return_value=(aurora_live._revision, {}), create=True):
+                aurora_live._tick()
+                self.assertFalse(bpy.context.scene.aurora_live.objects[1].error)
 
     def test_selection_is_additive_deduplicated_and_preserves_paused_entries(self):
         self.assertEqual(bpy.ops.aurora.live_selection(), {"FINISHED"})
