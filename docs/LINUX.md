@@ -63,15 +63,19 @@ cd Aurora-Viewer-vX.Y.Z-linux-x64
 
 To start it from your desktop's menu, with its icon in the panel and the
 dock, install the desktop entry and the icon of the archive, from its
-folder (the entry gets the viewer's real path):
+folder. The entry gets the viewer's real path, quoted and escaped as the
+desktop entry specification asks, so a folder name with spaces or symbols
+works:
 
 ```bash
 install -Dm644 aurora-viewer.svg ~/.local/share/icons/hicolor/scalable/apps/aurora-viewer.svg
 mkdir -p ~/.local/share/applications
-sed "s|^Exec=.*|Exec=$PWD/aurora-viewer|" aurora-viewer.desktop > ~/.local/share/applications/aurora-viewer.desktop
+exe=$(printf '%s' "$PWD/aurora-viewer" | sed -e 's/[\\"`$]/\\&/g' -e 's/\\/\\\\/g' -e 's/%/%%/g')
+EXEC="\"$exe\"" awk '/^Exec=/ { print "Exec=" ENVIRON["EXEC"]; next } 1' aurora-viewer.desktop > ~/.local/share/applications/aurora-viewer.desktop
 ```
 
-Run the `sed` line again if you move the folder. The window identifies
+Run the last two lines again if you move the folder. Avoid a `%` in the
+folder's path: GNOME and other GLib desktops then refuse the entry. The window identifies
 itself as `aurora-viewer` (Wayland app_id and X11 `WM_CLASS`), the name of
 the entry and its `StartupWMClass`: that is how the desktop puts the
 window under the entry's icon. Compositor rules can match it too (Hyprland:
