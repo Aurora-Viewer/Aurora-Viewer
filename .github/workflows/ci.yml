@@ -115,22 +115,26 @@ jobs:
     # Not on pull requests: the agent ran them locally (check.ps1) and the
     # merge queue runs them on the combined code before anything lands.
     #
-    # The run is split in two halves on two runners, each building the
-    # tests itself (the build is the same, the cache too): the interface
-    # tests of the viewer (`ui::`, about half of the time) and everything
-    # else. A libtest filter and its `--skip` are exact complements, so
-    # every test of every binary runs in one half and only one, whatever
-    # modules are added later; a new module only moves the balance.
-    name: tests (Windows, ${{ matrix.half }})
+    # The run is split in three parts on three runners, each building the
+    # tests itself in about 5 minutes (the build is the same, the cache
+    # too): the chat tests of the viewer (`ui::chat::`, about 4 minutes of
+    # running), its other interface tests (`ui::`, about 4 minutes) and
+    # everything else (about 3 minutes). Filters and `--skip` are exact
+    # complements, so every test of every binary runs in one part and only
+    # one, whatever modules are added later; a new module only moves the
+    # balance.
+    name: tests (Windows, ${{ matrix.part }})
     if: github.event_name != 'pull_request'
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - half: interface
-            filter: "ui::"
-          - half: rest
+          - part: chat
+            filter: "ui::chat::"
+          - part: interface
+            filter: "ui:: --skip ui::chat::"
+          - part: rest
             filter: "--skip ui::"
     steps:
       - uses: actions/checkout@v7
@@ -141,36 +145,36 @@ jobs:
         id: changes
         uses: ./.github/actions/code-changed
       - name: Rust stable
-        if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || matrix.half == 'interface')
+        if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || matrix.part == 'interface')
         run: |
           ./.github/drop-extra-targets.ps1
           rustup update stable --no-self-update
-      # both halves share the job's cache key (the matrix is not part of it)
+      # the parts share the job's cache key (the matrix is not part of it)
       - uses: Swatinem/rust-cache@v2
         id: cache
-        if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || matrix.half == 'interface')
+        if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || matrix.part == 'interface')
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' && matrix.half == 'interface' }}
-      - name: Tests (${{ matrix.half }})
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.part == 'interface' }}
+      - name: Tests (${{ matrix.part }})
         if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
         run: cargo test --profile ci --workspace --locked -- ${{ matrix.filter }}
       # main: build the tests without running them, for the cache only
-      # (one half writes it, the other has nothing to do)
+      # (one part writes it, the others have nothing to do)
       - name: Build the tests (cache)
-        if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && matrix.half == 'interface' && steps.cache.outputs.cache-hit != 'true'
+        if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && matrix.part == 'interface' && steps.cache.outputs.cache-hit != 'true'
         run: cargo test --profile ci --workspace --locked --no-run
 
   tests-result:
-    # The check that main requires: green when both halves passed (or were
+    # The check that main requires: green when every part passed (or was
     # skipped, on a pull request), red otherwise.
     name: tests (Windows)
     if: always()
     needs: tests
     runs-on: ubuntu-latest
     steps:
-      - name: Both halves
+      - name: Every part
         run: |
-          echo "halves: ${{ needs.tests.result }}"
+          echo "parts: ${{ needs.tests.result }}"
           case "${{ needs.tests.result }}" in success|skipped) ;; *) exit 1 ;; esac
 
   secrets:

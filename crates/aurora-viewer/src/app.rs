@@ -263,6 +263,8 @@ pub struct App {
     down: HashSet<Input>,
     shift: bool,
     ctrl: bool,
+    /// Command held, on macOS only (aurora_media::Modifiers::command).
+    command: bool,
     screen: Screen,
     login_form: LoginForm,
     // Bug report form (disabled, see main.rs):
@@ -933,6 +935,9 @@ fn wanted_interface_colors(settings: &Settings) -> crate::interface_colors::Inte
 /// graphics level first, so that the single settings after it still change
 /// it. Applied at start, and again after a new profile's level is chosen.
 fn apply_test_overrides(settings: &mut Settings) {
+    if std::env::var_os("AURORA_DEMO").is_some() && ui::bars::demo::get().graphics_profiles {
+        crate::graphics_presets::saved::demo(settings);
+    }
     if let Some(level) = std::env::var("AURORA_GRAPHICS_PRESET")
         .ok()
         .and_then(|v| crate::graphics_presets::Preset::from_name(&v))
@@ -1100,6 +1105,7 @@ impl App {
             down: HashSet::new(),
             shift: false,
             ctrl: false,
+            command: false,
             screen: Screen::Login,
             login_form: LoginForm::default(),
             // Bug report form (disabled, see main.rs):
@@ -4079,6 +4085,7 @@ impl App {
                     control: false,
                     alt: false,
                     shift: false,
+                    command: false,
                 };
                 let distance = (point - hud_ray.0).dot(hud_ray.1);
                 if self
@@ -4154,6 +4161,7 @@ impl App {
                     control: self.ctrl,
                     alt: self.alt,
                     shift: self.shift,
+                    command: self.command,
                 };
                 if self
                     .media
@@ -6248,6 +6256,7 @@ impl App {
             control: self.ctrl,
             alt: self.alt,
             shift: self.shift,
+            command: self.command,
         });
         if self.mouse_mode != MouseMode::None {
             self.mouse_mode = MouseMode::None;
@@ -8618,6 +8627,7 @@ impl App {
                         control: self.ctrl,
                         alt: self.alt,
                         shift: self.shift,
+                        command: self.command,
                     };
                     self.media.build_mode = self.build.open;
                     let displayed = gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1);
@@ -11896,6 +11906,16 @@ impl App {
                 self.settings.save();
                 self.snapshots.settings_changed = true;
             }
+            BarAction::SavedGraphicsPreset(name) => {
+                if crate::graphics_presets::saved::select(&mut self.settings, &name) {
+                    self.settings.save();
+                    self.snapshots.settings_changed = true;
+                }
+            }
+            BarAction::FpsCap(enabled) => {
+                self.settings.fps_cap = enabled;
+                self.settings.save();
+            }
             BarAction::CameraPreset(preset) => {
                 if self.world.rlva.camera_preset_locked(uuid::Uuid::nil()) {
                     return;
@@ -13410,6 +13430,9 @@ impl App {
                     perf: &self.perf,
                     net_loss: crate::net_profile::loss_percent(&self.net_profile.last),
                     graphics_preset: crate::graphics_presets::Preset::matching(&self.settings),
+                    graphics_saved: crate::graphics_presets::saved::choices(&self.settings),
+                    fps_cap: self.settings.fps_cap,
+                    fps_limit: self.settings.fps_limit,
                     camera_preset: self.settings.camera.preset,
                     interface_hidden: self.interface.hidden,
                     interface_keys: self.interface_keys(),
@@ -17961,6 +17984,7 @@ impl ApplicationHandler for App {
                 self.shift = m.state().shift_key();
                 self.ctrl = m.state().control_key();
                 self.alt = m.state().alt_key();
+                self.command = cfg!(target_os = "macos") && m.state().super_key();
                 if !self.ctrl || self.alt {
                     self.build.reset_selection_wheel();
                 }
@@ -18133,6 +18157,7 @@ impl ApplicationHandler for App {
                             control: self.ctrl,
                             alt: self.alt,
                             shift: self.shift,
+                            command: self.command,
                         };
                         if crate::media::keys::forward(p, code, scancode, pressed, ke.repeat, ke.text.as_deref(), mods) || pressed {
                             return;
@@ -18146,6 +18171,7 @@ impl ApplicationHandler for App {
                             control: self.ctrl,
                             alt: self.alt,
                             shift: self.shift,
+                            command: self.command,
                         };
                         if self
                             .media
@@ -18274,6 +18300,7 @@ impl ApplicationHandler for App {
                     control: self.ctrl,
                     alt: self.alt,
                     shift: self.shift,
+                    command: self.command,
                 };
                 let ray = if self.media.focus.is_some() {
                     self.gfx

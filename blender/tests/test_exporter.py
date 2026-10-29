@@ -7,6 +7,7 @@ import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import bpy
 import bmesh
@@ -141,6 +142,119 @@ class ExporterTests(unittest.TestCase):
     def capture(self):
         return exporter.snapshot([self.mesh], {"mPelvis", "mChest"}, 1)
 
+    def assert_bulk_matches_legacy(self, supported=None):
+        from aurora_live.client import wire_snapshot
+        supported = supported or {"mPelvis", "mChest"}
+        features = ["pbr-materials", "source-ids", "static-meshes", "object-links", "packed-geometry"]
+        legacy = exporter.snapshot([self.mesh], supported, 1)
+        bulk = exporter.snapshot([self.mesh], supported, 1, packed=True)
+        self.assertEqual(wire_snapshot(legacy, features), wire_snapshot(bulk, features))
+        self.assertTrue(all(isinstance(face["_buffers"][0], bytes) for face in bulk["meshes"][0]["faces"]))
+        return bulk
+
+    def test_bulk_capture_matches_rigged_static_modifiers_and_missing_weights(self):
+        self.assert_bulk_matches_legacy()
+        self.mesh.vertex_groups["mPelvis"].remove([2])
+        self.mesh.vertex_groups.new(name="mChest").add([1], 0.5, "REPLACE")
+        self.assert_bulk_matches_legacy()
+        self.mesh.vertex_groups.clear()
+        self.assert_bulk_matches_legacy()
+        self.mesh.vertex_groups.new(name="mPelvis").add([0, 1, 2], 1e-8, "REPLACE")
+        self.assert_bulk_matches_legacy()
+        self.mesh.modifiers.clear()
+        self.mesh.scale = (-2, 3, 4)
+        modifier = self.mesh.modifiers.new("Bulk solidify", "SOLIDIFY")
+        modifier.thickness = 0.1
+        bpy.context.view_layer.update()
+        self.assert_bulk_matches_legacy()
+
+    def test_bulk_capture_keeps_the_strongest_four_weights_and_tie_order(self):
+        names = ["mPelvis", "mChest", "mHipLeft", "mHipRight", "mKneeLeft", "mKneeRight"]
+        bpy.context.view_layer.objects.active = self.rig
+        bpy.ops.object.mode_set(mode="EDIT")
+        for name in names[2:]:
+            bone = self.rig.data.edit_bones.new(name)
+            bone.head, bone.tail = (0, 0, 1), (0, 0, 1.3)
+        bpy.ops.object.mode_set(mode="OBJECT")
+        self.mesh.vertex_groups.clear()
+        for name, weight in zip(names, [0.3, 0.3, 0.2, 0.1, 0.05, 0.04]):
+            self.mesh.vertex_groups.new(name=name).add([0, 1, 2], weight, "REPLACE")
+        self.assert_bulk_matches_legacy(set(names))
+
+    def test_bulk_capture_preserves_data_shape_keys_and_edit_mode(self):
+        self.mesh.shape_key_add(name="Basis")
+        shape = self.mesh.shape_key_add(name="Authored shape")
+        shape.data[0].co.z += 0.2
+        shape.value = 0.6
+        before_data, before_users = self.mesh.data, self.mesh.data.users
+        self.assert_bulk_matches_legacy()
+        bpy.context.view_layer.objects.active = self.mesh
+        bpy.ops.object.mode_set(mode="EDIT")
+        try:
+            self.assert_bulk_matches_legacy()
+            self.assertEqual(bpy.context.mode, "EDIT_MESH")
+            self.assertEqual(self.mesh.data, before_data)
+            self.assertEqual(self.mesh.data.users, before_users)
+            self.assertAlmostEqual(shape.value, 0.6)
+        finally:
+            bpy.ops.object.mode_set(mode="OBJECT")
+
+    def test_direct_bulk_capture_reads_edit_mesh_without_changing_the_source(self):
+        bpy.context.view_layer.objects.active = self.mesh
+        bpy.ops.object.mode_set(mode="EDIT")
+        try:
+            mesh = bmesh.from_edit_mesh(self.mesh.data)
+            mesh.verts.ensure_lookup_table()
+            mesh.verts[0].co.z += 0.15
+            bmesh.update_edit_mesh(self.mesh.data)
+            before = (len(bpy.data.objects), len(bpy.data.meshes), self.mesh.data.users)
+            self.assert_bulk_matches_legacy()
+            self.assertEqual(bpy.context.mode, "EDIT_MESH")
+            self.assertEqual(before, (len(bpy.data.objects), len(bpy.data.meshes), self.mesh.data.users))
+        finally:
+            bpy.ops.object.mode_set(mode="OBJECT")
+
+    def test_bulk_capture_enforces_the_same_corner_budget_and_cleans_temporary_data(self):
+        before = len(bpy.data.objects), len(bpy.data.meshes)
+        with patch.object(exporter, "MAX_CORNERS", 2):
+            errors = {}
+            value = exporter.snapshot([self.mesh], {"mPelvis", "mChest"}, 1, errors=errors, packed=True)
+        self.assertFalse(value["meshes"])
+        self.assertIn(self.mesh.as_pointer(), errors)
+        self.assertEqual(before, (len(bpy.data.objects), len(bpy.data.meshes)))
+
+    def test_material_refresh_matches_full_capture_and_reuses_geometry(self):
+        from aurora_live.client import wire_snapshot
+        supported = {"mPelvis", "mChest"}
+        ids = {self.mesh.as_pointer(): str(uuid.uuid4())}
+        previous = exporter.snapshot([self.mesh], supported, 1, source_ids=ids, packed=True)
+        material = bpy.data.materials.new("Refreshed material")
+        material.diffuse_color = (0.1, 0.3, 0.8, 1)
+        self.mesh.data.materials.append(material)
+        errors = {}
+        refreshed = exporter.material_snapshot([self.mesh], previous, ids, 2, errors)
+        full = exporter.snapshot([self.mesh], supported, 2, source_ids=ids, packed=True)
+        features = ["source-ids", "packed-geometry", "pbr-materials"]
+        self.assertEqual(wire_snapshot(refreshed, features), wire_snapshot(full, features))
+        self.assertIs(refreshed["meshes"][0]["faces"][0]["_buffers"], previous["meshes"][0]["faces"][0]["_buffers"])
+        self.assertFalse(errors)
+        self.assertIsNone(exporter.material_snapshot([], previous, ids, 3, {}))
+
+    def test_material_refresh_keeps_source_errors_isolated(self):
+        ids = {self.mesh.as_pointer(): str(uuid.uuid4())}
+        previous = exporter.snapshot([self.mesh], {"mPelvis", "mChest"}, 1, source_ids=ids, packed=True)
+        material = bpy.data.materials.new("Broken refresh")
+        material.use_nodes = True
+        output = next(node for node in material.node_tree.nodes if node.type == "OUTPUT_MATERIAL")
+        diffuse = material.node_tree.nodes.new("ShaderNodeBsdfDiffuse")
+        material.node_tree.links.new(diffuse.outputs[0], output.inputs["Surface"])
+        self.mesh.data.materials.append(material)
+        errors = {}
+        value = exporter.material_snapshot([self.mesh], previous, ids, 2, errors)
+        self.assertFalse(value["meshes"])
+        self.assertIn("Principled", errors[self.mesh.as_pointer()])
+        self.assertEqual(len(previous["meshes"]), 1)
+
     def test_rest_pose_uvs_and_source_are_preserved(self):
         before_objects = len(bpy.data.objects)
         before_meshes = len(bpy.data.meshes)
@@ -195,11 +309,98 @@ class ExporterTests(unittest.TestCase):
         self.assertEqual(exporter.snapshot([obj], {"mPelvis"}, 2)["meshes"], [])
 
     def test_failure_cleans_temporary_data(self):
-        self.mesh.vertex_groups.clear()
         before_objects, before_meshes = len(bpy.data.objects), len(bpy.data.meshes)
         with self.assertRaises(ValueError):
-            self.capture()
+            exporter.snapshot([self.mesh], {"mChest"}, 1)
         self.assertEqual((len(bpy.data.objects), len(bpy.data.meshes)), (before_objects, before_meshes))
+
+    def test_live_failure_rolls_back_images_and_keeps_other_sources_valid(self):
+        bad = self.mesh.copy()
+        bad.data = self.mesh.data.copy()
+        bad.name = "Broken material source"
+        bpy.context.collection.objects.link(bad)
+        for obj, broken in ((bad, True), (self.mesh, False)):
+            material = bpy.data.materials.new("Live textured surface")
+            material.use_nodes = True
+            shader = next(node for node in material.node_tree.nodes if node.type == "BSDF_PRINCIPLED")
+            image = bpy.data.images.new("Live rollback texture", 2, 2)
+            image.pixels.foreach_set(([1, 0, 0, 1] if broken else [0, 1, 0, 1]) * 4)
+            texture = material.node_tree.nodes.new("ShaderNodeTexImage")
+            texture.image = image
+            material.node_tree.links.new(texture.outputs["Color"], shader.inputs["Base Color"])
+            if broken:
+                material.node_tree.links.new(texture.outputs["Color"], shader.inputs["Normal"])
+            obj.data.materials.clear()
+            obj.data.materials.append(material)
+        bpy.context.view_layer.update()
+        before = len(bpy.data.objects), len(bpy.data.meshes)
+        errors = {}
+        value = exporter.snapshot([bad, self.mesh], {"mPelvis", "mChest"}, 1, errors=errors)
+        self.assertEqual([mesh["name"] for mesh in value["meshes"]], [self.mesh.name])
+        self.assertIn("Normal Map", errors[bad.as_pointer()])
+        self.assertEqual(len(value["images"]), 1)
+        self.assertEqual(value["meshes"][0]["faces"][0]["material"]["textures"][0], 0)
+        self.assertEqual(before, (len(bpy.data.objects), len(bpy.data.meshes)))
+        with self.assertRaisesRegex(ValueError, "Normal Map"):
+            exporter.snapshot([bad, self.mesh], {"mPelvis", "mChest"}, 2)
+
+    def test_live_unexpected_source_error_does_not_leave_a_dangling_root(self):
+        self.mesh.modifiers.clear()
+        child = self.mesh.copy()
+        child.data = self.mesh.data.copy()
+        child.name = "Valid child"
+        child.parent = self.mesh
+        bpy.context.collection.objects.link(child)
+        bpy.context.view_layer.update()
+        ids = {obj.as_pointer(): str(uuid.uuid4()) for obj in (self.mesh, child)}
+        capture = exporter._mesh
+
+        def fail_root(source, *args):
+            if source == self.mesh:
+                raise TypeError("Test unexpected source error")
+            return capture(source, *args)
+
+        errors = {}
+        with patch.object(exporter, "_mesh", side_effect=fail_root):
+            value = exporter.snapshot([self.mesh, child], set(), 1, source_ids=ids, errors=errors)
+        self.assertEqual(errors, {self.mesh.as_pointer(): "Test unexpected source error"})
+        self.assertEqual([mesh["name"] for mesh in value["meshes"]], [child.name])
+        self.assertNotIn("link", value["meshes"][0])
+
+    def test_unweighted_vertices_inherit_the_nearest_weights_without_changing_source_groups(self):
+        self.mesh.vertex_groups["mPelvis"].remove([1, 2])
+        chest = self.mesh.vertex_groups.new(name="mChest")
+        chest.add([1], 1.0, "REPLACE")
+        self.mesh.vertex_groups.new(name="Non-bone mask").add([2], 1.0, "REPLACE")
+        self.mesh.data.vertices[2].co = (0.19, 0.01, 1)
+        self.mesh.data.update()
+        before = [[(g.group, g.weight) for g in v.groups] for v in self.mesh.data.vertices]
+        mesh = self.capture()["meshes"][0]
+        vertices = [v for face in mesh["faces"] for v in face["vertices"]]
+        missing = next(v for v in vertices if abs(v["position"][0] - 0.19) < 1e-5)
+        self.assertEqual(mesh["joints"][missing["joints"][0]], "mChest")
+        self.assertEqual(missing["weights"], [1.0, 0.0, 0.0, 0.0])
+        self.assertEqual(before, [[(g.group, g.weight) for g in v.groups] for v in self.mesh.data.vertices])
+        self.assertEqual(self.capture()["meshes"], [mesh], "idle completion must be deterministic")
+        json.dumps(mesh, allow_nan=False)
+
+    def test_wholly_unweighted_rigged_mesh_uses_the_pelvis_without_creating_groups(self):
+        self.mesh.vertex_groups.clear()
+        mesh = self.capture()["meshes"][0]
+        self.assertEqual(mesh["joints"], ["mPelvis"])
+        self.assertEqual(len(mesh["inverse_bind"]), 1)
+        self.assertTrue(all(v["weights"] == [1.0, 0.0, 0.0, 0.0] for f in mesh["faces"] for v in f["vertices"]))
+        self.assertEqual(len(self.mesh.vertex_groups), 0)
+
+    def test_unweighted_completion_copies_normalized_top_four_and_rejects_nonfinite_data(self):
+        joints = [0, 2, 4, 3]
+        values = [0.4, 0.3, 0.2, 0.1]
+        weights = {0: (joints, values), 1: ([0] * 4, [0.0] * 4)}
+        exporter._complete_weights(weights, [(0, 0, 0), (1, 1, 1)])
+        self.assertEqual(weights[1], (joints, values))
+        for invalid in (float("inf"), float("nan")):
+            with self.assertRaises(ValueError):
+                exporter.influences([SimpleNamespace(group=0, weight=invalid)], {0: "mPelvis"}, {"mPelvis": 0})
 
     def test_top_four_weights_are_normalized(self):
         groups = [SimpleNamespace(group=i, weight=w) for i,w in enumerate([1.0,0.1,0.8,0.4,0.6])]
@@ -263,6 +464,7 @@ class ExporterTests(unittest.TestCase):
             bpy.context.view_layer.update()
             self.assertTrue(aurora_live._dirty)
             aurora_live._last_capture = 0.0
+            aurora_live._last_change = 0.0
             aurora_live._tick()
             self.assertEqual(len(captures), 2)
             self.assertNotEqual(captures[0]["meshes"], captures[1]["meshes"])

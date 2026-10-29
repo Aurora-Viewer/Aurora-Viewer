@@ -197,3 +197,35 @@ fn every_bundled_message_formats_with_its_declared_variables() {
         }
     }
 }
+
+#[test]
+fn japanese_system_locales_select_the_japanese_catalog() {
+    let languages = ["en", "fr", "ja"];
+    assert_eq!(resolve_language("default", "ja-JP", &languages), "ja");
+    assert_eq!(resolve_language("", "ja_JP", &languages), "ja");
+    assert_eq!(resolve_language("ja", "en-US", &languages), "ja");
+    assert_eq!(resolve_language("default", "ja-JP", &["en", "fr"]), "en");
+    assert!(aurora_i18n::available_languages().any(|language| language == ("ja", "日本語")));
+    // Region and underscore variants resolve without touching the global language.
+    assert_eq!(aurora_i18n::text_in("ja_JP", "language-system"), "システムの言語");
+    assert_eq!(aurora_i18n::text_in("JA-jp", "language-choice"), "言語");
+}
+
+#[test]
+fn japanese_dates_and_numbers_follow_japanese_conventions() {
+    assert_eq!(
+        aurora_i18n::tr_in!("ja", "profile-date", month = "09", day = "12", year = "2026"),
+        "2026年09月12日"
+    );
+    assert_eq!(aurora_i18n::text_in("ja", "number-decimal-separator"), ".");
+    assert_eq!(aurora_i18n::text_in("ja", "number-thousands-separator"), ",");
+}
+
+#[test]
+fn japanese_falls_back_to_english_only_for_unknown_keys() {
+    assert_ne!(
+        aurora_i18n::text_in("ja", "language-system"),
+        aurora_i18n::text_in("en", "language-system")
+    );
+    assert_eq!(aurora_i18n::text_in("ja", "unknown-key"), "unknown-key");
+}

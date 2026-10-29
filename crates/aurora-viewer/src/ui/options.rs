@@ -7,6 +7,7 @@
 pub mod backup;
 pub(crate) mod cx;
 mod pages;
+mod saved_graphics;
 mod scale;
 
 pub use pages::privacy;
@@ -315,6 +316,7 @@ const UNDO_SECONDS: f64 = 8.0;
 
 #[derive(Default)]
 pub struct OptionsUi {
+    saved_graphics: saved_graphics::Editor,
     pub current_parcel: Option<crate::world::parcel_visibility::Entry>,
     pub selected_parcel: Option<crate::world::parcel_visibility::Entry>,
     pub rlva_tools: super::rlva::Tools,
@@ -1072,6 +1074,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
     }
     erase_logs_modal(ctx, p, st, &mut r, *open);
     backup::restore_modal(ctx, p, s, st, &mut r, *open);
+    saved_graphics::confirm(ctx, p, s, st, &mut r, *open);
     st.defaults = Some(d);
     r
 }

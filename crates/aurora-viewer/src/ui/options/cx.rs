@@ -235,6 +235,8 @@ struct Next {
     experimental: bool,
     wide: bool,
     below: bool,
+    /// The enclosing group already names this full-width control.
+    section_body: bool,
     /// Its `subs` always show under it, without a cog.
     unfolded: bool,
     /// Not greyed behind a cog that is off: another setting uses it too.
@@ -388,6 +390,13 @@ impl<'a> Cx<'a> {
         self.next.wide = true;
         self.next.below = true;
         self
+    }
+
+    /// A group's single control: keep its label for search and navigation,
+    /// without repeating the section heading on the normal page.
+    pub fn section_body(&mut self) -> &mut Self {
+        self.next.section_body = true;
+        self.below()
     }
 
     /// The `subs` of the next row always show under it, as behind an open
@@ -945,9 +954,11 @@ impl<'a> Cx<'a> {
         }
         job.wrap.max_width = label_w.max(1.0);
         let galley = ctx.fonts_mut(|f| f.layout_job(job));
-        let text_h = galley.size().y;
+        let section_body = next.section_body && self.mode == Mode::Show;
+        let text_h = if section_body { 0.0 } else { galley.size().y };
+        let label_gap = if section_body { 0.0 } else { 6.0 };
         let height = if below {
-            text_h + 6.0 + control.y + 16.0
+            text_h + label_gap + control.y + 16.0
         } else {
             text_h.max(control.y).max(20.0) + 12.0
         }
@@ -957,7 +968,7 @@ impl<'a> Cx<'a> {
 
         // the control, at the right end of the row (or under the label)
         let control_rect = if below {
-            Rect::from_min_size(pos2(left, row.top() + 8.0 + text_h + 6.0), vec2(right - left, control.y))
+            Rect::from_min_size(pos2(left, row.top() + 8.0 + text_h + label_gap), vec2(right - left, control.y))
         } else {
             Rect::from_min_size(pos2(right - control.x, row.center().y - control.y / 2.0), control)
         };
@@ -992,9 +1003,11 @@ impl<'a> Cx<'a> {
         } else {
             pos2(left, row.center().y - text_h / 2.0)
         };
-        let label_rect = Rect::from_min_size(label_pos, galley.size());
+        let label_rect = Rect::from_min_size(label_pos, if section_body { vec2(control.x, 20.0) } else { galley.size() });
         let ink = if parent_off { p.muted } else { p.ink };
-        self.ui.painter().galley(label_pos, galley.clone(), ink);
+        if !section_body {
+            self.ui.painter().galley(label_pos, galley.clone(), ink);
+        }
         if !hint.is_empty() {
             self.ui.interact(label_rect, id.with("label"), Sense::hover()).on_hover_text(hint);
         }

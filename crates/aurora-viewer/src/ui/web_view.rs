@@ -311,6 +311,8 @@ impl WebView {
             control: i.modifiers.ctrl,
             alt: i.modifiers.alt,
             shift: i.modifiers.shift,
+            // (egui sets it on macOS only)
+            command: i.modifiers.mac_cmd,
         });
         let to_px = |pos: egui::Pos2| (((pos.x - rect.left()) * ppp) as i32, ((pos.y - rect.top()) * ppp) as i32);
         if let Some(pos) = resp.hover_pos() {

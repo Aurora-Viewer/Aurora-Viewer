@@ -248,27 +248,46 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
+    use rfd::{MessageButtons, MessageDialogResult, MessageLevel};
+
     pub fn thread_id() -> u32 {
         0
     }
 
     pub fn ask(title: &str, body: &str) -> bool {
-        rfd::MessageDialog::new()
-            .set_level(rfd::MessageLevel::Warning)
-            .set_title(title)
-            .set_description(body)
-            .set_buttons(rfd::MessageButtons::YesNo)
-            .show()
-            == rfd::MessageDialogResult::Yes
+        show(title, body, MessageLevel::Warning, MessageButtons::YesNo) == MessageDialogResult::Yes
     }
 
     pub fn tell(title: &str, body: &str) {
+        show(title, body, MessageLevel::Error, MessageButtons::Ok);
+    }
+
+    /// rfd's blocking `show` hands a macOS alert to the main thread
+    /// (`run_on_main`) and waits there for the answer: the whole viewer
+    /// stopped behind the box, the window, the sound and the frames that
+    /// would have withdrawn it (a demo frame of the macOS merge queue hung an
+    /// hour on it). The asynchronous one shows it from a thread of its own
+    /// (CFUserNotification), and only this thread waits.
+    #[cfg(target_os = "macos")]
+    fn show(title: &str, body: &str, level: MessageLevel, buttons: MessageButtons) -> MessageDialogResult {
+        pollster::block_on(
+            rfd::AsyncMessageDialog::new()
+                .set_level(level)
+                .set_title(title)
+                .set_description(body)
+                .set_buttons(buttons)
+                .show(),
+        )
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn show(title: &str, body: &str, level: MessageLevel, buttons: MessageButtons) -> MessageDialogResult {
         rfd::MessageDialog::new()
-            .set_level(rfd::MessageLevel::Error)
+            .set_level(level)
             .set_title(title)
             .set_description(body)
-            .set_buttons(rfd::MessageButtons::Ok)
-            .show();
+            .set_buttons(buttons)
+            .show()
     }
 
     pub fn close(_thread: u32) {}

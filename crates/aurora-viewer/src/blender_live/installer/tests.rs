@@ -1,6 +1,154 @@
 use super::*;
 
 #[test]
+fn blender_live_installer_selected_executable_checks_installs_and_reports_its_steps() {
+    let executable = Path::new("chosen/blender.exe");
+    let mut calls = Vec::new();
+    let mut phases = Vec::new();
+    let report = install_selected(
+        executable,
+        |path, install| {
+            calls.push((path.to_owned(), install));
+            Ok(Report {
+                version: [5, 2, 1],
+                plugin_version: install.then(|| addon::version().into()),
+                enabled: install,
+                ..Default::default()
+            })
+        },
+        |phase| phases.push(phase),
+    );
+    assert!(report.error.is_none() && report.enabled);
+    assert_eq!(report.plugin_version.as_deref(), Some(addon::version()));
+    assert_eq!(calls, [(executable.to_owned(), false), (executable.to_owned(), true)]);
+    assert_eq!(phases, [Phase::Checking, Phase::Installing]);
+}
+
+#[test]
+fn blender_live_installer_selected_executable_rejects_unsupported_newer_and_failed_probes() {
+    let [major, minor, patch] = semver(addon::version()).expect("bundled version");
+    for initial in [
+        Report {
+            version: [2, 92, 0],
+            ..Default::default()
+        },
+        Report {
+            version: [5, 2, 1],
+            plugin_version: Some(format!("{major}.{}.{patch}", minor + 1)),
+            ..Default::default()
+        },
+        Report {
+            error: Some("Probe failed".into()),
+            ..Default::default()
+        },
+    ] {
+        let mut calls = 0;
+        let report = install_selected(
+            Path::new("chosen/blender.exe"),
+            |_, install| {
+                assert!(!install, "a rejected probe must never install");
+                calls += 1;
+                Ok(initial.clone())
+            },
+            |_| {},
+        );
+        assert!(report.error.is_some());
+        assert_eq!(calls, 1);
+    }
+}
+
+#[test]
+fn blender_live_installer_selected_executable_requires_verified_activation() {
+    for installed in [
+        Ok(Report {
+            version: [5, 2, 1],
+            ..Default::default()
+        }),
+        Ok(Report {
+            version: [5, 2, 1],
+            enabled: true,
+            plugin_version: Some("0.1.0".into()),
+            ..Default::default()
+        }),
+        Err("Installation failed".to_owned()),
+    ] {
+        let report = install_selected(
+            Path::new("chosen/blender.exe"),
+            |_, install| {
+                if install {
+                    installed.clone()
+                } else {
+                    Ok(Report {
+                        version: [5, 2, 1],
+                        ..Default::default()
+                    })
+                }
+            },
+            |_| {},
+        );
+        assert!(report.error.is_some(), "incomplete installation must never report success");
+    }
+}
+
+#[test]
+fn blender_live_installer_chosen_result_preserves_other_rows_and_cancellation_is_idle() {
+    let mut installer = Installer::default();
+    installer.installations.push(Installation {
+        executable: "other/blender.exe".into(),
+        report: Report {
+            version: [4, 3, 0],
+            ..Default::default()
+        },
+    });
+    installer.success = Some(Report::default());
+    assert!(installer.begin(Phase::Choosing));
+    assert!(installer.success.is_none());
+    assert!(!installer.scanned);
+    assert!(
+        !installer.begin(Phase::Scanning),
+        "a second operation must not replace the active installation"
+    );
+    assert_eq!(installer.phase(), Phase::Choosing);
+    *installer.result.lock() = Some(Completed::Install {
+        executable: "chosen/blender.exe".into(),
+        report: Report {
+            version: [5, 2, 1],
+            enabled: true,
+            plugin_version: Some(addon::version().into()),
+            ..Default::default()
+        },
+    });
+    installer.poll();
+    assert!(!installer.busy && !installer.scanned);
+    assert_eq!(installer.installations.len(), 2);
+    assert_eq!(installer.installations[0].report.version, [4, 3, 0]);
+    assert_eq!(installer.success.as_ref().expect("completed installation").version, [5, 2, 1]);
+    assert!(installer.begin(Phase::Choosing));
+    *installer.result.lock() = Some(Completed::Cancelled);
+    installer.poll();
+    assert!(!installer.busy && !installer.scanned);
+    assert_eq!(installer.installations.len(), 2);
+    assert!(installer.error.is_none() && installer.success.is_none());
+}
+
+#[test]
+fn blender_live_installer_remembers_only_the_selection_without_inspecting_other_paths() {
+    let temporary = Temporary::new().expect("directory");
+    let file = temporary.0.join("remembered.json");
+    let unavailable = PathBuf::from("unavailable-drive/Blender/blender.exe");
+    std::fs::write(&file, serde_json::to_vec(&vec![unavailable.clone()]).expect("paths")).expect("fixture");
+    let chosen = Path::new("selected/Blender/blender.exe");
+    remember_at(&file, chosen).expect("remember");
+    remember_at(&file, chosen).expect("remember again");
+    let paths: Vec<PathBuf> = serde_json::from_slice(&std::fs::read(file).expect("saved paths")).expect("paths");
+    assert_eq!(
+        paths,
+        [chosen.to_owned(), unavailable],
+        "other paths are retained without validation or discovery"
+    );
+}
+
+#[test]
 fn blender_live_installer_selects_native_package_actions_without_downgrading() {
     let mut entry = Installation {
         executable: PathBuf::from("blender"),
@@ -71,7 +219,16 @@ fn blender_live_installer_native_probe_install_and_reinstall_preserve_previous_f
     assert!(initial.error.is_none(), "{:?}", initial.error);
     assert!(initial.plugin_version.is_none());
     assert!(!config.join("userpref.blend").exists(), "probe never saves preferences");
-    let installed = run(true);
+    let mut phases = Vec::new();
+    let installed = install_selected(
+        &executable,
+        |path, install| {
+            assert_eq!(path, executable, "only the selected executable runs");
+            Ok(run(install))
+        },
+        |phase| phases.push(phase),
+    );
+    assert_eq!(phases, [Phase::Checking, Phase::Installing]);
     assert!(installed.error.is_none(), "{:?}", installed.error);
     assert_eq!(installed.plugin_version.as_deref(), Some(addon::version()));
     assert!(installed.enabled);

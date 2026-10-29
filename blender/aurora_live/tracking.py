@@ -1,6 +1,7 @@
 """Scene-owned synchronization entries; object pointers survive renaming/saving."""
 import bpy
 import uuid
+import textwrap
 from bpy.app.translations import pgettext_iface
 from bpy.props import BoolProperty, IntProperty, PointerProperty, StringProperty
 from . import exporter, lods
@@ -227,6 +228,7 @@ def add(scene, objects, root=None):
 
 
 class AURORA_PG_sync_object(bpy.types.PropertyGroup):
+    error: StringProperty(options={"SKIP_SAVE"})
     medium: PointerProperty(type=lods.AURORA_PG_lod)
     low: PointerProperty(type=lods.AURORA_PG_lod)
     lowest: PointerProperty(type=lods.AURORA_PG_lod)
@@ -351,6 +353,52 @@ class AURORA_OT_remove(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class AURORA_OT_copy_error(bpy.types.Operator):
+    bl_idname = "aurora.live_copy_error"
+    bl_label = "Copy error"
+    bl_description = "Copy the complete object name and synchronization error"
+    bl_options = {"INTERNAL"}
+    message: StringProperty(options={"HIDDEN", "SKIP_SAVE"})
+
+    def execute(self, context):
+        context.window_manager.clipboard = self.message
+        self.report({"INFO"}, pgettext_iface("Error copied"))
+        return {"FINISHED"}
+
+
+class AURORA_OT_sync_error(bpy.types.Operator):
+    bl_idname = "aurora.live_error"
+    bl_label = "Synchronization error"
+    bl_description = "Show this object's synchronization error and copy its details"
+    bl_options = {"INTERNAL"}
+    index: IntProperty(default=-1, min=-1, options={"HIDDEN", "SKIP_SAVE"})
+    message: StringProperty(options={"HIDDEN", "SKIP_SAVE"})
+
+    def invoke(self, context, _event):
+        if self.index >= 0:
+            entries = context.scene.aurora_live.objects
+            if self.index >= len(entries) or not entries[self.index].error:
+                return {"CANCELLED"}
+            entry = entries[self.index]
+            self.message = entry.name + "\n\n" + entry.error
+        if not self.message:
+            return {"CANCELLED"}
+        # Keep a copy while the dialog is open: list reordering or a repaired
+        # source must not make Copy refer to a different object or error.
+        return context.window_manager.invoke_props_dialog(self, width=560)
+
+    def draw(self, _context):
+        for paragraph in self.message.splitlines():
+            if not paragraph:
+                self.layout.separator()
+            for line in textwrap.wrap(paragraph, width=70):
+                self.layout.label(text=line, translate=False)
+        self.layout.operator("aurora.live_copy_error", icon="COPYDOWN").message = self.message
+
+    def execute(self, _context):
+        return {"FINISHED"}
+
+
 class AURORA_UL_sync_objects(bpy.types.UIList):
     def filter_items(self, context, data, propname):
         ordered = rows(context.scene)
@@ -377,8 +425,13 @@ class AURORA_UL_sync_objects(bpy.types.UIList):
             button.index = index
         else:
             label.label(text="Missing object", icon="ERROR")
+        if item.error:
+            warning = row.row(align=True)
+            warning.alert = True
+            warning.operator_context = "INVOKE_DEFAULT"
+            warning.operator("aurora.live_error", text="", icon="ERROR", emboss=False).index = index
         row.operator("aurora.live_remove", text="", icon="X", emboss=False).index = index
 
 
 CLASSES = (AURORA_PG_sync_object, AURORA_OT_selection, AURORA_OT_pick, AURORA_OT_group, AURORA_OT_ungroup, AURORA_OT_root,
-           AURORA_OT_remove, AURORA_UL_sync_objects)
+           AURORA_OT_remove, AURORA_OT_copy_error, AURORA_OT_sync_error, AURORA_UL_sync_objects)

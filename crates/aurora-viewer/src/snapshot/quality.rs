@@ -37,6 +37,14 @@ macro_rules! adopt {
 }
 
 impl Held {
+    /// The user's current values without cloning the entire preferences or
+    /// their saved profile library for the FPS hover card's active marker.
+    pub(crate) fn user_values(&self, s: &Settings) -> (Values, bool) {
+        let mut user = self.clone();
+        user.sync(s);
+        (user.values, user.shadows)
+    }
+
     /// A setting the user changed while the boost is on (in Preferences)
     /// becomes their value: it is kept when the boost ends, and no longer
     /// raised while it lasts.
