@@ -852,6 +852,9 @@ fn system_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusI
     if super::immersive_item(ui, p) {
         *action = BarAction::ToggleImmersive;
     }
+    if super::filming_item(ui, p) {
+        *action = BarAction::ToggleFilming;
+    }
     if menu::item(ui, p, "layout-bottombar-filled", aurora_i18n::tr!("ui-bars-customize-bars")) {
         *action = BarAction::CustomizeBars;
     }

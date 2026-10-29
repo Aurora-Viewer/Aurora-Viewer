@@ -28,7 +28,9 @@ impl App {
     /// shown; in the viewfinder the photo's own, so that the screen shows
     /// what the photo will hold.
     pub(super) fn huds_shown(&self) -> bool {
-        let wanted = self.settings.show_huds && (!self.interface.immersive || self.settings.immersive_huds);
+        let wanted = self.settings.show_huds
+            && !self.interface.filming
+            && (!self.interface.immersive || self.settings.immersive_huds);
         (wanted || self.world.rlva_has_locked_hud()) && (!self.viewfinder_on() || self.settings.snapshot.huds)
     }
 

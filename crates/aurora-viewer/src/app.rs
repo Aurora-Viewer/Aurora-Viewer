@@ -3888,6 +3888,7 @@ impl App {
         match action {
             Action::Fly => self.toggle_fly(),
             Action::Flycam => self.toggle_joystick_flycam(),
+            Action::FilmingMode => self.toggle_filming(),
             Action::AlwaysRun => self.set_always_run(!self.always_run),
             Action::MoveLock => self.toggle_move_lock(),
             Action::MovementEnhancer => self.open_movement(),
@@ -3911,7 +3912,9 @@ impl App {
                 }
             }
             Action::ResetCamera => {
-                if !self.photo_escape() {
+                if self.interface.filming {
+                    self.toggle_filming();
+                } else if !self.photo_escape() {
                     self.reset_camera_view();
                 }
             }
@@ -11860,6 +11863,7 @@ impl App {
             BarAction::ToggleInterface => self.toggle_interface(),
             BarAction::HideInterface => self.interface.set_hidden(&self.egui_ctx, true),
             BarAction::ToggleImmersive => self.toggle_immersive(),
+            BarAction::ToggleFilming => self.toggle_filming(),
             BarAction::ImmersiveHuds(visible) => self.set_immersive_huds(visible),
             BarAction::HoverTips(menu) => {
                 let tips = &mut self.settings.hover_tips;
@@ -12008,6 +12012,35 @@ impl App {
                 self.leave_huds();
             }
             self.interface.set_immersive(&self.egui_ctx);
+        }
+    }
+
+    /// Filming mode (#1469): a completely clean screen for machinima. HUDs
+    /// and name tags go; joystick flycam starts when a controller is ready.
+    /// Escape or the shortcut leaves it and keeps the camera view.
+    fn toggle_filming(&mut self) {
+        if self.camera.mouselook() {
+            return;
+        }
+        if self.interface.filming {
+            let keep_flycam = self.joystick.active;
+            self.interface.set_hidden(&self.egui_ctx, false);
+            if keep_flycam {
+                // Leave flycam but retain the framed shot.
+                self.toggle_joystick_flycam();
+            }
+        } else {
+            if !self.world.rlva_has_locked_hud() {
+                self.leave_huds();
+            }
+            self.interface.set_filming(&self.egui_ctx);
+            if !self.joystick.active
+                && self.settings.joystick.enabled
+                && self.settings.joystick.flycam_enabled
+                && self.joystick.snapshot.selected(&self.settings.joystick).is_some()
+            {
+                self.toggle_joystick_flycam();
+            }
         }
     }
 
@@ -13207,7 +13240,8 @@ impl App {
                         projector,
                         self.camera.position,
                         !self.camera.mouselook(),
-                        !self.interface.immersive || self.settings.immersive_name_tags,
+                        !self.interface.filming
+                            && (!self.interface.immersive || self.settings.immersive_name_tags),
                         &self.settings,
                         &mut self.name_tag_visibility,
                         &voice_levels,
@@ -13888,7 +13922,10 @@ impl App {
                         painter.text(at, egui::Align2::CENTER_BOTTOM, &text, font, p.ink.gamma_multiply(0.6));
                     }
                 }
-                if self.skin.layout.chat_toasts && !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)) {
+                if self.skin.layout.chat_toasts
+                    && !self.interface.filming
+                    && !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui))
+                {
                     // FSBubblesHideConsoleAndToasts: the residents' lines are
                     // in their bubbles
                     let residents = !(self.chat_bubbles() && self.settings.chat_bubbles_hide_console);
@@ -13932,7 +13969,14 @@ impl App {
                         }
                     }
                 }
-                if self.interface.immersive && !self.camera.mouselook() {
+                if self.interface.filming && !self.camera.mouselook() {
+                    if matches!(
+                        ui::interface::filming_buttons(&ctx, &p),
+                        Some(ui::interface::FilmingAction::Leave)
+                    ) {
+                        a.bar = BarAction::ToggleFilming;
+                    }
+                } else if self.interface.immersive && !self.camera.mouselook() {
                     let huds = self.settings.show_huds.then_some(self.settings.immersive_huds);
                     match ui::interface::immersive_buttons(&ctx, &p, self.settings.immersive_name_tags, huds) {
                         Some(ui::interface::ImmersiveAction::Leave) => a.bar = BarAction::ToggleImmersive,
@@ -14683,7 +14727,7 @@ impl App {
                 // styles (#491)
                 let aurora = self.notifications_aurora();
                 let dnd = self.world.status.dnd;
-                let toasts_hidden = self.camera.mouselook() || self.photo_full_frame();
+                let toasts_hidden = self.camera.mouselook() || self.photo_full_frame() || self.interface.filming;
                 self.world.notifications.aurora = aurora;
                 // #465: a friendship offer in the middle of the screen, before
                 // the toasts it replaces (AURORA_DEMO_FRIEND_PROMPT: on for the run)

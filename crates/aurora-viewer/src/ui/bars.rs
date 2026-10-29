@@ -140,6 +140,8 @@ pub enum BarAction {
     HideInterface,
     /// Immersive mode (#859): the interface hidden but the chat.
     ToggleImmersive,
+    /// Filming mode (#1469): a completely clean screen for machinima.
+    ToggleFilming,
     /// The HUDs shown or hidden in immersive mode (#1190).
     ImmersiveHuds(bool),
     /// World › World tooltips: the three checks, as they are now.
@@ -455,6 +457,11 @@ pub(super) fn immersive_item(ui: &mut egui::Ui, p: &Palette) -> bool {
     menu::item(ui, p, "maximize", aurora_i18n::tr!("ui-bars-immersive"))
 }
 
+/// The menus' Filming mode (#1469), after Immersive.
+pub(super) fn filming_item(ui: &mut egui::Ui, p: &Palette) -> bool {
+    menu::item(ui, p, "video-filled", aurora_i18n::tr!("ui-bars-filming"))
+}
+
 fn flip(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: &mut bool, enabled: bool) -> bool {
     let clicked = menu::check(ui, p, icon, label, *on, enabled);
     if clicked {
@@ -724,6 +731,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
         if immersive_item(ui, p) {
             *action = BarAction::ToggleImmersive;
+        }
+        if filming_item(ui, p) {
+            *action = BarAction::ToggleFilming;
         }
         menu::separator(ui, p);
         if menu::item(ui, p, "logout", aurora_i18n::tr!("ui-bars-log-out")) {
@@ -1982,6 +1992,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "stop_animations" => return BarAction::StopAnimations,
         "resync_animations" => return BarAction::ResyncAnimations,
         "immersive" => return BarAction::ToggleImmersive,
+        "filming" => return BarAction::ToggleFilming,
         _ => {}
     }
     BarAction::None

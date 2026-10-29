@@ -17,6 +17,11 @@
 //! by default, `immersive_name_tags`), the HUDs (#1190: shown by default,
 //! `immersive_huds`; no button while Show HUDs hides them anyway) and leave
 //! it.
+//!
+//! Filming mode (#1469) is a machinima clean screen: every bar, window,
+//! HUD and name tag goes; no edge peek and no chat. A faint leave button
+//! and its shortcut bring the interface back. Joystick flycam can join it
+//! for cinematic camera moves.
 
 use super::bars::islands::{HEIGHT, MARGIN};
 use crate::theme::Palette;
@@ -35,6 +40,8 @@ pub struct Interface {
     pub hidden: bool,
     /// Hidden by immersive mode (not saved).
     pub immersive: bool,
+    /// Hidden by filming mode (#1469): a completely clean screen (not saved).
+    pub filming: bool,
     /// When it was hidden (`ctx` time), for the hint.
     hidden_at: Option<f64>,
     /// The bars an edge brought back.
@@ -80,25 +87,33 @@ pub struct Shown {
 impl Interface {
     /// Hide or show the interface, between two frames: the windows open now
     /// go with it and come back with it; the menus close. Shown, immersive
-    /// mode ends too.
+    /// and filming modes end too.
     pub fn set_hidden(&mut self, ctx: &egui::Context, hidden: bool) {
-        self.set(ctx, hidden, false);
+        self.set(ctx, hidden, false, false);
     }
 
     /// Enter immersive mode, between two frames: hidden, the chat windows
     /// kept.
     pub fn set_immersive(&mut self, ctx: &egui::Context) {
-        self.set(ctx, true, true);
+        self.set(ctx, true, true, false);
     }
 
-    fn set(&mut self, ctx: &egui::Context, hidden: bool, immersive: bool) {
+    /// Enter filming mode (#1469), between two frames: a completely clean
+    /// screen (no chat windows, no edge peek).
+    pub fn set_filming(&mut self, ctx: &egui::Context) {
+        self.set(ctx, true, false, true);
+    }
+
+    fn set(&mut self, ctx: &egui::Context, hidden: bool, immersive: bool, filming: bool) {
         self.hidden = hidden;
-        self.immersive = hidden && immersive;
+        self.filming = hidden && filming;
+        self.immersive = hidden && immersive && !self.filming;
         self.hidden_at = hidden.then(|| ctx.input(|i| i.time));
         self.peek_top = false;
         self.peek_bottom = false;
         self.peek_sides = [false; 2];
         self.confirm = false;
+        // Filming never keeps the chat; immersive does.
         super::widgets::hide_windows(ctx, hidden, self.immersive);
         if hidden {
             egui::Popup::close_all(ctx);
@@ -109,7 +124,7 @@ impl Interface {
     /// bar while it is used, unless the interface stays in mouselook.
     /// Hidden: none; with the islands, an edge hovered brings its bars back
     /// while the pointer stays on them, a menu open from them or the chat in
-    /// use. Immersive: the chat bar in use only.
+    /// use. Immersive: the chat bar in use only. Filming: nothing.
     pub fn bars(&mut self, f: &Frame) -> Shown {
         if f.mouselook {
             return if f.show_in_mouselook && !self.hidden {
@@ -117,12 +132,15 @@ impl Interface {
             } else {
                 Shown {
                     top: false,
-                    bottom: f.chat_active,
+                    bottom: f.chat_active && !self.filming,
                 }
             };
         }
         if !self.hidden {
             return Shown { top: true, bottom: true };
+        }
+        if self.filming {
+            return Shown { top: false, bottom: false };
         }
         if f.classic || self.immersive {
             return Shown {
@@ -147,7 +165,7 @@ impl Interface {
     /// none in mouselook unless the interface stays there; hidden, with the
     /// islands, the left or right edge hovered brings its toolbar back while
     /// the pointer stays on it (`edges`: their inner sides, last frame) or a
-    /// menu is open. Immersive: none.
+    /// menu is open. Immersive and filming: none.
     pub fn sides(&mut self, f: &Frame, edges: [f32; 2]) -> [bool; 2] {
         if f.mouselook {
             let on = f.show_in_mouselook && !self.hidden;
@@ -156,7 +174,7 @@ impl Interface {
         if !self.hidden {
             return [true, true];
         }
-        if f.classic || self.immersive {
+        if f.classic || self.immersive || self.filming {
             return [false, false];
         }
         let near = |test: &dyn Fn(Pos2) -> bool| f.pointer.is_some_and(test);
@@ -169,10 +187,10 @@ impl Interface {
     }
 
     /// Seconds left to the hint at `now` (the islands' look), while shown;
-    /// none in immersive mode, which has its button.
+    /// none in immersive or filming mode, which have their leave button.
     pub fn hint_left(&self, now: f64) -> Option<f64> {
         self.hidden_at
-            .filter(|_| self.hidden && !self.immersive)
+            .filter(|_| self.hidden && !self.immersive && !self.filming)
             .map(|at| HINT_S - (now - at))
             .filter(|s| *s > 0.0)
     }
@@ -239,8 +257,8 @@ pub fn hint(ctx: &egui::Context, p: &Palette, binding: Option<&crate::keybinds::
         });
 }
 
-/// Opacity of the immersive mode's buttons at rest: there, but out of the
-/// way.
+/// Opacity of the immersive / filming mode's buttons at rest: there, but
+/// out of the way.
 const BUTTONS_REST: f32 = 0.4;
 
 /// What the immersive mode's buttons ask for.
@@ -252,6 +270,12 @@ pub enum ImmersiveAction {
     NameTags(bool),
     /// The HUDs shown or hidden.
     Huds(bool),
+}
+
+/// Filming mode's single leave control (#1469).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilmingAction {
+    Leave,
 }
 
 /// The immersive mode's buttons, square, as high as the islands, in the top
@@ -312,6 +336,33 @@ pub fn immersive_buttons(ctx: &egui::Context, p: &Palette, name_tags: bool, huds
                     action = Some(ImmersiveAction::Leave);
                 }
             });
+        });
+    action
+}
+
+/// Filming mode's leave button (#1469): one faint control in the top right.
+pub fn filming_buttons(ctx: &egui::Context, p: &Palette) -> Option<FilmingAction> {
+    let screen = ctx.content_rect();
+    let size = Vec2::splat(HEIGHT);
+    let rect = Rect::from_min_max(
+        Pos2::new(screen.right() - MARGIN - HEIGHT, screen.top() + MARGIN),
+        Pos2::new(screen.right() - MARGIN, screen.top() + MARGIN + HEIGHT),
+    );
+    let hot = ctx.pointer_hover_pos().is_some_and(|at| rect.contains(at));
+    let mut action = None;
+    egui::Area::new(Id::unique("filming_buttons"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(rect.min)
+        .constrain(false)
+        .show(ctx, |ui| {
+            ui.set_opacity(if hot { 1.0 } else { BUTTONS_REST });
+            let label = aurora_i18n::tr!("ui-bars-filming-leave");
+            if super::widgets::glass_action_icon(ui, p, "camera-off", label, size, p.ink)
+                .on_hover_text(label)
+                .clicked()
+            {
+                action = Some(FilmingAction::Leave);
+            }
         });
     action
 }
@@ -503,6 +554,27 @@ mod tests {
         assert!(!ui.hidden && !ui.immersive);
         ui.set_hidden(&ctx, true);
         assert!(!ui.immersive, "Show User Interface hides without it");
+    }
+
+    /// Filming mode (#1469): a completely clean screen — no bars, no chat
+    /// bar, no edge peek; leaving restores a normal interface.
+    #[test]
+    fn filming_mode_hides_everything() {
+        let ctx = egui::Context::default();
+        let mut ui = Interface::default();
+        ui.set_filming(&ctx);
+        assert!(ui.hidden && ui.filming && !ui.immersive);
+        assert_eq!(ui.bars(&frame(Some(Pos2::new(700.0, 2.0)))), NONE);
+        let mut chat = frame(None);
+        chat.chat_active = true;
+        assert_eq!(ui.bars(&chat), NONE, "no chat bar while filming");
+        assert_eq!(ui.sides(&frame(Some(Pos2::new(1.0, 400.0))), [50.0, 1486.0]), [false, false]);
+        ui.set_hidden(&ctx, false);
+        assert!(!ui.hidden && !ui.filming);
+        ui.set_immersive(&ctx);
+        assert!(!ui.filming, "immersive is not filming");
+        ui.set_filming(&ctx);
+        assert!(ui.filming && !ui.immersive, "filming replaces immersive");
     }
 
     #[test]

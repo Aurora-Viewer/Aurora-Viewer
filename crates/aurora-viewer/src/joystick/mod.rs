@@ -85,24 +85,47 @@ impl Default for Settings {
 
 impl Settings {
     pub fn gamepad(&mut self) {
+        // Xbox One / XInput layout (gilrs / WGI on Windows): left stick
+        // XY, right stick X then triggers then right stick Y. Left bumper
+        // rises, right bumper falls. Live input still overrides any axis.
         self.mapping = [1, 0, -1, -1, 3, 2, -1];
-        // WGI places right-stick Y after the two triggers. Generic
-        // joysticks can override this starting point using Live input.
         if cfg!(windows) {
             self.mapping[4] = 5;
         }
         self.rise_button = 4;
         self.fall_button = 5;
+        self.jump_button = 0;
+        self.flycam_button = 7;
         self.avatar = Tuning {
             gain: [1.0, 1.0, 0.0, 0.0, 1.5, 1.5, 0.0],
-            dead_zone: [0.15; CHANNELS],
+            dead_zone: [0.18, 0.18, 0.15, 1.0, 0.18, 0.18, 1.0],
             feather: 6.0,
         };
+        // Cinematic flycam (#1469): vertical and roll enabled, softer
+        // feather so pans ease in and coast to a stop.
         self.flycam = Tuning {
-            gain: [2.1, 2.0, 0.0, 0.0, 1.5, 1.5, 0.0],
-            dead_zone: [0.15; CHANNELS],
-            feather: 5.0,
+            gain: [1.6, 1.5, 1.8, 0.7, 1.2, 1.2, 0.9],
+            dead_zone: [0.18, 0.18, 0.12, 0.15, 0.18, 0.18, 0.12],
+            feather: 2.5,
         };
+        self.auto_level = false;
+        // Zoom from the right trigger when WGI exposes it before right Y.
+        if cfg!(windows) {
+            self.mapping[6] = 4;
+            self.flycam.gain[6] = 0.9;
+        }
+    }
+
+    /// Xbox One naming (and XInput stand-ins) get the gamepad preset, with
+    /// Linux xpad's common RightY-before-triggers layout kept when not on
+    /// Windows.
+    pub fn apply_xbox_one(&mut self) {
+        self.gamepad();
+        if !cfg!(windows) {
+            // Common Linux Xbox layout: LX LY RX RY LT RT.
+            self.mapping = [1, 0, -1, -1, 3, 2, 5];
+            self.flycam.gain[6] = 0.9;
+        }
     }
 }
 
@@ -277,12 +300,17 @@ impl Controller {
         }
         let t = finite(dt, 0.0).clamp(0.0, 0.2);
         let feather = finite(tune.feather, 5.0).clamp(0.0, 32.0);
-        let blend = if feather == 0.0 { 1.0 } else { (t * feather).min(1.0) };
         for (i, (v, goal)) in self.filtered.iter_mut().zip(target).enumerate() {
             if !flycam && i < 3 {
                 *v = goal;
+            } else if feather == 0.0 {
+                *v = goal;
             } else {
-                *v += (goal - *v) * blend;
+                // Cinematic ease (#1469): slower takeoff, firmer stop so
+                // pans accelerate gently and do not halt abruptly.
+                let accelerating = goal.abs() > v.abs() + 1e-4;
+                let rate = feather * if accelerating { 0.55 } else { 1.35 };
+                *v += (goal - *v) * (t * rate).min(1.0);
             }
             if goal == 0.0 && v.abs() < 0.0001 {
                 *v = 0.0;
@@ -379,10 +407,23 @@ mod tests {
         c.sample(&snap, &s, true, false, 0.1);
         snap.devices[0].button(4, false);
         c.sample(&snap, &s, true, false, 0.1);
-        snap.devices[0].button(0, true);
+        snap.devices[0].button(s.flycam_button as usize, true);
         let m = c.sample(&snap, &s, true, false, 0.1);
         assert!(m.toggle_flycam);
         assert!(!m.moving());
+    }
+
+    #[test]
+    fn xbox_gamepad_preset_enables_cinematic_flycam_axes() {
+        let mut s = Settings::default();
+        s.apply_xbox_one();
+        assert!(s.flycam.gain[2] > 0.0, "vertical");
+        assert!(s.flycam.gain[3] > 0.0, "roll");
+        assert!(s.flycam.gain[6] > 0.0, "zoom");
+        assert!(s.flycam.feather < 5.0, "softer cinematic feather");
+        assert!(!s.auto_level, "roll stays until the operator levels");
+        assert_eq!(s.rise_button, 4);
+        assert_eq!(s.fall_button, 5);
     }
 
     #[test]

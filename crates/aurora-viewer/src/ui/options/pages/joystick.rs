@@ -68,12 +68,25 @@ pub fn page(cx: &mut Cx) {
         cx.row(
             tr!("joystick-preset"),
             tr!("joystick-preset-hint"),
-            &Many(&[&field!(joystick.mapping), &field!(joystick.avatar), &field!(joystick.flycam)]),
+            &Many(&[
+                &field!(joystick.mapping),
+                &field!(joystick.avatar),
+                &field!(joystick.flycam),
+                &field!(joystick.rise_button),
+                &field!(joystick.fall_button),
+                &field!(joystick.jump_button),
+                &field!(joystick.flycam_button),
+                &field!(joystick.auto_level),
+            ]),
             |ui, s| {
                 let mut changed = false;
                 ui.horizontal(|ui| {
                     if widgets::flat_button(ui, &p, tr!("joystick-gamepad")).clicked() {
                         s.joystick.gamepad();
+                        changed = true;
+                    }
+                    if widgets::flat_button(ui, &p, tr!("joystick-xbox")).clicked() {
+                        s.joystick.apply_xbox_one();
                         changed = true;
                     }
                     if widgets::flat_button(ui, &p, tr!("joystick-spacemouse")).clicked() {
@@ -83,6 +96,9 @@ pub fn page(cx: &mut Cx) {
                         s.joystick.flycam = d.flycam;
                         s.joystick.rise_button = d.rise_button;
                         s.joystick.fall_button = d.fall_button;
+                        s.joystick.jump_button = d.jump_button;
+                        s.joystick.flycam_button = d.flycam_button;
+                        s.joystick.auto_level = d.auto_level;
                         changed = true;
                     }
                 });

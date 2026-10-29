@@ -68,6 +68,8 @@ pub const COMMANDS: &[Command] = commands![
     "stop_animations", "player-stop-filled", "ui-context-stop-animations", true;
     // Aurora's own: the interface hidden but the chat (#859)
     "immersive", "maximize", "ui-bars-immersive", true;
+    // Machinima clean screen (#1469)
+    "filming", "video-filled", "ui-bars-filming", true;
     // Firestorm's, not in Aurora yet
     "avatar", "user-circle", "toolbar-command-avatar", false;
     "destinations", "map-2", "toolbar-command-destinations", false;

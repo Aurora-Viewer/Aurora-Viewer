@@ -302,6 +302,9 @@ pub enum Action {
     ResetCamera,
     /// LLViewerJoystick::toggleFlycam (menu_viewer.xml, Alt+Shift+F).
     Flycam,
+    /// Machinima filming mode (#1469): a completely clean screen, with
+    /// joystick flycam when a controller is ready (Alt+Shift+C).
+    FilmingMode,
     /// The Controls window, on its Camera tab (Firestorm's View › Camera
     /// Controls).
     CameraControls,
@@ -461,6 +464,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Mouselook, aurora_i18n::tr!("common-mouselook")),
                     (Action::ResetCamera, aurora_i18n::tr!("keybinds-return-to-avatar")),
                     (Action::Flycam, aurora_i18n::tr!("joystick-flycam")),
+                    (Action::FilmingMode, aurora_i18n::tr!("keybinds-filming-mode")),
                     (Action::CameraControls, aurora_i18n::tr!("controls-camera-title")),
                     (Action::LensZoomIn, aurora_i18n::tr!("keybinds-lens-zoom-in")),
                     (Action::LensZoomOut, aurora_i18n::tr!("keybinds-lens-zoom-out")),
@@ -667,6 +671,8 @@ impl KeyBindings {
             (Action::Mouselook, [k(K::KeyM), None]),
             (Action::ResetCamera, [k(K::Escape), None]),
             (Action::Flycam, [kalt(K::KeyF, false, true), None]),
+            // #1469: clean-screen filming mode (Ctrl+Shift+C is Camera Controls).
+            (Action::FilmingMode, [kalt(K::KeyC, false, true), None]),
             (Action::CameraControls, [kmod(K::KeyC, true, true), None]),
             (Action::LensZoomIn, [kmod(K::Digit0, true, false), kmod(K::Numpad0, true, false)]),
             (Action::LensZoomOut, [kmod(K::Digit8, true, false), kmod(K::Numpad8, true, false)]),

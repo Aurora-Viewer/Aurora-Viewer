@@ -19,7 +19,8 @@ pub struct State {
 
 impl App {
     pub(super) fn joystick_status(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
-        if !self.joystick.active {
+        // Filming mode (#1469) keeps a completely clean screen.
+        if !self.joystick.active || self.interface.filming {
             return;
         }
         let room = crate::ui::layout::work_area(ctx);
