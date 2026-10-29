@@ -2130,6 +2130,15 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
             } else {
                 usize::MAX
             };
+            let message_field = matches!(
+                d,
+                Dialog::Friendship { .. } | Dialog::TeleportRequest { .. } | Dialog::OfferTeleport { .. }
+            );
+            let hint = if message_field {
+                aurora_i18n::tr!("ui-contacts-message-hint")
+            } else {
+                aurora_i18n::tr!("ui-contacts-enter-to-confirm")
+            };
             let buf = match d {
                 Dialog::Friendship { message, .. } | Dialog::TeleportRequest { message, .. } | Dialog::OfferTeleport { message, .. } => {
                     message
@@ -2138,15 +2147,32 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
                 Dialog::SetAlias { alias, .. } => alias,
                 _ => unreachable!("dialog without input"),
             };
-            let r = ui.add(egui::TextEdit::singleline(buf).char_limit(limit).desired_width(f32::INFINITY));
-            if r.lost_focus() && widgets::enter_pressed(ui) {
+            let r = ui
+                .add(
+                    egui::TextEdit::singleline(buf)
+                        .char_limit(limit)
+                        .desired_width(f32::INFINITY)
+                        .hint_text(hint.to_owned()),
+                )
+                .on_hover_text(aurora_i18n::tr!("ui-contacts-enter-to-confirm"));
+            // Enter while the field has focus (or just gave it up) confirms —
+            // same pattern as script search. Relying on lost_focus alone missed
+            // presses that left the field focused, so Send never ran.
+            if (r.has_focus() || r.lost_focus()) && widgets::enter_pressed(ui) {
                 done = Some(true);
             }
         }
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let size = Vec2::new(0.0, 26.0);
-            if widgets::action_button(ui, p, icon, ok, kind, size).clicked() {
+            // slightly taller than the usual 26 px action row: easier pointer targets
+            let size = Vec2::new(0.0, 32.0);
+            let enter = crate::keybinds::Binding {
+                input: crate::keybinds::Input::key(winit::keyboard::KeyCode::Enter),
+                ctrl: false,
+                shift: false,
+                alt: false,
+            };
+            if widgets::action_button_keyed(ui, p, icon, ok, kind, size, true, has_input.then_some(&enter)).clicked() {
                 done = Some(true);
             }
             // a warning has nothing to cancel
