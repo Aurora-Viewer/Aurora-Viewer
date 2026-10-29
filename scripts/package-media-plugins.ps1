@@ -123,7 +123,9 @@ if ($Platform -eq 'windows') {
         $archs = & lipo -archs $file.FullName 2>$null
         if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0; continue }   # not a Mach-O file
         if ($archs -notmatch '\barm64\b') { throw "$($file.FullName) has no arm64 code ($archs)" }
-        foreach ($line in (& otool -L $file.FullName | Select-Object -Skip 1)) {
+        # (a universal binary lists its dependencies once per architecture,
+        # each list after a header line ending with a colon)
+        foreach ($line in (& otool -L $file.FullName | Where-Object { -not $_.TrimEnd().EndsWith(':') })) {
             $dep = ($line.Trim() -split ' \(')[0]
             if ($dep -and $dep -notmatch '^(@rpath|@loader_path|@executable_path)/|^/usr/lib/|^/System/') {
                 throw "$($file.Name) loads $dep, outside the bundle"
