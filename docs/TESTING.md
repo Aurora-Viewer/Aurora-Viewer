@@ -8601,6 +8601,9 @@ What the inventory must show with these scenarios:
   in three, named `xmode=old` at the end of the `perf summary` line
   (`xmode=new` for the others): read `ft=` and `off_cpu:` per mode, on a
   machine that is busy with something else (a build, another viewer).
+  Windows only: on Linux the frame's threads are not raised, and both
+  modes are the same (the background jobs still run 10 nice values above
+  the viewer's).
 - **`AURORA_ALLOCATOR=system`**: the process allocates with the system's
   allocator (the Windows process heap), as before, instead of mimalloc
   (`allocator.rs`). The choice holds for the whole run, read before
