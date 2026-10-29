@@ -18,6 +18,14 @@ use std::sync::OnceLock;
 /// bytes) with its translation fit.
 const CONTEXT: u32 = 1024;
 
+/// Threads of a job on the CPU: half the cores, the other half stays for
+/// the frame (with all of them the viewer fell from 120 to ~100 fps during a
+/// translation).
+fn threads() -> i32 {
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    i32::try_from((cores / 2).max(1)).unwrap_or(1)
+}
+
 /// llama.cpp is initialised once per process.
 fn runtime() -> Result<&'static LlamaBackend, TranslateError> {
     static RUNTIME: OnceLock<Result<LlamaBackend, String>> = OnceLock::new();
@@ -79,7 +87,9 @@ impl Backend for LlamaCpp {
         let model = self.model.as_ref().ok_or(TranslateError::ModelMissing)?;
         let params = LlamaContextParams::default()
             .with_n_ctx(NonZeroU32::new(CONTEXT))
-            .with_n_batch(CONTEXT);
+            .with_n_batch(CONTEXT)
+            .with_n_threads(threads())
+            .with_n_threads_batch(threads());
         let mut ctx = model.new_context(rt, params).map_err(gen_err)?;
         let vocab = model.vocab();
         let tokens = vocab.tokenize(prompt.as_bytes(), true, true);
