@@ -3,6 +3,7 @@
 pub mod animation_log;
 pub mod anti_spam;
 pub mod appearance;
+pub mod attachment_inventory;
 pub mod attention;
 pub mod blocking;
 pub mod body;
@@ -457,6 +458,7 @@ pub struct World {
     inventory_background: inventory::background::BackgroundFetch,
     /// Inventory changes outside the inventory window (`take_inventory_edits`).
     inventory_edits: Vec<aurora_net::inventory::operations::Mutation>,
+    pub attachment_inventory: attachment_inventory::AttachmentInventory,
     pub received_items: received_items::ReceivedItems,
     /// Playing animations per avatar / animesh.
     pub animations: HashMap<Uuid, Vec<PlayingAnimation>>,
@@ -738,6 +740,7 @@ impl World {
             inventory_cache: None,
             inventory_background: Default::default(),
             inventory_edits: Vec::new(),
+            attachment_inventory: Default::default(),
             received_items: Default::default(),
             animations: HashMap::new(),
             ao_pose: None,
@@ -1970,7 +1973,10 @@ impl World {
     /// purpose (a detach sent by the resident, a script or RLVa).
     pub fn note_outfit_command(&mut self, command: &aurora_net::NetCommand) {
         match command {
-            aurora_net::NetCommand::DetachAttachments(items) => self.outfit.on_detach_requested(items),
+            aurora_net::NetCommand::DetachAttachments(items) => {
+                self.outfit.on_detach_requested(items);
+                self.attachment_inventory.detaching(items);
+            }
             aurora_net::NetCommand::DetachObject { handle, local_id } => {
                 if let Some(item) = self
                     .objects
@@ -1982,6 +1988,7 @@ impl World {
                     .and_then(|o| o.attachment_item_id())
                 {
                     self.outfit.on_detach_requested(&[item]);
+                    self.attachment_inventory.detaching(&[item]);
                 }
             }
             _ => {}
@@ -4405,6 +4412,9 @@ impl World {
         // LGPL 2.1): temporary attachments have no inventory item, but their
         // root and linked scripts still own motions that must be stopped.
         self.stop_linkset_motions(idx);
+        if let Some(item) = item {
+            self.attachment_inventory.detached(item);
+        }
         if let Some(item) = item
             && self.outfit.keeps_cof_link(item)
         {

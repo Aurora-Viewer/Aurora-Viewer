@@ -2829,6 +2829,13 @@ impl App {
             return;
         }
         if let NetEvent::InventoryEdited { request, result } = ev {
+            if self.world.attachment_inventory.owns(request) {
+                self.world.attachment_inventory_result(request, result);
+                if self.appearance_ui.pending.is_some_and(|(id, _)| id == request) {
+                    self.appearance_ui.pending = None;
+                }
+                return;
+            }
             if self.texture_library_result(request, &result) {
                 return;
             }
@@ -7784,6 +7791,15 @@ impl App {
             // outfit restore at login (queues the COF fetch below)
             let second_life = !matches!(self.settings.grid, crate::settings::GridChoice::Custom);
             self.world.update_outfit(second_life, Instant::now());
+            let allow_links = self.world.outfit.is_done() && self.appearance_ui.pending.is_none() && self.inventory_ui.pending.is_none();
+            for command in self.world.update_attachment_inventory(Instant::now(), allow_links) {
+                if let NetCommand::EditInventory { request, .. } = &command {
+                    // Serialize COF writes with the same guard as interactive
+                    // outfit changes, including inventory link replacement.
+                    self.appearance_ui.pending = Some((*request, false));
+                }
+                self.send(command);
+            }
             for cmd in std::mem::take(&mut self.world.outfit.commands) {
                 self.send(cmd);
             }

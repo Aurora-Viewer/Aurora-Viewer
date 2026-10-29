@@ -29,6 +29,13 @@ resets dependent previews and never deletes its file.
 Only local source models are offered. Preferences ignore references to the
 retired inventory snapshot format; its rez, capture and cleanup workflow is
 removed.
+`world/attachment_inventory.rs` fetches missing inventory records for ordinary
+attachments independently of open floaters, with bounded retries. Once login
+restoration and interactive outfit changes finish, it adds missing Current Outfit
+links through AIS, without replacing the outfit or reattaching anything. A
+simulator-confirmed detach during link creation removes the late link after
+confirmation; failed readback reloads the COF before retrying. Transient avatar
+absence during teleport preserves links. Temporary attachments are excluded.
 
 `scene/anim.rs` restarts active resident and control-avatar motions from one shared
 instant for Ctrl+S, World and the resync toolbar command. Receipt signals,
