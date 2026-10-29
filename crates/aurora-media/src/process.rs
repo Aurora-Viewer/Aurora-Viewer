@@ -413,11 +413,13 @@ pub struct PluginPaths {
 
 impl PluginPaths {
     /// Path of a plugin library (`media_plugin_cef`, `media_plugin_libvlc`,
-    /// `media_plugin_gstreamer`): `<name>.dll` on Windows, `lib<name>.so`
-    /// elsewhere.
+    /// `media_plugin_gstreamer`): `<name>.dll` on Windows, `<name>.dylib` on
+    /// macOS (LLDir_Mac::getLLPluginFilename), `lib<name>.so` elsewhere.
     pub fn plugin_file(&self, basename: &str) -> PathBuf {
         let file = if cfg!(windows) {
             format!("{basename}.dll")
+        } else if cfg!(target_os = "macos") {
+            format!("{basename}.dylib")
         } else {
             format!("lib{basename}.so")
         };
@@ -429,8 +431,12 @@ impl PluginPaths {
     }
 
     /// A folder holding `llplugin\` and SLPlugin (either inside `llplugin\`,
-    /// as in Aurora's pack, or next to it, as in a Firestorm / SL install).
+    /// as in Aurora's pack, or next to it, as in a Firestorm / SL install);
+    /// on macOS, a folder holding SLPlugin.app ([`Self::bundle_in`]).
     pub fn in_dir(dir: &Path) -> Option<PluginPaths> {
+        if cfg!(target_os = "macos") {
+            return Self::bundle_in(dir);
+        }
         let plugin_dir = dir.join("llplugin");
         if !plugin_dir.is_dir() {
             return None;
@@ -447,6 +453,28 @@ impl PluginPaths {
             }
         }
         None
+    }
+
+    /// macOS: SLPlugin.app laid out as in the Legacy Viewer's application
+    /// (indra/llfilesystem/lldir_mac.cpp: the launcher in its Contents/MacOS,
+    /// the plugins, CEF's framework and helpers and LibVLC in its
+    /// Contents/Frameworks, the folder SLPlugin runs in). Found in
+    /// `llplugin/` (Aurora's pack), in the folder itself, or in the
+    /// Contents/Resources of an application chosen as the folder (an
+    /// installed Legacy Viewer's .app).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    fn bundle_in(dir: &Path) -> Option<PluginPaths> {
+        [dir.join("llplugin"), dir.to_path_buf(), dir.join("Contents").join("Resources")]
+            .into_iter()
+            .map(|base| base.join("SLPlugin.app"))
+            .find_map(|app| {
+                let contents = app.join("Contents");
+                let launcher = contents.join("MacOS").join("SLPlugin");
+                launcher.is_file().then(|| PluginPaths {
+                    launcher,
+                    plugin_dir: contents.join("Frameworks"),
+                })
+            })
     }
 
     /// Search order: the folder chosen by the user, the viewer's own folder,
@@ -472,6 +500,8 @@ mod tests {
         dir
     }
 
+    // (macOS looks for SLPlugin.app instead: the test below)
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn the_chosen_folder_comes_before_the_pack_and_nothing_else_is_searched() {
         let root = std::env::temp_dir().join(format!("aurora-media-paths-{}", std::process::id()));
@@ -499,5 +529,28 @@ mod tests {
         assert!(PluginPaths::discover(Some(&empty), None).is_none());
         assert!(PluginPaths::discover(None, None).is_none());
         std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn macos_finds_slplugin_app_in_the_pack_a_folder_or_an_application() {
+        let root = std::env::temp_dir().join(format!("aurora-media-bundle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bundle = |base: &Path| {
+            let macos = base.join("SLPlugin.app").join("Contents").join("MacOS");
+            std::fs::create_dir_all(&macos).expect("fixture");
+            std::fs::write(macos.join("SLPlugin"), b"").expect("fixture");
+            base.join("SLPlugin.app").join("Contents")
+        };
+        let pack = root.join("pack");
+        let pack_contents = bundle(&pack.join("llplugin"));
+        let legacy = root.join("Legacy.app");
+        let legacy_contents = bundle(&legacy.join("Contents").join("Resources"));
+        let found = PluginPaths::bundle_in(&pack).expect("pack");
+        assert_eq!(found.launcher, pack_contents.join("MacOS").join("SLPlugin"));
+        assert_eq!(found.plugin_dir, pack_contents.join("Frameworks"));
+        let found = PluginPaths::bundle_in(&legacy).expect("an application");
+        assert_eq!(found.plugin_dir, legacy_contents.join("Frameworks"));
+        assert!(PluginPaths::bundle_in(&root).is_none(), "nothing directly in the root");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
