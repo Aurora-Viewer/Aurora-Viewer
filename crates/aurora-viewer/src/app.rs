@@ -17985,9 +17985,12 @@ impl ApplicationHandler for App {
                     if !pressed && let Some(key) = gesture_key {
                         self.gesture_state.manager.release(Some(key));
                     }
+                    // Undo / Redo keep their keys while an editor with a
+                    // history shows: the build tools, or the poser
+                    let history_open = self.build.open || (self.ik_editor.open && self.ik_editor.posing());
                     if pressed
                         && !lens_shortcut
-                        && !build_shortcut.is_some_and(|s| s.takes_gesture_key(self.build.open))
+                        && !build_shortcut.is_some_and(|s| s.takes_gesture_key(history_open))
                         && (!ke.repeat || gesture_key.is_some_and(crate::gestures::Manager::repeat_triggers))
                         && !typing
                         && self.in_world()

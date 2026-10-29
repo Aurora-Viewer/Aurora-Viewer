@@ -1815,6 +1815,10 @@ quickly with Ctrl+Shift and release: it must stay at its final size and
 place, without going back to an earlier size for a moment (issue #1193).
 Moves, rotations and the Edit window's fields must not jump back either.
 
+The demo also answers the build tools' Undo and Redo (Ctrl+Z, Ctrl+Y) like a
+simulator: each object keeps its placements before each edit, the updates of
+one drag (closer than 0.4 s) making one step.
+
 **`AURORA_DEMO_BUILD_TAB=general|rights|object|transform|shape|features|texture[:pbr|bp|bp-normal|bp-specular|media]|contents`**
 — section of the build window shown by the script. General includes object
 permissions; `rights`, `object` and `transform` redirect to General for older
@@ -2576,7 +2580,7 @@ That ignored test creates and removes its own isolated profile.
   list, parent-local numeric controls, markers and native save/load/import
   actions. No motorcycle, contacts or IK-project draft is loaded or written.
   Prefer the dedicated `AURORA_DEMO_POSER` scenarios below. See [Poser](POSER.md).
-- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|misc|physics|library|settings|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|bridge-starting|bridge-silent|bridge-failed|bridge-off`**:
+- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|misc|physics|library|settings|close|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|bridge-starting|bridge-silent|bridge-failed|bridge-off`**:
   the full handoff trial, with the real local pose layer and consent state
   machine, on a standing avatar without motorcycle contacts or bone bindings.
   The additional `connected` mode restores a T-pose at 450 and moves the
@@ -2590,7 +2594,9 @@ That ignored test creates and removes its own isolated profile.
   owned synthetic control skeleton. Consent fixtures request at 450, answer
   or expire at 480, and optionally withdraw at 560. Incoming-request and
   reminder modes show the target UI; accept/withdraw modes select the peer
-  and edit its head at 510. Library widens the native window; settings and
+  and edit its head at 510. `close` asks to close the window at 700, the
+  head edited: capture 760 for the confirmation (Minimize, Close anyway,
+  Don't ask again). Library widens the native window; settings and
   the remaining modes select the corresponding controls. The other modes
   count as a ready bridge; `bridge-*` modes open the subject menu at 440 with
   the peer's Ask disabled and the matching hint (starting, query script

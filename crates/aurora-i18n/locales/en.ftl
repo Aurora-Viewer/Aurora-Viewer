@@ -11055,13 +11055,19 @@ poser-consent-refused = Refused · retry in 10 min
 poser-consent-no-answer = No answer · retry in 10 min
 poser-physics = Physics
 poser-settings = Poser settings
-poser-undo = Undo
-poser-redo = Redo
+poser-undo = Undo (Ctrl+Z)
+poser-redo = Redo (Ctrl+Y)
 poser-library = Pose library
 poser-library-search = Find a pose…
 poser-library-meta = Pose · { $date }
-poser-active-status = Posing · { $count } edited joints
-poser-stopped-status = Stopped · { $count } edited joints
+poser-active-status = Posing · { $count ->
+    [one] { $count } edited joint
+   *[other] { $count } edited joints
+    }
+poser-stopped-status = Stopped · { $count ->
+    [one] { $count } edited joint
+   *[other] { $count } edited joints
+    }
 poser-t-pose = T-pose
 poser-start = Start posing
 poser-photo-notice = Only you can see these poses. To show a pose to others, upload it as an animation.
@@ -11234,6 +11240,15 @@ poser-position = Local position (metres)
 poser-rotation = Local rotation (degrees)
 poser-markers = Show joint markers and gizmos
 poser-stop-on-close = Stop posing when closed
+poser-confirm-close = Confirm before closing loses the pose
+poser-close-title = Close the poser?
+poser-close-confirm = Closing stops the pose: its { $count ->
+    [one] { $count } edited joint is
+   *[other] { $count } edited joints are
+    } lost. Minimize the window to keep them.
+poser-close-dont-ask = Don't ask again
+poser-close-minimize = Minimize
+poser-close-anyway = Close anyway
 poser-load = Load .anim
 poser-save = Save .anim
 poser-import = Prepare import
