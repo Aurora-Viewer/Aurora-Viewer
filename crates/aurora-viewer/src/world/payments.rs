@@ -169,10 +169,7 @@ impl World {
         let note = self.notice_line(text.clone());
         self.transcript_only(other, &note);
         let open = self.social.has_session(&other);
-        let friend = !sent
-            && self.payments.open_for_friends
-            && self.social.is_friend(&other)
-            && self.rlva_can_start_im(other);
+        let friend = !sent && self.payments.open_for_friends && self.social.is_friend(&other) && self.rlva_can_start_im(other);
         if !open && !friend {
             return;
         }
