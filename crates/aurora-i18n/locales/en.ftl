@@ -1529,8 +1529,7 @@ world-tphistory-today = Today
 app-aurora-elsewhere = Aurora Elsewhere
 common-aurora-demo = Aurora Demo
 demo-aurora-viewer-rust-vulkan = { "Aurora Viewer\u000ARust · Vulkan" }
-demo-aurora-viewer-rust-metal = { "Aurora Viewer
-Rust · Metal" }
+demo-aurora-viewer-rust-metal = { "Aurora Viewer\u000ARust · Metal" }
 ui-login-aurora-viewer-v = Aurora Viewer v{ $value0 }
 cli-aurora-viewer = { "Aurora Viewer " }{ $version }
 cli-aurora-viewer-2 = { "Aurora Viewer " }{ $version }{ " - " }{ $t }
