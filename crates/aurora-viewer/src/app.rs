@@ -15500,9 +15500,9 @@ impl ApplicationHandler for App {
         }
         let mut attrs = crate::cli::with_desktop_id(Window::default_attributes())
             .with_title(crate::cli::window_title())
-            // Vulkan initialization and the first frame take time: Windows
-            // must not expose the unpainted client area while they run.
-            .with_visible(false)
+            // Metal needs a visible layer to present its first drawable.
+            // Other platforms keep the unpainted client area hidden.
+            .with_visible(cfg!(target_os = "macos"))
             // Automated captures must not steal the user's keyboard focus.
             .with_active(!capture)
             .with_inner_size(winit::dpi::LogicalSize::new(w, h))
@@ -15520,6 +15520,9 @@ impl ApplicationHandler for App {
             }
         };
         crate::window_hold::install(&window);
+        // Cmd+Q asks like the close button (mac_quit.rs)
+        #[cfg(target_os = "macos")]
+        crate::mac_quit::route_quit_to_close();
         let size = window.inner_size();
         if std::env::var_os("AURORA_NOVSYNC").is_some() {
             self.settings.vsync = false;
@@ -15538,10 +15541,12 @@ impl ApplicationHandler for App {
             Ok(r) => r,
             Err(e) => {
                 log::error!("renderer initialisation failed: {e}");
-                eprintln!(
-                    "{}",
+                let message = if cfg!(target_os = "macos") {
+                    aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-metal", e = format!("{}", e))
+                } else {
                     aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-vulkan", e = format!("{}", e))
-                );
+                };
+                eprintln!("{message}");
                 // the window is still hidden: without this the viewer just
                 // vanished (#894)
                 graphics_start::report(&e.to_string(), capture);

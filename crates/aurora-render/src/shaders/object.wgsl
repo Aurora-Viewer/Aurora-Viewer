@@ -1279,6 +1279,12 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     // opaque enough (fs_depth_contact); a more transparent one would get
     // what lies behind it
     contact_surface = (rec.flags.x & FLAG_ALPHA_BLEND) == 0u || (frame.contact.y > 0.5 && m.color.a >= 0.5);
+    // Share this calculation across both lighting branches: duplicating its
+    // wave/shadow code crashes Apple's Metal pipeline compiler.
+    var caustic_light = vec3<f32>(0.0);
+    if ((rec.flags.x & FLAG_FULLBRIGHT) == 0u) {
+        caustic_light = m.color.rgb * (1.0-m.unlit) * water_caustics(in.world_pos,m.n);
+    }
     var col: vec3<f32>;
     let classic = is_classic_sky();
     var hazed = false;
@@ -1303,7 +1309,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
             col = (col + m.emissive) * ll_final_scale() + ll_local_diffuse(m.color.rgb, m.n, in.world_pos, in.clip.xy)
                 + legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy) * ll_local_scale();
         }
-        col = ll_haze(col + m.color.rgb * (1.0-m.unlit) * water_caustics(in.world_pos,m.n), a);
+        col = ll_haze(col + caustic_light, a);
         hazed = true;
     } else {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
@@ -1319,7 +1325,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
                                frame.sun_color.rgb / 3.0, 1.0)
                 + legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy) + m.emissive;
         }
-        col += m.color.rgb * (1.0-m.unlit) * water_caustics(in.world_pos,m.n);
+        col += caustic_light;
     }
     if ((rec.flags.x & FLAG_HIGHLIGHT) != 0u) {
         col = mix(col, vec3<f32>(0.55, 0.36, 0.96), 0.35);
