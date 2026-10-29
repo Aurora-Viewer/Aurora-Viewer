@@ -109,7 +109,7 @@ Your settings, cache and logs are kept: they are not in the viewer's folder.
 ## Not on Linux yet
 
 - Automatic installation of updates (above).
-- Desktop notifications and the crash report window.
+- The crash report window.
 - Opening `secondlife://` links from a web browser.
 
 ## Building from source

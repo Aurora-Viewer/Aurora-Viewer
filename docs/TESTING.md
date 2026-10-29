@@ -4040,7 +4040,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the balance hidden, the clock, the interface hidden, immersive mode, the chat bar autohidden |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
-| `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and Windows notifications for messages, mentions and offers arriving in the background |
+| `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object` | Notification center: cards, burst, paused bell, history, Legacy toasts and object inventory offers |
@@ -4870,7 +4870,8 @@ failure. Grid validation and any paid upload are performed by the human.
   flashes the taskbar button ten times, which then stays lit (Preferences ›
   Chat › Taskbar and system notifications; the script dialog's switch is off
   by default); the system notifications are turned on for the scenario: one
-  Windows notification per arrival, a click brings the window back on the
+  Windows notification (on Linux, one from the desktop's notification
+  service) per arrival, a click brings the window back on the
   conversation, the nearby chat or the bell's list. The log says
   `taskbar flash` and `system notification shown (<what a click opens>)`,
   never the text. `front` keeps the window in front: nothing flashes and
@@ -4878,7 +4879,10 @@ failure. Grid validation and any paid upload are performed by the human.
   bell's list open: capture with `AURORA_FPS_LIMIT=60` at frame 1300. The
   first notification writes the application's name and icon under
   `HKCU\Software\Classes\AppUserModelId\Aurora.Viewer` (what Windows shows
-  above it). `AURORA_DEMO_OPTIONS=3:attention` opens the switches.
+  above it). On Linux the log names the notification service and its
+  capabilities at the first one; a tiling compositor that ignores the
+  minimize (Hyprland, Sway) keeps the window focused, so nothing is shown
+  unless the window is moved away from the screen first. `AURORA_DEMO_OPTIONS=3:attention` opens the switches.
 - **`AURORA_DEMO_EXIT=1|cancel|logout|quit`**: opens the modal at frame 650.
   `1` leaves it interactive; the other modes make the choice at frame 800.
   Take screenshots at `740,900` to compare the blurred background then the
