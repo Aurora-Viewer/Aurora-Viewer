@@ -6650,7 +6650,10 @@ impl App {
         self.joystick_avatar(&mut i);
         if self.camera.free().is_some() {
             // the photo's free camera takes the movement keys: the avatar
-            // stays where it is (no walk, turn, jump or flight start)
+            // stays where it is (no walk, turn, jump or flight start).
+            // The viewfinder pad must be applied here: this path returns
+            // before `viewfinder_pad`, so Look / Glide / Forward were ignored.
+            self.apply_viewfinder_free_pad();
             self.photo_free_move(&i, dt);
             self.input = MoveInput::default();
             self.fb_since = None;
