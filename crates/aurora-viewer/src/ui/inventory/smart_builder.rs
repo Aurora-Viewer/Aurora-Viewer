@@ -242,6 +242,7 @@ fn group_ui(ui: &mut egui::Ui, p: &Palette, group: &mut Group, depth: usize) -> 
     if let Some(index) = remove {
         group.nodes.remove(index);
     }
+    // a zero width fits the label; the height is taken as given
     ui.horizontal_wrapped(|ui| {
         if widgets::action_button(
             ui,
@@ -249,7 +250,7 @@ fn group_ui(ui: &mut egui::Ui, p: &Palette, group: &mut Group, depth: usize) -> 
             "plus",
             aurora_i18n::tr!("inventory-smart-add-rule"),
             ActionKind::Flat,
-            Vec2::ZERO,
+            Vec2::new(0.0, CONTROL),
         )
         .clicked()
         {
@@ -262,7 +263,7 @@ fn group_ui(ui: &mut egui::Ui, p: &Palette, group: &mut Group, depth: usize) -> 
                 "plus",
                 aurora_i18n::tr!("inventory-smart-add-group"),
                 ActionKind::Flat,
-                Vec2::ZERO,
+                Vec2::new(0.0, CONTROL),
             )
             .clicked()
         {
