@@ -37,8 +37,10 @@ pub const CAPTURE_SAMPLE_RATE: u32 = ENGINE_SAMPLE_RATE;
 pub const OVERDRIVEN_POWER_LEVEL: f32 = 0.7;
 
 /// Sound a PulseAudio server (PipeWire included) delivers per callback (s).
-/// Its default fragment is two seconds, far too late for voice.
-const PULSE_CAPTURE_SECS: f64 = 0.02;
+/// Its default fragment is two seconds, far too late for voice. 40 ms, not
+/// 20: cpal's host lets the server hold one fragment and does not raise its
+/// callback thread to realtime, so a longer stall than this drops audio.
+const PULSE_CAPTURE_SECS: f64 = 0.04;
 
 /// Largest accepted software input gain (Firestorm's slider goes to 2).
 pub const MAX_INPUT_GAIN: f32 = 4.0;
