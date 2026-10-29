@@ -172,8 +172,8 @@ jobs:
           compression-level: 0
 
   # The macOS application (Apple Silicon) joins the release like the Linux
-  # archive: "Aurora Viewer.app" in a zip (ditto keeps the bundle's
-  # signature). Signed with the Developer ID, then notarized and stapled,
+  # archive: "Aurora Viewer.app" in a disk image, next to a link to
+  # Applications to drag it onto, as Mac applications are installed. Signed with the Developer ID, then notarized and stapled,
   # when the repository has the Apple secrets (docs/MACOS.md, "Signing");
   # signed ad hoc otherwise, which macOS opens only after "Open Anyway" in
   # Privacy & Security. The updater does not install it: the viewer points
@@ -255,12 +255,18 @@ jobs:
           codesign --verify --strict --verbose=2 "$APP"
           "$APP/Contents/MacOS/aurora-viewer" --version
           if [ "$SIGNED" = true ]; then spctl --assess --type execute --verbose=2 "$APP"; fi
-      - name: Package
+      # a compressed read-only image (UDZO); ditto copies the bundle with its
+      # signature (and its stapled ticket)
+      - name: Disk image
         run: |
-          zip="Aurora-Viewer-$TAG-macos-arm64.zip"
-          ditto -c -k --keepParent "$APP" "$zip"
-          shasum -a 256 "$zip" > "$zip.sha256"
-          echo "ARCHIVE=$zip" >> "$GITHUB_ENV"
+          dmg="Aurora-Viewer-$TAG-macos-arm64.dmg"
+          stage="$RUNNER_TEMP/dmg"
+          mkdir -p "$stage"
+          ditto "$APP" "$stage/$APP"
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -volname "Aurora Viewer" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$dmg"
+          shasum -a 256 "$dmg" > "$dmg.sha256"
+          echo "ARCHIVE=$dmg" >> "$GITHUB_ENV"
       - name: Publish
         if: env.TAG != 'dry-run'
         env:

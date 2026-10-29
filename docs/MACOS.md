@@ -14,9 +14,11 @@ nothing else to install. macOS support is new: tell us what does not work
 ## 1. Download and install
 
 1. On the [latest release](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/latest),
-   download `Aurora-Viewer-<version>-macos-arm64.zip`.
-2. Open the zip (a double click in the Finder): it gives **Aurora Viewer**.
-3. Drag **Aurora Viewer** into your **Applications** folder.
+   download `Aurora-Viewer-<version>-macos-arm64.dmg`.
+2. Open it (a double click in the Finder): a window shows **Aurora Viewer**
+   next to your **Applications** folder.
+3. Drag **Aurora Viewer** onto **Applications**, then eject the disk image
+   (the eject button next to "Aurora Viewer" in the Finder's sidebar).
 
 ## 2. Start the viewer
 
@@ -56,7 +58,7 @@ the close button of the window.
 
 The viewer tells you when a new version is out, but it cannot replace
 itself on macOS yet: its "Open the release page" button leads to the new
-zip. Install it as in step 1, replacing the old application. Your settings,
+disk image. Install it as in step 1, replacing the old application. Your settings,
 cache and logs are kept: they are not inside the application.
 
 | What | Where |
