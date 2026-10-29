@@ -177,13 +177,27 @@ pub fn item_from_llsd(v: &Llsd) -> Option<InvItem> {
             Uuid::from_u128(shadow.as_u128() ^ 0x3c115e51_04f4_523c_9fa6_98aff1034730)
         }
     };
+    let asset_type = int_or_name(&v["type"], asset_type_from_name);
+    let inv_type = if v.has("inv_type") {
+        int_or_name(&v["inv_type"], inv_type_from_name)
+    } else {
+        -1
+    };
+    // LLInventoryItem::fromLLSD / LLInventoryType::defaultForAssetType:
+    // Recover an omitted inventory type from its asset type, as the reader
+    // of a newly received inventory record does in the reference.
+    let inv_type = if inv_type >= 0 {
+        inv_type
+    } else {
+        default_inventory_type(asset_type)
+    };
     Some(InvItem {
         id,
         parent: v["parent_id"].as_uuid(),
         name: v["name"].to_string_value(),
         desc: v["desc"].to_string_value(),
-        asset_type: int_or_name(&v["type"], asset_type_from_name),
-        inv_type: int_or_name(&v["inv_type"], inv_type_from_name),
+        asset_type,
+        inv_type,
         asset_id,
         flags: v["flags"].as_u32(),
         favorite: v["favorite"]["toggled"].as_bool(),
@@ -208,6 +222,27 @@ pub fn item_from_llsd(v: &Llsd) -> Option<InvItem> {
         everyone_mask: v["permissions"]["everyone_mask"].as_u32(),
         next_owner_mask: v["permissions"]["next_owner_mask"].as_u32(),
     })
+}
+
+fn default_inventory_type(asset_type: i32) -> i32 {
+    match asset_type {
+        0 | 12 => 0,
+        1 | 17 => 1,
+        2 | 3 | 6 | 7 => asset_type,
+        4 | 10 | 11 => 10,
+        5 | 13 => 18,
+        8 | 14..=16 => 8,
+        20 => 19,
+        21 => 20,
+        40 => 23,
+        45 => 24,
+        49 => 22,
+        56 => 25,
+        57 => 26,
+        58 => 27,
+        59 => 28,
+        _ => -1,
+    }
 }
 
 /// Parse the login "inventory-skeleton" / "inventory-skel-lib" arrays.
@@ -297,6 +332,16 @@ pub fn parse_fetch_response(v: &Llsd) -> Vec<FolderContents> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn omitted_inventory_types_follow_asset_defaults_and_explicit_attachment_types_stay() {
+        for (asset, inventory) in [(6, 6), (5, 18), (13, 18), (20, 19), (21, 20), (56, 25), (57, 26)] {
+            let doc = llsd_map! { "item_id" => Uuid::from_u128(1), "type" => asset };
+            assert_eq!(item_from_llsd(&doc).expect("item").inv_type, inventory);
+        }
+        let doc = llsd_map! { "item_id" => Uuid::from_u128(1), "type" => 6, "inv_type" => 17 };
+        assert_eq!(item_from_llsd(&doc).expect("attachment").inv_type, 17);
+    }
 
     #[test]
     fn parses_fetch_response() {

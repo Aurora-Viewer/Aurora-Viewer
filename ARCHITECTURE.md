@@ -41,6 +41,13 @@ the COF remains unavailable, following `LLSelectMgr::sendDetach`. Healthy outfit
 mutations retain their existing path. Recovery preserves RLVa point/source locks
 and refuses unknown folder or scripted nostrip decisions until metadata arrives.
 
+`world/inventory/parents.rs` files owned, parentless server records using the
+Legacy Viewer rules: AIS reads go to Lost And Found; server notifications retain
+an existing parent or use the asset's system folder. Original item identities and
+permissions remain intact. Bounded reliable parent moves precede COF registration,
+and pending repairs survive older folder snapshots until confirmed readback.
+Parent confirmations use the existing RLVa inventory move policy.
+
 `scene/anim.rs` restarts active resident and control-avatar motions from one shared
 instant for Ctrl+S, World and the resync toolbar command. Receipt signals,
 simulator state and independent import previews are preserved. Native key dispatch leaves Save
@@ -2434,6 +2441,10 @@ preserve known flags, while complete AIS records can explicitly clear them.
 Cache version 3 invalidates older snapshots once, reloading favorites that
 earlier builds may have lost from their local listing.
 Readback retries never repeat a write, and diagnostics log only field states.
+Item reads accept explicit null parents, derive omitted inventory types from
+asset types, and recognize direct or embedded records with the requested identity.
+Background batches preserve successful items and report only failed identities;
+mutation readback still requires all requested records.
 Inventory links read and modify their original's favorite through
 `world/inventory/actions.rs`; the menu, filter, count and star share that
 rule. Multi-selection sets a common state and deduplicates aliases,

@@ -854,4 +854,105 @@ mod tests {
         assert!(remaining.is_none());
         assert!(matches!(&commands[..], [NetCommand::DetachObject { local_id, .. }] if *local_id == object.local_id));
     }
+
+    fn with_lost_folder(world: &mut World, item: &InvItem) -> Uuid {
+        world.inventory.owner = world.agent_id;
+        let id = Uuid::from_u128(90_080);
+        let mut folder = world.inventory.folders[&item.parent].clone();
+        folder.info.id = id;
+        folder.info.type_default = 16;
+        folder.info.name = "Lost And Found".to_owned();
+        folder.items.clear();
+        world.inventory.folders.insert(id, folder);
+        id
+    }
+
+    #[test]
+    fn a_fetched_parentless_attachment_becomes_visible_without_replacing_its_original() {
+        let (mut world, object, mut item) = fixture();
+        let lost = with_lost_folder(&mut world, &item);
+        item.parent = Uuid::nil();
+        world.apply(NetEvent::InventoryItems(vec![item.clone()]));
+        assert_eq!(world.inventory.items[&item.id].parent, lost);
+        assert!(world.inventory.folders[&lost].items.contains(&item.id));
+        assert!(
+            world.objects.index_of_uuid(&object.full_id).is_some(),
+            "do not detach or replace the object to file it"
+        );
+        let change = world.inventory.take_parent_repairs().expect("reliable parent repair");
+        assert!(change.move_only());
+        let commands = world.update_attachment_inventory(Instant::now(), true);
+        assert!(matches!(&commands[..], [NetCommand::EditInventory { change, .. }]
+            if matches!(&change.operations[..], [Operation::Links { links, .. }] if links.len() == 1 && links[0].target == item.id)));
+        assert!(
+            !world.inventory.items.contains_key(&object.full_id),
+            "the original inventory UUID stays unchanged"
+        );
+    }
+
+    #[test]
+    fn parent_repairs_use_normal_rlva_move_rules_without_unlocking_other_folders() {
+        let (mut world, object, mut item) = fixture();
+        let old = item.parent;
+        let lost = with_lost_folder(&mut world, &item);
+        item.parent = Uuid::nil();
+        world.apply(NetEvent::InventoryItems(vec![item.clone()]));
+        let locked = Uuid::from_u128(90_083);
+        let mut shared = world.inventory.folders[&old].info.clone();
+        shared.parent = world.inventory.root;
+        shared.name = "#RLV".to_owned();
+        shared.type_default = -1;
+        world.inventory.server_updated(
+            vec![
+                shared,
+                aurora_net::inventory::InvFolder {
+                    id: locked,
+                    parent: old,
+                    name: "Locked".to_owned(),
+                    type_default: -1,
+                    ..Default::default()
+                },
+            ],
+            Vec::new(),
+        );
+        world.rlva_configure(true);
+        restriction(&mut world, object.full_id, "@attachthis:Locked=n");
+        let change = world.inventory.take_parent_repairs().expect("repair");
+        let command = NetCommand::EditInventory {
+            request: Uuid::from_u128(90_081),
+            change: change.clone(),
+        };
+        assert!(world.rlva_allows_command(&command, Uuid::nil()));
+        assert!(
+            world.rlva_allows_command(&command, object.full_id),
+            "confirming the current parent is an ordinary allowed move"
+        );
+        let other = NetCommand::EditInventory {
+            request: Uuid::from_u128(90_082),
+            change: Mutation {
+                operations: vec![Operation::Patch {
+                    id: item.id,
+                    folder: false,
+                    body: aurora_llsd::llsd_map! { "parent_id" => locked },
+                }],
+                refresh: vec![locked],
+                ..Default::default()
+            },
+        };
+        assert!(!world.rlva_allows_command(&other, Uuid::nil()));
+        assert!(!world.rlva_allows_command(&other, Uuid::from_u128(90_084)));
+        let version = world.inventory.folders[&lost].info.version;
+        world.apply(NetEvent::InventoryContents(vec![FolderContents {
+            folder_id: lost,
+            owner_id: world.agent_id,
+            version: version + 1,
+            folders: Vec::new(),
+            items: vec![world.inventory.items[&item.id].clone()],
+        }]));
+        assert!(
+            world.rlva_allows_command(&command, Uuid::nil()),
+            "parent confirmation retains normal move policy after readback"
+        );
+        assert!(!world.rlva_allows_command(&other, Uuid::nil()));
+    }
 }

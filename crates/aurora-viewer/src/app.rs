@@ -7788,6 +7788,13 @@ impl App {
                 self.send(NetCommand::RequestProfile(id));
             }
             self.send_derender_requests();
+            // Parentless server records are filed before their COF links:
+            // reliable MoveInventoryItem, matching AISUpdate::doUpdate.
+            if let Some(change) = self.world.inventory.take_parent_repairs() {
+                let request = uuid::Uuid::new_v4();
+                self.world_edits.insert(request);
+                self.send(NetCommand::EditInventory { request, change });
+            }
             // outfit restore at login (queues the COF fetch below)
             let second_life = !matches!(self.settings.grid, crate::settings::GridChoice::Custom);
             self.world.update_outfit(second_life, Instant::now());
