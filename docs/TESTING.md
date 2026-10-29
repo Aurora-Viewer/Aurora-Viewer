@@ -1665,6 +1665,11 @@ No real L$ and no connection to a grid.
   stops the click without touching; `ignore-build` selects this screen in
   build mode.
 - `open` shows three simulated content items.
+- `open-multi` (#1410): the Open window receives Ctrl+A at frame 420;
+  every contents row is selected together. Ctrl/Shift clicks, a selected-row
+  drag or its Copy/Move menu act on the selection; Delete removes selected
+  entries only on a modifiable object. The list accepts inventory selections
+  and folders, including when empty; a refused entry refuses the entire drop.
 - `open-copy`, `open-replace`, `open-add` (#1103): after `open`, the
   window's "Copy to inventory" at frame 420 (`replace` / `add`: the "Copy
   and wear" menu's "Replace outfit with contents" / "Add contents to

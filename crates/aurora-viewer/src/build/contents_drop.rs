@@ -310,7 +310,7 @@ pub fn plan(world: &World, ids: &[Uuid], idx: usize, ctrl: bool, target: Target)
 /// The answer of `plan` while the cargo is held still: asked again only
 /// when the cargo, the target, Ctrl, the inventory or the object's rights
 /// change, not every frame.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct PlanCheck {
     /// cargo, prim, its flags and its root's, Ctrl, inventory generation
     key: Option<(Vec<Uuid>, Uuid, (u32, u32), bool, u64)>,

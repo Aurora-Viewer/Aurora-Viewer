@@ -2235,6 +2235,11 @@ normal search, modified-settings and reset paths.
 the transfer of an object's contents to the personal inventory;
 `ui/inventory/task_drop.rs` provides the common source of the two contents
 windows, the drop targets and the confirmation of removals.
+`ui/inventory/task_selection.rs` shares Ctrl/Shift selection with the editor.
+`ui/object_actions/contents_list.rs` applies it to the Open window, routes its
+focused Delete/Ctrl+A before world shortcuts, and shares the existing batch
+transfer and inventory-drop rules. `app/contents_copy.rs` rechecks mutations
+against the current object before dispatch and refreshes the contents after drops.
 `app/inventory.rs` checks the permissions again before the
 `MoveTaskInventory` message, with two persistent warning preferences
 (ordinary object or object containing scripts).

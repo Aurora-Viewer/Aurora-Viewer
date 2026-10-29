@@ -45,6 +45,61 @@ impl ContentsCopies {
 }
 
 impl App {
+    pub(super) fn apply_contents_action(&mut self, action: ui::object_actions::ContentsAction) {
+        use ui::object_actions::ContentsAction;
+        match action {
+            ContentsAction::Script(object, item) => self.open_script(aurora_net::scripts::ScriptTarget { object, item }),
+            ContentsAction::Notecard(object, item) => self.open_task_notecard(object, item),
+            ContentsAction::Copy(request) => self.copy_contents(*request),
+            ContentsAction::Take(object, items) => {
+                let Some(idx) = self.world.objects.index_of_uuid(&object) else {
+                    return;
+                };
+                if items
+                    .iter()
+                    .all(|item| self.build.task_transfer_kind(&self.world, object, item).is_ok())
+                {
+                    for item in &items {
+                        self.build.copy_item_to_inventory(&self.world, idx, item, Uuid::nil());
+                    }
+                }
+            }
+            ContentsAction::Remove(object, ids) => {
+                let Some(idx) = self.world.objects.index_of_uuid(&object) else {
+                    return;
+                };
+                if !self.build.contents_editable(&self.world, idx) {
+                    return;
+                }
+                let Some(c) = self.interactions.contents.as_mut().filter(|c| c.target.object == object) else {
+                    return;
+                };
+                let Some(Ok(items)) = &mut c.result else { return };
+                if !ids.iter().all(|id| items.iter().any(|item| item.id == *id)) {
+                    return;
+                }
+                for id in &ids {
+                    self.build.remove_item(&self.world, idx, *id);
+                }
+                items.retain(|item| !ids.contains(&item.id));
+                self.flush_build();
+            }
+            ContentsAction::Drop(object, ids, ctrl) => {
+                let Some(idx) = self.world.objects.index_of_uuid(&object) else {
+                    return;
+                };
+                match crate::build::contents_drop::plan(&self.world, &ids, idx, ctrl, crate::build::contents_drop::Target::Panel) {
+                    Ok(drops) => {
+                        self.build.drop_inventory(&mut self.world, idx, drops);
+                        self.build.request_contents(&self.world, idx, true);
+                        self.flush_build();
+                    }
+                    Err(reason) => self.contents_copy_alert(crate::build::contents_drop::reason_text(reason).into()),
+                }
+            }
+        }
+    }
+
     fn contents_copy_alert(&mut self, text: String) {
         self.world
             .notifications

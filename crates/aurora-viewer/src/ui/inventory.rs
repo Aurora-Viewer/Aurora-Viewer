@@ -52,6 +52,7 @@ pub(crate) mod smart;
 mod smart_builder;
 pub(crate) mod smart_store;
 pub(crate) mod task_drop;
+pub(crate) mod task_selection;
 pub mod thumbnail;
 pub(crate) mod tree;
 pub(crate) mod view;
