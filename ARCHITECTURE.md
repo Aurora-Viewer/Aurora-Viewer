@@ -5,6 +5,12 @@ instant for Ctrl+S, World and the resync toolbar command. Receipt signals,
 simulator state and independent import previews are preserved. Native key dispatch leaves Save
 to active script/document editors; inventory editors mark their focused field.
 
+`app/audio_mute.rs` retains the native minimized state while the renderer
+temporarily owns the window. Native resize events and the event loop apply
+the transient master mute immediately to the audio mixer, parcel/prim media,
+chat video previews and microphone transmission. Saved volumes, channel mutes
+and the microphone toggle are preserved when the window is restored.
+
 `aurora-net/src/session.rs` keeps the last confirmed agent parcel. Selected,
 hovered and build-tool property replies refresh its live metadata only when
 the simulator and local parcel id match; its bitmap, bounds and notification

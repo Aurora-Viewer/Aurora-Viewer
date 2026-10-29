@@ -30,6 +30,7 @@ mod ao;
 mod app_links;
 mod area_search;
 mod attention;
+mod audio_mute;
 mod avatar_render_settings;
 mod bridge;
 mod movelock;
@@ -640,7 +641,7 @@ pub struct App {
     /// The parcel music's title last told (ShowStreamMetadata).
     stream_title_said: Option<String>,
     /// Every sound is cut because the window is minimised (MuteWhenMinimized).
-    minimized_mute: bool,
+    minimized_mute: audio_mute::MinimizedMute,
     /// When the crash report's state was last noted (app/crash_state.rs).
     crash_state_at: Option<Instant>,
     /// The graphics card stopped finishing frames (app/gpu_stall.rs).
@@ -971,6 +972,11 @@ impl App {
         // the regional 12 / 24 hours and time zone of the bars' clock, read once
         ui::bars::clock::read_system_clock();
         let mut settings = Settings::load();
+        if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
+            && let Ok(mode) = std::env::var("AURORA_DEMO_MINIMIZED_MUTE")
+        {
+            settings.audio.mute_when_minimized = mode != "off";
+        }
         aurora_i18n::select(&settings.language, crate::cli::get().language.as_deref());
         if std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_KEYBOARD").is_some() {
             // Exercise a first launch without changing the user's bindings.
@@ -1319,7 +1325,7 @@ impl App {
             applied_audio: None,
             stream_url: String::new(),
             stream_title_said: None,
-            minimized_mute: false,
+            minimized_mute: audio_mute::MinimizedMute::default(),
             crash_state_at: None,
             gpu_stall: Default::default(),
             crouch_toggle: Default::default(),
@@ -3798,9 +3804,7 @@ impl App {
         if self.demo && std::env::var_os("AURORA_DEMO_SOUND").is_none() {
             return 0.0;
         }
-        let a = &self.settings.audio;
-        let channel = |i: usize| if a.muted[i] || !a.enabled[i] { 0.0 } else { a.volume[i] };
-        channel(0) * channel(5)
+        audio_mute::media_volume(&self.settings.audio, self.minimized_mute.active)
     }
 
     /// Why we may not speak where we stand (LLAgent::isActionAllowed("speak"),
@@ -3824,7 +3828,7 @@ impl App {
 
     /// Voice transmission wanted (microphone button / push-to-talk).
     fn talking(&self) -> bool {
-        if self.speak_denied().is_some() {
+        if self.minimized_mute.active || self.speak_denied().is_some() {
             false
         } else if self.settings.audio.mic_hold {
             self.mic_button_held || self.settings.keybinds.held(Action::PushToTalk, &self.down, self.mods())
@@ -5115,7 +5119,7 @@ impl App {
             // same order as AUDIO_CHANNELS
             for (i, ch) in aurora_audio::Channel::ALL.iter().enumerate() {
                 engine.set_volume(*ch, a.volume[i]);
-                engine.set_muted(*ch, a.muted[i] || (i == 0 && self.minimized_mute));
+                engine.set_muted(*ch, a.muted[i] || (i == 0 && self.minimized_mute.active));
                 engine.set_enabled(*ch, i == 0 || a.enabled[i]);
             }
             self.applied_audio = Some(a.clone());
@@ -5128,15 +5132,19 @@ impl App {
     /// frame and when the window's size changes, frames being rare while it
     /// is minimised.
     fn sync_minimized_mute(&mut self) {
-        let minimized = self.gfx.as_ref().is_some_and(|g| g.window.is_minimized().unwrap_or(false));
-        let mute = self.settings.audio.mute_when_minimized && minimized;
-        if mute == self.minimized_mute {
+        let minimized = self.gfx.as_ref().and_then(|g| g.window.is_minimized());
+        if !self.minimized_mute.update(self.settings.audio.mute_when_minimized, minimized) {
             return;
         }
-        self.minimized_mute = mute;
+        let mute = self.minimized_mute.active;
         if let Some(engine) = &self.audio_engine {
             engine.set_muted(aurora_audio::Channel::Master, mute || self.settings.audio.muted[0]);
         }
+        let volume = self.media_volume();
+        self.media.set_channel_volume(volume);
+        self.chat_ui.previews.set_volume(volume);
+        self.voice.set_transmit(self.talking());
+        log::debug!("audio: minimized mute {mute}");
     }
 
     /// The geometry arena's use noted for the agent's region, and the arena
@@ -7421,6 +7429,7 @@ impl App {
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
+        self.sync_minimized_mute();
         aurora_render::frame_priority::apply();
         self.world.anti_spam.configure(self.settings.anti_spam);
         self.update_rlva();
@@ -18122,6 +18131,7 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.sync_minimized_mute();
         self.record_window_geometry();
         self.attention_window();
         self.external_links();

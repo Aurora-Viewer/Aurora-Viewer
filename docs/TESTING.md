@@ -7459,6 +7459,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_STREAM_TITLE=[window\|history\|text][,stop]` | Stream title window with changing titles and their history |
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1`, `hud` or `parcel-open\|parcel-local\|parcel-source` | World/HUD chime or parcel sound isolation; interface and media sounds audible |
+| `AURORA_DEMO_MINIMIZED_MUTE=1\|off` | Force mute when minimized on or off for an offline run |
 | `AURORA_DEMO_SOUND_EXPLORER=1\|all\|blacklist\|blacklist-ignored\|avatar-menu\|avatar-menu-mixed\|avatar-menu-pie` | Sound Explorer, separate blacklist categories, ignored objects or avatar sound-category switches |
 | `AURORA_DEMO_ANIMATION_EXPLORER=1\|blacklist` | Animation explorer with a stand-in preview, or a blacklisted animation |
 | `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
@@ -7480,6 +7481,15 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_PLATE_COMBO=<clicks>` | "Click combo counter" for this run, and that many clicks on the hovered plate |
 
 ### Details
+
+- **`AURORA_DEMO_MINIMIZED_MUTE=1|off`**: overrides the Sound preference
+  for this offline launch. Combine with `AURORA_DEMO_SOUND=1` for the
+  looping world chime, or with local parcel/prim media or a chat video.
+  With `1`, minimize the native window: all playback and microphone
+  transmission must stop until restoration. Switching to another app alone
+  must leave playback audible. `off` keeps playback audible while minimized.
+  Restoration must preserve the saved channel volumes, mutes and microphone
+  toggle. Debug logging reports `audio: minimized mute true/false`.
 
 - **`AURORA_DEMO_VOICE`**: `speaking` animates the outline of our own name
   tag and of the other avatar's with realistic synthetic levels (0.35 to
