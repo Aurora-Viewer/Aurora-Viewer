@@ -4883,7 +4883,7 @@ failure. Grid validation and any paid upload are performed by the human.
   line): the rest of their first name and a space follow, selected; capture
   frame 620.
 - **`AURORA_DEMO_TRANSLATE=1|on`**: the translation of private conversations
-  (`crate::translate`, fork experiment). The Conversations window opens on a
+  (`crate::translate`, experimental). The Conversations window opens on a
   private conversation where a demo resident writes two Spanish messages
   (frames 700 and 760). With `1`, the preferences decide: translation is off
   by default (Preferences › Chat › Translation) and nothing happens; on, the

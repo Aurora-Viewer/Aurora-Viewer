@@ -12106,7 +12106,7 @@ particle-editor-inject-timeout = グリッドから応答がありませんで�
 keybinds-lens-zoom-in = 視野角を狭める
 keybinds-lens-zoom-out = 視野角を広げる
 keybinds-lens-zoom-default = 視野角をリセット
-# Translation of private IMs with a local model (fork experiment)
+# Translation of private IMs with a local model (experimental)
 translate-on = { "この会話は翻訳されています：" }{ $mine }{ " ⇄ " }{ $theirs }{ "。" }
 translate-off = この会話の翻訳をオフにしました。
 translate-status-off = この会話は翻訳されていません。翻訳するには、/tr と言語を入力してください（例：/tr es）。

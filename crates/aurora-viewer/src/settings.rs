@@ -809,7 +809,7 @@ pub struct Settings {
     /// Keyword alerts in chat and IMs (FSKeyword*, Preferences › Chat).
     pub keywords: crate::keywords::KeywordSettings,
     /// Translation of private IMs with a local model (Preferences > Chat >
-    /// Translation; fork experiment, not in the Legacy Viewer).
+    /// Translation; experimental, not in the Legacy Viewer).
     pub translate: crate::translate::TranslateSettings,
     /// Spell checking of the text fields (SpellCheck, SpellCheckDictionary;
     /// Preferences › Chat › Spelling).

@@ -12422,7 +12422,7 @@ particle-editor-inject-timeout = The grid did not answer: the script was not put
 keybinds-lens-zoom-in = Narrow viewing angle
 keybinds-lens-zoom-out = Widen viewing angle
 keybinds-lens-zoom-default = Reset viewing angle
-# Translation of private IMs with a local model (fork experiment)
+# Translation of private IMs with a local model (experimental)
 translate-on = { "This conversation is translated: " }{ $mine }{ " ⇄ " }{ $theirs }{ "." }
 translate-off = Translation is off for this conversation.
 translate-status-off = This conversation is not translated. Type /tr and a language (for example /tr es) to translate it.

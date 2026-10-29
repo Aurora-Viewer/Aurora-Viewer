@@ -265,7 +265,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
 /// window, and also said on a channel of the user's choice (off, not in the
 /// Legacy Viewer; any channel, 0 being the public chat, but DEBUG_CHANNEL).
 /// The translation of private conversations with a local model
-/// (`crate::translate`; fork experiment, not in the Legacy Viewer): my
+/// (`crate::translate`; experimental, not in the Legacy Viewer): my
 /// language and the model. Each conversation's language is chosen in it.
 fn translation(cx: &mut Cx) {
     use aurora_i18n::tr;
