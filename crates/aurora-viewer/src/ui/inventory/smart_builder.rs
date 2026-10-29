@@ -6,12 +6,13 @@ use super::smart::{Field, Group, Node, Op, Rule, SmartQuery};
 use super::view::{Age, types};
 use super::{InventoryUi, Palette, smart_store};
 use crate::ui::widgets::{self, ActionKind};
-use egui::{Align, Layout, RichText, TextStyle, Vec2};
+use egui::{Align, Layout, RichText, Vec2};
 
 /// Groups nest this deep below the root in the UI (the matcher has no limit).
 const MAX_DEPTH: usize = 2;
-/// The height of every control of a row: menus, fields and buttons.
-const CONTROL: f32 = 27.0;
+/// The height of every control of a row: menus, fields, buttons and the
+/// All / Any segments.
+const CONTROL: f32 = 26.0;
 /// The field and operator columns keep one width, so they line up from row
 /// to row whatever their text.
 const FIELD_W: f32 = 104.0;
@@ -303,7 +304,7 @@ fn row<T>(
                         ui.allocate_exact_size(Vec2::splat(CONTROL), egui::Sense::hover());
                     }
                 }
-                not_switch(ui, p, not(item));
+                not_toggle(ui, p, not(item));
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| fill(ui, item));
             });
         },
@@ -311,19 +312,17 @@ fn row<T>(
     removed
 }
 
-/// The Not switch and its label, in a box of their own width: the right to
-/// left column around it would otherwise put the label first.
-fn not_switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool) {
-    let label = aurora_i18n::tr!("inventory-smart-not");
-    let text = ui
-        .painter()
-        .layout_no_wrap(label.to_owned(), TextStyle::Body.resolve(ui.style()), p.ink)
-        .size()
-        .x;
-    let width = widgets::SWITCH_SIZE.x + ui.spacing().item_spacing.x + text;
-    ui.allocate_ui_with_layout(Vec2::new(width, CONTROL), Layout::left_to_right(Align::Center), |ui| {
-        widgets::switch_labeled(ui, p, on, label).on_hover_text(aurora_i18n::tr!("inventory-smart-not-tip"));
-    });
+/// Not, as a word-sized button beside remove, lit in the accent while the
+/// rule or the group is turned around: quieter than a switch and its label,
+/// and plainer than a glyph at this size.
+fn not_toggle(ui: &mut egui::Ui, p: &Palette, on: &mut bool) {
+    let kind = if *on { ActionKind::Primary } else { ActionKind::Flat };
+    if widgets::action_button(ui, p, "", aurora_i18n::tr!("inventory-smart-not"), kind, Vec2::new(0.0, CONTROL))
+        .on_hover_text(aurora_i18n::tr!("inventory-smart-not-tip"))
+        .clicked()
+    {
+        *on = !*on;
+    }
 }
 
 fn group_not(group: &mut Group) -> &mut bool {
@@ -334,9 +333,19 @@ fn rule_not(rule: &mut Rule) -> &mut bool {
     &mut rule.not
 }
 
-/// A group: its All / Any choice, Not and remove, its nodes, then the add
-/// buttons.
+/// A group. The root lies on the floater; a nested group is a card of its
+/// own, so its rules read as one block.
 fn group_ui(ui: &mut egui::Ui, p: &Palette, group: &mut Group, depth: usize) -> bool {
+    if depth == 0 {
+        group_body(ui, p, group, depth)
+    } else {
+        widgets::surface(ui, p, |ui| group_body(ui, p, group, depth))
+    }
+}
+
+/// A group's All / Any choice, Not and remove, its nodes, then the add
+/// buttons.
+fn group_body(ui: &mut egui::Ui, p: &Palette, group: &mut Group, depth: usize) -> bool {
     let remove_tip = (depth > 0).then(|| aurora_i18n::tr!("inventory-smart-remove-group"));
     let remove_self = row(
         ui,
@@ -345,13 +354,14 @@ fn group_ui(ui: &mut egui::Ui, p: &Palette, group: &mut Group, depth: usize) -> 
         group_not,
         remove_tip,
         |ui, group| {
-            if depth > 0 {
-                ui.label(RichText::new(aurora_i18n::tr!("inventory-smart-group")).color(p.muted));
+            let mut choice = usize::from(group.any);
+            let options = [
+                (aurora_i18n::tr!("inventory-smart-match-all"), true),
+                (aurora_i18n::tr!("inventory-smart-match-any"), true),
+            ];
+            if widgets::segmented(ui, p, &mut choice, &options) {
+                group.any = choice == 1;
             }
-            widgets::radio_value(ui, p, &mut group.any, false, aurora_i18n::tr!("inventory-smart-match-all"))
-                .on_hover_text(aurora_i18n::tr!("inventory-smart-match-tip"));
-            widgets::radio_value(ui, p, &mut group.any, true, aurora_i18n::tr!("inventory-smart-match-any"))
-                .on_hover_text(aurora_i18n::tr!("inventory-smart-match-tip"));
         },
         |_, _| {},
     );
@@ -364,11 +374,9 @@ fn group_ui(ui: &mut egui::Ui, p: &Palette, group: &mut Group, depth: usize) -> 
                 }
             }
             Node::Group(inner) => {
-                ui.indent("group", |ui| {
-                    if group_ui(ui, p, inner, depth + 1) {
-                        remove = Some(index);
-                    }
-                });
+                if group_ui(ui, p, inner, depth + 1) {
+                    remove = Some(index);
+                }
             }
         });
     }

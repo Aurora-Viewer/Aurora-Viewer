@@ -211,7 +211,7 @@ fn rule_menu(ui: &mut egui::Ui, p: &Palette, rule: &mut Rule) -> bool {
         }
         menu::separator(ui, p);
     }
-    menu::toggle(ui, p, "x", aurora_i18n::tr!("inventory-smart-not"), &mut rule.not);
+    menu::toggle(ui, p, "math-not", aurora_i18n::tr!("inventory-smart-not"), &mut rule.not);
     if menu::item(ui, p, "trash-filled", aurora_i18n::tr!("inventory-smart-remove-rule")) {
         remove = true;
     }
@@ -230,7 +230,7 @@ fn group_menu(ui: &mut egui::Ui, p: &Palette, group: &mut Group) -> bool {
         group.any = true;
     }
     menu::separator(ui, p);
-    menu::toggle(ui, p, "x", aurora_i18n::tr!("inventory-smart-not"), &mut group.not);
+    menu::toggle(ui, p, "math-not", aurora_i18n::tr!("inventory-smart-not"), &mut group.not);
     menu::item(ui, p, "trash-filled", aurora_i18n::tr!("inventory-smart-remove-group"))
 }
 

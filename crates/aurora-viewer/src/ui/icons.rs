@@ -117,6 +117,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "logout",
     "map",
     "map-2",
+    "math-not",
     "maximize",
     "message-circle-plus",
     "message-off",
