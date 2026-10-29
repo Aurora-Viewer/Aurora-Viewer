@@ -56,7 +56,8 @@ jobs:
         run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings -A dead-code
       - name: Tests
         if: steps.changes.outputs.code == 'true' && (github.event_name == 'merge_group' || github.ref == 'refs/heads/feat/macos-metal')
-        run: cargo test --profile ci --workspace --locked
+        # every failure of the run at once: the Apple GPU is reached here only
+        run: cargo test --profile ci --workspace --locked --no-fail-fast
       # the offline demo past its loading fade, then quit: a missing image
       # or a non-zero exit (a pipeline Metal refused, a GPU fault) fails
       - name: A demo frame on Metal
