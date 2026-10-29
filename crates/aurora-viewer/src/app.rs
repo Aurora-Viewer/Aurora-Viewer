@@ -1003,7 +1003,7 @@ impl App {
         {
             settings.show_ao = false;
         }
-        let net = NetClient::new()?;
+        let net = NetClient::new(settings.fast_asset_loading)?;
         net.set_agent_language(aurora_i18n::language(), settings.language_is_public);
         let voice_http = net.caps_http();
         let login_info = ui::news::LoginInfo::start(net.runtime());

@@ -37,6 +37,11 @@ pub fn page(cx: &mut Cx) {
                 .changed()
             },
         );
+        cx.toggle(
+            tr!("ui-options-fast-asset-loading"),
+            tr!("ui-options-fast-asset-loading-help"),
+            &field!(fast_asset_loading),
+        );
         // Legacy Viewer › Move & View (FSDisableNeighbourRegionConnections)
         cx.toggle(
             tr!("ui-options-no-neighbour-regions"),

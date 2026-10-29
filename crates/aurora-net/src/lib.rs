@@ -126,10 +126,18 @@ pub(crate) fn simulator_roots() -> Vec<reqwest::Certificate> {
 /// driver within seconds of login; 24 is the stable pre-adaptation limit.
 const ASSET_FETCH_SLOTS: usize = 24;
 const ASSET_IDLE_CONNECTIONS_PER_HOST: usize = 32;
-const _: () = assert!(ASSET_FETCH_SLOTS <= ASSET_IDLE_CONNECTIONS_PER_HOST);
+const FAST_ASSET_FETCH_SLOTS: usize = 128;
+
+fn asset_connection_limits(fast: bool) -> (usize, usize) {
+    if fast {
+        (FAST_ASSET_FETCH_SLOTS, FAST_ASSET_FETCH_SLOTS)
+    } else {
+        (ASSET_FETCH_SLOTS, ASSET_IDLE_CONNECTIONS_PER_HOST)
+    }
+}
 
 impl NetClient {
-    pub fn new() -> Result<NetClient, NetError> {
+    pub fn new(fast_asset_loading: bool) -> Result<NetClient, NetError> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(3)
             .thread_name("aurora-net")
@@ -170,12 +178,13 @@ impl NetClient {
         // decoding, a 30 s connect timeout and up to 10 redirects. Some
         // assets are served with an odd Content-Encoding that must not
         // make the fetch fail.
+        let (fetch_slots, idle_connections) = asset_connection_limits(fast_asset_loading);
         let asset_http = reqwest::Client::builder()
             .user_agent(aurora_version::user_agent())
             // Keep the transport bounded as llcorehttp does. Hundreds of
             // simultaneous HTTP/1.1 connections can exhaust a consumer
             // router or wedge a network-adapter driver during login.
-            .pool_max_idle_per_host(32)
+            .pool_max_idle_per_host(idle_connections)
             .connect_timeout(std::time::Duration::from_secs(30))
             .gzip(false)
             .redirect(reqwest::redirect::Policy::limited(10))
@@ -183,7 +192,7 @@ impl NetClient {
             .tls_danger_accept_invalid_hostnames(true)
             .build()
             .map_err(|e| NetError::Http(e.to_string()))?;
-        let (fetcher, fetch_results) = Fetcher::new(rt.handle(), asset_http, ASSET_FETCH_SLOTS, stats.clone());
+        let (fetcher, fetch_results) = Fetcher::new(rt.handle(), asset_http, fetch_slots, stats.clone());
 
         let shared_caps_http = caps_http.clone();
         let shared = session::Shared {
@@ -303,5 +312,16 @@ impl NetClient {
     /// HTTP client for capabilities (voice provisioning uses it too).
     pub fn caps_http(&self) -> reqwest::Client {
         self.caps_http.clone()
+    }
+}
+
+#[cfg(test)]
+mod connection_limit_tests {
+    use super::*;
+
+    #[test]
+    fn asset_connections_are_safe_by_default_and_fast_only_when_asked() {
+        assert_eq!(asset_connection_limits(false), (24, 32));
+        assert_eq!(asset_connection_limits(true), (128, 128));
     }
 }

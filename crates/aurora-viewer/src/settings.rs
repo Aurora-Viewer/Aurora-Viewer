@@ -1197,6 +1197,9 @@ pub struct Settings {
     /// (Firestorm's ThrottleBandwidthKBPS; the default and the top of the
     /// range are Aurora's, `aurora_net::throttle::DEFAULT_KBPS`).
     pub bandwidth_kbps: u32,
+    /// Use more simultaneous HTTP/1.1 connections for cold-cache asset
+    /// arrivals. Off by default for network adapter and router compatibility.
+    pub fast_asset_loading: bool,
     /// Connect only to the region we are in (the Legacy Viewer's
     /// FSDisableNeighbourRegionConnections, off): the neighbours are not
     /// shown, and crossings on foot or in vehicles are less reliable.
@@ -1888,6 +1891,7 @@ impl Default for Settings {
             cache_location: String::new(),
             chat_log_location: String::new(),
             bandwidth_kbps: aurora_net::throttle::DEFAULT_KBPS as u32,
+            fast_asset_loading: false,
             no_neighbour_regions: false,
             parcel_visibility: Default::default(),
             chat_bar_width: 0.0,
