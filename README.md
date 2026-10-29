@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/branding/logo-loup-couleur.svg" alt="Aurora Viewer" width="180">
+<img src="assets/branding/aurora-logo.svg" alt="Aurora Viewer" width="180">
 
 # Aurora Viewer
 
