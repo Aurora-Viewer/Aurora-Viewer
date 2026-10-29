@@ -13,7 +13,10 @@ pose history are independent of the binding editor and virtual controls.
 
 ## Posing
 
-Open **Build > Poser**, or add Poser to the toolbar. The window follows
+Open **Build > Poser**, or add Poser to the toolbar. In the photo mode's
+viewfinder, which hides the rest of the interface, the dock's wand button
+opens it over the shot (#1389): its joints take their clicks before the
+focus, and a worn HUD keeps its own. The window follows
 the layout validated on 2026-10-24: the subject strip (subject, posing
 status, "Visible to you only" with the full notice as tooltip, Start / Stop),
 the tabs, the joints column on the left and the selected joint on the right,

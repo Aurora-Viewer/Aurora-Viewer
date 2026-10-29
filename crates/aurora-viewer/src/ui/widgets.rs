@@ -308,6 +308,9 @@ pub struct Floater<'a> {
     /// Resized by its edges, its body keeps this width over height, the
     /// window adding the second value around it (see `keep_aspect`).
     pub aspect: Option<(f32, Vec2)>,
+    /// Its layer: the windows' own (`Middle`), or `Foreground` over an
+    /// overlay whose controls sit there (the photo viewfinder's poser).
+    pub order: egui::Order,
     cascade: Option<CascadeGroup>,
     partial_outside: bool,
     /// A chat window: it stays in immersive mode (`hide_windows`).
@@ -340,6 +343,7 @@ impl<'a> Floater<'a> {
             flush_body: false,
             steady_size: false,
             aspect: None,
+            order: egui::Order::Middle,
             cascade: None,
             partial_outside: false,
             chat: false,
@@ -554,6 +558,7 @@ impl<'a> Floater<'a> {
         // Window retains its normal movement and persisted layout.
         let mut w = egui::Window::new(&self.title)
             .id(window_id)
+            .order(self.order)
             .title_bar(false)
             .fade_in(false)
             .fade_out(false)
