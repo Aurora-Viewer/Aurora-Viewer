@@ -94,7 +94,7 @@ pub const COMMANDS: &[Command] = commands![
     "conversation_log", "file-text-filled", "toolbar-command-conversation-log", false;
     "movelock", "lock-filled", "movelock-title", true;
     "water_walk", "walk", "movement-water-walk", true;
-    "resync_animations", "refresh", "toolbar-command-resync-animations", false;
+    "resync_animations", "refresh", "toolbar-command-resync-animations", true;
     "regiontracker", "location-filled", "toolbar-command-region-tracker", false;
     "group_titles", "tags-filled", "toolbar-command-group-titles", false;
     "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", false;

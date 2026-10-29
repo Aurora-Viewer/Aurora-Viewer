@@ -239,8 +239,13 @@ pub fn init() {
     let path = log_path();
     let _ = std::fs::rename(&path, dir.join(format!("{}.previous.log", log_stem())));
     let file = std::fs::File::create(&path).ok();
+    // `pulseaudio` off: the PulseAudio client logs `ERROR Reactor error:
+    // Client disconnected` each time cpal closes a stream (every output or
+    // capture device switch). Real stream failures reach aurora-audio through
+    // cpal's error callback, which reopens the device.
     env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,reqwest=warn,symphonia=warn"),
+        env_logger::Env::default()
+            .default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,reqwest=warn,symphonia=warn,pulseaudio=off"),
     )
     .format_timestamp_millis()
     .target(env_logger::Target::Pipe(Box::new(Tee {

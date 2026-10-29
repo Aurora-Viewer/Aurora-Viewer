@@ -3491,6 +3491,21 @@ mod tests {
         assert_eq!(s.entries[&id].want, 0, "terrain normal maps must upgrade beyond the 512 px preview");
     }
 
+    #[test]
+    fn hud_textures_load_at_full_resolution_even_under_memory_pressure() {
+        let id = Uuid::from_u128(1);
+        for step in [0, 2] {
+            // a 1024 atlas on a 30 px button, three levels coarse on the GPU
+            let mut e = entry(Some(3), 30.0);
+            e.info = Some(file(1024));
+            e.gpu_size = (128, 128);
+            let mut s = pressed(step, vec![(1, e)]);
+            s.note_usage_fixed(&id, super::super::hud::TEXTURE_PIXELS);
+            s.recompute_wants();
+            assert_eq!(s.entries[&id].want, 0, "pressure step {step}");
+        }
+    }
+
     /// The streamer under memory pressure step `step`, holding `entries`.
     fn pressed(step: u8, entries: Vec<(u128, Entry)>) -> TextureStreamer {
         let mut s = TextureStreamer::new(PathBuf::new());

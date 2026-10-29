@@ -134,6 +134,7 @@ pub enum BarAction {
     CustomizeBars,
     /// The toolbar's Stop Animations (Firestorm's stop_animations command).
     StopAnimations,
+    ResyncAnimations,
     /// Show User Interface (Alt+Shift+U), and hiding it once confirmed.
     ToggleInterface,
     HideInterface,
@@ -291,6 +292,7 @@ pub struct HealthMenu {
     pub stop_keys: String,
     pub rebake_keys: String,
     pub refresh_keys: String,
+    pub resync_keys: String,
 }
 
 /// The navigation bar's star (LLLocationInputCtrl's add landmark button).
@@ -761,6 +763,16 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         });
     });
     menu::submenu(ui, p, "world-filled", aurora_i18n::tr!("common-world"), true, |ui| {
+        if menu::item_keys(
+            ui,
+            p,
+            "refresh",
+            aurora_i18n::tr!("toolbar-command-resync-animations"),
+            &st.health.resync_keys,
+        ) {
+            *action = BarAction::ResyncAnimations;
+        }
+        menu::separator(ui, p);
         menu::submenu(ui, p, "device-desktop-filled", "HUDs", true, |ui| {
             let mut visible = st.show_huds;
             if flip(ui, p, "eye-filled", aurora_i18n::tr!("ui-bars-show-huds"), &mut visible, true) {
@@ -1968,6 +1980,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "landmark_here" => return BarAction::CreateLandmark,
         "marketplacelistings" => return BarAction::MarketplaceListings,
         "stop_animations" => return BarAction::StopAnimations,
+        "resync_animations" => return BarAction::ResyncAnimations,
         "immersive" => return BarAction::ToggleImmersive,
         _ => {}
     }
@@ -3421,6 +3434,17 @@ mod tests {
         assert!(matches!(run_command(&ctx, "movement", &mut panels), BarAction::ToggleSwimming));
         assert!(matches!(run_command(&ctx, "water_walk", &mut panels), BarAction::ToggleWaterWalk));
         assert!(!panels.ao);
+    }
+
+    #[test]
+    fn resync_toolbar_command_is_available_and_dispatches_the_restart() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(super::super::toolbar::ready("resync_animations"));
+        assert!(matches!(
+            run_command(&ctx, "resync_animations", &mut panels),
+            BarAction::ResyncAnimations
+        ));
     }
 
     /// The texts and filled circles a button paints with its unread count.

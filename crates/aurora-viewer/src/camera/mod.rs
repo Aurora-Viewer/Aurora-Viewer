@@ -199,6 +199,39 @@ struct Animation {
     start_focus: Vec3,
     elapsed: f32,
     duration: f32,
+    orbit: bool,
+}
+
+fn orbit_angle(from: Vec3, to: Vec3) -> f32 {
+    let angle = to.y.atan2(to.x) - from.y.atan2(from.x);
+    if angle > PI {
+        angle - TAU
+    } else if angle < -PI {
+        angle + TAU
+    } else {
+        angle
+    }
+}
+
+impl Animation {
+    fn camera(&self, camera: Vec3, focus: Vec3, k: f32) -> Vec3 {
+        if !self.orbit || k <= 0.0 || k >= 1.0 || (self.start_camera == camera && self.start_focus == focus) {
+            return self.start_camera.lerp_monotonic(camera, k);
+        }
+        let from = self.start_camera - self.start_focus;
+        let to = camera - focus;
+        let (start_distance, end_distance) = (from.length(), to.length());
+        if start_distance < MIN_CAMERA_DISTANCE || end_distance < MIN_CAMERA_DISTANCE {
+            return self.start_camera.lerp_monotonic(camera, k);
+        }
+        // Appearance's half-turn must go around the avatar, not through it.
+        // Interpolate elevation and distance independently of the azimuth.
+        let yaw = from.y.atan2(from.x) + orbit_angle(from, to) * k;
+        let pitch = from.z.atan2(from.truncate().length());
+        let pitch = pitch + (to.z.atan2(to.truncate().length()) - pitch) * k;
+        let distance = start_distance + (end_distance - start_distance) * k;
+        self.start_focus.lerp_monotonic(focus, k) + Vec3::new(yaw.cos() * pitch.cos(), yaw.sin() * pitch.cos(), pitch.sin()) * distance
+    }
 }
 
 /// llSetCameraEyeOffset / llSetCameraAtOffset of the object we sit on.
@@ -436,6 +469,7 @@ impl Camera {
             start_focus: self.target,
             elapsed: 0.0,
             duration: 0.0,
+            orbit: false,
         });
         self.set_animation_duration(s.zoom_time, true);
     }
@@ -709,6 +743,22 @@ impl Camera {
     pub fn set_view(&mut self, camera: Vec3, focus: Vec3, agent: &mut AgentState, s: &CameraSettings) {
         self.unlock_view(agent, s);
         self.set_camera_pos_and_focus(camera, focus, None, s);
+    }
+
+    /// Appearance framing, including a changed eye with an unchanged focus.
+    /// Like changeCameraToCustomizeAvatar (llagentcamera.cpp), allow time for
+    /// the 1.35 s customise turn. Other camera operations retain their paths.
+    pub fn set_appearance_view(&mut self, camera: Vec3, focus: Vec3, agent: &mut AgentState, s: &CameraSettings) {
+        self.set_view(camera, focus, agent, s);
+        self.start_animation(s);
+        if let Some(a) = &mut self.anim {
+            a.orbit = true;
+            if s.zoom_time > 0.0 {
+                a.duration = s
+                    .zoom_time
+                    .max(orbit_angle(a.start_camera - a.start_focus, camera - focus).abs() / PI * 1.35);
+            }
+        }
     }
 
     /// RlvForceHandler<RLV_BHVR_SETCAM_FOCUS>: retain the exact object UUID
@@ -1480,7 +1530,7 @@ impl Camera {
                     self.anim = Some(a);
                     let k = smoothstep(fraction);
                     (
-                        a.start_camera.lerp_monotonic(camera_target, k),
+                        a.camera(camera_target, focus_target, k),
                         a.start_focus.lerp_monotonic(focus_target, k),
                     )
                 } else {
@@ -2106,6 +2156,78 @@ mod tests {
     fn settle(cam: &mut Camera, w: &mut World, s: &CameraSettings) {
         for _ in 0..300 {
             cam.update(w, s, &frame(1.0 / 60.0));
+        }
+    }
+
+    #[test]
+    fn appearance_half_turns_animate_at_constant_distance_in_both_directions() {
+        for fps in [30, 60, 144] {
+            let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+            let settings = CameraSettings {
+                smoothing: 0.0,
+                ..Default::default()
+            };
+            let mut camera = Camera::default();
+            settle(&mut camera, &mut world, &settings);
+            let focus = world.agent.position + Vec3::Z;
+            camera.set_appearance_view(focus + Vec3::X * 3.0, focus, &mut world.agent, &settings);
+            settle(&mut camera, &mut world, &settings);
+            for side in [-1.0, 1.0] {
+                let start = camera.position;
+                let end = focus + Vec3::X * (side * 3.0);
+                camera.set_appearance_view(end, focus, &mut world.agent, &settings);
+                assert!(camera.anim.is_some_and(|a| a.duration > 1.3));
+                camera.update(&mut world, &settings, &frame(0.0));
+                assert_eq!(
+                    camera.position, start,
+                    "start at the displayed eye even when the focus did not change"
+                );
+                let mut previous = start;
+                for _ in 0..fps * 2 {
+                    camera.update(&mut world, &settings, &frame(1.0 / fps as f32));
+                    assert!((camera.position.distance(focus) - 3.0).abs() < 1e-3, "never cut through the avatar");
+                    assert!(camera.position.distance(previous) < 12.0 / fps as f32, "no jump between frames");
+                    previous = camera.position;
+                }
+                assert!(camera.position.abs_diff_eq(end, 1e-4));
+                assert!(camera.anim.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn appearance_turn_can_reverse_midflight_and_cross_the_yaw_seam() {
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let settings = CameraSettings {
+            smoothing: 0.0,
+            ..Default::default()
+        };
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &settings);
+        let focus = world.agent.position + Vec3::Z;
+        let front = focus + Vec3::X * 3.0;
+        camera.set_appearance_view(front, focus, &mut world.agent, &settings);
+        settle(&mut camera, &mut world, &settings);
+        camera.set_appearance_view(focus - Vec3::X * 3.0, focus, &mut world.agent, &settings);
+        for _ in 0..30 {
+            camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        }
+        let interrupted = camera.position;
+        camera.set_appearance_view(front, focus, &mut world.agent, &settings);
+        camera.update(&mut world, &settings, &frame(0.0));
+        assert_eq!(camera.position, interrupted);
+        settle(&mut camera, &mut world, &settings);
+        assert!(camera.position.abs_diff_eq(front, 1e-4));
+        for yaw in [175.0_f32, -175.0] {
+            let eye = focus + Quat::from_rotation_z(yaw.to_radians()) * Vec3::X * 3.0;
+            camera.set_appearance_view(eye, focus, &mut world.agent, &settings);
+            for _ in 0..120 {
+                camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+                if yaw < 0.0 {
+                    assert!(camera.position.x < focus.x - 2.9, "take the short arc across ±180 degrees");
+                }
+            }
+            assert!(camera.position.abs_diff_eq(eye, 1e-4));
         }
     }
 

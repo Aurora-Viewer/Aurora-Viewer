@@ -291,6 +291,20 @@ fn file_names_follow_firestorm() {
 }
 
 #[test]
+fn local_fields_are_the_zone_s_own() {
+    use chrono::{FixedOffset, TimeZone};
+    // the Unix epoch seen from Tokyo, then from New York (the day before)
+    let tokyo = FixedOffset::east_opt(9 * 3600).unwrap().timestamp_opt(0, 0).unwrap();
+    assert_eq!(civil(&tokyo), (1970, 1, 1, 9, 0, 0));
+    let new_york = FixedOffset::west_opt(5 * 3600).unwrap().timestamp_opt(0, 0).unwrap();
+    assert_eq!(civil(&new_york), (1969, 12, 31, 19, 0, 0));
+    let leap = FixedOffset::east_opt(5 * 3600 + 45 * 60)
+        .unwrap()
+        .with_ymd_and_hms(2028, 2, 29, 23, 59, 58);
+    assert_eq!(civil(&leap.unwrap()), (2028, 2, 29, 23, 59, 58));
+}
+
+#[test]
 fn free_names_skip_the_taken_ones() {
     let dir = std::env::temp_dir().join(format!("aurora-photo-names-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

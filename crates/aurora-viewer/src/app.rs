@@ -3957,6 +3957,7 @@ impl App {
             }
             Action::Rebake => self.rebake(),
             Action::StopAnimations => self.stop_animations(false),
+            Action::ResyncAnimations => self.scene.resync_animations(Instant::now()),
             Action::RefreshAttachments => self.refresh_attachments(),
             Action::PhotoWindow => ui::widgets::toggle_floater(&self.egui_ctx, ui::snapshot::WINDOW, &mut self.panels.snapshot),
             Action::PhotoToDisk => self.photo_to_disk(),
@@ -5788,7 +5789,8 @@ impl App {
         let Ok(mode) = std::env::var("AURORA_DEMO_ACTIONS") else {
             return;
         };
-        if mode.ends_with("-ready") && !mode.starts_with("blend-") && !mode.starts_with("mask-") {
+        let probe = mode.starts_with("probe-");
+        if mode.ends_with("-ready") && !mode.starts_with("blend-") && !mode.starts_with("mask-") && !probe {
             return;
         }
         if let Some(copy) = mode.strip_prefix("open-") {
@@ -5797,13 +5799,18 @@ impl App {
         let id = crate::demo::action_mode_id(&mode);
         let click_frame = if mode.starts_with("linked-") { 724 } else { 284 };
         if self.frame_count == 260
-            && (id == 0 || id == 980 || id == 981 || mode.starts_with("blend-") || mode.starts_with("mask-"))
-            && let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(971))
+            && (id == 0 || id == 980 || id == 981 || mode.starts_with("blend-") || mode.starts_with("mask-") || probe)
+            && let Some(idx) = self
+                .world
+                .objects
+                .index_of_uuid(&crate::demo::action_id(if probe { 975 } else { 971 }))
             && let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
         {
             let direction = (self.camera.position - pos).normalize_or(-Vec3::X);
             let rotation = glam::Quat::from_rotation_arc(Vec3::X, direction);
-            self.world.apply(if mode.starts_with("blend-") || mode.starts_with("mask-") {
+            self.world.apply(if probe {
+                crate::demo::click_probe(&mode, pos)
+            } else if mode.starts_with("blend-") || mode.starts_with("mask-") {
                 crate::demo::alpha_click_overlay(&mode, pos + direction * 1.0, rotation)
             } else {
                 crate::demo::action_overlay(if id == 980 { 980 } else { 981 }, pos + direction * 1.0, rotation)
@@ -5856,6 +5863,9 @@ impl App {
         }
         if (id == 975 || id == 982) && self.frame_count == 325 {
             self.on_left_release();
+        }
+        if probe && self.frame_count == 740 {
+            log::info!("demo probe click: mode={mode}, held={}", self.interactions.held.is_some());
         }
         if mode.ends_with("-confirm")
             && self.frame_count == 320
@@ -9800,13 +9810,38 @@ impl App {
                 let relative = a.conjugate() * *b;
                 2.0 * Vec3::new(relative.x, relative.y, relative.z).length().atan2(relative.w.abs())
             };
-            if crate::demo::animation_sync_demo() && self.frame_count == 300 {
+            if (crate::demo::animation_sync_demo() || crate::demo::animation_resync_demo()) && self.frame_count == 300 {
                 let rig = self.scene.avatar_lib.rig.clone();
                 self.scene.anims.insert(
                     crate::demo::SYNC_DELAYED_ANIM,
                     Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::loop_animation(), &rig)),
                 );
                 log::info!("demo animation sync: delayed asset ready at frame 300");
+            }
+            if crate::demo::animation_resync_demo() {
+                if self.frame_count == 750 {
+                    let ctrl = self.ctrl;
+                    self.ctrl = true;
+                    self.on_input(Input::key(KeyCode::KeyS), true);
+                    self.on_input(Input::key(KeyCode::KeyS), false);
+                    self.ctrl = ctrl;
+                    log::info!("demo animation resync: Ctrl+S at frame 750");
+                }
+                if matches!(self.frame_count, 720 | 780 | 900)
+                    && let Some(&joint) = self.scene.avatar_lib.rig.names.get("mElbowLeft")
+                {
+                    let (leader, _) = self.scene.preview_pose(&crate::demo::DEMO_AGENT);
+                    let (follower, _) = self
+                        .scene
+                        .preview_pose(&uuid::Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0002));
+                    if let Some((a, b)) = leader.get(joint).zip(follower.get(joint)) {
+                        log::info!(
+                            "demo animation resync: frame {}, elbow phase error {:.6} rad",
+                            self.frame_count,
+                            phase_error(a, b)
+                        );
+                    }
+                }
             }
             if crate::demo::animation_sync_demo()
                 && (self.frame_count == 360 || (crate::demo::animation_edit_demo() && self.frame_count == 660))
@@ -11782,6 +11817,7 @@ impl App {
             }
             BarAction::CustomizeBars => self.toolbar_ui.open = true,
             BarAction::StopAnimations => self.stop_current_animations(),
+            BarAction::ResyncAnimations => self.scene.resync_animations(Instant::now()),
         }
     }
 
@@ -11923,6 +11959,7 @@ impl App {
             stop_keys: keys(Action::StopAnimations),
             rebake_keys: keys(Action::Rebake),
             refresh_keys: keys(Action::RefreshAttachments),
+            resync_keys: keys(Action::ResyncAnimations),
         }
     }
 
@@ -14359,7 +14396,8 @@ impl App {
                 self.shape_ui.update(&mut self.world, &self.scene, &ctx);
                 let shape_preferences = (self.shape_ui.hints, self.shape_ui.feet);
                 let shape_group = self.shape_ui.group;
-                let (shape_actions, visible) = ui::shape::show(&ctx, &p, &mut self.world, &mut self.shape_ui);
+                let (shape_actions, visible) =
+                    ui::shape::show(&ctx, &p, &mut self.world, &mut self.shape_ui, self.settings.customize_animation);
                 self.demo_shape_drag();
                 if shape_preferences != (self.shape_ui.hints, self.shape_ui.feet) {
                     self.settings.shape_show_hints = self.shape_ui.hints;
@@ -15374,7 +15412,7 @@ impl ApplicationHandler for App {
                 ));
             }
         }
-        let mut attrs = Window::default_attributes()
+        let mut attrs = crate::cli::with_desktop_id(Window::default_attributes())
             .with_title(crate::cli::window_title())
             // Vulkan initialization and the first frame take time: Windows
             // must not expose the unpainted client area while they run.
@@ -15734,6 +15772,11 @@ impl ApplicationHandler for App {
             );
             if crate::demo::animation_sync_demo() {
                 self.settings.synchronize_animations = true;
+            }
+            if crate::demo::animation_resync_demo() {
+                self.settings.synchronize_animations = false;
+            }
+            if crate::demo::animation_sync_demo() || crate::demo::animation_resync_demo() {
                 self.scene.anims.insert(
                     crate::demo::SYNC_LEADER_ANIM,
                     Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::loop_animation(), &rig)),
@@ -18010,13 +18053,21 @@ impl ApplicationHandler for App {
                     let find_taken = pressed && self.ctrl && find_key && ui::find_shortcut::window_takes_it(&self.egui_ctx);
                     let script_command = pressed
                         && self.ctrl
-                        && matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("k"))
+                        && matches!(&ke.logical_key, winit::keyboard::Key::Character(c)
+                            if c.eq_ignore_ascii_case("k") || (c.eq_ignore_ascii_case("s") && !self.shift && !self.alt))
                         && ui::scripts::editor_focused(&self.egui_ctx);
+                    let document_save = pressed
+                        && self.ctrl
+                        && !self.shift
+                        && !self.alt
+                        && matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("s"))
+                        && ui::inventory::document_save_focused(&self.egui_ctx);
                     if pressed
                         && ((!resp.consumed && !typing) || shortcut || chat_pass)
                         && !ke.repeat
                         && !find_taken
                         && !script_command
+                        && !document_save
                         && !ui_shortcut
                     {
                         self.on_input(Input::key(code), pressed);

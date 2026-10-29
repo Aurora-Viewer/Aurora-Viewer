@@ -1291,9 +1291,15 @@ mod tests {
         };
         document_frame(&ctx, &inv, &mut st, vec![key(egui::Key::End), egui::Event::Text("\nÉté 🐺".into())]);
         assert!(st.preview_dirty);
+        assert!(super::document_save_focused(&ctx), "native Ctrl+S belongs to this notecard");
         let (_, actions) = document_frame(&ctx, &inv, &mut st, vec![key(egui::Key::S)]);
         assert!(matches!(&actions[..], [InvAction::SaveContent { editor, item, text, close: false }]
             if *editor == st.ui_id && Some(*item) == st.preview && text == "Avant\nÉté 🐺"));
+        ctx.memory_mut(|m| m.surrender_focus(m.focused().expect("document focus")));
+        assert!(
+            !super::document_save_focused(&ctx),
+            "the world shortcut works again outside the document"
+        );
     }
 
     #[test]

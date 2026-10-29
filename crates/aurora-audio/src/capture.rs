@@ -36,6 +36,12 @@ pub const CAPTURE_SAMPLE_RATE: u32 = ENGINE_SAMPLE_RATE;
 /// [`MicCapture::level`] (Firestorm draws `level / OVERDRIVEN_POWER_LEVEL`).
 pub const OVERDRIVEN_POWER_LEVEL: f32 = 0.7;
 
+/// Sound a PulseAudio server (PipeWire included) delivers per callback (s).
+/// Its default fragment is two seconds, far too late for voice. 40 ms, not
+/// 20: cpal's host lets the server hold one fragment and does not raise its
+/// callback thread to realtime, so a longer stall than this drops audio.
+const PULSE_CAPTURE_SECS: f64 = 0.04;
+
 /// Largest accepted software input gain (Firestorm's slider goes to 2).
 pub const MAX_INPUT_GAIN: f32 = 4.0;
 
@@ -460,7 +466,7 @@ fn capture_main(
         let (raw_prod, mut raw_cons) = rtrb::RingBuffer::new(RING_SAMPLES);
         let raw_prod = Arc::new(Mutex::new(raw_prod));
         match open_input(&raw_prod, wanted.as_deref(), &shared) {
-            Ok((stream, name, fallback, failed)) => {
+            Ok((stream, name, fallback, failed, device)) => {
                 log::info!("audio input: {name}");
                 warned = false;
                 *shared.device.lock() = name;
@@ -470,6 +476,12 @@ fn capture_main(
                 }
                 let mut last = shared.captured.load(Ordering::Relaxed);
                 let mut last_check = std::time::Instant::now();
+                let watch = if wanted.is_none() {
+                    devices::DefaultWatch::new(Direction::Input, &device)
+                } else {
+                    None
+                };
+                let mut last_watch = std::time::Instant::now();
                 loop {
                     if let Some((config, reference)) = shared.processing.lock().clone() {
                         if let Some(p) = &mut processor {
@@ -522,6 +534,16 @@ fn capture_main(
                                 last = now;
                                 last_check = std::time::Instant::now();
                             }
+                            if let Some(watch) = &watch
+                                && last_watch.elapsed() >= devices::DefaultWatch::EVERY
+                            {
+                                last_watch = std::time::Instant::now();
+                                if watch.changed() {
+                                    log::info!("audio input: the default device changed; reopening");
+                                    reopen_now = true;
+                                    break;
+                                }
+                            }
                         }
                         Err(RecvTimeoutError::Disconnected) => return,
                     }
@@ -556,19 +578,19 @@ fn capture_main(
     }
 }
 
-type Opened = (cpal::Stream, String, bool, Arc<AtomicBool>);
+type Opened = (cpal::Stream, String, bool, Arc<AtomicBool>, cpal::Device);
 
 /// Opens `name` (or the default input). A named device that is missing or
 /// fails to open falls back to the default one.
 fn open_input(writer: &Arc<Mutex<rtrb::Producer<f32>>>, name: Option<&str>, shared: &Arc<MicShared>) -> Result<Opened, AudioError> {
     let picked = devices::pick(Direction::Input, name).ok_or(AudioError::NoDevice)?;
     match open_input_device(writer, &picked.device, shared) {
-        Ok((stream, failed)) => Ok((stream, devices::device_name(&picked.device), picked.fallback, failed)),
+        Ok((stream, failed)) => Ok((stream, devices::device_name(&picked.device), picked.fallback, failed, picked.device)),
         Err(e) if name.is_some() && !picked.fallback => {
             log::warn!("audio input device {name:?} cannot be opened ({e}); using the default");
             let picked = devices::pick(Direction::Input, None).ok_or(AudioError::NoDevice)?;
             let (stream, failed) = open_input_device(writer, &picked.device, shared)?;
-            Ok((stream, devices::device_name(&picked.device), true, failed))
+            Ok((stream, devices::device_name(&picked.device), true, failed, picked.device))
         }
         Err(e) => Err(e),
     }
@@ -580,13 +602,19 @@ fn open_input_device(
     shared: &Arc<MicShared>,
 ) -> Result<(cpal::Stream, Arc<AtomicBool>), AudioError> {
     let supported = device.default_input_config().map_err(|e| AudioError::Device(e.to_string()))?;
-    let config = supported.config();
+    let mut config = supported.config();
+    if devices::is_pulse(device) {
+        let frames = (f64::from(config.sample_rate) * PULSE_CAPTURE_SECS).round() as u32;
+        config.buffer_size = cpal::BufferSize::Fixed(frames.max(1));
+    }
     let failed = Arc::new(AtomicBool::new(false));
     let stream = match supported.sample_format() {
         SampleFormat::F32 => build_input::<f32>(device, &config, writer, &failed, shared),
         SampleFormat::I16 => build_input::<i16>(device, &config, writer, &failed, shared),
         SampleFormat::U16 => build_input::<u16>(device, &config, writer, &failed, shared),
         SampleFormat::I32 => build_input::<i32>(device, &config, writer, &failed, shared),
+        // The PulseAudio host reports 24-bit sources (s24le, s24-32le) as I24.
+        SampleFormat::I24 => build_input::<cpal::I24>(device, &config, writer, &failed, shared),
         SampleFormat::F64 => build_input::<f64>(device, &config, writer, &failed, shared),
         SampleFormat::I8 => build_input::<i8>(device, &config, writer, &failed, shared),
         SampleFormat::U8 => build_input::<u8>(device, &config, writer, &failed, shared),
@@ -740,5 +768,14 @@ mod tests {
         // 48 kHz 4 channels f32: averaged, no resampling.
         let mut a = InputAdapter::new(48_000, 4);
         assert_eq!(a.convert(&[1.0f32, 0.0, 0.0, 1.0, 0.2, 0.2, 0.2, 0.2]), [0.5, 0.2]);
+    }
+
+    #[test]
+    fn input_adapter_reads_a_24_bit_source() {
+        // 48 kHz stereo I24 (a 24-bit source of the PulseAudio host): averaged.
+        let half = cpal::I24::new(1 << 22).expect("in range");
+        let mut a = InputAdapter::new(48_000, 2);
+        let out = a.convert(&[half, half, half, cpal::I24::EQUILIBRIUM]);
+        assert!((out[0] - 0.5).abs() < 1e-6 && (out[1] - 0.25).abs() < 1e-6, "{out:?}");
     }
 }

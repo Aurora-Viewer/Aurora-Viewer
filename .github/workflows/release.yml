@@ -23,6 +23,7 @@ on:
     paths:
       - .github/workflows/release.yml
       - scripts/package.ps1
+      - packaging/linux/**
       - scripts/verify-version.ps1
 
 permissions:
