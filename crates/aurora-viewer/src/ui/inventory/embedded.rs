@@ -7,6 +7,14 @@ use super::*;
 use aurora_net::inventory::notecard::Notecard;
 use egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat};
 
+/// The native key handler must leave Ctrl+S to the focused document editor.
+pub fn save_focused(ctx: &egui::Context) -> bool {
+    ctx.memory(|m| m.focused()).is_some_and(|id| {
+        ctx.data(|d| d.get_temp::<u64>(id.with("document_save_frame")))
+            .is_some_and(|frame| frame + 1 >= ctx.cumulative_frame_nr())
+    })
+}
+
 #[derive(Default)]
 pub(super) struct EditorResult {
     pub changed: bool,
@@ -239,6 +247,8 @@ pub(super) fn editor(
         ..Default::default()
     };
     if output.response.has_focus() {
+        let frame = ui.ctx().cumulative_frame_nr();
+        ui.ctx().data_mut(|data| data.insert_temp(id.with("document_save_frame"), frame));
         result.save = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S));
     }
     if let Some(rendered) = markdown

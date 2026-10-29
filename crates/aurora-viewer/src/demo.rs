@@ -7622,6 +7622,10 @@ pub fn animation_edit_demo() -> bool {
     std::env::var("AURORA_DEMO_ANIM_LOOP").is_ok_and(|v| v == "sync-edit")
 }
 
+pub fn animation_resync_demo() -> bool {
+    std::env::var("AURORA_DEMO_ANIM_LOOP").is_ok_and(|v| v == "resync")
+}
+
 /// Sequence changes every 120 frames; a real stop/restart every 1200.
 /// In sync mode the second avatar's asset is withheld until frame 300.
 pub fn loop_animation_events(frame: u64) -> Vec<NetEvent> {
@@ -7641,7 +7645,7 @@ pub fn loop_animation_events(frame: u64) -> Vec<NetEvent> {
             anims: if step == 960 {
                 Vec::new()
             } else {
-                let id = if animation_sync_demo() {
+                let id = if animation_sync_demo() || animation_resync_demo() {
                     if avatar == DEMO_AGENT {
                         SYNC_LEADER_ANIM
                     } else {

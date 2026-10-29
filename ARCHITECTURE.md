@@ -1,5 +1,10 @@
 # Aurora Viewer architecture
 
+`scene/anim.rs` restarts active resident and control-avatar motions from one shared
+instant for Ctrl+S, World and the resync toolbar command. Receipt signals,
+simulator state and independent import previews are preserved. Native key dispatch leaves Save
+to active script/document editors; inventory editors mark their focused field.
+
 `aurora-net/src/session.rs` keeps the last confirmed agent parcel. Selected,
 hovered and build-tool property replies refresh its live metadata only when
 the simulator and local parcel id match; its bitmap, bounds and notification

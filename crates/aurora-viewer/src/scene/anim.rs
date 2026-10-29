@@ -658,6 +658,27 @@ impl Controller {
             ..Default::default()
         }
     }
+    /// FSToolsResyncAnimations (indra/newview/llviewermenu.cpp): stop and
+    /// reactivate playing motions locally at one shared instant. Keep the
+    /// receipt signals so the next sync does not undo the explicit restart.
+    /// Stopped motions and completed one-shots must not be resurrected.
+    pub fn resync_animations(&mut self, now: Instant) {
+        let now = if self.synchronized { now } else { self.paused_at.unwrap_or(now) };
+        let preview = self.preview_start;
+        for motion in self
+            .motions
+            .iter_mut()
+            .filter(|m| !m.internal && m.stop.is_none() && !preview.is_some_and(|(target, _)| target.is_none_or(|id| id == m.id)))
+        {
+            motion.activation = now;
+            motion.continuous_activation = now;
+            motion.weight = 0.0;
+            motion.residual = 0.0;
+            motion.recovery = None;
+        }
+        self.last_eval = None;
+    }
+
     /// Forget the held pose (LLVOAvatar::resetSkeleton): a joint no motion
     /// drives keeps the rotation and position the last motion gave it, which
     /// is how an avatar stays deformed after a pose or a mesh animation
@@ -1673,6 +1694,141 @@ mod tests {
         Controller {
             synchronized: true,
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn resync_aligns_playing_animations_and_survives_unchanged_signals_and_sequences() {
+        let rig = rig();
+        let animation = swing(&rig);
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        for (synchronized, control) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut controllers = Vec::new();
+            for start in [0.0, 0.65] {
+                let mut c = Controller {
+                    synchronized,
+                    control,
+                    ..Default::default()
+                };
+                let playing = [signal(Uuid::from_u128(77), 1, at(start))];
+                c.sync(&playing, at(start), |_| Some(animation.clone()));
+                assert!((c.motions[0].local_time(at(1.0)) - (1.0 - start)).abs() < 1e-6);
+                c.resync_animations(at(1.25));
+                assert!(c.sync(&playing, at(1.5), |_| Some(animation.clone())).is_empty());
+                assert_eq!(c.motions.len(), 1);
+                assert!((c.motions[0].local_time(at(1.5)) - 0.25).abs() < 1e-6);
+                assert_eq!(c.signals[&playing[0].id], playing[0], "receipt clocks are untouched");
+                let next = PlayingAnimation {
+                    sequence: 2,
+                    sequence_start: at(1.6),
+                    ..playing[0]
+                };
+                c.sync(&[next], at(1.75), |_| Some(animation.clone()));
+                assert!((c.motions[0].local_time(at(1.75)) - 0.5).abs() < 1e-6);
+                c.resync_animations(at(1.9));
+                c.sync(&[next], at(2.0), |_| Some(animation.clone()));
+                assert!((c.motions[0].local_time(at(2.0)) - 0.1).abs() < 1e-6);
+                controllers.push(c);
+            }
+            let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+            let mut elbows = Vec::new();
+            for c in &mut controllers {
+                c.evaluate(&rig, at(2.0), None, &mut pose);
+                elbows.push(c.rot[rig.names["mElbowLeft"]]);
+            }
+            assert!(elbows[0].abs_diff_eq(elbows[1], 1e-6), "avatars now draw the same dance phase");
+        }
+    }
+
+    #[test]
+    fn resync_restarts_a_one_shot_but_leaves_stopped_and_finished_motions_alone() {
+        let rig = rig();
+        let mut bound = BoundAnim::bind(swing(&rig).anim.clone(), &rig);
+        bound.anim.looping = false;
+        bound.anim.duration = 2.0;
+        bound.anim.ease_in = 0.0;
+        bound.anim.ease_out = 0.5;
+        let animation = Arc::new(bound);
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        let playing = [signal(Uuid::from_u128(78), 1, t0)];
+        for synchronized in [false, true] {
+            let mut c = Controller {
+                synchronized,
+                ..Default::default()
+            };
+            c.sync(&playing, t0, |_| Some(animation.clone()));
+            c.resync_animations(at(1.0));
+            assert!(c.sync(&playing, at(2.0), |_| Some(animation.clone())).is_empty());
+            assert_eq!(c.sync(&playing, at(2.5), |_| Some(animation.clone())), vec![playing[0].id]);
+            c.resync_animations(at(2.6));
+            assert!(c.sync(&playing, at(3.0), |_| Some(animation.clone())).is_empty());
+            assert!(c.motions.is_empty());
+            c.resync_animations(at(3.25));
+            c.sync(&playing, at(3.5), |_| Some(animation.clone()));
+            assert!(c.motions.is_empty(), "completed signaled motions stay completed");
+        }
+    }
+
+    #[test]
+    fn resync_during_a_pause_resumes_from_the_expected_clock() {
+        let rig = rig();
+        let animation = swing(&rig);
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        let playing = [signal(Uuid::from_u128(79), 1, t0)];
+        for synchronized in [false, true] {
+            let mut c = Controller {
+                synchronized,
+                ..Default::default()
+            };
+            c.sync(&playing, t0, |_| Some(animation.clone()));
+            c.set_paused(true, at(0.25));
+            c.resync_animations(at(1.0));
+            c.sync(&playing, at(1.5), |_| Some(animation.clone()));
+            c.set_paused(false, at(1.75));
+            c.sync(&playing, at(2.0), |_| Some(animation.clone()));
+            let expected = if synchronized { 1.0 } else { 0.25 };
+            assert!((c.motions[0].local_time(at(2.0)) - expected).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn resync_keeps_an_explicit_preview_clock() {
+        let rig = rig();
+        let animation = swing(&rig);
+        let t0 = Instant::now();
+        let id = Uuid::from_u128(80);
+        let playing = [signal(id, 1, t0)];
+        let mut c = Controller::default();
+        c.set_preview_clock(Some((Some(id), t0)));
+        c.sync(&playing, t0, |_| Some(animation.clone()));
+        c.resync_animations(t0 + Duration::from_secs(1));
+        c.sync(&playing, t0 + Duration::from_millis(1250), |_| Some(animation.clone()));
+        assert!((c.motions[0].local_time(t0 + Duration::from_millis(1250)) - 1.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn resync_scene_restarts_all_residents_and_control_avatars_at_one_instant() {
+        let library = Arc::new(super::super::avatar::AvatarLibrary::load());
+        let animation = swing(&library.rig);
+        let mut scene = super::super::Scene::new(std::path::PathBuf::new(), library);
+        let t0 = Instant::now();
+        for i in 0..3 {
+            let start = t0 + Duration::from_millis(i * 200);
+            let mut controller = Controller {
+                control: i == 2,
+                ..Default::default()
+            };
+            controller.sync(&[signal(Uuid::from_u128(81), 1, start)], start, |_| Some(animation.clone()));
+            scene.motions.insert(Uuid::from_u128(u128::from(i) + 1), controller);
+        }
+        let restart = t0 + Duration::from_secs(1);
+        scene.resync_animations(restart);
+        assert_eq!(scene.motions.len(), 3);
+        for controller in scene.motions.values() {
+            assert!((controller.motions[0].local_time(restart + Duration::from_millis(250)) - 0.25).abs() < 1e-6);
         }
     }
 
