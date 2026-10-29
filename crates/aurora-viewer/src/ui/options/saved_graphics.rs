@@ -54,7 +54,7 @@ pub(super) fn controls(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mu
     let editor = &mut st.saved_graphics;
     let current = crate::graphics_presets::saved::choices(s);
     let selected = current.iter().find(|(_, same)| *same).map(|(name, _)| name.as_str());
-    ui.horizontal_wrapped(|ui| {
+    ui.horizontal(|ui| {
         let mut demo_list = false;
         // Capture the production popup and name dialog without native pointer
         // automation. These two states are confined to offline demo runs.
@@ -95,16 +95,7 @@ pub(super) fn controls(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mu
             // Use the response's real popup ID, including ComboBox's salt.
             egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&list.response));
         }
-        if widgets::action_button(
-            ui,
-            p,
-            "device-floppy-filled",
-            tr!("common-save"),
-            widgets::ActionKind::Flat,
-            Vec2::ZERO,
-        )
-        .clicked()
-        {
+        if ui.button(tr!("common-save")).clicked() {
             editor.request_save(s);
         }
     });

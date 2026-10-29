@@ -2,8 +2,9 @@
 
 `graphics_presets/saved.rs` holds named rendering quality snapshots (#1218),
 persisted as an explicit allowlist in `Settings::graphics_saved`. The editor in
-`ui/options/saved_graphics.rs` asks for a name after Save, loads profiles and
-places each deletion button at the right of its dropdown row, with confirmation.
+`ui/options/saved_graphics.rs` places Save beside the profile selector, asks for
+a name after clicking it, and confirms deletion from each dropdown row's bin.
+Graphics keeps parcel-isolation controls in its Parcels tab after Smoothness.
 `ui/bars/graphics.rs` shares the built-in/custom choices and the independent FPS
 cap switch between the FPS hover card (both bar layouts) and the system menu.
 

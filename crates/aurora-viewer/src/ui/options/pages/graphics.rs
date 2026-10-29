@@ -1,7 +1,7 @@
 //! Preferences › Graphics (panel_preferences_graphics1.xml and its
 //! advanced floater): the level of the whole, then quality, light, the sky,
 //! reflections and Aurora's water, the image (anti-aliasing, tone mapping,
-//! depth of field) and smoothness.
+//! depth of field), smoothness and parcel visibility.
 
 use super::super::cx::{Cx, Nothing, field};
 use super::super::{COMBO_W, preset_choice, stepped, toggle};
@@ -61,11 +61,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
         }),
         3 => reflections_and_water(cx),
         4 => image(cx),
-        _ => {
+        5 => {
             frames_per_second(cx);
             graphics_card(cx);
             overlays(cx);
         }
+        6 => parcels(cx),
+        _ => {}
     }
 }
 
@@ -157,30 +159,9 @@ fn frames_per_second(cx: &mut Cx) {
     });
 }
 
-fn quality(cx: &mut Cx) {
+fn parcels(cx: &mut Cx) {
     use aurora_i18n::tr;
-    cx.group(tr!("ui-options-presets"), |cx| {
-        let p = cx.p;
-        cx.wide().keywords(tr!("ui-options-preset-custom")).row(
-            tr!("ui-options-preset-level"),
-            tr!("ui-options-preset-level-help"),
-            // a level writes the page's settings: they are the rows below
-            &Nothing,
-            |ui, s| preset_choice(ui, &p, s),
-        );
-        cx.wide()
-            .row_with(tr!("graphics-saved-title"), tr!("graphics-saved-help"), &Nothing, |ui, s, st, _| {
-                super::super::saved_graphics::controls(ui, &p, s, st)
-            });
-    });
-    cx.group(tr!("ui-options-distance-and-detail"), |cx| {
-        cx.slider(
-            tr!("common-draw-distance"),
-            tr!("ui-options-objects-beyond-this-distance-are-not-drawn-96-m"),
-            &field!(draw_distance),
-            32.0..=512.0,
-            " m",
-        );
+    cx.group(tr!("region-parcels"), |cx| {
         cx.combo(
             tr!("parcel-visibility-mode"),
             tr!("parcel-visibility-help"),
@@ -215,6 +196,33 @@ fn quality(cx: &mut Cx) {
             tr!("parcel-visibility-always-visible-help"),
             &field!(parcel_visibility.always_visible),
             true,
+        );
+    });
+}
+
+fn quality(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-options-presets"), |cx| {
+        let p = cx.p;
+        cx.wide().keywords(tr!("ui-options-preset-custom")).row(
+            tr!("ui-options-preset-level"),
+            tr!("ui-options-preset-level-help"),
+            // a level writes the page's settings: they are the rows below
+            &Nothing,
+            |ui, s| preset_choice(ui, &p, s),
+        );
+        cx.wide()
+            .row_with(tr!("graphics-saved-title"), tr!("graphics-saved-help"), &Nothing, |ui, s, st, _| {
+                super::super::saved_graphics::controls(ui, &p, s, st)
+            });
+    });
+    cx.group(tr!("ui-options-distance-and-detail"), |cx| {
+        cx.slider(
+            tr!("common-draw-distance"),
+            tr!("ui-options-objects-beyond-this-distance-are-not-drawn-96-m"),
+            &field!(draw_distance),
+            32.0..=512.0,
+            " m",
         );
         cx.row(
             tr!("ui-options-level-of-detail-lod"),

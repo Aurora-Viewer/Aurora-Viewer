@@ -8,11 +8,13 @@
   (both bar layouts) and system menu. The library survives preference resets;
   snapshots exclude account data, environment, hardware and frame pacing, and
   preserve the user's quality while photo quality is boosted. EN/FR/JA.
-  Save opens a focused name prompt with Enter support; every dropdown entry
-  has its own right-aligned bin, which confirms deletion without loading it.
-  `check.ps1` green: 6,164 passed, 30 ignored, including eight new regressions.
-  Native FR editor, dropdown and name-dialog captures inspected. Human demo
-  validation pending for this revision.
+  A standard Save button beside the selector opens a focused name prompt with
+  Enter support; every dropdown entry has its own right-aligned bin, which
+  confirms deletion without loading it. Parcel-isolation controls have their
+  own Graphics > Parcels tab after Smoothness.
+  `check.ps1` green: 6,165 passed, 30 ignored, including nine new regressions.
+  Native FR editor, dropdown, name-dialog and Parcels tab captures inspected.
+  Human demo validation pending for this revision.
 - 🟡 Poser close confirmation and Ctrl+Z / Ctrl+Y (human request, 2026-10-29; task `poser-close-undo`; no issue; follows #1450; validated by the human in demo on 2026-10-29): with stop on close, a close that loses edited joints (any subject) asks first: Minimize keeps the pose, Close anyway closes, Escape cancels, Don't ask again turns off the new Settings › Window switch (on by default). The Legacy Viewer closes at once (`FSFloaterPoser::onClose`); asking avoids losing a pose by mistake. Covers the cross, Ctrl+W and the photo viewfinder's wand; Stop posing only pauses and does not ask. Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z undo and redo in the poser as its title arrows (an Aurora addition: the Legacy poser has buttons only), unless a text field has the keyboard or the build tools' window is in front; gestures bound to them wait while the poser is open. Ctrl+W now finds a window raised over the viewfinder. The demo simulator answers the build tools' Undo / Redo (placements per object, one step per drag). Demo: `AURORA_DEMO_POSER=close`.
   - ⬜ Grid check: the build tools' Ctrl+Z / Ctrl+Y on a real simulator after moving, rotating and stretching an object.
 

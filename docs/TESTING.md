@@ -3231,7 +3231,8 @@ both open states and the selection count. Capture at frame 620.
   and 1160 to compare home, outside and repeated return; no crossing errors should
   be logged. Owner/group discovery also publishes its complete result at once.
   Combine with
-  `AURORA_DEMO_OPTIONS=graphics` for the native controls. Check live mode changes,
+  `AURORA_DEMO_OPTIONS=graphics/6` for the native controls in Graphics > Parcels,
+  after Smoothness. Check live mode changes,
   adding/removing scope entries and always-visible parcels, and restoring content
   without relogging. To add a neighbouring exception without walking there, select
   it in About Land, then use "Add selected parcel" in the always-visible list.

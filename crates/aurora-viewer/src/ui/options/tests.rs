@@ -578,6 +578,10 @@ fn every_page_names_its_tabs() {
     assert_eq!(Page::parse("0"), Some((Page::Graphics, 0)));
     assert_eq!(Page::parse("13"), Some((Page::Aurora, 0)));
     assert_eq!(Page::parse("9"), None, "the former Debug page is the Dev Toolbox");
+    assert_eq!(
+        Page::Graphics.tabs()[5..],
+        [aurora_i18n::tr!("ui-options-smoothness"), aurora_i18n::tr!("region-parcels")]
+    );
 }
 
 /// One frame of the rows of a page's tab, `width` wide, laid out as in the
@@ -726,6 +730,42 @@ fn preference_shapes(
 }
 
 #[test]
+fn graphics_profile_save_has_a_button_face_to_the_right_of_the_list() {
+    for width in [420.0, 700.0, 900.0] {
+        let mut frames = Frames::new();
+        let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+        s.graphics_saved
+            .insert("Layout profile".into(), crate::graphics_presets::saved::Saved::capture(&s));
+        let mut shapes = Vec::new();
+        for _ in 0..4 {
+            shapes = preference_shapes(&mut frames, &mut s, &mut st, &mut r, (Page::Graphics, 0, width), Vec::new());
+        }
+        let text_rect = |label: &str| {
+            shapes
+                .iter()
+                .find_map(|shape| match shape {
+                    egui::Shape::Text(t) if t.galley.text() == label => Some(egui::Rect::from_min_size(t.pos, t.galley.size())),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("missing text: {label}"))
+        };
+        let list = text_rect("Layout profile");
+        let save = text_rect(aurora_i18n::tr!("common-save"));
+        assert!(save.left() > list.right(), "{width}: Save is right of the list");
+        assert!(
+            (save.center().y - list.center().y).abs() < 1.0,
+            "{width}: Save stays on the list's line"
+        );
+        assert!(
+            shapes.iter().any(|shape| matches!(shape, egui::Shape::Rect(face)
+                if face.rect.contains_rect(save.expand(1.0)) && face.rect.height() < 30.0 && face.rect.width() < 160.0
+            )),
+            "{width}: Save has an ordinary padded button face"
+        );
+    }
+}
+
+#[test]
 fn parcel_visibility_lists_show_full_names_and_regions_with_separate_remove_controls() {
     use crate::world::parcel_visibility::Entry;
     fn frame(
@@ -743,7 +783,7 @@ fn parcel_visibility_lists_show_full_names_and_regions_with_separate_remove_cont
             ui.set_width(view.0);
             ui.spacing_mut().item_spacing.y = 0.0;
             let mut cx = Cx::new(ui, p, s, &d, st, &mut r, view.1, "parc");
-            run_page(&mut cx, Page::Graphics, Some(0));
+            run_page(&mut cx, Page::Graphics, Some(6));
             changed |= cx.changed;
         });
         (shapes, changed)
