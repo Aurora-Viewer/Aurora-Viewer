@@ -2496,6 +2496,7 @@ impl App {
         self.portal_demo_peer = None;
         self.follow_recovery = None;
         self.inventory_ui = Default::default();
+        self.contents_copies = Default::default();
         self.texture_library.reset();
         self.library_drag = Default::default();
         self.library_demo_seeded = false;

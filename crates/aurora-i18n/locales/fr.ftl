@@ -8183,6 +8183,14 @@ contents-copy-move-more = { $count ->
    *[other] …et { $count } autres éléments
     }
 contents-copy-requested = Copie du contenu dans « { $folder } » demandée.
+contents-copy-folder-timeout = La création du dossier « { $folder } » n’a pas été confirmée en 60 secondes. Aucun contenu n’a été transféré.
+contents-copy-complete = { $count ->
+    [one] Contenu copié dans « { $folder } » : { $count } élément reçu.
+   *[other] Contenu copié dans « { $folder } » : { $count } éléments reçus.
+    }
+contents-copy-timeout = Copie dans « { $folder } » non confirmée après 60 secondes. Éléments reçus : { $received }/{ $count }. Vérifiez le contenu du dossier.
+contents-copy-unavailable = Copie dans « { $folder } » non confirmée : le dossier de destination est introuvable ou n’a pas pu être chargé.
+contents-copy-wear-busy = Le contenu a été copié dans « { $folder } », mais votre tenue n’a pas pu être changée pendant une autre modification de tenue. Portez le dossier depuis votre inventaire.
 contents-copy-failed = Le dossier du contenu de l’objet n’a pas pu être créé : { $reason }
 contents-copy-wear-timeout = Tous les éléments de « { $folder } » ne sont pas arrivés dans votre inventaire : votre tenue n’a pas changé. Portez le dossier depuis votre inventaire.
 build-compact-land = Terrain

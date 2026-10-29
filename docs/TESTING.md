@@ -1682,6 +1682,14 @@ No real L$ and no connection to a grid.
   items arrived, wearing the folder`. Wearing needs a Current Outfit folder:
   add `AURORA_DEMO_APPEARANCE=worn` (the cube is then linked in the outfit;
   the demo does not attach it).
+  After confirmation (`open-copy-yes`), the inventory footer confirms the
+  three actual arrivals, then clears after five seconds (capture at frame 650
+  for success, 1050 after expiry, with `--fps-limit 60`).
+- `open-copy-timeout-yes` (#1410): the offline simulator withholds the spare
+  cube; frame 600 advances the copy observer's deadline. The footer reports
+  an unconfirmed copy with two of three items received, then clears after
+  five seconds. This fixture changes neither real-grid transfers nor their
+  60-second deadline. The move warning still requires confirmation at 480.
 - `play` starts a local HTML page; `pause` and `open-media-playing`
   inject a simulated playback state before the click; `open-media` simulates
   the opening of the external browser.

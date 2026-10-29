@@ -2240,6 +2240,11 @@ windows, the drop targets and the confirmation of removals.
 focused Delete/Ctrl+A before world shortcuts, and shares the existing batch
 transfer and inventory-drop rules. `app/contents_copy.rs` rechecks mutations
 against the current object before dispatch and refreshes the contents after drops.
+Copies also observe the destination's received records, matching names/types
+with multiplicity despite the server assigning new IDs. Folder creation and
+content arrival have bounded waits; late creation replies cannot start a timed-out
+transfer. Inventory feedback changes from pending to success/error, then expires
+after five seconds; request IDs keep older copies from replacing newer feedback.
 `app/inventory.rs` checks the permissions again before the
 `MoveTaskInventory` message, with two persistent warning preferences
 (ordinary object or object containing scripts).
