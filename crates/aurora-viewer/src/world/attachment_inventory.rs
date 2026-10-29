@@ -158,10 +158,7 @@ impl World {
         }
         let mut commands = Vec::new();
         if !missing.is_empty() {
-            commands.push(NetCommand::FetchItems {
-                items: missing,
-                owner: self.agent_id,
-            });
+            commands.push(NetCommand::FetchAttachmentItems { items: missing });
         }
         if !allow_links
             || worn.is_empty()
@@ -358,7 +355,7 @@ mod tests {
         let cof = appearance::cof(&world.inventory).expect("COF");
         let before = appearance::folder_links(&world.inventory, cof);
         assert!(matches!(&world.update_attachment_inventory(now, true)[..],
-            [NetCommand::FetchItems { items, owner }] if items == &[item.id] && *owner == world.agent_id));
+            [NetCommand::FetchAttachmentItems { items }] if items == &[item.id]));
         assert!(world.update_attachment_inventory(now, true).is_empty());
         world.apply(NetEvent::InventoryItems(vec![item.clone()]));
         assert!(world.inventory.folders[&item.parent].items.contains(&item.id));
@@ -401,7 +398,7 @@ mod tests {
         let now = Instant::now();
         for attempt in 0..u32::from(FETCH_ATTEMPTS) {
             assert!(matches!(&world.update_attachment_inventory(now + RETRY_GAP * attempt, true)[..],
-                [NetCommand::FetchItems { items, .. }] if items == &[item.id]));
+                [NetCommand::FetchAttachmentItems { items }] if items == &[item.id]));
             world.apply(NetEvent::InventoryItemsFailed { items: vec![item.id] });
             assert!(
                 world
@@ -870,17 +867,22 @@ mod tests {
     #[test]
     fn a_fetched_parentless_attachment_becomes_visible_without_replacing_its_original() {
         let (mut world, object, mut item) = fixture();
+        let objects = item.parent;
         let lost = with_lost_folder(&mut world, &item);
         item.parent = Uuid::nil();
-        world.apply(NetEvent::InventoryItems(vec![item.clone()]));
-        assert_eq!(world.inventory.items[&item.id].parent, lost);
-        assert!(world.inventory.folders[&lost].items.contains(&item.id));
+        world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+        assert_eq!(world.inventory.items[&item.id].parent, objects);
+        assert!(world.inventory.folders[&objects].items.contains(&item.id));
+        assert!(!world.inventory.folders[&lost].items.contains(&item.id));
         assert!(
             world.objects.index_of_uuid(&object.full_id).is_some(),
             "do not detach or replace the object to file it"
         );
         let change = world.inventory.take_parent_repairs().expect("reliable parent repair");
         assert!(change.move_only());
+        assert!(
+            matches!(&change.operations[..], [Operation::Patch { id, body, .. }] if *id == item.id && body["parent_id"].as_uuid() == objects)
+        );
         let commands = world.update_attachment_inventory(Instant::now(), true);
         assert!(matches!(&commands[..], [NetCommand::EditInventory { change, .. }]
             if matches!(&change.operations[..], [Operation::Links { links, .. }] if links.len() == 1 && links[0].target == item.id)));
@@ -896,7 +898,9 @@ mod tests {
         let old = item.parent;
         let lost = with_lost_folder(&mut world, &item);
         item.parent = Uuid::nil();
-        world.apply(NetEvent::InventoryItems(vec![item.clone()]));
+        world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+        assert_eq!(world.inventory.items[&item.id].parent, old);
+        assert!(world.inventory.folders[&lost].items.is_empty());
         let locked = Uuid::from_u128(90_083);
         let mut shared = world.inventory.folders[&old].info.clone();
         shared.parent = world.inventory.root;
@@ -941,12 +945,12 @@ mod tests {
         };
         assert!(!world.rlva_allows_command(&other, Uuid::nil()));
         assert!(!world.rlva_allows_command(&other, Uuid::from_u128(90_084)));
-        let version = world.inventory.folders[&lost].info.version;
+        let version = world.inventory.folders[&old].info.version;
         world.apply(NetEvent::InventoryContents(vec![FolderContents {
-            folder_id: lost,
+            folder_id: old,
             owner_id: world.agent_id,
             version: version + 1,
-            folders: Vec::new(),
+            folders: vec![world.inventory.folders[&locked].info.clone()],
             items: vec![world.inventory.items[&item.id].clone()],
         }]));
         assert!(
@@ -954,5 +958,77 @@ mod tests {
             "parent confirmation retains normal move policy after readback"
         );
         assert!(!world.rlva_allows_command(&other, Uuid::nil()));
+    }
+
+    #[test]
+    fn script_attachment_creation_and_readback_use_objects_in_both_arrival_orders() {
+        for notification_first in [false, true] {
+            let (mut world, _, mut item) = fixture();
+            let objects = item.parent;
+            let lost = with_lost_folder(&mut world, &item);
+            item.parent = Uuid::nil();
+            let notification = NetEvent::InventoryUpdated {
+                folders: Vec::new(),
+                items: vec![item.clone()],
+            };
+            let readback = NetEvent::AttachmentInventoryItems(vec![item.clone()]);
+            for event in if notification_first {
+                [notification, readback]
+            } else {
+                [readback, notification]
+            } {
+                world.apply(event);
+                assert_eq!(world.inventory.items[&item.id].parent, objects);
+                assert!(!world.inventory.folders[&lost].items.contains(&item.id));
+            }
+            let mut expected = item.clone();
+            expected.parent = objects;
+            assert_eq!(
+                world.inventory.items[&item.id], expected,
+                "preserve the original record and permissions"
+            );
+            assert_eq!(
+                world.inventory.take_parent_repairs().expect("parent assignment").operations.len(),
+                1
+            );
+            assert!(world.inventory.take_parent_repairs().is_none());
+            // An older generic metadata read cannot reclassify a pending
+            // creation as an AIS orphan while its reliable move is in flight.
+            world.apply(NetEvent::InventoryItems(vec![item.clone()]));
+            assert_eq!(world.inventory.items[&item.id].parent, objects);
+            assert!(world.inventory.take_parent_repairs().is_none());
+        }
+    }
+
+    #[test]
+    fn late_attachment_metadata_keeps_its_creation_context_after_detach_or_avatar_loss() {
+        for teleport in [false, true] {
+            let (mut world, object, mut item) = fixture();
+            let objects = item.parent;
+            let lost = with_lost_folder(&mut world, &item);
+            assert!(matches!(
+                &world.update_attachment_inventory(Instant::now(), true)[..],
+                [NetCommand::FetchAttachmentItems { .. }]
+            ));
+            if teleport {
+                world.teleporting = true;
+                let avatar = world.objects.index_of_uuid(&world.agent_id).expect("avatar");
+                world.objects.remove_idx(avatar);
+            } else {
+                world.apply(NetEvent::ObjectsKilled {
+                    handle: 1,
+                    local_ids: vec![object.local_id],
+                });
+            }
+            assert!(world.worn_attachment(&item.id).is_none());
+            item.parent = Uuid::nil();
+            world.apply(NetEvent::AttachmentInventoryItems(vec![item.clone()]));
+            assert_eq!(world.inventory.items[&item.id].parent, objects);
+            assert!(!world.inventory.folders[&lost].items.contains(&item.id));
+            assert!(
+                world.update_attachment_inventory(Instant::now(), true).is_empty(),
+                "never rewear a late original"
+            );
+        }
     }
 }

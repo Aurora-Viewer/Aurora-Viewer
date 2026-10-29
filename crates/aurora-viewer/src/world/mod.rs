@@ -3430,6 +3430,10 @@ impl World {
                 self.inventory.add_items(items);
                 None
             }
+            NetEvent::AttachmentInventoryItems(items) => {
+                self.inventory.add_attachment_items(items);
+                None
+            }
             NetEvent::AttachmentAssetSaved(item) => {
                 if self.rlva.enabled() {
                     self.rlva.watchdog.saved(item, Instant::now());

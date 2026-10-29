@@ -266,7 +266,14 @@ impl Inventory {
     /// cost ~1 ms per move into a 5,000-item Trash, twice per moved item
     /// (#1580). Lists stay ordered like `sort_children`'s.
     pub fn add_items(&mut self, mut items: Vec<InvItem>) {
-        self.repair_item_parents(&mut items, true);
+        self.repair_item_parents(&mut items, parents::ItemSource::Fetch);
+        self.add_items_inner(items);
+    }
+
+    /// A metadata read recovering a newly script-attached original retains
+    /// LLInventoryModel::updateItem's creation rules across HTTP delays.
+    pub fn add_attachment_items(&mut self, mut items: Vec<InvItem>) {
+        self.repair_item_parents(&mut items, parents::ItemSource::Attachment);
         self.add_items_inner(items);
     }
 
@@ -337,7 +344,7 @@ impl Inventory {
                 parent.children.push(id);
             }
         }
-        self.repair_item_parents(&mut items, false);
+        self.repair_item_parents(&mut items, parents::ItemSource::Simulator);
         for item in &items {
             if self.items.get(&item.id) != Some(item) {
                 changed.insert(item.parent);

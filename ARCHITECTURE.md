@@ -41,12 +41,16 @@ the COF remains unavailable, following `LLSelectMgr::sendDetach`. Healthy outfit
 mutations retain their existing path. Recovery preserves RLVa point/source locks
 and refuses unknown folder or scripted nostrip decisions until metadata arrives.
 
-`world/inventory/parents.rs` files owned, parentless server records using the
-Legacy Viewer rules: AIS reads go to Lost And Found; server notifications retain
-an existing parent or use the asset's system folder. Original item identities and
-permissions remain intact. Bounded reliable parent moves precede COF registration,
-and pending repairs survive older folder snapshots until confirmed readback.
-Parent confirmations use the existing RLVa inventory move policy.
+`world/inventory/parents.rs` distinguishes normal creation from AIS orphan
+recovery. Following `processUpdateCreateInventoryItem` / `updateItem`, a newly
+script-attached original retains its known folder or uses the Objects system
+folder when its parent is null. `FetchAttachmentItems` / `AttachmentInventoryItems`
+preserve that creation context through HTTP delays, detachment and teleport.
+Attaching only adds a COF link; it does not move an original with a valid parent.
+Generic AIS orphan reads keep their separate Lost And Found handling. Original
+identities and permissions remain intact. Bounded reliable parent moves precede
+COF registration, and pending assignments survive older folder/metadata reads
+until confirmed readback. Existing RLVa inventory move rules apply.
 
 `scene/anim.rs` restarts active resident and control-avatar motions from one shared
 instant for Ctrl+S, World and the resync toolbar command. Receipt signals,

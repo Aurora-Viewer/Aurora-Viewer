@@ -9,8 +9,15 @@ use aurora_net::inventory::{
 };
 use std::collections::{HashMap, HashSet};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ItemSource {
+    Fetch,
+    Simulator,
+    Attachment,
+}
+
 impl Inventory {
-    pub(super) fn repair_item_parents(&mut self, items: &mut [InvItem], fetched: bool) {
+    pub(super) fn repair_item_parents(&mut self, items: &mut [InvItem], source: ItemSource) {
         if self.owner.is_nil()
             || !items
                 .iter()
@@ -38,10 +45,20 @@ impl Inventory {
                 .get(&item.id)
                 .map(|it| it.parent)
                 .filter(|id| !id.is_nil() && self.folders.get(id).is_some_and(|f| !f.library));
-            // AIS classifies fetched null-parent records as lost. A server
-            // notification preserves an existing parent, or uses its type's
-            // system folder for a genuinely new item.
-            let parent = if fetched { system.get(&16).copied() } else { previous }
+            // processUpdateCreateInventoryItem -> updateItem: preserve the
+            // known parent or file a new object in FT_OBJECT. The attachment
+            // recovery read keeps that context even after a detach/teleport.
+            // AIS orphan repair is a separate path; a delayed metadata read
+            // cannot undo an already pending normal parent assignment.
+            let pending = previous.filter(|parent| self.repaired_parents.get(&item.id) == Some(parent));
+            let parent = pending
+                .or_else(|| {
+                    if source == ItemSource::Fetch {
+                        system.get(&16).copied()
+                    } else {
+                        previous
+                    }
+                })
                 .or_else(|| system.get(&item.asset_type).copied())
                 .or(root);
             let Some(parent) = parent else {
@@ -50,7 +67,7 @@ impl Inventory {
             item.parent = parent;
             if self.repaired_parents.insert(item.id, parent) != Some(parent) {
                 self.pending_parent_repairs.insert(item.id);
-                if fetched
+                if source != ItemSource::Simulator
                     && previous != Some(parent)
                     && let Some(folder) = self.folders.get_mut(&parent)
                     && folder.state == FetchState::Fetched
@@ -166,6 +183,41 @@ mod tests {
         assert!(inv.take_parent_repairs().is_none());
         inv.add_items(vec![object(20, Uuid::nil())]);
         assert!(inv.take_parent_repairs().is_none(), "no repeated moves while readback is pending");
+    }
+
+    #[test]
+    fn attachment_reads_preserve_known_folders_and_use_objects_for_new_originals() {
+        let mut inv = fixture(FetchState::Fetched);
+        let custom = id(4);
+        let mut folder = inv.folders[&id(3)].clone();
+        folder.info.id = custom;
+        folder.info.type_default = -1;
+        inv.folders.insert(custom, folder);
+        inv.add_items(vec![object(20, custom)]);
+        inv.add_attachment_items(vec![object(20, Uuid::nil()), object(21, Uuid::nil()), object(22, custom)]);
+        assert_eq!(inv.items[&id(20)].parent, custom);
+        assert_eq!(inv.items[&id(21)].parent, id(3));
+        assert_eq!(inv.items[&id(22)].parent, custom);
+        assert!(
+            inv.folders[&id(2)].items.is_empty(),
+            "ordinary attachments never use Lost And Found"
+        );
+        let change = inv.take_parent_repairs().expect("only parentless originals need repair");
+        assert_eq!(change.operations.len(), 2);
+        assert!(!inv.repaired_parents.contains_key(&id(22)), "a supplied valid parent needs no move");
+    }
+
+    #[test]
+    fn attachment_parent_assignment_never_targets_lost_and_found_when_objects_is_unavailable() {
+        let mut inv = fixture(FetchState::Fetched);
+        inv.folders.remove(&id(3));
+        inv.add_attachment_items(vec![object(20, Uuid::nil())]);
+        assert_eq!(inv.items[&id(20)].parent, inv.root);
+        assert!(inv.folders[&id(2)].items.is_empty());
+        let mut foreign = object(21, Uuid::nil());
+        foreign.owner = id(99);
+        inv.add_attachment_items(vec![foreign]);
+        assert!(inv.items[&id(21)].parent.is_nil());
     }
 
     #[test]

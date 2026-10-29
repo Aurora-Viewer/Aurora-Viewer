@@ -514,5 +514,94 @@ mod tests {
             });
             assert!(received.try_iter().any(|(_, event)| matches!(event, NetEvent::ExperienceAttachment { experience, object_name } if experience == Uuid::from_u128(700) && object_name == "Controller")));
         }
+        // Both inventory services preserve why a record was requested. A
+        // late attachment read must use normal creation filing in the model,
+        // rather than the separate AIS orphan-recovery classification.
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for (ais, attachment) in [(true, true), (false, true), (true, false), (false, false)] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local inventory service");
+            let cap = format!("http://{}", listener.local_addr().expect("address"));
+            session.sims.get_mut(&address).expect("sim").caps = Arc::new(HashMap::from([(
+                if ais { "InventoryAPIv3" } else { "FetchInventory2" }.to_owned(),
+                cap,
+            )]));
+            let record = llsd_map! {
+                "item_id" => Uuid::from_u128(103), "parent_id" => Uuid::nil(),
+                "name" => "Script-attached object", "type" => 6, "inv_type" => 6,
+                "permissions" => llsd_map! { "owner_id" => agent }
+            };
+            let body = aurora_llsd::to_xml(&if ais {
+                record
+            } else {
+                llsd_map! { "items" => Llsd::Array(vec![record]) }
+            });
+            let service = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.expect("HTTP read");
+                let mut bytes = Vec::new();
+                loop {
+                    if let Some(header_end) = bytes.windows(4).position(|b| b == b"\r\n\r\n") {
+                        let header = String::from_utf8_lossy(&bytes[..header_end]);
+                        let length = header
+                            .lines()
+                            .find_map(|line| {
+                                line.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .and_then(|n| n.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        if bytes.len() >= header_end + 4 + length {
+                            break;
+                        }
+                    }
+                    let mut chunk = [0; 2048];
+                    let n = socket.read(&mut chunk).await.expect("request");
+                    assert!(n > 0);
+                    bytes.extend_from_slice(&chunk[..n]);
+                }
+                let request = String::from_utf8_lossy(&bytes);
+                if ais {
+                    assert!(request.starts_with(&format!("GET /item/{} ", Uuid::from_u128(103))));
+                } else {
+                    assert!(request.starts_with("POST / "));
+                    assert!(request.contains(&agent.to_string()) && request.contains(&Uuid::from_u128(103).to_string()));
+                }
+                let headers = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/llsd+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(headers.as_bytes()).await.expect("headers");
+                socket.write_all(&body).await.expect("response");
+            });
+            session.on_command(if attachment {
+                NetCommand::FetchAttachmentItems {
+                    items: vec![Uuid::from_u128(103)],
+                }
+            } else {
+                NetCommand::FetchItems {
+                    items: vec![Uuid::from_u128(103)],
+                    owner: agent,
+                }
+            });
+            let (was_attachment, items) = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    while let Ok((_, event)) = received.try_recv() {
+                        match event {
+                            NetEvent::AttachmentInventoryItems(items) => return (true, items),
+                            NetEvent::InventoryItems(items) => return (false, items),
+                            NetEvent::InventoryItemsFailed { .. } => panic!("local item read failed"),
+                            _ => {}
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .expect("inventory reply");
+            assert_eq!(was_attachment, attachment, "AIS {ais}");
+            assert_eq!(items.len(), 1);
+            assert!(items[0].parent.is_nil());
+            assert_eq!(items[0].owner, agent);
+            service.await.expect("service completed");
+        }
     }
 }
