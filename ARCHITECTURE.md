@@ -5,6 +5,12 @@ instant for Ctrl+S, World and the resync toolbar command. Receipt signals,
 simulator state and independent import previews are preserved. Native key dispatch leaves Save
 to active script/document editors; inventory editors mark their focused field.
 
+`app/audio_mute.rs` retains the native minimized state while the renderer
+temporarily owns the window. Native resize events and the event loop apply
+the transient master mute immediately to the audio mixer, parcel/prim media,
+chat video previews and microphone transmission. Saved volumes, channel mutes
+and the microphone toggle are preserved when the window is restored.
+
 `aurora-net/src/session.rs` keeps the last confirmed agent parcel. Selected,
 hovered and build-tool property replies refresh its live metadata only when
 the simulator and local parcel id match; its bitmap, bounds and notification
@@ -2385,6 +2391,12 @@ grows from frame to frame; `ui/widgets/steady_tests.rs`
 (`assert_window_steady`) runs a window's real `show` over frames, zooms and
 a larger text and checks that its rect stays put with its bottom button
 inside.
+`ui/widgets/modal_keys.rs` gives every `widgets::Modal` its keyboard: Enter
+clicks the dialog's `Primary` button (its `Danger` one when it has none)
+unless a focused button or a multi-line field keeps it, and the first text
+field takes the focus, its text selected, when the dialog opens
+(`LLPanel::handleKeyHere`, `LLToastAlertPanel`); a dialog that does
+something else with Enter takes it with `widgets::enter_pressed`.
 `ui/widgets/keycap.rs` draws the keys of a shortcut (list of
 shortcuts, microphone panel). `ui/widgets/color.rs` is the compact colour picker (`color_button`,
 `color_panel`, RGB / HSV / hexadecimal conversions) and the eyedropper it shares

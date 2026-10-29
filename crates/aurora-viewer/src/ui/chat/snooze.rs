@@ -85,7 +85,7 @@ pub fn dialog(ctx: &egui::Context, p: &Palette, world: &World, st: &mut ChatUi) 
                 valid.is_some(),
             )
             .clicked()
-                || (valid.is_some() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                || (valid.is_some() && widgets::enter_pressed(ui))
             {
                 done = valid.map(|s| (prompt.group, s));
                 close = true;

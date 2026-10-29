@@ -131,6 +131,7 @@ impl Scene {
         self.lists.hud_blend.extend(blend.into_iter().map(|(_, cmd)| cmd));
     }
 
+    /// Left clicks and hover intercept HUD geometry regardless of opacity.
     pub fn hud_pick(&self, world: &World, cursor: (f32, f32), include_hidden: bool) -> Option<(usize, Vec3, (Vec3, Vec3))> {
         self.hud_pick_impl(
             world,

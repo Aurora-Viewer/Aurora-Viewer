@@ -256,9 +256,10 @@ struct DemoPhoto {
     /// viewfinder…), the setting itself left alone.
     style: Option<crate::settings::PhotoWindowStyle>,
     /// AURORA_DEMO_SNAPSHOT=viewfinder[-essential|-hidden][-menu|-help|
-    /// -drawer][-mf|-afc][-point][-frozen][-focus|-shoot]: the viewfinder, its
-    /// display, a panel open, its focus mode, and the own avatar focused
-    /// (then the photo taken) at AURORA_DEMO_SNAPSHOT_FRAME.
+    /// -drawer][-mf|-afc][-point][-frozen][-focus|-shoot|-group]: the
+    /// viewfinder, its display, a panel open, its focus mode, and the own
+    /// avatar focused (then the photo taken, or the others in view added)
+    /// at AURORA_DEMO_SNAPSHOT_FRAME.
     viewfinder: Option<DemoViewfinder>,
     /// AURORA_DEMO_SNAPSHOT=light: sunset, a brighter exposure, the clouds
     /// still and the worn lights off.
@@ -275,6 +276,9 @@ struct DemoViewfinder {
     point: bool,
     focus: bool,
     shoot: bool,
+    /// After the own avatar's focus, the other avatars in view added to
+    /// it (Shift + click: the group focus).
+    group: bool,
     /// The aperture ring on All sharp (the window's depth of field off).
     sharp: bool,
     /// The camera pad, the self-timer (2 s), AE-L, the controls on hover
@@ -1717,9 +1721,18 @@ LUT_3D_SIZE {n}
             return (false, false);
         };
         (
-            (v.focus || v.shoot) && self.frame_count == d.frame,
+            (v.focus || v.shoot || v.group) && self.frame_count == d.frame,
             v.shoot && self.frame_count == d.frame + 2,
         )
+    }
+
+    /// The demo adds the other avatars in view to the focus this frame
+    /// (`group`), once the own avatar's has locked.
+    pub(super) fn photo_demo_group(&self) -> bool {
+        self.snapshots
+            .demo
+            .as_ref()
+            .is_some_and(|d| d.viewfinder.as_ref().is_some_and(|v| v.group) && self.frame_count == d.frame + 40)
     }
 
     /// The last photo's card of the viewfinder: its thumbnail, what it
@@ -2220,6 +2233,7 @@ LUT_3D_SIZE {n}
                     point: has("point"),
                     focus: has("focus"),
                     shoot: has("shoot"),
+                    group: has("group"),
                     sharp: has("sharp"),
                     pad: has("pad"),
                     timer: has("timer"),

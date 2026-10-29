@@ -483,7 +483,7 @@ fn share(
                 let primary =
                     crate::ui::widgets::primary_button_sized(ui, p, aurora_i18n::tr!("ui-inventory-dialogs-give"), Vec2::new(96.0, 28.0));
                 ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("inventory_share_give", ui_id)), primary.rect));
-                give = !given.is_empty() && (primary.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                give = !given.is_empty() && (primary.clicked() || crate::ui::widgets::enter_pressed(ui));
             });
             cancel = crate::ui::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(96.0, 28.0)).clicked();
         });

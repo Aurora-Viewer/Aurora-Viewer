@@ -437,6 +437,98 @@ pub fn sharp_range(coc_scale: f32, focus: f32) -> (f32, f32) {
     (near, far.min(FAR))
 }
 
+/// The group focus (Shift + click on avatars, AF-S): every face held stays
+/// sharp. A camera would stop down until the group fits in its depth of
+/// field, and lose the background's blur; here the renderer keeps a zone
+/// sharp from the nearest face to the farthest
+/// (`aurora_render::DepthOfField::focus_far`) and blurs beyond each end at
+/// the aperture chosen.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Zone {
+    /// Where the lens focuses (m): the zone's middle in dioptres, where a
+    /// lens splits the depth between the two ends.
+    pub middle: f32,
+    /// The zone's ends as shares of `middle`: the lens hunts and follows
+    /// the middle and the zone moves with it, so the picture pumps through
+    /// the hunt as with one subject, then sits on the faces once locked.
+    pub near: f32,
+    pub far: f32,
+}
+
+impl Zone {
+    /// The zone's ends (m) with the lens at `distance`.
+    pub fn at(&self, distance: f32) -> (f32, f32) {
+        (distance * self.near, distance * self.far)
+    }
+}
+
+/// The zone holding the faces at `distances` (m along the view axis); None
+/// under two faces (a single subject is a single plane).
+pub fn group_zone(distances: &[f32]) -> Option<Zone> {
+    let mut finite = distances.iter().filter(|d| d.is_finite()).map(|d| d.clamp(MIN_FOCUS, FAR));
+    let first = finite.next()?;
+    let (mut near, mut far, mut n) = (first, first, 1);
+    for d in finite {
+        near = near.min(d);
+        far = far.max(d);
+        n += 1;
+    }
+    if n < 2 {
+        return None;
+    }
+    let middle = 2.0 / (1.0 / near + 1.0 / far);
+    Some(Zone {
+        middle,
+        near: near / middle,
+        far: far / middle,
+    })
+}
+
+/// The nearest and farthest distances kept sharp around a zone from `near`
+/// to `far` (`sharp_range` beyond each end), `coc_scale` the circle at the
+/// focus `near` (the circle at a focus s scales as 1 / s).
+pub fn sharp_zone(coc_scale: f32, near: f32, far: f32) -> (f32, f32) {
+    let far = far.max(near);
+    let front = sharp_range(coc_scale, near).0;
+    let back = sharp_range(coc_scale * near / far.max(1e-3), far).1;
+    (front, back)
+}
+
+/// What the focus holds: an avatar's face, or a point of the world.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Subject {
+    Avatar(uuid::Uuid),
+    Point(glam::Vec3),
+}
+
+impl Subject {
+    /// The same subject, for a click seen from `eye`: the same avatar, or a
+    /// point clicked again on the same spot (a few centimetres, more far
+    /// away, where a pixel covers more).
+    pub fn same(&self, other: &Subject, eye: glam::Vec3) -> bool {
+        match (self, other) {
+            (Subject::Avatar(a), Subject::Avatar(b)) => a == b,
+            (Subject::Point(a), Subject::Point(b)) => a.distance(*b) < 0.05 + 0.03 * a.distance(eye),
+            _ => false,
+        }
+    }
+}
+
+/// `s` into the group, or out of it when it is there already (seen from
+/// `eye`); true when it came in.
+pub fn toggle_subject(group: &mut Vec<Subject>, s: Subject, eye: glam::Vec3) -> bool {
+    match group.iter().position(|g| g.same(&s, eye)) {
+        Some(i) => {
+            group.remove(i);
+            false
+        }
+        None => {
+            group.push(s);
+            true
+        }
+    }
+}
+
 /// Where a distance sits on the scale, 0 at `MIN_FOCUS` to 1 at infinity:
 /// logarithmic like a lens's, infinity a little apart from the rest.
 pub fn scale_position(distance: f32) -> f32 {
@@ -782,6 +874,57 @@ mod tests {
         assert!(n2 > near && f2 < far);
         // a lens barely blurring keeps everything to infinity
         assert_eq!(sharp_range(1.0, 4.0).1, FAR);
+    }
+
+    #[test]
+    fn a_group_zone_spans_its_faces_and_moves_with_the_lens() {
+        // one face (or none) is a single plane
+        assert_eq!(group_zone(&[]), None);
+        assert_eq!(group_zone(&[3.0]), None);
+        assert_eq!(group_zone(&[3.0, f32::NAN]), None);
+        let z = group_zone(&[4.0, 2.0, 6.0, 3.0]).expect("a zone");
+        // the middle in dioptres: 1/3 m, halfway between 1/2 and 1/6
+        assert!((z.middle - 3.0).abs() < 1e-5, "{}", z.middle);
+        let (near, far) = z.at(z.middle);
+        assert!((near - 2.0).abs() < 1e-5 && (far - 6.0).abs() < 1e-5);
+        // the lens hunting past the middle carries the zone along
+        let (n2, f2) = z.at(z.middle * 2.0);
+        assert!((n2 - 4.0).abs() < 1e-5 && (f2 - 12.0).abs() < 1e-5);
+        // faces closer than the lens can focus count from its minimum
+        let close = group_zone(&[0.1, 2.0]).expect("a zone");
+        assert!((close.at(close.middle).0 - MIN_FOCUS).abs() < 1e-5);
+    }
+
+    #[test]
+    fn the_sharp_zone_reaches_past_the_group_on_both_sides() {
+        let k = 40.0;
+        let (front, back) = sharp_zone(k, 2.0, 6.0);
+        assert!(front < 2.0 && back > 6.0);
+        // as one plane at each end
+        assert_eq!(front, sharp_range(k, 2.0).0);
+        assert!((back - sharp_range(k * 2.0 / 6.0, 6.0).1).abs() < 1e-4);
+        // a zone of one plane is the plane's
+        assert_eq!(sharp_zone(k, 4.0, 4.0), sharp_range(k, 4.0));
+    }
+
+    #[test]
+    fn shift_click_adds_a_subject_then_takes_it_out() {
+        use glam::Vec3;
+        let eye = Vec3::ZERO;
+        let (a, b) = (uuid::Uuid::from_u128(1), uuid::Uuid::from_u128(2));
+        let mut group = vec![Subject::Avatar(a)];
+        assert!(toggle_subject(&mut group, Subject::Avatar(b), eye));
+        assert!(toggle_subject(&mut group, Subject::Point(Vec3::new(10.0, 0.0, 0.0)), eye));
+        assert_eq!(group.len(), 3);
+        // the same avatar again: out
+        assert!(!toggle_subject(&mut group, Subject::Avatar(a), eye));
+        // a point clicked again a little beside, 10 m away: the same one
+        assert!(!toggle_subject(&mut group, Subject::Point(Vec3::new(10.0, 0.2, 0.0)), eye));
+        assert_eq!(group, vec![Subject::Avatar(b)]);
+        // a point a metre beside is another one
+        assert!(toggle_subject(&mut group, Subject::Point(Vec3::new(4.0, 0.0, 0.0)), eye));
+        assert!(toggle_subject(&mut group, Subject::Point(Vec3::new(4.0, 1.0, 0.0)), eye));
+        assert_eq!(group.len(), 3);
     }
 
     #[test]

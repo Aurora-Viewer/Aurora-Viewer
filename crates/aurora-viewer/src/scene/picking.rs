@@ -735,13 +735,11 @@ impl Scene {
                     };
                     let tf = o.te.as_ref().map(|te| *te.face(hit.face)).unwrap_or_default();
                     // LLToolPie::handleMouseDown prioritizes transparent
-                    // attachments. HUD buttons own the whole Blend triangle,
-                    // and a face that draws nothing is a button whatever its
-                    // material mode: hit zones are often alpha-0 prims with a
-                    // Mask or Opaque material (no draw record), or faces with
-                    // the library's transparent texture. Visible Mask faces
-                    // keep their cutouts and move gestures keep holes.
-                    if g.hud && mode == FacePick::Surface && (tf.color[3] < 0.004 || self.blend_face(world, o, g, hit.face)) {
+                    // attachments. Left clicks own the whole HUD triangle in
+                    // every alpha mode, including Mask cutouts. Hover follows
+                    // the same target; quick movement keeps texture holes.
+                    // Right-click selection already includes hidden surfaces.
+                    if g.hud && mode == FacePick::Surface {
                         return Some(hit);
                     }
                     let draw = geom
@@ -2223,7 +2221,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn hud_blend_buttons_keep_normal_clicks_while_move_and_mask_picks_respect_texture_holes() {
+    fn hud_left_clicks_ignore_alpha_while_move_picks_respect_texture_holes() {
         let (mut world, mut scene, front, back) = scene_with_two_objects();
         let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
         let parent = world.objects.get(own).unwrap().key.local_id;
@@ -2250,21 +2248,40 @@ pub(super) mod tests {
             .textures
             .pick_masks
             .insert(texture, super::super::textures::PickMask::from_rgba(2, 2, &[0; 16]).unwrap());
-        for (pbr, legacy) in [(None, None), (Some(1), None), (None, Some(legacy_mat::alpha_mode::BLEND))] {
-            for alpha in [1.0, 0.5, 0.001, 0.0] {
+        for (pbr, legacy, texture_alpha) in [
+            (None, None, AlphaKind::Blend),
+            (Some(1), None, AlphaKind::Blend),
+            (None, Some(legacy_mat::alpha_mode::BLEND), AlphaKind::Blend),
+            (None, None, AlphaKind::Mask),
+            (Some(2), None, AlphaKind::Blend),
+            (None, Some(legacy_mat::alpha_mode::MASK), AlphaKind::Blend),
+        ] {
+            scene.textures.alpha_by_slot[0] = texture_alpha;
+            for (alpha, texel_alpha) in [1.0, 0.5, 0.001, 0.0].into_iter().flat_map(|a| [0, 127, 255].map(|t| (a, t))) {
+                scene.textures.pick_masks.insert(
+                    texture,
+                    super::super::textures::PickMask::from_rgba(1, 1, &[255, 255, 255, texel_alpha]).unwrap(),
+                );
                 let draw = &mut scene.gpu[front].faces[0];
                 draw.pbr_alpha = pbr;
                 draw.legacy_alpha = legacy;
                 draw.te_alpha = alpha;
-                draw.pass = if alpha < 0.004 { Pass::Hidden } else { Pass::Blend };
+                draw.pass = if alpha < 0.004 {
+                    Pass::Hidden
+                } else if pbr == Some(2) || legacy == Some(legacy_mat::alpha_mode::MASK) || texture_alpha == AlphaKind::Mask {
+                    Pass::Mask
+                } else {
+                    Pass::Blend
+                };
                 Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].color[3] = alpha;
                 let (idx, _, ray) = scene.hud_pick(&world, cursor, false).unwrap();
-                assert_eq!(idx, front, "Blend {pbr:?}/{legacy:?}, alpha {alpha}");
+                assert_eq!(idx, front, "material {pbr:?}/{legacy:?}, alpha {alpha}, texel {texel_alpha}");
                 let touch = scene.touch_surface(&world, idx, ray).unwrap();
                 assert_eq!(touch.face, 0);
                 assert!(touch.st.abs_diff_eq(Vec3::new(0.5, 0.5, 0.0), 1e-5));
                 assert_eq!(scene.hover_hud(&world, cursor), Some(front));
-                assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
+                let moved = if alpha >= 0.004 && texel_alpha > 0 { front } else { back };
+                assert_eq!(scene.hud_move_pick(&world, cursor), Some(moved));
                 assert_eq!(scene.hud_edit_pick(&world, cursor).unwrap().0, front);
             }
         }
@@ -2272,6 +2289,8 @@ pub(super) mod tests {
         scene.gpu[front].faces[0].pass = Pass::Blend;
         Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].color[3] = 1.0;
         scene.gpu[front].faces[0].legacy_alpha = None;
+        scene.gpu[front].faces[0].pbr_alpha = None;
+        scene.textures.alpha_by_slot[0] = AlphaKind::Blend;
         // Follow repeats/offsets in HUD space, rather than the raw mesh UV.
         let mut pixels = vec![255; 4 * 4 * 4];
         for y in 0..4 {
@@ -2294,14 +2313,16 @@ pub(super) mod tests {
         assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
         assert_eq!(scene.hud_move_pick(&world, cursor), Some(front));
         scene.gpu[front].faces[0].pbr_alpha = Some(2);
-        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
+        assert_eq!(scene.hud_edit_pick(&world, cursor).unwrap().0, front);
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
         scene.gpu[front].faces[0].pbr_alpha = None;
         scene.textures.alpha_by_slot[0] = AlphaKind::Mask;
-        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
         assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
         scene.textures.alpha_by_slot[0] = AlphaKind::Blend;
         scene.gpu[front].faces[0].legacy_alpha = Some(legacy_mat::alpha_mode::MASK);
-        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
         assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
         scene.gpu[front].faces[0].legacy_alpha = None;
         scene.gpu[front].faces[0].pbr_alpha = Some(2);

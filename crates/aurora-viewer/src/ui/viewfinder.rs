@@ -62,10 +62,20 @@ pub struct Viewfinder {
     pub af: Autofocus,
     /// The AF point, in fractions of the screen (None: its centre).
     pub point: Option<Pos2>,
-    /// The avatar the focus is on (AF area Avatar).
-    pub subject: Option<uuid::Uuid>,
+    /// What the focus is on: an avatar (AF area Avatar), or the group of
+    /// avatars and points Shift + click gathers, the first the one clicked
+    /// first.
+    pub subjects: Vec<vf::Subject>,
+    /// The point a click alone focused on, the first of a group Shift +
+    /// click starts from there.
+    pub last_point: Option<glam::Vec3>,
+    /// The zone the group keeps sharp (None for one subject).
+    pub zone: Option<vf::Zone>,
     /// The depth under the AF point asked of the renderer.
     pub pick: Option<u64>,
+    /// That depth was asked by Shift + click: the avatar or the point there
+    /// joins the group, or leaves it.
+    pub adding: bool,
     /// That depth was asked by the shutter with the lens locked: the same
     /// subject under the point keeps the lock.
     pub recheck: bool,
@@ -120,6 +130,12 @@ pub struct Frame<'a> {
     /// The head of the avatar under the AF point, or of the subject (its
     /// box in points), whether the focus is on it, and the avatar's name.
     pub face: Option<(Rect, bool, String)>,
+    /// The rest of a group focus: its heads (boxes and names) and its
+    /// points (points), and the zone kept sharp from the nearest to the
+    /// farthest (m).
+    pub group: Vec<(Rect, String)>,
+    pub points: Vec<Pos2>,
+    pub zone: Option<(f32, f32)>,
     /// The camera's pitch (degrees, positive up).
     pub pitch: f32,
     pub histogram: Option<&'a [u32; vf::HISTOGRAM_BINS]>,
@@ -810,10 +826,14 @@ impl Viewfinder {
                 Dial::Exposure => aurora_i18n::tr!("photo-vf-dial-exposure"),
                 Dial::Distance => aurora_i18n::tr!("photo-vf-dial-distance"),
             };
-            let rows: [(&str, String); 8] = [
+            let rows: [(&str, String); 9] = [
                 (
                     aurora_i18n::tr!("photo-vf-cheat-click-key"),
                     aurora_i18n::tr!("photo-vf-cheat-click").to_owned(),
+                ),
+                (
+                    aurora_i18n::tr!("photo-vf-cheat-shift-click-key"),
+                    aurora_i18n::tr!("photo-vf-cheat-shift-click").to_owned(),
                 ),
                 (
                     aurora_i18n::tr!("photo-vf-cheat-enter-key"),
@@ -857,6 +877,29 @@ impl Viewfinder {
             }
             let keys = aurora_i18n::tr!("photo-vf-cheat-keys", menu = f.keys.menu, af = f.keys.af_mode);
             shadow_text(back, p, Pos2::new(x, y), Align2::LEFT_CENTER, &keys, regular(12.0), p.muted);
+            // put away from where it is read (the quick menu brings it back)
+            y += 24.0;
+            let hide = egui::Area::new(Id::unique("vf_hints_hide"))
+                .order(Order::Foreground)
+                .fade_in(false)
+                .pivot(Align2::LEFT_CENTER)
+                .fixed_pos(Pos2::new(x, y))
+                .show(ctx, |ui| {
+                    icon_text_button(
+                        ui,
+                        p,
+                        "eye-off",
+                        aurora_i18n::tr!("photo-vf-hints-hide"),
+                        p.muted,
+                        aurora_i18n::tr!("photo-vf-hints-hide-tip"),
+                    )
+                    .clicked()
+                })
+                .inner;
+            if hide {
+                s.viewfinder.hints = false;
+                self.say(aurora_i18n::tr!("photo-vf-hints-hidden", menu = f.keys.menu), false, f.now);
+            }
         }
 
         // the histogram
@@ -983,27 +1026,30 @@ impl Viewfinder {
             .as_ref()
             .filter(|_| s.viewfinder.area == AfArea::Avatar && s.dof.focus != PhotoFocus::Manual);
         let mut under = f.point + Vec2::new(0.0, AF_BOX / 2.0 + 6.0);
+        let radius = ctx.global_style().visuals.window_corner_radius;
+        // a face box with whose head the lens takes above it
+        let face_box = |rect: Rect, name: &str, stroke: Stroke| {
+            painter.rect_stroke(rect, radius, shadow, StrokeKind::Middle);
+            painter.rect_stroke(rect, radius, stroke, StrokeKind::Middle);
+            shadow_text(
+                painter,
+                p,
+                rect.left_top() - Vec2::new(0.0, 4.0),
+                Align2::LEFT_BOTTOM,
+                name,
+                bold(ctx, 11.0),
+                stroke.color,
+            );
+        };
         match face {
             Some(&(rect, on, ref name)) if on || display != Display::Hidden => {
                 let rect = Rect::from_center_size(rect.center(), rect.size() * if on { scale } else { 1.0 });
-                let radius = ctx.global_style().visuals.window_corner_radius;
-                let (stroke, c) = if on {
-                    (Stroke::new(2.5, color), color)
+                let stroke = if on {
+                    Stroke::new(2.5, color)
                 } else {
-                    (Stroke::new(1.2, p.ink.gamma_multiply(0.7)), p.ink.gamma_multiply(0.7))
+                    Stroke::new(1.2, p.ink.gamma_multiply(0.7))
                 };
-                painter.rect_stroke(rect, radius, shadow, StrokeKind::Middle);
-                painter.rect_stroke(rect, radius, stroke, StrokeKind::Middle);
-                // whose head the lens takes
-                shadow_text(
-                    painter,
-                    p,
-                    rect.left_top() - Vec2::new(0.0, 4.0),
-                    Align2::LEFT_BOTTOM,
-                    name,
-                    bold(ctx, 11.0),
-                    c,
-                );
+                face_box(rect, name, stroke);
                 if on {
                     under = Pos2::new(rect.center().x, rect.bottom() + 8.0);
                 } else {
@@ -1019,12 +1065,21 @@ impl Viewfinder {
                 }
             }
         }
+        // the rest of a group, each face and point held the same way
+        for (r, name) in &f.group {
+            face_box(Rect::from_center_size(r.center(), r.size() * scale), name, Stroke::new(2.5, color));
+        }
+        for &at in &f.points {
+            brackets(painter, at, scale, Stroke::new(width, color), shadow);
+        }
         if locked && self.af.recent(f.now) && display != Display::Hidden {
-            let text = format!("{} m", vf::distance_text(self.af.distance()));
-            let text = if self.af.distance() >= vf::INFINITY {
-                "∞".to_owned()
-            } else {
-                text
+            let text = match f.zone {
+                // the group: from its nearest subject to its farthest
+                Some((near, far)) => {
+                    format!("{}–{} m", vf::distance_text(near), vf::distance_text(far))
+                }
+                _ if self.af.distance() >= vf::INFINITY => "∞".to_owned(),
+                _ => format!("{} m", vf::distance_text(self.af.distance())),
             };
             shadow_text(painter, p, under, Align2::CENTER_TOP, &text, bold(ctx, 12.0), p.success);
         }
@@ -1652,6 +1707,10 @@ impl Viewfinder {
                                 (
                                     aurora_i18n::tr!("photo-vf-help-click").to_owned(),
                                     aurora_i18n::tr!("photo-vf-help-click-text"),
+                                ),
+                                (
+                                    aurora_i18n::tr!("photo-vf-help-shift-click").to_owned(),
+                                    aurora_i18n::tr!("photo-vf-help-shift-click-text"),
                                 ),
                                 (
                                     aurora_i18n::tr!("photo-vf-help-alt-click").to_owned(),

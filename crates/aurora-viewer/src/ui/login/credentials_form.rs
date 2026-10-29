@@ -30,9 +30,7 @@ pub fn content(
     progress: Option<(&str, f32)>,
 ) -> bool {
     let grids_open = crate::ui::grids::is_open(ui.ctx());
-    let enter = !grids_open
-        && !egui::Popup::is_any_open(ui.ctx())
-        && ui.input(|i| i.modifiers == egui::Modifiers::NONE && i.key_pressed(egui::Key::Enter));
+    let enter = !grids_open && !egui::Popup::is_any_open(ui.ctx()) && widgets::enter_pressed(ui);
     let can = ui
         .add_enabled_ui(!form.busy && !grids_open, |ui| {
             ui.label(

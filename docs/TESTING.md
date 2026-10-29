@@ -319,7 +319,14 @@ the own avatar's face aimed at
 and the shutter half-pressed at `AURORA_DEMO_SNAPSHOT_FRAME`, `shoot` the
 same then released two frames later (the photo saved to disk; with `timer`
 the log gives `viewfinder: self-timer, 2 s`, then `viewfinder: shutter` two
-seconds after the lock, and the countdown shows at the top). With
+seconds after the lock, and the countdown shows at the top), `group` the
+same focus then, 40 frames later, the other avatars in view within 25 m
+added to it as Shift + clicks would (the log gives `viewfinder demo: <n>
+avatar(s) added to the focus` and `viewfinder: group focus, <n> subject(s),
+lens at <m>`; capture at frame 800 with `AURORA_FPS_LIMIT=60`: a green box
+on every head, the zone from the nearest face to the farthest under the
+first one and on the scale, every face sharp and the background blurred at
+f/1.8). With
 `viewfinder-focus` the log gives `viewfinder: focus asked at <m>` then,
 about 0.36 s later, `viewfinder: locked at <m>`: capture at frame 760 with
 `AURORA_FPS_LIMIT=60` to see the green box on the head, the avatar's name
@@ -2265,19 +2272,20 @@ grid.
   `faces-turned` turns all the panels by 180°: the front column
   becomes empty, the back appears, the double-sided one stays visible. The
   floating labels stay visible both ways.
-- `faces-alpha` uses a texture with holes in those panels. Normal touches
-  and hover reach transparent Blend texels; quick movement and local resizing
-  pass through them. Masked cutouts still let normal touches through, and
-  opaque PBR ignores texture alpha. A face that draws nothing (texture-entry
-  alpha 0, or the library's transparent texture) takes normal touches and
-  hover whatever its material mode.
+- `faces-alpha` uses a texture with holes in those panels. Left clicks
+  and hover reach the whole HUD face in Blend and Mask modes, including
+  fully transparent texels. Quick movement and local resizing still pass
+  through texture holes; opaque PBR ignores texture alpha. A face that
+  draws nothing (texture-entry alpha 0, or the library's transparent
+  texture) takes left clicks and hover whatever its material mode.
   Editing and right-click selection retain access to invisible faces.
   With `AURORA_DEMO_DEBUG=alpha`, translucent/invisible HUD faces appear red
   and material masks blue; their highlighted surfaces become pickable.
 - `blend-opacity`: three rows of panels, Legacy Blend, PBR Blend and Mask, at 0%, 50% and
   100% opacity from left to right. Each uses the same texture with holes.
-  Ordinary left clicks through the centre hole must reach every Blend panel,
-  including the invisible one, without Ctrl+Alt+T. Mask holes must pass through.
+  Ordinary left clicks through the centre hole must reach every panel,
+  including the invisible Blend and Mask panels, without Ctrl+Alt+T.
+  Right-click selection keeps its existing access to transparent faces.
   Combine with `AURORA_DEMO_CLICKS=<ms>,x,y,left` for repeated native touches.
 
 Right-click a HUD and check **Lock quick movement** to prevent its held-key
@@ -6578,7 +6586,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   visible, abilities by set, the dangerous abilities asking first; Save
   logs `demo group: N role update(s)`), Group identity (insignia from the
   texture picker, charter, show in search, moderate content, open
-  enrollment and fee; Save logs `demo group: identity saved`), Abilities
+  enrollment and fee; Save logs `demo group: identity saved` and the
+  simulated server keeps it: a new insignia shows at once in the window,
+  the conversation list and People › Groups), Abilities
   (who has the ability chosen), Banned residents (two at start; Unban,
   Ban residents by name), Invitations. `owner:identity` opens it on Group
   identity (to compare with the creation window).
@@ -7459,6 +7469,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_STREAM_TITLE=[window\|history\|text][,stop]` | Stream title window with changing titles and their history |
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1`, `hud` or `parcel-open\|parcel-local\|parcel-source` | World/HUD chime or parcel sound isolation; interface and media sounds audible |
+| `AURORA_DEMO_MINIMIZED_MUTE=1\|off` | Force mute when minimized on or off for an offline run |
 | `AURORA_DEMO_SOUND_EXPLORER=1\|all\|blacklist\|blacklist-ignored\|avatar-menu\|avatar-menu-mixed\|avatar-menu-pie` | Sound Explorer, separate blacklist categories, ignored objects or avatar sound-category switches |
 | `AURORA_DEMO_ANIMATION_EXPLORER=1\|blacklist` | Animation explorer with a stand-in preview, or a blacklisted animation |
 | `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
@@ -7480,6 +7491,15 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_PLATE_COMBO=<clicks>` | "Click combo counter" for this run, and that many clicks on the hovered plate |
 
 ### Details
+
+- **`AURORA_DEMO_MINIMIZED_MUTE=1|off`**: overrides the Sound preference
+  for this offline launch. Combine with `AURORA_DEMO_SOUND=1` for the
+  looping world chime, or with local parcel/prim media or a chat video.
+  With `1`, minimize the native window: all playback and microphone
+  transmission must stop until restoration. Switching to another app alone
+  must leave playback audible. `off` keeps playback audible while minimized.
+  Restoration must preserve the saved channel volumes, mutes and microphone
+  toggle. Debug logging reports `audio: minimized mute true/false`.
 
 - **`AURORA_DEMO_VOICE`**: `speaking` animates the outline of our own name
   tag and of the other avatar's with realistic synthetic levels (0.35 to
@@ -9981,10 +10001,13 @@ than 1 GB is a bug. The seeds are valid inputs made by our own encoders (or
 shipped assets), never content of the grid cache.
 
 `fuzz/` is its own Cargo workspace: the viewer's builds and `check.ps1` do
-not compile it. On this PC (stable Rust, Windows), `fuzz-local` mutates the
-seeds without coverage feedback:
+not compile it. It has no `Cargo.lock` of its own: copy the viewer's first,
+so that every shared crate is fuzzed at its shipped version (cargo only adds
+`libfuzzer-sys` and drops what `fuzz/` does not use). On this PC (stable
+Rust, Windows), `fuzz-local` mutates the seeds without coverage feedback:
 
 ```powershell
+Copy-Item Cargo.lock fuzz/Cargo.lock
 cargo run --release --manifest-path fuzz/Cargo.toml --bin fuzz-local -- all --seconds 60
 cargo run --release --manifest-path fuzz/Cargo.toml --bin fuzz-local -- mesh --seconds 300 --seed 7
 cargo run --release --manifest-path fuzz/Cargo.toml --bin fuzz-local -- --replay mesh fuzz/artifacts/mesh/crash-…

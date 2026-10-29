@@ -182,6 +182,15 @@ pub fn coc(scale: f32, focus: f32, z: f32, max_coc: f32) -> f32 {
     (scale * (focus - z) / z.max(1e-3)).clamp(-max_coc, max_coc)
 }
 
+/// The circle at `z` with a zone kept sharp from `focus` to `far` (the
+/// group focus), as dof.wgsl's `coc` works it out.
+#[cfg(test)]
+pub fn coc_in_zone(scale: f32, focus: f32, far: f32, z: f32, max_coc: f32) -> f32 {
+    let z = z.max(1e-3);
+    let s = z.clamp(focus, far.max(focus));
+    (scale * focus * (s - z) / (z * s)).clamp(-max_coc, max_coc)
+}
+
 /// The focus distance moving to its target (renderDoF: a change of more
 /// than 1 % starts a cosine transition of CameraFocusTransitionTime).
 #[derive(Debug, Clone)]
@@ -251,6 +260,7 @@ pub fn lens(s: &Settings, focus: f32, fov_y: f32, height: u32, window_height: u3
     aurora_render::DepthOfField {
         coc_scale: coc_scale(focal, s.f_number, focus, fov_y, height),
         focus,
+        focus_far: focus,
         // FIRE-13989: the same blur in an image of any size
         max_coc: s.max_coc * height as f32 / window_height.max(1) as f32,
         samples: s.samples(),
@@ -295,6 +305,26 @@ mod tests {
         // the same blur, in pixels per image height, at any resolution
         let k4 = coc_scale(50.0, 2.8, 5.0, fov, 2160);
         assert!((k4 / k - 2.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_sharp_zone_blurs_beyond_each_end_like_a_lens_focused_there() {
+        let fov = 60f32.to_radians();
+        let (near, far) = (3.0, 7.0);
+        let k = coc_scale(50.0, 2.8, near, fov, 1080);
+        let k_far = coc_scale(50.0, 2.8, far, fov, 1080);
+        // a zone of one plane is the plane
+        for z in [1.0, 3.0, 5.0, 40.0] {
+            assert!((coc_in_zone(k, near, near, z, 100.0) - coc(k, near, z, 100.0)).abs() < 1e-4);
+        }
+        // sharp all through the zone
+        for z in [3.0, 4.2, 6.9, 7.0] {
+            assert_eq!(coc_in_zone(k, near, far, z, 100.0), 0.0);
+        }
+        // in front: as focused at its near end; behind: as at its far end
+        assert!((coc_in_zone(k, near, far, 1.5, 100.0) - coc(k, near, 1.5, 100.0)).abs() < 1e-4);
+        assert!((coc_in_zone(k, near, far, 30.0, 100.0) - coc(k_far, far, 30.0, 100.0)).abs() < 1e-4);
+        assert!(coc_in_zone(k, near, far, 30.0, 100.0) < 0.0);
     }
 
     #[test]

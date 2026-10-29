@@ -154,6 +154,10 @@ pub fn my_powers() -> u64 {
     }
 }
 
+/// The demo group's identity saved during the run (UpdateGroupInfo): its
+/// profile read again shows it, as the grid's does.
+static IDENTITY: Mutex<Option<aurora_net::groups::GroupInfo>> = Mutex::new(None);
+
 /// The demo group's ban list during the run.
 static BANS: Mutex<Vec<(Uuid, f64)>> = Mutex::new(Vec::new());
 
@@ -821,6 +825,15 @@ pub fn reply(cmd: &NetCommand) -> Option<Vec<NetEvent>> {
                     if scenario() == Scenario::Guest {
                         g.member_title.clear();
                     }
+                    if let Some(info) = IDENTITY.lock().ok().and_then(|i| i.clone()) {
+                        g.charter = info.charter;
+                        g.show_in_list = info.show_in_list;
+                        g.insignia = info.insignia;
+                        g.membership_fee = info.membership_fee;
+                        g.open_enrollment = info.open_enrollment;
+                        g.allow_publish = info.allow_publish;
+                        g.mature_publish = info.mature_publish;
+                    }
                 }
             }
             events
@@ -894,12 +907,18 @@ pub fn reply(cmd: &NetCommand) -> Option<Vec<NetEvent>> {
             log::info!("demo group: {} role update(s)", updates.len());
             Vec::new()
         }
-        NetCommand::UpdateGroupInfo { info, .. } => {
+        NetCommand::UpdateGroupInfo { group, info } => {
             log::info!(
-                "demo group: identity saved (open enrollment {}, fee {})",
+                "demo group: identity saved (open enrollment {}, fee {}, insignia {})",
                 info.open_enrollment,
-                info.membership_fee
+                info.membership_fee,
+                info.insignia
             );
+            if *group == DEMO_GROUP1
+                && let Ok(mut identity) = IDENTITY.lock()
+            {
+                *identity = Some(info.clone());
+            }
             Vec::new()
         }
         NetCommand::GroupRoleChanges { changes, .. } => {

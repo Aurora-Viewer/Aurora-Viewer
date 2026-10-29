@@ -1572,7 +1572,7 @@ fn name_dialog(ctx: &egui::Context, p: &Palette, id: &str, prompt: &str, name: &
         ui.add_space(6.0);
         let r = ui.add(egui::TextEdit::singleline(name).char_limit(63).desired_width(f32::INFINITY));
         r.request_focus();
-        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+        if r.lost_focus() && widgets::enter_pressed(ui) {
             done = Some(!name.trim().is_empty());
         }
         ui.add_space(10.0);

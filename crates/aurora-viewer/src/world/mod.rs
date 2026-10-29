@@ -1607,6 +1607,34 @@ impl World {
         aurora_net::NetCommand::UpdateProfile { target, data }
     }
 
+    /// Save a group's identity (the group window): our copy follows before
+    /// the command is sent, as LLPanelGroupGeneral::apply changes
+    /// LLGroupMgr's data before sendUpdateGroupInfo, which expects no reply.
+    pub fn save_group_info(&mut self, group: Uuid, info: aurora_net::groups::GroupInfo) {
+        if let Some(g) = self.search.groups.get_mut(&group) {
+            g.charter.clone_from(&info.charter);
+            g.show_in_list = info.show_in_list;
+            g.insignia = info.insignia;
+            g.membership_fee = info.membership_fee;
+            g.open_enrollment = info.open_enrollment;
+            g.allow_publish = info.allow_publish;
+            g.mature_publish = info.mature_publish;
+        }
+        self.follow_group_insignia(group, info.insignia);
+        self.group_data.update_info(group, info);
+    }
+
+    /// A group's insignia, known from its profile or saved by us: our
+    /// membership (conversations, group lists) and the profiles' group
+    /// lists show it, not the one of the login's AgentGroupDataUpdate (the
+    /// Legacy Viewer's group icons read LLGroupMgr's latest data).
+    fn follow_group_insignia(&mut self, group: Uuid, insignia: Uuid) {
+        if let Some(g) = self.groups.groups.iter_mut().find(|g| g.id == group) {
+            g.insignia = insignia;
+        }
+        self.profiles.group_insignia(group, insignia);
+    }
+
     pub fn system_message(&mut self, text: impl Into<String>) {
         self.system_notice(text, notice_topics::Topic::Info);
     }
@@ -3234,6 +3262,7 @@ impl World {
                 Some(ev)
             }
             NetEvent::GroupProfile(g) => {
+                self.follow_group_insignia(g.id, g.insignia);
                 self.search.groups.insert(g.id, *g);
                 self.search.refresh_group_counts(&self.group_data);
                 self.refresh_task_inventory_offers();
@@ -7608,5 +7637,90 @@ mod motion_tests {
         );
         assert_eq!(world.agent.wanted_lead(), Vec3::ZERO);
         assert_eq!(world.agent.predicted_position(), stood);
+    }
+}
+
+#[cfg(test)]
+mod group_insignia_tests {
+    use super::*;
+
+    fn membership(id: Uuid, insignia: Uuid) -> aurora_net::GroupMembership {
+        aurora_net::GroupMembership {
+            id,
+            name: "Group".into(),
+            insignia,
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        }
+    }
+
+    /// A new insignia saved from the group window shows at once in our
+    /// group lists, conversations and profile, not after a relog.
+    #[test]
+    fn a_saved_insignia_is_shown_at_once() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        let (group, old, new) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        world.agent_id = Uuid::from_u128(9);
+        world.groups.groups.push(membership(group, old));
+        world.profiles.insert(aurora_net::AvatarProfile {
+            id: world.agent_id,
+            groups: vec![aurora_net::profile::ProfileGroup {
+                id: group,
+                name: "Group".into(),
+                insignia: old,
+            }],
+            ..Default::default()
+        });
+        world.apply(NetEvent::GroupProfile(Box::new(aurora_net::search::GroupProfile {
+            id: group,
+            insignia: old,
+            charter: "Old".into(),
+            ..Default::default()
+        })));
+        world.save_group_info(
+            group,
+            aurora_net::groups::GroupInfo {
+                charter: "New".into(),
+                insignia: new,
+                ..Default::default()
+            },
+        );
+        assert_eq!(world.groups.group(&group).map(|g| g.insignia), Some(new));
+        assert_eq!(
+            world.search.groups.get(&group).map(|g| (g.insignia, g.charter.as_str())),
+            Some((new, "New"))
+        );
+        assert_eq!(world.profiles.get(&world.agent_id).map(|p| p.groups[0].insignia), Some(new));
+        assert!(
+            world
+                .group_data
+                .out
+                .iter()
+                .any(|c| matches!(c, aurora_net::NetCommand::UpdateGroupInfo { group: g, info } if *g == group && info.insignia == new))
+        );
+    }
+
+    /// Changed by another officer: the group's profile, read again, brings
+    /// it to our membership.
+    #[test]
+    fn a_group_profile_reply_brings_the_new_insignia() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        let (group, old, new) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        world.groups.groups.push(membership(group, old));
+        world.apply(NetEvent::GroupProfile(Box::new(aurora_net::search::GroupProfile {
+            id: group,
+            insignia: new,
+            ..Default::default()
+        })));
+        assert_eq!(world.groups.group(&group).map(|g| g.insignia), Some(new));
+        // removed: the group glyph
+        world.apply(NetEvent::GroupProfile(Box::new(aurora_net::search::GroupProfile {
+            id: group,
+            insignia: Uuid::nil(),
+            ..Default::default()
+        })));
+        assert_eq!(world.groups.group(&group).map(|g| g.insignia), Some(Uuid::nil()));
     }
 }

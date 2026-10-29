@@ -23,6 +23,17 @@ pub fn debug_on() -> bool {
 const UPLOAD_BUDGET: usize = 16 << 20;
 
 impl MediaManager {
+    /// Update running plugins immediately, including while the native window
+    /// is minimized and media frames may no longer be drawn.
+    pub fn set_channel_volume(&mut self, channel_volume: f32) {
+        for media in &mut self.impls {
+            let volume = media.output_volume(channel_volume);
+            if let Some(plugin) = &mut media.plugin {
+                plugin.set_volume_immediate(volume);
+            }
+        }
+    }
+
     pub fn update(&mut self, world: &mut World, scene: &mut Scene, renderer: &mut Renderer, f: &MediaFrame) {
         let now = Instant::now();
         self.free_slots(renderer, &mut scene.textures, now);
@@ -542,22 +553,7 @@ impl MediaManager {
                     }
                 }
             }
-            let volume = if m.muted {
-                0.0
-            } else {
-                let mut v = f.channel_volume * m.volume;
-                if matches!(m.key, MediaKey::Prim { .. }) {
-                    // LLViewerMediaImpl::updateVolume roll-off
-                    let d = m.distance;
-                    if d > ROLLOFF_MAX {
-                        v = 0.0;
-                    } else if d > ROLLOFF_MIN {
-                        let att = 1.0 + ROLLOFF_RATE * (d - ROLLOFF_MIN);
-                        v *= (1.0 / (att * att)).min(1.0);
-                    }
-                }
-                v
-            };
+            let volume = m.output_volume(f.channel_volume);
             let Some(p) = m.plugin.as_mut() else {
                 continue;
             };
@@ -924,10 +920,58 @@ fn probe_mime(rt: &tokio::runtime::Handle, http: reqwest::Client, url: String) -
     rx
 }
 
+impl MediaImpl {
+    /// LLViewerMediaImpl::updateVolume: retain per-source mute, volume and
+    /// distance attenuation when the global audio override changes.
+    fn output_volume(&self, channel_volume: f32) -> f32 {
+        if self.muted {
+            return 0.0;
+        }
+        let mut volume = channel_volume * self.volume;
+        if matches!(self.key, MediaKey::Prim { .. }) {
+            if self.distance > ROLLOFF_MAX {
+                volume = 0.0;
+            } else if self.distance > ROLLOFF_MIN {
+                let attenuation = 1.0 + ROLLOFF_RATE * (self.distance - ROLLOFF_MIN);
+                volume *= (1.0 / (attenuation * attenuation)).min(1.0);
+            }
+        }
+        volume
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn minimized_mute_restores_media_source_volume_and_rolloff() {
+        for key in [
+            MediaKey::Parcel,
+            MediaKey::Prim {
+                object: Uuid::nil(),
+                face: 0,
+            },
+        ] {
+            let mut media = MediaImpl::new(key, String::new(), "text/html".into());
+            media.volume = 0.6;
+            media.distance = 60.0;
+            let before = media.output_volume(0.5);
+            assert!(before > 0.0);
+            assert_eq!(media.output_volume(0.0), 0.0);
+            assert_eq!(media.output_volume(0.5), before);
+            if key == MediaKey::Parcel {
+                assert_eq!(before, 0.3);
+            } else {
+                assert!(before < 0.3);
+                media.distance = ROLLOFF_MAX + 1.0;
+                assert_eq!(media.output_volume(0.5), 0.0);
+            }
+            media.muted = true;
+            assert_eq!(media.output_volume(0.5), 0.0);
+        }
+    }
 
     /// The demo place, its media screen, and an ObjectMedia capability.
     fn world() -> (World, Uuid) {

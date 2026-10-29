@@ -30,6 +30,7 @@ mod ao;
 mod app_links;
 mod area_search;
 mod attention;
+mod audio_mute;
 mod avatar_render_settings;
 mod bridge;
 mod movelock;
@@ -640,7 +641,7 @@ pub struct App {
     /// The parcel music's title last told (ShowStreamMetadata).
     stream_title_said: Option<String>,
     /// Every sound is cut because the window is minimised (MuteWhenMinimized).
-    minimized_mute: bool,
+    minimized_mute: audio_mute::MinimizedMute,
     /// When the crash report's state was last noted (app/crash_state.rs).
     crash_state_at: Option<Instant>,
     /// The graphics card stopped finishing frames (app/gpu_stall.rs).
@@ -689,8 +690,13 @@ pub struct App {
     system_fonts_pending: bool,
     /// Profile pictures by avatar id (egui textures).
     avatar_pics: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
+    /// The picture each of them shows: a profile that names another one
+    /// (saved by us, read again) replaces it.
+    avatar_pic_sources: std::collections::HashMap<uuid::Uuid, uuid::Uuid>,
     /// The same textures by picture, for the residents who share one.
     avatar_pic_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
+    /// Our login portrait (texture and saved file): agent, picture shown.
+    login_portrait_source: Option<(uuid::Uuid, uuid::Uuid)>,
     /// Interface images (pictures included) first shown from the coarse
     /// levels of a progressive download, by texture: width held, since
     /// when. A finer copy replaces their pixels in place.
@@ -971,6 +977,11 @@ impl App {
         // the regional 12 / 24 hours and time zone of the bars' clock, read once
         ui::bars::clock::read_system_clock();
         let mut settings = Settings::load();
+        if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
+            && let Ok(mode) = std::env::var("AURORA_DEMO_MINIMIZED_MUTE")
+        {
+            settings.audio.mute_when_minimized = mode != "off";
+        }
         aurora_i18n::select(&settings.language, crate::cli::get().language.as_deref());
         if std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_KEYBOARD").is_some() {
             // Exercise a first launch without changing the user's bindings.
@@ -1319,7 +1330,7 @@ impl App {
             applied_audio: None,
             stream_url: String::new(),
             stream_title_said: None,
-            minimized_mute: false,
+            minimized_mute: audio_mute::MinimizedMute::default(),
             crash_state_at: None,
             gpu_stall: Default::default(),
             crouch_toggle: Default::default(),
@@ -1348,7 +1359,9 @@ impl App {
             emoji: ui::emoji::Emoji::load(),
             system_fonts_pending,
             avatar_pics: Default::default(),
+            avatar_pic_sources: Default::default(),
             avatar_pic_images: Default::default(),
+            login_portrait_source: None,
             ui_coarse: Default::default(),
             ui_images: Default::default(),
             ui_image_masks: Default::default(),
@@ -3798,9 +3811,7 @@ impl App {
         if self.demo && std::env::var_os("AURORA_DEMO_SOUND").is_none() {
             return 0.0;
         }
-        let a = &self.settings.audio;
-        let channel = |i: usize| if a.muted[i] || !a.enabled[i] { 0.0 } else { a.volume[i] };
-        channel(0) * channel(5)
+        audio_mute::media_volume(&self.settings.audio, self.minimized_mute.active)
     }
 
     /// Why we may not speak where we stand (LLAgent::isActionAllowed("speak"),
@@ -3824,7 +3835,7 @@ impl App {
 
     /// Voice transmission wanted (microphone button / push-to-talk).
     fn talking(&self) -> bool {
-        if self.speak_denied().is_some() {
+        if self.minimized_mute.active || self.speak_denied().is_some() {
             false
         } else if self.settings.audio.mic_hold {
             self.mic_button_held || self.settings.keybinds.held(Action::PushToTalk, &self.down, self.mods())
@@ -5115,7 +5126,7 @@ impl App {
             // same order as AUDIO_CHANNELS
             for (i, ch) in aurora_audio::Channel::ALL.iter().enumerate() {
                 engine.set_volume(*ch, a.volume[i]);
-                engine.set_muted(*ch, a.muted[i] || (i == 0 && self.minimized_mute));
+                engine.set_muted(*ch, a.muted[i] || (i == 0 && self.minimized_mute.active));
                 engine.set_enabled(*ch, i == 0 || a.enabled[i]);
             }
             self.applied_audio = Some(a.clone());
@@ -5128,15 +5139,19 @@ impl App {
     /// frame and when the window's size changes, frames being rare while it
     /// is minimised.
     fn sync_minimized_mute(&mut self) {
-        let minimized = self.gfx.as_ref().is_some_and(|g| g.window.is_minimized().unwrap_or(false));
-        let mute = self.settings.audio.mute_when_minimized && minimized;
-        if mute == self.minimized_mute {
+        let minimized = self.gfx.as_ref().and_then(|g| g.window.is_minimized());
+        if !self.minimized_mute.update(self.settings.audio.mute_when_minimized, minimized) {
             return;
         }
-        self.minimized_mute = mute;
+        let mute = self.minimized_mute.active;
         if let Some(engine) = &self.audio_engine {
             engine.set_muted(aurora_audio::Channel::Master, mute || self.settings.audio.muted[0]);
         }
+        let volume = self.media_volume();
+        self.media.set_channel_volume(volume);
+        self.chat_ui.previews.set_volume(volume);
+        self.voice.set_transmit(self.talking());
+        log::debug!("audio: minimized mute {mute}");
     }
 
     /// The geometry arena's use noted for the agent's region, and the arena
@@ -6943,19 +6958,29 @@ impl App {
         wanted.extend(self.inventory_ui.wanted_pics.drain());
         self.refine_ui_copies();
         for agent in wanted {
-            if self.avatar_pics.contains_key(&agent) {
-                continue;
-            }
             self.world.want_profile(agent);
-            let Some(image) = self.world.profiles.get(&agent).map(|p| p.sl_image).filter(|i| !i.is_nil()) else {
+            let Some(image) = self.world.profiles.get(&agent).map(|p| p.sl_image) else {
                 continue;
             };
+            // the picture its profile names now (saved by us, or the profile
+            // read again: LLAvatarIconIDCache follows each reply)
+            if self.avatar_pic_sources.get(&agent) == Some(&image) {
+                continue;
+            }
+            if image.is_nil() {
+                // removed: the default picture
+                self.avatar_pics.remove(&agent);
+                self.avatar_pic_sources.remove(&agent);
+                continue;
+            }
             // two residents with the same picture share its texture (its
             // pixels are delivered once)
             if let Some(t) = self.avatar_pic_images.get(&image) {
                 self.avatar_pics.insert(agent, t.clone());
+                self.avatar_pic_sources.insert(agent, image);
                 continue;
             }
+            // (a changed picture shows the old one until the new is decoded)
             self.scene.textures.want_ui_image(renderer, image, &self.scene.jobs);
             if let Some((w, h, rgba)) = self.scene.textures.take_ui_image(&image)
                 && rgba.len() == (w * h * 4) as usize
@@ -6964,15 +6989,11 @@ impl App {
                 let t = self.egui_ctx.load_texture(format!("pic-{agent}"), ci, egui::TextureOptions::LINEAR);
                 self.avatar_pic_images.insert(image, t.clone());
                 self.avatar_pics.insert(agent, t);
-                if agent == self.world.agent_id
-                    && !self.demo
-                    && let Some(texture) = self.avatar_pics.get(&agent)
-                {
-                    self.login_form.portraits.insert(agent, texture.clone());
-                }
+                self.avatar_pic_sources.insert(agent, image);
                 self.picture_pixels(image, w, h, rgba);
             }
         }
+        self.follow_login_portrait(renderer);
         let mut images: Vec<uuid::Uuid> = self.profile_ui.wanted_images.drain().collect();
         images.extend(self.avatar_textures.wanted_images.drain());
         images.extend(self.place_images.drain());
@@ -7049,10 +7070,62 @@ impl App {
             .load_texture(format!("banner-{image}"), banner, egui::TextureOptions::LINEAR);
         self.profile_ui.banners.insert(image, banner);
         self.note_ui_copy(image, w);
+        self.save_login_portrait(image, w, h, rgba);
+    }
+
+    /// Our login portrait follows our profile picture, changed here or
+    /// elsewhere: the texture the login screen shows after a logout, and
+    /// the file it reads at the next start.
+    fn follow_login_portrait(&mut self, renderer: &mut Renderer) {
+        let agent = self.world.agent_id;
+        if self.demo || agent.is_nil() || self.world.profiles.awaiting(&agent) {
+            return;
+        }
+        let Some(image) = self.world.profiles.get(&agent).map(|p| p.sl_image) else {
+            return;
+        };
+        if image.is_nil() {
+            // no picture any more: the login screen's default one
+            if self.login_portrait_source != Some((agent, image)) {
+                self.login_portrait_source = Some((agent, image));
+                self.login_form.portraits.remove(&agent);
+                let path = crate::settings::account_dir(&agent).join("login_portrait.png");
+                rayon::spawn(move || {
+                    if let Err(e) = std::fs::remove_file(&path)
+                        && e.kind() != std::io::ErrorKind::NotFound
+                    {
+                        log::warn!("login portrait: {e}");
+                    }
+                });
+            }
+            return;
+        }
+        // the texture of our pictures, once decoded (we always want ours)
+        let Some(texture) = self.avatar_pic_images.get(&image) else {
+            return;
+        };
+        if self.login_form.portraits.get(&agent).map(|t| t.id()) != Some(texture.id()) {
+            self.login_form.portraits.insert(agent, texture.clone());
+        }
+        // a picture shown before (ours earlier, someone else's) has no
+        // pixels left for the file: decoded again
+        if self.login_portrait_source != Some((agent, image)) {
+            self.scene.textures.want_ui_image(renderer, image, &self.scene.jobs);
+            if let Some((w, h, rgba)) = self.scene.textures.take_ui_image(&image)
+                && rgba.len() == (w * h * 4) as usize
+            {
+                self.save_login_portrait(image, w, h, rgba);
+            }
+        }
+    }
+
+    /// The file of our login portrait, from our profile picture's pixels.
+    fn save_login_portrait(&mut self, image: uuid::Uuid, w: u32, h: u32, rgba: Vec<u8>) {
         let agent = self.world.agent_id;
         if self.demo || !self.world.profiles.get(&agent).is_some_and(|p| p.sl_image == image) {
             return;
         }
+        self.login_portrait_source = Some((agent, image));
         let path = crate::settings::account_dir(&agent).join("login_portrait.png");
         rayon::spawn(move || {
             let Some(image) = image::RgbaImage::from_raw(w, h, rgba) else {
@@ -7421,6 +7494,7 @@ impl App {
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
+        self.sync_minimized_mute();
         aurora_render::frame_priority::apply();
         self.world.anti_spam.configure(self.settings.anti_spam);
         self.update_rlva();
@@ -12426,7 +12500,7 @@ impl App {
                 GroupAction::ChangeRoles { group, changes } => self.world.group_data.change_roles(group, changes),
                 GroupAction::UpdateRoles { group, updates } => self.world.group_data.update_roles(group, updates),
                 GroupAction::UpdateInfo { group, info } => {
-                    self.world.group_data.update_info(group, info);
+                    self.world.save_group_info(group, info);
                     // the profile again, to show what the server kept
                     self.send(NetCommand::GroupProfileRequest(group));
                 }
@@ -18122,6 +18196,7 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.sync_minimized_mute();
         self.record_window_geometry();
         self.attention_window();
         self.external_links();

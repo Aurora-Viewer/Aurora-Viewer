@@ -8,7 +8,7 @@ use super::App;
 use crate::dof::{self, PhotoFocus};
 use crate::keybinds::{Action as Bind, Input, Mods};
 use crate::settings::PhotoWindowStyle;
-use crate::snapshot::viewfinder::{self as vf, AfArea, Event, Phase};
+use crate::snapshot::viewfinder::{self as vf, AfArea, Event, Phase, Subject};
 use crate::ui::snapshot::Action;
 use crate::ui::viewfinder::{CamMode, Dial, Frame, Keys, Out, Preset};
 use aurora_render::Renderer;
@@ -127,30 +127,47 @@ impl App {
             && let Some(answer) = renderer.take_pick(ticket)
         {
             self.snapshots.vf.pick = None;
-            let mut target = answer.map_or(vf::FAR, |p| dof::distance_along(eye, at, p));
-            self.snapshots.vf.subject = None;
-            if let Some(hit) = answer
-                && self.settings.snapshot.viewfinder.area == AfArea::Avatar
-                && let Some((id, head)) = self.vf_avatar_at(hit)
-            {
-                self.snapshots.vf.subject = Some(id);
-                target = dof::distance_along(eye, at, head);
-            }
-            if std::mem::take(&mut self.snapshots.vf.recheck) && self.snapshots.vf.af.holds(target) {
-                self.vf_lock_kept(renderer);
+            let avatar = answer
+                .filter(|_| self.settings.snapshot.viewfinder.area == AfArea::Avatar)
+                .and_then(|hit| self.vf_avatar_at(hit));
+            if std::mem::take(&mut self.snapshots.vf.adding) {
+                // an avatar's face on the Avatar area, else the point itself
+                let subject = match (avatar, answer) {
+                    (Some((id, _)), _) => Some(Subject::Avatar(id)),
+                    (None, Some(hit)) => Some(Subject::Point(hit)),
+                    (None, None) => None,
+                };
+                self.vf_group_toggle(subject, eye, at, now);
             } else {
-                log::info!("viewfinder: focus asked at {target:.2} m");
-                self.snapshots.vf.af.hunt(target, now);
+                let mut target = answer.map_or(vf::FAR, |p| dof::distance_along(eye, at, p));
+                self.snapshots.vf.subjects.clear();
+                self.snapshots.vf.last_point = answer;
+                if let Some((id, head)) = avatar {
+                    self.snapshots.vf.subjects.push(Subject::Avatar(id));
+                    self.snapshots.vf.last_point = None;
+                    target = dof::distance_along(eye, at, head);
+                }
+                if std::mem::take(&mut self.snapshots.vf.recheck) && self.snapshots.vf.af.holds(target) {
+                    self.vf_lock_kept(renderer);
+                } else {
+                    log::info!("viewfinder: focus asked at {target:.2} m");
+                    self.snapshots.vf.af.hunt(target, now);
+                }
             }
         }
-        // locked on an avatar: the lens stays on its head as it (or the
-        // camera) moves, like a camera's subject tracking
-        if self.settings.snapshot.dof.focus == PhotoFocus::Click
-            && let Some(id) = self.snapshots.vf.subject
-        {
-            match self.vf_head(&id, Instant::now()) {
-                Some(h) => self.snapshots.vf.af.follow(dof::distance_along(eye, at, h), now),
-                None => self.snapshots.vf.subject = None,
+        if self.photo_demo_group() {
+            self.vf_demo_group(eye, at, now);
+        }
+        // locked on avatars: the lens stays on their heads as they (or the
+        // camera) move, like a camera's subject tracking; a group's zone
+        // follows its nearest and farthest subjects
+        self.snapshots.vf.zone = None;
+        if self.settings.snapshot.dof.focus == PhotoFocus::Click && !self.snapshots.vf.subjects.is_empty() {
+            let distances = self.vf_subject_distances(eye, at);
+            let zone = vf::group_zone(&distances);
+            self.snapshots.vf.zone = zone;
+            if let Some(target) = zone.map(|z| z.middle).or(distances.first().copied()) {
+                self.snapshots.vf.af.follow(target, now);
             }
         }
         match self.settings.snapshot.dof.focus {
@@ -215,6 +232,96 @@ impl App {
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .and_then(|(_, id)| Some((id, self.vf_head(&id, now)?)))
+    }
+
+    /// Where the lens takes a subject: an avatar's face (`vf_head`; None
+    /// once it is gone), or the point.
+    fn vf_subject_at(&self, s: &Subject, now: Instant) -> Option<glam::Vec3> {
+        match s {
+            Subject::Avatar(id) => self.vf_head(id, now),
+            Subject::Point(p) => Some(*p),
+        }
+    }
+
+    /// The subjects' distances along the view axis (`eye`, `at`); the
+    /// avatars gone (left the region, no head) leave the group.
+    fn vf_subject_distances(&mut self, eye: glam::Vec3, at: glam::Vec3) -> Vec<f32> {
+        let now = Instant::now();
+        let mut subjects = std::mem::take(&mut self.snapshots.vf.subjects);
+        let mut distances = Vec::with_capacity(subjects.len());
+        subjects.retain(|s| match self.vf_subject_at(s, now) {
+            Some(h) => {
+                distances.push(dof::distance_along(eye, at, h));
+                true
+            }
+            None => false,
+        });
+        self.snapshots.vf.subjects = subjects;
+        distances
+    }
+
+    /// Shift + click answered: the avatar or the point under it joins the
+    /// group focus, or leaves it if it was in, and the lens hunts the
+    /// group's middle (the beep once it is sharp). A group started after a
+    /// click alone on a point keeps that point. The sky: the group stays
+    /// as it is.
+    fn vf_group_toggle(&mut self, subject: Option<Subject>, eye: glam::Vec3, at: glam::Vec3, now: f64) {
+        let Some(subject) = subject else {
+            self.snapshots.vf.say(aurora_i18n::tr!("photo-vf-group-sky"), true, now);
+            return;
+        };
+        let v = &mut self.snapshots.vf;
+        if v.subjects.is_empty()
+            && let Some(first) = v.last_point.take()
+        {
+            v.subjects.push(Subject::Point(first));
+        }
+        let added = vf::toggle_subject(&mut v.subjects, subject, eye);
+        let name = match subject {
+            Subject::Avatar(id) => self.vf_name(&id),
+            Subject::Point(_) => aurora_i18n::tr!("photo-vf-group-point").to_owned(),
+        };
+        let distances = self.vf_subject_distances(eye, at);
+        let count = distances.len();
+        if added && count >= 2 {
+            let text = aurora_i18n::tr!("photo-vf-group-added", name = name.as_str(), count = count);
+            self.snapshots.vf.say(text, false, now);
+        } else if !added {
+            let text = aurora_i18n::tr!("photo-vf-group-removed", name = name.as_str());
+            self.snapshots.vf.say(text, false, now);
+        }
+        let Some(target) = vf::group_zone(&distances).map(|z| z.middle).or(distances.first().copied()) else {
+            // the last one out: the lens stays where it is
+            self.snapshots.vf.af.idle();
+            return;
+        };
+        log::info!("viewfinder: group focus, {count} subject(s), lens at {target:.2} m");
+        self.snapshots.vf.af.hunt(target, now);
+    }
+
+    /// The demo's group (AURORA_DEMO_SNAPSHOT=viewfinder-group): the other
+    /// avatars in view within 25 m added one by one, as Shift + clicks on
+    /// them would.
+    fn vf_demo_group(&mut self, eye: glam::Vec3, at: glam::Vec3, now: f64) {
+        let wall = Instant::now();
+        let half_fov = self.settings.camera.fov * 0.5;
+        let dir = at.normalize_or_zero();
+        let ids: Vec<uuid::Uuid> = self
+            .world
+            .objects
+            .avatars()
+            .filter(|(_, o)| o.full_id != self.world.agent_id)
+            .filter_map(|(_, o)| Some((o.full_id, self.vf_head(&o.full_id, wall)?)))
+            .filter(|(_, h)| {
+                let to = *h - eye;
+                to.length() < 25.0 && dir.dot(to.normalize_or_zero()) > (half_fov * 0.8).cos()
+            })
+            .map(|(id, _)| id)
+            .collect();
+        log::info!("viewfinder demo: {} avatar(s) added to the focus", ids.len());
+        for id in ids {
+            self.vf_group_toggle(Some(Subject::Avatar(id)), eye, at, now);
+        }
     }
 
     /// What the lens takes on an avatar's head, whichever way its face is
@@ -284,6 +391,7 @@ impl App {
         }
         self.snapshots.vf.pick = Some(renderer.request_pick(x, y));
         self.snapshots.vf.recheck = false;
+        self.snapshots.vf.adding = false;
         self.snapshots.vf.hinted = true;
     }
 
@@ -349,9 +457,9 @@ impl App {
         }
         let v = &self.snapshots.vf;
         let locked = v.af.phase == Phase::Lock;
-        // the avatar followed is dropped as it leaves the frame
+        // the avatars followed are dropped as they leave the frame
         // (`viewfinder_ui`)
-        if locked && v.subject.is_some() {
+        if locked && !v.subjects.is_empty() {
             self.vf_lock_kept(renderer);
             return;
         }
@@ -379,7 +487,8 @@ impl App {
 
     /// A press of the left button in the world while the viewfinder shows:
     /// the AF point moves there and focuses; a menu open closes instead.
-    /// True when taken.
+    /// With Shift in AF-S, the avatar (Avatar area) or the point there
+    /// joins the group focus, or leaves it. True when taken.
     pub(super) fn viewfinder_click(&mut self) -> bool {
         // Alt + click (focus the camera), Ctrl + Alt (orbit), Ctrl + Alt +
         // Shift (pan) and the Controls window's object view stay the
@@ -396,11 +505,15 @@ impl App {
         let Some(mut gfx) = self.gfx.take() else {
             return true;
         };
+        let add = self.shift && self.settings.snapshot.dof.focus == PhotoFocus::Click;
         let (w, h) = gfx.renderer.size();
         self.snapshots.vf.point = Some(Pos2::new(self.cursor_pos.0 / w.max(1) as f32, self.cursor_pos.1 / h.max(1) as f32));
-        self.snapshots.vf.subject = None;
+        if !add {
+            self.snapshots.vf.subjects.clear();
+        }
         self.snapshots.vf.hinted = true;
         self.vf_focus(&mut gfx.renderer);
+        self.snapshots.vf.adding = add;
         self.gfx = Some(gfx);
         true
     }
@@ -508,7 +621,8 @@ impl App {
                 v.af.idle();
             }
         }
-        v.subject = None;
+        v.subjects.clear();
+        v.last_point = None;
         self.settings.save();
     }
 
@@ -522,7 +636,8 @@ impl App {
 
     fn vf_set_area(&mut self, area: AfArea) {
         self.settings.snapshot.viewfinder.area = area;
-        self.snapshots.vf.subject = None;
+        self.snapshots.vf.subjects.clear();
+        self.snapshots.vf.last_point = None;
         self.settings.save();
     }
 
@@ -771,43 +886,67 @@ impl App {
         };
         let area_avatar = self.settings.snapshot.viewfinder.area == AfArea::Avatar;
         let mut face = None;
-        if area_avatar && self.settings.snapshot.dof.focus != PhotoFocus::Manual {
-            if let Some(id) = self.snapshots.vf.subject {
-                match face_of(self, &id) {
-                    Some(r) => {
-                        point = r.center();
-                        face = Some((r, true, self.vf_name(&id)));
-                    }
-                    None => self.snapshots.vf.subject = None,
-                }
-            }
-            if face.is_none() {
-                // the face nearest the AF point, detected
-                face = self
-                    .world
-                    .objects
-                    .avatars()
-                    // (not those the photo's isolation leaves out)
-                    .filter(|(idx, _)| crate::snapshot::isolate::object_visible(&self.world, *idx))
-                    .filter_map(|(_, o)| Some((face_of(self, &o.full_id)?, o.full_id)))
-                    .map(|(r, id)| (r.center().distance(point), r, id))
-                    .filter(|(d, _, _)| *d < 120.0)
-                    .min_by(|a, b| a.0.total_cmp(&b.0))
-                    .map(|(_, r, id)| (r, false, self.vf_name(&id)));
-            }
+        let mut group = Vec::new();
+        let mut points = Vec::new();
+        let mut held = false;
+        if self.settings.snapshot.dof.focus != PhotoFocus::Manual {
+            // the subjects out of the frame are dropped; the first one left
+            // holds the AF point, the others their own boxes and brackets
+            let mut subjects = std::mem::take(&mut self.snapshots.vf.subjects);
+            subjects.retain(|s| {
+                let first = !held;
+                let kept = match s {
+                    Subject::Avatar(id) => face_of(self, id).map(|r| {
+                        if first {
+                            point = r.center();
+                            face = Some((r, true, self.vf_name(id)));
+                        } else {
+                            group.push((r, self.vf_name(id)));
+                        }
+                    }),
+                    Subject::Point(at) => projector.project(*at).map(|(at, _)| {
+                        if first {
+                            point = at;
+                        } else {
+                            points.push(at);
+                        }
+                    }),
+                };
+                held |= kept.is_some();
+                kept.is_some()
+            });
+            self.snapshots.vf.subjects = subjects;
+        }
+        if area_avatar && self.settings.snapshot.dof.focus != PhotoFocus::Manual && !held {
+            // the face nearest the AF point, detected
+            face = self
+                .world
+                .objects
+                .avatars()
+                // (not those the photo's isolation leaves out)
+                .filter(|(idx, _)| crate::snapshot::isolate::object_visible(&self.world, *idx))
+                .filter_map(|(_, o)| Some((face_of(self, &o.full_id)?, o.full_id)))
+                .map(|(r, id)| (r.center().distance(point), r, id))
+                .filter(|(d, _, _)| *d < 120.0)
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map(|(_, r, id)| (r, false, self.vf_name(&id)));
         }
         // the zone kept sharp, as the renderer blurs it
         let s = &self.settings;
         let mm = crate::snapshot::focal_of_fov(s.camera.fov);
         let lens = s.snapshot.dof.applied(&s.dof).0;
+        // a group's zone from its nearest subject to its farthest
+        let lens_at = self.snapshots.vf.af.distance();
+        let zone = self.snapshots.vf.zone.filter(|_| held).map(|z| z.at(lens_at));
+        let (near, far) = zone.unwrap_or((lens_at, lens_at));
         let k = dof::coc_scale(
             dof::focal_length_at(&lens, s.camera.fov),
             lens.f_number,
-            self.snapshots.vf.af.distance(),
+            near,
             s.camera.fov,
             window.1,
         );
-        let sharp = vf::sharp_range(k, self.snapshots.vf.af.distance());
+        let sharp = vf::sharp_zone(k, near, far);
         let ev = vf::ev_of(self.photo_exposure(), s.exposure);
         let dir = (self.camera.target - self.camera.position).normalize_or_zero();
         let pitch = dir.z.clamp(-1.0, 1.0).asin().to_degrees();
@@ -832,6 +971,9 @@ impl App {
             sharp,
             point,
             face,
+            group,
+            points,
+            zone,
             pitch,
             histogram: renderer.histogram.as_deref(),
             review: review.as_ref().map(|(t, l, k)| (t, l.clone(), k.clone())),

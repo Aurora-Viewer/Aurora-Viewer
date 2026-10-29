@@ -166,7 +166,7 @@ pub(super) fn show(
             } else {
                 "ao-create-group"
             };
-            submit = ui.add_enabled(valid.is_ok(), egui::Button::new(aurora_i18n::text(label))).clicked();
+            submit = widgets::default_button(ui.add_enabled(valid.is_ok(), egui::Button::new(aurora_i18n::text(label)))).clicked();
             cancel = widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked();
         });
     });

@@ -497,7 +497,7 @@ fn media_settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world:
             small(ui, p, aurora_i18n::tr!("build-ui-floaters-enter-a-url-or-url-pattern-to-add-to"));
             ui.add(egui::TextEdit::singleline(&mut entry).desired_width(300.0));
             ui.horizontal(|ui| {
-                if flat_button(ui, p, aurora_i18n::tr!("common-ok")).clicked() {
+                if crate::ui::widgets::default_button(flat_button(ui, p, aurora_i18n::tr!("common-ok"))).clicked() {
                     let t = entry.trim();
                     if !t.is_empty() && st.entry.whitelist.len() < 64 {
                         st.entry.whitelist.push(t.to_owned());
