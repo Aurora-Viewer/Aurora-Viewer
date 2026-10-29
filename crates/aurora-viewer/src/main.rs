@@ -85,6 +85,7 @@ mod system_info;
 mod system_notify;
 mod theme;
 mod tolerant;
+mod translate;
 mod ui;
 mod ui_sound;
 mod updater;

@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 aurora-updater = { version = "0.1.0", path = "../aurora-updater" }
+aurora-translate = { version = "0.1.0", path = "../aurora-translate" }
 aurora-i18n = { version = "0.1.0", path = "../aurora-i18n" }
 anyhow = "1.0.104"
 # Embedded Blender image pixels; maintained MIT/Apache-2.0 codec.

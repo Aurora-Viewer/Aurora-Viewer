@@ -712,6 +712,7 @@ dependencies = [
  "aurora-net",
  "aurora-prim",
  "aurora-render",
+ "aurora-translate",
  "aurora-updater",
  "aurora-version",
  "aurora-voice",

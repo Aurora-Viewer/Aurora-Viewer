@@ -11,7 +11,7 @@ pub mod model;
 pub mod prompt;
 pub mod worker;
 
-pub use detect::{Detected, detect, nothing_to_translate};
+pub use detect::{Detected, detect, detect_between, nothing_to_translate};
 pub use fake::FakeBackend;
 pub use lang::{LANGS, Lang, lang, parse_lang};
 pub use model::{CATALOGUE, DEFAULT_MODEL, Download, DownloadError, DownloadState, ModelEntry, entry, is_ready, model_path};
