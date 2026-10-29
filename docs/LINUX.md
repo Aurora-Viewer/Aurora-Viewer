@@ -10,7 +10,10 @@ and CachyOS; other recent distributions work the same way.
 - A recent distribution: the viewer is built on Ubuntu 24.04 and needs glibc
   2.39 or later (Arch, CachyOS, Manjaro, Fedora 40 or later, Ubuntu 24.04 or
   later, Debian 13…).
-- X11 or Wayland, and ALSA or PipeWire / PulseAudio for the sound.
+- X11 or Wayland, and PipeWire, PulseAudio or ALSA for the sound. When a
+  PipeWire (with `pipewire-pulse`) or PulseAudio server runs, the viewer
+  plays and records through it, so its own sinks and sources appear in
+  Preferences; otherwise it uses ALSA directly. No extra package is needed.
 
 ## 1. Install the system packages
 

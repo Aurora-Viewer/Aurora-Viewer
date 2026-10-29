@@ -11,8 +11,14 @@ description = "Audio output engine for Aurora Viewer: volume-channel mixer, parc
 sonora = "0.2.0"
 aurora-version = { version = "0.1.0", path = "../aurora-version" }
 # realtime: the device callbacks run in the multimedia scheduler's "Audio"
-# task (MMCSS), so a busy viewer does not starve them.
-cpal = { version = "0.18.2", features = ["realtime"] }
+# task (MMCSS) on Windows, and at realtime priority on the ALSA host on Linux,
+# so a busy viewer does not starve them. The PulseAudio host does not promote
+# its callback thread: the server's own buffer (40 ms out, 40 ms in) absorbs
+# the scheduling jitter instead.
+# pulseaudio (Linux): the sound server's own sinks and sources, through a
+# pure-Rust client of its protocol (no system library); PipeWire answers it
+# through pipewire-pulse. cpal falls back to ALSA when no server runs.
+cpal = { version = "0.18.2", features = ["realtime", "pulseaudio"] }
 crossbeam-channel = "0.5.17"
 log = "0.4.34"
 parking_lot = "0.12.5"
