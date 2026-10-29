@@ -942,6 +942,13 @@ cargo build --locked -p aurora-viewer
 AURORA_DEMO=1 ./target/debug/aurora-viewer --title "Test macos"
 ```
 
+Preferences › Graphics › Smoothness offers a 50–100% **3D render scale**.
+At lower scales, the world is reconstructed with a nine-tap Catmull-Rom spatial
+upscaler; controls, HUDs and world labels retain the window's native resolution.
+Saved photos render at their requested resolution. The default remains 100%.
+Bindless texture pages use the adapter's binding-array limit rather than its
+ordinary sampled-texture limit, avoiding the former 79-page ceiling on Metal.
+
 Windows and Linux keep Vulkan. There is no macOS download yet: build it
 from source. Not there yet on macOS: the media plugins pack (web pages and
 video in the world), `secondlife://` links from the browser, and an
@@ -949,6 +956,7 @@ application bundle. Human validation of login, voice, teleports and longer
 grid sessions is pending. The macOS workflow (`.github/workflows/macos.yml`)
 checks every pull request with clippy, and the merge queue runs the tests and
 draws a demo frame on an Apple GPU.
+
 
 ### Versions
 
