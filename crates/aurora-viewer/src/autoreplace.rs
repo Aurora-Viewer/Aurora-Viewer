@@ -91,8 +91,13 @@ pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
+/// The bundled lists, parsed once: some 4,000 entries, too many to parse
+/// again each time they are compared or restored (the Spelling page did it
+/// every frame, #1363).
+static DEFAULTS: LazyLock<Arc<Vec<List>>> = LazyLock::new(|| Arc::new(bundled()));
+
 /// The lists in use (the bundled ones until the user's file is read).
-static LISTS: LazyLock<RwLock<Arc<Vec<List>>>> = LazyLock::new(|| RwLock::new(Arc::new(bundled())));
+static LISTS: LazyLock<RwLock<Arc<Vec<List>>>> = LazyLock::new(|| RwLock::new(DEFAULTS.clone()));
 
 fn bundled() -> Vec<List> {
     parse_lists(BUNDLED.as_bytes())
@@ -111,7 +116,7 @@ pub fn load() {
         let path = user_file();
         match std::fs::read(&path) {
             Ok(bytes) => match parse_lists(&bytes) {
-                Ok(lists) => *LISTS.write() = Arc::new(lists),
+                Ok(lists) => *LISTS.write() = shared(lists),
                 Err(e) => log::warn!("autoreplace: {}: {e}", path.display()),
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -131,7 +136,7 @@ pub fn lists() -> Arc<Vec<List>> {
 /// (LLAutoReplace::saveToUserSettings).
 pub fn set_lists(lists: Vec<List>) {
     let xml = lists_to_xml(&lists);
-    *LISTS.write() = Arc::new(lists);
+    *LISTS.write() = shared(lists);
     let spawned = std::thread::Builder::new().name("aurora-autoreplace-save".into()).spawn(move || {
         let path = user_file();
         if let Some(dir) = path.parent() {
@@ -147,8 +152,19 @@ pub fn set_lists(lists: Vec<List>) {
 }
 
 /// The bundled lists again.
-pub fn defaults() -> Vec<List> {
-    bundled()
+pub fn defaults() -> Arc<Vec<List>> {
+    DEFAULTS.clone()
+}
+
+/// Whether `lists` are the bundled ones: the same `Arc` most of the time
+/// ([`shared`]), so the page checks it each frame for nothing.
+pub fn is_default(lists: &Arc<Vec<List>>) -> bool {
+    Arc::ptr_eq(lists, &DEFAULTS) || **lists == **DEFAULTS
+}
+
+/// Lists equal to the bundled ones share their `Arc`.
+fn shared(lists: Vec<List>) -> Arc<Vec<List>> {
+    if lists == **DEFAULTS { DEFAULTS.clone() } else { Arc::new(lists) }
 }
 
 /// LLAutoReplaceSettings::replaceWord: the replacement of the first list

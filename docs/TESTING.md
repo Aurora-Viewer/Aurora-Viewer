@@ -268,7 +268,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory, posted to the profile or sent by e-mail |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
-| `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
+| `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora or a LUT), the chosen one's strength and settings, the before / after line, the filter panel |
 | `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic\|free\|free-compact` | The Controls window open on a tab, Firestorm's two windows, or driving the photo window's free camera |
 | `AURORA_DEMO_CAMERA_PRESETS=save\|apply\|object\|pick[-…]` | The viewfinder's camera presets: saved on the avatar, a place and an object, applied, or the object chosen in the scene |
@@ -404,7 +404,12 @@ stopped at 680, unless `-keep`: the log gives `photo isolation: <id>
 chosen` and `isolation demo: choosing stopped, 1 chosen`. `-panel` opens
 the viewfinder's isolation panel. Use `AURORA_FPS_LIMIT=60`
 and capture from frame 700 (`AURORA_AA=3` and `6` for the two edge paths,
-MSAA and SMAA).
+MSAA and SMAA). `-back` returns to the entire scene at frame 1500: with
+`AURORA_DEMO_STREAM=3000,3000`, `AURORA_VRAM_BUDGET_MB=2048` and
+`AURORA_PROFILE=1`, the `memory summary` lines show that the textures of
+what the isolation leaves out are only lowered as out of view under memory
+pressure (`texture_mb` about 110 while isolated, not down to a few MB), so
+the entire scene does not reload all at once on its return (#1374).
 
 `AURORA_DEMO_PHOTO_LOOK` (with `AURORA_DEMO_SNAPSHOT`, which opens the photo
 mode): at frame 600 the photo takes those looks, stacked in the order

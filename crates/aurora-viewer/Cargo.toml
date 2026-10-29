@@ -55,13 +55,13 @@ log = "0.4.34"
 png = "0.18.1"
 md5 = "0.8.1"
 memmap2 = "0.9.11"
-parking_lot = "0.12.5"
+parking_lot = "0.13.0"
 pollster = "1.0.1"
 # CommonMark parsing for notecard previews; MIT licensed, no HTML runtime.
 pulldown-cmark = { version = "0.13.4", default-features = false }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 rayon = "1.12.0"
-resvg = "0.48"
+resvg = "0.49"
 # native file dialogs (About Land: export / import of access lists)
 rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -90,7 +90,7 @@ serde_path_to_error = "0.1.20"
 # Rust, no dependency, byte-identical to the reference C code; MIT /
 # Apache-2.0 with the reference's zlib notice
 bevy_mikktspace = "1.0.0"
-fancy-regex = "0.19.2"
+fancy-regex = "0.20.0"
 # advanced inventory search (ui/inventory/smart.rs): linear-time matching of
 # the patterns built from escaped rule values, so a search can never hang on
 # a pathological name; MIT / Apache-2.0, already in the tree through

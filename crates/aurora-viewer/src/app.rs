@@ -17957,6 +17957,7 @@ impl ApplicationHandler for App {
                         && !self.alt
                         && self.profile_ui.focused_web().is_none()
                         && self.search_ui.focused_web().is_none()
+                        && self.media.focus.is_none()
                         && let Some(key) = gesture_key
                         && let Some(id) = self
                             .gesture_state
