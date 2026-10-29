@@ -116,13 +116,21 @@ if ($Platform -eq 'windows') {
     & cp -p @modules (Join-Path $frameworks 'plugins'); Assert-Native 'cp of the VLC modules'
 
     # what the viewer expects of the pack: no link, arm64 in every binary,
-    # and nothing loaded from outside the bundle but the system's libraries
+    # and nothing loaded from outside the bundle but the system's libraries.
+    # A few VLC modules are Intel's own optimisations (MMX, SSE), built for
+    # x86_64 only and shipped by the Legacy Viewer too: VLC loads none of
+    # them on Apple Silicon, they are listed only.
     $links = @(& find $app -type l)
     if ($links.Count) { throw "Links in the pack: $($links -join ', ')" }
+    $modules = (Resolve-Path -LiteralPath (Join-Path $frameworks 'plugins')).Path
+    $intelOnly = @()
     foreach ($file in Get-ChildItem -LiteralPath $app -Recurse -File) {
         $archs = & lipo -archs $file.FullName 2>$null
         if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0; continue }   # not a Mach-O file
-        if ($archs -notmatch '\barm64\b') { throw "$($file.FullName) has no arm64 code ($archs)" }
+        if ($archs -notmatch '\barm64\b') {
+            if (-not $file.FullName.StartsWith($modules)) { throw "$($file.FullName) has no arm64 code ($archs)" }
+            $intelOnly += $file.Name
+        }
         # (a universal binary lists its dependencies once per architecture,
         # each list after a header line ending with a colon; a library lists
         # its own install name too, which loads nothing: the VLC modules keep
@@ -135,6 +143,8 @@ if ($Platform -eq 'windows') {
             }
         }
     }
+
+    if ($intelOnly.Count) { Write-Host "VLC modules for Intel Macs only: $($intelOnly -join ', ')" }
 
     # an ad hoc signature, as the Legacy Viewer signs without its
     # certificate (viewer_manifest.py, package_finish): each library, then
