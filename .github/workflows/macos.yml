@@ -59,17 +59,30 @@ jobs:
         # every failure of the run at once: the Apple GPU is reached here only
         run: cargo test --profile ci --workspace --locked --no-fail-fast
       # the offline demo past its loading fade, then quit: a missing image
-      # or a non-zero exit (a pipeline Metal refused, a GPU fault) fails
+      # or a non-zero exit (a pipeline Metal refused, a GPU fault) fails.
+      # The build takes about 5 minutes and the frames a few seconds: a
+      # viewer that never quits fails here instead of holding the merge
+      # queue for an hour. On the way, frame 300 is held 10 s as a GPU that
+      # stopped answering would: the "graphics card is not responding" box
+      # shows, and the frames must go on behind it (on macOS it froze the
+      # main thread until a click, which no runner gives)
       - name: A demo frame on Metal
         if: steps.changes.outputs.code == 'true' && github.event_name == 'merge_group'
+        timeout-minutes: 15
         env:
           AURORA_DEMO: '1'
+          AURORA_DEMO_GPU_STALL: '300:10'
           AURORA_CAPTURE: ${{ runner.temp }}/metal-demo.png
           AURORA_CAPTURE_FRAMES: '620'
           AURORA_CAPTURE_EXIT: '1'
         run: |
           cargo run --profile ci --locked -p aurora-viewer -- --title "CI macOS"
           test -s "$AURORA_CAPTURE"
+          log="$HOME/Library/Application Support/org.Aurora.AuroraViewer/logs/aurora-demo-ci-macos.log"
+          if ! grep -q "notice shown" "$log" || ! grep -q "the graphics card answered again" "$log"; then
+            echo "::error::the GPU stall and its notice did not happen as expected (see the demo log)"
+            exit 1
+          fi
       - name: Demo image and log
         if: always() && steps.changes.outputs.code == 'true' && github.event_name == 'merge_group'
         uses: actions/upload-artifact@v7
