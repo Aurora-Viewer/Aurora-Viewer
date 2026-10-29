@@ -41,6 +41,84 @@ pub(in crate::ui::inventory) enum Command {
     OpenCurrent(Uuid),
     NewOutfit(Uuid),
     RecoverFolder(Uuid),
+    FindSimilar(super::super::smart::SmartQuery),
+}
+
+/// "Find similar" for the one selected item: the submenu offers what the
+/// item has in common with others, each as the rules of an advanced search
+/// (Aurora's own; the Legacy Viewer has none). The creator goes by key, so
+/// it needs no known name.
+pub(super) fn similar(c: &mut Catalog, zone: &str, inv: &Inventory, id: Uuid, single: bool, all: bool) {
+    use super::super::smart::{Field, Op, Rule, SmartQuery, name_stem};
+    let item = rules::original(inv, id)
+        .and_then(|id| inv.items.get(&id))
+        .or_else(|| inv.items.get(&id));
+    if item.is_none() && !all {
+        return;
+    }
+    let one = |rule: Rule| {
+        let mut query = SmartQuery::default();
+        query.root.nodes.push(super::super::smart::Node::Rule(rule));
+        query
+    };
+    let group = c.group(
+        "find-similar",
+        zone,
+        "search-filled",
+        aurora_i18n::tr!("ui-inventory-context-find-similar"),
+        single && item.is_some(),
+        Direction::Vertical,
+        false,
+    );
+    let stem = item.map(|it| name_stem(&it.name)).filter(|stem| !stem.is_empty());
+    let creator = item.map(|it| it.creator).filter(|creator| !creator.is_nil());
+    let folder = item
+        .and_then(|it| inv.folders.get(&it.parent))
+        .map(|folder| folder.info.name.clone())
+        .filter(|name| !name.is_empty());
+    let entries = [
+        (
+            "find-similar-name",
+            "typography",
+            aurora_i18n::tr!("ui-inventory-context-find-similar-name"),
+            stem.map(|stem| one(Rule::text(Field::Name, Op::StartsWith, &stem))),
+        ),
+        (
+            "find-similar-creator",
+            "user",
+            aurora_i18n::tr!("ui-inventory-context-find-similar-creator"),
+            creator.map(|key| one(Rule::text(Field::Creator, Op::Is, &key.to_string()))),
+        ),
+        (
+            "find-similar-type",
+            "category",
+            aurora_i18n::tr!("ui-inventory-context-find-similar-type"),
+            item.filter(|it| (0..32).contains(&it.inv_type)).map(|it| {
+                let mut rule = Rule::of(Field::Type);
+                // snapshots count as textures, as in the filter itself
+                rule.bits = 1_u32 << if it.inv_type == 17 { 6 } else { it.inv_type };
+                one(rule)
+            }),
+        ),
+        (
+            "find-similar-folder",
+            "folder-filled",
+            aurora_i18n::tr!("ui-inventory-context-find-similar-folder"),
+            folder.map(|name| one(Rule::text(Field::Folder, Op::Is, &name))),
+        ),
+    ];
+    for (key, icon, label, query) in entries {
+        if query.is_some() || all {
+            c.add(
+                key,
+                &group,
+                icon,
+                label,
+                single && query.is_some(),
+                super::Command::Extra(Command::FindSimilar(query.unwrap_or_default())),
+            );
+        }
+    }
 }
 
 pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts, all: bool) {
@@ -607,6 +685,7 @@ pub(super) fn execute(
     actions: &mut Vec<InvAction>,
 ) {
     match command {
+        Command::FindSimilar(query) => st.find_similar(query),
         Command::ImAll(contacts) => {
             for who in contacts {
                 crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::Im(who));

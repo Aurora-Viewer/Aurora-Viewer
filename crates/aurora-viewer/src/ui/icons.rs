@@ -289,6 +289,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "file-upload",
     "files",
     "filter",
+    "filters",
     "flag",
     "flask",
     "folder",

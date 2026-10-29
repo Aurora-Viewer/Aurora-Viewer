@@ -344,6 +344,10 @@ fn compile_rule(rule: &Rule, names: &[(Uuid, String)], recent: i64, time: i64) -
             Age::Newer => Test::Newer(time - i64::from(rule.hours.min(876_000)) * 3600),
             Age::Older => Test::Older(time - i64::from(rule.hours.min(876_000)) * 3600),
         },
+        // a creator given by key (Find similar) needs no known name
+        Field::Creator if rule.op == Op::Is && Uuid::parse_str(rule.text.trim()).is_ok() => {
+            Test::Creators(Uuid::parse_str(rule.text.trim()).into_iter().collect())
+        }
         field => {
             let pattern = match pattern(rule.op, &rule.text.trim().to_lowercase()) {
                 Ok(pattern) => pattern,
@@ -543,6 +547,17 @@ mod tests {
         assert!(m.matches(&subject("hat")));
         assert!(!m.matches(&subject("shoe")));
         assert!(Matcher::new(&SmartQuery::default(), &HashMap::new(), 0, 0).matches(&subject("anything")));
+    }
+
+    #[test]
+    fn creator_given_by_key_needs_no_name() {
+        let key = Uuid::from_u128(7);
+        let m = Matcher::new(&one(Rule::text(Field::Creator, Op::Is, &key.to_string())), &HashMap::new(), 0, 0);
+        let mut s = subject("hat");
+        s.creator = key;
+        assert!(m.matches(&s));
+        s.creator = Uuid::from_u128(8);
+        assert!(!m.matches(&s));
     }
 
     #[test]

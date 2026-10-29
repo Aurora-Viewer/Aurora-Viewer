@@ -48,6 +48,8 @@ mod received;
 mod replace_links;
 mod rows;
 pub(crate) mod smart;
+mod smart_builder;
+pub(crate) mod smart_store;
 pub(crate) mod task_drop;
 pub mod thumbnail;
 pub(crate) mod tree;

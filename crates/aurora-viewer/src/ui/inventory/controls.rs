@@ -1,7 +1,7 @@
 //! Firestorm inventory view menu and finder options, presented with Aurora widgets.
 use super::view::{Age, Creator, Filters, InventoryPreferences, Links, SearchField, types};
 use super::{Inventory, InventoryUi, Palette};
-use crate::ui::widgets::{Floater, flat_button, switch, underlined_button};
+use crate::ui::widgets::{self, Floater, flat_button, switch, underlined_button};
 use egui::{RichText, Vec2};
 
 fn check(ui: &mut egui::Ui, p: &Palette, label: &str, value: &mut bool) -> bool {
@@ -202,6 +202,10 @@ fn tree_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
 }
 
 pub fn search(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryUi, prefs: &mut InventoryPreferences, hint: &str) {
+    if st.advanced {
+        advanced_search(ui, p, st);
+        return;
+    }
     let searching = !st.search.trim().is_empty();
     ui.horizontal(|ui| {
         let selector_width = 112.0_f32.min(ui.available_width() * 0.4);
@@ -227,6 +231,13 @@ pub fn search(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Inventor
                 ] {
                     ui.selectable_value(&mut prefs.search_field, field, label);
                 }
+                // A mode, not a field: it keeps the typed text as rules.
+                if ui
+                    .selectable_label(false, aurora_i18n::tr!("inventory-search-advanced-menu"))
+                    .clicked()
+                {
+                    st.enter_advanced(prefs.search_field);
+                }
             })
             .response
             .on_hover_text(aurora_i18n::tr!(
@@ -234,6 +245,52 @@ pub fn search(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Inventor
             ));
     });
     after_search(inv, st, searching);
+}
+
+/// The search line in advanced mode: the rules in one line (a click opens
+/// the builder), the way back to quick search, and the saved searches.
+fn advanced_search(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
+    let saved = super::smart_store::list();
+    ui.horizontal(|ui| {
+        let summary = st.filters.smart.as_ref().map(super::smart_builder::summary).unwrap_or_default();
+        let reserve = 150.0 + if saved.is_empty() { 0.0 } else { 112.0 };
+        let width = (ui.available_width() - reserve).max(60.0);
+        let line = ui
+            .scope(|ui| {
+                ui.set_max_width(width);
+                ui.add(
+                    egui::Label::new(RichText::new(summary).color(p.ink))
+                        .truncate()
+                        .sense(egui::Sense::click()),
+                )
+            })
+            .inner
+            .on_hover_text(aurora_i18n::tr!("inventory-search-advanced-tip"));
+        if line.clicked() {
+            st.filters_open = true;
+        }
+        if !saved.is_empty() {
+            let current = saved.iter().find(|s| Some(s.id) == st.active_smart).map(|s| s.name.clone());
+            let mut open = None;
+            egui::ComboBox::from_id_salt("inventory_smart_saved")
+                .width(100.0)
+                .truncate()
+                .selected_text(current.unwrap_or_else(|| aurora_i18n::tr!("inventory-smart-section").to_owned()))
+                .show_ui(ui, |ui| {
+                    for s in &saved {
+                        if ui.selectable_label(Some(s.id) == st.active_smart, &s.name).clicked() {
+                            open = Some((s.id, s.query.clone()));
+                        }
+                    }
+                });
+            if let Some((id, query)) = open {
+                st.open_smart(Some(id), query);
+            }
+        }
+        if widgets::flat_button(ui, p, aurora_i18n::tr!("inventory-search-quick")).clicked() {
+            st.leave_advanced();
+        }
+    });
 }
 
 /// The filter field and its clear action: a search, the filters, or the
@@ -260,6 +317,11 @@ pub fn search_input(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, hint: 
             st.search.clear();
             st.filters = Filters::default();
             st.saved_filters = None;
+            if st.advanced {
+                // Clearing empties the rules; the window stays in advanced mode.
+                st.filters.smart = Some(Default::default());
+                st.active_smart = None;
+            }
         }
     }
     field
@@ -285,7 +347,10 @@ pub fn after_search(inv: &Inventory, st: &mut InventoryUi, searching: bool) {
 pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &mut InventoryPreferences) {
     let screen = ctx.content_rect();
     let preferences_size = Vec2::new(410.0, 600.0_f32.min((screen.height() - 90.0).max(180.0)));
-    let filters_size = Vec2::new(410.0, 710.0_f32.min((screen.height() - 90.0).max(180.0)));
+    // the rule builder's rows hold a field, an operator, a value, Not and
+    // remove: wider than the quick filters' checkboxes
+    let filters_w = if st.advanced { 520.0 } else { 410.0 };
+    let filters_size = Vec2::new(filters_w, 710.0_f32.min((screen.height() - 90.0).max(180.0)));
     Floater::new(
         &format!("inventory_preferences_{}", st.ui_id),
         aurora_i18n::tr!("ui-inventory-controls-inventory-preferences"),
@@ -307,18 +372,25 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
                 );
             });
     });
+    // The body edits the whole window state in advanced mode, so the open flag
+    // is borrowed on its own.
+    let mut filters_open = st.filters_open;
     Floater::new(
         &format!("inventory_filters_{}", st.ui_id),
         aurora_i18n::tr!("ui-inventory-controls-inventory-filters"),
         screen.center() - filters_size / 2.0,
         filters_size,
     )
-    .show(ctx, p, &mut st.filters_open, |ui| {
+    .show(ctx, p, &mut filters_open, |ui| {
         let height = ui.available_height().min(ctx.content_rect().height() - 90.0).max(180.0);
         egui::ScrollArea::vertical()
             .max_height(height)
             .auto_shrink([false, true])
             .show(ui, |ui| {
+                if st.advanced {
+                    super::smart_builder::show(ui, p, st);
+                    return;
+                }
                 let f = &mut st.filters;
                 ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-controls-item-types")).color(p.muted));
                 ui.horizontal(|ui| {
@@ -462,4 +534,5 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
                 ui.label(RichText::new(note).size(12.0).color(p.muted));
             });
     });
+    st.filters_open = filters_open;
 }

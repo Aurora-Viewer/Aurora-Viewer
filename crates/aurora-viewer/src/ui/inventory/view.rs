@@ -780,7 +780,7 @@ impl ViewCache {
                         desc: &e.desc,
                         parent_name: folder_names.get(&e.parent).copied().unwrap_or(""),
                         creator: original.creator,
-                        kind: if original.inv_type == 17 { 6 } else { original.inv_type.into() },
+                        kind: if original.inv_type == 17 { 6 } else { original.inv_type },
                         owner_mask: original.owner_mask,
                         worn: query.worn.contains(&original_id),
                         linked,
