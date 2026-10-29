@@ -164,7 +164,7 @@ pub(super) fn show(
                         // (`/tr` works everywhere)
                         if kind == Some(sidebar::Kind::Private)
                             && let Some(session) = st.selected
-                            && (width > 320.0 || world.translate_view.partners.contains_key(&session))
+                            && ((width > 320.0 && world.translate_view.built) || world.translate_view.partners.contains_key(&session))
                         {
                             translate_button(ui, p, world, session, actions);
                         }

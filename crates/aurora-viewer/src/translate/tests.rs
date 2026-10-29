@@ -28,7 +28,8 @@ fn ok(id: u64, text: &str) -> Done {
 }
 
 fn out(t: &mut Translations, n: u64, text: &str, now: Instant) -> u64 {
-    let (job, fx) = t.outgoing(key(n), text, en(), es(), now);
+    let _ = now;
+    let (job, fx) = t.outgoing(key(n), text, en(), es());
     assert!(fx.is_empty());
     let job = job.expect("job");
     assert_eq!(job.direction, Direction::Outgoing);
@@ -60,7 +61,7 @@ fn outgoing_sends_the_translation() {
 #[test]
 fn outgoing_emote_keeps_its_prefix() {
     let mut t = Translations::default();
-    let (job, _) = t.outgoing(key(1), "/me waves hello", en(), es(), Instant::now());
+    let (job, _) = t.outgoing(key(1), "/me waves hello", en(), es());
     let job = job.expect("job");
     assert_eq!(job.text, "waves hello");
     let fx = t.done(ok(job.id, "saluda"));
@@ -86,10 +87,10 @@ fn outgoing_failure_sends_nothing() {
     assert_eq!(t.state(&key(1)), Some(&LineState::Failed { reason: FailReason::Error }));
     assert_eq!(
         t.send_original(key(1)),
-        Some(Effect::Send {
+        [Effect::Send {
             to: BOB,
             text: "hello".into()
-        })
+        }]
     );
     assert_eq!(t.state(&key(1)), None);
 }
@@ -99,6 +100,7 @@ fn outgoing_timeout() {
     let mut t = Translations::default();
     let now = Instant::now();
     let id = out(&mut t, 1, "hello", now);
+    t.started(id, now);
     assert!(t.tick(now + Duration::from_millis(9_900)).is_empty());
     assert!(t.tick(now + Duration::from_millis(10_100)).is_empty());
     assert_eq!(
@@ -109,7 +111,7 @@ fn outgoing_timeout() {
     );
     assert!(t.done(ok(id, "hola")).is_empty());
     // a retry gets a new job
-    let retry = t.retry(key(1), now).expect("job");
+    let retry = t.retry(key(1)).expect("job");
     assert_ne!(retry.id, id);
     assert!(matches!(t.state(&key(1)), Some(LineState::Pending)));
 }
@@ -146,7 +148,7 @@ fn nothing_to_translate_waits_its_turn() {
     let mut t = Translations::default();
     let now = Instant::now();
     let a = out(&mut t, 1, "first message", now);
-    let (job, fx) = t.outgoing(key(2), "😀", en(), es(), now);
+    let (job, fx) = t.outgoing(key(2), "😀", en(), es());
     assert!(job.is_none() && fx.is_empty());
     let fx = t.done(ok(a, "primer mensaje"));
     assert_eq!(
@@ -270,7 +272,7 @@ fn poll_until(svc: &mut TranslateService, s: &mut TranslateSettings, n: usize) -
 fn service_translates_both_ways_with_the_fake_backend() {
     let mut svc = TranslateService::with_backend(|| Box::new(aurora_translate::FakeBackend::new()));
     let mut s = settings_with(Some("es"));
-    let fx = svc.submit_outgoing(&s, BOB, key(1).time, "hello there", Instant::now());
+    let fx = svc.submit_outgoing(&s, BOB, key(1).time, "hello there");
     assert!(fx.is_empty());
     let fx = poll_until(&mut svc, &mut s, 2);
     assert_eq!(
@@ -362,4 +364,121 @@ fn view_marks_a_failed_incoming_line() {
     });
     assert_eq!(t.view().0.get(&key(1).time), Some(&LineShow::NotTranslated));
     assert!(t.view().1.is_empty());
+}
+
+#[test]
+fn failure_holds_later_messages_until_decided() {
+    let mut t = Translations::default();
+    let now = Instant::now();
+    let a = out(&mut t, 1, "first", now);
+    let b = out(&mut t, 2, "second", now);
+    t.done(Done {
+        id: a,
+        result: Err(TranslateError::Generate("x".into())),
+        millis: 1,
+    });
+    assert!(t.done(ok(b, "segundo")).is_empty(), "B waits behind the failed A");
+    let fx = t.send_original(key(1));
+    let sent: Vec<&str> = fx
+        .iter()
+        .filter_map(|e| match e {
+            Effect::Send { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sent, ["first", "segundo"]);
+}
+
+#[test]
+fn discard_releases_the_messages_behind() {
+    let mut t = Translations::default();
+    let now = Instant::now();
+    let a = out(&mut t, 1, "first", now);
+    let b = out(&mut t, 2, "second", now);
+    t.done(Done {
+        id: a,
+        result: Err(TranslateError::Generate("x".into())),
+        millis: 1,
+    });
+    t.done(ok(b, "segundo"));
+    let fx = t.discard(key(1));
+    assert_eq!(
+        fx[0],
+        Effect::Send {
+            to: BOB,
+            text: "segundo".into()
+        }
+    );
+}
+
+#[test]
+fn timeout_counts_from_the_start_of_the_job() {
+    let mut t = Translations::default();
+    let now = Instant::now();
+    let id = out(&mut t, 1, "hello", now);
+    // the model loads for 15 s: the job has not started
+    t.tick(now + Duration::from_secs(15));
+    assert_eq!(t.state(&key(1)), Some(&LineState::Pending));
+    t.started(id, now + Duration::from_secs(15));
+    t.tick(now + Duration::from_secs(20));
+    assert_eq!(t.state(&key(1)), Some(&LineState::Pending));
+    t.tick(now + Duration::from_secs(26));
+    assert_eq!(
+        t.state(&key(1)),
+        Some(&LineState::Failed {
+            reason: FailReason::Timeout
+        })
+    );
+}
+
+#[test]
+fn a_dead_translator_fails_what_is_pending() {
+    let mut t = Translations::default();
+    let now = Instant::now();
+    out(&mut t, 1, "hello", now);
+    t.incoming(key(2), "¿Dónde estás? Te estoy buscando.", es(), en()).expect("job");
+    t.fail_pending();
+    assert_eq!(t.state(&key(1)), Some(&LineState::Failed { reason: FailReason::Error }));
+    assert_eq!(t.state(&key(2)), Some(&LineState::Failed { reason: FailReason::Error }));
+}
+
+#[test]
+fn turning_off_keeps_messages_in_flight() {
+    let mut svc = TranslateService::with_backend(|| Box::new(aurora_translate::FakeBackend::slow(Duration::from_millis(50))));
+    let mut s = settings_with(Some("es"));
+    svc.submit_outgoing(&s, BOB, key(1).time, "hello there");
+    svc.set_partner(&mut s, BOB, None, std::path::Path::new("/nonexistent"));
+    let fx = poll_until(&mut svc, &mut s, 1);
+    assert_eq!(
+        fx.first(),
+        Some(&Effect::Send {
+            to: BOB,
+            text: "[es] hello there".into()
+        })
+    );
+}
+
+#[test]
+fn service_recovers_from_a_dead_translator() {
+    let mut svc = TranslateService::with_backend(|| Box::new(aurora_translate::FakeBackend::panicking()));
+    let mut s = settings_with(Some("es"));
+    svc.submit_outgoing(&s, BOB, key(1).time, "hello there");
+    let end = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < end && svc.view(&s).held.is_empty() {
+        svc.poll(&mut s, Instant::now());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(svc.view(&s).held.len(), 1, "the message is held, not lost");
+}
+
+#[test]
+fn no_suggestion_without_a_model_runtime() {
+    let mut svc = TranslateService::default();
+    let s = settings_with(None);
+    svc.on_incoming(&s, BOB, key(1).time, "Hola, ¿cómo estás hoy amigo?");
+    svc.on_incoming(&s, BOB, key(2).time, "¿Quieres ir a la playa conmigo?");
+    assert_eq!(svc.view(&s).built, aurora_translate::BUILT);
+    if !aurora_translate::BUILT {
+        assert!(svc.view(&s).suggestions.is_empty());
+    }
 }

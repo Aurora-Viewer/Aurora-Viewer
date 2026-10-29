@@ -70,11 +70,15 @@ pub fn clean_output(raw: &str, input: &str) -> Result<String, Rejected> {
     if out.is_empty() {
         return Err(Rejected::Empty);
     }
+    let (n_out, n_in) = (out.chars().count(), input.chars().count());
+    // chatter adds words around the translation: a short "Sure" is the
+    // translation of "Claro"
     let lower = out.to_lowercase();
-    if CHATTER.iter().any(|c| lower.starts_with(c)) {
+    if n_out > n_in + 20 && CHATTER.iter().any(|c| lower.starts_with(c)) {
         return Err(Rejected::Chatter);
     }
-    if out.chars().count() > 4 * input.chars().count().max(1) {
+    // a floor for short messages: one ideograph can be two English words
+    if n_out > (4 * n_in).max(n_in + 24) {
         return Err(Rejected::TooLong);
     }
     Ok(out.to_owned())
@@ -123,11 +127,23 @@ mod tests {
     }
 
     #[test]
+    fn short_affirmations_and_short_cjk_are_kept() {
+        assert_eq!(clean_output("Sure", "Claro"), Ok("Sure".into()));
+        assert_eq!(clean_output("Certainly!", "Bien sûr !"), Ok("Certainly!".into()));
+        assert_eq!(clean_output("No way", "嫌"), Ok("No way".into()));
+        assert_eq!(clean_output("Understood", "了解"), Ok("Understood".into()));
+    }
+
+    #[test]
     fn clean_rejects() {
         assert_eq!(clean_output("", "Hello"), Err(Rejected::Empty));
         assert_eq!(clean_output("   ", "Hello"), Err(Rejected::Empty));
         assert_eq!(clean_output(&"a".repeat(41), "0123456789"), Err(Rejected::TooLong));
+        assert_eq!(clean_output(&"a".repeat(30), "ab"), Err(Rejected::TooLong));
         assert_eq!(clean_output("Sure, here is the translation: Hola", "Hello"), Err(Rejected::Chatter));
-        assert_eq!(clean_output("Here's the translation", "Hello world"), Err(Rejected::Chatter));
+        assert_eq!(
+            clean_output("Here's the translation of your message: Hola mundo", "Hello world"),
+            Err(Rejected::Chatter)
+        );
     }
 }

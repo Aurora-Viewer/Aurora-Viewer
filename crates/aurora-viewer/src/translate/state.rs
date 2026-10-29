@@ -97,7 +97,9 @@ struct Entry {
     body: String,
     from: &'static Lang,
     to: &'static Lang,
-    started: Instant,
+    /// When the model began our message (after its load and the jobs
+    /// before it): the timeout counts from there.
+    started: Option<Instant>,
     /// Our translated message, waiting for the earlier ones to leave.
     ready: Option<String>,
 }
@@ -164,14 +166,7 @@ impl Translations {
 
     /// Our message, typed in a translated conversation. Without a job (a
     /// message with nothing to translate), it still leaves in its turn.
-    pub fn outgoing(
-        &mut self,
-        key: LineKey,
-        text: &str,
-        from: &'static Lang,
-        to: &'static Lang,
-        now: Instant,
-    ) -> (Option<Job>, Vec<Effect>) {
+    pub fn outgoing(&mut self, key: LineKey, text: &str, from: &'static Lang, to: &'static Lang) -> (Option<Job>, Vec<Effect>) {
         let (prefix, body) = split_emote(text);
         let skip = nothing_to_translate(body);
         self.lines.insert(
@@ -184,7 +179,7 @@ impl Translations {
                 body: body.into(),
                 from,
                 to,
-                started: now,
+                started: None,
                 ready: skip.then(|| text.into()),
             },
         );
@@ -213,7 +208,7 @@ impl Translations {
                 body: body.into(),
                 from: partner,
                 to: me,
-                started: Instant::now(),
+                started: None,
                 ready: None,
             },
         );
@@ -271,7 +266,7 @@ impl Translations {
                 e.direction == Direction::Outgoing
                     && e.state == LineState::Pending
                     && e.ready.is_none()
-                    && now.duration_since(e.started) > OUTGOING_TIMEOUT
+                    && e.started.is_some_and(|t| now.duration_since(t) > OUTGOING_TIMEOUT)
             })
             .map(|(k, _)| *k)
             .collect();
@@ -317,7 +312,10 @@ impl Translations {
                     e.state = LineState::Translated { original };
                     fx.push(Effect::Replace { key, text });
                 }
-            } else if e.state == LineState::Pending {
+            } else {
+                // still translating, or failed: the messages typed after it
+                // wait for it, or for the user's choice (Retry, Send
+                // original, Edit)
                 break;
             }
             q.pop_front();
@@ -325,37 +323,65 @@ impl Translations {
         fx
     }
 
-    pub fn retry(&mut self, key: LineKey, now: Instant) -> Option<Job> {
+    pub fn retry(&mut self, key: LineKey) -> Option<Job> {
         let e = self.lines.get_mut(&key)?;
         if !matches!(e.state, LineState::Failed { .. }) {
             return None;
         }
         e.state = LineState::Pending;
-        e.started = now;
+        e.started = None;
         self.version += 1;
-        if e.direction == Direction::Outgoing {
-            self.queues.entry(key.session).or_default().push_back(key);
-        }
         self.job(key)
     }
 
-    /// Our failed or too long message, sent as typed.
-    pub fn send_original(&mut self, key: LineKey) -> Option<Effect> {
-        let e = self.lines.get(&key)?;
+    /// Our failed or too long message, sent as typed, then the messages
+    /// that waited behind it.
+    pub fn send_original(&mut self, key: LineKey) -> Vec<Effect> {
+        let Some(e) = self.lines.get(&key) else {
+            return Vec::new();
+        };
         if e.direction != Direction::Outgoing || !matches!(e.state, LineState::Failed { .. } | LineState::TooLong { .. }) {
-            return None;
+            return Vec::new();
         }
         let text = format!("{}{}", e.prefix, e.body);
         self.lines.remove(&key);
         self.version += 1;
-        Some(Effect::Send { to: key.session, text })
+        let mut fx = vec![Effect::Send { to: key.session, text }];
+        fx.extend(self.flush(key.session));
+        fx
     }
 
-    /// Our held message dropped ("Edit" puts it back in the field).
-    pub fn discard(&mut self, key: LineKey) {
-        if self.lines.remove(&key).is_some() {
-            self.version += 1;
+    /// Our held message dropped ("Edit" puts it back in the field): the
+    /// messages that waited behind it leave.
+    pub fn discard(&mut self, key: LineKey) -> Vec<Effect> {
+        if self.lines.remove(&key).is_none() {
+            return Vec::new();
         }
+        self.version += 1;
+        self.flush(key.session)
+    }
+
+    /// The model began a job: our message's timeout starts now.
+    pub fn started(&mut self, job: u64, now: Instant) {
+        if let Some(e) = self.jobs.get(&job).and_then(|k| self.lines.get_mut(k))
+            && e.started.is_none()
+        {
+            e.started = Some(now);
+        }
+    }
+
+    /// The translator died: nothing pending will come back.
+    pub fn fail_pending(&mut self) {
+        for e in self
+            .lines
+            .values_mut()
+            .filter(|e| e.state == LineState::Pending && e.ready.is_none())
+        {
+            e.state = LineState::Failed { reason: FailReason::Error };
+            e.job = None;
+        }
+        self.jobs.clear();
+        self.version += 1;
     }
 
     pub fn version(&self) -> u64 {

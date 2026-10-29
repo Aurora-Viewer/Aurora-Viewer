@@ -65,6 +65,8 @@ pub struct Done {
 pub struct Status {
     pub loaded: bool,
     pub on_gpu: bool,
+    /// The job the model is working on (after the load).
+    pub running: Option<u64>,
 }
 
 /// The handle of the translation thread. Dropping it stops the thread
@@ -210,15 +212,25 @@ impl Worker {
             self.set_status(Status {
                 loaded: true,
                 on_gpu: info.on_gpu,
+                running: None,
             });
         }
+        self.set_running(Some(job.id));
         let max_tokens = (4 * job.text.chars().count() + 32).min(400);
-        let raw = self.backend.generate(&prompt(self.kind, &job.text, job.from, job.to), max_tokens)?;
+        let raw = self.backend.generate(&prompt(self.kind, &job.text, job.from, job.to), max_tokens);
+        self.set_running(None);
+        let raw = raw?;
         clean_output(&raw, &job.text).map_err(TranslateError::Rejected)
     }
 
     fn loaded(&self) -> bool {
         self.status.lock().map(|s| s.loaded).unwrap_or(false)
+    }
+
+    fn set_running(&self, id: Option<u64>) {
+        if let Ok(mut g) = self.status.lock() {
+            g.running = id;
+        }
     }
 
     fn set_status(&self, s: Status) {

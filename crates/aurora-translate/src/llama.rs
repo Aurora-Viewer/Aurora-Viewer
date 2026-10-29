@@ -104,16 +104,22 @@ impl Backend for LlamaCpp {
         ctx.decode(&mut batch).map_err(gen_err)?;
         let mut sampler = LlamaSampler::greedy();
         let mut out = Vec::new();
+        let mut finished = false;
         for pos in (tokens.len() as i32..).take(max_tokens) {
             let t = sampler.sample(&ctx, batch.n_tokens() - 1);
             sampler.accept(t);
             if vocab.is_eog(t) {
+                finished = true;
                 break;
             }
             out.extend(vocab.token_to_piece(t, false, None));
             batch.clear();
             batch.add(t, pos, &[0], true).map_err(gen_err)?;
             ctx.decode(&mut batch).map_err(gen_err)?;
+        }
+        // a translation cut by the token limit is not sent as if whole
+        if !finished {
+            return Err(TranslateError::Generate("translation cut at the token limit".into()));
         }
         Ok(String::from_utf8_lossy(&out).into_owned())
     }

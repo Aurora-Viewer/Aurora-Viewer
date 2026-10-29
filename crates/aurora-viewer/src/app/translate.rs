@@ -56,9 +56,7 @@ impl App {
             return false;
         }
         let time = self.world.own_im(to, text);
-        let fx = self
-            .translate
-            .submit_outgoing(&self.settings.translate, to, time, text, Instant::now());
+        let fx = self.translate.submit_outgoing(&self.settings.translate, to, time, text);
         self.apply_translation(fx);
         true
     }
@@ -122,8 +120,9 @@ impl App {
             ConvAction::TranslateRetry(key) => self.translate_retry(key),
             ConvAction::TranslateSendOriginal(key) => self.translate_send_original(key),
             ConvAction::TranslateDiscard(key) => {
-                self.translate.discard(key);
+                let fx = self.translate.discard(key);
                 self.world.remove_line(&key);
+                self.apply_translation(fx);
             }
             ConvAction::TranslateDismiss(session) => {
                 self.translate.dismiss(&mut self.settings.translate, session);
@@ -135,13 +134,12 @@ impl App {
 
     /// "Retry" on a line whose translation failed.
     fn translate_retry(&mut self, key: LineKey) {
-        self.translate.retry(&self.settings.translate, key, Instant::now());
+        self.translate.retry(&self.settings.translate, key);
     }
 
     /// "Send original" on our line whose translation failed or is too long.
     fn translate_send_original(&mut self, key: LineKey) {
-        if let Some(e) = self.translate.send_original(key) {
-            self.apply_translation(vec![e]);
-        }
+        let fx = self.translate.send_original(key);
+        self.apply_translation(fx);
     }
 }

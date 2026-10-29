@@ -66,11 +66,21 @@ pub fn detect_between(text: &str, a: &Lang, b: &Lang) -> Option<Detected> {
     whatlang::Detector::with_allowlist(allow).detect(text).and_then(found)
 }
 
+/// Han ideographs, kana and hangul.
+fn is_cjk(c: char) -> bool {
+    matches!(c as u32,
+        0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0xAC00..=0xD7AF | 0x1100..=0x11FF | 0x20000..=0x2FA1F)
+}
+
 /// Text the model has nothing to do with: only links, emoji, digits and
 /// punctuation, or a single letter, once the links are taken out. Two-letter
 /// words ("ok", "lol" is three) are kept as they are too: the same in most
 /// languages.
 pub fn nothing_to_translate(text: &str) -> bool {
+    // one ideograph, kana or hangul syllable is a word ("嫌", "はい")
+    if text.chars().any(is_cjk) {
+        return false;
+    }
     let letters: usize = text
         .split_whitespace()
         .filter(|w| !(w.contains("://") || w.starts_with("www.")))
@@ -114,6 +124,9 @@ mod tests {
             assert!(nothing_to_translate(t), "{t}");
         }
         assert!(!nothing_to_translate("hola amigo"));
+        for t in ["谢谢", "はい", "了解", "네요", "嫌"] {
+            assert!(!nothing_to_translate(t), "{t}");
+        }
         assert!(!nothing_to_translate("see https://example.com please"));
     }
 }

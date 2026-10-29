@@ -140,6 +140,10 @@ fn fetch(dir: &Path, e: &ModelEntry, state: &Mutex<DownloadState>, cancel: &Atom
         Ok(_) => {}
         Err(err) => log::warn!("free space unknown ({err}), downloading anyway"),
     }
+    if have >= e.bytes {
+        // complete already (the viewer stopped while checking it)
+        return finish(dir, e, state);
+    }
     let client = reqwest::blocking::Client::builder()
         .user_agent(format!("Aurora Viewer translator ({})", env!("CARGO_PKG_NAME")))
         .build()
@@ -150,6 +154,11 @@ fn fetch(dir: &Path, e: &ModelEntry, state: &Mutex<DownloadState>, cancel: &Atom
     }
     let mut resp = req.send().map_err(|err| DownloadError::Http(err.to_string()))?;
     let status = resp.status();
+    if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+        // the part does not match the file any more: start again
+        let _ = std::fs::remove_file(&part);
+        return Err(DownloadError::Http(status.to_string()));
+    }
     // a server that ignores the range sends the whole file again
     let resumed = status == reqwest::StatusCode::PARTIAL_CONTENT;
     if !status.is_success() {
@@ -182,9 +191,18 @@ fn fetch(dir: &Path, e: &ModelEntry, state: &Mutex<DownloadState>, cancel: &Atom
     file.flush().map_err(io)?;
     drop(file);
     if done != e.bytes {
-        let _ = std::fs::remove_file(&part);
+        // a cut connection keeps what came, to resume; too much is garbage
+        if done > e.bytes {
+            let _ = std::fs::remove_file(&part);
+        }
         return Err(DownloadError::Http(format!("{done} bytes received of {}", e.bytes)));
     }
+    finish(dir, e, state)
+}
+
+/// Check the complete part and give it the model's name.
+fn finish(dir: &Path, e: &ModelEntry, state: &Mutex<DownloadState>) -> Result<PathBuf, DownloadError> {
+    let part = part_path(dir, e);
     set(state, DownloadState::Verifying);
     if let Err(err) = verify(&part, e.sha256) {
         let _ = std::fs::remove_file(&part);
@@ -270,6 +288,28 @@ mod tests {
             assert!(e.sha256.chars().all(|c| c.is_ascii_hexdigit()));
             assert!(e.bytes > 0 && e.url.starts_with("https://"));
         }
+    }
+
+    #[test]
+    fn complete_part_is_verified_without_downloading() {
+        let dir = temp("complete");
+        std::fs::write(dir.join("tiny.gguf.part"), b"abc").expect("write");
+        let e: &'static ModelEntry = Box::leak(Box::new(small()));
+        let d = Download::start(dir.clone(), e);
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match d.progress() {
+                DownloadState::Ready(p) => {
+                    assert_eq!(p, model_path(&dir, e));
+                    break;
+                }
+                DownloadState::Running { .. } | DownloadState::Verifying if std::time::Instant::now() < end => {
+                    std::thread::sleep(std::time::Duration::from_millis(10))
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        assert!(is_ready(&dir, e));
     }
 
     #[test]

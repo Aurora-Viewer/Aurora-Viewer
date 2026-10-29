@@ -54,6 +54,8 @@ pub struct TranslateView {
     pub status: Option<Status>,
     /// The model's thread died.
     pub offline: bool,
+    /// The viewer can translate (built with a model runtime, or the demo's).
+    pub built: bool,
 }
 
 impl TranslateView {
@@ -69,7 +71,8 @@ pub struct TranslateService {
     translations: Translations,
     suggest: Suggest,
     suggestions: HashMap<Uuid, &'static Lang>,
-    translator: Option<Translator>,
+    /// The translator and the model it was started with.
+    translator: Option<(Translator, &'static str)>,
     download: Option<(&'static ModelEntry, Download)>,
     /// The conversation and language waiting for the model download.
     pub pending: Option<(Uuid, &'static Lang)>,
@@ -115,11 +118,11 @@ impl TranslateService {
         self.suggestions.remove(&session);
         self.bumps += 1;
         let Some(to) = to else {
+            // our messages being translated still leave, translated
             settings.sessions.remove(&session);
-            self.translations.close_session(session);
             return SetResult::Off;
         };
-        if self.backend.is_none() && !aurora_translate::BUILT {
+        if !self.built() {
             return SetResult::NotBuilt;
         }
         if !self.ready(settings, dir) {
@@ -156,37 +159,48 @@ impl TranslateService {
         self.pending = None;
     }
 
-    fn submit(&mut self, settings: &TranslateSettings, job: aurora_translate::Job) {
-        let t = self.translator.get_or_insert_with(|| {
+    fn built(&self) -> bool {
+        self.backend.is_some() || aurora_translate::BUILT
+    }
+
+    fn submit(&mut self, settings: &TranslateSettings, session: Uuid, job: aurora_translate::Job) {
+        let model = Self::model(settings);
+        // the model changed in the preferences: a new translator for it
+        if self.translator.as_ref().is_some_and(|(_, id)| *id != model.id) {
+            self.translator = None;
+        }
+        // a translated conversation whose model is gone (deleted, another
+        // one chosen): the download dialog again; the job fails and is held
+        let dir = models_dir();
+        if self.built()
+            && !self.ready(settings, &dir)
+            && self.download.is_none()
+            && self.pending.is_none()
+            && let Some(partner) = Self::partner(settings, session)
+        {
+            self.pending = Some((session, partner));
+        }
+        let (t, _) = self.translator.get_or_insert_with(|| {
             let backend = match self.backend {
                 Some(b) => b(),
-                None => aurora_translate::backend_for(aurora_translate::model_path(&models_dir(), Self::model(settings))),
+                None => aurora_translate::backend_for(aurora_translate::model_path(&dir, model)),
             };
-            Translator::spawn(backend, Self::model(settings).prompt, IDLE_UNLOAD)
+            (Translator::spawn(backend, model.prompt, IDLE_UNLOAD), model.id)
         });
         t.submit(job);
     }
 
     /// Our message in a translated conversation; its line is already shown.
-    pub fn submit_outgoing(
-        &mut self,
-        settings: &TranslateSettings,
-        session: Uuid,
-        time: SystemTime,
-        text: &str,
-        now: Instant,
-    ) -> Vec<Effect> {
+    pub fn submit_outgoing(&mut self, settings: &TranslateSettings, session: Uuid, time: SystemTime, text: &str) -> Vec<Effect> {
         let Some(to) = Self::partner(settings, session) else {
             return vec![Effect::Send {
                 to: session,
                 text: text.into(),
             }];
         };
-        let (job, fx) = self
-            .translations
-            .outgoing(LineKey { session, time }, text, Self::me(settings), to, now);
+        let (job, fx) = self.translations.outgoing(LineKey { session, time }, text, Self::me(settings), to);
         if let Some(job) = job {
-            self.submit(settings, job);
+            self.submit(settings, session, job);
         }
         fx
     }
@@ -197,9 +211,10 @@ impl TranslateService {
         match Self::partner(settings, session) {
             Some(partner) => {
                 if let Some(job) = self.translations.incoming(LineKey { session, time }, text, partner, me) {
-                    self.submit(settings, job);
+                    self.submit(settings, session, job);
                 }
             }
+            None if !self.built() => {}
             None => {
                 if let Some(l) = self.suggest.observe(session, text, me) {
                     self.suggestions.insert(session, l);
@@ -212,9 +227,19 @@ impl TranslateService {
     /// Every frame: finished translations, late messages, the download.
     pub fn poll(&mut self, settings: &mut TranslateSettings, now: Instant) -> Polled {
         let mut out = Polled::default();
-        if let Some(t) = &self.translator {
+        if let Some((t, _)) = &self.translator {
             while let Some(done) = t.try_recv() {
                 out.effects.extend(self.translations.done(done));
+            }
+            if let Some(id) = t.status().running {
+                self.translations.started(id, now);
+            }
+            // the thread died: what it held fails (held with Retry), and the
+            // next job starts a new one
+            if t.is_closed() {
+                log::warn!("the translator stopped; pending translations failed");
+                self.translations.fail_pending();
+                self.translator = None;
             }
         }
         out.effects.extend(self.translations.tick(now));
@@ -232,24 +257,24 @@ impl TranslateService {
         self.translations.original(key)
     }
 
-    pub fn retry(&mut self, settings: &TranslateSettings, key: LineKey, now: Instant) {
-        if let Some(job) = self.translations.retry(key, now) {
-            self.submit(settings, job);
+    pub fn retry(&mut self, settings: &TranslateSettings, key: LineKey) {
+        if let Some(job) = self.translations.retry(key) {
+            self.submit(settings, key.session, job);
         }
     }
 
-    pub fn send_original(&mut self, key: LineKey) -> Option<Effect> {
+    pub fn send_original(&mut self, key: LineKey) -> Vec<Effect> {
         self.translations.send_original(key)
     }
 
     /// Where the model runs, once a job started it.
     pub fn status(&self) -> Option<Status> {
-        self.translator.as_ref().map(Translator::status)
+        self.translator.as_ref().map(|(t, _)| t.status())
     }
 
     /// The model's thread died.
     pub fn offline(&self) -> bool {
-        self.translator.as_ref().is_some_and(Translator::is_closed)
+        self.translator.as_ref().is_some_and(|(t, _)| t.is_closed())
     }
 
     pub fn close_session(&mut self, session: Uuid) {
@@ -259,8 +284,8 @@ impl TranslateService {
     }
 
     /// Our held message dropped: "Edit" puts it back in the field.
-    pub fn discard(&mut self, key: LineKey) {
-        self.translations.discard(key);
+    pub fn discard(&mut self, key: LineKey) -> Vec<Effect> {
+        self.translations.discard(key)
     }
 
     /// "Not now" on the suggestion card.
@@ -294,6 +319,7 @@ impl TranslateService {
             me: Some(Self::me(settings)),
             status: self.status(),
             offline: self.offline(),
+            built: self.built(),
         }
     }
 

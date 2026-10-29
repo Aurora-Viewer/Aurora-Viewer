@@ -5,6 +5,7 @@ use crate::worker::{Backend, BackendInfo, TranslateError};
 use std::time::Duration;
 
 pub struct FakeBackend {
+    panic: bool,
     fail: bool,
     delay: Duration,
 }
@@ -12,6 +13,7 @@ pub struct FakeBackend {
 impl FakeBackend {
     pub fn new() -> Self {
         Self {
+            panic: false,
             fail: false,
             delay: Duration::ZERO,
         }
@@ -20,6 +22,14 @@ impl FakeBackend {
     /// Every translation fails.
     pub fn failing() -> Self {
         Self { fail: true, ..Self::new() }
+    }
+
+    /// The thread dies at the first translation (a crash in the runtime).
+    pub fn panicking() -> Self {
+        Self {
+            panic: true,
+            ..Self::new()
+        }
     }
 
     /// Every translation takes `delay`, like a real model.
@@ -41,6 +51,7 @@ impl Backend for FakeBackend {
 
     fn generate(&mut self, prompt: &str, _max_tokens: usize) -> Result<String, TranslateError> {
         std::thread::sleep(self.delay);
+        assert!(!self.panic, "fake backend crash");
         if self.fail {
             return Err(TranslateError::Generate("fake failure".into()));
         }
