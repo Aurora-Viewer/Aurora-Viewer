@@ -297,14 +297,18 @@ Files in [`assets/branding/`](../assets/branding/):
 
 | File | Use |
 |---|---|
-| `logo-loup-couleur.svg` / `-4096.png` | full logo: login screen, README, window icon |
-| `silhouette-loup-blanche.svg` / `-4096.png` | white silhouette: small icons, toolbar, monochrome |
-| `silhouette-loup-blanche-fond-noir.svg` | silhouette on a black background (the only file with an opaque background) |
-| `aurora.ico` | full logo as a Windows icon (16 to 256 px, taken from the 4096 PNG): icon of `aurora-viewer.exe` (embedded by its `build.rs`), "Aurora Tools" shortcut |
+| `aurora-logo.svg` / `.png` (720 px) | full logo in colour, transparent background: README, window icon, login and loading screens, About, system notifications (`LOGO_PNG` of `app.rs`) |
+| `aurora-logo-white.svg` / `.png` (4096 px) | white silhouette: the Aurora menu button of the toolbars (tinted with the palette), monochrome uses on a dark background |
+| `aurora-logo-black.svg` / `.png` (4096 px) | black silhouette: monochrome uses on a light background |
+| `aurora-logo-purple.png` / `aurora-logo-teal.png` (4096 px) | silhouette in violet or in turquoise |
+| `aurora-logo-bg.png` (4096 px) | full logo on a navy background (the only file with an opaque background): square icons that need one (website's Apple touch icon) |
+| `aurora.ico` | full logo as a Windows icon (16 to 256 px, taken from `aurora-logo.png`): icon of `aurora-viewer.exe` (embedded by its `build.rs`), "Aurora Tools" and "Aurora PR" shortcuts |
 
-The logo is a wolf's head in profile, facing right, in 4 colours:
-violet `#8B5CF6`, indigo `#4F46E5`, turquoise `#5EEAD4` and midnight blue
-`#070B1F`. Do not distort it, recolour it or add an effect to it.
+The logo is a howling wolf's head in profile, facing up and to the right,
+its mane made of aurora ribbons, in a circle. Its colours: violet `#8B5CF6`
+and indigo `#4F46E5` for the head, turquoise `#5EEAD4` and a deeper
+turquoise `#56CAA9` for the ribbons. Do not distort it, recolour it or add
+an effect to it; the one-colour versions above are the only recolourings.
 
 ## README buttons
 

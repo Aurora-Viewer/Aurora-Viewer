@@ -99,12 +99,26 @@ fn run(rx: Receiver<Toast>, _clicks: Sender<u64>) {
 }
 
 /// The logo as a PNG file in the cache: Windows' registry and the
-/// freedesktop service both read the icon from a file.
+/// freedesktop service both read the icon from a file. Its name follows the
+/// logo's size in bytes, so a new logo writes a new file instead of reusing
+/// the old one.
 #[cfg(any(windows, target_os = "linux"))]
 fn icon_file() -> Option<std::path::PathBuf> {
-    let path = crate::settings::cache_dir().join("notification-icon.png");
+    let dir = crate::settings::cache_dir();
+    let name = format!("notification-icon-{}.png", crate::app::LOGO_PNG.len());
+    let path = dir.join(&name);
     if path.exists() {
         return Some(path);
+    }
+    // the icons of earlier logos
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let old = entry.file_name();
+            let old = old.to_string_lossy();
+            if old.starts_with("notification-icon") && old.ends_with(".png") && old != name {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
     }
     let img = match image::load_from_memory(crate::app::LOGO_PNG) {
         Ok(img) => img.resize(256, 256, image::imageops::FilterType::Triangle),
