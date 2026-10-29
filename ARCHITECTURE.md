@@ -1,5 +1,11 @@
 # Aurora Viewer architecture
 
+`graphics_presets/saved.rs` holds named rendering quality snapshots (#1218),
+persisted as an explicit allowlist in `Settings::graphics_saved`. The editor in
+`ui/options/saved_graphics.rs` saves, loads and confirms replacement/deletion.
+`ui/bars/graphics.rs` shares the built-in/custom choices and the independent FPS
+cap switch between the FPS hover card (both bar layouts) and the system menu.
+
 `scene/anim.rs` restarts active resident and control-avatar motions from one shared
 instant for Ctrl+S, World and the resync toolbar command. Receipt signals,
 simulator state and independent import previews are preserved. Native key dispatch leaves Save

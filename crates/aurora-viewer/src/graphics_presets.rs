@@ -32,6 +32,8 @@
 
 use crate::settings::Settings;
 
+pub(crate) mod saved;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Preset {
     Potato,

@@ -168,6 +168,10 @@ fn quality(cx: &mut Cx) {
             &Nothing,
             |ui, s| preset_choice(ui, &p, s),
         );
+        cx.wide()
+            .row_with(tr!("graphics-saved-title"), tr!("graphics-saved-help"), &Nothing, |ui, s, st, _| {
+                super::super::saved_graphics::controls(ui, &p, s, st)
+            });
     });
     cx.group(tr!("ui-options-distance-and-detail"), |cx| {
         cx.slider(
