@@ -770,11 +770,15 @@ fn shadow_normal(m: Material) -> vec3<f32> {
 }
 
 fn eval_material(in: VsOut, front: bool) -> Material {
+    return eval_material_sampled(in, front, sample_tex(records[in.record].tex.x, in.uv));
+}
+
+// Reuse the base sample after the blended pass has rejected empty texels.
+fn eval_material_sampled(in: VsOut, front: bool, base_s: vec4<f32>) -> Material {
     portal_clip(records[in.record], in.world_pos);
     rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
     var m: Material;
-    let base_s = sample_tex(rec.tex.x, in.uv);
     // each map with its own transform (legacy and PBR materials)
     let nrm_s = sample_tex(rec.tex.y, in.uv_n);
     let mr_s = sample_tex(rec.tex.z, in.uv_s);
@@ -1392,7 +1396,9 @@ fn fs_opaque(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4
 @fragment
 fn fs_mask(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
-    return mask_color(rec, shade(in, front).color);
+    let m = eval_material(in, front);
+    let alpha = mask_color(rec, m.color).a;
+    return vec4<f32>(shade_material(in, m).color.rgb, alpha);
 }
 
 struct GOut {
@@ -1413,9 +1419,11 @@ fn fs_opaque_g(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
 @fragment
 fn fs_mask_g(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
     let rec = records[in.record];
-    let s = shade(in, front);
+    let m = eval_material(in, front);
+    let alpha = mask_color(rec, m.color).a;
+    let s = shade_material(in, m);
     var o: GOut;
-    o.color = mask_color(rec, s.color);
+    o.color = vec4<f32>(s.color.rgb, alpha);
     o.gbuf = gbuffer(s);
     return o;
 }
@@ -1467,23 +1475,28 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
     // fainter ones, by the alpha of fs_depth_contact (the occlusion's depth
     // holds the same ones); tested before the material, which the other
     // pass's texels then never evaluate
+    let rec = records[in.record];
+    let base_s = sample_tex(rec.tex.x, in.uv);
+    let raw_alpha = base_s.a * rec.base_color.a;
     if (BLEND_SPLIT != 0u) {
-        let rec = records[in.record];
-        let half = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a >= 0.5;
+        let half = raw_alpha >= 0.5;
         if ((BLEND_SPLIT == 1u) != half) {
             discard;
         }
     }
-    let m = eval_material(in, front);
-    if (BLEND_EARLY_DISCARD && m.color.a < 0.004) {
+    // Alpha needs only the base map; reject before the normal, ORM and
+    // emissive maps, their derivatives and the lighting. Emissive masks
+    // use face alpha while their texture alpha controls unlit color.
+    let alpha = select(raw_alpha, rec.base_color.a, (rec.flags.x & FLAG_EMISSIVE_MASK) != 0u);
+    if (BLEND_EARLY_DISCARD && alpha < 0.004) {
         discard;
     }
     // Blended and alpha-tested: the hair, eyelashes and skirt of a system
     // avatar (LLDrawPoolAvatar::beginPostDeferredPass, minimum alpha).
-    let rec = records[in.record];
-    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && m.color.a < rec.params.w) {
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && alpha < rec.params.w) {
         discard;
     }
+    let m = eval_material_sampled(in, front, base_s);
     var c = shade_material(in, m).color;
     c.a = c.a * rez_alpha(rec, in);
     if (c.a < 0.004) {

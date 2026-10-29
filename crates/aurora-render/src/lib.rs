@@ -12,6 +12,8 @@ mod bloom;
 mod contact_shadows;
 mod cutout;
 // (Vulkan only: Metal textures stay with wgpu's allocator)
+#[cfg(test)]
+mod alpha_tests;
 #[cfg_attr(target_os = "macos", path = "dedicated_none.rs")]
 mod dedicated;
 mod device_lost;

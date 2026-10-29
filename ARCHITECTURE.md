@@ -8,6 +8,12 @@ scale uses nine bilinear Catmull-Rom taps before native-resolution labels, HUDs
 and egui; RLVa-only scaling retains its nearest-pixel behavior. Target changes
 invalidate depth/occlusion history, and snapshots bypass the user's scale.
 
+`object.wgsl` rejects masked texels before lighting and blended empty texels
+before fetching the remaining material maps. The blended path reuses its base
+sample and preserves emissive-mask alpha, cutoff and split-pass rules.
+`alpha_tests.rs` runs the production fragment entry points on the GPU with
+instrumented material/lighting functions to check pixels and skipped work.
+
 `scene/anim.rs` restarts active resident and control-avatar motions from one shared
 instant for Ctrl+S, World and the resync toolbar command. Receipt signals,
 simulator state and independent import previews are preserved. Native key dispatch leaves Save

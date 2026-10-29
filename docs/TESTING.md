@@ -256,6 +256,13 @@ use `AURORA_DEMO=1` for isolated comparisons. A Retina comparison can use
 `AURORA_DEMO_TEXTURES=9000`, `AURORA_DEMO_CROWD=20` and the same capture
 frame, changing only `AURORA_RENDER_SCALE` between 100, 67 and 50.
 
+For alpha-shader comparisons, use `AURORA_DEMO_CROWD=20` and
+`AURORA_DEMO_HAIR=8,24,80,16` to exercise layered transparent surfaces.
+Check both `AURORA_AA=3` (multisampled alpha coverage) and `AURORA_AA=6`
+(single-sample depth). The `alpha_entry_points` GPU regression also checks
+cutoff equality, zero cutoff, face alpha, emissive masks and split passes,
+including that rejected fragments skip lighting/material work.
+
 `AURORA_WINDOW_SIZE`: width and height of the render area, in logical pixels
 (at least 800 × 560), to measure according to the size of the window:
 without it, the demo opens at the size the window had in the last launch
