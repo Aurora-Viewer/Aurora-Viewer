@@ -12572,7 +12572,7 @@ area-search-regex-error = Regular expression: { $error }
 
 area-search-required = Only list objects that are
 area-search-excluded = Exclude objects that are
-area-search-ranges = Ranges and interaction
+area-search-ranges = Distance and sale price
 area-search-attachment = Attachments
 area-search-media = Shared media
 area-search-copy-perm = Copy
@@ -12601,3 +12601,8 @@ area-search-reset-all-tip = Reset the entire search.
 area-search-reset-search-tip = Clear search fields and regular expressions.
 area-search-reset-options-tip = Restore original filter options.
 area-search-reset-columns-tip = Restore default columns.
+
+area-search-range-options = Ranges
+area-search-reset-ranges-tip = Restore default distance and sale price ranges.
+
+area-search-results = Results

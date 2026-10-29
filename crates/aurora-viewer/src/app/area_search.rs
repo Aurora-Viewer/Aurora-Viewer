@@ -414,7 +414,7 @@ impl App {
             Action::FilterMine => {
                 let name = self.world.social.name_of(&self.world.agent_id);
                 self.area_search_ui.table.filters.owner = name;
-                self.area_search_ui.reveal_filters = true;
+                self.area_search_ui.reveal_search();
             }
         }
     }

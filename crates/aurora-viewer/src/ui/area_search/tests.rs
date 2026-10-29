@@ -41,6 +41,13 @@ impl Harness {
             .find_map(|s| text_rect(&s.shape, label))
             .unwrap_or_else(|| panic!("missing painted text: {label}"))
     }
+    fn inline_reset(&mut self) -> egui::Rect {
+        let (out, _) = self.frame(Vec::new());
+        out.shapes
+            .iter()
+            .find_map(|s| text_rect(&s.shape, aurora_i18n::tr!("common-reset")))
+            .expect("expanded form Reset before the table footer")
+    }
     fn click(&mut self, label: &str) -> (egui::FullOutput, Option<Action>) {
         let pos = self.find(label).center();
         self.click_at(pos)
@@ -348,7 +355,7 @@ fn area_search_native_table_virtualizes_long_results_and_keeps_footer_in_the_win
 }
 
 #[test]
-fn area_search_popouts_apply_filters_immediately_and_preserve_column_choices() {
+fn area_search_inline_filters_apply_immediately_and_preserve_column_choices() {
     let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 40);
     h.ui.table.rows[0].flags = 1 << 10;
     h.ui.table.dirty = true;
@@ -397,7 +404,7 @@ fn area_search_column_popout_is_right_aligned_stays_open_and_preserves_selection
 }
 
 #[test]
-fn area_search_resets_are_immediate_scoped_and_at_the_right_of_every_popout() {
+fn area_search_resets_are_immediate_scoped_and_at_the_right_of_each_section() {
     let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 40);
     h.ui.table.rows[0].flags = 1 << 10;
     h.ui.table.dirty = true;
@@ -406,9 +413,9 @@ fn area_search_resets_are_immediate_scoped_and_at_the_right_of_every_popout() {
     h.ui.table.filters.owner = "Demo owner".into();
     h.click(aurora_i18n::tr!("area-search-search"));
     let copy = h.find(aurora_i18n::tr!("area-search-copy-link"));
-    let search_reset = h.find(aurora_i18n::tr!("common-reset"));
+    let search_reset = h.inline_reset();
     assert!(search_reset.left() > copy.right());
-    h.click(aurora_i18n::tr!("common-reset"));
+    h.click_at(search_reset.center());
     assert!(h.ui.table.filters.query.is_empty() && h.ui.table.filters.owner.is_empty());
     assert!(h.ui.table.filters.phantom, "Search Reset retains filter options");
     assert_eq!(h.ui.table.visible.len(), 1);
@@ -417,9 +424,9 @@ fn area_search_resets_are_immediate_scoped_and_at_the_right_of_every_popout() {
     h.ui.table.filters.owner = "Demo owner".into();
     h.click(aurora_i18n::tr!("area-search-filters"));
     let save = h.find(aurora_i18n::tr!("area-search-save-defaults"));
-    let reset = h.find(aurora_i18n::tr!("common-reset"));
+    let reset = h.inline_reset();
     assert!(reset.left() > save.right());
-    h.click(aurora_i18n::tr!("common-reset"));
+    h.click_at(reset.center());
     assert!(!h.ui.table.filters.phantom);
     assert_eq!(h.ui.table.filters.owner, "Demo owner", "Filters Reset retains search text");
     assert_eq!(h.ui.table.visible.len(), 40);
@@ -454,7 +461,7 @@ fn area_search_regex_error_is_visible_on_results_and_recovers_when_corrected() {
 }
 
 #[test]
-fn area_search_requested_search_popout_survives_sizing_and_regex_errors_do_not_move_its_anchor() {
+fn area_search_requested_inline_search_survives_sizing_and_regex_errors_keep_toolbar_fixed() {
     let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 40);
     h.ui.demo_controls("fields");
     for _ in 0..6 {
@@ -469,7 +476,88 @@ fn area_search_requested_search_popout_survives_sizing_and_regex_errors_do_not_m
     let after = h.find(aurora_i18n::tr!("area-search-search"));
     assert!(
         (before.top() - after.top()).abs() < 1.0,
-        "typing a partial expression cannot move its popout anchor"
+        "typing a partial expression cannot move the toolbar"
     );
     assert!(h.ctx.read_response(egui::Id::unique(("area_search_field", 0))).is_some());
+}
+
+#[test]
+fn area_search_tabs_keep_inline_forms_and_result_rows_accessible() {
+    for (scale, size) in [
+        (1.0, Vec2::new(1280.0, 900.0)),
+        (1.5, Vec2::new(1280.0, 900.0)),
+        (1.0, Vec2::new(600.0, 466.0)),
+    ] {
+        let mut h = Harness::new(scale, size, 40);
+        let search = h.find(aurora_i18n::tr!("area-search-search"));
+        let filters = h.find(aurora_i18n::tr!("area-search-filters"));
+        let columns = h.find(aurora_i18n::tr!("area-search-columns"));
+        assert!(search.right() < filters.left() && filters.right() < columns.left());
+        h.click(aurora_i18n::tr!("area-search-search"));
+        let field = h
+            .ctx
+            .read_response(egui::Id::unique(("area_search_field", 0)))
+            .expect("inline search field");
+        assert!(field.rect.top() > search.bottom());
+        assert!(h.find("Object 1").top() > h.inline_reset().bottom());
+        h.click(aurora_i18n::tr!("area-search-filters"));
+        assert_eq!(h.ui.expanded, Some(super::controls::Section::Filters));
+        let header = h.find(aurora_i18n::tr!("area-search-required"));
+        assert!(header.top() > filters.bottom());
+        assert!(h.find("Object 1").top() > h.inline_reset().bottom());
+        h.click(aurora_i18n::tr!("area-search-results"));
+        assert!(h.ui.expanded.is_none());
+        assert!(h.find("Object 1").top() < header.top() + 100.0);
+    }
+}
+
+#[test]
+fn area_search_filter_and_range_resets_preserve_other_sections() {
+    use super::controls::Section;
+    for (section, label) in [
+        (Section::Filters, aurora_i18n::tr!("area-search-filters")),
+        (Section::Ranges, aurora_i18n::tr!("area-search-range-options")),
+    ] {
+        let mut h = Harness::new(1.0, Vec2::new(1280.0, 900.0), 40);
+        h.ui.table.filters = Filters {
+            query: "Object".into(),
+            owner: "Demo owner".into(),
+            phantom: true,
+            click_action: 2,
+            sale: true,
+            min_price: 2,
+            max_price: 3,
+            distance_on: true,
+            min_distance: 1.0,
+            max_distance: 8.0,
+            parcel_only: true,
+            children: true,
+            exclude_physical: true,
+            ..Default::default()
+        };
+        h.click(label);
+        let save = h.find(aurora_i18n::tr!("area-search-save-defaults"));
+        let reset = h.inline_reset();
+        assert!(reset.left() > save.right());
+        h.click_at(reset.center());
+        let f = &h.ui.table.filters;
+        assert_eq!((&*f.query, &*f.owner), ("Object", "Demo owner"));
+        match section {
+            Section::Filters => {
+                assert!(!f.phantom && f.click_action == 0);
+                assert!(!f.parcel_only && !f.children && !f.exclude_physical);
+                assert!(f.sale && f.distance_on);
+                assert_eq!((f.min_price, f.max_price), (2, 3));
+                assert_eq!((f.min_distance, f.max_distance), (1.0, 8.0));
+            }
+            Section::Ranges => {
+                assert!(!f.sale && !f.distance_on);
+                assert_eq!((f.min_distance, f.max_distance), (0.0, 96.0));
+                assert!(f.phantom && f.parcel_only && f.children && f.exclude_physical);
+                assert_eq!(f.click_action, 2);
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(h.ui.expanded, Some(section), "Reset keeps the current section open");
+    }
 }

@@ -3942,14 +3942,14 @@ both open states and the selection count. Capture at frame 620.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
-| `AURORA_DEMO_AREA_SEARCH=1\|filters\|fields\|columns\|all-columns\|link\|parcel\|sale\|search\|menu` | Open Area Search with named objects and sale entries; `menu` opens its right-click menu. |
+| `AURORA_DEMO_AREA_SEARCH=1\|filters\|ranges\|scope\|fields\|columns\|all-columns\|link\|parcel\|sale\|search\|menu` | Open Area Search with named objects and sale entries; `menu` opens its right-click menu. |
 | `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails. |
 
 `AURORA_DEMO_AREA_SEARCH`: `1` opens the object list; `parcel` restricts it to
-the agent's parcel, `sale` shows sale entries, `filters` opens the grouped Filters popout, and
+the agent's parcel, `sale` shows sale entries, `filters` opens Filters (required/excluded properties, permissions, click action and scope), and
 `search` searches the localized fountain name, and `menu` right-clicks the
-second row to open the result menu. `fields` opens the six-field Search popout,
-`columns` opens the Columns popout, `all-columns` shows all ten result columns,
+second row to open the result menu. `fields` expands the six-field Search form,
+`ranges` opens distance and sale price, `scope` is an alias for Filters, `columns` opens the Columns popout, `all-columns` shows all ten result columns,
 and `link` round-trips a fountain search through the SLapp parser.
 Capture after frame 740 in English, French and Japanese, at normal and 150% UI scale. Check the column
 sorting, combined text and flag filters, the in-field crosses that clear only
@@ -3966,7 +3966,10 @@ group-owned objects, late name replies, derez/movement and region changes.
 Check all six text fields and whole-field regex (including invalid patterns),
 owner permission masks, required/excluded flags, min/max price and precise
 distance, each click action and current parcel. Every edit updates results immediately
-without hiding the table. Reset at the bottom right clears the current popout's
+without hiding the table. Results, Search, Filters and Ranges are left-aligned tabs;
+the table remains below every selected form. Results hides the form to give
+the table more room. Columns
+remains a right-aligned popout. Reset at the bottom right clears the current section's
 settings; the table's Reset clears all search fields and filter options. Save as
 default persists options without search text. Column visibility survives
 reopening/restarting; LI and prim count sort numerically. Copy as link restores

@@ -1,4 +1,4 @@
-//! Live search and filter popouts leave the virtualized result table in place.
+//! Inline search/filter expansion and a Columns popout preserve the result table.
 use super::*;
 use crate::settings::area_search::{AreaSearch, DEFAULT_COLUMNS};
 
@@ -7,13 +7,18 @@ pub(super) enum Section {
     All,
     Search,
     Filters,
+    Ranges,
     Columns,
 }
 
 impl AreaSearchUi {
     pub(crate) fn demo_controls(&mut self, mode: &str) {
-        self.reveal_filters = mode == "fields";
-        self.filters_open = mode == "filters";
+        self.expanded = match mode {
+            "fields" => Some(Section::Search),
+            "filters" | "scope" => Some(Section::Filters),
+            "ranges" => Some(Section::Ranges),
+            _ => None,
+        };
         self.demo_columns = mode == "columns";
         if mode == "all-columns" {
             self.visible_columns = Some([true; 10]);
@@ -50,107 +55,135 @@ impl AreaSearchUi {
         self.refresh = true;
     }
 
+    pub(crate) fn reveal_search(&mut self) {
+        self.expanded = Some(Section::Search);
+    }
+
     pub(super) fn reset_section(&mut self, section: Section) {
-        self.table.filters = match section {
-            Section::All => Filters::default(),
-            Section::Search => self.table.filters.without_search(),
+        let f = &mut self.table.filters;
+        let defaults = Filters::default();
+        match section {
+            Section::All => *f = defaults,
+            Section::Search => *f = f.without_search(),
             Section::Filters => {
-                let f = &self.table.filters;
-                Filters {
-                    query: f.query.clone(),
-                    name: f.name.clone(),
-                    description: f.description.clone(),
-                    owner: f.owner.clone(),
-                    group: f.group.clone(),
-                    creator: f.creator.clone(),
-                    last_owner: f.last_owner.clone(),
-                    regex: f.regex,
-                    ..Default::default()
-                }
+                f.locked = defaults.locked;
+                f.copy = defaults.copy;
+                f.modify = defaults.modify;
+                f.transfer = defaults.transfer;
+                f.media = defaults.media;
+                f.probe = defaults.probe;
+                f.only_attachments = defaults.only_attachments;
+                f.physical = defaults.physical;
+                f.phantom = defaults.phantom;
+                f.temporary = defaults.temporary;
+                f.click_action = defaults.click_action;
+
+                f.include_attachments = defaults.include_attachments;
+                f.exclude_physical = defaults.exclude_physical;
+                f.exclude_temporary = defaults.exclude_temporary;
+                f.exclude_probes = defaults.exclude_probes;
+                f.children = defaults.children;
+                f.neighbors = defaults.neighbors;
+                f.parcel_only = defaults.parcel_only;
+                f.mine = defaults.mine;
+            }
+            Section::Ranges => {
+                f.sale = defaults.sale;
+                f.min_price = defaults.min_price;
+                f.max_price = defaults.max_price;
+                f.distance_on = defaults.distance_on;
+                f.min_distance = defaults.min_distance;
+                f.max_distance = defaults.max_distance;
             }
             Section::Columns => {
                 self.visible_columns = Some(DEFAULT_COLUMNS);
                 return;
             }
-        };
+        }
+        self.table.filters.normalize();
         self.table.prepare();
         self.check_selection();
     }
-
-    pub(super) fn tool_popouts(&mut self, ui: &mut egui::Ui, p: &Palette) {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            for section in [Section::Columns, Section::Filters, Section::Search] {
-                let (icon, label, requested) = match section {
-                    Section::Search => ("search-filled", aurora_i18n::tr!("area-search-search"), self.reveal_filters),
-                    Section::Filters => (
-                        "adjustments-horizontal-filled",
-                        aurora_i18n::tr!("area-search-filters"),
-                        self.filters_open,
-                    ),
-                    Section::Columns => ("layout-columns", aurora_i18n::tr!("area-search-columns"), self.demo_columns),
-                    Section::All => continue,
-                };
-                let width = widgets::action_button_fit(ui, icon, label);
-                let form_style = ui.style().clone();
-                let response = widgets::action_button(ui, p, icon, label, widgets::ActionKind::Flat, Vec2::new(width, 26.0));
-                if requested {
-                    egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
-                }
-                let below = ui.ctx().content_rect().bottom() - response.rect.bottom() - 12.0;
-                let body_height = (below - 44.0).clamp(80.0, 440.0);
-                let open = menu::dropdown_placed(
-                    &response,
+    pub(super) fn controls(&mut self, ui: &mut egui::Ui, p: &Palette) {
+        ui.horizontal(|ui| {
+            let label = aurora_i18n::tr!("area-search-columns");
+            let width = widgets::action_button_fit(ui, "layout-columns", label);
+            let left = (ui.available_width() - width - ui.spacing().item_spacing.x).max(0.0);
+            ui.allocate_ui_with_layout(Vec2::new(left, 30.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.set_min_width(left);
+                let sections = [None, Some(Section::Search), Some(Section::Filters), Some(Section::Ranges)];
+                let mut selected = sections.iter().position(|section| *section == self.expanded).unwrap_or(0);
+                if widgets::tabs(
+                    ui,
                     p,
-                    egui::PopupCloseBehavior::CloseOnClickOutside,
-                    Some((egui::RectAlign::BOTTOM_END, 4.0)),
-                    |ui| {
-                        if section != Section::Columns {
-                            ui.set_style(form_style);
-                        }
-                        self.options(ui, p, section, body_height);
-                    },
-                );
-                // Grid sizing may discard the first layout pass. Keep an
-                // explicit open request through a later complete frame.
-                let request_id = response.id.with("area_search_requested");
-                let frame = ui.ctx().cumulative_frame_nr();
-                let settled = if requested && open {
-                    let first = ui.ctx().data_mut(|d| {
-                        let first = d.get_temp::<u64>(request_id).unwrap_or(frame);
-                        d.insert_temp(request_id, first);
-                        first
-                    });
-                    frame > first
-                } else {
-                    false
-                };
-                if !requested {
-                    ui.ctx().data_mut(|d| d.remove::<u64>(request_id));
+                    &mut selected,
+                    &[
+                        (aurora_i18n::tr!("area-search-results"), true),
+                        (aurora_i18n::tr!("area-search-search"), true),
+                        (aurora_i18n::tr!("area-search-filters"), true),
+                        (aurora_i18n::tr!("area-search-range-options"), true),
+                    ],
+                ) {
+                    self.expanded = sections[selected];
                 }
-                if settled {
-                    match section {
-                        Section::Search => self.reveal_filters = false,
-                        Section::Filters => self.filters_open = false,
-                        Section::Columns => self.demo_columns = false,
-                        Section::All => {}
-                    }
+            });
+            let response = widgets::action_button(ui, p, "layout-columns", label, widgets::ActionKind::Flat, Vec2::new(width, 26.0));
+            if self.demo_columns {
+                egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
+            }
+            let below = ui.ctx().content_rect().bottom() - response.rect.bottom() - 12.0;
+            let open = menu::dropdown_placed(
+                &response,
+                p,
+                egui::PopupCloseBehavior::CloseOnClickOutside,
+                Some((egui::RectAlign::BOTTOM_END, 4.0)),
+                |ui| self.options(ui, p, Section::Columns, (below - 44.0).clamp(80.0, 440.0)),
+            );
+            // A sizing pass can be discarded. Retain the demo's request
+            // until the popup has survived a complete subsequent frame.
+            let request_id = response.id.with("area_search_requested");
+            let frame = ui.ctx().cumulative_frame_nr();
+            if self.demo_columns && open {
+                let first = ui.ctx().data_mut(|d| {
+                    let first = d.get_temp::<u64>(request_id).unwrap_or(frame);
+                    d.insert_temp(request_id, first);
+                    first
+                });
+                if frame > first {
+                    self.demo_columns = false;
                 }
+            } else if !self.demo_columns {
+                ui.ctx().data_mut(|d| d.remove::<u64>(request_id));
             }
         });
+        if let Some(section) = self.expanded {
+            // The form scrolls independently, reserving rows and the action
+            // footer below it rather than growing or covering the floater.
+            let window_height = egui::AreaState::load(ui.ctx(), egui::Id::unique(WINDOW))
+                .and_then(|state| state.size)
+                .map_or(550.0, |size| size.y);
+            // The measured floater bounds remain reliable while egui sizes
+            // scroll content beyond the visible viewport. Keep its chrome,
+            // form footer and result rows outside this scrolling form.
+            let height = (window_height - 340.0).clamp(24.0, 440.0);
+            self.options(ui, p, section, height);
+        }
     }
-
     fn options(&mut self, ui: &mut egui::Ui, p: &Palette, section: Section, body_height: f32) {
-        let screen = ui.ctx().content_rect();
-        let width = if section == Section::Columns { 240.0_f32 } else { 760.0 };
-        ui.set_width(width.min((screen.width() - 24.0).max(240.0)));
+        if section == Section::Columns {
+            ui.set_width(240.0);
+        }
         ui.spacing_mut().item_spacing = Vec2::new(8.0, if section == Section::Columns { 0.0 } else { 6.0 });
         egui::ScrollArea::vertical()
             .id_salt(("area_search_options", section))
             .max_height(body_height)
+            // The default 64-point minimum would consume the table reservation.
+            .min_scrolled_height(0.0)
             .auto_shrink([false, true])
             .show(ui, |ui| match section {
                 Section::Search => search_controls(ui, p, &mut self.table.filters),
                 Section::Filters => filter_controls(ui, p, &mut self.table.filters),
+                Section::Ranges => range_controls(ui, p, &mut self.table.filters),
                 Section::Columns => {
                     let shown = self.visible_columns.get_or_insert(DEFAULT_COLUMNS);
                     for (i, column) in Column::ALL.into_iter().enumerate() {
@@ -167,7 +200,7 @@ impl AreaSearchUi {
             if section == Section::Search && ui.button(aurora_i18n::tr!("area-search-copy-link")).clicked() {
                 ui.ctx().copy_text(self.table.filters.link());
             }
-            if section == Section::Filters && ui.button(aurora_i18n::tr!("area-search-save-defaults")).clicked() {
+            if matches!(section, Section::Filters | Section::Ranges) && ui.button(aurora_i18n::tr!("area-search-save-defaults")).clicked() {
                 self.save_defaults = true;
             }
         });
@@ -188,6 +221,7 @@ pub(super) fn page_footer(ui: &mut egui::Ui, p: &Palette, section: Section, acti
         Section::All => aurora_i18n::tr!("area-search-reset-all-tip"),
         Section::Search => aurora_i18n::tr!("area-search-reset-search-tip"),
         Section::Filters => aurora_i18n::tr!("area-search-reset-options-tip"),
+        Section::Ranges => aurora_i18n::tr!("area-search-reset-ranges-tip"),
         Section::Columns => aurora_i18n::tr!("area-search-reset-columns-tip"),
     };
     ui.horizontal(|ui| {
@@ -238,19 +272,8 @@ fn inverse(ui: &mut egui::Ui, p: &Palette, value: &mut bool, label: &str) {
     *value = !excluded;
 }
 
-fn filter_controls(ui: &mut egui::Ui, p: &Palette, f: &mut Filters) {
+fn range_controls(ui: &mut egui::Ui, p: &Palette, f: &mut Filters) {
     f.normalize();
-    if ui.available_width() >= 720.0 {
-        ui.columns(2, |columns| {
-            required_controls(&mut columns[0], p, f);
-            excluded_controls(&mut columns[1], p, f);
-        });
-    } else {
-        required_controls(ui, p, f);
-        ui.add_space(12.0);
-        excluded_controls(ui, p, f);
-    }
-    ui.add_space(12.0);
     widgets::section_header(ui, p, "adjustments-horizontal-filled", aurora_i18n::tr!("area-search-ranges"));
     ui.horizontal_wrapped(|ui| {
         widgets::checkbox(ui, p, &mut f.sale, aurora_i18n::tr!("area-search-sale"));
@@ -280,6 +303,27 @@ fn filter_controls(ui: &mut egui::Ui, p: &Palette, f: &mut Filters) {
             );
         });
     });
+    f.normalize();
+}
+
+fn filter_controls(ui: &mut egui::Ui, p: &Palette, f: &mut Filters) {
+    f.normalize();
+    if ui.available_width() >= 720.0 {
+        ui.columns(2, |columns| {
+            properties_controls(&mut columns[0], p, f);
+            scope_controls(&mut columns[1], p, f);
+        });
+    } else {
+        properties_controls(ui, p, f);
+        ui.add_space(12.0);
+        scope_controls(ui, p, f);
+    }
+    f.normalize();
+}
+fn properties_controls(ui: &mut egui::Ui, p: &Palette, f: &mut Filters) {
+    f.normalize();
+    required_controls(ui, p, f);
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.label(aurora_i18n::tr!("area-search-click-action"));
         let labels = [
@@ -302,6 +346,12 @@ fn filter_controls(ui: &mut egui::Ui, p: &Palette, f: &mut Filters) {
                 }
             });
     });
+    f.normalize();
+}
+
+fn scope_controls(ui: &mut egui::Ui, p: &Palette, f: &mut Filters) {
+    excluded_controls(ui, p, f);
+    ui.add_space(8.0);
     ui.horizontal_wrapped(|ui| {
         widgets::checkbox(ui, p, &mut f.parcel_only, aurora_i18n::tr!("area-search-parcel"));
         widgets::checkbox(ui, p, &mut f.mine, aurora_i18n::tr!("area-search-mine"));
@@ -311,7 +361,7 @@ fn filter_controls(ui: &mut egui::Ui, p: &Palette, f: &mut Filters) {
 
 fn required_controls(ui: &mut egui::Ui, p: &Palette, f: &mut Filters) {
     widgets::section_header(ui, p, "filter-filled", aurora_i18n::tr!("area-search-required"));
-    let cols = 2;
+    let cols = if ui.available_width() >= 620.0 { 3 } else { 2 };
     egui::Grid::new("area_search_required")
         .num_columns(cols)
         .spacing([16.0, 2.0])

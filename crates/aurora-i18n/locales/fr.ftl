@@ -12568,7 +12568,7 @@ area-search-regex-error = Expression régulière : { $error }
 
 area-search-required = Ne lister que les objets qui sont
 area-search-excluded = Exclure les objets qui sont
-area-search-ranges = Plages et interaction
+area-search-ranges = Distance et prix de vente
 area-search-attachment = Pièces jointes
 area-search-media = Média partagé
 area-search-copy-perm = Copie
@@ -12597,3 +12597,8 @@ area-search-reset-all-tip = Réinitialiser toute la recherche.
 area-search-reset-search-tip = Effacer les champs de recherche et les expressions régulières.
 area-search-reset-options-tip = Rétablir les options de filtrage d’origine.
 area-search-reset-columns-tip = Rétablir les colonnes par défaut.
+
+area-search-range-options = Plages
+area-search-reset-ranges-tip = Rétablir les plages de distance et de prix par défaut.
+
+area-search-results = Résultats

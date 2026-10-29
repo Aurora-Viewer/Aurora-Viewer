@@ -443,9 +443,13 @@ one metre of actual travel before another automatic recovery can be requested.
 
 `ui/area_search.rs` and `ui/area_search/table.rs` draw the native Area Search
 window and cache its filtered, sorted, virtualized object rows.
-`ui/area_search/controls.rs` keeps Search, Filters and Columns in shared
-popouts while the virtualized table stays visible. All edits apply immediately.
-Reset sits at the bottom right of each popout: search text, filter options or
+`ui/area_search/controls.rs` places Results, Search, Filters and Ranges in shared tabs on the left, showing
+one inline form above the virtualized table; Filters pairs required properties
+with exclusions/parcel/ownership (side by side when wide), while Ranges holds
+distance and price. Columns stays in a right-aligned
+popout. Forms scroll independently to reserve result rows below them; selecting
+Results hides the form to give the table more room. All edits apply immediately.
+Reset sits at the bottom right of each section and restores only its own options or
 column choices; the result footer resets the entire search. Save as default
 persists filter options without search text. Compiled regex filters survive
 live snapshots; one matching-limit failure cancels the rest of that batch,

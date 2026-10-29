@@ -29,9 +29,8 @@ pub struct AreaSearchUi {
     pub(crate) save_defaults: bool,
     pub(crate) selection: Selection,
     pub(crate) refresh: bool,
-    pub(crate) filters_open: bool,
-    /// Opens the search fields once, to show the filter the menu set.
-    pub(crate) reveal_filters: bool,
+    /// At most one inline form is expanded, leaving rows visible below it.
+    expanded: Option<controls::Section>,
     /// Where the right-click menu opened.
     menu_at: Option<egui::Pos2>,
     /// The result list the selection was last checked against.
@@ -101,7 +100,7 @@ impl AreaSearchUi {
                 .size(12.0)
                 .color(p.muted),
             );
-            ui.horizontal(|ui| self.tool_popouts(ui, p));
+            self.controls(ui, p);
             if let Some(error) = &self.table.regex_error {
                 ui.label(RichText::new(aurora_i18n::tr!("area-search-regex-error", error = error.as_str())).color(p.warn));
             }

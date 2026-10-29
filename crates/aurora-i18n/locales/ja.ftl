@@ -12557,7 +12557,7 @@ area-search-regex-error = 正規表現：{ $error }
 
 area-search-required = 次の条件を満たすオブジェクトのみ表示
 area-search-excluded = 次のオブジェクトを除外
-area-search-ranges = 範囲と操作
+area-search-ranges = 距離と販売価格
 area-search-attachment = 装着物
 area-search-media = 共有メディア
 area-search-copy-perm = コピー
@@ -12586,3 +12586,8 @@ area-search-reset-all-tip = 検索全体をリセットします。
 area-search-reset-search-tip = 検索欄と正規表現をクリアします。
 area-search-reset-options-tip = フィルターの初期設定に戻します。
 area-search-reset-columns-tip = 既定の列に戻します。
+
+area-search-range-options = 範囲
+area-search-reset-ranges-tip = 距離と販売価格の範囲を既定に戻します。
+
+area-search-results = 結果
