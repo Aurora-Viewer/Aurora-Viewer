@@ -66,6 +66,10 @@ pub mod writes;
 pub use water_effects::{WaterEffects, WaterEvent, WaterGround};
 
 pub use arena::MeshAlloc;
+// What a tile of a photo draws around what it keeps, for the bloom and the
+// depth of field (snapshot tiles in the viewer).
+pub use bloom::tile_reach as bloom_tile_reach;
+pub use dof::tile_reach as dof_tile_reach;
 pub use drawn_pick::{Drawn, DrawnFace, DrawnMode};
 pub use gpu_cull::set_whole_chunk_uploads;
 pub use histogram::HISTOGRAM_BINS;

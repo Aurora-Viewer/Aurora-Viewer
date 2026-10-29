@@ -345,19 +345,25 @@ drawn in <n> part(s), <ms>`, `snapshot <W> x <H>: <MB> of textures … at its
 peak` (the video memory of the photo frame) and `photo saved: <file> (<KB>,
 written in <ms>)`. Open the file: its framing is the window's (cropped to
 its proportions), without the interface unless asked. With
-`AURORA_DEMO_SNAPSHOT_TILE=2048`, an 8K photo is drawn in 12 tiles: compare
+`AURORA_DEMO_SNAPSHOT_TILE=2048`, an 8K photo is drawn in 15 tiles: compare
 it with the same photo in one pass, the tiles must not show (the demo's
 particles and animations make a few levels of difference everywhere). Each
-tile is drawn with a guard band of up to 128 pixels on the sides it shares
-with another, then cropped, so a forced side gives more tiles than the
-photo divided by it: 15 tiles of 640 x 600 for 3200 x 1800 with
-`AURORA_DEMO_SNAPSHOT_TILE=1024`. With `AURORA_AO=gtao:2` and
+tile is drawn with a guard band of 128 pixels on the sides it shares with
+another, its edges on multiples of 64, then cropped, so a forced side gives
+more tiles than the photo divided by it: 15 tiles of 640 x 600 for
+3200 x 1800 with `AURORA_DEMO_SNAPSHOT_TILE=1024`. The bloom widens the band
+to 346 pixels and the depth of field to its largest blur and 66 pixels, at
+most a quarter of the forced side: with `AURORA_BLOOM=1`, compare a
+7680 x 4320 photo in one pass with the same in 6 tiles
+(`AURORA_DEMO_SNAPSHOT_TILE=4096`). The glow keeps its halo in every tile
+(the lamps of the plaza, the glowing objects): the same size as in one
+pass, never cut along a border. With `AURORA_AO=gtao:2` and
 `AURORA_DEMO_DEBUG=ao`, no dark line may cross the ground along the tiles'
 borders. With `AURORA_DEBUG_SHADOWS=1`, the sun's shadows are those of the
 photo in one pass, in every tile (the shadow of the box on the right of the
 plaza, with `AURORA_DEMO_POS=129,134`). The world keeps the first tile's
 instant until the last: with `AURORA_DEMO_SNAPSHOT_TILE=1024` at
-3840 x 3840 (36 parts), `AURORA_DEMO_CROWD=12,3`, `AURORA_DEMO_PHYSICS=1`
+3840 x 3840 (25 parts), `AURORA_DEMO_CROWD=12,3`, `AURORA_DEMO_PHYSICS=1`
 and `AURORA_DEMO_POS=129,134`, the hopping avatars are never cut along the
 tiles' borders.
 `inventory[:<side>|window]` opens the window on the Inventory destination

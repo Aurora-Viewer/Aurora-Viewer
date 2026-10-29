@@ -14,6 +14,15 @@ const TILE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 /// Half pixels per tile of the near blur map (TILE in dof.wgsl).
 const TILE: u32 = 16;
 
+/// How far, in pixels of the image, the depth of field of a pixel reads
+/// the image around it with a blur of `max_coc` pixels at most: its disk,
+/// and the near blur of its tile and the next one (the dilated map), with
+/// the taps of the setup and the composite. A photo drawn in tiles draws
+/// this much around each one.
+pub fn tile_reach(max_coc: f32) -> u32 {
+    max_coc.max(0.0).ceil() as u32 + 2 * 2 * TILE + 2
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct DofU {
