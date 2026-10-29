@@ -327,7 +327,6 @@ mod win {
                         shown.pop_front();
                     }
                 }
-                Ok(_) => {}
                 Err(e) => log::warn!("system notification not shown ({e})"),
             }
         }
