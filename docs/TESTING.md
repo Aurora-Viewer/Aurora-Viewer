@@ -268,6 +268,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory, posted to the profile or sent by e-mail |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
+| `AURORA_DEMO_FREEZE_WORLD=1` | With `AURORA_DEMO_SNAPSHOT=viewfinder-frozen`: a prop derezzed and particles started while the world is frozen |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora or a LUT), the chosen one's strength and settings, the before / after line, the filter panel |
 | `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic\|free\|free-compact` | The Controls window open on a tab, Firestorm's two windows, or driving the photo window's free camera |
@@ -310,7 +311,13 @@ Preferences' blur never comes back under the photo mode), `pad` the camera pad s
 2 s self-timer, `ael` AE-L on, `frozen` the world frozen (the dock's
 snowflake: two captures some frames apart show the avatars, the
 particles, the water and the animated textures at the same instant, the
-log gives `world frozen: <n> moving objects held`), `hover` or `nocontrols` the on-screen controls
+log gives `world frozen: <n> moving objects held`; with
+`AURORA_DEMO_FREEZE_WORLD=1`, a violet box and a teal disc of another
+resident rez beside our avatar at frame 400, and at 650 the box is
+derezzed and a script starts a fountain on the disc: with
+`AURORA_CAPTURE_FRAMES=700,900` both captures show the box and a disc with
+no particle, and differ by no pixel; without `frozen` the box goes and the
+disc sprays), `hover` or `nocontrols` the on-screen controls
 on hover or hidden (the lens ring and the AF choices show otherwise), `tilt`
 the camera rolled 20° clockwise (the level turns the other way, along the
 horizon), `tilt90` a quarter turn (the AF frame over a head keeps its size,

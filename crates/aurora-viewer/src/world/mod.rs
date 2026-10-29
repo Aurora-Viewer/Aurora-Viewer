@@ -402,6 +402,9 @@ pub struct World {
     /// A parcel owner or an estate manager froze us (ViewerFrozenMessage):
     /// shown on the navigation bar while it lasts.
     pub frozen: bool,
+    /// What the simulator killed while the photo mode held the world still
+    /// (`freeze_motion`): each object's key and id, removed on thaw.
+    held_kills: Vec<(ObjKey, Uuid)>,
     /// Interface sounds to play (drained by the app).
     pub ui_sounds: Vec<UiSound>,
     /// Conversation messages received (their sound depends on the IM modes).
@@ -708,6 +711,7 @@ impl World {
             environment_answers: Vec::new(),
             health: 100.0,
             frozen: false,
+            held_kills: Vec::new(),
             social: social::Social::default(),
             contact_sets: Default::default(),
             recent: Default::default(),
@@ -1311,6 +1315,102 @@ impl World {
         self.objects.damp_seats(now, dt as f32, selected);
     }
 
+    /// The objects the simulator killed (process_kill_object,
+    /// indra/newview/llviewermessage.cpp, originally LGPL 2.1).
+    fn kill_objects(&mut self, handle: RegionHandle, local_ids: &[u32]) {
+        let land_watches = self.land.watches(handle);
+        let mut land_changed = false;
+        for &id in local_ids {
+            let key = ObjKey {
+                region: handle,
+                local_id: id,
+            };
+            if self.kill_is_ignored(&key) {
+                continue;
+            }
+            self.derender.forget_key(&key);
+            land_changed |= land_watches
+                && self
+                    .objects
+                    .index_of(&key)
+                    .and_then(|i| self.objects.get(i))
+                    .is_some_and(|o| !o.is_avatar());
+            if let Some(i) = self.objects.index_of(&key) {
+                self.unregister_attachment(i);
+                // (who sits on it stays, with what it wears: the
+                // simulator does not send them again)
+                self.get_off_linkset(i);
+                let subtree = self.objects.subtree(i);
+                for &child in &subtree {
+                    if let Some(source) = self.objects.get(child).map(|o| o.full_id) {
+                        self.scripted_camera.clear(source);
+                        self.stop_motion_from_source(source);
+                    }
+                }
+                // (an avatar leaving, an object deleted or taken, a
+                // worn item taken off)
+                self.objects.killed.push(subtree);
+            }
+            self.objects.remove(&key);
+            // a cache hit replays the cached ones, a full update comes with them
+            self.gltf_overrides.remove(&key);
+        }
+        self.forget_gone_look_ats();
+        if land_changed {
+            self.land.objects_changed(handle, Instant::now());
+        }
+    }
+
+    /// While the photo mode holds the world still (issue #1154), what the
+    /// simulator kills stays drawn until the thaw, like the moves it
+    /// reports (`ObjectStore::hold_poses`): a derezzed prop, a temporary
+    /// object or an avatar leaving does not spoil the shot being lined up.
+    /// What the user does goes at once: what our avatar wears (an
+    /// attachment taken off) and the objects we own (deleted or taken).
+    /// The Legacy Viewer's FreezeTime still removes them: a visible
+    /// difference asked for by the testers. Returns the kills to apply now.
+    fn hold_kills(&mut self, handle: RegionHandle, local_ids: Vec<u32>) -> Vec<u32> {
+        if !self.objects.holds_poses() {
+            return local_ids;
+        }
+        let own = self.objects.index_of_uuid(&self.agent_id);
+        let mut now = Vec::new();
+        for id in local_ids {
+            let key = ObjKey {
+                region: handle,
+                local_id: id,
+            };
+            let held = self.objects.index_of(&key).and_then(|idx| {
+                let o = self.objects.get(idx)?;
+                // (UpdateFlags tells it in every update; the owner only
+                // comes with a sound or particles)
+                let ours = o.update_flags & crate::ui::context::flags::OBJECT_YOU_OWNER != 0
+                    || o.owner_id == self.agent_id
+                    || own.is_some_and(|own| self.hangs_from(idx, own));
+                (!ours).then_some(o.full_id)
+            });
+            match held {
+                Some(full_id) => self.held_kills.push((key, full_id)),
+                None => now.push(id),
+            }
+        }
+        now
+    }
+
+    /// `idx` is `ancestor` or hangs from it (a prim of what an avatar wears).
+    fn hangs_from(&self, mut idx: usize, ancestor: usize) -> bool {
+        for _ in 0..64 {
+            if idx == ancestor {
+                return true;
+            }
+            match self.objects.get(idx).and_then(|o| self.objects.parent_of(o)) {
+                Some(p) => idx = p,
+                None => return false,
+            }
+        }
+        false
+    }
+
     /// Freeze the world at `at` for a photo, or thaw it (issue #1154,
     /// LLFloater360Capture::freezeWorld, indra/newview/llfloater360capture.cpp,
     /// originally LGPL 2.1): the objects and the avatars that move keep their
@@ -1318,6 +1418,22 @@ impl World {
     pub fn freeze_motion(&mut self, at: Option<Instant>) {
         let Some(at) = at else {
             self.objects.release_poses();
+            // what left meanwhile goes now, unless its key went to another
+            // object since (a new rez, or the same avatar back at another key)
+            let kills = std::mem::take(&mut self.held_kills);
+            if !kills.is_empty() {
+                log::info!("world thawed: {} objects killed meanwhile removed", kills.len());
+            }
+            for (key, id) in kills {
+                if self
+                    .objects
+                    .index_of(&key)
+                    .and_then(|i| self.objects.get(i))
+                    .is_some_and(|o| o.full_id == id)
+                {
+                    self.kill_objects(key.region, &[key.local_id]);
+                }
+            }
             return;
         };
         let own = self
@@ -2317,47 +2433,8 @@ impl World {
                 None
             }
             NetEvent::ObjectsKilled { handle, local_ids } => {
-                let land_watches = self.land.watches(handle);
-                let mut land_changed = false;
-                for id in local_ids {
-                    let key = ObjKey {
-                        region: handle,
-                        local_id: id,
-                    };
-                    if self.kill_is_ignored(&key) {
-                        continue;
-                    }
-                    self.derender.forget_key(&key);
-                    land_changed |= land_watches
-                        && self
-                            .objects
-                            .index_of(&key)
-                            .and_then(|i| self.objects.get(i))
-                            .is_some_and(|o| !o.is_avatar());
-                    if let Some(i) = self.objects.index_of(&key) {
-                        self.unregister_attachment(i);
-                        // (who sits on it stays, with what it wears: the
-                        // simulator does not send them again)
-                        self.get_off_linkset(i);
-                        let subtree = self.objects.subtree(i);
-                        for &child in &subtree {
-                            if let Some(source) = self.objects.get(child).map(|o| o.full_id) {
-                                self.scripted_camera.clear(source);
-                                self.stop_motion_from_source(source);
-                            }
-                        }
-                        // (an avatar leaving, an object deleted or taken, a
-                        // worn item taken off)
-                        self.objects.killed.push(subtree);
-                    }
-                    self.objects.remove(&key);
-                    // a cache hit replays the cached ones, a full update comes with them
-                    self.gltf_overrides.remove(&key);
-                }
-                self.forget_gone_look_ats();
-                if land_changed {
-                    self.land.objects_changed(handle, Instant::now());
-                }
+                let local_ids = self.hold_kills(handle, local_ids);
+                self.kill_objects(handle, &local_ids);
                 None
             }
             NetEvent::GltfOverrides { handle, local_id, sides } => {
@@ -5180,6 +5257,54 @@ mod motion_tests {
             object,
             properties: vec![(12, 1.0), (21, f32::from(u8::from(locked)))],
         });
+    }
+
+    #[test]
+    fn the_frozen_world_keeps_what_others_derez_until_the_thaw() {
+        let (mut world, me, handle) = fixture();
+        let mut prop = me.clone();
+        prop.full_id = Uuid::from_u128(970);
+        prop.local_id = 970;
+        prop.parent_id = 0;
+        prop.owner_id = Uuid::from_u128(971);
+        prop.update_flags = 0;
+        prop.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        let mut reused = prop.clone();
+        reused.full_id = Uuid::from_u128(972);
+        reused.local_id = 972;
+        let mut mine = prop.clone();
+        mine.full_id = Uuid::from_u128(973);
+        mine.local_id = 973;
+        mine.update_flags = crate::ui::context::flags::OBJECT_YOU_OWNER;
+        let mut worn = prop.clone();
+        worn.full_id = Uuid::from_u128(974);
+        worn.local_id = 974;
+        worn.parent_id = me.local_id;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![me.clone(), prop.clone(), reused.clone(), mine.clone(), worn.clone()],
+        });
+        let present = |world: &World, id: u128| world.objects.index_of_uuid(&Uuid::from_u128(id)).is_some();
+        world.freeze_motion(Some(Instant::now()));
+        world.apply(NetEvent::ObjectsKilled {
+            handle,
+            local_ids: vec![970, 972, 973, 974],
+        });
+        // what the user does goes at once, the rest is held
+        assert!(present(&world, 970) && present(&world, 972));
+        assert!(!present(&world, 973) && !present(&world, 974));
+        assert!(world.objects.killed.iter().flatten().count() >= 2);
+        // a new object at a held key is not the one that left
+        let mut newcomer = reused.clone();
+        newcomer.full_id = Uuid::from_u128(975);
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![newcomer],
+        });
+        world.freeze_motion(None);
+        assert!(!present(&world, 970));
+        assert!(present(&world, 975));
+        assert!(world.held_kills.is_empty());
     }
 
     #[test]
