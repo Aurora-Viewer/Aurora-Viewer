@@ -119,6 +119,10 @@ impl Profiles {
                 "fl_about_text" => p.fl_about = v.to_string_value(),
                 "notes" => p.notes = Some(v.to_string_value()),
                 "hide_age" => p.hide_age = Some(v.as_bool()),
+                // the pictures shown from it (name plates, lists, the login
+                // screen) follow (LLAvatarIconIDCache::add once saved)
+                "sl_image_id" => p.sl_image = v.as_uuid(),
+                "fl_image_id" => p.fl_image = v.as_uuid(),
                 "allow_publish" => {
                     p.flags = if v.as_bool() {
                         p.flags | flags::ALLOW_PUBLISH
@@ -127,6 +131,16 @@ impl Profiles {
                     };
                 }
                 _ => {}
+            }
+        }
+    }
+
+    /// A group's insignia changed: the group lists of the profiles known
+    /// show the new one.
+    pub fn group_insignia(&mut self, group: Uuid, insignia: Uuid) {
+        for p in self.map.values_mut() {
+            for g in p.groups.iter_mut().filter(|g| g.id == group) {
+                g.insignia = insignia;
             }
         }
     }
@@ -573,5 +587,56 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(ps.get(&id).and_then(|p| p.notes.as_deref()), Some("a"));
+    }
+
+    /// A picture chosen in the profile window replaces the one the
+    /// pictures are drawn from at once, without waiting for a relog.
+    #[test]
+    fn a_saved_picture_is_shown_at_once() {
+        let id = Uuid::from_u128(1);
+        let mut ps = Profiles::default();
+        ps.insert(AvatarProfile {
+            id,
+            sl_image: Uuid::from_u128(10),
+            fl_image: Uuid::from_u128(11),
+            ..Default::default()
+        });
+        ps.apply_local(id, &aurora_llsd::llsd_map! { "sl_image_id" => Uuid::from_u128(20) });
+        assert_eq!(ps.get(&id).map(|p| p.sl_image), Some(Uuid::from_u128(20)));
+        assert_eq!(ps.get(&id).map(|p| p.fl_image), Some(Uuid::from_u128(11)));
+        // removed: the default picture
+        ps.apply_local(id, &aurora_llsd::llsd_map! { "fl_image_id" => Uuid::nil() });
+        assert_eq!(ps.get(&id).map(|p| p.fl_image), Some(Uuid::nil()));
+    }
+
+    #[test]
+    fn a_new_insignia_reaches_the_profiles_group_lists() {
+        let (group, other) = (Uuid::from_u128(5), Uuid::from_u128(6));
+        let groups = vec![
+            aurora_net::profile::ProfileGroup {
+                id: group,
+                name: "A".into(),
+                insignia: Uuid::from_u128(50),
+            },
+            aurora_net::profile::ProfileGroup {
+                id: other,
+                name: "B".into(),
+                insignia: Uuid::from_u128(60),
+            },
+        ];
+        let mut ps = Profiles::default();
+        for id in [1, 2] {
+            ps.insert(AvatarProfile {
+                id: Uuid::from_u128(id),
+                groups: groups.clone(),
+                ..Default::default()
+            });
+        }
+        ps.group_insignia(group, Uuid::from_u128(70));
+        for id in [1, 2] {
+            let p = ps.get(&Uuid::from_u128(id)).expect("cached");
+            assert_eq!(p.groups[0].insignia, Uuid::from_u128(70));
+            assert_eq!(p.groups[1].insignia, Uuid::from_u128(60));
+        }
     }
 }
