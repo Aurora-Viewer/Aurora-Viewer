@@ -6826,7 +6826,7 @@ hand would (log: `demo physics edit: sliders at the lively layer`); the
 of `other` keep bouncing. Save stores the asset and applies it as the
 appearance, as a simulator bake would.
 
-**`AURORA_DEMO_SHAPE=body|head|eyes|ears|nose|mouth|chin|torso|legs|male|readonly|nocopy|dirty|save-as|saving|save-feedback|mesh-head|static-head|pbr-head|mesh-drag|layered-head`**
+**`AURORA_DEMO_SHAPE=body|head|eyes|ears|nose|mouth|chin|torso|legs|male|readonly|nocopy|dirty|save-as|saving|save-feedback|mesh-head|static-head|pbr-head|mesh-drag|layered-head|t-pose`**
 opens the editor with a synthetic worn shape, without reading a real inventory or
 connecting to a grid. Category modes select the corresponding controls; `male`
 selects the male shape, `readonly` removes Modify, `nocopy` removes Copy, `dirty`
@@ -6846,6 +6846,11 @@ customise-animation setting in Preferences › Avatars › Animations. Toggle it
 the other control must follow immediately, the choice must survive reopening,
 and the shape must stay unmodified. On the grid, disabling releases the editing
 animation; enabling uses the existing stand-up/customise animation sequence.
+`t-pose` supplies synthetic pelvis turn/return motions and starts with the switch
+on. Toggle it both ways: the camera must ease around the avatar over a half-turn,
+keeping its distance and the edited part in view. Reverse it mid-transition to
+check that the new arc starts at the displayed view. Category changes and the
+wearable editors use the same orbit framing; normal camera modes keep their paths.
 `pbr-head` uses a PBR skin material over a conflicting blue texture-entry tint;
 the head must retain its textured skin color in the world and in the hints.
 `layered-head` adds a cosmetic shell above a rigged, BOM-textured mesh head.

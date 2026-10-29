@@ -114,7 +114,8 @@ impl App {
                     )
                 })
                 .unwrap_or((eye, target));
-            self.camera.set_view(eye, target, &mut self.world.agent, &self.settings.camera);
+            self.camera
+                .set_appearance_view(eye, target, &mut self.world.agent, &self.settings.camera);
             self.shape_ui.camera_pending = false;
         }
     }
@@ -149,6 +150,21 @@ impl App {
         let Ok(mode) = std::env::var("AURORA_DEMO_SHAPE") else {
             return;
         };
+        if mode == "t-pose" {
+            self.settings.customize_animation = true;
+            for (id, done) in [
+                (super::avatar_health::ANIM_CUSTOMIZE, false),
+                (super::avatar_health::ANIM_CUSTOMIZE_DONE, true),
+            ] {
+                self.scene.anims.insert(
+                    id,
+                    std::sync::Arc::new(crate::scene::anim::BoundAnim::bind(
+                        crate::shape_editor::demo::customize_animation(done),
+                        &self.world.avatar_lib.rig,
+                    )),
+                );
+            }
+        }
         crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
         let Some(item) = worn_shape(&self.world) else {
             return;

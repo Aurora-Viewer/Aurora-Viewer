@@ -10,6 +10,39 @@ pub const ASSET: Uuid = Uuid::from_u128(0xA0E0_5A9E_0000_0000_0000_0000_0000_000
 const ITEM: Uuid = Uuid::from_u128(0xA0E0_5A9E_0000_0000_0000_0000_0000_0002);
 pub const TINT: [f32; 4] = [0.25, 0.65, 1.0, 1.0];
 
+/// Synthetic customise motions for checking the camera's half-turn offline.
+pub fn customize_animation(done: bool) -> aurora_assets::Animation {
+    let rotation = |time, angle| aurora_assets::anim::RotKey {
+        time,
+        rotation: Quat::from_rotation_z(angle),
+    };
+    aurora_assets::Animation {
+        base_priority: 6,
+        duration: 2.0,
+        emote_name: String::new(),
+        loop_in: 1.35,
+        loop_out: 2.0,
+        looping: !done,
+        ease_in: if done { 1.35 } else { 0.0 },
+        ease_out: 1.35,
+        hand_pose: 0,
+        joints: vec![aurora_assets::JointMotion {
+            joint_name: "mPelvis".into(),
+            priority: -1,
+            rot_keys: if done {
+                vec![rotation(0.0, 0.0)]
+            } else {
+                vec![
+                    rotation(0.0, 0.0),
+                    rotation(1.35, std::f32::consts::PI),
+                    rotation(2.0, std::f32::consts::PI),
+                ]
+            },
+            pos_keys: Vec::new(),
+        }],
+    }
+}
+
 pub struct MeshAsset {
     pub data: Arc<Vec<u8>>,
     pub header: aurora_assets::MeshHeader,

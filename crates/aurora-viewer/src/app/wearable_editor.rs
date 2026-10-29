@@ -56,7 +56,8 @@ impl App {
         if let Some((eye, target)) =
             crate::shape_editor::camera::view(&self.world, &self.scene, self.wearable_ui.camera_group(), self.camera.fov_y, turned)
         {
-            self.camera.set_view(eye, target, &mut self.world.agent, &self.settings.camera);
+            self.camera
+                .set_appearance_view(eye, target, &mut self.world.agent, &self.settings.camera);
             self.wearable_ui.camera_pending = false;
         }
     }
