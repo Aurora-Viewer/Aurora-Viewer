@@ -26,6 +26,23 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-10-29 — Aurora 0.8.3 runs natively on the Mac
+Aurora now runs natively on Apple Silicon Macs, drawn through Metal: every release carries a macOS application to drag into Applications. Web pages and video in the world work there too: the first time they are needed, the viewer downloads its media plugins by itself. The install guide is in docs/MACOS.md.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.3)
+
+## 2026-10-29 — Messages that matter, in front of you
+A message an estate manager sends to the region now shows as a card in the middle of the screen, like a friendship offer, and is kept under the bell and in nearby chat. A group notice shows its group, its insignia and its attachment, ready to save. The L$ you pay a resident now appear in your conversation with them, like the L$ they pay you, and stay there when you open it again.
+
+## 2026-10-29 — For photos and creators
+In the photo viewfinder, Shift + click keeps every avatar of a group shot sharp, your HUDs answer clicks, and the Poser button poses the avatar over the shot. The poser now works with every shape, asks before closing loses a pose, and undoes with Ctrl+Z. LiveMesh previews an animation on a saved local model, Bento tails and wings included.
+
+## 2026-10-29 — Inventory, graphics and Linux
+Hover an inventory item to preview its picture, and build an advanced search from visual rules, saved for later. Save your graphics settings as named profiles. On Linux, sound goes through PulseAudio or PipeWire, notifications come from the desktop, and the dock shows Aurora's new howling wolf. Thanks to circuskid for Linux, logue for the native Japanese proofreading, and voidel, our newest contributor.
+
+## 2026-10-29 — Your ideas, on the feedback board
+Feature requests now live on our feedback board: suggest an idea, vote for the ones you want most, and follow their progress. The requests made on GitHub have been moved there.
+[Open the feedback board](https://feedback.aurora-viewer.org)
+
 ## 2026-10-29 — Aurora 0.8.2 now speaks Japanese, 日本語
 Aurora is now available in Japanese: choose 日本語 in Preferences › Interface › Language, or let the system language pick it on a Japanese Windows. Every message is translated with Second Life's official Japanese terms, the interface draws with Japanese fonts, and dates read the Japanese way.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.2)

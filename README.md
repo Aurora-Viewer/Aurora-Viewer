@@ -166,7 +166,8 @@ are planned or in progress: they are not in the viewer yet.
 - **Graphics levels matched to your machine**, chosen at first launch: GTAO
   from Medium up, contact shadows from High, screen-space indirect light
   (experimental) in Deluxe with a 192 m draw distance; per-section resets
-  when you want to start over.
+  when you want to start over. Save your own settings as named graphics
+  profiles and switch between them from Preferences or the FPS counter.
 - **HDR, or the older look**: the Legacy Viewer's HDR and Emissive switch,
   on by default, in Preferences › Graphics › Image.
 
@@ -245,6 +246,10 @@ are planned or in progress: they are not in the viewer yet.
   on-screen camera pad, and a 2 s or 10 s self-timer to get into your pose.
 - **Up to 8K**: 4K by default, in PNG, JPEG or BMP, to disk, inventory or the
   profile feed ([how to use it](#photos)).
+- **Group photos, sharp**: Shift + click adds every avatar of a group shot
+  to the focus, while the background keeps its blur.
+- **Pose without leaving the shot**: your HUDs answer clicks in the
+  viewfinder, and its Poser button poses the avatar over the shot.
 - **Freeze the world**: every avatar, animation and moving thing holds still
   while your camera stays free, to line up the perfect angle on a pose.
 - **Camera presets**: save a whole shot by name and bring it back in one
@@ -274,13 +279,14 @@ are planned or in progress: they are not in the viewer yet.
   you can place on the ground, move, rotate, resize, attach to your body or
   HUD and detach. The Blender plug-in ships with the viewer and installs
   itself, with an SL / Bento starter rig, rigging tools and an import with
-  its LODs prepared ([details](docs/BLENDER_LIVE.md)).
+  its LODs prepared ([details](docs/BLENDER_LIVE.md)). Preview an animation
+  on a saved local model, to see Bento tails and wings move.
 - **A poser for photos**: pose yourself, your own animesh, or nearby avatars
   who agree to it, joint by joint: body, face, hands, other bones and
   physics, with a Left / Right / Mirror side choice, a finger grid and
   whole-pose actions. Save poses to a library, export them as BVH or import
-  them as an animation. The pose is seen by you only
-  ([details](docs/POSER.md)).
+  them as an animation, with Ctrl+Z / Ctrl+Y as you go. The pose is seen by
+  you only ([details](docs/POSER.md)).
 - **An IK workbench**: reusable pose projects that keep chosen bones on their
   targets, with contacts that compatible viewers apply to nearby avatars
   ([details](docs/IK_EDIT.md)).
@@ -316,7 +322,7 @@ are planned or in progress: they are not in the viewer yet.
   picture. Unread conversations flash softly, three dots bounce on the
   picture of a resident typing to you, and an item
   someone gives you appears as a card in their conversation, like the L$ they
-  pay you, with their message. A thumbnail per
+  pay you and the L$ you pay them, with the message. A thumbnail per
   open conversation waits beside the chat bar with its unread count, and
   nearby chat can also rise in bubbles above the speakers' heads (off by
   default).
@@ -339,6 +345,10 @@ are planned or in progress: they are not in the viewer yet.
   in nearby chat to find and play a gesture. Ctrl+Shift+Enter starts a new
   line, and pasted paragraphs keep their shape. Arabic and Hebrew read right
   to left, in name tags, bubbles, floating text and conversations.
+- **Messages that matter, in front of you**: a message an estate manager
+  sends to the region shows as a card in the middle of the screen, like a
+  friendship offer, and a group notice shows its group, its insignia and
+  its attachment, ready to save.
 - **Script errors where you look**: your own objects' errors show in red in
   the nearby chat instead of popping a window, and can also go to a chat
   channel for your logger script.
@@ -374,7 +384,10 @@ are planned or in progress: they are not in the viewer yet.
   type, and a CMT button that shows your rights, the next owner's, or both.
   A second inventory window opens beside the first to sort between faraway
   folders, and folders opened in their own window get the same layout. The
-  Recent tab can cover a set period, such as the last week.
+  Recent tab can cover a set period, such as the last week. Hover an item to
+  preview its picture, and build an advanced search from visual rules
+  ("objects or scripts, but not no-copy ones"), saved for later, or ask for
+  items similar to one.
 - **Outfits at hand**: the outfit menu on the outfit folders, and a
   double-click in the inventory to put something on or take it off. Group
   your outfits in folders right from Appearance, in the list and the
@@ -418,7 +431,7 @@ are planned or in progress: they are not in the viewer yet.
   downloads it in the background, checks it against its published hash,
   installs it and restarts your session, and rolls back if anything goes
   wrong. Before you agree, it tells you whether your cache and settings are
-  kept. On Linux it shows the new release instead
+  kept. On Linux and macOS it shows the new release instead
   ([details](docs/UPDATES.md)).
 
 ### Only in Aurora
@@ -460,9 +473,10 @@ are planned or in progress: they are not in the viewer yet.
 
 - **Free software (GPLv3)**, written from scratch: it is not a fork.
 - **Windows, Linux and macOS**: every release has a Linux build
-  ([install guide](docs/LINUX.md)) and a macOS application for Apple
-  Silicon, drawn through Metal ([install guide](docs/MACOS.md); new, web
-  pages and video in the world are not there yet).
+  ([install guide](docs/LINUX.md)), with its sound through PulseAudio or
+  PipeWire and the desktop's notifications, and a macOS application for
+  Apple Silicon, drawn through Metal, with web pages and video in the world
+  ([install guide](docs/MACOS.md)).
 
 ## Performance
 
@@ -526,8 +540,8 @@ The texture memory budget is set automatically from the detected VRAM.
   editor.
 - **Photos and camera** — a full-screen viewfinder with face autofocus, lens
   rings, focus peaking, a live histogram, exposure lock and a self-timer;
-  snapshots up to 8K to disk, inventory or
-  the profile feed; isolation of your avatar or chosen subjects on a
+  group focus, HUDs and the poser in the viewfinder; snapshots up to 8K to
+  disk, inventory or the profile feed; isolation of your avatar or chosen subjects on a
   transparent background; 66 stackable filters and effects with their own
   sliders, and your `.cube` LUTs; camera presets, a frozen world, quiet
   snapshots; depth of field, a maximum-quality photo mode with 8× MSAA,
@@ -536,7 +550,9 @@ The texture memory budget is set automatically from the detected VRAM.
 - **Social** — local chat as cards or classic lines, messenger-style IMs and
   group conversations with a Contacts tab, resident profiles, the People
   window, contact sets, blocking, notifications
-  with history and friend/IM alerts, inventory offers in the conversation,
+  with history and friend/IM alerts, region messages in the middle of the
+  screen, group notices with their insignia and attachment, inventory offers
+  and L$ payments in the conversation,
   a filter for object messages from elsewhere, conversations popped out into
   their own windows, conversation thumbnails beside the chat bar, optional
   chat bubbles above heads, picture, post and video link previews, a GIF
@@ -556,7 +572,8 @@ The texture memory budget is set automatically from the detected VRAM.
   environments, experience permission prompts and region restart alerts.
 - **Inventory and commerce** — Aurora's inventory window (tree, explorer and
   details) or the Legacy one, fetched whole in the background at login, a
-  second inventory window, resizable columns, giving by dropping on a
+  second inventory window, resizable columns, advanced searches from visual
+  rules and saved searches, picture previews on hover, giving by dropping on a
   profile or an avatar, copying or wearing an object's contents, inventory
   tools, dedicated Marketplace and
   listings windows, compact import launcher and per-type editors; sound
@@ -584,8 +601,7 @@ completed work from features awaiting that validation.
 **Not there yet**
 
 - Depth exports and 360° snapshots.
-- Web pages and video in the world on macOS (the media plugins), and its
-  automatic updates.
+- Automatic updates on macOS (the viewer points to the new release).
 - Automatic installation of updates on Linux (the viewer points to the
   new release instead).
 
