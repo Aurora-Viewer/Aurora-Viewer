@@ -804,6 +804,9 @@ impl super::Scene {
         let (Some(o), Some(g)) = (world.objects.get(idx), self.gpu.get(idx)) else {
             return c;
         };
+        if o.extra.reflection_probe.is_some() {
+            return c | class::OFF_POINT;
+        }
         if o.click_action == crate::interaction::code::IGNORE {
             c |= class::IGNORE;
         }

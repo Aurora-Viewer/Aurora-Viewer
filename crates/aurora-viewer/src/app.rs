@@ -5781,7 +5781,8 @@ impl App {
         let Ok(mode) = std::env::var("AURORA_DEMO_ACTIONS") else {
             return;
         };
-        if mode.ends_with("-ready") && !mode.starts_with("blend-") && !mode.starts_with("mask-") {
+        let probe = mode.starts_with("probe-");
+        if mode.ends_with("-ready") && !mode.starts_with("blend-") && !mode.starts_with("mask-") && !probe {
             return;
         }
         if let Some(copy) = mode.strip_prefix("open-") {
@@ -5790,13 +5791,18 @@ impl App {
         let id = crate::demo::action_mode_id(&mode);
         let click_frame = if mode.starts_with("linked-") { 724 } else { 284 };
         if self.frame_count == 260
-            && (id == 0 || id == 980 || id == 981 || mode.starts_with("blend-") || mode.starts_with("mask-"))
-            && let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(971))
+            && (id == 0 || id == 980 || id == 981 || mode.starts_with("blend-") || mode.starts_with("mask-") || probe)
+            && let Some(idx) = self
+                .world
+                .objects
+                .index_of_uuid(&crate::demo::action_id(if probe { 975 } else { 971 }))
             && let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
         {
             let direction = (self.camera.position - pos).normalize_or(-Vec3::X);
             let rotation = glam::Quat::from_rotation_arc(Vec3::X, direction);
-            self.world.apply(if mode.starts_with("blend-") || mode.starts_with("mask-") {
+            self.world.apply(if probe {
+                crate::demo::click_probe(&mode, pos)
+            } else if mode.starts_with("blend-") || mode.starts_with("mask-") {
                 crate::demo::alpha_click_overlay(&mode, pos + direction * 1.0, rotation)
             } else {
                 crate::demo::action_overlay(if id == 980 { 980 } else { 981 }, pos + direction * 1.0, rotation)
@@ -5849,6 +5855,9 @@ impl App {
         }
         if (id == 975 || id == 982) && self.frame_count == 325 {
             self.on_left_release();
+        }
+        if probe && self.frame_count == 740 {
+            log::info!("demo probe click: mode={mode}, held={}", self.interactions.held.is_some());
         }
         if mode.ends_with("-confirm")
             && self.frame_count == 320

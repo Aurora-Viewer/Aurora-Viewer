@@ -3485,6 +3485,9 @@ pub fn stand_from_prim(seat: Vec3, size: Vec3) -> Vec<NetEvent> {
 }
 
 pub fn action_mode_id(mode: &str) -> u32 {
+    if mode.starts_with("probe-") {
+        return 975;
+    }
     if mode.starts_with("pay-linked-menu") {
         return 974;
     }
@@ -3592,6 +3595,21 @@ pub fn alpha_click_overlay(mode: &str, pos: Vec3, rotation: Quat) -> NetEvent {
             face.material_id = material;
         }
     }
+    NetEvent::ObjectUpdates {
+        handle: HANDLE,
+        objects: vec![object],
+    }
+}
+
+/// Invisible probe enclosing the scripted Touch cube (#1401).
+pub fn click_probe(mode: &str, pos: Vec3) -> NetEvent {
+    let mut object = action_object(976, 0, 138.0, 126.0, [1.0, 1.0, 1.0, 0.0], "");
+    object.position = pos;
+    object.scale = Vec3::splat(4.0);
+    object.extra.reflection_probe = Some(aurora_prim::extra::ReflectionProbeParams {
+        flags: u8::from(mode.starts_with("probe-box")),
+        ..crate::build::edits::PROBE_DEFAULT
+    });
     NetEvent::ObjectUpdates {
         handle: HANDLE,
         objects: vec![object],

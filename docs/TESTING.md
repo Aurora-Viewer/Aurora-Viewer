@@ -1682,6 +1682,13 @@ No real L$ and no connection to a grid.
   Pay window looks in Preferences > Aurora. No real currency is transferred.
 - `linked-touch`, `linked-sit`: hollow root with Touch and child seat with
   Sit, overlapping bounding boxes; checks the prim actually aimed at.
+- `probe-sphere`, `probe-box` (#1401): an invisible reflection probe encloses
+  the scripted Touch cube. The click must reach cube 975, with a matching
+  `demo click action: Touch, object=975` and `demo probe click: ... held=false`
+  after release in the log. Add
+  `-ready` for manual clicks and the frame-650 hover sample: it must report
+  `prim=Some(975), action=Some(Touch)`. Combine with `AURORA_HOVER_CHECK=1`;
+  probe selection remains available through the build tools' explicit toggle.
 - `transparent-menu`, `transparent-build`: cube with 60% transparency,
   without a Touch script or click action; right click opens its menu and
   left click in edit mode selects it. `invisible-menu`, `invisible-build`
