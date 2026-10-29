@@ -13,7 +13,6 @@ pub mod currency;
 pub mod estate;
 pub mod experience;
 pub mod fetch;
-mod fetch_pace;
 pub mod freeze;
 pub mod group_money;
 pub mod groups;
@@ -122,22 +121,12 @@ pub(crate) fn simulator_roots() -> Vec<reqwest::Certificate> {
     roots
 }
 
-/// Asset requests under way at once: they follow the link
-/// (`fetch_pace.rs`, None), unless `AURORA_FETCH_SLOTS=<n>` (1 to 256)
-/// fixes them for one launch, to compare.
-fn fetch_slots() -> Option<usize> {
-    match std::env::var("AURORA_FETCH_SLOTS").ok().map(|v| v.trim().parse::<usize>()) {
-        Some(Ok(n)) if (1..=256).contains(&n) => {
-            log::info!("asset fetch: {n} requests at once (AURORA_FETCH_SLOTS)");
-            Some(n)
-        }
-        Some(_) => {
-            log::warn!("AURORA_FETCH_SLOTS: expected 1 to 256, following the link");
-            None
-        }
-        None => None,
-    }
-}
+/// Bound the HTTP/1.1 connections opened for asset arrivals. The former
+/// adaptive ceiling of 192 could exhaust a consumer router or wedge a NIC
+/// driver within seconds of login; 24 is the stable pre-adaptation limit.
+const ASSET_FETCH_SLOTS: usize = 24;
+const ASSET_IDLE_CONNECTIONS_PER_HOST: usize = 32;
+const _: () = assert!(ASSET_FETCH_SLOTS <= ASSET_IDLE_CONNECTIONS_PER_HOST);
 
 impl NetClient {
     pub fn new() -> Result<NetClient, NetError> {
@@ -160,7 +149,7 @@ impl NetClient {
         let roots = simulator_roots();
         let caps_http = reqwest::Client::builder()
             .user_agent(aurora_version::user_agent())
-            .pool_max_idle_per_host(32)
+            .pool_max_idle_per_host(ASSET_IDLE_CONNECTIONS_PER_HOST)
             .connect_timeout(std::time::Duration::from_secs(15))
             .tls_certs_only(roots.clone())
             .tls_danger_accept_invalid_hostnames(true)
@@ -181,11 +170,12 @@ impl NetClient {
         // decoding, a 30 s connect timeout and up to 10 redirects. Some
         // assets are served with an odd Content-Encoding that must not
         // make the fetch fail.
-        let fetch_slots = fetch_slots();
         let asset_http = reqwest::Client::builder()
             .user_agent(aurora_version::user_agent())
-            // (connections kept for every request the pace may have)
-            .pool_max_idle_per_host(fetch_slots.unwrap_or(fetch_pace::MAX).max(32))
+            // Keep the transport bounded as llcorehttp does. Hundreds of
+            // simultaneous HTTP/1.1 connections can exhaust a consumer
+            // router or wedge a network-adapter driver during login.
+            .pool_max_idle_per_host(32)
             .connect_timeout(std::time::Duration::from_secs(30))
             .gzip(false)
             .redirect(reqwest::redirect::Policy::limited(10))
@@ -193,7 +183,7 @@ impl NetClient {
             .tls_danger_accept_invalid_hostnames(true)
             .build()
             .map_err(|e| NetError::Http(e.to_string()))?;
-        let (fetcher, fetch_results) = Fetcher::paced(rt.handle(), asset_http, fetch_slots, stats.clone());
+        let (fetcher, fetch_results) = Fetcher::new(rt.handle(), asset_http, ASSET_FETCH_SLOTS, stats.clone());
 
         let shared_caps_http = caps_http.clone();
         let shared = session::Shared {
