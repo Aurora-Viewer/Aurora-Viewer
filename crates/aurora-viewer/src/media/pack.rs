@@ -72,6 +72,13 @@ impl PluginPack {
             // tests no network at all
             automatic: !cfg!(test) && aurora_updater::test_environment().is_none(),
         };
+        // No pack is built for macOS yet (TASKS.md): the Windows one would
+        // download and never start. Plugins of a chosen folder still work.
+        if cfg!(target_os = "macos") {
+            this.automatic = false;
+            this.dir = None;
+            this.state = PackState::Failed(Failure::Unsupported);
+        }
         // AURORA_MEDIA_PACK_FEED: a pack served by a test server of this PC
         // (loopback only), to try it before it is published. Its size and
         // SHA-256 are still those this viewer was built for.

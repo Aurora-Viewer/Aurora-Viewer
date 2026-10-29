@@ -136,7 +136,12 @@ pub fn page(cx: &mut Cx) {
                         (text, Some(d.received as f32 / d.total.max(1) as f32), false)
                     }
                     PackState::Downloading(_) => (tr!("media-plugins-installing").to_string(), Some(1.0), false),
-                    PackState::Failed(failure) => (media_pack_error(failure).to_string(), None, true),
+                    // (nothing to try again when no pack exists for this system)
+                    PackState::Failed(failure) => (
+                        media_pack_error(failure).to_string(),
+                        None,
+                        !matches!(failure, aurora_updater::Failure::Unsupported),
+                    ),
                     PackState::Idle | PackState::Ready => (tr!("media-plugins-missing").to_string(), None, false),
                 }
             };
