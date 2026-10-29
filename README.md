@@ -9,6 +9,7 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 [![Download](docs/readme/button-download.svg)](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/latest)&nbsp;
 [![Download for Linux](docs/readme/button-download-linux.svg)](docs/LINUX.md)&nbsp;
+[![Download for macOS](docs/readme/button-download-macos.svg)](docs/MACOS.md)&nbsp;
 [![Discord](docs/readme/button-discord.svg)](https://discord.gg/TK4nbMGmKt)&nbsp;
 [![Website](docs/readme/button-website.svg)](https://aurora-viewer.org)
 
@@ -16,7 +17,7 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 [![Release](https://img.shields.io/github/v/release/Aurora-Viewer/Aurora-Viewer?include_prereleases&color=8B5CF6)](https://github.com/Aurora-Viewer/Aurora-Viewer/releases)
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-4F46E5)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-5EEAD4?logo=rust&logoColor=white)](https://www.rust-lang.org)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-070B1F)](#build)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-070B1F)](#build)
 
 [Why Aurora](#why-aurora) · [Creator tools](#creator-tools) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing)
 
@@ -458,10 +459,10 @@ are planned or in progress: they are not in the viewer yet.
 ### Open
 
 - **Free software (GPLv3)**, written from scratch: it is not a fork.
-- **Windows and Linux**: every release has a Linux build too
-  ([install guide](docs/LINUX.md)).
-- **macOS (experimental)**: native Metal startup and the offline demo work on
-  Apple Silicon. Live-grid and voice validation remain pending.
+- **Windows, Linux and macOS**: every release has a Linux build
+  ([install guide](docs/LINUX.md)) and a macOS application for Apple
+  Silicon, drawn through Metal ([install guide](docs/MACOS.md); new, web
+  pages and video in the world are not there yet).
 
 ## Performance
 
@@ -583,7 +584,8 @@ completed work from features awaiting that validation.
 **Not there yet**
 
 - Depth exports and 360° snapshots.
-- Complete macOS validation and packaging (the native Metal build is experimental).
+- Web pages and video in the world on macOS (the media plugins), and its
+  automatic updates.
 - Automatic installation of updates on Linux (the viewer points to the
   new release instead).
 
@@ -889,7 +891,8 @@ files never leave the machine and are never attached to a bug report.
 
 Requirements: Windows 10/11, [Rust](https://rustup.rs) (stable, selected
 automatically by `rust-toolchain.toml`), a GPU with Vulkan support. On Linux,
-see [Installing on Linux](docs/LINUX.md#building-from-source).
+see [Installing on Linux](docs/LINUX.md#building-from-source); on macOS,
+[Installing on macOS](docs/MACOS.md#building-from-source).
 
 **Development environment:** create a folder for the project, clone this
 repository into it, then double-click **`aurora-tools.cmd`**:
@@ -931,24 +934,14 @@ builds GitHub's latest `main` with `--release` into `..\RELEASE\`.
 Every build carries the emoji font (Noto Color Emoji, 10.7 MB) inside the
 exe, so the exe works from any folder.
 
-### macOS (experimental)
+### macOS
 
-Use stable Rust and Apple's C/C++ build tools, or an equivalent Nix development
-environment providing them. The renderer selects native Metal on macOS;
-MoltenVK and `vulkan-portability` are not required.
-
-```sh
-cargo build --locked -p aurora-viewer
-AURORA_DEMO=1 ./target/debug/aurora-viewer --title "Test macos"
-```
-
-Windows and Linux keep Vulkan. There is no macOS download yet: build it
-from source. Not there yet on macOS: the media plugins pack (web pages and
-video in the world), `secondlife://` links from the browser, and an
-application bundle. Human validation of login, voice, teleports and longer
-grid sessions is pending. The macOS workflow (`.github/workflows/macos.yml`)
-checks every pull request with clippy, and the merge queue runs the tests and
-draws a demo frame on an Apple GPU.
+Apple Silicon Macs draw through Metal (`aurora_render::BACKENDS`), Windows
+and Linux through Vulkan; MoltenVK is not used. Building, the application
+bundle and its signing: [Installing on macOS](docs/MACOS.md). The macOS
+workflow (`.github/workflows/macos.yml`) checks every pull request with
+clippy on a Mac, and the merge queue runs the tests and draws a demo frame on
+an Apple GPU.
 
 ### Versions
 
