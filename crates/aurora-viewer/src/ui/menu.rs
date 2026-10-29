@@ -1140,12 +1140,13 @@ fn heading_line(ui: &mut Ui, p: &Palette, text: &str) {
 }
 
 /// The query of the [`searchable`] menu being drawn, and where its rows
-/// stand: the sub-menus they are in, the path whose heading was drawn
-/// last, the entries shown.
+/// stand: the sub-menus they are in, the path whose entries were drawn
+/// last, the paths whose heading was drawn, the entries shown.
 struct Filter {
     words: Vec<String>,
     path: Vec<String>,
     shown: Option<Vec<String>>,
+    headed: Vec<Vec<String>>,
     matches: usize,
 }
 
@@ -1175,36 +1176,61 @@ fn entry_matches(words: &[String], path: &[String], label: &str) -> bool {
         .all(|w| label.contains(w.as_str()) || path.iter().any(|s| s.contains(w.as_str())))
 }
 
+/// What goes above an entry found by a search.
+#[derive(Debug, PartialEq)]
+enum Above {
+    /// Under the entries drawn just before it.
+    Nothing,
+    /// The first entry of its path: the path as a heading.
+    Heading(String),
+    /// Back in a path already headed (Me after Me › Avatar health), or at
+    /// the top level after a sub-menu: a divider, the heading is not
+    /// repeated.
+    Divider,
+}
+
+/// The lead of an entry of `path`, the previous one having been drawn
+/// under `shown` (`None`: the first entry), and the paths already headed.
+fn above(path: &[String], shown: &mut Option<Vec<String>>, headed: &mut Vec<Vec<String>>) -> Above {
+    if shown.as_deref() == Some(path) {
+        return Above::Nothing;
+    }
+    let first = shown.replace(path.to_vec()).is_none();
+    if path.is_empty() {
+        return if first { Above::Nothing } else { Above::Divider };
+    }
+    if headed.iter().any(|h| h == path) {
+        return Above::Divider;
+    }
+    headed.push(path.to_vec());
+    Above::Heading(path.join(" › "))
+}
+
 /// Whether the row `label` is drawn; while filtering, the heading of its
 /// path is drawn before the first entry found under it.
 fn filter_row(ui: &mut Ui, p: &Palette, label: &str) -> bool {
-    let heading = FILTER.with_borrow_mut(|f| {
+    let lead = FILTER.with_borrow_mut(|f| {
         let Some(f) = f.as_mut() else {
-            return Some(None);
+            return Some(Above::Nothing);
         };
         if !entry_matches(&f.words, &f.path, label) {
             return None;
         }
         f.matches += 1;
-        if f.shown.as_ref() == Some(&f.path) {
-            return Some(None);
-        }
-        f.shown = Some(f.path.clone());
-        Some(Some(f.path.join(" › ")))
+        Some(above(&f.path, &mut f.shown, &mut f.headed))
     });
-    match heading {
+    match lead {
         None => false,
-        Some(None) => true,
-        Some(Some(path)) => {
-            if path.is_empty() {
-                // a top-level entry after the entries of a sub-menu
-                let w = if ui.is_sizing_pass() { MIN_W } else { ui.available_width() };
-                let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 7.0), Sense::hover());
-                ui.painter()
-                    .hline(rect.x_range().shrink(4.0), rect.center().y, super::widgets::divider_stroke(p));
-            } else {
-                heading_line(ui, p, &path);
-            }
+        Some(Above::Nothing) => true,
+        Some(Above::Heading(path)) => {
+            heading_line(ui, p, &path);
+            true
+        }
+        Some(Above::Divider) => {
+            let w = if ui.is_sizing_pass() { MIN_W } else { ui.available_width() };
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 7.0), Sense::hover());
+            ui.painter()
+                .hline(rect.x_range().shrink(4.0), rect.center().y, super::widgets::divider_stroke(p));
             true
         }
     }
@@ -1218,7 +1244,7 @@ fn hidden(ui: &mut Ui) -> egui::Response {
 
 /// A menu with a search field at its top (the wolf menu): typing filters its
 /// entries, those of the sub-menus listed in place under their path ("Me ›
-/// Movement"). The field takes the keyboard when the menu opens and starts
+/// Avatar health"); a long list scrolls under the field. The field takes the keyboard when the menu opens and starts
 /// empty each time; a click in it leaves a menu that closes on any click
 /// open. Aurora's own: the Legacy Viewer's menus have no search.
 pub fn searchable(ui: &mut Ui, p: &Palette, body: impl FnOnce(&mut Ui)) {
@@ -1249,9 +1275,17 @@ pub fn searchable(ui: &mut Ui, p: &Palette, body: impl FnOnce(&mut Ui)) {
         words,
         path: Vec::new(),
         shown: None,
+        headed: Vec::new(),
         matches: 0,
     }));
-    body(ui);
+    // a broad query lists more entries than the window holds: they scroll
+    // and the field stays in place (the popup, sized on the last frame,
+    // would otherwise hold them to the height of the unfiltered menu)
+    let room = (ui.ctx().content_rect().bottom() - ui.cursor().top() - 12.0).max(120.0);
+    egui::ScrollArea::vertical()
+        .max_height(room)
+        .min_scrolled_height(room)
+        .show(ui, body);
     let found = FILTER.take().is_some_and(|f| f.matches > 0);
     if !found {
         let text = aurora_i18n::tr!("ui-bars-menu-no-match", query = query.trim().to_string());
@@ -1259,9 +1293,9 @@ pub fn searchable(ui: &mut Ui, p: &Palette, body: impl FnOnce(&mut Ui)) {
     }
 }
 
-/// `AURORA_DEMO_MENU_SEARCH=<query>`: the wolf menu of the classic bar
-/// opened at frame 540 and `query` typed in its search field at 560;
-/// capture frame 620.
+/// `AURORA_DEMO_MENU_SEARCH=<query>`: the wolf menu of the islands (the
+/// default bars) clicked at frames 540–541 and `query` typed in its search
+/// field at 560; capture frame 620.
 pub fn search_demo_events(frame: u64) -> Vec<egui::Event> {
     static QUERY: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     let Some(query) = QUERY.get_or_init(|| std::env::var("AURORA_DEMO_MENU_SEARCH").ok()) else {
@@ -1314,6 +1348,24 @@ mod tests {
     fn search_query_splits_on_whitespace() {
         assert!(words("   ").is_empty());
         assert_eq!(words("Go  HOME"), ["go", "home"]);
+    }
+
+    #[test]
+    fn search_heads_each_path_once() {
+        let path = |s: &str| -> Vec<String> { s.split('/').filter(|w| !w.is_empty()).map(String::from).collect() };
+        let (mut shown, mut headed) = (None, Vec::new());
+        let mut next = |s: &str| above(&path(s), &mut shown, &mut headed);
+        // Me, Me › Health, back in Me, then the top level
+        assert_eq!(next("Me"), Above::Heading("Me".into()));
+        assert_eq!(next("Me"), Above::Nothing);
+        assert_eq!(next("Me/Health"), Above::Heading("Me › Health".into()));
+        assert_eq!(next("Me"), Above::Divider);
+        assert_eq!(next("Me"), Above::Nothing);
+        assert_eq!(next(""), Above::Divider);
+        assert_eq!(next("World"), Above::Heading("World".into()));
+        // a top-level entry found first has nothing above it
+        let (mut shown, mut headed) = (None, Vec::new());
+        assert_eq!(above(&[], &mut shown, &mut headed), Above::Nothing);
     }
 
     struct Menus {

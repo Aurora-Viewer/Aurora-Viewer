@@ -957,12 +957,15 @@ when unfocused") is ignored during a screenshot.
   menu state: a walked chord must never open a context menu, and an ordinary
   subsequent right click must still work. Interactive objects, HUDs, media,
   build tools, modified clicks and ground double-click actions retain priority.
-- **`AURORA_DEMO_MENU_SEARCH=<query>`**: the wolf menu of the classic bar
-  opens at frame 540 and `query` is typed into its search field at 560
-  (the field takes the keyboard when the menu opens). Capture frame 620:
-  the matching entries of every sub-menu under their path heading (`home`:
-  Go home under Me, Set Home to Here under World), or the "No entry
-  matches" line.
+- **`AURORA_DEMO_MENU_SEARCH=<query>`**: the wolf menu of the top islands
+  (the default bars; the click misses the wolf of the Legacy bars) is
+  clicked at frames 540–541 and `query` is typed into its search field at
+  560 (the field takes the keyboard when the menu opens). Capture frame
+  620: the matching entries of every sub-menu under their path heading
+  (`home`: Go home under Me, Set Home to Here under World), or the "No
+  entry matches" line. A broad query (`e`) scrolls under the field, and a
+  path met again (Me after Me › Avatar health) gets a divider, not its
+  heading a second time.
 - **`AURORA_DEMO_DOUBLECLICK=walk|run|tp[,x,y]`**: the double-click action
   of the session (the saved one is left alone), and a double click of the
   left button at pixel (x, y) at frames 700 to 703 (ground ahead and to the
