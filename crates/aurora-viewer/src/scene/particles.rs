@@ -795,7 +795,11 @@ mod tests {
         // a changed value starts it again, the particles already out stay
         let out = manager.sources[&key].ps.particles().len();
         assert!(out > 0);
-        manager.set_preview(Some((object, ps::PartSysData { burst_part_count: 3, ..data })));
+        let changed = ps::PartSysData {
+            burst_part_count: 3,
+            ..data
+        };
+        manager.set_preview(Some((object, changed)));
         assert!(manager.sources[&key].ps.is_emitting());
         assert_eq!(manager.sources[&key].ps.particles().len(), out);
         // closed and opened again with the same settings: it starts again
