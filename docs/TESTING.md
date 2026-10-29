@@ -102,19 +102,24 @@ Check live silhouette changes, filtering, Ctrl/Shift selection, changing full
 detail, removing exceptions and adding residents from the shared picker.
 `empty` starts with no exceptions. Both scenarios use only demo settings.
 
-**Saved graphics profiles (#1218).** `AURORA_DEMO_BARS=profiles` installs two
-demo quality profiles for this run; add `AURORA_DEMO_OPTIONS=graphics` to inspect
+**Saved graphics profiles (#1218).** `AURORA_DEMO_BARS=profiles` installs three
+demo profiles, including two with identical quality; add `AURORA_DEMO_OPTIONS=graphics` to inspect
 their editor. Use `graphics:profiles-list` to open its dropdown with one bin per
-profile, or `graphics:save-profile` to open the name prompt after Save. The name
+profile, or `graphics:save-profile` to open the Save as name prompt. The name
 field exists only in that dialog, starts focused and accepts Enter. A bin must
 ask for confirmation without loading its profile, even when another is active;
 all bins stay at the same right edge with long names. Cancel saves/deletes
-nothing, and an existing name still requires replacement confirmation.
+nothing, and Save as with an existing name requires replacement confirmation.
+Only the explicitly selected profile is highlighted, even with identical values.
+Editing quality keeps that name and marks it modified; Save updates only that
+profile without asking for a name. With no profile selected, Save is disabled
+and Save as creates one. Both buttons stay beside the selector in narrow windows.
 `AURORA_DEMO_BARS=fpspresets` also opens the actual FPS hover card
 after frame 300; combine with `legacy` to check the other bar layout. Save a
 named profile, change quality, reload it from Preferences and from the FPS
-hover card, and restart the demo to check persistence. Replacement and deletion
-require confirmation. Check that moving into the hover card keeps it clickable,
+hover card, and restart the demo to check persistence of the library and selection.
+Choosing a built-in level clears the named selection; deleting the selected
+profile does likewise without loading another profile. Check that moving into the hover card keeps it clickable,
 that ordinary FPS clicks still open Performance, and that the FPS cap toggle
 retains its numeric limit. Vsync, background cap, hardware and environment are
 independent of profiles. Saving while photo quality is boosted must save the

@@ -161,7 +161,7 @@ fn frames_per_second(cx: &mut Cx) {
 
 fn parcels(cx: &mut Cx) {
     use aurora_i18n::tr;
-    cx.group(tr!("region-parcels"), |cx| {
+    cx.group(tr!("parcel-visibility-filter"), |cx| {
         cx.combo(
             tr!("parcel-visibility-mode"),
             tr!("parcel-visibility-help"),
@@ -183,6 +183,8 @@ fn parcels(cx: &mut Cx) {
             tr!("parcel-visibility-same-group-help"),
             &field!(parcel_visibility.same_group),
         );
+    });
+    cx.group(tr!("parcel-visibility-parcels"), |cx| {
         parcel_list(
             cx,
             tr!("parcel-visibility-parcels"),
@@ -190,6 +192,8 @@ fn parcels(cx: &mut Cx) {
             &field!(parcel_visibility.parcels),
             false,
         );
+    });
+    cx.group(tr!("parcel-visibility-always-visible"), |cx| {
         parcel_list(
             cx,
             tr!("parcel-visibility-always-visible"),
@@ -211,7 +215,7 @@ fn quality(cx: &mut Cx) {
             &Nothing,
             |ui, s| preset_choice(ui, &p, s),
         );
-        cx.wide()
+        cx.below()
             .row_with(tr!("graphics-saved-title"), tr!("graphics-saved-help"), &Nothing, |ui, s, st, _| {
                 super::super::saved_graphics::controls(ui, &p, s, st)
             });
@@ -839,7 +843,7 @@ fn parcel_list(
     use aurora_i18n::tr;
     let p = cx.p;
     let get = field.get_mut;
-    cx.below().row_with(label, hint, field, |ui, s, st, _| {
+    cx.section_body().row_with(label, hint, field, |ui, s, st, _| {
         let entries = get(s);
         let mut changed = false;
         ui.vertical(|ui| {

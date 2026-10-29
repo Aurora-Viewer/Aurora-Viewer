@@ -75,11 +75,35 @@ pub fn valid_name(name: &str) -> bool {
     !name.is_empty() && name.chars().count() <= 64 && !name.chars().any(char::is_control)
 }
 
+/// Selection is an identity, not a comparison: identical profiles stay distinct.
+pub fn selected(s: &Settings) -> Option<&str> {
+    s.graphics_saved_active
+        .as_deref()
+        .filter(|name| s.graphics_saved.contains_key(*name))
+}
+
+pub fn select(s: &mut Settings, name: &str) -> bool {
+    let Some(saved) = s.graphics_saved.get(name).cloned() else {
+        return false;
+    };
+    saved.apply(s);
+    s.graphics_saved_active = Some(name.to_owned());
+    true
+}
+
+pub fn save_selected(s: &mut Settings) -> bool {
+    let Some(name) = selected(s).map(str::to_owned) else {
+        return false;
+    };
+    s.graphics_saved.insert(name, Saved::capture(s));
+    true
+}
+
 pub fn choices(s: &Settings) -> Vec<(String, bool)> {
-    let current = Saved::capture(s);
+    let selected = selected(s);
     s.graphics_saved
-        .iter()
-        .map(|(name, values)| (name.clone(), *values == current))
+        .keys()
+        .map(|name| (name.clone(), selected == Some(name.as_str())))
         .collect()
 }
 
@@ -92,7 +116,8 @@ pub fn demo(s: &mut Settings) {
     sample.draw_distance = 160.0;
     let photo = Saved::read(&sample);
     s.graphics_saved.insert("My photo profile".into(), photo.clone());
-    photo.apply(s);
+    s.graphics_saved.insert("My photo profile (copy)".into(), photo);
+    select(s, "My photo profile");
 }
 
 #[cfg(test)]
@@ -126,12 +151,46 @@ mod tests {
         for unrelated in ["username", "camera", "time_of_day", "fps_cap", "ui_scale", "graphics_saved"] {
             assert!(snapshot.get(unrelated).is_none(), "profile excludes {unrelated}");
         }
+        select(&mut loaded, "Photo / nuit 🌙");
         assert_eq!(choices(&loaded), vec![("Photo / nuit 🌙".into(), true)]);
         loaded.draw_distance += 1.0;
-        assert!(!choices(&loaded)[0].1);
+        assert!(choices(&loaded)[0].1, "editing keeps the selected identity");
         assert_eq!(loaded.graphics_saved.len(), 1);
         loaded.reset_keeping_account();
         assert_eq!(loaded.graphics_saved.len(), 1, "resetting preferences keeps the saved library");
+        assert!(selected(&loaded).is_none(), "resetting preferences clears the selected identity");
+    }
+
+    #[test]
+    fn graphics_saved_selection_distinguishes_identical_profiles_and_save_updates_only_the_selected_name() {
+        let mut s = Settings::default();
+        let original = Saved::capture(&s);
+        s.graphics_saved.insert("Test".into(), original.clone());
+        s.graphics_saved.insert("Test 2".into(), original.clone());
+        assert!(
+            choices(&s).iter().all(|(_, active)| !active),
+            "equal values do not select a profile"
+        );
+        assert!(!save_selected(&mut s), "no implicit overwrite target");
+        for name in ["Test", "Test 2", "Test"] {
+            assert!(select(&mut s, name));
+            assert_eq!(choices(&s).iter().filter(|(_, active)| *active).count(), 1);
+            assert_eq!(selected(&s), Some(name));
+        }
+        s.draw_distance = 224.0;
+        assert_eq!(selected(&s), Some("Test"));
+        assert!(save_selected(&mut s));
+        assert_eq!(s.graphics_saved["Test"].quality.draw_distance, 224.0);
+        assert_eq!(s.graphics_saved["Test 2"], original);
+        let json = serde_json::to_string(&s).expect("serialize selected identity");
+        let mut restored: Settings = serde_json::from_str(&json).expect("restore selected identity");
+        assert_eq!(selected(&restored), Some("Test"));
+        assert!(!select(&mut restored, "Missing"));
+        assert_eq!(selected(&restored), Some("Test"));
+        Preset::High.apply(&mut restored);
+        assert!(selected(&restored).is_none(), "choosing a built-in level leaves the saved profile");
+        restored.graphics_saved_active = Some("Missing".into());
+        assert!(restored.sanitized().graphics_saved_active.is_none());
     }
 
     #[test]
@@ -163,6 +222,7 @@ mod tests {
         assert_ne!(Saved::read(&s), user);
         assert_eq!(Saved::capture(&s), user);
         s.graphics_saved.insert("My quality".into(), user);
+        s.graphics_saved_active = Some("My quality".into());
         assert!(choices(&s)[0].1);
     }
 }

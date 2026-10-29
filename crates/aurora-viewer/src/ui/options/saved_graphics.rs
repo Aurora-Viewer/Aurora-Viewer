@@ -1,7 +1,7 @@
 //! Named graphics controls shared with the FPS hover list.
 
 use super::{OptionsResult, OptionsUi};
-use crate::graphics_presets::saved::{Saved, valid_name};
+use crate::graphics_presets::saved::{self, Saved, valid_name};
 use crate::settings::Settings;
 use crate::theme::Palette;
 use crate::ui::widgets;
@@ -22,7 +22,7 @@ enum Pending {
 }
 
 impl Editor {
-    fn request_save(&mut self, s: &Settings) {
+    fn request_save_as(&mut self, s: &Settings) {
         self.name.clear();
         self.focus_name = true;
         self.pending = Some(Pending::Save(Box::new(Saved::capture(s))));
@@ -52,9 +52,30 @@ fn profile_row(ui: &mut egui::Ui, p: &Palette, name: &str, active: bool) -> egui
 pub(super) fn controls(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi) -> bool {
     let mut changed = false;
     let editor = &mut st.saved_graphics;
-    let current = crate::graphics_presets::saved::choices(s);
-    let selected = current.iter().find(|(_, same)| *same).map(|(name, _)| name.as_str());
+    let current = saved::choices(s);
+    let selected = saved::selected(s).map(str::to_owned);
+    let label = match selected.as_deref() {
+        Some(name) if s.graphics_saved[name] != Saved::capture(s) => tr!("graphics-saved-modified", name = name.to_owned()),
+        Some(name) => name.to_owned(),
+        None => tr!("ui-options-preset-custom").to_owned(),
+    };
     ui.horizontal(|ui| {
+        let actions_width: f32 = [tr!("common-save"), tr!("graphics-saved-save-as")]
+            .into_iter()
+            .map(|label| {
+                ui.painter()
+                    .layout_no_wrap(
+                        label.to_owned(),
+                        egui::TextStyle::Button.resolve(ui.style()),
+                        ui.visuals().text_color(),
+                    )
+                    .size()
+                    .x
+                    + ui.spacing().button_padding.x * 2.0
+                    + ui.spacing().item_spacing.x
+            })
+            .sum();
+        let list_width = (ui.available_width() - actions_width).clamp(64.0, 260.0);
         let mut demo_list = false;
         // Capture the production popup and name dialog without native pointer
         // automation. These two states are confined to offline demo runs.
@@ -64,22 +85,19 @@ pub(super) fn controls(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mu
             if mode == "graphics:profiles-list" {
                 demo_list = true;
             } else if mode == "graphics:save-profile" && !ui.ctx().data(|d| d.get_temp::<bool>(id)).unwrap_or(false) {
-                editor.request_save(s);
+                editor.request_save_as(s);
                 ui.ctx().data_mut(|d| d.insert_temp(id, true));
             }
         }
         let list = egui::ComboBox::from_id_salt("saved_graphics")
-            .width(260.0)
+            .width(list_width)
             .truncate()
-            .selected_text(selected.unwrap_or(tr!("ui-options-preset-custom")))
+            .selected_text(label)
             .show_ui(ui, |ui| {
                 for (name, active) in &current {
                     let (load, delete) = profile_row(ui, p, name, *active).inner;
                     if load {
-                        if let Some(saved) = s.graphics_saved.get(name).cloned() {
-                            saved.apply(s);
-                            changed = true;
-                        }
+                        changed |= saved::select(s, name);
                         ui.close();
                     }
                     if delete {
@@ -95,8 +113,11 @@ pub(super) fn controls(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mu
             // Use the response's real popup ID, including ComboBox's salt.
             egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&list.response));
         }
-        if ui.button(tr!("common-save")).clicked() {
-            editor.request_save(s);
+        if ui.add_enabled(selected.is_some(), egui::Button::new(tr!("common-save"))).clicked() {
+            changed |= saved::save_selected(s);
+        }
+        if ui.button(tr!("graphics-saved-save-as")).clicked() {
+            editor.request_save_as(s);
         }
     });
     changed
@@ -165,13 +186,18 @@ pub(super) fn confirm(ctx: &egui::Context, p: &Palette, s: &mut Settings, st: &m
                     editor.pending = Some(Pending::Replace(name, values));
                     return;
                 }
-                s.graphics_saved.insert(name, *values);
+                s.graphics_saved.insert(name.clone(), *values);
+                s.graphics_saved_active = Some(name);
             }
             Some(Pending::Replace(name, values)) => {
-                s.graphics_saved.insert(name, *values);
+                s.graphics_saved.insert(name.clone(), *values);
+                s.graphics_saved_active = Some(name);
             }
             Some(Pending::Delete(name)) => {
                 s.graphics_saved.remove(&name);
+                if s.graphics_saved_active.as_ref() == Some(&name) {
+                    s.graphics_saved_active = None;
+                }
                 editor.name.clear();
             }
             None => return,
@@ -217,20 +243,20 @@ mod tests {
     }
 
     #[test]
-    fn graphics_saved_name_is_requested_only_after_save_and_replacement_is_confirmed() {
+    fn graphics_saved_save_updates_the_selection_while_save_as_requests_a_name_and_confirms_duplicates() {
         let mut frames = Frames::new();
         let mut s = Settings::default();
         let mut st = OptionsUi::default();
         frame(&mut frames, &mut s, &mut st, vec![]);
         let input = egui::Id::unique("graphics_saved_name");
         assert!(frames.ctx.read_response(input).is_none(), "no permanent name field");
-        button(&mut frames, &mut s, &mut st, tr!("common-save"));
+        button(&mut frames, &mut s, &mut st, tr!("graphics-saved-save-as"));
         assert!(matches!(st.saved_graphics.pending, Some(Pending::Save(_))));
         assert!(frames.ctx.memory(|m| m.has_focus(input)), "the dialog is ready for typing");
         assert!(s.graphics_saved.is_empty());
         button(&mut frames, &mut s, &mut st, tr!("common-cancel"));
         assert!(s.graphics_saved.is_empty(), "cancelling the name prompt saves nothing");
-        button(&mut frames, &mut s, &mut st, tr!("common-save"));
+        button(&mut frames, &mut s, &mut st, tr!("graphics-saved-save-as"));
         frame(&mut frames, &mut s, &mut st, vec![egui::Event::Text("Night".into())]);
         frame(
             &mut frames,
@@ -257,17 +283,30 @@ mod tests {
             }],
         );
         assert_eq!(s.graphics_saved.len(), 1);
+        assert_eq!(saved::selected(&s), Some("Night"));
+        s.draw_distance = 192.0;
+        let texts = frame(&mut frames, &mut s, &mut st, vec![]);
+        assert!(
+            texts.iter().any(|t| t.source == tr!("graphics-saved-modified", name = "Night")),
+            "the selected name is marked modified"
+        );
+        button(&mut frames, &mut s, &mut st, tr!("common-save"));
+        assert!(
+            st.saved_graphics.pending.is_none(),
+            "Save updates the selected profile without a name prompt"
+        );
+        assert_eq!(s.graphics_saved["Night"].quality.draw_distance, 192.0);
         let original = s.graphics_saved["Night"].clone();
         s.draw_distance = 224.0;
-        button(&mut frames, &mut s, &mut st, tr!("common-save"));
-        assert!(st.saved_graphics.name.is_empty(), "each save asks for a name");
+        button(&mut frames, &mut s, &mut st, tr!("graphics-saved-save-as"));
+        assert!(st.saved_graphics.name.is_empty(), "Save as asks for a new name");
         frame(&mut frames, &mut s, &mut st, vec![egui::Event::Text("Night".into())]);
         button(&mut frames, &mut s, &mut st, tr!("common-save"));
         assert!(matches!(st.saved_graphics.pending, Some(Pending::Replace(_, _))));
         assert_eq!(s.graphics_saved["Night"], original);
         button(&mut frames, &mut s, &mut st, tr!("common-cancel"));
         assert_eq!(s.graphics_saved["Night"], original);
-        button(&mut frames, &mut s, &mut st, tr!("common-save"));
+        button(&mut frames, &mut s, &mut st, tr!("graphics-saved-save-as"));
         frame(&mut frames, &mut s, &mut st, vec![egui::Event::Text("Night".into())]);
         button(&mut frames, &mut s, &mut st, tr!("common-save"));
         button(&mut frames, &mut s, &mut st, tr!("common-save"));
@@ -307,13 +346,6 @@ mod tests {
 
     fn bin(frames: &mut Frames, s: &mut Settings, st: &mut OptionsUi, name: &str) {
         let texts = frame(frames, s, st, vec![]);
-        let y = texts
-            .iter()
-            .find(|t| t.source == name)
-            .expect("profile in the dropdown")
-            .rect
-            .center()
-            .y;
         let popup = frames
             .ctx
             .memory(|m| {
@@ -323,6 +355,13 @@ mod tests {
                     .find_map(|layer| (layer.order == egui::Order::Foreground).then(|| m.area_rect(layer.id)).flatten())
             })
             .expect("open profile list");
+        let y = texts
+            .iter()
+            .find(|t| t.source == name && popup.contains(t.rect.center()))
+            .expect("profile in the dropdown, not its selected label")
+            .rect
+            .center()
+            .y;
         let pos = egui::pos2(popup.right() - 14.0, y);
         frame(frames, s, st, vec![egui::Event::PointerMoved(pos)]);
         frame(frames, s, st, vec![click(pos, true)]);
@@ -339,7 +378,7 @@ mod tests {
         s.graphics_saved.insert("Day".into(), day);
         s.graphics_saved.insert("Night".into(), night.clone());
         let mut st = OptionsUi::default();
-        button(&mut frames, &mut s, &mut st, "Day");
+        button(&mut frames, &mut s, &mut st, tr!("ui-options-preset-custom"));
         button(&mut frames, &mut s, &mut st, "Night");
         assert_eq!(Saved::capture(&s), night, "selecting a row still loads it");
         button(&mut frames, &mut s, &mut st, "Night");
@@ -355,5 +394,10 @@ mod tests {
         assert!(!s.graphics_saved.contains_key("Day"));
         assert!(s.graphics_saved.contains_key("Night"));
         assert_eq!(Saved::capture(&s), night);
+        assert_eq!(saved::selected(&s), Some("Night"), "deleting another profile keeps the selection");
+        button(&mut frames, &mut s, &mut st, "Night");
+        bin(&mut frames, &mut s, &mut st, "Night");
+        button(&mut frames, &mut s, &mut st, tr!("common-delete"));
+        assert!(saved::selected(&s).is_none(), "deleting the selected profile clears its identity");
     }
 }

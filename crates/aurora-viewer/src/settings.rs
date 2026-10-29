@@ -1095,6 +1095,8 @@ pub struct Settings {
     pub fps_limit: u32,
     /// Named graphics quality snapshots (#1218), independent of frame pacing.
     pub graphics_saved: std::collections::BTreeMap<String, crate::graphics_presets::saved::Saved>,
+    /// The explicitly selected profile, retained while its quality is edited.
+    pub graphics_saved_active: Option<String>,
     /// Lower cap while the window is not focused (on by default, as
     /// Firestorm yields BackgroundYieldTime every frame in the background).
     pub background_fps_cap: bool,
@@ -1837,6 +1839,7 @@ impl Default for Settings {
             fps_cap: true,
             fps_limit: 120,
             graphics_saved: Default::default(),
+            graphics_saved_active: None,
             background_fps_cap: true,
             background_fps_limit: 15,
             max_particles: 4096,
@@ -2140,6 +2143,13 @@ impl Settings {
     }
 
     pub(crate) fn sanitized(mut self) -> Settings {
+        if self
+            .graphics_saved_active
+            .as_ref()
+            .is_some_and(|name| !self.graphics_saved.contains_key(name))
+        {
+            self.graphics_saved_active = None;
+        }
         for profile in self.world_context_menus.profiles.values_mut() {
             profile.locked = true;
         }

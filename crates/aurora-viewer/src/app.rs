@@ -11905,8 +11905,7 @@ impl App {
                 self.snapshots.settings_changed = true;
             }
             BarAction::SavedGraphicsPreset(name) => {
-                if let Some(saved) = self.settings.graphics_saved.get(&name).cloned() {
-                    saved.apply(&mut self.settings);
+                if crate::graphics_presets::saved::select(&mut self.settings, &name) {
                     self.settings.save();
                     self.snapshots.settings_changed = true;
                 }

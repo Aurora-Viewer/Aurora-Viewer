@@ -736,6 +736,7 @@ fn graphics_profile_save_has_a_button_face_to_the_right_of_the_list() {
         let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
         s.graphics_saved
             .insert("Layout profile".into(), crate::graphics_presets::saved::Saved::capture(&s));
+        crate::graphics_presets::saved::select(&mut s, "Layout profile");
         let mut shapes = Vec::new();
         for _ in 0..4 {
             shapes = preference_shapes(&mut frames, &mut s, &mut st, &mut r, (Page::Graphics, 0, width), Vec::new());
@@ -751,10 +752,15 @@ fn graphics_profile_save_has_a_button_face_to_the_right_of_the_list() {
         };
         let list = text_rect("Layout profile");
         let save = text_rect(aurora_i18n::tr!("common-save"));
+        let save_as = text_rect(aurora_i18n::tr!("graphics-saved-save-as"));
         assert!(save.left() > list.right(), "{width}: Save is right of the list");
         assert!(
             (save.center().y - list.center().y).abs() < 1.0,
             "{width}: Save stays on the list's line"
+        );
+        assert!(
+            save_as.left() > save.right() && save_as.right() <= width,
+            "{width}: Save as fits beside Save"
         );
         assert!(
             shapes.iter().any(|shape| matches!(shape, egui::Shape::Rect(face)
@@ -816,7 +822,16 @@ fn parcel_visibility_lists_show_full_names_and_regions_with_separate_remove_cont
             for _ in 0..4 {
                 shapes = frame(&mut frames, &mut s, &mut st, view, Vec::new()).0;
             }
-            let heading = text(&shapes, aurora_i18n::tr!("parcel-visibility-always-visible")).pos;
+            let heading_label = aurora_i18n::tr!("parcel-visibility-always-visible");
+            let heading = if mode == Mode::Show {
+                let filtering = text(&shapes, &aurora_i18n::tr!("parcel-visibility-filter").to_uppercase()).pos;
+                let scope = text(&shapes, &aurora_i18n::tr!("parcel-visibility-parcels").to_uppercase()).pos;
+                let exceptions = text(&shapes, &heading_label.to_uppercase()).pos;
+                assert!(filtering.y < scope.y && scope.y < exceptions.y, "three separate sections in order");
+                exceptions + egui::vec2(14.0, 0.0)
+            } else {
+                text(&shapes, heading_label).pos
+            };
             let mut remove = None;
             let mut right: Option<f32> = None;
             for entry in &entries {

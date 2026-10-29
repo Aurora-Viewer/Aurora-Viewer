@@ -258,6 +258,7 @@ impl Preset {
     /// like the slider of the page).
     pub fn apply(self, s: &mut Settings) {
         self.values().write(s);
+        s.graphics_saved_active = None;
     }
 
     /// The level whose settings are exactly those of `s`, if any.
