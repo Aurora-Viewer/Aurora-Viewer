@@ -5444,6 +5444,13 @@ impl Scene {
         })
     }
 
+    /// Tools.ResyncAnimations: every resident and control avatar restarts on
+    /// our screen only, with one shared instant for the whole scene.
+    pub fn resync_animations(&mut self, now: Instant) {
+        use rayon::prelude::*;
+        self.motions.par_iter_mut().for_each(|(_, motions)| motions.resync_animations(now));
+    }
+
     /// "Reset skeleton" of an avatar or an animated object
     /// (LLVOAvatar::resetSkeleton): the rest skeleton is built again from
     /// the shape and the worn meshes on the next frame, and the pose held

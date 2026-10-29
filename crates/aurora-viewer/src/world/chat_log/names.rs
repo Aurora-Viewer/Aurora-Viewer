@@ -180,8 +180,7 @@ pub fn existing_file(dir: &Path, stem: &str, today: Option<(i64, i64, i64)>) -> 
     found.is_file().then_some(found)
 }
 
-/// Today's local date (LogFileNamewithDate uses localtime); the Second Life
-/// date on the platforms whose local clock is not read.
+/// Today's local date (LogFileNamewithDate uses localtime).
 #[cfg(windows)]
 pub fn local_date() -> (i64, i64, i64) {
     let mut time = windows_sys::Win32::Foundation::SYSTEMTIME::default();
@@ -195,8 +194,9 @@ pub fn local_date() -> (i64, i64, i64) {
 
 #[cfg(not(windows))]
 pub fn local_date() -> (i64, i64, i64) {
-    let t = super::format::Slt::of(SystemTime::now());
-    (t.year, t.month, t.day)
+    use chrono::Datelike;
+    let t = chrono::Local::now();
+    (t.year().into(), t.month().into(), t.day().into())
 }
 
 #[cfg(test)]

@@ -1107,7 +1107,7 @@ impl Scene {
                 && world
                     .objects
                     .get(idx)
-                    .is_some_and(|o| o.click_action == crate::interaction::code::IGNORE)
+                    .is_some_and(|o| o.click_action == crate::interaction::code::IGNORE && o.extra.reflection_probe.is_none())
                 && ray_may_hit(g, ray)
                 && self.hit_distance(world, idx, ray, now, true, among).is_some_and(|t| t <= limit)
         })
@@ -1127,7 +1127,7 @@ impl Scene {
         let mut found = false;
         for (idx, g) in self.pick_objects(among) {
             let Some(o) = world.objects.get(idx) else { continue };
-            if g.faces.is_empty() || g.hud || o.click_action == crate::interaction::code::IGNORE {
+            if g.faces.is_empty() || g.hud || o.extra.reflection_probe.is_some() || o.click_action == crate::interaction::code::IGNORE {
                 continue;
             }
             if !g.is_avatar && !ray_may_hit(g, ray) {
@@ -1197,7 +1197,12 @@ impl Scene {
         let mut found = false;
         for (idx, g) in self.pick_objects(None) {
             let Some(o) = world.objects.get(idx) else { continue };
-            if g.hud || g.rigged || Some(idx) == wearer || o.click_action == crate::interaction::code::IGNORE {
+            if g.hud
+                || g.rigged
+                || Some(idx) == wearer
+                || o.extra.reflection_probe.is_some()
+                || o.click_action == crate::interaction::code::IGNORE
+            {
                 continue;
             }
             // an invisible clicker under the mesh, often partly inside the
@@ -1258,7 +1263,12 @@ impl Scene {
         let props = HashMap::new();
         for (idx, g) in self.pick_objects(among) {
             let Some(o) = world.objects.get(idx) else { continue };
-            if g.hud || g.is_avatar || o.click_action == crate::interaction::code::IGNORE || !ray_may_hit(g, ray) {
+            if g.hud
+                || g.is_avatar
+                || o.extra.reflection_probe.is_some()
+                || o.click_action == crate::interaction::code::IGNORE
+                || !ray_may_hit(g, ray)
+            {
                 continue;
             }
             let hidden = include_hidden && o.click_action != crate::interaction::code::DISABLED;
@@ -1355,6 +1365,9 @@ impl Scene {
     /// Nearest Blend surface in front of the displayed/action point. The
     /// hover search reuses its candidate list and large-face hierarchies;
     /// a full search remains available to check the index independently.
+    /// Ordinary picks exclude probes, as LLToolPie::handleMouseDown and
+    /// LLOctreeIntersect::check (indra/newview/llspatialpartition.cpp) do;
+    /// only the selection paths honor SelectReflectionProbes.
     pub(super) fn blend_hit(
         &self,
         world: &World,
@@ -1372,6 +1385,7 @@ impl Scene {
                 || g.is_avatar
                 || g.rigged
                 || (g.owner_avatar.is_some() && o.visual_volume().is_mesh())
+                || o.extra.reflection_probe.is_some()
                 || o.click_action == crate::interaction::code::IGNORE
                 || !ray_may_hit(g, ray)
             {
@@ -1432,6 +1446,7 @@ impl Scene {
                 // (of a worn mesh, only the invisible faces of one without a
                 // skin: `worn_unrigged_mesh`)
                 || (g.owner_avatar.is_some() && o.visual_volume().is_mesh() && !(include_hidden && worn_unrigged_mesh(o, g)))
+                || o.extra.reflection_probe.is_some()
                 || o.click_action == crate::interaction::code::IGNORE
             {
                 continue;
@@ -1954,6 +1969,82 @@ pub(super) mod tests {
         assert_eq!(
             scene.color_at_ray(&world, ray, true, 100.0),
             Some((world.objects.get(front).unwrap().full_id, [0.1, 0.2, 0.3]))
+        );
+    }
+
+    #[test]
+    fn reflection_probes_do_not_intercept_actions_or_hover() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let front_point = Vec3::new(2.5, 0.0, 50.0);
+        let back_point = Vec3::new(6.5, 0.0, 50.0);
+        world.objects.get_mut(back).unwrap().click_action = crate::interaction::code::TOUCH;
+        world.objects.get_mut(back).unwrap().update_flags = 1 << 7;
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        // Ordinary transparent surfaces still stop clicks, even without an action.
+        scene.gpu[front].faces[0].te_alpha = 0.4;
+        let point = scene.action_point(&world, Some(ray), Some(back_point), false, 100.0).unwrap();
+        assert_eq!(point, front_point);
+        assert_eq!(scene.interaction_at_ray(&world, point, ray, true), Some(front));
+
+        for flags in [0, 1, 1 | 4] {
+            world.objects.get_mut(front).unwrap().extra.reflection_probe = Some(aurora_prim::extra::ReflectionProbeParams {
+                flags,
+                ..crate::build::edits::PROBE_DEFAULT
+            });
+            // Both non-actionable and scripted probes must let the click through.
+            for action in [crate::interaction::code::TOUCH, crate::interaction::code::IGNORE] {
+                for scripted in [false, true] {
+                    let probe = world.objects.get_mut(front).unwrap();
+                    probe.click_action = action;
+                    probe.update_flags = if scripted { 1 << 7 } else { 0 };
+                    for alpha in [0.0, 0.4] {
+                        scene.gpu[front].faces[0].te_alpha = alpha;
+                        scene.pick.changed(front);
+                        let point = scene.action_point(&world, Some(ray), Some(back_point), false, 100.0).unwrap();
+                        assert_eq!(
+                            point, back_point,
+                            "probe flags={flags}, action={action}, scripted={scripted}, alpha={alpha}"
+                        );
+                        assert_eq!(scene.interaction_at_ray(&world, point, ray, true), Some(back));
+                        assert_eq!(
+                            crate::interaction::target(&world, back, &HashMap::new()).unwrap().action,
+                            crate::interaction::Action::Touch
+                        );
+                        assert_eq!(
+                            scene.hover_pick(&world, Some(ray), Some(back_point), 100.0),
+                            (Some(back_point), Some(back))
+                        );
+                        assert_eq!(
+                            scene.interaction_point(&world, Some(ray), Some(back_point), false, 100.0),
+                            Some(back_point)
+                        );
+                        assert_eq!(scene.blend_hit(&world, ray, Some(back_point), 100.0, None), None);
+                        assert_eq!(
+                            scene.point_behind_ignored(&world, ray, 100.0, Instant::now(), None),
+                            Some(back_point)
+                        );
+                        assert_eq!(scene.point_behind_rigged(&world, ray, 0.0, 100.0, None), Some(back_point));
+                        // Foreground depth still occludes the scripted cube.
+                        let occluder = Vec3::new(1.0, 0.0, 50.0);
+                        assert_eq!(scene.action_point(&world, Some(ray), Some(occluder), false, 100.0), Some(occluder));
+                        assert_eq!(scene.interaction_at_ray(&world, front_point, ray, true), None);
+                    }
+                }
+            }
+        }
+        // Removing the probe parameters restores an ordinary Blend surface.
+        let object = world.objects.get_mut(front).unwrap();
+        object.extra.reflection_probe = None;
+        object.click_action = crate::interaction::code::TOUCH;
+        scene.pick.changed(front);
+        assert_eq!(
+            scene.hover_pick(&world, Some(ray), Some(back_point), 100.0),
+            (Some(front_point), Some(front))
         );
     }
 

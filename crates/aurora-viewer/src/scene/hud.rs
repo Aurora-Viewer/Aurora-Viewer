@@ -4,6 +4,14 @@
 use super::*;
 use aurora_render::HudView;
 
+/// LLVOVolume::updateTextureVirtualSize gives every HUD face the whole
+/// screen and BOOST_HUD, which LLViewerFetchedTexture::setBoostLevel and
+/// addTextureStats (llviewertexture.cpp) turn into 2048 * 2048 and discard
+/// 0: HUD textures load at full resolution, whatever the size of their prim.
+/// A size from the prim's radius left the small buttons of a HUD, which
+/// often show one corner of a shared atlas, three levels too coarse.
+pub(super) const TEXTURE_PIXELS: f32 = 2048.0;
+
 impl Scene {
     /// Screen bounds of the visible linkset, using its zoomed geometry.
     pub fn hud_rect(&self, world: &World, idx: usize, view: HudView) -> Option<[f32; 4]> {
@@ -86,10 +94,9 @@ impl Scene {
             min_x = min_x.min(g.center.x - g.radius - 0.1);
             max_x = max_x.max(g.center.x + g.radius + 0.1);
             // HUD textures must stream even when the world camera is far
-            // away; their interest is screen area, never world distance.
-            let px = (g.radius * 2.0 * size[1] as f32 * world.hud_zoom).max(32.0);
+            // away; never world distance, nor the size of the prim.
             for id in &g.tex_ids {
-                self.textures.note_usage_fixed(id, px);
+                self.textures.note_usage_fixed(id, TEXTURE_PIXELS);
             }
             for face in &g.faces {
                 // LLDrawPoolAlpha::renderDebugAlpha also runs in the HUD pass.

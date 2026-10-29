@@ -129,6 +129,14 @@ fn output_buffer(rate: u32) -> (cpal::BufferSize, Duration) {
     }
 }
 
+/// The output buffer on a PulseAudio server (PipeWire included). cpal asks
+/// it for twice the period, so a period of half [`OUTPUT_QUEUE_SECS`] queues
+/// the same 40 ms as on Windows; the server's default would be two seconds.
+fn pulse_output_buffer(rate: u32) -> (cpal::BufferSize, Duration) {
+    let frames = (f64::from(rate) * OUTPUT_QUEUE_SECS / 2.0).round() as u32;
+    (cpal::BufferSize::Fixed(frames.max(1)), Duration::from_secs_f64(OUTPUT_QUEUE_SECS))
+}
+
 /// How often the output thread reports the stream's health.
 const HEALTH_REPORT: Duration = Duration::from_secs(5);
 
@@ -203,7 +211,7 @@ fn output_main(
     loop {
         let mut reopen_now = false;
         match open_stream(&mixer, wanted.as_deref(), &reference) {
-            Ok((stream, new_info, health)) => {
+            Ok((stream, new_info, health, device)) => {
                 log::info!(
                     "audio output: {} ({} Hz, {} ch)",
                     new_info.device_name,
@@ -214,11 +222,27 @@ fn output_main(
                 if let Some(tx) = ready.take() {
                     let _ = tx.send(Ok(()));
                 }
+                let watch = if wanted.is_none() {
+                    devices::DefaultWatch::new(Direction::Output, &device)
+                } else {
+                    None
+                };
                 let mut last_report = Instant::now();
+                let mut last_watch = Instant::now();
                 loop {
                     if last_report.elapsed() >= HEALTH_REPORT {
                         health.report(last_report.elapsed().as_secs());
                         last_report = Instant::now();
+                    }
+                    if let Some(watch) = &watch
+                        && last_watch.elapsed() >= devices::DefaultWatch::EVERY
+                    {
+                        last_watch = Instant::now();
+                        if watch.changed() {
+                            log::info!("audio output: the default device changed; reopening");
+                            reopen_now = true;
+                            break;
+                        }
                     }
                     match ctl.recv_timeout(Duration::from_millis(250)) {
                         Ok(OutputCmd::SetDevice(name)) => {
@@ -260,25 +284,26 @@ fn output_main(
     }
 }
 
-/// Opens `name` (or the default device). A named device that is missing or
-/// fails to open falls back to the default one.
+/// Opens `name` (or the default device), and returns the device opened too.
+/// A named device that is missing or fails to open falls back to the default
+/// one.
 fn open_stream(
     mixer: &Arc<Mutex<Mixer>>,
     name: Option<&str>,
     reference: &EchoReference,
-) -> Result<(cpal::Stream, OutputInfo, Arc<StreamHealth>), AudioError> {
+) -> Result<(cpal::Stream, OutputInfo, Arc<StreamHealth>, cpal::Device), AudioError> {
     let picked = devices::pick(Direction::Output, name).ok_or(AudioError::NoDevice)?;
     match open_device(mixer, &picked.device, reference) {
         Ok((stream, mut info, health)) => {
             info.fallback = picked.fallback;
-            Ok((stream, info, health))
+            Ok((stream, info, health, picked.device))
         }
         Err(e) if name.is_some() && !picked.fallback => {
             log::warn!("audio output device {name:?} cannot be opened ({e}); using the default");
             let picked = devices::pick(Direction::Output, None).ok_or(AudioError::NoDevice)?;
             let (stream, mut info, health) = open_device(mixer, &picked.device, reference)?;
             info.fallback = true;
-            Ok((stream, info, health))
+            Ok((stream, info, health, picked.device))
         }
         Err(e) => Err(e),
     }
@@ -292,13 +317,19 @@ fn open_device(
     let supported = device.default_output_config().map_err(|e| AudioError::Device(e.to_string()))?;
     let mut config = supported.config();
     let queued;
-    (config.buffer_size, queued) = output_buffer(config.sample_rate);
+    (config.buffer_size, queued) = if devices::is_pulse(device) {
+        pulse_output_buffer(config.sample_rate)
+    } else {
+        output_buffer(config.sample_rate)
+    };
     let health = Arc::new(StreamHealth::new(queued));
     let stream = match supported.sample_format() {
         SampleFormat::F32 => build::<f32>(device, &config, mixer, &health, reference),
         SampleFormat::I16 => build::<i16>(device, &config, mixer, &health, reference),
         SampleFormat::U16 => build::<u16>(device, &config, mixer, &health, reference),
         SampleFormat::I32 => build::<i32>(device, &config, mixer, &health, reference),
+        // The PulseAudio host reports 24-bit sinks (s24le, s24-32le) as I24.
+        SampleFormat::I24 => build::<cpal::I24>(device, &config, mixer, &health, reference),
         SampleFormat::F64 => build::<f64>(device, &config, mixer, &health, reference),
         SampleFormat::I8 => build::<i8>(device, &config, mixer, &health, reference),
         SampleFormat::U8 => build::<u8>(device, &config, mixer, &health, reference),
@@ -477,6 +508,13 @@ mod tests {
     }
 
     #[test]
+    fn pulse_output_buffer_queues_forty_ms_in_two_periods() {
+        let (size, queued) = pulse_output_buffer(48_000);
+        assert_eq!(size, cpal::BufferSize::Fixed(960));
+        assert_eq!(queued, Duration::from_millis(40));
+    }
+
+    #[test]
     fn adapter_resamples_and_maps_channels() {
         let params = Arc::new(SharedParams::new());
         let (tx, rx) = crossbeam_channel::unbounded();
@@ -496,5 +534,23 @@ mod tests {
             assert!((i32::from(frame[1]) - i32::from(full)).abs() < 50);
             assert!(frame[2..].iter().all(|&s| s == 0));
         }
+    }
+
+    #[test]
+    fn adapter_fills_a_24_bit_device() {
+        let params = Arc::new(SharedParams::new());
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut mixer = Mixer::new(params, rx);
+        let data: Arc<[f32]> = vec![0.5f32; 48_000].into();
+        tx.send(Command::PlayClip(ClipVoice::new(Channel::Ui, data, 1.0))).unwrap();
+
+        // 48 kHz stereo, I24 (a 24-bit sink of the PulseAudio host).
+        let mut adapter = OutputAdapter::new(48_000, 2);
+        let mut out = vec![cpal::I24::EQUILIBRIUM; 480 * 2];
+        for _ in 0..10 {
+            adapter.fill(&mut mixer, &mut out);
+        }
+        let full = cpal::I24::from_sample(0.5f32).inner();
+        assert!(out.iter().all(|s| (s.inner() - full).abs() < 4096));
     }
 }

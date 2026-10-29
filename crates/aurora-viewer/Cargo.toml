@@ -12,8 +12,9 @@ aurora-i18n = { version = "0.1.0", path = "../aurora-i18n" }
 anyhow = "1.0.104"
 # Embedded Blender image pixels; maintained MIT/Apache-2.0 codec.
 base64 = "0.23.1"
-# The computer's UTC offset for the bars' clock (ui/bars/clock.rs); already
-# built for aurora-llsd, MIT/Apache-2.0.
+# The computer's UTC offset for the bars' clock (ui/bars/clock.rs) and its
+# local time off Windows (snapshot names, chat log dates, script __DATE__);
+# already built for aurora-llsd, MIT/Apache-2.0.
 chrono = "0.4.45"
 # The bars' clock: the computer's tz database zone (Windows' zones mapped to
 # IANA names; already in the tree through chrono) and its abbreviation now
@@ -125,6 +126,11 @@ windows = { version = "0.62.2", features = ["Data_Xml_Dom", "Foundation", "UI_No
 # getenv without allocating, for the allocator's choice (allocator.rs); already
 # in the tree
 libc = "0.2.190"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The freedesktop notification service (system_notify.rs), over the session
+# bus; already in the tree through keyring's Secret Service store
+zbus = "5.19.0"
 
 # icon and version block of aurora-viewer.exe (build.rs; runs rc.exe of the
 # Windows SDK). Without `toml`: nothing is read from Cargo.toml.

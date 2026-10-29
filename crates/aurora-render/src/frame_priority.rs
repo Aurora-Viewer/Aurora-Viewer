@@ -71,6 +71,12 @@ fn set_thread_priority(raised: bool) {
             SetThreadPriority(GetCurrentThread(), priority);
         }
     }
+    // Linux: no raise. A nice value below the process's needs RLIMIT_NICE
+    // or CAP_SYS_NICE (neither on a stock desktop); with the default
+    // autogroups it would only weigh against the viewer's own threads, not
+    // against a compiler or a browser; and every process the raised main
+    // thread starts (the media plugin) would inherit it. The background
+    // jobs are lowered instead (scene/jobs.rs), which needs no right.
     #[cfg(not(windows))]
     let _ = raised;
 }

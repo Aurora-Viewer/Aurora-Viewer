@@ -37,6 +37,13 @@ Get-ChildItem -LiteralPath $dictionaries -Directory -ErrorAction Stop | ForEach-
 }
 $docs = 'LICENSE', 'NOTICE.md', 'README.md' | ForEach-Object { Join-Path $Source $_ }
 Copy-Item -LiteralPath $docs -Destination $Out -ErrorAction Stop
+# Linux (an executable without extension): the desktop entry and its icon,
+# named after the viewer's Wayland app_id / X11 WM_CLASS (cli.rs DESKTOP_ID)
+# so the desktop matches the window to them. docs/LINUX.md installs them.
+if (-not [IO.Path]::GetExtension($Exe)) {
+    Copy-Item -LiteralPath (Join-Path $Source 'packaging/linux/aurora-viewer.desktop') -Destination $Out -ErrorAction Stop
+    Copy-Item -LiteralPath (Join-Path $Source 'assets/branding/aurora-logo.svg') -Destination (Join-Path $Out 'aurora-viewer.svg') -ErrorAction Stop
+}
 $taskExePath = (Resolve-Path -LiteralPath $Exe).Path
 $taskVersion = (& $taskExePath --version | Out-String).Trim() -replace '^Aurora Viewer ', ''
 if ($LASTEXITCODE -ne 0 -or $taskVersion -notmatch '^\d+\.\d+\.\d+([+-][0-9A-Za-z.+-]+)?$') { throw 'Invalid package version.' }

@@ -368,6 +368,8 @@ pub enum Action {
     /// Avatar health's "Stop avatar animations", the scripts keeping their
     /// permissions (menu_viewer.xml, shortcut="alt|shift|A").
     StopAnimations,
+    /// World › Resync Animations (Tools.ResyncAnimations, Ctrl+S).
+    ResyncAnimations,
     /// Avatar health's "Refresh attachments" (menu_viewer.xml,
     /// shortcut="alt|shift|R").
     RefreshAttachments,
@@ -516,6 +518,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 vec![
                     (Action::Rebake, aurora_i18n::tr!("ui-context-rebake")),
                     (Action::StopAnimations, aurora_i18n::tr!("avatar-health-stop-animations")),
+                    (Action::ResyncAnimations, aurora_i18n::tr!("toolbar-command-resync-animations")),
                     (Action::RefreshAttachments, aurora_i18n::tr!("avatar-health-refresh-attachments")),
                 ],
             ),
@@ -812,6 +815,7 @@ impl KeyBindings {
             (Action::DevToolbox, [kalt(K::KeyD, true, false), None]),
             // menu_viewer.xml: Avatar Health
             (Action::StopAnimations, [kalt(K::KeyA, false, true), None]),
+            (Action::ResyncAnimations, [kmod(K::KeyS, true, false), None]),
             (Action::RefreshAttachments, [kalt(K::KeyR, false, true), None]),
             (Action::PhotoWindow, [kmod(K::KeyS, true, true), None]),
             (Action::PhotoToDisk, [kmod(K::Backquote, true, false), None]),
@@ -1753,6 +1757,7 @@ mod tests {
             (Action::DevToolbox, (true, false, true), [K::KeyD; 4]),
             (Action::Rebake, (true, false, true), [K::KeyR; 4]),
             (Action::StopAnimations, (false, true, true), [K::KeyA, K::KeyQ, K::KeyQ, K::KeyA]),
+            (Action::ResyncAnimations, (true, false, false), [K::KeyS; 4]),
             (Action::RefreshAttachments, (false, true, true), [K::KeyR; 4]),
             (Action::PhotoWindow, (true, true, false), [K::KeyS; 4]),
             (Action::SitGround, (false, true, true), [K::KeyS; 4]),
@@ -1848,10 +1853,41 @@ mod tests {
     fn old_files_get_new_actions() {
         let mut kb = KeyBindings::default();
         kb.map.retain(|(a, _)| *a != Action::ToggleMic);
+        kb.map.retain(|(a, _)| *a != Action::ResyncAnimations);
         kb.map.push((Action::Forward, [None, None])); // duplicate
         let kb = kb.sanitized();
         assert_eq!(kb.map.iter().filter(|(a, _)| *a == Action::Forward).count(), 1);
         assert!(kb.map.iter().any(|(a, _)| *a == Action::ToggleMic));
+        assert_eq!(
+            kb.get(Action::ResyncAnimations),
+            KeyBindings::default().get(Action::ResyncAnimations)
+        );
+    }
+
+    #[test]
+    fn resync_shortcut_does_not_walk_back_or_take_snapshot_and_sit_keys() {
+        let kb = KeyBindings::default();
+        let input = Input::key(KeyCode::KeyS);
+        let mods = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        let mut down = HashSet::from([input.clone()]);
+        assert_eq!(kb.update_held_input(&mut down, &input, true, mods), Some(Action::ResyncAnimations));
+        assert!(down.is_empty());
+        assert!(!kb.held(Action::Back, &down, Mods::default()));
+        assert_eq!(kb.triggered(&input, Mods { shift: true, ..mods }), Some(Action::PhotoWindow));
+        assert_eq!(
+            kb.triggered(
+                &input,
+                Mods {
+                    alt: true,
+                    shift: true,
+                    ctrl: false
+                }
+            ),
+            Some(Action::SitGround)
+        );
     }
 
     #[test]
