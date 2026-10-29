@@ -26,6 +26,23 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-10-29 — Aurora 0.8.3 tourne nativement sur Mac
+Aurora tourne désormais nativement sur les Mac Apple Silicon, avec un rendu Metal : chaque release contient une application macOS à glisser dans Applications. Les pages web et les vidéos du monde y fonctionnent aussi : la première fois qu'il en a besoin, le viewer télécharge lui-même ses plugins média. Le guide d'installation est dans docs/MACOS.md.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.3)
+
+## 2026-10-29 — Les messages importants, sous vos yeux
+Un message qu'un gérant de domaine envoie à la région s'affiche maintenant en carte au milieu de l'écran, comme une offre d'amitié, et reste sous la cloche et dans le chat local. Une notice de groupe montre son groupe, son insigne et sa pièce jointe, prête à enregistrer. Les L$ que vous payez à un résident apparaissent dans votre conversation avec lui, comme ceux qu'il vous paie, et y restent quand vous la rouvrez.
+
+## 2026-10-29 — Pour les photos et les créateurs
+Dans le viseur photo, Maj + clic garde nets tous les avatars d'une photo de groupe, vos HUD répondent aux clics, et le bouton Poseur pose l'avatar par-dessus la prise de vue. Le poseur fonctionne maintenant avec toutes les formes, demande avant qu'une fermeture perde la pose, et annule avec Ctrl+Z. LiveMesh prévisualise une animation sur un modèle local enregistré, queues et ailes Bento comprises.
+
+## 2026-10-29 — Inventaire, graphismes et Linux
+Survolez un objet de l'inventaire pour voir son image, et construisez une recherche avancée à partir de règles visuelles, enregistrée pour plus tard. Enregistrez vos réglages graphiques en profils nommés. Sous Linux, le son passe par PulseAudio ou PipeWire, les notifications viennent du bureau, et le dock montre le nouveau loup hurlant d'Aurora. Merci à circuskid pour Linux, à logue pour la relecture japonaise native, et à voidel, notre nouveau contributeur.
+
+## 2026-10-29 — Vos idées, sur le tableau des suggestions
+Les demandes de fonctionnalités vivent désormais sur notre tableau des suggestions : proposez une idée, votez pour celles que vous voulez le plus et suivez leur avancement. Les demandes faites sur GitHub y ont été déplacées.
+[Ouvrir le tableau des suggestions](https://feedback.aurora-viewer.org)
+
 ## 2026-10-29 — Aurora 0.8.2 parle japonais, 日本語
 Aurora existe désormais en japonais : choisissez 日本語 dans Préférences › Interface › Langue, ou laissez la langue du système le choisir sur un Windows japonais. Chaque message est traduit avec les termes japonais officiels de Second Life, l'interface s'affiche avec des polices japonaises et les dates se lisent à la japonaise.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.2)
