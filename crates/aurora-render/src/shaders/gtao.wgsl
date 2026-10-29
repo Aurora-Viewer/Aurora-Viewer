@@ -328,27 +328,24 @@ fn surface_normals(px: vec2<i32>, uv: vec2<f32>, pixel: vec2<f32>, centre: vec3<
     return mat2x3<f32>(n, n);
 }
 
-// The angle of normal `n` in a slice (lines 11 to 15 of the paper): from
-// the view vector, positive towards the slice's direction.
-fn slice_normal_angle(n: vec3<f32>, axis: vec3<f32>, ortho_direction: vec3<f32>, view_vec: vec3<f32>) -> f32 {
-    let projected = n - axis * dot(n, axis);
-    let cos_n = saturate(dot(projected, view_vec) / max(length(projected), 1e-6));
-    return sign(dot(ortho_direction, projected)) * fast_acos(cos_n);
-}
-
 // Under the smooth normal of a low-poly mesh, the flat triangle rises above
-// the smooth tangent plane on one side of a slice, and its own samples
-// occluded it there: a ring along the silhouette of round prims, a band at
-// the avatar's neck. The angle the horizons of side `sgn` (1: the slice's
-// direction, -1 against it) go down by: how far the triangle's plane
-// (normal angle `ng`) is above the smooth one (`nn`) on that side, at most
-// FACET_LIFT_MAX, beyond which the triangle's normal is the depth's noise
-// at an edge rather than a facet. Real occluders lose as much, a few
-// degrees on a fine mesh.
-const FACET_LIFT_MAX: f32 = 0.7853981633974483;
+// the smooth tangent plane on one side, and its own samples occluded it
+// there (a ring along the silhouette of round prims, a band at the avatar's
+// neck); the neighbouring triangles of a concave fold rise above it by the
+// angle of their crease, and drew the mesh's edges as lines. How much a
+// sample in direction `dir` (unit, from the pixel's point) counts as an
+// occluder: nothing on the triangle's plane (`flat_n`) or under it, fully
+// from FACET_MARGIN above it (the sine of 30°, beyond the creases of the
+// usual low-poly prims and bodies), smoothly between. Its height is still
+// measured from the smooth plane, the same on every triangle: lowering the
+// horizons by the angle between the two planes (#1037) did that per
+// triangle, and the occlusion of real occluders changed from one triangle
+// to the next (#993). What it leaves out is the band within 30° of the
+// surface, about 7 % of a slice's cosine-weighted visibility per side.
+const FACET_MARGIN: f32 = 0.5;
 
-fn facet_lift(nn: f32, ng: f32, sgn: f32) -> f32 {
-    return clamp(sgn * (nn - ng), 0.0, FACET_LIFT_MAX);
+fn above_facet(dir: vec3<f32>, flat_n: vec3<f32>) -> f32 {
+    return smoothstep(0.0, FACET_MARGIN, dot(dir, flat_n));
 }
 
 // XeGTAO_FastACos
@@ -504,8 +501,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             // heuristic lets a sample behind the centre go sooner
             let falloff_base0 = length(vec3<f32>(delta0.xy, delta0.z * (1.0 + thin_occluder_compensation)));
             let falloff_base1 = length(vec3<f32>(delta1.xy, delta1.z * (1.0 + thin_occluder_compensation)));
-            let weight0 = saturate(falloff_base0 * falloff_mul + falloff_add);
-            let weight1 = saturate(falloff_base1 * falloff_mul + falloff_add);
+            var weight0 = saturate(falloff_base0 * falloff_mul + falloff_add);
+            var weight1 = saturate(falloff_base1 * falloff_mul + falloff_add);
+            if (g.misc.w > 0.5) {
+                // (the mesh normal: the triangle's own samples left out)
+                weight0 *= above_facet(horizon_vec0, normals[1]);
+                weight1 *= above_facet(horizon_vec1, normals[1]);
+            }
             var shc0 = dot(horizon_vec0, view_vec);
             var shc1 = dot(horizon_vec1, view_vec);
             shc0 = mix(low_horizon0, shc0, weight0);
@@ -518,14 +520,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         // slopes
         projected_length = mix(projected_length, 1.0, 0.05);
         // line 27: the visible arc between the two horizons, cosine weighted
-        var h0 = -fast_acos(horizon1);
-        var h1 = fast_acos(horizon0);
-        if (g.misc.w > 0.5) {
-            // (the mesh normal: without the triangle's own samples)
-            let ng = slice_normal_angle(normals[1], axis, ortho_direction, view_vec);
-            h1 = min(h1 + facet_lift(nn, ng, 1.0), nn + PI_HALF);
-            h0 = max(h0 - facet_lift(nn, ng, -1.0), nn - PI_HALF);
-        }
+        let h0 = -fast_acos(horizon1);
+        let h1 = fast_acos(horizon0);
         let iarc0 = (cos_norm + 2.0 * h0 * sin(nn) - cos(2.0 * h0 - nn)) / 4.0;
         let iarc1 = (cos_norm + 2.0 * h1 * sin(nn) - cos(2.0 * h1 - nn)) / 4.0;
         visibility += projected_length * (iarc0 + iarc1);
@@ -648,13 +644,6 @@ fn main_bitmask(@builtin(global_invocation_id) id: vec3<u32>) {
         let projected_length = length(projected_normal);
         let cos_norm = saturate(dot(projected_normal, view_vec) / max(projected_length, 1e-6));
         let nn = sign_norm * fast_acos(cos_norm);
-        // the triangle's own samples lowered under the smooth normal, as
-        // in `main`: they would light it with its own colour
-        var lift = vec2<f32>(0.0);
-        if (g.misc.w > 0.5) {
-            let ng = slice_normal_angle(normals[1], axis, ortho_direction, view_vec);
-            lift = vec2<f32>(facet_lift(nn, ng, 1.0), facet_lift(nn, ng, -1.0));
-        }
         var occluded = 0u;
         var slice_light = vec3<f32>(0.0);
 
@@ -678,21 +667,30 @@ fn main_bitmask(@builtin(global_invocation_id) id: vec3<u32>) {
                 if (distance(front, centre) > radius) {
                     continue;
                 }
+                let dir = normalize(front - centre);
+                // the triangle's own samples left out, as in `main`: they
+                // would light it with its own colour
+                var facet = 1.0;
+                if (g.misc.w > 0.5) {
+                    facet = above_facet(dir, normals[1]);
+                    if (facet <= 0.0) {
+                        continue;
+                    }
+                }
                 let back = front + normalize(front) * thickness;
-                let side_lift = sgn * lift[side];
-                let af = sgn * fast_acos(clamp(dot(normalize(front - centre), view_vec), -1.0, 1.0)) + side_lift;
+                let af = sgn * fast_acos(clamp(dot(dir, view_vec), -1.0, 1.0));
                 // a sample on the pixel's own plane (or below it) hides
                 // nothing: without this margin a flat floor occluded itself
                 // by a sector on each side
                 if (sgn * (af - nn) > PI_HALF - 0.1) {
                     continue;
                 }
-                let ab = sgn * fast_acos(clamp(dot(normalize(back - centre), view_vec), -1.0, 1.0)) + side_lift;
+                let ab = sgn * fast_acos(clamp(dot(normalize(back - centre), view_vec), -1.0, 1.0));
                 let mask = sectors_between(sector(af, nn), sector(ab, nn));
                 let fresh = mask & ~occluded;
                 if (fresh != 0u) {
                     let l = previous_radiance(front);
-                    slice_light += l.rgb * f32(countOneBits(fresh)) / 32.0;
+                    slice_light += l.rgb * (facet * f32(countOneBits(fresh)) / 32.0);
                 }
                 occluded |= mask;
             }

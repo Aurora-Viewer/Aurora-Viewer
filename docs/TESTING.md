@@ -8336,15 +8336,18 @@ What the inventory must show with these scenarios:
   low-poly meshes showed their facets, more or less visible with the sky's
   ambient light (#993). Under the smooth normal, a triangle rises above the
   smooth tangent plane on one side, and its own samples occluded it there
-  (a ring along the silhouette of the torus, a band at the avatar's neck):
-  on each slice the horizons on that side go down by the angle between the
-  two planes (`facet_lift`, at most 45°), so only what stands above the
-  triangle occludes. `depth` goes back to the depth's normal (the prepass
-  then draws the depth alone, the image as before), `alt` every other
-  second. The Legacy method does not change. To compare,
-  `AURORA_DEMO_DEBUG=ao` with `AURORA_AO=gtao:2` and
-  `AURORA_DEMO_CAMERA=close,800,620,40`: the back and the skirt of our
-  avatar, faceted before, and the torus behind the plaza.
+  (a ring along the silhouette of the torus, a band at the avatar's neck),
+  and the neighbours across a concave crease drew the mesh's edges as
+  lines: each sample occludes only as much as it stands above the
+  triangle's own plane (`above_facet`: nothing on it, fully from 30°
+  above it), its height still measured from the smooth plane, so the
+  occlusion does not change from one triangle to the next. `depth` goes
+  back to the depth's normal (the prepass then draws the depth alone, the
+  image as before), `alt` every other second. The Legacy method does not
+  change. To compare, `AURORA_DEMO_DEBUG=ao` with `AURORA_AO=gtao:2`: the
+  back, the waist and the skirt of our avatar, and the large sphere behind
+  the material panels, where the lines of the mesh's creases showed;
+  `AURORA_DEMO_SKY=1,0.8,1.2` for a sky with strong ambient light.
 - **`AURORA_SSIL=1|0|alt`**: Preferences › Graphics › Indirect light
   (GTAO) for this launch, without changing the saved setting; it needs the
   GTAO method. A pass after GTAO's gathers the light on a visibility
