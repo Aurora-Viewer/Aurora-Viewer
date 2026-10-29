@@ -78,7 +78,7 @@ jobs:
           key: ${{ matrix.target }}
       # The corpus libFuzzer grew in earlier runs, plus the current seeds.
       - name: Restore the corpus
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
@@ -94,7 +94,7 @@ jobs:
           -timeout=10 -rss_limit_mb=4096 -malloc_limit_mb=1024
       - name: Save the corpus
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
