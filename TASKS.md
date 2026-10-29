@@ -13,7 +13,7 @@
   own right-aligned bin, which confirms deletion without loading it.
   Graphics > Parcels follows Smoothness, with separate sections for filtering,
   the filter's scope list and always-visible parcels.
-  `check.ps1` green: 6,166 passed, 30 ignored, including ten new regressions.
+  `check.ps1` green: 6,198 passed, 30 ignored, including ten new regressions.
   Native FR editor, dropdown, name-dialog and Parcels tab captures inspected.
   Validated by the human in demo on 2026-10-29; merge authorized.
 - 🟡 Poser close confirmation and Ctrl+Z / Ctrl+Y (human request, 2026-10-29; task `poser-close-undo`; no issue; follows #1450; validated by the human in demo on 2026-10-29): with stop on close, a close that loses edited joints (any subject) asks first: Minimize keeps the pose, Close anyway closes, Escape cancels, Don't ask again turns off the new Settings › Window switch (on by default). The Legacy Viewer closes at once (`FSFloaterPoser::onClose`); asking avoids losing a pose by mistake. Covers the cross, Ctrl+W and the photo viewfinder's wand; Stop posing only pauses and does not ask. Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z undo and redo in the poser as its title arrows (an Aurora addition: the Legacy poser has buttons only), unless a text field has the keyboard or the build tools' window is in front; gestures bound to them wait while the poser is open. Ctrl+W now finds a window raised over the viewfinder. The demo simulator answers the build tools' Undo / Redo (placements per object, one step per drag). Demo: `AURORA_DEMO_POSER=close`.
