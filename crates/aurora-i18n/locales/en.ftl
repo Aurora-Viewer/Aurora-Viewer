@@ -12458,3 +12458,4 @@ translate-options-my-language-hint = What the messages of translated conversatio
 translate-options-model = Translation model
 translate-options-model-hint = Runs on this computer, downloaded the first time a conversation is translated. The larger model translates better and needs more memory.
 translate-options-model-size = { $model }{ " (" }{ $size }{ " GB)" }
+translate-line-pending = translating…

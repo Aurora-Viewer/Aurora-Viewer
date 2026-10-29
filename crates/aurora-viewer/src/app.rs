@@ -10149,6 +10149,18 @@ impl App {
                 }
             }
         }
+        if self.demo && crate::demo::translate::active() {
+            let agent = self.world.agent_id;
+            for event in crate::demo::translate::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+                self.chat_ui.selected = Some(crate::demo::translate::WITH);
+            }
+            if crate::demo::translate::starts_on() && self.frame_count == crate::demo::translate::ANSWER_FRAME {
+                self.translate_outgoing(crate::demo::translate::WITH, crate::demo::translate::ANSWER);
+            }
+        }
         if self.demo && crate::demo::keywords::active() {
             let agent = self.world.agent_id;
             for event in crate::demo::keywords::events(self.frame_count, agent) {
@@ -17602,6 +17614,18 @@ impl ApplicationHandler for App {
             if let Ok(mode) = std::env::var("AURORA_DEMO_CONV_REORDER") {
                 self.panels.chat = true;
                 self.chat_ui.demo_reorder = Some(ui::chat::ReorderDemo::parse(&mode));
+            }
+            // AURORA_DEMO_TRANSLATE: the Conversations window open, a fake
+            // model (or the real one), the conversation translated with `on`
+            // (for the run, never saved)
+            if crate::demo::translate::active() {
+                self.panels.chat = true;
+                if !crate::demo::translate::real() {
+                    self.translate = crate::translate::TranslateService::with_backend(crate::demo::translate::backend);
+                }
+                if crate::demo::translate::starts_on() {
+                    self.settings.translate.sessions.insert(crate::demo::translate::WITH, "es".into());
+                }
             }
             // AURORA_DEMO_KEYWORDS: the alerts on for the run, with the
             // Conversations window open on the nearby chat

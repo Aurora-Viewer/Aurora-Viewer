@@ -6,6 +6,11 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# The local translation model of the IM translator (llama.cpp on the CPU;
+# `aurora-translate/vulkan` adds the GPU).
+translator = ["aurora-translate/llama"]
+
 [dependencies]
 aurora-updater = { version = "0.1.0", path = "../aurora-updater" }
 aurora-translate = { version = "0.1.0", path = "../aurora-translate" }

@@ -374,6 +374,7 @@ fn roomy_row(
                 chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &visible, size, color, italics, mark);
             }
             super::previews::cards(ui, env, line, &text);
+            super::translation_note(ui, p, env.world, line);
         });
     });
     row.response.rect
@@ -426,6 +427,7 @@ fn compact_row(
                 chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &visible, size, color, italics, mark);
             }
             super::previews::cards(ui, env, line, &text);
+            super::translation_note(ui, p, env.world, line);
         });
     });
     row.response.rect

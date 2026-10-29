@@ -218,6 +218,9 @@ pub mod tex_refresh;
 /// (AURORA_DEMO_TOASTS).
 #[path = "demo_toasts.rs"]
 pub mod toasts;
+/// Translated private conversations (AURORA_DEMO_TRANSLATE).
+#[path = "demo_translate.rs"]
+pub mod translate;
 /// Fast camera turns (AURORA_DEMO_TURN).
 #[path = "demo_turn.rs"]
 pub mod turn;

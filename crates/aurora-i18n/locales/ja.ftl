@@ -12142,3 +12142,4 @@ translate-options-my-language-hint = 翻訳する会話のメッセージをこ�
 translate-options-model = 翻訳モデル
 translate-options-model-hint = このコンピュータ上で動作し、会話を初めて翻訳するときにダウンロードされます。大きいモデルほど翻訳の質が高くなりますが、より多くのメモリを使用します。
 translate-options-model-size = { $model }{ "（" }{ $size }{ "ＧＢ）" }
+translate-line-pending = 翻訳中…

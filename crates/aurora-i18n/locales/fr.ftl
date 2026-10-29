@@ -12454,3 +12454,4 @@ translate-options-my-language-hint = La langue dans laquelle les messages des co
 translate-options-model = Modèle de traduction
 translate-options-model-hint = Fonctionne sur cet ordinateur, téléchargé la première fois qu’une conversation est traduite. Le plus grand modèle traduit mieux et demande plus de mémoire.
 translate-options-model-size = { $model }{ " (" }{ $size }{ " Go)" }
+translate-line-pending = traduction…

@@ -839,6 +839,22 @@ fn translation_marks(job: &mut egui::text::LayoutJob, world: &World, line: &crat
     }
 }
 
+/// The same under a row of Aurora's workspace (`thread.rs`): the original
+/// under the translation, or the state of the translation.
+pub(super) fn translation_note(ui: &mut egui::Ui, p: &Palette, world: &World, line: &crate::world::ChatLine) {
+    use crate::translate::LineShow;
+    let Some(show) = world.translate_view.lines.get(&line.time) else {
+        return;
+    };
+    let text = match show {
+        LineShow::Pending => aurora_i18n::tr!("translate-line-pending").to_owned(),
+        LineShow::Original(original) => world.rlva_filter_text(original).into_owned(),
+        LineShow::NotTranslated => aurora_i18n::tr!("translate-line-not-translated").to_owned(),
+        LineShow::NotSent => aurora_i18n::tr!("translate-line-not-sent").to_owned(),
+    };
+    ui.label(RichText::new(text).size(11.5).color(p.muted));
+}
+
 fn line_job(
     line: &crate::world::ChatLine,
     p: &Palette,

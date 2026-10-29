@@ -23,7 +23,14 @@ const BUTTON: f32 = 28.0;
 /// What the field takes under the messages: typing line, box and margin.
 pub(super) fn height(ctx: &egui::Context, conversation: Option<uuid::Uuid>) -> f32 {
     let field = egui::Id::unique(("conv_input", conversation));
-    TYPING_H + BOX_H.max(super::input::height(ctx, field, BUTTON) + 8.0) + 12.0
+    let bars = ctx.data(|d| d.get_temp::<f32>(bars_id(conversation))).unwrap_or(0.0);
+    TYPING_H + bars + BOX_H.max(super::input::height(ctx, field, BUTTON) + 8.0) + 12.0
+}
+
+/// Where the height of the translation bars above the field is kept, for
+/// [`height`] at the next frame.
+fn bars_id(conversation: Option<uuid::Uuid>) -> egui::Id {
+    egui::Id::unique(("translate_bars", conversation))
 }
 
 /// The volume of what we say in the nearby chat.
@@ -112,10 +119,17 @@ pub(super) fn show(
             }
             // ---- the box
             let mut draft = std::mem::take(st.draft_mut(st.selected));
+            let top = ui.cursor().top();
             if kind == Some(sidebar::Kind::Private)
                 && let Some(session) = st.selected
             {
                 translate_bars(ui, p, world, session, &mut draft, actions);
+            }
+            let bars = ui.cursor().top() - top;
+            let id = bars_id(st.selected);
+            if ui.ctx().data(|d| d.get_temp::<f32>(id)) != Some(bars) {
+                ui.ctx().data_mut(|d| d.insert_temp(id, bars));
+                ui.ctx().request_repaint();
             }
             if let Some(q) = quote {
                 draft = format!("{q}{draft}");
@@ -150,7 +164,7 @@ pub(super) fn show(
                         // (`/tr` works everywhere)
                         if kind == Some(sidebar::Kind::Private)
                             && let Some(session) = st.selected
-                            && (roomy || world.translate_view.partners.contains_key(&session))
+                            && (width > 320.0 || world.translate_view.partners.contains_key(&session))
                         {
                             translate_button(ui, p, world, session, actions);
                         }

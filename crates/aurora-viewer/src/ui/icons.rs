@@ -106,6 +106,8 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "indent-decrease",
     "indent-increase",
     "label-off",
+    "language",
+    "language-off",
     "layers-intersect",
     "layout-columns",
     "license",
