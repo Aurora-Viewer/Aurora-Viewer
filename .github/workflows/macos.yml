@@ -52,12 +52,14 @@ jobs:
           rustup update stable --no-self-update
           rustup component add clippy
       # caches are written from main only (see ci.yml); one key for the two
-      # macOS jobs, written by this one
+      # macOS jobs, written by this one. Its name is not the job's: the key
+      # would otherwise be the one of the old cache (clippy's output only),
+      # and main, finding it, would never build the tests into it
       - uses: Swatinem/rust-cache@v2
         id: cache
         if: steps.changes.outputs.code == 'true'
         with:
-          shared-key: macos
+          shared-key: macos-tests
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # dead code is the Windows job's: Windows-only helpers build here
       # without their callers, as on Linux. Not in the queue: the pull
@@ -135,7 +137,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         if: steps.changes.outputs.code == 'true'
         with:
-          shared-key: macos
+          shared-key: macos-tests
           save-if: false
       - name: Tests (interface)
         if: steps.changes.outputs.code == 'true'
