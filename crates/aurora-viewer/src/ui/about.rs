@@ -260,11 +260,7 @@ fn hero(ui: &mut egui::Ui, p: &Palette, logo: Option<&egui::TextureHandle>) {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
             ui.label(sheet::semibold(ui, "Aurora Viewer", 22.0, p.ink));
-            ui.label(
-                RichText::new(aurora_i18n::tr!("ui-login-second-life-client-rust-vulkan"))
-                    .size(12.0)
-                    .color(p.violet_pale),
-            );
+            ui.label(RichText::new(crate::ui::login::client_tagline()).size(12.0).color(p.violet_pale));
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);

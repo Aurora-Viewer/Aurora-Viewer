@@ -412,32 +412,54 @@ pub struct TilePass {
 }
 
 /// Photo pixels drawn around a tile on each side it shares with another
-/// tile, then cropped. The screen-space passes read the depth around each
-/// pixel: GTAO's horizon search, its normal and its edges, the contact
-/// shadows' rays (60 pixels). A tile drawn alone had no scene past its
-/// border, and GTAO took the border row it read again beyond it for a wall:
-/// a dark line along the seams. GTAO's radius (0.73 m) spans fewer pixels
-/// than the band beyond 9 m in a photo 1,800 pixels high, and its farthest
-/// samples weigh the least; the band costs 128 pixels of a side of 4,096 or
-/// more in the photos that need tiles.
+/// tile, then cropped, at least. The screen-space passes read the depth
+/// around each pixel: GTAO's horizon search, its normal and its edges, the
+/// contact shadows' rays (60 pixels). A tile drawn alone had no scene past
+/// its border, and GTAO took the border row it read again beyond it for a
+/// wall: a dark line along the seams. GTAO's radius (0.73 m) spans fewer
+/// pixels than the band beyond 9 m in a photo 1,800 pixels high, and its
+/// farthest samples weigh the least; the band costs 128 pixels of a side of
+/// 4,096 or more in the photos that need tiles. The bloom and the depth of
+/// field reach farther and widen it while they are on
+/// (`aurora_render::bloom_tile_reach`, `dof_tile_reach`).
 pub const TILE_GUARD: u32 = 128;
+
+/// The pixel a drawn tile starts on, and the multiple its size is rounded
+/// to (but at the photo's edges): the bloom halves the image six times, so
+/// its levels' texels (and the depth of field's tiles of 32 pixels) fall
+/// on those of one pass. Off them, each tile blurred its own grid and the
+/// halos stepped at the seams.
+const TILE_ALIGN: u32 = 64;
 
 /// How a photo of `size` is drawn: one pass when the card holds it (a side
 /// within `max_side`, the pixels within `max_pixels`, the memory its render
 /// targets take), otherwise the fewest equal tiles that fit with their guard
-/// bands (LLViewerWindow::rawSnapshot draws tiles of the window's size; one
-/// pass keeps the screen-space effects exact, so tiles are the fallback
-/// only).
-pub fn plan(size: (u32, u32), max_side: u32, max_pixels: u64) -> Vec<TilePass> {
+/// bands of `guard` pixels (LLViewerWindow::rawSnapshot draws tiles of the
+/// window's size; one pass keeps the screen-space effects exact, so tiles
+/// are the fallback only).
+pub fn plan(size: (u32, u32), max_side: u32, max_pixels: u64, guard: u32) -> Vec<TilePass> {
     let (w, h) = (size.0.max(1), size.1.max(1));
     let max_side = max_side.max(MIN_SIDE);
     let max_pixels = max_pixels.max(u64::from(MIN_SIDE) * u64::from(MIN_SIDE));
-    // at most an eighth of the side a pass can draw, so that the tiles keep
-    // most of what they draw (and always fit, down to the smallest limits)
-    let guard = TILE_GUARD.min(max_side / 8).min(max_pixels.isqrt() as u32 / 8);
-    // the side a pass draws when `side` is split in `n`: the tile, a band on
-    // each side and the pixel that puts its origin on an even one
-    let drawn = |side: u32, n: u32| if n > 1 { side.div_ceil(n) + 2 * guard + 1 } else { side };
+    // at most a quarter of the side a pass can draw, with its alignment, so
+    // that the tiles keep about half of what they draw (and always fit, down
+    // to the smallest limits)
+    let room = (max_side / 4).min(max_pixels.isqrt() as u32 / 4);
+    let guard = guard.min(room);
+    let align = TILE_ALIGN.min(prev_power_of_two(guard.max(2)));
+    // the widest a pass draws when `side` is split in `n`: a tile, a band
+    // on each side it shares and the pixels that put its edges on the
+    // alignment (at most 2 x guard + 2 x (align - 1) more than the tile:
+    // n large enough always fits)
+    let drawn = |side: u32, n: u32| {
+        let t = side.div_ceil(n);
+        (0..n)
+            .map(|i| i * t)
+            .take_while(|&x| x < side)
+            .map(|x| band(side, x, t.min(side - x), guard, align).1)
+            .max()
+            .unwrap_or(side)
+    };
     let mut nx = w.div_ceil(max_side);
     let mut ny = h.div_ceil(max_side);
     loop {
@@ -471,7 +493,7 @@ pub fn plan(size: (u32, u32), max_side: u32, max_pixels: u64) -> Vec<TilePass> {
                 };
                 tiles.push(TilePass {
                     keep,
-                    draw: guarded((w, h), keep, guard),
+                    draw: guarded((w, h), keep, guard, align),
                 });
             }
         }
@@ -479,20 +501,27 @@ pub fn plan(size: (u32, u32), max_side: u32, max_pixels: u64) -> Vec<TilePass> {
     tiles
 }
 
+/// The largest power of two within `v` (at least 1).
+fn prev_power_of_two(v: u32) -> u32 {
+    1 << (31 - v.max(1).leading_zeros())
+}
+
 /// `tile` of a photo of `size` and `guard` pixels around it, within the
-/// photo: its own edges stay those of one pass. The origin is on an even
-/// pixel, the pixels GTAO at half resolution reads in one pass.
-fn guarded(size: (u32, u32), tile: Tile, guard: u32) -> Tile {
-    let x = tile.x.saturating_sub(guard) & !1;
-    let y = tile.y.saturating_sub(guard) & !1;
-    let right = (tile.x + tile.width + guard).min(size.0);
-    let bottom = (tile.y + tile.height + guard).min(size.1);
-    Tile {
-        x,
-        y,
-        width: right - x,
-        height: bottom - y,
-    }
+/// photo, its edges on multiples of `align` (an even number): its own edges
+/// stay those of one pass. The origin is at least on an even pixel, the
+/// pixels GTAO at half resolution reads in one pass.
+fn guarded(size: (u32, u32), tile: Tile, guard: u32, align: u32) -> Tile {
+    let (x, width) = band(size.0, tile.x, tile.width, guard, align);
+    let (y, height) = band(size.1, tile.y, tile.height, guard, align);
+    Tile { x, y, width, height }
+}
+
+/// The start and the length drawn along one side of `side` pixels for the
+/// `len` pixels kept from `start` (see [`guarded`]).
+fn band(side: u32, start: u32, len: u32, guard: u32, align: u32) -> (u32, u32) {
+    let from = start.saturating_sub(guard) / align * align;
+    let to = (start + len + guard).next_multiple_of(align).min(side);
+    (from, to - from)
 }
 
 /// The projection that draws `tile` of a photo of `size` with the photo's

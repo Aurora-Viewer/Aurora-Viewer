@@ -302,6 +302,7 @@ mod tests {
                         ui.set_width(390.0);
                         let mut env = ToastEnv {
                             pics: &pics,
+                            images: &HashMap::new(),
                             emoji: &mut emoji,
                             hidden: false,
                             message_seconds: 30.0,

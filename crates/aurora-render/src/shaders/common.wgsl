@@ -758,6 +758,18 @@ fn probe_radiance(pos: vec3<f32>, frag: vec2<f32>, r: vec3<f32>, roughness: f32,
     return select(fallback, s.rgb, s.w > 0.0);
 }
 
+// The largest value of the Rgba16Float scene targets (HDR_FORMAT).
+const HDR_MAX: f32 = 65504.0;
+
+// `c` written to a scene target as it would be stored, but finite: a
+// highlight brighter than the format holds (a sun specular on a smooth
+// metal or mirror) stays as bright as it can instead of turning infinite,
+// and a NaN counts as black. One such pixel would otherwise reach the TAA
+// history and the bloom chain, which spread it over the whole image (#1380).
+fn finite_hdr(c: vec3<f32>) -> vec3<f32> {
+    return select(clamp(c, vec3<f32>(-HDR_MAX), vec3<f32>(HDR_MAX)), vec3<f32>(0.0), c != c);
+}
+
 /// Reflection passes: drop geometry behind the mirror / below the water.
 fn reflection_clip(world_pos: vec3<f32>) -> bool {
     return in_reflection_pass() && dot(frame.clip_plane.xyz, world_pos) + frame.clip_plane.w < 0.0;

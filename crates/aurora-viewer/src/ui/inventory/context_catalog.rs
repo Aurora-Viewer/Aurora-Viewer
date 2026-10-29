@@ -839,6 +839,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
             Command::Links(id),
         );
     }
+    extra::similar(&mut c, &organize, inv, id, single, all);
     if item.is_some() || all {
         c.add(
             "replace-links",
@@ -1380,6 +1381,11 @@ mod tests {
             "empty-trash",
             "favorite-add",
             "favorite-remove",
+            "find-similar",
+            "find-similar-name",
+            "find-similar-creator",
+            "find-similar-type",
+            "find-similar-folder",
         ] {
             assert!(ids.contains(id), "missing editor option {id}");
         }

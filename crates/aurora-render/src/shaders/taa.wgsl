@@ -27,8 +27,12 @@ fn vs_taa(@builtin(vertex_index) vi: u32) -> Out {
     return o;
 }
 
-// Reduce HDR fireflies in the blend.
-fn tm(c: vec3<f32>) -> vec3<f32> {
+// Reduce HDR fireflies in the blend. An infinite input is held at the
+// largest value of the format (inf / (1 + inf) would be a NaN) and a NaN
+// counts as black: kept, either would stay in the history and leak into
+// every neighbour's clamp until the whole image is lost (#1380).
+fn tm(c_in: vec3<f32>) -> vec3<f32> {
+    let c = select(min(c_in, vec3<f32>(65504.0)), vec3<f32>(0.0), c_in != c_in);
     return c / (1.0 + max(c.r, max(c.g, c.b)));
 }
 

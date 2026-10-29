@@ -82,6 +82,7 @@ mod imports;
 mod inspect;
 mod inventory;
 mod inventory_drag;
+mod inventory_hover;
 mod inventory_thumbnail;
 mod joystick;
 mod land_moderation;
@@ -710,6 +711,7 @@ pub struct App {
     /// Other interface images by asset id (profiles: 1st life picture,
     /// group insignias).
     ui_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
+    inventory_hover_images: inventory_hover::Images,
     ui_image_masks: std::collections::HashMap<uuid::Uuid, crate::world::rlva::effects::AlphaMask>,
     rlva_overlay_slots: std::collections::HashMap<uuid::Uuid, u32>,
     /// Avatar profile windows.
@@ -1372,6 +1374,7 @@ impl App {
             login_portrait_source: None,
             ui_coarse: Default::default(),
             ui_images: Default::default(),
+            inventory_hover_images: Default::default(),
             ui_image_masks: Default::default(),
             rlva_overlay_slots: Default::default(),
             profile_ui: Default::default(),
@@ -3183,6 +3186,13 @@ impl App {
                 } else {
                     crate::world::favorites::Favorites::load(crate::settings::account_dir(&l.agent_id).join(crate::world::favorites::FILE))
                 };
+                // the saved smart searches of the inventory; the demo keeps
+                // them in memory
+                if !self.demo {
+                    crate::ui::inventory::smart_store::load(
+                        crate::settings::account_dir(&l.agent_id).join(crate::ui::inventory::smart_store::FILE),
+                    );
+                }
                 // LLAgent::init: the FLY control is set before the first
                 // AgentUpdate when the last session of this account ended
                 // flying (the arrival lands it where flying is blocked)
@@ -7011,6 +7021,7 @@ impl App {
         images.extend(self.buy_land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
         images.extend(self.chat_ui.wanted_images.drain());
+        images.extend(self.notif_ui.wanted_images.drain());
         images.extend(self.pay_ui.wanted_images.drain());
         images.extend(self.people_ui.wanted_images.drain());
         images.extend(self.contacts_people_ui.wanted_images.drain());
@@ -7066,6 +7077,7 @@ impl App {
                 self.note_ui_copy(image, w);
             }
         }
+        self.update_inventory_hover_images(renderer);
     }
 
     /// What a profile picture's pixels give besides its texture: the Aurora
@@ -9018,7 +9030,8 @@ impl App {
                 &mut gfx.renderer,
                 &mut scene.textures,
                 &mut self.world,
-                world_dt,
+                dt,
+                frozen,
                 self.camera.position,
                 max_particles,
                 self.settings.draw_distance,
@@ -9355,6 +9368,12 @@ impl App {
                 .extend(ui::inventory::document_demo_events(&ctx, self.frame_count, &mut self.inventory_ui));
             raw.events
                 .extend(ui::inventory::clipboard_demo_events(&ctx, self.frame_count, &mut self.inventory_ui));
+            raw.events.extend(ui::inventory::hover_demo_events(
+                &ctx,
+                self.frame_count,
+                &self.world.inventory,
+                &mut self.inventory_ui,
+            ));
             raw.events
                 .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
             ui::inventory::aurora_demo(&ctx, self.frame_count);
@@ -10020,6 +10039,22 @@ impl App {
                 self.notif_ui.open = true;
                 self.notif_ui.center.tab = ui::notification_center::Tab::History;
             }
+            // the notice's attachment saved from its card
+            if self.frame_count == crate::demo::notifs::SAVE_AT
+                && mode == "group-notice-saved"
+                && let Some(id) = self
+                    .world
+                    .notifications
+                    .list
+                    .iter()
+                    .find(|n| n.offered_attachment().is_some())
+                    .map(|n| n.id)
+            {
+                let (commands, _) = self.world.respond_notification(id, crate::world::notifications::Response::Accept);
+                for command in commands {
+                    self.send(command);
+                }
+            }
             if self.frame_count == crate::demo::notifs::ANSWER_AT && matches!(mode.as_str(), "history" | "legacy-history") {
                 // a few cards answered or closed: they go to the history
                 let ids: Vec<(u64, bool)> = self.world.notifications.listed().map(|n| (n.id, n.interactive())).collect();
@@ -10070,6 +10105,11 @@ impl App {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
+            }
+        }
+        if self.demo && crate::demo::freeze_world::on() {
+            for event in crate::demo::freeze_world::events(self.frame_count) {
+                self.world.apply(event);
             }
         }
         if self.demo && crate::demo::seat_kill::on() {
@@ -14464,6 +14504,7 @@ impl App {
                     &mut open,
                     self.appearance_ui.pending.is_some(),
                     &self.ui_images,
+                    &self.inventory_hover_images.ready,
                     &self.avatar_pics,
                     &self.settings.script_editor,
                     // the inventory scenarios were written for the Legacy window,
@@ -14724,6 +14765,7 @@ impl App {
                 let classic_bars = self.bars_look().0;
                 let mut toast_env = ui::notifications::ToastEnv {
                     pics: &self.avatar_pics,
+                    images: &self.ui_images,
                     emoji: &mut self.emoji,
                     hidden: toasts_hidden,
                     message_seconds: f64::from(self.settings.im_toast_seconds),
@@ -15545,9 +15587,9 @@ impl ApplicationHandler for App {
         }
         let mut attrs = crate::cli::with_desktop_id(Window::default_attributes())
             .with_title(crate::cli::window_title())
-            // Vulkan initialization and the first frame take time: Windows
-            // must not expose the unpainted client area while they run.
-            .with_visible(false)
+            // Metal needs a visible layer to present its first drawable.
+            // Other platforms keep the unpainted client area hidden.
+            .with_visible(cfg!(target_os = "macos"))
             // Automated captures must not steal the user's keyboard focus.
             .with_active(!capture)
             .with_inner_size(winit::dpi::LogicalSize::new(w, h))
@@ -15565,6 +15607,9 @@ impl ApplicationHandler for App {
             }
         };
         crate::window_hold::install(&window);
+        // Cmd+Q asks like the close button (mac_quit.rs)
+        #[cfg(target_os = "macos")]
+        crate::mac_quit::route_quit_to_close();
         let size = window.inner_size();
         if std::env::var_os("AURORA_NOVSYNC").is_some() {
             self.settings.vsync = false;
@@ -15583,10 +15628,12 @@ impl ApplicationHandler for App {
             Ok(r) => r,
             Err(e) => {
                 log::error!("renderer initialisation failed: {e}");
-                eprintln!(
-                    "{}",
+                let message = if cfg!(target_os = "macos") {
+                    aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-metal", e = format!("{}", e))
+                } else {
                     aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-vulkan", e = format!("{}", e))
-                );
+                };
+                eprintln!("{message}");
                 // the window is still hidden: without this the viewer just
                 // vanished (#894)
                 graphics_start::report(&e.to_string(), capture);
@@ -17079,6 +17126,9 @@ impl ApplicationHandler for App {
                         | "aurora-additional"
                         | "show-original"
                         | "aurora-show-original"
+                        | "smart"
+                        | "aurora-smart"
+                        | "aurora-smart-wide"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(
@@ -17216,6 +17266,45 @@ impl ApplicationHandler for App {
                     }
                     if view == "large" {
                         self.inventory_ui.search = aurora_i18n::tr!("app-item").into();
+                    }
+                    if matches!(view.as_str(), "smart" | "aurora-smart" | "aurora-smart-wide") {
+                        // advanced search: objects or scripts (an Any
+                        // group) but not the no-copy object (a Not rule),
+                        // with saved searches in the sidebar
+                        use ui::inventory::smart::{Field, Group, Node, Op, Rule, SmartQuery};
+                        let kinds = Rule {
+                            bits: (1 << 6) | (1 << 10),
+                            ..Rule::of(Field::Type)
+                        };
+                        let no_copy = aurora_i18n::tr!("world-inventory-demo-no-copy-object").to_lowercase();
+                        let query = SmartQuery {
+                            root: Group {
+                                any: false,
+                                not: false,
+                                nodes: vec![
+                                    Node::Group(Group {
+                                        any: true,
+                                        not: false,
+                                        nodes: vec![Node::Rule(kinds), Node::Rule(Rule::text(Field::Name, Op::EndsInNumber, ""))],
+                                    }),
+                                    Node::Rule(Rule {
+                                        not: true,
+                                        ..Rule::text(Field::Name, Op::Contains, &no_copy)
+                                    }),
+                                ],
+                            },
+                        };
+                        let worn = SmartQuery {
+                            root: Group {
+                                nodes: vec![Node::Rule(Rule::of(Field::Worn))],
+                                ..Group::default()
+                            },
+                        };
+                        let id = ui::inventory::smart_store::add(aurora_i18n::tr!("inventory-smart-untitled"), query.clone());
+                        ui::inventory::smart_store::add(aurora_i18n::tr!("inventory-smart-worn"), worn);
+                        self.inventory_ui.open_smart(Some(id), query);
+                        // the classic layout edits the rules in the Filters floater
+                        self.inventory_ui.filters_open = view == "smart";
                     }
                     if view.starts_with("search-selection") {
                         self.inventory_ui.search = aurora_i18n::tr!("world-inventory-demo-item", n = "1490");
@@ -18050,9 +18139,12 @@ impl ApplicationHandler for App {
                     if !pressed && let Some(key) = gesture_key {
                         self.gesture_state.manager.release(Some(key));
                     }
+                    // Undo / Redo keep their keys while an editor with a
+                    // history shows: the build tools, or the poser
+                    let history_open = self.build.open || (self.ik_editor.open && self.ik_editor.posing());
                     if pressed
                         && !lens_shortcut
-                        && !build_shortcut.is_some_and(|s| s.takes_gesture_key(self.build.open))
+                        && !build_shortcut.is_some_and(|s| s.takes_gesture_key(history_open))
                         && (!ke.repeat || gesture_key.is_some_and(crate::gestures::Manager::repeat_triggers))
                         && !typing
                         && self.in_world()

@@ -30,6 +30,10 @@ struct PostParams {
     // 2: the live view, over a checkerboard
     cutout: f32,
     _pad: f32,
+    // the part of the photo this frame draws, in fractions of the photo
+    // (left, top, width, height; 0, 0, 1, 1 outside a tiled photo): the
+    // glow's 512 x 512 texels are the whole photo's, as in one pass
+    photo_part: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> post: PostParams;
 // Blurred glow (512x512, display space), see glow.wgsl.
@@ -259,12 +263,15 @@ fn cas(uv: vec2<f32>) -> vec3<f32> {
 // texel; four bilinear taps over the footprint keep it from shimmering.
 @fragment
 fn fs_glow_extract(in: Out) -> @location(0) vec4<f32> {
-    // one glow texel in uv
-    let foot = vec2<f32>(1.0 / 512.0);
+    // in.uv is a place in the whole photo; one glow texel in the image's uv
+    // (texels off the part drawn clamp to its edge: the guard band, cropped)
+    let part = post.photo_part;
+    let uv = (in.uv - part.xy) / part.zw;
+    let foot = vec2<f32>(1.0 / 512.0) / part.zw;
     var acc = vec4<f32>(0.0);
     for (var i = 0; i < 4; i++) {
         let o = vec2<f32>(f32(i & 1) - 0.5, f32(i >> 1u) - 0.5) * 0.5 * foot;
-        let c = textureSampleLevel(hdr, hdr_sampler, in.uv + o, 0.0);
+        let c = textureSampleLevel(hdr, hdr_sampler, uv + o, 0.0);
         let a = clamp(c.a, 0.0, 1.0);
         acc += vec4<f32>(linear_to_srgb(legacy_gamma(tonemap(c.rgb))) * a, a * a);
     }
@@ -292,7 +299,11 @@ fn fs_bloom_prefilter(in: Out) -> @location(0) vec4<f32> {
         vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, 1.0),
     );
     for (var i = 0; i < 13; i++) {
-        t[i] = bloom_extract(textureSampleLevel(hdr, hdr_sampler, in.uv + offs[i] * texel, 0.0).rgb);
+        // an infinite pixel held at the largest value of the format, a NaN
+        // (also what filtering gives next to an infinite one) as black: the
+        // bloom chain would spread either over the whole image (#1380)
+        let s = textureSampleLevel(hdr, hdr_sampler, in.uv + offs[i] * texel, 0.0).rgb;
+        t[i] = bloom_extract(select(min(s, vec3<f32>(65504.0)), vec3<f32>(0.0), s != s));
     }
     var acc = bloom_box(t[9], t[10], t[11], t[12]) * 0.5;
     acc += bloom_box(t[0], t[1], t[3], t[4]) * 0.125;
@@ -315,7 +326,7 @@ fn fs_post(in: Out) -> @location(0) vec4<f32> {
     }
     if (post.glow > 0.5) {
         // glowcombineF.glsl: added in display space, then clamped by the 8-bit target
-        let g = textureSampleLevel(glow_tex, hdr_sampler, in.uv, 0.0).rgb;
+        let g = textureSampleLevel(glow_tex, hdr_sampler, post.photo_part.xy + in.uv * post.photo_part.zw, 0.0).rgb;
         m = srgb_to_linear_post(min(linear_to_srgb(m) + g, vec3<f32>(1.0)));
     }
     if (post.debug_glow > 0.5) {

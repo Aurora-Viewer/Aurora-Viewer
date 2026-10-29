@@ -29,6 +29,25 @@ pub(crate) const GAIN: f32 = 5.0;
 /// setting is off.
 pub(crate) const DEFAULT_STRENGTH: f32 = 0.5;
 
+/// How far, in pixels of the image, the bloom of a pixel reads the image
+/// around it: the 13 taps of each downsample reach 2 texels of the level
+/// above and their bilinear half texel (2.5 x 2^(k-1) pixels into level
+/// k), the tent of each upsample a texel of the smaller level and a half
+/// (1.5 x 2^k into level k - 1), the post pass a texel of the first level.
+/// A photo drawn in tiles draws this much around each one (346 pixels).
+pub const TILE_REACH: u32 = (5 * ((1u32 << MAX_LEVELS) - 1)).div_ceil(2) + 3 * ((1u32 << (MAX_LEVELS + 1)) - 4) / 2 + 2;
+
+/// The pixels a tile of a photo must draw around what it keeps for the
+/// bloom of `setting` (its strength, 0 off; `AURORA_BLOOM` included): 0
+/// when it is off.
+pub fn tile_reach(setting: f32) -> u32 {
+    if Override::from_env().strength(setting, 0).1 {
+        TILE_REACH
+    } else {
+        0
+    }
+}
+
 /// The size of each level: half the image, then halved, while the short
 /// side stays at least [`MIN_SIDE`].
 pub(crate) fn levels(width: u32, height: u32) -> Vec<(u32, u32)> {

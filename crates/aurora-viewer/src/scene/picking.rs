@@ -598,14 +598,15 @@ impl Scene {
     }
 
     pub fn click_bounds(&self, world: &World, idx: usize) -> Option<(Vec3, Vec3)> {
-        let (pos, rot, _) = Self::object_transform(world, idx, Instant::now(), 0)?;
+        let now = Instant::now();
+        let (pos, rot, _) = Self::object_transform(world, idx, now, 0)?;
         let g = self.gpu.get(idx);
         let geom = g.and_then(|g| g.geom).and_then(|key| self.geom_ready(&key));
         let (mut min, mut max) = geom.map_or((-Vec3::splat(0.5), Vec3::splat(0.5)), |g| (g.min, g.max));
         if let Some(unbind) = g.and_then(|g| self.unbind_of(g)) {
             (min, max) = transformed_box(unbind, min, max);
         }
-        let scale = world.visual_scale(idx);
+        let scale = world.visual_scale_at(idx, now);
         Some((pos + rot * ((min + max) * 0.5 * scale), (max - min) * scale))
     }
 
@@ -687,7 +688,7 @@ impl Scene {
         let key = geometry.or(g.geom)?;
         let geom = self.geom_ready(&key)?;
         let (pos, rot, _) = Self::object_transform(world, idx, now, 0)?;
-        let model = self.drawn_model(g, o, world.visual_scale(idx), Some(key), pos, rot);
+        let model = self.drawn_model(g, o, world.visual_scale_at(idx, now), Some(key), pos, rot);
         let inv = model.inverse();
         let counts = &self.exact_tests;
         counts.objects.fetch_add(1, Relaxed);
@@ -891,7 +892,7 @@ impl Scene {
         let key = g.geom?;
         let geom = self.geom_ready(&key)?;
         let (pos, rot, _) = Self::object_transform(world, idx, now, 0)?;
-        let model = self.drawn_model(g, o, world.visual_scale(idx), Some(key), pos, rot);
+        let model = self.drawn_model(g, o, world.visual_scale_at(idx, now), Some(key), pos, rot);
         let inv = model.inverse();
         // (the ray in object space, as `pick::ray_faces` takes it there)
         let (origin, dir) = (inv.transform_point3(ray.0), inv.transform_vector3(ray.1));
@@ -963,7 +964,7 @@ impl Scene {
         let tf = super::plants::plant_face(o).unwrap_or_else(|| o.te.as_ref().map(|te| *te.face(hit.face)).unwrap_or_default());
         let mut st = hit.uv;
         if tf.planar() {
-            let p = model.inverse().transform_point3(ray.0 + ray.1 * hit.t) * o.visual_scale();
+            let p = model.inverse().transform_point3(ray.0 + ray.1 * hit.t) * o.visual_scale_at(now);
             let n = model.transpose().transform_vector3(hit.normal).normalize_or_zero();
             let b = if n.x.abs() >= 0.5 {
                 Vec3::new(0.0, if n.x < 0.0 { -1.0 } else { 1.0 }, 0.0)
@@ -1458,7 +1459,7 @@ impl Scene {
             let Some((pos, rot, _)) = Self::object_transform(world, idx, now, 0) else {
                 continue;
             };
-            let inv = self.drawn_model(g, o, o.visual_scale(), g.geom, pos, rot).inverse();
+            let inv = self.drawn_model(g, o, o.visual_scale_at(now), g.geom, pos, rot).inverse();
             if !ray_box(inv.transform_point3(ray.0), inv.transform_vector3(ray.1), geom.min, geom.max).is_some_and(|t| t < nearest) {
                 continue;
             }

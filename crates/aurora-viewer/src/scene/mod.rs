@@ -2115,7 +2115,7 @@ impl Scene {
             if g.owner_avatar.is_some() && o.visual_volume().is_mesh() {
                 continue; // rigged / worn mesh: the avatar capsule handles it
             }
-            let scale = o.visual_scale().max(Vec3::splat(0.01));
+            let scale = o.visual_scale_at(now).max(Vec3::splat(0.01));
             // the geometry centre lies in the prim box: farther than the box
             // diagonal plus the tolerance, the point cannot be inside
             if !g.rigged && g.radius > 0.0 && (point - g.center).length() > scale.length() + 0.2 {
@@ -2178,7 +2178,7 @@ impl Scene {
                 continue;
             };
             let d = pos.distance(view.eye);
-            if hud || d > self.draw_distance || !view.sphere_visible(pos, (o.visual_scale() * 0.5).length()) {
+            if hud || d > self.draw_distance || !view.sphere_visible(pos, (o.visual_scale_at(now) * 0.5).length()) {
                 continue;
             }
             let normal = rot * Vec3::Z;
@@ -2188,7 +2188,7 @@ impl Scene {
             if best.as_ref().is_some_and(|(bd, _)| *bd <= d) {
                 continue;
             }
-            let to_box = Mat4::from_scale_rotation_translation(o.visual_scale().max(Vec3::splat(0.01)), rot, pos).inverse();
+            let to_box = Mat4::from_scale_rotation_translation(o.visual_scale_at(now).max(Vec3::splat(0.01)), rot, pos).inverse();
             best = Some((
                 d,
                 aurora_render::MirrorParams {
@@ -3192,7 +3192,7 @@ impl Scene {
             return;
         };
         let is_avatar = o.is_avatar();
-        let scale = o.visual_scale().max(Vec3::splat(0.001));
+        let scale = o.visual_scale_at(now).max(Vec3::splat(0.001));
         let radius = (scale * 0.5).length().max(0.05);
 
         // ---- avatar

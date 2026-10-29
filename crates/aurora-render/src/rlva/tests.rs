@@ -8,7 +8,7 @@ use super::*;
 fn rlva_gpu_spheres_preserve_uniform_images_and_compose_black_masks_without_glow() {
     let _gpu = crate::test_gpu::lock();
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN,
+        backends: crate::BACKENDS,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).expect("Vulkan adapter");

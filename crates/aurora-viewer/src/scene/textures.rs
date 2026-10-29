@@ -928,6 +928,8 @@ pub struct TextureStreamer {
     pub demo_source: Option<DemoSource>,
     /// Textures also wanted as egui images (profile pictures...): small CPU copies.
     ui_wanted: std::collections::HashSet<Uuid>,
+    /// Session-long UI users, independent from the bounded hover cache.
+    ui_permanent: std::collections::HashSet<Uuid>,
     ui_ready: HashMap<Uuid, (u32, u32, Vec<u8>)>,
     ui_previews: super::texture_ui::Images,
     pub stats: TextureStats,
@@ -1124,6 +1126,7 @@ impl TextureStreamer {
             can_fetch: false,
             demo_source: None,
             ui_wanted: Default::default(),
+            ui_permanent: Default::default(),
             ui_ready: HashMap::new(),
             ui_previews: Default::default(),
             stats: TextureStats::default(),
@@ -1627,6 +1630,16 @@ impl TextureStreamer {
 
     /// Keep a texture resident and deliver a small RGBA copy for the UI.
     pub fn want_ui_image(&mut self, renderer: &mut Renderer, id: Uuid, jobs: &Jobs) {
+        if !id.is_nil() {
+            self.ui_permanent.insert(id);
+        }
+        self.want_transient_ui_image(renderer, id, jobs);
+    }
+
+    /// The inventory hover cache owns one bounded, releasable UI interest.
+    /// All UI users share one streamer reference per asset; a permanent
+    /// consumer can adopt an asset first requested by the hover cache.
+    pub fn want_transient_ui_image(&mut self, renderer: &mut Renderer, id: Uuid, jobs: &Jobs) {
         if id.is_nil() {
             return;
         }
@@ -1655,9 +1668,21 @@ impl TextureStreamer {
         self.note_usage(&id, 256.0);
     }
 
+    pub fn release_transient_ui_image(&mut self, id: &Uuid) {
+        if !self.ui_permanent.contains(id) && self.ui_wanted.remove(id) {
+            self.ui_ready.remove(id);
+            self.release(id);
+            if let Some(entry) = self.entries.get_mut(id)
+                && entry.refs == 0
+            {
+                entry.urgent = false;
+            }
+        }
+    }
+
     /// Decoded UI copy, once available (taken by the caller).
     pub fn take_ui_image(&mut self, id: &Uuid) -> Option<(u32, u32, Vec<u8>)> {
-        self.ui_previews.poll(&mut self.ui_ready);
+        self.ui_previews.poll(&mut self.ui_ready, &self.ui_wanted);
         self.ui_ready.remove(id)
     }
 
@@ -3221,6 +3246,34 @@ mod tests {
             counted: 0,
             refresh: false,
             epoch: 0,
+        }
+    }
+
+    #[test]
+    fn inventory_hover_cache_releases_only_its_ui_interest_and_preserves_other_users() {
+        for (permanent, world_refs) in [(false, 0), (false, 1), (true, 0), (true, 1)] {
+            let image = Uuid::from_u128(0x7e57);
+            let mut e = entry(Some(2), 256.0);
+            e.refs = 1 + world_refs;
+            e.urgent = true;
+            let mut streamer = pressed(0, vec![(image.as_u128(), e)]);
+            streamer.ui_wanted.insert(image);
+            if permanent {
+                // A profile/editor can adopt a texture first loaded by hover.
+                streamer.ui_permanent.insert(image);
+            }
+            streamer.ui_ready.insert(image, (1, 1, vec![255; 4]));
+            streamer.release_transient_ui_image(&image);
+            let refs = if permanent { 1 + world_refs } else { world_refs };
+            assert_eq!(streamer.entries[&image].refs, refs);
+            assert_eq!(streamer.ui_wanted.contains(&image), permanent);
+            assert_eq!(streamer.ui_ready.contains_key(&image), permanent);
+            assert_eq!(streamer.entries[&image].unused_since.is_some(), refs == 0);
+            if refs == 0 {
+                assert!(!streamer.entries[&image].urgent);
+            }
+            streamer.release_transient_ui_image(&image);
+            assert_eq!(streamer.entries[&image].refs, refs, "release is idempotent");
         }
     }
 

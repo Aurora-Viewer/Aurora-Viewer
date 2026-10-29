@@ -1,4 +1,4 @@
-//! Aurora Viewer renderer: wgpu on the Vulkan backend, bindless textures,
+//! Aurora Viewer renderer: wgpu on Vulkan (Metal on macOS), bindless textures,
 //! sub-allocated geometry and multi-draw-indirect submission.
 //!
 //! Two halves: `main_thread` (the `Renderer` the scene uses: its stores,
@@ -11,6 +11,8 @@ pub mod bc7;
 mod bloom;
 mod contact_shadows;
 mod cutout;
+// (Vulkan only: Metal textures stay with wgpu's allocator)
+#[cfg_attr(target_os = "macos", path = "dedicated_none.rs")]
 mod dedicated;
 mod device_lost;
 mod dof;
@@ -66,6 +68,10 @@ pub mod writes;
 pub use water_effects::{WaterEffects, WaterEvent, WaterGround};
 
 pub use arena::MeshAlloc;
+// What a tile of a photo draws around what it keeps, for the bloom and the
+// depth of field (snapshot tiles in the viewer).
+pub use bloom::tile_reach as bloom_tile_reach;
+pub use dof::tile_reach as dof_tile_reach;
 pub use drawn_pick::{Drawn, DrawnFace, DrawnMode};
 pub use gpu_cull::set_whole_chunk_uploads;
 pub use histogram::HISTOGRAM_BINS;
@@ -84,6 +90,13 @@ pub use upload::{StagedMesh, StagedTexture, StagingPool, TexelFormat};
 pub use egui;
 pub use egui_wgpu;
 pub use wgpu;
+
+/// Native graphics API for this platform.
+pub const BACKENDS: wgpu::Backends = if cfg!(target_os = "macos") {
+    wgpu::Backends::METAL
+} else {
+    wgpu::Backends::VULKAN
+};
 
 pub(crate) const COMMON_SHADER: &str = concat!(
     include_str!("shaders/common.wgsl"),

@@ -97,6 +97,11 @@ serde_path_to_error = "0.1.20"
 # Apache-2.0 with the reference's zlib notice
 bevy_mikktspace = "1.0.0"
 fancy-regex = "0.20.0"
+# advanced inventory search (ui/inventory/smart.rs): linear-time matching of
+# the patterns built from escaped rule values, so a search can never hang on
+# a pathological name; MIT / Apache-2.0, already in the tree through
+# env_filter
+regex = "1.12"
 # Hashing of the maps the frame walks (fast_hash.rs); zlib licence, already
 # in the tree through hashbrown
 foldhash = "0.2.0"
@@ -132,6 +137,12 @@ windows = { version = "0.62.2", features = ["Data_Xml_Dom", "Foundation", "UI_No
 # getenv without allocating, for the allocator's choice (allocator.rs); already
 # in the tree
 libc = "0.2.190"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# The application menu's Quit item routed to the window's close
+# (mac_quit.rs); the versions already in the tree
+objc2 = "0.6.5"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSMenu", "NSMenuItem", "NSResponder"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # The freedesktop notification service (system_notify.rs), over the session

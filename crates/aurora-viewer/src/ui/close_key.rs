@@ -13,7 +13,7 @@
 //! conversation shown instead (LLMultiFloater::closeDockedFloater).
 
 use crate::keybinds::{Input, Mods};
-use egui::{Id, LayerId, Order};
+use egui::{Id, Order};
 use std::collections::HashSet;
 use winit::keyboard::{Key as NativeKey, KeyCode};
 
@@ -67,7 +67,14 @@ pub fn begin(ctx: &egui::Context) {
         // back to front
         let front = ctx.memory(|m| {
             m.layer_ids()
-                .filter_map(|layer| state.shown.iter().find(|(id, _)| LayerId::new(Order::Middle, *id) == layer))
+                // a window's own layer: Middle, or Foreground over the
+                // photo viewfinder (the poser)
+                .filter_map(|layer| {
+                    state
+                        .shown
+                        .iter()
+                        .find(|(id, _)| layer.id == *id && layer.order != Order::Background)
+                })
                 .map(|(id, _)| *id)
                 .last()
         });
@@ -246,9 +253,10 @@ mod tests {
         };
         let mut ignored = false;
         frame(&mut frames, Vec::new(), &mut closed, &mut ignored);
-        frames
-            .ctx
-            .move_to_top(LayerId::new(Order::Middle, Id::unique(if raise_left { "left" } else { "right" })));
+        frames.ctx.move_to_top(egui::LayerId::new(
+            Order::Middle,
+            Id::unique(if raise_left { "left" } else { "right" }),
+        ));
         frame(&mut frames, Vec::new(), &mut closed, &mut ignored);
         frame(&mut frames, events, &mut closed, &mut left_to_fields);
         frame(&mut frames, Vec::new(), &mut closed, &mut left_to_fields);

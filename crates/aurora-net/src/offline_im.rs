@@ -17,6 +17,8 @@ use uuid::Uuid;
 
 /// IM_FROM_TASK.
 const DIALOG_FROM_TASK: u8 = 19;
+/// IM_GROUP_NOTICE.
+const DIALOG_GROUP_NOTICE: u8 = 32;
 
 /// The capabilities Firestorm wants before it reads the offline messages
 /// through `ReadOfflineMsgs` (else the legacy RetrieveInstantMessages).
@@ -61,6 +63,16 @@ fn message(m: &Llsd) -> InstantMessage {
     if session_id.is_nil() && dialog == DIALOG_FROM_TASK {
         session_id = m.get("asset_id").as_uuid();
     }
+    let mut binary_bucket = if m.has("binary_bucket") {
+        m.get("binary_bucket").as_binary().to_vec()
+    } else {
+        vec![0]
+    };
+    // a group notice names its group in `asset_id` (processNewMessage's aux_id)
+    let aux = m.get("asset_id").as_uuid();
+    if dialog == DIALOG_GROUP_NOTICE && !aux.is_nil() {
+        binary_bucket = crate::groups::notice_bucket_from_offline(aux, &binary_bucket);
+    }
     InstantMessage {
         from_agent_id: m.get("from_agent_id").as_uuid(),
         from_name: m.get("from_agent_name").as_str().to_owned(),
@@ -71,11 +83,7 @@ fn message(m: &Llsd) -> InstantMessage {
         // IM_OFFLINE unless the entry says otherwise
         offline: !m.has("offline") || m.get("offline").as_i32() != 0,
         from_group,
-        binary_bucket: if m.has("binary_bucket") {
-            m.get("binary_bucket").as_binary().to_vec()
-        } else {
-            vec![0]
-        },
+        binary_bucket,
         timestamp: m.get("timestamp").as_i32() as u32,
     }
 }
@@ -185,6 +193,16 @@ mod tests {
         assert!(got[0].from_group);
         assert!(!got[0].offline);
         assert_eq!(got[0].binary_bucket, [1, 2, 3]);
+        // the same with its group in asset_id: the attachment's text becomes
+        // a live notice's bucket
+        let mut m = entry();
+        m.insert("dialog", 32);
+        m.insert("asset_id", id(0x6E));
+        m.insert("binary_bucket", b"0|0|Landmark\0".to_vec());
+        let got = parse(&llsd_map! { "messages" => Llsd::Array(vec![m]) }).unwrap();
+        let bucket = crate::groups::notice_bucket(&got[0].binary_bucket).expect("notice bucket");
+        assert!(bucket.has_inventory);
+        assert_eq!((bucket.group, bucket.item_name.as_str()), (id(0x6E), "Landmark"));
         // an object's message without a transaction: its asset id names it
         let mut m = entry();
         m.insert("dialog", 19);

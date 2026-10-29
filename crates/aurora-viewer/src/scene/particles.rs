@@ -261,7 +261,8 @@ impl ParticleManager {
     /// (indra/newview/particleeditor.cpp, originally LGPL 2.1).
     pub fn set_preview(&mut self, wanted: Option<(Uuid, ps::PartSysData)>) {
         let object = wanted.map(|(object, _)| object);
-        if let Some(old) = self.preview.filter(|old| Some(*old) != object)
+        let previous = self.preview;
+        if let Some(old) = previous.filter(|old| Some(*old) != object)
             && let Some(s) = self.sources.get_mut(&preview_key(old))
         {
             // closed or moved to another prim: its particles go at once
@@ -272,7 +273,12 @@ impl ParticleManager {
         let Some((object, data)) = wanted else { return };
         let key = preview_key(object);
         if let Some(s) = self.sources.get_mut(&key) {
-            if s.ps.data() != &data || !s.ps.is_emitting() {
+            // the Legacy editor makes a fresh source on every change and on
+            // opening: the source clock starts again, and a source max age
+            // then runs out once and stays out, as the injected script's
+            // does. An expired preview is never restarted on its own.
+            if s.ps.data() != &data || previous != Some(object) {
+                s.ps.stop();
                 s.ps.set_data(data);
             }
             return;
@@ -304,6 +310,13 @@ impl ParticleManager {
     }
 
     /// Apply object updates, simulate and build the sorted instance list.
+    /// `frozen`: the photo mode holds the world still (issue #1154). The
+    /// objects' particles get no time and no source emits, a script's new
+    /// system included (LLFloater360Capture::freezeWorld calls
+    /// LLViewerPartSim::enable(false), whose zero particle count makes
+    /// shouldAddPart refuse every new particle; llviewerpartsim.cpp,
+    /// originally LGPL 2.1). The avatars' loading clouds go on, like the
+    /// rez effects.
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
@@ -311,6 +324,7 @@ impl ParticleManager {
         textures: &mut TextureStreamer,
         world: &mut World,
         dt: f32,
+        frozen: bool,
         eye: Vec3,
         max_particles: usize,
         draw_distance: f32,
@@ -402,6 +416,10 @@ impl ParticleManager {
                 // out of view. Local filters must take effect immediately.
                 s.ps.clear_particles();
             }
+            // (a source's clock does not run while frozen: without this,
+            // a new one would burst at every frame, LL's first run)
+            let held = frozen && !s.cloud;
+            let dt = if held { 0.0 } else { dt };
             let transform = idx.and_then(|i| Scene::object_transform(world, i, now, 0));
             let Some((pos, rot, hud)) = transform else {
                 // object gone: stop emitting, let the particles live out
@@ -437,7 +455,7 @@ impl ParticleManager {
             };
             // sources beyond the draw distance, or of a blocked owner
             // (LLViewerPartSourceScript, flagParticles), keep simulating but do not emit
-            if blocked || pos.distance(eye) > draw_distance {
+            if blocked || held || pos.distance(eye) > draw_distance {
                 let mut none = 0;
                 s.update(dt, &ctx, &mut none, world);
             } else {
@@ -746,6 +764,49 @@ mod tests {
         manager.set_preview(None);
         assert_eq!(manager.preview, None);
         assert!(manager.sources.values().all(|s| !s.ps.is_emitting() && s.ps.particles().is_empty()));
+    }
+
+    #[test]
+    fn the_particle_editor_preview_runs_out_like_the_script() {
+        let object = Uuid::from_u128(5);
+        let mut manager = ParticleManager::default();
+        let data = ps::PartSysData {
+            crc: 1,
+            max_age: 0.3,
+            burst_rate: 0.1,
+            burst_part_count: 2,
+            ..Default::default()
+        };
+        let key = preview_key(object);
+        let mut budget = usize::MAX;
+        let mut run_out = |manager: &mut ParticleManager| {
+            for _ in 0..20 {
+                manager.set_preview(Some((object, data)));
+                if let Some(s) = manager.sources.get_mut(&key) {
+                    s.ps.update(0.05, &SourceContext::default(), &mut budget);
+                }
+            }
+        };
+        // the same settings every frame: past its max age it stays out
+        run_out(&mut manager);
+        assert!(!manager.sources[&key].ps.is_emitting());
+        manager.set_preview(Some((object, data)));
+        assert!(!manager.sources[&key].ps.is_emitting());
+        // a changed value starts it again, the particles already out stay
+        let out = manager.sources[&key].ps.particles().len();
+        assert!(out > 0);
+        let changed = ps::PartSysData {
+            burst_part_count: 3,
+            ..data
+        };
+        manager.set_preview(Some((object, changed)));
+        assert!(manager.sources[&key].ps.is_emitting());
+        assert_eq!(manager.sources[&key].ps.particles().len(), out);
+        // closed and opened again with the same settings: it starts again
+        run_out(&mut manager);
+        manager.set_preview(None);
+        manager.set_preview(Some((object, data)));
+        assert!(manager.sources[&key].ps.is_emitting());
     }
 
     #[test]

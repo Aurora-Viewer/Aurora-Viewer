@@ -124,6 +124,7 @@ impl Default for Profile {
                             "separator:links",
                             "paste-link",
                             "find-links",
+                            "find-similar",
                             "replace-links",
                             "separator:marketplace",
                             "marketplace-copy",
@@ -232,6 +233,7 @@ impl Profile {
             "recover-folder",
             "copy-name",
             "new-outfit",
+            "find-similar",
         ] {
             let known = self.layout.placements.contains_key(id)
                 || self.layout.removed.contains(id)
@@ -304,6 +306,7 @@ impl Preferences {
                 ("empty-lost-found", "empty-trash", TEXT),
                 ("recover-folder", "restore", TEXT),
                 ("copy-name", "image", "children:organize"),
+                ("find-similar", "find-links", "children:organize"),
             ] {
                 let known = profile.layout.placements.contains_key(id)
                     || profile.layout.removed.contains(id)

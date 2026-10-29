@@ -442,7 +442,10 @@ impl Scene {
                 let model = parent * Mat4::from_rotation_translation(object.rotation, object.position);
                 bits(&object.position.to_array(), &mut hash);
                 bits(&object.rotation.to_array(), &mut hash);
-                bits(&object.visual_scale().to_array(), &mut hash);
+                // Calibration uses the reported pose, so use its full size
+                // too, without following temporary render damping.
+                let scale = object.render.local_scale.unwrap_or(object.scale);
+                bits(&scale.to_array(), &mut hash);
                 let volume = object.visual_volume();
                 if volume.is_mesh() {
                     if let Some(sculpt) = volume.sculpt {
@@ -465,7 +468,7 @@ impl Scene {
                                 if own_rig || (skin.is_none() && on_foot) {
                                     surfaces.push(Surface::Mesh {
                                         mesh: Box::new(mesh),
-                                        rigid: (!own_rig).then(|| model * Mat4::from_scale(object.visual_scale())),
+                                        rigid: (!own_rig).then(|| model * Mat4::from_scale(scale)),
                                     });
                                 }
                             }
@@ -483,7 +486,7 @@ impl Scene {
                     match geom {
                         Some(geom) => surfaces.push(Surface::Geometry {
                             geom,
-                            model: model * Mat4::from_scale(object.visual_scale()),
+                            model: model * Mat4::from_scale(scale),
                         }),
                         None => ready = false,
                     }

@@ -34,6 +34,9 @@ mod members;
 mod notices;
 mod view;
 
+// a notice's attachment drawn the same on its notification card
+pub(crate) use notices::{asset_label, attachment_icon};
+
 use super::place_details::Ctx;
 use super::search::SearchAction;
 use super::widgets::{self, Floater};

@@ -1236,6 +1236,17 @@ pub fn attention_mark(painter: &egui::Painter, p: &Palette, rect: egui::Rect, ra
     );
 }
 
+/// Is the floater `id` shown in front of the floater `other`? A window not
+/// shown is behind every other, whatever its layer (the poser's goes up
+/// over the photo viewfinder).
+pub fn floater_above(ctx: &egui::Context, id: &str, other: &str) -> bool {
+    let (id, other) = (egui::Id::unique(id), egui::Id::unique(other));
+    ctx.memory(|m| {
+        let place = |want: egui::Id| m.layer_ids().filter(|l| m.areas().is_visible(l)).position(|l| l.id == want);
+        place(id) > place(other)
+    })
+}
+
 /// Is the floater `id` reduced to its title bar?
 pub fn floater_minimized(ctx: &egui::Context, id: &str) -> bool {
     ctx.data_mut(|d| d.get_persisted::<bool>(egui::Id::unique((id, "minimized"))))
@@ -2183,7 +2194,7 @@ pub fn action_button_if(
 const KEYED_ICON: f32 = 15.0;
 const KEYED_GAP: f32 = 7.0;
 /// Room around the content of a button that takes its content's width.
-const KEYED_PAD: f32 = 24.0;
+pub(crate) const KEYED_PAD: f32 = 24.0;
 
 /// An `action_button_keyed`'s icon with its gap, label and keycaps widths.
 fn keyed_parts(ui: &egui::Ui, icon: &str, label: &str, key: Option<&crate::keybinds::Binding>) -> (f32, f32, f32) {
