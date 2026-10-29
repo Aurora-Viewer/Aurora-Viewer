@@ -33,6 +33,7 @@ pub(crate) mod menu_layout;
 pub use delete::demo_events as delete_demo_events;
 mod dialogs;
 mod document;
+pub use embedded::save_focused as document_save_focused;
 pub(crate) mod drag;
 mod embedded;
 mod keyboard;

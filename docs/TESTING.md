@@ -2378,7 +2378,7 @@ To check with these scenarios:
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_ANIM_LOOP=1\|sync\|sync-edit` | Animation loops, sequences, stops and synchronization after delayed loading or editing |
+| `AURORA_DEMO_ANIM_LOOP=1\|sync\|sync-edit\|resync` | Animation loops, sequences, stops and synchronization after delayed loading, editing or Ctrl+S |
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
@@ -2925,6 +2925,15 @@ Other existing AO modes: interface, interface-group, interface-track, interface-
 - **`AURORA_DEMO_ANIM_LOOP=1`**: loop whose first interval is missing,
   sequence changed every 120 frames, stop / restart at frames
   960 / 1020 every 1200 frames.
+- **`AURORA_DEMO_ANIM_LOOP=resync`**: the delayed-loading pair below, with
+  the default Legacy animation clock. Frame 750 presses the bound Ctrl+S
+  action to restart both residents locally. The log reports the elbow phase
+  error before (frame 720) and after (780 and 900, expected below 0.001 rad,
+  including later sequence changes). Capture at 740 and 800. On the grid, start
+  a group dance, press Ctrl+S and check the local restart/alignment; repeat
+  from World › Resync animations and the corresponding toolbar button.
+  HUD script permissions, seating and other viewers must remain unchanged.
+  Ctrl+S in a notecard or script editor must save without restarting dances.
 - **`AURORA_DEMO_ANIM_LOOP=sync`**: enables Synchronized clock in the demo
   settings (normal default: Legacy). The two avatars receive distinct animations
   together at frame 120; the second file becomes available only at frame 300.
