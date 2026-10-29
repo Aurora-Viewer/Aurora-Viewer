@@ -937,7 +937,7 @@ aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Vie
 ├─ LICENSE, NOTICE.md           GPLv3, third-party licences
 ├─ aurora-tools.cmd             development tools (double-click): scripts/tools
 ├─ assets/
-│  ├─ branding/                 logos (colour, silhouette), SVG + PNG 4096, aurora.ico
+│  ├─ branding/                 logos (colour, white, black, violet, teal, on navy), SVG + PNG, aurora.ico
 │  ├─ models/                   self-contained Aurora 3D GLB for material previews
 │  ├─ tabler-icons/             full Tabler library (SVG: outline, filled)
 │  └─ emoji/                    Noto Color Emoji font and its licence (built into the exe)
