@@ -8,15 +8,23 @@ name: macOS
 # compiles every pipeline of the scene with Apple's Metal compiler, which
 # crashed on a shader that Vulkan accepted (object.wgsl, shade_material)
 # and can do so again after any shader change.
+#
+# In the queue the tests run on two runners, as on Windows (see ci.yml):
+# the interface tests of the viewer (`ui::`, about three quarters of the
+# run) on one, everything else and the demo frame on the other. Two and not
+# three: an organisation has five macOS runners at once, and the queue
+# builds up to three entries side by side.
 on:
   pull_request:
   merge_group:
   push:
     branches: [main]
 
+# a push to main is never cancelled: its cache build takes a quarter of an
+# hour, and the next merge would otherwise cancel it again and again
 concurrency:
   group: macos-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 permissions:
   contents: read
@@ -26,10 +34,10 @@ env:
 
 jobs:
   macos:
-    name: clippy, tests, demo (macOS)
+    name: clippy, tests, demo (macOS, rest)
     # Apple Silicon (arm64), the only Macs Aurora supports
     runs-on: macos-15
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
@@ -43,21 +51,35 @@ jobs:
         run: |
           rustup update stable --no-self-update
           rustup component add clippy
-      # caches are written from main only (see ci.yml)
+      # caches are written from main only (see ci.yml); one key for the two
+      # macOS jobs, written by this one. Its name is not the job's: the key
+      # would otherwise be the one of the old cache (clippy's output only),
+      # and main, finding it, would never build the tests into it
       - uses: Swatinem/rust-cache@v2
         id: cache
         if: steps.changes.outputs.code == 'true'
         with:
+          shared-key: macos-tests
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # dead code is the Windows job's: Windows-only helpers build here
-      # without their callers, as on Linux
+      # without their callers, as on Linux. Not in the queue: the pull
+      # request ran it, and the tests below build the combined code anyway
       - name: Clippy (warnings are errors)
-        if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || steps.cache.outputs.cache-hit != 'true')
+        if: steps.changes.outputs.code == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'))
         run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings -A dead-code
-      - name: Tests
+      # main: build the tests and the viewer without running them, for the
+      # cache only, so that the queue compiles the workspace and not its
+      # dependencies (about 8 minutes saved, then 3 for the demo)
+      - name: Build the tests and the viewer (cache)
+        if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        run: |
+          cargo test --profile ci --workspace --locked --no-run
+          cargo build --profile ci --locked -p aurora-viewer
+      - name: Tests (rest)
         if: steps.changes.outputs.code == 'true' && github.event_name == 'merge_group'
         # every failure of the run at once: the Apple GPU is reached here only
-        run: cargo test --profile ci --workspace --locked --no-fail-fast
+        run: |
+          cargo test --profile ci --workspace --locked --no-fail-fast -- --skip ui::
       # the offline demo past its loading fade, then quit: a missing image
       # or a non-zero exit (a pipeline Metal refused, a GPU fault) fails.
       # The build takes about 5 minutes and the frames a few seconds: a
@@ -92,3 +114,47 @@ jobs:
             ${{ runner.temp }}/metal-demo.png
             ~/Library/Application Support/org.Aurora.AuroraViewer/logs/aurora-demo-*.log
           if-no-files-found: warn
+
+  macos-interface:
+    # Queue only: no runner is taken on a pull request or on main. A libtest
+    # filter and its `--skip` are exact complements, so every test runs in
+    # one job and only one.
+    name: tests (macOS, interface)
+    if: github.event_name == 'merge_group'
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: Code changed?
+        id: changes
+        uses: ./.github/actions/code-changed
+      - name: Rust stable
+        if: steps.changes.outputs.code == 'true'
+        run: rustup update stable --no-self-update
+      - uses: Swatinem/rust-cache@v2
+        if: steps.changes.outputs.code == 'true'
+        with:
+          shared-key: macos-tests
+          save-if: false
+      - name: Tests (interface)
+        if: steps.changes.outputs.code == 'true'
+        run: |
+          cargo test --profile ci --workspace --locked --no-fail-fast -- ui::
+
+  macos-result:
+    # The check that main requires (its name is the one of the single job
+    # it replaced): green when both jobs passed (or the interface one was
+    # skipped, outside the queue), red otherwise.
+    name: clippy, tests, demo (macOS)
+    if: always()
+    needs: [macos, macos-interface]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Both jobs
+        run: |
+          echo "rest: ${{ needs.macos.result }}, interface: ${{ needs.macos-interface.result }}"
+          case "${{ needs.macos.result }}" in success) ;; *) exit 1 ;; esac
+          case "${{ needs.macos-interface.result }}" in success|skipped) ;; *) exit 1 ;; esac
