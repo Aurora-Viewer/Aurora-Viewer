@@ -10252,6 +10252,7 @@ shape-female = Female
 shape-height = Height: { $value }
 shape-meters = Meters
 shape-feet = Feet
+shape-t-pose = T-pose
 shape-search = Filter parameters…
 shape-hints = Visual previews
 shape-loading = Loading the worn shape…

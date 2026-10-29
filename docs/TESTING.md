@@ -6841,6 +6841,11 @@ over the category row goes forward/backward, stays within Body/Legs and does not
 scroll the parameter list. The self-avatar/attachment menu's Appearance › Edit
 Shape opens this editor. Asset arrivals and AO cycles must keep ready hint images
 visible, with no repeated "Preparing preview" placeholders.
+The right-aligned T-pose switch beside the height units shares the saved
+customise-animation setting in Preferences › Avatars › Animations. Toggle it in either place while editing:
+the other control must follow immediately, the choice must survive reopening,
+and the shape must stay unmodified. On the grid, disabling releases the editing
+animation; enabling uses the existing stand-up/customise animation sequence.
 `pbr-head` uses a PBR skin material over a conflicting blue texture-entry tint;
 the head must retain its textured skin color in the world and in the hints.
 `layered-head` adds a cosmetic shell above a rigged, BOM-textured mesh head.

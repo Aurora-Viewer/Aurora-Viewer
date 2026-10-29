@@ -10,6 +10,7 @@ use egui::{RichText, Vec2};
 pub enum Action {
     Save(Option<String>),
     Retry,
+    CustomizeAnimation(bool),
 }
 
 fn groups() -> [&'static str; 9] {
@@ -83,7 +84,7 @@ fn category_wheel(
     None
 }
 
-pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State) -> (Vec<Action>, Vec<i32>) {
+pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State, mut customize_animation: bool) -> (Vec<Action>, Vec<i32>) {
     if !st.open {
         return (Vec::new(), Vec::new());
     }
@@ -152,6 +153,14 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State)
                     {
                         st.feet = !st.feet;
                     }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if widgets::switch_labeled(ui, p, &mut customize_animation, aurora_i18n::tr!("shape-t-pose"))
+                            .on_hover_text(aurora_i18n::tr!("ui-options-customize-animation-hint"))
+                            .changed()
+                        {
+                            actions.push(Action::CustomizeAnimation(customize_animation));
+                        }
+                    });
                 });
             });
             ui.add_space(6.0);
@@ -518,7 +527,7 @@ mod tests {
             ..Default::default()
         };
         let _ = run_headless(ctx, input, |ui| {
-            actions = show(ui.ctx(), &crate::theme::Theme::default().palette(), world, state).0;
+            actions = show(ui.ctx(), &crate::theme::Theme::default().palette(), world, state, true).0;
         });
         actions
     }
@@ -542,7 +551,7 @@ mod tests {
         let mut output = Default::default();
         for _ in 0..3 {
             output = run_headless(&ctx, input.clone(), |ui| {
-                let _ = show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut world, &mut state);
+                let _ = show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut world, &mut state, true);
             });
         }
         let at = output
@@ -613,7 +622,7 @@ mod tests {
             };
             let mut frame = |state: &mut State| {
                 run_headless(&ctx, input.clone(), |ui| {
-                    let _ = show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut world, state);
+                    let _ = show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut world, state, true);
                 })
             };
             for _ in 0..8 {
@@ -694,7 +703,7 @@ mod tests {
         let mut output = Default::default();
         for _ in 0..4 {
             output = run_headless(&ctx, input.clone(), |ui| {
-                let _ = show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut world, &mut state);
+                let _ = show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut world, &mut state, true);
             });
         }
         assert!(

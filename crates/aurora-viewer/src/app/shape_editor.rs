@@ -121,6 +121,10 @@ impl App {
 
     pub(super) fn shape_action(&mut self, action: ui::shape::Action) {
         match action {
+            ui::shape::Action::CustomizeAnimation(enabled) => {
+                self.settings.customize_animation = enabled;
+                self.settings.save();
+            }
             ui::shape::Action::Retry => {
                 if let Some(item) = worn_shape(&self.world) {
                     self.open_shape_editor(item);
