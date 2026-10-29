@@ -2,7 +2,7 @@
 
 - ✅ Distinct wearable icons and Appearance ordering ([#1356](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/1356); PR [#1477](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/1477); task `bom-wearable-icons`, 2026-10-29; validated by the human in the online test viewer on 2026-10-29, merge authorized): share a distinct Tabler icon for each of the 17 system wearable types across Inventory and Appearance, including unworn editor rows. Place body parts and system clothing before attachments in outfit and worn lists; keep clothing layers furthest from the body first. Sources: `LLInventoryIcon::assignWearableIcon`, `LLWearableItemTypeNameComparator`. Body parts join the leading wearable group at the reporter's request. Offline scenarios: `AURORA_DEMO_APPEARANCE=wearables|wearables-outfits|wearables-edit`. Full `scripts/check.ps1` green: 6,159 passed, zero failures, 30 ignored; formatting and Clippy clean. Regressions cover distinct embedded icons, upper flag bits, unknown types, unresolved originals, grouping and actual rendered row/layer order. Adapt the long-list context-menu test to select the first displayed item in the new type order. Five French native captures inspected, including unworn rows and tattoo drag; all scenarios exit zero.
 
-- ✅ Named graphics profiles (#1218): save/load named rendering quality in
+- ✅ Named graphics profiles (#1218; PR #1508): save/load named rendering quality in
   Preferences > Graphics, confirm duplicate names/deletion, and expose built-in
   levels, saved profiles and an independent FPS cap in the FPS hover panel
   (both bar layouts) and system menu. The library survives preference resets;
