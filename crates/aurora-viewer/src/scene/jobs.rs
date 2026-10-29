@@ -203,6 +203,18 @@ fn below_normal_priority() {
             SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
         }
     }
+    // Linux: the nice value is per thread there, and the scheduler shares
+    // the cores by weight rather than by strict priority as Windows does
+    // (a step of nice is ~1.25× less weight). +10 over the process's base
+    // leaves a job thread about a tenth of a frame thread's weight (110 /
+    // 1024), near Windows' "frame first" without starving the decodes:
+    // the AURORA_DEMO_STREAM arrival loads in the same time either way.
+    #[cfg(target_os = "linux")]
+    {
+        use aurora_render::frame_priority::linux;
+        // lowering needs no privilege
+        linux::set_thread_nice(linux::base_nice() + 10);
+    }
 }
 
 impl JobResult {
