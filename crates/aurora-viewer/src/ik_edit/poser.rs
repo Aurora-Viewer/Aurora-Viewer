@@ -202,6 +202,17 @@ impl Editor {
             ..Default::default()
         };
     }
+    /// The photo viewfinder's Poser button: closes the window as its own
+    /// close button does when it shows, else opens it. True when opened.
+    pub fn toggle_poser(&mut self) -> bool {
+        if self.open && self.poser.active {
+            self.close_poser();
+            false
+        } else {
+            self.open_poser();
+            true
+        }
+    }
     fn close_poser(&mut self) {
         self.open = false;
         if self.poser.stop_on_close {

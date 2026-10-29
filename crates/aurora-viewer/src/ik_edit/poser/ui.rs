@@ -37,6 +37,9 @@ impl Editor {
         let mut floater = Floater::new("poser", aurora_i18n::tr!("poser-title"), egui::pos2(650.0, 70.0), DEFAULT_SIZE);
         floater.min_size = MIN_SIZE;
         floater.steady_size = true;
+        if self.over_viewfinder {
+            floater.order = egui::Order::Foreground;
+        }
         floater.actions = vec![
             ("settings-filled", aurora_i18n::text("poser-settings"), &mut settings),
             ("arrow-forward-up", aurora_i18n::text("poser-redo"), &mut redo),
