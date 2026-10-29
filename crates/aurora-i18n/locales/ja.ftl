@@ -9978,6 +9978,7 @@ shape-female = 女性
 shape-height = 身長：{ $value }
 shape-meters = メートル
 shape-feet = フィート
+shape-t-pose = Tポーズ
 shape-search = パラメータを絞り込み…
 shape-hints = ビジュアルプレビュー
 shape-loading = 着用中のシェイプを読み込み中…

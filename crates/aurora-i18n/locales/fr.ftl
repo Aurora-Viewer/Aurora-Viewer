@@ -10248,6 +10248,7 @@ shape-female = Féminin
 shape-height = Taille : { $value }
 shape-meters = Mètres
 shape-feet = Pieds
+shape-t-pose = T-pose
 shape-search = Filtrer les paramètres…
 shape-hints = Aperçus visuels
 shape-loading = Chargement de la silhouette portée…
