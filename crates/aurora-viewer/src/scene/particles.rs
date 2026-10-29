@@ -261,7 +261,8 @@ impl ParticleManager {
     /// (indra/newview/particleeditor.cpp, originally LGPL 2.1).
     pub fn set_preview(&mut self, wanted: Option<(Uuid, ps::PartSysData)>) {
         let object = wanted.map(|(object, _)| object);
-        if let Some(old) = self.preview.filter(|old| Some(*old) != object)
+        let previous = self.preview;
+        if let Some(old) = previous.filter(|old| Some(*old) != object)
             && let Some(s) = self.sources.get_mut(&preview_key(old))
         {
             // closed or moved to another prim: its particles go at once
@@ -272,7 +273,12 @@ impl ParticleManager {
         let Some((object, data)) = wanted else { return };
         let key = preview_key(object);
         if let Some(s) = self.sources.get_mut(&key) {
-            if s.ps.data() != &data || !s.ps.is_emitting() {
+            // the Legacy editor makes a fresh source on every change and on
+            // opening: the source clock starts again, and a source max age
+            // then runs out once and stays out, as the injected script's
+            // does. An expired preview is never restarted on its own.
+            if s.ps.data() != &data || previous != Some(object) {
+                s.ps.stop();
                 s.ps.set_data(data);
             }
             return;
@@ -758,6 +764,45 @@ mod tests {
         manager.set_preview(None);
         assert_eq!(manager.preview, None);
         assert!(manager.sources.values().all(|s| !s.ps.is_emitting() && s.ps.particles().is_empty()));
+    }
+
+    #[test]
+    fn the_particle_editor_preview_runs_out_like_the_script() {
+        let object = Uuid::from_u128(5);
+        let mut manager = ParticleManager::default();
+        let data = ps::PartSysData {
+            crc: 1,
+            max_age: 0.3,
+            burst_rate: 0.1,
+            burst_part_count: 2,
+            ..Default::default()
+        };
+        let key = preview_key(object);
+        let mut budget = usize::MAX;
+        let mut run_out = |manager: &mut ParticleManager| {
+            for _ in 0..20 {
+                manager.set_preview(Some((object, data)));
+                if let Some(s) = manager.sources.get_mut(&key) {
+                    s.ps.update(0.05, &SourceContext::default(), &mut budget);
+                }
+            }
+        };
+        // the same settings every frame: past its max age it stays out
+        run_out(&mut manager);
+        assert!(!manager.sources[&key].ps.is_emitting());
+        manager.set_preview(Some((object, data)));
+        assert!(!manager.sources[&key].ps.is_emitting());
+        // a changed value starts it again, the particles already out stay
+        let out = manager.sources[&key].ps.particles().len();
+        assert!(out > 0);
+        manager.set_preview(Some((object, ps::PartSysData { burst_part_count: 3, ..data })));
+        assert!(manager.sources[&key].ps.is_emitting());
+        assert_eq!(manager.sources[&key].ps.particles().len(), out);
+        // closed and opened again with the same settings: it starts again
+        run_out(&mut manager);
+        manager.set_preview(None);
+        manager.set_preview(Some((object, data)));
+        assert!(manager.sources[&key].ps.is_emitting());
     }
 
     #[test]
