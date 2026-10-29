@@ -50,7 +50,8 @@ tar -xzf Aurora-Viewer-vX.Y.Z-linux-x64.tar.gz
 ```
 
 The archive holds one folder, `Aurora-Viewer-vX.Y.Z-linux-x64`, with the
-viewer (`aurora-viewer`), its licences and the README. Move it where
+viewer (`aurora-viewer`), its desktop entry and icon, its licences and the
+README. Move it where
 you like, for example `~/.local/opt/aurora-viewer`.
 
 ## 3. Start the viewer
@@ -60,19 +61,21 @@ cd Aurora-Viewer-vX.Y.Z-linux-x64
 ./aurora-viewer
 ```
 
-To start it from your desktop's menu, create
-`~/.local/share/applications/aurora-viewer.desktop` (put the real path of
-the viewer after `Exec=`):
+To start it from your desktop's menu, with its icon in the panel and the
+dock, install the desktop entry and the icon of the archive, from its
+folder (the entry gets the viewer's real path):
 
-```ini
-[Desktop Entry]
-Type=Application
-Name=Aurora Viewer
-Comment=Second Life viewer
-Exec=/home/you/.local/opt/aurora-viewer/aurora-viewer
-Terminal=false
-Categories=Game;Network;
+```bash
+install -Dm644 aurora-viewer.svg ~/.local/share/icons/hicolor/scalable/apps/aurora-viewer.svg
+mkdir -p ~/.local/share/applications
+sed "s|^Exec=.*|Exec=$PWD/aurora-viewer|" aurora-viewer.desktop > ~/.local/share/applications/aurora-viewer.desktop
 ```
+
+Run the `sed` line again if you move the folder. The window identifies
+itself as `aurora-viewer` (Wayland app_id and X11 `WM_CLASS`), the name of
+the entry and its `StartupWMClass`: that is how the desktop puts the
+window under the entry's icon. Compositor rules can match it too (Hyprland:
+`class:^(aurora-viewer)$`; KDE: window class `aurora-viewer`).
 
 ## Web pages and video
 

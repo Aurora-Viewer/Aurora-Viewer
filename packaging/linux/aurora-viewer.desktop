@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Aurora Viewer
+GenericName=Second Life Viewer
+GenericName[fr]=Visionneuse Second Life
+GenericName[ja]=Second Life ビューア
+Comment=Explore Second Life
+Comment[fr]=Explorer Second Life
+Comment[ja]=Second Life を探索
+Exec=aurora-viewer
+Icon=aurora-viewer
+Terminal=false
+Categories=Game;Simulation;
+Keywords=Second Life;SL;metaverse;virtual world;
+StartupWMClass=aurora-viewer

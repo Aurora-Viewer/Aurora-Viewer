@@ -195,6 +195,29 @@ pub fn window_title() -> String {
     title_with(get().title.as_deref(), env!("AURORA_BUILD_PROFILE"), aurora_version::version())
 }
 
+/// The viewer's identity on the Linux desktop: Wayland app_id, X11
+/// WM_CLASS, and the name of `packaging/linux/aurora-viewer.desktop`, whose
+/// `StartupWMClass` repeats it. The panel and the dock match the window to
+/// that file (name, icon, pinning) only when the two agree. The executable's
+/// name, which X11 used by default: X11 desktops see no change. The Legacy
+/// Viewer's `com.secondlife.indra.viewer` is shared by every viewer of its
+/// family, so Aurora does not take it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub const DESKTOP_ID: &str = "aurora-viewer";
+
+/// Window attributes with the [`DESKTOP_ID`] on Linux; elsewhere unchanged.
+pub fn with_desktop_id(attrs: winit::window::WindowAttributes) -> winit::window::WindowAttributes {
+    #[cfg(target_os = "linux")]
+    {
+        // one field behind both traits: the Wayland app_id is `general`,
+        // the X11 WM_CLASS is (`instance`, `general`)
+        use winit::platform::wayland::WindowAttributesExtWayland;
+        attrs.with_name(DESKTOP_ID, DESKTOP_ID)
+    }
+    #[cfg(not(target_os = "linux"))]
+    attrs
+}
+
 fn title_with(title: Option<&str>, profile_dir: &str, version: &str) -> String {
     let base = match title {
         Some(t) => aurora_i18n::tr!("cli-aurora-viewer-2", version = version.to_string(), t = t.to_string()),
