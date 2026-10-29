@@ -102,6 +102,29 @@ Check live silhouette changes, filtering, Ctrl/Shift selection, changing full
 detail, removing exceptions and adding residents from the shared picker.
 `empty` starts with no exceptions. Both scenarios use only demo settings.
 
+**Saved graphics profiles (#1218).** `AURORA_DEMO_BARS=profiles` installs three
+demo profiles, including two with identical quality; add `AURORA_DEMO_OPTIONS=graphics` to inspect
+their editor. Use `graphics:profiles-list` to open its dropdown with one bin per
+profile, or `graphics:save-profile` to open the Save as name prompt. The name
+field exists only in that dialog, starts focused and accepts Enter. A bin must
+ask for confirmation without loading its profile, even when another is active;
+all bins stay at the same right edge with long names. Cancel saves/deletes
+nothing, and Save as with an existing name requires replacement confirmation.
+Only the explicitly selected profile is highlighted, even with identical values.
+Editing quality keeps that name and marks it modified; Save updates only that
+profile without asking for a name. With no profile selected, Save is disabled
+and Save as creates one. Both buttons stay beside the selector in narrow windows.
+`AURORA_DEMO_BARS=fpspresets` also opens the actual FPS hover card
+after frame 300; combine with `legacy` to check the other bar layout. Save a
+named profile, change quality, reload it from Preferences and from the FPS
+hover card, and restart the demo to check persistence of the library and selection.
+Choosing a built-in level clears the named selection; deleting the selected
+profile does likewise without loading another profile. Check that moving into the hover card keeps it clickable,
+that ordinary FPS clicks still open Performance, and that the FPS cap toggle
+retains its numeric limit. Vsync, background cap, hardware and environment are
+independent of profiles. Saving while photo quality is boosted must save the
+user's quality; resetting preferences must keep the named profile library.
+
 `AURORA_DEMO_SUN=<azimuth>,<elevation>`: the direction towards the sun for
 the lighting and the shadows (azimuth 0 east, 90 north), the sky keeping
 its own sun. The demo camera looks east, so `0,12` puts a low sun in front
@@ -1678,6 +1701,11 @@ No real L$ and no connection to a grid.
   stops the click without touching; `ignore-build` selects this screen in
   build mode.
 - `open` shows three simulated content items.
+- `open-multi` (#1410): the Open window receives Ctrl+A at frame 420;
+  every contents row is selected together. Ctrl/Shift clicks, a selected-row
+  drag or its Copy/Move menu act on the selection; Delete removes selected
+  entries only on a modifiable object. The list accepts inventory selections
+  and folders, including when empty; a refused entry refuses the entire drop.
 - `open-copy`, `open-replace`, `open-add` (#1103): after `open`, the
   window's "Copy to inventory" at frame 420 (`replace` / `add`: the "Copy
   and wear" menu's "Replace outfit with contents" / "Add contents to
@@ -1690,6 +1718,14 @@ No real L$ and no connection to a grid.
   items arrived, wearing the folder`. Wearing needs a Current Outfit folder:
   add `AURORA_DEMO_APPEARANCE=worn` (the cube is then linked in the outfit;
   the demo does not attach it).
+  After confirmation (`open-copy-yes`), the inventory footer confirms the
+  three actual arrivals, then clears after five seconds (capture at frame 650
+  for success, 1050 after expiry, with `--fps-limit 60`).
+- `open-copy-timeout-yes` (#1410): the offline simulator withholds the spare
+  cube; frame 600 advances the copy observer's deadline. The footer reports
+  an unconfirmed copy with two of three items received, then clears after
+  five seconds. This fixture changes neither real-grid transfers nor their
+  60-second deadline. The move warning still requires confirmation at 480.
 - `play` starts a local HTML page; `pause` and `open-media-playing`
   inject a simulated playback state before the click; `open-media` simulates
   the opening of the external browser.
@@ -2414,7 +2450,7 @@ To check with these scenarios:
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
-| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|shape\|shape-readonly\|shape-apply` | Local Blender bridge, static object placement, LOD import and shape transfer |
+| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_HAND_IK=<mode>` | Local or observed motorcycle contacts on linked targets |
@@ -2470,15 +2506,34 @@ in English and French without changing Blender's 3D selection.
 `objects` adds a belt and neck band, starts the belt hidden and the band
 removed. Toggle the belt and clear the objects; no restore button should
 appear. Each row's Import button opens that object's
-ordinary mesh importer without selecting it first. Check the Connection,
-Objects and Plugins horizontal dividers and the truncated names beside their
-Import buttons. `upload` opens the importer directly with a frozen shell draft.
-Check that Connection status sits beside the title and its port, address and
-start/stop button stay on one line.
-Plugins automatically detects installed Blender executables on a worker. Check
-that paths and per-version plug-in statuses/actions are readable, Refresh rescans,
-and Choose Blender adds a portable executable. Manual ZIP export remains collapsed.
+ordinary mesh importer without selecting it first. Check the Connection and
+Plugins tabs, and the truncated object names beside their Import
+buttons. `upload` opens the importer directly with a frozen shell draft.
+Connection contains status, port, shape and object controls; Plugins contains
+installation and manual ZIP export. `plugins` opens the idle Plugins tab.
+Check readable 16-point body/control text, including paths, hints, tabs and
+manual-install labels, in EN/FR/JA and narrow windows. Switching tabs or reopening
+must preserve the preview, selection and installer state. Port, address and
+start/stop can wrap at narrow widths. Each tab retains its own scroll position.
+Opening LiveMesh must not discover Blender installations or launch Blender probes.
+In Plugins, Search for Blender explicitly detects installed executables on a worker
+and rescans on subsequent clicks. Check that paths and per-version plug-in
+statuses/actions are readable. Install in Blender opens an executable picker;
+choosing one file checks and installs only that executable, even without a prior
+search. Check the choosing/checking/installing states and spinner, then a success
+message naming the Blender version and its updated row. Completion and errors
+stay above the installation list, including after a search with many results.
+Existing rows must remain.
+Cancel must leave the list alone without an empty-search error. Unsupported
+versions, newer installed plug-ins and failures must show an error, not success.
+Manual ZIP export remains collapsed. A fresh Blender scene defaults to a 2-second
+automatic update interval; intervals already saved in `.blend` files are retained.
 Detection alone must not install or enable anything.
+`installer-choose`, `installer-check` and `installer-install` hold synthetic
+installer steps with their spinner and disabled controls. `installer-done`
+shows a successful Blender 5.2.1 installation and `installer-error` a failure.
+These fixtures never open the file picker, discover executables or change a
+Blender profile. Capture the steps and completion in English and French.
 `shape` seeds a synthetic editable shape and sends it once a capable Blender
 client connects; `shape-readonly` removes Modify and must send nothing. Neither
 mode uses account assets or a grid. Run `blender/tests/bridge_shape.py` with
@@ -2593,7 +2648,7 @@ That ignored test creates and removes its own isolated profile.
   list, parent-local numeric controls, markers and native save/load/import
   actions. No motorcycle, contacts or IK-project draft is loaded or written.
   Prefer the dedicated `AURORA_DEMO_POSER` scenarios below. See [Poser](POSER.md).
-- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|misc|physics|library|settings|close|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|bridge-starting|bridge-silent|bridge-failed|bridge-off`**:
+- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|misc|physics|library|settings|close|square-head|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|bridge-starting|bridge-silent|bridge-failed|bridge-off`**:
   the full handoff trial, with the real local pose layer and consent state
   machine, on a standing avatar without motorcycle contacts or bone bindings.
   The additional `connected` mode restores a T-pose at 450 and moves the
@@ -2609,7 +2664,10 @@ That ignored test creates and removes its own isolated profile.
   reminder modes show the target UI; accept/withdraw modes select the peer
   and edit its head at 510. `close` asks to close the window at 700, the
   head edited: capture 760 for the confirmation (Minimize, Close anyway,
-  Don't ask again). Library widens the native window; settings and
+  Don't ask again). `square-head` sets our Head Shape slider to 100 at frame
+  300, which mirrors the forehead joints' scale on one axis (#1249): capture
+  620 must show the pose on (status "Posing", Stop button) and the head
+  turned, as in `self`. Library widens the native window; settings and
   the remaining modes select the corresponding controls. The other modes
   count as a ready bridge; `bridge-*` modes open the subject menu at 440 with
   the peer's Ask disabled and the matching hint (starting, query script
@@ -3200,7 +3258,8 @@ both open states and the selection count. Capture at frame 620.
   and 1160 to compare home, outside and repeated return; no crossing errors should
   be logged. Owner/group discovery also publishes its complete result at once.
   Combine with
-  `AURORA_DEMO_OPTIONS=graphics` for the native controls. Check live mode changes,
+  `AURORA_DEMO_OPTIONS=graphics/6` for the native controls in Graphics > Parcels,
+  after Smoothness. Check live mode changes,
   adding/removing scope entries and always-visible parcels, and restoring content
   without relogging. To add a neighbouring exception without walking there, select
   it in About Land, then use "Add selected parcel" in the always-visible list.
@@ -4050,7 +4109,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PEOPLE_FILTER=<text>` | Initial name filter for a People demo scenario |
 | `AURORA_DEMO_ANTI_SPAM=1` | Synthetic offer, script prompt and sound floods with Protections controls |
 | `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > Protections |
-| `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens the preferences on a page, a search, the modified settings, open cogs or a reset |
+| `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, reset, or a graphics profile dialog/list |
 | `AURORA_DEMO_GRIDS=1\|pages` | Opens the grid manager with synthetic metadata |
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
@@ -4063,7 +4122,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BUY_PASS=sell\|none\|own` | The ground menu's "Buy access" on the plaza parcel |
 | `AURORA_DEMO_PAY=<mode>` | Demo balance and the Pay window of a resident or a group |
 | `AURORA_DEMO_MONEY_TRACKER=<mode>` | The money tracker on a session of payments, in either look |
-| `AURORA_DEMO_PAYMENT=card\|legacy\|friend\|off` | A resident's direct payment as a card in their conversation |
+| `AURORA_DEMO_PAYMENT=card\|legacy\|sent\|sent-open\|friend\|off` | A direct payment as a card in the conversation with the other resident |
 | `AURORA_DEMO_LOGIN=<mode>` | Offline login screen and account carousel |
 | `AURORA_DEMO_LOGIN_SUBMIT=<frame>` | Press Log in of the open login form at that frame |
 | `AURORA_DEMO_LOGIN_WAIT=logout\|sudden\|refused` | A previous session of the demo account still on the grid: the login's countdown |
@@ -4087,7 +4146,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
-| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the balance hidden, the clock, the interface hidden, immersive mode, the chat bar autohidden |
+| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Legacy bars, place island, favourites, menus, balance, clock, hidden interface, immersive mode, chat autohide; `profiles` / `fpspresets`: saved graphics fixtures / FPS hover card |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
@@ -4097,6 +4156,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_DELIVERY=1\|several\|open\|history` | A Marketplace delivery arriving in Received items: its card under the bell, several at once, "Show in inventory", its history entry |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_FRIEND_PROMPT=1\|later` | Friendship offers in the middle of the screen (#465), one waiting behind the other |
+| `AURORA_DEMO_REGION_MESSAGE=1` | Messages to the whole region in the middle of the screen (#1404), one waiting behind the other |
 | `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
 | `AURORA_DEMO_ABOUT=info\|licences[:end]` | Help › About Aurora Viewer opens on its Info or Licences tab |
 | `AURORA_DEMO_COLLISIONS=1\|chat` | Residents bump, push and hit the agent; the "Bumps, pushes & hits" window opens on the list |
@@ -4322,8 +4382,14 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Tess's conversation open on her message, then two cards: "paid you
   L$1,500" with "Thanks for the set!", and L$75 with no message (the
   simulator's "Payment" is not shown). `legacy`: the same as two lines of
-  the legacy lines, the coin before the sentence. `friend`: no conversation
-  open; a friend's L$250 opens theirs on its card ("For the boat ride"), a
+  the legacy lines, the coin before the sentence. `sent`: the same, then
+  our own L$300 to her, "You paid … L$300" with "For the rent", not
+  counted as unread (the demo keeps no transcript: that both payments come
+  back with the history is a unit test's, and a grid check). `sent-open`:
+  no conversation open; our L$300 to Tess opens hers on its card, with
+  "Open the conversation when you pay a resident" turned on (off by
+  default). `friend`: no
+  conversation open; a friend's L$250 opens theirs on its card ("For the boat ride"), a
   stranger's L$20 shows nowhere. `off`: the same with "Open a conversation for a
   friend's payment" off: no conversation opens. Capture after frame 400, with `--language fr`
   and `--language en`.
@@ -4508,6 +4574,23 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   of the demo profile. The synthetic sources stay in `.scratch`.
   `animation-own` puts the preview at 0.75 s, paused, also on the demo
   avatar. The slider and the pose must stay fixed until Resume.
+  `animation-custom` loads a local rigged Bento tail and its looping animation,
+  with the saved-model list open to show the removal icons at each row's right.
+  Its tail must move in the preview. Choose model loads a rigged DAE, glTF or
+  GLB from disk; its initial camera includes the bones' rotational reach, so a
+  tail or wing must remain in view while turning. Standard restores the
+  ordinary mannequin. Check seeking,
+  pause/resume, base animations and camera controls with both models. Cancel
+  the file picker or choose an unrigged/invalid file: keep the current model,
+  with an error for rejected files. Model selection is independent per
+  animation, preview-only, and never adds a mesh upload or changes its fee.
+  Add two models, switch between them in the model list, then return to Standard.
+  Restart the viewer and select either model without reopening a file picker.
+  Remove an unselected entry with its row's icon: the current preview must stay
+  selected and the list must stay open. Remove the selected entry: return to
+  Standard. In both cases its source file must remain on disk. Long names must
+  leave room for the aligned removal icons. A moved/missing source
+  stays in the list, reports a load error and keeps the previous preview.
   `AURORA_DEMO_IMPORT_FILE` replaces the fixtures with an existing file,
   read without modification; choose the mode matching its type.
 
@@ -4805,6 +4888,15 @@ failure. Grid validation and any paid upload are performed by the human.
   arrives. Capture with `AURORA_FPS_LIMIT=60` at 800 (and 960 with
   `later`), in `--language en` and `fr`; Preferences › Interface › "Reduce
   animations" leaves the card still.
+- **`AURORA_DEMO_REGION_MESSAGE=1`**: messages to the whole region in the
+  middle of the screen (#1404), turned on for this run only (Preferences ›
+  Chat › Toasts is not changed). Orion, the estate manager, announces a
+  restart at frame 700, Nova a party at 760: Orion's card arrives (the
+  region's badge, his name, "sent a message to Aurora Demo", the message)
+  and says one more message is waiting; neither gets a toast, both wait
+  under the bell and are written in nearby chat. OK closes Orion's and
+  Nova's arrives. Capture with `AURORA_FPS_LIMIT=60` at 800, in
+  `--language en` and `fr`.
 - **`AURORA_DEMO_ABOUT=info|licences[:end]`**: the About window
   (`ui/about.rs`) opens at frame 600 on the tab asked for (`info` when the
   value is anything else); `:end` scrolls the tab to its last card. Info shows the demo region and simulator, the
@@ -6989,7 +7081,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|worn|save|edit|layers|layers-drag|layers-hold|menu|duplicates`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates`**
 — opens Appearance with four synthetic outfits:
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
@@ -7038,6 +7130,13 @@ for them (`5 to look up`), as a cold inventory cache.
   Lipstick under Star from frame 701 and drops it at frame 760 (the list
   then reads Freckles, Star, Lipstick); `layers-hold` holds it over its
   landing place, for a capture of the marker.
+
+`wearables`, `wearables-outfits` and `wearables-edit` show all 17 system
+wearable types in Worn, My Outfits and the editor respectively. Each type
+has its own icon, shared with Inventory. Body parts and clothing precede
+attachments regardless of their names or descriptions; the three tattoos
+remain Lipstick, Freckles, Star in Worn and the editor. The editor's unworn
+rows use the same type-specific icons.
 
 These operations stay offline; creating new clothing and
 new body parts is not available yet.

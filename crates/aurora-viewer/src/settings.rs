@@ -584,6 +584,10 @@ pub struct Settings {
     /// their conversation on its card (#1198); a payment from anyone else
     /// shows there only when it is open. On by default.
     pub payment_opens_conversation: bool,
+    /// Preferences › Chat › Conversations: our own direct payment to a
+    /// resident opens their conversation on its card (#1198); otherwise it
+    /// shows there only when it is open. Off by default.
+    pub payment_sent_opens_conversation: bool,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
     /// "Search": last tab, rating boxes and land limits.
@@ -737,6 +741,11 @@ pub struct Settings {
     /// addition the Legacy Viewer does not have: its toast stays one switch
     /// away).
     pub friend_request_prompt: bool,
+    /// A message to the whole region shows as a card in the middle of the
+    /// screen instead of a toast (`ui::region_message_prompt`, #1404; on,
+    /// an Aurora addition: off gives back the Legacy Viewer's GodMessage
+    /// toast). Its line of nearby chat stays either way.
+    pub region_message_prompt: bool,
     /// Toast of an IM or conference message out of sight (EnableIMChatPopups, on).
     pub toast_im: bool,
     /// Toast of a group chat message (EnableGroupChatPopups, off).
@@ -1093,6 +1102,10 @@ pub struct Settings {
     /// Optional frame rate cap (on by default at 120 images per second).
     pub fps_cap: bool,
     pub fps_limit: u32,
+    /// Named graphics quality snapshots (#1218), independent of frame pacing.
+    pub graphics_saved: std::collections::BTreeMap<String, crate::graphics_presets::saved::Saved>,
+    /// The explicitly selected profile, retained while its quality is edited.
+    pub graphics_saved_active: Option<String>,
     /// Lower cap while the window is not focused (on by default, as
     /// Firestorm yields BackgroundYieldTime every frame in the background).
     pub background_fps_cap: bool,
@@ -1645,6 +1658,7 @@ impl Default for Settings {
             payment_confirm_threshold: 200,
             always_track_payments: false,
             payment_opens_conversation: true,
+            payment_sent_opens_conversation: false,
             maps: MapSettings::default(),
             search: Default::default(),
             show_people: true,
@@ -1707,6 +1721,7 @@ impl Default for Settings {
             friends_online_in_chat: false,
             presence_position: PresencePosition::TopRight,
             friend_request_prompt: true,
+            region_message_prompt: true,
             toast_im: true,
             toast_group_im: false,
             ims_in_notification_center: false,
@@ -1834,6 +1849,8 @@ impl Default for Settings {
             hdr_emissive: true,
             fps_cap: true,
             fps_limit: 120,
+            graphics_saved: Default::default(),
+            graphics_saved_active: None,
             background_fps_cap: true,
             background_fps_limit: 15,
             max_particles: 4096,
@@ -2136,7 +2153,14 @@ impl Settings {
         s
     }
 
-    fn sanitized(mut self) -> Settings {
+    pub(crate) fn sanitized(mut self) -> Settings {
+        if self
+            .graphics_saved_active
+            .as_ref()
+            .is_some_and(|name| !self.graphics_saved.contains_key(name))
+        {
+            self.graphics_saved_active = None;
+        }
         for profile in self.world_context_menus.profiles.values_mut() {
             profile.locked = true;
         }
@@ -2476,6 +2500,8 @@ impl Settings {
             window_maximized: old.window_maximized,
             // a newer build's own values are not this build's to reset
             newer_file: old.newer_file,
+            // Named profiles are user content, like separate preset files.
+            graphics_saved: old.graphics_saved,
             // Reset this avatar's hover options while keeping other accounts.
             hover_height_accounts: old.hover_height_accounts,
             hover_height_account: old.hover_height_account,

@@ -194,14 +194,17 @@ impl Editor {
                         Vec3::ZERO
                     }
             }
+            // a mirrored axis (a shape slider's) shows its size, and keeps
+            // its sign when edited
             _ => {
                 if self.poser.delta {
                     pose.scales[bone] / base.scales[bone]
                 } else {
-                    pose.scales[bone]
+                    pose.scales[bone].abs()
                 }
             }
         };
+        let scale_signs = pose.scales[bone].signum();
         let mut edited = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 16.0;
@@ -318,7 +321,15 @@ impl Editor {
             self.commit_poser_manipulation(rig, frame, false);
             self.refresh = true;
         } else if edited && self.poser.transform == 2 {
-            self.set_pose_scale(rig, bone, if self.poser.delta { base.scales[bone] * value } else { value });
+            self.set_pose_scale(
+                rig,
+                bone,
+                if self.poser.delta {
+                    base.scales[bone] * value
+                } else {
+                    value * scale_signs
+                },
+            );
         } else if edited && let Some(session) = self.poser.sessions.get_mut(&self.poser.subject) {
             if !self.poser.drag_checkpoint {
                 session.checkpoint();

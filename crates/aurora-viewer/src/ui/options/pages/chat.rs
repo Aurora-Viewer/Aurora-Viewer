@@ -137,6 +137,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-payment-opens-conversation-hint"),
                     &field!(payment_opens_conversation),
                 );
+                // and our own payment's card in the payee's conversation
+                cx.toggle(
+                    tr!("ui-options-payment-sent-opens-conversation"),
+                    tr!("ui-options-payment-sent-opens-conversation-hint"),
+                    &field!(payment_sent_opens_conversation),
+                );
                 // the tab of a conversation with news flashes
                 // (FSFloaterIMContainer::startFlashingTab), in violet and softly
                 cx.toggle(
@@ -657,6 +663,12 @@ fn notifications(cx: &mut Cx) {
             tr!("ui-options-friend-request-prompt"),
             tr!("ui-options-friend-request-prompt-hint"),
             &field!(friend_request_prompt),
+        );
+        // #1404: a message to the whole region there too
+        cx.toggle(
+            tr!("ui-options-region-message-prompt"),
+            tr!("ui-options-region-message-prompt-hint"),
+            &field!(region_message_prompt),
         );
         cx.toggle(tr!("ui-options-toast-im"), tr!("ui-options-toast-im-hint"), &field!(toast_im));
         cx.toggle(tr!("ui-options-toast-group-im"), "", &field!(toast_group_im));

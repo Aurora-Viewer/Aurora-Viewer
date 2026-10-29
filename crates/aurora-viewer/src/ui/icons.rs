@@ -78,6 +78,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "device-desktop-analytics",
     "device-desktop-off",
     "dimensions",
+    "diaper",
     "door-enter",
     "door-exit",
     "external-link",
@@ -87,6 +88,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "file-import",
     "focus-2",
     "focus-centered",
+    "fingerprint",
     "gavel",
     "gif",
     "grid-3x3",
@@ -105,8 +107,11 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "inbox",
     "indent-decrease",
     "indent-increase",
+    "jacket",
     "label-off",
     "layers-intersect",
+    "layers-subtract",
+    "layers-union",
     "layout-columns",
     "license",
     "link",
@@ -126,6 +131,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "movie",
     "music",
     "network",
+    "needle",
     "packages",
     "note",
     "minus",
@@ -151,13 +157,17 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "rss",
     "run",
     "select-all",
+    "scissors",
     "shape",
     "share",
     "shield-off",
     "shovel",
+    "shirt-sport",
+    "shoe",
     "slash",
     "slashes",
     "snowflake",
+    "sock",
     "sort-ascending-letters",
     "sort-descending-letters",
     "speakerphone",
@@ -333,6 +343,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "location",
     "lock",
     "man",
+    "woman",
     "map-pin",
     "medical-cross",
     "menu-2",
@@ -498,6 +509,22 @@ const ALIASES: &[(&str, &str)] = &[
     ("Inv_Landmark", "map-pin-filled"),
     ("Inv_Clothing", "shirt-filled"),
     ("Inv_BodyShape", "man-filled"),
+    ("Inv_Skin", "fingerprint"),
+    ("Inv_Hair", "scissors"),
+    ("Inv_Eye", "eye-filled"),
+    ("Inv_Shirt", "shirt-filled"),
+    ("Inv_Pants", "walk"),
+    ("Inv_Shoe", "shoe"),
+    ("Inv_Socks", "sock"),
+    ("Inv_Jacket", "jacket"),
+    ("Inv_Gloves", "hand-stop"),
+    ("Inv_Undershirt", "shirt-sport"),
+    ("Inv_Underpants", "diaper"),
+    ("Inv_Skirt", "woman-filled"),
+    ("Inv_Alpha", "layers-subtract"),
+    ("Inv_Tattoo", "needle"),
+    ("Inv_Physics", "wave-sine"),
+    ("Inv_Universal", "layers-union"),
     ("Inv_Script", "code"),
     ("Inv_Sound", "file-music-filled"),
     ("Inv_Animation", "run"),
@@ -674,5 +701,21 @@ mod tests {
         for (alias, target) in ALIASES {
             assert!(names.contains(target), "{alias} -> {target} is not embedded");
         }
+    }
+
+    #[test]
+    fn wearable_types_have_distinct_embedded_icons() {
+        let mut targets = std::collections::HashSet::new();
+        for kind in 0..=16 {
+            let asset_type = if kind < 4 { 13 } else { 5 };
+            let name = crate::ui::inventory::item_icon(asset_type, 18, kind);
+            let target = ALIASES.iter().find(|(alias, _)| *alias == name).expect("wearable icon alias").1;
+            assert!(targets.insert(target), "wearable type {kind} repeats {target}");
+            assert!(OUTLINE.iter().chain(FILLED).any(|(name, _)| *name == target));
+            assert_eq!(crate::ui::inventory::item_icon(asset_type, 18, kind | 0xffff_ff00), name);
+        }
+        assert_eq!(crate::ui::inventory::item_icon(5, 18, 255), "Inv_Clothing");
+        assert_eq!(crate::ui::inventory::item_icon(13, 18, 255), "Inv_BodyShape");
+        assert_eq!(crate::ui::inventory::item_icon(24, 24, 14), "Inv_LinkItem");
     }
 }

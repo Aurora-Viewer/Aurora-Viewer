@@ -12,11 +12,17 @@
     libmedia_plugin_gstreamer.so, the files of viewer_manifest.py
     (LinuxManifest), and the shared libraries of the prebuilt packages they
     link; video goes through the system's GStreamer, as in the Legacy Viewer.
+    macOS (PowerShell 7 on the runner): SLPlugin.app as the Legacy Viewer's
+    application holds it (viewer_manifest.py, DarwinManifest), the plugins,
+    CEF's framework, the Dullahan helpers and LibVLC in its
+    Contents/Frameworks, signed ad hoc.
 
 .EXAMPLE
     ./scripts/package-media-plugins.ps1 -Source fs -Build fs/build-vc170-64 -Out Aurora-Media-Plugins-1-windows-x64 -Version 1
 .EXAMPLE
     ./scripts/package-media-plugins.ps1 -Platform linux -Source fs -Build fs/build-linux-x86_64 -Out Aurora-Media-Plugins-2-linux-x64 -Version 2
+.EXAMPLE
+    ./scripts/package-media-plugins.ps1 -Platform macos -Source fs -Build fs/build-darwin-universal -Out Aurora-Media-Plugins-3-macos-universal -Version 3
 #>
 param(
     # checkout of the Legacy Viewer sources, at the commit that was built
@@ -26,7 +32,7 @@ param(
     [Parameter(Mandatory)][string]$Out,
     [Parameter(Mandatory)][string]$Version,
     [string]$Configuration = 'Release',
-    [ValidateSet('windows', 'linux')][string]$Platform = 'windows'
+    [ValidateSet('windows', 'linux', 'macos')][string]$Platform = 'windows'
 )
 $ErrorActionPreference = 'Stop'
 
@@ -79,6 +85,78 @@ if ($Platform -eq 'windows') {
         Sort-Object FullName -Descending | Select-Object -First 1
     if (-not $crt) { throw 'The Visual C++ runtime to redistribute was not found.' }
     Copy-Required $crt.FullName @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') $plugin
+} elseif ($Platform -eq 'macos') {
+    function Assert-Native([string]$What) { if ($LASTEXITCODE -ne 0) { throw "$What failed" } }
+    $lib = Join-Path $packages 'lib/release'
+    $app = Join-Path $plugin 'SLPlugin.app'
+    $frameworks = Join-Path $app 'Contents/Frameworks'
+    # the launcher's bundle as Xcode built it, without its debug symbols
+    & ditto (Join-Path $Build "llplugin/slplugin/$Configuration/SLPlugin.app") $app; Assert-Native 'ditto SLPlugin.app'
+    New-Item -ItemType Directory -Force -Path (Join-Path $frameworks 'plugins') | Out-Null
+    Copy-Required (Join-Path $Build "media_plugins/cef/$Configuration") 'media_plugin_cef.dylib' $frameworks
+    Copy-Required (Join-Path $Build "media_plugins/libvlc/$Configuration") 'media_plugin_libvlc.dylib' $frameworks
+
+    # CEF: Dullahan loads the framework and starts its helpers from the
+    # main bundle's Contents/Frameworks, where the helpers find it too
+    foreach ($bundle in 'Chromium Embedded Framework.framework', 'DullahanHelper.app', 'DullahanHelper (Alerts).app',
+        'DullahanHelper (GPU).app', 'DullahanHelper (Renderer).app', 'DullahanHelper (Plugin).app') {
+        $from = Join-Path $lib $bundle
+        if (-not (Test-Path -LiteralPath $from)) { throw "Missing from the build: $from" }
+        & ditto $from (Join-Path $frameworks $bundle); Assert-Native "ditto $bundle"
+    }
+    # LibVLC under the names its plugin and modules load (@rpath/libvlc.dylib,
+    # @rpath/libvlccore.dylib): the files themselves, the pack holds no link
+    foreach ($name in 'libvlc.dylib', 'libvlccore.dylib') {
+        & cp -L (Join-Path $lib $name) (Join-Path $frameworks $name); Assert-Native "cp $name"
+    }
+    # its modules with their times: plugins.dat describes them by time, a
+    # newer file would make VLC scan them all at every start (the plugin
+    # sets VLC_PLUGIN_PATH to ./plugins, SLPlugin running in Frameworks)
+    $modules = @(Get-ChildItem -LiteralPath (Join-Path $lib 'plugins') -Filter '*.dylib').FullName + (Join-Path $lib 'plugins/plugins.dat')
+    & cp -p @modules (Join-Path $frameworks 'plugins'); Assert-Native 'cp of the VLC modules'
+
+    # what the viewer expects of the pack: no link, arm64 in every binary,
+    # and nothing loaded from outside the bundle but the system's libraries.
+    # A few VLC modules are Intel's own optimisations (MMX, SSE), built for
+    # x86_64 only and shipped by the Legacy Viewer too: VLC loads none of
+    # them on Apple Silicon, they are listed only.
+    $links = @(& find $app -type l)
+    if ($links.Count) { throw "Links in the pack: $($links -join ', ')" }
+    $modules = (Resolve-Path -LiteralPath (Join-Path $frameworks 'plugins')).Path
+    $intelOnly = @()
+    foreach ($file in Get-ChildItem -LiteralPath $app -Recurse -File) {
+        $archs = & lipo -archs $file.FullName 2>$null
+        if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0; continue }   # not a Mach-O file
+        if ($archs -notmatch '\barm64\b') {
+            if (-not $file.FullName.StartsWith($modules)) { throw "$($file.FullName) has no arm64 code ($archs)" }
+            $intelOnly += $file.Name
+        }
+        # (a universal binary lists its dependencies once per architecture,
+        # each list after a header line ending with a colon; a library lists
+        # its own install name too, which loads nothing: the VLC modules keep
+        # the .libs/ name of their build)
+        $own = @(& otool -D $file.FullName | Where-Object { -not $_.TrimEnd().EndsWith(':') } | ForEach-Object { $_.Trim() })
+        foreach ($line in (& otool -L $file.FullName | Where-Object { -not $_.TrimEnd().EndsWith(':') })) {
+            $dep = ($line.Trim() -split ' \(')[0]
+            if ($dep -and $own -notcontains $dep -and $dep -notmatch '^(@rpath|@loader_path|@executable_path)/|^/usr/lib/|^/System/') {
+                throw "$($file.Name) loads $dep, outside the bundle"
+            }
+        }
+    }
+
+    if ($intelOnly.Count) { Write-Host "VLC modules for Intel Macs only: $($intelOnly -join ', ')" }
+
+    # an ad hoc signature, as the Legacy Viewer signs without its
+    # certificate (viewer_manifest.py, package_finish): each library, then
+    # the bundle with the hardened runtime and SLPlugin's entitlements
+    # (JIT for CEF, libraries of other signers)
+    $libraries = @(Get-ChildItem -LiteralPath $frameworks -Filter '*.dylib').FullName +
+        @(Get-ChildItem -LiteralPath (Join-Path $frameworks 'plugins') -Filter '*.dylib').FullName +
+        @(Get-ChildItem -LiteralPath (Join-Path $frameworks 'Chromium Embedded Framework.framework/Libraries') -Filter '*.dylib' -ErrorAction SilentlyContinue).FullName
+    foreach ($library in $libraries) { & codesign --force --sign - $library; Assert-Native "codesign $library" }
+    & codesign --force --deep --options runtime --entitlements (Join-Path $Source 'indra/newview/slplugin.entitlements') --sign - $app
+    Assert-Native 'codesign SLPlugin.app'
+    & codesign --verify --deep --strict $app; Assert-Native 'codesign --verify'
 } else {
     $lib = Join-Path $packages 'lib/release'
     # the launcher and the two plugins; the gstreamer10 target is installed
@@ -149,7 +227,7 @@ function Get-PackageVersion([string]$Name) {
     $match.Groups[1].Value
 }
 $built = [ordered]@{ dullahan = Get-PackageVersion 'dullahan' }
-if ($Platform -eq 'windows') { $built['vlc-bin'] = Get-PackageVersion 'vlc-bin' }
+if ($Platform -ne 'linux') { $built['vlc-bin'] = Get-PackageVersion 'vlc-bin' }
 $manifest = [ordered]@{
     schema   = 1
     version  = $Version

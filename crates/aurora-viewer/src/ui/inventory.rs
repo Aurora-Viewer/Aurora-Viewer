@@ -54,6 +54,7 @@ pub(crate) mod smart;
 mod smart_builder;
 pub(crate) mod smart_store;
 pub(crate) mod task_drop;
+pub(crate) mod task_selection;
 pub mod thumbnail;
 pub(crate) mod tree;
 pub(crate) mod view;
@@ -475,6 +476,7 @@ pub struct InventoryUi {
     progress: Option<progress::State>,
     copy_jobs: progress::CopyJobs,
     notice: Option<(String, std::time::Instant)>,
+    contents_notice: Option<progress::ContentsNotice>,
     pub message: String,
     pub dialog: Option<EditDialog>,
     move_to: Option<move_to::MoveTo>,
@@ -871,11 +873,10 @@ pub fn item_icon(asset_type: i32, inv_type: i32, flags: u32) -> &'static str {
         (1, _) => "Inv_Sound",
         (2, _) => "Inv_CallingCard",
         (3, _) => "Inv_Landmark",
-        (5, _) => "Inv_Clothing",
+        (5 | 13, _) => wearable_icon(asset_type, flags),
         (6, _) => "Inv_Object",
         (7, _) => "Inv_Notecard",
         (10, _) => "Inv_Script",
-        (13, _) => "Inv_BodyShape",
         (20, _) => "Inv_Animation",
         (21, _) => "Inv_Gesture",
         (24, _) => "Inv_LinkItem",
@@ -884,6 +885,33 @@ pub fn item_icon(asset_type: i32, inv_type: i32, flags: u32) -> &'static str {
         (56, _) => "Inv_Settings",
         (57, _) => "Inv_Material",
         _ => "Inv_Invalid",
+    }
+}
+
+/// LLInventoryIcon::assignWearableIcon / LLWearableType::inventoryFlagsToWearableType
+/// (indra/newview/llinventoryicon.cpp, indra/llappearance/llwearabletype.cpp).
+/// Only the low byte is a wearable type; the remaining inventory flags are independent.
+fn wearable_icon(asset_type: i32, flags: u32) -> &'static str {
+    match (asset_type, flags & 0xff) {
+        (13, 0) => "Inv_BodyShape",
+        (13, 1) => "Inv_Skin",
+        (13, 2) => "Inv_Hair",
+        (13, 3) => "Inv_Eye",
+        (5, 4) => "Inv_Shirt",
+        (5, 5) => "Inv_Pants",
+        (5, 6) => "Inv_Shoe",
+        (5, 7) => "Inv_Socks",
+        (5, 8) => "Inv_Jacket",
+        (5, 9) => "Inv_Gloves",
+        (5, 10) => "Inv_Undershirt",
+        (5, 11) => "Inv_Underpants",
+        (5, 12) => "Inv_Skirt",
+        (5, 13) => "Inv_Alpha",
+        (5, 14) => "Inv_Tattoo",
+        (5, 15) => "Inv_Physics",
+        (5, 16) => "Inv_Universal",
+        (13, _) => "Inv_BodyShape",
+        _ => "Inv_Clothing",
     }
 }
 
@@ -1223,20 +1251,9 @@ fn status(
     actions: &mut Vec<InvAction>,
     filtered: bool,
 ) {
-    let now = std::time::Instant::now();
-    let pending_message = st.busy().then(|| st.pending_status(now));
-    let (message, color) = if !st.message.is_empty() {
-        (st.message.as_str(), p.warn)
-    } else if let Some(message) = &pending_message {
-        (message.as_str(), p.ink)
-    } else if let Some(message) = st.success_notice(now) {
-        (message, p.success)
-    } else if st.fetch_all {
-        (aurora_i18n::tr!("ui-inventory-search-loading-folders"), p.muted)
-    } else {
-        ("", p.muted)
-    };
-    let message = message.to_owned();
+    let (message, color) = st
+        .status_message(p, std::time::Instant::now())
+        .unwrap_or_else(|| (String::new(), p.muted));
     let count = if filtered {
         aurora_i18n::tr!(
             "ui-inventory-results-objects-loaded",
@@ -1969,6 +1986,7 @@ pub fn show(
         w.state.progress.clone_from(&st.progress);
         w.state.copy_jobs.clone_from(&st.copy_jobs);
         w.state.notice.clone_from(&st.notice);
+        w.state.contents_notice.clone_from(&st.contents_notice);
         w.state.merchant = st.merchant;
         w.state.marketplace_commands.clone_from(&st.marketplace_commands);
         w.state.playing = st.playing;

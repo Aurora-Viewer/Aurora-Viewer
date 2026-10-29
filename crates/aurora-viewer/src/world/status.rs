@@ -594,7 +594,8 @@ mod tests {
         let im = |dialog: u8, message: &str| InstantMessage {
             from_agent_id: tess,
             from_name: "Tess Touch".into(),
-            to_agent_id: Uuid::nil(),
+            // to us: to nobody, it would be a message to the whole region
+            to_agent_id: Uuid::from_u128(1),
             dialog,
             session_id: Uuid::nil(),
             message: message.into(),

@@ -80,18 +80,22 @@ script is started. Rigged sources continue to follow the avatar as before.
 
 ## Install and connect
 
-1. In Aurora, open **Build → LiveMesh**. The **Plugins** section automatically
-   detects local Blender installations and shows each executable's version,
-   path and installed Aurora plug-in version. Click **Install**, **Update** or
+1. In Aurora, open **Build → LiveMesh**. In the **Plugins** tab, click **Install in Blender…**
+   and select Blender's executable (`blender.exe` on Windows). Aurora checks only
+   this executable, installs and enables the matching bundled plug-in, and shows
+   the current step followed by a completion message with the Blender version.
+   To list all installations instead, click **Search for Blender**. It shows
+   each executable's version, path and installed Aurora plug-in version. Click **Install**, **Update** or
    **Enable** on the desired row. Aurora chooses the compatible bundled package,
    installs it and saves its enabled state in that Blender profile.
 2. If Blender is already open, restart it when convenient to load the updated
-   plug-in. Aurora never closes its windows or changes your scene. **Refresh**
-   rescans installations. **Choose Blender…** adds an executable in a custom or
-   portable location and remembers it for later. Standard application folders,
+   plug-in. Aurora never closes its windows or changes your scene. **Search for Blender**
+   rescans installations. **Install in Blender…** also supports custom or portable
+   locations and remembers the selected executable for later searches. It never
+   searches or launches other Blender executables. Standard application folders,
    common portable folders, PATH and Windows application registrations are
    searched without recursively scanning your disks. Removable drives are added
-   through **Choose Blender…**, avoiding empty card readers during automatic
+   through **Install in Blender…**, avoiding empty card readers during
    detection. Prior Aurora package files and `userpref.blend` are preserved under the selected profile's
    `aurora-backups` directory; failed installation restores these files. Newer
    plug-in versions are never downgraded. Multiple executables of the same
@@ -108,16 +112,38 @@ script is started. Rigged sources continue to follow the avatar as before.
    - **Blender 2.93–4.1:** choose the **classic add-on** package in Aurora.
      In Blender, open Preferences → Add-ons → Install, select the ZIP,
      then enable **3D View: Aurora LiveMesh**. Keep the ZIP intact.
-3. In Aurora's **LiveMesh** window, click **Enable preview**.
+3. In Aurora's **LiveMesh** window, open the **Connection** tab and click **Enable preview**.
    The default port is **17655**. Change it in both applications if another
    program is already using that port, or to preview in another viewer.
 4. In Blender, open the 3D view sidebar (`N`) → **Aurora** → **Live**, then
    **Connect to Aurora**. No object selection or rigged mesh is required.
    To preview meshes, select them and click **Add selected meshes** at any time.
 5. Edit your mesh. **Automatic updates** is enabled by default, with an
-   **Interval (seconds)** of **0.2**. Larger meshes can take longer to capture
+   **Interval (seconds)** of **2**. Larger meshes can take longer to capture
    and prepare. Aurora supplies the
    animation and avatar shape, independently of Blender's current pose.
+
+Automatic captures wait for a short 150 ms pause during mesh editing, sculpting
+or painting, so a continuous editing gesture is not interrupted by capture.
+The chosen interval remains the minimum delay between captures. **Update now**
+still captures immediately, and animation playback does not wait for this pause.
+With a current viewer, geometry and the strongest four skin weights are prepared
+in bulk as detached byte buffers; the socket worker encodes these directly.
+Meshes without shape keys or enabled modifiers other than Armature are read
+directly in their rest state, avoiding a temporary object and a scene evaluation.
+Other meshes retain the evaluated export path. Material-only changes reuse the
+captured geometry.
+Geometry edits still rebuild the mesh at each retained update; all changes
+currently send a complete snapshot, with compression on the socket worker.
+Idle connection feedback redraws only the sidebar when its content changes.
+
+If an object cannot be exported or sent, its list row shows a warning button.
+Click it to open the full error and object name, then **Copy error** to copy
+all details to the clipboard. Object errors do not fill the top of the sidebar.
+The other valid objects continue to update. Fix the reported problem and use
+**Update now**, or wait for the next automatic capture, to retry. The entry stays
+in Blender's list; failed sources are omitted from that preview snapshot. Import
+and LOD preparation still require the complete requested source to be valid.
 
 The four navigation buttons keep the sidebar focused on one task:
 
@@ -642,10 +668,13 @@ skeleton from receiving the shape twice when previewed in Aurora.
 Use a Second Life compatible armature and its deform vertex groups (`mPelvis`,
 `mTorso`, `mChest`, Bento joints, supported aliases and collision volumes).
 An optional string custom property **`aurora_joint`** on a Blender bone maps
-its name to an Aurora joint. Unrecognized weighted bones are reported instead
-of silently attaching the mesh to the pelvis. Every vertex needs a positive
-bone weight. The four strongest influences are retained and normalized, as
-in Second Life mesh assets.
+its name to an Aurora joint. Unrecognized weighted bones are reported.
+Unweighted vertices
+inherit the nearest weighted vertex's influences in the exported copy, using
+the same normalized-distance rule as mesh import. A wholly unweighted rigged
+mesh follows the pelvis, or the shallowest supported deform bone available.
+Blender's source vertex groups remain unchanged. The four strongest influences
+are retained and normalized, as in Second Life mesh assets.
 
 **Automatic (Avastar / SL)** detects an existing SL rig's rest axes. Explicit
 **SL / Z up** and **Blender -Y forward** overrides remain available. Scene unit scale is
@@ -663,7 +692,11 @@ position overrides are not applied to Aurora's skeleton.
 
 ## Current limits
 
-- 32 enabled source objects, 600,000 exported corners, 64 MiB per snapshot.
+- 32 enabled source objects and 600,000 exported corners. Transfer frames stay
+  within 64 MiB; negotiated lossless compression accepts up to 256 MiB of decoded
+  snapshot JSON. The plug-in compresses on its socket worker without reducing
+  geometry or texture quality. A source that still exceeds the negotiated
+  budget is omitted and gets its own warning; other valid sources keep updating.
   Paused entries remain in the list and do not count toward these limits.
 - 110 weighted joints per source object and 32 nonempty material surfaces.
   Large surfaces and more than eight faces are split into render objects.
@@ -708,7 +741,8 @@ instead of the sphere, including its actual inverse binds and weight palette.
 Add `--pbr` to recalculate its automatic weights, send base/normal/ORM/emission
 maps and stream repeated image edits through the renderer.
 `bridge_tracking.py` uses the real Blender client and list operators to add two
-objects, pause them individually/together, resume updated pixels, remove/re-add
+objects, isolate an invalid material while the valid source keeps updating,
+restore the repaired source, pause them individually/together, resume updated pixels, remove/re-add
 entries and reconnect without a selection. Use the same `-- --port <port>`
 arguments. Its optional `--save-blend <absolute-path.blend>` saves the final list
 with one active object, one paused object and a packed test image.
@@ -721,9 +755,20 @@ can be opened normally and connected through the Aurora sidebar.
 TCP listens on IPv4 loopback only. The client sends the eight bytes
 `AURBLD1\n`. Aurora responds with one newline-terminated JSON object containing
 `protocol`, the supported `joints`, their inverse neutral `rest_axes` (column-major,
-translation removed), `features: ["pbr-materials", "source-ids", "shape-transfer", "shape-apply", "import-lods"]`, and `max_bytes`. Every subsequent client
-message is a four-byte unsigned little-endian JSON byte count, then a UTF-8
-snapshot. Length zero is a heartbeat. The reply is newline-terminated JSON
+translation removed), negotiated `features`, `max_bytes` (64 MiB), and
+`max_decoded_bytes` (256 MiB). Every subsequent client message is a four-byte
+unsigned little-endian byte count, then a UTF-8 snapshot. Peers advertising
+`compressed-snapshots` also accept `ZLIB` followed by a complete zlib stream of
+that same JSON. Compression is lossless and runs only on the socket workers.
+Truncated, corrupt, concatenated or over-budget streams are rejected. Plain
+frames keep the original 64 MiB cap, so older clients remain compatible.
+With `packed-geometry`, a surface can replace its `vertices` and `indices` arrays
+with `packed: {"vertices": "<base64>", "indices": "<base64>"}`. Each vertex is a
+52-byte little-endian record: eight f32 values (position, normal, UV), four u8
+joint indices and four f32 weights. Indices are little-endian u32. Values are
+identical to the ordinary JSON-to-f32 conversion; bounds, skinning, normals and
+index validation still apply. Mixing nonempty arrays and packed data is invalid.
+Length zero is a heartbeat. The reply is newline-terminated JSON
 with `ok`, `revision` on success, or `error` on rejection. A success acknowledges
 CPU preparation, not a displayed GPU frame. Revisions strictly increase within
 a connection; reconnecting starts a new revision sequence.

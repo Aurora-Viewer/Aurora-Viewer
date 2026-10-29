@@ -302,6 +302,7 @@ Files in [`assets/branding/`](../assets/branding/):
 | `aurora-logo-black.svg` / `.png` (4096 px) | black silhouette: monochrome uses on a light background |
 | `aurora-logo-purple.png` / `aurora-logo-teal.png` (4096 px) | silhouette in violet or in turquoise |
 | `aurora-logo-bg.png` (4096 px) | full logo on a navy background (the only file with an opaque background): square icons that need one (website's Apple touch icon) |
+| `aurora.icns` | full logo on its navy background in Apple's rounded square (an 824 px body with 185 px corners on a 1024 px canvas, 16 to 1024 px, taken from `aurora-logo-bg.png`): icon of `Aurora Viewer.app` on macOS |
 | `aurora.ico` | full logo as a Windows icon (16 to 256 px, taken from `aurora-logo.png`): icon of `aurora-viewer.exe` (embedded by its `build.rs`), "Aurora Tools" and "Aurora PR" shortcuts |
 
 The logo is a howling wolf's head in profile, facing up and to the right,

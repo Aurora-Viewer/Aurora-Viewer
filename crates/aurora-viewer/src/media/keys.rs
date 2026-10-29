@@ -5,17 +5,19 @@
 //! keys, nativeKeyboardEvent for text) we send what the Legacy Viewer's SDL2
 //! window sends: SDL keycodes, their Windows virtual keys and the typed
 //! UTF-16 units (LLWindowSDL::getNativeKeyData, LLKeyboardSDL::mapSDL2toWin).
-//! The helpers of both systems are built everywhere, so that their tests run
-//! on either.
+//! On macOS (nativeKeyboardEventOSX) we send what the Legacy Viewer's Cocoa
+//! window reads from its NSEvent: key code, Cocoa modifier flags and
+//! characters (LLWindowMacOSX::getNativeKeyData). The helpers of every
+//! system are built everywhere, so that their tests run on any.
 
 use aurora_media::{MediaPlugin, Modifiers};
 use winit::keyboard::KeyCode;
 
-#[cfg_attr(target_os = "linux", allow(dead_code))]
+#[cfg_attr(any(target_os = "linux", target_os = "macos"), allow(dead_code))]
 pub const WM_KEYDOWN: u32 = 0x0100;
-#[cfg_attr(target_os = "linux", allow(dead_code))]
+#[cfg_attr(any(target_os = "linux", target_os = "macos"), allow(dead_code))]
 pub const WM_KEYUP: u32 = 0x0101;
-#[cfg_attr(target_os = "linux", allow(dead_code))]
+#[cfg_attr(any(target_os = "linux", target_os = "macos"), allow(dead_code))]
 pub const WM_CHAR: u32 = 0x0102;
 
 /// Windows virtual-key code of a physical key.
@@ -127,7 +129,7 @@ pub fn virtual_key(code: KeyCode) -> Option<u32> {
     Some(vk)
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))]
+#[cfg_attr(any(target_os = "linux", target_os = "macos"), allow(dead_code))]
 /// lParam of a key message: repeat count 1, scan code, extended bit, and
 /// for a release the previous-state and transition bits.
 pub fn key_lparam(scancode: u32, up: bool, repeat: bool) -> u32 {
@@ -152,7 +154,7 @@ pub fn char_units(text: &str) -> Vec<u32> {
 
 /// Send a key (and the characters it types) to a plugin; false when the key
 /// has no virtual-key code.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn forward(
     p: &mut MediaPlugin,
     code: KeyCode,
@@ -212,6 +214,144 @@ pub fn forward(
         }
     }
     true
+}
+
+/// Send a key (and the characters it types) to a plugin, as the Legacy
+/// Viewer's Cocoa window does (LLWindowMacOSX::getNativeKeyData,
+/// LLViewerMediaImpl::handleKeyHere / handleUnicodeCharHere); `scancode` is
+/// the key's macOS key code (winit's scancode there). The CEF plugin passes
+/// only non-printable keys on as keys (MediaPluginCEF::keyEvent); the
+/// characters arrive as text, with the native data of their key
+/// (MediaPluginCEF::unicodeInput). False when the key has no code.
+#[cfg(target_os = "macos")]
+pub fn forward(
+    p: &mut MediaPlugin,
+    code: KeyCode,
+    scancode: u32,
+    pressed: bool,
+    repeat: bool,
+    text: Option<&str>,
+    mods: Modifiers,
+) -> bool {
+    let Some(vk) = virtual_key(code) else {
+        return false;
+    };
+    let flags = mac::flags(mods);
+    let (ev, kind) = match (pressed, repeat) {
+        (false, _) => (aurora_media::KeyEvent::Up, mac::KEY_UP),
+        (true, true) => (aurora_media::KeyEvent::Repeat, mac::KEY_DOWN),
+        (true, false) => (aurora_media::KeyEvent::Down, mac::KEY_DOWN),
+    };
+    let (chars, unmodified) = mac::characters(code, text);
+    p.key_event(
+        ev,
+        vk as i32,
+        mods,
+        MediaPlugin::native_key_data_mac(kind, flags, scancode, chars, unmodified, repeat),
+    );
+    if pressed {
+        for (unit, unmodified) in mac::typed(text, mods) {
+            let native = MediaPlugin::native_key_data_mac(mac::KEY_DOWN, flags, scancode, unit, unmodified, repeat);
+            p.text_input(text.unwrap_or_default(), mods, native);
+        }
+    }
+    true
+}
+
+/// The Cocoa side of the macOS keyboard (pure functions, tested everywhere).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod mac {
+    use super::char_units;
+    use aurora_media::Modifiers;
+    use winit::keyboard::KeyCode;
+
+    /// NSEventType of a key press and of its release.
+    pub const KEY_DOWN: u32 = 10;
+    pub const KEY_UP: u32 = 11;
+
+    /// NSEventModifierFlags: Shift, Control, Option, Command.
+    pub fn flags(mods: Modifiers) -> u32 {
+        let mut f = 0;
+        if mods.shift {
+            f |= 1 << 17;
+        }
+        if mods.control {
+            f |= 1 << 18;
+        }
+        if mods.alt {
+            f |= 1 << 19;
+        }
+        if mods.command {
+            f |= 1 << 20;
+        }
+        f
+    }
+
+    /// The character Cocoa gives a key that types none: the control
+    /// characters of Return, Tab, Escape and Backspace, the private-use
+    /// codes of the function keys (NSUpArrowFunctionKey…).
+    pub fn function_char(code: KeyCode) -> Option<u32> {
+        use KeyCode::*;
+        Some(match code {
+            Enter => 0x0D,
+            NumpadEnter => 0x03,
+            Tab => 0x09,
+            Escape => 0x1B,
+            Backspace => 0x7F,
+            ArrowUp => 0xF700,
+            ArrowDown => 0xF701,
+            ArrowLeft => 0xF702,
+            ArrowRight => 0xF703,
+            F1 => 0xF704,
+            F2 => 0xF705,
+            F3 => 0xF706,
+            F4 => 0xF707,
+            F5 => 0xF708,
+            F6 => 0xF709,
+            F7 => 0xF70A,
+            F8 => 0xF70B,
+            F9 => 0xF70C,
+            F10 => 0xF70D,
+            F11 => 0xF70E,
+            F12 => 0xF70F,
+            Insert => 0xF727,
+            Delete => 0xF728,
+            Home => 0xF729,
+            End => 0xF72B,
+            PageUp => 0xF72C,
+            PageDown => 0xF72D,
+            _ => return None,
+        })
+    }
+
+    /// The event's first character and first character without
+    /// modifiers ([NSEvent characters] / charactersIgnoringModifiers):
+    /// what the key types, else its function character, else none (0). A
+    /// shifted letter is the lower-case one without modifiers.
+    pub fn characters(code: KeyCode, text: Option<&str>) -> (u32, u32) {
+        if let Some(c) = function_char(code) {
+            return (c, c);
+        }
+        let Some(first) = text.and_then(|t| t.chars().next()) else {
+            return (0, 0);
+        };
+        let unit = |c: char| char_units(&c.to_string()).first().copied().unwrap_or(0);
+        (unit(first), unit(first.to_lowercase().next().unwrap_or(first)))
+    }
+
+    /// The UTF-16 units a key press types, each with its unmodified unit.
+    /// With Control or Command down the Legacy Viewer's window types
+    /// nothing (the key is a shortcut), nor for the keys that type control
+    /// characters, which go as keys.
+    pub fn typed(text: Option<&str>, mods: Modifiers) -> Vec<(u32, u32)> {
+        let Some(text) = text.filter(|t| !t.is_empty()) else {
+            return Vec::new();
+        };
+        if mods.control || mods.command || text.chars().any(|c| c.is_control()) {
+            return Vec::new();
+        }
+        char_units(text).into_iter().map(|u| (u, u)).collect()
+    }
 }
 
 /// The SDL2 side of the Linux keyboard (pure functions, tested everywhere).
@@ -393,6 +533,17 @@ mod tests {
             ..none
         };
         assert_eq!(sdl::modifiers(ctrl_shift), 5);
+        // macOS: Cocoa flags, function characters, what a key types
+        let command = Modifiers { command: true, ..none };
+        assert_eq!(mac::flags(ctrl_shift), (1 << 17) | (1 << 18));
+        assert_eq!(mac::flags(command), 1 << 20);
+        assert_eq!(mac::characters(KeyCode::ArrowLeft, None), (0xF702, 0xF702));
+        assert_eq!(mac::characters(KeyCode::Backspace, None), (0x7F, 0x7F));
+        assert_eq!(mac::characters(KeyCode::KeyA, Some("A")), ('A' as u32, 'a' as u32));
+        assert_eq!(mac::characters(KeyCode::ShiftLeft, None), (0, 0));
+        assert_eq!(mac::typed(Some("é"), none), vec![(0xE9, 0xE9)]);
+        assert!(mac::typed(Some("a"), command).is_empty(), "Cmd+A is a shortcut");
+        assert!(mac::typed(Some("\r"), none).is_empty(), "Return goes as a key");
         assert_eq!(sdl::typed(KeyCode::KeyE, Some("é"), none), vec![("é".to_string(), 0xE9)]);
         assert_eq!(
             sdl::typed(KeyCode::KeyE, Some("😀"), none),

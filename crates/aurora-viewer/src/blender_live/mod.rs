@@ -4,6 +4,7 @@
 
 mod addon;
 mod demo;
+mod geometry;
 pub(crate) mod import;
 mod installer;
 mod links;
@@ -29,6 +30,13 @@ use std::{
 use uuid::Uuid;
 
 pub const DEFAULT_PORT: u16 = 17655;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Tab {
+    #[default]
+    Connection,
+    Plugins,
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SourceState {
@@ -72,6 +80,7 @@ impl Drop for Server {
 
 pub struct Live {
     pub open: bool,
+    pub(super) tab: Tab,
     pub port: u16,
     server: Option<Server>,
     pub error: Option<String>,
@@ -109,6 +118,7 @@ impl Default for Live {
     fn default() -> Self {
         Self {
             open: false,
+            tab: Tab::Connection,
             port: DEFAULT_PORT,
             server: None,
             error: None,

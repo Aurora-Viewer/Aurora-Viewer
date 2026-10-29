@@ -91,7 +91,7 @@ impl State {
 /// rotations or child scale (LLXformMatrix). The avatar model is removed first.
 pub(super) fn local_pose(rig: &Rig, frame: &Frame) -> Option<(ik::LocalPose, Vec<Vec3>)> {
     let inverse = frame.model.inverse();
-    let matrices: Vec<_> = frame
+    let mut matrices: Vec<_> = frame
         .joints
         .iter()
         .map(|m| (inverse * *m).to_scale_rotation_translation())
@@ -102,6 +102,34 @@ pub(super) fn local_pose(rig: &Rig, frame: &Frame) -> Option<(ik::LocalPose, Vec
             .any(|(s, q, p)| !s.is_finite() || s.abs().min_element() < 1e-5 || !q.is_finite() || !p.is_finite())
     {
         return None;
+    }
+    // Shape sliders give some face and pectoral joints a negative scale on
+    // one axis (LLPolySkeletalDistortion adds scale deltas without a floor).
+    // A mirrored matrix does not tell which axis: glam puts the sign on X
+    // and turns the rotation half a turn. Keep the reading whose local
+    // rotation is nearest the rig's rest one, so that rotations set from a
+    // preset, a file or the T-pose do not turn that joint over. Parents first.
+    for &bone in &rig.order {
+        let (scale, rotation, _) = matrices[bone];
+        if scale.x >= 0.0 {
+            continue;
+        }
+        let parent = rig.parent[bone].map_or(Quat::IDENTITY, |p| matrices[p].1);
+        let rest = rig.local_rot[bone];
+        let (flip, signs) = [
+            (Quat::IDENTITY, Vec3::ONE),
+            (Quat::from_rotation_z(std::f32::consts::PI), Vec3::new(-1.0, -1.0, 1.0)),
+            (Quat::from_rotation_y(std::f32::consts::PI), Vec3::new(-1.0, 1.0, -1.0)),
+            (Quat::from_rotation_x(std::f32::consts::PI), Vec3::new(1.0, -1.0, -1.0)),
+        ]
+        .into_iter()
+        .max_by(|a, b| {
+            let near = |flip: Quat| (parent.inverse() * rotation * flip).normalize().dot(rest).abs();
+            near(a.0).total_cmp(&near(b.0))
+        })
+        .unwrap_or((Quat::IDENTITY, Vec3::ONE));
+        matrices[bone].0 = scale * signs;
+        matrices[bone].1 = (rotation * flip).normalize();
     }
     let mut pose = ik::LocalPose {
         rotations: vec![Quat::IDENTITY; rig.len()],

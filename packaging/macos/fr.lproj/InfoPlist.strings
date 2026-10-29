@@ -1,0 +1,2 @@
+/* Shown by macOS when voice chat first opens the microphone. */
+"NSMicrophoneUsageDescription" = "Aurora Viewer utilise le microphone pour le chat vocal dans Second Life.";

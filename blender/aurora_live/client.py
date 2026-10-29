@@ -5,9 +5,15 @@ import socket
 import struct
 import threading
 import time
+import zlib
+import array
+import base64
+import sys
 
 MAGIC = b"AURBLD1\n"
 MAX_BYTES = 64 * 1024 * 1024
+MAX_DECODED_BYTES = 256 * 1024 * 1024
+COMPRESS_THRESHOLD = 1024 * 1024
 MAX_REPLY = 8 * 1024 * 1024 + 4096
 
 
@@ -16,11 +22,113 @@ def wire_snapshot(snapshot, features):
         raise ValueError("Update Aurora Viewer to preview non-rigged meshes")
     if not {"object-links", "source-ids"}.issubset(features) and any(mesh.get("link") for mesh in snapshot.get("meshes", [])):
         raise ValueError("Update Aurora Viewer to preview linked objects")
-    if "source-ids" in features or "meshes" not in snapshot:
+    if "meshes" not in snapshot:
         return snapshot
-    # v1 peers without this optional capability reject unknown mesh fields.
-    return dict(snapshot, meshes=[{key: value for key, value in mesh.items() if key != "source_id"}
-                                  for mesh in snapshot["meshes"]])
+    meshes = snapshot["meshes"]
+    if "source-ids" not in features or any("_slots" in mesh for mesh in meshes):
+        # v1 peers without this optional capability reject unknown mesh fields.
+        meshes = [{key: value for key, value in mesh.items() if key != "_slots" and (key != "source_id" or "source-ids" in features)}
+                  for mesh in meshes]
+    packed_geometry = "packed-geometry" in features
+    buffered = any("_buffers" in face for mesh in meshes for face in mesh.get("faces", []))
+    if packed_geometry or buffered:
+        packed_meshes = []
+        record = struct.Struct("<8f4B4f")
+        for source in meshes:
+            faces = []
+            for face in source.get("faces", []):
+                if "_buffers" in face:
+                    vertices, index_bytes = face["_buffers"]
+                else:
+                    vertices = b"".join(record.pack(*v["position"], *v["normal"], *v["uv"], *v["joints"], *v["weights"])
+                                        for v in face["vertices"])
+                    indices = array.array("I", face["indices"])
+                    if indices.itemsize != 4:
+                        raise ValueError("Unsupported native index size")
+                    if sys.byteorder != "little":
+                        indices.byteswap()
+                    index_bytes = indices.tobytes()
+                packed = {key: value for key, value in face.items() if key not in {"vertices", "indices", "_buffers"}}
+                if packed_geometry:
+                    packed["packed"] = {"vertices": base64.b64encode(vertices).decode("ascii"),
+                                        "indices": base64.b64encode(index_bytes).decode("ascii")}
+                else:
+                    # A reconnect may target an older viewer after capture.
+                    packed["vertices"] = [{"position": list(v[:3]), "normal": list(v[3:6]), "uv": list(v[6:8]),
+                                           "joints": list(v[8:12]), "weights": list(v[12:])} for v in record.iter_unpack(vertices)]
+                    indices = array.array("I")
+                    indices.frombytes(index_bytes)
+                    if sys.byteorder != "little":
+                        indices.byteswap()
+                    packed["indices"] = indices.tolist()
+                faces.append(packed)
+            packed_meshes.append(dict(source, faces=faces))
+        meshes = packed_meshes
+    return snapshot if meshes is snapshot["meshes"] else dict(snapshot, meshes=meshes)
+
+
+class SnapshotSizeError(ValueError):
+    pass
+
+
+def _encode(snapshot, hello):
+    value = wire_snapshot(snapshot, hello.get("features", []))
+    raw = json.dumps(value, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+    limit = min(MAX_BYTES, hello.get("max_bytes", MAX_BYTES))
+    compressed = "compressed-snapshots" in hello.get("features", [])
+    if compressed and (len(raw) >= COMPRESS_THRESHOLD or len(raw) > limit):
+        if len(raw) <= min(MAX_DECODED_BYTES, hello.get("max_decoded_bytes", MAX_DECODED_BYTES)):
+            packed = b"ZLIB" + zlib.compress(raw, 1)
+            if len(packed) < len(raw) and len(packed) <= limit:
+                return packed
+    if len(raw) <= limit:
+        return raw
+    raise SnapshotSizeError("This object exceeds the LiveMesh transfer limit; reduce its geometry or textures" if compressed else
+                            "Update Aurora Viewer to preview this large object")
+
+
+def _subset(snapshot, meshes):
+    """Retain only used images and valid parent links without copying geometry."""
+    images = snapshot.get("images", [])
+    used = sorted({image for mesh in meshes for face in mesh.get("faces", [])
+                   for image in (face.get("material") or {}).get("textures", []) if image is not None})
+    remap = {image: index for index, image in enumerate(used)}
+    identities = {mesh.get("source_id") for mesh in meshes}
+    selected = []
+    for source in meshes:
+        mesh = dict(source)
+        if mesh.get("link", {}).get("parent") not in identities:
+            mesh.pop("link", None)
+        faces = []
+        for source_face in mesh.get("faces", []):
+            face = dict(source_face)
+            if face.get("material"):
+                face["material"] = dict(face["material"])
+                face["material"]["textures"] = [remap[image] if image is not None else None
+                                                for image in face["material"].get("textures", [])]
+            faces.append(face)
+        mesh["faces"] = faces
+        selected.append(mesh)
+    return dict(snapshot, meshes=selected, images=[images[image] for image in used])
+
+
+def prepare_frame(snapshot, hello):
+    try:
+        return _encode(snapshot, hello), {}
+    except SnapshotSizeError:
+        # A source that still exceeds the negotiated budget must not stop
+        # otherwise valid objects. Retry only this exceptional oversized case.
+        accepted, issues = [], {}
+        payload = _encode(_subset(snapshot, []), hello)
+        for mesh in snapshot.get("meshes", []):
+            try:
+                candidate = _encode(_subset(snapshot, accepted + [mesh]), hello)
+            except SnapshotSizeError as error:
+                issues[mesh.get("source_id", mesh["name"])] = str(error)
+            else:
+                accepted.append(mesh)
+                payload = candidate
+        return payload, issues
 
 
 class Client:
@@ -33,6 +141,7 @@ class Client:
         self._connection = None
         self._joints = frozenset()
         self._rest_axes = {}
+        self._features = frozenset()
         self._shape = None
         self._shape_received = 0.0
         self._shape_result = None
@@ -40,6 +149,7 @@ class Client:
         self._import_received = 0.0
         self._import_result = None
         self._status = "Connecting to Aurora…"
+        self._issues = (None, {})
         self._thread = threading.Thread(target=self._run, name="Aurora Live", daemon=True)
         self._thread.start()
 
@@ -55,6 +165,14 @@ class Client:
     def rest_axes(self):
         with self._lock:
             return self._rest_axes
+
+    def features(self):
+        with self._lock:
+            return self._features
+
+    def issues(self):
+        with self._lock:
+            return self._issues
 
     def take_shape(self, ready=True, pose=False):
         with self._lock:
@@ -153,6 +271,7 @@ class Client:
                             raise ValueError("Update Aurora Viewer to use live PBR materials")
                         with self._lock:
                             self._rest_axes = hello.get("rest_axes", {})
+                            self._features = frozenset(hello.get("features", []))
                         self._set_status("Connected to Aurora", hello["joints"])
                         if "shape-transfer" in hello.get("features", []):
                             features = [name for name in ("shape-transfer", "shape-apply", "import-lods") if name in hello.get("features", [])]
@@ -161,9 +280,12 @@ class Client:
                             self._reply(reader)
                         sent = None
                         heartbeat = time.monotonic()
+                        self._wake.set()
                         while not self._stop.is_set():
-                            self._wake.wait(0.1)
+                            self._wake.wait(max(0.0, 2.0 - (time.monotonic() - heartbeat)))
                             self._wake.clear()
+                            if self._stop.is_set():
+                                break
                             with self._lock:
                                 latest = self._latest
                                 result, self._shape_result = self._shape_result, None
@@ -189,12 +311,9 @@ class Client:
                                 self._reply(reader)
                                 heartbeat = time.monotonic()
                             if latest is not None and latest["revision"] != sent:
-                                payload = json.dumps(wire_snapshot(latest, hello.get("features", [])),
-                                                     separators=(",", ":"), allow_nan=False).encode("utf-8")
-                                if len(payload) > min(MAX_BYTES, hello.get("max_bytes", MAX_BYTES)):
-                                    self._set_status("Mesh snapshot exceeds the 64 MiB limit")
-                                    sent = latest["revision"]
-                                    continue
+                                payload, issues = prepare_frame(latest, hello)
+                                with self._lock:
+                                    self._issues = (latest["revision"], issues)
                                 connection.sendall(struct.pack("<I", len(payload)) + payload)
                                 reply = self._reply(reader)
                                 sent = latest["revision"]
@@ -205,12 +324,13 @@ class Client:
                                     if reply.get("retry"):
                                         sent = None
                                         self._stop.wait(0.5)
+                                        self._wake.set()
                                 heartbeat = time.monotonic()
                             elif time.monotonic() - heartbeat > 2.0:
                                 connection.sendall(b"\0\0\0\0")
                                 self._reply(reader)
                                 heartbeat = time.monotonic()
-            except (OSError, ValueError, TypeError) as error:
+            except (OSError, ValueError, TypeError, OverflowError, struct.error) as error:
                 self._set_status("Waiting for Aurora: " + str(error), ())
                 self._stop.wait(1.0)
             finally:

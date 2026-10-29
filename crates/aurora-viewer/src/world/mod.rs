@@ -73,6 +73,7 @@ pub mod radar;
 pub mod received_items;
 pub mod recent;
 pub mod region_alerts;
+pub mod region_messages;
 pub mod region_restart;
 pub mod rig_graph;
 pub mod rig_targets;
@@ -3705,6 +3706,14 @@ impl World {
     }
 
     fn on_im(&mut self, mut im: InstantMessage) {
+        // a message to the whole region, before the rules of conversations
+        // (region_messages.rs)
+        if region_messages::is_region_message(&im) {
+            if !self.anti_spam_im(&im) {
+                self.on_region_message(&im);
+            }
+            return;
+        }
         if self.im_blocked(&im) {
             return;
         }

@@ -8,6 +8,7 @@ pub(crate) mod clock;
 pub(crate) mod demo;
 pub mod dock;
 pub mod favorites;
+mod graphics;
 pub mod islands;
 mod place;
 pub mod side;
@@ -125,6 +126,8 @@ pub enum BarAction {
     SystemIsland(crate::settings::SystemIsland),
     NetStats(bool),
     GraphicsPreset(crate::graphics_presets::Preset),
+    SavedGraphicsPreset(String),
+    FpsCap(bool),
     CameraPreset(crate::camera::CameraPreset),
     GraphicsPreferences,
     CameraControls,
@@ -251,6 +254,9 @@ pub struct StatusInfo<'a> {
     pub net_loss: f32,
     /// The graphics and camera presets in use (None: custom).
     pub graphics_preset: Option<crate::graphics_presets::Preset>,
+    pub graphics_saved: Vec<(String, bool)>,
+    pub fps_cap: bool,
+    pub fps_limit: u32,
     pub camera_preset: crate::camera::CameraPreset,
     /// The interface hidden (an edge brought the islands back), and the
     /// keys of its shortcut.
@@ -1784,8 +1790,8 @@ pub fn top_bars(
                     };
                     // a click opens (or closes) the performance window
                     let fps = steady_label(ui, "fps", islands::fps_text(st.fps), fps_col, egui::Sense::click())
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .on_hover_text(aurora_i18n::tr!("ui-bars-frames-per-second-click-for-performance-details"));
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    graphics::hover(&fps, p, st, &mut action);
                     if fps.clicked() {
                         panels.perf = !panels.perf;
                     }

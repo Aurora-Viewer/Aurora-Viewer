@@ -85,12 +85,17 @@ pub struct Modifiers {
     pub control: bool,
     pub alt: bool,
     pub shift: bool,
+    /// The Command key, on macOS only (always false elsewhere): the Legacy
+    /// Viewer counts it as Control (LLKeyboardMacOSX::translateModifiers,
+    /// indra/llwindow/llkeyboardmacosx.cpp), and its native key data
+    /// carries it apart.
+    pub command: bool,
 }
 
 impl Modifiers {
     fn translate(self) -> String {
         let mut s = String::new();
-        if self.control {
+        if self.control || self.command {
             s.push_str("control|");
         }
         if self.alt {
@@ -626,6 +631,23 @@ impl MediaPlugin {
         m
     }
 
+    /// macOS native key data, as LLWindowMacOSX::getNativeKeyData
+    /// (indra/llwindow/llwindowmacosx.cpp): the NSEvent's type (10 key down,
+    /// 11 key up), its Cocoa modifier flags, its key code (kVK_*), its first
+    /// character and first character without modifiers (absent when there
+    /// is none), and whether it repeats.
+    pub fn native_key_data_mac(event_type: u32, modifiers: u32, keycode: u32, chars: u32, unmodified: u32, repeat: bool) -> Llsd {
+        let unit = |c: u32| if c == 0 { Llsd::Undef } else { Llsd::Integer(c as i32) };
+        let mut m = Llsd::new_map();
+        m.insert("event_type", Llsd::Integer(event_type as i32));
+        m.insert("event_modifiers", Llsd::Integer(modifiers as i32));
+        m.insert("event_keycode", Llsd::Integer(keycode as i32));
+        m.insert("event_chars", unit(chars));
+        m.insert("event_umodchars", unit(unmodified));
+        m.insert("event_isrepeat", Llsd::Boolean(repeat));
+        m
+    }
+
     /// Linux native key data, as LLWindowSDL::getNativeKeyData of the SDL2
     /// build (indra/llwindow/llwindowsdl2.cpp): the SDL keycode (or the typed
     /// UTF-16 unit), its Windows virtual key, the GDK-like modifier mask
@@ -930,25 +952,44 @@ pub const TIME_MEDIA_PLUGIN: &str = if cfg!(target_os = "linux") {
     "media_plugin_libvlc"
 };
 
-/// Plugin for a MIME type (LLMIMETypes::implType over mime_types.xml, or
-/// mime_types_linux.xml on Linux): unknown types go to the browser.
-pub fn plugin_for_mime(mime: &str) -> &'static str {
-    plugin_for_mime_on(mime, cfg!(target_os = "linux"))
+/// The Legacy Viewer's MIME table of a system: mime_types.xml (Windows),
+/// mime_types_linux.xml, mime_types_mac.xml.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MimeTable {
+    Windows,
+    Linux,
+    Mac,
 }
 
-fn plugin_for_mime_on(mime: &str, linux: bool) -> &'static str {
+const MIME_TABLE: MimeTable = if cfg!(target_os = "linux") {
+    MimeTable::Linux
+} else if cfg!(target_os = "macos") {
+    MimeTable::Mac
+} else {
+    MimeTable::Windows
+};
+
+/// Plugin for a MIME type (LLMIMETypes::implType over the system's
+/// mime_types table): unknown types go to the browser.
+pub fn plugin_for_mime(mime: &str) -> &'static str {
+    plugin_for_mime_on(mime, MIME_TABLE)
+}
+
+fn plugin_for_mime_on(mime: &str, table: MimeTable) -> &'static str {
     let mime = mime.trim().to_ascii_lowercase();
+    let linux = table == MimeTable::Linux;
     let video = if linux { "media_plugin_gstreamer" } else { "media_plugin_libvlc" };
-    // the Windows table sends these to the browser, the Linux one to GStreamer
+    // the Windows table sends these to the browser, the Linux and macOS
+    // ones to their video plugin
     const CEF_ON_WINDOWS: [&str; 3] = ["application/ogg", "audio/mid", "video/x-ms-wmv"];
-    if mime == "application/smil" || (!linux && CEF_ON_WINDOWS.contains(&mime.as_str())) {
+    if mime == "application/smil" || (table == MimeTable::Windows && CEF_ON_WINDOWS.contains(&mime.as_str())) {
         return "media_plugin_cef";
     }
     if mime.starts_with("video/")
         || mime.starts_with("audio/")
         || mime == "application/octet-stream"
         || mime == "rtsp"
-        || (linux && mime == "application/ogg")
+        || (table != MimeTable::Windows && mime == "application/ogg")
         || (!linux && mime == "libvlc")
     {
         return video;
@@ -993,11 +1034,11 @@ mod tests {
 
     #[test]
     fn mime_routing() {
-        assert_eq!(plugin_for_mime_on("text/html", false), "media_plugin_cef");
-        assert_eq!(plugin_for_mime_on("video/mp4", false), "media_plugin_libvlc");
-        assert_eq!(plugin_for_mime_on("audio/mpeg", false), "media_plugin_libvlc");
-        assert_eq!(plugin_for_mime_on("video/x-ms-wmv", false), "media_plugin_cef");
-        assert_eq!(plugin_for_mime_on("rtsp", false), "media_plugin_libvlc");
+        assert_eq!(plugin_for_mime_on("text/html", MimeTable::Windows), "media_plugin_cef");
+        assert_eq!(plugin_for_mime_on("video/mp4", MimeTable::Windows), "media_plugin_libvlc");
+        assert_eq!(plugin_for_mime_on("audio/mpeg", MimeTable::Windows), "media_plugin_libvlc");
+        assert_eq!(plugin_for_mime_on("video/x-ms-wmv", MimeTable::Windows), "media_plugin_cef");
+        assert_eq!(plugin_for_mime_on("rtsp", MimeTable::Windows), "media_plugin_libvlc");
         assert_eq!(mime_from_scheme("rtsp://x/y").as_deref(), Some("rtsp"));
         assert_eq!(mime_from_scheme("https://x/y"), None);
         assert_eq!(mime_from_scheme("www.example.com"), None);
@@ -1007,7 +1048,7 @@ mod tests {
 
     #[test]
     fn mime_routing_on_linux_follows_mime_types_linux_xml() {
-        let linux = |m| plugin_for_mime_on(m, true);
+        let linux = |m| plugin_for_mime_on(m, MimeTable::Linux);
         assert_eq!(linux("text/html"), "media_plugin_cef");
         assert_eq!(linux("video/mp4"), "media_plugin_gstreamer");
         assert_eq!(linux("audio/mpeg"), "media_plugin_gstreamer");
@@ -1017,5 +1058,35 @@ mod tests {
         assert_eq!(linux("application/smil"), "media_plugin_cef");
         assert_eq!(linux("rtsp"), "media_plugin_gstreamer");
         assert_eq!(linux("libvlc"), "media_plugin_cef");
+    }
+
+    #[test]
+    fn mime_routing_on_macos_follows_mime_types_mac_xml() {
+        let mac = |m| plugin_for_mime_on(m, MimeTable::Mac);
+        assert_eq!(mac("text/html"), "media_plugin_cef");
+        assert_eq!(mac("video/mp4"), "media_plugin_libvlc");
+        // the three types the Windows table gives the browser
+        assert_eq!(mac("video/x-ms-wmv"), "media_plugin_libvlc");
+        assert_eq!(mac("application/ogg"), "media_plugin_libvlc");
+        assert_eq!(mac("audio/mid"), "media_plugin_libvlc");
+        assert_eq!(mac("application/smil"), "media_plugin_cef");
+        assert_eq!(mac("libvlc"), "media_plugin_libvlc");
+    }
+
+    #[test]
+    fn command_counts_as_control_in_the_modifiers() {
+        let command = Modifiers {
+            command: true,
+            ..Default::default()
+        };
+        assert_eq!(command.translate(), "control|");
+        let mac = MediaPlugin::native_key_data_mac(10, 1 << 20, 0x00, 'a' as u32, 'a' as u32, false);
+        assert_eq!(mac.get("event_keycode").as_i32(), 0);
+        assert_eq!(mac.get("event_modifiers").as_i32(), 1 << 20);
+        assert!(
+            MediaPlugin::native_key_data_mac(11, 0, 0x7B, 0, 0, false)
+                .get("event_chars")
+                .is_undef()
+        );
     }
 }

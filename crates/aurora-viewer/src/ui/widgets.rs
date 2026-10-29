@@ -1668,6 +1668,14 @@ pub fn switch_labeled(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: impl
     .inner
 }
 
+/// Custom-painted controls follow an explicit font override in their UI scope.
+fn control_font(ui: &egui::Ui, default_size: f32) -> egui::FontId {
+    ui.style()
+        .override_font_id
+        .clone()
+        .unwrap_or_else(|| egui::FontId::proportional(default_size))
+}
+
 /// Flat tab strip. Returns true when the selection changed.
 pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
     tabs_row(ui, p, selected, labels, false)
@@ -1683,7 +1691,12 @@ fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let n = labels.len().max(1) as f32;
-        let font = egui::FontId::proportional(12.0);
+        let font = control_font(ui, 12.0);
+        let height = if ui.style().override_font_id.is_some() {
+            (ui.fonts_mut(|f| f.row_height(&font)) + 12.0).max(30.0)
+        } else {
+            30.0
+        };
         let text_w: Vec<f32> = labels
             .iter()
             .map(|(l, _)| ui.fonts_mut(|f| f.layout_no_wrap((*l).to_owned(), font.clone(), Color32::PLACEHOLDER).size().x) + 18.0)
@@ -1699,7 +1712,7 @@ fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
             } else {
                 text_w[i] * compact + extra.min(40.0)
             };
-            let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 30.0), if *enabled { Sense::click() } else { Sense::hover() });
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, height), if *enabled { Sense::click() } else { Sense::hover() });
             let sel = *selected == i;
             if sel || (resp.hovered() && *enabled) {
                 let fill = if sel {
@@ -2004,10 +2017,17 @@ fn text_button(ui: &mut egui::Ui, p: &Palette, label: &str, size: Option<Vec2>) 
     // Keep the button in the parent's layout so wrapped toolbars can break
     // before it. A child UI would wrap internally and enlarge narrow windows.
     // The theme gives every button its plain filled face.
-    let button = egui::Button::new(RichText::new(label).size(12.0).color(p.ink));
+    let button = egui::Button::new(RichText::new(label).font(control_font(ui, 12.0)).color(p.ink));
     match size {
         Some(size) => ui.add_sized(size, button.truncate()),
-        None => ui.add(button.min_size(Vec2::new(0.0, 20.0))),
+        None => {
+            let height = if ui.style().override_font_id.is_some() {
+                ui.spacing().interact_size.y
+            } else {
+                20.0
+            };
+            ui.add(button.min_size(Vec2::new(0.0, height)))
+        }
     }
 }
 
@@ -2200,7 +2220,7 @@ pub(crate) const KEYED_PAD: f32 = 24.0;
 fn keyed_parts(ui: &egui::Ui, icon: &str, label: &str, key: Option<&crate::keybinds::Binding>) -> (f32, f32, f32) {
     let text = ui
         .painter()
-        .layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.5), Color32::PLACEHOLDER)
+        .layout_no_wrap(label.to_owned(), control_font(ui, 12.5), Color32::PLACEHOLDER)
         .size()
         .x;
     // an icon alone (empty label) sits in the middle, without the gap
@@ -2237,7 +2257,7 @@ pub fn action_button_keyed(
     const ICON: f32 = KEYED_ICON;
     const GAP: f32 = KEYED_GAP;
     let enabled = enabled && ui.is_enabled();
-    let font = egui::FontId::proportional(12.5);
+    let font = control_font(ui, 12.5);
     let (lead, text_w, caps_w) = keyed_parts(ui, icon, label, key);
     let icon = if key.is_some() && size.x > 0.0 && lead + text_w + caps_w + 2.0 * GAP > size.x {
         ""
@@ -2379,7 +2399,7 @@ pub struct DialogButton<'a> {
 pub fn action_button_fit(ui: &egui::Ui, icon: &str, label: &str) -> f32 {
     let text = ui
         .painter()
-        .layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.5), Color32::PLACEHOLDER)
+        .layout_no_wrap(label.to_owned(), control_font(ui, 12.5), Color32::PLACEHOLDER)
         .size()
         .x;
     let lead = match (icon.is_empty(), label.is_empty()) {

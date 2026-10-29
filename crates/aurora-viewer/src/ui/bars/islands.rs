@@ -588,6 +588,7 @@ fn system(
     let texts = readouts(st);
     let mut audio_action = crate::ui::audio::AudioAction::None;
     let mut readouts_zone = Rect::NOTHING;
+    let mut fps_hovered = false;
     let mut x = island.left() + PAD;
     for item in items(st) {
         let w = item_width(ui, &texts, item);
@@ -644,6 +645,11 @@ fn system(
                     crate::ui::perf::place_under(ui.ctx(), island);
                     panels.perf = !panels.perf;
                 }
+                super::graphics::hover(&fps, p, st, action);
+                fps_hovered = fps.hovered();
+                // FPS has its own interactive hover card. The neighbouring
+                // clock and network readouts retain the detailed system tip.
+                continue;
             }
             Item::Net => {
                 if traffic(ui, p, icons, st, rect).clicked() {
@@ -692,7 +698,7 @@ fn system(
         }
     }
     // gone under a menu or the volume panel
-    let hovered = readouts_zone.is_positive() && ui.rect_contains_pointer(readouts_zone);
+    let hovered = !fps_hovered && readouts_zone.is_positive() && ui.rect_contains_pointer(readouts_zone);
     (audio_action, hovered)
 }
 
@@ -729,24 +735,8 @@ fn traffic(ui: &mut egui::Ui, p: &Palette, icons: &Icons, st: &StatusInfo, rect:
 /// interface, the bars' buttons.
 fn system_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, island: Rect, action: &mut BarAction) {
     use crate::camera::CameraPreset;
-    use crate::graphics_presets::Preset;
     menu::submenu(ui, p, "photo-filled", aurora_i18n::tr!("ui-bars-graphics-presets"), true, |ui| {
-        for preset in Preset::ALL {
-            if menu::check(
-                ui,
-                p,
-                "device-desktop-filled",
-                preset.label(),
-                st.graphics_preset == Some(preset),
-                true,
-            ) {
-                *action = BarAction::GraphicsPreset(preset);
-            }
-        }
-        menu::separator(ui, p);
-        if menu::item(ui, p, "adjustments-filled", aurora_i18n::tr!("ui-bars-open-graphics-preferences")) {
-            *action = BarAction::GraphicsPreferences;
-        }
+        super::graphics::choices(ui, p, st, action);
         if menu::item(ui, p, "gauge-filled", aurora_i18n::tr!("ui-bars-performance-window")) {
             crate::ui::perf::place_under(ui.ctx(), island);
             crate::ui::widgets::open_floater(ui.ctx(), "perf", &mut panels.perf);
@@ -896,7 +886,7 @@ fn system_tip(
             ctx.pointer_latest_pos()
                 .is_some_and(|pos| tip.contains(pos) || bridge.contains(pos))
         });
-    let blocked = egui::Popup::is_any_open(ctx);
+    let blocked = egui::Popup::is_any_open(ctx) || super::graphics::is_open(ctx);
     let open = if super::demo::get().tip {
         true
     } else if blocked {
@@ -1148,6 +1138,9 @@ mod tests {
             perf: Box::leak(Box::default()),
             net_loss: 0.0,
             graphics_preset: None,
+            graphics_saved: Vec::new(),
+            fps_cap: true,
+            fps_limit: 120,
             camera_preset: Default::default(),
             interface_hidden: false,
             interface_keys: String::new(),
@@ -1627,6 +1620,87 @@ mod tests {
         frame_at(&ctx, &st, 1.35, vec![]);
         assert!(egui::Popup::is_any_open(&ctx), "the island's menu");
         assert!(!open(), "no tooltip under the menu");
+    }
+
+    #[test]
+    fn graphics_hover_keeps_its_choices_interactive() {
+        use crate::ui::widgets::elide_tests::Frames;
+        for (label, cap) in [
+            ("My night profile".to_owned(), false),
+            (aurora_i18n::tr!("graphics-fps-cap", limit = 120), true),
+        ] {
+            let mut frames = Frames::new();
+            let mut st = status(true, true);
+            st.graphics_saved = vec![("My night profile".into(), false)];
+            let p = crate::theme::Theme::default().palette();
+            let mut action = BarAction::None;
+            let mut anchor = Rect::NOTHING;
+            let mut body = |ui: &mut egui::Ui| {
+                let response = ui.button("FPS");
+                anchor = response.rect;
+                super::super::graphics::hover(&response, &p, &st, &mut action);
+            };
+            frames.run(vec![], &mut body);
+            // Use the real delayed tooltip, then leave its FPS anchor to
+            // click a saved profile or the independent cap inside it.
+            let pos = Pos2::new(20.0, 15.0);
+            let texts = frames.hover(pos, &mut body);
+            let target = texts
+                .iter()
+                .find(|t| t.source == label)
+                .expect("quality choice shown on hover")
+                .rect
+                .center();
+            frames.run(vec![egui::Event::PointerMoved(target)], &mut body);
+            frames.run(vec![press(target, egui::PointerButton::Primary, true)], &mut body);
+            frames.run(vec![press(target, egui::PointerButton::Primary, false)], &mut body);
+            assert!(anchor.contains(pos));
+            if cap {
+                assert!(matches!(action, BarAction::FpsCap(false)));
+            } else {
+                assert!(matches!(action, BarAction::SavedGraphicsPreset(name) if name == "My night profile"));
+            }
+        }
+    }
+
+    #[test]
+    fn graphics_hover_allows_scrolling_long_profile_lists() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let mut frames = Frames::new();
+        let mut st = status(true, true);
+        st.graphics_saved = (0..20).map(|n| (format!("Profile {n:02}"), false)).collect();
+        let p = crate::theme::Theme::default().palette();
+        let mut action = BarAction::None;
+        let mut body = |ui: &mut egui::Ui| {
+            let response = ui.button("FPS");
+            super::super::graphics::hover(&response, &p, &st, &mut action);
+        };
+        frames.run(vec![], &mut body);
+        let texts = frames.hover(Pos2::new(20.0, 15.0), &mut body);
+        let pos = texts
+            .iter()
+            .find(|t| t.source == "Profile 00")
+            .expect("first saved choice")
+            .rect
+            .center();
+        frames.run(vec![egui::Event::PointerMoved(pos)], &mut body);
+        frames.run(
+            vec![egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+                delta: egui::vec2(0.0, -240.0),
+                modifiers: Default::default(),
+            }],
+            &mut body,
+        );
+        assert!(super::super::graphics::is_open(&frames.ctx), "the wheel keeps the hover panel open");
+        for _ in 0..20 {
+            frames.run(vec![], &mut body);
+        }
+        assert!(super::super::graphics::is_open(&frames.ctx));
+        frames.run(vec![egui::Event::PointerMoved(Pos2::new(900.0, 700.0))], &mut body);
+        assert!(!super::super::graphics::is_open(&frames.ctx), "leaving closes the card");
     }
 
     /// The bug button's right click copies the version, silently: no menu

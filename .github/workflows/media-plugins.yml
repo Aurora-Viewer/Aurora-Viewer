@@ -10,6 +10,10 @@ name: Media plugins
 #   That commit builds no LibVLC plugin for Linux and there is no Linux VLC
 #   package: video goes through the system's GStreamer, as in the Legacy
 #   Viewer.
+# - macOS (universal, arm64 and x86_64, as the Legacy Viewer builds it):
+#   SLPlugin.app with media_plugin_cef.dylib, media_plugin_libvlc.dylib, CEF's
+#   framework, the Dullahan helpers and LibVLC in its Contents/Frameworks,
+#   signed ad hoc.
 # Run by hand: the packs only change with these pins. With "publish", both
 # packs go to the release media-plugins-<PACK_VERSION>, whose size and SHA-256
 # the viewer then pins per system (aurora-updater media_pack.rs). Publish
@@ -28,7 +32,7 @@ permissions:
   contents: write
 
 env:
-  PACK_VERSION: '2'
+  PACK_VERSION: '3'
   FIRESTORM_SHA: c33bfee253160cceefdb7c98d864fbb736e8ed9a
   BUILD_VARIABLES_SHA: c17312d38377c003977cf5b6dcc83c6042eba194
   AUTOBUILD_VSVER: '170'
@@ -172,9 +176,73 @@ jobs:
             ${{ env.PACK }}.sha256
           compression-level: 0
 
+  # Xcode builds the universal binaries of the pinned commit
+  # (build-darwin-universal); bash 4 and GNU sed as the Legacy Viewer's own
+  # macOS job installs them (its .github/workflows/build_viewer.yml)
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+      - name: Legacy Viewer sources
+        uses: actions/checkout@v7
+        with:
+          repository: FirestormViewer/phoenix-firestorm
+          ref: ${{ env.FIRESTORM_SHA }}
+          path: fs
+      - name: Legacy Viewer build variables
+        uses: actions/checkout@v7
+        with:
+          repository: FirestormViewer/fs-build-variables
+          ref: ${{ env.BUILD_VARIABLES_SHA }}
+          path: fs-vars
+      - name: Release still free
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "media-plugins-$PACK_VERSION" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "media-plugins-$PACK_VERSION is already published: raise PACK_VERSION"; exit 1
+          fi
+      - name: Bash and GNU sed
+        run: |
+          brew install bash gnu-sed
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix)/opt/gnu-sed/libexec/gnubin" >> "$GITHUB_PATH"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Autobuild
+        run: python -m pip install -r fs/requirements.txt
+      - name: Configure
+        working-directory: fs
+        run: autobuild configure -c ReleaseFS_open -A 64
+      - name: Build the launcher and the two plugins
+        working-directory: fs
+        run: cmake --build build-darwin-universal --config Release --parallel "$(sysctl -n hw.ncpu)" --target SLPlugin media_plugin_cef media_plugin_libvlc
+      # zip (Info-ZIP) keeps the permissions the viewer restores on extraction
+      - name: Package
+        shell: pwsh
+        run: |
+          $dir = "Aurora-Media-Plugins-$env:PACK_VERSION-macos-universal"
+          ./scripts/package-media-plugins.ps1 -Platform macos -Source fs -Build fs/build-darwin-universal -Out $dir -Version $env:PACK_VERSION
+          & zip -r -q "$dir.zip" $dir
+          if ($LASTEXITCODE -ne 0) { throw 'zip failed' }
+          $hash = (Get-FileHash -LiteralPath "$dir.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $dir.zip" | Set-Content -LiteralPath "$dir.zip.sha256" -Encoding utf8NoBOM
+          "{0}: {1} bytes, sha256 {2}" -f "$dir.zip", (Get-Item "$dir.zip").Length, $hash
+          "PACK=$dir.zip" >> $env:GITHUB_ENV
+      - uses: actions/upload-artifact@v7
+        with:
+          name: media-plugins-macos
+          path: |
+            ${{ env.PACK }}
+            ${{ env.PACK }}.sha256
+          compression-level: 0
+
   publish:
     if: inputs.publish
-    needs: [windows, linux]
+    needs: [windows, linux, macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -189,17 +257,18 @@ jobs:
           $tag = "media-plugins-$env:PACK_VERSION"
           $windows = "Aurora-Media-Plugins-$env:PACK_VERSION-windows-x64.zip"
           $linux = "Aurora-Media-Plugins-$env:PACK_VERSION-linux-x64.zip"
+          $macos = "Aurora-Media-Plugins-$env:PACK_VERSION-macos-universal.zip"
           $source = "Aurora-Media-Plugins-$env:PACK_VERSION-source.tar.gz"
           $manifest = (& unzip -p $windows '*/aurora-media-plugins.json') -join "`n" | ConvertFrom-Json
           $notes = @(
-              "Media plugins of Aurora Viewer, pack $env:PACK_VERSION (Windows x64 and Linux x64). The viewer downloads the archive of its system by itself when media need it; it checks its size and SHA-256 and installs it in the user's data folder."
+              "Media plugins of Aurora Viewer, pack $env:PACK_VERSION (Windows x64, Linux x64 and macOS universal). The viewer downloads the archive of its system by itself when media need it; it checks its size and SHA-256 and installs it in the user's data folder."
               ''
-              "- Windows: SLPlugin.exe, media_plugin_cef.dll and media_plugin_libvlc.dll; Linux: SLPlugin, libmedia_plugin_cef.so and libmedia_plugin_gstreamer.so. Built from FirestormViewer/phoenix-firestorm@$env:FIRESTORM_SHA (LGPL 2.1); that source is attached ($source)."
+              "- Windows: SLPlugin.exe, media_plugin_cef.dll and media_plugin_libvlc.dll; Linux: SLPlugin, libmedia_plugin_cef.so and libmedia_plugin_gstreamer.so; macOS: SLPlugin.app with media_plugin_cef.dylib and media_plugin_libvlc.dylib, signed ad hoc. Built from FirestormViewer/phoenix-firestorm@$env:FIRESTORM_SHA (LGPL 2.1); that source is attached ($source)."
               "- CEF / Dullahan $($manifest.packages.dullahan): Linden Lab's prebuilt packages (BSD-3-Clause for CEF, see LICENSES in the archives)."
-              "- VLC $($manifest.packages.'vlc-bin') (Windows): Linden Lab's prebuilt package (LGPL 2.1+ for libvlc, see LICENSES/vlc.txt); source at https://download.videolan.org/pub/videolan/vlc/"
+              "- VLC $($manifest.packages.'vlc-bin') (Windows and macOS): Linden Lab's prebuilt package (LGPL 2.1+ for libvlc, see LICENSES/vlc.txt); source at https://download.videolan.org/pub/videolan/vlc/"
               '- Video on Linux plays through the GStreamer 1.0 of the system (gst-plugins-base, -good, -bad, -ugly and gst-libav for the usual codecs), as in the Legacy Viewer.'
               ''
               'This is not a viewer release: the viewer is in the releases tagged vX.Y.Z.'
           )
           $notes -join "`n" | Set-Content -LiteralPath notes.md -Encoding utf8NoBOM
-          gh release create $tag $windows "$windows.sha256" $linux "$linux.sha256" $source --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Media plugins $env:PACK_VERSION" --notes-file notes.md --latest=false
+          gh release create $tag $windows "$windows.sha256" $linux "$linux.sha256" $macos "$macos.sha256" $source --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Media plugins $env:PACK_VERSION" --notes-file notes.md --latest=false
