@@ -12,6 +12,26 @@ use egui::{RichText, Vec2};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+/// LLWearableItemTypeNameComparator (indra/newview/llwearableitemslist.cpp):
+/// group wearable types, then names or worn layer order. Keep all system
+/// wearables above attachments, including body parts, as requested in #1356.
+pub(super) fn sort_links(inv: &crate::world::inventory::Inventory, links: &mut [aurora_net::outfits::OutfitLink], by_layer: bool) {
+    links.sort_by_cached_key(|link| {
+        let (group, kind) = match inv.items.get(&link.target).filter(|_| !link.folder) {
+            Some(it) if it.asset_type == 13 => (0, it.flags & 0xff),
+            Some(it) if it.asset_type == 5 => (1, it.flags & 0xff),
+            Some(it) if it.asset_type == 6 => (2, 0),
+            Some(_) => (3, 0),
+            None => (4, 0),
+        };
+        let layer = if by_layer && group == 1 { super::layers::order(link) } else { None };
+        (group, kind, layer, link.name.to_lowercase(), link.target)
+    });
+    if by_layer {
+        super::layers::furthest_first(inv, links);
+    }
+}
+
 /// LLPanelWearableOutfitItem::updateItem: clothing follows the confirmed COF;
 /// objects are worn when the simulator reports them attached to our avatar.
 pub(super) fn worn_items(world: &World) -> HashSet<Uuid> {
@@ -321,5 +341,67 @@ pub(super) fn profile(ctx: &egui::Context, p: &Palette, world: &World, st: &mut 
     });
     if !open {
         st.profile_item = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wearable_sort_keeps_system_items_first_and_preserves_layer_order() {
+        use aurora_net::outfits::OutfitLink;
+        let mut inv = crate::world::inventory::Inventory::default();
+        let mut links = Vec::new();
+        for (id, asset_type, flags, name, desc) in [
+            (1, 6, 0, "AAA attachment", "@0"),
+            (2, 5, 14, "AAA inner tattoo", "@1400"),
+            (3, 5, 14, "ZZZ outer tattoo", "@1401"),
+            (4, 5, 5, "ZZZ pants", "@500"),
+            (5, 13, 1, "ZZZ skin", ""),
+            (6, 5, 13 | 0x100, "ZZZ alpha", ""),
+            (7, 5, 15, "ZZZ physics", "unrelated description"),
+            (8, 6, 0, "bbb attachment", ""),
+            (9, 13, 3, "AAA eyes", ""),
+        ] {
+            let id = Uuid::from_u128(id);
+            inv.add_items(vec![InvItem {
+                id,
+                asset_type,
+                flags,
+                name: name.into(),
+                ..Default::default()
+            }]);
+            links.push(OutfitLink {
+                target: id,
+                name: name.into(),
+                desc: desc.into(),
+                folder: false,
+                inv_type: 18,
+            });
+        }
+        // An unresolved original and a folder link must never displace known wearables.
+        links.push(OutfitLink {
+            target: Uuid::from_u128(10),
+            name: "AAA missing".into(),
+            desc: String::new(),
+            folder: false,
+            inv_type: 18,
+        });
+        links.push(OutfitLink {
+            target: Uuid::from_u128(11),
+            name: "AAA folder".into(),
+            desc: String::new(),
+            folder: true,
+            inv_type: 8,
+        });
+        for (by_layer, expected) in [
+            (false, vec![5, 9, 4, 6, 2, 3, 7, 1, 8, 11, 10]),
+            (true, vec![5, 9, 4, 6, 3, 2, 7, 1, 8, 11, 10]),
+        ] {
+            let mut sorted = links.clone();
+            sort_links(&inv, &mut sorted, by_layer);
+            assert_eq!(sorted.iter().map(|l| l.target.as_u128()).collect::<Vec<_>>(), expected);
+        }
     }
 }

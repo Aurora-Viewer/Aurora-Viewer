@@ -19,7 +19,68 @@ pub(super) struct CopyJob {
 
 pub(super) type CopyJobs = HashMap<Uuid, CopyJob>;
 
+#[derive(Clone)]
+pub(super) struct ContentsNotice {
+    request: Uuid,
+    text: String,
+    /// None while waiting; success/error share the usual five-second lifetime.
+    result: Option<(bool, Instant)>,
+}
+
 impl InventoryUi {
+    pub fn begin_contents_copy(&mut self, request: Uuid, text: String) {
+        self.message.clear();
+        self.contents_notice = Some(ContentsNotice {
+            request,
+            text,
+            result: None,
+        });
+    }
+
+    pub fn finish_contents_copy(&mut self, request: Uuid, text: String, success: bool, now: Instant) {
+        if let Some(notice) = &mut self.contents_notice
+            && notice.request == request
+        {
+            notice.text = text;
+            notice.result = Some((success, now));
+        }
+    }
+
+    pub(super) fn contents_notice(&self, now: Instant) -> Option<(&str, Option<bool>)> {
+        self.contents_notice
+            .as_ref()
+            .filter(|notice| {
+                notice
+                    .result
+                    .is_none_or(|(_, finished)| now.saturating_duration_since(finished) < NOTICE_DURATION)
+            })
+            .map(|notice| (notice.text.as_str(), notice.result.map(|(success, _)| success)))
+    }
+
+    /// Both inventory presentations use the same priority, colors and expiry.
+    pub(super) fn status_message(&self, p: &crate::theme::Palette, now: Instant) -> Option<(String, egui::Color32)> {
+        if !self.message.is_empty() {
+            Some((self.message.clone(), p.warn))
+        } else if self.busy() {
+            Some((self.pending_status(now), p.ink))
+        } else if let Some((text, result)) = self.contents_notice(now) {
+            Some((
+                text.to_owned(),
+                match result {
+                    None => p.ink,
+                    Some(true) => p.success,
+                    Some(false) => p.warn,
+                },
+            ))
+        } else if let Some(text) = self.success_notice(now) {
+            Some((text.to_owned(), p.success))
+        } else if self.fetch_all {
+            Some((aurora_i18n::tr!("ui-inventory-search-loading-folders").to_owned(), p.muted))
+        } else {
+            None
+        }
+    }
+
     pub fn begin_mutation(&mut self, request: Uuid, change: &Mutation) {
         self.pending = Some(request);
         self.progress = Some(State {
@@ -170,6 +231,45 @@ const NOTICE_DURATION: Duration = Duration::from_secs(5);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contents_copy_pending_is_replaced_by_success_or_error_then_expires() {
+        for success in [false, true] {
+            let now = Instant::now();
+            let request = Uuid::from_u128(1);
+            let mut st = InventoryUi::default();
+            let p = crate::theme::Theme::default().palette();
+            st.begin_contents_copy(request, "Requested".into());
+            assert_eq!(st.contents_notice(now + Duration::from_secs(60)), Some(("Requested", None)));
+            assert_eq!(st.status_message(&p, now), Some(("Requested".into(), p.ink)));
+            st.finish_contents_copy(request, "Result".into(), success, now);
+            assert_eq!(
+                st.status_message(&p, now),
+                Some(("Result".into(), if success { p.success } else { p.warn }))
+            );
+            assert_eq!(
+                st.contents_notice(now + Duration::from_millis(4999)),
+                Some(("Result", Some(success)))
+            );
+            assert!(st.contents_notice(now + NOTICE_DURATION).is_none());
+            assert!(st.status_message(&p, now + NOTICE_DURATION).is_none());
+            assert!(st.message.is_empty(), "no permanent warning remains after expiry");
+        }
+    }
+
+    #[test]
+    fn an_older_contents_copy_cannot_overwrite_a_newer_request_or_an_unrelated_error() {
+        let now = Instant::now();
+        let mut st = InventoryUi::default();
+        st.begin_contents_copy(Uuid::from_u128(1), "First".into());
+        st.begin_contents_copy(Uuid::from_u128(2), "Second".into());
+        st.finish_contents_copy(Uuid::from_u128(1), "First failed".into(), false, now);
+        assert_eq!(st.contents_notice(now), Some(("Second", None)));
+        st.message = "Unrelated error".into();
+        st.finish_contents_copy(Uuid::from_u128(2), "Second succeeded".into(), true, now);
+        assert_eq!(st.message, "Unrelated error");
+        assert_eq!(st.contents_notice(now), Some(("Second succeeded", Some(true))));
+    }
 
     #[test]
     fn success_notices_expire_after_five_seconds_and_a_new_notice_restarts_the_duration() {

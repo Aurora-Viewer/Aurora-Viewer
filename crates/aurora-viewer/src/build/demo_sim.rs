@@ -376,6 +376,11 @@ impl DemoSim {
                 let Some(task) = self.contents_of(id).1.iter().find(|i| i.item_id == *item_id).cloned() else {
                     return Vec::new();
                 };
+                // Offline copy-feedback fixture: retain the no-copy cube so
+                // the real observer sees a partial result and times out.
+                if task.asset_type == 6 && std::env::var("AURORA_DEMO_ACTIONS").as_deref() == Ok("open-copy-timeout-yes") {
+                    return Vec::new();
+                }
                 let Ok(kind) = super::task_inventory::kind(world, id, &task, true) else {
                     return Vec::new();
                 };
