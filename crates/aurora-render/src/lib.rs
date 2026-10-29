@@ -11,19 +11,9 @@ pub mod bc7;
 mod bloom;
 mod contact_shadows;
 mod cutout;
-#[cfg(not(target_os = "macos"))]
+// (Vulkan only: Metal textures stay with wgpu's allocator)
+#[cfg_attr(target_os = "macos", path = "dedicated_none.rs")]
 mod dedicated;
-#[cfg(target_os = "macos")]
-mod dedicated {
-    // Metal textures use wgpu's allocator; there are no external Vulkan allocations.
-    pub fn bytes() -> u64 {
-        0
-    }
-    pub fn texture(_: &wgpu::Device, _: &wgpu::TextureDescriptor) -> Option<Result<wgpu::Texture, String>> {
-        None
-    }
-}
-
 mod device_lost;
 mod dof;
 mod drawn_pick;

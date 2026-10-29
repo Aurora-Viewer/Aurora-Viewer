@@ -19,9 +19,18 @@ thiserror = "2.0.21"
 uuid = "1.27.0"
 # counters: bytes of the live textures and buffers, for the memory budget (vram.rs)
 wgpu = { version = "30.0.1", features = ["counters"] }
-ash = "0.38"
 bcdec_rs = "0.2.0"
 intel_tex_2 = "0.5.0"
+
+# Vulkan under wgpu: memory budget (vram.rs), texture pages in memory of
+# their own (dedicated.rs); macOS draws through Metal instead
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+ash = "0.38"
+
+# Metal under wgpu: memory budget and size of the device (vram.rs); the
+# version and the feature wgpu-hal uses
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLDevice"] }
 
 [target.'cfg(windows)'.dependencies]
 # CPU time of a thread, for the profile (thread_cpu.rs)

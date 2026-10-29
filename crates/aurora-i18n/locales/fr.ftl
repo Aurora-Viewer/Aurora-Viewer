@@ -1532,11 +1532,14 @@ world-tphistory-today = Aujourd'hui
 app-aurora-elsewhere = Aurora Ailleurs
 common-aurora-demo = Aurora Démo
 demo-aurora-viewer-rust-vulkan = { "Aurora Viewer\u000ARust · Vulkan" }
+demo-aurora-viewer-rust-metal = { "Aurora Viewer
+Rust · Metal" }
 ui-login-aurora-viewer-v = Aurora Viewer v{ $value0 }
 cli-aurora-viewer = { "Aurora Viewer " }{ $version }
 cli-aurora-viewer-2 = { "Aurora Viewer " }{ $version }{ " - " }{ $t }
 common-aurora-viewer = { "Aurora Viewer " }{ $value0 }
 app-aurora-viewer-unable-to-initialize-vulkan = { "Aurora Viewer: impossible d'initialiser Vulkan : " }{ $e }
+app-aurora-viewer-unable-to-initialize-metal = { "Aurora Viewer: impossible d'initialiser Metal : " }{ $e }
 app-graphics-start-failed-title = Aurora Viewer ne peut pas démarrer
 app-graphics-start-failed =
     Aurora Viewer n'a pu ouvrir aucune carte graphique pour dessiner sa fenêtre.
@@ -1989,6 +1992,7 @@ inventory-demo-destination = Destination de test
 keybinds-middle-click = Clic molette
 ui-options-camera-click-my-avatar-keep-camera = Clic sur mon avatar : garder la caméra
 ui-login-second-life-client-rust-vulkan = Client Second Life  ·  Rust  ·  Vulkan
+ui-login-second-life-client-rust-metal = Client Second Life  ·  Rust  ·  Metal
 build-ui-general-click-to = Cliquer pour :
 ui-options-camera-clicking-your-avatar-does-not-return-the-camera-behind = Garde la vue actuelle lors d’un clic sur son avatar ou sur un accessoire sans action au toucher. Alt+clic permet toujours de changer le point visé par la caméra.
 build-ui-tools-click-in-the-world-to-build = Cliquez dans le monde pour construire.

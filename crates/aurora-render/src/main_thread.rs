@@ -1404,7 +1404,7 @@ fn open_device(adapter: &wgpu::Adapter) -> Result<OpenedDevice, RenderError> {
 }
 
 /// Size of the largest device-local memory heap (the GPU's own VRAM on a
-/// discrete card), read from Vulkan. None on other backends.
+/// discrete card), read from Vulkan.
 #[cfg(not(target_os = "macos"))]
 fn detect_vram_mb(adapter: &wgpu::Adapter) -> Option<u64> {
     use ash::vk;
@@ -1421,9 +1421,18 @@ fn detect_vram_mb(adapter: &wgpu::Adapter) -> Option<u64> {
         .max()
 }
 
+/// Memory the GPU can use well, read from Metal: the recommended working
+/// set of the device (a share of the unified memory on Apple Silicon), the
+/// figure the Legacy Viewer reads as `kCGLRPVideoMemoryMegabytes`
+/// (indra/llwindow/llopenglview-objc.mm).
 #[cfg(target_os = "macos")]
-fn detect_vram_mb(_: &wgpu::Adapter) -> Option<u64> {
-    None
+fn detect_vram_mb(adapter: &wgpu::Adapter) -> Option<u64> {
+    use objc2_metal::MTLDevice;
+    // SAFETY: the hal adapter is only borrowed for this call; reading a
+    // device property changes no state.
+    let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Metal>() }?;
+    let bytes = hal.raw_device().recommendedMaxWorkingSetSize();
+    (bytes > 0).then_some(bytes / (1024 * 1024))
 }
 
 #[cfg(test)]

@@ -15519,10 +15519,12 @@ impl ApplicationHandler for App {
             Ok(r) => r,
             Err(e) => {
                 log::error!("renderer initialisation failed: {e}");
-                eprintln!(
-                    "{}",
+                let message = if cfg!(target_os = "macos") {
+                    aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-metal", e = format!("{}", e))
+                } else {
                     aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-vulkan", e = format!("{}", e))
-                );
+                };
+                eprintln!("{message}");
                 // the window is still hidden: without this the viewer just
                 // vanished (#894)
                 graphics_start::report(&e.to_string(), capture);

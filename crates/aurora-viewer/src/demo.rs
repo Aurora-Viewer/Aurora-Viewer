@@ -4162,7 +4162,12 @@ pub fn events() -> Vec<NetEvent> {
         torus,
         te(violet, 3, false, 0.0),
         ExtraParams::default(),
-        aurora_i18n::tr!("demo-aurora-viewer-rust-vulkan"),
+        // the graphics API this build draws with
+        if cfg!(target_os = "macos") {
+            aurora_i18n::tr!("demo-aurora-viewer-rust-metal")
+        } else {
+            aurora_i18n::tr!("demo-aurora-viewer-rust-vulkan")
+        },
     ));
     id += 1;
     add(prim(
