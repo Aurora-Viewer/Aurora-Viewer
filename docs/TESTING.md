@@ -4871,18 +4871,19 @@ failure. Grid validation and any paid upload are performed by the human.
   Chat › Taskbar and system notifications; the script dialog's switch is off
   by default); the system notifications are turned on for the scenario: one
   Windows notification (on Linux, one from the desktop's notification
-  service) per arrival, a click brings the window back on the
-  conversation, the nearby chat or the bell's list. The log says
-  `taskbar flash` and `system notification shown (<what a click opens>)`,
-  never the text. `front` keeps the window in front: nothing flashes and
-  nothing is shown. `capture` brings the window back at frame 1150 with the
-  bell's list open: capture with `AURORA_FPS_LIMIT=60` at frame 1300. The
-  first notification writes the application's name and icon under
+  service) per arrival, a click brings the window back on the conversation,
+  the nearby chat or the bell's list. The log says `taskbar flash` and
+  `system notification shown (<what a click opens>)`, never the text.
+  `front` keeps the window in front: nothing flashes and nothing is shown.
+  `capture` brings the window back at frame 1150 with the bell's list open:
+  capture with `AURORA_FPS_LIMIT=60` at frame 1300. The first notification
+  writes the application's name and icon under
   `HKCU\Software\Classes\AppUserModelId\Aurora.Viewer` (what Windows shows
   above it). On Linux the log names the notification service and its
   capabilities at the first one; a tiling compositor that ignores the
   minimize (Hyprland, Sway) keeps the window focused, so nothing is shown
-  unless the window is moved away from the screen first. `AURORA_DEMO_OPTIONS=3:attention` opens the switches.
+  unless the window is moved away from the screen first.
+  `AURORA_DEMO_OPTIONS=3:attention` opens the switches.
 - **`AURORA_DEMO_EXIT=1|cancel|logout|quit`**: opens the modal at frame 650.
   `1` leaves it interactive; the other modes make the choice at frame 800.
   Take screenshots at `740,900` to compare the blurred background then the

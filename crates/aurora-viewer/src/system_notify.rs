@@ -181,6 +181,9 @@ mod freedesktop {
                 return;
             }
         };
+        // Read once for the session: a server started (or replaced by one
+        // with `actions`) after the viewer gets no click handling until the
+        // next start.
         let caps: Vec<String> = proxy.call("GetCapabilities", &()).unwrap_or_else(|e| {
             log::warn!("system notifications: no notification service ({e})");
             Vec::new()
