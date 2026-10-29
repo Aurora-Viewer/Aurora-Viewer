@@ -478,7 +478,7 @@ mod tests {
 
     fn advance(world: &mut World, scene: &mut Scene, frame: u64, input: MoveInput) {
         let floor = simulation_floor(world, scene, "steps");
-        world.agent.simulate_locally(&input, false, Some(floor), 1.0 / 60.0);
+        world.agent.simulate_locally(&input, false, Some(floor), 1.0 / 60.0, true);
         world.agent.update(&input, false, 1.0 / 60.0, 4.0);
         tick(world, scene, frame, "steps");
         update_motion(world, scene, frame, "steps", &input);

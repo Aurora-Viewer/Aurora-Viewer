@@ -52,6 +52,18 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-walk-backwards-without-turning-help"),
             &field!(walk_backwards_without_turning),
         );
+        // AutomaticFly (agent_jump / LLAgent::propagate), split into two
+        // independent choices at the human's request.
+        cx.toggle(
+            tr!("ui-options-automatic-fly"),
+            tr!("ui-options-automatic-fly-help"),
+            &field!(automatic_fly),
+        );
+        cx.toggle(
+            tr!("ui-options-automatic-land"),
+            tr!("ui-options-automatic-land-help"),
+            &field!(automatic_land),
+        );
         // FSCrouchToggle, FSIgnoreFinishAnimation, FSFlyAfterTeleport
         cx.toggle(
             tr!("ui-options-crouch-toggle"),

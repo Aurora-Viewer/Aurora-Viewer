@@ -210,6 +210,14 @@ impl AgentState {
         if quickjump { flags | control::FINISH_ANIM } else { flags }
     }
 
+    /// Use the same simulator transition as Quickjump for a held ground
+    /// jump when automatic takeoff is disabled. Keep UP_POS held so the
+    /// simulator can repeat jumps; its physics still decides when to jump.
+    pub fn immediate_jump_flags(&self, flags: u32, enabled: bool) -> u32 {
+        let jump = enabled && !self.flying && !self.is_sitting() && flags & (control::UP_POS | control::FLY) == control::UP_POS;
+        Self::quickjump_flags(flags, jump)
+    }
+
     /// LLAgent::isSitting: on an object or on the ground.
     pub fn is_sitting(&self) -> bool {
         self.seated || self.ground_sit
@@ -544,17 +552,25 @@ impl AgentState {
     /// Offline demo only: stand in for the simulator's avatar physics so the
     /// controls can be tried without a grid (walk 3.2 m/s, run 5.1 m/s, fly,
     /// jump, terrain following). On a grid the simulator does this.
-    pub fn simulate_locally(&mut self, input: &MoveInput, mouselook: bool, ground: Option<f32>, dt: f32) {
-        self.simulate_flight(input, mouselook, ground, dt, false);
+    pub fn simulate_locally(&mut self, input: &MoveInput, mouselook: bool, ground: Option<f32>, dt: f32, automatic_land: bool) {
+        self.simulate_flight(input, mouselook, ground, dt, false, automatic_land);
     }
 
     /// Optional native-flight stand-in for offline navigation tests. Native
     /// flight retains velocity after release; NUDGE is not a speed limiter.
-    pub fn simulate_native_flight(&mut self, input: &MoveInput, mouselook: bool, ground: Option<f32>, dt: f32) {
-        self.simulate_flight(input, mouselook, ground, dt, true);
+    pub fn simulate_native_flight(&mut self, input: &MoveInput, mouselook: bool, ground: Option<f32>, dt: f32, automatic_land: bool) {
+        self.simulate_flight(input, mouselook, ground, dt, true, automatic_land);
     }
 
-    fn simulate_flight(&mut self, input: &MoveInput, mouselook: bool, ground: Option<f32>, dt: f32, native_flight: bool) {
+    fn simulate_flight(
+        &mut self,
+        input: &MoveInput,
+        mouselook: bool,
+        ground: Option<f32>,
+        dt: f32,
+        native_flight: bool,
+        automatic_land: bool,
+    ) {
         // object center above the floor: half the default body height (SL
         // places the pelvis 0.13 m above it, see Scene::skeleton_of)
         const STAND: f32 = 0.84;
@@ -622,7 +638,7 @@ impl AgentState {
         {
             pos.z = f;
             vz = vz.max(0.0);
-            if self.flying && input.down {
+            if self.flying && input.down && automatic_land {
                 self.flying = false; // landing
             }
         }
@@ -807,6 +823,37 @@ impl AgentState {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn automatic_landing_preference_keeps_demo_descent_and_ascent_available() {
+        let down = MoveInput {
+            down: true,
+            ..Default::default()
+        };
+        let up = MoveInput {
+            up: true,
+            ..Default::default()
+        };
+        for native in [false, true] {
+            for automatic_land in [false, true] {
+                let mut agent = AgentState {
+                    flying: true,
+                    server_pos: Vec3::Z * 0.84,
+                    ..Default::default()
+                };
+                for _ in 0..10 {
+                    agent.simulate_flight(&down, false, Some(0.0), 0.1, native, automatic_land);
+                }
+                assert_eq!(agent.flying, !automatic_land);
+                assert_eq!(agent.server_pos.z, 0.84);
+                let flags = agent.control_flags(&down, false);
+                assert_ne!(flags & control::UP_NEG, 0, "descent remains held");
+                assert_eq!(flags & control::FLY != 0, !automatic_land);
+                agent.simulate_flight(&up, false, Some(0.0), 0.1, native, automatic_land);
+                assert!(agent.server_pos.z > 0.84, "jump or ascend remains available");
+            }
+        }
+    }
+
     use super::*;
     use std::time::Duration;
 
@@ -845,6 +892,44 @@ mod tests {
         assert_eq!(AgentState::quickjump_flags(walking, false), walking);
         assert_eq!(AgentState::quickjump_flags(walking, true), walking | control::FINISH_ANIM);
         assert_eq!(AgentState::quickjump_flags(0, true), control::FINISH_ANIM);
+    }
+
+    #[test]
+    fn automatic_fly_off_starts_ground_jumps_immediately_and_keeps_up_held_for_repeats() {
+        let agent = AgentState::default();
+        let input = MoveInput {
+            up: true,
+            forward: true,
+            ..Default::default()
+        };
+        let held = agent.control_flags(&input, false);
+        assert_eq!(agent.immediate_jump_flags(held, false), held, "ordinary automatic-fly timing");
+        let flags = agent.immediate_jump_flags(held, true);
+        assert_eq!(flags, held | control::FINISH_ANIM);
+        assert_ne!(flags & control::UP_POS, 0, "the simulator keeps the repeated jump input");
+        assert_eq!(flags & control::FLY, 0);
+        let released = agent.control_flags(&MoveInput::default(), false);
+        assert_eq!(
+            agent.immediate_jump_flags(released, true),
+            released,
+            "release restores ordinary landing handling"
+        );
+    }
+
+    #[test]
+    fn immediate_jump_never_adds_up_or_skips_a_seated_or_flying_animation() {
+        let mut agent = AgentState::default();
+        for flags in [0, control::UP_NEG, control::AT_POS, control::UP_POS | control::FLY] {
+            assert_eq!(agent.immediate_jump_flags(flags, true), flags);
+        }
+        agent.seated = true;
+        assert_eq!(agent.immediate_jump_flags(control::UP_POS, true), control::UP_POS);
+        agent.seated = false;
+        agent.ground_sit = true;
+        assert_eq!(agent.immediate_jump_flags(control::UP_POS, true), control::UP_POS);
+        agent.ground_sit = false;
+        agent.flying = true;
+        assert_eq!(agent.immediate_jump_flags(control::UP_POS, true), control::UP_POS);
     }
 
     #[test]
@@ -1034,7 +1119,7 @@ mod tests {
             forward: true,
             ..MoveInput::default()
         };
-        agent.simulate_locally(&forward, false, Some(0.0), 0.1);
+        agent.simulate_locally(&forward, false, Some(0.0), 0.1, true);
         agent.update(&forward, false, 0.1, 5.0);
         near(agent.position, carried);
         agent.on_server_update_at(carried + Vec3::X, Vec3::ZERO, Vec3::ZERO, false, true, at(now, 1.0));

@@ -4952,6 +4952,16 @@ failure. Grid validation and any paid upload are performed by the human.
   (under the pointer, its reset), the cogs with their number of rows,
   greyed and dimmed while their row is off. Combine with
   `AURORA_DEMO_LOGIN=empty` and `--language fr|en` for preference captures.
+  `controls` shows the independent "Fly by holding Up" and "Land by holding
+  Down" switches, both on by default. Try all four combinations: Up still
+  jumps or ascends, Down still crouches or descends, and the Fly button and
+  shortcut still start/end flight. With automatic landing off, descending
+  onto the ground must retain flight. Verify the choices after a restart.
+  With automatic takeoff off, the first permitted ground jump starts without
+  the pre-jump wait, even when Quickjump is off; holding Up keeps repeating
+  jumps. Releasing Up restores the usual landing animation handling. Check
+  that seated avatars and jump restrictions still prevent jumping, and that
+  flight and the swimming/water-exit controls keep their existing behavior.
   `2:text-size` opens Appearance and cycles the text-size preference through
   0.8, 1.0, 1.4, 2.0 and 1.0 every 180 frames after frame 600. Capture
   frames 700, 880, 1060, 1240 and 1420 to compare the preview, navigation, window titles,
