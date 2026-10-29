@@ -97,23 +97,73 @@ enum Completed {
     Error(String),
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Phase {
+    #[default]
+    Choosing,
+    Scanning,
+    Checking,
+    Installing,
+}
+
 #[derive(Default)]
 pub(crate) struct Installer {
     pub scanned: bool,
     pub busy: bool,
-    pub installing: Option<PathBuf>,
     pub installations: Vec<Installation>,
     pub error: Option<String>,
     pub success: Option<Report>,
     manual: Vec<PathBuf>,
     result: Arc<Mutex<Option<Completed>>>,
+    phase: Arc<Mutex<Phase>>,
 }
 
 impl Installer {
+    pub(super) fn phase(&self) -> Phase {
+        *self.phase.lock()
+    }
+
+    pub fn demo(&mut self, mode: &str) {
+        let phase = match mode {
+            "installer-choose" => Phase::Choosing,
+            "installer-check" => Phase::Checking,
+            "installer-install" => Phase::Installing,
+            "installer-done" | "installer-error" => Phase::Installing,
+            _ => return,
+        };
+        self.begin(phase);
+        if matches!(mode, "installer-done" | "installer-error") {
+            let report = Report {
+                version: [5, 2, 1],
+                enabled: mode == "installer-done",
+                plugin_version: (mode == "installer-done").then(|| addon::version().into()),
+                profile: "Blender/profile".into(),
+                target: "Blender/profile/extensions/aurora_live_mesh".into(),
+                error: (mode == "installer-error").then(|| aurora_i18n::tr!("blender-live-installer-no-report").into()),
+                ..Default::default()
+            };
+            *self.result.lock() = Some(Completed::Install {
+                executable: "Blender/blender.exe".into(),
+                report,
+            });
+            self.poll();
+        }
+    }
+
+    fn begin(&mut self, phase: Phase) -> bool {
+        if self.busy {
+            return false;
+        }
+        self.busy = true;
+        self.error = None;
+        self.success = None;
+        *self.phase.lock() = phase;
+        true
+    }
+
     pub fn poll(&mut self) {
         let Some(completed) = self.result.lock().take() else { return };
         self.busy = false;
-        self.installing = None;
         match completed {
             Completed::Scan { installations, manual } => {
                 self.installations = installations;
@@ -122,6 +172,11 @@ impl Installer {
             Completed::Install { executable, report } => {
                 if let Some(entry) = self.installations.iter_mut().find(|i| i.executable == executable) {
                     entry.report = report.clone();
+                } else {
+                    self.installations.push(Installation {
+                        executable,
+                        report: report.clone(),
+                    });
                 }
                 if let Some(error) = &report.error {
                     self.error = Some(error.clone());
@@ -134,52 +189,58 @@ impl Installer {
         }
     }
 
-    pub fn scan(&mut self, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, choose: bool) {
-        if self.busy {
+    pub fn scan(&mut self, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
+        if !self.begin(Phase::Scanning) {
             return;
         }
-        self.busy = true;
         self.scanned = true;
-        self.error = None;
         let result = self.result.clone();
         let ctx = ctx.clone();
         let mut manual = self.manual.clone();
         jobs.execute(move || {
+            if let Some(path) = remembered_paths()
+                && let Ok(bytes) = std::fs::read(&path)
+            {
+                manual.extend(
+                    serde_json::from_slice::<Vec<PathBuf>>(&bytes)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .take(64),
+                );
+            }
+            manual = unique_executables(manual);
+            *result.lock() = Some(Completed::Scan {
+                installations: scan(&manual),
+                manual,
+            });
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn choose(&mut self, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
+        if !self.begin(Phase::Choosing) {
+            return;
+        }
+        let result = self.result.clone();
+        let phase = self.phase.clone();
+        let ctx = ctx.clone();
+        jobs.execute(move || {
             let completed = (|| {
-                if let Some(path) = remembered_paths()
-                    && let Ok(bytes) = std::fs::read(&path)
-                {
-                    manual.extend(
-                        serde_json::from_slice::<Vec<PathBuf>>(&bytes)
-                            .unwrap_or_default()
-                            .into_iter()
-                            .take(64),
-                    );
-                }
-                if choose {
-                    let Some(path) = rfd::FileDialog::new()
-                        .set_title(aurora_i18n::tr!("blender-live-choose-blender"))
-                        .pick_file()
-                    else {
-                        return Ok(Completed::Cancelled);
-                    };
-                    if !is_blender(&path) {
-                        return Err(aurora_i18n::tr!("blender-live-invalid-executable").into());
-                    }
-                    manual.push(path);
-                }
-                manual = unique_executables(manual);
-                if choose && let Some(path) = remembered_paths() {
-                    if let Some(parent) = path.parent() {
-                        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-                    }
-                    let bytes = serde_json::to_vec(&manual).map_err(|e| e.to_string())?;
-                    crate::atomic_file::write(&path, &bytes).map_err(|e| e.to_string())?;
-                }
-                Ok(Completed::Scan {
-                    installations: scan(&manual),
-                    manual,
-                })
+                let picker = rfd::FileDialog::new().set_title(aurora_i18n::tr!("blender-live-choose-executable"));
+                #[cfg(windows)]
+                let picker = picker.add_filter("Blender", &["exe"]);
+                let Some(path) = picker.pick_file() else {
+                    return Ok(Completed::Cancelled);
+                };
+                let Some(executable) = unique_executables(vec![path]).pop() else {
+                    return Err(aurora_i18n::tr!("blender-live-invalid-executable").into());
+                };
+                remember_selected(&executable)?;
+                let report = install_selected(&executable, run_bridge, |value| {
+                    *phase.lock() = value;
+                    ctx.request_repaint();
+                });
+                Ok(Completed::Install { executable, report })
             })()
             .unwrap_or_else(Completed::Error);
             *result.lock() = Some(completed);
@@ -195,16 +256,14 @@ impl Installer {
         {
             return;
         }
-        self.busy = true;
-        self.installing = Some(executable.clone());
-        self.success = None;
-        self.error = None;
+        self.begin(Phase::Checking);
         let result = self.result.clone();
+        let phase = self.phase.clone();
         let ctx = ctx.clone();
         jobs.execute(move || {
-            let report = run_bridge(&executable, true).unwrap_or_else(|error| Report {
-                error: Some(error),
-                ..Default::default()
+            let report = install_selected(&executable, run_bridge, |value| {
+                *phase.lock() = value;
+                ctx.request_repaint();
             });
             *result.lock() = Some(Completed::Install { executable, report });
             ctx.request_repaint();
@@ -212,8 +271,81 @@ impl Installer {
     }
 }
 
+/// Check and install only the requested executable, independently of discovery.
+fn install_selected(executable: &Path, mut run: impl FnMut(&Path, bool) -> Result<Report, String>, mut phase: impl FnMut(Phase)) -> Report {
+    phase(Phase::Checking);
+    let mut report = match run(executable, false) {
+        Ok(report) => report,
+        Err(error) => {
+            return Report {
+                error: Some(error),
+                ..Default::default()
+            };
+        }
+    };
+    let action = Installation {
+        executable: executable.to_owned(),
+        report: report.clone(),
+    }
+    .action();
+    match action {
+        Action::Failed => return report,
+        Action::Unsupported | Action::Newer => {
+            report.error = Some(if action == Action::Unsupported {
+                aurora_i18n::tr!("blender-live-unsupported-version").into()
+            } else {
+                aurora_i18n::tr!("blender-live-newer").into()
+            });
+            return report;
+        }
+        _ => {}
+    }
+    phase(Phase::Installing);
+    match run(executable, true) {
+        Ok(mut installed) => {
+            if installed.error.is_none() && (!installed.enabled || installed.plugin_version.as_deref() != Some(addon::version())) {
+                installed.error = Some(aurora_i18n::tr!("blender-live-installer-no-report").into());
+            }
+            installed
+        }
+        Err(error) => Report {
+            error: Some(error),
+            ..report
+        },
+    }
+}
+
 fn remembered_paths() -> Option<PathBuf> {
     directories::ProjectDirs::from("org", "Aurora", "AuroraViewer").map(|d| d.config_dir().join("blender-installations.json"))
+}
+
+fn remember_selected(executable: &Path) -> Result<(), String> {
+    let Some(path) = remembered_paths() else { return Ok(()) };
+    remember_at(&path, executable)
+}
+
+fn remember_at(path: &Path, executable: &Path) -> Result<(), String> {
+    let mut paths = std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Vec<PathBuf>>(&bytes).ok())
+        .unwrap_or_default();
+    // Do not inspect other executables or their drives when choosing one file.
+    paths.retain(|p| executable_key(p) != executable_key(executable));
+    paths.insert(0, executable.to_owned());
+    paths.truncate(64);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let bytes = serde_json::to_vec(&paths).map_err(|e| e.to_string())?;
+    crate::atomic_file::write(path, &bytes).map_err(|e| e.to_string())
+}
+
+fn executable_key(path: &Path) -> String {
+    if cfg!(windows) {
+        path.to_string_lossy().to_lowercase()
+    } else {
+        path.to_string_lossy().into_owned()
+    }
 }
 
 fn is_blender(path: &Path) -> bool {
@@ -228,13 +360,7 @@ fn unique_executables(paths: Vec<PathBuf>) -> Vec<PathBuf> {
         .into_iter()
         .filter_map(|p| p.canonicalize().ok())
         .filter(|p| is_blender(p))
-        .filter(|p| {
-            seen.insert(if cfg!(windows) {
-                p.to_string_lossy().to_lowercase()
-            } else {
-                p.to_string_lossy().into_owned()
-            })
-        })
+        .filter(|p| seen.insert(executable_key(p)))
         .take(64)
         .collect()
 }
