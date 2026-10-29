@@ -4076,7 +4076,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BUY_PASS=sell\|none\|own` | The ground menu's "Buy access" on the plaza parcel |
 | `AURORA_DEMO_PAY=<mode>` | Demo balance and the Pay window of a resident or a group |
 | `AURORA_DEMO_MONEY_TRACKER=<mode>` | The money tracker on a session of payments, in either look |
-| `AURORA_DEMO_PAYMENT=card\|legacy\|friend\|off` | A resident's direct payment as a card in their conversation |
+| `AURORA_DEMO_PAYMENT=card\|legacy\|sent\|friend\|off` | A direct payment as a card in the conversation with the other resident |
 | `AURORA_DEMO_LOGIN=<mode>` | Offline login screen and account carousel |
 | `AURORA_DEMO_LOGIN_SUBMIT=<frame>` | Press Log in of the open login form at that frame |
 | `AURORA_DEMO_LOGIN_WAIT=logout\|sudden\|refused` | A previous session of the demo account still on the grid: the login's countdown |
@@ -4335,8 +4335,11 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Tess's conversation open on her message, then two cards: "paid you
   L$1,500" with "Thanks for the set!", and L$75 with no message (the
   simulator's "Payment" is not shown). `legacy`: the same as two lines of
-  the legacy lines, the coin before the sentence. `friend`: no conversation
-  open; a friend's L$250 opens theirs on its card ("For the boat ride"), a
+  the legacy lines, the coin before the sentence. `sent`: the same, then
+  our own L$300 to her, "You paid … L$300" with "For the rent", not
+  counted as unread (the demo keeps no transcript: that both payments come
+  back with the history is a unit test's, and a grid check). `friend`: no
+  conversation open; a friend's L$250 opens theirs on its card ("For the boat ride"), a
   stranger's L$20 shows nowhere. `off`: the same with "Open a conversation for a
   friend's payment" off: no conversation opens. Capture after frame 400, with `--language fr`
   and `--language en`.

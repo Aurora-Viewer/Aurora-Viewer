@@ -1755,7 +1755,8 @@ impl App {
                     amount = format!("{}", amount)
                 ));
             }
-            // the simulator's MoneyBalanceReply names a gift (the money tracker)
+            // the simulator's MoneyBalanceReply names a gift (the money
+            // tracker, the card in the payee's conversation)
             if let NetCommand::PayResident {
                 to,
                 group,
@@ -1764,7 +1765,7 @@ impl App {
             } = &cmd
             {
                 let item = if message.is_empty() { "Payment" } else { message.as_str() };
-                self.record_money(&NetEvent::MoneyTransaction {
+                let reply = NetEvent::MoneyTransaction {
                     id: uuid::Uuid::new_v4(),
                     success: true,
                     kind: 5001,
@@ -1775,7 +1776,9 @@ impl App {
                     amount: *amount,
                     item: item.to_owned(),
                     description: String::new(),
-                });
+                };
+                self.record_money(&reply);
+                self.world.payment(&reply);
             }
             // a sit on any prim, and the stand up from it (app/own_motion.rs);
             // the stand up's animations still come from demo::respond
@@ -2640,7 +2643,7 @@ impl App {
         } = ev
         {
             self.record_money(&ev);
-            self.world.payment_received(&ev);
+            self.world.payment(&ev);
             self.pay_ui.on_transaction(success, kind, dest, description);
             return;
         }
