@@ -2194,7 +2194,7 @@ pub fn action_button_if(
 const KEYED_ICON: f32 = 15.0;
 const KEYED_GAP: f32 = 7.0;
 /// Room around the content of a button that takes its content's width.
-const KEYED_PAD: f32 = 24.0;
+pub(crate) const KEYED_PAD: f32 = 24.0;
 
 /// An `action_button_keyed`'s icon with its gap, label and keycaps widths.
 fn keyed_parts(ui: &egui::Ui, icon: &str, label: &str, key: Option<&crate::keybinds::Binding>) -> (f32, f32, f32) {

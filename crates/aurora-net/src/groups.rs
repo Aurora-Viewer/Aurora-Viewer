@@ -370,6 +370,28 @@ pub fn notice_bucket(bucket: &[u8]) -> Option<NoticeBucket> {
     })
 }
 
+/// A notice kept while we were offline (ReadOfflineMsgs) names its group in
+/// the entry's `asset_id` and its attachment as text, "asset type|wearable
+/// type|name", empty without one (the `aux_id` branch of process_improved_im,
+/// llimprocessing.cpp, originally LGPL 2.1). It comes back here in the form
+/// of a live notice's bucket, so that one parser reads both.
+pub fn notice_bucket_from_offline(group: Uuid, text: &[u8]) -> Vec<u8> {
+    let text = String::from_utf8_lossy(text);
+    let text = text.trim_end_matches('\0');
+    // has_inventory = binary_bucket_size > 1
+    let mut parts = text.split('|');
+    let attachment = (!text.is_empty()).then(|| {
+        let asset_type = parts.next().and_then(|t| t.trim().parse::<i32>().ok()).unwrap_or(0);
+        parts.next();
+        (asset_type as u8, parts.next().unwrap_or_default())
+    });
+    let mut out = vec![u8::from(attachment.is_some()), attachment.map_or(0, |a| a.0)];
+    out.extend_from_slice(group.as_bytes());
+    out.extend_from_slice(attachment.map_or("", |a| a.1).as_bytes());
+    out.push(0);
+    out
+}
+
 /// "subject|message" of a notice (the first "|" splits them).
 pub fn notice_text(message: &str) -> (String, String) {
     match message.split_once('|') {
@@ -835,6 +857,13 @@ mod tests {
         let mut open = b.clone();
         open.pop();
         assert!(notice_bucket(&open).is_none(), "not terminated");
+        // an offline notice: the group from the entry, the attachment as text
+        let n = notice_bucket(&notice_bucket_from_offline(group, b"6|0|Texture kit\0")).expect("offline bucket");
+        assert!(n.has_inventory);
+        assert_eq!((n.asset_type, n.group, n.item_name.as_str()), (6, group, "Texture kit"));
+        let n = notice_bucket(&notice_bucket_from_offline(group, b"\0")).expect("offline bucket");
+        assert!(!n.has_inventory);
+        assert_eq!((n.group, n.item_name.as_str()), (group, ""));
         assert_eq!(notice_text("Hi|Body|more"), ("Hi".into(), "Body|more".into()));
         assert_eq!(notice_text("Hi"), ("Hi".into(), String::new()));
         let (text, bucket) = notice_to_send("Hi", "Body", None);

@@ -507,7 +507,7 @@ fn rolled_out(
             child.set_clip_rect(Rect::from_min_size(top, Vec2::new(width + 12.0, full_h * keep)).intersect(ui.clip_rect()));
             child.multiply_opacity(keep);
         }
-        let r = center_card(&mut child, p, icons, world, env, &mut nui.wanted_pics, n);
+        let r = center_card(&mut child, p, icons, world, env, &mut nui.wanted_pics, &mut nui.wanted_images, n);
         let card = child.min_rect();
         nui.center.heights.insert(peek.id, card.height());
         // the time left, a fine violet bar along the card's bottom
@@ -657,7 +657,7 @@ fn full_list(
                     let pinned = |n: &Notification| matches!(n.data, Data::RegionRestart);
                     for first in [true, false] {
                         for n in list.list.iter_mut().rev().filter(|n| !n.transient && pinned(n) == first) {
-                            if let Some(r) = center_card(ui, p, icons, world, env, &mut nui.wanted_pics, n) {
+                            if let Some(r) = center_card(ui, p, icons, world, env, &mut nui.wanted_pics, &mut nui.wanted_images, n) {
                                 answers.push((n.id, r));
                             }
                         }
@@ -750,6 +750,7 @@ fn center_card(
     world: &World,
     env: &mut ToastEnv<'_>,
     wanted: &mut std::collections::HashSet<uuid::Uuid>,
+    wanted_images: &mut std::collections::HashSet<uuid::Uuid>,
     n: &mut Notification,
 ) -> Option<Response> {
     if matches!(n.data, Data::RegionRestart)
@@ -762,7 +763,7 @@ fn center_card(
         if matches!(n.data, Data::Message { .. }) {
             cards::person_card(ui, p, icons, world, env, wanted, n, false)
         } else {
-            cards::card(ui, p, icons, world, n, false, true)
+            cards::card(ui, p, icons, world, env.images, wanted_images, n, false, true)
         }
     });
     if !read {

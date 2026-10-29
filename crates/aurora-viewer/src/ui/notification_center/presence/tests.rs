@@ -329,6 +329,7 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
             );
             let mut env = ToastEnv {
                 pics: &pics,
+                images: &std::collections::HashMap::new(),
                 emoji: &mut emoji,
                 hidden: false,
                 message_seconds: 30.0,
@@ -443,6 +444,7 @@ impl Clicks {
             self.notif.bell = Some(Rect::from_min_size(Pos2::new(1236.0, 8.0), Vec2::splat(36.0)));
             let mut env = ToastEnv {
                 pics: &pics,
+                images: &std::collections::HashMap::new(),
                 emoji: &mut self.emoji,
                 hidden: false,
                 message_seconds: 30.0,
