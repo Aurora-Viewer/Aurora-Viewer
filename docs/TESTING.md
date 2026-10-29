@@ -104,7 +104,13 @@ detail, removing exceptions and adding residents from the shared picker.
 
 **Saved graphics profiles (#1218).** `AURORA_DEMO_BARS=profiles` installs two
 demo quality profiles for this run; add `AURORA_DEMO_OPTIONS=graphics` to inspect
-their editor. `AURORA_DEMO_BARS=fpspresets` also opens the actual FPS hover card
+their editor. Use `graphics:profiles-list` to open its dropdown with one bin per
+profile, or `graphics:save-profile` to open the name prompt after Save. The name
+field exists only in that dialog, starts focused and accepts Enter. A bin must
+ask for confirmation without loading its profile, even when another is active;
+all bins stay at the same right edge with long names. Cancel saves/deletes
+nothing, and an existing name still requires replacement confirmation.
+`AURORA_DEMO_BARS=fpspresets` also opens the actual FPS hover card
 after frame 300; combine with `legacy` to check the other bar layout. Save a
 named profile, change quality, reload it from Preferences and from the FPS
 hover card, and restart the demo to check persistence. Replacement and deletion
@@ -4075,7 +4081,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PEOPLE_FILTER=<text>` | Initial name filter for a People demo scenario |
 | `AURORA_DEMO_ANTI_SPAM=1` | Synthetic offer, script prompt and sound floods with Protections controls |
 | `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > Protections |
-| `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens the preferences on a page, a search, the modified settings, open cogs or a reset |
+| `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, reset, or a graphics profile dialog/list |
 | `AURORA_DEMO_GRIDS=1\|pages` | Opens the grid manager with synthetic metadata |
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |

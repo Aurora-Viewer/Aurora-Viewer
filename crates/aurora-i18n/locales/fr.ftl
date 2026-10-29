@@ -4587,6 +4587,7 @@ ui-options-preset-custom = Personnalisé
 graphics-saved-title = Profils graphiques enregistrés
 graphics-saved-help = Enregistrez la qualité de rendu actuelle sous un nom, ou sélectionnez un profil enregistré pour l’appliquer. Les limites FPS, la synchronisation verticale, le matériel et l’environnement restent inchangés.
 graphics-saved-name = Nom du profil
+graphics-saved-save = Enregistrer un profil graphique
 graphics-saved-empty = Aucun profil graphique enregistré
 graphics-saved-replace = Remplacer ce profil graphique ?
 graphics-saved-delete = Supprimer ce profil graphique ?

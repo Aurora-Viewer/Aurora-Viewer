@@ -4584,6 +4584,7 @@ ui-options-preset-custom = カスタム
 graphics-saved-title = 保存済みグラフィックプロファイル
 graphics-saved-help = 現在の描画品質に名前を付けて保存するか、保存済みプロファイルを選択して適用します。FPS 制限、垂直同期、ハードウェア、環境設定は変更されません。
 graphics-saved-name = プロファイル名
+graphics-saved-save = グラフィックプロファイルを保存
 graphics-saved-empty = 保存済みのグラフィックプロファイルはありません
 graphics-saved-replace = このグラフィックプロファイルを上書きしますか？
 graphics-saved-delete = このグラフィックプロファイルを削除しますか？

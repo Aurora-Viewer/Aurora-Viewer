@@ -4584,6 +4584,7 @@ ui-options-preset-custom = Custom
 graphics-saved-title = Saved graphics profiles
 graphics-saved-help = Save the current rendering quality under a name, or select a saved profile to apply it. FPS limits, vertical sync, hardware and environment stay unchanged.
 graphics-saved-name = Profile name
+graphics-saved-save = Save graphics profile
 graphics-saved-empty = No saved graphics profiles
 graphics-saved-replace = Replace this graphics profile?
 graphics-saved-delete = Delete this graphics profile?
