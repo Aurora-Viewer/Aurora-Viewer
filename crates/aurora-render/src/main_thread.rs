@@ -1379,10 +1379,7 @@ fn open_device(adapter: &wgpu::Adapter) -> Result<OpenedDevice, RenderError> {
     if afeat.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT) {
         features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;
     }
-    let max_textures = alim
-        .max_binding_array_elements_per_shader_stage
-        .min(alim.max_sampled_textures_per_shader_stage.saturating_sub(17))
-        .clamp(64, 16384);
+    let max_textures = texture_page_limit(&alim);
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("aurora"),
         required_features: features,
@@ -1435,9 +1432,27 @@ fn detect_vram_mb(adapter: &wgpu::Adapter) -> Option<u64> {
     (bytes > 0).then_some(bytes / (1024 * 1024))
 }
 
+// Binding-array entries have their own limit; they do not consume the
+// ordinary sampled-texture slots used by frame attachments.
+fn texture_page_limit(limits: &wgpu::Limits) -> u32 {
+    limits.max_binding_array_elements_per_shader_stage.clamp(64, 16384)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bindless_pages_are_not_limited_by_ordinary_texture_slots() {
+        let mut limits = wgpu::Limits {
+            max_sampled_textures_per_shader_stage: 96,
+            max_binding_array_elements_per_shader_stage: 1_000_000,
+            ..Default::default()
+        };
+        assert_eq!(texture_page_limit(&limits), 16384);
+        limits.max_binding_array_elements_per_shader_stage = 512;
+        assert_eq!(texture_page_limit(&limits), 512);
+    }
 
     #[test]
     fn skin_binds_send_only_the_range_asked_for() {
