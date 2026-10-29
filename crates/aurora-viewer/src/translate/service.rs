@@ -1,7 +1,7 @@
 //! The app's translator: the state of the lines, the model's thread
 //! (spawned at the first job), the model download and the suggestions.
 
-use super::state::{Effect, LineKey, LineState, Suggest, TranslateSettings, Translations};
+use super::state::{Effect, Held, LineKey, LineShow, Suggest, TranslateSettings, Translations};
 use aurora_translate::{Backend, Download, DownloadState, Lang, ModelEntry, Status, Translator, lang};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -40,8 +40,32 @@ pub struct Polled {
     pub settings_changed: bool,
 }
 
+/// What the interface shows of the translation (kept on the World, which
+/// every window reads).
+#[derive(Debug, Default, Clone)]
+pub struct TranslateView {
+    /// By the time of their line.
+    pub lines: HashMap<SystemTime, LineShow>,
+    pub held: Vec<Held>,
+    pub suggestions: HashMap<Uuid, &'static Lang>,
+    pub partners: HashMap<Uuid, &'static Lang>,
+    pub me: Option<&'static Lang>,
+    /// Where the model runs, once a job started it.
+    pub status: Option<Status>,
+    /// The model's thread died.
+    pub offline: bool,
+}
+
+impl TranslateView {
+    pub fn held_in(&self, session: Uuid) -> impl Iterator<Item = &Held> {
+        self.held.iter().filter(move |h| h.key.session == session)
+    }
+}
+
 #[derive(Default)]
 pub struct TranslateService {
+    /// Bumped when the suggestions change (the lines have their own).
+    bumps: u64,
     translations: Translations,
     suggest: Suggest,
     suggestions: HashMap<Uuid, &'static Lang>,
@@ -89,6 +113,7 @@ impl TranslateService {
     /// `to`, or stop with `None`.
     pub fn set_partner(&mut self, settings: &mut TranslateSettings, session: Uuid, to: Option<&'static Lang>, dir: &Path) -> SetResult {
         self.suggestions.remove(&session);
+        self.bumps += 1;
         let Some(to) = to else {
             settings.sessions.remove(&session);
             self.translations.close_session(session);
@@ -114,6 +139,13 @@ impl TranslateService {
     /// The model being downloaded and how far it is.
     pub fn download_state(&self) -> Option<(&'static ModelEntry, DownloadState)> {
         self.download.as_ref().map(|(e, d)| (*e, d.progress()))
+    }
+
+    /// The download dialog, while a conversation waits for the model: the
+    /// model and how far its download is (`None`: not started).
+    pub fn dialog(&self, settings: &TranslateSettings) -> Option<(&'static ModelEntry, Option<DownloadState>)> {
+        self.pending?;
+        Some((Self::model(settings), self.download_state().map(|(_, s)| s)))
     }
 
     /// "Cancel" or "Not now" in the download dialog.
@@ -171,17 +203,10 @@ impl TranslateService {
             None => {
                 if let Some(l) = self.suggest.observe(session, text, me) {
                     self.suggestions.insert(session, l);
+                    self.bumps += 1;
                 }
             }
         }
-    }
-
-    /// The language suggested for a conversation, unless silenced.
-    pub fn suggestion(&self, session: Uuid, settings: &TranslateSettings) -> Option<&'static Lang> {
-        if settings.dismissed.contains(&session) || settings.sessions.contains_key(&session) {
-            return None;
-        }
-        self.suggestions.get(&session).copied()
     }
 
     /// Every frame: finished translations, late messages, the download.
@@ -201,10 +226,6 @@ impl TranslateService {
             }
         }
         out
-    }
-
-    pub fn line_state(&self, key: &LineKey) -> Option<&LineState> {
-        self.translations.state(key)
     }
 
     pub fn original(&self, key: &LineKey) -> Option<String> {
@@ -234,6 +255,46 @@ impl TranslateService {
     pub fn close_session(&mut self, session: Uuid) {
         self.translations.close_session(session);
         self.suggestions.remove(&session);
+        self.bumps += 1;
+    }
+
+    /// Our held message dropped: "Edit" puts it back in the field.
+    pub fn discard(&mut self, key: LineKey) {
+        self.translations.discard(key);
+    }
+
+    /// "Not now" on the suggestion card.
+    pub fn dismiss(&mut self, settings: &mut TranslateSettings, session: Uuid) {
+        settings.dismissed.insert(session);
+        self.suggestions.remove(&session);
+        self.bumps += 1;
+    }
+
+    /// Changes when [`Self::view`] would.
+    pub fn version(&self) -> u64 {
+        self.translations.version() + self.bumps
+    }
+
+    pub fn view(&self, settings: &TranslateSettings) -> TranslateView {
+        let (lines, held) = self.translations.view();
+        TranslateView {
+            lines,
+            held,
+            suggestions: self
+                .suggestions
+                .iter()
+                .filter(|(s, _)| !settings.dismissed.contains(*s) && !settings.sessions.contains_key(*s))
+                .map(|(s, l)| (*s, *l))
+                .collect(),
+            partners: settings
+                .sessions
+                .keys()
+                .filter_map(|s| Some((*s, Self::partner(settings, *s)?)))
+                .collect(),
+            me: Some(Self::me(settings)),
+            status: self.status(),
+            offline: self.offline(),
+        }
     }
 
     /// Logout: nothing in flight survives the session.
@@ -241,5 +302,6 @@ impl TranslateService {
         self.translations.clear();
         self.suggestions.clear();
         self.pending = None;
+        self.bumps += 1;
     }
 }

@@ -412,6 +412,8 @@ pub struct World {
     /// the app): session, time of their line, text without the "(Saved …)"
     /// prefix of an offline message.
     pub incoming_ims: Vec<(Uuid, SystemTime, String)>,
+    /// What the conversations show of their translation (set by the app).
+    pub translate_view: crate::translate::TranslateView,
     /// Taskbar flashes and system notifications asked for (drained by the
     /// app, `app/attention.rs`).
     pub attention: Vec<attention::Attention>,
@@ -647,6 +649,7 @@ impl World {
             ui_sounds: Vec::new(),
             im_messages: Vec::new(),
             incoming_ims: Vec::new(),
+            translate_view: Default::default(),
             attention: Vec::new(),
             balance_changes: Vec::new(),
             typing_started: Vec::new(),

@@ -112,6 +112,11 @@ pub(super) fn show(
             }
             // ---- the box
             let mut draft = std::mem::take(st.draft_mut(st.selected));
+            if kind == Some(sidebar::Kind::Private)
+                && let Some(session) = st.selected
+            {
+                translate_bars(ui, p, world, session, &mut draft, actions);
+            }
             if let Some(q) = quote {
                 draft = format!("{q}{draft}");
                 st.conv_focus_request = true;
@@ -140,6 +145,15 @@ pub(super) fn show(
                             let b = box_button(ui, p, "gif", aurora_i18n::tr!("ui-chat-gif"), st.gif_open);
                             super::gif_picker::button(&b, p, st);
                         }
+                        // the narrow layout keeps the room for the field: the
+                        // button only while the conversation is translated
+                        // (`/tr` works everywhere)
+                        if kind == Some(sidebar::Kind::Private)
+                            && let Some(session) = st.selected
+                            && (roomy || world.translate_view.partners.contains_key(&session))
+                        {
+                            translate_button(ui, p, world, session, actions);
+                        }
                         // narrow, only its icon. An IM has no attach button:
                         // inventory is given by dropping it on the
                         // conversation, which says so during the drag (#627)
@@ -155,7 +169,10 @@ pub(super) fn show(
                         let field_w = (ui.available_width() - chip_w - BUTTON - 12.0).max(40.0);
                         let hint = match st.selected {
                             None => aurora_i18n::tr!("ui-chat-write-local").to_owned(),
-                            Some(id) => aurora_i18n::tr!("ui-chat-write-to", name = world.session_title(&id)),
+                            Some(id) => match world.translate_view.partners.get(&id) {
+                                Some(l) => aurora_i18n::tr!("translate-write-to", name = world.session_title(&id), lang = l.native),
+                                None => aurora_i18n::tr!("ui-chat-write-to", name = world.session_title(&id)),
+                            },
                         };
                         super::input::prepare(ui, conv_input, local);
                         let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
@@ -305,6 +322,102 @@ fn typing_job(ctx: &egui::Context, p: &Palette, text: &str, names: &[String], wi
 }
 
 /// A button of the box: an icon, lit while its picker is open.
+/// The translation of a private conversation (`crate::translate`): its
+/// languages in the tooltip, the menu of languages on a click.
+fn translate_button(ui: &mut egui::Ui, p: &Palette, world: &World, session: uuid::Uuid, actions: &mut Vec<ConvAction>) {
+    let view = &world.translate_view;
+    let partner = view.partners.get(&session).copied();
+    let tip = match (partner, view.me) {
+        (Some(theirs), Some(mine)) => {
+            let mut tip = aurora_i18n::tr!("translate-button-on", mine = mine.native, theirs = theirs.native).to_string();
+            if view.offline {
+                tip = format!("{tip}\n{}", aurora_i18n::tr!("translate-offline"));
+            } else if view.status.is_some_and(|s| s.loaded && !s.on_gpu) {
+                tip = format!("{tip}\n{}", aurora_i18n::tr!("translate-on-cpu"));
+            }
+            tip
+        }
+        _ => aurora_i18n::tr!("translate-button-off").to_string(),
+    };
+    let b = box_button(ui, p, "language", &tip, partner.is_some());
+    menu::dropdown(&b, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+        if menu::check(
+            ui,
+            p,
+            "language-off",
+            aurora_i18n::tr!("translate-menu-off"),
+            partner.is_none(),
+            true,
+        ) {
+            actions.push(ConvAction::Translate { session, to: None });
+        }
+        menu::separator(ui, p);
+        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+            for l in aurora_translate::LANGS.iter().filter(|l| Some(*l) != view.me) {
+                let label = if l.native == l.english {
+                    l.native.to_owned()
+                } else {
+                    format!("{} · {}", l.native, l.english)
+                };
+                if menu::check(ui, p, "language", &label, partner == Some(l), true) {
+                    actions.push(ConvAction::Translate { session, to: Some(l) });
+                }
+            }
+        });
+    });
+}
+
+/// Above the field of a private conversation: our message held back by its
+/// translation, or the suggestion to translate the conversation.
+fn translate_bars(ui: &mut egui::Ui, p: &Palette, world: &World, session: uuid::Uuid, draft: &mut String, actions: &mut Vec<ConvAction>) {
+    use crate::ui::widgets::{ActionKind, action_button};
+    let view = &world.translate_view;
+    let size = egui::vec2(0.0, 24.0);
+    if let Some(h) = view.held_in(session).next() {
+        ui.horizontal_wrapped(|ui| {
+            let short: String = h.original.chars().take(40).collect();
+            let text = if h.too_long {
+                aurora_i18n::tr!("translate-held-too-long", text = short)
+            } else {
+                aurora_i18n::tr!("translate-held-failed", text = short)
+            };
+            ui.label(RichText::new(text).color(p.muted));
+            if !h.too_long && action_button(ui, p, "refresh", aurora_i18n::tr!("translate-retry"), ActionKind::Primary, size).clicked() {
+                actions.push(ConvAction::TranslateRetry(h.key));
+            }
+            if action_button(
+                ui,
+                p,
+                "send-filled",
+                aurora_i18n::tr!("translate-send-original"),
+                ActionKind::Flat,
+                size,
+            )
+            .clicked()
+            {
+                actions.push(ConvAction::TranslateSendOriginal(h.key));
+            }
+            if action_button(ui, p, "pencil-filled", aurora_i18n::tr!("translate-edit"), ActionKind::Flat, size).clicked() {
+                *draft = h.original.clone();
+                actions.push(ConvAction::TranslateDiscard(h.key));
+            }
+        });
+        ui.add_space(4.0);
+    } else if let (Some(theirs), Some(mine)) = (view.suggestions.get(&session).copied(), view.me) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(aurora_i18n::tr!("translate-suggest", lang = theirs.native)).color(p.muted));
+            let pair = format!("{} ⇄ {}", mine.code.to_uppercase(), theirs.code.to_uppercase());
+            if action_button(ui, p, "language", &pair, ActionKind::Primary, size).clicked() {
+                actions.push(ConvAction::Translate { session, to: Some(theirs) });
+            }
+            if action_button(ui, p, "x", aurora_i18n::tr!("translate-not-now"), ActionKind::Flat, size).clicked() {
+                actions.push(ConvAction::TranslateDismiss(session));
+            }
+        });
+        ui.add_space(4.0);
+    }
+}
+
 fn box_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, active: bool) -> egui::Response {
     let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(BUTTON), egui::Sense::hover());
     let resp = ui.interact(rect, sidebar::control_id(&format!("box-{icon}")), egui::Sense::click());

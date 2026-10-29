@@ -99,6 +99,11 @@ impl LineClock {
         self.revision = tick();
     }
 
+    /// A line changed in place (its translation): the views lay it out again.
+    pub fn touched(&mut self) {
+        self.revision = tick();
+    }
+
     /// The lines were replaced or shuffled.
     pub fn renumbered(&mut self) {
         self.revision = tick();
@@ -254,9 +259,30 @@ impl World {
             return;
         };
         line.text = format!("{head}{translated}");
-        let mut logged = line.clone();
+        s.clock.touched();
+        let line = s.lines.iter().rev().find(|l| l.time == key.time).cloned();
+        let Some(mut logged) = line else {
+            return;
+        };
         logged.text = format!("[translation] {translated}");
         self.log_line(key.session, &logged);
+    }
+
+    /// Our held message taken back ("Edit" on an untranslated message): its
+    /// line leaves the conversation.
+    pub fn remove_line(&mut self, key: &crate::translate::LineKey) {
+        let s = self.session_lines(key.session);
+        if let Some(i) = s.lines.iter().rposition(|l| l.time == key.time) {
+            s.lines.remove(i);
+            s.clock.renumbered();
+        }
+    }
+
+    /// The translation marks of a conversation's lines changed.
+    pub fn touch_conversation(&mut self, session: Uuid) {
+        if let Some(s) = self.social.ims.iter_mut().find(|s| s.other == session) {
+            s.clock.touched();
+        }
     }
 
     /// A line enters a conversation: written to its transcript (new lines,

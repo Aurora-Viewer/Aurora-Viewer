@@ -119,6 +119,7 @@ pub mod texture_picker;
 #[cfg(test)]
 mod theme_guard;
 pub mod toolbar;
+pub mod translate_download;
 pub mod update;
 pub mod viewfinder;
 pub mod voice_tag;

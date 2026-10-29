@@ -110,6 +110,30 @@ pub struct Translations {
     /// Our messages of each conversation, in typed order, until they leave.
     queues: HashMap<Uuid, VecDeque<LineKey>>,
     next: u64,
+    /// Bumped at every change: the app rebuilds the interface's view then.
+    version: u64,
+}
+
+/// What a line of a conversation shows about its translation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LineShow {
+    /// Translating ("…" after the text).
+    Pending,
+    /// The line shows the translation; this was typed or received.
+    Original(String),
+    /// A received message the model could not translate.
+    NotTranslated,
+    /// Our message, not sent (failed or too long): the bar above the field
+    /// offers to retry, send the original or edit it.
+    NotSent,
+}
+
+/// Our message held back, for the bar above the field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Held {
+    pub key: LineKey,
+    pub original: String,
+    pub too_long: bool,
 }
 
 /// An emote's "/me" stays as it is; only what follows is translated.
@@ -165,6 +189,7 @@ impl Translations {
             },
         );
         self.queues.entry(key.session).or_default().push_back(key);
+        self.version += 1;
         if skip {
             return (None, self.flush(key.session));
         }
@@ -192,6 +217,7 @@ impl Translations {
                 ready: None,
             },
         );
+        self.version += 1;
         self.job(key)
     }
 
@@ -206,6 +232,7 @@ impl Translations {
             return Vec::new();
         }
         e.job = None;
+        self.version += 1;
         let original = format!("{}{}", e.prefix, e.body);
         match (e.direction, d.result) {
             (Direction::Incoming, Ok(t)) => {
@@ -249,6 +276,9 @@ impl Translations {
             .map(|(k, _)| *k)
             .collect();
         let mut fx = Vec::new();
+        if !late.is_empty() {
+            self.version += 1;
+        }
         for key in late {
             if let Some(e) = self.lines.get_mut(&key) {
                 e.state = LineState::Failed {
@@ -302,6 +332,7 @@ impl Translations {
         }
         e.state = LineState::Pending;
         e.started = now;
+        self.version += 1;
         if e.direction == Direction::Outgoing {
             self.queues.entry(key.session).or_default().push_back(key);
         }
@@ -316,9 +347,50 @@ impl Translations {
         }
         let text = format!("{}{}", e.prefix, e.body);
         self.lines.remove(&key);
+        self.version += 1;
         Some(Effect::Send { to: key.session, text })
     }
 
+    /// Our held message dropped ("Edit" puts it back in the field).
+    pub fn discard(&mut self, key: LineKey) {
+        if self.lines.remove(&key).is_some() {
+            self.version += 1;
+        }
+    }
+
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// What every line shows, by the time of its line, and our held
+    /// messages, oldest first.
+    pub fn view(&self) -> (HashMap<SystemTime, LineShow>, Vec<Held>) {
+        let mut held = Vec::new();
+        let lines = self
+            .lines
+            .iter()
+            .map(|(k, e)| {
+                let show = match &e.state {
+                    LineState::Pending => LineShow::Pending,
+                    LineState::Translated { original } => LineShow::Original(original.clone()),
+                    LineState::Failed { .. } | LineState::TooLong { .. } if e.direction == Direction::Outgoing => {
+                        held.push(Held {
+                            key: *k,
+                            original: format!("{}{}", e.prefix, e.body),
+                            too_long: matches!(e.state, LineState::TooLong { .. }),
+                        });
+                        LineShow::NotSent
+                    }
+                    LineState::Failed { .. } | LineState::TooLong { .. } => LineShow::NotTranslated,
+                };
+                (k.time, show)
+            })
+            .collect();
+        held.sort_by_key(|h| h.key.time);
+        (lines, held)
+    }
+
+    #[cfg(test)]
     pub fn state(&self, key: &LineKey) -> Option<&LineState> {
         self.lines.get(key).map(|e| &e.state)
     }
@@ -330,6 +402,7 @@ impl Translations {
 
     pub fn close_session(&mut self, session: Uuid) {
         self.lines.retain(|k, _| k.session != session);
+        self.version += 1;
         self.jobs.retain(|_, k| k.session != session);
         self.queues.remove(&session);
     }

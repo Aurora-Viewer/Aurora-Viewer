@@ -73,6 +73,26 @@ impl App {
             self.settings.save();
         }
         self.apply_translation(polled.effects);
+        let seen = (self.translate.version(), self.settings.translate.clone());
+        if self.translate_seen.as_ref() != Some(&seen) {
+            let view = self.translate.view(&self.settings.translate);
+            let old = std::mem::replace(&mut self.world.translate_view, view);
+            let v = &self.world.translate_view;
+            let sessions: Vec<Uuid> = old
+                .partners
+                .keys()
+                .chain(v.partners.keys())
+                .chain(old.held.iter().map(|h| &h.key.session))
+                .copied()
+                .collect();
+            for s in sessions {
+                self.world.touch_conversation(s);
+            }
+            self.translate_seen = Some(seen);
+        } else {
+            self.world.translate_view.status = self.translate.status();
+            self.world.translate_view.offline = self.translate.offline();
+        }
     }
 
     fn apply_translation(&mut self, fx: Vec<Effect>) {
@@ -90,13 +110,36 @@ impl App {
         }
     }
 
+    /// A choice made in a conversation (`ui::chat::ConvAction::Translate*`).
+    pub(super) fn translate_action(&mut self, act: crate::ui::chat::ConvAction) {
+        use crate::ui::chat::ConvAction;
+        match act {
+            ConvAction::Translate { session, to } => {
+                if let Some(text) = self.translate_set(session, to) {
+                    self.world.conversation_notice(session, text, Topic::Info);
+                }
+            }
+            ConvAction::TranslateRetry(key) => self.translate_retry(key),
+            ConvAction::TranslateSendOriginal(key) => self.translate_send_original(key),
+            ConvAction::TranslateDiscard(key) => {
+                self.translate.discard(key);
+                self.world.remove_line(&key);
+            }
+            ConvAction::TranslateDismiss(session) => {
+                self.translate.dismiss(&mut self.settings.translate, session);
+                self.settings.save();
+            }
+            _ => {}
+        }
+    }
+
     /// "Retry" on a line whose translation failed.
-    pub(super) fn translate_retry(&mut self, key: LineKey) {
+    fn translate_retry(&mut self, key: LineKey) {
         self.translate.retry(&self.settings.translate, key, Instant::now());
     }
 
     /// "Send original" on our line whose translation failed or is too long.
-    pub(super) fn translate_send_original(&mut self, key: LineKey) {
+    fn translate_send_original(&mut self, key: LineKey) {
         if let Some(e) = self.translate.send_original(key) {
             self.apply_translation(vec![e]);
         }

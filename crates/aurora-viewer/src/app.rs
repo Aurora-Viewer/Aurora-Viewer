@@ -282,6 +282,9 @@ pub struct App {
     chat_ui: ChatUi,
     /// Translation of private IMs with a local model (`app/translate.rs`).
     translate: crate::translate::TranslateService,
+    /// The service's version and the settings the World's view was built
+    /// from.
+    translate_seen: Option<(u64, crate::translate::TranslateSettings)>,
     toolbar_ui: ui::toolbar::ToolbarUi,
     /// The skin's toolbar as the dock of the islands has it by default.
     dock_layout: ui::bars::dock::DockLayout,
@@ -1113,6 +1116,7 @@ impl App {
             panels,
             chat_ui: ChatUi::default(),
             translate: crate::translate::TranslateService::default(),
+            translate_seen: None,
             toolbar_ui: Default::default(),
             dock_layout: Default::default(),
             favorites_access_applied: None,
@@ -11627,6 +11631,9 @@ impl App {
             self.world.own_im(to, &text);
             self.send(NetCommand::SendIm { to, message: text });
         }
+        for act in a.translate {
+            self.translate_action(act);
+        }
         self.translate_frame();
         // menu choices made anywhere in the interface (ui::context::request)
         for act in ui::context::take_requests(&self.egui_ctx) {
@@ -14163,6 +14170,11 @@ impl App {
                         ui::chat::ConvAction::Local(out) => a.chat = Some(out),
                         ui::chat::ConvAction::Im { to, text } => a.ims.push((to, text)),
                         ui::chat::ConvAction::OfferTeleport(id) => a.offer_tp.push(id),
+                        act @ (ui::chat::ConvAction::Translate { .. }
+                        | ui::chat::ConvAction::TranslateRetry(_)
+                        | ui::chat::ConvAction::TranslateSendOriginal(_)
+                        | ui::chat::ConvAction::TranslateDiscard(_)
+                        | ui::chat::ConvAction::TranslateDismiss(_)) => a.translate.push(act),
                         ui::chat::ConvAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
                         ui::chat::ConvAction::Close(id) => {
                             self.translate.close_session(id);
@@ -14305,6 +14317,16 @@ impl App {
                 if let Some(closed) = self.call_invite_ui.show(&ctx, &p, &mut self.world) {
                     self.world.leave_session(closed);
                     self.chat_ui.forget(closed);
+                }
+                // the translation model, downloaded on first use
+                if let Some((model, state)) = self.translate.dialog(&self.settings.translate) {
+                    match ui::translate_download::show(&ctx, &p, model, state.as_ref()) {
+                        Some(ui::translate_download::Choice::Download) => self
+                            .translate
+                            .start_download(&self.settings.translate, crate::translate::models_dir()),
+                        Some(ui::translate_download::Choice::Cancel) => self.translate.cancel_download(),
+                        None => {}
+                    }
                 }
                 for c in contact_actions {
                     self.on_contacts_action(c, &mut a);
@@ -15448,6 +15470,8 @@ struct UiActions {
     font_changed: bool,
     cancel_loading: bool,
     ims: Vec<(uuid::Uuid, String)>,
+    /// The conversations' translation choices (`app/translate.rs`).
+    translate: Vec<ui::chat::ConvAction>,
     offer_tp: Vec<uuid::Uuid>,
     landmark: Option<uuid::Uuid>,
     audio: Option<ui::audio::AudioAction>,

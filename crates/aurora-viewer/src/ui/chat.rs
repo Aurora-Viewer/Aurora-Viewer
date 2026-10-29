@@ -818,6 +818,27 @@ enum JobLook<'a> {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// What a translated IM line adds after its text (`crate::translate`): "…"
+/// while it translates, the original under the translation in small muted
+/// text, or why it was not translated or not sent.
+fn translation_marks(job: &mut egui::text::LayoutJob, world: &World, line: &crate::world::ChatLine, p: &Palette, size: f32) {
+    use crate::translate::LineShow;
+    let Some(show) = world.translate_view.lines.get(&line.time) else {
+        return;
+    };
+    let small = egui::TextFormat {
+        color: p.muted,
+        font_id: egui::FontId::proportional(size - 2.0),
+        ..Default::default()
+    };
+    match show {
+        LineShow::Pending => job.append(" …", 0.0, small),
+        LineShow::Original(original) => job.append(&format!("\n{}", world.rlva_filter_text(original)), 0.0, small),
+        LineShow::NotTranslated => job.append(&format!(" · {}", aurora_i18n::tr!("translate-line-not-translated")), 0.0, small),
+        LineShow::NotSent => job.append(&format!(" · {}", aurora_i18n::tr!("translate-line-not-sent")), 0.0, small),
+    }
+}
+
 fn line_job(
     line: &crate::world::ChatLine,
     p: &Palette,
@@ -1000,6 +1021,7 @@ fn line_job(
         }
         at += n;
     }
+    translation_marks(&mut job, world, line, p, size);
     job.wrap.max_width = width;
     BubbleJob {
         job,
@@ -1016,6 +1038,19 @@ pub enum ConvAction {
         to: uuid::Uuid,
         text: String,
     },
+    /// Translate a private conversation to a language, or stop (`None`).
+    Translate {
+        session: uuid::Uuid,
+        to: Option<&'static aurora_translate::Lang>,
+    },
+    /// Our held message (`crate::translate`): translate it again.
+    TranslateRetry(crate::translate::LineKey),
+    /// Our held message, sent as typed.
+    TranslateSendOriginal(crate::translate::LineKey),
+    /// Our held message dropped ("Edit": its text went back to the field).
+    TranslateDiscard(crate::translate::LineKey),
+    /// "Not now" on the suggestion to translate a conversation.
+    TranslateDismiss(uuid::Uuid),
     OfferTeleport(uuid::Uuid),
     /// Open the People floater (0 = nearby, 1 = friends).
     OpenPeople(u8),

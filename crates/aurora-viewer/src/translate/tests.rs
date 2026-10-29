@@ -297,9 +297,9 @@ fn service_suggests_in_an_untranslated_conversation() {
     let mut s = settings_with(None);
     svc.on_incoming(&s, BOB, key(1).time, "Hola, ¿cómo estás hoy amigo?");
     svc.on_incoming(&s, BOB, key(2).time, "¿Quieres ir a la playa conmigo?");
-    assert_eq!(svc.suggestion(BOB, &s).map(|l| l.code), Some("es"));
+    assert_eq!(svc.view(&s).suggestions.get(&BOB).map(|l| l.code), Some("es"));
     s.dismissed.insert(BOB);
-    assert_eq!(svc.suggestion(BOB, &s), None);
+    assert!(svc.view(&s).suggestions.is_empty());
 }
 
 #[test]
@@ -317,4 +317,49 @@ fn set_partner_without_a_model_asks_for_the_download() {
         svc.set_partner(&mut s, BOB, None, std::path::Path::new("/nonexistent")),
         SetResult::Off
     );
+}
+
+#[test]
+fn view_shows_pending_translated_and_held() {
+    let mut t = Translations::default();
+    let now = Instant::now();
+    let v0 = t.version();
+    let a = out(&mut t, 1, "hello", now);
+    let b = out(&mut t, 2, "bye", now);
+    assert_ne!(t.version(), v0);
+    let (lines, held) = t.view();
+    assert_eq!(lines.get(&key(1).time), Some(&LineShow::Pending));
+    assert!(held.is_empty());
+    t.done(ok(a, "hola"));
+    t.done(Done {
+        id: b,
+        result: Err(TranslateError::Generate("x".into())),
+        millis: 1,
+    });
+    let (lines, held) = t.view();
+    assert_eq!(lines.get(&key(1).time), Some(&LineShow::Original("hello".into())));
+    assert_eq!(lines.get(&key(2).time), Some(&LineShow::NotSent));
+    assert_eq!(
+        held,
+        [Held {
+            key: key(2),
+            original: "bye".into(),
+            too_long: false
+        }]
+    );
+    t.discard(key(2));
+    assert!(t.view().1.is_empty());
+}
+
+#[test]
+fn view_marks_a_failed_incoming_line() {
+    let mut t = Translations::default();
+    let job = t.incoming(key(1), "¿Dónde estás? Te estoy buscando.", es(), en()).expect("job");
+    t.done(Done {
+        id: job.id,
+        result: Err(TranslateError::Generate("x".into())),
+        millis: 1,
+    });
+    assert_eq!(t.view().0.get(&key(1).time), Some(&LineShow::NotTranslated));
+    assert!(t.view().1.is_empty());
 }
