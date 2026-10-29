@@ -10,8 +10,14 @@ pub struct Saved {
     pub id: Uuid,
     pub name: String,
     pub path: PathBuf,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub inventory: Option<super::animation_inventory::Origin>,
+}
+
+pub(super) fn deserialize_local_models<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<Saved>, D::Error> {
+    let mut models = Vec::<Saved>::deserialize(deserializer)?;
+    // Retire references created by the removed inventory-preview experiment.
+    // Their private format is no longer loadable; local source files stay put.
+    models.retain(|model| !model.path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("apmodel")));
+    Ok(models)
 }
 
 impl Saved {
@@ -23,7 +29,6 @@ impl Saved {
             id: Uuid::new_v4(),
             name: path.file_stem().unwrap_or_default().to_string_lossy().into_owned(),
             path,
-            inventory: None,
         };
         let id = saved.id;
         models.push(saved);
@@ -52,9 +57,6 @@ pub(super) fn load(path: PathBuf, model_limit: u32, avatars: &AvatarLibrary) -> 
         return Err(aurora_i18n::tr!("import-local-file-missing").into());
     }
     let bytes = files::read(&path).map_err(|e| e.to_string())?;
-    if path.extension().is_some_and(|ext| ext == "apmodel") {
-        return super::animation_inventory::snapshot::decode(path, &bytes, avatars);
-    }
     let (scene, images) = files::mesh_scene(&path, &bytes, false, None, model_limit).map_err(|e| e.to_string())?;
     prepare(path, mesh::Draft::new(scene, images), avatars)
 }
@@ -96,7 +98,7 @@ pub(super) fn prepare(path: PathBuf, mut draft: mesh::Draft, avatars: &AvatarLib
 /// Fit rotating tails/wings around the pelvis rather than the mesh's rest
 /// bounds. Bone-chain lengths plus each vertex's joint-local distance bound
 /// rotations without sampling clips or scanning geometry on the frame thread.
-pub(super) fn frame_rotations(geometry: &mut aurora_render::preview::Model, base: &SkeletonBase, rig: &crate::scene::anim::Rig) {
+fn frame_rotations(geometry: &mut aurora_render::preview::Model, base: &SkeletonBase, rig: &crate::scene::anim::Rig) {
     let world = rig.world_with(&rig.local_rot, glam::Vec3::ZERO, &base.local_pos, &base.scale);
     let center = world[rig.pelvis].w_axis.truncate();
     let mut reach = vec![0.0; rig.len()];
@@ -199,13 +201,6 @@ impl Imports {
         let Some(model) = self.load_preferences.animation_models.iter().find(|model| model.id == saved) else {
             return;
         };
-        if model
-            .inventory
-            .as_ref()
-            .is_some_and(|origin| origin.profile != self.animation_inventory.profile)
-        {
-            return;
-        }
         let path = model.path.clone();
         let Some(entry) = self
             .entries

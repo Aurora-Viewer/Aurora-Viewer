@@ -542,8 +542,6 @@ impl TaskItem {
 #[derive(Debug, Clone, Default)]
 pub struct ObjectProps {
     pub object_id: Uuid,
-    /// Source inventory item, supplied by full ObjectProperties after rez.
-    pub item_id: Uuid,
     /// Full properties (selection) rather than the family subset.
     pub full: bool,
     pub creator_id: Uuid,

@@ -274,6 +274,25 @@ fn saved_animation_models_round_trip_and_reuse_the_loaded_model_across_animation
 }
 
 #[test]
+fn retired_inventory_preview_references_do_not_reappear_in_the_local_model_list() {
+    let local = Saved {
+        id: Uuid::new_v4(),
+        name: "Local tail".into(),
+        path: "tail.dae".into(),
+    };
+    let preferences = serde_json::json!({ "animation_models": [
+        serde_json::to_value(&local).expect("local model reference"),
+        { "id": Uuid::new_v4(), "name": "Inventory tail", "path": "private/model.apmodel",
+          "inventory": { "profile": "test-profile", "item": Uuid::new_v4() } },
+        { "id": Uuid::new_v4(), "name": "Old snapshot", "path": "private/model.APMODEL" }
+    ] });
+    let restored: Preferences = serde_json::from_value(preferences).expect("preferences remain readable");
+    assert_eq!(restored.animation_models, vec![local]);
+    let saved = serde_json::to_string(&restored).expect("updated preferences");
+    assert!(!saved.contains("apmodel") && !saved.contains("Inventory tail"));
+}
+
+#[test]
 fn removing_a_saved_animation_model_keeps_its_file_and_rejects_pending_results() {
     let root = std::env::temp_dir().join(format!("aurora-model-list-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&root).expect("fixture directory");

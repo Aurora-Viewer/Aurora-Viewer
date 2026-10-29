@@ -152,7 +152,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
         | "material-loading" => Choice::Material,
         "mesh" | "mesh-low" | "mesh-error" | "mesh-physics" | "mesh-degenerate" | "mesh-options" | "mesh-zoom" | "mesh-normals"
         | "mesh-colors" | "mesh-avatar" | "mesh-avatar-rigged" | "mesh-journal" | "mesh-multiple" => Choice::Mesh,
-        "animation" | "animation-own" | "animation-custom" | "animation-inventory" | "animation-inventory-ready" => Choice::Animation,
+        "animation" | "animation-own" | "animation-custom" => Choice::Animation,
         "sound" | "sound-split" => Choice::Sound,
         mode if mode.starts_with("local") => Choice::Local,
         _ => Choice::Bulk,
@@ -202,9 +202,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                     Choice::Material => &[("material-demo.gltf", Choice::Material)],
                     Choice::Mesh if mode == "mesh-multiple" => &[("mesh-multiple.dae", Choice::Mesh)],
                     Choice::Mesh => &[("mesh-demo.dae", Choice::Mesh)],
-                    Choice::Animation if mode == "animation-custom" || mode.starts_with("animation-inventory") => {
-                        &[("tail-preview.anim", Choice::Animation)]
-                    }
+                    Choice::Animation if mode == "animation-custom" => &[("tail-preview.anim", Choice::Animation)],
                     Choice::Animation => &[
                         ("animation-demo.bvh", Choice::Animation),
                         ("animation-demo.anim", Choice::Animation),
@@ -246,6 +244,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                             if mode == "animation-custom" {
                                 let avatars = crate::scene::avatar::AvatarLibrary::load();
                                 for entry in &mut loaded {
+                                    wake.data_mut(|data| data.insert_temp(egui::Id::unique(("animation_model_list_open", entry.id)), true));
                                     match animation_model::load(root.join("tail-preview.dae"), prefs.mesh_model_limit, &avatars) {
                                         Ok(model) => {
                                             // Feed the ordinary completion path after Loaded so the
@@ -382,9 +381,6 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
             Err(error) => vec![Entry::new(root, Err(error), prefs.texture())],
         };
         let _ = tx.send(Worker::Loaded(request, entries));
-        if mode.starts_with("animation-inventory") {
-            let _ = tx.send(Worker::AnimationInventoryDemo(animation_inventory::demo_asset()));
-        }
         for (id, generation, model) in animation_models {
             let _ = tx.send(Worker::AnimationModel(id, generation, Some(Ok(model))));
         }

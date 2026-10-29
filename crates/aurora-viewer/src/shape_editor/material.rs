@@ -9,7 +9,7 @@ use crate::{
 use aurora_render::preview::Material;
 use uuid::Uuid;
 
-pub(crate) struct Face {
+pub(super) struct Face {
     pub textures: [Uuid; 4],
     pub material: Material,
     pub alpha_explicit: bool,

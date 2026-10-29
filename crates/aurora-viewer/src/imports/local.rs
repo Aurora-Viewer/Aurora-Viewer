@@ -67,7 +67,7 @@ impl Watch {
         }
     }
 }
-pub(super) fn prepare(
+fn prepare(
     id: Uuid,
     generation: u64,
     source: &Source,

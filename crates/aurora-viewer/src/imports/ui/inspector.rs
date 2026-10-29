@@ -15,7 +15,6 @@ pub(super) fn show(
     actions: &mut Vec<Action>,
 ) {
     let mut open = imports.open;
-    let animation_profile = imports.animation_inventory.profile.clone();
     let busy = imports.busy() || imports.confirm;
     let connected = imports.demo_started || world.login.is_some();
     let window = imports.window_choice();
@@ -24,12 +23,7 @@ pub(super) fn show(
     }
     let multiple = window == Choice::Bulk;
     let window_id = egui::Id::unique(window.window_id());
-    if imports.demo_started
-        && !imports.launcher_open
-        && !imports.settings_open
-        && imports.preview_zoom.is_none()
-        && imports.animation_inventory.entry.is_none()
-    {
+    if imports.demo_started && !imports.launcher_open && !imports.settings_open && imports.preview_zoom.is_none() {
         // Keep the requested demo inspector above other scripted floaters.
         ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, window_id));
     }
@@ -323,7 +317,6 @@ pub(super) fn show(
                                                             entry.id,
                                                             &entry.animation_model,
                                                             &prefs.animation_models,
-                                                            &animation_profile,
                                                             actions,
                                                         );
                                                         let before = (

@@ -19,30 +19,16 @@ uses that rest skeleton, and the existing preview GPU skins Bento joints.
 Worker-computed bone-chain reach frames rotating tails/wings around the pelvis
 without per-frame geometry scans or a rest-bounds crop.
 Choosing Standard restores the dummy avatar. Preview models never enter the
-upload queue or change animation bytes or metadata. Local-file models only
-change the preview.
+upload queue or change animation bytes, metadata, inventory or world appearance.
 `Preferences::animation_models` remembers model identifiers, names and local
 paths across sessions. Selecting a saved entry loads it on the worker pool;
-weak cache entries share geometry only while a preview retains it. Removing
-a saved reference resets dependent previews and never deletes its file.
-
-`imports/animation_inventory/` prepares inventory models without wearing them:
-`ui/animation_inventory.rs` offers searchable copyable objects and an explicit
-one-time rez action. `app/animation_inventory.rs` owns identification, asset
-streaming, timeout/cancellation and cleanup independently of the floater.
-Full `ObjectProperties.ItemID`, owner, region and a newly created root must
-match before the copied linkset can be moved to Trash; existing objects linked
-in by a script prevent automatic cleanup. Uncertain identification/cleanup
-requires manual inspection, never a guessed deletion or a repeated rez.
-`geometry.rs` shares scene mesh/texture sources and worn-face material resolution;
-workers decode rigged surfaces, apply SL joint overrides and compute bounds.
-Ordinary prims and unrigged surfaces are omitted explicitly in the picker.
-`snapshot.rs` writes a versioned compressed visual model atomically in the
-private account/grid profile. It stores named skeleton joints, skin bindings,
-materials and preview pixels, with bounded sizes, finite values and checked
-indices when loaded. Scripts and inventory contents are never captured. Saved
-inventory entries are scoped to that account/grid; selecting them, or adding
-the same item again, reads the snapshot locally, including after restart.
+weak cache entries share geometry only while a preview retains it. Each saved
+model has a removal icon at the right of its list row, so it can be removed
+without selecting it first. The list stays open for further removals. Removing a reference
+resets dependent previews and never deletes its file.
+Only local source models are offered. Preferences ignore references to the
+retired inventory snapshot format; its rez, capture and cleanup workflow is
+removed.
 
 `scene/anim.rs` restarts active resident and control-avatar motions from one shared
 instant for Ctrl+S, World and the resync toolbar command. Receipt signals,

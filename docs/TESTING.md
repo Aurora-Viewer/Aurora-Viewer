@@ -4564,7 +4564,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   of the demo profile. The synthetic sources stay in `.scratch`.
   `animation-own` puts the preview at 0.75 s, paused, also on the demo
   avatar. The slider and the pose must stay fixed until Resume.
-  `animation-custom` loads a local rigged Bento tail and its looping animation.
+  `animation-custom` loads a local rigged Bento tail and its looping animation,
+  with the saved-model list open to show the removal icons at each row's right.
   Its tail must move in the preview. Choose model loads a rigged DAE, glTF or
   GLB from disk; its initial camera includes the bones' rotational reach, so a
   tail or wing must remain in view while turning. Standard restores the
@@ -4575,25 +4576,11 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   animation, preview-only, and never adds a mesh upload or changes its fee.
   Add two models, switch between them in the model list, then return to Standard.
   Restart the viewer and select either model without reopening a file picker.
-  Remove an entry: its source file must remain on disk. A moved/missing source
+  Remove an unselected entry with its row's icon: the current preview must stay
+  selected and the list must stay open. Remove the selected entry: return to
+  Standard. In both cases its source file must remain on disk. Long names must
+  leave room for the aligned removal icons. A moved/missing source
   stays in the list, reports a load error and keeps the previous preview.
-  `animation-inventory` opens the searchable inventory picker with a synthetic
-  copyable Bento tail selected. Selecting a row must do nothing in the world;
-  only **Rez once and save preview** prepares it. `animation-inventory-ready`
-  triggers this action once in the offline simulator. It must identify the
-  copied root by full source ItemID, save the animated visual snapshot and
-  remove that copy. With `RUST_LOG=aurora_viewer=info`, the log reports
-  `rez_once=1`, `snapshot_saved=true` and
-  `cleanup_confirmed=true`. Restart the same scenario: it must report
-  `saved_model_reused=true rez_once=0` and show the same moving tail. Removing
-  the saved entry allows a fresh preparation. Cancellation still cleans up.
-  These synthetic modes never contact a grid. **Human grid check:** add a
-  copyable rigged object on build-enabled land, confirm the original remains
-  in inventory and the rezzed copy goes to Trash; select the model after a
-  viewer restart without another rez or wearing. Also check rez denial,
-  cancel/close during preparation, missing/corrupt snapshot, no-copy and
-  coalesced-item rejection. A failure to identify or confirm cleanup must
-  show the manual-cleanup warning and must never delete another object.
   `AURORA_DEMO_IMPORT_FILE` replaces the fixtures with an existing file,
   read without modification; choose the mode matching its type.
 

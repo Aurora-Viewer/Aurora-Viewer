@@ -60,7 +60,6 @@ mod describe;
 mod dev_toolbox;
 mod folders;
 use folders::chat_log_root;
-mod animation_inventory;
 mod contents_drop_demo;
 mod dof;
 mod double_click;

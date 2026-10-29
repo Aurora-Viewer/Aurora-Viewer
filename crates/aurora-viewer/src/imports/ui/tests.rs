@@ -1503,7 +1503,7 @@ fn popup_rows_keep_their_rectangles_when_hover_changes() {
 }
 
 #[test]
-fn the_saved_animation_model_list_selects_an_entry_and_removes_only_its_reference() {
+fn the_saved_animation_model_list_removes_each_row_without_selecting_it() {
     let ctx = egui::Context::default();
     let theme = crate::theme::Theme::default();
     theme.apply(&ctx, 1.0);
@@ -1511,15 +1511,13 @@ fn the_saved_animation_model_list_selects_an_entry_and_removes_only_its_referenc
     let saved = vec![
         super::super::animation_model::Saved {
             id: Uuid::new_v4(),
-            name: "Tail fixture".into(),
+            name: "Tail fixture with a long name that must leave room for its removal icon".into(),
             path: "tail.dae".into(),
-            inventory: None,
         },
         super::super::animation_model::Saved {
             id: Uuid::new_v4(),
             name: "Wing fixture".into(),
             path: "wings.glb".into(),
-            inventory: None,
         },
     ];
     let mut model = super::super::animation_model::Selection::default();
@@ -1533,7 +1531,7 @@ fn the_saved_animation_model_list_selects_an_entry_and_removes_only_its_referenc
             },
             |ui| {
                 ui.set_width(330.0);
-                animation_model_controls(ui, &theme.palette(), id, model, &saved, "", &mut actions);
+                animation_model_controls(ui, &theme.palette(), id, model, &saved, &mut actions);
             },
         );
         output.textures_delta.clear();
@@ -1575,12 +1573,43 @@ fn the_saved_animation_model_list_selects_an_entry_and_removes_only_its_referenc
     assert!(matches!(actions.as_slice(), [Action::SelectAnimationModel(target, selected)] if *target == id && *selected == saved[1].id));
     model.saved = Some(saved[1].id);
     drop(frame(Vec::new(), &model));
-    let remove = ctx
-        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("animation_model_remove", id))))
-        .expect("remove reference");
+    for pressed in [true, false] {
+        drop(frame(click(list.center(), pressed), &model));
+    }
+    drop(frame(Vec::new(), &model));
+    let remove_tail = ctx
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("animation_model_remove", id, saved[0].id))))
+        .expect("unselected model's removal icon");
+    let remove_wing = ctx
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("animation_model_remove", id, saved[1].id))))
+        .expect("selected model's removal icon");
+    let tail_row = ctx
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("animation_model_row", id, saved[0].id))))
+        .expect("long model name");
+    assert!(
+        (remove_tail.right() - remove_wing.right()).abs() < 0.1,
+        "icons align regardless of name length"
+    );
+    assert!(tail_row.right() < remove_tail.left(), "names and removal buttons cannot overlap");
     let mut actions = Vec::new();
     for pressed in [true, false] {
-        actions.extend(frame(click(remove.center(), pressed), &model).1);
+        actions.extend(frame(click(remove_tail.center(), pressed), &model).1);
+    }
+    assert!(matches!(actions.as_slice(), [Action::RemoveAnimationModel(removed)] if *removed == saved[0].id));
+    assert_eq!(model.saved, Some(saved[1].id), "removing another row must not select it");
+    let (output, _) = frame(Vec::new(), &model);
+    assert!(
+        output
+            .shapes
+            .iter()
+            .filter(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == "Wing fixture"))
+            .count()
+            >= 2,
+        "the list stays open after removing a row"
+    );
+    let mut actions = Vec::new();
+    for pressed in [true, false] {
+        actions.extend(frame(click(remove_wing.center(), pressed), &model).1);
     }
     assert!(matches!(actions.as_slice(), [Action::RemoveAnimationModel(selected)] if *selected == saved[1].id));
 }
