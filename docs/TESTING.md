@@ -2260,19 +2260,20 @@ grid.
   `faces-turned` turns all the panels by 180°: the front column
   becomes empty, the back appears, the double-sided one stays visible. The
   floating labels stay visible both ways.
-- `faces-alpha` uses a texture with holes in those panels. Normal touches
-  and hover reach transparent Blend texels; quick movement and local resizing
-  pass through them. Masked cutouts still let normal touches through, and
-  opaque PBR ignores texture alpha. A face that draws nothing (texture-entry
-  alpha 0, or the library's transparent texture) takes normal touches and
-  hover whatever its material mode.
+- `faces-alpha` uses a texture with holes in those panels. Left clicks
+  and hover reach the whole HUD face in Blend and Mask modes, including
+  fully transparent texels. Quick movement and local resizing still pass
+  through texture holes; opaque PBR ignores texture alpha. A face that
+  draws nothing (texture-entry alpha 0, or the library's transparent
+  texture) takes left clicks and hover whatever its material mode.
   Editing and right-click selection retain access to invisible faces.
   With `AURORA_DEMO_DEBUG=alpha`, translucent/invisible HUD faces appear red
   and material masks blue; their highlighted surfaces become pickable.
 - `blend-opacity`: three rows of panels, Legacy Blend, PBR Blend and Mask, at 0%, 50% and
   100% opacity from left to right. Each uses the same texture with holes.
-  Ordinary left clicks through the centre hole must reach every Blend panel,
-  including the invisible one, without Ctrl+Alt+T. Mask holes must pass through.
+  Ordinary left clicks through the centre hole must reach every panel,
+  including the invisible Blend and Mask panels, without Ctrl+Alt+T.
+  Right-click selection keeps its existing access to transparent faces.
   Combine with `AURORA_DEMO_CLICKS=<ms>,x,y,left` for repeated native touches.
 
 Right-click a HUD and check **Lock quick movement** to prevent its held-key

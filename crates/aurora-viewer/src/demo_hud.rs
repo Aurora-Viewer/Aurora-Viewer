@@ -166,8 +166,8 @@ pub fn face_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
 
 pub const MAT_OPACITY_BLEND: Uuid = Uuid::from_u128(8310);
 
-/// Legacy Blend, PBR Blend and Mask rows at zero, half and full opacity. All faces share the
-/// material, so a hidden side cannot fill the Mask control's texture hole.
+/// Legacy Blend, PBR Blend and Mask rows at zero, half and full opacity.
+/// Left clicks must reach every panel through its texture hole.
 pub fn opacity_events() -> Vec<NetEvent> {
     let mut objects = Vec::new();
     for row in 0..3 {
