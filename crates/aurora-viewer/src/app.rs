@@ -217,8 +217,10 @@ const FLY_TIME: f32 = 0.5;
 /// (an eased FOV zoom creeps toward its target for ever).
 const FOV_SEND_EPSILON: f32 = 1e-3;
 
-/// The wolf logo (window icon, loading screen, system notifications).
-pub(crate) const LOGO_PNG: &[u8] = include_bytes!("../assets/logo-loup-couleur-4096.png");
+/// The wolf logo (window icon, login and loading screens, About, system
+/// notifications), read from the branding folder: one file for the viewer,
+/// the README and the exe icon.
+pub(crate) const LOGO_PNG: &[u8] = include_bytes!("../../../assets/branding/aurora-logo.png");
 
 struct LogoData {
     ui: egui::ColorImage,
@@ -1026,7 +1028,7 @@ impl App {
         }
         let system_fonts_pending = !ui::fonts::apply(&egui_ctx, &ui_font(&settings));
 
-        // Decode the 4096px logo off the main thread.
+        // Decode the logo off the main thread.
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || match image::load_from_memory(LOGO_PNG) {
             Ok(img) => {
@@ -18049,6 +18051,10 @@ impl ApplicationHandler for App {
 
     fn device_event(&mut self, _el: &ActiveEventLoop, _id: winit::event::DeviceId, event: DeviceEvent) {
         if let DeviceEvent::MouseMotion { delta } = event {
+            // a remote desktop's or a tablet's position: its motion (raw_mouse.rs)
+            let Some(delta) = crate::raw_mouse::motion(delta) else {
+                return;
+            };
             if self.numeric_drag.active() {
                 if let Some(g) = &mut self.gfx {
                     g.egui_state.on_mouse_motion(delta);
