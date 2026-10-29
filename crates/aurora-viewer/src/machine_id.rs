@@ -149,6 +149,7 @@ fn fold_serial(units: &[u16]) -> [u8; 6] {
 /// getSerialNumber on macOS (llmachineid.cpp:350): the serial copied into a
 /// 64-byte C buffer as UTF-8, then folded like the Windows serials, byte by
 /// byte. A serial that does not fit, or an empty one, gives nothing.
+#[cfg(any(target_os = "macos", test))]
 fn fold_mac_serial(serial: &str) -> Option<[u8; 6]> {
     let bytes = serial.as_bytes();
     if bytes.is_empty() || bytes.len() >= 64 {
@@ -160,6 +161,7 @@ fn fold_mac_serial(serial: &str) -> Option<[u8; 6]> {
 /// LLMachineID::init on macOS, then llHashedUniqueID: the folded serial,
 /// else the adapter address (the "legacy" id, zeros when getNodeID found
 /// none: the Legacy Viewer hashes its zero-filled buffer then).
+#[cfg(any(target_os = "macos", test))]
 fn pick_mac(serial: Option<[u8; 6]>, node: Option<[u8; 6]>) -> ([u8; 6], &'static str) {
     if let Some(id) = serial {
         (id, "the platform serial number")
