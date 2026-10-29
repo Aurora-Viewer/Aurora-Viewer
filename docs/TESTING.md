@@ -319,7 +319,14 @@ the own avatar's face aimed at
 and the shutter half-pressed at `AURORA_DEMO_SNAPSHOT_FRAME`, `shoot` the
 same then released two frames later (the photo saved to disk; with `timer`
 the log gives `viewfinder: self-timer, 2 s`, then `viewfinder: shutter` two
-seconds after the lock, and the countdown shows at the top). With
+seconds after the lock, and the countdown shows at the top), `group` the
+same focus then, 40 frames later, the other avatars in view within 25 m
+added to it as Shift + clicks would (the log gives `viewfinder demo: <n>
+avatar(s) added to the focus` and `viewfinder: group focus, <n> subject(s),
+lens at <m>`; capture at frame 800 with `AURORA_FPS_LIMIT=60`: a green box
+on every head, the zone from the nearest face to the farthest under the
+first one and on the scale, every face sharp and the background blurred at
+f/1.8). With
 `viewfinder-focus` the log gives `viewfinder: focus asked at <m>` then,
 about 0.36 s later, `viewfinder: locked at <m>`: capture at frame 760 with
 `AURORA_FPS_LIMIT=60` to see the green box on the head, the avatar's name

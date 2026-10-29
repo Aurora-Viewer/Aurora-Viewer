@@ -71,12 +71,17 @@ impl App {
             return None;
         }
         // the viewfinder's AF-S: the lens where its hunt has it (the image
-        // pumps through the focus like a camera's), no transition of its own
+        // pumps through the focus like a camera's), no transition of its own;
+        // a group focus keeps its zone sharp, from its nearest face to its
+        // farthest (`snapshot::viewfinder::Zone`)
         let viewfinder = self.viewfinder_on() && photo.enabled;
         if viewfinder && photo.focus == crate::dof::PhotoFocus::Click {
             let d = self.snapshots.vf.af.distance();
             self.dof_focus.set(d);
-            return Some(dof::lens(&s, d, fov_y, height, window_height, false));
+            let (near, far) = self.snapshots.vf.zone.map_or((d, d), |z| z.at(d));
+            let mut lens = dof::lens(&s, near, fov_y, height, window_height, false);
+            lens.focus_far = far;
+            return Some(lens);
         }
         let eye = self.camera.position;
         let at = self.camera.target - self.camera.position;
