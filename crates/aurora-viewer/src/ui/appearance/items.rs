@@ -37,10 +37,13 @@ pub(super) fn sort_links(inv: &crate::world::inventory::Inventory, links: &mut [
 pub(super) fn worn_items(world: &World) -> HashSet<Uuid> {
     let mut worn = world.worn_attachment_items();
     if let Some(cof) = model::cof(&world.inventory) {
+        // Include COF object links too: otherwise an attachment that is linked
+        // but not yet (or no longer) on the avatar offers Add, and Add/Take off
+        // fights the outfit. Clothing and body parts were already included.
         worn.extend(
             model::folder_links(&world.inventory, cof)
                 .into_iter()
-                .filter(|link| !link.folder && world.inventory.items.get(&link.target).is_some_and(|it| it.asset_type != 6))
+                .filter(|link| !link.folder)
                 .map(|link| link.target),
         );
     }

@@ -349,6 +349,18 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
     let cof = cof(inv).ok_or(aurora_i18n::tr!("world-appearance-the-current-outfit-folder-is-unavailable"))?;
     require_complete(inv, cof)?;
     let mut current = folder_links(inv, cof);
+    // Items this plan is taking off: still attached on the avatar until the
+    // later DetachAttachments, so the worn-preservation pass must skip them
+    // or Take off writes them straight back into the COF (duplicate links /
+    // "took off then put back on").
+    let taking_off: HashSet<Uuid> = match &action {
+        Action::Remove(id) => super::inventory::actions::original(inv, *id).into_iter().collect(),
+        Action::RemoveItems(ids) => ids
+            .iter()
+            .filter_map(|id| super::inventory::actions::original(inv, *id))
+            .collect(),
+        _ => HashSet::new(),
+    };
     if matches!(
         action,
         Action::Add(_)
@@ -363,6 +375,9 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             | Action::PlaceLayer(..)
     ) {
         for id in worn.keys() {
+            if taking_off.contains(id) {
+                continue;
+            }
             if !current.iter().any(|l| l.target == *id) {
                 let it = inv
                     .items
@@ -1934,6 +1949,18 @@ mod tests {
         .expect("remove");
         assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(1000)));
         assert!(!change.links.iter().any(|l| l.target == Uuid::from_u128(715)));
+    }
+
+    #[test]
+    fn taking_off_a_worn_attachment_does_not_write_it_back_into_the_cof() {
+        let inv = fixture();
+        let item = Uuid::from_u128(717);
+        let (change, sync) = plan(&inv, Action::Remove(item), &HashMap::from([(item, 5)])).expect("take off");
+        assert!(sync);
+        assert!(
+            !change.links.iter().any(|l| l.target == item),
+            "still-attached for Detach must not re-enter the COF slam"
+        );
     }
 
     #[test]
