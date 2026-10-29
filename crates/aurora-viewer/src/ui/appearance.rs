@@ -1756,7 +1756,7 @@ pub fn show(
             save_in(ui, &world.inventory, st);
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let enter = widgets::enter_pressed(ui);
                 let valid = !name.trim().is_empty() && st.pending.is_none();
                 use widgets::{ActionKind, action_button, action_button_if};
                 let size = Vec2::new(0.0, 26.0);

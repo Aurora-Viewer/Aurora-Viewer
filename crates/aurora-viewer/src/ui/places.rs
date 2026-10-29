@@ -403,7 +403,7 @@ impl PlacesUi {
                     );
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        if widgets::flat_button(ui, p, aurora_i18n::tr!("common-ok")).clicked() {
+                        if widgets::default_button(widgets::flat_button(ui, p, aurora_i18n::tr!("common-ok"))).clicked() {
                             answer = Some(true);
                         }
                         if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {

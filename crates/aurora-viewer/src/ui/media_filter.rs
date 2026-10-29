@@ -159,7 +159,7 @@ pub fn list(ui: &mut egui::Ui, p: &Palette, rules: Option<&[Rule]>, typed: &mut 
                     .desired_width((width - 2.0 * (90.0 + ui.spacing().item_spacing.x)).max(80.0))
                     .hint_text(aurora_i18n::tr!("ui-options-media-filter-add-hint")),
             );
-            let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let entered = field.lost_focus() && widgets::enter_pressed(ui);
             let has_text = !typed.trim().is_empty();
             let size = egui::vec2(90.0, 26.0);
             let allow = ui

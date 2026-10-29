@@ -295,10 +295,7 @@ pub(super) fn show(
         ui.horizontal(|ui| {
             close |= ui.button(aurora_i18n::tr!("common-cancel")).clicked();
             let enabled = state.pending_save.is_none() && state.pending_load.is_none() && !state.name.trim().is_empty();
-            if ui
-                .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-save")))
-                .clicked()
-            {
+            if widgets::default_button(ui.add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-save")))).clicked() {
                 match write(&prefs.context_menus) {
                     Ok(text) => {
                         actions.push(InvAction::ExportMenuNotecard {

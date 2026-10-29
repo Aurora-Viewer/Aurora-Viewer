@@ -136,16 +136,15 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
                         })
                     })
                 };
-            if ui
-                .add_enabled(
-                    enabled,
-                    egui::Button::new(if saving {
-                        aurora_i18n::tr!("build-layout-export")
-                    } else {
-                        aurora_i18n::tr!("build-layout-reload")
-                    }),
-                )
-                .clicked()
+            if crate::ui::widgets::default_button(ui.add_enabled(
+                enabled,
+                egui::Button::new(if saving {
+                    aurora_i18n::tr!("build-layout-export")
+                } else {
+                    aurora_i18n::tr!("build-layout-reload")
+                }),
+            ))
+            .clicked()
             {
                 if saving {
                     match serde_json::to_string_pretty(&Profile::capture(tool, s)) {
