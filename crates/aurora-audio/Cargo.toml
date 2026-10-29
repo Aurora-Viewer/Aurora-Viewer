@@ -21,7 +21,7 @@ aurora-version = { version = "0.1.0", path = "../aurora-version" }
 cpal = { version = "0.18.2", features = ["realtime", "pulseaudio"] }
 crossbeam-channel = "0.5.17"
 log = "0.4.34"
-parking_lot = "0.12.5"
+parking_lot = "0.13.0"
 rtrb = "0.4"
 rustls = "0.23.45"
 symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "aac", "ogg", "vorbis", "wav", "pcm", "id3v2"] }

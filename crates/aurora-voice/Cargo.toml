@@ -15,7 +15,7 @@ aurora-llsd = { version = "0.1.0", path = "../aurora-llsd" }
 bytes = "1"
 glam = "0.34.1"
 log = "0.4.34"
-parking_lot = "0.12.5"
+parking_lot = "0.13.0"
 # Pure-Rust Opus encoder + decoder (no C toolchain); interoperates with libopus.
 rusty-opus = "1.0.0"
 rustls = { version = "0.23.45", default-features = false, features = ["aws_lc_rs", "std"] }
