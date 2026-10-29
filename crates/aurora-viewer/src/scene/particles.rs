@@ -304,6 +304,13 @@ impl ParticleManager {
     }
 
     /// Apply object updates, simulate and build the sorted instance list.
+    /// `frozen`: the photo mode holds the world still (issue #1154). The
+    /// objects' particles get no time and no source emits, a script's new
+    /// system included (LLFloater360Capture::freezeWorld calls
+    /// LLViewerPartSim::enable(false), whose zero particle count makes
+    /// shouldAddPart refuse every new particle; llviewerpartsim.cpp,
+    /// originally LGPL 2.1). The avatars' loading clouds go on, like the
+    /// rez effects.
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
@@ -311,6 +318,7 @@ impl ParticleManager {
         textures: &mut TextureStreamer,
         world: &mut World,
         dt: f32,
+        frozen: bool,
         eye: Vec3,
         max_particles: usize,
         draw_distance: f32,
@@ -402,6 +410,10 @@ impl ParticleManager {
                 // out of view. Local filters must take effect immediately.
                 s.ps.clear_particles();
             }
+            // (a source's clock does not run while frozen: without this,
+            // a new one would burst at every frame, LL's first run)
+            let held = frozen && !s.cloud;
+            let dt = if held { 0.0 } else { dt };
             let transform = idx.and_then(|i| Scene::object_transform(world, i, now, 0));
             let Some((pos, rot, hud)) = transform else {
                 // object gone: stop emitting, let the particles live out
@@ -437,7 +449,7 @@ impl ParticleManager {
             };
             // sources beyond the draw distance, or of a blocked owner
             // (LLViewerPartSourceScript, flagParticles), keep simulating but do not emit
-            if blocked || pos.distance(eye) > draw_distance {
+            if blocked || held || pos.distance(eye) > draw_distance {
                 let mut none = 0;
                 s.update(dt, &ctx, &mut none, world);
             } else {
