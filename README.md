@@ -942,11 +942,13 @@ cargo build --locked -p aurora-viewer
 AURORA_DEMO=1 ./target/debug/aurora-viewer --title "Test macos"
 ```
 
-This is an initial port, validated with the offline demo on Apple Silicon.
-Human validation of login, voice, teleports and longer grid sessions remains
-pending. Media-plugin packs and URL-handler registration are not provided on
-macOS. Vulkan-specific memory-budget queries are unavailable, so texture
-memory follows the viewer's setting. Windows and Linux retain Vulkan.
+Windows and Linux keep Vulkan. There is no macOS download yet: build it
+from source. Not there yet on macOS: the media plugins pack (web pages and
+video in the world), `secondlife://` links from the browser, and an
+application bundle. Human validation of login, voice, teleports and longer
+grid sessions is pending. The macOS workflow (`.github/workflows/macos.yml`)
+checks every pull request with clippy, and the merge queue runs the tests and
+draws a demo frame on an Apple GPU.
 
 ### Versions
 
