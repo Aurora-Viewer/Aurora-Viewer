@@ -193,6 +193,9 @@ impl App {
                     .and_then(|idx| Some((*self.scene.avatar_complexity.get(id)?, self.scene.too_complex.contains(&idx))));
                 f.render = self.settings.render_exception(id);
                 f.blocked = w.is_avatar_blocked(id);
+                let name = w.legacy_name(id).unwrap_or_else(|| w.social.name_of(id));
+                f.voice_blocked = w.voice_blocked(id);
+                f.can_block_voice = !crate::world::mutes::is_linden(&name);
                 f.particles_blocked = self.settings.particle_filters.blocked(*id, true);
                 f.sound_blocks = w.derender.owner_sound_flags(*id);
                 f.contact_sets = w.contact_sets.set_names();

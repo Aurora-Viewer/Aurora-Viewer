@@ -193,6 +193,10 @@ pub struct Facts {
     /// Rendering exception: 0 normal, 1 never fully, 2 always fully.
     pub render: u8,
     pub blocked: bool,
+    /// Voice chat is muted for this resident (`LLMute::flagVoiceChat` only).
+    pub voice_blocked: bool,
+    /// Lindens cannot have their voice muted (`LLInspectAvatar`).
+    pub can_block_voice: bool,
     /// The independent owner particle filter is enabled.
     pub particles_blocked: bool,
     /// Asset blacklist owner categories: 1 worn, 2 rezzed, 4 gesture.
