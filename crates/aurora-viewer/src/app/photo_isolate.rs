@@ -29,6 +29,9 @@ pub(super) enum Pick {
 /// Points waiting for their answer: past this, the oldest are given up.
 const PENDING: usize = 6;
 
+/// The frame `AURORA_DEMO_ISOLATE=…-back` returns to the entire scene.
+const DEMO_BACK: u64 = 1500;
+
 impl App {
     /// Every frame, before it is laid out.
     pub(super) fn photo_isolate_frame(&mut self, renderer: &mut Renderer) {
@@ -166,15 +169,17 @@ impl App {
         (rows, hover)
     }
 
-    /// AURORA_DEMO_ISOLATE=<own|pick>[-panel][-opaque], with the photo mode
-    /// open (AURORA_DEMO_SNAPSHOT): at frame 640 `own` shows our avatar
-    /// alone on an empty background (`-opaque` keeping the sky and the
-    /// ground); `pick` chooses in the scene instead, the pointer at the
+    /// AURORA_DEMO_ISOLATE=<own|pick>[-panel][-opaque][-back], with the
+    /// photo mode open (AURORA_DEMO_SNAPSHOT): at frame 640 `own` shows our
+    /// avatar alone on an empty background (`-opaque` keeping the sky and
+    /// the ground); `pick` chooses in the scene instead, the pointer at the
     /// middle of the window, 70 % down (our avatar in the viewfinder) from
     /// frame 640 and a click there at 650, then stops choosing at 680;
-    /// `panel` opens the panel.
+    /// `panel` opens the panel; `back` returns to the entire scene at frame
+    /// [`DEMO_BACK`], once the memory pressure has had time to lower what
+    /// the isolation left out (issue #1374).
     fn photo_isolate_demo(&mut self, renderer: &Renderer) {
-        if !self.demo || !(640..=680).contains(&self.frame_count) {
+        if !self.demo || !(640..=DEMO_BACK).contains(&self.frame_count) {
             return;
         }
         let Ok(mode) = std::env::var("AURORA_DEMO_ISOLATE") else {
@@ -182,6 +187,14 @@ impl App {
         };
         let words: Vec<&str> = mode.split('-').collect();
         let frame = self.frame_count;
+        if frame == DEMO_BACK && words.contains(&"back") {
+            self.world.photo_isolation.set_mode(isolate::Mode::Off);
+            log::info!("isolation demo: back to the entire scene");
+            return;
+        }
+        if frame > 680 {
+            return;
+        }
         let (w, h) = renderer.size();
         let at = (w as f32 / 2.0, h as f32 * 0.7);
         let iso = &mut self.world.photo_isolation;
