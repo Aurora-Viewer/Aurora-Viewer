@@ -220,20 +220,23 @@ impl Object {
     pub fn visual_volume(&self) -> VolumeParams {
         self.render.local_volume.as_deref().copied().unwrap_or(self.volume)
     }
+    /// Network dimensions with render damping, without local mesh overrides.
+    pub(super) fn damped_scale(&self) -> Vec3 {
+        self.scale_correction
+            .filter(|c| c.matches(self.scale))
+            .map_or(self.scale, |c| c.drawn)
+    }
+    pub(super) fn damped_scale_at(&self, now: Instant) -> Vec3 {
+        self.scale_correction.map_or(self.scale, |c| c.sample(self.scale, now))
+    }
     #[inline]
     pub fn visual_scale(&self) -> Vec3 {
-        self.render.local_scale.unwrap_or_else(|| {
-            self.scale_correction
-                .filter(|c| c.matches(self.scale))
-                .map_or(self.scale, |c| c.drawn)
-        })
+        self.render.local_scale.unwrap_or_else(|| self.damped_scale())
     }
     /// Sample position and size at the same scene/picking instant. The
     /// cached value in visual_scale is for frame scheduling and coarse bounds.
     pub fn visual_scale_at(&self, now: Instant) -> Vec3 {
-        self.render
-            .local_scale
-            .unwrap_or_else(|| self.scale_correction.map_or(self.scale, |c| c.sample(self.scale, now)))
+        self.render.local_scale.unwrap_or_else(|| self.damped_scale_at(now))
     }
     /// Ordinary flexible volumes use a simulated path; sculpt/mesh assets
     /// retain their own geometry even if they carry stale flexible parameters.
