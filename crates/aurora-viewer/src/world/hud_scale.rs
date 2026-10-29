@@ -477,7 +477,13 @@ impl World {
     }
 
     pub fn visual_scale(&self, idx: usize) -> Vec3 {
-        self.objects.get(idx).map_or(Vec3::ONE, |o| o.scale * self.hud_scale(idx))
+        self.objects.get(idx).map_or(Vec3::ONE, |o| o.visual_scale() * self.hud_scale(idx))
+    }
+
+    pub fn visual_scale_at(&self, idx: usize, now: Instant) -> Vec3 {
+        self.objects
+            .get(idx)
+            .map_or(Vec3::ONE, |o| o.visual_scale_at(now) * self.hud_scale(idx))
     }
 
     /// Root translation stays unchanged; linked offsets follow the zoom.

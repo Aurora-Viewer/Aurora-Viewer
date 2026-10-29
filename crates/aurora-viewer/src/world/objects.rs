@@ -1,7 +1,7 @@
 //! Object store: every prim, mesh and avatar known to the viewer.
 
 use super::edit_echo::{SentEdits, Transform};
-use super::motion::{self, Correction};
+use super::motion::{self, Correction, ScaleCorrection};
 use crate::fast_hash::FastMap;
 use aurora_net::RegionHandle;
 use aurora_net::build::TransformUpdate;
@@ -143,6 +143,8 @@ pub struct Object {
     /// The last report put it elsewhere than where it was drawn: the gap
     /// fades instead of showing at once (motion.rs).
     correction: Option<Correction>,
+    /// Rendered scale; authoritative network scale stays in scale.
+    scale_correction: Option<ScaleCorrection>,
     /// A root an avatar sits on (`ObjectStore::damp_seats`).
     seat: Option<Seat>,
     /// Full updates carry parentage; terse motion packets do not confirm it.
@@ -220,7 +222,18 @@ impl Object {
     }
     #[inline]
     pub fn visual_scale(&self) -> Vec3 {
-        self.render.local_scale.unwrap_or(self.scale)
+        self.render.local_scale.unwrap_or_else(|| {
+            self.scale_correction
+                .filter(|c| c.matches(self.scale))
+                .map_or(self.scale, |c| c.drawn)
+        })
+    }
+    /// Sample position and size at the same scene/picking instant. The
+    /// cached value in visual_scale is for frame scheduling and coarse bounds.
+    pub fn visual_scale_at(&self, now: Instant) -> Vec3 {
+        self.render
+            .local_scale
+            .unwrap_or_else(|| self.scale_correction.map_or(self.scale, |c| c.sample(self.scale, now)))
     }
     /// Ordinary flexible volumes use a simulated path; sculpt/mesh assets
     /// retain their own geometry even if they carry stale flexible parameters.
@@ -254,6 +267,7 @@ impl Object {
             foot_plane: u.foot_plane,
             motion_time: f64::NAN,
             correction: None,
+            scale_correction: None,
             seat: None,
             full_update_serial: 1,
             volume: u.volume,
@@ -527,7 +541,10 @@ impl Object {
     /// motion, a correction still fading (`ObjectStore::expire_corrections`
     /// ends it) or a seat still damped.
     pub fn has_motion(&self) -> bool {
-        self.extrapolates() || self.correction.is_some() || self.seat_damping()
+        self.extrapolates()
+            || self.correction.is_some()
+            || self.scale_correction.is_some_and(|c| c.matches(self.scale))
+            || self.seat_damping()
     }
 
     fn seat_damping(&self) -> bool {
@@ -884,16 +901,21 @@ impl ObjectStore {
             let Some(o) = self.slots.get_mut(idx).and_then(Option::as_mut) else {
                 return false;
             };
-            match &o.correction {
-                Some(c) if c.active(now) => true,
-                Some(_) => {
-                    o.correction = None;
-                    o.render.needs_records = true;
-                    self.touched.note(idx);
-                    false
-                }
-                None => false,
+            let pose_active = o.correction.as_ref().is_some_and(|c| c.active(now));
+            let pose_ended = o.correction.is_some() && !pose_active;
+            if pose_ended {
+                o.correction = None;
             }
+            let scale_active = o.scale_correction.as_mut().is_some_and(|c| c.advance(o.scale, now));
+            let scale_ended = o.scale_correction.is_some() && !scale_active;
+            if scale_ended {
+                o.scale_correction = None;
+            }
+            if pose_ended || scale_ended {
+                o.render.needs_records = true;
+                self.touched.note(idx);
+            }
+            pose_active || scale_active
         });
         self.correcting = listed;
     }
@@ -1043,13 +1065,23 @@ impl ObjectStore {
         let Some(o) = self.get_mut(idx) else {
             return;
         };
-        let drawn = (!moved_frame && !hud).then(|| o.predicted(now, clock));
+        let mut drawn = (!moved_frame && !hud).then(|| o.predicted(now, clock));
+        let drawn_scale = o.scale_correction.map_or(o.scale, |c| c.sample(o.scale, now));
         o.apply_full(u);
         o.parent_region = region;
         if let Some(sent) = sent {
             o.keep_sent(sent);
         }
-        if o.stamp_motion(clock, now, drawn) && !self.correcting.contains(&idx) {
+        // Sample centre and size at the same receipt instant, including a
+        // new report arriving before the previous correction has settled.
+        let smooth_scale =
+            !o.is_avatar() && drawn.is_some_and(|pose| motion::within_snap_distance(pose.0 - o.position, drawn_scale - o.scale));
+        if !o.is_avatar() && !smooth_scale {
+            drawn = None;
+        }
+        o.scale_correction = smooth_scale.then(|| ScaleCorrection::between(drawn_scale, o.scale, now)).flatten();
+        let pose_active = o.stamp_motion(clock, now, drawn);
+        if (pose_active || o.scale_correction.is_some()) && !self.correcting.contains(&idx) {
             self.correcting.push(idx);
         }
     }
@@ -2029,6 +2061,93 @@ mod tests {
         assert_eq!(s.get(avatar).expect("avatar").key, key(2, 50));
     }
 
+    #[test]
+    fn scripted_stretches_keep_their_anchored_edge_at_every_frame_rate() {
+        use std::time::Duration;
+        for fps in [30, 60, 144] {
+            for linked in [false, true] {
+                let mut store = ObjectStore::default();
+                let start = Instant::now();
+                if linked {
+                    store.upsert_at(1, update(100, PRIM, ""), Some(start));
+                }
+                let mut report = update(101, PRIM, "");
+                report.parent_id = if linked { 100 } else { 0 };
+                report.position = Vec3::Z;
+                report.scale = Vec3::new(0.2, 0.2, 2.0);
+                let idx = store.upsert_at(1, report.clone(), Some(start));
+                let mut generation = 0;
+                for frame in 1..=fps {
+                    let at = start + Duration::from_secs_f64(frame as f64 / fps as f64);
+                    let next_generation = frame * 10 / fps;
+                    if next_generation != generation {
+                        generation = next_generation;
+                        let length = if generation % 2 == 0 { 2.0 } else { 0.6 };
+                        report.scale.z = length;
+                        report.position.z = length * 0.5;
+                        store.upsert_at(1, report.clone(), Some(at));
+                    }
+                    store.expire_corrections(at);
+                    let o = store.get(idx).expect("prim");
+                    assert_eq!(o.scale, report.scale, "reported dimensions must remain authoritative");
+                    let centre = store.predicted(o, at).0;
+                    let size = o.visual_scale_at(at);
+                    assert!(
+                        (centre.z - size.z * 0.5).abs() < 1e-5,
+                        "fps={fps} linked={linked} frame={frame}: {centre:?} {size:?}"
+                    );
+                    // Rendering samples later than the frame scheduler too.
+                    let later = at + Duration::from_millis(3);
+                    let centre = store.predicted(o, later).0;
+                    assert!((centre.z - o.visual_scale_at(later).z * 0.5).abs() < 1e-5);
+                }
+                store.expire_corrections(start + Duration::from_secs(2));
+                let o = store.get(idx).expect("settled prim");
+                assert!(!o.has_motion());
+                assert_eq!(o.visual_scale(), report.scale);
+            }
+        }
+    }
+
+    #[test]
+    fn scale_only_corrections_animate_and_local_edits_and_reparenting_snap() {
+        use std::time::Duration;
+        let start = Instant::now();
+        let mut store = ObjectStore::default();
+        let mut report = update(102, PRIM, "");
+        report.scale = Vec3::ONE;
+        let idx = store.upsert_at(1, report.clone(), Some(start));
+        report.scale = Vec3::splat(2.0);
+        store.upsert_at(1, report.clone(), Some(start));
+        assert!(store.get(idx).expect("scaling").has_motion());
+        store.expire_corrections(start + Duration::from_millis(60));
+        near(store.get(idx).expect("half scale").visual_scale(), Vec3::splat(1.5));
+        // A terse movement update carries no scale and must not cancel it.
+        store.apply_terse_at(
+            idx,
+            &terse(102, report.position, Vec3::ZERO),
+            Some(start + Duration::from_millis(60)),
+        );
+        near(
+            store.get(idx).expect("terse").visual_scale_at(start + Duration::from_millis(120)),
+            Vec3::splat(1.75),
+        );
+        store.get_mut(idx).expect("edit").scale = Vec3::splat(3.0);
+        near(store.get(idx).expect("edited").visual_scale(), Vec3::splat(3.0));
+        store.expire_corrections(start + Duration::from_millis(130));
+        assert!(!store.get(idx).expect("edit cancelled correction").has_motion());
+        report.parent_id = 999;
+        report.scale = Vec3::splat(4.0);
+        store.upsert_at(1, report.clone(), Some(start + Duration::from_millis(140)));
+        assert_eq!(store.get(idx).expect("reparented").visual_scale(), report.scale);
+        report.position = Vec3::X * 100.0;
+        report.scale = Vec3::splat(5.0);
+        store.upsert_at(1, report.clone(), Some(start + Duration::from_millis(150)));
+        let o = store.get(idx).expect("large jump");
+        assert_eq!(store.predicted(o, start + Duration::from_millis(150)).0, report.position);
+        assert_eq!(o.visual_scale(), report.scale);
+    }
+
     fn terse(local_id: u32, position: Vec3, velocity: Vec3) -> TerseUpdate {
         TerseUpdate {
             local_id,
@@ -2305,12 +2424,17 @@ mod tests {
             let mut cube = update(root_id + 1, PRIM, "");
             cube.parent_id = root_id;
             let cube_idx = s.upsert(1, cube.clone());
-            // the page cube turns a quarter (llSetLinkPrimitiveParamsFast)
+            // The HUD page changes immediately; body-worn prims damp size
+            // and rotation together (llSetLinkPrimitiveParamsFast).
             cube.rotation = quarter;
+            cube.scale *= 2.0;
+            let reported_scale = cube.scale;
             s.upsert(1, cube);
             let o = s.get(cube_idx).expect("cube");
             let drawn = s.predicted(o, now).1;
             assert_eq!(o.correction.is_some(), fades, "point {point}");
+            assert_eq!(o.scale_correction.is_some(), fades, "scale at point {point}");
+            assert_eq!(o.visual_scale_at(now) == reported_scale, !fades, "scale at point {point}");
             assert_eq!(drawn.abs_diff_eq(quarter, 1e-4), !fades, "point {point}: {drawn:?}");
             // the HUD root itself turns at once too
             let root_idx = s
