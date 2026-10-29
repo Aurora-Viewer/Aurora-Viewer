@@ -6780,6 +6780,7 @@ world-maturity-change-error-title = コンテンツのレーティングは変�
 world-maturity-change-error = { "現在、" }{ $preferred }{ "コンテンツを表示する設定に変更できませんでした。設定は" }{ $actual }{ "コンテンツを表示するようにリセットされました。初期設定 › インターフェース › コンテンツで再度お試しください。" }
 world-mod-declined-your-teleport-offer = { $from }{ "がテレポートのオファーを拒否しました" }
 world-mod-has-your-object = { $from }{ "があなたのオブジェクトを" }{ $verb }
+world-mod-group-notice-sent-by = { "送信者：" }{ $sender }
 world-mod-gives-you = { $from }{ "があなたに" }{ $what }{ "を渡しました" }
 world-payments-paid-you = { $name }{ "があなたにL$ " }{ $amount }{ "を支払いました" }
 world-payments-paid-you-message = { $name }{ "があなたにL$ " }{ $amount }{ "を支払いました：" }{ $message }

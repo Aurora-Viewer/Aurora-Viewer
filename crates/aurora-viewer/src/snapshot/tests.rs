@@ -86,16 +86,22 @@ fn one_pass_while_the_card_holds_it_tiles_otherwise() {
         width: 7680,
         height: 4320,
     };
-    assert_eq!(plan((7680, 4320), 16384, 64_000_000), vec![TilePass { keep: whole, draw: whole }]);
+    assert_eq!(
+        plan((7680, 4320), 16384, 64_000_000, TILE_GUARD),
+        vec![TilePass { keep: whole, draw: whole }]
+    );
     // just within the limits: still one pass, no guard band
-    assert_eq!(plan((7680, 4320), 7680, 7680 * 4320), vec![TilePass { keep: whole, draw: whole }]);
+    assert_eq!(
+        plan((7680, 4320), 7680, 7680 * 4320, TILE_GUARD),
+        vec![TilePass { keep: whole, draw: whole }]
+    );
     // a side over the card's limit
-    // (2 x 2 tiles of 3840 would leave no room for their bands: 3 x 2)
-    let tiles = plan((7680, 4320), 4096, u64::MAX);
-    assert_eq!(tiles.len(), 6);
+    // (2 x 2 tiles of 3840 keep room for their one band each: 3968 drawn)
+    let tiles = plan((7680, 4320), 4096, u64::MAX, TILE_GUARD);
+    assert_eq!(tiles.len(), 4);
     assert!(tiles.iter().all(|t| t.draw.width <= 4096 && t.draw.height <= 4096));
     // too many pixels for the memory
-    let tiles = plan((7680, 4320), 16384, 10_000_000);
+    let tiles = plan((7680, 4320), 16384, 10_000_000, TILE_GUARD);
     assert!(tiles.len() >= 4);
     assert!(
         tiles
@@ -115,7 +121,7 @@ fn one_pass_while_the_card_holds_it_tiles_otherwise() {
     assert!(covered.iter().all(|&c| c == 1));
     // down to the smallest limits, every pass fits
     for (max_side, max_pixels) in [(32, 0), (100, 5_000), (1024, 1_000_000), (16384, 2_000)] {
-        let tiles = plan((3200, 1800), max_side, max_pixels);
+        let tiles = plan((3200, 1800), max_side, max_pixels, TILE_GUARD);
         let max_pixels = max_pixels.max(32 * 32);
         assert!(
             tiles.iter().all(|t| t.draw.width <= max_side.max(32)
@@ -130,7 +136,7 @@ fn one_pass_while_the_card_holds_it_tiles_otherwise() {
 fn a_tile_is_drawn_with_a_guard_band_on_the_sides_it_shares() {
     // 3200 x 1800 with sides of 1024 at most: 5 x 3 tiles of 640 x 600,
     // drawn with up to 128 pixels more on each inner side
-    let tiles = plan((3200, 1800), 1024, u64::MAX);
+    let tiles = plan((3200, 1800), 1024, u64::MAX, TILE_GUARD);
     assert_eq!(tiles.len(), 15);
     let corner = tiles[0];
     assert_eq!(
@@ -149,7 +155,8 @@ fn a_tile_is_drawn_with_a_guard_band_on_the_sides_it_shares() {
             x: 0,
             y: 0,
             width: 640 + 128,
-            height: 600 + 128
+            // 728, rounded to the alignment
+            height: 768
         }
     );
     let middle = tiles[5 + 1];
@@ -158,22 +165,50 @@ fn a_tile_is_drawn_with_a_guard_band_on_the_sides_it_shares() {
         middle.draw,
         Tile {
             x: 512,
-            y: 472,
+            // 472 and 1328, on the alignment
+            y: 448,
             width: 128 + 640 + 128,
-            height: 128 + 600 + 128
+            height: 1344 - 448
         }
     );
     let last = tiles[14];
     assert_eq!((last.draw.x + last.draw.width, last.draw.y + last.draw.height), (3200, 1800));
     for t in &tiles {
-        // what is kept lies in what is drawn, from an even pixel
+        // what is kept lies in what is drawn, from a multiple of 64
         assert!(t.draw.x <= t.keep.x && t.keep.x + t.keep.width <= t.draw.x + t.draw.width);
         assert!(t.draw.y <= t.keep.y && t.keep.y + t.keep.height <= t.draw.y + t.draw.height);
-        assert!(t.draw.x % 2 == 0 && t.draw.y % 2 == 0);
+        assert!(t.draw.x % 64 == 0 && t.draw.y % 64 == 0);
     }
-    // an odd tile origin moves the drawn one to the even pixel before
-    let odd = plan((3003, 1800), 1024, u64::MAX)[1];
-    assert_eq!((odd.keep.x, odd.draw.x, odd.draw.width), (751, 622, 129 + 751 + 128));
+    // an odd tile origin moves the drawn one to the multiple of 64 before,
+    // its end to the one after
+    let odd = plan((3003, 1800), 1024, u64::MAX, TILE_GUARD)[1];
+    assert_eq!((odd.keep.x, odd.draw.x, odd.draw.width), (601, 448, 1344 - 448));
+}
+
+#[test]
+fn the_bloom_widens_the_guard_band_and_the_tiles_fall_on_its_levels() {
+    // an 8K photo with sides of 4096 at most and the bloom's band
+    let guard = 384;
+    let tiles = plan((7680, 4320), 4096, u64::MAX, guard);
+    assert_eq!(tiles.len(), 6);
+    for t in &tiles {
+        let (k, d) = (t.keep, t.draw);
+        assert!(d.width <= 4096 && d.height <= 4096);
+        // the whole band on every side shared with another tile
+        assert!(k.x == 0 || k.x - d.x >= guard);
+        assert!(k.y == 0 || k.y - d.y >= guard);
+        assert!(k.x + k.width == 7680 || d.x + d.width - (k.x + k.width) >= guard);
+        assert!(k.y + k.height == 4320 || d.y + d.height - (k.y + k.height) >= guard);
+        // the edges on the bloom's last level, but the photo's own
+        assert!(d.x % 64 == 0 && d.y % 64 == 0);
+        assert!(d.x + d.width == 7680 || d.width % 64 == 0);
+        assert!(d.y + d.height == 4320 || d.height % 64 == 0);
+    }
+    // a band wider than a quarter of what a pass draws is narrowed
+    let tiles = plan((3200, 1800), 1024, u64::MAX, 384);
+    assert!(tiles.iter().all(|t| t.draw.width <= 1024 && t.draw.height <= 1024));
+    let middle = tiles.iter().find(|t| t.keep.x > 0 && t.keep.y > 0).expect("an inner tile");
+    assert!(middle.keep.x - middle.draw.x >= 256 && middle.keep.x - middle.draw.x < 256 + 64);
 }
 
 #[test]

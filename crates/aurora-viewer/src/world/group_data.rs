@@ -759,7 +759,7 @@ impl GroupMgr {
 
 /// The answer to a notice attachment's offer (sendReceiveResponse with
 /// IM_GROUP_NOTICE: accepted with the destination folder, or declined).
-fn offer_answer(from: Uuid, tx: Uuid, folder: Option<Uuid>) -> NetCommand {
+pub(super) fn offer_answer(from: Uuid, tx: Uuid, folder: Option<Uuid>) -> NetCommand {
     NetCommand::SendImDialog {
         to: from,
         dialog: if folder.is_some() {
