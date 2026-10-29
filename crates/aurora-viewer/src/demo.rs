@@ -7038,6 +7038,10 @@ pub fn lights_events(n: u32) -> Vec<NetEvent> {
 /// texel between 0.25 and 0.75 (a knit), and under it a red layer (a body
 /// add-on), attached first on the same point so that it is drawn after the
 /// dress (#1300).
+/// AURORA_DEMO_SOFT_MASK=1: a skin-tone disc on the groin whose texture is
+/// classified as Mask (mostly binary alpha, short soft fringe). Without the
+/// rigged auto-Mask skip it would be punched out; with it, the soft fringe
+/// stays visible (Physics Cock Max / #1492 class of attachments).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HairDemo {
     pub layers: u32,
@@ -7049,6 +7053,7 @@ pub struct HairDemo {
     pub layered: bool,
     pub outer_first: bool,
     pub sheer: bool,
+    pub soft_mask: bool,
 }
 
 pub fn hair_demo() -> Option<HairDemo> {
@@ -7059,9 +7064,10 @@ pub fn hair_demo() -> Option<HairDemo> {
     let layered = cards > 0 && cards_args.contains(&"layered");
     let outer_first = layered && cards_args.contains(&"outer");
     let sheer = std::env::var("AURORA_DEMO_SHEER").is_ok_and(|v| v.trim() == "1");
+    let soft_mask = std::env::var("AURORA_DEMO_SOFT_MASK").is_ok_and(|v| v.trim() == "1");
     let demo = match std::env::var("AURORA_DEMO_HAIR").ok() {
         Some(v) => hair_demo_from(&v),
-        None if cards > 0 || sheer => HairDemo {
+        None if cards > 0 || sheer || soft_mask => HairDemo {
             layers: 0,
             ..hair_demo_from("")
         },
@@ -7073,6 +7079,7 @@ pub fn hair_demo() -> Option<HairDemo> {
         layered,
         outer_first,
         sheer,
+        soft_mask,
         ..demo
     })
 }
@@ -7092,15 +7099,22 @@ fn hair_demo_from(v: &str) -> HairDemo {
         layered: false,
         outer_first: false,
         sheer: false,
+        soft_mask: false,
     }
 }
 
 /// Knit texture of the dress of AURORA_DEMO_SHEER.
 pub const TEX_SHEER: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0023);
 
+/// Soft-fringe Mask texture of AURORA_DEMO_SOFT_MASK (skin tone disc).
+pub const TEX_SOFT_MASK: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0024);
+
 /// Mesh assets of AURORA_DEMO_SHEER: the dress, and the layer under it.
 pub const SHEER_DRESS_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0002_0000_0300);
 pub const SHEER_LAYER_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0002_0000_0301);
+
+/// Mesh asset of AURORA_DEMO_SOFT_MASK (pelvis shell).
+pub const SOFT_MASK_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0002_0000_0302);
 
 /// Strand texture of the hair demo.
 pub const TEX_HAIR: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0020);
@@ -7259,6 +7273,37 @@ pub fn hair_events(demo: HairDemo, crowd: u32) -> Vec<NetEvent> {
             worn.state = 0x10; // chest
             objects.push(worn);
         }
+    }
+    if demo.soft_mask {
+        // groin attach point 53: state nibbles swapped ((53 & 0x0F) << 4) |
+        // ((53 & 0xF0) >> 4) = 0x53
+        let mesh = SculptParams {
+            texture: SOFT_MASK_MESH,
+            sculpt_type: LL_SCULPT_TYPE_MESH,
+        };
+        let mut t = (*te([1.0, 1.0, 1.0, 1.0], 0, false, 0.0)).clone();
+        for f in &mut t.faces {
+            f.texture = TEX_SOFT_MASK;
+        }
+        let mut worn = prim(
+            200_062,
+            Vec3::ZERO,
+            Quat::IDENTITY,
+            Vec3::splat(0.1),
+            aurora_prim::VolumeParams {
+                sculpt: Some(mesh),
+                ..Default::default()
+            },
+            Arc::new(t),
+            ExtraParams {
+                sculpt: Some(mesh),
+                ..Default::default()
+            },
+            "",
+        );
+        worn.parent_id = 9000;
+        worn.state = 0x53; // groin
+        objects.push(worn);
     }
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }
@@ -7455,6 +7500,31 @@ fn sheer_texture() -> (Vec<u8>, u32, u32) {
     (px, N, N)
 }
 
+/// Pixels of [`TEX_SOFT_MASK`] (RGBA8, 256×256): an opaque skin-tone disc
+/// with a two-texel soft fringe. Classifies as Mask; a 0.5 cutoff would
+/// erase the fringe, while Blend keeps it.
+fn soft_mask_texture() -> (Vec<u8>, u32, u32) {
+    const N: u32 = 256;
+    const R: f32 = 80.0;
+    const SOFT: f32 = 2.0;
+    let mut px = Vec::with_capacity((N * N * 4) as usize);
+    let c = (N as f32 - 1.0) * 0.5;
+    for y in 0..N {
+        for x in 0..N {
+            let d = ((x as f32 - c).hypot(y as f32 - c) - R).clamp(0.0, SOFT);
+            let a = if d <= 0.0 {
+                255
+            } else if d >= SOFT {
+                0
+            } else {
+                (255.0 * (1.0 - d / SOFT)) as u8
+            };
+            px.extend_from_slice(&[200, 160, 140, a]);
+        }
+    }
+    (px, N, N)
+}
+
 /// The procedural texture `id` takes a mip chain (the others are the
 /// 64-texel test panels, kept as they are).
 pub fn local_texture_mips(id: &Uuid) -> bool {
@@ -7462,6 +7532,7 @@ pub fn local_texture_mips(id: &Uuid) -> bool {
         || *id == TEX_HAIR_CARD
         || *id == TEX_HAIR_CARD_LAYERED
         || *id == TEX_SHEER
+        || *id == TEX_SOFT_MASK
         || *id == TEX_PROJECTED
         || *id == TEX_FOLIAGE
         || plants::is_texture(id)
@@ -7512,6 +7583,18 @@ mod hair_tests {
             let transparent = px.as_chunks::<4>().0.iter().filter(|p| p[3] == 0).count() as f32 / (w * h) as f32;
             assert!((transparent - empty as f32 / 100.0).abs() < 0.05, "{empty} % asked, {transparent}");
         }
+    }
+
+    /// Soft-fringe genital-class texture: Mask-classified, with a fringe
+    /// that a 0.5 cutoff would erase.
+    #[test]
+    fn soft_mask_texture_is_mask_with_a_soft_fringe() {
+        let (px, w, h) = soft_mask_texture();
+        assert_eq!(px.len(), (w * h * 4) as usize);
+        assert_eq!(classify_alpha(&px), AlphaKind::Mask);
+        let soft = px.as_chunks::<4>().0.iter().filter(|p| p[3] > 0 && p[3] < 128).count();
+        let solid = px.as_chunks::<4>().0.iter().filter(|p| p[3] >= 128).count();
+        assert!(solid > soft && soft > 0, "{solid} solid, {soft} soft fringe");
     }
 
     /// The strands of `AURORA_DEMO_HAIR_CARDS=<n>,layered` are a blended
@@ -7942,6 +8025,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     }
     if *id == TEX_SHEER {
         return Some(sheer_texture());
+    }
+    if *id == TEX_SOFT_MASK {
+        return Some(soft_mask_texture());
     }
     if *id == TEX_HAIR_CARD {
         return Some(hair_card_texture());

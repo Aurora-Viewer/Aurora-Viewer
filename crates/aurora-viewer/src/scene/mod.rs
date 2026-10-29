@@ -523,9 +523,26 @@ impl ObjGpu {
 
 /// Pass of a face and whether its glow goes to LL's alpha pool, from the
 /// alpha class and alpha channel of its base texture.
-fn face_mode(f: &FaceDraw, alpha: &[AlphaKind], channel: &[bool]) -> (Pass, bool) {
+///
+/// `object_auto_mask`: when false, a texture that looks binary is still
+/// blended. Matches `LLFace::canRenderAsMask` (indra/newview/llface.cpp):
+/// never auto alpha-mask a rigged face or a HUD attachment. Soft genital
+/// and hair alphas stay visible; an explicit MASK material / PBR mask is
+/// unchanged.
+fn face_mode(f: &FaceDraw, alpha: &[AlphaKind], channel: &[bool], object_auto_mask: bool) -> (Pass, bool) {
     let tex_alpha = alpha.get(f.base_slot as usize).copied().unwrap_or(AlphaKind::Opaque);
-    let pass = classify(f, tex_alpha);
+    let mut pass = classify(f, tex_alpha);
+    // LLFace::canRenderAsMask: never auto-mask rigged faces, HUD, or glow.
+    // Creator MASK / PBR mask and system body parts keep their pass.
+    let auto = object_auto_mask && !f.glow;
+    if !auto
+        && matches!(pass, Pass::Mask | Pass::MaskTwoSided)
+        && f.pbr_alpha.is_none()
+        && !matches!(f.legacy_alpha, Some(legacy_mat::alpha_mode::MASK))
+        && f.system.is_none()
+    {
+        pass = Pass::Blend;
+    }
     // LLPipeline::getPoolTypeFromTE + canRenderAsMask: a glowing face whose
     // texture has an alpha channel goes to the alpha pool unless its
     // material says none / mask / emissive
@@ -1165,7 +1182,9 @@ fn te_record_base(model: Mat4, f: &TextureFace) -> DrawRecord {
         base_color: f.color,
         emissive: [0.0, 0.0, 0.0, f.glow],
         uv_st: [f.scale_s, f.scale_t, f.offset_s, f.offset_t],
-        params: [f.rotation, 0.0, roughness, 0.5],
+        // Without a material, LL uses 0.33 for PASS_ALPHA_MASK (not grass's
+        // 0.5): LLVolumeGeometryManager::updateGeometry, llvovolume.cpp.
+        params: [f.rotation, 0.0, roughness, 0.33],
         tex: [
             aurora_render::textures::WHITE,
             aurora_render::textures::FLAT_NORMAL,
@@ -2857,12 +2876,14 @@ impl Scene {
                 let Some(g) = self.gpu.get_mut(idx) else {
                     continue;
                 };
+                // LLFace::canRenderAsMask: never auto-mask a rigged mesh or HUD
+                let object_auto_mask = !g.rigged && !g.hud;
                 let mut any = false;
                 for (fi, f) in g.faces.iter_mut().enumerate() {
                     if f.base_slot != slot {
                         continue;
                     }
-                    let (pass, pool) = face_mode(f, alpha, channel);
+                    let (pass, pool) = face_mode(f, alpha, channel, object_auto_mask);
                     if pass == f.pass && pool == f.glow_pool {
                         continue;
                     }
@@ -2892,7 +2913,11 @@ impl Scene {
     /// Classify freshly built faces of object `idx`: pass, record alpha
     /// mode, GPU face entries, `special`; and note the object as a user of
     /// their texture slots.
-    fn finish_faces(&mut self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu) {
+    ///
+    /// `object_auto_mask`: see [`face_mode`]. Pass `rigged_owner.is_none() &&
+    /// !hud` from `rebuild_faces` — `g.rigged` is only updated after that
+    /// rebuild returns.
+    fn finish_faces(&mut self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu, object_auto_mask: bool) {
         // (new faces: what the cursor is over may have changed)
         self.pick.changed(idx);
         self.fresh_usage.insert(idx);
@@ -2911,7 +2936,7 @@ impl Scene {
                 last_slot = Some(f.base_slot);
                 self.slot_users.insert((f.base_slot, idx as u32));
             }
-            let (pass, pool) = face_mode(f, alpha, channel);
+            let (pass, pool) = face_mode(f, alpha, channel, object_auto_mask);
             f.pass = pass;
             f.glow_pool = pool;
             let mode = f.record_flags();
@@ -3740,7 +3765,10 @@ impl Scene {
         g.tex_generation = self.textures.generation;
         g.mat_generation = self.materials.generation;
         g.built_faces = geom.faces.iter().filter(|f| f.is_some()).count();
-        self.finish_faces(renderer, idx, &mut g);
+        // g.rigged is set only after rebuild_faces returns; use the skin we
+        // just bound so the first classify already skips auto-Mask.
+        let object_auto_mask = rigged_owner.is_none() && !g.hud;
+        self.finish_faces(renderer, idx, &mut g, object_auto_mask);
         self.gpu[idx] = g;
     }
 
@@ -4015,7 +4043,8 @@ impl Scene {
             g.bom_mask = bom_mask;
             g.jelly = jelly;
             g.rlva_silhouette = rlva_silhouette;
-            self.finish_faces(renderer, idx, &mut g);
+            // System parts set FaceDraw::system; auto-Mask rules do not apply.
+            self.finish_faces(renderer, idx, &mut g, true);
             self.gpu[idx] = g;
         } else {
             // (unchanged records are not uploaded again)
@@ -6506,6 +6535,43 @@ mod tests {
             ..test_face(Pass::Blend, false)
         };
         assert_eq!(prim.record_flags(), flags::ALPHA_BLEND);
+    }
+
+    /// LLFace::canRenderAsMask: never auto alpha-mask a rigged face, a HUD
+    /// face, or a glowing face. Soft genital / hair alphas stay Blend. An
+    /// explicit MASK material or PBR mask still Masks.
+    #[test]
+    fn rigged_faces_are_never_auto_alpha_masked() {
+        let alpha = [AlphaKind::Mask];
+        let channel = [true];
+        let face = |glow: bool, legacy: Option<u8>, pbr: Option<u8>| FaceDraw {
+            glow,
+            legacy_alpha: legacy,
+            pbr_alpha: pbr,
+            base_slot: 0,
+            ..test_face(Pass::Hidden, false)
+        };
+        // auto-mask allowed: binary texture → Mask
+        assert_eq!(face_mode(&face(false, None, None), &alpha, &channel, true).0, Pass::Mask);
+        // rigged / HUD (object_auto_mask false): same texture → Blend
+        assert_eq!(face_mode(&face(false, None, None), &alpha, &channel, false).0, Pass::Blend);
+        // glowing face: never auto-mask
+        assert_eq!(face_mode(&face(true, None, None), &alpha, &channel, true).0, Pass::Blend);
+        // creator MASK material still Masks on a rigged mesh
+        assert_eq!(
+            face_mode(&face(false, Some(legacy_mat::alpha_mode::MASK), None), &alpha, &channel, false).0,
+            Pass::Mask
+        );
+        // PBR mask still Masks
+        assert_eq!(face_mode(&face(false, None, Some(2)), &alpha, &channel, false).0, Pass::Mask);
+        // two-sided auto-Mask → Blend when auto-mask is off
+        let two = FaceDraw {
+            two_sided: true,
+            base_slot: 0,
+            ..test_face(Pass::Hidden, false)
+        };
+        assert_eq!(face_mode(&two, &alpha, &channel, false).0, Pass::Blend);
+        assert_eq!(face_mode(&two, &alpha, &channel, true).0, Pass::MaskTwoSided);
     }
 
     /// LLVolumeGeometryManager::rebuildGeom / genDrawInfo: a zero base color
