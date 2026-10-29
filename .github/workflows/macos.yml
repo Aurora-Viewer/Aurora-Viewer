@@ -12,7 +12,7 @@ on:
   pull_request:
   merge_group:
   push:
-    branches: [main]
+    branches: [main, feat/macos-metal]
 
 concurrency:
   group: macos-${{ github.ref }}
@@ -55,12 +55,12 @@ jobs:
         if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || steps.cache.outputs.cache-hit != 'true')
         run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings -A dead-code
       - name: Tests
-        if: steps.changes.outputs.code == 'true' && github.event_name == 'merge_group'
+        if: steps.changes.outputs.code == 'true' && (github.event_name == 'merge_group' || github.ref == 'refs/heads/feat/macos-metal')
         run: cargo test --profile ci --workspace --locked
       # the offline demo past its loading fade, then quit: a missing image
       # or a non-zero exit (a pipeline Metal refused, a GPU fault) fails
       - name: A demo frame on Metal
-        if: steps.changes.outputs.code == 'true' && github.event_name == 'merge_group'
+        if: steps.changes.outputs.code == 'true' && (github.event_name == 'merge_group' || github.ref == 'refs/heads/feat/macos-metal')
         env:
           AURORA_DEMO: '1'
           AURORA_CAPTURE: ${{ runner.temp }}/metal-demo.png
@@ -70,7 +70,7 @@ jobs:
           cargo run --profile ci --locked -p aurora-viewer -- --title "CI macOS"
           test -s "$AURORA_CAPTURE"
       - name: Demo image and log
-        if: always() && steps.changes.outputs.code == 'true' && github.event_name == 'merge_group'
+        if: always() && steps.changes.outputs.code == 'true' && (github.event_name == 'merge_group' || github.ref == 'refs/heads/feat/macos-metal')
         uses: actions/upload-artifact@v7
         with:
           name: macos-demo
