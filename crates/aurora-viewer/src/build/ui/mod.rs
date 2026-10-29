@@ -207,7 +207,7 @@ pub struct FloaterState {
 
 /// Width of the label column of the tabs.
 const LABEL_W: f32 = 112.0;
-const INSPECTOR_ID: &str = "build_tools_inspector_c3";
+pub(crate) const INSPECTOR_ID: &str = "build_tools_inspector_c3";
 
 /// Build shortcuts (menu_viewer.xml): Ctrl+B, Ctrl+1..5, delete, duplicate,
 /// link, edit linked parts, grid, undo...

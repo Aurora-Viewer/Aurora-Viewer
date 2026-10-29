@@ -2,6 +2,7 @@
 //! strip, the tabs, the joints column (or the pose library in its place),
 //! the selected joint (with the settings laid over it) and the file footer.
 use super::*;
+use crate::keybinds::EditHistory;
 use crate::ui::menu;
 use document::LoadMode;
 
@@ -33,6 +34,12 @@ impl Editor {
         self.mirrors.initialize(rig);
         self.follow_selected_side(rig);
         let (mut library, mut settings, mut undo, mut redo) = (false, false, false, false);
+        self.poser.edited_total = self
+            .poser
+            .sessions
+            .values()
+            .map(|s| (0..rig.len()).filter(|b| s.edited(*b)).count())
+            .sum();
         let mut open = self.open;
         let mut floater = Floater::new("poser", aurora_i18n::tr!("poser-title"), egui::pos2(650.0, 70.0), DEFAULT_SIZE);
         floater.min_size = MIN_SIZE;
@@ -77,6 +84,10 @@ impl Editor {
         if settings {
             self.poser.settings_open = !self.poser.settings_open;
         }
+        if let Some(history) = self.history_key(ctx) {
+            undo |= history == EditHistory::Undo;
+            redo |= history == EditHistory::Redo;
+        }
         if let Some(session) = self.poser.sessions.get_mut(&self.poser.subject)
             && (undo || redo)
         {
@@ -108,7 +119,96 @@ impl Editor {
             });
         }
         if !open {
+            self.ask_close();
+        }
+        if self.poser.close_asked {
+            self.close_confirm_ui(ctx, p);
+        }
+    }
+    /// Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) as the title's arrows, the key
+    /// taken from the build tools' Undo: none while a field keeps its own
+    /// history, a menu or a dialog is open, or the build tools' window is in
+    /// front of the poser's. The Legacy Viewer's poser has the buttons only
+    /// (FSFloaterPoser undo_change / button_redo_change).
+    fn history_key(&self, ctx: &egui::Context) -> Option<EditHistory> {
+        if self.poser.close_asked
+            || ctx.egui_wants_keyboard_input()
+            || egui::Popup::is_any_open(ctx)
+            || ctx.memory(|m| m.top_modal_layer()).is_some()
+            || widgets::floater_above(ctx, crate::build::ui::INSPECTOR_ID, "poser")
+        {
+            return None;
+        }
+        let (key, modifiers, history) = ctx.input(|i| {
+            i.events.iter().find_map(|e| match *e {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers: m,
+                    ..
+                } => {
+                    let mods = crate::keybinds::Mods {
+                        ctrl: m.command || m.ctrl,
+                        shift: m.shift,
+                        alt: m.alt,
+                    };
+                    EditHistory::from_key(key, mods).map(|h| (key, m, h))
+                }
+                _ => None,
+            })
+        })?;
+        ctx.input_mut(|i| i.consume_key(modifiers, key));
+        Some(history)
+    }
+    /// Closing stops the pose (`stop_on_close`) and loses its edited joints:
+    /// Minimize keeps them in the window's bar, Close anyway goes on, Escape
+    /// or a click beside the dialog leaves the window as it was.
+    fn close_confirm_ui(&mut self, ctx: &egui::Context, p: &Palette) {
+        let (mut minimize, mut close) = (false, false);
+        let response = widgets::Modal::new(egui::Id::unique("poser-close-confirm")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.label(egui::RichText::new(aurora_i18n::tr!("poser-close-title")).size(17.0).color(p.ink));
+            ui.add_space(8.0);
+            ui.label(aurora_i18n::tr!("poser-close-confirm", count = self.poser.edited_total));
+            ui.add_space(6.0);
+            widgets::checkbox(ui, p, &mut self.poser.close_dont_ask, aurora_i18n::tr!("poser-close-dont-ask"));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let size = egui::vec2(0.0, 26.0);
+                minimize = widgets::action_button(
+                    ui,
+                    p,
+                    "minus",
+                    aurora_i18n::text("poser-close-minimize"),
+                    widgets::ActionKind::Primary,
+                    size,
+                )
+                .clicked();
+                close = widgets::action_button(
+                    ui,
+                    p,
+                    "x",
+                    aurora_i18n::text("poser-close-anyway"),
+                    widgets::ActionKind::Danger,
+                    size,
+                )
+                .clicked();
+            });
+        });
+        if minimize || close {
+            if self.poser.close_dont_ask {
+                self.poser.confirm_close = false;
+            }
+            self.poser.close_dont_ask = false;
+        }
+        if minimize {
+            self.poser.close_asked = false;
+            widgets::minimize_floater(ctx, "poser");
+        } else if close {
             self.close_poser();
+        } else if response.should_close() {
+            self.poser.close_asked = false;
+            self.poser.close_dont_ask = false;
         }
     }
     /// The subject, how many joints it has edited, the local-only notice and
@@ -461,6 +561,10 @@ impl Editor {
         });
         bones::caption(ui, p, aurora_i18n::text("poser-settings-window"));
         widgets::switch_labeled(ui, p, &mut self.poser.stop_on_close, aurora_i18n::tr!("poser-stop-on-close"));
+        // only a close that stops the pose loses it
+        ui.add_enabled_ui(self.poser.stop_on_close, |ui| {
+            widgets::switch_labeled(ui, p, &mut self.poser.confirm_close, aurora_i18n::tr!("poser-confirm-close"));
+        });
         widgets::switch_labeled(ui, p, &mut self.poser.dof, aurora_i18n::tr!("poser-dof"));
         ui.add_space(6.0);
         bones::caption(ui, p, aurora_i18n::text("poser-settings-handling"));

@@ -11115,13 +11115,19 @@ poser-consent-refused = Refusé · nouvel essai dans 10 min
 poser-consent-no-answer = Sans réponse · nouvel essai dans 10 min
 poser-physics = Physique
 poser-settings = Réglages du poseur
-poser-undo = Annuler
-poser-redo = Rétablir
+poser-undo = Annuler (Ctrl+Z)
+poser-redo = Rétablir (Ctrl+Y)
 poser-library = Bibliothèque de poses
 poser-library-search = Rechercher une pose…
 poser-library-meta = Pose · { $date }
-poser-active-status = En pose · { $count } articulations modifiées
-poser-stopped-status = Arrêté · { $count } articulations modifiées
+poser-active-status = En pose · { $count ->
+    [one] { $count } articulation modifiée
+   *[other] { $count } articulations modifiées
+    }
+poser-stopped-status = Arrêté · { $count ->
+    [one] { $count } articulation modifiée
+   *[other] { $count } articulations modifiées
+    }
 poser-t-pose = Pose en T
 poser-start = Démarrer la pose
 poser-photo-notice = Vous seul voyez ces poses. Pour montrer une pose aux autres, importez-la comme animation.
@@ -11294,6 +11300,15 @@ poser-position = Position locale (mètres)
 poser-rotation = Rotation locale (degrés)
 poser-markers = Afficher les repères et les gizmos
 poser-stop-on-close = Arrêter la pose à la fermeture
+poser-confirm-close = Confirmer quand la fermeture perd la pose
+poser-close-title = Fermer le poseur ?
+poser-close-confirm = La fermeture arrête la pose : { $count ->
+    [one] { $count } articulation modifiée est perdue
+   *[other] { $count } articulations modifiées sont perdues
+    }. Minimisez la fenêtre pour les garder.
+poser-close-dont-ask = Ne plus demander
+poser-close-minimize = Minimiser
+poser-close-anyway = Fermer quand même
 poser-load = Charger .anim
 poser-save = Enregistrer .anim
 poser-import = Préparer l’import
