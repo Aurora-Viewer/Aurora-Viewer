@@ -16930,6 +16930,9 @@ impl ApplicationHandler for App {
                 if view.starts_with("layers") {
                     crate::world::appearance::seed_demo_layers(&mut self.world.inventory, self.world.agent_id);
                 }
+                if view.starts_with("wearables") {
+                    crate::world::appearance::seed_demo_wearables(&mut self.world.inventory, self.world.agent_id);
+                }
                 if matches!(view.as_str(), "gallery-fit" | "gallery-fill") {
                     ui::appearance::demo_previews(&self.egui_ctx, &mut self.world.inventory, &mut self.ui_images);
                     self.settings.appearance_fill_previews = view == "gallery-fill";
@@ -16947,11 +16950,11 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
                 self.appearance_ui.open(
                     match view.as_str() {
-                        "outfits" | "multi-outfits" | "folders-outfits" => 1,
-                        "worn" | "save" => 2,
+                        "outfits" | "multi-outfits" | "folders-outfits" | "wearables-outfits" => 1,
+                        "worn" | "save" | "wearables" => 2,
                         _ => 0,
                     },
-                    view == "edit" || view.starts_with("layers"),
+                    matches!(view.as_str(), "edit" | "wearables-edit") || view.starts_with("layers"),
                 );
                 if view == "save" {
                     self.appearance_ui.begin_save_as(&self.world.inventory);
@@ -16964,6 +16967,9 @@ impl ApplicationHandler for App {
                 }
                 if matches!(view.as_str(), "menu" | "duplicates") {
                     self.appearance_ui.open_outfit(uuid::Uuid::from_u128(704));
+                }
+                if view == "wearables-outfits" {
+                    self.appearance_ui.open_outfit(uuid::Uuid::from_u128(705));
                 }
                 if crate::world::appearance::demo_outfit_mode("locate") {
                     self.appearance_ui.locate_current(&self.world.inventory);
