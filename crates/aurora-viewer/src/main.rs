@@ -68,6 +68,7 @@ mod net_profile;
 mod overlay_hooks;
 mod own_motion;
 mod physics_editor;
+mod raw_mouse;
 mod report_abuse;
 mod scene;
 mod screen_rate;
@@ -192,7 +193,11 @@ fn run_viewer() -> anyhow::Result<()> {
         .thread_name(|i| format!("aurora-worker-{i}"))
         .build_global();
 
-    let event_loop = winit::event_loop::EventLoop::new()?;
+    let mut event_loop = winit::event_loop::EventLoop::builder();
+    // the absolute positions of remote desktops made motions (raw_mouse.rs)
+    #[cfg(windows)]
+    raw_mouse::install(&mut event_loop);
+    let event_loop = event_loop.build()?;
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
     // the cache folder of this run, before anything uses it
     cache_location::init();
