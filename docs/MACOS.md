@@ -30,7 +30,16 @@ release you downloaded is not notarized by Apple yet. Open it once this way:
    message about Aurora Viewer and click **Open Anyway**, then confirm with
    your password or Touch ID.
 
-macOS remembers the choice: the next starts are normal.
+macOS remembers the choice: the next starts are normal. In the Terminal,
+this command does the same, once the application is in Applications:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Aurora Viewer.app"
+```
+
+Until the releases are notarized, macOS may also ask again, after an
+update, whether Aurora Viewer may use the keychain (your saved password:
+choose **Always Allow**) and the microphone.
 
 The first time voice chat opens the microphone, macOS asks whether Aurora
 Viewer may use it: allow it to speak in voice chat (you can change it later
