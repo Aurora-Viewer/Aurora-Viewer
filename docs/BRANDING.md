@@ -297,7 +297,7 @@ Files in [`assets/branding/`](../assets/branding/):
 
 | File | Use |
 |---|---|
-| `aurora-logo.svg` / `.png` (720 px) | full logo in colour, transparent background: README, window icon, login and loading screens, About, system notifications (`LOGO_PNG` of `app.rs`) |
+| `aurora-logo.svg` / `.png` (720 px) | full logo in colour, transparent background: README, window icon, login and loading screens, About, system notifications (`LOGO_PNG` of `app.rs`), the Linux desktop icon (`aurora-viewer.svg` of the archive) |
 | `aurora-logo-white.svg` / `.png` (4096 px) | white silhouette: the Aurora menu button of the toolbars (tinted with the palette), monochrome uses on a dark background |
 | `aurora-logo-black.svg` / `.png` (4096 px) | black silhouette: monochrome uses on a light background |
 | `aurora-logo-purple.png` / `aurora-logo-teal.png` (4096 px) | silhouette in violet or in turquoise |

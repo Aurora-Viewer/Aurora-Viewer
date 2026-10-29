@@ -615,7 +615,7 @@ impl ApplicationHandler for Recovery {
             };
             let window = Arc::new(
                 event_loop.create_window(
-                    Window::default_attributes()
+                    crate::cli::with_desktop_id(Window::default_attributes())
                         .with_title(title)
                         .with_inner_size(winit::dpi::LogicalSize::new(840.0, 610.0))
                         .with_min_inner_size(winit::dpi::LogicalSize::new(700.0, 500.0)),

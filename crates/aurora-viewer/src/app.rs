@@ -15367,7 +15367,7 @@ impl ApplicationHandler for App {
                 ));
             }
         }
-        let mut attrs = Window::default_attributes()
+        let mut attrs = crate::cli::with_desktop_id(Window::default_attributes())
             .with_title(crate::cli::window_title())
             // Vulkan initialization and the first frame take time: Windows
             // must not expose the unpainted client area while they run.
