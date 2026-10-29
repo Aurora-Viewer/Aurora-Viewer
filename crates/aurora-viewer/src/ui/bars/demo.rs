@@ -17,6 +17,8 @@
 //! with either bars), `balancemenu` (the account island's right click).
 //! The system island: `systip`
 //! (its detailed tooltip shown), `sysmenu` (its right click),
+//! `profiles` (two saved quality fixtures), `fpspresets` (the fixtures and
+//! the FPS hover card, with either bar layout),
 //! `netgraph` (Firestorm's traffic indicator shown), `tplist` (earlier
 //! places in the session, the back arrow's list of them open), `sysperf` /
 //! `sysnet` (Performance opened from the island at frame 300, by its frame
@@ -81,6 +83,9 @@ pub struct DemoBars {
     pub click_name: bool,
     /// The system island's detailed tooltip shown.
     pub tip: bool,
+    /// Named quality fixtures; optionally show the FPS hover card.
+    pub graphics_profiles: bool,
+    pub fps_presets: bool,
     /// The traffic indicator shown or hidden, whatever is saved.
     pub net_stats: Option<bool>,
     /// The balance shown or hidden, whatever is saved.
@@ -165,6 +170,11 @@ pub fn parse(value: &str) -> DemoBars {
             }
             "chatname" => d.click_name = true,
             "systip" => d.tip = true,
+            "profiles" => d.graphics_profiles = true,
+            "fpspresets" => {
+                d.graphics_profiles = true;
+                d.fps_presets = true;
+            }
             "sysmenu" => d.open = Some(Open::System),
             "tplist" => d.open = Some(Open::TpList),
             "netgraph" => d.net_stats = Some(true),

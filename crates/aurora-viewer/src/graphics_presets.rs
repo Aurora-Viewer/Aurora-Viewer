@@ -32,6 +32,8 @@
 
 use crate::settings::Settings;
 
+pub(crate) mod saved;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Preset {
     Potato,
@@ -256,6 +258,7 @@ impl Preset {
     /// like the slider of the page).
     pub fn apply(self, s: &mut Settings) {
         self.values().write(s);
+        s.graphics_saved_active = None;
     }
 
     /// The level whose settings are exactly those of `s`, if any.

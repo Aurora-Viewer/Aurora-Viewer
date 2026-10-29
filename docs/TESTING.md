@@ -102,6 +102,29 @@ Check live silhouette changes, filtering, Ctrl/Shift selection, changing full
 detail, removing exceptions and adding residents from the shared picker.
 `empty` starts with no exceptions. Both scenarios use only demo settings.
 
+**Saved graphics profiles (#1218).** `AURORA_DEMO_BARS=profiles` installs three
+demo profiles, including two with identical quality; add `AURORA_DEMO_OPTIONS=graphics` to inspect
+their editor. Use `graphics:profiles-list` to open its dropdown with one bin per
+profile, or `graphics:save-profile` to open the Save as name prompt. The name
+field exists only in that dialog, starts focused and accepts Enter. A bin must
+ask for confirmation without loading its profile, even when another is active;
+all bins stay at the same right edge with long names. Cancel saves/deletes
+nothing, and Save as with an existing name requires replacement confirmation.
+Only the explicitly selected profile is highlighted, even with identical values.
+Editing quality keeps that name and marks it modified; Save updates only that
+profile without asking for a name. With no profile selected, Save is disabled
+and Save as creates one. Both buttons stay beside the selector in narrow windows.
+`AURORA_DEMO_BARS=fpspresets` also opens the actual FPS hover card
+after frame 300; combine with `legacy` to check the other bar layout. Save a
+named profile, change quality, reload it from Preferences and from the FPS
+hover card, and restart the demo to check persistence of the library and selection.
+Choosing a built-in level clears the named selection; deleting the selected
+profile does likewise without loading another profile. Check that moving into the hover card keeps it clickable,
+that ordinary FPS clicks still open Performance, and that the FPS cap toggle
+retains its numeric limit. Vsync, background cap, hardware and environment are
+independent of profiles. Saving while photo quality is boosted must save the
+user's quality; resetting preferences must keep the named profile library.
+
 `AURORA_DEMO_SUN=<azimuth>,<elevation>`: the direction towards the sun for
 the lighting and the shadows (azimuth 0 east, 90 north), the sky keeping
 its own sun. The demo camera looks east, so `0,12` puts a low sun in front
@@ -3232,7 +3255,8 @@ both open states and the selection count. Capture at frame 620.
   and 1160 to compare home, outside and repeated return; no crossing errors should
   be logged. Owner/group discovery also publishes its complete result at once.
   Combine with
-  `AURORA_DEMO_OPTIONS=graphics` for the native controls. Check live mode changes,
+  `AURORA_DEMO_OPTIONS=graphics/6` for the native controls in Graphics > Parcels,
+  after Smoothness. Check live mode changes,
   adding/removing scope entries and always-visible parcels, and restoring content
   without relogging. To add a neighbouring exception without walking there, select
   it in About Land, then use "Add selected parcel" in the always-visible list.
@@ -4082,7 +4106,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PEOPLE_FILTER=<text>` | Initial name filter for a People demo scenario |
 | `AURORA_DEMO_ANTI_SPAM=1` | Synthetic offer, script prompt and sound floods with Protections controls |
 | `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > Protections |
-| `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens the preferences on a page, a search, the modified settings, open cogs or a reset |
+| `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, reset, or a graphics profile dialog/list |
 | `AURORA_DEMO_GRIDS=1\|pages` | Opens the grid manager with synthetic metadata |
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
@@ -4119,7 +4143,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
-| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the balance hidden, the clock, the interface hidden, immersive mode, the chat bar autohidden |
+| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Legacy bars, place island, favourites, menus, balance, clock, hidden interface, immersive mode, chat autohide; `profiles` / `fpspresets`: saved graphics fixtures / FPS hover card |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |

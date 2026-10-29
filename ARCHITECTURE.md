@@ -1,5 +1,16 @@
 # Aurora Viewer architecture
 
+`graphics_presets/saved.rs` holds named rendering quality snapshots (#1218),
+persisted as an explicit allowlist in `Settings::graphics_saved`. Selection is
+stored separately in `graphics_saved_active`: identical snapshots remain distinct,
+and editing retains the selected name. The editor in `ui/options/saved_graphics.rs`
+updates that profile with Save, asks for a name with Save as, marks unsaved changes,
+and confirms duplicate names and deletion from each dropdown row's bin.
+Graphics keeps parcel-isolation controls in its Parcels tab after Smoothness,
+split into filtering options, the filter's scope list and always-visible parcels.
+`ui/bars/graphics.rs` shares the built-in/custom choices and the independent FPS
+cap switch between the FPS hover card (both bar layouts) and the system menu.
+
 `scene/anim.rs` restarts active resident and control-avatar motions from one shared
 instant for Ctrl+S, World and the resync toolbar command. Receipt signals,
 simulator state and independent import previews are preserved. Native key dispatch leaves Save
