@@ -888,3 +888,61 @@ fn poser_handles_own_the_pointer_and_leave_the_rest_of_the_scene_to_huds() {
     editor.poser.markers = false;
     assert!(!hover(&mut editor, at("mKneeLeft")), "hidden markers own nothing");
 }
+
+#[test]
+fn poser_poses_a_shape_whose_sliders_mirror_face_joints() {
+    // #1249: shape sliders at their ends give eyelids, nose, forehead and
+    // pectorals a negative scale on one axis; the poser refused the whole
+    // pose of such an avatar, which then neither froze nor moved.
+    let (mut world, mut editor) = fixture();
+    let lib = world.avatar_lib.clone();
+    let rig = &lib.rig;
+    let shape = lib.shape_params.shape(&[0; 260], rig);
+    let mirrored: Vec<usize> = (0..rig.len()).filter(|b| shape.scale[*b].min_element() < 0.0).collect();
+    assert!(!mirrored.is_empty(), "the fixture shape mirrors no joint");
+    let joints = rig.world_with(&rig.local_rot, Vec3::ZERO, &shape.local_pos, &shape.scale);
+    world.avatar_poses.insert(
+        world.agent_id,
+        joints.iter().zip(&rig.default_world_inv).map(|(p, i)| *p * *i).collect(),
+    );
+    editor.poser.sessions.clear();
+    let layers = editor.pose_layers(&world);
+    let pose = layers.get(&world.agent_id).expect("the mirrored shape is posed");
+    // the shape's own axis keeps the sign, so the rest rotation stays the
+    // rest rotation and the T-pose or a preset does not turn the joint over
+    for &bone in &mirrored {
+        assert!(
+            pose.scales[bone].abs_diff_eq(shape.scale[bone], 1e-4),
+            "scale of {}",
+            rig.canonical_names[bone]
+        );
+        assert!(
+            pose.rotations[bone].dot(rig.local_rot[bone]).abs() > 0.9999,
+            "rotation of {}",
+            rig.canonical_names[bone]
+        );
+    }
+    // the captured channels rebuild the shaped skeleton (skeleton space)
+    let model = Frame::new(&world).expect("frame").model;
+    for (bone, (posed, shaped)) in pose.matrices(rig, model).iter().zip(&joints).enumerate() {
+        assert!(shaped.abs_diff_eq(*posed, 1e-4), "{} moved", rig.canonical_names[bone]);
+    }
+    // an edit reaches the layer, and a scale edit keeps the mirrored axis
+    let frame = Frame::new(&world).expect("frame");
+    editor.select(rig.names["mHead"], rig, &frame);
+    editor.set_rotation(Quat::from_rotation_z(0.4));
+    assert!(editor.commit_poser_manipulation(rig, &frame, true));
+    assert!(
+        editor.pose_layers(&world)[&world.agent_id].rotations[rig.names["mHead"]]
+            .dot(pose.rotations[rig.names["mHead"]])
+            .abs()
+            < 0.999
+    );
+    editor.set_pose_scale(rig, mirrored[0], shape.scale[mirrored[0]] * 2.0);
+    let scaled = editor.pose_layers(&world)[&world.agent_id].scales[mirrored[0]];
+    assert!(
+        scaled.abs_diff_eq(data::bounded_scale(shape.scale[mirrored[0]] * 2.0), 1e-5),
+        "{scaled:?}"
+    );
+    assert_eq!(data::bounded_scale(Vec3::new(-20.0, 0.0, -1e-6)), Vec3::new(-10.0, 0.001, -0.001));
+}

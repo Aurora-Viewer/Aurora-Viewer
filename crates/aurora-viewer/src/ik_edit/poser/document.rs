@@ -66,9 +66,7 @@ impl Document {
                     && (0.99..=1.01).contains(&q.length_squared())
                     && p.is_finite()
                     && p.abs().max_element() <= 100.0
-                    && s.is_finite()
-                    && s.min_element() >= 0.001
-                    && s.max_element() <= 100.0
+                    && data::scale_valid(s)
             })
     }
     pub fn apply(&self, rig: &Rig, session: &mut data::Session, mode: LoadMode, model: Mat4) -> bool {
