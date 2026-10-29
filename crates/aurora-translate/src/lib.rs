@@ -4,6 +4,8 @@
 
 pub mod detect;
 pub mod lang;
+pub mod prompt;
 
 pub use detect::{Detected, detect, nothing_to_translate};
 pub use lang::{LANGS, Lang, lang, parse_lang};
+pub use prompt::{PromptKind, Rejected, clean_output, prompt};
