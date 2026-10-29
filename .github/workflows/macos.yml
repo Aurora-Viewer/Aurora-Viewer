@@ -76,7 +76,8 @@ jobs:
       - name: Tests (rest)
         if: steps.changes.outputs.code == 'true' && github.event_name == 'merge_group'
         # every failure of the run at once: the Apple GPU is reached here only
-        run: cargo test --profile ci --workspace --locked --no-fail-fast -- --skip ui::
+        run: |
+          cargo test --profile ci --workspace --locked --no-fail-fast -- --skip ui::
       # the offline demo past its loading fade, then quit: a missing image
       # or a non-zero exit (a pipeline Metal refused, a GPU fault) fails.
       # The build takes about 5 minutes and the frames a few seconds: a
@@ -138,7 +139,8 @@ jobs:
           save-if: false
       - name: Tests (interface)
         if: steps.changes.outputs.code == 'true'
-        run: cargo test --profile ci --workspace --locked --no-fail-fast -- ui::
+        run: |
+          cargo test --profile ci --workspace --locked --no-fail-fast -- ui::
 
   macos-result:
     # The check that main requires (its name is the one of the single job
