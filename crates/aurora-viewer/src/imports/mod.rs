@@ -4,6 +4,7 @@
 //! scheduled on the scene's low-priority workers, never the frame thread.
 
 pub mod animation;
+pub mod animation_inventory;
 pub mod animation_model;
 pub mod demo;
 pub mod files;
@@ -420,6 +421,7 @@ impl Entry {
 }
 
 pub(super) enum Worker {
+    AnimationInventoryDemo(Result<local::Mesh, String>),
     AnimationModel(Uuid, u64, Option<Result<Arc<animation_model::Model>, String>>),
     Loaded(Uuid, Vec<Entry>),
     Reloaded(Uuid, Result<Vec<Entry>, String>),
@@ -511,6 +513,7 @@ pub struct Imports {
     pub own_avatar_preview: Option<Uuid>,
     pub animation_model_cache: HashMap<Uuid, std::sync::Weak<animation_model::Model>>,
     pub animation_models_dirty: bool,
+    pub animation_inventory: animation_inventory::State,
     pub load_preferences: Preferences,
     cost_overrides: HashMap<(Kind, bool), i32>,
     pub spent: i32,
@@ -563,6 +566,7 @@ impl Default for Imports {
             own_avatar_preview: None,
             animation_model_cache: HashMap::new(),
             animation_models_dirty: false,
+            animation_inventory: Default::default(),
             load_preferences: Default::default(),
             cost_overrides: HashMap::new(),
             spent: 0,
@@ -1078,6 +1082,10 @@ impl Imports {
                 Worker::AnimationModel(id, generation, result) => {
                     self.complete_animation_model(id, generation, result);
                 }
+                Worker::AnimationInventoryDemo(result) => match result {
+                    Ok(mesh) => self.animation_inventory.demo_mesh = Some(mesh),
+                    Err(error) => self.message = error,
+                },
                 Worker::Model(id, generation, model, prepared) => {
                     if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && e.preview_generation == generation) {
                         entry.preview_pending = false;

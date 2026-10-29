@@ -4577,6 +4577,23 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Restart the viewer and select either model without reopening a file picker.
   Remove an entry: its source file must remain on disk. A moved/missing source
   stays in the list, reports a load error and keeps the previous preview.
+  `animation-inventory` opens the searchable inventory picker with a synthetic
+  copyable Bento tail selected. Selecting a row must do nothing in the world;
+  only **Rez once and save preview** prepares it. `animation-inventory-ready`
+  triggers this action once in the offline simulator. It must identify the
+  copied root by full source ItemID, save the animated visual snapshot and
+  remove that copy. With `RUST_LOG=aurora_viewer=info`, the log reports
+  `rez_once=1`, `snapshot_saved=true` and
+  `cleanup_confirmed=true`. Restart the same scenario: it must report
+  `saved_model_reused=true rez_once=0` and show the same moving tail. Removing
+  the saved entry allows a fresh preparation. Cancellation still cleans up.
+  These synthetic modes never contact a grid. **Human grid check:** add a
+  copyable rigged object on build-enabled land, confirm the original remains
+  in inventory and the rezzed copy goes to Trash; select the model after a
+  viewer restart without another rez or wearing. Also check rez denial,
+  cancel/close during preparation, missing/corrupt snapshot, no-copy and
+  coalesced-item rejection. A failure to identify or confirm cleanup must
+  show the manual-cleanup warning and must never delete another object.
   `AURORA_DEMO_IMPORT_FILE` replaces the fixtures with an existing file,
   read without modification; choose the mode matching its type.
 

@@ -395,6 +395,12 @@ pub fn inventory_rez(rez: &aurora_net::inventory::rez::RezInventory) -> ObjectUp
         &rez.item.name,
     );
     o.full_id = id;
+    if rez.item.id == crate::imports::animation_inventory::DEMO_ITEM {
+        o.volume.sculpt = Some(aurora_prim::params::SculptParams {
+            texture: crate::imports::animation_inventory::DEMO_MESH,
+            sculpt_type: LL_SCULPT_TYPE_MESH,
+        });
+    }
     o.owner_id = DEMO_AGENT;
     o.update_flags = crate::ui::context::flags::OBJECT_MODIFY
         | crate::ui::context::flags::OBJECT_COPY

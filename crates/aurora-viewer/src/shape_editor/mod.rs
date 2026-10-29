@@ -4,7 +4,7 @@
 pub mod camera;
 pub mod catalog;
 pub mod demo;
-mod material;
+pub(crate) mod material;
 mod preview;
 #[cfg(test)]
 pub(crate) mod tests;

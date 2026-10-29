@@ -1513,11 +1513,13 @@ fn the_saved_animation_model_list_selects_an_entry_and_removes_only_its_referenc
             id: Uuid::new_v4(),
             name: "Tail fixture".into(),
             path: "tail.dae".into(),
+            inventory: None,
         },
         super::super::animation_model::Saved {
             id: Uuid::new_v4(),
             name: "Wing fixture".into(),
             path: "wings.glb".into(),
+            inventory: None,
         },
     ];
     let mut model = super::super::animation_model::Selection::default();
@@ -1531,7 +1533,7 @@ fn the_saved_animation_model_list_selects_an_entry_and_removes_only_its_referenc
             },
             |ui| {
                 ui.set_width(330.0);
-                animation_model_controls(ui, &theme.palette(), id, model, &saved, &mut actions);
+                animation_model_controls(ui, &theme.palette(), id, model, &saved, "", &mut actions);
             },
         );
         output.textures_delta.clear();

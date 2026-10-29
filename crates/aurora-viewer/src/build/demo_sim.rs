@@ -129,6 +129,7 @@ impl DemoSim {
                 .unwrap_or(crate::demo::DEMO_AGENT);
             ObjectProps {
                 object_id: id,
+                item_id: Uuid::nil(),
                 full: true,
                 creator_id: DEMO_CREATOR,
                 owner_id,
@@ -448,10 +449,25 @@ impl DemoSim {
                 }
                 events
             }
-            BuildCmd::RezInventory(rez) => vec![NetEvent::ObjectUpdates {
-                handle: rez.handle,
-                objects: vec![crate::demo::inventory_rez(rez)],
-            }],
+            BuildCmd::RezInventory(rez) => {
+                let object = crate::demo::inventory_rez(rez);
+                let id = object.full_id;
+                self.props.insert(
+                    id,
+                    ObjectProps {
+                        object_id: id,
+                        item_id: rez.item.id,
+                        owner_id: world.agent_id,
+                        full: true,
+                        name: rez.item.name.clone(),
+                        ..Default::default()
+                    },
+                );
+                vec![NetEvent::ObjectUpdates {
+                    handle: rez.handle,
+                    objects: vec![object],
+                }]
+            }
             BuildCmd::Select { handle, local_ids } => {
                 let ids = Self::uuids(world, *handle, local_ids);
                 self.reply_props(world, &ids)

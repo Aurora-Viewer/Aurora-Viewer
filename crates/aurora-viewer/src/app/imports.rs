@@ -10,6 +10,18 @@ const SOUND_PREVIEW: u64 = u64::MAX - 10;
 impl App {
     pub(super) fn show_imports(&mut self, ctx: &egui::Context, palette: &Palette) {
         self.imports.load_preferences = self.settings.imports.clone();
+        let profile = crate::imports::persistence::profile(self.world.agent_id, &self.settings.login_uri());
+        if self.imports.animation_inventory.profile != profile {
+            for entry in &mut self.imports.entries {
+                if self.imports.load_preferences.animation_models.iter().any(|saved| {
+                    Some(saved.id) == entry.animation_model.saved
+                        && saved.inventory.as_ref().is_some_and(|origin| origin.profile != profile)
+                }) {
+                    crate::imports::animation_model::reset(entry);
+                }
+            }
+            self.imports.animation_inventory.profile = profile;
+        }
         if self.demo && !self.imports.demo_started {
             self.world.balance = Some(1000);
             self.imports.demo_started = true;
@@ -67,6 +79,7 @@ impl App {
             self.send(NetCommand::DiscardMeshQuote(token));
         }
         let commands = self.imports.poll(ctx, &self.scene.jobs, &self.world, &self.settings.inventory);
+        self.poll_inventory_animation_model(ctx);
         if std::mem::take(&mut self.imports.animation_models_dirty) {
             self.settings
                 .imports
@@ -354,6 +367,7 @@ impl App {
                     self.imports
                         .animation_model_file(id, &self.scene.jobs, ctx, self.scene.avatar_lib.clone());
                 }
+                Action::InventoryAnimationModel(id) => self.choose_inventory_animation_model(id),
                 Action::DefaultAnimationModel(id) => {
                     if let Some(entry) = self.imports.entries.iter_mut().find(|e| e.id == id) {
                         crate::imports::animation_model::reset(entry);
@@ -592,6 +606,7 @@ impl App {
             }
         }
         self.update_import_avatar_preview();
+        self.show_inventory_animation_model(ctx, palette);
         if let Some(asset) = self.imports.map_picker.show(ctx, palette, &mut self.world, &self.ui_images)
             && let Some((id, slot)) = self.imports.map_target.take()
         {

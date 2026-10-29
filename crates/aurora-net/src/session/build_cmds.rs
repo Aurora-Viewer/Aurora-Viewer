@@ -904,6 +904,7 @@ pub(super) fn parse_properties(m: &msgs::ObjectProperties) -> Vec<ObjectProps> {
         .iter()
         .map(|b| ObjectProps {
             object_id: b.object_id,
+            item_id: b.item_id,
             full: true,
             creator_id: b.creator_id,
             owner_id: b.owner_id,

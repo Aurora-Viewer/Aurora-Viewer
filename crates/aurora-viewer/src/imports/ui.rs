@@ -10,6 +10,7 @@ use egui::{RichText, Vec2};
 
 const IMPORT_POSITION: egui::Pos2 = egui::Pos2 { x: 48.0, y: 80.0 };
 
+pub(crate) mod animation_inventory;
 pub(super) mod destination;
 mod inspector;
 pub(crate) mod launcher;
@@ -93,6 +94,7 @@ pub enum Action {
     Preview(Uuid),
     Play(Uuid, bool),
     AnimationModel(Uuid),
+    InventoryAnimationModel(Uuid),
     SelectAnimationModel(Uuid, Uuid),
     RemoveAnimationModel(Uuid),
     DefaultAnimationModel(Uuid),
@@ -592,6 +594,7 @@ fn animation_model_controls(
     id: Uuid,
     model: &super::animation_model::Selection,
     saved: &[super::animation_model::Saved],
+    profile: &str,
     actions: &mut Vec<Action>,
 ) {
     ui.label(aurora_i18n::tr!("import-animation-model"));
@@ -614,6 +617,9 @@ fn animation_model_controls(
         .show_ui(ui, |ui| {
             selection(ui, &mut selected, None, aurora_i18n::tr!("import-animation-model-default"));
             for saved in saved {
+                if saved.inventory.as_ref().is_some_and(|origin| origin.profile != profile) {
+                    continue;
+                }
                 selection(ui, &mut selected, Some(saved.id), &saved.name).on_hover_text(saved.path.display().to_string());
             }
         })
@@ -628,7 +634,7 @@ fn animation_model_controls(
             actions.push(Action::DefaultAnimationModel(id));
         }
     }
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let choose = tool_button(ui, p, aurora_i18n::tr!("import-animation-model-choose"), !model.pending);
         if choose.clicked() {
             actions.push(Action::AnimationModel(id));
@@ -657,6 +663,9 @@ fn animation_model_controls(
             ui.spinner();
         }
     });
+    if tool_button(ui, p, aurora_i18n::tr!("import-animation-inventory-choose"), !model.pending).clicked() {
+        actions.push(Action::InventoryAnimationModel(id));
+    }
     if let Some(error) = &model.error {
         ui.label(RichText::new(error).small().color(p.danger));
         ui.label(

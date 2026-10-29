@@ -853,6 +853,8 @@ fn set_slot_alpha(alpha: &mut Vec<AlphaKind>, generation: &mut u64, changes: &mu
 }
 
 pub struct TextureStreamer {
+    /// Temporary 256px demand while an inventory model snapshot is prepared.
+    model_previews: std::collections::HashSet<Uuid>,
     entries: HashMap<Uuid, Entry>,
     /// The textures `update` has something to do for (`Entry::has_work`),
     /// each listed once. It only visits these: walking every texture at
@@ -1126,6 +1128,7 @@ impl TextureStreamer {
             can_fetch: false,
             demo_source: None,
             ui_wanted: Default::default(),
+            model_previews: Default::default(),
             ui_permanent: Default::default(),
             ui_ready: HashMap::new(),
             ui_previews: Default::default(),
@@ -1202,6 +1205,24 @@ impl TextureStreamer {
             size: entry.and_then(|e| e.info).map(|i| (i.width, i.height)),
             procedural: self.local_slots.contains_key(id),
         }
+    }
+
+    pub fn want_model_preview(&mut self, id: Uuid, wanted: bool) {
+        if wanted {
+            self.model_previews.insert(id);
+        } else {
+            self.model_previews.remove(&id);
+        }
+    }
+
+    pub fn model_preview_ready(&self, id: &Uuid) -> bool {
+        *id == aurora_prim::te::BLANK_TEXTURE
+            || is_builtin_transparent(id)
+            || self.is_local(id)
+            || self
+                .full_size(id)
+                .zip(self.decoded_level(id))
+                .is_some_and(|((w, h), level)| level <= texture_cache::preview_discard(w, h))
     }
 
     /// The texture has see-through pixels (None until it is decoded): the
@@ -1806,6 +1827,7 @@ impl TextureStreamer {
             entries,
             reductions,
             ui_wanted,
+            model_previews,
             todo,
             counts,
             by_fetch_key,
@@ -1817,6 +1839,9 @@ impl TextureStreamer {
         let mut bytes_below = 0;
         let mut pending = 0;
         for (id, e) in entries.iter_mut() {
+            if !model_previews.is_empty() && model_previews.contains(id) {
+                e.need_px = e.need_px.max(256.0);
+            }
             if e.keep_pixels {
                 e.want = 0;
                 bytes_below += bytes_at(e, 0);
@@ -1828,6 +1853,11 @@ impl TextureStreamer {
             let (want, keep) = wanted(full_px, levels, e, dropped);
             let in_view = e.need_px > 0.0 || e.fixed_px > 0.0;
             e.want = if full && in_view && e.source == TexSource::Asset { 0 } else { want };
+            if model_previews.contains(id)
+                && let Some(info) = e.info
+            {
+                e.want = e.want.min(texture_cache::preview_discard(info.width, info.height));
+            }
             // (still on its way: there is somewhere to download it from, or
             // what is held of it has more to give)
             let reachable = can_fetch || e.fetching || e.decoding || !e.data.is_empty() || e.cache_state < 2;
@@ -1854,6 +1884,7 @@ impl TextureStreamer {
                     && !e.decoding
                     && e.source == TexSource::Asset
                     && !ui_wanted.contains(id)
+                    && !model_previews.contains(id)
                 {
                     reductions.push((*id, keep, bytes_at(e, d)));
                 }
@@ -3577,6 +3608,32 @@ mod tests {
         assert_eq!(s.pressure.step(), step);
         s.entries.extend(entries.into_iter().map(|(id, e)| (Uuid::from_u128(id), e)));
         s
+    }
+
+    #[test]
+    fn inventory_model_texture_demand_waits_for_preview_pixels_and_releases_its_boost() {
+        let id = Uuid::from_u128(1);
+        let mut e = entry(Some(4), 0.0);
+        e.info = Some(J2kInfo {
+            width: 1024,
+            height: 1024,
+            components: 4,
+            levels: 11,
+        });
+        let mut stream = pressed(3, vec![(1, e)]);
+        assert!(!stream.model_preview_ready(&id));
+        stream.want_model_preview(id, true);
+        stream.recompute_wants();
+        assert_eq!(
+            stream.entries[&id].want, 2,
+            "an offscreen preparation still needs 256px source data"
+        );
+        stream.entries.get_mut(&id).unwrap().decoded = Some(2);
+        assert!(stream.model_preview_ready(&id));
+        stream.want_model_preview(id, false);
+        stream.recompute_wants();
+        assert!(stream.entries[&id].want > 2, "normal memory pressure resumes after preparation");
+        assert!(stream.model_previews.is_empty());
     }
 
     #[test]
