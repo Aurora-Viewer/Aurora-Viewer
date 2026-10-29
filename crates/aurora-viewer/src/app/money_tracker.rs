@@ -105,11 +105,13 @@ impl App {
         }
     }
 
-    /// AURORA_DEMO_PAYMENT=card|legacy|sent|friend|off (docs/TESTING.md): a
-    /// resident's conversation open on their message, then their two
-    /// payments as cards, in the bubbles or the legacy lines; `sent`: then
-    /// ours to them (the demo keeps no transcript: what comes back when the
-    /// conversation is opened again is a unit test's); `friend`: a friend's payment opens their conversation, a stranger's
+    /// AURORA_DEMO_PAYMENT=card|legacy|sent|sent-open|friend|off
+    /// (docs/TESTING.md): a resident's conversation open on their message,
+    /// then their two payments as cards, in the bubbles or the legacy lines;
+    /// `sent`: then ours to them (the demo keeps no transcript: what comes
+    /// back when the conversation is opened again is a unit test's);
+    /// `sent-open`: no conversation open, ours opens it with "Open the
+    /// conversation when you pay a resident" on; `friend`: a friend's payment opens their conversation, a stranger's
     /// (no conversation) shows nowhere; `off`: the same with the option off,
     /// no conversation opens.
     pub(super) fn demo_payment(&mut self) {
@@ -134,6 +136,14 @@ impl App {
         self.panels.perf = false;
         self.panels.chat = true;
         ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 300.0), egui::vec2(600.0, 440.0));
+        if mode == "sent-open" {
+            self.settings.payment_sent_opens_conversation = true;
+            self.world.payments.open_when_paying = true;
+            self.world
+                .payment(&gift(6, agent, DEMO_NOVA, 300, aurora_i18n::tr!("demo-payment-rent")));
+            self.chat_ui.open(DEMO_NOVA);
+            return;
+        }
         if mode == "friend" || mode == "off" {
             self.settings.payment_opens_conversation = mode == "friend";
             self.world.payments.open_for_friends = self.settings.payment_opens_conversation;

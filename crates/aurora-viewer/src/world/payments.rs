@@ -15,9 +15,10 @@
 //!
 //! Our own direct payment to a resident (the Legacy Viewer's PaymentSent,
 //! you_paid_ldollars_gift) is the same the other way: its card in the
-//! payee's conversation when it is open, never opening one (we just paid
-//! them), and its line in their transcript, so that it is still there when
-//! the conversation is opened again, as a received payment is (#1198).
+//! payee's conversation when it is open, or always with "Open the
+//! conversation when you pay a resident" (off by default), and its line in
+//! their transcript, so that it is still there when the conversation is
+//! opened again, as a received payment is (#1198).
 
 use super::{ChatKind, ChatLine, Origin, World};
 use std::collections::VecDeque;
@@ -53,6 +54,8 @@ pub struct Payments {
     recent: VecDeque<Uuid>,
     /// A friend's payment opens their conversation, from the preferences.
     pub open_for_friends: bool,
+    /// Our own payment opens the payee's conversation, from the preferences.
+    pub open_when_paying: bool,
 }
 
 impl Payments {
@@ -169,8 +172,12 @@ impl World {
         let note = self.notice_line(text.clone());
         self.transcript_only(other, &note);
         let open = self.social.has_session(&other);
-        let friend = !sent && self.payments.open_for_friends && self.social.is_friend(&other) && self.rlva_can_start_im(other);
-        if !open && !friend {
+        let opens = if sent {
+            self.payments.open_when_paying
+        } else {
+            self.payments.open_for_friends && self.social.is_friend(&other)
+        };
+        if !open && !(opens && self.rlva_can_start_im(other)) {
             return;
         }
         self.social.session_mut(other);
@@ -287,6 +294,24 @@ mod tests {
         assert!(with.contains("75") && with.ends_with("Thanks"), "{with}");
         let ours = sentence("Jane".into(), true, 75, "Thanks");
         assert!(ours != with && ours.contains("Jane") && ours.ends_with("Thanks"), "{ours}");
+    }
+
+    #[test]
+    fn our_payment_opens_the_conversation_when_asked() {
+        for open in [true, false] {
+            let mut w = world();
+            w.payments.open_when_paying = open;
+            w.payment(&paid(30, GIFT, AGENT, JANE, 120, "Payment"));
+            assert_eq!(cards(&w, JANE).len(), usize::from(open), "{open}");
+            if open {
+                assert_eq!(w.social.ims[0].unread, 0, "our own doing is not unread");
+            }
+        }
+        // a received payment from a stranger still opens nothing
+        let mut w = world();
+        w.payments.open_when_paying = true;
+        w.payment(&paid(31, GIFT, JANE, AGENT, 120, "Payment"));
+        assert!(w.social.ims.is_empty());
     }
 
     #[test]
