@@ -7019,6 +7019,7 @@ impl App {
         images.extend(self.buy_land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
         images.extend(self.chat_ui.wanted_images.drain());
+        images.extend(self.notif_ui.wanted_images.drain());
         images.extend(self.pay_ui.wanted_images.drain());
         images.extend(self.people_ui.wanted_images.drain());
         images.extend(self.contacts_people_ui.wanted_images.drain());
@@ -10035,6 +10036,22 @@ impl App {
                 }
                 self.notif_ui.open = true;
                 self.notif_ui.center.tab = ui::notification_center::Tab::History;
+            }
+            // the notice's attachment saved from its card
+            if self.frame_count == crate::demo::notifs::SAVE_AT
+                && mode == "group-notice-saved"
+                && let Some(id) = self
+                    .world
+                    .notifications
+                    .list
+                    .iter()
+                    .find(|n| n.offered_attachment().is_some())
+                    .map(|n| n.id)
+            {
+                let (commands, _) = self.world.respond_notification(id, crate::world::notifications::Response::Accept);
+                for command in commands {
+                    self.send(command);
+                }
             }
             if self.frame_count == crate::demo::notifs::ANSWER_AT && matches!(mode.as_str(), "history" | "legacy-history") {
                 // a few cards answered or closed: they go to the history
@@ -14705,6 +14722,7 @@ impl App {
                 let classic_bars = self.bars_look().0;
                 let mut toast_env = ui::notifications::ToastEnv {
                     pics: &self.avatar_pics,
+                    images: &self.ui_images,
                     emoji: &mut self.emoji,
                     hidden: toasts_hidden,
                     message_seconds: f64::from(self.settings.im_toast_seconds),

@@ -41,6 +41,8 @@ pub struct NotifUi {
     last_seen: u64,
     /// Profile pictures the cards of friends and messages want.
     pub wanted_pics: HashSet<Uuid>,
+    /// Textures the cards want: the insignias of the group notices' groups.
+    pub wanted_images: HashSet<Uuid>,
     /// The bell's rectangle (Aurora's center unrolls under it).
     pub bell: Option<egui::Rect>,
     /// With the islands, from the system island's left edge to the bell
@@ -56,6 +58,8 @@ pub struct NotifUi {
 /// away (mouselook, the photo's full frame: nothing over the view).
 pub struct ToastEnv<'a> {
     pub pics: &'a HashMap<Uuid, egui::TextureHandle>,
+    /// Interface textures by id (the group notices' insignias).
+    pub images: &'a HashMap<Uuid, egui::TextureHandle>,
     pub emoji: &'a mut super::emoji::Emoji,
     pub hidden: bool,
     /// Seconds a message toast stays (NotificationToastLifeTime).
@@ -325,18 +329,30 @@ pub(super) fn person_card(
 
 /// One notification card; returns the user's answer. `aurora`: the card of
 /// Aurora's center (its kind in a coloured disc beside the text, the width
-/// of its panel).
+/// of its panel). A group notice shows its group's insignia instead of the
+/// kind (LLToastGroupNotifyPanel's group_icon), from `images` once loaded
+/// (asked for in `wanted`), and its attachment to save.
 pub(super) fn card(
     ui: &mut egui::Ui,
     p: &Palette,
     icons: &Icons,
     world: &World,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+    wanted: &mut HashSet<Uuid>,
     n: &mut Notification,
     toast: bool,
     aurora: bool,
 ) -> Option<Response> {
     let mut out = None;
     let (icon, accent) = kind_style(p, n.kind);
+    let insignia = match &n.data {
+        Data::GroupNotice { group, .. } => super::chat::group_insignia(world, group),
+        _ => None,
+    };
+    if let Some(i) = insignia {
+        wanted.insert(i);
+    }
+    let picture = insignia.and_then(|i| images.get(&i));
     // in the list, an unread card is lighter than a read one
     let fill = if aurora {
         p.field
@@ -362,7 +378,9 @@ pub(super) fn card(
             ui.horizontal(|ui| {
                 if !aurora {
                     let (r, _) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
-                    if let Some(t) = icons.get(icon) {
+                    if let Some(t) = picture {
+                        super::widgets::square_picture(ui, r, t);
+                    } else if let Some(t) = icons.get(icon) {
                         ui.painter().image(
                             t.id(),
                             egui::Rect::from_center_size(r.center(), Vec2::splat(16.0)),
@@ -428,6 +446,80 @@ pub(super) fn card(
                 // drawn by `person_card`; the restart's live card by
                 // `region_restart::bell_card`, its text alone here
                 Data::None | Data::Presence { .. } | Data::Message { .. } | Data::RegionRestart => {}
+                // the attachment as in the group's Notices tab, saved from
+                // here (LLToastGroupNotifyPanel::onClickAttachment)
+                Data::GroupNotice { attachment: Some(a), .. } => {
+                    ui.add_space(6.0);
+                    // the card's width: the frame's content is laid out in
+                    // a column of that width (in the indent's row it would
+                    // follow the row and grow with its content)
+                    let inner = ui.available_width() - indent - 16.0;
+                    ui.horizontal(|ui| {
+                        ui.add_space(indent);
+                        egui::Frame::new()
+                            .fill(p.bar)
+                            .corner_radius(ui.visuals().widgets.inactive.corner_radius)
+                            .inner_margin(egui::Margin::symmetric(8, 5))
+                            .show(ui, |ui| {
+                                ui.vertical(|ui| {
+                                    ui.set_width(inner);
+                                    let (icon, label) = if a.saved {
+                                        ("check", aurora_i18n::tr!("ui-group-notices-saved"))
+                                    } else {
+                                        ("download-filled", aurora_i18n::tr!("ui-group-notices-save"))
+                                    };
+                                    // beside the name while it leaves the name
+                                    // room, else under it (a long translation)
+                                    let button =
+                                        super::widgets::action_button_keyed_content(ui, icon, label, None) + super::widgets::KEYED_PAD;
+                                    let inline = inner - 22.0 - button >= 110.0;
+                                    let mut save = |ui: &mut egui::Ui| {
+                                        let save = super::widgets::action_button_if(
+                                            ui,
+                                            p,
+                                            icon,
+                                            label,
+                                            super::widgets::ActionKind::Flat,
+                                            Vec2::new(0.0, 24.0),
+                                            !a.saved,
+                                        );
+                                        if save.clicked() {
+                                            out = Some(Response::Accept);
+                                        }
+                                    };
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 7.0;
+                                        super::widgets::glyph(ui, super::group_profile::attachment_icon(a.asset_type), p.amber, 15.0);
+                                        let w = if inline { inner - 22.0 - button - 8.0 } else { inner - 22.0 };
+                                        ui.allocate_ui(Vec2::new(w, 28.0), |ui| {
+                                            ui.vertical(|ui| {
+                                                ui.spacing_mut().item_spacing.y = 0.0;
+                                                ui.add(
+                                                    egui::Label::new(RichText::new(&a.name).size(12.0).strong().color(p.ink)).truncate(),
+                                                )
+                                                .on_hover_text(&a.name);
+                                                ui.label(
+                                                    RichText::new(super::group_profile::asset_label(a.asset_type))
+                                                        .size(11.0)
+                                                        .color(p.muted),
+                                                );
+                                            });
+                                        });
+                                        if inline {
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| save(ui));
+                                        }
+                                    });
+                                    if !inline {
+                                        ui.horizontal(|ui| {
+                                            ui.add_space(22.0);
+                                            save(ui);
+                                        });
+                                    }
+                                });
+                            });
+                    });
+                }
+                Data::GroupNotice { .. } => {}
                 Data::Lure { change_rating, .. } => {
                     let accept = if *change_rating {
                         aurora_i18n::tr!("ui-chat-invite-change-and-continue")
@@ -589,11 +681,15 @@ pub(super) fn card(
         if aurora {
             ui.horizontal_top(|ui| {
                 let (r, _) = ui.allocate_exact_size(Vec2::splat(30.0), egui::Sense::hover());
-                ui.painter().circle_filled(r.center(), 15.0, accent);
-                if let Some(t) = icons.get(icon) {
-                    egui::Image::new(t)
-                        .tint(p.on_accent)
-                        .paint_at(ui, egui::Rect::from_center_size(r.center(), Vec2::splat(15.0)));
+                if let Some(t) = picture {
+                    super::widgets::square_picture(ui, r, t);
+                } else {
+                    ui.painter().circle_filled(r.center(), 15.0, accent);
+                    if let Some(t) = icons.get(icon) {
+                        egui::Image::new(t)
+                            .tint(p.on_accent)
+                            .paint_at(ui, egui::Rect::from_center_size(r.center(), Vec2::splat(15.0)));
+                    }
                 }
                 ui.vertical(|ui| content(ui));
             });
@@ -805,7 +901,7 @@ pub fn show(
                                     let r = if matches!(n.data, Data::Message { .. }) {
                                         person_card(ui, p, icons, world, env, &mut nui.wanted_pics, n, false)
                                     } else {
-                                        card(ui, p, icons, world, n, false, false)
+                                        card(ui, p, icons, world, env.images, &mut nui.wanted_images, n, false, false)
                                     };
                                     if let Some(r) = r {
                                         answers.push((n.id, r));
@@ -838,7 +934,7 @@ pub fn show(
                         let r = if matches!(n.data, Data::Presence { .. } | Data::Message { .. }) {
                             person_card(ui, p, icons, world, env, &mut nui.wanted_pics, n, true)
                         } else {
-                            card(ui, p, icons, world, n, true, false)
+                            card(ui, p, icons, world, env.images, &mut nui.wanted_images, n, true, false)
                         };
                         match r {
                             // closing a toast only hides it: the offer waits in
@@ -942,7 +1038,17 @@ mod tests {
                     },
                     |ui| {
                         ui.set_width(390.0);
-                        answer = card(ui, &p, &icons, &world, &mut list.list[0], !aurora, aurora);
+                        answer = card(
+                            ui,
+                            &p,
+                            &icons,
+                            &world,
+                            &HashMap::new(),
+                            &mut HashSet::new(),
+                            &mut list.list[0],
+                            !aurora,
+                            aurora,
+                        );
                     },
                 );
                 output.textures_delta.clear();
@@ -981,6 +1087,117 @@ mod tests {
     }
 
     const JANE: Uuid = Uuid::from_u128(2);
+
+    /// A group notice's attachment: its name and its save button inside the
+    /// card in both styles, the click saving it (then "Saved", greyed).
+    #[test]
+    fn a_notice_attachment_is_saved_from_its_card_in_both_styles() {
+        for aurora in [false, true] {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = Icons::default();
+            let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let mut list = Notifications::default();
+            list.push(
+                Kind::Group,
+                "Northern Wolves : Workshop",
+                "Sent by Jane Doe\nBring the kit.",
+                Data::GroupNotice {
+                    group: Uuid::from_u128(6),
+                    attachment: Some(crate::world::notifications::NoticeAttachment {
+                        from: JANE,
+                        tx: Uuid::from_u128(3),
+                        name: "Texture kit".into(),
+                        asset_type: 6,
+                        saved: false,
+                    }),
+                },
+            );
+            let mut time = 0.0;
+            let mut frame = |events, list: &mut Notifications| {
+                time += 0.1;
+                let mut answer = None;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        ui.set_width(320.0);
+                        answer = card(
+                            ui,
+                            &p,
+                            &icons,
+                            &world,
+                            &HashMap::new(),
+                            &mut HashSet::new(),
+                            &mut list.list[0],
+                            true,
+                            aurora,
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                (output, answer)
+            };
+            for _ in 0..3 {
+                frame(vec![], &mut list);
+            }
+            let text_rect = |output: &egui::FullOutput, text: &str| {
+                output.shapes.iter().find_map(|s| match &s.shape {
+                    egui::Shape::Text(t) if t.galley.text() == text => Some(egui::Rect::from_min_size(t.pos, t.galley.size())),
+                    _ => None,
+                })
+            };
+            let (output, _) = frame(vec![], &mut list);
+            let body = output
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::Shape::Text(t) if t.galley.text().contains("Bring the kit.") => {
+                        Some(egui::Rect::from_min_size(t.pos, t.galley.size()))
+                    }
+                    _ => None,
+                })
+                .expect("body shown");
+            assert!(text_rect(&output, "Texture kit").is_some(), "aurora={aurora}: attachment named");
+            let save = text_rect(&output, aurora_i18n::tr!("ui-group-notices-save")).expect("save button");
+            // the toast's own width: nothing past its time and close button
+            let right = 320.0 + 16.0;
+            assert!(
+                save.right() <= right,
+                "aurora={aurora}: button inside the card ({} > {right})",
+                save.right()
+            );
+            assert!(save.top() > body.bottom(), "under the text");
+            frame(vec![egui::Event::PointerMoved(save.center())], &mut list);
+            for pressed in [true, false] {
+                let (_, answer) = frame(
+                    vec![egui::Event::PointerButton {
+                        pos: save.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                    &mut list,
+                );
+                if !pressed {
+                    assert!(matches!(answer, Some(Response::Accept)), "aurora={aurora}: {answer:?}");
+                }
+            }
+            let (out, _) = list.respond(list.list[0].id, Response::Accept, |_| Uuid::from_u128(7), Uuid::nil());
+            assert_eq!(out.len(), 1);
+            let (output, _) = frame(vec![], &mut list);
+            assert!(
+                text_rect(&output, aurora_i18n::tr!("ui-group-notices-saved")).is_some(),
+                "aurora={aurora}: saved"
+            );
+        }
+    }
 
     #[test]
     fn object_offer_buttons_are_visible_and_clickable_in_both_styles() {
@@ -1027,7 +1244,17 @@ mod tests {
                         },
                         |ui| {
                             ui.set_width(320.0);
-                            answer = card(ui, &p, &icons, &world, &mut list.list[0], true, aurora);
+                            answer = card(
+                                ui,
+                                &p,
+                                &icons,
+                                &world,
+                                &HashMap::new(),
+                                &mut HashSet::new(),
+                                &mut list.list[0],
+                                true,
+                                aurora,
+                            );
                         },
                     );
                     output.textures_delta.clear();
@@ -1107,7 +1334,17 @@ mod tests {
                     },
                     |ui| {
                         ui.set_width(320.0);
-                        answer = card(ui, &p, &icons, &world, &mut list.list[0], toast, aurora);
+                        answer = card(
+                            ui,
+                            &p,
+                            &icons,
+                            &world,
+                            &HashMap::new(),
+                            &mut HashSet::new(),
+                            &mut list.list[0],
+                            toast,
+                            aurora,
+                        );
                     },
                 );
                 output.textures_delta.clear();

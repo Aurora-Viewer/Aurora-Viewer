@@ -171,6 +171,8 @@ struct PostU {
     /// A cut-out photo (cutout.rs): 1 the snapshot, 2 the live view.
     cutout: f32,
     _pad: f32,
+    /// The part of the photo the frame draws ([`photo_part`]).
+    photo_part: [f32; 4],
 }
 
 /// Where `PostU::auto_exposure` sits in the post uniforms.
@@ -2230,6 +2232,22 @@ fn whole_proj(proj: Mat4, photo_tile: Mat4) -> Mat4 {
     } else {
         photo_tile.inverse() * proj
     }
+}
+
+/// The part of the whole image a frame draws with `photo_tile` (see
+/// [`whole_proj`]), in fractions of it: left, top, width, height (0, 0, 1,
+/// 1 outside a tiled photo). The glow keeps the whole photo's 512 x 512
+/// texels with it: drawn on a tile's own, its halo shrank with the tile and
+/// stopped at its border, a line along every seam.
+fn photo_part(photo_tile: Mat4) -> [f32; 4] {
+    let (sx, sy) = (photo_tile.x_axis.x, photo_tile.y_axis.y);
+    if photo_tile == Mat4::IDENTITY || sx <= 0.0 || sy <= 0.0 {
+        return [0.0, 0.0, 1.0, 1.0];
+    }
+    // the tile's centre in normalised device coordinates (y up)
+    let (cx, cy) = (-photo_tile.w_axis.x / sx, -photo_tile.w_axis.y / sy);
+    let (w, h) = (1.0 / sx, 1.0 / sy);
+    [(cx + 1.0) * 0.5 - w * 0.5, (1.0 - cy) * 0.5 - h * 0.5, w, h]
 }
 
 /// Whether this frame uses the receiver bias of before
@@ -5519,6 +5537,7 @@ impl Backend {
                 (true, false) => 2.0,
             },
             _pad: 0.0,
+            photo_part: photo_part(f.photo_tile),
         };
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
@@ -7987,6 +8006,24 @@ mod tests {
         // the photo's centre, around which the cascades are laid, is
         // outside the tile
         assert!((tile * photo).project_point3(Vec3::new(0.0, 0.0, -10.0)).x < -1.0);
+    }
+
+    /// The glow of a tile reads the whole photo's texels: the tile knows
+    /// where it lies in the photo, from the top left.
+    #[test]
+    fn a_tile_knows_its_part_of_the_photo() {
+        assert_eq!(photo_part(Mat4::IDENTITY), [0.0, 0.0, 1.0, 1.0]);
+        let near = |a: [f32; 4], b: [f32; 4]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6);
+        // the right-hand tile of the middle row of a 3 x 3 grid
+        let tile = Mat4::from_cols(Vec4::X * 3.0, Vec4::Y * 3.0, Vec4::Z, Vec4::new(-2.0, 0.0, 0.0, 1.0));
+        assert!(
+            near(photo_part(tile), [2.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0]),
+            "{:?}",
+            photo_part(tile)
+        );
+        // the top left quarter (its centre at -0.5, 0.5)
+        let tile = Mat4::from_cols(Vec4::X * 2.0, Vec4::Y * 2.0, Vec4::Z, Vec4::new(1.0, -1.0, 0.0, 1.0));
+        assert!(near(photo_part(tile), [0.0, 0.0, 0.5, 0.5]), "{:?}", photo_part(tile));
     }
 
     #[test]

@@ -822,7 +822,7 @@ impl App {
         if purpose != Purpose::Preview {
             self.world.photo_isolation.set_picking(false);
         }
-        let tiles = snapshot::plan(size, self.photo_max_side(renderer), self.photo_max_pixels(renderer));
+        let tiles = self.photo_tiles(renderer, size);
         let interface = s.interface && snapshot::same_proportions(full, window);
         self.snapshots.job = Some(Job {
             purpose,
@@ -883,6 +883,19 @@ impl App {
         };
         let compare = self.snapshots.ui.looks.compare.filter(|_| self.viewfinder_on());
         looks::frame_look(&layers, place, compare, false, focus)
+    }
+
+    /// How a photo of `size` is drawn (`snapshot::plan`), with the guard
+    /// band its effects need: the bloom and the depth of field (at the blur
+    /// this photo gets, its `max_coc` grows with its height) read the image
+    /// farther than the screen-space passes.
+    fn photo_tiles(&self, renderer: &Renderer, size: (u32, u32)) -> Vec<snapshot::TilePass> {
+        let bloom = if self.settings.bloom { self.settings.bloom_strength } else { 0.0 };
+        let dof = self
+            .photo_dof_max_coc(size.1, renderer.size().1)
+            .map_or(0, aurora_render::dof_tile_reach);
+        let guard = snapshot::TILE_GUARD.max(aurora_render::bloom_tile_reach(bloom)).max(dof);
+        snapshot::plan(size, self.photo_max_side(renderer), self.photo_max_pixels(renderer), guard)
     }
 
     /// The largest side drawn in one pass: the card's, or in demo
@@ -1798,7 +1811,7 @@ LUT_3D_SIZE {n}
             let inventory = (self.snapshots.ui.destination == Destination::Inventory).then(|| self.photo_inventory_view(window));
             let profile = (self.snapshots.ui.destination == Destination::Profile).then(|| self.photo_profile_view(window));
             let email = (self.snapshots.ui.destination == Destination::Email).then(|| self.photo_email_view(window));
-            let tiles = snapshot::plan(photo, self.photo_max_side(renderer), self.photo_max_pixels(renderer)).len();
+            let tiles = self.photo_tiles(renderer, photo).len();
             let busy = self.photo_busy_line();
             if let Some((_, what)) = &busy {
                 let now = ctx.input(|i| i.time);
@@ -1841,7 +1854,7 @@ LUT_3D_SIZE {n}
             let profile = (self.snapshots.ui.destination == Destination::Profile).then(|| self.photo_profile_view(window));
             let email = (self.snapshots.ui.destination == Destination::Email).then(|| self.photo_email_view(window));
             let mut state = std::mem::take(&mut self.snapshots.ui);
-            let tiles = snapshot::plan(photo, self.photo_max_side(renderer), self.photo_max_pixels(renderer)).len();
+            let tiles = self.photo_tiles(renderer, photo).len();
             let s = &self.snapshots;
             let busy = if let Some(t) = s.detail_wait {
                 let wait = snapshot::quality::DETAIL_WAIT.as_secs_f32();

@@ -6785,6 +6785,7 @@ world-maturity-change-error-title = Content rating not changed
 world-maturity-change-error = { "We were unable to change your preferences to view " }{ $preferred }{ " content at this time. Your preferences have been reset to view " }{ $actual }{ " content. You may try again in Preferences › Interface › Content." }
 world-mod-declined-your-teleport-offer = { $from }{ " declined your teleport offer" }
 world-mod-has-your-object = { $from }{ " has " }{ $verb }{ " your object" }
+world-mod-group-notice-sent-by = { "Sent by " }{ $sender }
 world-mod-gives-you = { $from }{ " gives you " }{ $what }
 world-payments-paid-you = { $name }{ " paid you L$" }{ $amount }
 world-payments-paid-you-message = { $name }{ " paid you L$" }{ $amount }{ ": " }{ $message }

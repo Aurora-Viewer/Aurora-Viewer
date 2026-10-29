@@ -6790,6 +6790,7 @@ world-maturity-change-error-title = Classement du contenu non modifié
 world-maturity-change-error = { "Impossible de modifier vos préférences afin d’afficher le contenu " }{ $preferred }{ " pour le moment. Le paramètre " }{ $actual }{ " a été rétabli. Vous pouvez réessayer dans Préférences › Interface › Contenu." }
 world-mod-declined-your-teleport-offer = { $from }{ " a refusé votre téléportation" }
 world-mod-has-your-object = { $from }{ " a " }{ $verb }{ " votre objet" }
+world-mod-group-notice-sent-by = { "Envoyée par " }{ $sender }
 world-mod-gives-you = { $from }{ " vous donne " }{ $what }
 world-payments-paid-you = { $name }{ " vous a payé " }{ $amount }{ " L$" }
 world-payments-paid-you-message = { $name }{ " vous a payé " }{ $amount }{ " L$ : " }{ $message }
