@@ -498,6 +498,8 @@ fn failure_text(kind: aurora_updater::Failure) -> &'static str {
         Failure::Integrity => aurora_i18n::tr!("update-error-integrity"),
         Failure::Filesystem | Failure::Busy => aurora_i18n::tr!("update-error-filesystem"),
         Failure::Package => aurora_i18n::tr!("update-error-package"),
+        // macOS: an application to replace, not a folder to extract
+        Failure::Unsupported if cfg!(target_os = "macos") => aurora_i18n::tr!("update-error-unsupported-macos"),
         Failure::Unsupported => aurora_i18n::tr!("update-error-unsupported"),
         Failure::Startup => aurora_i18n::tr!("update-error-startup"),
     }

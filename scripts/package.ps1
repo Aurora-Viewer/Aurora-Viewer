@@ -40,7 +40,9 @@ Copy-Item -LiteralPath $docs -Destination $Out -ErrorAction Stop
 # Linux (an executable without extension): the desktop entry and its icon,
 # named after the viewer's Wayland app_id / X11 WM_CLASS (cli.rs DESKTOP_ID)
 # so the desktop matches the window to them. docs/LINUX.md installs them.
-if (-not [IO.Path]::GetExtension($Exe)) {
+# (macOS has its own bundle: package-macos.ps1; $IsMacOS is unset, so
+# false, in Windows PowerShell 5.1.)
+if (-not [IO.Path]::GetExtension($Exe) -and -not $IsMacOS) {
     Copy-Item -LiteralPath (Join-Path $Source 'packaging/linux/aurora-viewer.desktop') -Destination $Out -ErrorAction Stop
     Copy-Item -LiteralPath (Join-Path $Source 'assets/branding/aurora-logo.svg') -Destination (Join-Path $Out 'aurora-viewer.svg') -ErrorAction Stop
 }

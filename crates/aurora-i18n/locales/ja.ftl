@@ -7698,6 +7698,7 @@ update-error-integrity = ダウンロードしたファイルが公開されて�
 update-error-filesystem = インストールの準備ができません。空き容量とフォルダの書き込み権限を確認し、ほかの Aurora を終了してください。
 update-error-package = パッケージが不完全または無効です。現在のインストールはそのまま保持されます。
 update-error-unsupported = このリリースは、このフォルダからは自動でインストールできません。リリースページからダウンロードし、専用のフォルダに展開してください。
+update-error-unsupported-macos = macOSでは、新しいバージョンは手動でインストールします。リリースページからダウンロードし、アプリケーションフォルダのAurora Viewerを新しいものに置き換えてください。
 update-error-startup = 更新ヘルパーを起動できませんでした。現在のインストールはそのまま保持されています。
 update-rollback = 新しいバージョンが正しく起動しませんでした。以前のインストールを復元しました。
 update-settings = アップデート
