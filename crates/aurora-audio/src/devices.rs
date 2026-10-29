@@ -1,4 +1,6 @@
-//! Device enumeration and lookup by name (cpal default host).
+//! Device enumeration and lookup by name (cpal default host: WASAPI on
+//! Windows; on Linux the PulseAudio protocol, which PipeWire also serves,
+//! else ALSA).
 //!
 //! Devices are identified by their human-readable name, as Firestorm does
 //! for its `VoiceOutputAudioDevice` / `VoiceInputAudioDevice` settings.
@@ -14,8 +16,7 @@ pub(crate) fn device_name(device: &cpal::Device) -> String {
         .unwrap_or_else(|_| "unknown".to_string())
 }
 
-/// Names of the audio output devices of the default host (WASAPI on
-/// Windows). Empty when none can be listed. Enumeration talks to the OS:
+/// Names of the audio output devices of the default host. Empty when none can be listed. Enumeration talks to the OS:
 /// call it when a settings panel opens, not every frame.
 pub fn output_devices() -> Vec<String> {
     match cpal::default_host().output_devices() {
@@ -36,6 +37,63 @@ pub fn input_devices() -> Vec<String> {
             log::debug!("cannot list audio input devices: {e}");
             Vec::new()
         }
+    }
+}
+
+/// Whether `device` is a sink or source of a PulseAudio server (PipeWire
+/// included, through pipewire-pulse). Without an explicit buffer size such a
+/// stream gets the server's default, two seconds of latency.
+pub(crate) fn is_pulse(device: &cpal::Device) -> bool {
+    #[cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd"))]
+    {
+        device.id().is_ok_and(|id| id.host() == cpal::HostId::PulseAudio)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd")))]
+    {
+        let _ = device;
+        false
+    }
+}
+
+/// Watches the sound server's default device while "Default" is in use. The
+/// PulseAudio host opens a stream on the sink or source it resolved by index,
+/// so the stream stays there when the desktop default changes; ALSA's
+/// "default" and the Legacy Viewer follow the new default, so the output and
+/// capture threads reopen their stream when this reports a change.
+pub(crate) struct DefaultWatch {
+    host: cpal::Host,
+    direction: Direction,
+    current: cpal::DeviceId,
+}
+
+impl DefaultWatch {
+    /// How often the threads check (one round trip to the server, off the
+    /// audio callback).
+    pub(crate) const EVERY: std::time::Duration = std::time::Duration::from_secs(2);
+
+    /// A watch on `opened`, the default device just opened; `None` off the
+    /// PulseAudio host, whose other hosts need none.
+    pub(crate) fn new(direction: Direction, opened: &cpal::Device) -> Option<Self> {
+        if !is_pulse(opened) {
+            return None;
+        }
+        let current = opened.id().ok()?;
+        Some(Self {
+            host: cpal::default_host(),
+            direction,
+            current,
+        })
+    }
+
+    /// True when the server's default is no longer the opened device. A
+    /// failed query (server restarting) reports no change: the stream's own
+    /// error reopens it.
+    pub(crate) fn changed(&self) -> bool {
+        let default = match self.direction {
+            Direction::Output => self.host.default_output_device(),
+            Direction::Input => self.host.default_input_device(),
+        };
+        default.and_then(|d| d.id().ok()).is_some_and(|id| id != self.current)
     }
 }
 
