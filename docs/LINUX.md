@@ -51,8 +51,7 @@ tar -xzf Aurora-Viewer-vX.Y.Z-linux-x64.tar.gz
 
 The archive holds one folder, `Aurora-Viewer-vX.Y.Z-linux-x64`, with the
 viewer (`aurora-viewer`), its desktop entry and icon, its licences and the
-README. Move it where
-you like, for example `~/.local/opt/aurora-viewer`.
+README. Move it where you like, for example `~/.local/opt/aurora-viewer`.
 
 ## 3. Start the viewer
 
@@ -75,11 +74,12 @@ EXEC="\"$exe\"" awk '/^Exec=/ { print "Exec=" ENVIRON["EXEC"]; next } 1' aurora-
 ```
 
 Run the last two lines again if you move the folder. Avoid a `%` in the
-folder's path: GNOME and other GLib desktops then refuse the entry. The window identifies
-itself as `aurora-viewer` (Wayland app_id and X11 `WM_CLASS`), the name of
-the entry and its `StartupWMClass`: that is how the desktop puts the
-window under the entry's icon. Compositor rules can match it too (Hyprland:
-`class:^(aurora-viewer)$`; KDE: window class `aurora-viewer`).
+folder's path: GNOME and other GLib desktops then refuse the entry. The
+window identifies itself as `aurora-viewer` (Wayland app_id and X11
+`WM_CLASS`), the name of the entry and its `StartupWMClass`: that is how
+the desktop puts the window under the entry's icon. Compositor rules can
+match it too (Hyprland: `class:^(aurora-viewer)$`; KDE: window class
+`aurora-viewer`).
 
 ## Web pages and video
 
