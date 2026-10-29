@@ -14721,10 +14721,11 @@ impl App {
                 // #1404: a message to the whole region there too, first: the
                 // friendship offers wait behind it
                 // (AURORA_DEMO_REGION_MESSAGE: on for the run)
-                let region_on =
-                    self.settings.region_message_prompt || (self.demo && crate::demo::region_message::enabled());
+                let region_on = self.settings.region_message_prompt || (self.demo && crate::demo::region_message::enabled());
                 let mut region_action = None;
-                let region_shown = self.region_message_prompt.next(&mut self.world.notifications, region_on, prompt_allowed);
+                let region_shown = self
+                    .region_message_prompt
+                    .next(&mut self.world.notifications, region_on, prompt_allowed);
                 if let Some((id, from)) = region_shown {
                     let name = Some(self.world.social.display_name_of(&from))
                         .filter(|n| n != "…")
@@ -14736,9 +14737,9 @@ impl App {
                         name,
                         motion: !self.settings.reduce_motion,
                     };
-                    region_action =
-                        self.region_message_prompt
-                            .show(&ctx, &p, &self.skin.icons, &self.world.notifications, id, &env);
+                    region_action = self
+                        .region_message_prompt
+                        .show(&ctx, &p, &self.skin.icons, &self.world.notifications, id, &env);
                 }
                 let mut prompt_action = None;
                 let friend_allowed = prompt_allowed && region_shown.is_none();

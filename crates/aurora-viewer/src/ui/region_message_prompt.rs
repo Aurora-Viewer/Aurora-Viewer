@@ -274,7 +274,9 @@ mod tests {
                     prompt.show(ctx, &p, &icons, &list, id, &env);
                 }
             });
-            let rect = ctx.memory(|m| m.area_rect(egui::Id::unique("region_message_prompt"))).expect("the card");
+            let rect = ctx
+                .memory(|m| m.area_rect(egui::Id::unique("region_message_prompt")))
+                .expect("the card");
             sizes.push(rect.size());
             last = Some(output);
         }

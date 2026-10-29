@@ -99,10 +99,6 @@ pub mod freeze_world;
 /// Friendship offers in the middle of the screen (AURORA_DEMO_FRIEND_PROMPT).
 #[path = "demo_friend_prompt.rs"]
 pub mod friend_prompt;
-/// Messages to the whole region in the middle of the screen
-/// (AURORA_DEMO_REGION_MESSAGE).
-#[path = "demo_region_message.rs"]
-pub mod region_message;
 #[path = "demo_geometry.rs"]
 pub mod geometry;
 /// Names and chat in the characters residents use (AURORA_DEMO_GLYPHS).
@@ -173,6 +169,10 @@ pub mod presence;
 /// Region / Estate answers (AURORA_DEMO_REGION).
 #[path = "demo_region.rs"]
 pub mod region;
+/// Messages to the whole region in the middle of the screen
+/// (AURORA_DEMO_REGION_MESSAGE).
+#[path = "demo_region_message.rs"]
+pub mod region_message;
 /// The rez effect of objects and avatars appearing (AURORA_DEMO_REZ_EFFECT).
 #[path = "demo_rez.rs"]
 pub mod rez;

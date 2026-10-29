@@ -9,9 +9,9 @@
 //! conversation with the sender instead. Shown in the middle of the screen
 //! by `ui::region_message_prompt` (#1404).
 
+use super::World;
 use super::notice_topics::Topic;
 use super::notifications::{Data, Kind};
-use super::World;
 use aurora_net::InstantMessage;
 
 /// IM_NOTHING_SPECIAL from a resident to nobody: the whole region.
