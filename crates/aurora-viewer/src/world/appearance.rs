@@ -1127,6 +1127,43 @@ pub fn seed_demo_layers(inv: &mut Inventory, agent: Uuid) {
     demo_replace(inv, agent, cof, &links);
 }
 
+/// All wearable icons and ordering in Appearance, with three tattoo layers
+/// and attachments: `AURORA_DEMO_APPEARANCE=wearables[-outfits|-edit]`.
+pub fn seed_demo_wearables(inv: &mut Inventory, agent: Uuid) {
+    seed_demo_layers(inv, agent);
+    let Some(cof) = cof(inv) else { return };
+    let mut links = folder_links(inv, cof);
+    for (kind, name) in wearables().iter().enumerate() {
+        if links.iter().any(|link| {
+            inv.items
+                .get(&link.target)
+                .is_some_and(|it| matches!(it.asset_type, 5 | 13) && it.flags & 0xff == kind as u32)
+        }) {
+            continue;
+        }
+        let item = InvItem {
+            id: Uuid::from_u128(730 + kind as u128),
+            parent: inv.root,
+            name: (*name).into(),
+            asset_type: if kind < 4 { 13 } else { 5 },
+            inv_type: 18,
+            flags: kind as u32,
+            creator: agent,
+            owner: agent,
+            base_mask: 0x7fffffff,
+            owner_mask: 0x7fffffff,
+            ..Default::default()
+        };
+        links.push(item_link(&item));
+        inv.add_items(vec![item]);
+    }
+    if let Some(outfit) = base(inv) {
+        let saved: Vec<_> = links.iter().filter(|link| !link.folder).cloned().collect();
+        demo_replace(inv, agent, outfit, &saved);
+    }
+    demo_replace(inv, agent, cof, &links);
+}
+
 /// `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]`: the number of generated
 /// outfits added to the Appearance demo (a large wardrobe), 0 without it.
 pub fn demo_outfit_count() -> usize {

@@ -477,7 +477,13 @@ impl World {
     }
 
     pub fn visual_scale(&self, idx: usize) -> Vec3 {
-        self.objects.get(idx).map_or(Vec3::ONE, |o| o.scale * self.hud_scale(idx))
+        self.objects.get(idx).map_or(Vec3::ONE, |o| o.damped_scale() * self.hud_scale(idx))
+    }
+
+    pub fn visual_scale_at(&self, idx: usize, now: Instant) -> Vec3 {
+        self.objects
+            .get(idx)
+            .map_or(Vec3::ONE, |o| o.damped_scale_at(now) * self.hud_scale(idx))
     }
 
     /// Root translation stays unchanged; linked offsets follow the zoom.
@@ -548,6 +554,40 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scale_helpers_ignore_local_previews_but_keep_network_damping() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let now = Instant::now();
+        let mut prim = crate::demo::hud::object(31, false);
+        prim.parent_id = 0;
+        prim.state = 0;
+        prim.scale = Vec3::ONE;
+        let idx = world.objects.upsert_at(1, prim.clone(), Some(now));
+        world.objects.get_mut(idx).expect("prim").render.local_scale = Some(Vec3::splat(9.0));
+        prim.scale = Vec3::splat(2.0);
+        world.objects.upsert_at(1, prim, Some(now));
+        let half = now + Duration::from_millis(60);
+        world.objects.expire_corrections(half);
+        // The existing world helpers retain network dimensions, while the
+        // renderer's object overlay keeps its previous preview behavior.
+        assert_eq!(world.visual_scale(idx), Vec3::splat(1.5));
+        assert_eq!(world.visual_scale_at(idx, half), Vec3::splat(1.5));
+        assert_eq!(world.objects.get(idx).expect("prim").visual_scale_at(half), Vec3::splat(9.0));
+        assert_eq!(world.objects.get(idx).expect("prim").scale, Vec3::splat(2.0));
+
+        let mut world = hud_world();
+        let root = world
+            .objects
+            .index_of_uuid(&crate::demo::hud::object(31, false).full_id)
+            .expect("HUD");
+        let id = world.objects.get(root).expect("HUD").full_id;
+        let reported = world.objects.get(root).expect("HUD").scale;
+        world.hud_scales.set(id, 2.0);
+        world.objects.get_mut(root).expect("HUD").render.local_scale = Some(Vec3::splat(9.0));
+        assert_eq!(world.visual_scale(root), reported * 2.0);
+        assert_eq!(world.visual_scale_at(root, half), reported * 2.0);
+    }
 
     fn props(id: Uuid, name: &str, creator: u128) -> aurora_net::build::ObjectProps {
         aurora_net::build::ObjectProps {

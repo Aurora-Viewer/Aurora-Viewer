@@ -7859,6 +7859,7 @@ update-error-integrity = The download does not match the published checksum. It 
 update-error-filesystem = Unable to prepare installation. Check free space and folder write permissions, and close other Aurora instances.
 update-error-package = The package is incomplete or invalid. The current installation is preserved.
 update-error-unsupported = This release cannot be installed automatically from this folder. Download it from its page and extract it into a dedicated folder.
+update-error-unsupported-macos = On macOS, a new version is installed by hand. Download it from its page, then replace Aurora Viewer in your Applications folder with the new one.
 update-error-startup = The update helper could not start. The current installation is preserved.
 update-rollback = The new version did not start correctly. The previous installation was restored.
 update-settings = Updates
@@ -8194,6 +8195,14 @@ contents-copy-move-more = { $count ->
    *[other] …and { $count } more items
     }
 contents-copy-requested = Copy of the contents to "{ $folder }" requested.
+contents-copy-folder-timeout = Creation of "{ $folder }" was not confirmed within 60 seconds. No contents were transferred.
+contents-copy-complete = { $count ->
+    [one] Contents copied to "{ $folder }": { $count } item received.
+   *[other] Contents copied to "{ $folder }": { $count } items received.
+    }
+contents-copy-timeout = Copy to "{ $folder }" could not be confirmed within 60 seconds. Items received: { $received }/{ $count }. Check the folder's contents.
+contents-copy-unavailable = Copy to "{ $folder }" could not be confirmed: the destination folder is missing or could not be loaded.
+contents-copy-wear-busy = Contents copied to "{ $folder }", but your outfit could not be changed while another outfit change was pending. Wear the folder from your inventory.
 contents-copy-failed = The folder for the object's contents could not be created: { $reason }
 contents-copy-wear-timeout = Not every item of "{ $folder }" reached your inventory: your outfit was not changed. Wear the folder from your inventory.
 build-compact-land = Land

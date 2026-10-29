@@ -7856,6 +7856,7 @@ update-error-integrity = ダウンロードしたファイルが公開されて�
 update-error-filesystem = インストールの準備ができません。空き容量とフォルダの書き込み権限を確認し、他のAuroraを閉じてください。
 update-error-package = パッケージが不完全または無効です。現在のインストールは保持されています。
 update-error-unsupported = このリリースはこのフォルダから自動的にインストールできません。リリースページからダウンロードし、専用のフォルダに展開してください。
+update-error-unsupported-macos = macOSでは、新しいバージョンは手動でインストールします。リリースページからダウンロードし、アプリケーションフォルダのAurora Viewerを新しいものに置き換えてください。
 update-error-startup = アップデートのヘルパーを起動できませんでした。現在のインストールは保持されています。
 update-rollback = 新しいバージョンが正しく起動しませんでした。以前のインストールを復元しました。
 update-settings = アップデート
@@ -8191,6 +8192,11 @@ contents-copy-move-more = { $count ->
    *[other] …ほか{ $count }個のアイテム
     }
 contents-copy-requested = 中身の「{ $folder }」へのコピーを要求しました。
+contents-copy-folder-timeout = ６０秒以内にフォルダ「{ $folder }」の作成を確認できませんでした。中身は転送していません。
+contents-copy-complete = 中身を「{ $folder }」にコピーしました（受信：{ $count }アイテム）。
+contents-copy-timeout = ６０秒以内に「{ $folder }」へのコピーを確認できませんでした。受信アイテム：{ $received }／{ $count }。フォルダの中身を確認してください。
+contents-copy-unavailable = 「{ $folder }」へのコピーを確認できませんでした。転送先フォルダが見つからないか、読み込めませんでした。
+contents-copy-wear-busy = 中身は「{ $folder }」にコピーされましたが、別のアウトフィットの変更が進行中のため、アウトフィットを変更できませんでした。インベントリからフォルダを着用してください。
 contents-copy-failed = オブジェクトの中身用のフォルダを作成できませんでした：{ $reason }
 contents-copy-wear-timeout = 「{ $folder }」のアイテムの一部がインベントリに届きませんでした：アウトフィットは変更されていません。インベントリからフォルダを着用してください。
 build-compact-land = 土地

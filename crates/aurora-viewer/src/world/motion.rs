@@ -184,6 +184,61 @@ impl Correction {
     }
 }
 
+/// Scale follows the same 0.06 s half-life and report timestamp as position.
+/// LLDrawable::updateXform interpolates both together: otherwise a scripted
+/// stretch moves its anchored end because the centre lags behind its size.
+#[derive(Debug, Clone, Copy)]
+pub struct ScaleCorrection {
+    offset: Vec3,
+    target: Vec3,
+    at: Instant,
+    pub drawn: Vec3,
+}
+
+pub fn within_snap_distance(position_offset: Vec3, scale_offset: Vec3) -> bool {
+    position_offset.is_finite()
+        && scale_offset.is_finite()
+        && position_offset.length_squared() + scale_offset.length_squared() <= SNAP_DISTANCE * SNAP_DISTANCE
+}
+
+impl ScaleCorrection {
+    pub fn between(drawn: Vec3, target: Vec3, now: Instant) -> Option<Self> {
+        let offset = drawn - target;
+        (drawn.is_finite()
+            && target.is_finite()
+            && drawn.min_element() > 0.0
+            && target.min_element() > 0.0
+            && within_snap_distance(Vec3::ZERO, offset)
+            && offset.length_squared() >= MIN_OFFSET * MIN_OFFSET)
+            .then_some(Self {
+                offset,
+                target,
+                at: now,
+                drawn,
+            })
+    }
+
+    pub fn matches(&self, scale: Vec3) -> bool {
+        self.target == scale
+    }
+
+    pub fn sample(&self, scale: Vec3, now: Instant) -> Vec3 {
+        if !self.matches(scale) {
+            return scale;
+        }
+        let age = now.saturating_duration_since(self.at).as_secs_f32();
+        if age >= CORRECTION_LIFE {
+            return scale;
+        }
+        scale + self.offset * 0.5_f32.powf(age / DAMPING_HALF_LIFE)
+    }
+
+    pub fn advance(&mut self, scale: Vec3, now: Instant) -> bool {
+        self.drawn = self.sample(scale, now);
+        self.matches(scale) && now.saturating_duration_since(self.at).as_secs_f32() < CORRECTION_LIFE
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -3,10 +3,11 @@ name: Release
 # A version tag (SemVer: v0.2.0, v0.2.1…) pushed by a human builds the
 # viewer and publishes the release with notes grouped by PR label: the
 # Windows zip (the one the updater installs) and its crash symbols, then the
-# Linux archive. A pull request that changes these release files gets a dry
-# run of both jobs (the version Git describes, the symbols and the Linux
-# archive kept as the run's artifacts, nothing published): no agent can try
-# the Linux build on its PC, and the symbols need the release build.
+# Linux archive and the macOS application. A pull request that changes these
+# release files gets a dry run of the three jobs (the version Git describes,
+# the symbols, the Linux archive and the macOS application kept as the run's
+# artifacts, nothing published): no agent can try the Linux or macOS build
+# on its PC, and the symbols need the release build.
 # The Nightly workflow calls it with the beta tag it has just pushed (a tag
 # pushed with the workflow token starts no workflow by itself); a tag with
 # a pre-release part is published as a GitHub pre-release.
@@ -24,7 +25,16 @@ on:
       - .github/workflows/release.yml
       - scripts/package.ps1
       - packaging/linux/**
+      - packaging/macos/**
+      - scripts/package-macos.ps1
+      - assets/branding/aurora.icns
       - scripts/verify-version.ps1
+
+# a new push to a pull request stops its previous dry run; a release (a
+# tag, or the nightly's call) is never cancelled: its group is its own run
+concurrency:
+  group: release-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -162,6 +172,117 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: viewer-linux-dry-run
+          path: |
+            ${{ env.ARCHIVE }}
+            ${{ env.ARCHIVE }}.sha256
+          compression-level: 0
+
+  # The macOS application (Apple Silicon) joins the release like the Linux
+  # archive: "Aurora Viewer.app" in a disk image, next to a link to
+  # Applications to drag it onto, as Mac applications are installed. Signed with the Developer ID, then notarized and stapled,
+  # when the repository has the Apple secrets (docs/MACOS.md, "Signing");
+  # signed ad hoc otherwise, which macOS opens only after "Open Anyway" in
+  # Privacy & Security. The updater does not install it: the viewer points
+  # to the release page, as on Linux.
+  macos:
+    needs: windows
+    if: ${{ !cancelled() && (needs.windows.result == 'success' || github.event_name == 'pull_request') }}
+    runs-on: macos-15
+    env:
+      TAG: ${{ inputs.tag || github.event_name == 'push' && github.ref_name || 'dry-run' }}
+      APP: Aurora Viewer.app
+      SIGNED: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.APPLE_API_KEY_P8 != '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Rust stable
+        run: rustup update stable
+      - uses: Swatinem/rust-cache@v2
+      # (see the Linux job: the tag's version, no debug info in the binary)
+      - name: Build
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: debuginfo
+        run: |
+          if [ "$TAG" != dry-run ]; then export AURORA_VERSION_TAG="$TAG"; fi
+          cargo build --release --locked -p aurora-viewer
+      - name: Verify compiled version
+        if: env.TAG != 'dry-run'
+        shell: pwsh
+        run: ./scripts/verify-version.ps1 -Exe target/release/aurora-viewer -Tag $env:TAG
+      - name: Application
+        shell: pwsh
+        run: ./scripts/package-macos.ps1 -Exe target/release/aurora-viewer -Out $env:APP
+      # the certificate lives in a keychain of this run only; the hardened
+      # runtime and a secure timestamp are what the notarization requires
+      - name: Sign (Developer ID) and notarize
+        if: env.SIGNED == 'true'
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          API_KEY: ${{ secrets.APPLE_API_KEY_P8 }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(uuidgen)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$keychain" | awk -v team="($TEAM_ID)" '/Developer ID Application/ && index($0, team) { print $2; exit }')"
+          if [ -z "$identity" ]; then echo "no Developer ID Application identity of team $TEAM_ID in the certificate"; exit 1; fi
+          codesign --force --options runtime --timestamp --entitlements packaging/macos/aurora-viewer.entitlements --sign "$identity" "$APP"
+          printf '%s' "$API_KEY" > "$RUNNER_TEMP/notary.p8"
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --key "$RUNNER_TEMP/notary.p8" --key-id "$API_KEY_ID" --issuer "$API_ISSUER" --wait --timeout 1h --output-format json > "$RUNNER_TEMP/notary.json"
+          status="$(plutil -extract status raw -o - "$RUNNER_TEMP/notary.json" 2>/dev/null || true)"
+          if [ "$status" != Accepted ]; then
+            cat "$RUNNER_TEMP/notary.json"
+            id="$(plutil -extract id raw -o - "$RUNNER_TEMP/notary.json" 2>/dev/null || true)"
+            if [ -n "$id" ]; then xcrun notarytool log "$id" --key "$RUNNER_TEMP/notary.p8" --key-id "$API_KEY_ID" --issuer "$API_ISSUER"; fi
+            rm -f "$RUNNER_TEMP/notary.p8"
+            exit 1
+          fi
+          rm -f "$RUNNER_TEMP/notary.p8"
+          xcrun stapler staple "$APP"
+          security delete-keychain "$keychain"
+      - name: Sign (ad hoc)
+        if: env.SIGNED != 'true'
+        run: codesign --force --sign - "$APP"
+      # the signature holds and the signed executable starts
+      - name: Check the application
+        run: |
+          codesign --verify --strict --verbose=2 "$APP"
+          "$APP/Contents/MacOS/aurora-viewer" --version
+          if [ "$SIGNED" = true ]; then spctl --assess --type execute --verbose=2 "$APP"; fi
+      # a compressed read-only image (UDZO); ditto copies the bundle with its
+      # signature (and its stapled ticket)
+      - name: Disk image
+        run: |
+          dmg="Aurora-Viewer-$TAG-macos-arm64.dmg"
+          stage="$RUNNER_TEMP/dmg"
+          mkdir -p "$stage"
+          ditto "$APP" "$stage/$APP"
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -volname "Aurora Viewer" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$dmg"
+          shasum -a 256 "$dmg" > "$dmg.sha256"
+          echo "ARCHIVE=$dmg" >> "$GITHUB_ENV"
+      - name: Publish
+        if: env.TAG != 'dry-run'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256"
+      - name: Dry-run application
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: viewer-macos-dry-run
           path: |
             ${{ env.ARCHIVE }}
             ${{ env.ARCHIVE }}.sha256

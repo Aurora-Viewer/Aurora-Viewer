@@ -1678,6 +1678,11 @@ No real L$ and no connection to a grid.
   stops the click without touching; `ignore-build` selects this screen in
   build mode.
 - `open` shows three simulated content items.
+- `open-multi` (#1410): the Open window receives Ctrl+A at frame 420;
+  every contents row is selected together. Ctrl/Shift clicks, a selected-row
+  drag or its Copy/Move menu act on the selection; Delete removes selected
+  entries only on a modifiable object. The list accepts inventory selections
+  and folders, including when empty; a refused entry refuses the entire drop.
 - `open-copy`, `open-replace`, `open-add` (#1103): after `open`, the
   window's "Copy to inventory" at frame 420 (`replace` / `add`: the "Copy
   and wear" menu's "Replace outfit with contents" / "Add contents to
@@ -1690,6 +1695,14 @@ No real L$ and no connection to a grid.
   items arrived, wearing the folder`. Wearing needs a Current Outfit folder:
   add `AURORA_DEMO_APPEARANCE=worn` (the cube is then linked in the outfit;
   the demo does not attach it).
+  After confirmation (`open-copy-yes`), the inventory footer confirms the
+  three actual arrivals, then clears after five seconds (capture at frame 650
+  for success, 1050 after expiry, with `--fps-limit 60`).
+- `open-copy-timeout-yes` (#1410): the offline simulator withholds the spare
+  cube; frame 600 advances the copy observer's deadline. The footer reports
+  an unconfirmed copy with two of three items received, then clears after
+  five seconds. This fixture changes neither real-grid transfers nor their
+  60-second deadline. The move warning still requires confirmation at 480.
 - `play` starts a local HTML page; `pause` and `open-media-playing`
   inject a simulated playback state before the click; `open-media` simulates
   the opening of the external browser.
@@ -6989,7 +7002,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|worn|save|edit|layers|layers-drag|layers-hold|menu|duplicates`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates`**
 — opens Appearance with four synthetic outfits:
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
@@ -7038,6 +7051,13 @@ for them (`5 to look up`), as a cold inventory cache.
   Lipstick under Star from frame 701 and drops it at frame 760 (the list
   then reads Freckles, Star, Lipstick); `layers-hold` holds it over its
   landing place, for a capture of the marker.
+
+`wearables`, `wearables-outfits` and `wearables-edit` show all 17 system
+wearable types in Worn, My Outfits and the editor respectively. Each type
+has its own icon, shared with Inventory. Body parts and clothing precede
+attachments regardless of their names or descriptions; the three tattoos
+remain Lipstick, Freckles, Star in Worn and the editor. The editor's unworn
+rows use the same type-specific icons.
 
 These operations stay offline; creating new clothing and
 new body parts is not available yet.

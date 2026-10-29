@@ -284,13 +284,16 @@ impl SyncCtx<'_> {
                 let radius = if ow.is_avatar() {
                     AVATAR_LOD_RADIUS
                 } else {
-                    (ow.visual_scale().length() * 0.5).max(0.5)
+                    (ow.visual_scale_at(self.now).length() * 0.5).max(0.5)
                 };
                 return (radius, op.distance(eye));
             }
-            return ((o.visual_scale() * 0.5).length(), pos.distance(eye));
+            return ((o.visual_scale_at(self.now) * 0.5).length(), pos.distance(eye));
         }
-        ((lod_scale_bias(&o.visual_volume()) * o.visual_scale()).length(), pos.distance(eye))
+        (
+            (lod_scale_bias(&o.visual_volume()) * o.visual_scale_at(self.now)).length(),
+            pos.distance(eye),
+        )
     }
 
     /// What the debug overlay shows of the detail level of object `idx`
@@ -334,7 +337,7 @@ impl SyncCtx<'_> {
     pub(super) fn placement(&self, idx: usize, o: &Object, xf: Xf, geom_key: GeomKey, geom: &GpuGeom) -> Placement {
         let world = self.world;
         let (pos, rot, _) = xf;
-        let scale = (o.visual_scale() * if xf.2 { world.hud_scale(idx) } else { 1.0 }).max(Vec3::splat(0.001));
+        let scale = (o.visual_scale_at(self.now) * if xf.2 { world.hud_scale(idx) } else { 1.0 }).max(Vec3::splat(0.001));
         let skinned = matches!(geom_key, GeomKey::Mesh { id, .. } if self.meshes.meta(&id).is_some_and(|m| m.skin.is_some()));
         let skeleton_owner = skinned.then(|| Scene::skeleton_owner(world, idx)).flatten();
         // A skinned mesh is drawn rigged only on a skeleton (worn, or an
