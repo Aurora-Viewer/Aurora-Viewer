@@ -217,9 +217,17 @@ mod tests {
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
         let root = std::env::temp_dir().join(format!("aurora-media-pack-{}", uuid::Uuid::new_v4()));
         let mut pack = PluginPack::new(root);
-        assert!(pack.dir().is_none() && matches!(pack.state(), PackState::Idle));
+        // (macOS has no pack yet: unsupported from the start, never fetched)
+        let missing = |state: PackState| {
+            if cfg!(target_os = "macos") {
+                matches!(state, PackState::Failed(Failure::Unsupported))
+            } else {
+                matches!(state, PackState::Idle)
+            }
+        };
+        assert!(pack.dir().is_none() && missing(pack.state()));
         assert!(!pack.poll(true, runtime.handle()));
-        assert!(matches!(pack.state(), PackState::Idle), "no download in a unit test");
+        assert!(missing(pack.state()), "no download in a unit test");
         // what the worker reports ends up in the state, and in `dir`
         pack.state = PackState::Downloading(Progress::default());
         pack.tx.send(Event::Done(Err(Failure::Network))).expect("fixture");
