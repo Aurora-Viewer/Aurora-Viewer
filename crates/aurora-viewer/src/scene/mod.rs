@@ -4379,7 +4379,21 @@ impl Scene {
             let Some(g) = self.gpu.get(idx) else {
                 return l;
             };
-            if g.faces.is_empty() || g.hud || g.photo_hidden {
+            if g.faces.is_empty() || g.hud {
+                return l;
+            }
+            if g.photo_hidden {
+                // left out of the photo, not of the scene: its textures held
+                // as out of view, so that memory pressure lowers them like
+                // any other out of view instead of down to nothing, and the
+                // entire scene comes back as it was rather than reloading
+                // all at once with the video memory full (#1374)
+                if usage {
+                    let px = texture_importance::texture_pixels(view, g.center, g.radius, false);
+                    for f in g.faces.iter().filter(|f| f.pass != Pass::Hidden) {
+                        note_face_usage(&mut l.usage, f, px, false);
+                    }
+                }
                 return l;
             }
             let own_first_person = self
