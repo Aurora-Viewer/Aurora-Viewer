@@ -16,8 +16,9 @@ pub(crate) fn device_name(device: &cpal::Device) -> String {
         .unwrap_or_else(|_| "unknown".to_string())
 }
 
-/// Names of the audio output devices of the default host. Empty when none can be listed. Enumeration talks to the OS:
-/// call it when a settings panel opens, not every frame.
+/// Names of the audio output devices of the default host. Empty when none
+/// can be listed. Enumeration talks to the OS: call it when a settings
+/// panel opens, not every frame.
 pub fn output_devices() -> Vec<String> {
     match cpal::default_host().output_devices() {
         Ok(list) => list.map(|d| device_name(&d)).collect(),
@@ -57,9 +58,10 @@ pub(crate) fn is_pulse(device: &cpal::Device) -> bool {
 
 /// Watches the sound server's default device while "Default" is in use. The
 /// PulseAudio host opens a stream on the sink or source it resolved by index,
-/// so the stream stays there when the desktop default changes; ALSA's
-/// "default" and the Legacy Viewer follow the new default, so the output and
-/// capture threads reopen their stream when this reports a change.
+/// so the stream stays there when the desktop default changes. ALSA's
+/// "default" follows the new default, and so does the Legacy Viewer's voice
+/// (`LLWebRTCImpl::updateDevices`, indra/llwebrtc/llwebrtc.cpp), so the
+/// output and capture threads reopen their stream when this reports a change.
 pub(crate) struct DefaultWatch {
     host: cpal::Host,
     direction: Direction,
