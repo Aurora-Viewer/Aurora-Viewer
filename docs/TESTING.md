@@ -314,7 +314,9 @@ log gives `world frozen: <n> moving objects held`), `hover` or `nocontrols` the 
 on hover or hidden (the lens ring and the AF choices show otherwise), `tilt`
 the camera rolled 20° clockwise (the level turns the other way, along the
 horizon), `tilt90` a quarter turn (the AF frame over a head keeps its size,
-lying on its side), `focus`
+lying on its side), `poser` the poser opened over it (the dock's wand
+button: its window, the joints and the gizmo drawn over the viewfinder; a
+click on a joint selects it without moving the AF point), `focus`
 the own avatar's face aimed at
 and the shutter half-pressed at `AURORA_DEMO_SNAPSHOT_FRAME`, `shoot` the
 same then released two frames later (the photo saved to disk; with `timer`

@@ -48,6 +48,9 @@ enum Control {
 #[derive(Default)]
 pub struct Editor {
     pub open: bool,
+    /// The poser's window shows over the photo viewfinder, whose controls
+    /// sit above the windows: it goes up with them (#1389).
+    pub over_viewfinder: bool,
     pub picking: bool,
     pub target: Option<Uuid>,
     pub target_name: String,

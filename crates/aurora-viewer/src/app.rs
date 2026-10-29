@@ -13092,6 +13092,18 @@ impl App {
                 // the full-frame photo view: the world and its own strip only
                 if self.photo_full_frame() {
                     self.photo_ui(&ctx, &p, projector, renderer);
+                    // the poser stays over it (#1389): pose, then shoot
+                    if self.ik_editor.open && self.ik_editor.posing() {
+                        // no bars here: its room is the whole window, as
+                        // large as it is now (the bars' room of the last
+                        // frame with them would keep an older window size)
+                        let screen = ctx.content_rect();
+                        ui::layout::set_work_area(&ctx, screen);
+                        ui::layout::set_move_area(&ctx, screen);
+                        self.ik_editor.over_viewfinder = true;
+                        self.ik_editor.show(&ctx, &p, &self.world, projector);
+                        self.ik_editor.over_viewfinder = false;
+                    }
                     // the exit's question still shows over the photo mode
                     a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
                     return a;
