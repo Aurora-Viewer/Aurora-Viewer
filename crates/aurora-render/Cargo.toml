@@ -13,7 +13,7 @@ egui = { version = "0.37.0", features = ["monochrome_emoji_fonts"] }
 egui-wgpu = "0.37.0"
 glam = { version = "0.34.1", features = ["bytemuck"] }
 log = "0.4.34"
-parking_lot = "0.12.5"
+parking_lot = "0.13.0"
 pollster = "1.0.1"
 thiserror = "2.0.21"
 uuid = "1.27.0"

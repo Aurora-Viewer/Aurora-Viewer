@@ -55,7 +55,7 @@ log = "0.4.34"
 png = "0.18.1"
 md5 = "0.8.1"
 memmap2 = "0.9.11"
-parking_lot = "0.12.5"
+parking_lot = "0.13.0"
 pollster = "1.0.1"
 # CommonMark parsing for notecard previews; MIT licensed, no HTML runtime.
 pulldown-cmark = { version = "0.13.4", default-features = false }

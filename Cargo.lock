@@ -252,7 +252,7 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-core-graphics",
  "objc2-foundation 0.3.2",
- "parking_lot",
+ "parking_lot 0.12.5",
  "percent-encoding",
  "windows-sys 0.60.2",
  "wl-clipboard-rs",
@@ -529,7 +529,7 @@ dependencies = [
  "log",
  "meshopt",
  "openjpeg-sys",
- "parking_lot",
+ "parking_lot 0.13.0",
  "parry3d",
  "rayon",
  "serde_json",
@@ -546,7 +546,7 @@ dependencies = [
  "cpal",
  "crossbeam-channel",
  "log",
- "parking_lot",
+ "parking_lot 0.13.0",
  "rtrb",
  "rustls",
  "sonora",
@@ -614,7 +614,7 @@ dependencies = [
  "glam 0.34.1",
  "log",
  "md5",
- "parking_lot",
+ "parking_lot 0.13.0",
  "reqwest",
  "serde",
  "serde_json",
@@ -649,7 +649,7 @@ dependencies = [
  "intel_tex_2",
  "log",
  "naga",
- "parking_lot",
+ "parking_lot 0.13.0",
  "pollster 1.0.1",
  "rayon",
  "thiserror 2.0.21",
@@ -728,7 +728,7 @@ dependencies = [
  "md5",
  "memmap2",
  "mimalloc",
- "parking_lot",
+ "parking_lot 0.13.0",
  "png",
  "pollster 1.0.1",
  "pulldown-cmark",
@@ -769,7 +769,7 @@ dependencies = [
  "glam 0.34.1",
  "log",
  "opus-decoder",
- "parking_lot",
+ "parking_lot 0.13.0",
  "reqwest",
  "rtc",
  "rustls",
@@ -1984,7 +1984,7 @@ dependencies = [
  "harfrust",
  "log",
  "nohash-hasher",
- "parking_lot",
+ "parking_lot 0.12.5",
  "profiling",
  "self_cell",
  "serde",
@@ -3327,6 +3327,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lock_api"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65d91b22da179613dcf4d6ec8349563f52a363f6849e03b00dd0a185ec4a59af"
+dependencies = [
+ "scopeguard",
+]
+
+[[package]]
 name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4239,8 +4248,18 @@ version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93857453250e3077bd71ff98b6a65ea6621a19bb0f559a85248955ac12c45a1a"
 dependencies = [
- "lock_api",
- "parking_lot_core",
+ "lock_api 0.4.14",
+ "parking_lot_core 0.9.12",
+]
+
+[[package]]
+name = "parking_lot"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9cf937ca4e1d0b7578784559063422fc39ae7c5a00f02471f2614d5486fd226"
+dependencies = [
+ "lock_api 0.5.0",
+ "parking_lot_core 0.10.0",
 ]
 
 [[package]]
@@ -4252,6 +4271,18 @@ dependencies = [
  "cfg-if",
  "libc",
  "redox_syscall 0.5.18",
+ "smallvec",
+ "windows-link",
+]
+
+[[package]]
+name = "parking_lot_core"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cfff060068cc18aa7815010fcaf80c68c7fb9e85fc7f5c0f9bf142c21d19826"
+dependencies = [
+ "libc",
+ "redox_syscall 0.9.4",
  "smallvec",
  "windows-link",
 ]
@@ -6439,7 +6470,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
- "parking_lot",
+ "parking_lot 0.12.5",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",
@@ -7171,7 +7202,7 @@ dependencies = [
  "js-sys",
  "log",
  "naga",
- "parking_lot",
+ "parking_lot 0.12.5",
  "portable-atomic",
  "profiling",
  "raw-window-handle",
@@ -7204,7 +7235,7 @@ dependencies = [
  "naga",
  "naga-types",
  "once_cell",
- "parking_lot",
+ "parking_lot 0.12.5",
  "portable-atomic",
  "profiling",
  "raw-window-handle",
@@ -7291,7 +7322,7 @@ dependencies = [
  "objc2-quartz-core 0.3.2",
  "once_cell",
  "ordered-float",
- "parking_lot",
+ "parking_lot 0.12.5",
  "portable-atomic",
  "portable-atomic-util",
  "profiling",
