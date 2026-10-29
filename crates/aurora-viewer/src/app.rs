@@ -18049,6 +18049,10 @@ impl ApplicationHandler for App {
 
     fn device_event(&mut self, _el: &ActiveEventLoop, _id: winit::event::DeviceId, event: DeviceEvent) {
         if let DeviceEvent::MouseMotion { delta } = event {
+            // a remote desktop's or a tablet's position: its motion (raw_mouse.rs)
+            let Some(delta) = crate::raw_mouse::motion(delta) else {
+                return;
+            };
             if self.numeric_drag.active() {
                 if let Some(g) = &mut self.gfx {
                     g.egui_state.on_mouse_motion(delta);
