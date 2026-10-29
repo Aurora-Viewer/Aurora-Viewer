@@ -30,6 +30,12 @@ on:
       - assets/branding/aurora.icns
       - scripts/verify-version.ps1
 
+# a new push to a pull request stops its previous dry run; a release (a
+# tag, or the nightly's call) is never cancelled: its group is its own run
+concurrency:
+  group: release-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
