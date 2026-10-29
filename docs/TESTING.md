@@ -6982,7 +6982,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|worn|save|edit|layers|layers-drag|layers-hold|menu|duplicates`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates`**
 — opens Appearance with four synthetic outfits:
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
@@ -7031,6 +7031,13 @@ for them (`5 to look up`), as a cold inventory cache.
   Lipstick under Star from frame 701 and drops it at frame 760 (the list
   then reads Freckles, Star, Lipstick); `layers-hold` holds it over its
   landing place, for a capture of the marker.
+
+`wearables`, `wearables-outfits` and `wearables-edit` show all 17 system
+wearable types in Worn, My Outfits and the editor respectively. Each type
+has its own icon, shared with Inventory. Body parts and clothing precede
+attachments regardless of their names or descriptions; the three tattoos
+remain Lipstick, Freckles, Star in Worn and the editor. The editor's unworn
+rows use the same type-specific icons.
 
 These operations stay offline; creating new clothing and
 new body parts is not available yet.

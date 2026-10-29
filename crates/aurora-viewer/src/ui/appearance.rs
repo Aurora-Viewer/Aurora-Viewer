@@ -970,7 +970,7 @@ fn outfit_list(
                     });
                     ui.add_space(2.0);
                     let mut links = model::folder_links(&world.inventory, *id);
-                    links.sort_by_key(|l| l.name.to_lowercase());
+                    items::sort_links(&world.inventory, &mut links, false);
                     for link in links.iter().filter(|l| !l.folder) {
                         if let Some(it) = world.inventory.items.get(&link.target) {
                             ui.push_id(("outfit_item", id, it.id), |ui| {
@@ -1069,12 +1069,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
             });
         }
     }
-    links.sort_by(|a, b| {
-        layers::order(a)
-            .cmp(&layers::order(b))
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
-    layers::furthest_first(inv, &mut links);
+    items::sort_links(inv, &mut links, true);
     // each clothing type's layers as shown, furthest from the body first
     let mut groups: HashMap<u32, Vec<Uuid>> = HashMap::new();
     for link in &links {
@@ -1194,7 +1189,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
                 not_worn_row(
                     ui,
                     p,
-                    if st.edit_tab == 0 { "shirt-filled" } else { "man-filled" },
+                    super::inventory::item_icon(if kind < 4 { 13 } else { 5 }, 18, kind as u32),
                     &aurora_i18n::tr!("ui-appearance-not-worn", name = name.to_string(), ending = ending.to_string()),
                 );
                 row_gap(ui);
@@ -2005,6 +2000,84 @@ mod tests {
                 .iter()
                 .any(|c| matches!(c, aurora_net::NetCommand::FetchItems { items, .. } if items.contains(&target)))
         );
+    }
+
+    #[test]
+    fn wearable_rows_precede_attachments_in_outfits_worn_and_editor() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let palette = crate::theme::Theme::default().palette();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        model::seed_demo(&mut world.inventory, world.agent_id);
+        model::seed_demo_wearables(&mut world.inventory, world.agent_id);
+        let folder = Uuid::from_u128(705);
+        for view in 0..3 {
+            let mut st = AppearanceUi::default();
+            st.open_outfit(folder);
+            let mut render = || {
+                ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 1600.0))),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        ui.set_width(600.0);
+                        if view == 0 {
+                            let entry = Entry {
+                                id: folder,
+                                depth: 0,
+                                group: false,
+                                outfits: 0,
+                            };
+                            outfit_list(
+                                ui,
+                                &palette,
+                                &world,
+                                &mut st,
+                                &[entry],
+                                &[folder],
+                                model::base(&world.inventory),
+                                &mut vec![],
+                            );
+                        } else {
+                            worn_list(ui, &palette, &world, &mut st, &mut vec![], view == 2);
+                        }
+                    },
+                )
+            };
+            for _ in 0..3 {
+                render();
+            }
+            let output = render();
+            let y = |id| {
+                let name = &world.inventory.items[&Uuid::from_u128(id)].name;
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.text().starts_with(name) => Some(text.pos.y),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("missing {name} in view {view}"))
+            };
+            // The real row painter must show every system wearable above every attachment.
+            for link in model::folder_links(&world.inventory, folder) {
+                let item = &world.inventory.items[&link.target];
+                if matches!(item.asset_type, 5 | 13) && view != 2 {
+                    for attachment in [717, 718, 719, 720, 721] {
+                        assert!(
+                            y(item.id.as_u128()) < y(attachment),
+                            "{} below attachment in view {view}",
+                            item.name
+                        );
+                    }
+                }
+            }
+            if view != 0 {
+                assert!(y(725) < y(724) && y(724) < y(714), "tattoo layers reversed in view {view}");
+            }
+        }
     }
 
     #[test]
@@ -2830,10 +2903,11 @@ mod tests {
             ..Default::default()
         };
         // right click an item of the open outfit, then draw the whole list
-        let label = model::folder_links(&world.inventory, outfit)
+        let mut links = model::folder_links(&world.inventory, outfit);
+        items::sort_links(&world.inventory, &mut links, false);
+        let label = links
             .into_iter()
-            .filter_map(|l| world.inventory.items.get(&l.target).map(|it| it.name.clone()))
-            .min_by_key(|n| n.to_lowercase())
+            .find_map(|l| world.inventory.items.get(&l.target).map(|it| it.name.clone()))
             .expect("item");
         let pos = label_position(&ctx, &mut world, &mut st, &label);
         for pressed in [true, false] {
