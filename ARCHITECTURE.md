@@ -1,5 +1,16 @@
 # Aurora Viewer architecture
 
+`graphics_presets/saved.rs` holds named rendering quality snapshots (#1218),
+persisted as an explicit allowlist in `Settings::graphics_saved`. Selection is
+stored separately in `graphics_saved_active`: identical snapshots remain distinct,
+and editing retains the selected name. The editor in `ui/options/saved_graphics.rs`
+updates that profile with Save, asks for a name with Save as, marks unsaved changes,
+and confirms duplicate names and deletion from each dropdown row's bin.
+Graphics keeps parcel-isolation controls in its Parcels tab after Smoothness,
+split into filtering options, the filter's scope list and always-visible parcels.
+`ui/bars/graphics.rs` shares the built-in/custom choices and the independent FPS
+cap switch between the FPS hover card (both bar layouts) and the system menu.
+
 `scene/anim.rs` restarts active resident and control-avatar motions from one shared
 instant for Ctrl+S, World and the resync toolbar command. Receipt signals,
 simulator state and independent import previews are preserved. Native key dispatch leaves Save
@@ -434,10 +445,14 @@ snapshots and UI. Both matching Blender package layouts are bundled by
 `blender_live/addon.rs` and exported to ZIP on a worker, using the shared atomic
 file writer: a native extension for 4.2+ or a classic add-on for 2.93–4.1.
 `installer.rs` discovers bounded application directories, PATH and Windows
-application registrations, with a remembered manual executable picker. Discovery
-and installation run on workers, with at most two read-only Blender probes at a
-time. `blender/install_bridge.py`, bundled in the viewer, asks each executable
-for its actual version/profile and uses Blender's native offline package
+application registrations, with a remembered manual executable picker. Opening
+LiveMesh does not start discovery; only Search for Blender requests it.
+Install in Blender chooses one executable, checks it and installs the bundled
+plug-in directly, with worker-driven status steps and an explicit completion
+message. It upserts only that executable's report and preserves other rows.
+Discovery and installation run on workers, with at most two
+read-only Blender probes at a time. The bundled `blender/install_bridge.py` asks
+each executable for its actual version/profile and uses Blender's native offline package
 operators. Installation backs up Aurora's prior package and preferences, verifies
 every bundled file plus activation, restores files on failure, and saves only
 the changed Aurora enable state. An OS file lock serializes writes to a profile;
@@ -487,6 +502,33 @@ always capture. Comparing prepared content suppresses identical automatic
 revisions, including idle texture-paint ticks, while sharing payload buffers
 with the worker. `docs/BLENDER_LIVE.md` describes setup and
 wire limits; `blender/tests/` exercises real Blender capture and transport.
+For packed peers, capture reads RNA weights once, ranks/normalizes the strongest
+four in NumPy and creates detached immutable geometry buffers directly, avoiding
+per-corner dictionaries and a second Python packing loop. Legacy export/LOD
+callers keep the ordinary representation. Editing gestures get a 150 ms quiet
+gap before automatic capture; manual refresh bypasses it and animation playback
+cannot starve updates. Packed capture reads the base rest mesh directly when
+there are no shape keys or enabled modifiers other than Armature; other cases retain
+evaluated-clone capture. Material-only updates reuse the cached geometry buffers
+and refresh materials/images; geometry, membership and export-setting changes
+invalidate that cache. Status changes redraw only the View3D sidebar region,
+without waking every viewport at each timer tick. The socket sender sleeps until
+new work or its existing two-second heartbeat instead of polling at 10 Hz.
+Live capture isolates source failures, rolls back their image budgets and removes
+dangling parent links before sending the remaining valid sources. Strict export
+callers still fail atomically. Per-entry transient errors open a dialog from a
+warning button, with wrapped details and a copy action. The timer boundary retains the callback after
+unexpected exceptions; material polling failures cannot block geometry capture.
+Negotiated `compressed-snapshots` uses a `ZLIB` prefix and lossless zlib on the
+socket workers. Wire frames remain bounded to 64 MiB, decoded JSON to 256 MiB;
+decompression rejects incomplete/checksum-invalid streams and trailing data.
+`geometry.rs` decodes negotiated `packed-geometry` surfaces: base64 little-endian
+52-byte corner records (position/normal/UV f32, four u8 joints, four f32 weights)
+and u32 indices. They retain the same values as JSON's f32 conversion, with no
+geometry simplification, and pass the ordinary limits and content validation.
+If a source still exceeds the peer budget, the client sends the valid subset,
+remaps used images, removes dangling links and reports source-ID errors back to
+Blender's rows. Latest revision matching discards stale transport diagnostics.
 Optional negotiated source UUIDs keep Aurora's per-object visibility/removal
 stable across renames and render-batch splitting. Prepared sources share immutable
 import scenes and decoded pixels. Negotiated `import-lods` requests identify a
@@ -499,10 +541,13 @@ four File LODs already assigned. Preparation never requests a quote or upload;
 the normal review, quote and confirmed upload workflow follows. Preview-only
 elbow/knee flexion inspects skinning without altering the uploaded mesh.
 Hidden/removed sources keep receiving edits, with no simulator traffic.
-The LiveMesh floater separates connection, objects and plug-in controls
-with shared horizontal dividers in a brighter palette tone and plain section
-headings. Connection status shares its title row; port, loopback address and
-start/stop share a single control row. Each source row requests its own fresh LOD bundle;
+The LiveMesh floater has Connection and Plugins tabs, retained across reopening
+with separate scroll positions. Connection contains transport status, shape
+transfer, objects and their placement controls; Plugins contains installation,
+progress, completion and manual ZIP export. Its body uses scoped 16-point
+typography, including custom-painted controls through the UI font override.
+Port, loopback address and start/stop share a wrapping control row.
+Each source row requests its own fresh LOD bundle;
 visibility and bulk removal remain independent of import selection.
 Plugins lists detected Blender versions and installed plug-in versions, with a
 per-installation Install/Update/Enable/Reinstall action. Manual ZIP export remains

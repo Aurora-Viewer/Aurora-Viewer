@@ -1093,6 +1093,10 @@ pub struct Settings {
     /// Optional frame rate cap (on by default at 120 images per second).
     pub fps_cap: bool,
     pub fps_limit: u32,
+    /// Named graphics quality snapshots (#1218), independent of frame pacing.
+    pub graphics_saved: std::collections::BTreeMap<String, crate::graphics_presets::saved::Saved>,
+    /// The explicitly selected profile, retained while its quality is edited.
+    pub graphics_saved_active: Option<String>,
     /// Lower cap while the window is not focused (on by default, as
     /// Firestorm yields BackgroundYieldTime every frame in the background).
     pub background_fps_cap: bool,
@@ -1834,6 +1838,8 @@ impl Default for Settings {
             hdr_emissive: true,
             fps_cap: true,
             fps_limit: 120,
+            graphics_saved: Default::default(),
+            graphics_saved_active: None,
             background_fps_cap: true,
             background_fps_limit: 15,
             max_particles: 4096,
@@ -2136,7 +2142,14 @@ impl Settings {
         s
     }
 
-    fn sanitized(mut self) -> Settings {
+    pub(crate) fn sanitized(mut self) -> Settings {
+        if self
+            .graphics_saved_active
+            .as_ref()
+            .is_some_and(|name| !self.graphics_saved.contains_key(name))
+        {
+            self.graphics_saved_active = None;
+        }
         for profile in self.world_context_menus.profiles.values_mut() {
             profile.locked = true;
         }
@@ -2476,6 +2489,8 @@ impl Settings {
             window_maximized: old.window_maximized,
             // a newer build's own values are not this build's to reset
             newer_file: old.newer_file,
+            // Named profiles are user content, like separate preset files.
+            graphics_saved: old.graphics_saved,
             // Reset this avatar's hover options while keeping other accounts.
             hover_height_accounts: old.hover_height_accounts,
             hover_height_account: old.hover_height_account,

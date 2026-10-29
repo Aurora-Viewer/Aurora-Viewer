@@ -29,7 +29,7 @@ pub struct Pack {
 /// The pack this viewer uses, built by the "Media plugins" workflow
 /// (.github/workflows/media-plugins.yml) and published under the tag
 /// `media-plugins-<version>`, one archive per system.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub const PACK: Pack = Pack {
     version: "1",
     size: 252_643_186,
@@ -41,15 +41,27 @@ pub const PACK: Pack = Pack {
     size: 206_114_621,
     sha256: "11a41a1e6c6250bbc9875b3fdf2d3609f1dd1740707d9ee805eb245803bea687",
 };
+#[cfg(target_os = "macos")]
+pub const PACK: Pack = Pack {
+    version: "3",
+    size: 334_919_416,
+    sha256: "28b21b12416459b67e7a5148d7a0239830b339db95267b517517b40ba68b15a0",
+};
 
 /// The system part of the archive's name.
-const SYSTEM: &str = if cfg!(target_os = "linux") { "linux-x64" } else { "windows-x64" };
+const SYSTEM: &str = if cfg!(target_os = "linux") {
+    "linux-x64"
+} else if cfg!(target_os = "macos") {
+    "macos-universal"
+} else {
+    "windows-x64"
+};
 
 const MANIFEST: &str = "aurora-media-plugins.json";
 /// Written next to the manifest once the archive is extracted: the SHA-256 of
 /// that archive. A pack rebuilt under the same version is installed again.
 const ORIGIN: &str = "archive.sha256";
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 const REQUIRED: [&str; 3] = [
     "llplugin/SLPlugin.exe",
     "llplugin/media_plugin_cef.dll",
@@ -62,6 +74,14 @@ const REQUIRED: [&str; 3] = [
     "llplugin/SLPlugin",
     "llplugin/libmedia_plugin_cef.so",
     "llplugin/libmedia_plugin_gstreamer.so",
+];
+/// SLPlugin.app as the Legacy Viewer's application holds it, its plugins
+/// in its Contents/Frameworks (DarwinManifest, viewer_manifest.py).
+#[cfg(target_os = "macos")]
+const REQUIRED: [&str; 3] = [
+    "llplugin/SLPlugin.app/Contents/MacOS/SLPlugin",
+    "llplugin/SLPlugin.app/Contents/Frameworks/media_plugin_cef.dylib",
+    "llplugin/SLPlugin.app/Contents/Frameworks/media_plugin_libvlc.dylib",
 ];
 
 #[derive(serde::Deserialize)]

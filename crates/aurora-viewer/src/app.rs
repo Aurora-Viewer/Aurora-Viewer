@@ -935,6 +935,9 @@ fn wanted_interface_colors(settings: &Settings) -> crate::interface_colors::Inte
 /// graphics level first, so that the single settings after it still change
 /// it. Applied at start, and again after a new profile's level is chosen.
 fn apply_test_overrides(settings: &mut Settings) {
+    if std::env::var_os("AURORA_DEMO").is_some() && ui::bars::demo::get().graphics_profiles {
+        crate::graphics_presets::saved::demo(settings);
+    }
     if let Some(level) = std::env::var("AURORA_GRAPHICS_PRESET")
         .ok()
         .and_then(|v| crate::graphics_presets::Preset::from_name(&v))
@@ -11901,6 +11904,16 @@ impl App {
                 self.settings.save();
                 self.snapshots.settings_changed = true;
             }
+            BarAction::SavedGraphicsPreset(name) => {
+                if crate::graphics_presets::saved::select(&mut self.settings, &name) {
+                    self.settings.save();
+                    self.snapshots.settings_changed = true;
+                }
+            }
+            BarAction::FpsCap(enabled) => {
+                self.settings.fps_cap = enabled;
+                self.settings.save();
+            }
             BarAction::CameraPreset(preset) => {
                 if self.world.rlva.camera_preset_locked(uuid::Uuid::nil()) {
                     return;
@@ -13415,6 +13428,9 @@ impl App {
                     perf: &self.perf,
                     net_loss: crate::net_profile::loss_percent(&self.net_profile.last),
                     graphics_preset: crate::graphics_presets::Preset::matching(&self.settings),
+                    graphics_saved: crate::graphics_presets::saved::choices(&self.settings),
+                    fps_cap: self.settings.fps_cap,
+                    fps_limit: self.settings.fps_limit,
                     camera_preset: self.settings.camera.preset,
                     interface_hidden: self.interface.hidden,
                     interface_keys: self.interface_keys(),

@@ -283,7 +283,7 @@ pub(crate) fn organization_drag_preview(ctx: &egui::Context, p: &Palette, id: eg
 pub fn section_header(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str) {
     ui.horizontal(|ui| {
         glyph(ui, icon, p.violet_light, 17.0);
-        ui.label(RichText::new(title).size(13.0).strong().color(p.ink));
+        ui.label(RichText::new(title).font(super::control_font(ui, 13.0)).strong().color(p.ink));
     });
     ui.add_space(4.0);
 }
@@ -344,7 +344,7 @@ fn section<R>(
     // a plain title takes the style of the section titles; a caller's own
     // rich text or galley (an outfit's name with its suffix) is kept
     let title = match title {
-        egui::WidgetText::Text(text) => RichText::new(text).size(12.5).strong().color(p.ink).into(),
+        egui::WidgetText::Text(text) => RichText::new(text).font(super::control_font(ui, 12.5)).strong().color(p.ink).into(),
         styled => styled,
     };
     let indent = ui.spacing().indent;
