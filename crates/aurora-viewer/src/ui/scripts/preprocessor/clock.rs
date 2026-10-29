@@ -1,5 +1,5 @@
 //! The C preprocessor's __DATE__ / __TIME__ builtins, using the local clock
-//! on Windows (as Boost.Wave does). Other platforms use the UTC clock.
+//! (as Boost.Wave does).
 
 #[cfg(windows)]
 pub(super) fn builtins() -> (String, String) {
@@ -21,21 +21,16 @@ pub(super) fn builtins() -> (String, String) {
 
 #[cfg(not(windows))]
 pub(super) fn builtins() -> (String, String) {
-    let seconds = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    // Civil date from days since the Unix epoch, via Gregorian 400-year eras.
-    let days = seconds / 86400 + 719468;
-    let era = days / 146097;
-    let doe = days % 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + u64::from(month <= 2);
-    format(year, month, day, seconds / 3600 % 24, seconds / 60 % 60, seconds % 60)
+    use chrono::{Datelike, Timelike};
+    let t = chrono::Local::now();
+    format(
+        u64::try_from(t.year()).unwrap_or(0),
+        t.month().into(),
+        t.day().into(),
+        t.hour().into(),
+        t.minute().into(),
+        t.second().into(),
+    )
 }
 
 fn format(year: u64, month: u64, day: u64, hour: u64, minute: u64, second: u64) -> (String, String) {

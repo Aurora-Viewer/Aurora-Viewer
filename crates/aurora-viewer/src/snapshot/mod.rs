@@ -628,29 +628,20 @@ fn local_time() -> (u16, u16, u16, u16, u16, u16) {
 
 #[cfg(not(windows))]
 fn local_time() -> (u16, u16, u16, u16, u16, u16) {
-    // UTC: the platform's local time zone is not read without a dependency
-    let unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64);
-    let days = unix.div_euclid(86400);
-    let secs = unix.rem_euclid(86400);
-    // H. Hinnant's civil_from_days
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
+    // the TZ variable, else the system zone (/etc/localtime)
+    civil(&chrono::Local::now())
+}
+
+/// A date and time's fields in its own time zone, as `local_time` gives them.
+#[cfg_attr(windows, allow(dead_code))]
+fn civil(t: &(impl chrono::Datelike + chrono::Timelike)) -> (u16, u16, u16, u16, u16, u16) {
     (
-        y as u16,
-        m as u16,
-        d as u16,
-        (secs / 3600) as u16,
-        (secs / 60 % 60) as u16,
-        (secs % 60) as u16,
+        u16::try_from(t.year()).unwrap_or(0),
+        t.month() as u16,
+        t.day() as u16,
+        t.hour() as u16,
+        t.minute() as u16,
+        t.second() as u16,
     )
 }
 
