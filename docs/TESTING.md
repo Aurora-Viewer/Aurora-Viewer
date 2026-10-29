@@ -4073,7 +4073,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
-| `AURORA_DEMO_TRANSLATE=1\|on` | Private conversation translated with a local model: the suggestion to translate it, or translated both ways from the start |
+| `AURORA_DEMO_TRANSLATE=1\|on` | Private conversation translated with a local model: Spanish messages under the preferences' switch (the suggestion when it is on), or translated both ways from the start |
 | `AURORA_TRANSLATE_REAL=1` | With `AURORA_DEMO_TRANSLATE`, the real model (downloaded first) instead of the fake one |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object` | Notification center: cards, burst, paused bell, history, Legacy toasts and object inventory offers |
@@ -4885,10 +4885,11 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_TRANSLATE=1|on`**: the translation of private conversations
   (`crate::translate`, fork experiment). The Conversations window opens on a
   private conversation where a demo resident writes two Spanish messages
-  (frames 700 and 760): with `1`, the bar above the field suggests "They seem
-  to write Español. Translate this conversation?" (capture at frame 820). With
-  `on`, the conversation is translated to Spanish from the start (for the
-  run, never saved): each message shows its translation with the original
+  (frames 700 and 760). With `1`, the preferences decide: translation is off
+  by default (Preferences › Chat › Translation) and nothing happens; on, the
+  bar above the field suggests "They seem to write Español. Translate this
+  conversation?" (capture at frame 820). With `on`, translation is on and the
+  conversation translated to Spanish from the start: each message shows its translation with the original
   under it in small muted text, a third message arrives at 900, and we answer
   in English at 1000; capture at 1100. The language button of the field is
   lit and the field's hint says "(translated to Español)". The model is a

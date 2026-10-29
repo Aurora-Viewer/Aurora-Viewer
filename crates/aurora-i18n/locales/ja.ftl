@@ -12143,3 +12143,6 @@ translate-options-model = 翻訳モデル
 translate-options-model-hint = このコンピュータ上で動作し、会話を初めて翻訳するときにダウンロードされます。大きいモデルほど翻訳の質が高くなりますが、より多くのメモリを使用します。
 translate-options-model-size = { $model }{ "（" }{ $size }{ "ＧＢ）" }
 translate-line-pending = 翻訳中…
+translate-disabled = 翻訳はオフです。環境設定 › チャット › 翻訳でオンにしてください。
+translate-options-enabled = 個人間の会話を翻訳
+translate-options-enabled-hint = 個人間の会話にボタンが表示され、このコンピュータ上で動作するモデルで双方向に翻訳します。相手が別の言語で書くと提案が表示されます。オフの場合は何も翻訳されません。

@@ -17624,6 +17624,7 @@ impl ApplicationHandler for App {
                     self.translate = crate::translate::TranslateService::with_backend(crate::demo::translate::backend);
                 }
                 if crate::demo::translate::starts_on() {
+                    self.settings.translate.enabled = true;
                     self.settings.translate.sessions.insert(crate::demo::translate::WITH, "es".into());
                 }
             }

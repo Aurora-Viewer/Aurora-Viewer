@@ -29,6 +29,8 @@ pub enum SetResult {
     NeedsDownload,
     /// This viewer was built without a model runtime.
     NotBuilt,
+    /// Translation is off in the preferences.
+    Disabled,
 }
 
 /// What a frame of the translator gives the app.
@@ -56,6 +58,8 @@ pub struct TranslateView {
     pub offline: bool,
     /// The viewer can translate (built with a model runtime, or the demo's).
     pub built: bool,
+    /// Translation is on in the preferences.
+    pub enabled: bool,
 }
 
 impl TranslateView {
@@ -105,6 +109,9 @@ impl TranslateService {
     }
 
     pub fn partner(settings: &TranslateSettings, session: Uuid) -> Option<&'static Lang> {
+        if !settings.enabled {
+            return None;
+        }
         settings.sessions.get(&session).and_then(|c| lang(c))
     }
 
@@ -122,6 +129,9 @@ impl TranslateService {
             settings.sessions.remove(&session);
             return SetResult::Off;
         };
+        if !settings.enabled {
+            return SetResult::Disabled;
+        }
         if !self.built() {
             return SetResult::NotBuilt;
         }
@@ -214,7 +224,7 @@ impl TranslateService {
                     self.submit(settings, session, job);
                 }
             }
-            None if !self.built() => {}
+            None if !self.built() || !settings.enabled => {}
             None => {
                 if let Some(l) = self.suggest.observe(session, text, me) {
                     self.suggestions.insert(session, l);
@@ -320,6 +330,7 @@ impl TranslateService {
             status: self.status(),
             offline: self.offline(),
             built: self.built(),
+            enabled: settings.enabled,
         }
     }
 

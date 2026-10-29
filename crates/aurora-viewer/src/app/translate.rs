@@ -34,7 +34,7 @@ impl App {
         let r = self.translate.set_partner(&mut self.settings.translate, session, to, &models_dir());
         match r {
             SetResult::Ready | SetResult::Off => self.settings.save(),
-            SetResult::NeedsDownload | SetResult::NotBuilt => {}
+            SetResult::NeedsDownload | SetResult::NotBuilt | SetResult::Disabled => {}
         }
         if r == SetResult::Ready {
             self.translate_recent(session);
@@ -43,6 +43,7 @@ impl App {
             SetResult::Ready => Some(self.translate_status(session)),
             SetResult::Off => Some(aurora_i18n::tr!("translate-off").to_string()),
             SetResult::NotBuilt => Some(aurora_i18n::tr!("translate-not-built").to_string()),
+            SetResult::Disabled => Some(aurora_i18n::tr!("translate-disabled").to_string()),
             SetResult::NeedsDownload => None,
         }
     }

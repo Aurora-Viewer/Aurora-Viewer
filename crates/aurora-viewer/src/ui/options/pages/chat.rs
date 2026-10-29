@@ -270,53 +270,62 @@ pub fn page(cx: &mut Cx, tab: usize) {
 fn translation(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("translate-options"), |cx| {
-        let same = tr!("translate-options-same-as-interface");
-        let mut mine: Vec<(&str, &str)> = vec![("", same)];
-        mine.extend(aurora_translate::LANGS.iter().map(|l| (l.code, l.native)));
-        let words: Vec<&str> = mine.iter().map(|(_, l)| *l).collect();
-        cx.keywords(&words.join(" ")).row(
-            tr!("translate-options-my-language"),
-            tr!("translate-options-my-language-hint"),
-            &field!(translate.my_language),
-            |ui, s| {
-                let lang = &mut s.translate.my_language;
-                let mut code = mine.iter().find(|(c, _)| *c == lang.as_str()).map_or("", |(c, _)| *c);
-                let changed = super::super::combo(ui, &mut code, &mine);
-                if changed {
-                    *lang = code.to_owned();
-                }
-                changed
-            },
+        cx.toggle(
+            tr!("translate-options-enabled"),
+            tr!("translate-options-enabled-hint"),
+            &field!(translate.enabled),
         );
-        let labels: Vec<String> = aurora_translate::CATALOGUE
-            .iter()
-            .map(|e| {
-                tr!(
-                    "translate-options-model-size",
-                    model = e.label,
-                    size = format!("{:.1}", e.bytes as f64 / 1e9)
-                )
-            })
-            .collect();
-        let models: Vec<(&str, &str)> = aurora_translate::CATALOGUE
-            .iter()
-            .zip(&labels)
-            .map(|(e, l)| (e.id, l.as_str()))
-            .collect();
-        cx.row(
-            tr!("translate-options-model"),
-            tr!("translate-options-model-hint"),
-            &field!(translate.model),
-            |ui, s| {
-                let model = &mut s.translate.model;
-                let mut id = models.iter().find(|(c, _)| *c == model.as_str()).map_or(models[0].0, |(c, _)| *c);
-                let changed = super::super::combo(ui, &mut id, &models);
-                if changed {
-                    *model = id.to_owned();
-                }
-                changed
-            },
-        );
+        // my language and the model, greyed while it is off
+        let off = !cx.s.translate.enabled;
+        cx.subs(off, |cx| {
+            let same = tr!("translate-options-same-as-interface");
+            let mut mine: Vec<(&str, &str)> = vec![("", same)];
+            mine.extend(aurora_translate::LANGS.iter().map(|l| (l.code, l.native)));
+            let words: Vec<&str> = mine.iter().map(|(_, l)| *l).collect();
+            cx.keywords(&words.join(" ")).row(
+                tr!("translate-options-my-language"),
+                tr!("translate-options-my-language-hint"),
+                &field!(translate.my_language),
+                |ui, s| {
+                    let lang = &mut s.translate.my_language;
+                    let mut code = mine.iter().find(|(c, _)| *c == lang.as_str()).map_or("", |(c, _)| *c);
+                    let changed = super::super::combo(ui, &mut code, &mine);
+                    if changed {
+                        *lang = code.to_owned();
+                    }
+                    changed
+                },
+            );
+            let labels: Vec<String> = aurora_translate::CATALOGUE
+                .iter()
+                .map(|e| {
+                    tr!(
+                        "translate-options-model-size",
+                        model = e.label,
+                        size = format!("{:.1}", e.bytes as f64 / 1e9)
+                    )
+                })
+                .collect();
+            let models: Vec<(&str, &str)> = aurora_translate::CATALOGUE
+                .iter()
+                .zip(&labels)
+                .map(|(e, l)| (e.id, l.as_str()))
+                .collect();
+            cx.row(
+                tr!("translate-options-model"),
+                tr!("translate-options-model-hint"),
+                &field!(translate.model),
+                |ui, s| {
+                    let model = &mut s.translate.model;
+                    let mut id = models.iter().find(|(c, _)| *c == model.as_str()).map_or(models[0].0, |(c, _)| *c);
+                    let changed = super::super::combo(ui, &mut id, &models);
+                    if changed {
+                        *model = id.to_owned();
+                    }
+                    changed
+                },
+            );
+        });
     });
 }
 

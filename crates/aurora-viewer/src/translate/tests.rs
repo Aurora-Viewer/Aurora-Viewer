@@ -249,6 +249,7 @@ fn parse_tr_forms() {
 
 fn settings_with(session_lang: Option<&str>) -> TranslateSettings {
     let mut s = TranslateSettings {
+        enabled: true,
         my_language: "en".into(),
         ..Default::default()
     };
@@ -481,4 +482,32 @@ fn no_suggestion_without_a_model_runtime() {
     if !aurora_translate::BUILT {
         assert!(svc.view(&s).suggestions.is_empty());
     }
+}
+
+#[test]
+fn translation_is_off_by_default_and_does_nothing_until_enabled() {
+    let mut s = TranslateSettings::default();
+    assert!(!s.enabled);
+    s.my_language = "en".into();
+    s.sessions.insert(BOB, "es".into());
+    let mut svc = TranslateService::with_backend(|| Box::new(aurora_translate::FakeBackend::new()));
+    // a conversation saved as translated is not, while the switch is off
+    assert_eq!(TranslateService::partner(&s, BOB), None);
+    assert_eq!(
+        svc.submit_outgoing(&s, BOB, key(1).time, "hello there"),
+        [Effect::Send {
+            to: BOB,
+            text: "hello there".into()
+        }]
+    );
+    svc.on_incoming(&s, BOB, key(2).time, "Hola, ¿cómo estás hoy amigo?");
+    svc.on_incoming(&s, BOB, key(3).time, "¿Quieres ir a la playa conmigo?");
+    let v = svc.view(&s);
+    assert!(v.suggestions.is_empty() && v.partners.is_empty() && !v.enabled);
+    assert_eq!(
+        svc.set_partner(&mut s, BOB, Some(es()), std::path::Path::new("/x")),
+        SetResult::Disabled
+    );
+    s.enabled = true;
+    assert_eq!(TranslateService::partner(&s, BOB).map(|l| l.code), Some("es"));
 }

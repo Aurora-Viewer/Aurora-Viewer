@@ -25,6 +25,10 @@ const SUGGEST_MIN_CHARS: usize = 15;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TranslateSettings {
+    /// The translation of conversations at all (off by default): without
+    /// it, no button, no suggestion, and no conversation is translated, not
+    /// even one chosen before.
+    pub enabled: bool,
     /// ISO 639-1 code; empty: the interface's language.
     pub my_language: String,
     pub model: String,
@@ -39,6 +43,7 @@ pub struct TranslateSettings {
 impl Default for TranslateSettings {
     fn default() -> Self {
         Self {
+            enabled: false,
             my_language: String::new(),
             model: aurora_translate::DEFAULT_MODEL.into(),
             preview: false,

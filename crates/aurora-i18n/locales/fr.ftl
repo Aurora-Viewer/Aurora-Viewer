@@ -12455,3 +12455,6 @@ translate-options-model = Modèle de traduction
 translate-options-model-hint = Fonctionne sur cet ordinateur, téléchargé la première fois qu’une conversation est traduite. Le plus grand modèle traduit mieux et demande plus de mémoire.
 translate-options-model-size = { $model }{ " (" }{ $size }{ " Go)" }
 translate-line-pending = traduction…
+translate-disabled = La traduction est désactivée. Activez-la dans Préférences › Chat › Traduction.
+translate-options-enabled = Traduire les conversations privées
+translate-options-enabled-hint = Un bouton dans les conversations privées les traduit dans les deux sens avec un modèle qui fonctionne sur cet ordinateur, et une suggestion apparaît quand quelqu’un écrit dans une autre langue. Désactivé, rien n’est traduit.

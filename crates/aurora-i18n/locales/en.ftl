@@ -12459,3 +12459,6 @@ translate-options-model = Translation model
 translate-options-model-hint = Runs on this computer, downloaded the first time a conversation is translated. The larger model translates better and needs more memory.
 translate-options-model-size = { $model }{ " (" }{ $size }{ " GB)" }
 translate-line-pending = translating…
+translate-disabled = Translation is off. Turn it on in Preferences › Chat › Translation.
+translate-options-enabled = Translate private conversations
+translate-options-enabled-hint = A button in private conversations translates them both ways with a model that runs on this computer, and a suggestion appears when someone writes in another language. Off, nothing is translated.

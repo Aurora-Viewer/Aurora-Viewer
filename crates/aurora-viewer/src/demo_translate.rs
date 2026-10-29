@@ -1,8 +1,10 @@
 //! AURORA_DEMO_TRANSLATE: the translation of private conversations
-//! (`crate::translate`) without a grid nor a model. Nova writes two Spanish
-//! messages in a private conversation (the suggestion to translate it
-//! shows); with `on` the conversation is translated from the start, Nova
-//! writes again and we answer in English. The model is a fake one that
+//! (`crate::translate`) without a grid nor a model. A resident writes two
+//! Spanish messages in a private conversation: with `1` the preferences
+//! decide (translation off by default: nothing happens; on: the suggestion
+//! to translate it shows); with `on` translation is on and the conversation
+//! translated from the start, the resident writes again and we answer in
+//! English. The model is a fake one that
 //! answers "[<language>] <text>" after 0.4 s, unless AURORA_TRANSLATE_REAL is
 //! set: then the real model (downloaded first if needed).
 
