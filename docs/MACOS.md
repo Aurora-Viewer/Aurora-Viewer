@@ -54,6 +54,15 @@ key (Ctrl+S, Ctrl+Shift+I…), as in the Legacy Viewer. Text fields follow
 macOS (Cmd+C, Cmd+V, Cmd+A, Cmd+arrows). **Cmd+Q** asks before quitting, like
 the close button of the window.
 
+## Web pages and video
+
+Web pages and video in the world need the media plugins, which are not part
+of the application: the first time they are needed, the viewer downloads
+Aurora's media plugins pack (about 335 MB) into the `media-plugins` folder of
+its settings (table below), once. A Legacy Viewer installed on the Mac can
+lend its plugins instead: in **Preferences › Media**, type the path of its
+application (its `.app` in `/Applications`) as the plugins folder.
+
 ## Updates
 
 The viewer tells you when a new version is out, but it cannot replace
@@ -72,10 +81,6 @@ paste the path.
 
 ## Not on macOS yet
 
-- Aurora's own media plugins pack (web pages and video in the world). Meanwhile, a
-  Legacy Viewer installed on the Mac lends its plugins: in **Preferences › Media**,
-  type the path of its application (for example `/Applications/Firestorm.app`) as the
-  plugins folder.
 - Automatic installation of updates (above).
 - Opening `secondlife://` links from a web browser.
 - The crash report window.
