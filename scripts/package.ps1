@@ -42,7 +42,7 @@ Copy-Item -LiteralPath $docs -Destination $Out -ErrorAction Stop
 # so the desktop matches the window to them. docs/LINUX.md installs them.
 if (-not [IO.Path]::GetExtension($Exe)) {
     Copy-Item -LiteralPath (Join-Path $Source 'packaging/linux/aurora-viewer.desktop') -Destination $Out -ErrorAction Stop
-    Copy-Item -LiteralPath (Join-Path $Source 'assets/branding/logo-loup-couleur.svg') -Destination (Join-Path $Out 'aurora-viewer.svg') -ErrorAction Stop
+    Copy-Item -LiteralPath (Join-Path $Source 'assets/branding/aurora-logo.svg') -Destination (Join-Path $Out 'aurora-viewer.svg') -ErrorAction Stop
 }
 $taskExePath = (Resolve-Path -LiteralPath $Exe).Path
 $taskVersion = (& $taskExePath --version | Out-String).Trim() -replace '^Aurora Viewer ', ''
