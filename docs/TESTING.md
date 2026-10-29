@@ -9981,10 +9981,13 @@ than 1 GB is a bug. The seeds are valid inputs made by our own encoders (or
 shipped assets), never content of the grid cache.
 
 `fuzz/` is its own Cargo workspace: the viewer's builds and `check.ps1` do
-not compile it. On this PC (stable Rust, Windows), `fuzz-local` mutates the
-seeds without coverage feedback:
+not compile it. It has no `Cargo.lock` of its own: copy the viewer's first,
+so that every shared crate is fuzzed at its shipped version (cargo only adds
+`libfuzzer-sys` and drops what `fuzz/` does not use). On this PC (stable
+Rust, Windows), `fuzz-local` mutates the seeds without coverage feedback:
 
 ```powershell
+Copy-Item Cargo.lock fuzz/Cargo.lock
 cargo run --release --manifest-path fuzz/Cargo.toml --bin fuzz-local -- all --seconds 60
 cargo run --release --manifest-path fuzz/Cargo.toml --bin fuzz-local -- mesh --seconds 300 --seed 7
 cargo run --release --manifest-path fuzz/Cargo.toml --bin fuzz-local -- --replay mesh fuzz/artifacts/mesh/crash-…

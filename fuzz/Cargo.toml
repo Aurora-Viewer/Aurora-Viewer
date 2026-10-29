@@ -4,6 +4,8 @@
 # it. The `fuzz-local` runner works on stable Rust (Windows included); the
 # libFuzzer targets of fuzz_targets/ need nightly and `cargo fuzz`
 # (`--features libfuzzer`), as the Fuzz workflow runs them on Linux.
+# No lock of its own: copy the viewer's Cargo.lock here first, so that every
+# shared crate is fuzzed at its shipped version.
 [package]
 name = "aurora-fuzz"
 version = "0.0.0"

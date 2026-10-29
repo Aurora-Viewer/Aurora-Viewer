@@ -27,6 +27,8 @@
 /fuzz/corpus/
 /fuzz/artifacts/
 /fuzz/coverage/
+# made from the viewer's Cargo.lock (docs/TESTING.md, "Fuzzing")
+/fuzz/Cargo.lock
 
 # Logs, captures, local settings
 *.log
