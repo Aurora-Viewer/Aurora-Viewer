@@ -27,6 +27,8 @@ struct Dof {
     tiles: vec4<f32>,
     // focus peaking: colour, w 1 when on
     peak: vec4<f32>,
+    // x: the far end of the sharp zone (m), lens.y its near end
+    band: vec4<f32>,
 };
 @group(0) @binding(5) var<uniform> dof: Dof;
 
@@ -61,8 +63,12 @@ fn view_depth(d: f32, uv: vec2<f32>) -> f32 {
 // Signed circle of confusion in full-resolution pixels: positive in front of
 // the focus plane (cofF.glsl's calc_cof: |s - z| / z * f^2 / (N (s - f)),
 // divided by the magnification and by a pixel's size at the focus distance).
+// That is k (1/z - 1/s), k = scale * s the same at any focus: with a sharp
+// zone from s to band.x (group focus), s is the zone's nearer end for a
+// point in front of it, its farther end for one behind, z itself inside.
 fn coc(z: f32) -> f32 {
-    let c = dof.lens.x * (dof.lens.y - z) / z;
+    let s = clamp(z, dof.lens.y, max(dof.band.x, dof.lens.y));
+    let c = dof.lens.x * dof.lens.y * (s - z) / (z * s);
     return clamp(c, -dof.lens.z, dof.lens.z);
 }
 

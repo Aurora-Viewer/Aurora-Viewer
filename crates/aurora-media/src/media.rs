@@ -732,10 +732,19 @@ impl MediaPlugin {
 
     /// Volume 0..1 (sent only when it changes).
     pub fn set_volume(&mut self, volume: f32) {
-        if (volume - self.requested_volume).abs() > 0.001 {
+        if volume_changed(self.requested_volume, volume) {
             self.requested_volume = volume;
             self.send(PluginMessage::new(CLASS_MEDIA_TIME, "set_volume").with("volume", volume as f64));
         }
+    }
+
+    /// Apply a native-window audio override even without another media frame.
+    pub fn set_volume_immediate(&mut self, volume: f32) {
+        self.set_volume(volume);
+        self.idle();
+        // idle drains our command queue into the process's socket buffer
+        // after its transport tick. Flush that buffer without a frame delay.
+        self.process.idle();
     }
 
     pub fn shutdown(&mut self) {
@@ -963,9 +972,24 @@ pub fn mime_from_scheme(url: &str) -> Option<String> {
     }
 }
 
+/// Suppress insignificant slider/roll-off changes, but always deliver exact
+/// silence and restoration, even at a gain below the normal IPC threshold.
+fn volume_changed(previous: f32, next: f32) -> bool {
+    (next == 0.0) != (previous == 0.0) || (next - previous).abs() > 0.001
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn minimized_mute_reaches_plugins_even_at_a_tiny_volume() {
+        assert!(volume_changed(0.0005, 0.0));
+        assert!(volume_changed(0.0, 0.0005));
+        assert!(!volume_changed(0.0, 0.0));
+        assert!(!volume_changed(0.5, 0.5005));
+        assert!(volume_changed(0.5, 0.6));
+    }
 
     #[test]
     fn mime_routing() {

@@ -159,6 +159,13 @@ impl Voice {
         ))
     }
 
+    /// Apply a native-window microphone override without waiting for a frame.
+    pub fn set_transmit(&self, transmit: bool) {
+        if let Some((_, session)) = &self.session {
+            session.set_transmit(transmit && self.mic.is_some());
+        }
+    }
+
     pub fn update(&mut self, v: VoiceInputs) {
         // microphone: open while voice is on in world, or for the settings meter
         let want_mic = v.enabled && (v.in_world || v.tuning);

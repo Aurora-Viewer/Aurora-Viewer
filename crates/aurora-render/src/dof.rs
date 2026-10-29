@@ -23,6 +23,8 @@ struct DofU {
     tiles: [f32; 4],
     /// Focus peaking: colour, 1 when on.
     peak: [f32; 4],
+    /// The far end of the sharp zone (m), then padding.
+    band: [f32; 4],
 }
 
 struct Targets {
@@ -249,6 +251,7 @@ impl Dof {
                 Some([r, g, b]) => [r, g, b, 1.0],
                 None => [0.0; 4],
             },
+            band: [params.focus_far.max(params.focus), 0.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&u));
         self.ensure_targets(device, size, hdr, post);

@@ -494,7 +494,7 @@ impl EnvEditorUi {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     let size = Vec2::new(0.0, 26.0);
-                    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let enter = widgets::enter_pressed(ui);
                     if widgets::action_button(ui, p, "check", aurora_i18n::tr!("common-ok"), ActionKind::Primary, size).clicked() || enter {
                         // onSaveAsCommit: corrected, "Unnamed" when empty
                         out.push(EditorAction::SaveAs(env_edit::correct_item_name(&name)));

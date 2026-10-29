@@ -298,7 +298,7 @@ pub(super) fn dialogs(
                 use widgets::{ActionKind, action_button, action_button_if};
                 let size = egui::Vec2::new(0.0, 26.0);
                 if action_button_if(ui, p, "check", aurora_i18n::tr!("common-ok"), ActionKind::Primary, size, valid).clicked()
-                    || (valid && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                    || (valid && crate::ui::widgets::enter_pressed(ui))
                 {
                     actions.push(Action::Category(id, Update::Rename(name.trim().into())));
                     close = true;

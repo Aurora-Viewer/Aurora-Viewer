@@ -1284,6 +1284,11 @@ pub struct DepthOfField {
     pub coc_scale: f32,
     /// Focus distance along the view axis (m).
     pub focus: f32,
+    /// The far end of the zone kept sharp (m), `focus` for a single plane:
+    /// the photo viewfinder's group focus keeps every avatar between its
+    /// nearest (`focus`) and its farthest sharp, the blur growing beyond
+    /// each end as a lens's from its plane.
+    pub focus_far: f32,
     /// Largest circle (pixels of the image; CameraMaxCoF at the window's
     /// height).
     pub max_coc: f32,

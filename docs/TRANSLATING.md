@@ -78,15 +78,25 @@ Japanese, beyond the plural:
   stems (保存, 削除, フレンドに追加), without です／ます nor a final 。;
   sentences, hints and errors use the polite です／ます form.
 - Japanese punctuation is full width (、。「」（）！？：); no space between
-  Japanese text and a placeable or a number (`{ $seconds }秒`), a space
-  before a Latin unit (`{ $distance } m`).
+  Japanese text and a placeable, a number or a unit (`{ $seconds }秒`,
+  `{ $distance }ｍ`).
+- Abbreviations, units and digits written in the Japanese text are full
+  width (ＵＵＩＤ, ＬＳＬ, ＨＵＤ, ＵＲＬ, ３Ｄ, ｍ, ＭＢ, ％, １つ):
+  half-width capitals look squashed next to kana and kanji, and the Legacy
+  Viewer's Japanese interface writes them the same way. The value of a
+  placeable is formatted by the code and stays as it is, and so does what
+  the user types or compares with another text: key names (Ctrl, WASD), chat
+  commands, file names and extensions, the identifiers of the Dev Toolbox
+  tools (J2, L1).
 - Terms: アバター, インベントリ, フレンド, グループ, 区画 (parcel),
   リージョン, 不動産 (estate), オブジェクト, 装着 (attach), アウトフィット,
   容姿 (appearance), 初期設定 (Preferences), 設定 (Aurora's own settings),
   近くのチャット, テレポート, ランドマーク, スクリプト, テクスチャ, フォルダ,
   ごみ箱; look an existing one up in `ja.ftl` before choosing a new one.
-  Second Life, Legacy Viewer, L$, LSL, UUID, key names and product names
-  stay in Latin letters.
+  Second Life, L$ and product names (Blender) stay in Latin letters. The
+  viewers are Auroraビューア and レガシービューア: "Legacy" is レガシー, as in
+  the option labels the Legacy Viewer's Japanese interface already
+  translates (昼間（レガシー）).
 - A label quoted in a hint (「…」) is the exact text of that label in
   `ja.ftl`.
 - A continuation line of a multi-line message cannot start with `*`, `[`
