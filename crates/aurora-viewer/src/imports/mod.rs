@@ -4,6 +4,7 @@
 //! scheduled on the scene's low-priority workers, never the frame thread.
 
 pub mod animation;
+pub mod animation_model;
 pub mod demo;
 pub mod files;
 mod live;
@@ -323,6 +324,7 @@ pub struct Entry {
     pub material_large_pending: [bool; 4],
     pub texture_target: usize,
     pub player: animation::Player,
+    pub animation_model: animation_model::Selection,
     pub mesh_player: mesh::preview::Player,
     pub sound: sound::Editor,
     pub local: bool,
@@ -393,6 +395,7 @@ impl Entry {
             material_large_pending: [false; 4],
             texture_target: 0,
             player: Default::default(),
+            animation_model: Default::default(),
             mesh_player: Default::default(),
             local: false,
             local_pending: false,
@@ -415,6 +418,7 @@ impl Entry {
 }
 
 pub(super) enum Worker {
+    AnimationModel(Uuid, u64, Option<Result<Arc<animation_model::Model>, String>>),
     Loaded(Uuid, Vec<Entry>),
     Reloaded(Uuid, Result<Vec<Entry>, String>),
     Encoded(Uuid, Result<Vec<u8>, String>),
@@ -1063,6 +1067,11 @@ impl Imports {
                         }
                     } else {
                         jobs.discard(pixels);
+                    }
+                }
+                Worker::AnimationModel(id, generation, result) => {
+                    if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
+                        animation_model::complete(entry, generation, result);
                     }
                 }
                 Worker::Model(id, generation, model, prepared) => {

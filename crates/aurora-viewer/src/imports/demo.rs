@@ -22,6 +22,51 @@ pub(super) fn multiple_dae() -> String {
     )
 }
 
+/// A local Bento tail fixture, intentionally independent of inventory assets.
+pub(super) fn tail_dae() -> String {
+    let controller = r##"<library_controllers><controller id="tail-skin"><skin source="#cube">
+<source id="tail-joints"><Name_array count="1">mTail1</Name_array></source>
+<source id="tail-bind"><float_array count="16">1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1</float_array><technique_common><accessor count="1" stride="16"/></technique_common></source>
+<source id="tail-weights"><float_array count="1">1</float_array><technique_common><accessor count="1" stride="1"/></technique_common></source>
+<joints><input semantic="JOINT" source="#tail-joints"/><input semantic="INV_BIND_MATRIX" source="#tail-bind"/></joints>
+<vertex_weights count="8"><input semantic="JOINT" source="#tail-joints" offset="0"/><input semantic="WEIGHT" source="#tail-weights" offset="1"/><vcount>1 1 1 1 1 1 1 1</vcount><v>0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0</v></vertex_weights>
+</skin></controller></library_controllers>"##;
+    DAE.replace(
+        "-0.5 -0.5 -0.5 0.5 -0.5 -0.5 0.5 0.5 -0.5 -0.5 0.5 -0.5 -0.5 -0.5 0.5 0.5 -0.5 0.5 0.5 0.5 0.5 -0.5 0.5 0.5",
+        "0 -0.10 -0.10 -0.9 -0.04 -0.04 -0.9 0.04 -0.04 0 0.10 -0.10 0 -0.10 0.10 -0.9 -0.04 0.04 -0.9 0.04 0.04 0 0.10 0.10",
+    )
+    .replace("<library_visual_scenes>", &format!("{controller}<library_visual_scenes>"))
+    .replace(
+        r##"<instance_geometry url="#cube"/>"##,
+        r##"<instance_controller url="#tail-skin"/>"##,
+    )
+}
+
+pub(super) fn tail_animation() -> Animation {
+    let mut animation = crate::demo::idle_animation();
+    animation.base_priority = 4;
+    animation.duration = 2.0;
+    animation.loop_in = 0.0;
+    animation.loop_out = 2.0;
+    animation.looping = true;
+    animation.ease_in = 0.0;
+    animation.ease_out = 0.0;
+    animation.joints = vec![aurora_assets::anim::JointMotion {
+        joint_name: "mTail1".into(),
+        priority: 4,
+        rot_keys: [0.0, 0.7, 0.0, -0.7, 0.0]
+            .into_iter()
+            .enumerate()
+            .map(|(i, angle)| aurora_assets::anim::RotKey {
+                time: i as f32 * 0.5,
+                rotation: glam::Quat::from_rotation_z(angle),
+            })
+            .collect(),
+        pos_keys: Vec::new(),
+    }];
+    animation
+}
+
 pub(super) fn fixtures(root: &Path) -> Result<(), String> {
     let write = |name: &str, data: &[u8]| std::fs::write(root.join(name), data).map_err(|e| e.to_string());
     std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
@@ -43,6 +88,11 @@ pub(super) fn fixtures(root: &Path) -> Result<(), String> {
     write("mesh-demo.dae", DAE.as_bytes())?;
     write("mesh-multiple.dae", multiple_dae().as_bytes())?;
     write("animation-demo.bvh", BVH)?;
+    write("tail-preview.dae", tail_dae().as_bytes())?;
+    write(
+        "tail-preview.anim",
+        &aurora_assets::import_animation::encode(&tail_animation()).map_err(|e| e.to_string())?,
+    )?;
     let skeleton =
         aurora_assets::Skeleton::parse(include_bytes!("../../assets/character/avatar_skeleton.xml")).map_err(|e| e.to_string())?;
     let animation = aurora_assets::import_animation::parse_bvh(BVH, &skeleton).map_err(|e| e.to_string())?;
@@ -102,7 +152,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
         | "material-loading" => Choice::Material,
         "mesh" | "mesh-low" | "mesh-error" | "mesh-physics" | "mesh-degenerate" | "mesh-options" | "mesh-zoom" | "mesh-normals"
         | "mesh-colors" | "mesh-avatar" | "mesh-avatar-rigged" | "mesh-journal" | "mesh-multiple" => Choice::Mesh,
-        "animation" | "animation-own" => Choice::Animation,
+        "animation" | "animation-own" | "animation-custom" => Choice::Animation,
         "sound" | "sound-split" => Choice::Sound,
         mode if mode.starts_with("local") => Choice::Local,
         _ => Choice::Bulk,
@@ -128,7 +178,11 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
     jobs.execute(move || {
         let root = PathBuf::from(".scratch").join("import-demo").join(request.to_string());
         let external = std::env::var_os("AURORA_DEMO_IMPORT_FILE").map(PathBuf::from);
-        let fixture_result = if external.is_some() { Ok(()) } else { fixtures(&root) };
+        let fixture_result = if external.is_some() && mode != "animation-custom" {
+            Ok(())
+        } else {
+            fixtures(&root)
+        };
         let entries = match fixture_result {
             Ok(()) => {
                 let files: &[(&str, Choice)] = match choice {
@@ -147,6 +201,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                     Choice::Material => &[("material-demo.gltf", Choice::Material)],
                     Choice::Mesh if mode == "mesh-multiple" => &[("mesh-multiple.dae", Choice::Mesh)],
                     Choice::Mesh => &[("mesh-demo.dae", Choice::Mesh)],
+                    Choice::Animation if mode == "animation-custom" => &[("tail-preview.anim", Choice::Animation)],
                     Choice::Animation => &[
                         ("animation-demo.bvh", Choice::Animation),
                         ("animation-demo.anim", Choice::Animation),
@@ -185,6 +240,15 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                         choice == Choice::Local || loader == Choice::Local,
                     ) {
                         Ok(mut loaded) => {
+                            if mode == "animation-custom" {
+                                let avatars = crate::scene::avatar::AvatarLibrary::load();
+                                for entry in &mut loaded {
+                                    match animation_model::load(root.join("tail-preview.dae"), prefs.mesh_model_limit, &avatars) {
+                                        Ok(model) => entry.animation_model.current = Some(model),
+                                        Err(error) => entry.animation_model.error = Some(error),
+                                    }
+                                }
+                            }
                             if mode == "mesh-colors"
                                 && let Some(entry) = loaded.first()
                             {

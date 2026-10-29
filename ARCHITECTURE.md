@@ -11,6 +11,16 @@ split into filtering options, the filter's scope list and always-visible parcels
 `ui/bars/graphics.rs` shares the built-in/custom choices and the independent FPS
 cap switch between the FPS hover card (both bar layouts) and the system menu.
 
+`imports/animation_model.rs` loads local rigged DAE/glTF/GLB preview models
+on the import worker pool. Each animation draft retains its own geometry,
+imported rest skeleton and revisioned selection; cancellation, failures and
+late results preserve the current model. The independent animation clock
+uses that rest skeleton, and the existing preview GPU skins Bento joints.
+Worker-computed bone-chain reach frames rotating tails/wings around the pelvis
+without per-frame geometry scans or a rest-bounds crop.
+Choosing Standard restores the dummy avatar. Preview models never enter the
+upload queue or change animation bytes, metadata, inventory or world appearance.
+
 `scene/anim.rs` restarts active resident and control-avatar motions from one shared
 instant for Ctrl+S, World and the resync toolbar command. Receipt signals,
 simulator state and independent import previews are preserved. Native key dispatch leaves Save

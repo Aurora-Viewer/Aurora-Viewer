@@ -305,7 +305,7 @@ fn mesh_joint_world(
     rig.world_with(&rotations, Vec3::Z * pelvis, &positions, &rig.scale)
 }
 
-fn build(
+pub(super) fn build(
     source: &Source,
     target: usize,
     shape: MaterialShape,
@@ -767,6 +767,18 @@ impl Imports {
         let Some(mut source) = entry.source.clone() else {
             return;
         };
+        if matches!(source, Source::Animation { .. })
+            && let Some(custom) = &entry.animation_model.current
+        {
+            let model = custom.geometry.clone();
+            let entry = self.entries.iter_mut().find(|e| e.id == id).expect("entry exists");
+            entry.model = Some(model);
+            entry.model_generation = Some(entry.preview_generation);
+            entry.preview_not_before = None;
+            entry.preview_pending = false;
+            entry.preview_error = None;
+            return;
+        }
         let options = self.options(entry);
         let target = entry.texture_target;
         let shape = entry.material_shape;

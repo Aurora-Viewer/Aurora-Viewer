@@ -4564,6 +4564,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   of the demo profile. The synthetic sources stay in `.scratch`.
   `animation-own` puts the preview at 0.75 s, paused, also on the demo
   avatar. The slider and the pose must stay fixed until Resume.
+  `animation-custom` loads a local rigged Bento tail and its looping animation.
+  Its tail must move in the preview. Choose model loads a rigged DAE, glTF or
+  GLB from disk; its initial camera includes the bones' rotational reach, so a
+  tail or wing must remain in view while turning. Standard restores the
+  ordinary mannequin. Check seeking,
+  pause/resume, base animations and camera controls with both models. Cancel
+  the file picker or choose an unrigged/invalid file: keep the current model,
+  with an error for rejected files. Model selection is independent per
+  animation, preview-only, and never adds a mesh upload or changes its fee.
   `AURORA_DEMO_IMPORT_FILE` replaces the fixtures with an existing file,
   read without modification; choose the mode matching its type.
 

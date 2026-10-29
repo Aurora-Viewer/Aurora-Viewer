@@ -240,7 +240,12 @@ impl App {
                         entry.player.playing = false;
                         self.imports.demo_animation_positioned = true;
                     }
-                    entry.player.tick(entry.id, &self.scene.avatar_lib.rig, &mut self.scene.anims);
+                    entry.player.tick(
+                        entry.id,
+                        &self.scene.avatar_lib.rig,
+                        &mut self.scene.anims,
+                        entry.animation_model.current.as_ref().map(|model| &model.base),
+                    );
                     if entry.player.playing {
                         ctx.request_repaint();
                     }
@@ -336,6 +341,15 @@ impl App {
                     }
                     if start {
                         self.imports.play(id, &self.scene.jobs, ctx, self.scene.avatar_lib.rig.clone());
+                    }
+                }
+                Action::AnimationModel(id) => {
+                    self.imports
+                        .animation_model_file(id, &self.scene.jobs, ctx, self.scene.avatar_lib.clone());
+                }
+                Action::DefaultAnimationModel(id) => {
+                    if let Some(entry) = self.imports.entries.iter_mut().find(|e| e.id == id) {
+                        crate::imports::animation_model::reset(entry);
                     }
                 }
                 Action::SoundGain(id) => {

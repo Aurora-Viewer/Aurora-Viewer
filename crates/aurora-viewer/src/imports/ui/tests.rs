@@ -1377,6 +1377,97 @@ fn clicking_an_animation_selects_and_restarts_its_preview() {
 }
 
 #[test]
+fn custom_animation_model_buttons_choose_and_restore_without_playing_or_uploading() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let animation = super::super::demo::tail_animation();
+    let entry = Entry::new(
+        "tail.anim".into(),
+        Ok(Source::Animation {
+            bytes: Arc::new(Vec::new()),
+            animation: Arc::new(animation),
+            bvh: None,
+        }),
+        Default::default(),
+    );
+    let id = entry.id;
+    let mut imports = Imports {
+        open: true,
+        choice: Choice::Animation,
+        active: Some(id),
+        entries: vec![entry],
+        ..Default::default()
+    };
+    let mut prefs = Preferences::default();
+    let mut frame = |events, imports: &mut Imports| {
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| actions = show(ui.ctx(), &theme.palette(), imports, &mut prefs, &world, &Default::default()),
+        );
+        output.textures_delta.clear();
+        actions
+    };
+    for _ in 0..3 {
+        assert!(frame(Vec::new(), &mut imports).is_empty());
+    }
+    for (key, enabled) in [("animation_model_choose", true), ("animation_model_reset", false)] {
+        let rect = ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique((key, id))))
+            .expect("model button");
+        let mut actions = Vec::new();
+        for pressed in [true, false] {
+            actions.extend(frame(
+                vec![
+                    egui::Event::PointerMoved(rect.center()),
+                    egui::Event::PointerButton {
+                        pos: rect.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                &mut imports,
+            ));
+        }
+        if enabled {
+            assert!(matches!(actions.as_slice(), [Action::AnimationModel(target)] if *target == id));
+        } else {
+            assert!(actions.is_empty(), "Standard is disabled until a model is selected or loading");
+        }
+    }
+    imports.entries[0].animation_model.pending = true;
+    drop(frame(Vec::new(), &mut imports));
+    let rect = ctx
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("animation_model_reset", id))))
+        .expect("Standard");
+    let mut actions = Vec::new();
+    for pressed in [true, false] {
+        actions.extend(frame(
+            vec![
+                egui::Event::PointerMoved(rect.center()),
+                egui::Event::PointerButton {
+                    pos: rect.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            &mut imports,
+        ));
+    }
+    assert!(matches!(actions.as_slice(), [Action::DefaultAnimationModel(target)] if *target == id));
+    assert!(!imports.entries[0].player.started);
+    assert!(matches!(imports.entries[0].status, Status::Ready));
+}
+
+#[test]
 fn popup_rows_keep_their_rectangles_when_hover_changes() {
     let ctx = egui::Context::default();
     crate::theme::Theme::default().apply(&ctx, 1.0);

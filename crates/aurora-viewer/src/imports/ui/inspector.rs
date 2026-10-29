@@ -311,6 +311,7 @@ pub(super) fn show(
                                                     egui::Layout::top_down(egui::Align::Min),
                                                     |ui| {
                                                         ui.set_width(settings_width);
+                                                        animation_model_controls(ui, p, entry.id, &entry.animation_model, actions);
                                                         let before = (
                                                             animation.base_priority,
                                                             animation.looping,
