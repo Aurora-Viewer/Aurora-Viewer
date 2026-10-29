@@ -840,6 +840,10 @@ trace" and "Open report folder" in the same window give the technical
 details: the full trace may contain personal paths, review it before sharing.
 The bar button can be hidden in Preferences › Interface.
 
+Ideas and feature requests go to the
+[feedback board](https://feedback.aurora-viewer.org), where everyone can vote
+for them.
+
 ### Where your files are
 
 Logs are in `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`; each
