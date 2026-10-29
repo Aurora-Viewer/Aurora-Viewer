@@ -137,6 +137,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-payment-opens-conversation-hint"),
                     &field!(payment_opens_conversation),
                 );
+                // and our own payment's card in the payee's conversation
+                cx.toggle(
+                    tr!("ui-options-payment-sent-opens-conversation"),
+                    tr!("ui-options-payment-sent-opens-conversation-hint"),
+                    &field!(payment_sent_opens_conversation),
+                );
                 // the tab of a conversation with news flashes
                 // (FSFloaterIMContainer::startFlashingTab), in violet and softly
                 cx.toggle(

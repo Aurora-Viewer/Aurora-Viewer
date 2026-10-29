@@ -1760,7 +1760,8 @@ impl App {
                     amount = format!("{}", amount)
                 ));
             }
-            // the simulator's MoneyBalanceReply names a gift (the money tracker)
+            // the simulator's MoneyBalanceReply names a gift (the money
+            // tracker, the card in the payee's conversation)
             if let NetCommand::PayResident {
                 to,
                 group,
@@ -1769,7 +1770,7 @@ impl App {
             } = &cmd
             {
                 let item = if message.is_empty() { "Payment" } else { message.as_str() };
-                self.record_money(&NetEvent::MoneyTransaction {
+                let reply = NetEvent::MoneyTransaction {
                     id: uuid::Uuid::new_v4(),
                     success: true,
                     kind: 5001,
@@ -1780,7 +1781,9 @@ impl App {
                     amount: *amount,
                     item: item.to_owned(),
                     description: String::new(),
-                });
+                };
+                self.record_money(&reply);
+                self.world.payment(&reply);
             }
             // a sit on any prim, and the stand up from it (app/own_motion.rs);
             // the stand up's animations still come from demo::respond
@@ -2645,7 +2648,7 @@ impl App {
         } = ev
         {
             self.record_money(&ev);
-            self.world.payment_received(&ev);
+            self.world.payment(&ev);
             self.pay_ui.on_transaction(success, kind, dest, description);
             return;
         }
@@ -7694,6 +7697,7 @@ impl App {
         self.world.received_items.enabled = self.settings.sort_received_items;
         self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
         self.world.payments.open_for_friends = self.settings.payment_opens_conversation;
+        self.world.payments.open_when_paying = self.settings.payment_sent_opens_conversation;
         self.world.received_items.enabled_since = self.settings.received_items_since;
         if self.demo
             && self.frame_count == 700
