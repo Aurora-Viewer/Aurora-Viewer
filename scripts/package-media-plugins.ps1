@@ -124,10 +124,13 @@ if ($Platform -eq 'windows') {
         if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0; continue }   # not a Mach-O file
         if ($archs -notmatch '\barm64\b') { throw "$($file.FullName) has no arm64 code ($archs)" }
         # (a universal binary lists its dependencies once per architecture,
-        # each list after a header line ending with a colon)
+        # each list after a header line ending with a colon; a library lists
+        # its own install name too, which loads nothing: the VLC modules keep
+        # the .libs/ name of their build)
+        $own = @(& otool -D $file.FullName | Where-Object { -not $_.TrimEnd().EndsWith(':') } | ForEach-Object { $_.Trim() })
         foreach ($line in (& otool -L $file.FullName | Where-Object { -not $_.TrimEnd().EndsWith(':') })) {
             $dep = ($line.Trim() -split ' \(')[0]
-            if ($dep -and $dep -notmatch '^(@rpath|@loader_path|@executable_path)/|^/usr/lib/|^/System/') {
+            if ($dep -and $own -notcontains $dep -and $dep -notmatch '^(@rpath|@loader_path|@executable_path)/|^/usr/lib/|^/System/') {
                 throw "$($file.Name) loads $dep, outside the bundle"
             }
         }
