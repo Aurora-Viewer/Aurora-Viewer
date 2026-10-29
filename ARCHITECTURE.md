@@ -1,5 +1,12 @@
 # Aurora Viewer architecture
 
+The renderer selects native Metal on macOS and Vulkan on Windows and Linux
+(`aurora-render::BACKENDS`). Metal texture pages use wgpu's allocator;
+Vulkan-only dedicated allocations and heap-budget probes are disabled there.
+The macOS window is visible during startup so Metal can acquire its first
+drawable. Scene shading shares the caustic-light calculation across the classic
+and PBR lighting branches to avoid a Metal pipeline-compiler crash.
+
 `scene/anim.rs` restarts active resident and control-avatar motions from one shared
 instant for Ctrl+S, World and the resync toolbar command. Receipt signals,
 simulator state and independent import previews are preserved. Native key dispatch leaves Save

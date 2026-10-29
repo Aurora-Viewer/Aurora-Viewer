@@ -460,8 +460,8 @@ are planned or in progress: they are not in the viewer yet.
 - **Free software (GPLv3)**, written from scratch: it is not a fork.
 - **Windows and Linux**: every release has a Linux build too
   ([install guide](docs/LINUX.md)).
-- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **macOS build**: the code is portable, the build remains to be
-  validated.
+- **macOS (experimental)**: native Metal startup and the offline demo work on
+  Apple Silicon. Live-grid and voice validation remain pending.
 
 ## Performance
 
@@ -583,7 +583,7 @@ completed work from features awaiting that validation.
 **Not there yet**
 
 - Depth exports and 360° snapshots.
-- A macOS build: the code is portable but not validated.
+- Complete macOS validation and packaging (the native Metal build is experimental).
 - Automatic installation of updates on Linux (the viewer points to the
   new release instead).
 
@@ -930,6 +930,23 @@ builds GitHub's latest `main` with `--release` into `..\RELEASE\`.
 
 Every build carries the emoji font (Noto Color Emoji, 10.7 MB) inside the
 exe, so the exe works from any folder.
+
+### macOS (experimental)
+
+Use stable Rust and Apple's C/C++ build tools, or an equivalent Nix development
+environment providing them. The renderer selects native Metal on macOS;
+MoltenVK and `vulkan-portability` are not required.
+
+```sh
+cargo build --locked -p aurora-viewer
+AURORA_DEMO=1 ./target/debug/aurora-viewer --title "Test macos"
+```
+
+This is an initial port, validated with the offline demo on Apple Silicon.
+Human validation of login, voice, teleports and longer grid sessions remains
+pending. Media-plugin packs and URL-handler registration are not provided on
+macOS. Vulkan-specific memory-budget queries are unavailable, so texture
+memory follows the viewer's setting. Windows and Linux retain Vulkan.
 
 ### Versions
 
