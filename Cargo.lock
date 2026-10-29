@@ -659,6 +659,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "aurora-translate"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "thiserror 2.0.21",
+ "whatlang",
+]
+
+[[package]]
 name = "aurora-updater"
 version = "0.1.0"
 dependencies = [
@@ -2588,6 +2597,8 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash 0.1.5",
 ]
 
@@ -7367,6 +7378,15 @@ dependencies = [
  "raw-window-handle",
  "static_assertions",
  "web-sys",
+]
+
+[[package]]
+name = "whatlang"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5e8f38b596e2a359b755342473520a99421e43658548c79489ee221b728c107"
+dependencies = [
+ "hashbrown 0.15.5",
 ]
 
 [[package]]

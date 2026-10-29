@@ -1,0 +1,19 @@
+[package]
+name = "aurora-translate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# The llama.cpp backend (Vulkan). Without it the translator answers NotBuilt.
+llama = []
+
+[dependencies]
+log = "0.4.34"
+thiserror = "2.0.21"
+whatlang = "0.18.0"
+
+[lints]
+workspace = true
