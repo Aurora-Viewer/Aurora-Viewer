@@ -695,6 +695,7 @@ inventory-smart-age-newer = Plus récent que
 inventory-smart-age-older = Plus ancien que
 inventory-smart-hours = { $hours } h
 inventory-smart-types-none = Choisir les types
+inventory-smart-rights-none = Choisir les droits
 inventory-status-counts = { $count ->
     [one] { $number } élément
    *[other] { $number } éléments

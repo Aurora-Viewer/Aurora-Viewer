@@ -675,6 +675,7 @@ inventory-smart-age-newer = 以内
 inventory-smart-age-older = より前
 inventory-smart-hours = { $hours }時間
 inventory-smart-types-none = 種類を選択
+inventory-smart-rights-none = 権限を選択
 inventory-status-counts = { $count ->
    *[other] { $number }個のアイテム
 } · { $selected }個を選択中

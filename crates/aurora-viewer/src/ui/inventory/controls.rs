@@ -348,7 +348,7 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
     let preferences_size = Vec2::new(410.0, 600.0_f32.min((screen.height() - 90.0).max(180.0)));
     // the rule builder's rows hold a field, an operator, a value, Not and
     // remove: wider than the quick filters' checkboxes
-    let filters_w = if st.advanced { 520.0 } else { 410.0 };
+    let filters_w = if st.advanced { 600.0 } else { 410.0 };
     let filters_size = Vec2::new(filters_w, 710.0_f32.min((screen.height() - 90.0).max(180.0)));
     Floater::new(
         &format!("inventory_preferences_{}", st.ui_id),
