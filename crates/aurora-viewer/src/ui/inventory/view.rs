@@ -4,6 +4,7 @@
 //! LLPanelMainInventory. Views are cached by inventory generation and inputs;
 //! parallel sorting/filtering never changes server folder membership.
 
+use super::smart::{Field as SmartField, Matcher, Subject};
 use super::{Facts, Inventory, folder_name, rules};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -247,6 +248,9 @@ pub struct Filters {
     pub hours: u32,
     pub always_folders: bool,
     pub coalesced: bool,
+    /// Advanced search: the rule tree that replaces the text and the
+    /// filters above (all but always_folders) while it is set.
+    pub smart: Option<super::smart::SmartQuery>,
 }
 impl Default for Filters {
     fn default() -> Self {
@@ -259,6 +263,7 @@ impl Default for Filters {
             hours: 24,
             always_folders: false,
             coalesced: false,
+            smart: None,
         }
     }
 }
@@ -271,6 +276,7 @@ impl Filters {
             || self.age != Age::Any
             || self.always_folders
             || self.coalesced
+            || self.smart.as_ref().is_some_and(|q| !q.is_empty())
     }
 }
 
@@ -630,9 +636,23 @@ impl ViewCache {
             _ => time / 60 * 60 - i64::from(filters.hours.min(876_000)) * 3600,
         };
         let text = text.trim().to_lowercase();
-        let uses_creator = matches!(prefs.search_field, SearchField::Creator | SearchField::All) && !text.is_empty();
+        let smart = filters.smart.as_ref();
+        // Advanced Date rules read the clock (`Matcher` rounds it to the
+        // minute): the key follows it, as the age filter's cutoff does.
+        let cutoff = match smart {
+            Some(q) if q.uses(SmartField::Date) => time / 60 * 60,
+            _ => cutoff,
+        };
+        let uses_creator = match smart {
+            Some(q) => q.uses(SmartField::Creator),
+            None => matches!(prefs.search_field, SearchField::Creator | SearchField::All) && !text.is_empty(),
+        };
         let names = if uses_creator { facts.names.clone() } else { HashMap::new() };
-        let worn = if tab == 3 { facts.worn.clone() } else { HashSet::new() };
+        let worn = if tab == 3 || smart.is_some_and(|q| q.uses(SmartField::Worn)) {
+            facts.worn.clone()
+        } else {
+            HashSet::new()
+        };
         let query = Query {
             root,
             text,
@@ -680,6 +700,16 @@ impl ViewCache {
         } else {
             within(inv, &favorites)
         };
+        // Advanced search: patterns and creator names resolved once, then
+        // shared by the parallel walk. Its Date rules keep their own clock;
+        // the Recent tab still limits to since logout.
+        let recent = recent_cutoff(prefs, time);
+        let matcher = smart.map(|q| Matcher::new(q, &query.names, recent, time));
+        let folder_names: HashMap<Uuid, &str> = if smart.is_some_and(|q| q.uses(SmartField::Folder)) {
+            self.entries.iter().filter(|e| e.folder).map(|e| (e.id, e.name.as_str())).collect()
+        } else {
+            HashMap::new()
+        };
         self.results = self
             .entries
             .par_iter()
@@ -706,6 +736,22 @@ impl ViewCache {
                     if matches!(tab, 2 | 3) || (tab == 4 && !favored.contains(&e.id)) {
                         return false;
                     }
+                    if let Some(matcher) = &matcher {
+                        return matcher.matches(&Subject {
+                            id: e.id,
+                            folder: true,
+                            name: &e.name,
+                            desc: "",
+                            parent_name: folder_names.get(&e.parent).copied().unwrap_or(""),
+                            creator: Uuid::nil(),
+                            kind: -1,
+                            owner_mask: 0,
+                            worn: false,
+                            linked: false,
+                            coalesced: false,
+                            date: e.date,
+                        });
+                    }
                     return !filters.active()
                         && match query.field {
                             SearchField::Name => matches_text(&e.name, &query.text),
@@ -718,6 +764,36 @@ impl ViewCache {
                     return false;
                 };
                 let linked = matches!(it.asset_type, 24 | 25);
+                if let Some(matcher) = &matcher {
+                    if query.target.is_some_and(|target| !linked || it.asset_id != target) {
+                        return false;
+                    }
+                    let original_id = rules::original(inv, e.id).unwrap_or(e.id);
+                    let original = inv.items.get(&original_id).unwrap_or(it);
+                    if tab == 2 && (e.date <= 0 || e.date < recent) {
+                        return false;
+                    }
+                    if tab == 3 && (!query.worn.contains(&original_id) || e.outfit) {
+                        return false;
+                    }
+                    if tab == 4 && !favored.contains(&e.parent) && !rules::is_favorite(inv, e.id) {
+                        return false;
+                    }
+                    return matcher.matches(&Subject {
+                        id: e.id,
+                        folder: false,
+                        name: &e.name,
+                        desc: &e.desc,
+                        parent_name: folder_names.get(&e.parent).copied().unwrap_or(""),
+                        creator: original.creator,
+                        kind: if original.inv_type == 17 { 6 } else { original.inv_type },
+                        owner_mask: original.owner_mask,
+                        worn: query.worn.contains(&original_id),
+                        linked,
+                        coalesced: original.asset_type == 6 && original.flags & super::OBJECT_HAS_MULTIPLE_ITEMS != 0,
+                        date: e.date,
+                    });
+                }
                 if (filters.links == Links::Only && !linked) || (filters.links == Links::Exclude && linked) {
                     return false;
                 }
@@ -1747,5 +1823,102 @@ mod tests {
             assert_eq!(cache.result_children[&inv.root][0], inbox, "Marketplace stays above sender folders");
             assert!(expected.iter().all(|id| cache.folder_date(*id) > 0));
         }
+    }
+
+    fn smart(nodes: Vec<super::super::smart::Node>, any: bool) -> Filters {
+        use super::super::smart::{Group, SmartQuery};
+        Filters {
+            smart: Some(SmartQuery {
+                root: Group { any, not: false, nodes },
+            }),
+            ..Filters::default()
+        }
+    }
+
+    #[test]
+    fn advanced_search_matches_quick_search_for_a_single_and() {
+        use super::super::smart::{Field, Node, Rule, SmartQuery};
+        let (inv, facts) = fixture();
+        let prefs = InventoryPreferences::default();
+        for text in ["older", "a", "date", "zz"] {
+            let mut cache = ViewCache::default();
+            cache.search(
+                &inv,
+                inv.root,
+                text,
+                &prefs,
+                &Filters::default(),
+                0,
+                None,
+                &facts,
+                facts.agent,
+                1000,
+            );
+            let quick = cache.results.clone();
+            let filters = Filters {
+                smart: Some(SmartQuery::from_quick(text, SearchField::Name)),
+                ..Filters::default()
+            };
+            assert_eq!(search(&inv, &facts, &prefs, &filters, 0), quick, "{text}");
+        }
+        // The legacy type filter, as a rule.
+        let mut types = Rule::of(Field::Type);
+        types.bits = 1 << 6;
+        let legacy = Filters {
+            types: 1 << 6,
+            ..Filters::default()
+        };
+        assert_eq!(
+            search(&inv, &facts, &prefs, &smart(vec![Node::Rule(types)], false), 0),
+            search(&inv, &facts, &prefs, &legacy, 0)
+        );
+    }
+
+    #[test]
+    fn advanced_search_ors_across_fields_and_negates() {
+        use super::super::smart::{Field, Node, Op, Rule};
+        let (mut inv, facts) = fixture();
+        let mut gesture = item(13, id(2), "Wave", 200);
+        gesture.inv_type = 20;
+        gesture.asset_type = 21;
+        inv.add_items(vec![gesture]);
+        let prefs = InventoryPreferences::default();
+        let mut gestures = Rule::of(Field::Type);
+        gestures.bits = 1 << 20;
+        let either = smart(
+            vec![
+                Node::Rule(gestures.clone()),
+                Node::Rule(Rule::text(Field::Name, Op::StartsWith, "z ")),
+            ],
+            true,
+        );
+        let results = search(&inv, &facts, &prefs, &either, 0);
+        assert!(results.contains(&id(13)) && results.contains(&id(11)));
+        assert!(!results.contains(&id(10)) && !results.contains(&id(2)), "{results:?}");
+        gestures.not = true;
+        let not_gesture = search(&inv, &facts, &prefs, &smart(vec![Node::Rule(gestures)], false), 0);
+        assert!(!not_gesture.contains(&id(13)) && not_gesture.contains(&id(10)));
+        assert!(!not_gesture.contains(&id(2)), "folders do not match item-only rules");
+        let in_folder = smart(vec![Node::Rule(Rule::text(Field::Folder, Op::Is, "personal"))], false);
+        let results = search(&inv, &facts, &prefs, &in_folder, 0);
+        assert!(results.contains(&id(10)) && results.contains(&id(13)));
+    }
+
+    #[test]
+    fn advanced_search_refreshes_when_rules_or_creator_names_change() {
+        use super::super::smart::{Field, Node, Op, Rule};
+        let (inv, mut facts) = fixture();
+        let prefs = InventoryPreferences::default();
+        let mut cache = ViewCache::default();
+        let mut run = |filters: &Filters, facts: &Facts| {
+            cache.search(&inv, inv.root, "", &prefs, filters, 0, None, facts, facts.agent, 1000);
+            cache.results.clone()
+        };
+        let by_alice = smart(vec![Node::Rule(Rule::text(Field::Creator, Op::Contains, "alice"))], false);
+        assert!(run(&by_alice, &facts).is_empty());
+        facts.names.insert(id(99), "Alice Doe".into());
+        assert!(run(&by_alice, &facts).contains(&id(10)), "a name arriving refreshes the results");
+        let by_bob = smart(vec![Node::Rule(Rule::text(Field::Creator, Op::Contains, "bob"))], false);
+        assert!(run(&by_bob, &facts).is_empty(), "a changed rule refreshes the results");
     }
 }

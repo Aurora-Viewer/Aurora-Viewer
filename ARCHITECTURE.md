@@ -1556,6 +1556,16 @@ window's open folders (the main window's with the UI layout). Searches,
 filters and the other tabs use the flattened result tree of
 `ui/inventory/view.rs`, drawn the same way.
 
+`ui/inventory/smart.rs` is the advanced search's rule model (All/Any groups of
+negatable rules on any item fact) and its matcher: each rule compiles once per
+change to a linear-time `regex` pattern, creator names resolve to a UUID set,
+and `view.rs` calls it from the same parallel search pass in place of the
+quick-search checks. `ui/inventory/smart_builder.rs` edits the rules in the
+Filters floater, `ui/inventory/aurora/smart_bar.rs` shows them as chips in the
+Aurora toolbar, and `ui/inventory/smart_store.rs` keeps the account's saved
+smart searches, shared by every inventory window and written off the frame
+thread.
+
 `ui/inventory/keyboard.rs` handles Up/Down and Shift+Up/Down on the focused
 inventory list, following `LLFolderView::handleKeyHere`. It uses the current
 cached displayed order in both layouts, searches and folder windows; Shift

@@ -733,6 +733,7 @@ dependencies = [
  "pollster 1.0.1",
  "pulldown-cmark",
  "rayon",
+ "regex",
  "reqwest",
  "resvg",
  "rfd",

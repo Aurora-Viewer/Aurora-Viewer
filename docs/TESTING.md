@@ -4133,7 +4133,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_WEARABLE=<type>[:mode]` | Skin, hair, eyes and system clothing editors |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
-| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, layout notecards, filters, drag feedback, windows, keyboard and search selection; `aurora…` modes show Aurora's window at each width |
+| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|channel\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, commands to worn scripts, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
@@ -7180,6 +7180,18 @@ offline; the files and snapshots uploaded in demo stay offline.
   tab, and no such button. Click the lit button: the additional window
   closes; click it again: it reopens at the same place, its folders and
   search forgotten. Drag an item from one window onto a folder of the other.
+- `smart`, `aurora-smart`, `aurora-smart-wide`: advanced search. The window
+  is in advanced mode on a saved smart search: objects or scripts, or a name
+  ending in a number (an Any group), but not the no-copy object (a Not
+  rule). `aurora-smart` shows the narrow window, whose chip bar keeps its
+  chips and its field only; `aurora-smart-wide` shows the whole chip bar
+  (All/Any, add, save, leave) and the "Smart searches" sidebar section with
+  two saved searches, the first highlighted; `smart` shows the classic
+  window with the rule summary and the rule builder open in the Filters
+  floater. Click a chip to change its operator, Not or remove it; flip
+  All/Any; right-click an item for "Find similar"; the ✕ of the chip bar (or
+  "Quick search" in the search options) brings quick search back with its
+  text. The demo keeps saved searches in memory only.
 - `aurora-worn`, `aurora-worn-medium`, `aurora-worn-wide`: Aurora's three
   widths on the clothing folder with no selection. Worn clothing names stay
   semi-bold and use the exact text colour of their Worn tag beside the

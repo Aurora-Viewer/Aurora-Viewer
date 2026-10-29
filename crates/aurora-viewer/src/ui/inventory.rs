@@ -48,6 +48,9 @@ pub(crate) mod properties;
 mod received;
 mod replace_links;
 mod rows;
+pub(crate) mod smart;
+mod smart_builder;
+pub(crate) mod smart_store;
 pub(crate) mod task_drop;
 pub mod thumbnail;
 pub(crate) mod tree;
@@ -415,6 +418,14 @@ pub struct InventoryUi {
     filters_initialized: bool,
     filters: view::Filters,
     saved_filters: Option<view::Filters>,
+    /// Advanced search in this window: `filters.smart` holds the rules and
+    /// the quick search text waits in `quick_text` until it is turned off.
+    pub advanced: bool,
+    quick_text: String,
+    /// The saved smart search shown, highlighted in the sidebar.
+    pub active_smart: Option<u64>,
+    /// Find similar: the chip that undoes it restores `saved_filters`.
+    similar: bool,
     view: view::ViewCache,
     plain: rows::PlainTree,
     result_tree: view::TreeState,
@@ -643,6 +654,8 @@ impl InventoryUi {
     /// show_item_original: clear filters, expand ancestors, select and scroll to the original.
     pub fn show_original(&mut self, inv: &Inventory, id: Uuid) {
         self.keyboard_selection = false;
+        // first: leaving advanced mode puts the quick-search text back
+        self.leave_advanced();
         self.search.clear();
         self.filters = view::Filters::default();
         self.saved_filters = None;
@@ -719,6 +732,78 @@ impl InventoryUi {
         self.links_filter = Some(id);
         self.fetch_all = true;
         self.tab = 0;
+    }
+    /// Advanced search on: what was typed in quick search becomes its rules
+    /// (`SmartQuery::from_quick`), so nothing is lost.
+    pub(crate) fn enter_advanced(&mut self, field: view::SearchField) {
+        if self.advanced {
+            return;
+        }
+        self.advanced = true;
+        self.filters_initialized = true;
+        self.quick_text = std::mem::take(&mut self.search);
+        self.filters.smart = Some(smart::SmartQuery::from_quick(&self.quick_text, field));
+    }
+    /// Back to quick search, its text as it was left.
+    pub(crate) fn leave_advanced(&mut self) {
+        if !self.advanced {
+            return;
+        }
+        self.advanced = false;
+        self.active_smart = None;
+        self.filters.smart = None;
+        if self.similar {
+            self.end_similar();
+        }
+        self.search = std::mem::take(&mut self.quick_text);
+    }
+    /// The filters Find links or Find similar set aside come back. Taken in
+    /// advanced mode, they hold its rules: quick search leaves them out.
+    pub(crate) fn restore_saved_filters(&mut self) {
+        if let Some(filters) = self.saved_filters.take() {
+            self.filters = filters;
+            if !self.advanced {
+                self.filters.smart = None;
+            }
+        }
+    }
+    /// Show a saved smart search (`id`) or an unsaved query (None) in this
+    /// window, over the whole inventory.
+    pub(crate) fn open_smart(&mut self, id: Option<u64>, query: smart::SmartQuery) {
+        if !self.advanced {
+            self.quick_text = std::mem::take(&mut self.search);
+            self.advanced = true;
+        }
+        self.search.clear();
+        self.filters.smart = Some(query);
+        self.filters_initialized = true;
+        self.links_filter = None;
+        self.active_smart = id;
+        self.fetch_all = true;
+        self.tab = 0;
+    }
+    /// Find similar: like Find all links, the filters in place come back
+    /// when its chip is removed.
+    pub(crate) fn find_similar(&mut self, query: smart::SmartQuery) {
+        if self.saved_filters.is_none() {
+            self.saved_filters = Some(self.filters.clone());
+        }
+        self.filters = view::Filters::default();
+        self.open_smart(None, query);
+        self.similar = true;
+    }
+    /// Find similar undone in place: back to the filters it set aside,
+    /// still in advanced mode.
+    pub(crate) fn end_similar(&mut self) {
+        self.similar = false;
+        self.restore_saved_filters();
+    }
+    pub(crate) fn finding_similar(&self) -> bool {
+        self.similar
+    }
+    /// The rules of the advanced search, None in quick search.
+    pub(crate) fn smart_query(&mut self) -> Option<&mut smart::SmartQuery> {
+        self.filters.smart.as_mut()
     }
     /// The list is the flattened result tree, drawn row by row in sight only
     /// (`search_scroll`): a search or a filter, and every tab but the plain
@@ -1774,10 +1859,11 @@ pub fn show(
             facts.names.insert(resident, world.social.name_of(&resident));
         }
     }
-    if shown
-        && matches!(prefs.search_field, view::SearchField::Creator | view::SearchField::All)
-        && (!st.search.trim().is_empty() || st.windows.iter().any(|w| !w.state.search.trim().is_empty()))
-    {
+    // Advanced rules on Creator need the names too, whatever quick search is set to.
+    let smart_creator = |f: &view::Filters| f.smart.as_ref().is_some_and(|q| q.uses(smart::Field::Creator));
+    let quick_creator = matches!(prefs.search_field, view::SearchField::Creator | view::SearchField::All)
+        && (!st.search.trim().is_empty() || st.windows.iter().any(|w| !w.state.search.trim().is_empty()));
+    if shown && (quick_creator || smart_creator(&st.filters) || st.windows.iter().any(|w| smart_creator(&w.state.filters))) {
         if st.creator_generation != Some(world.inventory.generation) {
             st.creators = world
                 .inventory
@@ -2068,6 +2154,41 @@ fn headless_output(mut output: egui::FullOutput) -> egui::FullOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quick_search_never_keeps_advanced_rules() {
+        // Find similar from advanced mode, then back to quick search: the
+        // filters set aside held the rules, they must not come back.
+        let mut st = InventoryUi::default();
+        st.enter_advanced(view::SearchField::Name);
+        st.find_similar(smart::SmartQuery::default());
+        st.leave_advanced();
+        assert!(!st.advanced && st.filters.smart.is_none());
+    }
+
+    #[test]
+    fn ending_find_similar_brings_the_rules_back() {
+        let mut st = InventoryUi::default();
+        st.enter_advanced(view::SearchField::Name);
+        let rules = smart::SmartQuery::from_quick("hat", view::SearchField::Name);
+        st.filters.smart = Some(rules.clone());
+        st.find_similar(smart::SmartQuery::default());
+        st.end_similar();
+        assert!(st.advanced && !st.finding_similar());
+        assert_eq!(st.filters.smart, Some(rules));
+    }
+
+    #[test]
+    fn show_original_leaves_the_quick_text_out() {
+        let inv = Inventory::default();
+        let mut st = InventoryUi {
+            search: "hat".into(),
+            ..Default::default()
+        };
+        st.enter_advanced(view::SearchField::Name);
+        st.show_original(&inv, Uuid::from_u128(1));
+        assert!(!st.advanced && st.search.is_empty() && st.filters.smart.is_none());
+    }
 
     #[test]
     fn opening_inventory_focuses_search_without_taking_it_back() {

@@ -175,6 +175,98 @@ fn browse(st: &mut InventoryUi, prefs: &InventoryPreferences, folder: Uuid) {
     st.side.shown = folder;
 }
 
+/// The account's saved smart searches: a click shows one over the whole
+/// inventory, the right-click menu renames or deletes it. The name being
+/// edited lives in egui's memory: it belongs to this column alone.
+fn smart_searches(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    saved: &[super::super::smart_store::Saved],
+) {
+    use super::super::smart_store;
+    let editing = ui.make_persistent_id("aurora_smart_rename");
+    // (search, name, first frame)
+    let mut edit: Option<(u64, String, bool)> = ui.data_mut(|d| d.get_temp(editing));
+    if edit.as_ref().is_some_and(|(id, ..)| !saved.iter().any(|s| s.id == *id)) {
+        edit = None;
+    }
+    for search in saved {
+        let label = if search.name.is_empty() {
+            aurora_i18n::tr!("inventory-smart-untitled")
+        } else {
+            search.name.as_str()
+        };
+        if let Some((id, name, first)) = edit.as_mut().filter(|(id, ..)| *id == search.id) {
+            let r = ui.add_sized(
+                [ui.available_width(), ROW],
+                egui::TextEdit::singleline(name)
+                    .id(ui.make_persistent_id(("aurora_smart_rename_field", *id)))
+                    .font(egui::FontId::proportional(13.0))
+                    .text_color(p.ink)
+                    .char_limit(63),
+            );
+            if std::mem::take(first) {
+                r.request_focus();
+                if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), r.id) {
+                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(0),
+                        egui::text::CCursor::new(name.chars().count()),
+                    )));
+                    state.store(ui.ctx(), r.id);
+                }
+            } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                ui.memory_mut(|m| m.surrender_focus(r.id));
+                edit = None;
+            } else if !r.has_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                smart_store::rename(*id, name.trim());
+                edit = None;
+            }
+            continue;
+        }
+        let response = entry(ui, p, "search-filled", label, None, 0, st.active_smart == Some(search.id), 8.0);
+        if response.clicked() {
+            browse(st, prefs, inv.root);
+            st.open_smart(Some(search.id), search.query.clone());
+        }
+        menu::context_menu(&response, p, |ui| {
+            if menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("inventory-smart-rename")) {
+                edit = Some((search.id, search.name.clone(), true));
+            }
+            if menu::item(ui, p, "trash-filled", aurora_i18n::tr!("inventory-smart-delete")) {
+                smart_store::delete(search.id);
+                if st.active_smart == Some(search.id) {
+                    st.leave_advanced();
+                }
+            }
+        });
+    }
+    match edit {
+        Some(edit) => ui.data_mut(|d| {
+            d.insert_temp(editing, edit);
+        }),
+        None => ui.data_mut(|d| {
+            d.remove_temp::<(u64, String, bool)>(editing);
+        }),
+    }
+
+    // Find similar: an unsaved search, shown until its chip is removed.
+    if st.finding_similar() {
+        entry(
+            ui,
+            p,
+            "search-filled",
+            aurora_i18n::tr!("inventory-smart-similar"),
+            None,
+            0,
+            st.active_smart.is_none(),
+            8.0,
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn show(
     ui: &mut egui::Ui,
@@ -267,6 +359,13 @@ pub(super) fn show(
         if entry(ui, p, icon, label, Some(count), waiting, st.tab == tab, 8.0).clicked() {
             set_tab(st, prefs, tab);
         }
+    }
+    let saved = if scoped { Vec::new() } else { super::super::smart_store::list() };
+    if !saved.is_empty() || (st.finding_similar() && !scoped) {
+        ui.add_space(10.0);
+        menu::section(ui, p, aurora_i18n::tr!("inventory-smart-section"));
+        ui.add_space(2.0);
+        smart_searches(ui, p, inv, st, prefs, &saved);
     }
     ui.add_space(10.0);
     crate::ui::menu::section(ui, p, aurora_i18n::tr!("inventory-folders"));
