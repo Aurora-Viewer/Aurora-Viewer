@@ -7,7 +7,7 @@ use super::{
     textures::{PreviewRevision, PreviewSource},
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
 use uuid::Uuid;
@@ -70,9 +70,10 @@ impl Images {
         });
     }
 
-    pub fn poll(&mut self, ready: &mut HashMap<Uuid, Pixels>) {
+    pub fn poll(&mut self, ready: &mut HashMap<Uuid, Pixels>, wanted: &HashSet<Uuid>) {
         while let Ok((id, revision, pixels)) = self.rx.try_recv() {
             if self.pending.remove(&id) == Some(revision)
+                && wanted.contains(&id)
                 && let Some(pixels) = pixels
             {
                 // Prefer the normal upload path's potentially newer image.
@@ -86,6 +87,36 @@ impl Images {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn inventory_hover_cache_late_replies_cannot_resurrect_released_images_or_grow_the_worker_queue() {
+        let _inline = super::super::jobs::execute_inline_on_this_thread();
+        let (jobs, _results) = Jobs::new();
+        let bytes = aurora_assets::j2k::encode_texture_j2k(64, 64, 3, &vec![128; 64 * 64 * 3], true).unwrap();
+        let source = || PreviewSource {
+            bytes: Arc::new(bytes.clone()),
+            jpeg: std::env::temp_dir().join("unused-hover-cache.j2c"),
+            blocks: std::env::temp_dir().join("unused-hover-cache.bc7"),
+            decoded: Some(0),
+            size: Some((64, 64)),
+            procedural: false,
+        };
+        let mut images = Images::default();
+        let mut ready = HashMap::new();
+        for n in 1..=1000 {
+            images.request(Uuid::from_u128(n), source(), &jobs);
+            assert!(images.pending.len() <= 8);
+        }
+        assert_eq!(images.pending.len(), 8);
+        images.poll(&mut ready, &HashSet::new());
+        assert!(
+            ready.is_empty() && images.pending.is_empty(),
+            "released image results are discarded"
+        );
+        images.request(Uuid::from_u128(1001), source(), &jobs);
+        images.poll(&mut ready, &HashSet::from([Uuid::from_u128(1001)]));
+        assert_eq!(ready.len(), 1, "new active image can load after obsolete jobs drain");
+    }
 
     #[test]
     fn resident_and_cache_only_default_textures_get_ui_pixels_without_an_upload() {
@@ -108,7 +139,7 @@ mod tests {
             let mut images = Images::default();
             let mut ready = HashMap::new();
             images.request(aurora_prim::te::DEFAULT_TEXTURE, source, &jobs);
-            images.poll(&mut ready);
+            images.poll(&mut ready, &HashSet::from([aurora_prim::te::DEFAULT_TEXTURE]));
             let (width, height, rgba) = ready.get(&aurora_prim::te::DEFAULT_TEXTURE).unwrap();
             assert_eq!((*width, *height, rgba.len()), (64, 64, 64 * 64 * 4));
             assert!(

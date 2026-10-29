@@ -36,6 +36,8 @@ mod document;
 pub use embedded::save_focused as document_save_focused;
 pub(crate) mod drag;
 mod embedded;
+mod hover;
+pub use hover::demo_events as hover_demo_events;
 mod keyboard;
 pub(crate) mod listings;
 mod markdown;
@@ -479,6 +481,7 @@ pub struct InventoryUi {
     pub links_filter: Option<Uuid>,
     pub windows: Vec<InventoryWindow>,
     pub thumbnail: thumbnail::ThumbnailUi,
+    hover: hover::State,
     pub share_picker: super::avatar_picker::AvatarPicker,
     pub share_items: Vec<Uuid>,
     pub property_edit: Option<(Uuid, PropertyEdit)>,
@@ -498,6 +501,7 @@ pub struct InventoryUi {
     pub content_save: Option<(Uuid, Vec<u8>, String)>,
     pub close_after_save: bool,
     pub wanted_images: HashSet<Uuid>,
+    pub wanted_hover_images: HashSet<Uuid>,
     /// Residents whose profile picture the give confirmation wants.
     pub wanted_pics: HashSet<Uuid>,
     pub playing: Option<(Uuid, bool)>,
@@ -989,22 +993,7 @@ fn item_response(
     drag::target(ui, p, &r, inv, it.parent, st, prefs, facts, actions);
     super::widgets::demo::rez_row(&r, it.id);
     super::widgets::demo::worn_row(&r, it.id);
-    let r = r.on_hover_ui(|ui| {
-        ui.label(&it.name);
-        ui.label(inventory_path(inv, it.parent));
-        ui.label(if it.created_at > 0 {
-            aurora_net::inventory::created_date(it.created_at)
-        } else {
-            aurora_i18n::tr!("ui-inventory-unknown-date").into()
-        });
-        if !it.desc.is_empty() {
-            ui.label(&it.desc);
-        }
-        if let Some(permissions) = permissions {
-            crate::ui::widgets::divider(ui, p);
-            ui.label(permissions.tooltip());
-        }
-    });
+    st.hover.record(&r, id, permissions);
     if r.clicked() || r.secondary_clicked() {
         st.select(ui, id, r.secondary_clicked());
     }
@@ -1106,6 +1095,7 @@ fn folder_response(
     }
     drag::target(ui, p, &destination, inv, id, state, prefs, facts, actions);
     drag::navigation::folder(ui, &destination, state.ui_id, id, open);
+    state.hover.record(&r, id, None);
     if r.clicked() || r.secondary_clicked() {
         state.select(ui, id, r.secondary_clicked());
     }
@@ -1789,6 +1779,7 @@ pub fn show(
     open: &mut bool,
     appearance_busy: bool,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
+    hover_images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     pics: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     script_settings: &super::scripts::settings::ScriptSettings,
     classic: bool,
@@ -1932,6 +1923,7 @@ pub fn show(
             aurora::widen(ctx, "inventory");
         }
     }
+    st.hover.show(p, inv, prefs, hover_images, &mut st.wanted_hover_images);
     st.was_open = *open && !super::widgets::floater_minimized(ctx, "inventory");
     controls::dialogs(ctx, p, st, prefs);
     finish_hidden_rename(inv, st, prefs, &mut actions);
@@ -2052,6 +2044,9 @@ pub fn show(
                 aurora::widen(ctx, &window_id);
             }
         }
+        w.state
+            .hover
+            .show(p, &world.inventory, prefs, hover_images, &mut w.state.wanted_hover_images);
         w.state.was_open = w.open && !super::widgets::floater_minimized(ctx, &window_id);
         if let Some(root) = w.state.navigate_to.take() {
             w.root = root;
@@ -2096,6 +2091,7 @@ pub fn show(
             w.state.dialog = Some(EditDialog::Share(std::mem::take(&mut w.state.share_items), *resident));
         }
         st.wanted_images.extend(w.state.wanted_images.drain());
+        st.wanted_hover_images.extend(w.state.wanted_hover_images.drain());
         if before != (w.state.clipboard.clone(), w.state.cut) {
             st.clipboard.clone_from(&w.state.clipboard);
             st.cut = w.state.cut;
@@ -2222,6 +2218,7 @@ mod tests {
                         false,
                         &images,
                         &Default::default(),
+                        &Default::default(),
                         &scripts,
                         classic,
                     );
@@ -2290,6 +2287,7 @@ mod tests {
                         &mut open,
                         false,
                         &images,
+                        &Default::default(),
                         &Default::default(),
                         &scripts,
                         classic,

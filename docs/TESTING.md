@@ -4579,6 +4579,22 @@ failure. Grid validation and any paid upload are performed by the human.
   the windows. The build window keeps its width across its six sections,
   including Shape for the advanced settings; long lists scroll in the body,
   the actions stay visible. Modal confirmations keep the blurred background.
+- **`AURORA_DEMO_INVENTORY=hover-photo|hover-photo-object|aurora-hover-photo|aurora-hover-photo-object`**:
+  hover the synthetic texture or an object with a saved picture after frame 600.
+  Capture after frame 700. Both layouts must show the image without selecting
+  or opening the item. Preferences > Inventory > Show pictures on hover is on
+  by default; disabling it retains the text tooltip and stops picture requests.
+  Objects without a saved thumbnail retain their text tooltip. The viewer does
+  not rez objects or inspect their contained assets to manufacture a preview.
+  On the grid, also check a snapshot, a linked texture, an object/folder with a
+  thumbnail, an outfit with exactly one direct texture, and RLVa `viewtexture`.
+  Hover images use a separate 32-entry cache, limited to 256-pixel RGBA copies
+  (8 MiB), with least-recently-used eviction and 30-second idle expiry. Texture
+  source references end once the copy is complete or the pointer leaves;
+  unreferenced source textures follow the streamer's normal delayed eviction.
+  Regression filter `inventory_hover_cache` exercises 1,000 successive images,
+  real egui handle release, active/recent retention, expiry, shared world/UI
+  source references, bounded workers and replies arriving after cancellation.
 - **`AURORA_DEMO_INVENTORY=default-permissions|aurora-default-permissions`**:
   opens the shared Default permissions window over the Legacy or Aurora
   inventory. The final New-menu entry opens the same window. Check creation
