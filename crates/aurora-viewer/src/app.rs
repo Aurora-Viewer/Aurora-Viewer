@@ -9327,6 +9327,7 @@ impl App {
             self.gesture_demo_input(&mut raw);
             self.suggest_demo_input(&mut raw);
             self.double_click_menu_demo_input(&mut raw);
+            raw.events.extend(ui::menu::search_demo_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::worn_events(&ctx, self.frame_count));
             raw.events
