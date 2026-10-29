@@ -7852,6 +7852,7 @@ update-error-integrity = Le fichier téléchargé ne correspond pas à l’empre
 update-error-filesystem = Impossible de préparer l’installation. Vérifiez l’espace libre et les droits d’écriture du dossier, puis fermez les autres instances d’Aurora.
 update-error-package = Le paquet est incomplet ou invalide. L’installation actuelle est conservée.
 update-error-unsupported = Cette release ne permet pas l’installation automatique depuis ce dossier. Téléchargez-la depuis sa page et décompressez-la dans un dossier dédié.
+update-error-unsupported-macos = Sur macOS, une nouvelle version s’installe à la main. Téléchargez-la depuis sa page, puis remplacez Aurora Viewer dans votre dossier Applications par la nouvelle.
 update-error-startup = L’auxiliaire de mise à jour n’a pas pu démarrer. L’installation actuelle est conservée.
 update-rollback = La nouvelle version n’a pas démarré correctement. L’ancienne installation a été restaurée.
 update-settings = Mises à jour
@@ -8187,6 +8188,14 @@ contents-copy-move-more = { $count ->
    *[other] …et { $count } autres éléments
     }
 contents-copy-requested = Copie du contenu dans « { $folder } » demandée.
+contents-copy-folder-timeout = La création du dossier « { $folder } » n’a pas été confirmée en 60 secondes. Aucun contenu n’a été transféré.
+contents-copy-complete = { $count ->
+    [one] Contenu copié dans « { $folder } » : { $count } élément reçu.
+   *[other] Contenu copié dans « { $folder } » : { $count } éléments reçus.
+    }
+contents-copy-timeout = Copie dans « { $folder } » non confirmée après 60 secondes. Éléments reçus : { $received }/{ $count }. Vérifiez le contenu du dossier.
+contents-copy-unavailable = Copie dans « { $folder } » non confirmée : le dossier de destination est introuvable ou n’a pas pu être chargé.
+contents-copy-wear-busy = Le contenu a été copié dans « { $folder } », mais votre tenue n’a pas pu être changée pendant une autre modification de tenue. Portez le dossier depuis votre inventaire.
 contents-copy-failed = Le dossier du contenu de l’objet n’a pas pu être créé : { $reason }
 contents-copy-wear-timeout = Tous les éléments de « { $folder } » ne sont pas arrivés dans votre inventaire : votre tenue n’a pas changé. Portez le dossier depuis votre inventaire.
 build-compact-land = Terrain

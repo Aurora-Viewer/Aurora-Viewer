@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Aurora Viewer.app: scripts/package-macos.ps1 replaces @VERSION@ with the
+     viewer's MAJOR.MINOR.PATCH. The texts shown to the user are translated
+     in the .lproj folders next to this file. -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Aurora Viewer</string>
+	<key>CFBundleName</key>
+	<string>Aurora Viewer</string>
+	<key>CFBundleExecutable</key>
+	<string>aurora-viewer</string>
+	<key>CFBundleIconFile</key>
+	<string>Aurora</string>
+	<key>CFBundleIdentifier</key>
+	<string>org.aurora-viewer.AuroraViewer</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@VERSION@</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.social-networking</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>12.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<!-- voice chat: without it macOS ends the app when the microphone opens -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Aurora Viewer uses the microphone for voice chat in Second Life.</string>
+</dict>
+</plist>

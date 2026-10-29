@@ -979,6 +979,7 @@ aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Vie
 ├─ fuzz/                        fuzzing of the readers of untrusted data (its own workspace, outside the build): targets (`src/lib.rs`), stable runner `fuzz-local` (`src/main.rs`), libFuzzer binaries (`fuzz_targets/`), run nightly by `.github/workflows/fuzz.yml`
 ├─ news/                        news of the login screen, written by hand: fr.md, en.md (read on `main` by the viewer, and compiled into it)
 ├─ packaging/linux/            desktop entry of the Linux archive (`aurora-viewer.desktop`; its icon is the colour logo of `assets/branding/`)
+├─ packaging/macos/            `Info.plist` of `Aurora Viewer.app` (its texts translated in `*.lproj/InfoPlist.strings`) and the entitlements of its hardened runtime; `scripts/package-macos.ps1` builds the bundle, the release signs it
 ├─ scripts/                     tools for agents and humans (PowerShell)
 │  ├─ automation-window-border.ps1 dashed yellow outline of the automated-test windows (Windows)
 │  └─ tools/                    aurora-tools: menu, interface (ui), checks and repair (checks), actions, live PRs (prs), releases, reset (reset), Claude Code permissions (claude)
@@ -2259,6 +2260,16 @@ normal search, modified-settings and reset paths.
 the transfer of an object's contents to the personal inventory;
 `ui/inventory/task_drop.rs` provides the common source of the two contents
 windows, the drop targets and the confirmation of removals.
+`ui/inventory/task_selection.rs` shares Ctrl/Shift selection with the editor.
+`ui/object_actions/contents_list.rs` applies it to the Open window, routes its
+focused Delete/Ctrl+A before world shortcuts, and shares the existing batch
+transfer and inventory-drop rules. `app/contents_copy.rs` rechecks mutations
+against the current object before dispatch and refreshes the contents after drops.
+Copies also observe the destination's received records, matching names/types
+with multiplicity despite the server assigning new IDs. Folder creation and
+content arrival have bounded waits; late creation replies cannot start a timed-out
+transfer. Inventory feedback changes from pending to success/error, then expires
+after five seconds; request IDs keep older copies from replacing newer feedback.
 `app/inventory.rs` checks the permissions again before the
 `MoveTaskInventory` message, with two persistent warning preferences
 (ordinary object or object containing scripts).
