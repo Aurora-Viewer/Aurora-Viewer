@@ -298,6 +298,18 @@ fn os(path: &str) -> String {
             .replace("SLPlugin.exe", "SLPlugin")
             .replace("media_plugin_libvlc.dll", "libmedia_plugin_gstreamer.so")
             .replace("media_plugin_cef.dll", "libmedia_plugin_cef.so")
+    } else if cfg!(target_os = "macos") {
+        // SLPlugin.app, its plugins in its Contents/Frameworks
+        path.replace("windows-x64", "macos-universal")
+            .replace("llplugin/SLPlugin.exe", "llplugin/SLPlugin.app/Contents/MacOS/SLPlugin")
+            .replace(
+                "llplugin/media_plugin_libvlc.dll",
+                "llplugin/SLPlugin.app/Contents/Frameworks/media_plugin_libvlc.dylib",
+            )
+            .replace(
+                "llplugin/media_plugin_cef.dll",
+                "llplugin/SLPlugin.app/Contents/Frameworks/media_plugin_cef.dylib",
+            )
     } else {
         path.to_string()
     }
@@ -354,8 +366,9 @@ fn media_pack_installs_once_and_replaces_what_older_viewers_left() {
     let server = Server::new(HashMap::from([(pack_route(), bytes)]));
     let temp = Temp::new();
     let root = temp.0.join("media-plugins");
-    fs::create_dir_all(root.join("1/llplugin")).expect("older pack");
-    fs::write(root.join(os("1/llplugin/SLPlugin.exe")), b"old").expect("older pack");
+    let older = root.join(os("1/llplugin/SLPlugin.exe"));
+    fs::create_dir_all(older.parent().expect("folder")).expect("older pack");
+    fs::write(older, b"old").expect("older pack");
     fs::create_dir_all(root.join(".staging-interrupted")).expect("leftover");
     fs::write(root.join(".staging-interrupted/download.zip"), b"partial").expect("leftover");
     assert!(media_pack::installed(&root, &pack).is_none());

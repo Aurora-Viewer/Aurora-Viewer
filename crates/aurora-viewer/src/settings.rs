@@ -584,6 +584,10 @@ pub struct Settings {
     /// their conversation on its card (#1198); a payment from anyone else
     /// shows there only when it is open. On by default.
     pub payment_opens_conversation: bool,
+    /// Preferences › Chat › Conversations: our own direct payment to a
+    /// resident opens their conversation on its card (#1198); otherwise it
+    /// shows there only when it is open. Off by default.
+    pub payment_sent_opens_conversation: bool,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
     /// "Search": last tab, rating boxes and land limits.
@@ -737,6 +741,11 @@ pub struct Settings {
     /// addition the Legacy Viewer does not have: its toast stays one switch
     /// away).
     pub friend_request_prompt: bool,
+    /// A message to the whole region shows as a card in the middle of the
+    /// screen instead of a toast (`ui::region_message_prompt`, #1404; on,
+    /// an Aurora addition: off gives back the Legacy Viewer's GodMessage
+    /// toast). Its line of nearby chat stays either way.
+    pub region_message_prompt: bool,
     /// Toast of an IM or conference message out of sight (EnableIMChatPopups, on).
     pub toast_im: bool,
     /// Toast of a group chat message (EnableGroupChatPopups, off).
@@ -1649,6 +1658,7 @@ impl Default for Settings {
             payment_confirm_threshold: 200,
             always_track_payments: false,
             payment_opens_conversation: true,
+            payment_sent_opens_conversation: false,
             maps: MapSettings::default(),
             search: Default::default(),
             show_people: true,
@@ -1711,6 +1721,7 @@ impl Default for Settings {
             friends_online_in_chat: false,
             presence_position: PresencePosition::TopRight,
             friend_request_prompt: true,
+            region_message_prompt: true,
             toast_im: true,
             toast_group_im: false,
             ims_in_notification_center: false,

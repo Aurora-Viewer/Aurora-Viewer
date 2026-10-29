@@ -689,9 +689,11 @@ gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<n>/comments --paginate
   - **Task**: a piece of work that is neither (tooling, cleanup, follow-up);
   - **Epic**: a master issue grouping others.
 
-  The issue forms set Bug or Feature; check it **from the content and the
+  The bug form sets Bug; check the type **from the content and the
   attachments**, not only the title or the form chosen, and correct it if
-  needed. The type labels stay for PRs only (section 9): `fix` designates
+  needed. Users' feature requests go to the feedback board
+  (https://feedback.aurora-viewer.org), which the new-issue page links to:
+  point a feature request filed on GitHub there. The type labels stay for PRs only (section 9): `fix` designates
   the PR that fixes a Bug, `feature` the PR that brings a Feature.
 - Its domain is given by **area labels** (section 9: `chat`, `ui`, `avatar`,
   `build-tools`…): at least one, the ones that fit the content; add one that

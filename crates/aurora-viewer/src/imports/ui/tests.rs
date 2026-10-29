@@ -1377,6 +1377,97 @@ fn clicking_an_animation_selects_and_restarts_its_preview() {
 }
 
 #[test]
+fn custom_animation_model_buttons_choose_and_restore_without_playing_or_uploading() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let animation = super::super::demo::tail_animation();
+    let entry = Entry::new(
+        "tail.anim".into(),
+        Ok(Source::Animation {
+            bytes: Arc::new(Vec::new()),
+            animation: Arc::new(animation),
+            bvh: None,
+        }),
+        Default::default(),
+    );
+    let id = entry.id;
+    let mut imports = Imports {
+        open: true,
+        choice: Choice::Animation,
+        active: Some(id),
+        entries: vec![entry],
+        ..Default::default()
+    };
+    let mut prefs = Preferences::default();
+    let mut frame = |events, imports: &mut Imports| {
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| actions = show(ui.ctx(), &theme.palette(), imports, &mut prefs, &world, &Default::default()),
+        );
+        output.textures_delta.clear();
+        actions
+    };
+    for _ in 0..3 {
+        assert!(frame(Vec::new(), &mut imports).is_empty());
+    }
+    for (key, enabled) in [("animation_model_choose", true), ("animation_model_reset", false)] {
+        let rect = ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique((key, id))))
+            .expect("model button");
+        let mut actions = Vec::new();
+        for pressed in [true, false] {
+            actions.extend(frame(
+                vec![
+                    egui::Event::PointerMoved(rect.center()),
+                    egui::Event::PointerButton {
+                        pos: rect.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                &mut imports,
+            ));
+        }
+        if enabled {
+            assert!(matches!(actions.as_slice(), [Action::AnimationModel(target)] if *target == id));
+        } else {
+            assert!(actions.is_empty(), "Standard is disabled until a model is selected or loading");
+        }
+    }
+    imports.entries[0].animation_model.pending = true;
+    drop(frame(Vec::new(), &mut imports));
+    let rect = ctx
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("animation_model_reset", id))))
+        .expect("Standard");
+    let mut actions = Vec::new();
+    for pressed in [true, false] {
+        actions.extend(frame(
+            vec![
+                egui::Event::PointerMoved(rect.center()),
+                egui::Event::PointerButton {
+                    pos: rect.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            &mut imports,
+        ));
+    }
+    assert!(matches!(actions.as_slice(), [Action::DefaultAnimationModel(target)] if *target == id));
+    assert!(!imports.entries[0].player.started);
+    assert!(matches!(imports.entries[0].status, Status::Ready));
+}
+
+#[test]
 fn popup_rows_keep_their_rectangles_when_hover_changes() {
     let ctx = egui::Context::default();
     crate::theme::Theme::default().apply(&ctx, 1.0);
@@ -1409,6 +1500,118 @@ fn popup_rows_keep_their_rectangles_when_hover_changes() {
         }
     }
     assert_eq!(selected, 0);
+}
+
+#[test]
+fn the_saved_animation_model_list_removes_each_row_without_selecting_it() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let id = Uuid::new_v4();
+    let saved = vec![
+        super::super::animation_model::Saved {
+            id: Uuid::new_v4(),
+            name: "Tail fixture with a long name that must leave room for its removal icon".into(),
+            path: "tail.dae".into(),
+        },
+        super::super::animation_model::Saved {
+            id: Uuid::new_v4(),
+            name: "Wing fixture".into(),
+            path: "wings.glb".into(),
+        },
+    ];
+    let mut model = super::super::animation_model::Selection::default();
+    let frame = |events, model: &super::super::animation_model::Selection| {
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(600.0, 500.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                ui.set_width(330.0);
+                animation_model_controls(ui, &theme.palette(), id, model, &saved, &mut actions);
+            },
+        );
+        output.textures_delta.clear();
+        (output, actions)
+    };
+    let click = |pos, pressed| {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    };
+    for _ in 0..3 {
+        drop(frame(Vec::new(), &model));
+    }
+    let list = ctx
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("animation_model_list", id))))
+        .expect("model list");
+    for pressed in [true, false] {
+        drop(frame(click(list.center(), pressed), &model));
+    }
+    let (output, _) = frame(Vec::new(), &model);
+    let wing = output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.text() == "Wing fixture" => Some(text.pos + text.galley.size() * 0.5),
+            _ => None,
+        })
+        .expect("saved model visible in the dropdown");
+    let mut actions = Vec::new();
+    for pressed in [true, false] {
+        actions.extend(frame(click(wing, pressed), &model).1);
+    }
+    assert!(matches!(actions.as_slice(), [Action::SelectAnimationModel(target, selected)] if *target == id && *selected == saved[1].id));
+    model.saved = Some(saved[1].id);
+    drop(frame(Vec::new(), &model));
+    for pressed in [true, false] {
+        drop(frame(click(list.center(), pressed), &model));
+    }
+    drop(frame(Vec::new(), &model));
+    let remove_tail = ctx
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("animation_model_remove", id, saved[0].id))))
+        .expect("unselected model's removal icon");
+    let remove_wing = ctx
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("animation_model_remove", id, saved[1].id))))
+        .expect("selected model's removal icon");
+    let tail_row = ctx
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("animation_model_row", id, saved[0].id))))
+        .expect("long model name");
+    assert!(
+        (remove_tail.right() - remove_wing.right()).abs() < 0.1,
+        "icons align regardless of name length"
+    );
+    assert!(tail_row.right() < remove_tail.left(), "names and removal buttons cannot overlap");
+    let mut actions = Vec::new();
+    for pressed in [true, false] {
+        actions.extend(frame(click(remove_tail.center(), pressed), &model).1);
+    }
+    assert!(matches!(actions.as_slice(), [Action::RemoveAnimationModel(removed)] if *removed == saved[0].id));
+    assert_eq!(model.saved, Some(saved[1].id), "removing another row must not select it");
+    let (output, _) = frame(Vec::new(), &model);
+    assert!(
+        output
+            .shapes
+            .iter()
+            .filter(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == "Wing fixture"))
+            .count()
+            >= 2,
+        "the list stays open after removing a row"
+    );
+    let mut actions = Vec::new();
+    for pressed in [true, false] {
+        actions.extend(frame(click(remove_wing.center(), pressed), &model).1);
+    }
+    assert!(matches!(actions.as_slice(), [Action::RemoveAnimationModel(selected)] if *selected == saved[1].id));
 }
 
 /// The enlarged preview keeps its size, its camera hint wrapped in a narrow

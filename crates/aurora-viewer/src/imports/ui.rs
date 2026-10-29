@@ -92,6 +92,10 @@ pub enum Action {
     Cancel,
     Preview(Uuid),
     Play(Uuid, bool),
+    AnimationModel(Uuid),
+    SelectAnimationModel(Uuid, Uuid),
+    RemoveAnimationModel(Uuid),
+    DefaultAnimationModel(Uuid),
     SoundGain(Uuid),
     Reload(Uuid),
     RestoreDraft(Uuid),
@@ -579,6 +583,129 @@ fn texture(
         );
     } else {
         ui.spinner();
+    }
+}
+
+fn animation_model_controls(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    id: Uuid,
+    model: &super::animation_model::Selection,
+    saved: &[super::animation_model::Saved],
+    actions: &mut Vec<Action>,
+) {
+    ui.label(aurora_i18n::tr!("import-animation-model"));
+    let mut selected = model.saved;
+    let name = saved
+        .iter()
+        .find(|saved| Some(saved.id) == selected)
+        .map(|saved| saved.name.as_str())
+        .or_else(|| {
+            model
+                .current
+                .as_ref()
+                .and_then(|current| current.path.file_stem())
+                .and_then(|name| name.to_str())
+        })
+        .unwrap_or(aurora_i18n::tr!("import-animation-model-default"));
+    if ui
+        .ctx()
+        .data(|data| data.get_temp::<bool>(egui::Id::unique(("animation_model_list_open", id))))
+        .unwrap_or(false)
+    {
+        // Scripted captures keep the list visible after startup focus changes.
+        // Any human interaction returns the demo to ordinary popup behaviour.
+        if ui.input(|input| {
+            input.pointer.any_pressed()
+                || input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::Key { pressed: true, .. }))
+        }) {
+            ui.ctx()
+                .data_mut(|data| data.remove_temp::<bool>(egui::Id::unique(("animation_model_list_open", id))));
+        } else {
+            egui::Popup::open_id(
+                ui.ctx(),
+                ui.make_persistent_id(egui::IdSalt::new(("animation_models", id))).with("popup"),
+            );
+        }
+    }
+    let list = egui::ComboBox::from_id_salt(("animation_models", id))
+        .width(ui.available_width())
+        .selected_text(name)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show_ui(ui, |ui| {
+            if selection(ui, &mut selected, None, aurora_i18n::tr!("import-animation-model-default")).clicked() {
+                ui.close();
+            }
+            for saved in saved {
+                ui.push_id(saved.id, |ui| {
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(ui.available_width(), 26.0),
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            let label = aurora_i18n::tr!("import-animation-model-remove", name = saved.name.clone());
+                            let remove =
+                                action_button(ui, p, "trash-filled", "", ActionKind::Flat, Vec2::splat(26.0)).on_hover_text(&label);
+                            remove.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), &label));
+                            let row =
+                                selection(ui, &mut selected, Some(saved.id), &saved.name).on_hover_text(saved.path.display().to_string());
+                            ui.ctx().data_mut(|data| {
+                                data.insert_temp(egui::Id::unique(("animation_model_remove", id, saved.id)), remove.rect);
+                                data.insert_temp(egui::Id::unique(("animation_model_row", id, saved.id)), row.rect);
+                            });
+                            if remove.clicked() {
+                                actions.push(Action::RemoveAnimationModel(saved.id));
+                            }
+                            if row.clicked() {
+                                ui.close();
+                            }
+                        },
+                    );
+                });
+            }
+        })
+        .response
+        .on_hover_text(aurora_i18n::tr!("import-animation-model-help"));
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::unique(("animation_model_list", id)), list.rect));
+    if selected != model.saved {
+        if let Some(saved) = selected {
+            actions.push(Action::SelectAnimationModel(id, saved));
+        } else {
+            actions.push(Action::DefaultAnimationModel(id));
+        }
+    }
+    ui.horizontal(|ui| {
+        let choose = tool_button(ui, p, aurora_i18n::tr!("import-animation-model-choose"), !model.pending);
+        if choose.clicked() {
+            actions.push(Action::AnimationModel(id));
+        }
+        let reset = tool_button(
+            ui,
+            p,
+            aurora_i18n::tr!("import-animation-model-default"),
+            model.current.is_some() || model.pending,
+        );
+        if reset.clicked() {
+            actions.push(Action::DefaultAnimationModel(id));
+        }
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(egui::Id::unique(("animation_model_choose", id)), choose.rect);
+            data.insert_temp(egui::Id::unique(("animation_model_reset", id)), reset.rect);
+        });
+        if model.pending {
+            ui.spinner();
+        }
+    });
+    if let Some(error) = &model.error {
+        ui.label(RichText::new(error).small().color(p.danger));
+        ui.label(
+            RichText::new(aurora_i18n::tr!("import-animation-model-kept"))
+                .small()
+                .color(p.muted),
+        );
     }
 }
 

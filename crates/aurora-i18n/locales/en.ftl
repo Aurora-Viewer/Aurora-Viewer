@@ -354,6 +354,13 @@ import-base-standing = Standing
 import-base-walking = Walking
 import-base-sitting = Sitting
 import-base-flying = Flying
+import-animation-model = Preview model
+import-animation-model-default = Standard
+import-animation-model-choose = Add model…
+import-animation-model-remove = Remove { $name } from list
+import-animation-model-kept = The previous preview is kept.
+import-animation-model-help = Add local rigged DAE, glTF or GLB models once, then select them from this saved list. Models must use Second Life bones, including Bento. Removing an entry keeps its file. Models are used only for previews and are not uploaded.
+import-animation-model-rigged = Choose a model weighted to the Second Life skeleton.
 import-animation-base = Preview base animation
 import-animation-base-help = Animation played on the preview mannequin alongside the selected file. This choice does not modify the imported file.
 import-mesh-choose-high = Load HIGH models…
@@ -2191,6 +2198,8 @@ ui-options-show-contacts-tab = Show the Contacts tab
 ui-options-show-contacts-tab-hint = Show Contacts in the Conversations window.
 ui-options-payment-opens-conversation = Open a conversation for a friend's payment
 ui-options-payment-opens-conversation-hint = L$ a resident pays you show as a card in your conversation with them when it is open. With this on, a friend's payment opens it.
+ui-options-payment-sent-opens-conversation = Open the conversation when you pay a resident
+ui-options-payment-sent-opens-conversation-hint = Your own direct payment to a resident shows as a card in your conversation with them when it is open. With this on, it opens it.
 ui-options-conversations-own-windows = Open conversations in their own window
 ui-options-conversations-own-windows-hint = A conversation opened from a name, a notification or a call opens in its own window instead of the Conversations window. The nearby chat stays there.
 ui-options-send-typing = Say when I am typing
@@ -2515,6 +2524,14 @@ ui-friend-prompt-later-hint = Keep the offer under the bell and answer it later
 ui-friend-prompt-more = { $count ->
     [one] One more friendship offer is waiting
    *[other] { $count } more friendship offers are waiting
+    }
+ui-options-region-message-prompt = Region messages in the middle of the screen
+ui-options-region-message-prompt-hint = A card you close with OK instead of a toast; the message is still written in nearby chat
+ui-region-message-prompt-sent = sent a message to the region
+ui-region-message-prompt-sent-to = sent a message to { $region }
+ui-region-message-prompt-more = { $count ->
+    [one] One more region message is waiting
+   *[other] { $count } more region messages are waiting
     }
 ui-options-position-top-left = Top left
 ui-options-position-top-center = Top middle
@@ -5845,6 +5862,8 @@ demo-restart-toast = Are you coming to the concert tonight?
 demo-toast-are-you-there = Are you there? Come and see the new fountain ✨
 demo-toast-group-message = The meeting starts in ten minutes at the stage
 demo-friend-prompt-message = Hi! We met at the lagoon party last night, want to stay in touch? 🌊
+demo-region-message-restart = The region restarts in 10 minutes for maintenance. Please find a safe spot or teleport to the lagoon; we will be back shortly. Thank you for your patience!
+demo-region-message-event = The dance party starts at the plaza in 5 minutes 🎶
 demo-attention-im = Are you still there? I'm waiting for you at the fountain
 demo-attention-mention = are you coming to the concert?
 demo-attention-group = can you open the doors of the stage?
@@ -5867,6 +5886,7 @@ demo-scripted-url = Visit our web shop
 demo-payment-sending = Sending you the L$ for the set now
 demo-payment-thanks = Thanks for the set!
 demo-payment-boat = For the boat ride
+demo-payment-rent = For the rent
 demo-places-sign = Visitor sign
 demo-bubbles-concert = Are you coming to the concert tonight?
 demo-bubbles-cant = I can't, I'm working late 😕
@@ -6798,6 +6818,8 @@ world-mod-group-notice-sent-by = { "Sent by " }{ $sender }
 world-mod-gives-you = { $from }{ " gives you " }{ $what }
 world-payments-paid-you = { $name }{ " paid you L$" }{ $amount }
 world-payments-paid-you-message = { $name }{ " paid you L$" }{ $amount }{ ": " }{ $message }
+world-payments-you-paid = { "You paid " }{ $name }{ " L$" }{ $amount }
+world-payments-you-paid-message = { "You paid " }{ $name }{ " L$" }{ $amount }{ ": " }{ $message }
 world-inventory-offers-received = { $name }{ " has given you this " }{ $kind }{ ": " }{ $item }
 world-inventory-offers-kept = Kept { $item }
 world-inventory-offers-item-sent = { "Inventory item " }{ $item }{ " offered" }
@@ -6838,6 +6860,8 @@ world-collisions-scripted-object = { $name } hit you with a scripted object.
 world-collisions-physical-object = { $name } hit you with a physical object.
 world-region-alerts-version-title = Simulator version changed
 world-region-alerts-version-body = The region you have entered is running a different simulator version. Current simulator: { $new }. Previous simulator: { $old }.
+world-region-message-title = Region message from { $name }
+world-region-message-line = Region message from { $name }: { $message }
 app-was-unblocked-because-you-sent-them-an-im = { $name }{ " was unblocked because you sent them an IM." }
 ui-contacts-is-already-your-friend = { $name }{ " is already your friend." }
 # { $ending } is the agreement of the French participle: nothing in English

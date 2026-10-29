@@ -56,7 +56,9 @@ A world lock attempts to hold a joint's position and orientation when its
 ancestors or subject move, yielding at reach limits to preserve attachments.
 Scale has local X/Y/Z cube handles and a central uniform-scale cube. Drag an
 axis cube outward to enlarge that channel, or drag the central cube right/up
-to enlarge all three channels. Scale values stay positive and bounded.
+to enlarge all three channels. Scale values stay bounded and keep their
+sign: some shape sliders mirror a face or pectoral joint on one axis (Head
+Shape at 100 does it to the forehead), and the poser keeps that axis.
 Dragging a joint marker directly rotates or moves that joint, according to
 the selected transform mode. This changes the pose without assigning a target.
 Loaded pose/animation translations also retain the captured shaped offsets;

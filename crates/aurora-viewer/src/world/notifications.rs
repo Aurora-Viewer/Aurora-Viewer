@@ -197,6 +197,12 @@ pub enum Data {
     Delivery {
         object: Uuid,
     },
+    /// A message to the whole region from `from` (GodMessage,
+    /// `region_messages.rs`), received in `region`.
+    RegionMessage {
+        from: Uuid,
+        region: String,
+    },
     /// The restart of the agent's region (RegionRestartMinutes /
     /// RegionRestartSeconds, show_toast="false"): pinned at the top of "To
     /// do" with the live count while the alert counts (`region_restart.rs`).
@@ -295,7 +301,7 @@ impl Notification {
     /// it was about can be opened).
     pub fn history_entry(&self, outcome: Outcome) -> Entry {
         let follow = match &self.data {
-            Data::None | Data::GroupNotice { .. } => Follow::Restore,
+            Data::None | Data::GroupNotice { .. } | Data::RegionMessage { .. } => Follow::Restore,
             Data::Message { session, .. } => Follow::Conversation(*session),
             Data::Lure { from, .. } => place_link(&self.body).map_or(Follow::Conversation(*from), Follow::Place),
             Data::TeleportRequest { from, .. } | Data::Friend { from, .. } | Data::CallingCard { from, .. } => Follow::Conversation(*from),
@@ -319,7 +325,7 @@ impl Notification {
     /// Needs an answer (stays until answered).
     pub fn interactive(&self) -> bool {
         match &self.data {
-            Data::None | Data::Presence { .. } | Data::Message { .. } | Data::Delivery { .. } => false,
+            Data::None | Data::Presence { .. } | Data::Message { .. } | Data::Delivery { .. } | Data::RegionMessage { .. } => false,
             Data::GroupNotice { .. } => self.offered_attachment().is_some(),
             _ => true,
         }
@@ -366,6 +372,7 @@ impl Notification {
             | Data::Presence { .. }
             | Data::Message { .. }
             | Data::RegionRestart
+            | Data::RegionMessage { .. }
             | Data::CallingCard { .. }
             | Data::Delivery { .. } => false,
             Data::Inventory { object, .. } => object.is_nil(),
