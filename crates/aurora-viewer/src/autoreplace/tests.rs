@@ -74,3 +74,19 @@ fn names_and_keywords() {
     assert!(valid_keyword("brb") && valid_keyword("e.g.") && valid_keyword("(c)"));
     assert!(!valid_keyword("") && !valid_keyword("two words") && !valid_keyword("a/b"));
 }
+
+#[test]
+fn the_bundled_lists_are_parsed_once_and_shared() {
+    // #1363: the Spelling page compares with them every frame
+    assert!(Arc::ptr_eq(&defaults(), &defaults()));
+    assert!(is_default(&defaults()));
+    // lists equal to the bundled ones (a saved copy) share their Arc
+    let copy = defaults().as_ref().clone();
+    assert!(Arc::ptr_eq(&shared(copy.clone()), &defaults()));
+    assert!(is_default(&Arc::new(copy.clone())));
+    let mut changed = copy;
+    changed[0].replacements.insert("zzq".to_owned(), "changed".to_owned());
+    let changed = shared(changed);
+    assert!(!Arc::ptr_eq(&changed, &defaults()));
+    assert!(!is_default(&changed));
+}

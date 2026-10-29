@@ -279,16 +279,17 @@ fn lists(ui: &mut egui::Ui, p: &Palette, st: &mut SpellingPage) {
     use aurora_i18n::tr;
     poll_dialog(st);
     let current = crate::autoreplace::lists();
-    let mut lists = current.as_ref().clone();
-    let mut changed = false;
-    st.list = st.list.min(lists.len().saturating_sub(1));
+    // Copied only when something changes: the bundled lists alone hold
+    // some 4,000 entries, too many to copy every frame (#1363).
+    let mut edited: Option<Vec<List>> = None;
+    st.list = st.list.min(current.len().saturating_sub(1));
     ui.vertical(|ui| {
-        if lists.is_empty() {
+        if current.is_empty() {
             ui.label(RichText::new(tr!("ui-options-auto-replace-no-list")).size(12.0).color(p.muted));
         }
-        let count = lists.len();
+        let count = current.len();
         let mut action = None;
-        for (i, list) in lists.iter().enumerate() {
+        for (i, list) in current.iter().enumerate() {
             ui.horizontal(|ui| {
                 if widgets::icon_button(ui, p, "arrow-up", tr!("ui-options-auto-replace-up"), i > 0) {
                     action = Some((i, Move::Up));
@@ -310,6 +311,7 @@ fn lists(ui: &mut egui::Ui, p: &Palette, st: &mut SpellingPage) {
         }
         match action {
             Some((i, Move::Up)) => {
+                let lists = edited.get_or_insert_with(|| current.as_ref().clone());
                 lists.swap(i, i - 1);
                 st.list = if st.list == i {
                     i - 1
@@ -318,9 +320,9 @@ fn lists(ui: &mut egui::Ui, p: &Palette, st: &mut SpellingPage) {
                 } else {
                     st.list
                 };
-                changed = true;
             }
             Some((i, Move::Down)) => {
+                let lists = edited.get_or_insert_with(|| current.as_ref().clone());
                 lists.swap(i, i + 1);
                 st.list = if st.list == i {
                     i + 1
@@ -329,17 +331,15 @@ fn lists(ui: &mut egui::Ui, p: &Palette, st: &mut SpellingPage) {
                 } else {
                     st.list
                 };
-                changed = true;
             }
             Some((i, Move::Delete)) => {
-                lists.remove(i);
+                edited.get_or_insert_with(|| current.as_ref().clone()).remove(i);
                 if st.list > i {
                     st.list -= 1;
                 }
-                changed = true;
             }
             Some((i, Move::Export)) => {
-                let list = lists[i].clone();
+                let list = current[i].clone();
                 let title = tr!("ui-options-auto-replace-export");
                 dialog(st, move || {
                     let path = rfd::FileDialog::new()
@@ -376,14 +376,14 @@ fn lists(ui: &mut egui::Ui, p: &Palette, st: &mut SpellingPage) {
             .clicked();
             if (add || entered) && !name.is_empty() {
                 // LLAutoReplaceSettings::addList: an empty list at the end
-                let name = crate::autoreplace::unique_name(&lists, &name);
+                let lists = edited.get_or_insert_with(|| current.as_ref().clone());
+                let name = crate::autoreplace::unique_name(lists, &name);
                 lists.push(List {
                     name,
                     replacements: Default::default(),
                 });
                 st.list = lists.len() - 1;
                 st.new_list.clear();
-                changed = true;
             }
             if widgets::action_button_if(
                 ui,
@@ -405,7 +405,7 @@ fn lists(ui: &mut egui::Ui, p: &Palette, st: &mut SpellingPage) {
                     Some(Dialog::Imported(list))
                 });
             }
-            if lists != crate::autoreplace::defaults()
+            if !crate::autoreplace::is_default(&current)
                 && widgets::action_button(
                     ui,
                     p,
@@ -416,14 +416,13 @@ fn lists(ui: &mut egui::Ui, p: &Palette, st: &mut SpellingPage) {
                 )
                 .clicked()
             {
-                lists = crate::autoreplace::defaults();
+                edited = Some(crate::autoreplace::defaults().as_ref().clone());
                 st.list = 0;
-                changed = true;
             }
         });
         message(ui, p, st);
     });
-    if changed {
+    if let Some(lists) = edited {
         crate::autoreplace::set_lists(lists);
     }
 }
