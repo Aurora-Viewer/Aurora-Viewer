@@ -229,3 +229,110 @@ fn custom_animation_model_loads_gltf_and_glb_with_bento_weights() {
     }
     std::fs::remove_dir(root).expect("remove fixture directory");
 }
+
+#[test]
+fn saved_animation_models_round_trip_and_reuse_the_loaded_model_across_animations() {
+    let avatars = Arc::new(AvatarLibrary::load());
+    let first = entry();
+    let second = entry();
+    let (first_id, second_id) = (first.id, second.id);
+    let mut imports = Imports {
+        entries: vec![first, second],
+        ..Default::default()
+    };
+    let model = model(&avatars);
+    imports.complete_animation_model(first_id, 0, Some(Ok(model.clone())));
+    let saved = imports.entries[0].animation_model.saved.expect("saved model");
+    assert!(imports.animation_models_dirty);
+    assert_eq!(imports.load_preferences.animation_models.len(), 1);
+    let json = serde_json::to_string(&imports.load_preferences).expect("save preferences");
+    let restored: Preferences = serde_json::from_str(&json).expect("reload preferences");
+    assert_eq!(restored.animation_models, imports.load_preferences.animation_models);
+    assert_eq!(
+        serde_json::from_str::<Preferences>("{}")
+            .expect("old preferences")
+            .animation_models
+            .len(),
+        0
+    );
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    imports.select_animation_model(second_id, saved, &jobs, &egui::Context::default(), avatars);
+    assert_eq!(imports.entries[1].animation_model.saved, Some(saved));
+    assert!(!imports.entries[1].animation_model.pending);
+    assert!(Arc::ptr_eq(
+        imports.entries[1].animation_model.current.as_ref().expect("shared model"),
+        &model
+    ));
+    imports.complete_animation_model(first_id, 0, Some(Ok(model)));
+    assert_eq!(
+        imports.load_preferences.animation_models.len(),
+        1,
+        "adding the same file never duplicates it"
+    );
+    reset(&mut imports.entries[0]);
+    assert_eq!(imports.entries[1].animation_model.saved, Some(saved), "Standard is per animation");
+}
+
+#[test]
+fn removing_a_saved_animation_model_keeps_its_file_and_rejects_pending_results() {
+    let root = std::env::temp_dir().join(format!("aurora-model-list-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("fixture directory");
+    let path = root.join("tail.dae");
+    std::fs::write(&path, demo::tail_dae()).expect("model file");
+    let avatars = Arc::new(AvatarLibrary::load());
+    let current = load(path.clone(), 768, &avatars).expect("model");
+    let entry = entry();
+    let id = entry.id;
+    let mut imports = Imports {
+        entries: vec![entry],
+        ..Default::default()
+    };
+    imports.complete_animation_model(id, 0, Some(Ok(current.clone())));
+    let saved = imports.entries[0].animation_model.saved.expect("saved model");
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    imports.entries[0].animation_model.requested = Some(saved);
+    imports.remove_animation_model(saved, &jobs);
+    assert!(path.is_file(), "removing a reference must never delete the user's file");
+    assert!(imports.load_preferences.animation_models.is_empty());
+    assert!(imports.animation_model_cache.is_empty());
+    assert!(imports.entries[0].animation_model.current.is_none());
+    imports.complete_animation_model(id, 0, Some(Ok(current)));
+    assert!(
+        imports.load_preferences.animation_models.is_empty(),
+        "late loading cannot re-add a removed model"
+    );
+    std::fs::remove_file(path).expect("remove fixture");
+    std::fs::remove_dir(root).expect("remove fixture directory");
+}
+
+#[test]
+fn an_unavailable_saved_animation_model_keeps_the_list_and_the_previous_preview() {
+    let avatars = Arc::new(AvatarLibrary::load());
+    let current = model(&avatars);
+    let entry = entry();
+    let id = entry.id;
+    let mut imports = Imports {
+        entries: vec![entry],
+        ..Default::default()
+    };
+    imports.complete_animation_model(id, 0, Some(Ok(current.clone())));
+    let missing = Saved::remember(&mut imports.load_preferences.animation_models, "missing.dae".into());
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    imports.select_animation_model(id, missing, &jobs, &egui::Context::default(), avatars);
+    let generation = imports.entries[0].animation_model.generation;
+    imports.complete_animation_model(id, generation, Some(Err("missing file".into())));
+    assert_eq!(
+        imports.entries[0].animation_model.saved,
+        Some(missing),
+        "an unavailable entry stays selected so it can be removed"
+    );
+    assert!(Arc::ptr_eq(
+        imports.entries[0].animation_model.current.as_ref().expect("retained preview"),
+        &current
+    ));
+    assert_eq!(imports.load_preferences.animation_models.len(), 2);
+    assert!(imports.entries[0].animation_model.error.is_some());
+    imports.remove_animation_model(missing, &jobs);
+    assert_eq!(imports.load_preferences.animation_models.len(), 1);
+    assert!(imports.entries[0].animation_model.current.is_none());
+}

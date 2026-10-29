@@ -67,6 +67,13 @@ impl App {
             self.send(NetCommand::DiscardMeshQuote(token));
         }
         let commands = self.imports.poll(ctx, &self.scene.jobs, &self.world, &self.settings.inventory);
+        if std::mem::take(&mut self.imports.animation_models_dirty) {
+            self.settings
+                .imports
+                .animation_models
+                .clone_from(&self.imports.load_preferences.animation_models);
+            self.settings.save();
+        }
         for command in commands {
             self.send(command);
         }
@@ -351,6 +358,18 @@ impl App {
                     if let Some(entry) = self.imports.entries.iter_mut().find(|e| e.id == id) {
                         crate::imports::animation_model::reset(entry);
                     }
+                }
+                Action::SelectAnimationModel(id, saved) => {
+                    self.imports
+                        .select_animation_model(id, saved, &self.scene.jobs, ctx, self.scene.avatar_lib.clone());
+                }
+                Action::RemoveAnimationModel(saved) => {
+                    self.imports.remove_animation_model(saved, &self.scene.jobs);
+                    self.settings
+                        .imports
+                        .animation_models
+                        .clone_from(&self.imports.load_preferences.animation_models);
+                    self.settings.save();
                 }
                 Action::SoundGain(id) => {
                     if self.imports.sound_playing == Some(id)

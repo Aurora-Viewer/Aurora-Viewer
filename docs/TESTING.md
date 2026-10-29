@@ -4573,6 +4573,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   the file picker or choose an unrigged/invalid file: keep the current model,
   with an error for rejected files. Model selection is independent per
   animation, preview-only, and never adds a mesh upload or changes its fee.
+  Add two models, switch between them in the model list, then return to Standard.
+  Restart the viewer and select either model without reopening a file picker.
+  Remove an entry: its source file must remain on disk. A moved/missing source
+  stays in the list, reports a load error and keeps the previous preview.
   `AURORA_DEMO_IMPORT_FILE` replaces the fixtures with an existing file,
   read without modification; choose the mode matching its type.
 

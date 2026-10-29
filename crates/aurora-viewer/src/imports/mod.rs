@@ -119,6 +119,7 @@ pub struct Preferences {
     pub permissions_by_type: permissions::ByType,
     pub show_payment: bool,
     pub preview_on_avatar: bool,
+    pub animation_models: Vec<animation_model::Saved>,
     pub mesh_auto_weights: bool,
     pub mesh_auto_preview_weights: bool,
     pub mesh_reliable_default: bool,
@@ -151,6 +152,7 @@ impl Default for Preferences {
             permissions_by_type: Default::default(),
             show_payment: true,
             preview_on_avatar: false,
+            animation_models: Vec::new(),
             mesh_auto_weights: true,
             mesh_auto_preview_weights: true,
             mesh_reliable_default: false,
@@ -507,6 +509,8 @@ pub struct Imports {
     pub demo_upload_started: bool,
     pub demo_animation_positioned: bool,
     pub own_avatar_preview: Option<Uuid>,
+    pub animation_model_cache: HashMap<Uuid, std::sync::Weak<animation_model::Model>>,
+    pub animation_models_dirty: bool,
     pub load_preferences: Preferences,
     cost_overrides: HashMap<(Kind, bool), i32>,
     pub spent: i32,
@@ -557,6 +561,8 @@ impl Default for Imports {
             demo_upload_started: false,
             demo_animation_positioned: false,
             own_avatar_preview: None,
+            animation_model_cache: HashMap::new(),
+            animation_models_dirty: false,
             load_preferences: Default::default(),
             cost_overrides: HashMap::new(),
             spent: 0,
@@ -1070,9 +1076,7 @@ impl Imports {
                     }
                 }
                 Worker::AnimationModel(id, generation, result) => {
-                    if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
-                        animation_model::complete(entry, generation, result);
-                    }
+                    self.complete_animation_model(id, generation, result);
                 }
                 Worker::Model(id, generation, model, prepared) => {
                     if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && e.preview_generation == generation) {

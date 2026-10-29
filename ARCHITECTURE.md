@@ -20,6 +20,10 @@ Worker-computed bone-chain reach frames rotating tails/wings around the pelvis
 without per-frame geometry scans or a rest-bounds crop.
 Choosing Standard restores the dummy avatar. Preview models never enter the
 upload queue or change animation bytes, metadata, inventory or world appearance.
+`Preferences::animation_models` remembers model identifiers, names and local
+paths across sessions. Selecting a saved entry loads it on the worker pool;
+weak cache entries share geometry only while a preview retains it. Removing
+a saved reference resets dependent previews and never deletes its file.
 
 `scene/anim.rs` restarts active resident and control-avatar motions from one shared
 instant for Ctrl+S, World and the resync toolbar command. Receipt signals,

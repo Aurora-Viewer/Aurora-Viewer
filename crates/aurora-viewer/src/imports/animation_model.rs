@@ -5,6 +5,29 @@
 use super::*;
 use crate::scene::{anim::SkeletonBase, avatar::AvatarLibrary};
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Saved {
+    pub id: Uuid,
+    pub name: String,
+    pub path: PathBuf,
+}
+
+impl Saved {
+    fn remember(models: &mut Vec<Self>, path: PathBuf) -> Uuid {
+        if let Some(saved) = models.iter().find(|saved| saved.path == path) {
+            return saved.id;
+        }
+        let saved = Self {
+            id: Uuid::new_v4(),
+            name: path.file_stem().unwrap_or_default().to_string_lossy().into_owned(),
+            path,
+        };
+        let id = saved.id;
+        models.push(saved);
+        id
+    }
+}
+
 pub struct Model {
     pub path: PathBuf,
     pub geometry: Arc<aurora_render::preview::Model>,
@@ -17,9 +40,14 @@ pub struct Selection {
     pub generation: u64,
     pub pending: bool,
     pub error: Option<String>,
+    pub saved: Option<Uuid>,
+    requested: Option<Uuid>,
 }
 
 pub(super) fn load(path: PathBuf, model_limit: u32, avatars: &AvatarLibrary) -> Result<Arc<Model>, String> {
+    if !path.is_file() {
+        return Err(aurora_i18n::tr!("import-local-file-missing").into());
+    }
     let bytes = files::read(&path).map_err(|e| e.to_string())?;
     let (scene, images) = files::mesh_scene(&path, &bytes, false, None, model_limit).map_err(|e| e.to_string())?;
     prepare(path, mesh::Draft::new(scene, images), avatars)
@@ -114,6 +142,8 @@ pub fn reset(entry: &mut Entry) {
     entry.animation_model.current = None;
     entry.animation_model.pending = false;
     entry.animation_model.error = None;
+    entry.animation_model.saved = None;
+    entry.animation_model.requested = None;
     refresh(entry);
 }
 
@@ -134,6 +164,87 @@ pub(super) fn complete(entry: &mut Entry, generation: u64, result: Option<Result
 }
 
 impl Imports {
+    pub(super) fn complete_animation_model(&mut self, id: Uuid, generation: u64, result: Option<Result<Arc<Model>, String>>) {
+        let Some(entry) = self.entries.iter_mut().find(|entry| {
+            entry.id == id && entry.animation_model.generation == generation && matches!(entry.source, Some(Source::Animation { .. }))
+        }) else {
+            return;
+        };
+        if let Some(Ok(model)) = &result {
+            let saved = entry.animation_model.requested.take().unwrap_or_else(|| {
+                self.animation_models_dirty = true;
+                Saved::remember(&mut self.load_preferences.animation_models, model.path.clone())
+            });
+            self.animation_model_cache.insert(saved, Arc::downgrade(model));
+            entry.animation_model.saved = Some(saved);
+        }
+        entry.animation_model.requested = None;
+        complete(entry, generation, result);
+    }
+
+    pub fn select_animation_model(
+        &mut self,
+        id: Uuid,
+        saved: Uuid,
+        jobs: &crate::scene::jobs::Jobs,
+        ctx: &egui::Context,
+        avatars: Arc<AvatarLibrary>,
+    ) {
+        let Some(model) = self.load_preferences.animation_models.iter().find(|model| model.id == saved) else {
+            return;
+        };
+        let path = model.path.clone();
+        let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.id == id && matches!(entry.source, Some(Source::Animation { .. })))
+        else {
+            return;
+        };
+        entry.animation_model.generation += 1;
+        let generation = entry.animation_model.generation;
+        entry.animation_model.requested = Some(saved);
+        entry.animation_model.saved = Some(saved);
+        entry.animation_model.error = None;
+        if let Some(model) = self.animation_model_cache.get(&saved).and_then(std::sync::Weak::upgrade) {
+            self.complete_animation_model(id, generation, Some(Ok(model)));
+            return;
+        }
+        entry.animation_model.pending = true;
+        let model_limit = self.load_preferences.mesh_model_limit;
+        let tx = self.tx.clone();
+        let wake = ctx.clone();
+        jobs.execute(move || {
+            let result = load(path, model_limit, &avatars);
+            let _ = tx.send(Worker::AnimationModel(id, generation, Some(result)));
+            wake.request_repaint();
+        });
+    }
+
+    pub fn remove_animation_model(&mut self, saved: Uuid, jobs: &crate::scene::jobs::Jobs) {
+        let path = self
+            .load_preferences
+            .animation_models
+            .iter()
+            .find(|model| model.id == saved)
+            .map(|model| model.path.clone());
+        self.load_preferences.animation_models.retain(|model| model.id != saved);
+        self.animation_models_dirty = true;
+        for entry in &mut self.entries {
+            if entry.animation_model.saved == Some(saved)
+                || entry.animation_model.requested == Some(saved)
+                || entry
+                    .animation_model
+                    .current
+                    .as_ref()
+                    .is_some_and(|model| Some(&model.path) == path.as_ref())
+            {
+                reset(entry);
+            }
+        }
+        jobs.discard(self.animation_model_cache.remove(&saved));
+    }
+
     pub fn animation_model_file(&mut self, id: Uuid, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, avatars: Arc<AvatarLibrary>) {
         let Some(entry) = self
             .entries
@@ -149,6 +260,7 @@ impl Imports {
         let generation = entry.animation_model.generation;
         entry.animation_model.pending = true;
         entry.animation_model.error = None;
+        entry.animation_model.requested = None;
         let model_limit = self.load_preferences.mesh_model_limit;
         let tx = self.tx.clone();
         let wake = ctx.clone();

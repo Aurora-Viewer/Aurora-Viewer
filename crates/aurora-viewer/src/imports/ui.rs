@@ -93,6 +93,8 @@ pub enum Action {
     Preview(Uuid),
     Play(Uuid, bool),
     AnimationModel(Uuid),
+    SelectAnimationModel(Uuid, Uuid),
+    RemoveAnimationModel(Uuid),
     DefaultAnimationModel(Uuid),
     SoundGain(Uuid),
     Reload(Uuid),
@@ -589,17 +591,43 @@ fn animation_model_controls(
     p: &Palette,
     id: Uuid,
     model: &super::animation_model::Selection,
+    saved: &[super::animation_model::Saved],
     actions: &mut Vec<Action>,
 ) {
     ui.label(aurora_i18n::tr!("import-animation-model"));
-    let name = model
-        .current
-        .as_ref()
-        .and_then(|model| model.path.file_name())
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| aurora_i18n::tr!("import-animation-model-default").into());
-    ui.add(egui::Label::new(name).truncate())
+    let mut selected = model.saved;
+    let name = saved
+        .iter()
+        .find(|saved| Some(saved.id) == selected)
+        .map(|saved| saved.name.as_str())
+        .or_else(|| {
+            model
+                .current
+                .as_ref()
+                .and_then(|current| current.path.file_stem())
+                .and_then(|name| name.to_str())
+        })
+        .unwrap_or(aurora_i18n::tr!("import-animation-model-default"));
+    let list = egui::ComboBox::from_id_salt(("animation_models", id))
+        .width(ui.available_width())
+        .selected_text(name)
+        .show_ui(ui, |ui| {
+            selection(ui, &mut selected, None, aurora_i18n::tr!("import-animation-model-default"));
+            for saved in saved {
+                selection(ui, &mut selected, Some(saved.id), &saved.name).on_hover_text(saved.path.display().to_string());
+            }
+        })
+        .response
         .on_hover_text(aurora_i18n::tr!("import-animation-model-help"));
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::unique(("animation_model_list", id)), list.rect));
+    if selected != model.saved {
+        if let Some(saved) = selected {
+            actions.push(Action::SelectAnimationModel(id, saved));
+        } else {
+            actions.push(Action::DefaultAnimationModel(id));
+        }
+    }
     ui.horizontal(|ui| {
         let choose = tool_button(ui, p, aurora_i18n::tr!("import-animation-model-choose"), !model.pending);
         if choose.clicked() {
@@ -614,9 +642,16 @@ fn animation_model_controls(
         if reset.clicked() {
             actions.push(Action::DefaultAnimationModel(id));
         }
+        let remove = tool_button(ui, p, aurora_i18n::tr!("import-animation-model-remove"), model.saved.is_some());
+        if remove.clicked()
+            && let Some(saved) = model.saved
+        {
+            actions.push(Action::RemoveAnimationModel(saved));
+        }
         ui.ctx().data_mut(|data| {
             data.insert_temp(egui::Id::unique(("animation_model_choose", id)), choose.rect);
             data.insert_temp(egui::Id::unique(("animation_model_reset", id)), reset.rect);
+            data.insert_temp(egui::Id::unique(("animation_model_remove", id)), remove.rect);
         });
         if model.pending {
             ui.spinner();
@@ -624,6 +659,11 @@ fn animation_model_controls(
     });
     if let Some(error) = &model.error {
         ui.label(RichText::new(error).small().color(p.danger));
+        ui.label(
+            RichText::new(aurora_i18n::tr!("import-animation-model-kept"))
+                .small()
+                .color(p.muted),
+        );
     }
 }
 

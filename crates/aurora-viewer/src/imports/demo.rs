@@ -183,6 +183,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
         } else {
             fixtures(&root)
         };
+        let mut animation_models = Vec::new();
         let entries = match fixture_result {
             Ok(()) => {
                 let files: &[(&str, Choice)] = match choice {
@@ -244,7 +245,11 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                                 let avatars = crate::scene::avatar::AvatarLibrary::load();
                                 for entry in &mut loaded {
                                     match animation_model::load(root.join("tail-preview.dae"), prefs.mesh_model_limit, &avatars) {
-                                        Ok(model) => entry.animation_model.current = Some(model),
+                                        Ok(model) => {
+                                            // Feed the ordinary completion path after Loaded so the
+                                            // synthetic source exercises the saved model selector too.
+                                            animation_models.push((entry.id, entry.animation_model.generation, model));
+                                        }
                                         Err(error) => entry.animation_model.error = Some(error),
                                     }
                                 }
@@ -375,6 +380,9 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
             Err(error) => vec![Entry::new(root, Err(error), prefs.texture())],
         };
         let _ = tx.send(Worker::Loaded(request, entries));
+        for (id, generation, model) in animation_models {
+            let _ = tx.send(Worker::AnimationModel(id, generation, Some(Ok(model))));
+        }
         wake.request_repaint();
     });
 }
