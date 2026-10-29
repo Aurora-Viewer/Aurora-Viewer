@@ -39,4 +39,4 @@ Copy-Item -LiteralPath (Join-Path $Source 'assets/branding/aurora.icns') -Destin
 Get-ChildItem -LiteralPath (Join-Path $Source 'packaging/macos') -Directory -Filter '*.lproj' | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination $resources -Recurse
 }
-"$Out: Aurora Viewer $version"
+"${Out}: Aurora Viewer $version"
