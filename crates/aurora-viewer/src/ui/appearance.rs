@@ -2016,7 +2016,7 @@ mod tests {
             let mut st = AppearanceUi::default();
             st.open_outfit(folder);
             let mut render = || {
-                ctx.run_ui(
+                let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 1600.0))),
                         ..Default::default()
@@ -2044,7 +2044,9 @@ mod tests {
                             worn_list(ui, &palette, &world, &mut st, &mut vec![], view == 2);
                         }
                     },
-                )
+                );
+                output.textures_delta.clear();
+                output
             };
             for _ in 0..3 {
                 render();
