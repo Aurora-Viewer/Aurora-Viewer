@@ -81,6 +81,7 @@ mod imports;
 mod inspect;
 mod inventory;
 mod inventory_drag;
+mod inventory_hover;
 mod inventory_thumbnail;
 mod joystick;
 mod land_moderation;
@@ -704,6 +705,7 @@ pub struct App {
     /// Other interface images by asset id (profiles: 1st life picture,
     /// group insignias).
     ui_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
+    inventory_hover_images: inventory_hover::Images,
     ui_image_masks: std::collections::HashMap<uuid::Uuid, crate::world::rlva::effects::AlphaMask>,
     rlva_overlay_slots: std::collections::HashMap<uuid::Uuid, u32>,
     /// Avatar profile windows.
@@ -1364,6 +1366,7 @@ impl App {
             login_portrait_source: None,
             ui_coarse: Default::default(),
             ui_images: Default::default(),
+            inventory_hover_images: Default::default(),
             ui_image_masks: Default::default(),
             rlva_overlay_slots: Default::default(),
             profile_ui: Default::default(),
@@ -7064,6 +7067,7 @@ impl App {
                 self.note_ui_copy(image, w);
             }
         }
+        self.update_inventory_hover_images(renderer);
     }
 
     /// What a profile picture's pixels give besides its texture: the Aurora
@@ -9353,6 +9357,12 @@ impl App {
                 .extend(ui::inventory::document_demo_events(&ctx, self.frame_count, &mut self.inventory_ui));
             raw.events
                 .extend(ui::inventory::clipboard_demo_events(&ctx, self.frame_count, &mut self.inventory_ui));
+            raw.events.extend(ui::inventory::hover_demo_events(
+                &ctx,
+                self.frame_count,
+                &self.world.inventory,
+                &mut self.inventory_ui,
+            ));
             raw.events
                 .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
             ui::inventory::aurora_demo(&ctx, self.frame_count);
@@ -14421,6 +14431,7 @@ impl App {
                     &mut open,
                     self.appearance_ui.pending.is_some(),
                     &self.ui_images,
+                    &self.inventory_hover_images.ready,
                     &self.avatar_pics,
                     &self.settings.script_editor,
                     // the inventory scenarios were written for the Legacy window,

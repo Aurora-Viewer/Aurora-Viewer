@@ -114,6 +114,11 @@ pub fn seed(inv: &mut Inventory, agent: Uuid) {
         .collect(),
     );
     let original = Uuid::from_u128(8100);
+    if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| mode.contains("hover-photo"))
+        && let Some(object) = inv.items.get_mut(&original)
+    {
+        object.thumbnail = crate::demo::TEX_SNAPSHOT;
+    }
     inv.add_items(vec![InvItem {
         id: Uuid::from_u128(8113),
         parent: personal,
