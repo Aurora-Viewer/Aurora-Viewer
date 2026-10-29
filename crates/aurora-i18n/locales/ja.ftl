@@ -824,7 +824,7 @@ notecard-lsl-demo =
             // LSLの配色とインデント
             integer count = 2;
             vector tint = <1.0, 0.5, 0.0>;
-            llSay(PUBLIC_CHANNEL, "Hello 🐺");
+            llSay(PUBLIC_CHANNEL, "こんにちは🐺");
     { "    }" }
     { "}" }
     ```
@@ -1055,7 +1055,7 @@ language-item-count = { $count ->
    *[other] { $count }項目
     }
 
-#ビューア interface and notifications
+# Viewer interface and notifications
 
 ui-inventory-failed = { "  （失敗）" }
 cmdline-dice-exploded = { "  ^-- 爆発" }
@@ -2268,7 +2268,7 @@ build-shapes-half-cone = 半円錐
 build-shapes-half-sphere = 半球
 ui-environment-blue-density = 青の濃度
 ui-environment-haze-density = 霞の濃度
-build-ui-features-density-in-100-kg-m-3 = { "密度\u000A100100 ㎏/㎥" }
+build-ui-features-density-in-100-kg-m-3 = { "密度\u000A100 ㎏/㎥" }
 ui-inventory-controls-since-last-logout = 前回のログアウト以降
 ui-login-latest = 最新
 ui-land-covenant-last-modified = 最終更新：{ $when }
@@ -3811,14 +3811,11 @@ demo-building-class = 土曜の建築教室
 demo-building-class-desc = 初心者歓迎：プリム、リンク、テクスチャを学べます。午後3時（SLT）にサンドボックス集合。
 demo-nova-first-life = 昼はグラフィックデザイナー、夜はミュージシャン。海のそばに住み、日曜は友人とギターを弾いて過ごします。
 demo-fireflies-club = Fireflies Club
-demo-nova-about = { "日曜はミュージシャン。金曜の夜はいつもラグーンのステージにいます 🎶✨
-ショップ：" }{ $slurl }{ "
-サウンド：[https://example.com/nova Novaのサウンドページ]・www.example.org" }
+demo-nova-about = { "日曜はミュージシャン。金曜の夜はいつもラグーンのステージにいます 🎶✨\u000Aショップ：" }{ $slurl }{ "\u000Aサウンド：[https://example.com/nova Novaのサウンドページ]・www.example.org" }
 demo-nova-notes = 浜辺で知り合いました。とても親切な人です。ステージ機材を貸してください。
 common-my-inventory = 自分の持ち物
 ui-options-my-name = 自分の名前
-demo-my-demo-profile-it-can-be-edited-here-saving = { "自分のデモプロフィールです。
-ここで編集できます。保存内容はローカルに限られます。" }
+demo-my-demo-profile-it-can-be-edited-here-saving = { "自分のデモプロフィールです。\u000Aここで編集できます。保存内容はローカルに限られます。" }
 common-world = ワールド
 ui-appearance-move-layer-up = レイヤーを上へ移動
 ui-minimap-show-shout-range-100-m = 大声の範囲を表示（100 m）
@@ -9565,7 +9562,7 @@ ui-group-land-in-use = 使用中
 ui-group-land-available = 利用可能
 ui-group-land-contributed = 貢献済み
 ui-group-land-my-contribution = 自分の貢献
-ui-group-land-of-max =㎡／{ $max }
+ui-group-land-of-max = ㎡／{ $max }
 ui-group-land-contribution-tip = グループに提供する土地（0～{ $max }㎡：すでに提供している分と残っている土地）。Enterで適用します。
 ui-group-land-contribution-error = 土地の貢献を設定することができません
 ui-group-land-over-limit = 使用中の土地をサポートするには、より多くの土地クレジットが必要です。
@@ -10780,7 +10777,7 @@ bridge-object-info-result =
     オブジェクトID：{ $object }
     説明：{ $description }
     ルートプリム：{ $root }
-    プリム数：{ $pri㎳ }
+    プリム数：{ $prims }
     ランドインパクト：{ $impact }
     インベントリのアイテム：{ $inventory }
     速度：{ $velocity }ｍ／秒
@@ -11940,7 +11937,7 @@ ui-appearance-selected-outfits = { $count } 個のアウトフィットを選択
 spelling-add-to-dictionary = 辞書に追加
 spelling-glossary = Second Lifeの用語集
 spelling-ignore = 無視に追加
-g-import-filter = Hunspellの辞書
+spelling-import-filter = Hunspellの辞書
 spelling-import-title = 辞書をインポート
 spelling-looking = 候補を探しています…
 ui-options-tab-spelling = スペル
@@ -11950,9 +11947,9 @@ ui-options-spelling-on-hint = チャットバー、会話、ノートカード�
 ui-options-spelling-main = メイン辞書
 ui-options-spelling-main-hint = チェックする言語とその語形の文法
 ui-options-spelling-loading = 読み込んでいます…
--options-spelling-failed = 辞書を読み込めませんでした
+ui-options-spelling-failed = 辞書を読み込めませんでした
 ui-options-spelling-extra = その他の辞書
-i-options-spelling-extra-hint = これらの単語も正しいスペルとみなされます
+ui-options-spelling-extra-hint = これらの単語も正しいスペルとみなされます
 ui-options-spelling-imported = インポートした辞書
 ui-options-spelling-imported-hint = ディスクから追加したHunspellの辞書（.dic。メインの辞書には横に.affが必要）
 ui-options-spelling-imported-none = まだありません
@@ -12197,7 +12194,7 @@ scene-nav-character-detail = ＣＰＵ：{ $cpu }㎲ · 長さ：{ $length }ｍ 
 scene-nav-horizontal = 水平のキャラクター
 scene-nav-vertical = 垂直のキャラクター
 
-# About Auroraビューア (#1126)
+# About Aurora Viewer (#1126)
 about-tab-info = 情報
 about-tab-licences = ライセンス
 about-copy = クリップボードにコピー
@@ -12261,7 +12258,7 @@ world-outfit-folders-too-deep = アウトフィットのフォルダは4階層�
 
 ## Build › Edit particles (particle editor)
 particle-editor-title = パーティクルエディタ
-particle-menu-tip = パーティクルを調整するには、自分が所有するオブジェクトを選択してください。
+particle-editor-menu-tip = パーティクルを調整するには、自分が所有するオブジェクトを選択してください。
 particle-editor-script-name = 新しいパーティクルスクリプト
 particle-editor-emitter = パーティクル源
 particle-editor-particles = パーティクル
