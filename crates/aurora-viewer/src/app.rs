@@ -9020,7 +9020,8 @@ impl App {
                 &mut gfx.renderer,
                 &mut scene.textures,
                 &mut self.world,
-                world_dt,
+                dt,
+                frozen,
                 self.camera.position,
                 max_particles,
                 self.settings.draw_distance,
@@ -10078,6 +10079,11 @@ impl App {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
+            }
+        }
+        if self.demo && crate::demo::freeze_world::on() {
+            for event in crate::demo::freeze_world::events(self.frame_count) {
+                self.world.apply(event);
             }
         }
         if self.demo && crate::demo::seat_kill::on() {

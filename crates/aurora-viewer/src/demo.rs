@@ -90,6 +90,10 @@ pub mod env;
 /// (AURORA_DEMO_EXPERIENCE).
 #[path = "demo_experience.rs"]
 pub mod experience;
+/// A prop derezzed and particles started while the photo mode holds the
+/// world still (AURORA_DEMO_FREEZE_WORLD).
+#[path = "demo_freeze_world.rs"]
+pub mod freeze_world;
 /// Meshes filling the geometry arena until it outgrows its buffers
 /// (AURORA_DEMO_GEOMETRY).
 /// Friendship offers in the middle of the screen (AURORA_DEMO_FRIEND_PROMPT).
