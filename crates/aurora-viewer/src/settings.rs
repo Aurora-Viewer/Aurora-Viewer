@@ -737,6 +737,11 @@ pub struct Settings {
     /// addition the Legacy Viewer does not have: its toast stays one switch
     /// away).
     pub friend_request_prompt: bool,
+    /// A message to the whole region shows as a card in the middle of the
+    /// screen instead of a toast (`ui::region_message_prompt`, #1404; on,
+    /// an Aurora addition: off gives back the Legacy Viewer's GodMessage
+    /// toast). Its line of nearby chat stays either way.
+    pub region_message_prompt: bool,
     /// Toast of an IM or conference message out of sight (EnableIMChatPopups, on).
     pub toast_im: bool,
     /// Toast of a group chat message (EnableGroupChatPopups, off).
@@ -1711,6 +1716,7 @@ impl Default for Settings {
             friends_online_in_chat: false,
             presence_position: PresencePosition::TopRight,
             friend_request_prompt: true,
+            region_message_prompt: true,
             toast_im: true,
             toast_group_im: false,
             ims_in_notification_center: false,

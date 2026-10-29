@@ -2523,6 +2523,14 @@ ui-friend-prompt-more = { $count ->
     [one] One more friendship offer is waiting
    *[other] { $count } more friendship offers are waiting
     }
+ui-options-region-message-prompt = Region messages in the middle of the screen
+ui-options-region-message-prompt-hint = A card you close with OK instead of a toast; the message is still written in nearby chat
+ui-region-message-prompt-sent = sent a message to the region
+ui-region-message-prompt-sent-to = sent a message to { $region }
+ui-region-message-prompt-more = { $count ->
+    [one] One more region message is waiting
+   *[other] { $count } more region messages are waiting
+    }
 ui-options-position-top-left = Top left
 ui-options-position-top-center = Top middle
 ui-options-position-top-right = Top right
@@ -5852,6 +5860,8 @@ demo-restart-toast = Are you coming to the concert tonight?
 demo-toast-are-you-there = Are you there? Come and see the new fountain ✨
 demo-toast-group-message = The meeting starts in ten minutes at the stage
 demo-friend-prompt-message = Hi! We met at the lagoon party last night, want to stay in touch? 🌊
+demo-region-message-restart = The region restarts in 10 minutes for maintenance. Please find a safe spot or teleport to the lagoon; we will be back shortly. Thank you for your patience!
+demo-region-message-event = The dance party starts at the plaza in 5 minutes 🎶
 demo-attention-im = Are you still there? I'm waiting for you at the fountain
 demo-attention-mention = are you coming to the concert?
 demo-attention-group = can you open the doors of the stage?
@@ -6845,6 +6855,8 @@ world-collisions-scripted-object = { $name } hit you with a scripted object.
 world-collisions-physical-object = { $name } hit you with a physical object.
 world-region-alerts-version-title = Simulator version changed
 world-region-alerts-version-body = The region you have entered is running a different simulator version. Current simulator: { $new }. Previous simulator: { $old }.
+world-region-message-title = Region message from { $name }
+world-region-message-line = Region message from { $name }: { $message }
 app-was-unblocked-because-you-sent-them-an-im = { $name }{ " was unblocked because you sent them an IM." }
 ui-contacts-is-already-your-friend = { $name }{ " is already your friend." }
 # { $ending } is the agreement of the French participle: nothing in English

@@ -2522,6 +2522,14 @@ ui-friend-prompt-more = { $count ->
     [one] もう一つのフレンド申請のオファーが来ています
    *[other] ほか{ $count }件のフレンド申請のオファーが来ています
     }
+ui-options-region-message-prompt = 画面中央にリージョンメッセージを表示
+ui-options-region-message-prompt-hint = トースト通知の代わりに「OK」で閉じるカードを表示します。メッセージは近くのチャットにも記録されます。
+ui-region-message-prompt-sent = さんがリージョンにメッセージを送信しました
+ui-region-message-prompt-sent-to = さんが{ $region }にメッセージを送信しました
+ui-region-message-prompt-more = { $count ->
+    [one] ほかにもう1件のリージョンメッセージがあります
+   *[other] ほか{ $count }件のリージョンメッセージがあります
+    }
 ui-options-position-top-left = 左上
 ui-options-position-top-center = 上中央
 ui-options-position-top-right = 右上
@@ -5852,6 +5860,8 @@ demo-restart-toast = 今夜のコンサート来る？
 demo-toast-are-you-there = いる？新しい噴水を見においで ✨
 demo-toast-group-message = ミーティングは10分後にステージで始まります
 demo-friend-prompt-message = こんにちは！昨夜ラグーンのパーティーで会ったよね。これからも連絡取り合わない？🌊
+demo-region-message-restart = メンテナンスのため、リージョンは10分後に再起動します。安全な場所へ移動するか、ラグーンへテレポートしてください。すぐに戻ります。ご協力ありがとうございます！
+demo-region-message-event = 5分後に広場でダンスパーティーが始まります🎶
 demo-attention-im = まだいる？噴水のところで待ってるよ
 demo-attention-mention = コンサートに来る？
 demo-attention-group = ステージの扉を開けてもらえる？
@@ -6842,6 +6852,8 @@ world-collisions-scripted-object = { $name }がスクリプト付きのオブジ
 world-collisions-physical-object = { $name }が物理オブジェクトであなたを攻撃しました。
 world-region-alerts-version-title = シミュレーターのバージョンが変わりました
 world-region-alerts-version-body = 入ったリージョンでは別のシミュレーターのバージョンが実行されています。現在のシミュレーター：{ $new }。以前のシミュレーター：{ $old }。
+world-region-message-title = { $name }さんからのリージョンメッセージ
+world-region-message-line = { $name }さんからのリージョンメッセージ：{ $message }
 app-was-unblocked-because-you-sent-them-an-im = { $name }{ "にＩＭを送信したため、ブロックが解除されました。" }
 ui-contacts-is-already-your-friend = { $name }{ "はすでにフレンドです。" }
 # { $ending } is the agreement of the French participle: nothing in English

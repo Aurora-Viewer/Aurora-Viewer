@@ -95,6 +95,7 @@ pub mod portals;
 pub mod presence;
 pub mod profile;
 pub mod region;
+pub mod region_message_prompt;
 pub mod region_restart;
 pub mod remote_object;
 pub mod report_abuse;

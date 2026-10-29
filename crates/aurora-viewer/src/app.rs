@@ -612,6 +612,7 @@ pub struct App {
     notif_ui: ui::notifications::NotifUi,
     /// A friendship offer in the middle of the screen (#465).
     friend_prompt: ui::friend_prompt::FriendPromptUi,
+    region_message_prompt: ui::region_message_prompt::RegionMessagePromptUi,
     /// The region restart alert (app/region_restart.rs).
     region_restart: region_restart::State,
     /// Taskbar flashes and system notifications (app/attention.rs).
@@ -1315,6 +1316,7 @@ impl App {
             audio_ui: Default::default(),
             notif_ui: Default::default(),
             friend_prompt: Default::default(),
+            region_message_prompt: Default::default(),
             region_restart: Default::default(),
             attention: Default::default(),
             reconnect_place: None,
@@ -10107,6 +10109,13 @@ impl App {
                 self.friend_prompt.put_off();
             }
         }
+        if self.demo && crate::demo::region_message::enabled() {
+            for event in crate::demo::region_message::events(self.frame_count) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+        }
         if self.demo && crate::demo::object_im::settings().is_some() {
             let agent = self.world.agent_id;
             for event in crate::demo::object_im::events(self.frame_count, agent) {
@@ -14725,8 +14734,32 @@ impl App {
                 // the toasts it replaces (AURORA_DEMO_FRIEND_PROMPT: on for the run)
                 let prompt_on = self.settings.friend_request_prompt || (self.demo && crate::demo::friend_prompt::mode().is_some());
                 let prompt_allowed = !toasts_hidden && !dnd && self.world.notifications.started;
+                // #1404: a message to the whole region there too, first: the
+                // friendship offers wait behind it
+                // (AURORA_DEMO_REGION_MESSAGE: on for the run)
+                let region_on = self.settings.region_message_prompt || (self.demo && crate::demo::region_message::enabled());
+                let mut region_action = None;
+                let region_shown = self
+                    .region_message_prompt
+                    .next(&mut self.world.notifications, region_on, prompt_allowed);
+                if let Some((id, from)) = region_shown {
+                    let name = Some(self.world.social.display_name_of(&from))
+                        .filter(|n| n != "…")
+                        .or_else(|| self.world.avatar_name(&from));
+                    if name.is_none() {
+                        self.world.social.want_name(from);
+                    }
+                    let env = ui::region_message_prompt::PromptEnv {
+                        name,
+                        motion: !self.settings.reduce_motion,
+                    };
+                    region_action = self
+                        .region_message_prompt
+                        .show(&ctx, &p, &self.skin.icons, &self.world.notifications, id, &env);
+                }
                 let mut prompt_action = None;
-                if let Some((id, from)) = self.friend_prompt.next(&mut self.world.notifications, prompt_on, prompt_allowed) {
+                let friend_allowed = prompt_allowed && region_shown.is_none();
+                if let Some((id, from)) = self.friend_prompt.next(&mut self.world.notifications, prompt_on, friend_allowed) {
                     self.notif_ui.wanted_pics.insert(from);
                     let name = Some(self.world.social.display_name_of(&from))
                         .filter(|n| n != "…")
@@ -14800,6 +14833,11 @@ impl App {
                 match prompt_action {
                     Some(ui::friend_prompt::PromptAction::Answer(id, r)) => answers.push((id, r)),
                     Some(ui::friend_prompt::PromptAction::Profile(id)) => self.profile_ui.open(&mut self.world, id),
+                    None => {}
+                }
+                match region_action {
+                    Some(ui::region_message_prompt::PromptAction::Answer(id, r)) => answers.push((id, r)),
+                    Some(ui::region_message_prompt::PromptAction::Profile(id)) => self.profile_ui.open(&mut self.world, id),
                     None => {}
                 }
                 for (id, r) in answers {

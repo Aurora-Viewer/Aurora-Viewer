@@ -231,6 +231,7 @@ const BEFORE: &[&str] = &[
     "link_previews",
     "keywords",
     "friend_request_prompt",
+    "region_message_prompt",
     // Controls
     "mouse_sensitivity",
     "invert_mouse",
