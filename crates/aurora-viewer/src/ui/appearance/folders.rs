@@ -267,7 +267,7 @@ pub(super) fn dialogs(ctx: &egui::Context, p: &Palette, world: &World, st: &mut 
             } else {
                 ("check", aurora_i18n::tr!("common-ok"), ActionKind::Primary)
             };
-            let enter = !matches!(dialog, Dialog::Delete(_)) && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let enter = widgets::enter_pressed(ui);
             if action_button_if(ui, p, icon, label, kind, size, valid).clicked() || (valid && enter) {
                 let change = match dialog {
                     Dialog::New { parent, name, then_move } => {

@@ -476,12 +476,11 @@ impl LibraryUi {
                 widgets::Modal::new(egui::Id::unique(("material_close", item.id))).show(ctx, |ui| {
                     ui.label(aurora_i18n::tr!("ui-inventory-dialogs-this-document-has-unsaved-changes"));
                     ui.horizontal(|ui| {
-                        if ui
-                            .add_enabled(
-                                material_editor::can_edit(world, &item) && editor.dirty() && editor.saving.is_none(),
-                                egui::Button::new(aurora_i18n::tr!("common-save")),
-                            )
-                            .clicked()
+                        if widgets::default_button(ui.add_enabled(
+                            material_editor::can_edit(world, &item) && editor.dirty() && editor.saving.is_none(),
+                            egui::Button::new(aurora_i18n::tr!("common-save")),
+                        ))
+                        .clicked()
                         {
                             editor.close_after_save = true;
                             editor.confirm_close = false;

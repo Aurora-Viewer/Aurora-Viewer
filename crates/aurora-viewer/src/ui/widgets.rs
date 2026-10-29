@@ -24,6 +24,7 @@ pub mod demo;
 pub(crate) mod elide_tests;
 pub(crate) mod hero;
 pub(crate) mod keycap;
+mod modal_keys;
 pub(crate) mod pills;
 mod resize;
 pub(crate) mod scroll_offset;
@@ -33,6 +34,7 @@ mod unread;
 mod volume;
 mod workspace;
 pub use color::color_button;
+pub(crate) use modal_keys::{default_button, enter_pressed};
 pub use pills::{
     clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide,
     search_box,
@@ -2229,7 +2231,12 @@ pub fn action_button_keyed(
     let lead = if icon.is_empty() { 0.0 } else { lead };
     let content = lead + text_w + caps_w;
     let desired = Vec2::new(if size.x > 0.0 { size.x } else { content + KEYED_PAD }, size.y);
-    let (rect, resp) = ui.allocate_exact_size(desired, if enabled { Sense::click() } else { Sense::hover() });
+    let (rect, mut resp) = ui.allocate_exact_size(desired, if enabled { Sense::click() } else { Sense::hover() });
+    match kind {
+        ActionKind::Primary => modal_keys::offer(&mut resp, modal_keys::Answer::Primary),
+        ActionKind::Danger => modal_keys::offer(&mut resp, modal_keys::Answer::Danger),
+        _ => {}
+    }
     let hot = enabled && (resp.hovered() || resp.has_focus());
     let (fill, ink) = match kind {
         ActionKind::Primary => (if hot { p.violet_light } else { p.violet }, p.on_accent),
@@ -2449,15 +2456,16 @@ pub fn glass_action_icon(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str
 
 /// Primary action using the Aurora accent and the flat button geometry.
 pub fn primary_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
-    ui.add_sized(
+    let mut response = ui.add_sized(
         size,
         egui::Button::new(RichText::new(label).size(12.0).strong().color(p.on_accent))
             .fill(p.violet)
             .stroke(Stroke::new(1.0, p.violet))
             .corner_radius(ui.visuals().widgets.inactive.corner_radius)
             .truncate(),
-    )
-    .on_hover_text(label)
+    );
+    modal_keys::offer(&mut response, modal_keys::Answer::Primary);
+    response.on_hover_text(label)
 }
 
 /// Green online / grey offline.

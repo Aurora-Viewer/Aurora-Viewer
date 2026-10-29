@@ -2391,6 +2391,12 @@ grows from frame to frame; `ui/widgets/steady_tests.rs`
 (`assert_window_steady`) runs a window's real `show` over frames, zooms and
 a larger text and checks that its rect stays put with its bottom button
 inside.
+`ui/widgets/modal_keys.rs` gives every `widgets::Modal` its keyboard: Enter
+clicks the dialog's `Primary` button (its `Danger` one when it has none)
+unless a focused button or a multi-line field keeps it, and the first text
+field takes the focus, its text selected, when the dialog opens
+(`LLPanel::handleKeyHere`, `LLToastAlertPanel`); a dialog that does
+something else with Enter takes it with `widgets::enter_pressed`.
 `ui/widgets/keycap.rs` draws the keys of a shortcut (list of
 shortcuts, microphone panel). `ui/widgets/color.rs` is the compact colour picker (`color_button`,
 `color_panel`, RGB / HSV / hexadecimal conversions) and the eyedropper it shares

@@ -812,7 +812,7 @@ fn show_dialog(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View, wor
                 ui.horizontal(|ui| {
                     let w = ui.available_width() - 90.0;
                     let r = widgets::search_box(ui, p, query, aurora_i18n::tr!("ui-land-picker-experience-hint"), w);
-                    search = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    search = r.lost_focus() && widgets::enter_pressed(ui);
                     if widgets::flat_button(ui, p, aurora_i18n::tr!("common-search")).clicked() {
                         search = true;
                     }

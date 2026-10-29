@@ -203,9 +203,10 @@ impl State {
                 );
                 ui.horizontal(|ui| {
                     close |= ui.button(aurora_i18n::tr!("common-cancel")).clicked();
-                    save = ui
-                        .add_enabled(!self.name.trim().is_empty(), egui::Button::new(aurora_i18n::tr!("common-save")))
-                        .clicked();
+                    save = widgets::default_button(
+                        ui.add_enabled(!self.name.trim().is_empty(), egui::Button::new(aurora_i18n::tr!("common-save"))),
+                    )
+                    .clicked();
                 });
             });
             if save {
@@ -228,7 +229,7 @@ impl State {
                 if pending {
                     ctx.request_repaint_after(std::time::Duration::from_millis(100));
                 }
-                close = ui.button(aurora_i18n::tr!("common-close")).clicked();
+                close = widgets::default_button(ui.button(aurora_i18n::tr!("common-close"))).clicked();
             });
             if close || modal.should_close() {
                 self.message = None;

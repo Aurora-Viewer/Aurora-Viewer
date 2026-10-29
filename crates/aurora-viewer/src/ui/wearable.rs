@@ -344,9 +344,9 @@ pub fn show(
             ui.label(aurora_i18n::tr!("common-save-as"));
             ui.text_edit_singleline(name);
             ui.horizontal(|ui| {
-                accepted = ui
-                    .add_enabled(!name.trim().is_empty(), egui::Button::new(aurora_i18n::tr!("common-save")))
-                    .clicked();
+                accepted =
+                    widgets::default_button(ui.add_enabled(!name.trim().is_empty(), egui::Button::new(aurora_i18n::tr!("common-save"))))
+                        .clicked();
                 dismissed = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
             });
         });
@@ -362,7 +362,7 @@ pub fn show(
         widgets::Modal::new(egui::Id::unique("wearable_unsaved")).show(ctx, |ui| {
             ui.label(aurora_i18n::tr!("wearable-unsaved"));
             ui.horizontal(|ui| {
-                if ui.button(aurora_i18n::tr!("common-save")).clicked() {
+                if widgets::default_button(ui.button(aurora_i18n::tr!("common-save"))).clicked() {
                     st.close_after_save = true;
                     st.close_confirmation = false;
                     actions.push(Action::Save(None));

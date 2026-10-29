@@ -892,7 +892,7 @@ impl ListingsUi {
             // validateNonNegativeS32
             text.retain(|c| c.is_ascii_digit());
             text.truncate(10);
-            if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            if edit.lost_focus() && widgets::enter_pressed(ui) {
                 answer = Some(true);
             }
             ui.add_space(12.0);

@@ -150,7 +150,7 @@ pub fn footer(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, sideb
             }
             ui.add_space(8.0);
             super::news_panel(ui, p, icons, info, 235.0);
-            if ui.button(aurora_i18n::tr!("common-close")).clicked() {
+            if widgets::default_button(ui.button(aurora_i18n::tr!("common-close"))).clicked() {
                 form.show_info = false;
             }
         });

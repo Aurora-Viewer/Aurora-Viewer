@@ -361,7 +361,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
             widgets::section_header(ui, p, "device-floppy", aurora_i18n::tr!("ui-inventory-dialogs-save-changes"));
             ui.label(aurora_i18n::tr!("gesture-unsaved"));
             ui.horizontal(|ui| {
-                if ui.button(aurora_i18n::tr!("gesture-save")).clicked()
+                if widgets::default_button(ui.button(aurora_i18n::tr!("gesture-save"))).clicked()
                     && let Some(e) = state.editors.get(&id)
                     && let Some(g) = &e.definition
                 {
