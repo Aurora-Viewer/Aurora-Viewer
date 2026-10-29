@@ -6,6 +6,13 @@ Vulkan-only dedicated allocations and heap-budget probes are disabled there.
 The macOS window is visible during startup so Metal can acquire its first
 drawable. Scene shading shares the caustic-light calculation across the classic
 and PBR lighting branches to avoid a Metal pipeline-compiler crash.
+Binding-array texture pages are limited independently of ordinary frame texture
+bindings. `RenderSettings::render_scale_percent` reuses the separate world-target
+path in `rlva/resolution.rs`; the RLVa resolution divisor takes precedence,
+following the reference RenderResolutionMultiplier behavior. The user
+scale uses nine bilinear Catmull-Rom taps before native-resolution labels, HUDs
+and egui; RLVa-only scaling retains its nearest-pixel behavior. Target changes
+invalidate depth/occlusion history, and snapshots bypass the user's scale.
 
 `scene/anim.rs` restarts active resident and control-avatar motions from one shared
 instant for Ctrl+S, World and the resync toolbar command. Receipt signals,

@@ -122,6 +122,13 @@ fn overlays(cx: &mut Cx) {
 fn frames_per_second(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-frames-per-second"), |cx| {
+        cx.slider(
+            tr!("ui-options-render-scale"),
+            tr!("ui-options-render-scale-help"),
+            &field!(render_scale_percent),
+            50..=100,
+            "%",
+        );
         // across, its switch in line with those of the limits below
         cx.wide().toggle(
             tr!("ui-options-vertical-synchronization"),

@@ -89,6 +89,8 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
+| `AURORA_RENDER_SCALE=50..100` | World resolution percentage; interface and HUDs stay native |
+| `AURORA_TEXTURE_BUDGET_MB=256..32768` | Manual texture memory budget for this launch |
 | `AURORA_TEST_NEUTRAL_POSE=1` | Local neutral-pose comparison in the online or demo Hover Height floater |
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
@@ -243,6 +245,16 @@ to the vertex shaders or to the passes is therefore checked with both,
 `AURORA_AA=3` and `AURORA_AA=6`: it is with the second that the terrain let
 the sky show through in patches
 (`AURORA_DEMO_POS="60,128"`, `AURORA_DEMO_ALTITUDE=86`).
+
+`AURORA_RENDER_SCALE`: the world's linear resolution percentage (50–100,
+100 by default), before spatial upscaling. HUDs, labels and controls stay at
+native resolution. RLVa's resolution divisor takes precedence; saved photos
+ignore the user scale. `AURORA_TEXTURE_BUDGET_MB` selects a manual texture
+budget (256–32768 MB). Both follow the normal saved graphics settings path;
+use `AURORA_DEMO=1` for isolated comparisons. A Retina comparison can use
+`AURORA_WINDOW_SIZE=1728,1056`, `AURORA_GRAPHICS_PRESET=high`,
+`AURORA_DEMO_TEXTURES=9000`, `AURORA_DEMO_CROWD=20` and the same capture
+frame, changing only `AURORA_RENDER_SCALE` between 100, 67 and 50.
 
 `AURORA_WINDOW_SIZE`: width and height of the render area, in logical pixels
 (at least 800 × 560), to measure according to the size of the window:

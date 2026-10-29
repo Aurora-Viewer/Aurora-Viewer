@@ -4313,7 +4313,20 @@ impl Backend {
     fn rebuild_targets(&mut self) {
         self.occlusion.invalidate();
         self.depth_pick.scene_changed();
-        let size = crate::rlva::resolution::size((self.config.width, self.config.height), self.rlva_resolution_divisor);
+        let scale = if self.snapshot_window.is_some() {
+            100
+        } else {
+            self.settings.render_scale_percent
+        };
+        let size = crate::rlva::resolution::render_size((self.config.width, self.config.height), self.rlva_resolution_divisor, scale);
+        log::info!(
+            "world resolution: {}x{} (output {}x{}, scale {}%)",
+            size.0,
+            size.1,
+            self.config.width,
+            self.config.height,
+            scale
+        );
         self.targets = Self::make_targets(
             &self.device,
             &self.post_layout,
@@ -4374,6 +4387,7 @@ impl Backend {
         };
         let pipelines_dirty = samples != self.msaa_samples || s.ssr != self.settings.ssr;
         let targets_dirty = pipelines_dirty
+            || s.render_scale_percent != self.settings.render_scale_percent
             || (s.aa == AntiAliasing::Smaa) != (self.settings.aa == AntiAliasing::Smaa)
             || s.ssao.min(1) != self.settings.ssao.min(1)
             || s.ao_method != self.settings.ao_method
@@ -7254,8 +7268,18 @@ impl Backend {
 
         let draw_huds = lists.hud_view.is_some() && self.hud_depth.is_some() && snapshot.is_none_or(|s| s.huds);
         if world_size != (self.config.width, self.config.height) {
-            if self.rlva_scaled.as_ref().is_none_or(|scaled| scaled.size() != world_size) {
-                self.rlva_scaled = Some(crate::rlva::resolution::Scaled::new(&self.device, self.config.format, world_size));
+            let smooth = self.settings.render_scale_percent < 100 && self.rlva_resolution_divisor <= 1 && snapshot.is_none();
+            if self
+                .rlva_scaled
+                .as_ref()
+                .is_none_or(|scaled| scaled.size() != world_size || scaled.smooth != smooth)
+            {
+                self.rlva_scaled = Some(crate::rlva::resolution::Scaled::new(
+                    &self.device,
+                    self.config.format,
+                    world_size,
+                    smooth,
+                ));
             }
         } else {
             self.rlva_scaled = None;

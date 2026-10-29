@@ -942,6 +942,13 @@ cargo build --locked -p aurora-viewer
 AURORA_DEMO=1 ./target/debug/aurora-viewer --title "Test macos"
 ```
 
+Preferences › Graphics › Smoothness offers a 50–100% **3D render scale**.
+At lower scales, the world is reconstructed with a nine-tap Catmull-Rom spatial
+upscaler; controls, HUDs and world labels retain the window's native resolution.
+Saved photos render at their requested resolution. The default remains 100%.
+Bindless texture pages use the adapter's binding-array limit rather than its
+ordinary sampled-texture limit, avoiding the former 79-page ceiling on Metal.
+
 This is an initial port, validated with the offline demo on Apple Silicon.
 Human validation of login, voice, teleports and longer grid sessions remains
 pending. Media-plugin packs and URL-handler registration are not provided on

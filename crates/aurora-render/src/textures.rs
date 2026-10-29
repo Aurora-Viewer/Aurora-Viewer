@@ -3282,6 +3282,14 @@ mod tests {
         };
         let mut live: std::collections::BTreeMap<u32, (u32, (u32, u32))> = Default::default();
         let mut next_id = 1u32;
+        // More distinct page keys than Metal's ordinary 96 texture slots.
+        // Every page is sampled through the production binding-array layout.
+        for width in 1..=128 {
+            let slot = upload(&mut table, next_id, (width, 1), None).expect("bindless page");
+            live.insert(slot, (next_id, (width, 1)));
+            next_id += 1;
+        }
+        assert!(table.store.pages.len() > 96);
         for frame in 0..400 {
             for _ in 0..rand(12) {
                 match rand(10) {
