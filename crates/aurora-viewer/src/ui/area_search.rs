@@ -1,9 +1,10 @@
 //! Area Search: rezzed objects received by the viewer, following
 //! FSAreaSearch::isSearchableObject / matchObject (indra/newview/fsareasearch.cpp).
-//! Attachments and avatars are excluded; linked prims are optional.
+//! Avatars are excluded; attachments and linked prims are optional.
 //! The right-click menu of the results follows menu_fs_area_search.xml and
 //! FSPanelAreaSearchList::onContextMenuItemClick / onContextMenuItemEnable.
 
+mod controls;
 mod selection;
 mod table;
 #[cfg(test)]
@@ -23,6 +24,9 @@ pub const WINDOW: &str = "area_search";
 #[derive(Default)]
 pub struct AreaSearchUi {
     pub(crate) table: Table,
+    visible_columns: Option<[bool; 10]>,
+    demo_columns: bool,
+    pub(crate) save_defaults: bool,
     pub(crate) selection: Selection,
     pub(crate) refresh: bool,
     pub(crate) filters_open: bool,
@@ -62,7 +66,7 @@ impl AreaSearchUi {
             WINDOW,
             aurora_i18n::tr!("toolbar-command-area-search"),
             egui::pos2(250.0, 120.0),
-            Vec2::new(800.0, 510.0),
+            Vec2::new(800.0, 550.0),
         );
         window.min_size = Vec2::new(560.0, 350.0);
         window.show(ctx, p, open, |ui| {
@@ -86,62 +90,7 @@ impl AreaSearchUi {
                     self.refresh = true;
                 }
             });
-            ui.horizontal_wrapped(|ui| {
-                widgets::checkbox(ui, p, &mut self.table.filters.parcel_only, aurora_i18n::tr!("area-search-parcel"));
-                widgets::checkbox(ui, p, &mut self.table.filters.children, aurora_i18n::tr!("area-search-children"));
-                widgets::checkbox(ui, p, &mut self.table.filters.mine, aurora_i18n::tr!("area-search-mine"));
-                widgets::checkbox(ui, p, &mut self.table.filters.neighbors, aurora_i18n::tr!("area-search-neighbors"));
-            });
-            widgets::collapsing_forced(
-                ui,
-                p,
-                "area_search_filters",
-                aurora_i18n::tr!("area-search-filters"),
-                self.filters_open,
-                std::mem::take(&mut self.reveal_filters).then_some(true),
-                |ui| {
-                    let wide = ui.available_width() >= 660.0;
-                    egui::Grid::new("area_search_fields")
-                        .num_columns(if wide { 4 } else { 2 })
-                        .show(ui, |ui| {
-                            for (i, (label, text)) in [
-                                (aurora_i18n::tr!("inspect-col-name"), &mut self.table.filters.name),
-                                (aurora_i18n::tr!("inspect-col-description"), &mut self.table.filters.description),
-                                (aurora_i18n::tr!("inspect-col-owner"), &mut self.table.filters.owner),
-                                (aurora_i18n::tr!("inspect-col-creator"), &mut self.table.filters.creator),
-                            ]
-                            .into_iter()
-                            .enumerate()
-                            {
-                                ui.label(label);
-                                widgets::filter_field(ui, p, text, egui::Id::unique(("area_search_field", i)), 180.0);
-                                if !wide || i % 2 == 1 {
-                                    ui.end_row();
-                                }
-                            }
-                        });
-                    ui.horizontal_wrapped(|ui| {
-                        widgets::checkbox(ui, p, &mut self.table.filters.sale, aurora_i18n::tr!("area-search-sale"));
-                        widgets::checkbox(ui, p, &mut self.table.filters.physical, aurora_i18n::tr!("area-search-physical"));
-                        widgets::checkbox(ui, p, &mut self.table.filters.phantom, aurora_i18n::tr!("area-search-phantom"));
-                        widgets::checkbox(ui, p, &mut self.table.filters.temporary, aurora_i18n::tr!("area-search-temporary"));
-                    });
-                    ui.horizontal(|ui| {
-                        widgets::checkbox(ui, p, &mut self.table.filters.distance_on, aurora_i18n::tr!("area-search-distance"));
-                        ui.add_enabled(
-                            self.table.filters.distance_on,
-                            egui::DragValue::new(&mut self.table.filters.max_distance)
-                                .range(0.0..=65536.0)
-                                .suffix(" m"),
-                        );
-                        if ui.button(aurora_i18n::tr!("area-search-reset")).clicked() {
-                            self.table.filters = Filters::default();
-                        }
-                    });
-                },
-            );
             self.table.prepare();
-            self.check_selection();
             ui.label(
                 RichText::new(aurora_i18n::tr!(
                     "area-search-count",
@@ -152,81 +101,103 @@ impl AreaSearchUi {
                 .size(12.0)
                 .color(p.muted),
             );
+            ui.horizontal(|ui| self.tool_popouts(ui, p));
+            if let Some(error) = &self.table.regex_error {
+                ui.label(RichText::new(aurora_i18n::tr!("area-search-regex-error", error = error.as_str())).color(p.warn));
+            }
+            self.table.prepare();
+            self.check_selection();
             if self.table.filters.parcel_only && !parcel_known {
                 ui.label(RichText::new(aurora_i18n::tr!("area-search-parcel-pending")).color(p.warn));
             }
             ui.label(RichText::new(aurora_i18n::tr!("area-search-scope")).size(11.0).color(p.muted));
-            let width = widgets::header_width(ui, ui.scope_id().with("area_search_rows"));
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                for (column, fraction) in columns() {
-                    let label = column.label();
-                    let label = if self.table.sort == column {
-                        format!("{label} {}", if self.table.descending { "↓" } else { "↑" })
-                    } else {
-                        label.to_owned()
-                    };
-                    if ui
-                        .add_sized([width * fraction - 4.0, 24.0], egui::Button::new(label).truncate())
-                        .on_hover_text(column.label())
-                        .clicked()
-                    {
-                        self.table.descending = self.table.sort == column && !self.table.descending;
-                        self.table.sort = column;
-                        self.table.dirty = true;
-                    }
-                }
-            });
-            self.table.prepare();
-            self.check_selection();
-            if self.table.visible.is_empty() {
-                ui.label(RichText::new(aurora_i18n::tr!("area-search-empty")).color(p.muted));
-            }
-            let height = (ui.available_height() - 40.0).max(60.0);
-            let list = egui::ScrollArea::vertical()
-                .id_salt("area_search_rows")
-                .max_height(height)
+            let (mut table_ui, footer) = widgets::above_footer(ui);
+            let mut columns = self.columns();
+            let minima: Vec<_> = columns.iter().map(|(column, _)| column_min_width(ui, *column)).collect();
+            let minimum: f32 = minima.iter().sum();
+            let table_width = table_ui.available_width().max(minimum + 16.0);
+            egui::ScrollArea::horizontal()
+                .id_salt("area_search_horizontal")
                 .auto_shrink([false, false])
-                .show_rows(ui, 25.0, self.table.visible.len(), |ui, range| {
-                    for i in range {
-                        let row = &self.table.rows[self.table.visible[i]];
-                        let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 25.0), Sense::click());
-                        let selected = self.selection.contains(&row.id);
-                        if selected || response.hovered() {
-                            let color = if selected { p.violet.gamma_multiply(0.28) } else { p.raised };
-                            ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, color);
-                        }
-                        let mut x = rect.left();
-                        for (column, fraction) in columns() {
-                            let w = rect.width() * fraction;
-                            let text = row.cell(column);
-                            let mut job = egui::text::LayoutJob::simple_singleline(text, egui::FontId::proportional(12.0), p.ink);
-                            job.wrap = egui::text::TextWrapping::truncate_at_width(w - 10.0);
-                            let galley = ui.painter().layout_job(job);
-                            let at = widgets::row_text_origin(ui.painter(), &galley, x + 4.0, rect.center().y);
-                            ui.painter().galley(at, galley, p.ink);
-                            x += w;
-                        }
-                        if response.clicked() {
-                            let m = ui.input(|i| i.modifiers);
-                            let (rows, visible) = (&self.table.rows, &self.table.visible);
-                            self.selection
-                                .click(row.id, m.command, m.shift, || visible.iter().map(|i| rows[*i].id).collect());
-                        }
-                        if response.double_clicked() && !ui.input(|i| i.modifiers.command || i.modifiers.shift) {
-                            action = Some(Action::Zoom(row.id));
-                        }
-                        let demo = self.demo_menu && i == 1;
-                        if response.secondary_clicked() || demo {
-                            self.demo_menu = false;
-                            self.selection.context_click(row.id);
-                            self.menu_at = Some(response.interact_pointer_pos().unwrap_or(rect.center()));
-                            egui::Popup::open_id(ui.ctx(), menu_id());
-                        }
-                        response.on_hover_text(format!("{}\n{}\n{}", row.name, row.description, row.id));
+                .show(&mut table_ui, |ui| {
+                    ui.set_width(table_width);
+
+                    let width = widgets::header_width(ui, ui.scope_id().with("area_search_rows"));
+                    let extra = (width - minimum).max(0.0);
+                    for ((_, fraction), min) in columns.iter_mut().zip(&minima) {
+                        *fraction = (*min + extra * *fraction) / width;
                     }
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        for &(column, fraction) in &columns {
+                            let label = column.label();
+                            let label = if self.table.sort == column {
+                                format!("{label} {}", if self.table.descending { "↓" } else { "↑" })
+                            } else {
+                                label.to_owned()
+                            };
+                            if ui
+                                .add_sized([width * fraction - 4.0, 24.0], egui::Button::new(label).truncate())
+                                .on_hover_text(column.label())
+                                .clicked()
+                            {
+                                self.table.descending = self.table.sort == column && !self.table.descending;
+                                self.table.sort = column;
+                                self.table.dirty = true;
+                            }
+                        }
+                    });
+                    self.table.prepare();
+                    self.check_selection();
+                    if self.table.visible.is_empty() {
+                        ui.label(RichText::new(aurora_i18n::tr!("area-search-empty")).color(p.muted));
+                    }
+                    let height = ui.available_height();
+                    let list = egui::ScrollArea::vertical()
+                        .id_salt("area_search_rows")
+                        .max_height(height)
+                        .auto_shrink([false, false])
+                        .show_rows(ui, 25.0, self.table.visible.len(), |ui, range| {
+                            for i in range {
+                                let row = &self.table.rows[self.table.visible[i]];
+                                let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 25.0), Sense::click());
+                                let selected = self.selection.contains(&row.id);
+                                if selected || response.hovered() {
+                                    let color = if selected { p.violet.gamma_multiply(0.28) } else { p.raised };
+                                    ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, color);
+                                }
+                                let mut x = rect.left();
+                                for &(column, fraction) in &columns {
+                                    let w = rect.width() * fraction;
+                                    let text = row.cell(column);
+                                    let mut job = egui::text::LayoutJob::simple_singleline(text, egui::FontId::proportional(12.0), p.ink);
+                                    job.wrap = egui::text::TextWrapping::truncate_at_width(w - 10.0);
+                                    let galley = ui.painter().layout_job(job);
+                                    let at = widgets::row_text_origin(ui.painter(), &galley, x + 4.0, rect.center().y);
+                                    ui.painter().galley(at, galley, p.ink);
+                                    x += w;
+                                }
+                                if response.clicked() {
+                                    let m = ui.input(|i| i.modifiers);
+                                    let (rows, visible) = (&self.table.rows, &self.table.visible);
+                                    self.selection
+                                        .click(row.id, m.command, m.shift, || visible.iter().map(|i| rows[*i].id).collect());
+                                }
+                                if response.double_clicked() && !ui.input(|i| i.modifiers.command || i.modifiers.shift) {
+                                    action = Some(Action::Zoom(row.id));
+                                }
+                                let demo = self.demo_menu && i == 1;
+                                if response.secondary_clicked() || demo {
+                                    self.demo_menu = false;
+                                    self.selection.context_click(row.id);
+                                    self.menu_at = Some(response.interact_pointer_pos().unwrap_or(rect.center()));
+                                    egui::Popup::open_id(ui.ctx(), menu_id());
+                                }
+                                response.on_hover_text(format!("{}\n{}\n{}", row.name, row.description, row.id));
+                            }
+                        });
+                    widgets::remember_scroll_bar(ui, ui.scope_id().with("area_search_rows"), &list);
                 });
-            widgets::remember_scroll_bar(ui, ui.scope_id().with("area_search_rows"), &list);
             if let Some(pos) = self.menu_at {
                 let mut chosen = None;
                 menu::context_menu_at(ui, menu_id(), pos, p, |ui| chosen = self.menu(ui, p, draw_distance));
@@ -237,53 +208,58 @@ impl AreaSearchUi {
                     action = chosen;
                 }
             }
-            ui.horizontal(|ui| {
-                let single = self.selection.single();
-                let ids = &self.selection.ids;
-                ui.add_enabled_ui(!ids.is_empty(), |ui| {
-                    if widgets::action_button(
-                        ui,
-                        p,
-                        "zoom-scan-filled",
-                        aurora_i18n::tr!("area-search-inspect"),
-                        widgets::ActionKind::Flat,
-                        Vec2::new(0.0, 28.0),
-                    )
-                    .clicked()
-                    {
-                        action = Some(Action::Inspect(ids.clone()));
-                    }
-                    if ui
-                        .add_enabled_ui(single.is_some(), |ui| {
-                            widgets::action_button(
-                                ui,
-                                p,
-                                "zoom-in-filled",
-                                aurora_i18n::tr!("area-search-zoom"),
-                                widgets::ActionKind::Flat,
-                                Vec2::new(0.0, 28.0),
-                            )
-                        })
-                        .inner
+            footer.show(ui, |ui| {
+                let reset = controls::page_footer(ui, p, controls::Section::All, |ui| {
+                    let single = self.selection.single();
+                    let ids = &self.selection.ids;
+                    ui.add_enabled_ui(!ids.is_empty(), |ui| {
+                        if widgets::action_button(
+                            ui,
+                            p,
+                            "zoom-scan-filled",
+                            aurora_i18n::tr!("area-search-inspect"),
+                            widgets::ActionKind::Flat,
+                            Vec2::new(0.0, 28.0),
+                        )
                         .clicked()
-                        && let Some(id) = single
-                    {
-                        action = Some(Action::Zoom(id));
-                    }
-                    if widgets::action_button(
-                        ui,
-                        p,
-                        "copy-filled",
-                        aurora_i18n::tr!("area-search-copy"),
-                        widgets::ActionKind::Flat,
-                        Vec2::new(0.0, 28.0),
-                    )
-                    .clicked()
-                    {
-                        let ids: Vec<_> = ids.iter().map(Uuid::to_string).collect();
-                        ui.ctx().copy_text(ids.join("\n"));
-                    }
+                        {
+                            action = Some(Action::Inspect(ids.clone()));
+                        }
+                        if ui
+                            .add_enabled_ui(single.is_some(), |ui| {
+                                widgets::action_button(
+                                    ui,
+                                    p,
+                                    "zoom-in-filled",
+                                    aurora_i18n::tr!("area-search-zoom"),
+                                    widgets::ActionKind::Flat,
+                                    Vec2::new(0.0, 28.0),
+                                )
+                            })
+                            .inner
+                            .clicked()
+                            && let Some(id) = single
+                        {
+                            action = Some(Action::Zoom(id));
+                        }
+                        if widgets::action_button(
+                            ui,
+                            p,
+                            "copy-filled",
+                            aurora_i18n::tr!("area-search-copy"),
+                            widgets::ActionKind::Flat,
+                            Vec2::new(0.0, 28.0),
+                        )
+                        .clicked()
+                        {
+                            let ids: Vec<_> = ids.iter().map(Uuid::to_string).collect();
+                            ui.ctx().copy_text(ids.join("\n"));
+                        }
+                    });
                 });
+                if reset {
+                    self.reset_section(controls::Section::All);
+                }
             });
         });
         action
@@ -396,12 +372,33 @@ fn menu_id() -> egui::Id {
     egui::Id::unique("area_search_menu")
 }
 
-fn columns() -> [(Column, f32); 5] {
-    [
-        (Column::Distance, 0.12),
-        (Column::Name, 0.29),
-        (Column::Owner, 0.23),
-        (Column::Description, 0.26),
-        (Column::Price, 0.10),
-    ]
+impl AreaSearchUi {
+    fn columns(&self) -> Vec<(Column, f32)> {
+        let shown = self
+            .visible_columns
+            .unwrap_or([true, true, true, true, true, false, true, false, false, false]);
+        let weights = [0.16, 0.29, 0.26, 0.10, 0.16, 0.10, 0.23, 0.23, 0.23, 0.23];
+        let total: f32 = weights.iter().zip(shown).filter_map(|(w, on)| on.then_some(w)).sum();
+        Column::ALL
+            .into_iter()
+            .zip(weights)
+            .zip(shown)
+            .filter_map(|((column, weight), on)| on.then_some((column, weight / total)))
+            .collect()
+    }
+}
+
+/// Keep optional columns readable. Overflow scrolls the header and virtualized
+/// rows together rather than reducing numeric headers to indistinguishable dots.
+fn column_min_width(ui: &egui::Ui, column: Column) -> f32 {
+    let content: f32 = match column {
+        Column::Name => 130.0,
+        Column::Description => 150.0,
+        Column::Owner | Column::Group | Column::Creator | Column::LastOwner => 140.0,
+        Column::LandImpact | Column::PrimCount => 90.0,
+        Column::Distance | Column::Price => 72.0,
+    };
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let label = ui.painter().layout_no_wrap(column.label().into(), font, ui.visuals().text_color());
+    content.max(label.size().x + 2.0 * ui.spacing().button_padding.x + 24.0)
 }

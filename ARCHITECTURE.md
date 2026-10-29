@@ -442,13 +442,28 @@ Escape, Stop or closing the controller. A recovered pilot requires at least
 one metre of actual travel before another automatic recovery can be requested.
 
 `ui/area_search.rs` and `ui/area_search/table.rs` draw the native Area Search
-window and cache its filtered, sorted, virtualized object rows;
+window and cache its filtered, sorted, virtualized object rows.
+`ui/area_search/controls.rs` keeps Search, Filters and Columns in shared
+popouts while the virtualized table stays visible. All edits apply immediately.
+Reset sits at the bottom right of each popout: search text, filter options or
+column choices; the result footer resets the entire search. Save as default
+persists filter options without search text. Compiled regex filters survive
+live snapshots; one matching-limit failure cancels the rest of that batch,
+with diagnostics visible above the table.
+`settings/area_search.rs` owns typed defaults and Legacy-compatible
+`openfloater/area_search` link encoding/decoding, routed by `slapp.rs`.
+Aurora retains its broader physical/temporary defaults, live text search,
+precise inclusive distance ranges, parallel filtering and multiple selection.
 `ui/area_search/selection.rs` keeps its multiple row selection, which the
 right-click menu acts on through the object menus' actions. `app/area_search.rs`
 prepares live rezzed-object snapshots in parallel, resolves distinct owners,
-creators and groups, and reads full metadata using bounded select/deselect
+creators, last owners and groups, and reads full metadata using bounded select/deselect
 packets while preserving Build and Inspect selections. Metadata has a separate
-live-object cache, independent of the build tool's small cache. Recent query
+live-object cache, independent of the build tool's small cache. Land impact has
+its own live-object cache, supplied by GetObjectCost batches of at most 64 ids,
+at most 192 outstanding, with timeout-bounded retries. Unknown costs remain unknown.
+Attachments are opt-in; ancestry distinguishes attachment roots from child prims,
+and distances use their bone-anchored scene transforms. Exclusions run before requests. Recent query
 provenance survives window closure through the network timeout, so delayed and duplicate
 full replies do not fill Build's cache. Build still receives metadata it already
 uses, selected/inspected prims and unrelated replies; other consumers see every reply.

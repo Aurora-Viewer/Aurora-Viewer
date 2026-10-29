@@ -3942,13 +3942,16 @@ both open states and the selection count. Capture at frame 620.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
-| `AURORA_DEMO_AREA_SEARCH=1\|filters\|parcel\|sale\|search\|menu` | Open Area Search with named objects and sale entries; `menu` opens its right-click menu. |
+| `AURORA_DEMO_AREA_SEARCH=1\|filters\|fields\|columns\|all-columns\|link\|parcel\|sale\|search\|menu` | Open Area Search with named objects and sale entries; `menu` opens its right-click menu. |
 | `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails. |
 
 `AURORA_DEMO_AREA_SEARCH`: `1` opens the object list; `parcel` restricts it to
-the agent's parcel, `sale` shows sale entries, `filters` expands the filters, and
+the agent's parcel, `sale` shows sale entries, `filters` opens the grouped Filters popout, and
 `search` searches the localized fountain name, and `menu` right-clicks the
-second row to open the result menu. Capture after frame 740, in English and French. Check the column
+second row to open the result menu. `fields` opens the six-field Search popout,
+`columns` opens the Columns popout, `all-columns` shows all ten result columns,
+and `link` round-trips a fountain search through the SLapp parser.
+Capture after frame 740 in English, French and Japanese, at normal and 150% UI scale. Check the column
 sorting, combined text and flag filters, the in-field crosses that clear only
 their filled text filter and return keyboard focus to it, Reset, Refresh preserving filters,
 selection, Inspect, Zoom/double click, Copy UUID, and the toolbar button reopening
@@ -3960,6 +3963,16 @@ Filter my objects (the owner field, opened). Edit, Delete (with its question),
 Return, Inspect, Touch, Derender & blacklist and Sit work on the demo objects. On the grid, compare the received roots with the Legacy
 Viewer, check parcel boundaries and neighboring regions, linked prim names,
 group-owned objects, late name replies, derez/movement and region changes.
+Check all six text fields and whole-field regex (including invalid patterns),
+owner permission masks, required/excluded flags, min/max price and precise
+distance, each click action and current parcel. Every edit updates results immediately
+without hiding the table. Reset at the bottom right clears the current popout's
+settings; the table's Reset clears all search fields and filter options. Save as
+default persists options without search text. Column visibility survives
+reopening/restarting; LI and prim count sort numerically. Copy as link restores
+the search rules when clicked in chat. Include attachments with child prims
+excluded: attachment roots must still appear, and their children only when
+enabled. Grid validation is performed by the human, without sharing credentials.
 Keep a Build/Inspect selection while requests are arriving: it must stay selected.
 Objects outside the viewer's received scene cannot be enumerated by this window.
 

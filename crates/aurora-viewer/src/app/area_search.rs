@@ -1,6 +1,6 @@
 //! Area Search's live data and bounded ObjectSelect/ObjectDeselect requests.
 //! FSAreaSearch::findObjects / processRequestQueue / requestObjectProperties
-//! (indra/newview/fsareasearch.cpp). Never select an attachment or an avatar.
+//! (indra/newview/fsareasearch.cpp). Avatars are excluded; attachments are opt-in.
 use super::*;
 use crate::ui::area_search::{Action, Row};
 use crate::world::objects::{ObjKey, Object, ObjectStore};
@@ -21,13 +21,16 @@ pub(super) struct Feed {
     /// Touches waiting for their turn: when, which object.
     touches: VecDeque<(Instant, Uuid)>,
     props: HashMap<Uuid, ObjectProps>,
+    costs: HashMap<Uuid, f32>,
+    cost_pending: HashMap<u64, (Instant, Vec<Uuid>)>,
+    cost_asked: HashMap<Uuid, Instant>,
     requests: HashMap<Uuid, (ObjKey, Instant)>,
     recent: HashMap<Uuid, Instant>,
     last_request: Option<Instant>,
     next: Option<Instant>,
     region: Option<aurora_net::RegionHandle>,
     seeded: bool,
-    scope: (bool, bool, bool),
+    scope: (bool, bool, bool, bool, bool, bool, bool),
 }
 
 impl Feed {
@@ -43,11 +46,15 @@ impl Feed {
         let recent = std::mem::take(&mut self.recent);
         let touches = std::mem::take(&mut self.touches);
         let last_request = self.last_request;
+        let cost_pending = std::mem::take(&mut self.cost_pending);
+        let cost_asked = std::mem::take(&mut self.cost_asked);
         *self = Self {
             touches,
             requests,
             recent,
             last_request,
+            cost_pending,
+            cost_asked,
             ..Default::default()
         };
     }
@@ -65,6 +72,60 @@ impl Feed {
         }
     }
 
+    /// At most three 64-object capability requests in flight. Failed or partial
+    /// replies wait the regular timeout before retrying; Refresh cannot bypass it.
+    fn cost_batches(&mut self, candidates: &[(Uuid, ObjKey)], now: Instant) -> HashMap<aurora_net::RegionHandle, Vec<Uuid>> {
+        self.cost_pending.retain(|_, (at, _)| now.saturating_duration_since(*at) < TIMEOUT);
+        self.cost_asked.retain(|_, at| now.saturating_duration_since(*at) < TIMEOUT);
+        let count: usize = self.cost_pending.values().map(|(_, ids)| ids.len()).sum();
+        let mut remaining = 192usize.saturating_sub(count);
+        let mut batches = HashMap::<_, Vec<_>>::new();
+        // One batch per snapshot limits both HTTP traffic and frame-thread work.
+        for &(id, key) in candidates {
+            if remaining == 0 {
+                break;
+            }
+            if self.costs.contains_key(&id) || self.cost_asked.contains_key(&id) {
+                continue;
+            }
+            if !batches.is_empty() && !batches.contains_key(&key.region) {
+                continue;
+            }
+            let batch = batches.entry(key.region).or_default();
+            if batch.len() == 64 {
+                break;
+            }
+            batch.push(id);
+            self.cost_asked.insert(id, now);
+            remaining -= 1;
+        }
+        batches
+    }
+
+    pub(super) fn on_cost_reply(&mut self, tag: u64, result: &Result<aurora_llsd::Llsd, String>) {
+        let Some((_, ids)) = self.cost_pending.remove(&tag) else {
+            return;
+        };
+        if !self.seeded {
+            return;
+        }
+        let Ok(reply) = result else {
+            return;
+        };
+        for id in ids {
+            let object = &reply[id.to_string().as_str()];
+            let cost = match &object["linked_set_resource_cost"] {
+                aurora_llsd::Llsd::Integer(n) => *n as f32,
+                aurora_llsd::Llsd::Real(n) => *n as f32,
+                _ => continue,
+            };
+            if cost.is_finite() && cost >= 0.0 {
+                self.costs.insert(id, cost);
+                self.cost_asked.remove(&id);
+            }
+        }
+        self.next = None;
+    }
     fn requests(&mut self, candidates: &[(Uuid, ObjKey)], now: Instant) -> HashMap<aurora_net::RegionHandle, Vec<u32>> {
         self.recent.retain(|_, until| now < *until);
         // A scope change cannot cancel a packet already sent. Keep counting it
@@ -96,27 +157,47 @@ impl Feed {
     }
 }
 
-/// Reported region position of a rezzed prim, with its ancestry validated.
-/// An unresolved parent could be an avatar; wait rather than list its attachment.
-fn placement(store: &ObjectStore, object: &Object) -> Option<Vec3> {
-    if object.is_avatar() || object.is_client_preview() || object.full_id.is_nil() {
+/// Validated ancestry, before any metadata request. Attachment roots remain
+/// roots even though their parent is an avatar (isSearchableObject/root-edit).
+struct Placement {
+    position: Vec3,
+    attachment: bool,
+    child: bool,
+    wearer: Option<usize>,
+}
+fn placement(store: &ObjectStore, original: &Object) -> Option<Placement> {
+    if original.is_avatar() || original.is_client_preview() || original.full_id.is_nil() {
         return None;
     }
-    let mut object = object;
+    let mut object = original;
     let mut pos = object.position;
-    for _ in 0..64 {
+    for depth in 0..64 {
         if object.parent_id == 0 {
-            return pos.is_finite().then_some(pos);
+            return pos.is_finite().then_some(Placement {
+                position: pos,
+                attachment: original.is_attachment(),
+                child: original.parent_id != 0,
+                wearer: None,
+            });
         }
-        object = store.get(store.parent_of(object)?)?;
-        if object.is_avatar() || object.is_client_preview() {
+        let parent = store.parent_of(object)?;
+        object = store.get(parent)?;
+        if object.is_client_preview() {
             return None;
+        }
+        if object.is_avatar() {
+            // The live snapshot resolves the bone-anchored world transform.
+            return Some(Placement {
+                position: object.position,
+                attachment: true,
+                child: depth != 0,
+                wearer: Some(parent),
+            });
         }
         pos = object.position + object.rotation * pos;
     }
     None
 }
-
 impl App {
     pub(super) fn area_search_build_properties(&self, props: Vec<ObjectProps>, area_reads: &HashSet<Uuid>) -> Vec<ObjectProps> {
         if area_reads.is_empty() {
@@ -137,7 +218,8 @@ impl App {
         self.panels.people = false;
         self.panels.chat = false;
         self.panels.minimap = false;
-        self.area_search_ui.filters_open = mode == "filters";
+        self.area_search_ui.table.filters = Default::default();
+        self.area_search_ui.demo_controls(mode);
         self.area_search_ui.demo_menu = mode == "menu";
         self.area_search_ui.table.filters.parcel_only = mode == "parcel";
         self.area_search_ui.table.filters.sale = mode == "sale";
@@ -214,11 +296,20 @@ impl App {
         }
         if refresh {
             self.area_search_feed.props.clear();
+            self.area_search_feed.costs.clear();
             // Keep outstanding requests: repeated Refresh must not bypass the cap.
             self.area_search_feed.next = None;
         }
         let filters = &self.area_search_ui.table.filters;
-        let scope = (filters.children, filters.parcel_only, filters.neighbors);
+        let scope = (
+            filters.children,
+            filters.parcel_only,
+            filters.neighbors,
+            filters.include_attachments,
+            filters.exclude_physical,
+            filters.exclude_temporary,
+            filters.exclude_probes,
+        );
         if self.area_search_feed.scope != scope {
             self.area_search_feed.scope = scope;
             self.area_search_feed.next = None;
@@ -234,6 +325,15 @@ impl App {
             .show(ctx, p, &mut self.panels.area_search, parcel_known, draw_distance)
         {
             self.area_search_action(action, now);
+        }
+        let columns = self.area_search_ui.saved_columns();
+        let defaults = std::mem::take(&mut self.area_search_ui.save_defaults);
+        if defaults || self.settings.area_search.columns != columns {
+            self.settings.area_search.columns = columns;
+            if defaults {
+                self.settings.area_search.filters = self.area_search_ui.table.filters.without_search();
+            }
+            self.settings.save();
         }
     }
 
@@ -369,24 +469,51 @@ impl App {
             .retain(|id, _| self.world.objects.index_of_uuid(id).is_some());
         let world = &self.world;
         let props = &self.area_search_feed.props;
+        self.area_search_feed
+            .costs
+            .retain(|id, _| self.world.objects.index_of_uuid(id).is_some());
+        let area_costs = &self.area_search_feed.costs;
         let store = &world.objects;
         let agent = world.agent_global().unwrap_or_default();
         let origin = world.main_origin().unwrap_or_default();
         let bitmap = world.parcel.as_ref().map(|p| p.bitmap.as_slice()).unwrap_or_default();
         let regions: HashSet<_> = world.regions.keys().copied().collect();
-        let children = self.area_search_ui.table.filters.children;
+        let filters = &self.area_search_ui.table.filters;
+        let children = filters.children;
         let parcel_only = self.area_search_ui.table.filters.parcel_only;
         let neighbors = self.area_search_ui.table.filters.neighbors;
         let region = world.main_region;
         let rows: Vec<_> = store
             .slots
             .par_iter()
-            .filter_map(|o| {
+            .enumerate()
+            .filter_map(|(index, o)| {
                 let o = o.as_ref()?;
-                if !regions.contains(&o.key.region) || (!children && o.parent_id != 0) || (!neighbors && Some(o.key.region) != region) {
+                if !regions.contains(&o.key.region) || (!neighbors && Some(o.key.region) != region) {
                     return None;
                 }
-                let pos = placement(store, o)?;
+                let place = placement(store, o)?;
+                if (!children && place.child)
+                    || (!filters.include_attachments && place.attachment)
+                    || (filters.exclude_physical && o.update_flags & 1 != 0)
+                    || (filters.exclude_temporary && o.update_flags & (1 << 29) != 0)
+                    || (filters.exclude_probes && o.extra.reflection_probe.is_some())
+                {
+                    return None;
+                }
+                let pos = if place.attachment {
+                    let transform = Scene::object_transform(world, index, now, 0)?;
+                    let position = if transform.2 {
+                        // HUD coordinates are screen-space; their useful world
+                        // distance and parcel are those of their wearer.
+                        Scene::object_transform(world, place.wearer?, now, 0)?.0
+                    } else {
+                        transform.0
+                    };
+                    position - world.region_offset(o.key.region)?
+                } else {
+                    place.position
+                };
                 let (x, y) = aurora_net::handle_to_origin(o.key.region);
                 let global = glam::DVec3::new(f64::from(x), f64::from(y), 0.0) + pos.as_dvec3();
                 let on_parcel = crate::world::landmarks::in_parcel(bitmap, origin, global);
@@ -397,8 +524,16 @@ impl App {
                 row.id = o.full_id;
                 row.distance = global.distance(agent) as f32;
                 row.on_parcel = on_parcel;
-                row.child = o.parent_id != 0;
+                row.child = place.child;
+                row.attachment = place.attachment;
                 row.flags = o.update_flags;
+                row.click_action = o.click_action;
+                row.probe = o.extra.reflection_probe.is_some();
+                row.media =
+                    o.te.as_ref()
+                        .is_some_and(|te| te.faces.iter().any(|face| face.media_flags & 1 != 0));
+                row.prim_count = store.children_of(&o.key).len() as u32 + 1;
+                row.land_impact = area_costs.get(&o.full_id).copied();
                 row.mine = o.update_flags & ui::context::flags::OBJECT_YOU_OWNER != 0;
                 if let Some(p) = props.get(&o.full_id) {
                     row.loaded = true;
@@ -406,6 +541,8 @@ impl App {
                     row.description.clone_from(&p.description);
                     row.owner_id = p.owner_id;
                     row.creator_id = p.creator_id;
+                    row.last_owner_id = p.last_owner_id;
+                    row.owner_mask = p.owner_mask;
                     row.group_id = p.group_id;
                     if row.owner_id.is_nil() && !row.group_id.is_nil() {
                         row.owner_id = row.group_id;
@@ -423,7 +560,7 @@ impl App {
         let mut names = HashMap::new();
         let mut group_names = HashMap::new();
         for (r, _) in &rows {
-            for id in [r.owner_id, r.creator_id]
+            for id in [r.owner_id, r.creator_id, r.last_owner_id]
                 .into_iter()
                 .filter(|id| !id.is_nil() && *id != r.group_id)
             {
@@ -450,11 +587,26 @@ impl App {
                     names.get(&r.owner_id).cloned().unwrap_or_default()
                 };
                 r.creator = names.get(&r.creator_id).cloned().unwrap_or_default();
+                r.last_owner = names.get(&r.last_owner_id).cloned().unwrap_or_default();
                 r.group = group_names.get(&r.group_id).cloned().unwrap_or_default();
                 r
             })
             .collect();
         self.area_search_ui.table.replace(rows);
+        let cost_batches = if self.area_search_ui.needs_costs() {
+            self.area_search_ui.table.prepare();
+            let visible: HashSet<_> = self
+                .area_search_ui
+                .table
+                .visible
+                .iter()
+                .map(|i| self.area_search_ui.table.rows[*i].id)
+                .collect();
+            let candidates: Vec<_> = candidates.into_iter().filter(|(id, _)| visible.contains(id)).collect();
+            self.area_search_feed.cost_batches(&candidates, now)
+        } else {
+            HashMap::new()
+        };
         let kept: HashSet<_> = self
             .build
             .highlighted(&self.world)
@@ -462,6 +614,17 @@ impl App {
             .chain(self.inspect_prims())
             .filter_map(|(i, _)| self.world.objects.get(i).map(|o| o.key))
             .collect();
+        for (handle, ids) in cost_batches {
+            let body = aurora_llsd::llsd_map! { "object_ids" => aurora_llsd::Llsd::Array(ids.iter().copied().map(aurora_llsd::Llsd::from).collect()) };
+            let tag = self.build.cap(
+                handle,
+                "GetObjectCost",
+                false,
+                body,
+                crate::build::edits::CapPurpose::AreaSearchCost,
+            );
+            self.area_search_feed.cost_pending.insert(tag, (now, ids));
+        }
         for command in property_commands(packets, &kept) {
             self.send(command);
         }
@@ -511,6 +674,51 @@ mod tests {
     use super::*;
     use glam::Quat;
 
+    #[test]
+    fn area_search_cost_requests_are_bounded_and_late_invalid_or_partial_replies_stay_unknown() {
+        let now = Instant::now();
+        let mut feed = Feed {
+            seeded: true,
+            ..Default::default()
+        };
+        let candidates: Vec<_> = (1..=400)
+            .map(|id| {
+                (
+                    Uuid::from_u128(id),
+                    ObjKey {
+                        region: 1,
+                        local_id: id as u32,
+                    },
+                )
+            })
+            .collect();
+        for tag in 1..=3 {
+            let batch = feed.cost_batches(&candidates, now);
+            assert_eq!(batch[&1].len(), 64);
+            feed.cost_pending.insert(tag, (now, batch[&1].clone()));
+        }
+        assert!(feed.cost_batches(&candidates, now).is_empty());
+        feed.reset();
+        assert!(
+            feed.cost_batches(&candidates, now).is_empty(),
+            "close/reopen cannot bypass the bound"
+        );
+        feed.seeded = true;
+        let id = feed.cost_pending[&1].1[0];
+        let missing = feed.cost_pending[&1].1[1];
+        let mut reply = aurora_llsd::Llsd::new_map();
+        reply.insert(id.to_string(), aurora_llsd::llsd_map! { "linked_set_resource_cost" => 2.5 });
+        reply.insert(missing.to_string(), aurora_llsd::llsd_map! { "linked_set_resource_cost" => -1.0 });
+        feed.on_cost_reply(1, &Ok(reply));
+        assert_eq!(feed.costs[&id], 2.5);
+        assert!(!feed.costs.contains_key(&missing));
+        let batches = feed.cost_batches(&candidates, now);
+        assert!(!batches[&1].contains(&missing), "partial replies wait before retrying");
+        feed.on_cost_reply(2, &Err("offline".into()));
+        feed.on_cost_reply(3, &Err("offline".into()));
+        let later = feed.cost_batches(&candidates[..64], now + TIMEOUT);
+        assert_eq!(later[&1].len(), 63, "known values are reused, missing values retry");
+    }
     #[test]
     fn area_search_does_not_fill_the_build_cache_or_hide_selected_or_unrelated_replies() {
         let mut props: Vec<_> = (1..=6000)
@@ -635,20 +843,22 @@ mod tests {
     }
 
     #[test]
-    fn area_search_places_linked_prims_and_excludes_worn_unresolved_cyclic_and_local_objects() {
+    fn area_search_distinguishes_attachment_roots_and_children_and_rejects_invalid_ancestry() {
         let mut store = ObjectStore::default();
         let mut root = update(1, 0, Vec3::new(10.0, 20.0, 0.0));
         root.rotation = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
         store.upsert(1, root);
         let child = Object::from_update(1, update(2, 1, Vec3::X * 3.0));
-        assert!(placement(&store, &child).unwrap().distance(Vec3::new(10.0, 23.0, 0.0)) < 0.0001);
+        assert!(placement(&store, &child).unwrap().position.distance(Vec3::new(10.0, 23.0, 0.0)) < 0.0001);
         assert!(placement(&store, &Object::from_update(1, update(3, 999, Vec3::ZERO))).is_none());
         let mut avatar = update(10, 0, Vec3::ZERO);
         avatar.pcode = 47;
         store.upsert(1, avatar);
-        assert!(placement(&store, &Object::from_update(1, update(11, 10, Vec3::ZERO))).is_none());
+        let root = placement(&store, &Object::from_update(1, update(11, 10, Vec3::ZERO))).unwrap();
+        assert!(root.attachment && !root.child);
         store.upsert(1, update(12, 10, Vec3::ZERO));
-        assert!(placement(&store, &Object::from_update(1, update(13, 12, Vec3::ZERO))).is_none());
+        let child = placement(&store, &Object::from_update(1, update(13, 12, Vec3::ZERO))).unwrap();
+        assert!(child.attachment && child.child);
         store.upsert(1, update(14, 15, Vec3::ZERO));
         store.upsert(1, update(15, 14, Vec3::ZERO));
         assert!(placement(&store, &Object::from_update(1, update(16, 14, Vec3::ZERO))).is_none());

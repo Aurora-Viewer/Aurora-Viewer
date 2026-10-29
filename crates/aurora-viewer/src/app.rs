@@ -1072,6 +1072,7 @@ impl App {
         scene.lod_factor = settings.lod_factor;
         let update_demo = ui::update::UpdateDemo::from_env(&settings);
         Ok(Box::new(App {
+            area_search_ui: ui::area_search::AreaSearchUi::from_saved(&settings.area_search),
             settings,
             disk_cache,
             skin,
@@ -1286,7 +1287,6 @@ impl App {
             dof_focus: Default::default(),
             snapshots: Default::default(),
             inspect_ui: Default::default(),
-            area_search_ui: Default::default(),
             sound_explorer_ui: Default::default(),
             animation_explorer_ui: Default::default(),
             animation_explorer: Default::default(),
@@ -3077,7 +3077,10 @@ impl App {
                     self.build.replacement_task_inventory_error(object, reason);
                 }
             }
-            NetEvent::CapReply { tag, result } => self.build.on_cap_reply(&mut self.world, tag, result),
+            NetEvent::CapReply { tag, result } => {
+                self.area_search_feed.on_cost_reply(tag, &result);
+                self.build.on_cap_reply(&mut self.world, tag, result);
+            }
             NetEvent::ScriptRunning {
                 object_id,
                 item_id,
