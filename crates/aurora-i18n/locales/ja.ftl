@@ -878,7 +878,7 @@ notecard-markdown-demo =
     ```
 notecard-lsl-demo =
     # ノートカード内のＬＳＬ
-    スクリプトエディタと同じように入力するには、**ＬＳＬ**ボタンを使い、スクリプトエディタと同じように入力します。
+    まず**ＬＳＬ**ボタンを押してから、スクリプトエディタと同じように入力します。
 
     ```lsl
     default
@@ -3334,7 +3334,7 @@ demo-land-night-club = ナイトクラブ
 common-interface = インターフェース
 build-ui-floaters-intersections-up-to-meters = 交差範囲（メートル）
 media-plugins-missing = 未インストール
-media-plugins-downloading = Auroraのメディアプラグインをダウンロードしています：{ $received }／{ $total }MB
+media-plugins-downloading = Auroraのメディアプラグインをダウンロードしています：{ $received }／{ $total }ＭＢ
 media-plugins-installing = メディアプラグインをインストールしています…
 media-plugins-error-network = ダウンロードに失敗しました。接続を確認してください。Auroraは自動的に再試行します。
 media-plugins-error-integrity = ダウンロードしたファイルが想定と一致しないため、インストールされませんでした。Auroraは自動的に再試行します。
@@ -3727,7 +3727,7 @@ common-light = ライト
 ui-options-lights = 光源
 ui-environment-moon = 月
 ui-waypoint-remove = ビーコンを削除
-ui-waypoint-remove-help = ワールドマップ、ミニマップ、3Dビューから行き先ビーコンを削除します。
+ui-waypoint-remove-help = ワールドマップ、ミニマップ、３Ｄビューから行き先ビーコンを削除します。
 ui-waypoint-click-to-remove = クリックしてビーコンを削除
 ui-waypoint-distance = { $distance }ｍ先
 ui-worldmap-legend = 凡例
@@ -4892,7 +4892,7 @@ controls-free-look-tip = 視点を回転：押して引きます。
 controls-free-up = 上
 controls-free-down = 下
 controls-free-speed = 速度
-controls-free-speed-value = { $speed }m/s
+controls-free-speed-value = { $speed }ｍ／ｓ
 controls-free-no-collisions = 衝突なし
 controls-free-no-collisions-tip = カメラがオブジェクトや地面を通り抜けます。オフにすると手前で止まり、沿って滑ります。
 controls-free-keys-move = 移動
@@ -7822,7 +7822,7 @@ update-demo-notes =
     • 安定性とパフォーマンスの向上。
     • 起動に失敗した場合はロールバックする検証済みのインストール。
 update-downloading = ダウンロード中…
-update-transfer = { $downloaded }／{ $total }MB
+update-transfer = { $downloaded }／{ $total }ＭＢ
 update-ready = ダウンロードが完了しました。
 update-effects-title = インストールしています
 update-cache-keep = キャッシュ：保持されます。
@@ -10735,7 +10735,7 @@ build-compact-projection-options = 投影とオプション
 voice-restart = 再起動
 voice-listen-from = 聞く位置
 voice-ear-avatar = アバター
-voice-local-only = 近くのボイスのみ。プライベートコールとグループコールには3D定位がありません。
+voice-local-only = 近くのボイスのみ。プライベートコールとグループコールには３Ｄ定位がありません。
 voice-processing = マイクの処理
 voice-processing-open = マイクの処理…
 voice-automatic-gain = 自動ゲイン制御

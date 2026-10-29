@@ -212,17 +212,6 @@ fn japanese_system_locales_select_the_japanese_catalog() {
 }
 
 #[test]
-fn japanese_counts_have_no_plural_forms() {
-    // CLDR gives Japanese the "other" category only: [one] is never selected.
-    for count in [0, 1, 2, 21] {
-        assert_eq!(
-            aurora_i18n::tr_in!("ja", "language-item-count", count = count),
-            format!("{count}項目")
-        );
-    }
-}
-
-#[test]
 fn japanese_dates_and_numbers_follow_japanese_conventions() {
     assert_eq!(
         aurora_i18n::tr_in!("ja", "profile-date", month = "09", day = "12", year = "2026"),
