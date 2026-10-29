@@ -310,9 +310,7 @@ pub fn search_input(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, hint: 
     super::clipboard::demo_search(&field, st);
     if cleared {
         if st.links_filter.take().is_some() {
-            if let Some(filters) = st.saved_filters.take() {
-                st.filters = filters;
-            }
+            st.restore_saved_filters();
         } else {
             st.search.clear();
             st.filters = Filters::default();
@@ -321,6 +319,7 @@ pub fn search_input(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, hint: 
                 // Clearing empties the rules; the window stays in advanced mode.
                 st.filters.smart = Some(Default::default());
                 st.active_smart = None;
+                st.similar = false;
             }
         }
     }

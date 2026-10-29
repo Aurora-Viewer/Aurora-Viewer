@@ -180,11 +180,26 @@ impl Group {
         })
     }
 
+    /// Whether a folder can be a result: every rule of an All group must
+    /// speak about folders, one rule of an Any group is enough (quick search
+    /// on All gives "name or description or…", and folders match by name).
     fn only_folder_fields(&self) -> bool {
-        self.nodes.iter().all(|node| match node {
-            Node::Rule(rule) => rule.is_blank() || rule.field.applies_to_folders(),
+        let mut nodes = self
+            .nodes
+            .iter()
+            .filter(|node| match node {
+                Node::Rule(rule) => !rule.is_blank(),
+                Node::Group(group) => !group.is_blank(),
+            })
+            .peekable();
+        if nodes.peek().is_none() {
+            return true;
+        }
+        let speaks = |node: &Node| match node {
+            Node::Rule(rule) => rule.field.applies_to_folders(),
             Node::Group(group) => group.only_folder_fields(),
-        })
+        };
+        if self.any { nodes.any(speaks) } else { nodes.all(speaks) }
     }
 }
 
@@ -273,6 +288,12 @@ enum Test {
     Coalesced,
     Newer(i64),
     Older(i64),
+}
+
+impl Test {
+    fn applies_to_folders(&self) -> bool {
+        matches!(self, Test::Text(field, _) if field.applies_to_folders())
+    }
 }
 
 enum Compiled {
@@ -384,6 +405,9 @@ pub fn pattern(op: Op, value: &str) -> Result<Regex, regex::Error> {
 
 fn eval(node: &Compiled, s: &Subject) -> bool {
     match node {
+        // a rule that cannot speak about folders is false for one, negated
+        // or not: in an Any group the other rules decide
+        Compiled::Test(test, _) if s.folder && !test.applies_to_folders() => false,
         Compiled::Test(test, not) => run(test, s) != *not,
         Compiled::Group { any, not, nodes } => {
             let hit = if nodes.is_empty() {
@@ -598,7 +622,15 @@ mod tests {
         let mut not_texture = Rule::of(Field::Type);
         not_texture.bits = 1 << 0;
         not_texture.not = true;
-        assert!(!Matcher::new(&one(not_texture), &HashMap::new(), 0, 0).matches(&folder));
+        assert!(!Matcher::new(&one(not_texture.clone()), &HashMap::new(), 0, 0).matches(&folder));
+        // quick search on All, taken to advanced: folders still match by name
+        let all = SmartQuery::from_quick("hat", super::super::view::SearchField::All);
+        assert!(Matcher::new(&all, &HashMap::new(), 0, 0).matches(&folder));
+        // in an Any group, a negated rule folders cannot have stays false
+        let mut any = one(Rule::text(Field::Name, Op::Contains, "shoe"));
+        any.root.any = true;
+        any.root.nodes.push(Node::Rule(not_texture));
+        assert!(!Matcher::new(&any, &HashMap::new(), 0, 0).matches(&folder));
     }
 
     #[test]

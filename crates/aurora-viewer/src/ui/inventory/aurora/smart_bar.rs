@@ -192,6 +192,10 @@ fn rule_menu(ui: &mut egui::Ui, p: &Palette, rule: &mut Rule) -> bool {
         for op in Op::ALL {
             if menu::check(ui, p, "search-filled", op_name(op), rule.op == op, true) {
                 rule.op = op;
+                // an op without a value hides the field: no hidden text may still match
+                if !op.needs_value() {
+                    rule.text.clear();
+                }
             }
         }
         if rule.op.needs_value() {
@@ -528,6 +532,10 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, width: 
             query.root.nodes.remove(i);
         }
     }
+    // the last chip of Find similar gone: the filters it set aside come back
+    if st.finding_similar() && st.smart_query().is_some_and(|q| q.root.nodes.is_empty()) {
+        st.end_similar();
+    }
 
     // Save: update the saved search being edited, or name a new one
     if let Some(save) = &save
@@ -571,7 +579,8 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, width: 
                     if !edit.has_focus() && !ui.memory(|m| m.had_focus_last_frame(edit.id)) {
                         edit.request_focus();
                     }
-                    if edit.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    // a single-line field gives up its focus on Enter
+                    if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         confirmed = true;
                     }
                     if ui.input(|i| i.key_pressed(egui::Key::Escape)) {

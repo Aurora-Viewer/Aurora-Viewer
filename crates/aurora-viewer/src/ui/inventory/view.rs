@@ -637,6 +637,12 @@ impl ViewCache {
         };
         let text = text.trim().to_lowercase();
         let smart = filters.smart.as_ref();
+        // Advanced Date rules read the clock (`Matcher` rounds it to the
+        // minute): the key follows it, as the age filter's cutoff does.
+        let cutoff = match smart {
+            Some(q) if q.uses(SmartField::Date) => time / 60 * 60,
+            _ => cutoff,
+        };
         let uses_creator = match smart {
             Some(q) => q.uses(SmartField::Creator),
             None => matches!(prefs.search_field, SearchField::Creator | SearchField::All) && !text.is_empty(),

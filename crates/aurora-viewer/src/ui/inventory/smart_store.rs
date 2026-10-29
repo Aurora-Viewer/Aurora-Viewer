@@ -75,11 +75,18 @@ pub fn load(path: PathBuf) {
             // this account still, and what was saved before the read stays after
             if store.writer.as_ref().is_some_and(|w| w.same_channel(&writer)) {
                 let added = std::mem::replace(&mut store.saved, read);
-                let next = next_id(&store.saved);
+                // The early searches keep their ids, which a window may
+                // already hold (`active_smart`); a read one that collides
+                // takes a fresh id, nothing refers to it yet.
+                let mut next = next_id(&store.saved).max(next_id(&added));
+                for saved in &mut store.saved {
+                    if added.iter().any(|s| s.id == saved.id) {
+                        saved.id = next;
+                        next += 1;
+                    }
+                }
                 let early = !added.is_empty();
-                store
-                    .saved
-                    .extend(added.into_iter().enumerate().map(|(i, s)| Saved { id: next + i as u64, ..s }));
+                store.saved.extend(added);
                 store.revision += 1;
                 // supersedes the queued write of the early list alone
                 if early {

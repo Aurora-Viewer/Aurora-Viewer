@@ -619,9 +619,7 @@ pub(super) fn chip_list(st: &InventoryUi) -> Vec<Chip> {
             text: aurora_i18n::tr!("inventory-chip-links-of").to_owned(),
             remove: |st| {
                 st.links_filter = None;
-                if let Some(filters) = st.saved_filters.take() {
-                    st.filters = filters;
-                }
+                st.restore_saved_filters();
             },
         });
         return chips;

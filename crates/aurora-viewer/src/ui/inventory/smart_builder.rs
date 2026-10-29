@@ -303,6 +303,10 @@ fn rule_row(ui: &mut egui::Ui, p: &Palette, rule: &mut Rule) -> bool {
                         ui.selectable_value(&mut rule.op, op, op_label(op));
                     }
                 });
+            // An op without a value hides the field: no hidden text may still match.
+            if !rule.op.needs_value() {
+                rule.text.clear();
+            }
         }
         value_editor(ui, p, rule);
         widgets::switch_labeled(ui, p, &mut rule.not, aurora_i18n::tr!("inventory-smart-not"))

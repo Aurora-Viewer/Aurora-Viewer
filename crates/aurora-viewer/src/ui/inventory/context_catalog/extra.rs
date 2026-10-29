@@ -72,9 +72,14 @@ pub(super) fn similar(c: &mut Catalog, zone: &str, inv: &Inventory, id: Uuid, si
     );
     let stem = item.map(|it| name_stem(&it.name)).filter(|stem| !stem.is_empty());
     let creator = item.map(|it| it.creator).filter(|creator| !creator.is_nil());
-    let folder = item
-        .and_then(|it| inv.folders.get(&it.parent))
-        .map(|folder| folder.info.name.clone())
+    // the folder the clicked row sits in: a link's own, not its original's
+    let folder = inv
+        .items
+        .get(&id)
+        .or(item)
+        .filter(|it| inv.folders.contains_key(&it.parent))
+        // the name the list shows (and matches), localized for system folders
+        .map(|it| super::super::folder_name(inv, it.parent))
         .filter(|name| !name.is_empty());
     let entries = [
         (
