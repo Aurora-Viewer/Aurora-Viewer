@@ -10,6 +10,10 @@ use aurora_net::NetCommand;
 use std::time::Instant;
 use uuid::Uuid;
 
+/// Messages already received that are translated when a conversation
+/// becomes translated.
+const RECENT: usize = 5;
+
 impl App {
     /// `/tr` typed in a private conversation.
     pub(super) fn translate_command(&mut self, session: Uuid, cmd: TrCommand) {
@@ -32,11 +36,22 @@ impl App {
             SetResult::Ready | SetResult::Off => self.settings.save(),
             SetResult::NeedsDownload | SetResult::NotBuilt => {}
         }
+        if r == SetResult::Ready {
+            self.translate_recent(session);
+        }
         match r {
             SetResult::Ready => Some(self.translate_status(session)),
             SetResult::Off => Some(aurora_i18n::tr!("translate-off").to_string()),
             SetResult::NotBuilt => Some(aurora_i18n::tr!("translate-not-built").to_string()),
             SetResult::NeedsDownload => None,
+        }
+    }
+
+    /// The conversation just became translated: its last messages too (the
+    /// ones that made us turn it on).
+    fn translate_recent(&mut self, session: Uuid) {
+        for (time, text) in self.world.recent_incoming(session, RECENT) {
+            self.translate.on_incoming(&self.settings.translate, session, time, &text);
         }
     }
 
@@ -67,8 +82,9 @@ impl App {
             self.translate.on_incoming(&self.settings.translate, session, time, &text);
         }
         let polled = self.translate.poll(&mut self.settings.translate, Instant::now());
-        if polled.settings_changed {
+        if let Some(session) = polled.now_translated {
             self.settings.save();
+            self.translate_recent(session);
         }
         self.apply_translation(polled.effects);
         let seen = (self.translate.version(), self.settings.translate.clone());

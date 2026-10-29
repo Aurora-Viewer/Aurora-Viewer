@@ -268,6 +268,23 @@ impl World {
         self.log_line(key.session, &logged);
     }
 
+    /// The last `n` messages the other resident sent in a private
+    /// conversation, this session's (not the history), oldest first: the
+    /// ones translated when the conversation becomes translated.
+    pub fn recent_incoming(&mut self, session: Uuid, n: usize) -> Vec<(SystemTime, String)> {
+        let s = self.session_lines(session);
+        let mut got: Vec<(SystemTime, String)> = s
+            .lines
+            .iter()
+            .rev()
+            .filter(|l| l.kind == ChatKind::Im && l.source == session && l.origin == Origin::Live)
+            .take(n)
+            .map(|l| (l.time, l.text.clone()))
+            .collect();
+        got.reverse();
+        got
+    }
+
     /// Our held message taken back ("Edit" on an untranslated message): its
     /// line leaves the conversation.
     pub fn remove_line(&mut self, key: &crate::translate::LineKey) {

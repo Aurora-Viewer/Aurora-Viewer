@@ -71,3 +71,15 @@ fn replace_line_changes_the_text_and_keeps_the_prefix() {
     w.replace_line(&LineKey { session: BOB, time }, "hello", "hola");
     assert_eq!(lines(&mut w)[1], "hola");
 }
+
+#[test]
+fn recent_incoming_lists_their_last_messages_oldest_first() {
+    let mut w = world();
+    for i in 0..7 {
+        w.on_im(im(&format!("mensaje {i}"), false));
+    }
+    w.own_im(BOB, "hello");
+    w.incoming_ims.clear();
+    let got: Vec<String> = w.recent_incoming(BOB, 5).into_iter().map(|(_, t)| t).collect();
+    assert_eq!(got, ["mensaje 2", "mensaje 3", "mensaje 4", "mensaje 5", "mensaje 6"]);
+}

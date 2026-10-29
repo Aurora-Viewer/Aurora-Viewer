@@ -35,9 +35,9 @@ pub enum SetResult {
 #[derive(Debug, Default)]
 pub struct Polled {
     pub effects: Vec<Effect>,
-    /// The settings changed (a conversation became translated after the
-    /// download): save them.
-    pub settings_changed: bool,
+    /// A conversation became translated after the model download: save the
+    /// settings, translate its last messages.
+    pub now_translated: Option<Uuid>,
 }
 
 /// What the interface shows of the translation (kept on the World, which
@@ -247,7 +247,7 @@ impl TranslateService {
             self.download = None;
             if let Some((session, l)) = self.pending.take() {
                 settings.sessions.insert(session, l.code.into());
-                out.settings_changed = true;
+                out.now_translated = Some(session);
             }
         }
         out
