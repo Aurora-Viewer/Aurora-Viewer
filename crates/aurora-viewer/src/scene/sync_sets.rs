@@ -1149,6 +1149,28 @@ mod tests {
     }
 
     #[test]
+    fn a_scale_only_update_keeps_syncing_until_its_final_size() {
+        let mut f = Fixture::new();
+        f.prim.scale = Vec3::ONE;
+        let state = State::default();
+        let root = f.add(9000, 0, false);
+        let child = f.add(9001, 9000, false);
+        let other = f.add(9002, 0, false);
+        let all = [root, child, other];
+        f.frame(&state);
+        f.update(child, |u| u.scale *= 2.0);
+        assert!(f.world.objects.get(child).expect("scaling prim").has_motion());
+        assert_eq!(f.frame(&state), vec![child]);
+        assert_eq!(f.quiet_frame(&all, &state), vec![child]);
+        f.world
+            .objects
+            .expire_corrections(std::time::Instant::now() + std::time::Duration::from_secs(1));
+        assert!(!f.world.objects.get(child).expect("settled prim").has_motion());
+        assert_eq!(f.quiet_frame(&all, &state), vec![child]);
+        assert_eq!(f.quiet_frame(&all, &state), Vec::<usize>::new());
+    }
+
+    #[test]
     fn motion_start_and_stop() {
         let mut f = Fixture::new();
         let state = State::default();
