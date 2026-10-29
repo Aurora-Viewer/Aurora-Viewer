@@ -729,6 +729,8 @@ dependencies = [
  "md5",
  "memmap2",
  "mimalloc",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
  "parking_lot 0.13.0",
  "png",
  "pollster 1.0.1",

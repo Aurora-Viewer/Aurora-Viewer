@@ -127,6 +127,12 @@ windows = { version = "0.62.2", features = ["Data_Xml_Dom", "Foundation", "UI_No
 # in the tree
 libc = "0.2.190"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# The application menu's Quit item routed to the window's close
+# (mac_quit.rs); the versions already in the tree
+objc2 = "0.6.5"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSMenu", "NSMenuItem", "NSResponder"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # The freedesktop notification service (system_notify.rs), over the session
 # bus; already in the tree through keyring's Secret Service store

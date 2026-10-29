@@ -15501,6 +15501,9 @@ impl ApplicationHandler for App {
             }
         };
         crate::window_hold::install(&window);
+        // Cmd+Q asks like the close button (mac_quit.rs)
+        #[cfg(target_os = "macos")]
+        crate::mac_quit::route_quit_to_close();
         let size = window.inner_size();
         if std::env::var_os("AURORA_NOVSYNC").is_some() {
             self.settings.vsync = false;
