@@ -72,7 +72,10 @@ paste the path.
 
 ## Not on macOS yet
 
-- Web pages and video in the world (the media plugins).
+- Aurora's own media plugins pack (web pages and video in the world). Meanwhile, a
+  Legacy Viewer installed on the Mac lends its plugins: in **Preferences › Media**,
+  type the path of its application (for example `/Applications/Firestorm.app`) as the
+  plugins folder.
 - Automatic installation of updates (above).
 - Opening `secondlife://` links from a web browser.
 - The crash report window.
