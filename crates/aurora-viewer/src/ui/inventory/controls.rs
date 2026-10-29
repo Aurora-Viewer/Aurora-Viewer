@@ -49,6 +49,7 @@ pub(super) fn preferences_for_tab(ui: &mut egui::Ui, p: &Palette, prefs: &mut In
         aurora_i18n::tr!("ui-inventory-controls-show-library"),
         &mut prefs.show_library,
     );
+    changed |= check(ui, p, aurora_i18n::tr!("inventory-hover-pictures"), &mut prefs.thumbnail_tooltips);
     changed |= check(ui, p, aurora_i18n::tr!("ui-inventory-controls-recent-tab"), &mut prefs.show_recent);
     if prefs.show_recent {
         ui.horizontal(|ui| {

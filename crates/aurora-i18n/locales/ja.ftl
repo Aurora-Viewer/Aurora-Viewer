@@ -12176,3 +12176,5 @@ particle-editor-inject-timeout = グリッドから応答がありませんで�
 keybinds-lens-zoom-in = 視野角を狭める
 keybinds-lens-zoom-out = 視野角を広げる
 keybinds-lens-zoom-default = 視野角をリセット
+inventory-hover-pictures = マウスを重ねると画像を表示
+inventory-hover-pictures-help = 写真や、アイテムとフォルダーに保存された画像を、少し待ってからプレビューします。

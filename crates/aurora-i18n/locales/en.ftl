@@ -12501,3 +12501,5 @@ particle-editor-inject-timeout = The grid did not answer: the script was not put
 keybinds-lens-zoom-in = Narrow viewing angle
 keybinds-lens-zoom-out = Widen viewing angle
 keybinds-lens-zoom-default = Reset viewing angle
+inventory-hover-pictures = Show pictures on hover
+inventory-hover-pictures-help = Preview photos and saved item or folder pictures after hovering for a moment.

@@ -351,6 +351,7 @@ mod tests {
                     &Default::default(),
                     &Default::default(),
                     &Default::default(),
+                    &Default::default(),
                     false,
                 );
             },
@@ -410,6 +411,7 @@ mod tests {
                         &mut prefs,
                         &mut false,
                         false,
+                        &Default::default(),
                         &Default::default(),
                         &Default::default(),
                         &Default::default(),

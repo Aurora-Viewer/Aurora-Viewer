@@ -11,6 +11,17 @@ the transient master mute immediately to the audio mixer, parcel/prim media,
 chat video previews and microphone transmission. Saved volumes, channel mutes
 and the microphone toggle are preserved when the window is restored.
 
+`ui/inventory/hover.rs` resolves photo and metadata pictures for the inventory's
+shared item/folder responses. Each window finishes its hovered response against
+the asynchronous UI image cache; only an actually displayed tooltip requests
+its image. Links, outfit pictures and RLVa texture restrictions share the same
+resolver in the Aurora and Legacy layouts.
+`app/inventory_hover.rs` owns a separate 32-image LRU cache (at most 8 MiB
+of 256-pixel RGBA images), expiring after 30 seconds without use. Streamer
+interest ends when an image is complete or its hover is abandoned; cache
+eviction drops the egui handle. Permanent profile/editor interests survive
+those releases, and obsolete worker replies cannot recreate released copies.
+
 `aurora-net/src/session.rs` keeps the last confirmed agent parcel. Selected,
 hovered and build-tool property replies refresh its live metadata only when
 the simulator and local parcel id match; its bitmap, bounds and notification

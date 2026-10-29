@@ -12497,3 +12497,5 @@ particle-editor-inject-timeout = La grille n’a pas répondu : le script n’a 
 keybinds-lens-zoom-in = Réduire l’angle de vue
 keybinds-lens-zoom-out = Élargir l’angle de vue
 keybinds-lens-zoom-default = Réinitialiser l’angle de vue
+inventory-hover-pictures = Afficher les images au survol
+inventory-hover-pictures-help = Affiche les photos et les vignettes des objets ou dossiers après un court survol.
