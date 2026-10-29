@@ -104,6 +104,16 @@ pub enum LoginAction {
     Accessibility,
 }
 
+/// "Second Life client · Rust · <graphics API>" under the name (login
+/// screen, its carousel, About), with the API this build draws with.
+pub(crate) fn client_tagline() -> &'static str {
+    if cfg!(target_os = "macos") {
+        aurora_i18n::tr!("ui-login-second-life-client-rust-metal")
+    } else {
+        aurora_i18n::tr!("ui-login-second-life-client-rust-vulkan")
+    }
+}
+
 /// Animated aurora background (also behind the loading screens without a
 /// last view).
 pub fn draw_background(ui: &egui::Ui, p: &Palette) {
@@ -550,11 +560,7 @@ pub fn show(
                 }
                 ui.add_space(2.0);
                 ui.label(RichText::new("Aurora Viewer").size(34.0).strong().color(p.ink));
-                ui.label(
-                    RichText::new(aurora_i18n::tr!("ui-login-second-life-client-rust-vulkan"))
-                        .size(13.0)
-                        .color(p.violet_pale),
-                );
+                ui.label(RichText::new(client_tagline()).size(13.0).color(p.violet_pale));
                 ui.add_space(18.0);
             });
             login_card = card(ui, p, 24, true, |ui| {

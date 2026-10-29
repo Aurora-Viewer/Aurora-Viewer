@@ -3174,6 +3174,13 @@ impl App {
                 } else {
                     crate::world::favorites::Favorites::load(crate::settings::account_dir(&l.agent_id).join(crate::world::favorites::FILE))
                 };
+                // the saved smart searches of the inventory; the demo keeps
+                // them in memory
+                if !self.demo {
+                    crate::ui::inventory::smart_store::load(
+                        crate::settings::account_dir(&l.agent_id).join(crate::ui::inventory::smart_store::FILE),
+                    );
+                }
                 // LLAgent::init: the FLY control is set before the first
                 // AgentUpdate when the last session of this account ended
                 // flying (the arrival lands it where flying is blocked)
@@ -13085,6 +13092,18 @@ impl App {
                 // the full-frame photo view: the world and its own strip only
                 if self.photo_full_frame() {
                     self.photo_ui(&ctx, &p, projector, renderer);
+                    // the poser stays over it (#1389): pose, then shoot
+                    if self.ik_editor.open && self.ik_editor.posing() {
+                        // no bars here: its room is the whole window, as
+                        // large as it is now (the bars' room of the last
+                        // frame with them would keep an older window size)
+                        let screen = ctx.content_rect();
+                        ui::layout::set_work_area(&ctx, screen);
+                        ui::layout::set_move_area(&ctx, screen);
+                        self.ik_editor.over_viewfinder = true;
+                        self.ik_editor.show(&ctx, &p, &self.world, projector);
+                        self.ik_editor.over_viewfinder = false;
+                    }
                     // the exit's question still shows over the photo mode
                     a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
                     return a;
@@ -15481,9 +15500,9 @@ impl ApplicationHandler for App {
         }
         let mut attrs = crate::cli::with_desktop_id(Window::default_attributes())
             .with_title(crate::cli::window_title())
-            // Vulkan initialization and the first frame take time: Windows
-            // must not expose the unpainted client area while they run.
-            .with_visible(false)
+            // Metal needs a visible layer to present its first drawable.
+            // Other platforms keep the unpainted client area hidden.
+            .with_visible(cfg!(target_os = "macos"))
             // Automated captures must not steal the user's keyboard focus.
             .with_active(!capture)
             .with_inner_size(winit::dpi::LogicalSize::new(w, h))
@@ -15501,6 +15520,9 @@ impl ApplicationHandler for App {
             }
         };
         crate::window_hold::install(&window);
+        // Cmd+Q asks like the close button (mac_quit.rs)
+        #[cfg(target_os = "macos")]
+        crate::mac_quit::route_quit_to_close();
         let size = window.inner_size();
         if std::env::var_os("AURORA_NOVSYNC").is_some() {
             self.settings.vsync = false;
@@ -15519,10 +15541,12 @@ impl ApplicationHandler for App {
             Ok(r) => r,
             Err(e) => {
                 log::error!("renderer initialisation failed: {e}");
-                eprintln!(
-                    "{}",
+                let message = if cfg!(target_os = "macos") {
+                    aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-metal", e = format!("{}", e))
+                } else {
                     aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-vulkan", e = format!("{}", e))
-                );
+                };
+                eprintln!("{message}");
                 // the window is still hidden: without this the viewer just
                 // vanished (#894)
                 graphics_start::report(&e.to_string(), capture);
@@ -17015,6 +17039,9 @@ impl ApplicationHandler for App {
                         | "aurora-additional"
                         | "show-original"
                         | "aurora-show-original"
+                        | "smart"
+                        | "aurora-smart"
+                        | "aurora-smart-wide"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(
@@ -17152,6 +17179,45 @@ impl ApplicationHandler for App {
                     }
                     if view == "large" {
                         self.inventory_ui.search = aurora_i18n::tr!("app-item").into();
+                    }
+                    if matches!(view.as_str(), "smart" | "aurora-smart" | "aurora-smart-wide") {
+                        // advanced search: objects or scripts (an Any
+                        // group) but not the no-copy object (a Not rule),
+                        // with saved searches in the sidebar
+                        use ui::inventory::smart::{Field, Group, Node, Op, Rule, SmartQuery};
+                        let kinds = Rule {
+                            bits: (1 << 6) | (1 << 10),
+                            ..Rule::of(Field::Type)
+                        };
+                        let no_copy = aurora_i18n::tr!("world-inventory-demo-no-copy-object").to_lowercase();
+                        let query = SmartQuery {
+                            root: Group {
+                                any: false,
+                                not: false,
+                                nodes: vec![
+                                    Node::Group(Group {
+                                        any: true,
+                                        not: false,
+                                        nodes: vec![Node::Rule(kinds), Node::Rule(Rule::text(Field::Name, Op::EndsInNumber, ""))],
+                                    }),
+                                    Node::Rule(Rule {
+                                        not: true,
+                                        ..Rule::text(Field::Name, Op::Contains, &no_copy)
+                                    }),
+                                ],
+                            },
+                        };
+                        let worn = SmartQuery {
+                            root: Group {
+                                nodes: vec![Node::Rule(Rule::of(Field::Worn))],
+                                ..Group::default()
+                            },
+                        };
+                        let id = ui::inventory::smart_store::add(aurora_i18n::tr!("inventory-smart-untitled"), query.clone());
+                        ui::inventory::smart_store::add(aurora_i18n::tr!("inventory-smart-worn"), worn);
+                        self.inventory_ui.open_smart(Some(id), query);
+                        // the classic layout edits the rules in the Filters floater
+                        self.inventory_ui.filters_open = view == "smart";
                     }
                     if view.starts_with("search-selection") {
                         self.inventory_ui.search = aurora_i18n::tr!("world-inventory-demo-item", n = "1490");
@@ -17973,9 +18039,12 @@ impl ApplicationHandler for App {
                     if !pressed && let Some(key) = gesture_key {
                         self.gesture_state.manager.release(Some(key));
                     }
+                    // Undo / Redo keep their keys while an editor with a
+                    // history shows: the build tools, or the poser
+                    let history_open = self.build.open || (self.ik_editor.open && self.ik_editor.posing());
                     if pressed
                         && !lens_shortcut
-                        && !build_shortcut.is_some_and(|s| s.takes_gesture_key(self.build.open))
+                        && !build_shortcut.is_some_and(|s| s.takes_gesture_key(history_open))
                         && (!ke.repeat || gesture_key.is_some_and(crate::gestures::Manager::repeat_triggers))
                         && !typing
                         && self.in_world()

@@ -1,0 +1,81 @@
+name: macOS
+
+# The macOS build draws through Metal (aurora-render BACKENDS) and has paths
+# of its own (Metal memory budget, the Cmd key…) that Windows and Linux
+# never build. Same two stages as the CI workflow: a pull request gets
+# clippy on macOS; the merge queue also runs the tests and one demo frame
+# on the runner's Apple GPU. That frame is the check that matters most: it
+# compiles every pipeline of the scene with Apple's Metal compiler, which
+# crashed on a shader that Vulkan accepted (object.wgsl, shade_material)
+# and can do so again after any shader change.
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    name: clippy, tests, demo (macOS)
+    # Apple Silicon (arm64), the only Macs Aurora supports
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: Code changed?
+        id: changes
+        uses: ./.github/actions/code-changed
+      - name: Rust stable
+        if: steps.changes.outputs.code == 'true'
+        run: |
+          rustup update stable --no-self-update
+          rustup component add clippy
+      # caches are written from main only (see ci.yml)
+      - uses: Swatinem/rust-cache@v2
+        id: cache
+        if: steps.changes.outputs.code == 'true'
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # dead code is the Windows job's: Windows-only helpers build here
+      # without their callers, as on Linux
+      - name: Clippy (warnings are errors)
+        if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || steps.cache.outputs.cache-hit != 'true')
+        run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings -A dead-code
+      - name: Tests
+        if: steps.changes.outputs.code == 'true' && github.event_name == 'merge_group'
+        # every failure of the run at once: the Apple GPU is reached here only
+        run: cargo test --profile ci --workspace --locked --no-fail-fast
+      # the offline demo past its loading fade, then quit: a missing image
+      # or a non-zero exit (a pipeline Metal refused, a GPU fault) fails
+      - name: A demo frame on Metal
+        if: steps.changes.outputs.code == 'true' && github.event_name == 'merge_group'
+        env:
+          AURORA_DEMO: '1'
+          AURORA_CAPTURE: ${{ runner.temp }}/metal-demo.png
+          AURORA_CAPTURE_FRAMES: '620'
+          AURORA_CAPTURE_EXIT: '1'
+        run: |
+          cargo run --profile ci --locked -p aurora-viewer -- --title "CI macOS"
+          test -s "$AURORA_CAPTURE"
+      - name: Demo image and log
+        if: always() && steps.changes.outputs.code == 'true' && github.event_name == 'merge_group'
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-demo
+          path: |
+            ${{ runner.temp }}/metal-demo.png
+            ~/Library/Application Support/org.Aurora.AuroraViewer/logs/aurora-demo-*.log
+          if-no-files-found: warn

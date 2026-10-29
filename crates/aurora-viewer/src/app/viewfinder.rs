@@ -486,9 +486,10 @@ impl App {
     }
 
     /// A press of the left button in the world while the viewfinder shows:
-    /// the AF point moves there and focuses; a menu open closes instead.
-    /// With Shift in AF-S, the avatar (Avatar area) or the point there
-    /// joins the group focus, or leaves it. True when taken.
+    /// the AF point moves there and focuses; a menu open closes instead;
+    /// a HUD or a poser handle under the pointer keeps it. With Shift in
+    /// AF-S, the avatar (Avatar area) or the point there joins the group
+    /// focus, or leaves it. True when taken.
     pub(super) fn viewfinder_click(&mut self) -> bool {
         // Alt + click (focus the camera), Ctrl + Alt (orbit), Ctrl + Alt +
         // Shift (pan) and the Controls window's object view stay the
@@ -501,6 +502,16 @@ impl App {
             v.menu = false;
             v.help = false;
             return true;
+        }
+        // A poser handle or a shown HUD under the pointer keeps the press
+        // (#1389): the Legacy Viewer's snapshot floater takes no scene
+        // clicks, so a HUD's poses and the poser stay usable while framing.
+        // The world's press path then decides between the two, as outside
+        // the viewfinder.
+        if (self.ik_editor.open && self.ik_editor.poser_owns_pointer())
+            || (self.huds_shown() && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_some())
+        {
+            return false;
         }
         let Some(mut gfx) = self.gfx.take() else {
             return true;
@@ -992,6 +1003,7 @@ impl App {
             isolate_hover,
             presets: &self.settings.camera_shots,
             preset_object,
+            posing: self.ik_editor.open && self.ik_editor.posing(),
         };
         // the demo aims at the own avatar's face, then shoots
         let (aim, shoot) = self.photo_demo_viewfinder();
@@ -1048,6 +1060,11 @@ impl App {
                 }
                 Out::Isolate(o) => self.photo_isolate_out(o, ctx.pixels_per_point()),
                 Out::Preset(o) => self.vf_preset(o, ctx.pixels_per_point()),
+                Out::Poser => {
+                    if self.ik_editor.toggle_poser() {
+                        crate::ui::widgets::open_floater(ctx, "poser", &mut self.ik_editor.open);
+                    }
+                }
                 Out::Exit => self.panels.snapshot = false,
             }
         }

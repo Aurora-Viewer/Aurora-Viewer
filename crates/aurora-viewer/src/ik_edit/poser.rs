@@ -36,6 +36,8 @@ pub struct Config {
     pub also_bvh: bool,
     pub unlock_pelvis: bool,
     pub confirm_overwrite: bool,
+    /// Ask before a close that stops the pose and loses its edited joints.
+    pub confirm_close: bool,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -48,6 +50,7 @@ impl Default for Config {
             also_bvh: false,
             unlock_pelvis: false,
             confirm_overwrite: false,
+            confirm_close: true,
         }
     }
 }
@@ -100,6 +103,13 @@ pub(super) struct State {
     /// A joint, shaft or gizmo handle was under the pointer, or dragged, in
     /// the last frame: the next press is the poser's, not a HUD's.
     pointer_owned: bool,
+    /// The joints edited over every subject, counted as the window shows:
+    /// what a close that stops the pose would lose.
+    edited_total: usize,
+    /// The window's close waits for the confirmation (Minimize or Close
+    /// anyway), and its "Don't ask again" ticked.
+    close_asked: bool,
+    close_dont_ask: bool,
 }
 impl Deref for State {
     type Target = Config;
@@ -202,7 +212,29 @@ impl Editor {
             ..Default::default()
         };
     }
+    /// The photo viewfinder's Poser button: closes the window as its own
+    /// close button does when it shows, else opens it. True when opened.
+    pub fn toggle_poser(&mut self) -> bool {
+        if self.open && self.poser.active {
+            self.ask_close();
+            false
+        } else {
+            self.open_poser();
+            true
+        }
+    }
+    /// The window's close, its cross, Ctrl+W or the viewfinder's button:
+    /// when it would stop the pose and lose edited joints, it asks first.
+    /// The Legacy Viewer closes at once (FSFloaterPoser::onClose).
+    fn ask_close(&mut self) {
+        if self.poser.stop_on_close && self.poser.confirm_close && self.poser.edited_total > 0 {
+            self.poser.close_asked = true;
+        } else {
+            self.close_poser();
+        }
+    }
     fn close_poser(&mut self) {
+        self.poser.close_asked = false;
         self.open = false;
         if self.poser.stop_on_close {
             self.poser.active = false;
@@ -294,6 +326,10 @@ impl Editor {
         if frame == 420 {
             self.open_poser();
             self.pose_layers(world);
+        }
+        // the head edited at 450, then the window's cross: the confirmation
+        if mode == "poser-close" && frame == 700 {
+            self.ask_close();
         }
         if frame == 450
             && let Some(pose) = self.editor_frame(world)

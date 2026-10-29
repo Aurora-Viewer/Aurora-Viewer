@@ -8,7 +8,7 @@
 
 use super::super::view::{Age, Creator, Links, SearchField, types};
 use super::super::*;
-use super::{Layout, rights};
+use super::{Layout, rights, smart_bar};
 use crate::ui::{menu, sheet, widgets};
 use egui::{Color32, Pos2, Rect, Sense, Vec2};
 
@@ -129,6 +129,38 @@ fn search_hint(prefs: &InventoryPreferences, short: bool) -> &'static str {
 /// The search field, `width` wide, taking Ctrl+F for the window; its key
 /// shows inside while it is empty at the wide width.
 fn search(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, width: f32, layout: Layout) {
+    // the switch to the advanced search sits inside the width, so the rows'
+    // arithmetic stays theirs
+    let width = (width - BAR - 6.0).max(40.0);
+    let tip = if st.advanced {
+        aurora_i18n::tr!("inventory-search-quick")
+    } else {
+        aurora_i18n::tr!("inventory-search-advanced-tip")
+    };
+    if st.advanced {
+        smart_bar::show(ui, p, st, width);
+    } else {
+        quick_search(ui, p, inv, st, prefs, width, layout);
+    }
+    if tool_button(ui, p, "filters-filled", tip, st.advanced).clicked() {
+        if st.advanced {
+            st.leave_advanced();
+        } else {
+            st.enter_advanced(prefs.search_field);
+        }
+    }
+}
+
+/// The quick search: the plain text field.
+fn quick_search(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    width: f32,
+    layout: Layout,
+) {
     let searching = !st.search.trim().is_empty();
     let field = ui
         .scope(|ui| {
@@ -251,6 +283,22 @@ fn sort_menu(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut I
             }
         }
     });
+    menu::separator(ui, p);
+    // the search's mode: the rules of the advanced search, or the text box
+    if st.advanced {
+        if menu::item(ui, p, "search-filled", aurora_i18n::tr!("inventory-search-quick")) {
+            st.leave_advanced();
+        }
+    } else if menu::item_tip(
+        ui,
+        p,
+        "filters-filled",
+        aurora_i18n::tr!("inventory-search-advanced"),
+        true,
+        aurora_i18n::tr!("inventory-search-advanced-tip"),
+    ) {
+        st.enter_advanced(prefs.search_field);
+    }
     if menu::item(
         ui,
         p,
@@ -571,9 +619,7 @@ pub(super) fn chip_list(st: &InventoryUi) -> Vec<Chip> {
             text: aurora_i18n::tr!("inventory-chip-links-of").to_owned(),
             remove: |st| {
                 st.links_filter = None;
-                if let Some(filters) = st.saved_filters.take() {
-                    st.filters = filters;
-                }
+                st.restore_saved_filters();
             },
         });
         return chips;

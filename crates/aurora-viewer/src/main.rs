@@ -61,6 +61,8 @@ mod login_accounts;
 mod login_places;
 mod login_wait;
 mod lsl_keywords;
+#[cfg(target_os = "macos")]
+mod mac_quit;
 mod machine_id;
 mod media;
 mod movement;

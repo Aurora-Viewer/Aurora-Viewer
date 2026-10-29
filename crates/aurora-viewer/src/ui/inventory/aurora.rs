@@ -15,6 +15,7 @@ mod details;
 mod rights;
 pub(super) mod rows;
 mod sidebar;
+mod smart_bar;
 mod toolbar;
 
 pub(super) use sidebar::Sidebar;
@@ -112,6 +113,7 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             "aurora-wide"
             | "aurora-worn-wide"
             | "aurora-sidebar-wide"
+            | "aurora-smart-wide"
             | "aurora-keyboard-wide"
             | "aurora-rights"
             | "aurora-columns"

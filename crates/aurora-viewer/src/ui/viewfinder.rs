@@ -157,6 +157,8 @@ pub struct Frame<'a> {
     /// would hold.
     pub presets: &'a [crate::camera::CameraShot],
     pub preset_object: Option<String>,
+    /// The poser's window shows over the viewfinder.
+    pub posing: bool,
 }
 
 /// The keys the help and the hints name.
@@ -204,6 +206,8 @@ pub enum Out {
     Isolate(Isolate),
     /// The camera presets panel, or choosing its object in the scene.
     Preset(Preset),
+    /// The poser's window opened or closed (#1389).
+    Poser,
     /// Out of the photo mode.
     Exit,
 }
@@ -1524,8 +1528,8 @@ impl Viewfinder {
                     ) {
                         panel.freeze_world = !panel.freeze_world;
                     }
-                    // five above the shutter, six under it (the panels of the
-                    // shot together)
+                    // five above the shutter, seven under it (the panels of
+                    // the shot together)
                     ui.add_space(6.0);
                     self.shutter_button(ui, p, out);
                     ui.add_space(6.0);
@@ -1574,6 +1578,11 @@ impl Viewfinder {
                             self.isolate = false;
                             out.push(Out::Isolate(Isolate::Picking(false)));
                         }
+                    }
+                    // the toolbar's Poser, the interface being hidden: pose
+                    // the avatar without leaving the shot
+                    if dock_button(ui, p, Face::Icon("wand"), aurora_i18n::tr!("photo-vf-poser-tip"), f.posing) {
+                        out.push(Out::Poser);
                     }
                     let has_photo = f.review.is_some();
                     if dock_button(ui, p, Face::Icon("photo-filled"), aurora_i18n::tr!("photo-vf-last-photo"), false) && has_photo {

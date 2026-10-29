@@ -24,6 +24,23 @@ pub struct DemoSim {
     /// The reports of transform edits held for a round trip
     /// (`AURORA_DEMO_BUILD_ECHO`), with when they arrive.
     late_echoes: VecDeque<(Instant, NetEvent)>,
+    /// The simulator's undo history of the edited objects (Ctrl+Z /
+    /// Ctrl+Y): their placements before each edit, and those undone.
+    history: HashMap<Uuid, History>,
+}
+
+/// An object's position, rotation and scale.
+type Placement = (glam::Vec3, glam::Quat, glam::Vec3);
+
+/// Updates of one object closer than this are one edit (a drag sends one
+/// a frame), as a simulator keeps one undo step for a drag.
+const EDIT_GAP: Duration = Duration::from_millis(400);
+
+#[derive(Default)]
+struct History {
+    undo: Vec<Placement>,
+    redo: Vec<Placement>,
+    last: Option<Instant>,
 }
 
 /// `AURORA_DEMO_BUILD_ECHO=<ms>`: the demo answers a transform edit that
@@ -255,6 +272,13 @@ impl DemoSim {
                     let Some(o) = world.objects.index_of_uuid(&id).and_then(|i| world.objects.get(i)) else {
                         continue;
                     };
+                    let history = self.history.entry(id).or_default();
+                    let now = Instant::now();
+                    if history.last.is_none_or(|at| now - at > EDIT_GAP) {
+                        history.undo.push((o.position, o.rotation, o.scale));
+                        history.redo.clear();
+                    }
+                    history.last = Some(now);
                     let mut o = super::replace::demo_update(o);
                     if let Some(p) = update.position {
                         o.position = p;
@@ -275,6 +299,30 @@ impl DemoSim {
                     }
                     None => vec![echo],
                 }
+            }
+            BuildCmd::Undo { handle, ids, .. } | BuildCmd::Redo { handle, ids, .. } => {
+                let redo = matches!(c, BuildCmd::Redo { .. });
+                let mut objects = Vec::new();
+                for id in ids {
+                    let Some(o) = world.objects.index_of_uuid(id).and_then(|i| world.objects.get(i)) else {
+                        continue;
+                    };
+                    let history = self.history.entry(*id).or_default();
+                    let (from, to) = if redo {
+                        (&mut history.redo, &mut history.undo)
+                    } else {
+                        (&mut history.undo, &mut history.redo)
+                    };
+                    let Some((position, rotation, scale)) = from.pop() else {
+                        continue;
+                    };
+                    to.push((o.position, o.rotation, o.scale));
+                    history.last = None;
+                    let mut o = super::replace::demo_update(o);
+                    (o.position, o.rotation, o.scale) = (position, rotation, scale);
+                    objects.push(o);
+                }
+                vec![NetEvent::ObjectUpdates { handle: *handle, objects }]
             }
             BuildCmd::Delink { handle, local_ids } => {
                 let mut objects = Vec::new();

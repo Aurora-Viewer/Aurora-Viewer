@@ -314,7 +314,9 @@ log gives `world frozen: <n> moving objects held`), `hover` or `nocontrols` the 
 on hover or hidden (the lens ring and the AF choices show otherwise), `tilt`
 the camera rolled 20° clockwise (the level turns the other way, along the
 horizon), `tilt90` a quarter turn (the AF frame over a head keeps its size,
-lying on its side), `focus`
+lying on its side), `poser` the poser opened over it (the dock's wand
+button: its window, the joints and the gizmo drawn over the viewfinder; a
+click on a joint selects it without moving the AF point), `focus`
 the own avatar's face aimed at
 and the shutter half-pressed at `AURORA_DEMO_SNAPSHOT_FRAME`, `shoot` the
 same then released two frames later (the photo saved to disk; with `timer`
@@ -1813,6 +1815,10 @@ quickly with Ctrl+Shift and release: it must stay at its final size and
 place, without going back to an earlier size for a moment (issue #1193).
 Moves, rotations and the Edit window's fields must not jump back either.
 
+The demo also answers the build tools' Undo and Redo (Ctrl+Z, Ctrl+Y) like a
+simulator: each object keeps its placements before each edit, the updates of
+one drag (closer than 0.4 s) making one step.
+
 **`AURORA_DEMO_BUILD_TAB=general|rights|object|transform|shape|features|texture[:pbr|bp|bp-normal|bp-specular|media]|contents`**
 — section of the build window shown by the script. General includes object
 permissions; `rights`, `object` and `transform` redirect to General for older
@@ -2574,7 +2580,7 @@ That ignored test creates and removes its own isolated profile.
   list, parent-local numeric controls, markers and native save/load/import
   actions. No motorcycle, contacts or IK-project draft is loaded or written.
   Prefer the dedicated `AURORA_DEMO_POSER` scenarios below. See [Poser](POSER.md).
-- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|misc|physics|library|settings|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|bridge-starting|bridge-silent|bridge-failed|bridge-off`**:
+- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|misc|physics|library|settings|close|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|bridge-starting|bridge-silent|bridge-failed|bridge-off`**:
   the full handoff trial, with the real local pose layer and consent state
   machine, on a standing avatar without motorcycle contacts or bone bindings.
   The additional `connected` mode restores a T-pose at 450 and moves the
@@ -2588,7 +2594,9 @@ That ignored test creates and removes its own isolated profile.
   owned synthetic control skeleton. Consent fixtures request at 450, answer
   or expire at 480, and optionally withdraw at 560. Incoming-request and
   reminder modes show the target UI; accept/withdraw modes select the peer
-  and edit its head at 510. Library widens the native window; settings and
+  and edit its head at 510. `close` asks to close the window at 700, the
+  head edited: capture 760 for the confirmation (Minimize, Close anyway,
+  Don't ask again). Library widens the native window; settings and
   the remaining modes select the corresponding controls. The other modes
   count as a ready bridge; `bridge-*` modes open the subject menu at 440 with
   the peer's Ask disabled and the matching hint (starting, query script
@@ -4131,7 +4139,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_WEARABLE=<type>[:mode]` | Skin, hair, eyes and system clothing editors |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
-| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, layout notecards, filters, drag feedback, windows, keyboard and search selection; `aurora…` modes show Aurora's window at each width |
+| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|channel\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, commands to worn scripts, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
@@ -7178,6 +7186,18 @@ offline; the files and snapshots uploaded in demo stay offline.
   tab, and no such button. Click the lit button: the additional window
   closes; click it again: it reopens at the same place, its folders and
   search forgotten. Drag an item from one window onto a folder of the other.
+- `smart`, `aurora-smart`, `aurora-smart-wide`: advanced search. The window
+  is in advanced mode on a saved smart search: objects or scripts, or a name
+  ending in a number (an Any group), but not the no-copy object (a Not
+  rule). `aurora-smart` shows the narrow window, whose chip bar keeps its
+  chips and its field only; `aurora-smart-wide` shows the whole chip bar
+  (All/Any, add, save, leave) and the "Smart searches" sidebar section with
+  two saved searches, the first highlighted; `smart` shows the classic
+  window with the rule summary and the rule builder open in the Filters
+  floater. Click a chip to change its operator, Not or remove it; flip
+  All/Any; right-click an item for "Find similar"; the ✕ of the chip bar (or
+  "Quick search" in the search options) brings quick search back with its
+  text. The demo keeps saved searches in memory only.
 - `aurora-worn`, `aurora-worn-medium`, `aurora-worn-wide`: Aurora's three
   widths on the clothing folder with no selection. Worn clothing names stay
   semi-bold and use the exact text colour of their Worn tag beside the
