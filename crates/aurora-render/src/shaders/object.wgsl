@@ -1333,7 +1333,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     }
     var s: Shaded;
     col = debug_view(col, in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy);
-    s.color = vec4<f32>(light_tiles_checked(col, in.world_pos, in.clip.xy), m.color.a);
+    s.color = vec4<f32>(finite_hdr(light_tiles_checked(col, in.world_pos, in.clip.xy)), m.color.a);
     s.n = m.n;
     s.roughness = m.roughness;
     s.metallic = m.metallic;

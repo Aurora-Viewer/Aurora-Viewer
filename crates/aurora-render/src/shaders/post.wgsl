@@ -292,7 +292,11 @@ fn fs_bloom_prefilter(in: Out) -> @location(0) vec4<f32> {
         vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, 1.0),
     );
     for (var i = 0; i < 13; i++) {
-        t[i] = bloom_extract(textureSampleLevel(hdr, hdr_sampler, in.uv + offs[i] * texel, 0.0).rgb);
+        // an infinite pixel held at the largest value of the format, a NaN
+        // (also what filtering gives next to an infinite one) as black: the
+        // bloom chain would spread either over the whole image (#1380)
+        let s = textureSampleLevel(hdr, hdr_sampler, in.uv + offs[i] * texel, 0.0).rgb;
+        t[i] = bloom_extract(select(min(s, vec3<f32>(65504.0)), vec3<f32>(0.0), s != s));
     }
     var acc = bloom_box(t[9], t[10], t[11], t[12]) * 0.5;
     acc += bloom_box(t[0], t[1], t[3], t[4]) * 0.125;

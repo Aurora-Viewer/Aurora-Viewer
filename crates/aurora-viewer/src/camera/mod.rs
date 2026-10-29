@@ -536,6 +536,17 @@ impl Camera {
         }
     }
 
+    /// The viewing angle narrowed by the field of view correction
+    /// (LLAgentCamera::updateCamera), never under LLCamera::getMinView (5°,
+    /// more in a narrow window) as LLViewerCamera::setView caps it: the
+    /// correction alone goes down to a thousandth of the angle, a sliver of
+    /// the focused object filling the screen. An angle already narrower
+    /// (`base_fov`) stays as it is.
+    fn zoomed_fov(&self, s: &CameraSettings, aspect: f32) -> f32 {
+        let base = self.base_fov(s);
+        (base / (1.0 + self.current_fov_zoom)).max(mouselook_zoom::min_view(aspect).min(base))
+    }
+
     /// Right button down in mouselook (LLToolCompGun::handleRightMouseDown):
     /// the remembered zoomed angle at once. `aspect`: the window's.
     pub fn press_mouselook_zoom(&mut self, s: &CameraSettings, aspect: f32) {
@@ -1451,7 +1462,7 @@ impl Camera {
             // the free camera's own view; the avatar's waits for its return
             self.position = free.position;
             self.target = free.target();
-            self.fov_y = self.base_fov(s) / (1.0 + self.current_fov_zoom);
+            self.fov_y = self.zoomed_fov(s, f.aspect);
             self.anim = None;
             return;
         }
@@ -1510,7 +1521,7 @@ impl Camera {
             self.smoothing_last_agent = camera_target - self.avatar.position;
             self.position = camera_target;
             self.target = focus_target;
-            self.fov_y = self.base_fov(s) / (1.0 + self.current_fov_zoom);
+            self.fov_y = self.zoomed_fov(s, f.aspect);
             return;
         }
 
@@ -1572,7 +1583,7 @@ impl Camera {
         self.current_fov_zoom += (self.fov_zoom - self.current_fov_zoom) * interpolant(FOV_ZOOM_HALF_LIFE, dt);
         self.position = camera;
         self.target = focus;
-        self.fov_y = self.base_fov(s) / (1.0 + self.current_fov_zoom);
+        self.fov_y = self.zoomed_fov(s, f.aspect);
     }
 
     /// While seated the agent frame turns with the seat (setupSitCamera,
@@ -3329,6 +3340,31 @@ mod tests {
         }
         assert!(cam.fov_zoom > 0.0);
         assert!(cam.fov_y < s.fov);
+    }
+
+    #[test]
+    fn fov_correction_stops_at_the_legacy_minimum_view() {
+        // two centimetres from a 1 m cube: the correction alone would narrow
+        // the view to under 2°; LLViewerCamera::setView keeps 5°, and more in
+        // a narrow window so that its width keeps 5° (#1380)
+        for (aspect, min) in [(16.0 / 9.0, 5f32), (0.5, 10.0)] {
+            let (mut w, mut cam, s, _) = focused_object_with(constrained());
+            cam.zoom_in(0.0001);
+            let f = FrameInput {
+                aspect,
+                ..frame(1.0 / 60.0)
+            };
+            for _ in 0..300 {
+                cam.update(&mut w, &s, &f);
+            }
+            assert!(s.fov / (1.0 + cam.fov_zoom) < min.to_radians() * 0.5, "{}", cam.fov_zoom);
+            assert!(
+                (cam.fov_y - min.to_radians()).abs() < 1e-4,
+                "aspect {aspect}: {}°",
+                cam.fov_y.to_degrees()
+            );
+            assert!(cam.proj(aspect).is_finite());
+        }
     }
 
     #[test]
