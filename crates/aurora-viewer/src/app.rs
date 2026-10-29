@@ -15481,9 +15481,9 @@ impl ApplicationHandler for App {
         }
         let mut attrs = crate::cli::with_desktop_id(Window::default_attributes())
             .with_title(crate::cli::window_title())
-            // Vulkan initialization and the first frame take time: Windows
-            // must not expose the unpainted client area while they run.
-            .with_visible(false)
+            // Metal needs a visible layer to present its first drawable.
+            // Other platforms keep the unpainted client area hidden.
+            .with_visible(cfg!(target_os = "macos"))
             // Automated captures must not steal the user's keyboard focus.
             .with_active(!capture)
             .with_inner_size(winit::dpi::LogicalSize::new(w, h))

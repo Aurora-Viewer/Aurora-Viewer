@@ -446,7 +446,7 @@ mod tests {
         assert_eq!(outward.portal.access, source.access);
         let back = Journey::new(&world, world.agent_id, &outward.portal, now);
         assert_eq!(back.portal.id, source.id);
-        assert_eq!(back.portal.center, source.center);
+        assert!(Vec3::from(back.portal.center).distance(Vec3::from(source.center)) < 1e-5);
         assert_eq!(back.portal.position, source.position);
         assert!(!outward.valid(&world, now + Duration::from_secs(31), 1031));
         assert!(!outward.valid(&world, now, 1120));

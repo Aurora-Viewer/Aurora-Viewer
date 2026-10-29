@@ -1420,12 +1420,17 @@ mod tests {
                 &mut st,
                 vec![
                     egui::Event::Key {
-                        key: egui::Key::Home,
+                        key: if cfg!(target_os = "macos") {
+                            egui::Key::ArrowUp
+                        } else {
+                            egui::Key::Home
+                        },
                         physical_key: None,
                         pressed: true,
                         repeat: false,
                         modifiers: egui::Modifiers {
-                            ctrl: true,
+                            ctrl: !cfg!(target_os = "macos"),
+                            mac_cmd: cfg!(target_os = "macos"),
                             command: true,
                             ..Default::default()
                         },
