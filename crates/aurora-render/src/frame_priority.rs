@@ -35,8 +35,6 @@ thread_local! {
 
 /// Raise (or not) the frame's threads, from their next turn on.
 pub fn set_raised(raised: bool) {
-    #[cfg(target_os = "linux")]
-    linux::base_nice();
     WANTED.store(if raised { RAISED } else { NORMAL }, Ordering::Relaxed);
 }
 
@@ -73,71 +71,14 @@ fn set_thread_priority(raised: bool) {
             SetThreadPriority(GetCurrentThread(), priority);
         }
     }
-    #[cfg(target_os = "linux")]
-    linux::set_thread_priority(raised);
-    #[cfg(not(any(windows, target_os = "linux")))]
+    // Linux: no raise. A nice value below the process's needs RLIMIT_NICE
+    // or CAP_SYS_NICE (neither on a stock desktop); with the default
+    // autogroups it would only weigh against the viewer's own threads, not
+    // against a compiler or a browser; and every process the raised main
+    // thread starts (the media plugin) would inherit it. The background
+    // jobs are lowered instead (scene/jobs.rs), which needs no right.
+    #[cfg(not(windows))]
     let _ = raised;
-}
-
-/// Linux: the nice value, per thread there. Only the threads of the same
-/// scheduling group compete by it: the whole process with the default
-/// autogroups (one per session), so a raised frame thread mostly goes
-/// ahead of the viewer's own threads, not of another program's.
-///
-/// Like a Windows thread priority, which is relative to the process's
-/// priority class, the values are relative to the nice the viewer was
-/// started with (`nice -n 5 aurora-viewer` keeps the order). Going below
-/// it needs RLIMIT_NICE (`ulimit -e`, the `gamemode` group grants it on
-/// some distributions) or CAP_SYS_NICE: refused once, it is not tried
-/// again and the frame's threads stay at the base. Back to normal is
-/// allowed: it never goes above the base. A thread inherits the nice of
-/// the thread that creates it, so a thread started by a raised one starts
-/// raised too (Windows does not do that).
-#[cfg(target_os = "linux")]
-pub mod linux {
-    use std::sync::OnceLock;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    /// One step above normal: nice weights go by ~1.25× a step, as Windows
-    /// goes by one level for ABOVE_NORMAL.
-    const RAISED_STEP: i32 = 1;
-
-    static BASE: OnceLock<i32> = OnceLock::new();
-
-    /// The nice value the process started with: taken by the main thread
-    /// before it raises anything (`set_raised` at startup).
-    pub fn base_nice() -> i32 {
-        *BASE.get_or_init(thread_nice)
-    }
-
-    /// Nice value of the calling thread.
-    pub fn thread_nice() -> i32 {
-        // SAFETY: `gettid` has no precondition; `getpriority` only reads
-        // integers, and cannot fail for the calling thread's own id.
-        unsafe { libc::getpriority(libc::PRIO_PROCESS, libc::gettid() as libc::id_t) }
-    }
-
-    /// Set the calling thread's nice value; false if refused.
-    pub fn set_thread_nice(nice: i32) -> bool {
-        // SAFETY: as in `thread_nice`; `setpriority` only reads integers.
-        unsafe { libc::setpriority(libc::PRIO_PROCESS, libc::gettid() as libc::id_t, nice.clamp(-20, 19)) == 0 }
-    }
-
-    pub(super) fn set_thread_priority(raised: bool) {
-        /// Raising was refused once: the process may not go below its base.
-        static REFUSED: AtomicBool = AtomicBool::new(false);
-        if raised && REFUSED.load(Ordering::Relaxed) {
-            return;
-        }
-        let base = base_nice();
-        let ok = set_thread_nice(if raised { base - RAISED_STEP } else { base });
-        if !ok && raised && !REFUSED.swap(true, Ordering::Relaxed) {
-            log::info!(
-                "frame priority: the frame's threads stay at nice {base} ({}); raising them needs RLIMIT_NICE or CAP_SYS_NICE",
-                std::io::Error::last_os_error()
-            );
-        }
-    }
 }
 
 /// AURORA_FRAME_PRIORITY: `normal` keeps the frame's threads at normal
