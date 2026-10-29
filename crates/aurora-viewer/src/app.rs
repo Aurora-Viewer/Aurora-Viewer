@@ -2499,6 +2499,7 @@ impl App {
         self.portal_demo_peer = None;
         self.follow_recovery = None;
         self.inventory_ui = Default::default();
+        self.contents_copies = Default::default();
         self.texture_library.reset();
         self.library_drag = Default::default();
         self.library_demo_seeded = false;
@@ -9328,6 +9329,12 @@ impl App {
             self.portal_drop_demo_input(&mut raw);
             self.give_demo_input(&mut raw, vp, (w, h));
             self.contents_drop_demo_input(&mut raw, vp, (w, h));
+            if self.frame_count == 420
+                && std::env::var("AURORA_DEMO_ACTIONS").as_deref() == Ok("open-multi")
+                && let Some(c) = &self.interactions.contents
+            {
+                ui::object_actions::contents_demo_select_all(&self.egui_ctx, c.target.object, &mut raw);
+            }
             self.wearable_drop_demo_input(&mut raw);
             ui::inventory::drag::demo::input(&ctx, self.frame_count, &self.world.inventory, &self.inventory_ui, &mut raw);
             self.gesture_demo_input(&mut raw);
@@ -13288,6 +13295,7 @@ impl App {
                 } else {
                     self.world.parcel_name.as_str()
                 };
+                let mut contents_actions = Vec::new();
                 let icons = &self.skin.icons;
                 let layout = &self.skin.layout;
                 let maturity = self
@@ -13834,6 +13842,12 @@ impl App {
                     // Focused web/media pages already received the native
                     // keys; their history must not also change world objects.
                     if self.media.focus.is_none() && self.profile_ui.focused_web().is_none() && self.search_ui.focused_web().is_none() {
+                        contents_actions.extend(ui::object_actions::contents_shortcuts(
+                            &ctx,
+                            &self.interactions,
+                            &self.world,
+                            &self.build,
+                        ));
                         crate::build::ui::shortcuts(&ctx, &mut self.build, &mut self.world, &mut self.settings.build);
                     }
                     self.build
@@ -14643,14 +14657,13 @@ impl App {
                 }
                 self.show_pay(&ctx, &p, &mut a);
                 self.show_money_tracker(&ctx, &p, &mut a);
-                for action in ui::object_actions::show_contents(&ctx, &p, &self.skin.icons, &mut self.interactions, &self.world) {
-                    match action {
-                        ui::object_actions::ContentsAction::Script(object, item) => {
-                            self.open_script(aurora_net::scripts::ScriptTarget { object, item })
-                        }
-                        ui::object_actions::ContentsAction::Notecard(object, item) => self.open_task_notecard(object, item),
-                        ui::object_actions::ContentsAction::Copy(request) => self.copy_contents(*request),
-                    }
+                for action in contents_actions {
+                    self.apply_contents_action(action);
+                }
+                for action in
+                    ui::object_actions::show_contents(&ctx, &p, &self.skin.icons, &mut self.interactions, &self.world, &self.build)
+                {
+                    self.apply_contents_action(action);
                 }
                 self.show_task_notecards(&ctx, &p);
                 self.show_scripts(&ctx, &p);

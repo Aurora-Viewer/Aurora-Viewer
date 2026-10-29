@@ -1,3 +1,10 @@
+# Object contents copy feedback.
+contents-copy-folder-timeout = 60秒以内にフォルダ「{ $folder }」の作成を確認できませんでした。中身は転送していません。
+contents-copy-complete = 中身を「{ $folder }」にコピーしました（受信：{ $count }アイテム）。
+contents-copy-timeout = 60秒以内に「{ $folder }」へのコピーを確認できませんでした。受信アイテム：{ $received }/{ $count }。フォルダの中身を確認してください。
+contents-copy-unavailable = 「{ $folder }」へのコピーを確認できませんでした。転送先フォルダが見つからないか、読み込めませんでした。
+contents-copy-wear-busy = 中身は「{ $folder }」にコピーされましたが、別の着替え処理が進行中のため服装を変更できませんでした。インベントリからフォルダを着用してください。
+
 language-name = 日本語
 joystick-title = ジョイスティックと3Dマウス
 joystick-enabled = ジョイスティック入力を有効にする

@@ -813,18 +813,7 @@ pub(super) fn chips(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs:
 /// The message to show: a refused change, an operation's progress, its
 /// end, or the folders still loading for a search.
 pub(super) fn message(p: &Palette, st: &InventoryUi) -> Option<(String, Color32)> {
-    let now = std::time::Instant::now();
-    if !st.message.is_empty() {
-        Some((st.message.clone(), p.warn))
-    } else if st.busy() {
-        Some((st.pending_status(now), p.ink))
-    } else if let Some(message) = st.success_notice(now) {
-        Some((message.to_owned(), p.success))
-    } else if st.fetch_all {
-        Some((aurora_i18n::tr!("ui-inventory-search-loading-folders").to_owned(), p.muted))
-    } else {
-        None
-    }
+    st.status_message(p, std::time::Instant::now())
 }
 
 /// The line of a message, with the spinner of an operation.
@@ -879,6 +868,29 @@ pub(super) fn status_bar(ui: &mut egui::Ui, p: &Palette, st: &InventoryUi, explo
 mod tests {
     use super::super::super::view::Filters;
     use super::*;
+
+    #[test]
+    fn aurora_contents_copy_feedback_shows_pending_then_the_expiring_result() {
+        let palette = crate::theme::Theme::default().palette();
+        let request = uuid::Uuid::from_u128(1410);
+        for success in [false, true] {
+            let mut st = InventoryUi::default();
+            st.begin_contents_copy(request, "Requested".into());
+            assert_eq!(message(&palette, &st), Some(("Requested".into(), palette.ink)));
+            st.finish_contents_copy(request, "Result".into(), success, std::time::Instant::now());
+            assert_eq!(
+                message(&palette, &st),
+                Some(("Result".into(), if success { palette.success } else { palette.warn }))
+            );
+            st.finish_contents_copy(
+                request,
+                "Result".into(),
+                success,
+                std::time::Instant::now() - std::time::Duration::from_secs(5),
+            );
+            assert!(message(&palette, &st).is_none());
+        }
+    }
 
     #[test]
     fn restored_menu_feedback_uses_the_success_color_and_disappears_after_expiry() {

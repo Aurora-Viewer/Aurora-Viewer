@@ -54,6 +54,7 @@ pub(crate) mod smart;
 mod smart_builder;
 pub(crate) mod smart_store;
 pub(crate) mod task_drop;
+pub(crate) mod task_selection;
 pub mod thumbnail;
 pub(crate) mod tree;
 pub(crate) mod view;
@@ -475,6 +476,7 @@ pub struct InventoryUi {
     progress: Option<progress::State>,
     copy_jobs: progress::CopyJobs,
     notice: Option<(String, std::time::Instant)>,
+    contents_notice: Option<progress::ContentsNotice>,
     pub message: String,
     pub dialog: Option<EditDialog>,
     move_to: Option<move_to::MoveTo>,
@@ -1249,20 +1251,9 @@ fn status(
     actions: &mut Vec<InvAction>,
     filtered: bool,
 ) {
-    let now = std::time::Instant::now();
-    let pending_message = st.busy().then(|| st.pending_status(now));
-    let (message, color) = if !st.message.is_empty() {
-        (st.message.as_str(), p.warn)
-    } else if let Some(message) = &pending_message {
-        (message.as_str(), p.ink)
-    } else if let Some(message) = st.success_notice(now) {
-        (message, p.success)
-    } else if st.fetch_all {
-        (aurora_i18n::tr!("ui-inventory-search-loading-folders"), p.muted)
-    } else {
-        ("", p.muted)
-    };
-    let message = message.to_owned();
+    let (message, color) = st
+        .status_message(p, std::time::Instant::now())
+        .unwrap_or_else(|| (String::new(), p.muted));
     let count = if filtered {
         aurora_i18n::tr!(
             "ui-inventory-results-objects-loaded",
@@ -1995,6 +1986,7 @@ pub fn show(
         w.state.progress.clone_from(&st.progress);
         w.state.copy_jobs.clone_from(&st.copy_jobs);
         w.state.notice.clone_from(&st.notice);
+        w.state.contents_notice.clone_from(&st.contents_notice);
         w.state.merchant = st.merchant;
         w.state.marketplace_commands.clone_from(&st.marketplace_commands);
         w.state.playing = st.playing;
