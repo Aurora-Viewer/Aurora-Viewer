@@ -6586,7 +6586,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   visible, abilities by set, the dangerous abilities asking first; Save
   logs `demo group: N role update(s)`), Group identity (insignia from the
   texture picker, charter, show in search, moderate content, open
-  enrollment and fee; Save logs `demo group: identity saved`), Abilities
+  enrollment and fee; Save logs `demo group: identity saved` and the
+  simulated server keeps it: a new insignia shows at once in the window,
+  the conversation list and People › Groups), Abilities
   (who has the ability chosen), Banned residents (two at start; Unban,
   Ban residents by name), Invitations. `owner:identity` opens it on Group
   identity (to compare with the creation window).
