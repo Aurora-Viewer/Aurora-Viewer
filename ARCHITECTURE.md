@@ -36,6 +36,10 @@ links through AIS, without replacing the outfit or reattaching anything. A
 simulator-confirmed detach during link creation removes the late link after
 confirmation; failed readback reloads the COF before retrying. Transient avatar
 absence during teleport preserves links. Temporary attachments are excluded.
+Manual removal recovers our worn roots through `ObjectDetach` when an item or
+the COF remains unavailable, following `LLSelectMgr::sendDetach`. Healthy outfit
+mutations retain their existing path. Recovery preserves RLVa point/source locks
+and refuses unknown folder or scripted nostrip decisions until metadata arrives.
 
 `scene/anim.rs` restarts active resident and control-avatar motions from one shared
 instant for Ctrl+S, World and the resync toolbar command. Receipt signals,

@@ -44,6 +44,73 @@ impl AttachmentInventory {
 }
 
 impl World {
+    /// LLSelectMgr::sendDetach (indra/newview/llselectmgr.cpp): an object
+    /// actually worn by us can be detached by its simulator-local root even
+    /// when its inventory record or the rest of the outfit cannot be fetched.
+    fn attachment_detach_command(&self, item: Uuid) -> Option<NetCommand> {
+        let item = super::inventory::actions::original(&self.inventory, item)
+            .or_else(|| {
+                self.inventory
+                    .items
+                    .get(&item)
+                    .filter(|it| it.asset_type == 24)
+                    .map(|it| it.asset_id)
+            })
+            .unwrap_or(item);
+        let index = self.worn_attachment(&item).or_else(|| self.objects.index_of_uuid(&item))?;
+        let object = self.objects.get(index)?;
+        let parent = self.objects.parent_of(object).and_then(|i| self.objects.get(i))?;
+        if object.is_avatar() || object.attachment_point() == 0 || !parent.is_avatar() || parent.full_id != self.agent_id {
+            return None;
+        }
+        Some(NetCommand::DetachObject {
+            handle: object.key.region,
+            local_id: object.key.local_id,
+        })
+    }
+
+    /// Keep healthy inventory removals on the normal outfit path. Recover
+    /// worn roots independently when a stale item (including another worn
+    /// object's missing record) would otherwise block the whole COF plan.
+    pub fn recover_attachment_removal(
+        &self,
+        action: appearance::Action,
+        allow_recovery: bool,
+    ) -> (Vec<NetCommand>, Option<appearance::Action>) {
+        let (items, multiple) = match action {
+            appearance::Action::Remove(item) => (vec![item], false),
+            appearance::Action::RemoveItems(items) => (items, true),
+            other => return (Vec::new(), Some(other)),
+        };
+        let incomplete = self.worn_attachment_items().iter().any(|id| !self.inventory.items.contains_key(id))
+            || appearance::cof(&self.inventory).is_none_or(|cof| !appearance::complete(&self.inventory, cof));
+        let mut commands = Vec::new();
+        let mut remaining = Vec::new();
+        let mut seen = HashSet::new();
+        for item in items {
+            let temporary = self.rlva_temporary_attachment(item).is_some();
+            if (temporary || allow_recovery && (incomplete || !self.inventory.items.contains_key(&item)))
+                && let Some(command) = self.attachment_detach_command(item)
+            {
+                if let NetCommand::DetachObject { handle, local_id } = &command
+                    && seen.insert((*handle, *local_id))
+                {
+                    commands.push(command);
+                }
+            } else {
+                remaining.push(item);
+            }
+        }
+        let action = if remaining.is_empty() {
+            None
+        } else if multiple {
+            Some(appearance::Action::RemoveItems(remaining))
+        } else {
+            Some(appearance::Action::Remove(remaining[0]))
+        };
+        (commands, action)
+    }
+
     /// Independent of the inventory/appearance floaters: a script can attach
     /// a newly created inventory item while both windows are closed.
     pub fn update_attachment_inventory(&mut self, now: Instant, allow_links: bool) -> Vec<NetCommand> {
@@ -573,5 +640,218 @@ mod tests {
         );
         assert_eq!(world.take_inventory_edits().len(), 1);
         assert!(world.inventory.items.contains_key(&item.id));
+    }
+
+    #[test]
+    fn attachment_recovery_detaches_an_old_object_after_inventory_fetches_are_exhausted() {
+        let (mut world, object, item) = fixture();
+        let now = Instant::now();
+        for attempt in 0..u32::from(FETCH_ATTEMPTS) {
+            world.update_attachment_inventory(now + RETRY_GAP * attempt, false);
+            world.apply(NetEvent::InventoryItemsFailed { items: vec![item.id] });
+        }
+        assert!(
+            appearance::plan(
+                &world.inventory,
+                appearance::Action::Remove(item.id),
+                &world.worn_attachment_points()
+            )
+            .is_err()
+        );
+        let (commands, remaining) = world.recover_attachment_removal(appearance::Action::Remove(item.id), true);
+        assert!(remaining.is_none());
+        assert!(matches!(&commands[..], [NetCommand::DetachObject { handle: 1, local_id }] if *local_id == object.local_id));
+        assert!(world.worn_attachment(&item.id).is_some(), "wait for simulator confirmation");
+        assert!(world.take_inventory_edits().is_empty());
+        world.note_outfit_command(&commands[0]);
+        world.apply(NetEvent::ObjectsKilled {
+            handle: 1,
+            local_ids: vec![object.local_id],
+        });
+        assert!(world.worn_attachment(&item.id).is_none());
+        assert!(!world.inventory.items.contains_key(&item.id), "never fabricate an inventory record");
+    }
+
+    #[test]
+    fn attachment_recovery_removes_only_the_selected_known_root_despite_another_missing_item() {
+        let (mut world, object, missing) = fixture();
+        let selected = Uuid::from_u128(717);
+        let mut other = object.clone();
+        other.full_id = Uuid::from_u128(90_040);
+        other.local_id += 1;
+        other.name_values = format!("AttachItemID STRING RW SV {selected}");
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![other.clone()],
+        });
+        let cof = appearance::cof(&world.inventory).expect("COF");
+        let before = appearance::folder_links(&world.inventory, cof);
+        let expected: Vec<_> = before.iter().filter(|link| link.target != selected).cloned().collect();
+        assert!(
+            appearance::plan(
+                &world.inventory,
+                appearance::Action::Remove(selected),
+                &world.worn_attachment_points()
+            )
+            .is_err()
+        );
+        let (commands, remaining) = world.recover_attachment_removal(appearance::Action::Remove(selected), true);
+        assert!(remaining.is_none());
+        assert!(matches!(&commands[..], [NetCommand::DetachObject { handle: 1, local_id }] if *local_id == other.local_id));
+        assert_eq!(appearance::folder_links(&world.inventory, cof), before);
+        world.note_outfit_command(&commands[0]);
+        world.apply(NetEvent::ObjectsKilled {
+            handle: 1,
+            local_ids: vec![other.local_id],
+        });
+        assert_eq!(appearance::folder_links(&world.inventory, cof), expected);
+        assert!(world.worn_attachment(&missing.id).is_some());
+        assert!(world.inventory.items.contains_key(&selected));
+        assert!(!world.take_inventory_edits().is_empty());
+    }
+
+    #[test]
+    fn attachment_recovery_resolves_a_broken_link_deduplicates_roots_and_retains_clothing_actions() {
+        let (mut world, object, item) = fixture();
+        let link = InvItem {
+            id: Uuid::from_u128(90_050),
+            asset_id: item.id,
+            asset_type: 24,
+            ..item.clone()
+        };
+        let link_id = link.id;
+        world.inventory.add_items(vec![link]);
+        let clothing = Uuid::from_u128(715);
+        let (commands, remaining) = world.recover_attachment_removal(
+            appearance::Action::RemoveItems(vec![item.id, link_id, object.full_id, clothing]),
+            true,
+        );
+        assert_eq!(commands.len(), 1);
+        assert!(matches!(&commands[0], NetCommand::DetachObject { local_id, .. } if *local_id == object.local_id));
+        assert!(matches!(remaining, Some(appearance::Action::RemoveItems(ids)) if ids == vec![clothing]));
+    }
+
+    #[test]
+    fn attachment_recovery_preserves_healthy_outfit_removal_and_temporary_object_detachment() {
+        let (mut world, mut object, item) = fixture();
+        world.inventory.add_items(vec![item.clone()]);
+        let (commands, remaining) = world.recover_attachment_removal(appearance::Action::Remove(item.id), true);
+        assert!(commands.is_empty());
+        assert!(matches!(remaining, Some(appearance::Action::Remove(id)) if id == item.id));
+        object.name_values = format!("AttachItemID STRING RW SV {}", object.full_id);
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![object.clone()],
+        });
+        let (commands, remaining) = world.recover_attachment_removal(appearance::Action::Remove(object.full_id), true);
+        assert!(remaining.is_none());
+        assert!(matches!(&commands[..], [NetCommand::DetachObject { local_id, .. }] if *local_id == object.local_id));
+    }
+
+    #[test]
+    fn attachment_recovery_never_addresses_a_foreign_attachment_child_or_world_object() {
+        for kind in 0..3 {
+            let (mut world, mut object, _) = fixture();
+            match kind {
+                0 => {
+                    let mut avatar = crate::demo::action_avatar(false);
+                    avatar.full_id = Uuid::from_u128(90_060);
+                    avatar.local_id += 1;
+                    object.parent_id = avatar.local_id;
+                    world.apply(NetEvent::ObjectUpdates {
+                        handle: 1,
+                        objects: vec![avatar],
+                    });
+                }
+                1 => {
+                    object.parent_id = object.local_id;
+                    object.local_id += 1;
+                    object.full_id = Uuid::from_u128(90_061);
+                }
+                _ => object.parent_id = 0,
+            }
+            world.apply(NetEvent::ObjectUpdates {
+                handle: 1,
+                objects: vec![object.clone()],
+            });
+            let (commands, remaining) = world.recover_attachment_removal(appearance::Action::Remove(object.full_id), true);
+            assert!(commands.is_empty(), "kind {kind}");
+            assert!(remaining.is_some());
+        }
+    }
+
+    fn restriction(world: &mut World, source: Uuid, message: &str) {
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Controller".to_owned(),
+            source_id: source,
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: message.to_owned(),
+        }));
+    }
+
+    #[test]
+    fn attachment_recovery_honors_rlva_point_and_source_locks_with_known_or_missing_records() {
+        for known in [false, true] {
+            for (rule, allowed) in [("", true), ("@addattach=n", true), ("@remattach=n", false), ("@detach=n", false)] {
+                let (mut world, object, item) = fixture();
+                if known {
+                    world.inventory.add_items(vec![item.clone()]);
+                    let cof = appearance::cof(&world.inventory).expect("COF");
+                    world.inventory.folders.get_mut(&cof).expect("COF").state = FetchState::Unknown;
+                }
+                world.rlva_configure(true);
+                if !rule.is_empty() {
+                    restriction(&mut world, object.full_id, rule);
+                }
+                let (commands, remaining) = world.recover_attachment_removal(appearance::Action::Remove(item.id), true);
+                assert!(remaining.is_none());
+                assert_eq!(
+                    world.rlva_allows_command(&commands[0], Uuid::nil()),
+                    allowed,
+                    "known {known}, rule {rule}"
+                );
+                if allowed {
+                    world.rlva_note_attachment_command(&commands[0], Uuid::nil(), Instant::now());
+                    assert!(world.rlva.watchdog.expected_detach.contains_key(&item.id));
+                    assert!(!world.rlva.watchdog.expected_detach.contains_key(&object.full_id));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn attachment_recovery_keeps_unknown_folder_and_scripted_nostrip_checks_conservative() {
+        for rule in ["", "@sharedunwear=n", "@unsharedunwear=n", "@detachthis=n", "@detachallthis=n"] {
+            let (mut world, object, item) = fixture();
+            world.rlva_configure(true);
+            if !rule.is_empty() {
+                restriction(&mut world, object.full_id, rule);
+            }
+            let (commands, _) = world.recover_attachment_removal(appearance::Action::Remove(item.id), true);
+            assert_eq!(world.rlva_allows_command(&commands[0], Uuid::nil()), rule.is_empty(), "{rule}");
+            assert!(
+                !world.rlva_allows_command(&commands[0], Uuid::from_u128(90_070)),
+                "unknown scripted nostrip: {rule}"
+            );
+        }
+    }
+
+    #[test]
+    fn attachment_recovery_waits_for_interactive_outfit_changes_and_preserves_temporary_detaches() {
+        let (mut world, mut object, item) = fixture();
+        let (commands, remaining) = world.recover_attachment_removal(appearance::Action::Remove(item.id), false);
+        assert!(commands.is_empty());
+        assert!(matches!(remaining, Some(appearance::Action::Remove(id)) if id == item.id));
+        object.name_values = format!("AttachItemID STRING RW SV {}", object.full_id);
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![object.clone()],
+        });
+        let (commands, remaining) = world.recover_attachment_removal(appearance::Action::Remove(object.full_id), false);
+        assert!(remaining.is_none());
+        assert!(matches!(&commands[..], [NetCommand::DetachObject { local_id, .. }] if *local_id == object.local_id));
     }
 }

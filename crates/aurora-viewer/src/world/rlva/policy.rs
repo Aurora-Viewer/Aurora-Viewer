@@ -268,7 +268,11 @@ impl World {
                 })
                 .and_then(|i| self.objects.get(i))
                 .is_some_and(|object| {
-                    self.rlva_temporary_attachment(object.full_id) == Some(object.key) && self.rlva_can_remove(object.full_id, actor)
+                    self.rlva_own_attachment_root(object.full_id) == Some(object.full_id)
+                        && self.rlva_can_remove(
+                            object.attachment_item_id().filter(|id| !id.is_nil()).unwrap_or(object.full_id),
+                            actor,
+                        )
                 }),
             // Rez is sent as ADD while RLVa is enabled. The watchdog replaces
             // only removable predecessors once the actual point is known.
