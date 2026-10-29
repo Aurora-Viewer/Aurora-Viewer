@@ -90,7 +90,7 @@ serde_path_to_error = "0.1.20"
 # Rust, no dependency, byte-identical to the reference C code; MIT /
 # Apache-2.0 with the reference's zlib notice
 bevy_mikktspace = "1.0.0"
-fancy-regex = "0.19.2"
+fancy-regex = "0.20.0"
 # Hashing of the maps the frame walks (fast_hash.rs); zlib licence, already
 # in the tree through hashbrown
 foldhash = "0.2.0"
