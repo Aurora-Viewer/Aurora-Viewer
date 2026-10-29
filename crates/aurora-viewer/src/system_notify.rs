@@ -213,13 +213,14 @@ mod freedesktop {
                 -1i32,
             );
             match proxy.call::<_, _, u32>("Notify", &args) {
-                Ok(server_id) => {
+                Ok(server_id) if actions => {
                     let mut p = pending.lock().unwrap_or_else(PoisonError::into_inner);
                     p.push_back((server_id, toast.id));
                     if p.len() > KEEP {
                         p.pop_front();
                     }
                 }
+                Ok(_) => {}
                 Err(e) => log::warn!("system notification not shown ({e})"),
             }
         }
@@ -263,7 +264,9 @@ mod freedesktop {
                     _ => continue,
                 };
                 let mut p = pending.lock().unwrap_or_else(PoisonError::into_inner);
-                let Some(at) = p.iter().position(|&(s, _)| s == server_id) else {
+                // the newest first: a restarted server numbers from 1 again,
+                // and the dead one's notices never close
+                let Some(at) = p.iter().rposition(|&(s, _)| s == server_id) else {
                     continue;
                 };
                 if clicked {
@@ -324,6 +327,7 @@ mod win {
                         shown.pop_front();
                     }
                 }
+                Ok(_) => {}
                 Err(e) => log::warn!("system notification not shown ({e})"),
             }
         }
