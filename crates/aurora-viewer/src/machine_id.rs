@@ -8,12 +8,15 @@
 //!   adapter address (LLUUID::getNodeID, lluuid.cpp:456 / 600), else 32 zeros.
 //!   On Windows LLMachineID folds the characters of the motherboard UUID
 //!   (Win32_ComputerSystemProduct), else of the Windows serial number
-//!   (Win32_OperatingSystem), into six bytes. Elsewhere it is the adapter
-//!   address, all zeros when none is found.
+//!   (Win32_OperatingSystem), into six bytes. On macOS it folds the bytes of
+//!   the platform serial number (IOPlatformSerialNumber) the same way, else
+//!   takes the adapter address. Elsewhere it is the adapter address, all
+//!   zeros when none is found.
 //! - `id0` is generateSerialNumber: on Windows the md5 hex of the C:\ volume
 //!   serial (llappviewerwin32.cpp:1597), empty when it cannot be read; on
-//!   Linux the md5 hex of the longest name in /dev/disk/by-uuid
-//!   (llappviewerlinux.cpp:556).
+//!   macOS the md5 hex of the platform serial number, empty without one
+//!   (llappviewermacosx.cpp:437); on Linux the md5 hex of the longest name
+//!   in /dev/disk/by-uuid (llappviewerlinux.cpp:556).
 //!
 //! Only the hashes leave this module, plus the raw adapter address the
 //! viewer statistics carry (`adapter_mac`, send_viewer_stats'
@@ -102,7 +105,13 @@ fn os_adapter_address() -> Option<[u8; 6]> {
 fn unavailable() -> LoginIds {
     LoginIds {
         mac: mac_hash(None),
-        id0: if cfg!(windows) { id0_windows(None) } else { id0_linux(&[]) },
+        id0: if cfg!(windows) {
+            id0_windows(None)
+        } else if cfg!(target_os = "macos") {
+            id0_mac(None)
+        } else {
+            id0_linux(&[])
+        },
     }
 }
 
@@ -135,6 +144,40 @@ fn fold_serial(units: &[u16]) -> [u8; 6] {
         }
     }
     id
+}
+
+/// getSerialNumber on macOS (llmachineid.cpp:350): the serial copied into a
+/// 64-byte C buffer as UTF-8, then folded like the Windows serials, byte by
+/// byte. A serial that does not fit, or an empty one, gives nothing.
+fn fold_mac_serial(serial: &str) -> Option<[u8; 6]> {
+    let bytes = serial.as_bytes();
+    if bytes.is_empty() || bytes.len() >= 64 {
+        return None;
+    }
+    Some(fold_serial(&bytes.iter().map(|&b| u16::from(b)).collect::<Vec<_>>()))
+}
+
+/// LLMachineID::init on macOS, then llHashedUniqueID: the folded serial,
+/// else the adapter address (the "legacy" id, zeros when getNodeID found
+/// none: the Legacy Viewer hashes its zero-filled buffer then).
+fn pick_mac(serial: Option<[u8; 6]>, node: Option<[u8; 6]>) -> ([u8; 6], &'static str) {
+    if let Some(id) = serial {
+        (id, "the platform serial number")
+    } else if let Some(id) = node {
+        (id, "the network adapter")
+    } else {
+        ([0; 6], "nothing (zeros)")
+    }
+}
+
+/// generateSerialNumber on macOS: md5 of the serial as an ASCII C string,
+/// empty when there is none or it is not ASCII (CFStringGetCString with
+/// kCFStringEncodingASCII fails).
+fn id0_mac(serial: Option<&str>) -> String {
+    match serial {
+        Some(s) if s.is_ascii() => md5_hex(s.as_bytes()),
+        _ => String::new(),
+    }
 }
 
 /// LLUUID::validate (lluuid.cpp:308) and the null / all-F refusal of
@@ -237,7 +280,27 @@ fn compute() -> (LoginIds, &'static str, &'static str) {
     )
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn compute() -> (LoginIds, &'static str, &'static str) {
+    let serial = mac_ids::platform_serial();
+    // LLMachineID::init reads the adapter too, kept when the serial is missing
+    let (unique, mac_source) = pick_mac(serial.as_deref().and_then(fold_mac_serial), unix_ids::adapter_address());
+    let id0_source = if serial.is_some() {
+        "the platform serial number"
+    } else {
+        "nothing (unavailable)"
+    };
+    (
+        LoginIds {
+            mac: mac_hash(Some(unique)),
+            id0: id0_mac(serial.as_deref()),
+        },
+        mac_source,
+        id0_source,
+    )
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn compute() -> (LoginIds, &'static str, &'static str) {
     // LLMachineID::init (#else): the adapter address, zeros without one
     let node = unix_ids::adapter_address();
@@ -491,16 +554,118 @@ mod unix_ids {
         }
     }
 
-    #[cfg(not(target_os = "linux"))]
+    /// LLUUID::getNodeID on macOS (lluuid.cpp, the getifaddrs version): the
+    /// first link-level address of an Ethernet interface (en0, Wi-Fi
+    /// included) that is not all zeros.
+    #[cfg(target_os = "macos")]
+    pub(super) fn adapter_address() -> Option<[u8; 6]> {
+        /// IFT_ETHER (net/if_types.h)
+        const IFT_ETHER: u8 = 0x6;
+        // SAFETY: getifaddrs hands a list that is only read, then freed once;
+        // a link-level entry is a sockaddr_dl whose address follows its name
+        // (LLADDR), six bytes for an Ethernet one (sdl_alen checked).
+        unsafe {
+            let mut list: *mut libc::ifaddrs = std::ptr::null_mut();
+            if libc::getifaddrs(&mut list) != 0 || list.is_null() {
+                return None;
+            }
+            let mut found = None;
+            let mut entry = list;
+            while !entry.is_null() {
+                let addr = (*entry).ifa_addr;
+                if !addr.is_null() && i32::from((*addr).sa_family) == libc::AF_LINK {
+                    let link = addr.cast::<libc::sockaddr_dl>();
+                    if (*link).sdl_type == IFT_ETHER && (*link).sdl_alen >= 6 {
+                        let data = (&raw const (*link).sdl_data).cast::<u8>().add(usize::from((*link).sdl_nlen));
+                        let mut mac = [0u8; 6];
+                        std::ptr::copy_nonoverlapping(data, mac.as_mut_ptr(), 6);
+                        if mac.iter().any(|&b| b != 0) {
+                            found = Some(mac);
+                            break;
+                        }
+                    }
+                }
+                entry = (*entry).ifa_next;
+            }
+            libc::freeifaddrs(list);
+            found
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     pub(super) fn adapter_address() -> Option<[u8; 6]> {
         None
     }
 
     /// The names of /dev/disk/by-uuid.
+    #[cfg(not(target_os = "macos"))]
     pub(super) fn disk_uuids() -> Vec<String> {
         std::fs::read_dir("/dev/disk/by-uuid/")
             .map(|dir| dir.filter_map(|entry| entry.ok()?.file_name().into_string().ok()).collect())
             .unwrap_or_default()
+    }
+}
+
+/// The platform serial number of the Mac, as the Legacy Viewer reads it
+/// (getSerialNumber, generateSerialNumber): IOPlatformSerialNumber of the
+/// IOPlatformExpertDevice service.
+#[cfg(target_os = "macos")]
+mod mac_ids {
+    use std::ffi::{CStr, c_char, c_void};
+
+    type CFTypeRef = *const c_void;
+    /// kCFStringEncodingUTF8
+    const UTF8: u32 = 0x0800_0100;
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        fn CFStringCreateWithCString(allocator: CFTypeRef, text: *const c_char, encoding: u32) -> CFTypeRef;
+        fn CFStringGetCString(string: CFTypeRef, buffer: *mut c_char, size: isize, encoding: u32) -> u8;
+        fn CFGetTypeID(object: CFTypeRef) -> usize;
+        fn CFStringGetTypeID() -> usize;
+        fn CFRelease(object: CFTypeRef);
+    }
+
+    #[link(name = "IOKit", kind = "framework")]
+    unsafe extern "C" {
+        fn IOServiceMatching(name: *const c_char) -> *mut c_void;
+        fn IOServiceGetMatchingService(main_port: u32, matching: *mut c_void) -> u32;
+        fn IORegistryEntryCreateCFProperty(entry: u32, key: CFTypeRef, allocator: CFTypeRef, options: u32) -> CFTypeRef;
+        fn IOObjectRelease(object: u32) -> i32;
+    }
+
+    /// The serial, None when the service, the property or a string is
+    /// missing.
+    pub(super) fn platform_serial() -> Option<String> {
+        // SAFETY: IOServiceGetMatchingService consumes the matching
+        // dictionary (null when IOServiceMatching failed: no service); every
+        // CF object created here is released once, the service too; the
+        // property is read as a string only after its type is checked, into
+        // a buffer of the size given.
+        unsafe {
+            // main port 0: kIOMainPortDefault (MACH_PORT_NULL)
+            let service = IOServiceGetMatchingService(0, IOServiceMatching(c"IOPlatformExpertDevice".as_ptr()));
+            if service == 0 {
+                return None;
+            }
+            let key = CFStringCreateWithCString(std::ptr::null(), c"IOPlatformSerialNumber".as_ptr(), UTF8);
+            let value = if key.is_null() {
+                std::ptr::null()
+            } else {
+                let value = IORegistryEntryCreateCFProperty(service, key, std::ptr::null(), 0);
+                CFRelease(key);
+                value
+            };
+            IOObjectRelease(service);
+            if value.is_null() {
+                return None;
+            }
+            let mut buffer = [0 as c_char; 256];
+            let read = CFGetTypeID(value) == CFStringGetTypeID()
+                && CFStringGetCString(value, buffer.as_mut_ptr(), buffer.len() as isize, UTF8) != 0;
+            CFRelease(value);
+            read.then(|| CStr::from_ptr(buffer.as_ptr()).to_string_lossy().into_owned())
+        }
     }
 }
 
@@ -580,10 +745,27 @@ mod tests {
     }
 
     #[test]
+    fn a_mac_folds_its_serial_else_takes_the_adapter_else_zeros() {
+        // the bytes of the serial, folded like the Windows serials
+        assert_eq!(fold_mac_serial("C02XK0ABJGH5"), Some(fold_serial(&wide("C02XK0ABJGH5"))));
+        assert_eq!(fold_mac_serial(""), None, "an empty serial is no serial");
+        assert_eq!(fold_mac_serial(&"A".repeat(64)), None, "the 64-byte buffer cannot hold it");
+        assert!(fold_mac_serial(&"A".repeat(63)).is_some());
+        let (serial, node) = ([1; 6], [2; 6]);
+        assert_eq!(pick_mac(Some(serial), Some(node)).0, serial);
+        assert_eq!(pick_mac(None, Some(node)).0, node);
+        assert_eq!(pick_mac(None, None).0, [0; 6]);
+        // id0: the md5 of the serial, empty without an ASCII one
+        assert_eq!(id0_mac(Some("C02XK0ABJGH5")), format!("{:x}", md5::compute("C02XK0ABJGH5")));
+        assert_eq!(id0_mac(None), "");
+        assert_eq!(id0_mac(Some("é")), "");
+    }
+
+    #[test]
     fn nothing_readable_gives_the_legacy_placeholders() {
         let ids = unavailable();
         assert_eq!(ids.mac, "00000000000000000000000000000000");
-        if cfg!(windows) {
+        if cfg!(any(windows, target_os = "macos")) {
             assert_eq!(ids.id0, "");
         }
     }
