@@ -40,8 +40,8 @@ pub use pills::{
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{
-    Modal, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation, navigation_wrapped,
-    paint_glyph, section_header, sort_caret, stat, surface,
+    Modal, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation, navigation_beside,
+    navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
 };
 pub(crate) use workspace::{
     finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island_shape, organization_drag_preview,
@@ -116,6 +116,14 @@ pub(crate) fn paint_elided(ui: &egui::Ui, text: &str, left_center: egui::Pos2, w
     let cut = galley.elided;
     ui.painter().galley(pos, galley, color);
     cut
+}
+
+/// From the middle of a name to the middle of the line under it, both
+/// painted by hand around a row's middle: `base` at the usual text size,
+/// more once a large text size makes the two lines taller, for the row to
+/// grow by the difference instead of overlapping them (#1227).
+pub(crate) fn two_lines_gap(ui: &egui::Ui, top: &egui::FontId, bottom: &egui::FontId, base: f32) -> f32 {
+    ui.fonts_mut(|f| (f.row_height(top) + f.row_height(bottom)) / 2.0 + 1.0).max(base)
 }
 
 fn elided_galley(ui: &egui::Ui, text: impl Into<egui::WidgetText>, max_width: f32) -> std::sync::Arc<egui::Galley> {
@@ -2887,6 +2895,12 @@ pub fn square_picture(ui: &egui::Ui, rect: egui::Rect, t: &egui::TextureHandle) 
         .paint_at(ui, rect);
 }
 
+/// The initials stand for a picture: they keep to its tile, `share` of its
+/// height, whatever the text size (which scales every font).
+fn initials_font(ui: &egui::Ui, rect: egui::Rect, share: f32) -> egui::FontId {
+    egui::FontId::proportional(rect.height() * share / super::fonts::scale(ui.ctx()))
+}
+
 /// `avatar_picture` in a disc: the residents of the Conversations window,
 /// round like the pictures of the name plates (docs/BRANDING.md: only these
 /// and the name plates are round).
@@ -2905,7 +2919,7 @@ pub fn avatar_disc(ui: &egui::Ui, p: &Palette, rect: egui::Rect, pic: Option<&eg
         None => {
             ui.painter().circle_filled(rect.center(), radius, p.raised);
             let color = if dim { p.muted_dim } else { p.violet_pale };
-            let font = egui::FontId::proportional(rect.height() * 0.42);
+            let font = initials_font(ui, rect, 0.42);
             ui.painter()
                 .text(rect.center(), egui::Align2::CENTER_CENTER, initials(name), font, color);
         }
@@ -2925,7 +2939,7 @@ pub fn avatar_picture(ui: &egui::Ui, p: &Palette, rect: egui::Rect, pic: Option<
         None => {
             ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
             let color = if dim { p.muted_dim } else { p.violet_pale };
-            let font = egui::FontId::proportional(rect.height() * 0.45);
+            let font = initials_font(ui, rect, 0.45);
             ui.painter()
                 .text(rect.center(), egui::Align2::CENTER_CENTER, initials(name), font, color);
         }

@@ -121,6 +121,31 @@ impl App {
             }
             return;
         }
+        if mode == "preview-controls-drop" {
+            // The texture inspector's image dragged onto the material's empty metallic-roughness map (#1279).
+            let [texture, _, material, _] = crate::demo::texture_library::preview_items();
+            let source = self
+                .egui_ctx
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("resource_texture_preview", texture))));
+            let target = self.egui_ctx.data(|d| {
+                d.get_temp::<(Option<Uuid>, Option<egui::TextureId>, egui::Rect)>(egui::Id::unique((
+                    "resource_material_map",
+                    material,
+                    2usize,
+                )))
+            });
+            if let (Some(source), Some((_, _, target))) = (source, target) {
+                let (source, target) = (source.center(), target.center());
+                match self.frame_count {
+                    760 => raw.events.extend([egui::Event::PointerMoved(source), button(source, true)]),
+                    761 => raw.events.push(egui::Event::PointerMoved(source + egui::vec2(12.0, 0.0))),
+                    762..=764 => raw.events.push(egui::Event::PointerMoved(target)),
+                    765 => raw.events.push(button(target, false)),
+                    _ => {}
+                }
+            }
+            return;
+        }
         if mode.starts_with("material-preview") {
             let item = self
                 .egui_ctx

@@ -19,12 +19,28 @@ Une ligne vide commence un nouveau paragraphe.
   Un seul lien par actualité.
 - 20 actualités au plus sont affichées ; le titre est coupé à 120
   caractères, le texte à 600.
-- Chaque langue a son fichier (fr.md, en.md) : ajoute l'actualité dans les
-  deux. Une langue qui n'a pas de fichier affiche en.md.
+- Chaque langue a son fichier (fr.md, en.md, ja.md) : ajoute l'actualité
+  dans chacun. Une langue qui n'a pas de fichier affiche en.md.
 - Mode d'emploi complet : HUMANS.md, « Publier une actualité ».
 -->
 
 # Actualités d'Aurora Viewer
+
+## 2026-10-29 — Aurora 0.8.2 parle japonais, 日本語
+Aurora existe désormais en japonais : choisissez 日本語 dans Préférences › Interface › Langue, ou laissez la langue du système le choisir sur un Windows japonais. Chaque message est traduit avec les termes japonais officiels de Second Life, l'interface s'affiche avec des polices japonaises et les dates se lisent à la japonaise.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.2)
+
+## 2026-10-29 — Terrain PBR, et l'interrupteur HDR
+Les régions dont le sol utilise des matériaux PBR s'affichent désormais avec eux au lieu d'un gris uni, comme dans le Legacy Viewer, et les gérants de domaine voient un changement de revêtement sur le terrain avant de l'appliquer. Préférences › Graphismes › Image reçoit aussi l'interrupteur HDR et émissif du Legacy Viewer, activé par défaut, pour qui préfère l'ancien rendu.
+
+## 2026-10-29 — Chat et plaques de nom
+Ctrl+Maj+Entrée commence une nouvelle ligne dans un message, et les paragraphes collés gardent leur forme. Les erreurs de script de vos objets s'affichent en rouge dans le chat local au lieu d'ouvrir une fenêtre. Trois points sautillent sur la photo d'un résident qui vous écrit, les plaques de vos amis prennent la couleur des amis, et un clic droit sur votre solde L$ le masque pendant un stream.
+
+## 2026-10-29 — Pour les créateurs et les tenues
+Les permissions par défaut, en bas du menu Nouveau de l'inventaire, s'appliquent à ce que vous créez et importez. Glissez vos calques de tatouage, d'alpha et universels dans l'ordre voulu, déposez des textures de l'inventaire sur les vignettes des éditeurs d'apparence et de matériaux, et agrandissez les poignées d'édition. Les envois de textures 2K refonctionnent, et Apparence › Portée liste ce qu'un script vous a attaché pour un temps.
+
+## 2026-10-29 — Aussi dans la 0.8.2
+Le texte peut maintenant doubler de taille, dans Préférences › Apparence. Maintenez la flèche Retour de la barre du haut pour lister tous les lieux de la session. La disposition des fenêtres est enregistrée peu après chaque changement, même si le viewer plante ; les tenues enregistrées se suppriment de nouveau, les véhicules traversent les collisions en douceur, les clickers dans un corps mesh répondent à chaque clic, et le vent ne grésille plus. Merci à circuskid, notre nouveau contributeur : sous Linux, Aurora ne passe plus au premier plan à chaque message.
 
 ## 2026-10-27 — Aurora 0.8.1 : les avatars sortent plus vite du nuage
 Les téléchargements suivent votre connexion : dans une région chargée, les avatars sortent du nuage environ trois fois plus vite, déjà texturés, et la région se charge deux fois plus vite avec un cache vide. Votre tenue arrive complète : chaque attachement est porté à la connexion et à chaque changement de tenue.

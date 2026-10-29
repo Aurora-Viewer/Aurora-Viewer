@@ -293,6 +293,7 @@ impl Editor {
         let width = (ui.available_width() - side - ui.spacing().item_spacing.x).max(0.0);
         ui.horizontal_top(|ui| {
             let response = widgets::picture(ui, p, texture, Vec2::splat(side), "photo-filled", "");
+            self.drop_map(ui, p, response.rect, world, value, slot);
             ui.ctx().data_mut(|data| {
                 data.insert_temp(
                     egui::Id::unique(("resource_material_map", item.id, slot)),
@@ -386,6 +387,41 @@ impl Editor {
             });
         });
     }
+    /// LLTextureCtrl::handleDragAndDrop: a texture dragged from the inventory
+    /// onto a map's swatch replaces that map, through the same filter as the
+    /// picker. Disabled swatches (read-only material, save in flight) refuse it.
+    fn drop_map(&mut self, ui: &egui::Ui, p: &Palette, rect: egui::Rect, world: &World, value: &mut PbrMaterial, slot: usize) {
+        if !ui.rect_contains_pointer(rect) {
+            return;
+        }
+        let Some(cargo) = egui::DragAndDrop::payload::<InvDrag>(ui.ctx()) else {
+            return;
+        };
+        let texture = world.inventory.items.get(&cargo.0).filter(|it| is_texture(it));
+        let allowed = ui.is_enabled() && texture.is_some_and(map_source);
+        crate::ui::inventory::drag::feedback(
+            ui.ctx(),
+            if allowed {
+                egui::CursorIcon::Copy
+            } else {
+                egui::CursorIcon::NotAllowed
+            },
+        );
+        crate::ui::inventory::tree::drop_outline(ui, p, rect, allowed);
+        if !ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary)) {
+            return;
+        }
+        egui::DragAndDrop::clear_payload(ui.ctx());
+        match texture {
+            Some(item) if allowed => {
+                *map_mut(value, slot) = Some(item.asset_id);
+                self.message.clear();
+            }
+            // TooltipTextureRestrictedDrop
+            Some(_) if ui.is_enabled() => self.message = aurora_i18n::tr!("resource-preview-map-rights").into(),
+            _ => {}
+        }
+    }
     fn open_map(&mut self, slot: usize, map: Option<Uuid>) {
         self.picker.open_with_defaults(map_label(slot), map.unwrap_or_default(), None, true);
         self.map_slot = Some(slot);
@@ -401,14 +437,9 @@ impl Editor {
             && let Some(slot) = self.map_slot.take()
             && self.saving.is_none()
         {
-            // LLMaterialEditor::postBuild filters replacement maps by COPY|TRANSFER.
             let allowed = asset.is_nil()
                 || [aurora_prim::te::BLANK_TEXTURE, aurora_prim::te::TRANSPARENT_TEXTURE].contains(&asset)
-                || world.inventory.items.values().any(|it| {
-                    it.asset_id == asset
-                        && matches!(it.asset_type, 0 | 15)
-                        && it.owner_mask & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER
-                });
+                || world.inventory.items.values().any(|it| it.asset_id == asset && map_source(it));
             if allowed {
                 let mut value = (*self.draft).clone();
                 *map_mut(&mut value, slot) = (!asset.is_nil()).then_some(asset);
@@ -433,6 +464,14 @@ impl Editor {
 }
 pub(super) fn can_edit(world: &World, item: &aurora_net::inventory::InvItem) -> bool {
     item.owner == world.agent_id && !item.group_owned && item.owner_mask & rules::MODIFY != 0 && !rules::library(&world.inventory, item.id)
+}
+fn is_texture(item: &aurora_net::inventory::InvItem) -> bool {
+    matches!(item.asset_type, 0 | 15)
+}
+/// LLMaterialEditor::postBuild filters replacement maps by COPY|TRANSFER,
+/// for the picker and for drops alike.
+fn map_source(item: &aurora_net::inventory::InvItem) -> bool {
+    is_texture(item) && item.owner_mask & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER
 }
 fn scalar(ui: &mut egui::Ui, label: &str, value: &mut f32) {
     ui.label(label);
@@ -491,6 +530,20 @@ mod tests {
         assert!(!first.dirty());
         assert_eq!(first.asset, Uuid::from_u128(4));
         assert_eq!(source.roughness_factor, 1.0);
+    }
+    #[test]
+    fn only_fully_permissive_textures_fill_a_map() {
+        let texture = |asset_type, owner_mask| aurora_net::inventory::InvItem {
+            asset_type,
+            owner_mask,
+            ..Default::default()
+        };
+        let full = rules::COPY | rules::MODIFY | rules::TRANSFER;
+        assert!(map_source(&texture(0, full)));
+        assert!(map_source(&texture(0, rules::COPY | rules::TRANSFER)));
+        assert!(!map_source(&texture(0, rules::COPY | rules::MODIFY)));
+        assert!(!map_source(&texture(0, rules::MODIFY | rules::TRANSFER)));
+        assert!(!map_source(&texture(7, full)));
     }
     #[test]
     fn a_map_upload_finishing_during_save_is_kept_as_a_new_draft() {

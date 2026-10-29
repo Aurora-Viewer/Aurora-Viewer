@@ -32,6 +32,12 @@ clothing and visibility masks, used by the local wearable preview.
 The Blender extension bundles the same `avatar_skeleton.xml` and retains its
 provenance in `blender/aurora_live/SKELETON-NOTICE.txt`.
 
+The terrain alpha ramp (`crates/aurora-render/src/terrain_alpha_ramp.r8`) is the
+decoded 256-square linear grayscale image from the Legacy Viewer's
+`indra/newview/skins/default/textures/alpha_gradient_2d.j2c` (source revision
+`003e22b6`), Copyright Linden Research, Inc., originally LGPL 2.1 and distributed
+here under GPL-3.0-or-later as described above. Rows are retained top-down.
+
 The RLVa command parser, restriction rules, inventory conventions and camera
 behaviors in `crates/aurora-viewer/src/world/rlva/` and `world/rlva.rs` follow
 the Legacy Viewer's `indra/newview/rlv*.cpp` and `rlv*.h`: Copyright ©

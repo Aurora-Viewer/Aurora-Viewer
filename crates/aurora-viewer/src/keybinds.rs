@@ -376,6 +376,30 @@ pub enum Action {
     /// "Snapshot to Disk" (Firestorm Ctrl+`): a photo with the settings of
     /// the photo window, without it.
     PhotoToDisk,
+    /// World › Environment's fixed times of day and Use Shared Environment
+    /// (menu_viewer.xml: `World.EnvSettings` sunrise / noon / sunset /
+    /// midnight / region, Ctrl+Shift+U / Y / N / X / J).
+    EnvSunrise,
+    EnvMidday,
+    EnvSunset,
+    EnvMidnight,
+    EnvShared,
+}
+
+impl Action {
+    /// The local time of day an environment shortcut picks
+    /// (`Panels::time_of_day`: 0 the shared environment, 1 sunrise, 2 noon,
+    /// 3 sunset, 4 midnight).
+    pub fn time_of_day(self) -> Option<u8> {
+        match self {
+            Action::EnvShared => Some(0),
+            Action::EnvSunrise => Some(1),
+            Action::EnvMidday => Some(2),
+            Action::EnvSunset => Some(3),
+            Action::EnvMidnight => Some(4),
+            _ => None,
+        }
+    }
 }
 
 /// Held actions follow the key state; the others trigger on press.
@@ -493,6 +517,16 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Rebake, aurora_i18n::tr!("ui-context-rebake")),
                     (Action::StopAnimations, aurora_i18n::tr!("avatar-health-stop-animations")),
                     (Action::RefreshAttachments, aurora_i18n::tr!("avatar-health-refresh-attachments")),
+                ],
+            ),
+            (
+                aurora_i18n::tr!("common-environment"),
+                vec![
+                    (Action::EnvSunrise, aurora_i18n::tr!("ui-bars-sunrise")),
+                    (Action::EnvMidday, aurora_i18n::tr!("common-midday")),
+                    (Action::EnvSunset, aurora_i18n::tr!("ui-bars-sunset")),
+                    (Action::EnvMidnight, aurora_i18n::tr!("common-midnight")),
+                    (Action::EnvShared, aurora_i18n::tr!("ui-bars-use-shared-environments")),
                 ],
             ),
             (
@@ -781,6 +815,12 @@ impl KeyBindings {
             (Action::RefreshAttachments, [kalt(K::KeyR, false, true), None]),
             (Action::PhotoWindow, [kmod(K::KeyS, true, true), None]),
             (Action::PhotoToDisk, [kmod(K::Backquote, true, false), None]),
+            // menu_viewer.xml: World › Environment
+            (Action::EnvSunrise, [kmod(K::KeyU, true, true), None]),
+            (Action::EnvMidday, [kmod(K::KeyY, true, true), None]),
+            (Action::EnvSunset, [kmod(K::KeyN, true, true), None]),
+            (Action::EnvMidnight, [kmod(K::KeyX, true, true), None]),
+            (Action::EnvShared, [kmod(K::KeyJ, true, true), None]),
         ];
         KeyBindings { map: defaults }
     }
@@ -1571,6 +1611,34 @@ mod tests {
         }
         kb.set(Action::LensZoomIn, 0, None);
         assert_eq!(kb.sanitized().get(Action::LensZoomIn)[0], None);
+    }
+
+    /// World › Environment's shortcuts (menu_viewer.xml): Ctrl+Shift+U / Y /
+    /// N / X / J, added to older settings files and rebindable.
+    #[test]
+    fn environment_shortcuts_pick_the_legacy_times_of_day() {
+        let mut kb = KeyBindings::us_places([KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD]);
+        kb.map.retain(|(a, _)| a.time_of_day().is_none());
+        let mut kb = kb.sanitized();
+        let ctrl_shift = Mods {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        };
+        for (code, action, time) in [
+            (KeyCode::KeyU, Action::EnvSunrise, 1),
+            (KeyCode::KeyY, Action::EnvMidday, 2),
+            (KeyCode::KeyN, Action::EnvSunset, 3),
+            (KeyCode::KeyX, Action::EnvMidnight, 4),
+            (KeyCode::KeyJ, Action::EnvShared, 0),
+        ] {
+            assert_eq!(kb.triggered(&Input::key(code), ctrl_shift), Some(action), "{code:?}");
+            assert_eq!(kb.users(&kb.get(action)[0].clone().expect("default binding")), [action]);
+            assert_eq!(action.time_of_day(), Some(time));
+        }
+        assert_eq!(Action::Fly.time_of_day(), None);
+        kb.set(Action::EnvMidnight, 0, None);
+        assert_eq!(kb.sanitized().get(Action::EnvMidnight)[0], None);
     }
 
     #[test]

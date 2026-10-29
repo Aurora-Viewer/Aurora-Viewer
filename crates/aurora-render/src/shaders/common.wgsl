@@ -100,7 +100,18 @@ struct Frame {
     spot_lights: vec4<i32>,
     spot_fade: vec4<f32>,
     contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque enough cast it
+    features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes)
 };
+
+// frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
+// no emissive target (RenderEnableEmissiveBuffer, HAS_EMISSIVE): the PBR
+// faces it draws deferred (opaque, alpha-masked, terrain) lose their
+// emissive; blended and HUD faces keep it (pbralphaF, pbropaqueF IS_HUD)
+const FEATURE_NO_EMISSIVE: u32 = 1u;
+
+fn deferred_emissive_off() -> bool {
+    return (frame.features.x & FEATURE_NO_EMISSIVE) != 0u;
+}
 
 struct DrawRecord {
     model: mat4x4<f32>,
@@ -131,7 +142,7 @@ const FLAG_ALPHA_BLEND: u32 = 4u;
 const FLAG_PBR: u32 = 8u;
 const FLAG_HIGHLIGHT: u32 = 16u;
 const FLAG_PLANAR: u32 = 32u;
-const FLAG_UNLIT_SHADOWLESS: u32 = 64u;
+const FLAG_TERRAIN: u32 = 64u;
 const FLAG_SKINNED: u32 = 128u;
 const FLAG_LEGACY_MAT: u32 = 256u;
 const FLAG_EMISSIVE_MASK: u32 = 512u;

@@ -259,7 +259,13 @@ impl<'a> Grouping<'a> {
             || match self.prev {
                 Some(p) => {
                     p.source != line.source
-                        || (p.kind == crate::world::ChatKind::Own) != (line.kind == crate::world::ChatKind::Own)
+                        || p.kind.is_own() != line.kind.is_own()
+                        // the SHOUTS / WHISPERS tag is the header's: a line
+                        // said at another volume opens its own (#1323)
+                        || p.kind.volume() != line.kind.volume()
+                        // an object's script errors under their own warning
+                        // sign, apart from what it says (#1263)
+                        || super::object_row::script_error(p) != super::object_row::script_error(line)
                         || p.origin != line.origin
                         || p.from != line.from
                         || line.time.duration_since(p.time).map(|d| d.as_secs() > gap).unwrap_or(true)
@@ -709,6 +715,7 @@ impl View {
 mod tests {
     use super::*;
     use crate::world::{ChatKind, Origin};
+    use aurora_net::ChatType;
     use std::time::UNIX_EPOCH;
 
     fn line(from: &str, text: &str, secs: u64) -> ChatLine {
@@ -765,6 +772,21 @@ mod tests {
         let mut g = Grouping::new(Slt::of(old.time));
         assert!(g.look(&old).header);
         assert!(g.look(&new).header);
+        // an object's script errors open a group of their own, under their
+        // warning sign, and what it says next opens the next (#1263)
+        let object = |text: &str, secs, kind| ChatLine {
+            kind: ChatKind::Object(kind),
+            ..line("Demo HUD", text, secs)
+        };
+        let said = [
+            object("ready", 0, aurora_net::ChatType::OwnerSay),
+            object("error", 1, aurora_net::ChatType::Debug),
+            object("error again", 2, aurora_net::ChatType::Debug),
+            object("ready", 3, aurora_net::ChatType::OwnerSay),
+        ];
+        let mut g = Grouping::new(Slt::of(said[0].time));
+        let headers: Vec<bool> = said.iter().map(|l| g.look(l).header).collect();
+        assert_eq!(headers, [true, true, false, true]);
     }
 
     /// Aurora's workspace groups an author's messages within seven
@@ -788,6 +810,25 @@ mod tests {
         let mut g = Grouping::new(today);
         let classic: Vec<bool> = lines.iter().map(|l| g.look(l).header).collect();
         assert_eq!(classic, [true, true, false, false, true]);
+    }
+
+    /// A whisper, then a shout, then a normal line of ours: each under its
+    /// own header, which carries its tag (#1323).
+    #[test]
+    fn a_line_at_another_volume_opens_a_group() {
+        let mut lines = [
+            line("Me", "psst", 0),
+            line("Me", "HEY", 10),
+            line("Me", "hi", 20),
+            line("Me", "again", 30),
+        ];
+        lines[0].kind = ChatKind::Own(ChatType::Whisper);
+        lines[1].kind = ChatKind::Own(ChatType::Shout);
+        lines[2].kind = ChatKind::OWN;
+        lines[3].kind = ChatKind::OWN;
+        let mut g = Grouping::with(Slt::of(lines[0].time), Layout::Aurora);
+        let looks: Vec<bool> = lines.iter().map(|l| g.look(l).header).collect();
+        assert_eq!(looks, [true, true, true, false]);
     }
 
     /// The first line unread when the conversation opened carries "New",

@@ -75,6 +75,15 @@ impl TexAnimParams {
         }
     }
 
+    /// Repeats of a face showing one frame of the grid, the smaller of its
+    /// two (1 / grid size): the frame grid replaces the texture entry's
+    /// repeats (`frame_from_counter`). None for ROTATE, SCALE and an
+    /// animation without a grid, which keep the texture entry's repeats.
+    pub fn frame_repeats(&self) -> Option<f32> {
+        (!self.has(mode::ROTATE) && !self.has(mode::SCALE) && self.size_x != 0 && self.size_y != 0)
+            .then(|| 1.0 / self.size_x.max(self.size_y) as f32)
+    }
+
     /// Counter range of one cycle (ping-pong goes there and back).
     pub fn full_length(&self) -> f32 {
         let n = self.num_frames();
@@ -257,6 +266,9 @@ pub struct RecordAnim {
     /// ROTATE: repeats s, t, offsets s, t; SCALE: offsets s, t, rotation;
     /// otherwise: rotation and repeats s, t (1 / grid size with a grid).
     pub constants: [f32; 4],
+    /// Repeats the face shows its texture with, for texture streaming
+    /// ([`TexAnimParams::frame_repeats`]); None: the texture entry's.
+    pub frame_repeats: Option<f32>,
 }
 
 /// Record fields of an animation whose counter is `phase + (t - start) * rate`
@@ -286,6 +298,7 @@ pub fn record_anim(p: &TexAnimParams, start_ms: u32, phase: f32, te: &TexXform) 
         packed: p.mode as u32 | (p.size_x as u32) << 8 | (p.size_y as u32) << 16,
         anim: [origin, p.start.to_bits(), p.length.to_bits(), p.rate.to_bits()],
         constants,
+        frame_repeats: p.frame_repeats(),
     })
 }
 
@@ -557,6 +570,25 @@ mod tests {
         assert_eq!(r(ON | mode::SCALE, 1, 1), [0.25, -0.25, 0.5, 0.0]);
         assert_eq!(r(ON, 4, 2), [0.5, 0.25, 0.5, 0.0]);
         assert_eq!(r(ON | mode::SMOOTH, 0, 0), [0.5, 2.0, 3.0, 0.0]);
+    }
+
+    #[test]
+    fn frame_repeats_follow_the_grid() {
+        let te = TexXform::default();
+        let r = |mode, sx, sy| {
+            record_anim(&params(mode, sx, sy, 0.0, 1.0, 1.0), 0, 0.0, &te)
+                .expect("on")
+                .frame_repeats
+        };
+        // a 4 x 4 flipbook shows a quarter of its texture each way
+        assert_eq!(r(ON | LOOP, 4, 4), Some(0.25));
+        // the finer side of a non-square grid
+        assert_eq!(r(ON, 8, 2), Some(0.125));
+        assert_eq!(r(ON | mode::SMOOTH, 1, 4), Some(0.25));
+        // the texture entry's repeats stay
+        assert_eq!(r(ON | mode::ROTATE, 4, 4), None);
+        assert_eq!(r(ON | mode::SCALE, 4, 4), None);
+        assert_eq!(r(ON | mode::SMOOTH, 0, 0), None);
     }
 
     #[test]

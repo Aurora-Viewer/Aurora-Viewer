@@ -308,6 +308,7 @@ fn rlva_privacy_strict_exceptions_landmarks_profile_locations_and_nearby_release
         parent: world.inventory.root,
         kind: aurora_net::inventory::operations::NewItem::Landmark,
         name: "private".into(),
+        permissions: None,
     };
     assert!(!world.rlva_allows_command(&landmark, Uuid::nil()));
     let mut dialog = crate::ui::landmark_create::CreateLandmarkUi::default();

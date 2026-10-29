@@ -3,6 +3,7 @@
 
 pub mod anchors;
 pub mod anim;
+mod anim_box;
 pub mod animesh;
 mod auto_hover;
 pub mod avatar;
@@ -18,6 +19,7 @@ pub mod drawn;
 pub mod fetch_priority;
 mod flexible;
 mod foot_scope;
+mod foot_support;
 pub mod geometry_need;
 mod grounding;
 mod hand_ik;
@@ -62,11 +64,13 @@ mod world_overlays;
 pub use sync_plan::LodInfo;
 pub mod sync_sets;
 pub mod tangents;
+mod terrain_surface;
 pub mod texture_budget;
 pub(crate) mod texture_cache;
 pub mod texture_importance;
 mod texture_load;
 mod texture_ui;
+use terrain_surface::SurfaceGpu;
 pub mod textures;
 pub mod water;
 mod water_contacts;
@@ -323,8 +327,9 @@ pub struct FaceDraw {
     /// Legacy material alpha mode (`legacy_mat::alpha_mode`).
     pub legacy_alpha: Option<u8>,
     pub two_sided: bool,
-    /// The smaller of the texture entry's two scales: every texture of the
-    /// face is loaded for it (`texture_importance::per_repeats`).
+    /// The smaller of the texture entry's two scales, or of the frame grid of
+    /// its texture animation: every texture of the face is loaded for it
+    /// (`texture_importance::per_repeats`).
     pub repeats: f32,
     /// TE glow > 0: also drawn in the glow pass.
     pub glow: bool,
@@ -646,8 +651,8 @@ struct TerrainChunk {
 
 struct RegionGpu {
     chunks: HashMap<u32, TerrainChunk>,
-    detail_slots: [u32; 4],
-    detail_ids: [Uuid; 4],
+    surface: SurfaceGpu,
+    offset: Vec3,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -725,6 +730,7 @@ pub struct Scene {
     auto_hover: auto_hover::AutoHover,
     remote_soles: auto_hover::RemoteSoles,
     foot_scope: foot_scope::Scope,
+    foot_support: foot_support::FootSupport,
     sculpt_watch: Option<sculpt_watch::SculptWatch>,
     /// Optional local-only diagnostic toggle, exposed in Hover Height by
     /// AURORA_TEST_NEUTRAL_POSE, initially off. Keep evaluating the real motion controller
@@ -994,6 +1000,11 @@ pub struct Scene {
     pub parts: crate::frame_profile::Parts,
     /// Rest skeleton (shape + joint offsets of worn meshes) per skeleton owner.
     skeletons: FastMap<Uuid, AvatarSkeleton>,
+    /// Rigged extents per joint of each animated object (anim_box.rs).
+    rig_extents: FastMap<Uuid, anim_box::RigExtents>,
+    /// This frame's animated box of each animated object, which the
+    /// detail level of its rigged meshes is judged by (anim_box.rs).
+    anim_boxes: FastMap<Uuid, anim_box::AnimBox>,
     /// Skeleton owner of each object listed in a cached skeleton's members.
     skeleton_member_of: FastMap<usize, Uuid>,
     /// Mesh metadata generation the cached skeletons were checked against.
@@ -1508,6 +1519,8 @@ impl Scene {
             geom_waiting_spare: Vec::new(),
             parts: Default::default(),
             skeletons: Default::default(),
+            rig_extents: Default::default(),
+            anim_boxes: Default::default(),
             skeleton_member_of: Default::default(),
             skeleton_meta_gen: 0,
             motions: Default::default(),
@@ -1517,6 +1530,7 @@ impl Scene {
             auto_hover: Default::default(),
             remote_soles: Default::default(),
             foot_scope: foot_scope::Scope::from_environment(),
+            foot_support: Default::default(),
             neutral_pose_test: (std::env::var("AURORA_TEST_NEUTRAL_POSE").as_deref() == Ok("1")).then_some(false),
         }
     }
@@ -2002,6 +2016,7 @@ impl Scene {
     pub fn clear(&mut self, renderer: &mut Renderer) {
         self.remote_soles = Default::default();
         self.foot_scope.clear();
+        self.release_foot_support();
         self.flexibles.clear();
         let mut gpus = std::mem::take(&mut self.gpu);
         for (idx, g) in gpus.iter_mut().enumerate() {
@@ -2021,9 +2036,7 @@ impl Scene {
                 renderer.free_mesh(c.alloc);
                 renderer.records.free(c.record);
             }
-            for id in r.detail_ids {
-                self.textures.release(&id);
-            }
+            r.surface.free(renderer, &mut self.textures);
         }
         self.water.clear(renderer);
         self.banlines.clear(renderer);
@@ -2617,6 +2630,8 @@ impl Scene {
         let t_part = self.parts.lap(Part::SyncList, t0);
         step(&mut slow, "list");
 
+        // (the animated objects' boxes first: their rigged meshes' level)
+        self.update_anim_boxes(world, now);
         // placement in parallel, one level of the parent chains at a time
         self.xf_cache.next_frame(n);
         let mut plans: Vec<(usize, Plan)> = Vec::with_capacity(list.items.len());
@@ -3473,6 +3488,7 @@ impl Scene {
         let old_tex: Vec<Uuid> = std::mem::take(&mut g.tex_ids);
         g.material_ids.clear();
         let wearer = Self::wearer_avatar(world, idx);
+        let bake_wearer = Self::bake_wearer(world, idx, g.hud);
         let rigged_owner = match g.geom {
             Some(GeomKey::Mesh { id, .. }) => match self.meshes.meta(&id).and_then(|m| m.skin).filter(|s| !s.joint_names.is_empty()) {
                 Some(skin) => {
@@ -3520,8 +3536,9 @@ impl Scene {
             let mut aux_tex = [Uuid::nil(); 3];
             // texture streaming: the face's repeats, the texture entry's
             // smaller scale for every map (LLViewerTextureList::
-            // updateImageDecodePriority: glTF transforms not counted)
-            let repeats = tf.scale_s.abs().min(tf.scale_t.abs());
+            // updateImageDecodePriority: glTF transforms not counted), or
+            // the frame grid of a texture animation (below)
+            let mut repeats = tf.scale_s.abs().min(tf.scale_t.abs());
             let mut two_sided = false;
             // GLTF material?
             let mut base_tex = tf.texture;
@@ -3634,11 +3651,14 @@ impl Scene {
                     legacy_alpha = Some(lm.diffuse_alpha_mode);
                 }
             }
-            // texture (with bake-on-mesh redirection)
+            // texture (with bake-on-mesh redirection); without a bake wearer
+            // the placeholder stays, an ordinary texture asset
             let mut source = TexSource::Asset;
-            if let Some((bake_te, bake)) = avatar::bake_slot_for(&base_tex) {
-                match wearer.and_then(|(aid, a)| self.shown_bake(renderer, world, a, bake_te).map(|t| (aid, t))) {
-                    Some((aid, tid)) => {
+            if let Some((bake_te, bake)) = avatar::bake_slot_for(&base_tex)
+                && let Some((aid, a)) = bake_wearer
+            {
+                match self.shown_bake(renderer, world, a, bake_te) {
+                    Some(tid) => {
                         base_tex = tid;
                         source = world.bake_source(aid, bake, tid);
                     }
@@ -3675,6 +3695,15 @@ impl Scene {
                 rec.flags[3] = a.packed;
                 rec.anim = a.anim;
                 rec.anim_xf = a.constants;
+                // A flipbook shows one frame of its texture at a time: it is
+                // loaded for the frame's size on screen (#1229). The Legacy
+                // Viewer does so only at rate 0, where the frame goes into the
+                // texture entry's scale (LLVOVolume::animateTextures); a running
+                // animation keeps the entry's scale there, and a 4 x 4 grid
+                // loads four times too coarse each way.
+                if let Some(r) = a.frame_repeats {
+                    repeats = r;
+                }
             }
             rec.set_hud_zoom(hud_zoom);
             rec.set_anchor(anchor.map(|a| a.matrix));
@@ -3725,6 +3754,16 @@ impl Scene {
             idx = world.objects.parent_of(o)?;
         }
         None
+    }
+
+    /// The avatar whose bakes replace the "use baked" placeholders of object
+    /// `idx`: its wearer, unless it is a HUD or an animated object, whose
+    /// skeleton is its own. On the ground, on a HUD or on an animesh the
+    /// placeholder is drawn as the texture asset it is
+    /// (LLViewerObject::getBakedTextureForMagicId, llviewerobject.cpp).
+    fn bake_wearer(world: &World, idx: usize, hud: bool) -> Option<(Uuid, usize)> {
+        let wearer = Self::wearer_avatar(world, idx)?;
+        (!hud && Self::skeleton_owner(world, idx) == Some(wearer)).then_some(wearer)
     }
 
     /// LLVOAvatarSelf::updateAttachmentVisibility uses the root attachment's
@@ -4020,99 +4059,6 @@ impl Scene {
 
     // ------------------------------------------------------------ terrain & water
 
-    fn sync_terrain(&mut self, renderer: &mut Renderer, world: &mut World) {
-        let handles: Vec<u64> = world.regions.keys().copied().collect();
-        // drop GPU data of vanished regions
-        let stale: Vec<u64> = self.regions.keys().filter(|h| !world.regions.contains_key(h)).copied().collect();
-        for h in stale {
-            if let Some(r) = self.regions.remove(&h) {
-                for (_, c) in r.chunks {
-                    renderer.free_mesh(c.alloc);
-                    renderer.records.free(c.record);
-                }
-                for id in r.detail_ids {
-                    self.textures.release(&id);
-                }
-            }
-        }
-        let mut built = 0;
-        for h in handles {
-            let Some(offset) = world.region_offset(h) else {
-                continue;
-            };
-            let Some(reg) = world.regions.get_mut(&h) else {
-                continue;
-            };
-            let Some(info) = reg.info.clone() else {
-                continue;
-            };
-            let rg = self.regions.entry(h).or_insert_with(|| RegionGpu {
-                chunks: HashMap::new(),
-                detail_slots: [aurora_render::textures::WHITE; 4],
-                detail_ids: [Uuid::nil(); 4],
-            });
-            if rg.detail_ids != info.terrain_detail {
-                for (i, id) in info.terrain_detail.iter().enumerate() {
-                    let old = rg.detail_ids[i];
-                    rg.detail_slots[i] = self.textures.acquire(renderer, *id, TexSource::Asset);
-                    self.textures.release(&old);
-                    rg.detail_ids[i] = *id;
-                }
-                reg.dirty_chunks.extend(0..reg.heightmap.chunk_count());
-            }
-            if reg.dirty_chunks.is_empty() || built > 6 {
-                continue;
-            }
-            let comp = Composition {
-                start_height: info.terrain_start_height,
-                height_range: info.terrain_height_range,
-                origin_x: (h >> 32) as f64,
-                origin_y: (h & 0xFFFF_FFFF) as f64,
-            };
-            let chunks: Vec<u32> = reg.dirty_chunks.iter().copied().take(8).collect();
-            for c in chunks {
-                reg.dirty_chunks.remove(&c);
-                let (v, i) = terrain::build_chunk(&reg.heightmap, &comp, c);
-                let Some(alloc) = renderer.upload_mesh(&v, &i) else {
-                    continue;
-                };
-                let (mut zmin, mut zmax) = (f32::MAX, f32::MIN);
-                for vv in &v {
-                    zmin = zmin.min(vv.pos[2]);
-                    zmax = zmax.max(vv.pos[2]);
-                }
-                let cx_n = reg.heightmap.size_x / CHUNK_CELLS;
-                let x0 = (c % cx_n * CHUNK_CELLS) as f32;
-                let y0 = (c / cx_n * CHUNK_CELLS) as f32;
-                let half = CHUNK_CELLS as f32 * 0.5;
-                let center = offset + Vec3::new(x0 + half, y0 + half, (zmin + zmax) * 0.5);
-                let radius = Vec3::new(half, half, (zmax - zmin) * 0.5).length();
-                let rec = DrawRecord {
-                    model: Mat4::from_translation(offset).to_cols_array_2d(),
-                    uv_st: [12.0, 12.0, 0.0, 0.0],
-                    tex: rg.detail_slots,
-                    ..Default::default()
-                };
-                let record = renderer.records.alloc(rec);
-                if let Some(old) = rg.chunks.insert(
-                    c,
-                    TerrainChunk {
-                        alloc,
-                        record,
-                        center,
-                        radius,
-                    },
-                ) {
-                    renderer.free_mesh(old.alloc);
-                    renderer.records.free(old.record);
-                }
-                built += 1;
-            }
-            // keep detail texture slots current (placeholders become real textures in place)
-            let _ = rg.detail_slots;
-        }
-    }
-
     // ------------------------------------------------------------ culling
 
     /// Build this frame's draw lists.
@@ -4148,20 +4094,32 @@ impl Scene {
                     bounds: [0.0; 4],
                 };
                 if shadows {
-                    self.lists.shadow_casters.push(ShadowCaster {
+                    self.lists.terrain_shadow_casters.push(ShadowCaster {
                         cmd,
                         center: c.center,
                         radius: c.radius,
-                        alpha: false,
+                        alpha: r.surface.masked,
                     });
                 }
                 if self.reflections {
                     // with its bounds: each reflection pass keeps the chunks
                     // in its own frustum
-                    self.lists.reflection_terrain.push(cmd.with_bounds(c.center, c.radius));
+                    let reflected = cmd.with_bounds(c.center, c.radius);
+                    if r.surface.pbr {
+                        self.lists.reflection_terrain_pbr.push(reflected);
+                    } else {
+                        self.lists.reflection_terrain.push(reflected);
+                    }
                 }
                 if view.sphere_visible(c.center, c.radius) {
-                    self.lists.terrain.push(cmd);
+                    // one shader per kind of terrain (env.wgsl)
+                    if r.surface.masked {
+                        self.lists.terrain_mask.push(cmd);
+                    } else if r.surface.pbr {
+                        self.lists.terrain_pbr.push(cmd);
+                    } else {
+                        self.lists.terrain.push(cmd);
+                    }
                     for record in self.land_overlays.records(handle) {
                         self.lists.land_overlay.push(DrawCmd { record, ..cmd });
                     }
@@ -4650,11 +4608,12 @@ impl Scene {
         );
         self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
         self.lists.blend_depth_mode = blend_order::depth_mode();
-        if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Split {
-            blend_order::rig_objects(&self.blend_tmp, self.lists.blend_depth, &mut self.lists.blend_depth_runs);
-        } else {
-            blend_order::rig_runs(&self.blend_tmp, self.lists.blend_depth, &mut self.lists.blend_depth_runs);
-        }
+        let runs = match self.lists.blend_depth_mode {
+            aurora_render::RiggedBlendDepth::Layers => blend_order::each_object,
+            aurora_render::RiggedBlendDepth::Split => blend_order::rig_objects,
+            _ => blend_order::rig_runs,
+        };
+        runs(&self.blend_tmp, self.lists.blend_depth, &mut self.lists.blend_depth_runs);
         self.lists.blend.extend(self.blend_tmp.iter().map(|e| e.cmd));
         self.lists.blend_glow.extend(self.blend_tmp.iter().map(|e| e.glow));
         self.lists.shadow_casters.extend(result.casters);
@@ -4704,10 +4663,11 @@ impl Scene {
             }
         }
         if usage_phase == 0 {
-            // terrain detail textures: always wanted at decent resolution
+            // LLTerrainMaterials::boost: TERRAIN_DECODE_PRIORITY = 2048²,
+            // for every material map too. A 512 px cap loses terrain relief.
             for r in self.regions.values() {
-                for id in &r.detail_ids {
-                    self.textures.note_usage_fixed(id, 512.0);
+                for id in &r.surface.texture_ids {
+                    self.textures.note_usage_fixed(id, terrain_surface::DECODE_PIXELS);
                 }
             }
             self.textures.recompute_wants();
@@ -5082,6 +5042,12 @@ impl Scene {
         }
         self.pose_owners = owners;
         self.stats.posed = work.len();
+        let grounded: Vec<usize> = work
+            .iter()
+            .filter(|w| w.1.ground.is_some())
+            .filter_map(|w| world.objects.index_of_uuid(&w.3))
+            .collect();
+        self.update_foot_support(world, &grounded, now);
         // Keep the scene available for read-only support traces on pose workers.
         let mut pal = std::mem::take(&mut self.palettes);
         let mut chunks: Vec<Option<&mut [[[f32; 4]; 4]]>> = pal.chunks_mut(anim::PALETTE_JOINTS).map(Some).collect();
@@ -5655,6 +5621,38 @@ fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
 mod tests {
     use super::*;
     use aurora_net::NetEvent;
+
+    #[test]
+    fn bakes_replace_placeholders_only_on_worn_non_hud_non_animesh_objects() {
+        let mut w = World::new(Arc::new(AvatarLibrary::load()));
+        for e in crate::demo::events().into_iter().chain(crate::demo::animesh_events()) {
+            w.apply(e);
+        }
+        let index = |local: u32| {
+            w.objects
+                .iter()
+                .find(|(_, o)| o.key.local_id == local)
+                .map(|(i, _)| i)
+                .expect("fixture object")
+        };
+        let avatar = index(9001);
+        let wearer = Some((w.objects.get(avatar).expect("avatar").full_id, avatar));
+        // a rigged mesh worn by the avatar takes its bakes, not on a HUD
+        assert_eq!(Scene::bake_wearer(&w, index(9100), false), wearer);
+        assert_eq!(Scene::bake_wearer(&w, index(9100), true), None);
+        // an animesh, worn (9203) or on the ground (9200, 9202), has none
+        for animesh in [9203, 9200, 9202] {
+            assert_eq!(Scene::bake_wearer(&w, index(animesh), false), None, "{animesh}");
+        }
+        // nor has an ordinary object on the ground
+        let ground = w
+            .objects
+            .iter()
+            .find(|(_, o)| o.parent_id == 0 && !o.is_avatar() && o.extra.extended_mesh_flags.is_none())
+            .map(|(i, _)| i)
+            .expect("ground object");
+        assert_eq!(Scene::bake_wearer(&w, ground, false), None);
+    }
 
     #[test]
     fn first_person_visibility_uses_attachment_roots_and_preserves_huds_and_other_avatars() {

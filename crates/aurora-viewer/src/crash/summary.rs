@@ -65,6 +65,9 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
             "Startup or event loop failure".to_owned(),
             "startup or event loop failure".to_owned(),
         )
+    } else if dir.join("gpu-lost.txt").exists() {
+        // The viewer closed itself after the device loss (app/gpu_stall.rs).
+        ("GPU device lost".to_owned(), "GPU device lost".to_owned())
     } else if !stall.is_empty() {
         // The GPU still had a frame when the session ended (the window
         // answered, the user closed it from the notice or by other means).
@@ -147,6 +150,9 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
             "GPU not responding",
             format!("no frame for {seconds} s, the window still answering"),
         ));
+    }
+    if let Some(hooks) = overlay_hooks(&text("overlay-hooks.txt")) {
+        rows.push(("Overlay hooks", hooks));
     }
     if record.demo {
         rows.push(("Demo session", "yes".into()));
@@ -433,6 +439,25 @@ fn label(value: &str, max: usize) -> String {
     value.trim().to_owned()
 }
 
+/// The overlay hooks that came into the process (`overlay-hooks.txt`, one
+/// file name per line), each checked again against the fixed list of
+/// overlay_hooks.rs: only its names are published.
+fn overlay_hooks(text: &str) -> Option<String> {
+    let mut hooks: Vec<&crate::overlay_hooks::Hook> = Vec::new();
+    for hook in text.lines().filter_map(|line| crate::overlay_hooks::known(line.trim())) {
+        if !hooks.contains(&hook) {
+            hooks.push(hook);
+        }
+    }
+    (!hooks.is_empty()).then(|| {
+        hooks
+            .iter()
+            .map(|hook| format!("{}, {}", hook.program, hook.file))
+            .collect::<Vec<_>>()
+            .join("; ")
+    })
+}
+
 /// The start of the session log (the GPU line) and its end (the last
 /// warnings); a long session's log is never read whole.
 fn device_lost_in(tail: &str) -> bool {
@@ -682,6 +707,50 @@ mod tests {
         // handled (the process went on and ended another way): not the cause
         std::fs::write(dir.join("exit-code.txt"), "0xC0000005").unwrap();
         assert!(!build_at(&record, &dir, None).body.contains("Out of memory ("));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_session_closed_after_the_device_loss_says_so() {
+        let (dir, record) = session();
+        std::fs::write(dir.join("gpu-lost.txt"), []).unwrap();
+        let summary = build_at(&record, &dir, None);
+        assert_eq!(summary.title, "Crash: GPU device lost (0.7.1+3.gabcdef)");
+        assert!(summary.body.contains("| Crash | GPU device lost |"), "{}", summary.body);
+        // a render thread that panicked on the loss keeps its panic
+        std::fs::write(
+            dir.join("panic.txt"),
+            "Rust panic: panicked at wgpu-30.0.1/src/backend/wgpu_core.rs:349:9:\nError in Device::poll\n",
+        )
+        .unwrap();
+        assert!(build_at(&record, &dir, None).body.contains("| Crash | Rust panic |"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_overlay_hooks_of_the_session_are_named_from_the_fixed_list_only() {
+        let (dir, record) = session();
+        assert!(!build_at(&record, &dir, None).body.contains("| Overlay hooks |"));
+        std::fs::write(
+            dir.join("overlay-hooks.txt"),
+            "DiscordHook64.dll\nC:\\Users\\Private Name\\evil.dll\nRTSSHooks64.dll\nDiscordHook64.dll\n",
+        )
+        .unwrap();
+        let body = build_at(&record, &dir, None).body;
+        assert!(
+            body.contains(
+                "| Overlay hooks | Discord (in-game overlay or Go Live capture), DiscordHook64.dll; \
+                 RivaTuner Statistics Server (MSI Afterburner's on-screen display), RTSSHooks64.dll |"
+            ),
+            "{body}"
+        );
+        assert!(!body.contains("Private") && !body.contains("evil"), "{body}");
+        // a cell of the table: no hook may break it
+        assert!(
+            crate::overlay_hooks::KNOWN
+                .iter()
+                .all(|h| !h.program.contains('|') && !h.file.contains('|'))
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

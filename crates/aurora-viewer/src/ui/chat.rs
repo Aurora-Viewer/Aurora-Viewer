@@ -527,8 +527,10 @@ pub fn colon_emote(text: &mut String) {
 
 fn color_for(kind: ChatKind, p: &Palette) -> Color32 {
     match kind {
-        ChatKind::Own => p.violet_pale,
+        ChatKind::Own(_) => p.violet_pale,
         ChatKind::Local(_) => p.ink,
+        // a script error in red in the cards and the islands too (#1263)
+        ChatKind::Object(ChatType::Debug) => super::colors::script_error_color(),
         ChatKind::Object(_) | ChatKind::ObjectIm => p.teal.gamma_multiply(0.85),
         ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_) => p.muted,
         ChatKind::Im => p.violet_light,
@@ -845,7 +847,13 @@ fn line_job(
     // a line that holds a keyword takes its colour, name included
     let col = super::colors::contact_chat_color(line, world)
         .or_else(|| super::colors::keyword_color(line))
-        .unwrap_or_else(|| if compact { p.muted } else { color_for(line.kind, p) });
+        .unwrap_or_else(|| {
+            if compact {
+                object_row::text_color(line, p)
+            } else {
+                color_for(line.kind, p)
+            }
+        });
     let mut job = egui::text::LayoutJob::default();
     let small = egui::TextFormat {
         color: p.muted_dim,
@@ -861,7 +869,7 @@ fn line_job(
     // the pills of the islands (the bars mockup's `.toasts`): a resident's
     // name in semi-bold light violet, no colon, a system line in italics;
     // every other colour stays the kind's
-    let resident = matches!(line.kind, ChatKind::Local(_) | ChatKind::Own);
+    let resident = matches!(line.kind, ChatKind::Local(_) | ChatKind::Own(_));
     let mut name_fmt = match pill {
         Some(family) => super::fonts::semibold_format(family, size, if resident { p.violet_light } else { col }),
         None if compact => egui::TextFormat {
@@ -890,8 +898,8 @@ fn line_job(
         _ if emote => ("", "", &line.text[3..]),
         _ if body_only => ("", "", &line.text[..]),
         ChatKind::Im => ("[IM] ", ": ", &line.text[..]),
-        ChatKind::Local(ChatType::Shout) => ("", aurora_i18n::tr!("status-shouts"), &line.text[..]),
-        ChatKind::Local(ChatType::Whisper) => ("", aurora_i18n::tr!("status-whispers"), &line.text[..]),
+        ChatKind::Local(ChatType::Shout) | ChatKind::Own(ChatType::Shout) => ("", aurora_i18n::tr!("status-shouts"), &line.text[..]),
+        ChatKind::Local(ChatType::Whisper) | ChatKind::Own(ChatType::Whisper) => ("", aurora_i18n::tr!("status-whispers"), &line.text[..]),
         _ if pill.is_some() || compact => ("", "", &line.text[..]),
         _ => ("", ": ", &line.text[..]),
     };
@@ -1715,7 +1723,7 @@ pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::Ch
         return crate::world::rlva::privacy::anonymous(line.source).display_name.clone();
     }
     let logged = line.origin != Origin::Live;
-    let own = line.kind == ChatKind::Own;
+    let own = line.kind.is_own();
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
     let names = &world.social.avatar_names;
     let cached = if object || logged {
@@ -1737,9 +1745,9 @@ pub(crate) fn line_body(line: &crate::world::ChatLine, name: &str) -> (String, b
     if emote {
         (format!("{}{}", name, &line.text[3..]), true)
     } else {
-        let prefix = match line.kind {
-            ChatKind::Local(ChatType::Shout) => aurora_i18n::tr!("status-shouts-2"),
-            ChatKind::Local(ChatType::Whisper) => aurora_i18n::tr!("status-whispers-2"),
+        let prefix = match line.kind.volume() {
+            Some(ChatType::Shout) => aurora_i18n::tr!("status-shouts-2"),
+            Some(ChatType::Whisper) => aurora_i18n::tr!("status-whispers-2"),
             _ => "",
         };
         (format!("{prefix}{}", line.text), false)
@@ -2132,9 +2140,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
     // ours nor the notices
     let arrived = lines.map_or(0, |lines| {
         view.arrived(clock.first, |i| {
-            lines
-                .get(i)
-                .is_some_and(|l| l.kind != crate::world::ChatKind::Own && !l.kind.is_notice())
+            lines.get(i).is_some_and(|l| !l.kind.is_own() && !l.kind.is_notice())
         })
     });
     let latest_id = ui.scope_id().with(("latest", st.selected));
@@ -2245,7 +2251,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
         );
         return;
     }
-    let own = line.kind == ChatKind::Own;
+    let own = line.kind.is_own();
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
     // FSChatHistoryHeader: the display name, then " - username" in small
     let names = &world.social.avatar_names;
@@ -2271,12 +2277,13 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                 ui.horizontal(|ui| {
                     if object {
                         let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
-                        if let Some(t) = env.icons.get("box") {
+                        let (glyph, tint) = object_row::object_glyph(line, p, super::colors::sender_color(line));
+                        if let Some(t) = env.icons.get(glyph) {
                             ui.painter().image(
                                 t.id(),
                                 rect.shrink(2.0),
                                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                                super::colors::sender_color(line),
+                                tint,
                             );
                         }
                     } else {
@@ -3240,8 +3247,9 @@ fn bubble_sender(
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     match who {
         Sender::Object => {
-            if let Some(t) = super::icons::global("box") {
-                painter.image(t.id(), r.shrink(1.0), uv, super::colors::sender_color(line).gamma_multiply(alpha));
+            let (glyph, tint) = object_row::object_glyph(line, p, super::colors::sender_color(line));
+            if let Some(t) = super::icons::global(glyph) {
+                painter.image(t.id(), r.shrink(1.0), uv, tint.gamma_multiply(alpha));
             }
         }
         Sender::Avatar(id) => {
@@ -3270,7 +3278,7 @@ fn bubble_sender(
 /// may leave the lines above the chat bar, never the nearby chat
 /// (CHAT_SOURCE_AGENT in LLFloaterIMNearbyChatHandler::processChat).
 fn said_by_resident(line: &crate::world::ChatLine) -> bool {
-    matches!(line.kind, ChatKind::Local(_) | ChatKind::Own)
+    matches!(line.kind, ChatKind::Local(_) | ChatKind::Own(_))
 }
 
 /// Recent chat lines floating above the chat bar (fade out after 20 s);
@@ -3549,7 +3557,7 @@ enum SenderLink {
 }
 
 fn sender_link(world: &World, line: &crate::world::ChatLine) -> Option<SenderLink> {
-    let id = if line.kind == ChatKind::Own { world.agent_id } else { line.source };
+    let id = if line.kind.is_own() { world.agent_id } else { line.source };
     match line.kind {
         _ if id.is_nil() || line.kind.is_notice() => None,
         ChatKind::Object(_) | ChatKind::ObjectIm => Some(SenderLink::Object(id)),
@@ -4339,7 +4347,7 @@ mod tests {
             sender_link(&world, &line(ChatKind::Local(ChatType::Normal), 7)),
             Some(SenderLink::Resident(id(7)))
         );
-        assert_eq!(sender_link(&world, &line(ChatKind::Own, 0)), Some(SenderLink::Resident(id(1))));
+        assert_eq!(sender_link(&world, &line(ChatKind::OWN, 0)), Some(SenderLink::Resident(id(1))));
         assert_eq!(
             sender_link(&world, &line(ChatKind::Object(ChatType::Normal), 9)),
             Some(SenderLink::Object(id(9)))

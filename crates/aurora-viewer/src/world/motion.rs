@@ -18,6 +18,12 @@
 //! is not shown at once: it fades with Firestorm's half-life of 0.06 s
 //! ([`Correction`]). Firestorm does so for avatars and for objects at rest
 //! and lets moving objects jump; here every root object is treated alike.
+//!
+//! The root an avatar sits on goes further ([`damp`]): its drawn pose
+//! follows its reported motion with that half-life every frame, moving or
+//! not, as LLVOAvatar::idleUpdate forces its drawable into damped motion
+//! (LLPipeline::updateMoveDampedAsync). A vehicle's collisions are smoothed
+//! so, and the camera that follows its rider with them.
 
 use glam::{Quat, Vec3};
 use std::time::Instant;
@@ -39,6 +45,10 @@ const CORRECTION_LIFE: f32 = DAMPING_HALF_LIFE * 10.0;
 /// Gaps smaller than these are not worth a correction.
 const MIN_OFFSET: f32 = 1e-4;
 const MIN_TURN_W: f32 = 1.0 - 1e-7;
+/// MIN_INTERPOLATE_DISTANCE_SQUARED of lldrawable.cpp is 1 mm squared per
+/// metre of distance to the camera; at a fixed millimetre a damped seat
+/// only settles a little later, unseen.
+const SETTLED: f32 = 1e-3;
 
 /// Seconds of simulator time per second of ours, for a region whose time
 /// dilation is `time_dilation` and whose circuit received its last packet
@@ -90,6 +100,22 @@ pub fn extrapolate(m: &Reported, t: f64) -> (Vec3, Quat) {
     }
 }
 
+/// One frame of the damping of LLDrawable::updateXform: the `drawn` pose
+/// goes `dt` seconds of the half-life towards `target`, where the reports
+/// send the object. None when it is to be drawn at `target`: settled, or
+/// farther than 10 m (moved, not damped).
+pub fn damp(drawn: (Vec3, Quat), target: (Vec3, Quat), dt: f32) -> Option<(Vec3, Quat)> {
+    let k = (1.0 - 0.5_f32.powf(dt.max(0.0) / DAMPING_HALF_LIFE)).clamp(0.0, 1.0);
+    let position = drawn.0.lerp(target.0, k);
+    // (glam's lerp of rotations takes the short way and normalizes)
+    let rotation = drawn.1.lerp(target.1, k);
+    // the Legacy Viewer's measure of what is left: a turn weighs 10 m² per unit of
+    // 1 - cos(half angle)
+    let gap = position.distance_squared(target.0) + (1.0 - rotation.dot(target.1).abs()) * 10.0;
+    let damping = (SETTLED * SETTLED..=SNAP_DISTANCE * SNAP_DISTANCE).contains(&gap);
+    (damping && position.is_finite() && rotation.is_finite()).then_some((position, rotation))
+}
+
 /// The gap between where an object was drawn and where a report puts it,
 /// fading away.
 #[derive(Debug, Clone, Copy)]
@@ -107,11 +133,18 @@ impl Correction {
     /// From where the object was `drawn` to where the report puts it now.
     /// None when there is nothing to fade, or too much.
     pub fn between(drawn: (Vec3, Quat), reported: (Vec3, Quat), now: Instant) -> Option<Correction> {
-        let offset = drawn.0 - reported.0;
+        Self::toward(drawn, reported, reported, now)
+    }
+
+    /// From where the object was `drawn` to `pose`, where its last report
+    /// (`reported`) sends it at `now`: an object leaving the damping of a
+    /// seat while it moves.
+    pub fn toward(drawn: (Vec3, Quat), pose: (Vec3, Quat), reported: (Vec3, Quat), now: Instant) -> Option<Correction> {
+        let offset = drawn.0 - pose.0;
         if !offset.is_finite() || offset.length_squared() > SNAP_DISTANCE * SNAP_DISTANCE {
             return None;
         }
-        let mut turn = (drawn.1 * reported.1.inverse()).normalize();
+        let mut turn = (drawn.1 * pose.1.inverse()).normalize();
         if turn.w < 0.0 {
             turn = -turn;
         }
@@ -257,5 +290,48 @@ mod tests {
         // a pose written since by something else cancels it
         assert!(c.leads_to(Vec3::ZERO, quarter));
         assert!(!c.leads_to(Vec3::X * 0.01, quarter));
+    }
+
+    #[test]
+    fn a_damped_seat_follows_with_the_half_life_at_any_frame_rate() {
+        let quarter = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        let target = (Vec3::X * 2.0, quarter);
+        for frames in [30, 60, 240] {
+            let dt = 0.06 / frames as f32 * 10.0;
+            let mut drawn = (Vec3::ZERO, Quat::IDENTITY);
+            for _ in 0..frames / 10 {
+                drawn = damp(drawn, target, dt).expect("still damping");
+            }
+            // one half-life: half-way, whatever the frames
+            near(drawn.0, Vec3::X);
+            // (steps of a linear blend of rotations, the Legacy Viewer's nlerp: about
+            // half-way, a degree off for a quarter turn)
+            let angle = drawn.1.angle_between(Quat::from_rotation_z(std::f32::consts::FRAC_PI_4));
+            assert!(angle < 0.05, "{frames} frames a second: {angle} rad off");
+        }
+        // no time: where it was drawn
+        let drawn = damp((Vec3::ZERO, quarter), target, 0.0).expect("damping");
+        near(drawn.0, Vec3::ZERO);
+        // the other sign of the same rotation is no gap
+        assert!(damp((target.0, -quarter), target, 0.016).is_none());
+        // settled within a millimetre, or moved more than 10 m: drawn there
+        assert!(damp((Vec3::X * 2.0005, quarter), target, 0.016).is_none());
+        assert!(damp((Vec3::X * 20.0, quarter), target, 0.016).is_none());
+        assert!(damp((Vec3::splat(f32::NAN), quarter), target, 0.016).is_none());
+    }
+
+    #[test]
+    fn a_seat_left_while_moving_fades_from_where_it_was_drawn() {
+        let now = Instant::now();
+        let report = (Vec3::ZERO, Quat::IDENTITY);
+        // drawn 1 m behind where its motion has taken it since the report
+        let pose = (Vec3::X * 5.0, Quat::IDENTITY);
+        let c = Correction::toward((Vec3::X * 4.0, Quat::IDENTITY), pose, report, now).expect("a gap");
+        near(c.apply(pose, now).0, Vec3::X * 4.0);
+        near(
+            c.apply((Vec3::X * 6.0, Quat::IDENTITY), now + Duration::from_millis(60)).0,
+            Vec3::X * 5.5,
+        );
+        assert!(c.leads_to(report.0, report.1));
     }
 }

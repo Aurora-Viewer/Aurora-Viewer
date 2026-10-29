@@ -233,6 +233,7 @@ pub(super) struct SyncCtx<'a> {
     palette_slots: &'a FastMap<Uuid, u32>,
     skin_binds: &'a super::skin_binds::SkinBinds,
     palettes: &'a [[[f32; 4]; 4]],
+    anim_boxes: &'a FastMap<Uuid, super::anim_box::AnimBox>,
     records: &'a RecordStore,
     xf: &'a XfCache,
     now: Instant,
@@ -254,8 +255,9 @@ impl SyncCtx<'_> {
     }
 
     /// (radius, distance) used for an object's LOD (LLVOVolume::calcLOD):
-    /// rigged meshes use their skeleton owner's distance and size, other
-    /// volumes the LOD-biased scale (LLVolume::mLODScaleBias).
+    /// rigged meshes use their skeleton owner's distance and size (an
+    /// animated object's animated box, anim_box.rs), other volumes the
+    /// LOD-biased scale (LLVolume::mLODScaleBias).
     pub(super) fn lod_metrics(&self, idx: usize, o: &Object, pos: Vec3) -> (f32, f32) {
         let world = self.world;
         let eye = self.eye;
@@ -268,11 +270,17 @@ impl SyncCtx<'_> {
                 .sculpt
                 .is_some_and(|s| self.meshes.meta(&s.texture).is_some_and(|m| m.skin.is_some()));
             if rigged
-                && let Some((_, owner)) = Scene::skeleton_owner(world, idx)
+                && let Some((owner_id, owner)) = Scene::skeleton_owner(world, idx)
                 && let (Some(ow), Some((op, _, _))) = (world.objects.get(owner), self.transform(owner))
             {
-                // avatars: diagonal of the animated extents;
-                // animesh: half of it (LL uses the dynamic box)
+                // animesh: half the diagonal of its animated box, from its
+                // centre; before its first box, the size of its root
+                if !ow.is_avatar()
+                    && let Some(b) = self.anim_boxes.get(&owner_id)
+                {
+                    return b.lod_metrics(eye);
+                }
+                // avatars: diagonal of the animated extents
                 let radius = if ow.is_avatar() {
                     AVATAR_LOD_RADIUS
                 } else {
@@ -607,6 +615,7 @@ impl Scene {
             palette_slots: &self.palette_slots,
             skin_binds: &self.skin_binds,
             palettes: &self.palettes,
+            anim_boxes: &self.anim_boxes,
             records,
             xf: &self.xf_cache,
             now,

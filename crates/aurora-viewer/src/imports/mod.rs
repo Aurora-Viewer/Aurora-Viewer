@@ -479,6 +479,8 @@ pub struct Imports {
     pub confirm: bool,
     pub scale_bulk_1k: bool,
     pub pending_files: Option<Uuid>,
+    /// The pending files come from the texture picker's Local tab.
+    pub picker_files: bool,
     /// One-shot menu intent, consumed after drawing the import window.
     pub choose_files_on_open: bool,
     pub(super) tx: Sender<Worker>,
@@ -529,6 +531,7 @@ impl Default for Imports {
             confirm: false,
             scale_bulk_1k: false,
             pending_files: None,
+            picker_files: false,
             choose_files_on_open: false,
             tx,
             rx,
@@ -948,7 +951,16 @@ impl Imports {
                     if self.active.is_none() {
                         self.active = entries.iter().find(|e| self.choice.accepts(e)).map(|e| e.id);
                     }
+                    // The texture picker has no room for a file's error: its
+                    // local previews are shown in the importer, with the reason.
+                    let failed = std::mem::take(&mut self.picker_files)
+                        .then(|| entries.iter().find(|e| matches!(e.status, Status::Error(_))).map(|e| e.id))
+                        .flatten();
                     self.entries.extend(entries);
+                    if let Some(id) = failed {
+                        self.open(Choice::Local);
+                        self.active = Some(id);
+                    }
                 }
                 Worker::Reloaded(id, result) => {
                     if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {

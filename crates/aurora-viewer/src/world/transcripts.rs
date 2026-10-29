@@ -210,14 +210,14 @@ impl World {
         let names = &self.social.avatar_names;
         let from = match line.kind {
             ChatKind::System => String::new(),
-            ChatKind::Own => names.complete(&self.agent_id).unwrap_or_else(|| line.from.clone()),
+            ChatKind::Own(_) => names.complete(&self.agent_id).unwrap_or_else(|| line.from.clone()),
             ChatKind::Local(_) | ChatKind::Im if !line.source.is_nil() => names.complete(&line.source).unwrap_or_else(|| line.from.clone()),
             _ => line.from.clone(),
         };
         // the verbs Firestorm puts before what is shouted or whispered
-        let verb = match line.kind {
-            ChatKind::Local(ChatType::Shout) => "shouts: ",
-            ChatKind::Local(ChatType::Whisper) => "whispers: ",
+        let verb = match line.kind.volume() {
+            Some(ChatType::Shout) => "shouts: ",
+            Some(ChatType::Whisper) => "whispers: ",
             _ => "",
         };
         let text = format::encode_mentions(&line.text, |id| self.social.name_of(&id));
@@ -363,7 +363,7 @@ impl World {
                 let kind = if e.is_system() || e.from.is_empty() {
                     ChatKind::System
                 } else if own.contains(&e.from) {
-                    ChatKind::Own
+                    ChatKind::OWN
                 } else if nearby {
                     ChatKind::Local(ChatType::Normal)
                 } else {
@@ -475,7 +475,7 @@ impl World {
                     time: UNIX_EPOCH + Duration::from_secs(u64::from(h.time)),
                     from: if mine { own.clone() } else { h.from },
                     text: h.message,
-                    kind: if mine { ChatKind::Own } else { ChatKind::Im },
+                    kind: if mine { ChatKind::OWN } else { ChatKind::Im },
                     source: if mine { Uuid::nil() } else { h.from_id },
                     origin: Origin::ServerLog,
                 }
@@ -645,12 +645,25 @@ mod tests {
             source: Uuid::from_u128(2),
             origin: Origin::Live,
         });
+        // ours, as the simulator echoes it, keeps its volume and its verb
+        // (#1323)
+        w.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Me Resident".into(),
+            source_id: w.agent_id,
+            owner_id: w.agent_id,
+            source_type: aurora_net::ChatSourceType::Agent,
+            chat_type: ChatType::Whisper,
+            position: glam::Vec3::ZERO,
+            message: "psst".into(),
+        }));
+        assert_eq!(w.chat.back().map(|l| l.kind), Some(ChatKind::Own(ChatType::Whisper)));
         settle(&mut w);
         assert_eq!(
             file_texts(&w, names::NEARBY),
             [
                 (format::SYSTEM_FROM.to_owned(), "teleport completed".to_owned()),
-                ("Jane Doe".to_owned(), "shouts: HELLO".to_owned())
+                ("Jane Doe".to_owned(), "shouts: HELLO".to_owned()),
+                ("Me Resident".to_owned(), "whispers: psst".to_owned())
             ]
         );
         clean(&w, &root);

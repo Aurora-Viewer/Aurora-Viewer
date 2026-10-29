@@ -221,22 +221,25 @@ pub fn island(
         r
     };
     // back / forward through the teleport history, home
+    // (held down or right clicked: the session's places)
     for (left, dest) in [(true, st.tp_back.as_deref()), (false, st.tp_forward.as_deref())] {
         let id = Id::unique(("bars_place_arrow", left));
         let icon = if left { "arrow-left" } else { "arrow-right" };
         let resp = icon_slot(ui, p, icons, next(SLOT), id, icon, dest.is_some());
-        let tip = match dest {
-            Some(d) if left => aurora_i18n::tr!("ui-bars-back", d = d.to_string()),
-            Some(d) => aurora_i18n::tr!("ui-bars-next", d = d.to_string()),
-            None if left => aurora_i18n::tr!("ui-bars-no-previous-destination").to_owned(),
-            None => aurora_i18n::tr!("ui-bars-no-next-destination").to_owned(),
-        };
-        if resp.on_hover_text(tip).clicked() && dest.is_some() {
+        let resp = resp.on_hover_text(super::arrow_tip(left, dest, st));
+        if left {
+            demo_open(ui.ctx(), &resp, super::demo::Open::TpList);
+        }
+        let (clicked, chosen) = super::tp_list::arrow(ui, p, &resp, st, Some((egui::RectAlign::BOTTOM_START, 10.0)));
+        if clicked && dest.is_some() {
             action = Some(if left {
                 BarAction::TeleportBack
             } else {
                 BarAction::TeleportForward
             });
+        }
+        if chosen.is_some() {
+            action = chosen;
         }
     }
     let home = icon_slot(ui, p, icons, next(SLOT), Id::unique("bars_place_home"), "home-filled", true)

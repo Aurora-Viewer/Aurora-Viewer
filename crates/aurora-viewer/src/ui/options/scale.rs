@@ -61,7 +61,7 @@ impl Kind {
     fn limits(self) -> (f32, f32) {
         match self {
             Self::Interface => (MIN, MAX),
-            Self::Text => (0.8, 1.4),
+            Self::Text => (crate::settings::FONT_SCALE_MIN, crate::settings::FONT_SCALE_MAX),
         }
     }
 
@@ -800,7 +800,8 @@ mod tests {
                         let pos = start + egui::vec2(4.0 * native * direction * step as f32, 0.0);
                         h.frame(vec![Event::PointerMoved(pos)], true, true);
                         let value = h.saved;
-                        assert!((value - previous).abs() < 0.03, "font reflow cannot cause a jump");
+                        // 4 native pixels move the value by a share of its range
+                        assert!((value - previous).abs() < 0.05 * (max - min), "font reflow cannot cause a jump");
                         assert!((value - previous) * direction >= -0.00001);
                         for _ in 0..4 {
                             assert!(!h.frame(Vec::new(), true, true));
@@ -867,7 +868,7 @@ mod tests {
         assert_eq!(h.saved, 1.25);
         h.settled();
         let id = h.control.track_id.expect("rendered text-size track");
-        for (displayed, expected) in [(0.5, 0.8), (1.3, 1.3), (2.0, 1.4)] {
+        for (displayed, expected) in [(0.5, 0.8), (1.3, 1.3), (1.8, 1.8), (2.5, 2.0)] {
             assert!(h.frame(
                 vec![Event::AccessKitActionRequest(egui::accesskit::ActionRequest {
                     action: egui::accesskit::Action::SetValue,

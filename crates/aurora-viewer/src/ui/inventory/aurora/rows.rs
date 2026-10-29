@@ -2,7 +2,7 @@
 //! short instead of widening the list. The type icon, the name, its pills
 //! (worn, link) and favourite star, the rights at the end of the name, and
 //! from the medium width the columns (type, rights, date) at the right. A
-//! hovered wearable offers "Wear" or "Take off" in place, and the wide
+//! hovered wearable offers "Add" or "Take off" in place, and the wide
 //! window a "more actions" button. What a row does (selection, drag and
 //! drop, tooltip, menus) is `item_response` / `folder_response`, shared
 //! with the Legacy Viewer's window.
@@ -118,12 +118,7 @@ pub fn short_date(seconds: i64, now: i64) -> String {
     }
     let (year, month, day) = aurora_net::profile::civil_from_days(seconds.div_euclid(86400));
     let (this_year, _, _) = aurora_net::profile::civil_from_days(now.div_euclid(86400));
-    let month = crate::ui::land::months()[(month as usize).clamp(1, 12) - 1];
-    if year == this_year {
-        format!("{day} {month}")
-    } else {
-        format!("{day} {month} {year}")
-    }
+    crate::ui::land::day_month((year != this_year).then_some(year), month as usize, i64::from(day))
 }
 
 /// The name of an item's type, as the type column shows it: "Clothing ·
@@ -187,7 +182,9 @@ fn item_kind(it: &aurora_net::inventory::InvItem) -> String {
 /// What a hovered row offers in place.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Quick {
-    /// Wear (or take off) the wearable, as its double-click does.
+    /// Add without replacing, independently of the double-click preferences.
+    Add,
+    /// Wear a non-stackable wearable, or take off a worn item.
     Wear(bool),
     /// Its "more actions" menu (the wide width).
     More,
@@ -197,8 +194,8 @@ const QUICK_H: f32 = 22.0;
 
 fn quick_width(ui: &egui::Ui, quick: Quick) -> f32 {
     match quick {
-        Quick::Wear(worn) => {
-            let label = wear_label(worn);
+        Quick::Add | Quick::Wear(_) => {
+            let label = quick_label(quick);
             ui.painter()
                 .layout_no_wrap(label.to_owned(), egui::FontId::proportional(SMALL), Color32::PLACEHOLDER)
                 .size()
@@ -209,17 +206,18 @@ fn quick_width(ui: &egui::Ui, quick: Quick) -> f32 {
     }
 }
 
-fn wear_label(worn: bool) -> &'static str {
-    if worn {
-        aurora_i18n::tr!("inventory-take-off")
-    } else {
-        aurora_i18n::tr!("common-wear")
+fn quick_label(quick: Quick) -> &'static str {
+    match quick {
+        Quick::Add => aurora_i18n::tr!("common-add"),
+        Quick::Wear(true) => aurora_i18n::tr!("inventory-take-off"),
+        Quick::Wear(false) => aurora_i18n::tr!("common-wear"),
+        Quick::More => aurora_i18n::tr!("inventory-more-actions"),
     }
 }
 
-/// The buttons a hovered item shows: wear or take off a wearable (not a
-/// worn body part: it can only be replaced), and "more actions" at the wide
-/// width.
+/// The buttons a hovered item shows: add or take off a wearable, and
+/// "more actions" at the wide width. Body parts and physics only replace;
+/// a worn body part cannot be taken off.
 fn quick_buttons(inv: &Inventory, id: Uuid, facts: &Facts, layout: Layout) -> Vec<Quick> {
     let mut quick = Vec::new();
     if let Some(original) = rules::original(inv, id).and_then(|id| inv.items.get(&id))
@@ -228,7 +226,8 @@ fn quick_buttons(inv: &Inventory, id: Uuid, facts: &Facts, layout: Layout) -> Ve
     {
         let worn = facts.worn.contains(&original.id);
         if !(worn && original.asset_type == 13) {
-            quick.push(Quick::Wear(worn));
+            let add = !worn && (original.asset_type == 6 || (original.asset_type == 5 && original.flags & 0xff != 15));
+            quick.push(if add { Quick::Add } else { Quick::Wear(worn) });
         }
     }
     if layout == Layout::Wide {
@@ -256,13 +255,37 @@ fn show_quick(
     for (n, q) in quick.iter().enumerate().rev() {
         let w = quick_width(ui, *q);
         let rect = Rect::from_min_size(Pos2::new(x - w, center_y - QUICK_H / 2.0), Vec2::new(w, QUICK_H));
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_quick", id, n)), rect));
         x = rect.left() - 4.0;
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).id_salt(("inventory_quick", id, n)));
         match q {
-            Quick::Wear(worn) => {
-                if widgets::action_button(&mut child, p, "", wear_label(*worn), widgets::ActionKind::Flat, rect.size()).clicked() {
+            Quick::Add | Quick::Wear(_) => {
+                let clicked = child
+                    .add_enabled_ui(st.pending.is_none() && !facts.appearance_busy, |ui| {
+                        widgets::action_button(ui, p, "", quick_label(*q), widgets::ActionKind::Flat, rect.size()).clicked()
+                    })
+                    .inner;
+                if clicked {
                     st.select(ui, id, false);
-                    context::double_click(inv, id, st, prefs, facts, actions);
+                    if *q == Quick::Add {
+                        // Explicit Add follows LLObjectBridge::performAction("wear_add")
+                        // (indra/newview/llinventorybridge.cpp), never the double-click defaults.
+                        if let Some(item) = rules::original(inv, id) {
+                            actions.push(if rules::library(inv, item) {
+                                InvAction::WearCopy { item, replace: false }
+                            } else {
+                                InvAction::Appearance(crate::world::appearance::Action::WearItem {
+                                    item,
+                                    replace: false,
+                                    point: 0,
+                                })
+                            });
+                        }
+                    } else {
+                        context::double_click(inv, id, st, prefs, facts, actions);
+                    }
                 }
             }
             Quick::More => {
@@ -694,6 +717,13 @@ pub(super) mod tests {
         assert_eq!(
             quick_buttons(&inv, Uuid::from_u128(1), &facts, Layout::Wide),
             [Quick::Wear(false), Quick::More]
+        );
+        assert_eq!(quick_buttons(&inv, Uuid::from_u128(2), &facts, Layout::Compact), [Quick::Add]);
+        assert_eq!(quick_label(Quick::Add), aurora_i18n::tr!("common-add"));
+        inv.items.get_mut(&Uuid::from_u128(2)).unwrap().flags = 15;
+        assert_eq!(
+            quick_buttons(&inv, Uuid::from_u128(2), &facts, Layout::Compact),
+            [Quick::Wear(false)]
         );
     }
 }

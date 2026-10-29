@@ -792,6 +792,13 @@ fn full_size(e: &Entry) -> Option<(u32, u32)> {
     }
 }
 
+/// Width of a texture's UI copy decoded at `discard` or coarser: no finer
+/// than the level that fits 256 px (`texture_cache::preview_discard`).
+fn ui_width(width: u32, height: u32, discard: u8) -> u32 {
+    let level = texture_cache::preview_discard(width, height).max(discard);
+    width.div_ceil(1 << level.min(31))
+}
+
 /// Bytes of a texture's mip chain at a discard level, about (a third more
 /// than its level 0); 0 while its size is not known.
 fn bytes_at(e: &Entry, discard: u8) -> u64 {
@@ -1652,6 +1659,34 @@ impl TextureStreamer {
     pub fn take_ui_image(&mut self, id: &Uuid) -> Option<(u32, u32, Vec<u8>)> {
         self.ui_previews.poll(&mut self.ui_ready);
         self.ui_ready.remove(id)
+    }
+
+    /// Width of the finest UI copy of a texture (its full size halved until
+    /// it fits 256 px), once its header is known.
+    pub fn ui_image_width(&self, id: &Uuid) -> Option<u32> {
+        let (width, height) = self.full_size(id)?;
+        Some(ui_width(width, height, 0))
+    }
+
+    /// Keep loading a texture whose UI copy came out `have` px wide, from
+    /// the first levels of a progressive download: a copy taken once and
+    /// kept stays blurred, its texture no longer being asked for. The finer
+    /// copy comes through `take_ui_image`, from the next upload, or from a
+    /// worker when a finer level is already resident.
+    pub fn refine_ui_image(&mut self, id: Uuid, have: u32, jobs: &Jobs) {
+        self.note_usage(&id, 256.0);
+        if self.ui_ready.contains_key(&id) {
+            return;
+        }
+        let finer = self
+            .entries
+            .get(&id)
+            .and_then(|e| Some(ui_width(e.info?.width, e.info?.height, e.decoded?)))
+            .is_some_and(|width| width > have);
+        if finer {
+            let source = self.preview_source(&id);
+            self.ui_previews.request(id, source, jobs);
+        }
     }
 
     /// Something uses this texture (it is streamed). An entry nothing
@@ -3444,6 +3479,18 @@ mod tests {
         assert_eq!(e.px_now(), 300.0);
     }
 
+    #[test]
+    fn terrain_material_maps_request_the_reference_two_kilopixel_resolution() {
+        let mut e = entry(Some(2), 0.0);
+        e.info = Some(file(2048));
+        e.gpu_size = (512, 512);
+        let id = Uuid::from_u128(1);
+        let mut s = pressed(0, vec![(1, e)]);
+        s.note_usage_fixed(&id, super::super::terrain_surface::DECODE_PIXELS);
+        s.recompute_wants();
+        assert_eq!(s.entries[&id].want, 0, "terrain normal maps must upgrade beyond the 512 px preview");
+    }
+
     /// The streamer under memory pressure step `step`, holding `entries`.
     fn pressed(step: u8, entries: Vec<(u128, Entry)>) -> TextureStreamer {
         let mut s = TextureStreamer::new(PathBuf::new());
@@ -4121,6 +4168,18 @@ mod tests {
             }
         );
         assert_eq!(next_range(0, 20_000_001), ByteRange { start: 0, end: None });
+    }
+
+    /// A profile picture's UI copy is 256 px wide at most, and a coarser
+    /// resident level gives a coarser copy (still to be refined).
+    #[test]
+    fn ui_copy_width_follows_the_level_held() {
+        assert_eq!(ui_width(1024, 768, 0), 256);
+        assert_eq!(ui_width(1024, 768, 2), 256);
+        assert_eq!(ui_width(1024, 768, 4), 64);
+        assert_eq!(ui_width(128, 128, 0), 128);
+        assert_eq!(ui_width(128, 128, 1), 64);
+        assert_eq!(ui_width(300, 200, 1), 150);
     }
 
     #[test]

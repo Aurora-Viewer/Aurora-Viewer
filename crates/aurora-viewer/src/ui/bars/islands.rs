@@ -118,6 +118,40 @@ fn steady_width(ui: &egui::Ui, s: &str, size: f32) -> f32 {
     ['0', '4', '8'].into_iter().map(probe).fold(0.0, f32::max).ceil()
 }
 
+/// How long a readout keeps a width it no longer needs, in seconds.
+const HOLD: f64 = 10.0;
+
+/// The width a readout takes (#1246): the widest steady width its text
+/// needed in the last `HOLD` seconds, `id` remembering it. A frame rate
+/// going back and forth across 100 (a latency across 100 ms, a 12-hour
+/// clock across 10:00) does not move the bar, and no margin is kept for a
+/// digit the value never reaches.
+pub(super) fn held_width(ui: &egui::Ui, id: Id, s: &str, size: f32) -> f32 {
+    let w = steady_width(ui, s, size);
+    let ctx = ui.ctx();
+    let now = ctx.input(|i| i.time);
+    let (held, since) = ctx.data(|d| d.get_temp::<(f32, f64)>(id)).unwrap_or((w, now));
+    if w >= held || now - since >= HOLD {
+        // `since`: the last time the held width was needed
+        ctx.data_mut(|d| d.insert_temp(id, (w, now)));
+        w
+    } else {
+        held
+    }
+}
+
+/// The latency's text.
+pub(super) fn ping_text(ms: u32) -> String {
+    format!("{ms} ms")
+}
+
+/// The frame rate's text, in whole images a second: the Legacy Viewer
+/// writes a tenth (LLStatusBar::refresh, "%.1f"), which only flickers
+/// (the human's choice, #1246).
+pub(super) fn fps_text(fps: f32) -> String {
+    aurora_i18n::number(f64::from(fps), 0)
+}
+
 /// A readout of the system island: icon then text, `width` wide.
 #[allow(clippy::too_many_arguments)]
 fn readout(
@@ -350,7 +384,7 @@ const DISC: f32 = 22.0;
 
 fn balance_galley(ui: &egui::Ui, p: &Palette, st: &StatusInfo) -> Option<std::sync::Arc<egui::Galley>> {
     let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
-    st.balance.map(|b| {
+    st.balance.filter(|_| st.show_balance).map(|b| {
         ui.painter()
             .layout_no_wrap(format!("{} L$", aurora_i18n::integer(i64::from(b))), font, p.ink)
     })
@@ -366,19 +400,27 @@ fn account_width(ui: &egui::Ui, p: &Palette, st: &StatusInfo) -> f32 {
 }
 
 /// The account island: our picture with the online status on it (a click
-/// opens the status menu), the balance (a click buys L$).
+/// opens the status menu), the balance (a click buys L$). A right click on
+/// either shows or hides the balance (#1340): hidden, the picture stays.
 fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action: &mut BarAction) {
     let balance = balance_galley(ui, p, st);
     let w = account_slot_width(balance.as_ref());
     let rect = Rect::from_min_size(Pos2::new(island.left() + PAD, island.center().y - SLOT / 2.0), Vec2::new(w, SLOT));
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 4.0 + DISC / 2.0, rect.center().y), Vec2::splat(DISC));
     // the picture and its status: one target; the balance: another
-    let status_rect = Rect::from_min_max(rect.min, Pos2::new(disc.right() + 3.0, rect.bottom()));
+    let status_rect = if balance.is_some() {
+        Rect::from_min_max(rect.min, Pos2::new(disc.right() + 3.0, rect.bottom()))
+    } else {
+        rect
+    };
     let money_rect = Rect::from_min_max(Pos2::new(status_rect.right(), rect.top()), rect.max);
     let status = ui.interact(status_rect, Id::unique("bars_island_status"), Sense::click());
-    let money = ui.interact(money_rect, Id::unique("bars_island_balance"), Sense::click());
+    let money = balance
+        .is_some()
+        .then(|| ui.interact(money_rect, Id::unique("bars_island_balance"), Sense::click()));
+    let money_hovered = money.as_ref().is_some_and(egui::Response::hovered);
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&status));
-    slot_face(ui, p, rect, status.hovered() || money.hovered() || open, false);
+    slot_face(ui, p, rect, status.hovered() || money_hovered || open, false);
     crate::ui::widgets::avatar_disc(ui, p, disc, st.own_pic, st.own_name, false);
     // the status dot on the picture's lower right, ringed with the island
     let dot = disc.right_bottom() - Vec2::splat(3.5);
@@ -388,11 +430,24 @@ fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action
     if let Some(g) = balance {
         crate::ui::widgets::paint_ink_left(ui.painter(), g, Pos2::new(disc.right() + 6.0, rect.center().y), p.ink);
     }
-    if money.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    if let Some(money) = money {
+        if money.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        menu::context_menu(&money, p, |ui| super::balance_menu(ui, p, st.show_balance, action));
+        if money.on_hover_text(aurora_i18n::tr!("ui-bars-balance-click-to-buy-l")).clicked() {
+            *action = BarAction::BuyCurrency;
+        }
     }
-    if money.on_hover_text(aurora_i18n::tr!("ui-bars-balance-click-to-buy-l")).clicked() {
-        *action = BarAction::BuyCurrency;
+    menu::context_menu_of_button(&status, p, |ui| super::balance_menu(ui, p, st.show_balance, action));
+    // the demo cannot right-click: the same menu under the island
+    let ctx = ui.ctx().clone();
+    if super::demo::get().open == Some(super::demo::Open::Account) && ctx.cumulative_frame_nr() >= 300 {
+        let id = Id::unique("bars_account_demo_menu");
+        let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
+        let at = Pos2::new(rect.left(), island.bottom() + MARGIN);
+        menu::popup_at(&ctx, id, at, &mut open, p, |ui| super::balance_menu(ui, p, st.show_balance, action));
+        ctx.data_mut(|d| d.insert_temp(id, open));
     }
     demo_open(ui.ctx(), &status, super::demo::Open::Status);
     menu::dropdown_placed(
@@ -407,14 +462,21 @@ fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action
     status.on_hover_text(status_tip(&st.status));
 }
 
+/// The readouts of the system island.
+struct Readouts {
+    clock: String,
+    ping: String,
+    fps: String,
+}
+
 /// The readouts of the system island: clock, latency, frame rate.
-fn readouts(st: &StatusInfo) -> (String, String, String) {
+fn readouts(st: &StatusInfo) -> Readouts {
     let s = st.system_island;
-    (
-        clock::text(s),
-        format!("{} ms", st.ping_ms),
-        aurora_i18n::number(f64::from(st.fps), 1),
-    )
+    Readouts {
+        clock: clock::text(s),
+        ping: ping_text(st.ping_ms),
+        fps: fps_text(st.fps),
+    }
 }
 
 /// The size of the readouts' text.
@@ -425,7 +487,7 @@ const AUDIO_W: f32 = SLOT * 3.0 + 2.0 * 2.0;
 const NET_W: f32 = 36.0;
 
 /// What the system island shows, left to right.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Item {
     Clock,
     Ping,
@@ -457,11 +519,11 @@ fn items(st: &StatusInfo) -> Vec<Item> {
     shown
 }
 
-fn item_width(ui: &egui::Ui, texts: &(String, String, String), item: Item) -> f32 {
+fn item_width(ui: &egui::Ui, texts: &Readouts, item: Item) -> f32 {
     match item {
-        Item::Clock => readout_width(steady_width(ui, &texts.0, READOUT)),
-        Item::Ping => readout_width(steady_width(ui, &texts.1, READOUT)),
-        Item::Fps => readout_width(steady_width(ui, &texts.2, READOUT)),
+        Item::Clock => readout_width(held_width(ui, Id::unique(("bars_readout", item)), &texts.clock, READOUT)),
+        Item::Ping => readout_width(held_width(ui, Id::unique(("bars_readout", item)), &texts.ping, READOUT)),
+        Item::Fps => readout_width(held_width(ui, Id::unique(("bars_readout", item)), &texts.fps, READOUT)),
         Item::Net => readout_width(NET_W),
         Item::Media => AUDIO_W,
     }
@@ -540,7 +602,7 @@ fn system(
                     rect,
                     Id::unique("bars_island_time"),
                     "clock-filled",
-                    text(ui, texts.0.clone(), SIZE, p.muted),
+                    text(ui, texts.clock.clone(), SIZE, p.muted),
                     p.muted,
                     true,
                 );
@@ -560,7 +622,7 @@ fn system(
                     rect,
                     Id::unique("bars_island_ping"),
                     "antenna-bars-5",
-                    text(ui, texts.1.clone(), SIZE, p.muted),
+                    text(ui, texts.ping.clone(), SIZE, p.muted),
                     p.muted,
                     false,
                 );
@@ -574,7 +636,7 @@ fn system(
                     rect,
                     Id::unique("bars_island_fps"),
                     "gauge-filled",
-                    text(ui, texts.2.clone(), SIZE, color),
+                    text(ui, texts.fps.clone(), SIZE, color),
                     color,
                     true,
                 );
@@ -896,7 +958,7 @@ fn tip_body(
         day = day.to_string(),
         month = crate::ui::land::months()[month - 1]
     );
-    let (_, ping, fps) = readouts(st);
+    let Readouts { ping, fps, .. } = readouts(st);
     let [slt, local] = clock::tip_values(st.system_island);
     tip_row(ui, p, icons, "clock-filled", aurora_i18n::tr!("ui-bars-tip-slt"), &slt, p.ink);
     tip_row(ui, p, icons, "home-filled", aurora_i18n::tr!("ui-bars-tip-local"), &local, p.ink);
@@ -1043,6 +1105,7 @@ mod tests {
             parcel: "Aurora Plaza",
             tp_back: None,
             tp_forward: None,
+            tp_session: Default::default(),
             maturity: "",
             position: glam::Vec3::new(132.0, 126.0, 33.0),
             fps: 60.0,
@@ -1050,12 +1113,14 @@ mod tests {
             seated: false,
             ping_ms: 38,
             balance: Some(1000),
+            show_balance: true,
             voice: (crate::voice::VoiceLight::Off, String::new()),
             slurl: String::new(),
             status: Default::default(),
             ban_lines: 0,
             parcel_icons: Vec::new(),
             local_env: false,
+            env_keys: Default::default(),
             double_click: Default::default(),
             quickjump: false,
             quiet_snapshots: false,
@@ -1428,6 +1493,76 @@ mod tests {
         };
         st.net_stats = false;
         assert_eq!(items(&st), vec![Item::Clock]);
+    }
+
+    /// The balance hidden (#1340): the account island keeps the picture
+    /// alone, as narrow as without a balance, 8 px from the system island.
+    #[test]
+    fn the_account_island_hides_the_balance() {
+        let ctx = egui::Context::default();
+        let mut st = status(true, true);
+        let width = |st: &StatusInfo| {
+            let mut w = 0.0;
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                w = account_width(ui, &crate::theme::Theme::default().palette(), st)
+            });
+            out.textures_delta.clear();
+            w
+        };
+        let shown = width(&st);
+        st.show_balance = false;
+        let hidden = width(&st);
+        assert_eq!(hidden, PAD * 2.0 + account_slot_width(None));
+        assert!(shown > hidden + 30.0, "the balance takes its room: {shown} / {hidden}");
+        st.show_balance = true;
+        st.balance = None;
+        assert_eq!(width(&st), hidden);
+        st.balance = Some(1000);
+        st.show_balance = false;
+        frame_at(&ctx, &st, 0.0, vec![]);
+        frame_at(&ctx, &st, 0.1, vec![]);
+        let account = ctx.memory(|m| m.area_rect(Id::unique(("bars_island", "account")))).unwrap();
+        assert_eq!(account.width(), hidden);
+        assert_eq!(system_rect(&ctx).left() - account.right(), MARGIN);
+    }
+
+    /// A readout keeps the widest width it needed in the last `HOLD`
+    /// seconds (#1246): one digit is as wide as another, the frame rate
+    /// going back and forth across 100 does not move the island, which
+    /// narrows again once it stays under 100; the latency alike.
+    #[test]
+    fn the_readouts_hold_their_width() {
+        let ctx = egui::Context::default();
+        let st = status(true, true);
+        let width_at = |time: f64, item: Item, fps: f32, ping: u32| {
+            let mut w = 0.0;
+            let input = egui::RawInput {
+                time: Some(time),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                let texts = Readouts {
+                    ping: ping_text(ping),
+                    fps: fps_text(fps),
+                    ..readouts(&st)
+                };
+                w = item_width(ui, &texts, item);
+            });
+            out.textures_delta.clear();
+            w
+        };
+        let narrow = width_at(0.0, Item::Fps, 99.0, 0);
+        assert_eq!(width_at(0.5, Item::Fps, 15.0, 0), narrow, "one digit as wide as another");
+        let wide = width_at(1.0, Item::Fps, 100.0, 0);
+        assert!(wide > narrow);
+        assert_eq!(width_at(2.0, Item::Fps, 99.0, 0), wide);
+        assert_eq!(width_at(3.0, Item::Fps, 144.0, 0), wide);
+        assert_eq!(width_at(3.0 + HOLD - 0.5, Item::Fps, 99.0, 0), wide);
+        assert_eq!(width_at(3.0 + HOLD, Item::Fps, 99.0, 0), narrow);
+        let ping = width_at(20.0, Item::Ping, 0.0, 99);
+        assert!(width_at(21.0, Item::Ping, 0.0, 100) > ping);
+        assert!(width_at(22.0, Item::Ping, 0.0, 5) > ping);
+        assert_eq!(width_at(21.0 + HOLD, Item::Ping, 0.0, 99), ping);
     }
 
     /// Firestorm's thresholds of the traffic indicator: under 1.25 % of

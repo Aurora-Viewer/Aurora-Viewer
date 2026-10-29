@@ -253,6 +253,38 @@ impl Panels {
     }
 }
 
+/// Conversations and the mini-map as last seen by `remember`: their
+/// "at startup" settings follow a window only when it opens or closes.
+#[derive(Clone, Copy, Debug)]
+pub struct StartupWindows {
+    chat: bool,
+    minimap: bool,
+}
+
+impl StartupWindows {
+    pub fn new(panels: &Panels) -> StartupWindows {
+        StartupWindows {
+            chat: panels.chat,
+            minimap: panels.minimap,
+        }
+    }
+
+    /// Keeps the window's state at exit, like the save_visibility of
+    /// floater_im_container.xml and floater_map.xml, but only when the
+    /// window opens or closes: in between, the switches of Preferences ›
+    /// Layout › Startup hold (#1320), until the next open or close.
+    pub fn remember(&mut self, panels: &Panels, settings: &mut crate::settings::Settings) {
+        if panels.chat != self.chat {
+            self.chat = panels.chat;
+            settings.show_chat = panels.chat;
+        }
+        if panels.minimap != self.minimap {
+            self.minimap = panels.minimap;
+            settings.show_minimap = panels.minimap;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Panels;
@@ -384,5 +416,36 @@ mod tests {
         assert_eq!(open(&panels), ["chat", "perf", "inventory"]);
         assert_eq!(panels.people_tab, 1);
         assert!(saved.radar.show_minimap);
+    }
+
+    /// The Startup switches of Preferences hold while the windows stay as
+    /// they are, and a window opened or closed afterwards wins again (#1320).
+    #[test]
+    fn startup_switches_hold_until_the_window_opens_or_closes() {
+        let mut settings = Settings::default();
+        let mut panels = Panels::from_settings(&settings);
+        let mut seen = super::StartupWindows::new(&panels);
+        // both windows open, both switches turned off in Preferences
+        settings.show_chat = false;
+        settings.show_minimap = false;
+        for _ in 0..3 {
+            seen.remember(&panels, &mut settings);
+        }
+        assert!(!settings.show_chat && !settings.show_minimap);
+        // turned back on
+        settings.show_chat = true;
+        seen.remember(&panels, &mut settings);
+        assert!(settings.show_chat);
+        // the mini-map closed, then reopened: its state is remembered again
+        panels.minimap = false;
+        seen.remember(&panels, &mut settings);
+        assert!(!settings.show_minimap);
+        settings.show_minimap = true;
+        seen.remember(&panels, &mut settings);
+        assert!(settings.show_minimap, "the switch holds while the window stays closed");
+        panels.minimap = true;
+        panels.chat = false;
+        seen.remember(&panels, &mut settings);
+        assert!(settings.show_minimap && !settings.show_chat);
     }
 }

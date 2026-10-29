@@ -48,8 +48,15 @@ fn mip_texel(face: u32, uv: vec2<f32>) -> vec4<f32> {
 // LEGACY_FORMAT (skies with a probe ambiance, which take their ambient from
 // the probes) the filtering stores its values the same way.
 override LEGACY_FORMAT: bool = false;
+// Without "HDR and Emissive" (RenderHDREnabled off) the same stages are
+// GL_RGB8 (LLReflectionMapManager::update, LLCubeMapArray::allocate):
+// clamped to 1, in 256 linear steps. It replaces LEGACY_FORMAT.
+override LDR_FORMAT: bool = false;
 
 fn legacy_store(c: vec3<f32>) -> vec3<f32> {
+    if (LDR_FORMAT) {
+        return round(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)) * 255.0) / 255.0;
+    }
     if (!LEGACY_FORMAT) {
         return c;
     }
@@ -178,7 +185,7 @@ fn cs_mip(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     var c = mip_texel(id.z, texel_uv(id, dims)).rgb;
-    if (LEGACY_FORMAT) {
+    if (LEGACY_FORMAT || LDR_FORMAT) {
         // the four texels averaged, each as it was stored (the capture
         // included: the Legacy Viewer draws it into that format too)
         let p = vec2<i32>(id.xy) * 2;

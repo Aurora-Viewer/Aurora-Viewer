@@ -124,6 +124,7 @@ impl State {
             parent,
             name: self.name.trim().chars().take(63).collect(),
             data,
+            permissions: None,
         })
     }
 

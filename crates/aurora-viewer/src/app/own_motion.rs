@@ -23,6 +23,7 @@ impl App {
             input: self.input,
             yaw: self.world.agent.yaw,
             flying: self.world.agent.flying,
+            automatic_land: self.settings.automatic_land,
             running: self.running(),
             mouselook,
         };
@@ -45,7 +46,8 @@ impl App {
                         self.on_app_event(e);
                     }
                 }
-                Delivery::Landed => self.world.agent.flying = false,
+                Delivery::Landed if self.settings.automatic_land => self.world.agent.flying = false,
+                Delivery::Landed => {}
             }
         }
         self.world.predict_agent(1.0, 0.0);
@@ -226,7 +228,7 @@ impl App {
             .map(|p| p.id.to_string()[..8].to_string())
             .collect();
         log::info!(
-            "demo link trace: t={:.4} keys={} pos={:.4} {:.4} {:.4} server={:.4} {:.4} lead={:.4} {:.4} offset={:.4} {:.4} {:.4} cam={:.4} {:.4} {:.4} anims={} fly={} server_z={:.4} lead_z={:.4} svel={:.3} {:.3} {:.3} dvel={:.3} {:.3} {:.3}",
+            "demo link trace: t={:.4} keys={} pos={:.4} {:.4} {:.4} server={:.4} {:.4} lead={:.4} {:.4} offset={:.4} {:.4} {:.4} cam={:.4} {:.4} {:.4} at={:.4} {:.4} {:.4} anims={} fly={} server_z={:.4} lead_z={:.4} svel={:.3} {:.3} {:.3} dvel={:.3} {:.3} {:.3}",
             t,
             self.input.forward,
             a.position.x,
@@ -242,6 +244,9 @@ impl App {
             self.camera.position.x,
             self.camera.position.y,
             self.camera.position.z,
+            self.camera.target.x,
+            self.camera.target.y,
+            self.camera.target.z,
             anims.join(","),
             a.flying,
             a.predicted_position().z,

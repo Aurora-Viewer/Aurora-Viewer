@@ -830,6 +830,69 @@ mod tests {
     }
 
     #[test]
+    fn hover_add_preserves_worn_items_regardless_of_double_click_preferences() {
+        use crate::world::appearance::Action as Wear;
+
+        for width in [DEFAULT_SIZE.x, 800.0, WIDE_SIZE] {
+            for add_on_double_click in [false, true] {
+                for (kind, linked, library) in [
+                    (6, false, false),
+                    (5, false, false),
+                    (6, true, false),
+                    (6, false, true),
+                    (5, true, true),
+                ] {
+                    let mut h = Harness::new(width);
+                    h.prefs.double_click_add_objects = add_on_double_click;
+                    h.prefs.double_click_add_clothes = add_on_double_click;
+                    let row = Uuid::from_u128(8100);
+                    let mut item = h.inv.items[&row].clone();
+                    item.asset_type = kind;
+                    item.flags = 4;
+                    if library {
+                        h.inv.folders.get_mut(&item.parent).unwrap().library = true;
+                    }
+                    let original = if linked {
+                        item.id = Uuid::from_u128(8999);
+                        let original = item.id;
+                        h.inv.items.insert(original, item);
+                        let link = h.inv.items.get_mut(&row).unwrap();
+                        link.asset_type = 24;
+                        link.asset_id = original;
+                        original
+                    } else {
+                        h.inv.items.insert(row, item);
+                        row
+                    };
+                    h.st.show_original(&h.inv, row);
+                    h.frames(4);
+                    h.run(vec![egui::Event::PointerMoved(h.row(8100).center())]);
+                    h.frames(2);
+                    let button = h
+                        .ctx
+                        .data(|data| data.get_temp::<Rect>(egui::Id::unique(("inventory_quick", row, 0_usize))))
+                        .expect("hover action drawn");
+                    h.actions.clear();
+                    h.click(button.center(), Default::default());
+                    if library {
+                        assert!(matches!(&h.actions[..], [InvAction::WearCopy { item, replace: false }] if *item == original));
+                    } else {
+                        assert!(
+                            matches!(&h.actions[..], [InvAction::Appearance(Wear::WearItem { item, replace: false, point: 0 })] if *item == original)
+                        );
+                    }
+                    h.facts.appearance_busy = true;
+                    h.actions.clear();
+                    // Exercise a separate single click, not the row's double-click gesture.
+                    h.frames(40);
+                    h.click(button.center(), Default::default());
+                    assert!(h.actions.is_empty(), "hover actions wait for the current appearance operation");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn a_click_selects_a_row_and_the_explorer_goes_into_a_folder() {
         for width in [DEFAULT_SIZE.x, 800.0, WIDE_SIZE] {
             let mut h = Harness::new(width);

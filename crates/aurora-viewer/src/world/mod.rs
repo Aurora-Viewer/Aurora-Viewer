@@ -85,6 +85,7 @@ pub mod sound_parcels;
 pub mod staff;
 pub mod status;
 pub mod teleport_invites;
+pub mod temp_attachments;
 pub mod terrain;
 pub mod tphistory;
 pub mod transcripts;
@@ -125,6 +126,7 @@ pub struct Region {
     /// Terrain patches received so far: what the grass standing on it was
     /// placed for (scene/plants.rs).
     pub terrain_revision: u64,
+    pub terrain_surface: terrain::SurfaceState,
     pub caps: Arc<HashMap<String, String>>,
     /// Voice server of the region (SimulatorFeatures): "webrtc", "vivox" or empty.
     pub voice_server: String,
@@ -150,7 +152,8 @@ pub enum ChatKind {
     Im,
     /// Instant message sent by an object (llInstantMessage).
     ObjectIm,
-    Own,
+    /// Ours, with the volume of a nearby line (Normal elsewhere).
+    Own(ChatType),
     /// The card of a teleport offer or request (`teleport_invites.rs`),
     /// by its invitation: never written to the transcript.
     Invite(u64),
@@ -163,6 +166,25 @@ pub enum ChatKind {
 }
 
 impl ChatKind {
+    /// One of our lines that is not a nearby one (an IM, a group's), or
+    /// one said at the normal volume.
+    pub const OWN: ChatKind = ChatKind::Own(ChatType::Normal);
+
+    /// One of our own lines, whatever its volume.
+    pub fn is_own(self) -> bool {
+        matches!(self, ChatKind::Own(_))
+    }
+
+    /// How loud a resident's line was said, ours included (LLChat's
+    /// mChatType): whispered and shouted lines read the same whoever said
+    /// them (FSChatHistory::appendMessage).
+    pub fn volume(self) -> Option<ChatType> {
+        match self {
+            ChatKind::Local(t) | ChatKind::Own(t) => Some(t),
+            _ => None,
+        }
+    }
+
     /// A notice of the viewer rather than someone's message: it stands
     /// apart from the groups of messages.
     pub fn is_notice(self) -> bool {
@@ -234,6 +256,19 @@ impl PlayingAnimation {
     }
 }
 
+/// The Local tab of the texture picker (LLFloaterTexturePicker::onBtnAdd,
+/// onBtnRemove, onBtnUpload, indra/newview/lltexturectrl.cpp).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalAssetRequest {
+    /// Choose files to preview locally: images, or glTF materials.
+    Add {
+        materials: bool,
+    },
+    Remove(Uuid),
+    /// Open the importer on this local file, to upload it.
+    Upload(Uuid),
+}
+
 pub struct World {
     /// mScreen's Y scale (LLVOAvatarSelf::updateCharacter).
     pub hud_aspect: f32,
@@ -241,6 +276,8 @@ pub struct World {
     pub hud_zoom: f32,
     pub hud_scales: hud_scale::HudScales,
     pub hud_locks: hud_lock::HudLocks,
+    /// Names of our temporary attachments (temp_attachments.rs).
+    pub temp_attachment_names: temp_attachments::TempAttachmentNames,
     pub hover_height: hover_height::HoverHeight,
     /// The favourites in the account's order (`favorites.rs`).
     pub favorites: favorites::Favorites,
@@ -355,6 +392,8 @@ pub struct World {
     pub land_credit: i32,
     pub upload_cost: Option<i32>,
     pub local_assets: HashMap<Uuid, (String, bool)>,
+    /// The texture picker's Local tab buttons (drained by the app's importer).
+    pub local_asset_requests: Vec<LocalAssetRequest>,
     /// ExtEnvironment answers of the frame (parcel local id, error), for the
     /// environment editors' "Apply To Parcel / Region" (drained by the app).
     pub environment_answers: Vec<(i32, Result<(), String>)>,
@@ -595,6 +634,7 @@ impl World {
             hud_zoom: 1.0,
             hud_scales: Default::default(),
             hud_locks: Default::default(),
+            temp_attachment_names: Default::default(),
             hover_height: Default::default(),
             favorites: Default::default(),
             notification_history: Default::default(),
@@ -664,6 +704,7 @@ impl World {
             land_credit: 0,
             upload_cost: None,
             local_assets: HashMap::new(),
+            local_asset_requests: Vec::new(),
             environment_answers: Vec::new(),
             health: 100.0,
             frozen: false,
@@ -792,6 +833,8 @@ impl World {
             .and_then(|h| self.regions.get(&h))
             .map(|r| r.name.clone())
             .unwrap_or_default();
+        // the arrows' list names the place by its parcel too
+        self.tp_history.name_parcel(&self.parcel_name);
         let title = tphistory::location_title(&self.parcel_name, &region);
         if title.is_empty() {
             return;
@@ -1249,8 +1292,10 @@ impl World {
     /// circuit goes silent. A region without a simulator in `sims` (the
     /// offline demo, a region parked or just announced) runs at full rate.
     /// Corrections that have faded end here, and so do the waits of our
-    /// transform edits for their answer (edit_echo.rs).
-    pub fn advance_motion(&mut self, now: Instant, sims: &[aurora_net::stats::SimulatorMotion]) {
+    /// transform edits for their answer (edit_echo.rs). Then the roots
+    /// avatars sit on take a step of their damping, those `selected` in the
+    /// build tools excepted (ObjectStore::damp_seats).
+    pub fn advance_motion(&mut self, now: Instant, sims: &[aurora_net::stats::SimulatorMotion], selected: impl Fn(&ObjKey) -> bool) {
         let dt = now.saturating_duration_since(self.motion_tick).as_secs_f64();
         self.motion_tick = now;
         for &handle in self.regions.keys() {
@@ -1263,6 +1308,7 @@ impl World {
         }
         self.objects.expire_corrections(now);
         self.objects.expire_sent_edits(now);
+        self.objects.damp_seats(now, dt as f32, selected);
     }
 
     /// Freeze the world at `at` for a photo, or thaw it (issue #1154,
@@ -1537,6 +1583,7 @@ impl World {
                 if let Some(f) = self.social.friends.iter_mut().find(|f| f.id == *friend) {
                     f.rights_given = *rights;
                 }
+                self.status.rights_set_by_hand(*friend, *rights);
             }
             _ => {}
         }
@@ -1603,6 +1650,7 @@ impl World {
             wind: Default::default(),
             dirty_chunks: HashSet::new(),
             terrain_revision: 0,
+            terrain_surface: Default::default(),
             caps: Arc::new(HashMap::new()),
             voice_server: String::new(),
             avatar_hover_height: false,
@@ -1914,7 +1962,11 @@ impl World {
                 self.contact_sets = contact_sets::ContactSets::load(account.join(contact_sets::CONTACT_SETS_FILE));
                 self.groups.load_favorites(account.join(groups::FAVORITE_GROUPS_FILE));
                 self.group_data.load_read(account.join(group_data::NOTICES_READ_FILE));
-                self.status.invisible = status::Invisible::load(account.join(status::INVISIBLE_FILE), &self.social.friends);
+                self.status.invisible = status::Invisible::load(account.join(status::INVISIBLE_FILE));
+                let hidden = self.status.resume_invisible(&mut self.social, &mut self.groups.out);
+                if hidden > 0 {
+                    log::info!("invisible: hidden again from {hidden} friend(s) the login still showed us to");
+                }
                 let open = account.join(open_ims::FILE);
                 self.reopen_ims = open_ims::load(&open);
                 self.open_ims_path = Some(open);
@@ -1954,6 +2006,12 @@ impl World {
                 self.tp_history.name_current(info.handle, &info.name);
                 let r = self.ensure_region(info.handle, (info.size_x, info.size_y));
                 r.name = info.name.clone();
+                if r.info.as_ref().is_some_and(|old| {
+                    old.terrain_start_height != info.terrain_start_height || old.terrain_height_range != info.terrain_height_range
+                }) {
+                    r.dirty_chunks.extend(0..r.heightmap.chunk_count());
+                }
+                r.terrain_surface.applied = None;
                 r.info = Some(info);
                 None
             }
@@ -2074,7 +2132,16 @@ impl World {
                     } else {
                         self.regions.get(&handle).map(|r| r.name.clone()).unwrap_or_default()
                     };
-                    self.tp_history.arrived(tphistory::TpEntry { region, handle, position });
+                    let at = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_secs() as i64);
+                    self.tp_history.arrived(tphistory::TpEntry {
+                        region,
+                        handle,
+                        position,
+                        parcel: String::new(),
+                        at,
+                    });
                     // LLViewerParcelMgr::onTeleportFinished: a local teleport keeps
                     // the agent parcel (the simulator only sends ParcelProperties
                     // when the parcel changes)
@@ -2917,7 +2984,10 @@ impl World {
             NetEvent::Land(ev) => {
                 if let aurora_net::land::LandEvent::AttachmentScripts(result) = &ev {
                     match result {
-                        Ok((_, attachments)) => self.rlva_controller_resources(attachments),
+                        Ok((_, attachments)) => {
+                            self.temp_attachment_names.learn(attachments);
+                            self.rlva_controller_resources(attachments)
+                        }
                         Err(_) => self.rlva_controller_resources(&[]),
                     }
                 }
@@ -2950,6 +3020,14 @@ impl World {
             }
             NetEvent::Estate(ev) => {
                 match &ev {
+                    aurora_net::estate::EstateEvent::TerrainTransforms {
+                        handle,
+                        transforms: Ok(transforms),
+                    } => {
+                        if let Some(region) = self.regions.get_mut(handle) {
+                            region.terrain_surface.transforms = *transforms;
+                        }
+                    }
                     aurora_net::estate::EstateEvent::Stats { stats, .. } => self.on_sim_stats_alert(stats),
                     aurora_net::estate::EstateEvent::SimVersion { version, .. } => self.on_sim_version_alert(version),
                     _ => {}
@@ -3427,7 +3505,7 @@ impl World {
         if self.receive_hand_contacts(&c, Instant::now()) {
             return;
         }
-        if self.script_debug.route(&c, self.agent_id) || self.anti_spam_chat(&c) {
+        if self.script_debug.route(&c, self.agent_id, Instant::now()) || self.anti_spam_chat(&c) {
             return;
         }
         let kind = match c.source_type {
@@ -3435,7 +3513,9 @@ impl World {
             ChatSourceType::Object => ChatKind::Object(c.chat_type),
             ChatSourceType::Agent => {
                 if c.source_id == self.agent_id {
-                    ChatKind::Own
+                    // said, whispered or shouted: shown like anyone's
+                    // (FSChatHistory::appendMessage styles by mChatType)
+                    ChatKind::Own(c.chat_type)
                 } else {
                     // "We have a real utterance now": no more typing
                     self.nearby_typing.remove(&c.source_id);
@@ -3477,7 +3557,7 @@ impl World {
         // process_chat_from_simulator: every line but ours and the debug
         // channel's (FSKeywords::chatContainsKeyword)
         // (an object's line alerts no more while #741's option is on)
-        if !matches!(kind, ChatKind::Own | ChatKind::Object(ChatType::Debug)) && self.alerts(kind) {
+        if !matches!(kind, ChatKind::Own(_) | ChatKind::Object(ChatType::Debug)) && self.alerts(kind) {
             self.keyword_alert(c.source_id, &from, &c.message, true, attention::Open::NearbyChat);
         }
         // a resident's line, not ours nor an object's: the Conversations
@@ -3486,7 +3566,7 @@ impl World {
         // the bubble above the speaker's head: residents only, ourselves
         // included, never while we are in do not disturb
         // (process_chat_from_simulator, LLVOAvatar::addChat)
-        if matches!(kind, ChatKind::Local(_) | ChatKind::Own) && !self.status.dnd {
+        if matches!(kind, ChatKind::Local(_) | ChatKind::Own(_)) && !self.status.dnd {
             use bubble_chat::Voice;
             let voice = match c.chat_type {
                 ChatType::Whisper => Some(Voice::Whisper),
@@ -4372,7 +4452,7 @@ impl World {
             time: SystemTime::now(),
             from: me,
             text,
-            kind: ChatKind::Own,
+            kind: ChatKind::OWN,
             source: Uuid::nil(),
             origin: Origin::Live,
         };

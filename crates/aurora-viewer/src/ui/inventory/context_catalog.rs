@@ -249,6 +249,14 @@ fn creation(c: &mut Catalog, zone: &str, parent: Uuid, enabled: bool) {
             }),
         );
     }
+    c.invoke(
+        "default-permissions",
+        zone,
+        "shield-lock-filled",
+        aurora_i18n::tr!("inventory-default-permissions"),
+        true,
+        InvAction::DefaultPermissions,
+    );
 }
 
 pub(super) fn lock_entry() -> Entry {
@@ -1216,10 +1224,7 @@ pub(super) fn execute(
         Command::Links(id) => {
             st.find_links(id);
         }
-        Command::Replace(id) => {
-            st.dialog = Some(EditDialog::ReplaceLinks(id, None));
-            st.fetch_all = true;
-        }
+        Command::Replace(id) => st.begin_replace_links(id),
         Command::Group(ids) => submit(rules::group(inv, &ids, &prefs.protected, &facts.worn)),
         Command::Ungroup(id) => st.dialog = Some(EditDialog::Ungroup(id)),
         Command::Favorite(ids, favorite) => submit(if ids.len() == 1 {

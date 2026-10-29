@@ -312,6 +312,30 @@ pub fn gpu_stalled(seconds: u64) {
     let _ = seconds;
 }
 
+/// The GPU device is lost for good (app/gpu_stall.rs): the session, which
+/// ends now, is reported as such, with the safe graphics offered next.
+pub fn gpu_lost() {
+    if let Some(session) = SESSION.get() {
+        let _ = std::fs::write(session.dir.join("gpu-lost.txt"), []);
+        let _ = std::fs::write(session.dir.join("failed"), []);
+    }
+}
+
+/// A known overlay hook arrived in the process (overlay_hooks.rs): its file
+/// name goes to `overlay-hooks.txt`, so the report names it however long
+/// ago it came (the log's tail may no longer hold its line).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn overlay_hook(file: &str) {
+    if let Some(session) = SESSION.get()
+        && let Ok(mut out) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(session.dir.join("overlay-hooks.txt"))
+    {
+        let _ = writeln!(out, "{file}");
+    }
+}
+
 /// The user closed the viewer from the notice while the GPU did not answer:
 /// the session is reported even though it ends through the usual way out.
 pub fn gpu_closed() {
@@ -332,7 +356,10 @@ pub fn gpu_answered() {
 const GPU_TROUBLE: &str = "gpu-trouble";
 
 fn gpu_trouble(dir: &Path) -> bool {
-    ["gpu-stall.txt", "freeze.txt"].iter().any(|name| dir.join(name).exists()) || summary::device_lost(dir)
+    ["gpu-stall.txt", "gpu-lost.txt", "freeze.txt"]
+        .iter()
+        .any(|name| dir.join(name).exists())
+        || summary::device_lost(dir)
 }
 
 fn note_gpu_trouble(dir: &Path) {

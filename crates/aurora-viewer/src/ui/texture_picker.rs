@@ -7,8 +7,8 @@
 
 use super::widgets::{self, Floater};
 use crate::theme::Palette;
-use crate::world::World;
 use crate::world::inventory::{Inventory, actions};
+use crate::world::{LocalAssetRequest, World};
 use egui::{RichText, Vec2};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -78,6 +78,7 @@ pub struct TexturePicker {
     library_lookup: Option<(u64, Uuid, Option<Uuid>)>,
     uuid_error: bool,
     footer_height: f32,
+    local_row_height: f32,
     footer_font_scale: f32,
     material_previews: super::texture_library::previews::Previews,
     material_model: Option<std::sync::Arc<aurora_render::preview::Model>>,
@@ -115,6 +116,7 @@ impl TexturePicker {
         self.uuid_text = current.to_string();
         self.uuid_error = false;
         self.footer_height = 0.0;
+        self.local_row_height = 0.0;
         self.material_model = None;
         self.material_view.reset_camera();
         self.preview = None;
@@ -136,6 +138,17 @@ impl TexturePicker {
         self.materials = true;
         self.allow_none = true;
         self.extra_buttons = true;
+    }
+
+    /// Terrain requires a material in every slot; Blank remains available.
+    pub(crate) fn open_terrain_materials(&mut self, title: &str, current: Uuid) {
+        self.open_materials(title, current);
+        self.allow_none = false;
+    }
+
+    /// Demo: open on the Local tab (kept only where local assets are allowed).
+    pub(crate) fn show_local_tab(&mut self) {
+        self.source = 1;
     }
 
     pub(crate) fn take_preview(&mut self) -> Option<Uuid> {
@@ -383,8 +396,18 @@ impl TexturePicker {
                 };
                 base * font_scale.max(1.0)
             };
+            let local_tab = self.allow_local && self.source == 1;
+            // The Local tab's buttons sit under its list, outside the footer
+            // shared by every tab.
+            let local_row = if !local_tab {
+                0.0
+            } else if self.local_row_height > 0.0 && self.footer_font_scale == font_scale {
+                self.local_row_height
+            } else {
+                32.0 * font_scale.max(1.0)
+            };
             let (body, _) = ui.allocate_exact_size(
-                Vec2::new(ui.available_width(), (ui.available_height() - footer).max(48.0)),
+                Vec2::new(ui.available_width(), (ui.available_height() - footer - local_row).max(48.0)),
                 egui::Sense::hover(),
             );
             let mut list = ui.new_child(
@@ -534,6 +557,41 @@ impl TexturePicker {
             if toggle_local {
                 self.local_open[tab] = !self.local_open[tab];
             }
+            let local_top = ui.cursor().top();
+            if local_tab {
+                // LLFloaterTexturePicker's local mode: Add, Remove, Upload.
+                ui.add_space(6.0);
+                let chosen_local = self.selected.filter(|asset| world.local_assets.contains_key(asset));
+                ui.horizontal(|ui| {
+                    let gap = ui.spacing().item_spacing.x;
+                    let size = Vec2::new((ui.available_width() - 2.0 * gap) / 3.0, 26.0);
+                    let flat = widgets::ActionKind::Flat;
+                    if widgets::action_button(ui, p, "plus", aurora_i18n::tr!("common-add"), flat, size)
+                        .on_hover_text(aurora_i18n::tr!("ui-texture-picker-local-add-tip"))
+                        .clicked()
+                    {
+                        world
+                            .local_asset_requests
+                            .push(LocalAssetRequest::Add { materials: self.materials });
+                    }
+                    let enabled = chosen_local.is_some();
+                    if widgets::action_button_if(ui, p, "trash-filled", aurora_i18n::tr!("common-remove"), flat, size, enabled).clicked()
+                        && let Some(id) = chosen_local
+                    {
+                        world.local_asset_requests.push(LocalAssetRequest::Remove(id));
+                        self.selected = None;
+                        self.uuid_text.clear();
+                    }
+                    if widgets::action_button_if(ui, p, "file-upload-filled", aurora_i18n::tr!("import-upload"), flat, size, enabled)
+                        .on_hover_text(aurora_i18n::tr!("ui-texture-picker-local-upload-tip"))
+                        .clicked()
+                        && let Some(id) = chosen_local
+                    {
+                        world.local_asset_requests.push(LocalAssetRequest::Upload(id));
+                    }
+                });
+            }
+            let local_bottom = ui.cursor().top();
 
             ui.add_space(6.0);
             if self.extra_buttons {
@@ -639,7 +697,10 @@ impl TexturePicker {
                     }
                 },
             );
-            self.footer_height = (ui.cursor().top() - body.bottom()).max(1.0);
+            if local_tab {
+                self.local_row_height = (local_bottom - local_top).max(1.0);
+            }
+            self.footer_height = (ui.cursor().top() - body.bottom() - (local_bottom - local_top)).max(1.0);
             self.footer_font_scale = font_scale;
         });
         if !open || chosen.is_some() {
@@ -918,6 +979,54 @@ mod tests {
             picker.allow_local = false;
             labels = frame(&ctx, &mut picker, &mut world, 6.0, vec![]);
             assert!(!labels.contains_key(folder));
+        }
+    }
+
+    #[test]
+    fn local_tab_buttons_add_remove_and_upload_local_files() {
+        for materials in [false, true] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let local = Uuid::from_u128(10);
+            world.local_assets.insert(local, ("Local file".into(), materials));
+            let mut picker = TexturePicker::default();
+            if materials {
+                picker.open_materials("Material", Uuid::nil());
+            } else {
+                picker.open_with_defaults("Texture", Uuid::nil(), None, false);
+            }
+            picker.allow_local = true;
+            picker.source = 1;
+            let (add, remove, upload) = (
+                aurora_i18n::tr!("common-add"),
+                aurora_i18n::tr!("common-remove"),
+                aurora_i18n::tr!("import-upload"),
+            );
+            let mut labels = HashMap::new();
+            for n in 0..5 {
+                labels = frame(&ctx, &mut picker, &mut world, n as f64 / 60.0, vec![]);
+            }
+            // Remove and Upload wait for a local file to be chosen.
+            assert!(labels["Local file"].y < labels[add].y);
+            click(&ctx, &mut picker, &mut world, 1.0, labels[remove]);
+            click(&ctx, &mut picker, &mut world, 1.1, labels[upload]);
+            assert!(world.local_asset_requests.is_empty());
+            click(&ctx, &mut picker, &mut world, 1.2, labels[add]);
+            assert_eq!(world.local_asset_requests, vec![LocalAssetRequest::Add { materials }]);
+            world.local_asset_requests.clear();
+            click(&ctx, &mut picker, &mut world, 2.0, labels["Local file"]);
+            assert_eq!(picker.selected, Some(local));
+            click(&ctx, &mut picker, &mut world, 3.0, labels[upload]);
+            assert_eq!(world.local_asset_requests, vec![LocalAssetRequest::Upload(local)]);
+            world.local_asset_requests.clear();
+            click(&ctx, &mut picker, &mut world, 4.0, labels[remove]);
+            assert_eq!(world.local_asset_requests, vec![LocalAssetRequest::Remove(local)]);
+            assert_eq!(picker.selected, None);
+            // The other tabs keep the list's full height.
+            picker.source = 0;
+            labels = frame(&ctx, &mut picker, &mut world, 5.0, vec![]);
+            assert!(!labels.contains_key(add));
         }
     }
 

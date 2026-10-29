@@ -21,6 +21,8 @@ use uuid::Uuid;
 pub(super) const WIDTH: f32 = 232.0;
 pub(super) const RAIL: f32 = 58.0;
 const ENTRY_H: f32 = 44.0;
+/// From the middle of an entry's name to the middle of its subtitle.
+const LINE_GAP: f32 = 17.0;
 const PIC: f32 = 32.0;
 /// The glyph on an entry's square (nearby chat, a group without insignia).
 const GLYPH: f32 = 17.0;
@@ -213,8 +215,8 @@ pub(super) fn entry_id(entry: Pinned) -> egui::Id {
 
 /// The picture of an entry.
 pub(super) enum Icon<'a> {
-    /// A resident: their picture and status.
-    Avatar(Option<&'a egui::TextureHandle>, presence::Status),
+    /// A resident: their picture and status, and whether they type to us.
+    Avatar(Option<&'a egui::TextureHandle>, presence::Status, bool),
     /// A group: its insignia, once loaded (none: the group glyph).
     Group(Option<&'a egui::TextureHandle>),
     /// A Tabler icon on a tinted square (nearby chat, Contacts, a conference).
@@ -409,7 +411,7 @@ pub(super) fn show(
                         st.wanted_images.insert(i);
                     }
                     let icon = match kind {
-                        Kind::Private => Icon::Avatar(pics.get(&id), status),
+                        Kind::Private => Icon::Avatar(pics.get(&id), status, world.social.is_typing(&id)),
                         Kind::Group => Icon::Group(insignia.and_then(|i| images.get(&i))),
                         Kind::Conference => Icon::Glyph("users", p.muted),
                     };
@@ -482,7 +484,7 @@ pub(super) fn show(
                     for (id, name) in friends.into_iter().take(8) {
                         st.wanted_pics.insert(id);
                         let e = Entry {
-                            icon: Icon::Avatar(pics.get(&id), presence::of(world, &id)),
+                            icon: Icon::Avatar(pics.get(&id), presence::of(world, &id), false),
                             name_color: world.contact_sets.appearance(&id).ui_name.map(crate::ui::colors::set_color),
                             name: &name,
                             sub: Some(aurora_i18n::tr!("ui-chat-start-im").to_owned()),
@@ -550,7 +552,7 @@ fn preview(world: &World, line: &crate::world::ChatLine, named: bool) -> String 
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
     if emote || line.kind.is_notice() {
         text
-    } else if line.kind == crate::world::ChatKind::Own {
+    } else if line.kind.is_own() {
         aurora_i18n::tr!("ui-chat-preview-you", text = text.as_str()).to_owned()
     } else if named && let Some(first) = name.split_whitespace().next() {
         format!("{first} : {text}")
@@ -740,7 +742,8 @@ fn ghost(ctx: &egui::Context, p: &Palette, st: &ChatUi, e: Entry, rail: bool, pi
 /// in its tooltip).
 fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) -> Picked {
     let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, ENTRY_H), egui::Sense::hover());
+    let gap = crate::ui::widgets::two_lines_gap(ui, &egui::FontId::proportional(13.0), &egui::FontId::proportional(11.0), LINE_GAP);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, ENTRY_H + gap - LINE_GAP), egui::Sense::hover());
     // a conversation's entry drags, to its place or out of the window; the
     // nearby chat's, pinned, out of the window (#910)
     let sense = if e.close.is_some() || id == entry_id(Pinned::Local) {
@@ -847,19 +850,24 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
         egui::FontId::proportional(13.0)
     };
     let has_sub = e.sub.as_ref().is_some_and(|s| !s.is_empty());
-    let name_y = if has_sub { rect.center().y - 8.0 } else { rect.center().y };
+    let name_y = if has_sub {
+        rect.center().y - gap * 8.0 / LINE_GAP
+    } else {
+        rect.center().y
+    };
+    let sub_y = rect.center().y + gap * 9.0 / LINE_GAP;
     let cut = crate::ui::widgets::paint_elided(ui, e.name, egui::pos2(x, name_y), right - x, font, name_color);
     if let Some(sub) = e.sub.as_ref().filter(|s| !s.is_empty()) {
         let mut sx = x;
         if let Some((icon, color)) = e.sub_icon {
-            let r = egui::Rect::from_min_size(egui::pos2(sx, rect.center().y + 3.0), egui::Vec2::splat(11.0));
+            let r = egui::Rect::from_min_size(egui::pos2(sx, sub_y - 6.0), egui::Vec2::splat(11.0));
             super::thread::paint_icon(ui.painter(), icon, r, color);
             sx += 14.0;
         }
         crate::ui::widgets::paint_elided(
             ui,
             sub,
-            egui::pos2(sx, rect.center().y + 9.0),
+            egui::pos2(sx, sub_y),
             right - sx,
             egui::FontId::proportional(11.0),
             p.muted_dim,
@@ -869,14 +877,16 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
     Picked { resp, close }
 }
 
-/// The picture of an entry: a resident's with its status, a group's
-/// insignia, a glyph on a tinted square.
+/// The picture of an entry: a resident's with its status, or their typing
+/// to us; a group's insignia, a glyph on a tinted square.
 pub(super) fn paint_picture(ui: &egui::Ui, p: &Palette, icon: &Icon, name: &str, rect: egui::Rect, ring: Color32) {
     let radius = ui.visuals().window_corner_radius;
     match icon {
-        Icon::Avatar(pic, status) => {
+        Icon::Avatar(pic, status, typing) => {
             crate::ui::widgets::avatar_disc(ui, p, rect, *pic, name, false);
-            if *status != presence::Status::Unknown {
+            if *typing {
+                paint_typing(ui, p, rect, ring);
+            } else if *status != presence::Status::Unknown {
                 presence::paint_dot(ui.painter(), p, rect, *status, ring);
             }
         }
@@ -891,6 +901,32 @@ pub(super) fn paint_picture(ui: &egui::Ui, p: &Palette, icon: &Icon, name: &str,
             );
         }
     }
+}
+
+/// A resident typing to us (#1233), over the bottom of their picture: the
+/// name plates' three bouncing dots (`nameplate::typing_dot`) on a pill
+/// ringed in `ring`, the surface under the picture, like the status dot it
+/// stands in for (whoever types is online). An Aurora addition, the human's
+/// choice: the Legacy Viewer says it in the conversation's tab only.
+fn paint_typing(ui: &egui::Ui, p: &Palette, picture: egui::Rect, ring: Color32) {
+    let w = picture.width();
+    let size = egui::vec2(w * 0.78, (w * 0.42).max(8.0));
+    let pill = egui::Rect::from_center_size(egui::pos2(picture.center().x, picture.bottom() - size.y * 0.3), size);
+    let radius = ui.visuals().window_corner_radius;
+    let painter = ui.painter();
+    painter.rect_filled(pill.expand(1.5), radius, ring);
+    painter.rect_filled(pill, radius, p.raised);
+    // the plates' dots are 1.75 mockup pixels, 5.5 apart, on a 32 point
+    // picture; never smaller than a point and a bit in a thumbnail
+    let s = w / PIC;
+    let (r, step) = ((1.75 * s).max(1.2), (5.5 * s).max(3.6));
+    let now = ui.input(|i| i.time);
+    for k in 0..3 {
+        let (opacity, lift) = crate::ui::nameplate::typing_dot(now, k);
+        let at = pill.center() + egui::vec2((k as f32 - 1.0) * step, lift * s);
+        painter.circle_filled(at, r, p.ink.gamma_multiply(opacity));
+    }
+    ui.ctx().request_repaint();
 }
 
 /// The panel of a call at the bottom of the column, while another

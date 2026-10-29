@@ -539,6 +539,9 @@ pub struct Settings {
     /// the user's choice only, not the window's state at exit. Off, the
     /// frame rate of the bars opens it.
     pub show_perf: bool,
+    /// Conversations and the mini-map open with the session: the window's
+    /// last open or close, or the switch of Preferences › Layout › Startup
+    /// turned since (`ui::StartupWindows`).
     pub show_chat: bool,
     pub show_minimap: bool,
     /// FSUseStandalonePlaceDetailsFloater: landmarks, place links and history
@@ -614,6 +617,15 @@ pub struct Settings {
     /// off by default; Preferences > Chat). "/n" before the text works
     /// without it.
     pub show_chat_channel: bool,
+    /// Our own objects' script errors in the nearby chat, with a red
+    /// warning sign, instead of opening the Script debug window, which
+    /// still keeps them (ShowScriptErrorsLocation 0; on, the human's choice
+    /// for #1263, the window in the Legacy Viewer; Preferences > Chat).
+    pub script_errors_in_chat: bool,
+    /// They are also said on `script_errors_channel` (off; #1263, not in
+    /// the Legacy Viewer).
+    pub script_errors_to_channel: bool,
+    pub script_errors_channel: i32,
     /// What objects say in the nearby chat on one small row like the
     /// viewer's notices (#475, off by default; Preferences > Chat). Not in
     /// the Legacy Viewer.
@@ -815,6 +827,9 @@ pub struct Settings {
     /// Complete name plates for friends only: the others stop at the
     /// compact pill (off by default).
     pub plates_friends_only_full: bool,
+    /// A friend's name plate takes a light tint of the friends' color of
+    /// Preferences › Colors (on by default): friends stand out in a crowd.
+    pub plates_friend_tint: bool,
     /// A name plate under the pointer shows full while it stays there (on
     /// by default).
     pub plates_hover_expand: bool,
@@ -869,6 +884,10 @@ pub struct Settings {
     /// Firestorm's traffic indicator (ShowNetStats, off by default): a
     /// small curve of the network in the system island.
     pub show_net_stats: bool,
+    /// The L$ balance in the top bar (the Legacy Viewer's
+    /// FSShowCurrencyBalanceInStatusbar, on by default; #1340): hidden, it
+    /// stays out of sight on a stream.
+    pub show_balance: bool,
     /// People › Near you as Firestorm's radar table (`ui/people/radar.rs`)
     /// instead of the rows grouped by range and the sheet of
     /// `ui/people/nearby.rs`.
@@ -1010,6 +1029,13 @@ pub struct Settings {
     /// Legacy Viewer's `FSDisableTurningAroundWhenWalkingBackwards`, off by
     /// default.
     pub walk_backwards_without_turning: bool,
+    /// Hold Up to start flying (agent_jump, indra/newview/llviewerinput.cpp).
+    /// Aurora splits AutomaticFly into independent takeoff/landing choices;
+    /// both default to on.
+    pub automatic_fly: bool,
+    /// Hold Down on physical support to end flight (LLAgent::propagate,
+    /// indra/newview/llagent.cpp), independently of automatic takeoff.
+    pub automatic_land: bool,
     /// Always fly after a teleport (the Legacy Viewer's FSFlyAfterTeleport,
     /// off); a region that blocks flying still lands the avatar.
     pub fly_after_teleport: bool,
@@ -1059,6 +1085,11 @@ pub struct Settings {
     /// Share of the tone mapped color over the exposed linear one, on skies
     /// that are not classic (RenderTonemapMix, 0.7 like the Legacy Viewer).
     pub tonemap_mix: f32,
+    /// "HDR and Emissive" (RenderDisableVintageMode, on by default, off in
+    /// the Legacy Viewer's Low and LowMid levels): off, no exposure, tone
+    /// mapping nor sharpening, no emissive on opaque PBR faces and 8-bit
+    /// reflection probes (`RenderSettings::hdr`).
+    pub hdr_emissive: bool,
     /// Optional frame rate cap (on by default at 120 images per second).
     pub fps_cap: bool,
     pub fps_limit: u32,
@@ -1214,6 +1245,13 @@ pub(crate) fn foot_height_limit(value: f32) -> f32 {
     }
 }
 
+/// Limits of Preferences › Appearance › Text size, a multiplier of every
+/// interface font. The Legacy Viewer stops at +2 points (FSFontSizeAdjustment,
+/// panel_preferences_UI.xml, about 1.2×); Aurora goes up to twice the size for
+/// visually impaired users (#1227), on top of the interface scale.
+pub(crate) const FONT_SCALE_MIN: f32 = 0.8;
+pub(crate) const FONT_SCALE_MAX: f32 = 2.0;
+
 /// The default strength of the bloom (half of the light over its threshold).
 pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
 
@@ -1224,7 +1262,7 @@ pub(crate) const TONEMAP_MIX: f32 = 0.7;
 /// an S32 of seconds).
 pub(crate) const GROUP_SNOOZE_MAX_MINUTES: u32 = i32::MAX as u32 / 60;
 
-const SETTINGS_VERSION: u32 = 26;
+const SETTINGS_VERSION: u32 = 28;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1251,8 +1289,9 @@ pub struct ColorSettings {
     // name tags
     /// Display names colored by who the avatar is to us (me, friend, Linden,
     /// blocked), on the plates and the classic tags; off, every name is in
-    /// the theme's ink (the human's choice, 2026-10-14). Firestorm always
-    /// colors them (LLVOAvatar::getNameTagColor).
+    /// the theme's ink. On by default since 2026-10-28 (the human's choice:
+    /// friends stand out in a crowd), as the Legacy Viewer always colors them
+    /// (LLVOAvatar::getNameTagColor).
     pub relation_names: bool,
     pub tag_me: Rgba,
     pub tag_friend: Rgba,
@@ -1305,7 +1344,7 @@ pub struct ColorSettings {
 impl Default for ColorSettings {
     fn default() -> Self {
         ColorSettings {
-            relation_names: false,
+            relation_names: true,
             tag_me: hex(0xFFFFFF),
             tag_friend: hex(0x818CF8),
             tag_muted: hex(0x6F7BA0),
@@ -1631,6 +1670,9 @@ impl Default for Settings {
             font_scale: 1.0,
             chat_timestamps: true,
             show_chat_channel: false,
+            script_errors_in_chat: true,
+            script_errors_to_channel: false,
+            script_errors_channel: 1,
             compact_automated_chat: false,
             compact_im_system_lines: false,
             chat_keep_focus: true,
@@ -1718,6 +1760,7 @@ impl Default for Settings {
             immersive_name_tags: false,
             immersive_huds: true,
             show_net_stats: false,
+            show_balance: true,
             classic_people: false,
             classic_restart_alert: false,
             classic_chat_lines: false,
@@ -1744,6 +1787,7 @@ impl Default for Settings {
             classic_controls: false,
             camera_shots: Vec::new(),
             plates_friends_only_full: false,
+            plates_friend_tint: true,
             plates_hover_expand: true,
             plates_jiggle: false,
             plates_click_combo: false,
@@ -1769,6 +1813,8 @@ impl Default for Settings {
             arrow_keys_always_move: false,
             letter_keys_move: true,
             walk_backwards_without_turning: false,
+            automatic_fly: true,
+            automatic_land: true,
             fly_after_teleport: false,
             crouch_toggle: false,
             quickjump: false,
@@ -1785,6 +1831,7 @@ impl Default for Settings {
             specular_aa: true,
             tonemapper: 1,
             tonemap_mix: TONEMAP_MIX,
+            hdr_emissive: true,
             fps_cap: true,
             fps_limit: 120,
             background_fps_cap: true,
@@ -2275,6 +2322,16 @@ impl Settings {
             // rate's click
             self.show_perf = false;
         }
+        if self.settings_version < 27 {
+            // names colored by relation are the default again: every earlier
+            // file wrote the former default, off
+            self.colors.relation_names = true;
+        }
+        if self.settings_version < 28 {
+            // the levels now set HDR and Emissive: a profile still exactly
+            // on Potato or Low turns it off, any other keeps it on
+            crate::graphics_presets::upgrade_hdr_emissive(&mut self);
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -2352,7 +2409,7 @@ impl Settings {
         self.ui_scale = self.ui_scale.clamp(0.75, 2.0);
         self.mouse_sensitivity = self.mouse_sensitivity.clamp(0.1, 5.0);
         self.texture_budget_mb = self.texture_budget_mb.clamp(256, 32768);
-        self.font_scale = self.font_scale.clamp(0.8, 1.4);
+        self.font_scale = self.font_scale.clamp(FONT_SCALE_MIN, FONT_SCALE_MAX);
         self.hover_tips.delay = if self.hover_tips.delay.is_finite() {
             self.hover_tips.delay.clamp(0.0, MAX_HOVER_TIP_DELAY)
         } else {
@@ -2520,6 +2577,7 @@ impl Settings {
             } else {
                 Tonemapper::KhronosNeutral
             },
+            hdr: self.hdr_emissive,
             shadow_resolution: self.shadow_params().0,
             ssao: self.ssao,
             ao_method: if self.ao_method == 1 {
@@ -2691,6 +2749,28 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn automatic_flight_preferences_default_on_and_keep_independent_saved_choices() {
+        use super::Settings;
+        for json in ["{}", r#"{"automatic_fly":false}"#, r#"{"automatic_land":false}"#] {
+            let loaded: Settings = serde_json::from_str(json).expect("synthetic older preferences");
+            assert_eq!(loaded.automatic_fly, !json.contains("automatic_fly"));
+            assert_eq!(loaded.automatic_land, !json.contains("automatic_land"));
+        }
+        for automatic_fly in [false, true] {
+            for automatic_land in [false, true] {
+                let original = Settings {
+                    automatic_fly,
+                    automatic_land,
+                    ..Settings::default()
+                };
+                let bytes = serde_json::to_vec(&original).expect("serialize automatic flight choices");
+                let loaded: Settings = serde_json::from_slice(&bytes).expect("restore automatic flight choices");
+                assert_eq!((loaded.automatic_fly, loaded.automatic_land), (automatic_fly, automatic_land));
+            }
+        }
+    }
+
     /// The early read of `allow_overlays` agrees with the full settings and
     /// keeps the overlays out on any doubt.
     #[test]
@@ -3592,8 +3672,8 @@ mod tests {
     }
 
     #[test]
-    fn names_by_relation_stay_colored_for_classic_tag_users_only() {
-        assert!(!Settings::default().sanitized().colors.relation_names);
+    fn names_by_relation_are_colored_by_default_and_for_earlier_files() {
+        assert!(Settings::default().sanitized().colors.relation_names);
         // a file from before the switch has no such field
         for classic in [false, true] {
             let mut file = serde_json::to_value(Settings {
@@ -3604,12 +3684,19 @@ mod tests {
             .expect("synthetic saved settings");
             file["colors"].as_object_mut().expect("colors").remove("relation_names");
             let old: Settings = serde_json::from_value(file).expect("read synthetic settings");
-            assert_eq!(old.sanitized().colors.relation_names, classic);
+            assert!(old.sanitized().colors.relation_names);
         }
-        // changed after the migration: kept
-        let mut on = Settings::default();
-        on.colors.relation_names = true;
-        assert!(on.sanitized().colors.relation_names);
+        // a file that wrote the former default, off
+        let mut off = Settings {
+            settings_version: 26,
+            ..Settings::default()
+        };
+        off.colors.relation_names = false;
+        assert!(off.sanitized().colors.relation_names);
+        // switched off after the migration: kept
+        let mut off = Settings::default();
+        off.colors.relation_names = false;
+        assert!(!off.sanitized().colors.relation_names);
     }
 
     #[test]

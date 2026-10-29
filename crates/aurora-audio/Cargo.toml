@@ -10,7 +10,9 @@ description = "Audio output engine for Aurora Viewer: volume-channel mixer, parc
 [dependencies]
 sonora = "0.2.0"
 aurora-version = { version = "0.1.0", path = "../aurora-version" }
-cpal = "0.18.2"
+# realtime: the device callbacks run in the multimedia scheduler's "Audio"
+# task (MMCSS), so a busy viewer does not starve them.
+cpal = { version = "0.18.2", features = ["realtime"] }
 crossbeam-channel = "0.5.17"
 log = "0.4.34"
 parking_lot = "0.12.5"

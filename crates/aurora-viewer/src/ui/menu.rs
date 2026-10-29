@@ -19,6 +19,8 @@ const PAD: f32 = 8.0;
 const ICON: f32 = 15.0;
 const RIGHT: f32 = 22.0;
 const MIN_W: f32 = 180.0;
+/// Room of the check mark after the keys of a [`check_keys`] entry.
+const CHECK_ROOM: f32 = RIGHT + 4.0;
 /// Where the text of a row starts: a line under an entry (its value) lines
 /// up with it.
 pub const TEXT_INDENT: f32 = PAD + ICON + PAD;
@@ -38,6 +40,8 @@ enum End<'a> {
     /// The keys of the entry's shortcut, or a detail of the entry (where a
     /// landmark leads), muted at the right end.
     Keys(&'a str),
+    /// A check entry with the keys of its shortcut before the check mark.
+    CheckKeys(bool, &'a str),
     /// A small label in the brand teal (a suggestion).
     Tag(&'a str),
 }
@@ -254,7 +258,6 @@ pub fn dropdown_placed(
     place: Option<(egui::RectAlign, f32)>,
     body: impl FnOnce(&mut Ui),
 ) -> bool {
-    use egui::containers::menu::MenuConfig;
     if dismiss_on_window_change(&resp.ctx) {
         return false;
     }
@@ -264,9 +267,38 @@ pub fn dropdown_placed(
     } else {
         close
     };
+    placed(Popup::menu(resp), p, close, place, body)
+}
+
+/// [`dropdown_placed`] opened by its caller instead of by a click on
+/// `resp` (a button held down, a right click): `open` opens it this frame.
+/// It stays open until a click outside or an entry closes it. Returns
+/// whether the menu is open.
+pub fn dropdown_held(
+    resp: &egui::Response,
+    p: &Palette,
+    open: bool,
+    place: Option<(egui::RectAlign, f32)>,
+    body: impl FnOnce(&mut Ui),
+) -> bool {
+    if dismiss_on_window_change(&resp.ctx) {
+        return false;
+    }
+    let popup = Popup::menu(resp).open_memory(open.then_some(egui::SetOpenCommand::Bool(true)));
+    placed(popup, p, PopupCloseBehavior::CloseOnClickOutside, place, body)
+}
+
+fn placed(
+    popup: Popup<'_>,
+    p: &Palette,
+    close: PopupCloseBehavior,
+    place: Option<(egui::RectAlign, f32)>,
+    body: impl FnOnce(&mut Ui),
+) -> bool {
+    use egui::containers::menu::MenuConfig;
     // the tag hands the same style and rule to the sub-menus
     let config = MenuConfig::new().close_behavior(close).style(style(p));
-    let mut popup = Popup::menu(resp);
+    let mut popup = popup;
     if let Some((align, gap)) = place {
         popup = popup.align(align).gap(gap);
     }
@@ -355,6 +387,14 @@ pub fn picture_row(
     row_lead(ui, p, Lead::Picture(picture, fallback), label, true, End::Keys(detail), selected)
 }
 
+/// A row of a list holding the place we are in (the arrows' teleport
+/// list): its `detail` muted at the right end; the `current` row is lit
+/// like a hovered entry and takes no click.
+pub fn current_row(ui: &mut Ui, p: &Palette, icon: &str, label: &str, detail: &str, current: bool) -> egui::Response {
+    let sense = if current { Sense::hover() } else { Sense::click() };
+    row_lead_sensed(ui, p, Lead::Icon(icon), label, true, End::Keys(detail), current, sense)
+}
+
 /// [`picture_row`] with a Tabler icon: a resident to mention, a gesture.
 pub fn suggestion_row(ui: &mut Ui, p: &Palette, icon: &str, label: &str, detail: &str, selected: bool) -> egui::Response {
     row_lead(ui, p, Lead::Icon(icon), label, true, End::Keys(detail), selected)
@@ -384,14 +424,18 @@ fn row_lead_sensed(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: b
     let ink = if enabled { p.ink } else { p.muted_dim };
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
     let keys = match end {
-        End::Keys(keys) => {
+        End::Keys(keys) | End::CheckKeys(_, keys) => {
             let color = if enabled { p.muted } else { p.muted_dim };
             Some(ui.painter().layout_no_wrap(keys.to_owned(), FontId::proportional(11.5), color))
         }
         End::Tag(tag) => Some(ui.painter().layout_no_wrap(tag.to_owned(), FontId::proportional(10.5), p.teal)),
         _ => None,
     };
-    let tag_room = if matches!(end, End::Tag(_)) { TAG_PAD * 2.0 } else { 0.0 };
+    let tag_room = match end {
+        End::Tag(_) => TAG_PAD * 2.0,
+        End::CheckKeys(..) => CHECK_ROOM,
+        _ => 0.0,
+    };
     let right = keys.as_ref().map_or(RIGHT, |k| k.size().x + PAD * 2.0 + tag_room);
     let natural = (PAD + ICON + PAD + galley.size().x + right + PAD).max(MIN_W);
     // natural width while egui measures the menu, then the menu's width
@@ -462,6 +506,16 @@ fn row_lead_sensed(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: b
             if let Some(keys) = keys {
                 let pos = super::widgets::row_text_origin(painter, &keys, rect.right() - PAD - keys.size().x, rect.center().y);
                 painter.galley(pos, keys, p.muted);
+            }
+        }
+        End::CheckKeys(checked, _) => {
+            if checked {
+                paint_icon(painter, "check", end_rect, if enabled { p.violet_light } else { p.muted_dim });
+            }
+            if let Some(keys) = keys {
+                let right = rect.right() - CHECK_ROOM - keys.size().x;
+                let pos = super::widgets::row_text_origin(painter, &keys, right, rect.center().y);
+                painter.galley(pos, keys, if enabled { p.muted } else { p.muted_dim });
             }
         }
         End::Tag(_) => {
@@ -788,6 +842,16 @@ pub fn todo(ui: &mut Ui, p: &Palette, icon: &str, label: &str) {
 /// Check entry (menu_item_check); true when clicked (the menu closes).
 pub fn check(ui: &mut Ui, p: &Palette, icon: &str, label: &str, checked: bool, enabled: bool) -> bool {
     let clicked = row(ui, p, icon, label, enabled, End::Check(checked), false).clicked();
+    if clicked {
+        ui.close();
+    }
+    clicked && enabled
+}
+
+/// Check entry with the keys of its shortcut (an empty `keys` shows none);
+/// true when clicked (the menu closes).
+pub fn check_keys(ui: &mut Ui, p: &Palette, icon: &str, label: &str, checked: bool, enabled: bool, keys: &str) -> bool {
+    let clicked = row(ui, p, icon, label, enabled, End::CheckKeys(checked, keys), false).clicked();
     if clicked {
         ui.close();
     }

@@ -123,6 +123,7 @@ const BEFORE: &[&str] = &[
     "place_bar_rights_text",
     "favorites_access",
     "show_net_stats",
+    "show_balance",
     "standalone_place_details",
     "loading_backdrop",
     "reduce_motion",
@@ -302,6 +303,7 @@ const BEFORE: &[&str] = &[
     "ground_feet_max_avatars",
     "plates_hover_expand",
     "plates_friends_only_full",
+    "plates_friend_tint",
     "plate_click",
     "plate_shift_click",
     "plate_ctrl_click",
@@ -431,6 +433,26 @@ fn joystick_preferences_reset_device_mapping_buttons_and_both_tunings() {
     s.joystick.direct_zoom = true;
     reset_page_settings(Page::Controls, &mut s);
     assert_eq!(s.joystick, crate::joystick::Settings::default());
+}
+
+#[test]
+fn automatic_flight_preferences_have_separate_controls_and_reset_with_their_page() {
+    let paths = collected();
+    for key in ["automatic_fly", "automatic_land"] {
+        let pages: Vec<_> = paths.iter().filter(|(_, path)| path == key).map(|(page, _)| *page).collect();
+        assert_eq!(pages, [Page::Controls]);
+    }
+    let mut s = Settings {
+        automatic_fly: false,
+        automatic_land: false,
+        fly_after_teleport: true,
+        ..Settings::default()
+    };
+    reset_page_settings(Page::Graphics, &mut s);
+    assert!(!s.automatic_fly && !s.automatic_land);
+    reset_page_settings(Page::Controls, &mut s);
+    assert!(s.automatic_fly && s.automatic_land);
+    assert!(!s.fly_after_teleport);
 }
 
 #[test]
@@ -1080,7 +1102,8 @@ fn the_name_colors_wait_for_their_switch() {
     let p = crate::theme::Theme::default().palette();
     let d = Settings::default();
     let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
-    assert!(!s.colors.relation_names && !s.classic_name_tags);
+    assert!(s.colors.relation_names && !s.classic_name_tags);
+    s.colors.relation_names = false;
     let id = egui::Id::unique((
         "preferences-row",
         Page::Avatars,
@@ -1145,7 +1168,7 @@ fn preferences_keep_their_height_when_text_size_changes() {
         ] {
             state.page = page;
             state.query = query.to_owned();
-            for scale in [1.0, 1.2, 1.4, 0.8, 1.0] {
+            for scale in [1.0, 1.2, 1.4, 2.0, 0.8, 1.0] {
                 settings.font_scale = scale;
                 theme.apply(&ctx, scale);
                 for _ in 0..30 {

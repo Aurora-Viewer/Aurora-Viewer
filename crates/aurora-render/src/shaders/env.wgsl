@@ -145,6 +145,10 @@ fn fs_sky_g(in: SkyOut) -> GOut {
 
 // --------------------------------------------------------------- terrain
 
+// Classic terrain (four detail textures). The PBR terrain has its own
+// stage (TerrainPbrOut, vs_terrain_pbr, fs_terrain_pbr): one shader each, so
+// that textured regions keep the cost of the classic one (its varyings,
+// implicit-gradient samples and registers).
 struct TerrainOut {
     @invariant @builtin(position) clip: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
@@ -153,6 +157,32 @@ struct TerrainOut {
     @location(3) comp: f32,
     @location(4) @interpolate(flat) record: u32,
 };
+
+struct TerrainPbrOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) comp: f32,
+    @location(4) @interpolate(flat) record: u32,
+    @location(5) region_pos: vec3<f32>,
+    @location(6) tangent0: vec4<f32>,
+    @location(7) tangent1: vec4<f32>,
+    @location(8) tangent2: vec4<f32>,
+    @location(9) tangent3: vec4<f32>,
+    @location(10) blend_noise: f32,
+};
+
+// textureUtilV.glsl terrain_tangent_space_transform, applied per vertex
+// before interpolation, as pbrterrainV.glsl does for each of the four layers.
+fn terrain_transform_tangent(rec: DrawRecord, n: vec3<f32>, raw: vec4<f32>) -> vec4<f32> {
+    let scale_sign = sign(rec.uv_st.xy);
+    var weights = vec2<f32>(cos(rec.params.x), sin(rec.params.x)) * scale_sign;
+    weights.x += 1.0 - abs(sign(sign(weights.x) + 0.5 * sign(weights.y)));
+    weights.y = -weights.y;
+    let t = weights.x * raw.xyz + weights.y * raw.w * cross(n, raw.xyz);
+    return vec4<f32>(normalize(t), raw.w * scale_sign.x * scale_sign.y);
+}
 
 @vertex
 fn vs_terrain(in: VsIn) -> TerrainOut {
@@ -168,10 +198,33 @@ fn vs_terrain(in: VsIn) -> TerrainOut {
     out.clip = frame.eye_view_proj * ep;
     // (lighting, shadows and fog keep region coordinates)
     out.world_pos = ep.xyz + frame.eye.xyz;
-    out.normal = in.normal.xyz;
-    out.uv = in.uv;
-    // composition 0..3 packed in normal.w (-1..1)
-    out.comp = (in.normal.w * 0.5 + 0.5) * 3.0;
+    out.normal = vertex_normal(rec, in);
+    // region metres; the composition in uv.x (world/terrain.rs build_chunk)
+    out.uv = in.pos.xy;
+    out.comp = in.uv.x;
+    out.record = in.instance;
+    return out;
+}
+
+@vertex
+fn vs_terrain_pbr(in: VsIn) -> TerrainPbrOut {
+    let rec = records[in.instance];
+    // the position of vs_terrain, operation for operation (same prepass)
+    let model = eye_model(rec, in);
+    let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
+    var out: TerrainPbrOut;
+    out.clip = frame.eye_view_proj * ep;
+    out.world_pos = ep.xyz + frame.eye.xyz;
+    out.normal = vertex_normal(rec, in);
+    let raw = vec4<f32>(terrain_direction(vec4<u32>(round(in.weights * 255.0))), in.normal.w);
+    out.tangent0 = terrain_transform_tangent(records[rec.tex.x], out.normal, raw);
+    out.tangent1 = terrain_transform_tangent(records[rec.tex.y], out.normal, raw);
+    out.tangent2 = terrain_transform_tangent(records[rec.tex.z], out.normal, raw);
+    out.tangent3 = terrain_transform_tangent(records[rec.tex.w], out.normal, raw);
+    out.uv = in.pos.xy;
+    out.region_pos = in.pos;
+    out.comp = in.uv.x;
+    out.blend_noise = in.uv.y;
     out.record = in.instance;
     return out;
 }
@@ -211,6 +264,143 @@ fn terrain_weights(c: f32) -> vec4<f32> {
     let a2 = terrain_ramp(c - 2.0);
     let af = terrain_ramp(c - 1.0);
     return vec4<f32>(af * a1, af * (1.0 - a1), (1.0 - af) * a2, (1.0 - af) * (1.0 - a2));
+}
+
+// LLDrawPoolTerrain binds IMG_ALPHA_GRAD_2D, not the one-dimensional ramp
+// used by the old approximation above. Slot 6 is reserved by TextureTable.
+// Its decoded image is top-down; LLSurfacePatch::eval supplies GL coordinates.
+fn terrain_noise_weights(c: f32, noise: f32, dx: vec2<f32>, dy: vec2<f32>, clamp_sampler: sampler) -> vec4<f32> {
+    let ramp_loc = tex_loc[6u];
+    let uv = vec2<f32>(c, 1.0 - noise);
+    let gx = dx * vec2<f32>(1.0, -1.0);
+    let gy = dy * vec2<f32>(1.0, -1.0);
+    let a = textureSampleGrad(tex_pages[ramp_loc >> 16u], clamp_sampler, uv, ramp_loc & 0xffffu, gx, gy).r;
+    let b = textureSampleGrad(tex_pages[ramp_loc >> 16u], clamp_sampler, uv - vec2<f32>(2.0, 0.0), ramp_loc & 0xffffu, gx, gy).r;
+    let f = textureSampleGrad(tex_pages[ramp_loc >> 16u], clamp_sampler, uv - vec2<f32>(1.0, 0.0), ramp_loc & 0xffffu, gx, gy).r;
+    return vec4<f32>(f * a, f * (1.0 - a), (1.0 - f) * b, (1.0 - f) * (1.0 - b));
+}
+
+fn terrain_mix_weights(in: TerrainPbrOut, dx: vec3<f32>, dy: vec3<f32>, blend_dx: vec2<f32>, blend_dy: vec2<f32>, clamp_sampler: sampler) -> vec4<f32> {
+    let rec = records[in.record];
+    if (rec.flags.z != 0u) {
+        // LLTerrainPaintMap stores slots 2..4 in linear RGB; slot 1 is the
+        // remainder. No height/noise threshold is applied to a paintmap.
+        let slot = rec.flags.z;
+        let loc = tex_loc[slot];
+        // Clamp each mip level at region edges; detail maps use repeat.
+        let uv = in.region_pos.xy / rec.mat_uv.xy;
+        var other = max(textureSampleGrad(tex_pages[loc >> 16u], clamp_sampler, uv, loc & 0xffffu, dx.xy / rec.mat_uv.xy, dy.xy / rec.mat_uv.xy).rgb, vec3<f32>(0.0));
+        other /= max(1.0, dot(other, vec3<f32>(1.0)));
+        return vec4<f32>(max(0.0, 1.0 - dot(other, vec3<f32>(1.0))), other);
+    }
+    let weights = max(terrain_noise_weights(clamp(in.comp, 0.0, 3.0), in.blend_noise, blend_dx, blend_dy, clamp_sampler) - vec4<f32>(0.1), vec4<f32>(0.0));
+    return weights / dot(weights, vec4<f32>(1.0));
+}
+
+// LLDrawPoolTerrain::renderFullShaderPBR and pbrterrainUtilF.glsl:
+// 8 m repeats, triplanar sharpness 8, material cutoff .1, plane cutoff .01.
+// Shared material records keep the ordinary bindless texture table and make
+// terrain edits independent of the chunk geometry. Explicit gradients let
+// zero-weight layers/planes leave without sampling any maps.
+struct TerrainMaterial {
+    color: vec4<f32>,
+    orm: vec3<f32>,
+    normal: vec3<f32>,
+    emissive: vec3<f32>,
+    cutoff: f32,
+};
+
+fn terrain_uv(p: vec2<f32>, rec: DrawRecord) -> vec2<f32> {
+    let v = p * rec.uv_st.xy;
+    let c = cos(rec.params.x);
+    let s = sin(rec.params.x);
+    // terrain_texture_transform flips V before and after KHR's rotation.
+    return vec2<f32>(c*v.x-s*v.y, s*v.x+c*v.y);
+}
+
+fn terrain_sample(slot: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
+    let loc = tex_loc[slot];
+    return textureSampleGrad(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, dx, dy);
+}
+
+fn terrain_layer(rec: DrawRecord, p: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, n: vec3<f32>, tangent: vec4<f32>, planes: vec3<f32>, alpha_only: bool) -> TerrainMaterial {
+    var result = TerrainMaterial(vec4<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), rec.params.w);
+    let tangent_sign = tangent.w;
+    for (var axis = 0u; axis < 3u; axis++) {
+        if (planes[axis] <= 0.0) { continue; }
+        var uv = p.xy;
+        var ux = dx.xy;
+        var uy = dy.xy;
+        if (axis == 0u) {
+            let sign = select(-1.0, 1.0, n.x >= 0.0);
+            uv = p.yz * vec2<f32>(sign, 1.0);
+            ux = dx.yz * vec2<f32>(sign, 1.0);
+            uy = dy.yz * vec2<f32>(sign, 1.0);
+        } else if (axis == 1u) {
+            let sign = select(1.0, -1.0, n.y >= 0.0);
+            uv = p.xz * vec2<f32>(sign, 1.0);
+            ux = dx.xz * vec2<f32>(sign, 1.0);
+            uy = dy.xz * vec2<f32>(sign, 1.0);
+        }
+        let gl_tc = terrain_uv(uv, rec) + vec2<f32>(rec.uv_st.z, -rec.uv_st.w);
+        let gl_tx = terrain_uv(ux, rec);
+        let gl_ty = terrain_uv(uy, rec);
+        // LLImageRaw is bottom-up; our decoded JPEG2000 rows are top-down.
+        // Convert the completed GL transform, including offset and gradients.
+        let tc = vec2<f32>(gl_tc.x, 1.0 - gl_tc.y);
+        let tx = gl_tx * vec2<f32>(1.0, -1.0);
+        let ty = gl_ty * vec2<f32>(1.0, -1.0);
+        let color = terrain_sample(rec.tex.x, tc, tx, ty);
+        result.color += vec4<f32>(srgb_to_linear(color.rgb), color.a) * rec.base_color * planes[axis];
+        if (alpha_only) { continue; }
+        let orm = terrain_sample(rec.tex.z, tc, tx, ty).rgb * vec3<f32>(1.0, rec.params.z, rec.params.y);
+        let emission = srgb_to_linear(terrain_sample(rec.tex.w, tc, tx, ty).rgb) * rec.emissive.rgb;
+        var mapped = vec3<f32>(0.0, 0.0, 1.0);
+        if (rec.tex.y != 1u) {
+            mapped = terrain_sample(rec.tex.y, tc, tx, ty).rgb * 2.0 - vec3<f32>(1.0);
+        }
+        // pbrterrainUtilF.glsl's axial normal orientation. Blend tangent-space
+        // samples first, then apply the material's transformed Mikk basis once.
+        mapped = vec3<f32>(mapped.xy * select(1.0, -1.0, n[axis] < 0.0), mapped.z);
+        if (axis == 0u) { mapped = vec3<f32>(vec2<f32>(-mapped.y, mapped.x) * tangent_sign, mapped.z); }
+        if (axis == 1u) { mapped = vec3<f32>(-mapped.xy, mapped.z); }
+        result.orm += orm * planes[axis];
+        result.normal += mapped * planes[axis];
+        result.emissive += emission * planes[axis];
+    }
+    if (!alpha_only) {
+        // MikkTSpace leaves T interpolated here; renormalizing it or deriving
+        // it from N changes relief on curved terrain (pbrterrainF.glsl).
+        let t = tangent.xyz;
+        let b = tangent_sign * cross(n, t);
+        result.normal = normalize(t * result.normal.x + b * result.normal.y + n * result.normal.z);
+    }
+    return result;
+}
+
+fn terrain_material(in: TerrainPbrOut, dx: vec3<f32>, dy: vec3<f32>, blend_dx: vec2<f32>, blend_dy: vec2<f32>, alpha_only: bool, clamp_sampler: sampler) -> TerrainMaterial {
+    let rec = records[in.record];
+    let n = normalize(in.normal);
+    let tangents = array<vec4<f32>, 4>(in.tangent0, in.tangent1, in.tangent2, in.tangent3);
+    var result = TerrainMaterial(vec4<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), 0.0);
+    let weights = terrain_mix_weights(in, dx, dy, blend_dx, blend_dy, clamp_sampler);
+    var planes = pow(abs(n), vec3<f32>(8.0));
+    planes /= dot(planes, vec3<f32>(1.0));
+    planes = max(planes - vec3<f32>(0.01), vec3<f32>(0.0));
+    planes /= dot(planes, vec3<f32>(1.0));
+    for (var layer = 0u; layer < 4u; layer++) {
+        if (weights[layer] <= 0.0) { continue; }
+        let layer_record = records[rec.tex[layer]];
+        let tangent = tangents[layer];
+        let sample = terrain_layer(layer_record, in.region_pos, dx, dy, n, tangent, planes, alpha_only);
+        result.color += sample.color * weights[layer];
+        result.orm += sample.orm * weights[layer];
+        result.normal += sample.normal * weights[layer];
+        result.emissive += sample.emissive * weights[layer];
+        result.cutoff += sample.cutoff * weights[layer];
+    }
+    result.normal = normalize(result.normal + n * 0.000001);
+    return result;
 }
 
 fn terrain_color(in: TerrainOut) -> vec3<f32> {
@@ -264,6 +454,47 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
     return light_tiles_checked(debug_view(apply_fog(col*water_scene_light(in.world_pos), in.world_pos), in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
 }
 
+fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
+    let dx = dpdx(in.region_pos);
+    let dy = dpdy(in.region_pos);
+    let blend_dx = dpdx(vec2<f32>(in.comp, in.blend_noise));
+    let blend_dy = dpdy(vec2<f32>(in.comp, in.blend_noise));
+    let geo = normalize(in.normal);
+    let material = terrain_material(in, dx, dy, blend_dx, blend_dy, false, lin_clamp);
+    surface_occlusion = normal_map_occlusion(geo, material.normal, in.world_pos, 1.0 / in.clip.w);
+    screen_surface = true;
+    contact_surface = true;
+    if (material.color.a < material.cutoff) { discard; }
+    let n = material.normal;
+    let v = normalize(frame.camera_pos.xyz - in.world_pos);
+    let dist = distance(in.world_pos, frame.camera_pos.xyz);
+    let sh = sun_shadow(in.world_pos, geo, dist, in.clip.xy);
+    let metal = clamp(material.orm.b, 0.0, 1.0);
+    // pbrterrainF.glsl writes the material's ORM unchanged. Broadening its
+    // roughness from normal derivatives washes out terrain relief.
+    let rough = clamp(material.orm.g, 0.03, 1.0);
+    let ao = select(1.0, material.orm.r, frame.sky_ll.z > 0.5);
+    // pbrterrainF.glsl writes its emissive only with HAS_EMISSIVE
+    let emissive = select(material.emissive, vec3<f32>(0.0), deferred_emissive_off());
+    var color: vec3<f32>;
+    if (is_classic_sky()) {
+        let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
+        color = (ll_classic_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, a)
+            + emissive) * ll_final_scale()
+            + ll_classic_pbr_local(material.color.rgb, metal, rough, n, v, in.world_pos, in.clip.xy);
+        color = ll_haze(color + material.color.rgb * water_caustics(in.world_pos, n), a);
+        if (camera_underwater() || (water_fx_on(256u) && in.world_pos.z < camera_water_level())) {
+            color = apply_fog(color * water_scene_light(in.world_pos), in.world_pos);
+        }
+    } else {
+        color = shade_pbr(material.color.rgb, metal, rough, ao, n, v, in.world_pos, sh, in.clip.xy, false) + emissive;
+        color += material.color.rgb * water_caustics(in.world_pos, n);
+        color = apply_fog(color * water_scene_light(in.world_pos), in.world_pos);
+    }
+    color = debug_view(color, in.world_pos, n, dist, in.clip.xy);
+    return Shaded(vec4<f32>(light_tiles_checked(color, in.world_pos, in.clip.xy), 1.0), n, rough, metal);
+}
+
 @fragment
 fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     let col = terrain_color(in);
@@ -279,6 +510,117 @@ fn fs_terrain_g(in: TerrainOut) -> GOut {
     o.color = vec4<f32>(terrain_color(in), 1.0);
     o.gbuf = vec4<f32>(oct_encode(normalize(in.normal)), 1.0, 0.0);
     return o;
+}
+
+@fragment
+fn fs_terrain_pbr(in: TerrainPbrOut) -> @location(0) vec4<f32> {
+    let shaded = terrain_pbr_shaded(in);
+    if (reflection_clip(in.world_pos)) {
+        discard;
+    }
+    return shaded.color;
+}
+
+@fragment
+fn fs_terrain_pbr_g(in: TerrainPbrOut) -> GOut {
+    var o: GOut;
+    let shaded = terrain_pbr_shaded(in);
+    o.color = shaded.color;
+    o.gbuf = gbuffer(shaded);
+    return o;
+}
+
+// Match the main terrain mask before writing either single-sample depth or
+// MSAA depth. Alpha-only sampling skips ORM, normal and emissive maps.
+fn terrain_depth_mask(in: TerrainPbrOut) {
+    let dx = dpdx(in.region_pos);
+    let dy = dpdy(in.region_pos);
+    let blend_dx = dpdx(vec2<f32>(in.comp, in.blend_noise));
+    let blend_dy = dpdy(vec2<f32>(in.comp, in.blend_noise));
+    if ((records[in.record].flags.x & FLAG_ALPHA_MASK) != 0u) {
+        let material = terrain_material(in, dx, dy, blend_dx, blend_dy, true, lin_clamp);
+        if (material.color.a < material.cutoff) { discard; }
+    }
+}
+
+// Terrain shadow casters (the renderer's `shadow_terrain` pipeline, when not
+// drawn depth only): vs_shadow's placement plus the terrain's inputs, so
+// that the other casters keep vs_shadow / fs_shadow without them.
+struct TerrainShadowOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(1) @interpolate(flat) record: u32,
+    @location(2) world_pos: vec3<f32>,
+    @location(3) normal: vec3<f32>,
+    @location(4) region_pos: vec3<f32>,
+    @location(5) comp: f32,
+    @location(6) blend_noise: f32,
+};
+
+@vertex
+fn vs_shadow_terrain(in: VsIn) -> TerrainShadowOut {
+    let rec = records[in.instance];
+    let wp = skinned_model(rec, in) * vec4<f32>(vertex_position(rec, in), 1.0);
+    var out: TerrainShadowOut;
+    out.clip = shadow_params.vp * wp;
+    out.record = in.instance;
+    out.world_pos = wp.xyz;
+    out.normal = vertex_normal(rec, in);
+    out.region_pos = in.pos;
+    out.comp = in.uv.x;
+    out.blend_noise = in.uv.y;
+    return out;
+}
+
+// Sun cascades and projector shadows use the same region coordinates,
+// composition and triplanar alpha as colour, depth and picking. Derivatives
+// precede the material branch so neighbouring fragments can use other modes.
+fn terrain_shadow_mask(in: TerrainShadowOut) {
+    let dx = dpdx(in.region_pos);
+    let dy = dpdy(in.region_pos);
+    let blend_dx = dpdx(vec2<f32>(in.comp, in.blend_noise));
+    let blend_dy = dpdy(vec2<f32>(in.comp, in.blend_noise));
+    if ((records[in.record].flags.x & (FLAG_TERRAIN | FLAG_PBR | FLAG_ALPHA_MASK)) == (FLAG_TERRAIN | FLAG_PBR | FLAG_ALPHA_MASK)) {
+        var surface: TerrainPbrOut;
+        surface.normal = in.normal;
+        surface.region_pos = in.region_pos;
+        surface.comp = in.comp;
+        surface.blend_noise = in.blend_noise;
+        surface.record = in.record;
+        let material = terrain_material(surface, dx, dy, blend_dx, blend_dy, true, shadow_clamp);
+        if (material.color.a < material.cutoff) { discard; }
+    }
+}
+
+@fragment
+fn fs_shadow_terrain(in: TerrainShadowOut) {
+    terrain_shadow_mask(in);
+    portal_clip(records[in.record], in.world_pos);
+}
+
+// Masked PBR terrain only: the other terrain is drawn by vs_depth.
+@fragment
+fn fs_terrain_depth(in: TerrainPbrOut) {
+    terrain_depth_mask(in);
+}
+
+@fragment
+fn fs_terrain_depth_normal(in: TerrainPbrOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    terrain_depth_mask(in);
+    return depth_normal(in.normal, front);
+}
+
+// Picking gives the region metres as the surface coordinates of a hit (the
+// vertex uv holds the composition): classic and opaque PBR terrain.
+@fragment
+fn fs_terrain_pick(in: TerrainOut) -> @location(0) vec4<u32> {
+    return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.uv.x), bitcast<u32>(in.uv.y));
+}
+
+// Masked PBR terrain: its holes are no targets.
+@fragment
+fn fs_terrain_pick_mask(in: TerrainPbrOut) -> @location(0) vec4<u32> {
+    terrain_depth_mask(in);
+    return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.uv.x), bitcast<u32>(in.uv.y));
 }
 
 // ----------------------------------------------------------------- water

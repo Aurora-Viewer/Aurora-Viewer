@@ -689,13 +689,63 @@ impl Imports {
         });
     }
     pub fn choose_files(&mut self, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, options: import_texture::Options) {
-        if self.pending_files.is_some() || self.busy() {
+        if self.busy() {
+            return;
+        }
+        self.load_files(jobs, ctx, options, self.choice, self.choice == Choice::Local, None);
+    }
+    /// The texture picker's Local tab "Add" (LLFloaterTexturePicker::onBtnAdd,
+    /// indra/newview/lltexturectrl.cpp): images, or the materials of glTF
+    /// files, kept as local previews. Local entries never join an upload, so
+    /// a running one does not hold them back.
+    pub fn choose_local_files(
+        &mut self,
+        jobs: &crate::scene::jobs::Jobs,
+        ctx: &egui::Context,
+        options: import_texture::Options,
+        materials: bool,
+    ) {
+        if self.pending_files.is_some() {
+            return;
+        }
+        let choice = if materials { Choice::Material } else { Choice::Texture };
+        self.load_files(jobs, ctx, options, choice, true, None);
+        self.picker_files = true;
+    }
+    /// The Local tab's "Upload" (onBtnUpload): the importer opens on the
+    /// file's type and loads it again as an ordinary upload; the local
+    /// preview stays.
+    pub fn upload_local(&mut self, id: Uuid, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, options: import_texture::Options) {
+        let Some(entry) = self.entries.iter().find(|e| e.id == id && e.local) else {
+            return;
+        };
+        let choice = match entry.source {
+            Some(Source::Texture(_)) => Choice::Texture,
+            Some(Source::Material { .. }) => Choice::Material,
+            _ => return,
+        };
+        let path = entry.path.clone();
+        self.open(choice);
+        if !self.busy() {
+            self.load_files(jobs, ctx, options, choice, false, Some(vec![path]));
+        }
+    }
+    /// Loads `paths`, or the files chosen in a dialog filtered on `choice`.
+    fn load_files(
+        &mut self,
+        jobs: &crate::scene::jobs::Jobs,
+        ctx: &egui::Context,
+        options: import_texture::Options,
+        choice: Choice,
+        local: bool,
+        paths: Option<Vec<PathBuf>>,
+    ) {
+        if self.pending_files.is_some() {
             return;
         }
         let request = Uuid::new_v4();
         self.pending_files = Some(request);
-        let local = self.choice == Choice::Local;
-        let choice = self.choice;
+        self.picker_files = false;
         let sound_limit = self.sound_limit;
         let prefs = self.load_preferences.clone();
         let mut retained = self
@@ -709,22 +759,24 @@ impl Imports {
         let tx = self.tx.clone();
         let wake = ctx.clone();
         jobs.execute(move || {
-            let filter: &[&str] = match choice {
-                Choice::Texture => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2"],
-                Choice::Sound => &["wav"],
-                Choice::Animation => &["bvh", "anim"],
-                Choice::Material => &["gltf", "glb"],
-                Choice::Mesh => &["dae", "gltf", "glb"],
-                Choice::Bulk => &[
-                    "tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "wav", "anim", "dae", "gltf", "glb",
-                ],
-                Choice::Local => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "dae", "gltf", "glb"],
-            };
-            let paths = rfd::FileDialog::new()
-                .set_title(aurora_i18n::tr!("import-title"))
-                .add_filter(choice.label(), filter)
-                .pick_files()
-                .unwrap_or_default();
+            let paths = paths.unwrap_or_else(|| {
+                let filter: &[&str] = match choice {
+                    Choice::Texture => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2"],
+                    Choice::Sound => &["wav"],
+                    Choice::Animation => &["bvh", "anim"],
+                    Choice::Material => &["gltf", "glb"],
+                    Choice::Mesh => &["dae", "gltf", "glb"],
+                    Choice::Bulk => &[
+                        "tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "wav", "anim", "dae", "gltf", "glb",
+                    ],
+                    Choice::Local => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "dae", "gltf", "glb"],
+                };
+                rfd::FileDialog::new()
+                    .set_title(aurora_i18n::tr!("import-title"))
+                    .add_filter(choice.label(), filter)
+                    .pick_files()
+                    .unwrap_or_default()
+            });
             let mut entries = Vec::new();
             for (index, path) in paths.into_iter().enumerate() {
                 if index >= 256 || existing + entries.len() >= 512 {

@@ -521,6 +521,35 @@ fn face_masks_keep_texture_entry_indices_across_the_32_bit_boundary() {
 }
 
 #[test]
+fn face_stepping_reaches_every_face_of_a_local_mesh_preview() {
+    // #1353: the preview replaces the volume (VJLocalMeshObject), so ◄ ►
+    // walks the local mesh's faces, not the fewer ones of the worn prim.
+    let (mut world, mut tool, mut settings) = fixture();
+    let idx = object(&world, 99610);
+    let prim_faces = tool.num_faces(&world, idx);
+    let o = world.objects.get_mut(idx).unwrap();
+    let mut volume = o.volume;
+    volume.sculpt = Some(aurora_prim::params::SculptParams {
+        texture: uuid::Uuid::from_u128(0x1353),
+        sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+    });
+    o.render.local_volume = Some(Box::new(volume));
+    // before the local asset is counted: the mesh default
+    assert!(prim_faces < 8);
+    assert_eq!(tool.num_faces(&world, idx), 8);
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Face);
+    tool.face_click(&mut world, Some(idx), Some(0), false);
+    for face in 1..8u8 {
+        tool.select_next_part(&mut world, &mut settings, true, false);
+        assert_eq!(tool.sel_te(&world), [(idx, face)]);
+    }
+    tool.select_next_part(&mut world, &mut settings, true, false);
+    assert_eq!(tool.sel_te(&world), [(idx, 0)]);
+    tool.select_next_part(&mut world, &mut settings, false, false);
+    assert_eq!(tool.sel_te(&world), [(idx, 7)]);
+}
+
+#[test]
 fn invalid_face_and_shift_click_on_empty_space_preserve_selection() {
     let (mut world, mut tool, mut settings) = fixture();
     let idx = object(&world, 99610);

@@ -10,6 +10,7 @@
 //!   faces | faces-invisible | faces-ready: plain / Shift face clicks on
 //!   three prims of two objects (ready stops before the face clicks).
 //!   faces-picker | faces-picker-material: select one face and keep its picker open.
+//!   faces-picker-local | faces-picker-material-local: the same, on its Local tab.
 //!   faces-close: close view of one selected face for material readability.
 //!   faces-complex: closed torus and disconnected mesh islands, with holes.
 //!   create-delete | create-ready: create and select a basic prim, then
@@ -18,6 +19,8 @@
 //!   take an item into inventory or show the move warning (ready stops).
 //!   contents-properties: open a task item in the shared properties panel.
 //!   contents-multi | contents-rename-ready: show task multi-selection or rename.
+//!   contents-move-many: drop every item into inventory at once (two no-copy
+//!   items share one move warning).
 //!   shared | shared-denied: another resident's object with granted / denied editing.
 //! - x, y: click (physical pixels) at frame 220: selects the object there,
 //!   creates a prim, or presses the land brush (held until the capture)
@@ -37,6 +40,7 @@
 //! `:media` (e.g. `texture:bp`); `:bp-normal` / `:bp-specular` select empty
 //! legacy map channels, and opens `+weights`, `+grid`, `+media`
 //! (e.g. `general+weights+grid`); `contents+permissions` opens bulk rights.
+//! `AURORA_DEMO_BUILD_HANDLES=<percent>` sets the edit handle size.
 //! `AURORA_DEMO_BUILD_FOCUS=off|on` focuses the selected object before the
 //! drag, with edit camera tracking disabled/enabled.
 //! `AURORA_DEMO_BUILD_EDGE=left|right|top|bottom` moves the cursor to an
@@ -53,7 +57,8 @@ pub enum Step {
     Select(usize),
     SharedRights(usize, bool),
     Face(usize, u8, bool),
-    TexturePicker(bool),
+    /// Materials, Local tab.
+    TexturePicker(bool, bool),
     CloseView,
     CloseEditor,
     CreateAt(Vec3),
@@ -63,6 +68,8 @@ pub enum Step {
     ContentsProperties,
     ContentsSelection(bool),
     TakeTask(bool),
+    /// Every item, selected and dropped together on the inventory root.
+    TakeAll,
     Cursor(f32, f32),
     Press,
     Release,
@@ -105,7 +112,7 @@ fn handle_px(tool: &BuildTool, world: &World, s: &BuildSettings, part: Part) -> 
     let g = f.grid;
     let cam = &tool.cam;
     let c = f.pivot;
-    let len = cam.meters_for_pixels(c, 50.0);
+    let len = super::manip::arrow_length(cam, &f, c);
     let unit = |i: usize| {
         let mut v = Vec3::ZERO;
         v[i] = 1.0;
@@ -124,7 +131,7 @@ fn handle_px(tool: &BuildTool, world: &World, s: &BuildSettings, part: Part) -> 
             c + g.rotation * v
         }
         Part::Ring(i) => {
-            let r = cam.depth(c).max(0.01) * (100.0 / cam.height * cam.fov_y).tan();
+            let r = super::manip::ring_radius(cam, &f, c);
             let a = g.rotation * unit(i);
             // the ring point facing the camera most
             let to_cam = (cam.eye - c).normalize_or_zero();
@@ -133,7 +140,7 @@ fn handle_px(tool: &BuildTool, world: &World, s: &BuildSettings, part: Part) -> 
         }
         Part::Free => c,
         Part::Roll => {
-            let r = cam.depth(c).max(0.01) * (100.0 / cam.height * cam.fov_y).tan();
+            let r = super::manip::ring_radius(cam, &f, c);
             c + cam.up * r * 1.08
         }
         Part::Corner(k) => {
@@ -147,6 +154,16 @@ fn handle_px(tool: &BuildTool, world: &World, s: &BuildSettings, part: Part) -> 
         Part::Face(i, pos) => b.center + b.rotation * unit(i) * b.half[i] * if pos { 1.0 } else { -1.0 },
     };
     cam.project_px(p)
+}
+
+/// AURORA_DEMO_BUILD_HANDLES: the edit handle size, in percent.
+pub fn apply_handle_size(s: &mut BuildSettings) {
+    if let Some(percent) = std::env::var("AURORA_DEMO_BUILD_HANDLES")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+    {
+        s.gizmo_scale = percent / 100.0;
+    }
 }
 
 /// AURORA_DEMO_BUILD_TAB: the floater tab (and texture sub-tab) to show.
@@ -363,6 +380,7 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             260 if matches!(parts[0], "contents-multi" | "contents-rename-ready") => {
                 vec![Step::ContentsSelection(parts[0] == "contents-rename-ready")]
             }
+            260 if parts[0] == "contents-move-many" => vec![Step::TakeAll],
             260 if parts[0] != "contents-ready" => vec![Step::TakeTask(parts[0] == "contents-copy")],
             _ => Vec::new(),
         };
@@ -438,15 +456,16 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             215 => vec![Step::Open(Tool::Edit, EditMode::Face, 6), Step::Linked(false)],
             220 => object.into_iter().map(Step::Select).collect(),
             227 => vec![Step::Focus(false)],
-            235 if matches!(parts[0], "faces-close" | "faces-picker" | "faces-picker-material" | "faces-complex") => vec![Step::CloseView],
+            235 if matches!(parts[0], "faces-close" | "faces-complex") || parts[0].starts_with("faces-picker") => vec![Step::CloseView],
             _ if parts[0] == "faces-ready" => Vec::new(),
             240 if parts[0] == "faces-complex" => pick(99620, 0, false),
             240 => pick(99620, u8::MAX, false),
-            250 if matches!(parts[0], "faces-picker" | "faces-picker-material") => {
-                vec![Step::TexturePicker(parts[0] == "faces-picker-material")]
-            }
+            250 if parts[0].starts_with("faces-picker") => vec![Step::TexturePicker(
+                parts[0].starts_with("faces-picker-material"),
+                parts[0].ends_with("-local"),
+            )],
             _ if parts[0] == "faces-close" => Vec::new(),
-            _ if matches!(parts[0], "faces-picker" | "faces-picker-material") => Vec::new(),
+            _ if parts[0].starts_with("faces-picker") => Vec::new(),
             260 if parts[0] == "faces-complex" => pick(99621, 0, true),
             _ if parts[0] == "faces-complex" => Vec::new(),
             260 => pick(99620, 0, true),

@@ -50,6 +50,9 @@ pub mod auto_hover;
 /// (AURORA_DEMO_BLEND_SHADOWS).
 #[path = "demo_blend_shadows.rs"]
 pub mod blend_shadows;
+/// A box of bake-on-mesh placeholders on the ground (AURORA_DEMO_BOM_REZZED).
+#[path = "demo_bom_rezzed.rs"]
+pub mod bom_rezzed;
 /// Voice calls with a simulated voice server (AURORA_DEMO_CALL).
 #[path = "demo_calls.rs"]
 pub mod calls;
@@ -284,7 +287,15 @@ fn height(x: f32, y: f32) -> f32 {
     let dune = 2.5 * (x / 23.0).sin() * (y / 31.0).cos();
     // a beach and a lagoon to the west (water at 20 m)
     let shore = ((x - 75.0) / 9.0).clamp(-6.0, 9.0);
-    21.5 + shore + hill + dune + altitude()
+    static TERRAIN_SLOPES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let slopes = *TERRAIN_SLOPES.get_or_init(|| std::env::var("AURORA_DEMO_REGION").is_ok_and(|v| v.split(':').any(|p| p == "pbr-slopes")));
+    let relief = if slopes {
+        7.0 * (-((x - 123.0).powi(2) / 9.0 + (y - 49.0).powi(2) / 25.0)).exp()
+            - 2.0 * (-((x - 128.0).powi(2) + (y - 46.0).powi(2)) / 8.0).exp()
+    } else {
+        0.0
+    };
+    21.5 + shore + hill + dune + relief + altitude()
 }
 
 fn te(color: [f32; 4], shiny: u8, fullbright: bool, glow: f32) -> Arc<TextureEntry> {
@@ -1212,7 +1223,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
             let emoji_lines = std::env::var("AURORA_DEMO_CONV_EMOJI").is_ok().then(|| {
                 [
                     line(ago(10), name, friend, ChatKind::Im, "🎉🎶🐺"),
-                    line(ago(3), &me, Uuid::nil(), ChatKind::Own, "👍"),
+                    line(ago(3), &me, Uuid::nil(), ChatKind::OWN, "👍"),
                 ]
             });
             let mut lines = vec![
@@ -1220,14 +1231,14 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                     ago(26 * 60),
                     &me,
                     Uuid::nil(),
-                    ChatKind::Own,
+                    ChatKind::OWN,
                     aurora_i18n::tr!("demo-bubbles-concert"),
                 ),
                 line(ago(26 * 60 - 3), name, friend, ChatKind::Im, aurora_i18n::tr!("demo-bubbles-cant")),
                 line(ago(12), name, friend, ChatKind::Im, aurora_i18n::tr!("demo-bubbles-sorry")),
                 line(ago(11), name, friend, ChatKind::Im, aurora_i18n::tr!("demo-bubbles-join")),
-                line(ago(2), &me, Uuid::nil(), ChatKind::Own, aurora_i18n::tr!("demo-bubbles-coming")),
-                line(ago(1), &me, Uuid::nil(), ChatKind::Own, aurora_i18n::tr!("demo-bubbles-send-tp")),
+                line(ago(2), &me, Uuid::nil(), ChatKind::OWN, aurora_i18n::tr!("demo-bubbles-coming")),
+                line(ago(1), &me, Uuid::nil(), ChatKind::OWN, aurora_i18n::tr!("demo-bubbles-send-tp")),
             ];
             if let Some(extra) = emoji_lines {
                 lines.splice(4..4, extra);
@@ -1258,7 +1269,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                             ago(7),
                             &me,
                             Uuid::nil(),
-                            ChatKind::Own,
+                            ChatKind::OWN,
                             "https://www.youtube.com/watch?v=jNQXAC9IVRw&t=5s",
                         ),
                     ]
@@ -1291,7 +1302,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                             ChatKind::Im,
                             &with(aurora_i18n::tr!("demo-previews-teaser"), "https://youtu.be/jNQXAC9IVRw"),
                         ),
-                        line(ago(5), &me, Uuid::nil(), ChatKind::Own, "https://youtube.com/shorts/DemoShort01"),
+                        line(ago(5), &me, Uuid::nil(), ChatKind::OWN, "https://youtube.com/shorts/DemoShort01"),
                     ]
                 } else if mode == "clips" {
                     // video files and an animated WebP (#983): an unknown
@@ -1308,7 +1319,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                             ChatKind::Im,
                             "https://gyazo.com/9f8e7d6c5b4a39281706f5e4d3c2b1a0",
                         ),
-                        line(ago(6), &me, Uuid::nil(), ChatKind::Own, "https://i.imgur.com/DemoClp.gifv"),
+                        line(ago(6), &me, Uuid::nil(), ChatKind::OWN, "https://i.imgur.com/DemoClp.gifv"),
                     ]
                 } else if let Some(only) = mode.strip_prefix("services") {
                     // the pages of image services (#923) and the posts of
@@ -1339,7 +1350,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                     .enumerate()
                     .map(|(i, url)| {
                         let (who, id, kind) = if i % 2 == 1 {
-                            (me.as_str(), Uuid::nil(), ChatKind::Own)
+                            (me.as_str(), Uuid::nil(), ChatKind::OWN)
                         } else {
                             (name, friend, ChatKind::Im)
                         };
@@ -1378,7 +1389,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                             ago(6),
                             &me,
                             Uuid::nil(),
-                            ChatKind::Own,
+                            ChatKind::OWN,
                             &with(aurora_i18n::tr!("demo-previews-teaser"), "https://youtu.be/jNQXAC9IVRw"),
                         ),
                     ]
@@ -1396,7 +1407,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
             // ours, before her automatic response (which the events bring)
             world.conversation_line(
                 DEMO_NOVA,
-                line(ago(1), &me, Uuid::nil(), ChatKind::Own, aurora_i18n::tr!("demo-bubbles-free")),
+                line(ago(1), &me, Uuid::nil(), ChatKind::OWN, aurora_i18n::tr!("demo-bubbles-free")),
             );
             // her automatic response, as world/status.rs writes it
             let reply = aurora_i18n::tr!(
@@ -1428,7 +1439,7 @@ pub fn conv_scroll_lines(world: &mut crate::world::World) {
     let me = world.own_name();
     for n in 1..=40u64 {
         let (from, source, kind) = if n % 3 == 0 {
-            (me.clone(), Uuid::nil(), ChatKind::Own)
+            (me.clone(), Uuid::nil(), ChatKind::OWN)
         } else {
             ("Nova Example".to_owned(), DEMO_FRIEND, ChatKind::Im)
         };
@@ -1631,7 +1642,7 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
     });
     for (minutes, from, text) in group.into_iter().chain(previews) {
         let l = if from.is_nil() {
-            line(ago(minutes), &me, Uuid::nil(), ChatKind::Own, &text)
+            line(ago(minutes), &me, Uuid::nil(), ChatKind::OWN, &text)
         } else {
             line(ago(minutes), &names(from), from, ChatKind::Im, &text)
         };
@@ -1730,8 +1741,8 @@ fn world_name(id: Uuid) -> String {
     }
 }
 
-/// The nearby chat of the scene: a shout, a whisper, our emote and a
-/// mention of us, after the bubbles scenario's lines; then the friend's
+/// The nearby chat of the scene: a shout, a whisper, ours, our emote and
+/// a mention of us, after the bubbles scenario's lines; then the friend's
 /// status of `friend-away` / `friend-offline`.
 pub fn aurora_events(scene: &AuroraScene) -> Vec<NetEvent> {
     let say = |from: Uuid, name: &str, text: String, chat_type| {
@@ -1758,6 +1769,19 @@ pub fn aurora_events(scene: &AuroraScene) -> Vec<NetEvent> {
             aurora_i18n::tr!("demo-violet-wolf"),
             aurora_i18n::tr!("demo-aurora-local-whisper").to_owned(),
             ChatType::Whisper,
+        ),
+        // ours, whispered then shouted, tagged like anyone's (#1323)
+        say(
+            DEMO_AGENT,
+            "Aurora Demo",
+            aurora_i18n::tr!("demo-aurora-local-own-whisper").to_owned(),
+            ChatType::Whisper,
+        ),
+        say(
+            DEMO_AGENT,
+            "Aurora Demo",
+            aurora_i18n::tr!("demo-aurora-local-own-shout").to_owned(),
+            ChatType::Shout,
         ),
         say(
             DEMO_AGENT,
@@ -3988,9 +4012,9 @@ pub fn events() -> Vec<NetEvent> {
             sim_access: 13,
             region_flags: aurora_net::region_flags::ALLOW_VOICE | home::region_flag(),
             terrain_base: [Uuid::nil(); 4],
-            terrain_detail: [Uuid::nil(); 4],
-            terrain_start_height: [20.0, 20.0, 20.0, 20.0],
-            terrain_height_range: [30.0, 30.0, 30.0, 30.0],
+            terrain_detail: region::terrain_ids().unwrap_or([Uuid::nil(); 4]),
+            terrain_start_height: region::terrain_start_height(),
+            terrain_height_range: if region::terrain_ids().is_some() { [120.0; 4] } else { [30.0; 4] },
             size_x: 256,
             size_y: 256,
             is_main: true,
@@ -4667,6 +4691,34 @@ pub fn events() -> Vec<NetEvent> {
             (Vec3::new(135.3, 134.25, floor + 0.6), Vec3::new(1.4, 0.1, 1.2)),
         ] {
             add(metal(id, pos, scale, boxp, MAT_PBR_METAL[1]));
+            id += 1;
+        }
+    }
+    // AURORA_DEMO_PBR_EMISSIVE=1: three dark spheres ahead of the start
+    // position with the same orange emissive, opaque, alpha-masked and
+    // blended: without HDR and Emissive (AURORA_HDR=0) the first two lose
+    // their light, the blended one keeps it (HAS_EMISSIVE)
+    if std::env::var_os("AURORA_DEMO_PBR_EMISSIVE").is_some() {
+        let floor = height(cx, cy) + 0.35;
+        for (k, mat) in MAT_PBR_EMISSIVE.into_iter().enumerate() {
+            let mut t = TextureEntry::default();
+            for f in t.faces.iter_mut() {
+                f.texture = BLANK_TEXTURE;
+                f.color = [1.0, 1.0, 1.0, 1.0];
+            }
+            add(prim(
+                id,
+                Vec3::new(136.0, 124.0 + 2.0 * k as f32, floor + 2.6),
+                Quat::IDENTITY,
+                Vec3::splat(1.2),
+                sphere,
+                Arc::new(t),
+                ExtraParams {
+                    render_materials: (0..6).map(|f| (f, mat)).collect(),
+                    ..Default::default()
+                },
+                "",
+            ));
             id += 1;
         }
     }
@@ -5491,6 +5543,7 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(sculpt::events());
     ev.extend(plants::events());
     ev.extend(blend_shadows::events());
+    ev.extend(bom_rezzed::events());
     ev
 }
 
@@ -5541,6 +5594,71 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
             channel: -4243,
             buttons: ["1", "2", "3", "4"].map(str::to_owned).to_vec(),
         });
+        return ev;
+    }
+    // `scripted`: every window a scripted object sends (llDialog, llTextBox,
+    // llRequestPermissions, llLoadURL, llGiveInventory), then four pieces of
+    // information after them; the windows stay out until answered
+    if menu == "scripted" {
+        let sender: std::net::SocketAddr = ([127, 0, 0, 1], 13000).into();
+        let owner = aurora_i18n::tr!("demo-violet-wolf");
+        ev.push(NetEvent::ScriptDialog {
+            sender,
+            object_id: Uuid::from_u128(0xF0),
+            object_name: aurora_i18n::tr!("demo-fountain").into(),
+            owner_name: owner.into(),
+            message: aurora_i18n::tr!("demo-choose-a-color-for-the-water").into(),
+            channel: -4242,
+            buttons: vec![
+                aurora_i18n::tr!("demo-purple").into(),
+                aurora_i18n::tr!("demo-turquoise").into(),
+                aurora_i18n::tr!("demo-amber").into(),
+            ],
+        });
+        ev.push(NetEvent::ScriptDialog {
+            sender,
+            object_id: Uuid::from_u128(0xF2),
+            object_name: aurora_i18n::tr!("demo-land-script-sign").into(),
+            owner_name: owner.into(),
+            message: aurora_i18n::tr!("demo-scripted-textbox").into(),
+            channel: -4244,
+            buttons: vec!["!!llTextBox!!".into()],
+        });
+        ev.push(NetEvent::ScriptQuestion {
+            task_id: Uuid::from_u128(0xF3),
+            item_id: Uuid::from_u128(0xF4),
+            object_name: aurora_i18n::tr!("demo-keywords-object-name").into(),
+            owner_name: owner.into(),
+            questions: 0x10,
+            experience: Uuid::nil(),
+            region: 0,
+        });
+        ev.push(NetEvent::LoadUrl {
+            object_name: aurora_i18n::tr!("demo-shop").into(),
+            object_id: Uuid::from_u128(0xF5),
+            message: aurora_i18n::tr!("demo-scripted-url").into(),
+            url: "https://example.invalid/shop".into(),
+        });
+        ev.push(NetEvent::InstantMessage(aurora_net::InstantMessage {
+            from_agent_id: DEMO_GIVER,
+            from_name: aurora_i18n::tr!("demo-gift-dispenser").into(),
+            to_agent_id: Uuid::nil(),
+            dialog: crate::world::notifications::im::TASK_INVENTORY_OFFERED,
+            session_id: Uuid::from_u128(0xF6),
+            message: aurora_i18n::tr!("received-filing-demo-object").into(),
+            offline: false,
+            from_group: false,
+            binary_bucket: vec![7],
+            timestamp: 0,
+        }));
+        for info in [
+            aurora_i18n::tr!("demo-notifs-paid"),
+            aurora_i18n::tr!("demo-notifs-group-notice"),
+            aurora_i18n::tr!("demo-group-notice-sandbox"),
+            aurora_i18n::tr!("demo-group-notice-rules"),
+        ] {
+            ev.push(im(crate::world::notifications::im::MESSAGEBOX, info, Vec::new()));
+        }
         return ev;
     }
     let (object_name, message, buttons) = if !menu.is_empty() {
@@ -5623,6 +5741,20 @@ mod notification_tests {
         }
         let events = notification_samples(false, true, None);
         assert!(matches!(events.as_slice(), [NetEvent::InstantMessage(im)] if im.dialog == 4));
+        // every scripted window, then the information after them
+        let events = notification_samples(false, false, Some("scripted"));
+        assert!(matches!(
+            events.as_slice(),
+            [
+                NetEvent::ScriptDialog { .. },
+                NetEvent::ScriptDialog { buttons, .. },
+                NetEvent::ScriptQuestion { .. },
+                NetEvent::LoadUrl { .. },
+                NetEvent::InstantMessage(gift),
+                ..
+            ] if buttons[0] == "!!llTextBox!!" && gift.dialog == crate::world::notifications::im::TASK_INVENTORY_OFFERED
+        ));
+        assert_eq!(events.len(), 9);
     }
 }
 
@@ -6874,6 +7006,11 @@ pub fn lights_events(n: u32) -> Vec<NetEvent> {
 /// strands mostly opaque with a short soft edge and nothing between them,
 /// drawn in the Legacy Viewer's triangle order like a mesh asset (#935);
 /// `<n>,layered,outer`: listed from the outside in instead.
+/// AURORA_DEMO_SHEER=1 (with or without the others): our avatar also wears
+/// a sheer white dress around the torso, its alpha wavering from texel to
+/// texel between 0.25 and 0.75 (a knit), and under it a red layer (a body
+/// add-on), attached first on the same point so that it is drawn after the
+/// dress (#1300).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HairDemo {
     pub layers: u32,
@@ -6884,6 +7021,7 @@ pub struct HairDemo {
     pub cards: u32,
     pub layered: bool,
     pub outer_first: bool,
+    pub sheer: bool,
 }
 
 pub fn hair_demo() -> Option<HairDemo> {
@@ -6893,9 +7031,10 @@ pub fn hair_demo() -> Option<HairDemo> {
     let cards_args: Vec<&str> = cards_args.collect();
     let layered = cards > 0 && cards_args.contains(&"layered");
     let outer_first = layered && cards_args.contains(&"outer");
+    let sheer = std::env::var("AURORA_DEMO_SHEER").is_ok_and(|v| v.trim() == "1");
     let demo = match std::env::var("AURORA_DEMO_HAIR").ok() {
         Some(v) => hair_demo_from(&v),
-        None if cards > 0 => HairDemo {
+        None if cards > 0 || sheer => HairDemo {
             layers: 0,
             ..hair_demo_from("")
         },
@@ -6906,6 +7045,7 @@ pub fn hair_demo() -> Option<HairDemo> {
         cards,
         layered,
         outer_first,
+        sheer,
         ..demo
     })
 }
@@ -6924,8 +7064,16 @@ fn hair_demo_from(v: &str) -> HairDemo {
         cards: 0,
         layered: false,
         outer_first: false,
+        sheer: false,
     }
 }
+
+/// Knit texture of the dress of AURORA_DEMO_SHEER.
+pub const TEX_SHEER: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0023);
+
+/// Mesh assets of AURORA_DEMO_SHEER: the dress, and the layer under it.
+pub const SHEER_DRESS_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0002_0000_0300);
+pub const SHEER_LAYER_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0002_0000_0301);
 
 /// Strand texture of the hair demo.
 pub const TEX_HAIR: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0020);
@@ -7046,6 +7194,44 @@ pub fn hair_events(demo: HairDemo, crowd: u32) -> Vec<NetEvent> {
         lashes.parent_id = 9000;
         lashes.state = 0x10; // chest
         objects.push(lashes);
+    }
+    if demo.sheer {
+        // the layer attached first (the smaller local id): drawn after the
+        // dress, as a body add-on worn before the clothes over it
+        for (local, mesh, color, texture) in [
+            (200_060, SHEER_LAYER_MESH, [0.85, 0.12, 0.15, 0.95], None),
+            (200_061, SHEER_DRESS_MESH, [1.0, 1.0, 1.0, 1.0], Some(TEX_SHEER)),
+        ] {
+            let mesh = SculptParams {
+                texture: mesh,
+                sculpt_type: LL_SCULPT_TYPE_MESH,
+            };
+            let mut t = (*te(color, 0, false, 0.0)).clone();
+            if let Some(texture) = texture {
+                for f in &mut t.faces {
+                    f.texture = texture;
+                }
+            }
+            let mut worn = prim(
+                local,
+                Vec3::ZERO,
+                Quat::IDENTITY,
+                Vec3::splat(0.1),
+                aurora_prim::VolumeParams {
+                    sculpt: Some(mesh),
+                    ..Default::default()
+                },
+                Arc::new(t),
+                ExtraParams {
+                    sculpt: Some(mesh),
+                    ..Default::default()
+                },
+                "",
+            );
+            worn.parent_id = 9000;
+            worn.state = 0x10; // chest
+            objects.push(worn);
+        }
     }
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }
@@ -7225,12 +7411,30 @@ fn hair_card_layered_texture() -> (Vec<u8>, u32, u32) {
     (px, N, N)
 }
 
+/// Pixels of [`TEX_SHEER`] (RGBA8, 256×256): a white knit whose alpha
+/// wavers between 0.25 and 0.75 from one 4-texel stitch to the next, so
+/// that it crosses one half everywhere, even through the coarser mips.
+fn sheer_texture() -> (Vec<u8>, u32, u32) {
+    const N: u32 = 256;
+    let mut px = Vec::with_capacity((N * N * 4) as usize);
+    for y in 0..N {
+        for x in 0..N {
+            let stitch = (x / 4).wrapping_mul(73_856_093) ^ (y / 4).wrapping_mul(19_349_663);
+            let h = stitch.wrapping_mul(2_654_435_761) >> 24;
+            let alpha = 0.25 + 0.5 * h as f32 / 255.0;
+            px.extend_from_slice(&[245, 243, 240, (255.0 * alpha) as u8]);
+        }
+    }
+    (px, N, N)
+}
+
 /// The procedural texture `id` takes a mip chain (the others are the
 /// 64-texel test panels, kept as they are).
 pub fn local_texture_mips(id: &Uuid) -> bool {
     *id == TEX_HAIR
         || *id == TEX_HAIR_CARD
         || *id == TEX_HAIR_CARD_LAYERED
+        || *id == TEX_SHEER
         || *id == TEX_PROJECTED
         || *id == TEX_FOLIAGE
         || plants::is_texture(id)
@@ -7705,6 +7909,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     if *id == TEX_HAIR_CARD_LAYERED {
         return Some(hair_card_layered_texture());
     }
+    if *id == TEX_SHEER {
+        return Some(sheer_texture());
+    }
     if *id == TEX_HAIR_CARD {
         return Some(hair_card_texture());
     }
@@ -7713,6 +7920,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     }
     if let Some(species) = plants::texture(id) {
         return Some(species);
+    }
+    if let Some(placeholder) = bom_rezzed::texture(id) {
+        return Some(placeholder);
     }
     if let Some(pane) = blend_shadows::texture(id) {
         return Some(pane);
@@ -7850,6 +8060,14 @@ const MAT_PBR_METAL: [Uuid; 3] = [
 /// Polished metal cube of AURORA_DEMO_PBR_METAL, occluded but for a disc.
 const MAT_PBR_ORM_DISC: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0014);
 
+/// Orange emissive spheres of AURORA_DEMO_PBR_EMISSIVE: opaque, alpha-masked,
+/// blended.
+const MAT_PBR_EMISSIVE: [Uuid; 3] = [
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0030),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0031),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0032),
+];
+
 /// PBR materials of the demo (normally fetched as assets).
 pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
     let mut list = vec![(
@@ -7878,6 +8096,45 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             metallic_roughness_texture: Some(TEX_ORM_DISC),
             metallic_factor: 1.0,
             roughness_factor: 1.0,
+            ..Default::default()
+        },
+    ));
+    for (mat, (alpha_mode, alpha)) in MAT_PBR_EMISSIVE.into_iter().zip([
+        (aurora_assets::AlphaMode::Opaque, 1.0),
+        (aurora_assets::AlphaMode::Mask, 1.0),
+        (aurora_assets::AlphaMode::Blend, 0.6),
+    ]) {
+        list.push((
+            mat,
+            aurora_assets::PbrMaterial {
+                base_color_factor: [0.08, 0.08, 0.08, alpha],
+                metallic_factor: 0.0,
+                roughness_factor: 0.5,
+                emissive_factor: [1.0, 0.45, 0.1],
+                alpha_mode,
+                alpha_cutoff: 0.5,
+                ..Default::default()
+            },
+        ));
+    }
+    list.push((
+        region::terrain_replacement(),
+        aurora_assets::PbrMaterial {
+            base_color_factor: [0.035, 0.3, 0.055, 1.0],
+            metallic_factor: 0.0,
+            roughness_factor: 0.9,
+            ..Default::default()
+        },
+    ));
+    list.push((
+        region::terrain_mask(),
+        aurora_assets::PbrMaterial {
+            base_color_texture: Some(TEX_HOLES),
+            normal_texture: Some(TEX_BUMPS),
+            metallic_factor: 0.0,
+            roughness_factor: 0.7,
+            alpha_mode: aurora_assets::AlphaMode::Mask,
+            alpha_cutoff: 0.5,
             ..Default::default()
         },
     ));

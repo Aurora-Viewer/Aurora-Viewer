@@ -2,6 +2,13 @@
 use super::*;
 
 pub(super) fn show(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
+    defaults(ui, p, prefs);
+    ui.add_space(14.0);
+    widgets::section_header(ui, p, "coin-filled", aurora_i18n::tr!("import-permissions-payment"));
+    checkbox(ui, p, &mut prefs.show_payment, aurora_i18n::tr!("import-show-payment"));
+}
+
+pub(crate) fn defaults(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
     widgets::section_header(ui, p, "shield-lock-filled", aurora_i18n::tr!("import-permissions"));
     ui.label(
         RichText::new(aurora_i18n::tr!("import-permissions-basic-help"))
@@ -88,9 +95,6 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
             .small()
             .color(p.muted),
     );
-    ui.add_space(14.0);
-    widgets::section_header(ui, p, "coin-filled", aurora_i18n::tr!("import-permissions-payment"));
-    checkbox(ui, p, &mut prefs.show_payment, aurora_i18n::tr!("import-show-payment"));
 }
 
 fn cell(ui: &mut egui::Ui, width: f32, body: impl FnOnce(&mut egui::Ui)) {

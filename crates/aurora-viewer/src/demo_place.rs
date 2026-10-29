@@ -7,7 +7,7 @@
 //! (LLPanelPlaceInfo::setErrorStatus).
 
 use super::{DEMO_LOUP, TEX_SNAPSHOT, demo_sims, u};
-use crate::world::tphistory::HistoryItem;
+use crate::world::tphistory::{HistoryItem, TpEntry};
 use aurora_net::inventory::{FolderContents, InvFolder, InvItem};
 use aurora_net::land::RemoteParcelError;
 use aurora_net::{NetEvent, ParcelSummary, RegionHandle};
@@ -622,6 +622,51 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
         folders,
         items,
     })
+}
+
+/// The places of the session before the demo's arrival, oldest first, the
+/// last one twenty minutes ago (`AURORA_DEMO_BARS=tplist`).
+pub fn session() -> Vec<TpEntry> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let entry = |grid: (u32, u32), region: &str, parcel: &str, position: Vec3, minutes_ago: i64| TpEntry {
+        region: region.to_owned(),
+        handle: aurora_net::origin_to_handle(grid.0 * 256, grid.1 * 256),
+        position,
+        parcel: parcel.to_owned(),
+        at: now - minutes_ago * 60,
+    };
+    vec![
+        entry(
+            (999, 999),
+            aurora_i18n::tr!("common-sandbox"),
+            "",
+            Vec3::new(128.0, 128.0, 25.0),
+            95,
+        ),
+        entry(
+            (1000, 1001),
+            "Nordheim",
+            aurora_i18n::tr!("demo-place-nordheim-hall"),
+            Vec3::new(128.0, 64.0, 40.0),
+            71,
+        ),
+        entry(
+            (999, 1000),
+            aurora_i18n::tr!("common-pine-grove"),
+            "",
+            Vec3::new(200.0, 30.0, 24.0),
+            48,
+        ),
+        entry(
+            (1001, 1000),
+            aurora_i18n::tr!("common-boreal-lagoon"),
+            aurora_i18n::tr!("demo-place-aurora-lagoon"),
+            Vec3::new(60.0, 200.0, 22.0),
+            20,
+        ),
+    ]
 }
 
 /// The demo's teleport history, oldest first, around now.

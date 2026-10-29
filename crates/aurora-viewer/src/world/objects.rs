@@ -105,6 +105,15 @@ impl TexAnimClock {
     }
 }
 
+/// A root an avatar sits on: the pose drawn at the last frame, and whether
+/// it is damped there or drawn where its reports send it (settled, or
+/// still: a seat at rest costs nothing a frame).
+#[derive(Debug, Clone, Copy)]
+struct Seat {
+    drawn: (Vec3, Quat),
+    damping: bool,
+}
+
 #[derive(Debug)]
 pub struct Object {
     pub key: ObjKey,
@@ -134,6 +143,8 @@ pub struct Object {
     /// The last report put it elsewhere than where it was drawn: the gap
     /// fades instead of showing at once (motion.rs).
     correction: Option<Correction>,
+    /// A root an avatar sits on (`ObjectStore::damp_seats`).
+    seat: Option<Seat>,
     /// Full updates carry parentage; terse motion packets do not confirm it.
     pub full_update_serial: u64,
     pub volume: VolumeParams,
@@ -243,6 +254,7 @@ impl Object {
             foot_plane: u.foot_plane,
             motion_time: f64::NAN,
             correction: None,
+            seat: None,
             full_update_serial: 1,
             volume: u.volume,
             te: u.texture_entry,
@@ -448,39 +460,78 @@ impl Object {
     /// Local position and rotation drawn at `now`, `motion_time` being the
     /// clock of its region (`ObjectStore::motion_time`): where its last
     /// report sends it (motion.rs), and what is left of the gap that report
-    /// opened with where it was drawn.
+    /// opened with where it was drawn; a seat, where its damping has it.
     pub fn predicted(&self, now: Instant, motion_time: f64) -> (Vec3, Quat) {
-        let pose = if self.extrapolates() && self.motion_time.is_finite() {
-            motion::extrapolate(&self.reported(), motion_time - self.motion_time)
-        } else {
-            (self.position, self.rotation)
-        };
+        match self.seat {
+            Some(Seat { drawn, damping: true }) => drawn,
+            _ => self.undamped(now, motion_time),
+        }
+    }
+
+    /// `predicted` without the damping of a seat.
+    fn undamped(&self, now: Instant, motion_time: f64) -> (Vec3, Quat) {
+        let pose = self.reported_pose(motion_time);
         match &self.correction {
             Some(c) if c.leads_to(self.position, self.rotation) => c.apply(pose, now),
             _ => pose,
         }
     }
 
+    /// Where its last report sends it at `motion_time`, nothing smoothed.
+    fn reported_pose(&self, motion_time: f64) -> (Vec3, Quat) {
+        if self.extrapolates() && self.motion_time.is_finite() {
+            motion::extrapolate(&self.reported(), motion_time - self.motion_time)
+        } else {
+            (self.position, self.rotation)
+        }
+    }
+
     fn reported(&self) -> motion::Reported {
+        let (velocity, acceleration) = self.linear_motion();
         motion::Reported {
             position: self.position,
             rotation: self.rotation,
-            velocity: self.velocity,
-            acceleration: self.acceleration,
+            velocity,
+            acceleration,
             angular_velocity: self.angular_velocity,
         }
     }
 
-    /// The simulator reported a motion (any velocity, acceleration or spin).
+    /// LLVOVolume::isAttachment: a prim worn by an avatar (trees, grass and
+    /// avatars use the state for something else).
+    pub fn is_attachment(&self) -> bool {
+        self.pcode == aurora_prim::params::LL_PCODE_VOLUME && self.state != 0
+    }
+
+    /// Velocity and acceleration the object moves with. An attachment only
+    /// spins (LLViewerObject::idleUpdate returns before
+    /// interpolateLinearMotion): a velocity in the update of a worn prim
+    /// would carry it away from its point, in the point's frame, until the
+    /// next update.
+    fn linear_motion(&self) -> (Vec3, Vec3) {
+        if self.is_attachment() {
+            (Vec3::ZERO, Vec3::ZERO)
+        } else {
+            (self.velocity, self.acceleration)
+        }
+    }
+
+    /// The simulator reported a motion the object follows (velocity,
+    /// acceleration or spin).
     fn extrapolates(&self) -> bool {
-        self.velocity != Vec3::ZERO || self.acceleration != Vec3::ZERO || self.angular_velocity != Vec3::ZERO
+        let (velocity, acceleration) = self.linear_motion();
+        velocity != Vec3::ZERO || acceleration != Vec3::ZERO || self.angular_velocity != Vec3::ZERO
     }
 
     /// Whether `predicted` changes from a frame to the next: a reported
-    /// motion, or a correction still fading (`ObjectStore::expire_corrections`
-    /// ends it).
+    /// motion, a correction still fading (`ObjectStore::expire_corrections`
+    /// ends it) or a seat still damped.
     pub fn has_motion(&self) -> bool {
-        self.extrapolates() || self.correction.is_some()
+        self.extrapolates() || self.correction.is_some() || self.seat_damping()
+    }
+
+    fn seat_damping(&self) -> bool {
+        self.seat.is_some_and(|s| s.damping)
     }
 
     /// Put back the values of our own edit over a report of an earlier one
@@ -500,9 +551,11 @@ impl Object {
 
     /// A report was applied at `now`: stamp it with its region's clock and,
     /// when it left the object where `drawn` says it was not, let the gap
-    /// fade. True when a correction started.
+    /// fade. True when a correction started. A damped seat needs none: its
+    /// damping takes it there.
     fn stamp_motion(&mut self, motion_time: f64, now: Instant, drawn: Option<(Vec3, Quat)>) -> bool {
         self.motion_time = motion_time;
+        let drawn = if self.seat_damping() { None } else { drawn };
         self.correction = drawn.and_then(|drawn| Correction::between(drawn, (self.position, self.rotation), now));
         self.correction.is_some()
     }
@@ -604,6 +657,8 @@ pub struct ObjectStore {
     motion_rates: HashMap<RegionHandle, f32>,
     /// Slots whose object has a correction fading (`expire_corrections`).
     correcting: Vec<usize>,
+    /// Slots of the roots avatars sat on at the last frame (`damp_seats`).
+    seats: Vec<usize>,
     /// The photo mode's frozen world (`hold_poses`): where the objects that
     /// move are kept drawn.
     held: Option<HeldPoses>,
@@ -817,7 +872,9 @@ impl ObjectStore {
 
     /// End the corrections that have faded: the objects that do not move
     /// otherwise are still again, at the place of their last report, and
-    /// the scene hears of it.
+    /// the scene places them once more. A prim of a worn linkset was placed
+    /// by the sync while it faded; nothing else would put it back on its
+    /// anchor, and it would stay in the world behind its walking wearer.
     pub fn expire_corrections(&mut self, now: Instant) {
         if self.correcting.is_empty() {
             return;
@@ -831,6 +888,7 @@ impl ObjectStore {
                 Some(c) if c.active(now) => true,
                 Some(_) => {
                     o.correction = None;
+                    o.render.needs_records = true;
                     self.touched.note(idx);
                     false
                 }
@@ -838,6 +896,88 @@ impl ObjectStore {
             }
         });
         self.correcting = listed;
+    }
+
+    /// One frame of the damping of the roots avatars sit on (motion::damp),
+    /// `dt` seconds after the previous one. LLVOAvatar::idleUpdate damps the
+    /// root of each seated avatar's linkset every frame, moving or not,
+    /// except a root `selected` in the build tools, drawn where it is. A
+    /// root its last rider left fades on from where it was drawn.
+    pub fn damp_seats(&mut self, now: Instant, dt: f32, selected: impl Fn(&ObjKey) -> bool) {
+        let mut ridden = Vec::new();
+        for (_, avatar) in self.avatars() {
+            if avatar.parent_id != 0
+                && let Some(root) = self.seat_root(avatar)
+                && !ridden.contains(&root)
+            {
+                ridden.push(root);
+            }
+        }
+        let mut seats = std::mem::take(&mut self.seats);
+        for &idx in &ridden {
+            if !seats.contains(&idx) {
+                seats.push(idx);
+            }
+        }
+        for idx in seats {
+            let Some(o) = self.get(idx) else { continue };
+            let clock = self.motion_time(o.key.region);
+            let target = o.reported_pose(clock);
+            let rider = ridden.contains(&idx) && o.parent_id == 0;
+            let seat = (rider && !selected(&o.key)).then(|| {
+                // from where it was drawn at the last frame (its first: now)
+                let undamped = o.undamped(now, clock);
+                let drawn = o.seat.map_or(undamped, |s| s.drawn);
+                match motion::damp(drawn, target, dt) {
+                    Some(drawn) => Seat { drawn, damping: true },
+                    None => Seat {
+                        drawn: undamped,
+                        damping: false,
+                    },
+                }
+            });
+            // (after this frame's step, which it still takes)
+            let handover = match o.seat {
+                Some(Seat { drawn, damping: true }) if !rider && o.parent_id == 0 => {
+                    let drawn = motion::damp(drawn, target, dt).unwrap_or(target);
+                    Correction::toward(drawn, target, (o.position, o.rotation), now)
+                }
+                _ => None,
+            };
+            // the scene hears when it starts or stops moving by itself
+            let changed = o.seat_damping() != seat.is_some_and(|s| s.damping);
+            let o = if changed { self.get_mut(idx) } else { self.get_mut_untracked(idx) };
+            let Some(o) = o else { continue };
+            o.seat = seat;
+            if seat.is_some_and(|s| s.damping) {
+                o.correction = None;
+            } else if let Some(c) = handover {
+                o.correction = Some(c);
+                if !self.correcting.contains(&idx) {
+                    self.correcting.push(idx);
+                }
+            }
+            if seat.is_some() {
+                self.seats.push(idx);
+            }
+        }
+    }
+
+    /// The root of the linkset `avatar` sits on, unless it sits on another
+    /// avatar or a link of the chain is unknown.
+    fn seat_root(&self, avatar: &Object) -> Option<usize> {
+        let mut idx = self.parent_of(avatar)?;
+        for _ in 0..16 {
+            let o = self.get(idx)?;
+            if o.is_avatar() {
+                return None;
+            }
+            if o.parent_id == 0 {
+                return Some(idx);
+            }
+            idx = self.parent_of(o)?;
+        }
+        None
     }
 
     /// Apply a terse update to the object in `idx`.
@@ -1715,6 +1855,82 @@ mod tests {
 
     use aurora_prim::params::{LL_PCODE_LEGACY_AVATAR as AVATAR, LL_PCODE_VOLUME as PRIM};
 
+    #[test]
+    fn a_ridden_root_is_damped_every_frame_like_the_legacy_viewer() {
+        let mut s = ObjectStore::default();
+        let mut car = update(5, PRIM, "");
+        car.velocity = Vec3::X * 10.0;
+        let car = s.upsert(1, car);
+        // the rider sits on a child prim: the linkset's root is damped
+        let mut door = update(6, PRIM, "");
+        door.parent_id = 5;
+        s.upsert(1, door);
+        let mut rider = update(10, AVATAR, "");
+        rider.parent_id = 6;
+        let rider = s.upsert(1, rider);
+        let mut cart = update(20, PRIM, "");
+        cart.velocity = Vec3::X * 10.0;
+        let cart = s.upsert(1, cart);
+        let mut chair = update(30, PRIM, "");
+        chair.position = Vec3::Y * 3.0;
+        let chair = s.upsert(1, chair);
+        let mut sitter = update(31, AVATAR, "");
+        sitter.parent_id = 30;
+        s.upsert(1, sitter);
+        let mut now = Instant::now();
+        let dt = 1.0 / 60.0;
+        let frames = |s: &mut ObjectStore, now: &mut Instant, n: u32, selected: bool| {
+            for _ in 0..n {
+                *now += Duration::from_secs_f32(dt);
+                s.advance_motion(1, f64::from(dt));
+                s.damp_seats(*now, dt, |k| selected && k.local_id == 5);
+            }
+        };
+        let drawn = |s: &ObjectStore, idx: usize, now: Instant| s.predicted(s.get(idx).expect("object"), now);
+        frames(&mut s, &mut now, 60, false);
+        // nobody rides the cart: where its motion takes it; the car follows
+        // its own a constant 0.78 m behind at 10 m/s (0.06 s half-life)
+        near(drawn(&s, cart, now).0, Vec3::X * 10.0);
+        let car_x = drawn(&s, car, now).0.x;
+        assert!((car_x - 9.215).abs() < 0.02, "{car_x}");
+        // the chair at rest is not moving: the scene does not place it again
+        assert!(!s.get(chair).expect("chair").has_motion());
+        near(drawn(&s, chair, now).0, Vec3::Y * 3.0);
+        // a collision: thrown back and turned, then still; no jump on screen
+        let mut hit = terse(5, Vec3::X * 9.0, Vec3::ZERO);
+        (hit.is_avatar, hit.rotation) = (false, Quat::from_rotation_z(0.5));
+        s.apply_terse_at(car, &hit, Some(now));
+        near(drawn(&s, car, now).0, Vec3::X * car_x);
+        frames(&mut s, &mut now, 1, false);
+        let (position, rotation) = drawn(&s, car, now);
+        assert!(position.distance(Vec3::X * car_x) < 0.05, "{position}");
+        assert!(rotation.angle_between(Quat::IDENTITY) < 0.1, "{rotation}");
+        frames(&mut s, &mut now, 60, false);
+        near(drawn(&s, car, now).0, Vec3::X * 9.0);
+        assert!(!s.get(car).expect("car").has_motion(), "settled");
+        // selected in the build tools: drawn where it is
+        let mut push = terse(5, Vec3::X * 9.0, Vec3::X * 10.0);
+        push.is_avatar = false;
+        s.apply_terse_at(car, &push, Some(now));
+        frames(&mut s, &mut now, 30, true);
+        near(drawn(&s, car, now).0, Vec3::X * 14.0);
+        frames(&mut s, &mut now, 30, false);
+        assert!(drawn(&s, car, now).0.x < 18.9, "damped again");
+        // the rider stands up: the car fades on from where it is drawn
+        let before = drawn(&s, car, now).0;
+        let mut standing = update(10, AVATAR, "");
+        standing.position = Vec3::new(19.0, 2.0, 0.0);
+        s.upsert(1, standing);
+        assert_eq!(s.get(rider).expect("rider").parent_id, 0);
+        frames(&mut s, &mut now, 1, false);
+        let after = drawn(&s, car, now).0;
+        assert!(after.x > before.x && after.x - before.x < 0.4, "{before} -> {after}");
+        frames(&mut s, &mut now, 60, false);
+        // 121 frames at 10 m/s since the push from 9 m
+        let x = drawn(&s, car, now).0.x;
+        assert!((x - (9.0 + 10.0 * 121.0 * dt)).abs() < 0.01, "{x}");
+    }
+
     /// `id` under another local id, as another region sends it.
     fn resent(id: u32, local_id: u32, parent_id: u32, pcode: u8) -> ObjectUpdate {
         let mut u = update(local_id, pcode, "");
@@ -1916,6 +2132,48 @@ mod tests {
         near(drawn(&s), Vec3::X * 16.0);
         s.advance_motion(2, 1.0);
         near(drawn(&s), Vec3::X * 19.2);
+    }
+
+    #[test]
+    fn a_worn_prim_spins_but_never_drifts_with_a_reported_velocity() {
+        let mut s = ObjectStore::default();
+        let now = Instant::now();
+        s.upsert(1, update(1, AVATAR, ""));
+        // worn on the mouth (point 11), its update carrying a velocity
+        let mut worn = update(10, PRIM, "");
+        worn.parent_id = 1;
+        worn.state = 0xB0;
+        worn.position = Vec3::X * 0.2;
+        worn.velocity = Vec3::Y * 0.5;
+        worn.acceleration = Vec3::Z * -9.8;
+        let idx = s.upsert(1, worn.clone());
+        let o = s.get(idx).expect("worn prim");
+        assert_eq!(o.attachment_point(), 11);
+        assert!(o.is_attachment());
+        // nothing moves it: placed from its point's anchor
+        assert!(!o.has_motion());
+        s.advance_motion(1, 2.0);
+        near(s.predicted(s.get(idx).expect("worn prim"), now).0, Vec3::X * 0.2);
+        // llTargetOmega still turns it, on the spot
+        worn.angular_velocity = Vec3::Z * std::f32::consts::FRAC_PI_2;
+        s.upsert(1, worn.clone());
+        assert!(s.get(idx).expect("worn prim").has_motion());
+        s.advance_motion(1, 1.0);
+        let (position, rotation) = s.predicted(s.get(idx).expect("worn prim"), now);
+        near(position, Vec3::X * 0.2);
+        assert!(
+            rotation.abs_diff_eq(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2), 1e-4),
+            "{rotation:?}"
+        );
+        // the same prim on the ground goes its way
+        worn.parent_id = 0;
+        worn.state = 0;
+        worn.acceleration = Vec3::ZERO;
+        worn.angular_velocity = Vec3::ZERO;
+        let ground = s.upsert(1, worn);
+        assert!(!s.get(ground).expect("prim").is_attachment());
+        s.advance_motion(1, 2.0);
+        near(s.predicted(s.get(ground).expect("prim"), now).0, Vec3::X * 0.2 + Vec3::Y);
     }
 
     #[test]

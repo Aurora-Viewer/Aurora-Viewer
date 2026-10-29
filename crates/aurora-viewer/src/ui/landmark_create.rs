@@ -250,6 +250,7 @@ impl CreateLandmarkUi {
             parent,
             kind: NewItem::Landmark,
             name: default_title(&world.parcel_name, &world.region_name(), world.agent.position),
+            permissions: None,
         })
     }
 
@@ -299,6 +300,7 @@ impl CreateLandmarkUi {
             parent: self.folder,
             kind: NewItem::Landmark,
             name: world.parcel_name.clone(),
+            permissions: None,
         })
     }
 

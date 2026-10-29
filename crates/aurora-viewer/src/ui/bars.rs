@@ -12,6 +12,7 @@ pub mod islands;
 mod place;
 pub mod side;
 pub(crate) mod sizing;
+mod tp_list;
 
 use super::Panels;
 use super::icons::Icons;
@@ -76,6 +77,8 @@ pub enum BarAction {
     /// Teleport history (navigation bar arrows).
     TeleportBack,
     TeleportForward,
+    /// A place of the arrows' list, by its index in the session's history.
+    TeleportHistoryItem(usize),
     /// Voice light clicked: open "Sound and voice".
     VoicePrefs,
     /// Location typed or pasted in the navigation bar (SLURL, Region/x/y/z...).
@@ -96,6 +99,8 @@ pub enum BarAction {
     TeleportHistory,
     /// The balance, or Me › Buy L$ (LLStatusBar::onClickBuyCurrency).
     BuyCurrency,
+    /// The balance shown or hidden (its right click, the account island's).
+    ShowBalance(bool),
     /// Me › Double-click on the ground (Firestorm's "DoubleClick Teleport"
     /// of its movement menu, Advanced.SetDoubleClickAction).
     SetDoubleClick(crate::autopilot::DoubleClick),
@@ -171,6 +176,8 @@ pub struct StatusInfo<'a> {
     /// Destinations of the back / forward arrows (None = disabled).
     pub tp_back: Option<String>,
     pub tp_forward: Option<String>,
+    /// Every place of the session, for the arrows' list.
+    pub tp_session: crate::world::tphistory::Session<'a>,
     pub maturity: &'a str,
     pub position: glam::Vec3,
     pub fps: f32,
@@ -178,6 +185,8 @@ pub struct StatusInfo<'a> {
     pub seated: bool,
     pub ping_ms: u32,
     pub balance: Option<i32>,
+    /// The balance shown (`show_balance`, #1340).
+    pub show_balance: bool,
     /// Voice connection light and its explanation.
     pub voice: (crate::voice::VoiceLight, String),
     /// SLURL of the current position (shown when the location is edited).
@@ -190,6 +199,9 @@ pub struct StatusInfo<'a> {
     pub parcel_icons: Vec<super::parcel_icons::ParcelIcon>,
     /// A local environment is shown (selector, preset, personal lighting).
     pub local_env: bool,
+    /// The keys of World › Environment's shortcuts, by `Panels::time_of_day`
+    /// (0 Use shared environment; the legacy midday has none).
+    pub env_keys: [String; 6],
     /// What a double click on the ground does (Me › Double-click on the ground).
     pub double_click: crate::autopilot::DoubleClick,
     /// Quickjump is on (Me › Quickjump).
@@ -340,6 +352,18 @@ pub(super) fn home_menu(resp: &egui::Response, p: &Palette, can_set_home: bool) 
         set = menu::item_if(ui, p, "home-check", aurora_i18n::tr!("world-set-home-here"), can_set_home);
     });
     set
+}
+
+/// The balance's right click (the account island's in the islands): the
+/// Legacy Viewer's "Show Currency Balance" of its status bar menu
+/// (menu_hide_navbar.xml, FSShowCurrencyBalanceInStatusbar), then Buy L$.
+pub(super) fn balance_menu(ui: &mut egui::Ui, p: &Palette, shown: bool, action: &mut BarAction) {
+    if menu::check(ui, p, "coin-filled", aurora_i18n::tr!("ui-bars-show-balance"), shown, true) {
+        *action = BarAction::ShowBalance(!shown);
+    }
+    if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("currency-menu")) {
+        *action = BarAction::BuyCurrency;
+    }
 }
 
 /// Local time of day choices (index = `Panels::time_of_day`; shown in the
@@ -934,13 +958,14 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         menu::submenu(ui, p, "sunset-2-filled", aurora_i18n::tr!("common-environment"), true, |ui| {
             // back to the region / parcel EEP cycle, in real time
             let shared = !st.local_env;
-            if menu::check(
+            if menu::check_keys(
                 ui,
                 p,
                 "world-filled",
                 aurora_i18n::tr!("ui-bars-use-shared-environments"),
                 shared,
                 true,
+                &st.env_keys[0],
             ) {
                 panels.time_of_day = 0;
                 *action = BarAction::SharedEnvironment;
@@ -957,7 +982,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             let labels = time_of_day();
             for i in crate::world::env::TIME_OF_DAY_ORDER {
                 let n = i as usize;
-                if menu::check(ui, p, icons[n], labels[n], panels.time_of_day == i, true) {
+                if menu::check_keys(ui, p, icons[n], labels[n], panels.time_of_day == i, true, &st.env_keys[n]) {
                     panels.time_of_day = i;
                 }
             }
@@ -1310,27 +1335,46 @@ fn paint_icon(ui: &egui::Ui, icons: &Icons, name: &str, rect: egui::Rect, size: 
 
 /// Back / forward arrow of the navigation bar; `dest` is the history entry
 /// it leads to (None = disabled).
-fn nav_arrow(ui: &mut egui::Ui, p: &Palette, icons: &Icons, left: bool, dest: Option<&str>) -> bool {
+/// A back / forward arrow: whether it was clicked, and the place chosen
+/// in its list of the session's places.
+fn nav_arrow(ui: &mut egui::Ui, p: &Palette, icons: &Icons, left: bool, st: &StatusInfo) -> (bool, Option<BarAction>) {
+    let dest = if left { st.tp_back.as_deref() } else { st.tp_forward.as_deref() };
     let (rect, resp) = ui.allocate_exact_size(TOP_SLOT, egui::Sense::click());
     let enabled = dest.is_some();
-    if enabled && resp.hovered() {
+    let hot = resp.hovered() || egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
+    if enabled && hot {
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     let col = if !enabled {
         p.muted_dim.gamma_multiply(0.6)
-    } else if resp.hovered() {
+    } else if hot {
         p.ink
     } else {
         p.muted
     };
     paint_icon(ui, icons, if left { "arrow-left" } else { "arrow-right" }, rect, TOP_ICON, col);
+    let resp = resp.on_hover_text(arrow_tip(left, dest, st));
+    if left {
+        islands::demo_open(ui.ctx(), &resp, demo::Open::TpList);
+    }
+    let (clicked, chosen) = tp_list::arrow(ui, p, &resp, st, None);
+    (clicked && enabled, chosen)
+}
+
+/// The tooltip of a back / forward arrow: where it leads, and how to list
+/// the session's places when there are some.
+fn arrow_tip(left: bool, dest: Option<&str>, st: &StatusInfo) -> String {
     let tip = match dest {
         Some(d) if left => aurora_i18n::tr!("ui-bars-back", d = d.to_string()),
         Some(d) => aurora_i18n::tr!("ui-bars-next", d = d.to_string()),
         None if left => aurora_i18n::tr!("ui-bars-no-previous-destination").to_owned(),
         None => aurora_i18n::tr!("ui-bars-no-next-destination").to_owned(),
     };
-    resp.on_hover_text(tip).clicked() && enabled
+    if dest.is_some() && tp_list::has_list(st) {
+        format!("{tip}\n{}", aurora_i18n::tr!("ui-bars-tp-list-tip"))
+    } else {
+        tip
+    }
 }
 
 /// Circled "i" (About Land) at the start of the location field.
@@ -1581,6 +1625,15 @@ fn small(text: impl Into<String>, color: Color32) -> RichText {
     RichText::new(text).size(12.0).color(color)
 }
 
+/// A readout of the navigation bar as wide as it was lately
+/// (`islands::held_width`), its text centred: the frame rate, the latency
+/// or the clock changing does not move what is left of it (#1246).
+fn steady_label(ui: &mut egui::Ui, id: &str, text: String, color: Color32, sense: egui::Sense) -> egui::Response {
+    let w = islands::held_width(ui, egui::Id::unique(("bars_legacy_readout", id)), &text, 12.0);
+    let h = ui.fonts_mut(|f| f.row_height(&egui::FontId::proportional(12.0)));
+    ui.add_sized(Vec2::new(w, h), egui::Label::new(small(text, color)).sense(sense))
+}
+
 /// The bell of the navigation bar: its count, its style (Preferences ›
 /// Aurora › Notifications) and do not disturb (the paused bell, which a
 /// right click turns on and off, #491).
@@ -1658,11 +1711,18 @@ pub fn top_bars(
                 }
                 status_dot(ui, p, st.status, &mut action);
                 // back / forward through the teleport history, home (Firestorm navigation bar)
-                if nav_arrow(ui, p, icons, true, st.tp_back.as_deref()) {
-                    action = BarAction::TeleportBack;
-                }
-                if nav_arrow(ui, p, icons, false, st.tp_forward.as_deref()) {
-                    action = BarAction::TeleportForward;
+                for left in [true, false] {
+                    let (clicked, chosen) = nav_arrow(ui, p, icons, left, st);
+                    if clicked {
+                        action = if left {
+                            BarAction::TeleportBack
+                        } else {
+                            BarAction::TeleportForward
+                        };
+                    }
+                    if let Some(a) = chosen {
+                        action = a;
+                    }
                 }
                 let home = icon_button_response(ui, p, icons, "Home_Off", aurora_i18n::tr!("common-go-home"), TOP_ICON);
                 if home.clicked() {
@@ -1701,8 +1761,7 @@ pub fn top_bars(
                         p.danger
                     };
                     // a click opens (or closes) the performance window
-                    let fps = ui
-                        .add(egui::Label::new(small(aurora_i18n::number((st.fps) as f64, 1), fps_col)).sense(egui::Sense::click()))
+                    let fps = steady_label(ui, "fps", islands::fps_text(st.fps), fps_col, egui::Sense::click())
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .on_hover_text(aurora_i18n::tr!("ui-bars-frames-per-second-click-for-performance-details"));
                     if fps.clicked() {
@@ -1712,12 +1771,11 @@ pub fn top_bars(
                     if voice_light(ui, p, icons, st.voice.0, &st.voice.1) {
                         action = BarAction::VoicePrefs;
                     }
-                    ui.label(small(format!("{} ms", st.ping_ms), p.muted))
+                    steady_label(ui, "ping", islands::ping_text(st.ping_ms), p.muted, egui::Sense::hover())
                         .on_hover_text(aurora_i18n::tr!("ui-bars-region-latency"));
                     // a left click switches SLT and local time
                     let island = st.system_island;
-                    let clock = ui
-                        .add(egui::Label::new(small(clock::text(island), p.muted)).sense(egui::Sense::click()))
+                    let clock = steady_label(ui, "clock", clock::text(island), p.muted, egui::Sense::click())
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .on_hover_text(clock::hover_text(island));
                     if clock.clicked() {
@@ -1726,8 +1784,8 @@ pub fn top_bars(
                             ..island
                         });
                     }
-                    if let Some(b) = st.balance {
-                        // a click opens the L$ purchase
+                    if let Some(b) = st.balance.filter(|_| st.show_balance) {
+                        // a click opens the L$ purchase, a right click hides it
                         let balance = ui
                             .add(egui::Label::new(small(format!("{b} L$"), p.ink)).sense(egui::Sense::click()))
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1735,6 +1793,7 @@ pub fn top_bars(
                         if balance.clicked() {
                             action = BarAction::BuyCurrency;
                         }
+                        menu::context_menu(&balance, p, |ui| balance_menu(ui, p, st.show_balance, &mut action));
                     }
                     // the conversations' thumbnails, left of the balance as
                     // the Legacy Viewer's chiclets (#1134)
@@ -2107,7 +2166,8 @@ fn tool_button(
     {
         // centered on the letters' ink like the icons beside it: the line box
         // of a font sits lower than its capitals
-        let size = if look.dock { 13.0 } else { 12.0 };
+        // an icon, not a label: icon-sized whatever the text size
+        let size = if look.dock { 13.0 } else { 12.0 } / super::fonts::scale(ui.ctx());
         // bold like the worn names: the letters weigh as much as the filled
         // icons of the other buttons
         let format = super::widgets::bold_format(ui, egui::FontId::proportional(size), tint);
@@ -2172,6 +2232,10 @@ pub struct MicButton<'a> {
     pub open_processing: bool,
     /// Toggle mode: microphone switched on.
     pub on: bool,
+    /// Why speaking is forbidden here (region or parcel without voice): the
+    /// microphone is greyed and inert, its options stay open (the Speak
+    /// command's is_enabled_function, Agent.IsActionAllowed).
+    pub denied: Option<String>,
     /// Hold-to-talk mode (else click toggles).
     pub hold: bool,
     /// Hold mode: button pressed this frame (output).
@@ -2252,11 +2316,13 @@ fn mic_button(
         let zone = egui::Rect::from_min_max(egui::pos2(arrow_left, rect.top()), egui::pos2(arrow_left + arrow_w, rect.bottom()));
         ui.interact(zone, ui.scope_id().with("mic_arrow"), egui::Sense::click())
     });
+    let denied = mic.denied.is_some();
     if mic.hold {
-        mic.held = resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down());
-    } else if resp.clicked() {
+        mic.held = !denied && resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down());
+    } else if resp.clicked() && !denied {
         mic.on = !mic.on;
     }
+    let hovered = resp.hovered() && !denied;
     // The panel keeps its open state itself. egui's memory holds a single
     // open pop-up, and the list of a device combo is one: kept there, the
     // panel would close as soon as such a list unfolds.
@@ -2265,7 +2331,7 @@ fn mic_button(
     let on_arrow = arrow.as_ref().is_some_and(|r| r.hovered());
     let radius = ui.visuals().window_corner_radius;
     let live = mic.talking;
-    if let Some(fill) = tool_fill(p, live, resp.hovered() || on_arrow || open) {
+    if let Some(fill) = tool_fill(p, live, hovered || on_arrow || open) {
         ui.painter().rect_filled(rect, radius, fill);
     }
     // own level, along the bottom of the button: it follows the voice
@@ -2291,7 +2357,9 @@ fn mic_button(
     } else {
         "microphone-off"
     };
-    let tint = if live || resp.hovered() {
+    let tint = if denied {
+        p.muted_dim
+    } else if live || hovered {
         p.ink
     } else if mic.connected {
         p.muted
@@ -2337,12 +2405,14 @@ fn mic_button(
     } else {
         aurora_i18n::tr!("ui-bars-microphone-muted")
     };
-    let mut tip = if mic.hold {
+    let mut tip = if let Some(why) = &mic.denied {
+        why.clone()
+    } else if mic.hold {
         aurora_i18n::tr!("ui-bars-hold-to-talk", state = state.to_string())
     } else {
         aurora_i18n::tr!("extra-click-to-enable-mute-microphone", state = state.to_string())
     };
-    if let Some((light, why)) = &mic.voice_dot {
+    if let Some((light, why)) = mic.voice_dot.as_ref().filter(|_| !denied) {
         // what the top bar's voice light said
         let (_, name) = voice_state(p, *light);
         tip.push_str(&format!("\n{name}"));
@@ -3015,6 +3085,11 @@ mod tests {
         changed: bool,
         listed: bool,
         open_prefs: bool,
+        /// The microphone's state, kept from frame to frame.
+        on: bool,
+        hold: bool,
+        held: bool,
+        denied: Option<String>,
     }
 
     impl Bench {
@@ -3024,6 +3099,9 @@ mod tests {
             let devices = ["Device A".to_owned(), "Device B".to_owned()];
             let mut mic = MicButton {
                 connected: true,
+                on: self.on,
+                hold: self.hold,
+                denied: self.denied.clone(),
                 input_device: self.input.clone(),
                 output_device: self.output.clone(),
                 input_devices: &devices,
@@ -3049,6 +3127,8 @@ mod tests {
             self.changed = mic.devices_changed;
             self.listed = mic.list_devices;
             self.open_prefs = mic.open_prefs;
+            self.on = mic.on;
+            self.held = mic.held;
             output
         }
 
@@ -3091,6 +3171,44 @@ mod tests {
         fn arrow() -> egui::Pos2 {
             BUTTON + egui::vec2(WIDTH / 2.0 + 8.0 + MIC_ARROW / 2.0, 11.0)
         }
+    }
+
+    #[test]
+    fn a_microphone_the_land_forbids_stays_off_and_keeps_its_options() {
+        let centre = BUTTON + egui::vec2(WIDTH / 2.0, 11.0);
+        let mut bench = Bench {
+            denied: Some(aurora_i18n::tr!("voice-voice-disabled-on-this-parcel").into()),
+            ..Default::default()
+        };
+        // a first frame lays the button out
+        bench.frame(vec![]);
+        bench.click(centre);
+        assert!(!bench.on, "a click does not switch it on");
+        bench.hold = true;
+        bench.frame(vec![
+            egui::Event::PointerMoved(centre),
+            egui::Event::PointerButton {
+                pos: centre,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default(),
+            },
+        ]);
+        assert!(!bench.held, "holding it does not talk");
+        bench.frame(vec![egui::Event::PointerButton {
+            pos: centre,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        bench.click(Bench::arrow());
+        assert!(bench.panel_shown(), "its options stay open");
+
+        // allowed again, the same click switches it on
+        let mut bench = Bench::default();
+        bench.frame(vec![]);
+        bench.click(centre);
+        assert!(bench.on);
     }
 
     /// The landmark star alone at `STAR`: a frame with `events`, its

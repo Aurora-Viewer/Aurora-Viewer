@@ -166,6 +166,8 @@ are planned or in progress: they are not in the viewer yet.
   from Medium up, contact shadows from High, screen-space indirect light
   (experimental) in Deluxe with a 192 m draw distance; per-section resets
   when you want to start over.
+- **HDR, or the older look**: the Legacy Viewer's HDR and Emissive switch,
+  on by default, in Preferences › Graphics › Image.
 
 ### The Second Life you know
 
@@ -219,7 +221,9 @@ are planned or in progress: they are not in the viewer yet.
   scripted outfits, furniture and experiences rely on (RLV 3.4.3 /
   RLVa 2.4.2). Off by default: turn it on in Preferences › Protections;
   turning it off releases every restriction at once ([details](docs/RLVA.md)).
-- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **PBR terrain.**
+- **PBR terrain**: regions whose ground uses PBR materials render with them,
+  as in the Legacy Viewer, and estate managers preview a ground-cover change
+  on the terrain before they apply it.
 
 ### A photo mode like a real camera
 
@@ -282,8 +286,9 @@ are planned or in progress: they are not in the viewer yet.
 - **Build tools that stay out of the way**: a compact editor you can arrange
   yourself, larger material previews for Blinn-Phong and PBR, a live preview
   of the prim you are about to create, outlines that stay visible while you
-  move transparent objects, and parcel boundary shortcuts in the terrain
-  menus.
+  move transparent objects, edit handles you can make bigger, and parcel
+  boundary shortcuts in the terrain menus. Default permissions (Inventory ›
+  New) apply to everything you create or import.
 - **Area search**: find the objects rezzed around you from World › Area
   search or a toolbar button. Search their name, description, owner,
   creator, group or UUID as you type, keep to the current parcel or reach
@@ -301,9 +306,14 @@ are planned or in progress: they are not in the viewer yet.
 
 - **Flat, calm and readable**: glass island bars, a notification center with
   history, the Inter font throughout and a redesigned performance window.
+- **In English, French and Japanese (日本語)**: the whole interface follows
+  your system language or your choice, applied at once. Japanese uses Second
+  Life's official Japanese terms (インベントリ, 区画, フレンド…), Japanese
+  interface fonts and Japanese dates ([details](#language)).
 - **Conversations made for today**: a Contacts tab, conversations you can
   reorder, group pictures, and nearby chat as cards with the speaker's
-  picture. Unread conversations flash softly, "is typing…" shows, and an item
+  picture. Unread conversations flash softly, three dots bounce on the
+  picture of a resident typing to you, and an item
   someone gives you appears as a card in their conversation, like the L$ they
   pay you, with their message. A thumbnail per
   open conversation waits beside the chat bar with its unread count, and
@@ -325,8 +335,12 @@ are planned or in progress: they are not in the viewer yet.
 - **Write with ease**: a spell checker with suggestions in the chat bars,
   conversations and notecards, auto-replace (`brb`…) if you like, `@` to
   mention someone in the conversation, names completed as you type, and `/`
-  in nearby chat to find and play a gesture. Arabic and Hebrew read right to
-  left, in name tags, bubbles, floating text and conversations.
+  in nearby chat to find and play a gesture. Ctrl+Shift+Enter starts a new
+  line, and pasted paragraphs keep their shape. Arabic and Hebrew read right
+  to left, in name tags, bubbles, floating text and conversations.
+- **Script errors where you look**: your own objects' errors show in red in
+  the nearby chat instead of popping a window, and can also go to a chat
+  channel for your logger script.
 - **GIFs in the conversation**: a GIF picker next to the emoji button, with
   GIPHY and KLIPY. It appears once you add your own free key in
   Preferences › Chat › GIF.
@@ -363,18 +377,22 @@ are planned or in progress: they are not in the viewer yet.
 - **Outfits at hand**: the outfit menu on the outfit folders, and a
   double-click in the inventory to put something on or take it off. Group
   your outfits in folders right from Appearance, in the list and the
-  gallery.
+  gallery. Drag your tattoo, alpha or universal layers into the order you
+  want, and see (and remove) what a script attached to you for a while.
 - **One search for everything**: type once and residents, places, events,
   groups and classifieds come back together, with type chips, filters on
   one line and the details beside the results.
 - **Places with a preview**: favourites, landmarks and history in one list,
   with parcel snapshots, a star to add a favourite and, widened, folders and
-  a preview of the selected place.
+  a preview of the selected place. Hold the back arrow of the top bar to
+  list every place of the session and go back in one click.
 - **People and places at a glance**: redesigned resident and group profiles,
   a People window for friends, groups, contact sets, recent and blocked
   residents, and a world map with floating controls.
 - **Name tags your way**: show or hide your own tag, your friends' and other
   residents' separately, or show them for a few seconds before they fade.
+  Your friends' plates take the friends' colour, so they stand out in a
+  crowd.
 - **Windows that get out of the way**: double-click a window's title to
   collapse it into a movable bar, then restore it with its size and content.
   Hold Alt while dragging to attach windows together; Alt+Shift+U hides or
@@ -385,14 +403,13 @@ are planned or in progress: they are not in the viewer yet.
   their letter (M is M on AZERTY too). Search Preferences › Shortcuts by
   action, category or key.
 - **Made for every eye**: an Accessibility page gathers the settings that
-  help (interface scale, text size, reduce motion, sounds…), with a button on
-  the login screen. A high-contrast palette, the OpenDyslexic font, and
+  help (interface scale, text size up to twice the normal size, reduce
+  motion, sounds…), with a button on the login screen. A high-contrast palette, the OpenDyslexic font, and
   volume sliders that follow your ear are a click away.
 - **Your colours**: pick the accent, window background and text colours in
   Preferences; Aurora keeps them readable.
-- **A clock in the bars**, with your local time and its zone.
-- **English and French**, following the system language or your choice,
-  applied at once.
+- **A clock in the bars**, with your local time and its zone, and a balance
+  you can hide when you stream or share your screen (right click on it).
 - **A clean way out**: on closing, a dialog over a blurred background offers
   Quit, Log out (back to the login screen) and Cancel. Esc cancels; the
   viewer waits for the logout before closing.
@@ -497,7 +514,7 @@ The texture memory budget is set automatically from the detected VRAM.
 - **Posing** — a [poser](docs/POSER.md) for yourself, your animesh and
   consenting nearby avatars, with a pose library, BVH export and animation
   import; an [IK workbench](docs/IK_EDIT.md) with shared contact profiles.
-- **World** — prims, sculpts, mesh with LOD, terrain, EEP environment,
+- **World** — prims, sculpts, mesh with LOD, classic and PBR terrain, EEP environment,
   sky, water and day-cycle editors, world sounds, parcel music and media
   on prims, with Aurora's downloadable media plugins pack; an area search
   for the objects rezzed around you, with filters and sortable results;
@@ -543,13 +560,14 @@ The texture memory budget is set automatically from the detected VRAM.
   tools, dedicated Marketplace and
   listings windows, compact import launcher and per-type editors; sound
   waveform previews, trimming, gain and splitting.
-- **Interface** — flat Aurora theme, Inter font, Tabler icons, glass island bars,
+- **Interface** — in English, French and Japanese; flat Aurora theme, Inter font, Tabler icons, glass island bars,
   customizable bottom and side toolbars, classic layout options, Aurora
   search and Places windows, mini-map, world map, preferences and debug
   overlays; an immersive mode that keeps only the chat; Aurora team and
   Linden Lab marks; double-click walk / run / teleport and content-rating controls
   for places and teleport offers; an Accessibility page, a high-contrast
-  palette, custom interface colours and the OpenDyslexic font.
+  palette, custom interface colours, text up to twice the size and the
+  OpenDyslexic font.
 - **Windows updates** — release checks, cancellable verified downloads,
   installation and restart with rollback. The prompt explains whether cache
   and settings will be preserved, migrated or reset.
@@ -578,7 +596,7 @@ Voice is WebRTC only; Vivox is not supported.
 - Frame Generation (under investigation).
 - Compression for the textures that fast BC7 encoding would harm (they
   stay uncompressed and are decoded at each visit).
-- PBR terrain, and the water effects out of their experimental stage.
+- The water effects out of their experimental stage.
 - Maybe a VR mode with controller support.
 
 The detailed list of what is done, in progress and to do is in
@@ -607,9 +625,12 @@ Manager) and, when you tick it, a 30-day MFA authorization.
 
 ### Language
 
-The interface is available in English and French: system language detection,
-a choice saved in Preferences and applied at once. Fluent catalogues make it
-possible to add a language; see [the translation guide](docs/TRANSLATING.md).
+The interface is available in English, French and Japanese (日本語): system
+language detection, a choice saved in Preferences and applied at once. The
+Japanese translation covers every message, with the official Second Life
+Japanese terms; it draws with Japanese interface fonts (Meiryo UI, Yu Gothic
+UI or MS UI Gothic) and writes dates the Japanese way. Fluent catalogues make
+it possible to add a language; see [the translation guide](docs/TRANSLATING.md).
 
 The viewer first follows the language saved in **Preferences › Interface ›
 Language**, then the system's if "System language" is selected. English is
@@ -927,7 +948,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 |---|---|
 | `--title <text>` | Names the window "Aurora Viewer <version> - <text> (Dev)" and its log file |
 | `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
-| `--language <code>` | Forces the language of this instance (`en`, `fr`, or another language added to the catalogues), without changing the saved choice |
+| `--language <code>` | Forces the language of this instance (`en`, `fr`, `ja`, or another language added to the catalogues), without changing the saved choice |
 | `--grid <name>` | Selects the login grid: `agni`, `aditi`, a saved grid name/nickname or a login URI (`--loginuri <uri>` too) |
 | `--login <first> <last> <password>` | Logs in with this account as soon as the login screen opens |
 | `<slurl>`, `--url <slurl>` | Starts at this place, or hands it to the viewer already running; must come last |
@@ -1016,6 +1037,30 @@ Behaviour follows the Legacy Viewer: its sources are expected next to the reposi
 [FirestormViewer/phoenix-firestorm](https://github.com/FirestormViewer/phoenix-firestorm)).
 
 Questions and ideas are welcome on [Discord](https://discord.gg/TK4nbMGmKt).
+
+## AI use
+
+Aurora is made by people: developers, QA testers who test each version on
+the grid, a project manager, a community manager and moderators. Some
+contributors use AI coding assistants to help write code, and we say so
+openly.
+
+- **No AI in the viewer you download**: no AI feature, no AI model, nothing
+  sent to an AI service.
+- **AI never sees your password**: the AI tools run only on the developers'
+  computers while they write code. Your password goes from your computer to
+  Linden Lab, and nowhere else.
+- **[AGENTS.md](AGENTS.md) is not part of the viewer**: it holds the
+  guidelines for contributors who use AI, so that those tools follow strict
+  rules. Its first rule forbids them to connect to Second Life or to handle
+  any user name or password.
+- **No AI-generated art**: images, sounds, icons and design are made by
+  people.
+- **Every change is tested by a person** before it is merged, then by QA
+  testers on the grid.
+
+Questions and answers, and the details:
+[AI use policy](https://aurora-viewer.org/ai-policy/).
 
 ## Privacy
 

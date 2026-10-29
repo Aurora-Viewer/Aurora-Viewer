@@ -132,6 +132,9 @@ pub struct View<'a> {
     pub email: Option<EmailView>,
     /// Preferences' exposure, under the photo's own.
     pub exposure: f32,
+    /// HDR and Emissive is on: without it no exposure applies, the row is
+    /// greyed.
+    pub hdr: bool,
     /// The key that brings the free camera back (Escape by default).
     pub back_key: Option<crate::keybinds::Binding>,
 }
@@ -687,7 +690,7 @@ impl SnapshotUi {
         dof_rows(ui, p, &mut s.dof);
 
         section(ui, p, "sun-filled", aurora_i18n::tr!("photo-section-light"));
-        light_rows(ui, p, &mut self.light, view.exposure, out);
+        light_rows(ui, p, &mut self.light, view.exposure, view.hdr, out);
 
         let filter = ui.cursor();
         section(ui, p, "color-filter", aurora_i18n::tr!("photo-looks"));
@@ -998,7 +1001,7 @@ fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
 /// The window's quick light (Phototools' Quick Environments, Pause Clouds,
 /// Attached Lights and Exposure), for the photo only: the window gives the
 /// user's own back when it closes.
-fn light_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::PhotoLight, exposure: f32, out: &mut Vec<Action>) {
+fn light_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::PhotoLight, exposure: f32, hdr: bool, out: &mut Vec<Action>) {
     use crate::snapshot::light::EXPOSURE;
     ui.label(RichText::new(aurora_i18n::tr!("photo-light-time")).color(p.ink));
     ui.horizontal_wrapped(|ui| {
@@ -1017,29 +1020,34 @@ fn light_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::Ph
         }
     });
     row(ui, p, aurora_i18n::tr!("photo-light-exposure"), None, |ui| {
-        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            // (the value and the reset button after it)
-            ui.spacing_mut().slider_width = (ui.available_width() - 130.0).max(40.0);
-            let mut value = l.exposure.unwrap_or(exposure);
-            // (shown, the sky's exposure must not turn into a fixed one)
-            let slider = egui::Slider::new(&mut value, EXPOSURE)
-                .logarithmic(true)
-                .fixed_decimals(2)
-                .clamping(egui::SliderClamping::Edits)
-                .custom_parser(aurora_i18n::parse_number);
-            if ui.add(slider).changed() {
-                l.exposure = Some(value);
-            }
-            if widgets::icon_button(
-                ui,
-                p,
-                "restore",
-                aurora_i18n::tr!("photo-light-exposure-reset"),
-                l.exposure.is_some(),
-            ) {
-                l.exposure = None;
-            }
-        });
+        // (no exposure without HDR: LLPipeline::gammaCorrect)
+        ui.add_enabled_ui(hdr, |ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                // (the value and the reset button after it)
+                ui.spacing_mut().slider_width = (ui.available_width() - 130.0).max(40.0);
+                let mut value = l.exposure.unwrap_or(exposure);
+                // (shown, the sky's exposure must not turn into a fixed one)
+                let slider = egui::Slider::new(&mut value, EXPOSURE)
+                    .logarithmic(true)
+                    .fixed_decimals(2)
+                    .clamping(egui::SliderClamping::Edits)
+                    .custom_parser(aurora_i18n::parse_number);
+                if ui.add(slider).changed() {
+                    l.exposure = Some(value);
+                }
+                if widgets::icon_button(
+                    ui,
+                    p,
+                    "restore",
+                    aurora_i18n::tr!("photo-light-exposure-reset"),
+                    l.exposure.is_some(),
+                ) {
+                    l.exposure = None;
+                }
+            })
+        })
+        .response
+        .on_disabled_hover_text(aurora_i18n::tr!("ui-options-needs-hdr-emissive"));
     });
     row(
         ui,
@@ -1516,7 +1524,7 @@ mod tests {
         let mut light = crate::snapshot::light::PhotoLight::default();
         for _ in 0..2 {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                light_rows(ui, &p, &mut light, 1.234, &mut Vec::new())
+                light_rows(ui, &p, &mut light, 1.234, true, &mut Vec::new())
             });
             output.textures_delta.clear();
         }

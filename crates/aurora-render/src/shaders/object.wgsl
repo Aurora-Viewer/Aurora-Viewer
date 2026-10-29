@@ -125,7 +125,23 @@ fn lip_delta(rec: DrawRecord, in: VsIn) -> mat2x3<f32> {
 }
 
 fn vertex_position(rec: DrawRecord, in: VsIn) -> vec3<f32> { return in.pos + lip_delta(rec, in)[0]; }
-fn vertex_normal(rec: DrawRecord, in: VsIn) -> vec3<f32> { return in.normal.xyz + lip_delta(rec, in)[1]; }
+
+// Terrain reuses the unskinned parallel stream for two octahedral snorm16
+// directions. See pack_terrain_frame: no extra buffer or vertex stride.
+fn terrain_direction(bytes: vec4<u32>) -> vec3<f32> {
+    let bits = bytes.x | (bytes.y << 8u) | (bytes.z << 16u) | (bytes.w << 24u);
+    let p = unpack2x16snorm(bits);
+    var n = vec3<f32>(p, 1.0 - abs(p.x) - abs(p.y));
+    if (n.z < 0.0) {
+        n = vec3<f32>((vec2<f32>(1.0) - abs(p.yx)) * select(vec2<f32>(1.0), vec2<f32>(-1.0), p < vec2<f32>(0.0)), n.z);
+    }
+    return normalize(n);
+}
+
+fn vertex_normal(rec: DrawRecord, in: VsIn) -> vec3<f32> {
+    if ((rec.flags.x & FLAG_TERRAIN) != 0u) { return terrain_direction(in.joints); }
+    return in.normal.xyz + lip_delta(rec, in)[1];
+}
 
 // The tangent packed in the normal's w (aurora_render::pack_tangent): an
 // angle in 127 steps around the normal, from the axis pair of
@@ -566,6 +582,10 @@ struct DepthOut {
 // without atmosphere or scene lighting. Keep the shared UV/animation path.
 override HUD_SRGB_TARGET: bool = false;
 
+// A HUD face: drawn straight to the screen, never into the G-buffer, it
+// keeps its emissive without HDR (eval_material, deferred_emissive_off).
+var<private> hud_pass: bool = false;
+
 @fragment
 fn fs_hud(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
@@ -574,6 +594,7 @@ fn fs_hud(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
     // hidden unless double-sided. Per-face rejection preserves the
     // depth-sorted stream shared by translucent HUD materials.
     if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
+    hud_pass = true;
     let mat = eval_material(in, front);
     if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && mat.color.a < rec.params.w) { discard; }
     let blended = (rec.flags.x & FLAG_ALPHA_BLEND) != 0u;
@@ -665,6 +686,11 @@ fn fs_depth_mask_normal(in: VsOut, @builtin(front_facing) front: bool) -> @locat
     return depth_normal(in.normal, front);
 }
 
+// Alpha from which fs_depth_contact writes depth: half covered; 1/255 for
+// the rigged fringes of `RiggedBlendDepth::Layers` (#1300), the Legacy
+// Viewer's MINIMUM_ALPHA.
+override DEPTH_CONTACT_ALPHA: f32 = 0.5;
+
 // Depth of the blended faces opaque enough to cast contact shadows (half
 // covered, as the impostor pictures keep them), drawn over a copy of the
 // prepass (contact_shadows.rs).
@@ -677,7 +703,7 @@ fn depth_contact(in: VsOut) {
         return;
     }
     portal_clip(rec, in.world_pos);
-    if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < 0.5) {
+    if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < DEPTH_CONTACT_ALPHA) {
         discard;
     }
 }
@@ -777,6 +803,9 @@ fn eval_material(in: VsOut, front: bool) -> Material {
     m.ao = select(1.0, mr_s.r, (rec.flags.x & FLAG_PBR) != 0u && frame.sky_ll.z > 0.5);
     // TE glow is not emissive: it only feeds the glow pass (fs_glow)
     m.emissive = rec.emissive.rgb * srgb_to_linear(em_s.rgb);
+    if (deferred_emissive_off() && !hud_pass && (rec.flags.x & (FLAG_PBR | FLAG_ALPHA_BLEND)) == FLAG_PBR) {
+        m.emissive = vec3<f32>(0.0);
+    }
     m.legacy_spec = vec4<f32>(0.0);
     m.legacy_env = 0.0;
     if ((rec.flags.x & FLAG_LEGACY_MAT) != 0u) {
@@ -1643,7 +1672,8 @@ fn fs_pick_visible(in: PickOut) -> @location(0) vec4<u32> {
     portal_clip(rec, in.world_pos);
     // An emissive mask uses texture alpha for lighting, not opacity
     // (eval_material): its visible surface must remain a camera target.
-    let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(rec.tex.x, in.uv).a <= 32.0 / 255.0;
+    let terrain_pbr = (rec.flags.x & (FLAG_TERRAIN | FLAG_PBR)) == (FLAG_TERRAIN | FLAG_PBR);
+    let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(select(rec.tex.x, 0u, terrain_pbr), in.uv).a <= 32.0 / 255.0;
     // An opaque glTF material ignores its base color alpha (FaceDraw::
     // fully_transparent): drawn, it stays a target.
     let gltf_opaque = (rec.flags.x & FLAG_PBR) != 0u && (rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) == 0u;
@@ -1668,6 +1698,7 @@ struct ShadowParams {
 };
 
 @group(3) @binding(0) var<uniform> shadow_params: ShadowParams;
+@group(3) @binding(1) var shadow_clamp: sampler;
 
 @vertex
 fn vs_shadow(in: VsIn) -> ShadowOut {

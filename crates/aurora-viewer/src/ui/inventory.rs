@@ -27,6 +27,7 @@ pub(crate) mod context_customize;
 pub(crate) mod context_notecards;
 mod controls;
 pub(crate) use controls::recent_period;
+pub(crate) mod default_permissions;
 mod delete;
 pub(crate) mod menu_layout;
 pub use delete::demo_events as delete_demo_events;
@@ -44,6 +45,7 @@ pub(crate) mod permissions;
 mod progress;
 pub(crate) mod properties;
 mod received;
+mod replace_links;
 mod rows;
 pub(crate) mod task_drop;
 pub mod thumbnail;
@@ -102,6 +104,7 @@ pub fn show_document(
 }
 
 pub enum InvAction {
+    DefaultPermissions,
     ExportMenuNotecard {
         name: String,
         text: String,
@@ -299,7 +302,7 @@ pub enum EditDialog {
     Delete(Vec<Uuid>, bool),
     Empty(Uuid),
     Ungroup(Uuid),
-    ReplaceLinks(Uuid, Option<Uuid>),
+    ReplaceLinks(Box<replace_links::ReplaceLinks>),
     CopyEmbedded(Uuid, char),
     SaveEmbedded(Uuid),
 }
@@ -391,6 +394,7 @@ pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
 
 #[derive(Default)]
 pub struct InventoryUi {
+    pub default_permissions_open: bool,
     context_folders: std::cell::RefCell<context_catalog::FolderCache>,
     pub marketplace_commands: std::collections::HashMap<Uuid, Vec<crate::ui::marketplace_listings::OptionState>>,
     /// Save live splitter changes once the pointer is released.
@@ -550,6 +554,13 @@ impl InventoryUi {
 
     pub fn begin_move_to(&mut self, id: Uuid) {
         self.move_to = Some(move_to::MoveTo::new(self.selected_ids(id)));
+    }
+
+    /// Replace links to `id` (an original), once the whole inventory is
+    /// loaded.
+    pub fn begin_replace_links(&mut self, id: Uuid) {
+        self.dialog = Some(EditDialog::ReplaceLinks(Box::new(replace_links::ReplaceLinks::new(id))));
+        self.fetch_all = true;
     }
 
     pub fn filter_move_to(&mut self, filter: &str) {

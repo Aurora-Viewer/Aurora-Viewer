@@ -145,14 +145,11 @@ impl Voice {
             };
             return Ok((ChannelKey::Call(call.id.clone()), kind));
         }
-        let flags = region_flags.ok_or_else(|| aurora_i18n::tr!("voice-waiting-for-region").to_owned())?;
-        if flags & aurora_net::region_flags::ALLOW_VOICE == 0 {
-            return Err(aurora_i18n::tr!("voice-voice-disabled-in-this-region").into());
+        if let Some(why) = spatial_voice_denied(region_flags, parcel) {
+            return Err(why);
         }
+        region_flags.ok_or_else(|| aurora_i18n::tr!("voice-waiting-for-region").to_owned())?;
         let parcel = parcel.ok_or_else(|| aurora_i18n::tr!("voice-waiting-for-parcel").to_owned())?;
-        if parcel.flags & parcel_flags::ALLOW_VOICE_CHAT == 0 {
-            return Err(aurora_i18n::tr!("voice-voice-disabled-on-this-parcel").into());
-        }
         let parcel_id = (parcel.flags & parcel_flags::USE_ESTATE_VOICE_CHAN == 0).then_some(parcel.local_id);
         Ok((
             ChannelKey::Local { region, parcel: parcel_id },
@@ -356,6 +353,16 @@ impl Voice {
     }
 }
 
+/// Why the region or the parcel forbids nearby voice, `None` when it allows
+/// it or is not known yet (LLViewerParcelMgr::allowAgentVoice,
+/// indra/newview/llviewerparcelmgr.cpp, originally LGPL 2.1).
+pub fn spatial_voice_denied(region_flags: Option<u32>, parcel: Option<&aurora_net::ParcelInfo>) -> Option<String> {
+    if region_flags? & aurora_net::region_flags::ALLOW_VOICE == 0 {
+        return Some(aurora_i18n::tr!("voice-voice-disabled-in-this-region").into());
+    }
+    (parcel?.flags & parcel_flags::ALLOW_VOICE_CHAT == 0).then(|| aurora_i18n::tr!("voice-voice-disabled-on-this-parcel").into())
+}
+
 fn tag_levels(participants: Vec<aurora_voice::Participant>, agent_id: Uuid, own_level: f32) -> HashMap<Uuid, (f32, bool)> {
     let mut levels: HashMap<_, _> = participants.into_iter().map(|p| (p.agent_id, (p.level, p.speaking))).collect();
     // Servers need not echo our own join. Local capture is authoritative,
@@ -446,6 +453,28 @@ mod tests {
         assert_eq!(
             Voice::channel(7, Some(aurora_net::region_flags::ALLOW_VOICE), None, None).err(),
             Some(aurora_i18n::tr!("voice-waiting-for-parcel").to_owned())
+        );
+    }
+
+    #[test]
+    fn speaking_is_denied_only_once_the_land_forbids_it() {
+        let open = aurora_net::ParcelInfo {
+            flags: parcel_flags::ALLOW_VOICE_CHAT,
+            ..Default::default()
+        };
+        let closed = aurora_net::ParcelInfo::default();
+        let voice = Some(aurora_net::region_flags::ALLOW_VOICE);
+        // not known yet: the microphone is left as it is
+        assert_eq!(spatial_voice_denied(None, Some(&closed)), None);
+        assert_eq!(spatial_voice_denied(voice, None), None);
+        assert_eq!(spatial_voice_denied(voice, Some(&open)), None);
+        assert_eq!(
+            spatial_voice_denied(voice, Some(&closed)).as_deref(),
+            Some(aurora_i18n::tr!("voice-voice-disabled-on-this-parcel"))
+        );
+        assert_eq!(
+            spatial_voice_denied(Some(0), None).as_deref(),
+            Some(aurora_i18n::tr!("voice-voice-disabled-in-this-region"))
         );
     }
 

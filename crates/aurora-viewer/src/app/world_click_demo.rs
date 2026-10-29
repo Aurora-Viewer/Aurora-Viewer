@@ -19,6 +19,7 @@ impl App {
     pub(super) fn world_click_demo_steps(&mut self) {
         let Some(spec) = mode().filter(|_| self.demo) else { return };
         let mode = spec.strip_suffix("-keep-camera").unwrap_or(spec);
+        let drag = mode.ends_with("-drag");
         if mode.starts_with("avatar") || spec.ends_with("-keep-camera") {
             // Camera comparisons need a stationary subject even when another
             // demo/device left movement inputs active before this fixture.
@@ -40,7 +41,7 @@ impl App {
             if mode.starts_with("avatar") || spec.ends_with("-keep-camera") {
                 self.stop_autopilot(true);
             }
-            if spec.ends_with("-keep-camera") || mode == "avatar-return" {
+            if spec.ends_with("-keep-camera") || mode == "avatar-return" || drag {
                 self.settings.camera.click_avatar_keeps_camera = spec.ends_with("-keep-camera");
             }
             self.world_click_fixture(mode);
@@ -59,7 +60,12 @@ impl App {
             self.world.apply(panel);
         }
         if (680..=700).contains(&self.frame_count) && !mode.starts_with("mouselook-") {
-            let cursor = if mode.starts_with("avatar") {
+            let cursor = if mode.starts_with("avatar-tag") {
+                self.name_tags.iter().find(|t| t.id == self.world.agent_id).map(|t| {
+                    let p = t.rect.center() * self.egui_ctx.pixels_per_point();
+                    (p.x, p.y)
+                })
+            } else if mode.starts_with("avatar") {
                 self.world
                     .objects
                     .avatars()
@@ -124,14 +130,17 @@ impl App {
             log::info!("demo world click UI: over_ui={over_ui}");
             self.mouse_input(MouseButton::Left, true, over_ui);
         }
-        if self.frame_count == 701 {
+        if drag && (710..=760).contains(&self.frame_count) {
+            self.camera_mouse_delta(6.0, 0.0);
+        }
+        if self.frame_count == if drag { 761 } else { 701 } {
             self.mouse_input(MouseButton::Left, false, false);
             // Release modifiers before the deferred pick finishes: its
             // captured press must still choose the original gesture.
             self.ctrl = false;
             self.shift = false;
         }
-        if self.frame_count == 740 {
+        if self.frame_count == if drag { 820 } else { 740 } {
             self.alt = false;
             self.ctrl = false;
             self.world_click_camera_note("after", spec);
@@ -150,11 +159,16 @@ impl App {
 
     fn world_click_camera_note(&self, phase: &str, spec: &str) {
         log::info!(
-            "demo world click camera: {phase} {spec}, position={:?}, target={:?}, fov={}, object={:?}",
+            "demo world click camera: {phase} {spec}, position={:?}, target={:?}, fov={}, object={:?}, agent_yaw={}, body_yaw={:?}",
             self.camera.position,
             self.camera.target,
             self.camera.fov_y,
-            self.camera.focus_object_id()
+            self.camera.focus_object_id(),
+            self.world.agent.yaw,
+            self.world.bodies.get(&self.world.agent_id).map(|b| {
+                let forward = b.rotation * Vec3::X;
+                forward.y.atan2(forward.x)
+            })
         );
     }
 
@@ -199,8 +213,15 @@ impl App {
             let own = mode.starts_with("worn-own");
             let covered = matches!(
                 mode,
-                "worn-other-covered" | "worn-other-under" | "worn-other-hidden-under" | "worn-other-hidden-mesh-under"
+                "worn-other-covered"
+                    | "worn-other-under"
+                    | "worn-other-hidden-under"
+                    | "worn-other-hidden-mesh-under"
+                    | "worn-other-hidden-inside"
             );
+            // `worn-other-hidden-inside`: a small clicker sunk into the body,
+            // its faces well under the rigged mesh's surface (#1241)
+            let inside = mode == "worn-other-hidden-inside";
             // `worn-other-hidden*`: every face of the scripted attachment at
             // alpha 0, the invisible clickers of a headpat or a slapper
             let hidden = mode.starts_with("worn-other-hidden");
@@ -259,7 +280,13 @@ impl App {
                         if own || mode.starts_with("worn-other") {
                             // on the body, inside the wearer's box
                             o.position = OWN_PRIM;
-                            o.scale = Vec3::splat(if covered { 0.25 } else { 0.6 });
+                            o.scale = Vec3::splat(if inside {
+                                0.1
+                            } else if covered {
+                                0.25
+                            } else {
+                                0.6
+                            });
                         }
                         if hidden && let Some(te) = o.texture_entry.as_mut() {
                             for f in &mut std::sync::Arc::make_mut(te).faces {

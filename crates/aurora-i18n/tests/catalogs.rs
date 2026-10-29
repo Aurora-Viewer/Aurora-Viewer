@@ -93,6 +93,10 @@ fn saved_choice_system_locale_and_english_fallback() {
     assert_eq!(resolve_language("unknown", "fr", &languages), "en");
     assert_eq!(resolve_language("default", "", &languages), "en");
     assert_eq!(resolve_language("pt-BR", "fr", &["en", "pt-BR", "pt"]), "pt-BR");
+    let languages = ["en", "fr", "ja"];
+    assert_eq!(resolve_language("default", "ja-JP", &languages), "ja");
+    assert_eq!(resolve_language("ja", "en-US", &languages), "ja");
+    assert!(SOURCES.iter().any(|&(code, _)| code == "ja"), "Japanese catalog is bundled");
 }
 
 #[test]
@@ -118,6 +122,50 @@ fn fluent_renders_english_and_french_plural_rules() {
             assert_eq!(actual, format!("{count} {word}"));
         }
     }
+}
+
+#[test]
+fn short_dates_follow_the_language_order() {
+    use aurora_i18n::tr_in;
+    assert_eq!(tr_in!("en", "date-day-month", day = "28", month = "Oct"), "28 Oct");
+    assert_eq!(
+        tr_in!("ja", "date-day-month", day = "28", month = tr_in!("ja", "extra-oct")),
+        "10月28日"
+    );
+    assert_eq!(
+        tr_in!(
+            "ja",
+            "date-day-month-year",
+            day = "6",
+            month = tr_in!("ja", "extra-jun"),
+            year = "2022"
+        ),
+        "2022年6月6日"
+    );
+}
+
+#[test]
+fn japanese_counts_have_a_single_form() {
+    let &(_, source) = SOURCES.iter().find(|&&(code, _)| code == "ja").expect("Japanese catalog");
+    let mut bundle = fluent_bundle::FluentBundle::new(vec!["ja".parse().unwrap()]);
+    bundle.set_use_isolating(false);
+    bundle
+        .add_resource(fluent_bundle::FluentResource::try_new(source.to_owned()).unwrap())
+        .unwrap();
+    let forms: BTreeSet<String> = [0, 1, 2, 25]
+        .into_iter()
+        .map(|count| {
+            let mut args = fluent_bundle::FluentArgs::new();
+            args.set("count", count);
+            let pattern = bundle.get_message("language-item-count").unwrap().value().unwrap();
+            let mut errors = Vec::new();
+            let actual = bundle.format_pattern(pattern, Some(&args), &mut errors);
+            assert!(errors.is_empty(), "{errors:?}");
+            assert!(actual.contains(&count.to_string()), "{actual}");
+            actual.replace(&count.to_string(), "#")
+        })
+        .collect();
+    assert_eq!(forms.len(), 1, "{forms:?}");
 }
 
 #[test]

@@ -19,12 +19,28 @@ An empty line starts a new paragraph.
   One link per news item.
 - At most 20 news items are shown; the title is cut at 120 characters, the
   text at 600.
-- Each language has its own file (fr.md, en.md): add the news item to both.
-  A language without a file shows en.md.
+- Each language has its own file (en.md, fr.md, ja.md): add the news item
+  to each. A language without a file shows en.md.
 - Full instructions (in French): HUMANS.md, "Publier une actualité".
 -->
 
 # Aurora Viewer news
+
+## 2026-10-29 — Aurora 0.8.2 now speaks Japanese, 日本語
+Aurora is now available in Japanese: choose 日本語 in Preferences › Interface › Language, or let the system language pick it on a Japanese Windows. Every message is translated with Second Life's official Japanese terms, the interface draws with Japanese fonts, and dates read the Japanese way.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.2)
+
+## 2026-10-29 — PBR terrain, and the HDR switch
+Regions whose ground uses PBR materials now render with them instead of a flat grey, as in the Legacy Viewer, and estate managers see a ground-cover change on the terrain before they apply it. Preferences › Graphics › Image also gets the Legacy Viewer's HDR and Emissive switch, on by default, for those who prefer the older look.
+
+## 2026-10-29 — Chat and name tags
+Ctrl+Shift+Enter starts a new line in a message, and pasted paragraphs keep their shape. Your own objects' script errors show in red in the nearby chat instead of popping a window. Three dots bounce on the picture of a resident typing to you, your friends' name plates take the friends' colour, and a right click on your L$ balance hides it while you stream.
+
+## 2026-10-29 — For creators and outfits
+Default permissions, at the bottom of the inventory's New menu, apply to what you create and import. Drag your tattoo, alpha and universal layers into the order you want, drop inventory textures onto the swatches of the appearance and material editors, and make the edit handles bigger. 2K texture uploads work again, and Appearance › Worn lists what a script attached to you for a while.
+
+## 2026-10-29 — Also in 0.8.2
+Text can now grow to twice its size, in Preferences › Appearance. Hold the back arrow of the top bar to list every place of the session. The window layout is saved shortly after each change, even if the viewer crashes; saved outfits can be deleted again, ridden vehicles swing smoothly through collisions, clickers inside a mesh body answer every click, and the wind no longer crackles. Thanks to circuskid, our newest contributor, Linux no longer jumps to Aurora at each message.
 
 ## 2026-10-27 — Aurora 0.8.1: avatars out of the cloud sooner
 Downloads now keep pace with your connection: in a busy region, avatars come out of the cloud about three times sooner, already textured, and the region loads about twice as fast with an empty cache. Your own outfit arrives whole: every attachment is worn at login and at each outfit change.

@@ -184,7 +184,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     }
     let logged = line.origin != Origin::Live;
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
-    let own = line.kind == ChatKind::Own;
+    let own = line.kind.is_own();
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
     let name = super::sender_name(world, env.own_name, line);
     // a history line's sender is known when its name was cached
@@ -357,12 +357,13 @@ fn sender_picture(
     let p = env.p;
     if object {
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
-        if let Some(t) = env.icons.get("box") {
+        let (glyph, tint) = super::object_row::object_glyph(line, p, super::super::colors::sender_color(line));
+        if let Some(t) = env.icons.get(glyph) {
             ui.painter().image(
                 t.id(),
                 rect.shrink(5.0),
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                super::super::colors::sender_color(line),
+                tint,
             );
         }
         return;
@@ -413,7 +414,7 @@ mod tests {
         let day = 86_400;
         // yesterday's two lines, then today's
         let lines = [
-            at(0, ChatKind::Own, "concert?"),
+            at(0, ChatKind::OWN, "concert?"),
             at(180, ChatKind::Im, "can't"),
             at(day, ChatKind::Im, "sorry"),
         ];

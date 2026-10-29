@@ -307,6 +307,8 @@ mod tests {
         assert_eq!(integer_in("en", 1_234_567), "1,234,567");
         assert_eq!(integer_in("fr", -88_000), "-88\u{a0}000");
         assert_eq!(integer_in("en", i64::MIN), "-9,223,372,036,854,775,808");
+        assert_eq!(number_text_in("ja", "-1234.50"), "-1234.50");
+        assert_eq!(integer_in("ja", 1_234_567), "1,234,567");
     }
 
     #[test]

@@ -33,6 +33,14 @@ const BLOCKED_OPACITY: f32 = 0.62;
 /// Opacity of a badge's disc. Denser than the mockup's 0.72, which has a
 /// blur of its own behind it: the plate's border must not show through.
 const BADGE_OPACITY: f32 = 0.9;
+/// How far a contact set's background goes toward the plate's own tint,
+/// and the friends' color: half of it, enough to pick friends out in a
+/// crowd over the blurred world (a lighter one did not show, the human's
+/// test of 2026-10-28).
+const SET_TINT: f32 = 0.65;
+const FRIEND_TINT: f32 = 0.5;
+/// Opacity of a friend's border in the friends' color.
+const FRIEND_BORDER: f32 = 0.6;
 
 /// What every plate of a frame shares.
 pub(super) struct Env<'a> {
@@ -45,6 +53,9 @@ pub(super) struct Env<'a> {
     /// The plate's own color, opaque: halfway from the night blue of the
     /// brand to the bars' color.
     pub tint: Color32,
+    /// The friends' color of Preferences › Colors, when their plates take
+    /// a tint of it (Preferences › Avatars, on by default).
+    pub friend: Option<Color32>,
     /// Changes with the skin's colors: what was built with others is rebuilt.
     skin: u64,
 }
@@ -59,6 +70,7 @@ impl<'a> Env<'a> {
             pixels_per_point: painter.pixels_per_point(),
             semibold: crate::ui::fonts::semibold(painter.ctx()),
             tint: p.navy.lerp_to_gamma(p.bar, 0.5),
+            friend: None,
             skin: {
                 use std::hash::{Hash, Hasher};
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -188,7 +200,7 @@ struct Face {
     subs: [Option<Line>; 2],
     badges: Badges,
     dot: Option<Presence>,
-    /// A team member's "Aurora Staff" tag, and the time of its light.
+    /// A team member's "Aurora Viewer" tag, and the time of its light.
     staff: Option<(Arc<Galley>, Look, f32)>,
 }
 
@@ -212,11 +224,7 @@ fn face(env: &Env<'_>, level: Level, c: &Content, t: f32) -> Face {
         .nameplate_name
         .map(crate::ui::colors::set_color)
         .unwrap_or_else(|| c.role.name_color(p, &crate::ui::colors::get()));
-    let color = c
-        .appearance
-        .background
-        .map(|bg| readable_name(color, plate_tint(env, bg), p.ink))
-        .unwrap_or(color);
+    let color = surface_tint(env, c).map(|bg| readable_name(color, bg, p.ink)).unwrap_or(color);
     let mut format = match level {
         // the far pill's name is a regular weight
         Level::Far => TextFormat::simple(FontId::proportional(m.name_pt), color),
@@ -285,11 +293,37 @@ fn contrast(a: Color32, b: Color32) -> f32 {
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
-fn plate_tint(env: &Env<'_>, color: [f32; 4]) -> Color32 {
-    let color = crate::ui::colors::set_color(color).to_opaque();
-    // Derive the hue from the set, while keeping the ordinary surface alpha.
-    // Check both the main ink and the secondary line against the tint.
-    let mut tint = color.lerp_to_gamma(env.tint, 0.65);
+/// The friends' color, for a friend's plate that no contact set colors:
+/// the set wins outright (the human's choice of 2026-10-28), never a mix
+/// of the two. A blocked friend's plate stays plain.
+fn friend_color(env: &Env<'_>, c: &Content) -> Option<Color32> {
+    env.friend.filter(|_| c.friend && !c.blocked && c.appearance.background.is_none())
+}
+
+/// The surface's color when it is not the plate's own: a contact set's
+/// background, else for a friend a tint of the friends' color.
+pub(super) fn surface_tint(env: &Env<'_>, c: &Content) -> Option<Color32> {
+    match c.appearance.background {
+        Some(bg) => Some(plate_tint(env, crate::ui::colors::set_color(bg), SET_TINT)),
+        None => friend_color(env, c).map(|friend| plate_tint(env, friend, FRIEND_TINT)),
+    }
+}
+
+/// The border when it is not the plate's own light one: a contact set's,
+/// else a friend's in the friends' color (unless a set colors the plate).
+pub(super) fn surface_border(env: &Env<'_>, c: &Content) -> Option<Color32> {
+    match c.appearance.border {
+        Some(border) => Some(crate::ui::colors::set_color(border)),
+        None => friend_color(env, c).map(|friend| friend.to_opaque().gamma_multiply(FRIEND_BORDER)),
+    }
+}
+
+/// `color` taken `toward` of the way to the plate's own tint, then darkened
+/// until the text reads on it.
+fn plate_tint(env: &Env<'_>, color: Color32, toward: f32) -> Color32 {
+    // Derive the hue from the color, while keeping the ordinary surface
+    // alpha. Check both the main ink and the secondary line against the tint.
+    let mut tint = color.to_opaque().lerp_to_gamma(env.tint, toward);
     let target = if contrast(env.p.ink, env.p.navy) >= contrast(env.p.ink, env.p.field) {
         env.p.navy
     } else {
@@ -379,8 +413,8 @@ fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, c: &C
             .add(aurora_render::glass_region(rect.shrink(0.5), radius, st.glass * alpha, GLASS_SHADE));
     }
     let key = SurfaceKey {
-        tint: c.appearance.background.map(|bg| plate_tint(env, bg)).unwrap_or(env.tint),
-        border: c.appearance.border.map(crate::ui::colors::set_color),
+        tint: surface_tint(env, c).unwrap_or(env.tint),
+        border: surface_border(env, c),
         size: rect.size(),
         halo: st.halo,
         glass: st.glass,

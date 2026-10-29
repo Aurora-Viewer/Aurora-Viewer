@@ -39,6 +39,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-traffic-indicator-help"),
                     &field!(show_net_stats),
                 );
+                // panel_preferences_UI.xml "Show currency balance"; also the
+                // balance's right click and the account island's
+                cx.toggle(
+                    tr!("ui-options-show-balance"),
+                    tr!("ui-options-show-balance-help"),
+                    &field!(show_balance),
+                );
                 // also a left click on the clock, and the island's right click
                 use crate::settings::ClockZone;
                 cx.choice(

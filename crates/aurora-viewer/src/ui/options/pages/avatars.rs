@@ -96,6 +96,11 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-full-plates-friends-only-help"),
                     &field!(plates_friends_only_full),
                 );
+                cx.toggle(
+                    tr!("ui-options-plates-friend-tint"),
+                    tr!("ui-options-plates-friend-tint-help"),
+                    &field!(plates_friend_tint),
+                );
                 let choices: Vec<(PlateClick, &str)> = PlateClick::ALL.iter().map(|a| (*a, plate_click_label(*a))).collect();
                 cx.combo(
                     tr!("ui-options-plate-click"),
@@ -124,9 +129,11 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 cx.toggle(tr!("ui-options-names-by-relation"), "", &field!(colors.relation_names));
                 let off = !cx.s.colors.relation_names;
                 let classic = cx.s.classic_name_tags;
+                // the friends' color also tints their plates
+                let tint = cx.s.plates_friend_tint && !classic;
                 cx.subs(off, |cx| {
                     cx.color(tr!("ui-options-my-name"), "", &field!(colors.tag_me));
-                    cx.color(tr!("common-friends"), "", &field!(colors.tag_friend));
+                    cx.live(tint).color(tr!("common-friends"), "", &field!(colors.tag_friend));
                     cx.color(tr!("ui-options-ignored"), "", &field!(colors.tag_muted));
                     cx.color("Linden Lab", "", &field!(colors.tag_linden));
                 });

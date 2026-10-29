@@ -267,20 +267,25 @@ fn item_row(
             tool.ui.contents_selection.select(ui, object_id, item.item_id, false);
         }
         let item_modify = item.owner_mask & perm::MODIFY != 0;
-        if tool.ui.contents_selection.items.len() <= 1 {
-            crate::ui::inventory::task_drop::source(
-                ui,
-                &r,
-                world,
-                object_id,
-                item,
-                crate::build::task_inventory::owned(world, object_id, tool.props.get(&object_id)),
-            );
-        }
+        // A selected row carries the whole selection (LLFolderView::startDrag).
+        let dragged = if r.hovered() || r.drag_started() || r.dragged() {
+            contents_selection::acted_on(tool, object_id, item)
+        } else {
+            vec![item.clone()]
+        };
+        crate::ui::inventory::task_drop::source(
+            ui,
+            &r,
+            world,
+            object_id,
+            &dragged,
+            crate::build::task_inventory::owned(world, object_id, tool.props.get(&object_id)),
+        );
         let script = item.asset_type == AT_LSL_TEXT;
-        let transfer = tool.task_transfer_kind(world, object_id, item);
-        let can_take = transfer.is_ok();
         menu::context_menu(&r, p, |ui| {
+            let taken = contents_selection::acted_on(tool, object_id, item);
+            let transfers: Result<Vec<_>, _> = taken.iter().map(|it| tool.task_transfer_kind(world, object_id, it)).collect();
+            let can_take = transfers.is_ok();
             let can_open = script || item.asset_type == 7;
             let no_open = if can_open {
                 ""
@@ -313,14 +318,21 @@ fn item_row(
                 contents_selection::delete_selected(tool, world);
             }
             // a no-copy item leaves the object: the row says so
-            let take = if matches!(transfer, Ok(crate::build::task_inventory::TransferKind::Move { .. })) {
+            let moves = transfers.as_ref().is_ok_and(|kinds| {
+                kinds
+                    .iter()
+                    .any(|kind| matches!(kind, crate::build::task_inventory::TransferKind::Move { .. }))
+            });
+            let take = if moves {
                 aurora_i18n::tr!("task-transfer-move-menu")
             } else {
                 aurora_i18n::tr!("build-ui-contents-copy-to-inventory")
             };
             let take_tip = aurora_i18n::tr!("build-ui-contents-like-dragging-the-item-to-inventory");
             if menu::item_tip(ui, p, "briefcase-filled", take, can_take, take_tip) {
-                tool.copy_item_to_inventory(world, idx, item, uuid::Uuid::nil());
+                for it in &taken {
+                    tool.copy_item_to_inventory(world, idx, it, uuid::Uuid::nil());
+                }
             }
             if item.asset_type == AT_LSL_TEXT {
                 menu::separator(ui, p);

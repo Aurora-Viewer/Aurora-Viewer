@@ -795,9 +795,15 @@ impl Session<'_> {
                             sim.caps.len()
                         )
                     });
+                    // ModifyRegion granted only now: the handshake could not ask it
+                    let modify_new = !sim.caps.contains_key("ModifyRegion") && caps.contains_key("ModifyRegion");
                     let caps = Arc::new(caps);
                     sim.caps = caps.clone();
                     emit(self.sh, NetEvent::Capabilities { handle: sim.handle, caps });
+                    let terrain_handle = (sim.handshake_seen && modify_new).then_some(sim.handle);
+                    if let Some(handle) = terrain_handle {
+                        self.request_terrain_transforms(handle);
+                    }
                 }
                 Ok(caps) => log::info!("{} capabilities for {addr} asked again, {} kept", caps.len(), sim.caps.len()),
                 Err(e) => log::warn!("capabilities for {addr} asked again failed, {} kept: {e}", sim.caps.len()),
@@ -857,6 +863,10 @@ impl Session<'_> {
         sim.caps = caps.clone();
         emit(self.sh, NetEvent::Capabilities { handle: sim.handle, caps });
         let features = sim.caps.get("SimulatorFeatures").cloned().map(|u| (sim.handle, u));
+        let terrain_handle = sim.handshake_seen.then_some(sim.handle);
+        if let Some(handle) = terrain_handle {
+            self.request_terrain_transforms(handle);
+        }
         if let Some((handle, url)) = features {
             self.request_features(addr, handle, url);
         }
@@ -2440,7 +2450,13 @@ impl Session<'_> {
                 data,
                 copy_name,
             } => self.save_wearable(request, *item, data, copy_name),
-            NetCommand::CreateInventoryWearable { parent, kind, name, data } => self.create_wearable(parent, kind, name, data),
+            NetCommand::CreateInventoryWearable {
+                parent,
+                kind,
+                name,
+                data,
+                permissions,
+            } => self.create_wearable(parent, kind, name, data, permissions),
             NetCommand::CreateSettingsItem {
                 request,
                 parent,
@@ -2560,17 +2576,26 @@ impl Session<'_> {
                 parent,
                 name,
                 data,
+                permissions,
             } => {
-                self.create_notecard_item(request, parent, name, data);
+                self.create_notecard_item(request, parent, name, data, permissions);
             }
-            NetCommand::CreateInventoryItem { parent, kind, name } => {
+            NetCommand::CreateInventoryItem {
+                parent,
+                kind,
+                name,
+                permissions,
+            } => {
                 let (asset, inventory, subtype) = kind.types();
                 let mut m = CreateInventoryItem::default();
                 m.agent_data.agent_id = self.agent_id();
                 m.agent_data.session_id = self.session_id();
                 m.inventory_block.folder_id = parent;
                 m.inventory_block.callback_id = self.inventory_callback(true);
-                m.inventory_block.next_owner_mask = 0x7fffffff;
+                m.inventory_block.next_owner_mask = permissions.map_or(0x7fff_ffff, |rights| rights.next_owner);
+                if let Some(rights) = permissions {
+                    self.remember_creation_permissions(m.inventory_block.callback_id, parent, i32::from(asset), rights);
+                }
                 m.inventory_block.type_ = asset;
                 m.inventory_block.inv_type = inventory;
                 m.inventory_block.wearable_type = subtype;
@@ -2641,8 +2666,12 @@ impl Session<'_> {
                 let http = self.sh.caps_http.clone();
                 let events = self.sh.events.clone();
                 let owner = self.agent_id();
+                let moves = self.inventory_move_tx.clone();
                 tokio::spawn(async move {
-                    let result = crate::outfits::categories::mutate(&http, &cap, &fetch_cap, owner, change).await;
+                    let result = crate::outfits::categories::mutate(&http, &cap, &fetch_cap, owner, change, |movement| {
+                        inventory_moves::submit(moves, movement)
+                    })
+                    .await;
                     let _ = events.send(NetEvent::OutfitUpdated { request, result });
                 });
             }
@@ -5021,6 +5050,7 @@ impl Session<'_> {
         // sending (LLViewerRegion::loadObjectCache): the reply tells it
         // whether there is one.
         self.answer_region_handshake(from, m.region_info2.region_id);
+        self.request_terrain_transforms(handle);
     }
 }
 

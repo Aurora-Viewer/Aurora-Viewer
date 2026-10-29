@@ -225,6 +225,10 @@ impl ClickWait {
 
 impl App {
     pub(super) fn ui_takes_pointer(&self) -> bool {
+        if self.cursor_hold.held() {
+            // the hidden cursor is the camera's: the crosshair, never a window (#1343)
+            return false;
+        }
         let ppp = self.egui_ctx.pixels_per_point();
         ui::widgets::pointer_over_ui(&self.egui_ctx, egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp))
     }
@@ -235,7 +239,7 @@ impl App {
         if self.clicks.waiting() {
             self.clicks.hold(Held::Button { button, pressed, over_ui });
         } else {
-            self.mouse_button(button, pressed, over_ui);
+            self.with_mouse_mods(|app| app.mouse_button(button, pressed, over_ui));
         }
     }
 
@@ -512,7 +516,9 @@ impl App {
 
     fn replay(&mut self, input: Held) {
         match input {
-            Held::Button { button, pressed, over_ui } => self.mouse_button(button, pressed, over_ui),
+            Held::Button { button, pressed, over_ui } => {
+                self.with_mouse_mods(|app| app.mouse_button(button, pressed, over_ui));
+            }
             Held::Motion(dx, dy) => self.camera_mouse_delta(dx, dy),
             Held::Click(click) => self.run_click(click),
             Held::LeftRelease => self.on_left_release(),

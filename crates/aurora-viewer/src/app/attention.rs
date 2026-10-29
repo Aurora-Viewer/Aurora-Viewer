@@ -181,12 +181,19 @@ impl App {
         if std::mem::take(&mut self.attention.flash)
             && let Some(g) = &self.gfx
         {
-            log::info!("taskbar flash");
             #[cfg(windows)]
-            flash_window(&g.window);
+            {
+                log::info!("taskbar flash");
+                flash_window(&g.window);
+            }
             #[cfg(not(windows))]
-            g.window
-                .request_user_attention(Some(winit::window::UserAttentionType::Informational));
+            if flashes_here(g.window.is_minimized()) {
+                log::info!("taskbar flash");
+                g.window
+                    .request_user_attention(Some(winit::window::UserAttentionType::Informational));
+            } else {
+                log::debug!("taskbar flash skipped: the window is not minimized");
+            }
         }
         self.attention_clicks();
     }
@@ -266,6 +273,18 @@ fn window_in_front(window: &winit::window::Window) -> bool {
     window.has_focus() && !window.is_minimized().unwrap_or(false)
 }
 
+/// Whether the flash asked for (the window behind) is done, by what the
+/// window says of being minimized. macOS bounces the icon whenever
+/// (LLWindowMacOSX::flashIcon). Linux flashes only a minimized window
+/// (LLWindowSDL::flashIcon, indra/llwindow/llwindowsdl.cpp): on Wayland a
+/// window cannot know it (`None`), so it never flashes there. Wayland's
+/// attention request is an xdg_activation one, and a compositor that grants
+/// it switches to the viewer's workspace and focuses it.
+#[cfg(not(windows))]
+fn flashes_here(minimized: Option<bool>) -> bool {
+    cfg!(target_os = "macos") || minimized == Some(true)
+}
+
 #[cfg(windows)]
 fn flash_window(window: &winit::window::Window) {
     use windows_sys::Win32::Foundation::HWND;
@@ -316,6 +335,14 @@ mod tests {
         assert!(!flashes(Cause::ObjectIm, &s) && !flashes(Cause::Mention, &s));
         s.flash_on_script_dialog = true;
         assert!(flashes(Cause::ScriptDialog, &s));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn linux_flashes_only_a_minimized_window() {
+        assert!(flashes_here(Some(true)));
+        assert!(!flashes_here(Some(false)), "behind but not minimized");
+        assert!(!flashes_here(None), "Wayland: never, its request would focus the window");
     }
 
     #[test]
