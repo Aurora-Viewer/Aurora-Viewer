@@ -4,12 +4,15 @@
 //! five. `dnd` plays it with do not disturb on (the paused bell), `legacy`
 //! with Firestorm's toasts (Preferences › Aurora › Notifications); `list`
 //! opens the list once the burst has folded in, `history` shows its
-//! History tab after answering a few cards.
+//! History tab after answering a few cards. `group-notice` (and
+//! `legacy-group-notice`) sends two group notices, one with its group's
+//! insignia and an attachment; `group-notice-saved` saves that attachment.
 
 use aurora_net::NetEvent;
 use uuid::Uuid;
 
-/// The scenario, if asked: `1`, `dnd`, `legacy`, `list` or `history`.
+/// The scenario, if asked: `1`, `dnd`, `legacy`, `list`, `history`,
+/// `group-notice`, `legacy-group-notice`, `group-notice-saved`…
 pub fn mode() -> Option<String> {
     std::env::var("AURORA_DEMO_NOTIFS").ok()
 }
@@ -80,9 +83,59 @@ fn notice(agent: Uuid, text: &str) -> NetEvent {
     im(agent, Uuid::nil(), "Second Life", d::MESSAGEBOX, Uuid::nil(), text, b"")
 }
 
+/// A group notice (IM_GROUP_NOTICE) from `group`: its bucket names the
+/// group and the attachment, if any (notice_bucket_header_t).
+fn group_notice(agent: Uuid, group: Uuid, from: (Uuid, &str), subject: &str, body: &str, attachment: Option<(&str, u8)>) -> NetEvent {
+    use crate::world::notifications::im as d;
+    let mut bucket = vec![u8::from(attachment.is_some()), attachment.map_or(0, |a| a.1)];
+    bucket.extend_from_slice(group.as_bytes());
+    bucket.extend_from_slice(attachment.map_or("", |a| a.0).as_bytes());
+    bucket.push(0);
+    let session = Uuid::from_u128(0x6E07_0000_0000_0000_0000_0000_0000_0000 | (group.as_u128() & 0xFF));
+    im(
+        agent,
+        from.0,
+        from.1,
+        d::GROUP_NOTICE,
+        session,
+        &format!("{subject}|{body}"),
+        &bucket,
+    )
+}
+
+/// Frame at which `group-notice-saved` saves the attachment.
+pub const SAVE_AT: u64 = 850;
+
 /// The events of `frame`.
 pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
     use super::{DEMO_NOVA, DEMO_TESS};
+    // two group notices at frame 700: Aurora Builders (no insignia) without
+    // an attachment, Northern Wolves (an insignia) with one
+    if mode().is_some_and(|m| m.ends_with("group-notice") || m == "group-notice-saved") {
+        return if frame == 700 {
+            vec![
+                group_notice(
+                    agent,
+                    super::DEMO_GROUP1,
+                    (DEMO_TESS, "Tess Touch"),
+                    aurora_i18n::tr!("demo-group-notice-sandbox"),
+                    aurora_i18n::tr!("demo-group-notice-sandbox-body"),
+                    None,
+                ),
+                group_notice(
+                    agent,
+                    super::DEMO_GROUP2,
+                    // (Violet Wolf is blocked in the demo: their notice would be dropped)
+                    (friend(), "Orion Exemple"),
+                    aurora_i18n::tr!("demo-group-notice-workshop"),
+                    aurora_i18n::tr!("demo-group-notice-workshop-body"),
+                    Some((aurora_i18n::tr!("demo-group-notice-workshop-kit"), 6)),
+                ),
+            ]
+        } else {
+            Vec::new()
+        };
+    }
     if let Some(mode) = mode().filter(|m| {
         matches!(
             m.as_str(),

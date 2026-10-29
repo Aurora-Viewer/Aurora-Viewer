@@ -378,7 +378,7 @@ fn notice_when(timestamp: u32, now: i64) -> String {
 }
 
 /// The icon of an attachment by asset type (the inventory's).
-fn attachment_icon(asset_type: u8) -> &'static str {
+pub(crate) fn attachment_icon(asset_type: u8) -> &'static str {
     match asset_type {
         0 => "photo-filled",
         1 => "volume",
@@ -392,7 +392,7 @@ fn attachment_icon(asset_type: u8) -> &'static str {
 }
 
 /// What an attachment is, in words.
-fn asset_label(asset_type: u8) -> &'static str {
+pub(crate) fn asset_label(asset_type: u8) -> &'static str {
     match asset_type {
         0 => aurora_i18n::tr!("common-texture"),
         1 => aurora_i18n::tr!("common-sound"),

@@ -99,6 +99,8 @@ mod automated_chat_tests;
 #[cfg(test)]
 mod flash_tests;
 #[cfg(test)]
+mod group_notice_tests;
+#[cfg(test)]
 mod toasts_tests;
 
 use crate::agent::AgentState;
@@ -3844,12 +3846,7 @@ impl World {
             }
             d::GROUP_NOTICE => {
                 self.ui_sounds.push(UiSound::GroupNotice);
-                // "subject|message"
-                let (subject, body) = im
-                    .message
-                    .split_once('|')
-                    .unwrap_or((aurora_i18n::tr!("common-group-notice"), im.message.as_str()));
-                n.push(Kind::Group, format!("{from} : {subject}"), body.to_owned(), Data::None);
+                self.push_group_notice(im, &from);
             }
             d::FRIENDSHIP_ACCEPTED => {
                 self.social.form_friendship(im.from_agent_id);
@@ -3926,6 +3923,58 @@ impl World {
         };
         self.ask_attention(attention::Cause::Message, notice);
         true
+    }
+
+    /// A group notice received (IM_GROUP_NOTICE, process_improved_im in
+    /// indra/newview/llimprocessing.cpp and LLToastGroupNotifyPanel,
+    /// originally LGPL 2.1): titled by its group and subject, its sender
+    /// first in the text ("Sent by"), the group's insignia beside it and its
+    /// attachment offered on the card. A notice whose bucket cannot be read
+    /// still shows, titled by its sender as before.
+    fn push_group_notice(&mut self, im: &InstantMessage, from: &str) {
+        use notifications::{Data, Kind, NameTarget, NoticeAttachment};
+        // "subject|message"
+        let (subject, body) = im
+            .message
+            .split_once('|')
+            .unwrap_or((aurora_i18n::tr!("common-group-notice"), im.message.as_str()));
+        let bucket = aurora_net::groups::notice_bucket(&im.binary_bucket);
+        if bucket.is_none() {
+            log::warn!("group notice: malformed binary bucket");
+        }
+        let group = bucket.as_ref().map(|b| b.group).filter(|g| !g.is_nil());
+        let group_name = group.and_then(|g| {
+            self.groups
+                .group(&g)
+                .map(|m| m.name.clone())
+                .or_else(|| self.search.groups.get(&g).map(|s| s.name.clone()))
+                .filter(|name| !name.is_empty())
+        });
+        let title = format!("{} : {subject}", group_name.as_deref().unwrap_or(from));
+        let sent_by = aurora_i18n::tr!("world-mod-group-notice-sent-by", sender = from.to_string());
+        let text = if body.is_empty() { sent_by } else { format!("{sent_by}\n{body}") };
+        let data = match (group, &bucket) {
+            (Some(group), Some(b)) => Data::GroupNotice {
+                group,
+                attachment: b.has_inventory.then(|| NoticeAttachment {
+                    from: im.from_agent_id,
+                    tx: im.session_id,
+                    name: b.item_name.clone(),
+                    asset_type: b.asset_type,
+                    saved: false,
+                }),
+            },
+            _ => Data::None,
+        };
+        let id = self.notifications.push(Kind::Group, title, text, data);
+        if let (Some(group), Some(name)) = (group, group_name) {
+            self.notifications.link_name(id, name, NameTarget::Group(group));
+        }
+        // the sender, unless the notice came under the group's own id
+        if Some(im.from_agent_id) != group {
+            self.notifications
+                .link_name(id, im.from_name.clone(), NameTarget::Avatar(im.from_agent_id));
+        }
     }
 
     /// "Save to inventory" of a notice's attachment: into the system folder
@@ -4169,10 +4218,14 @@ impl World {
             _ => None,
         };
         // ShowInInventory: what a kept offer gives is shown in the inventory
-        let kept = match self.notifications.list.iter().find(|n| n.id == id).map(|n| &n.data) {
-            Some(notifications::Data::Inventory { object, task, .. }) if matches!(r, notifications::Response::Accept) => {
-                Some((*object, *task))
-            }
+        let kept = match self.notifications.list.iter().find(|n| n.id == id) {
+            Some(notifications::Notification {
+                data: notifications::Data::Inventory { object, task, .. },
+                ..
+            }) if matches!(r, notifications::Response::Accept) => Some((*object, *task)),
+            // a notice's attachment: what the server adds next
+            // (LLOpenTaskGroupOffer)
+            Some(n) if matches!(r, notifications::Response::Accept) && n.offered_attachment().is_some() => Some((Uuid::nil(), true)),
             _ => None,
         };
         // a resident's offer: its card in the conversation takes the answer
