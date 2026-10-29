@@ -300,6 +300,18 @@ fn megabytes(bytes: u64) -> String {
 }
 
 impl Previews {
+    /// A native minimize event can arrive while no player UI is being drawn.
+    pub fn set_volume(&mut self, volume: f32) {
+        if let Some(web) = &mut self.web {
+            web.volume = volume;
+        }
+        if let Some(player) = &mut self.playing
+            && let Some(plugin) = player.web.plugin_mut()
+        {
+            plugin.set_volume_immediate(volume);
+        }
+    }
+
     pub fn enlarged(&self) -> bool {
         self.lightbox.is_some()
     }
