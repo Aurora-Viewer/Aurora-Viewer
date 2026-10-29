@@ -227,13 +227,11 @@ impl World {
         )
     }
 
-    /// A line enters a conversation: written to its transcript (new lines,
-    /// when instant messages are logged), kept in memory within `MAX_CHAT`.
-    pub(super) fn conversation_push(&mut self, session: Uuid, line: ChatLine, unread: bool) {
-        self.session_lines(session);
-        self.ensure_transcript(session);
+    /// Write a live line to its conversation's transcript, when instant
+    /// messages are logged.
+    fn log_line(&mut self, session: Uuid, line: &ChatLine) {
         if line.origin == Origin::Live && self.chat_log.cfg.log_im && self.chat_log.identity().is_some() {
-            let (from, text) = self.transcript_text(&line);
+            let (from, text) = self.transcript_text(line);
             let s = self.session_lines(session);
             match s.log.stem.clone() {
                 Some(stem) => self.chat_log.append(&stem, line.time, &from, &text),
@@ -241,6 +239,32 @@ impl World {
                 None => {}
             }
         }
+    }
+
+    /// A line shows its translation: `original` at the end of its text
+    /// becomes `translated` (an offline message keeps its "(Saved …)"), and
+    /// the transcript gets the translation as a line of its own, after the
+    /// original it already holds.
+    pub fn replace_line(&mut self, key: &crate::translate::LineKey, original: &str, translated: &str) {
+        let s = self.session_lines(key.session);
+        let Some(line) = s.lines.iter_mut().rev().find(|l| l.time == key.time) else {
+            return;
+        };
+        let Some(head) = line.text.strip_suffix(original) else {
+            return;
+        };
+        line.text = format!("{head}{translated}");
+        let mut logged = line.clone();
+        logged.text = format!("[translation] {translated}");
+        self.log_line(key.session, &logged);
+    }
+
+    /// A line enters a conversation: written to its transcript (new lines,
+    /// when instant messages are logged), kept in memory within `MAX_CHAT`.
+    pub(super) fn conversation_push(&mut self, session: Uuid, line: ChatLine, unread: bool) {
+        self.session_lines(session);
+        self.ensure_transcript(session);
+        self.log_line(session, &line);
         let s = self.session_lines(session);
         s.lines.push_back(line);
         s.clock.pushed_back();

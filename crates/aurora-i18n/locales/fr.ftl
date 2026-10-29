@@ -12418,3 +12418,9 @@ particle-editor-inject-timeout = La grille n’a pas répondu : le script n’a 
 keybinds-lens-zoom-in = Réduire l’angle de vue
 keybinds-lens-zoom-out = Élargir l’angle de vue
 keybinds-lens-zoom-default = Réinitialiser l’angle de vue
+# Translation of private IMs with a local model (fork experiment)
+translate-on = { "Cette conversation est traduite : " }{ $mine }{ " ⇄ " }{ $theirs }{ "." }
+translate-off = La traduction de cette conversation est désactivée.
+translate-status-off = Cette conversation n’est pas traduite. Tapez /tr et une langue (par exemple /tr es) pour la traduire.
+translate-unknown = { "Langue inconnue : " }{ $lang }{ ". Essayez un code comme es, fr, de ou ja." }
+translate-not-built = Ce viewer est compilé sans la traduction.

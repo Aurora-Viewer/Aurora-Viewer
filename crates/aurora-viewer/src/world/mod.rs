@@ -100,6 +100,8 @@ mod automated_chat_tests;
 mod flash_tests;
 #[cfg(test)]
 mod toasts_tests;
+#[cfg(test)]
+mod translate_tests;
 
 use crate::agent::AgentState;
 use crate::scene::avatar::AvatarLibrary;
@@ -406,6 +408,10 @@ pub struct World {
     pub ui_sounds: Vec<UiSound>,
     /// Conversation messages received (their sound depends on the IM modes).
     pub im_messages: Vec<ImMessage>,
+    /// Private messages received this frame, for the translation (drained by
+    /// the app): session, time of their line, text without the "(Saved …)"
+    /// prefix of an offline message.
+    pub incoming_ims: Vec<(Uuid, SystemTime, String)>,
     /// Taskbar flashes and system notifications asked for (drained by the
     /// app, `app/attention.rs`).
     pub attention: Vec<attention::Attention>,
@@ -640,6 +646,7 @@ impl World {
             notification_history: Default::default(),
             ui_sounds: Vec::new(),
             im_messages: Vec::new(),
+            incoming_ims: Vec::new(),
             attention: Vec::new(),
             balance_changes: Vec::new(),
             typing_started: Vec::new(),
@@ -3697,8 +3704,10 @@ impl World {
                 source: im.from_agent_id,
                 origin: Origin::Live,
             };
+            let time = line.time;
             self.conversation_push(im.from_agent_id, line, true);
             if rlva_filter != rlva::communication::Received::Masked {
+                self.incoming_ims.push((im.from_agent_id, time, im.message.clone()));
                 self.send_autoresponse(&im, autoresponse);
             }
             return;
@@ -4469,7 +4478,9 @@ impl World {
     }
 
     /// Record an IM we sent.
-    pub fn own_im(&mut self, to: Uuid, text: &str) {
+    /// Our message in a conversation; the time of its line (the key of its
+    /// translation).
+    pub fn own_im(&mut self, to: Uuid, text: &str) -> SystemTime {
         let text = self.rlva_outgoing_im_text(to, false, text).into_owned();
         let me = self
             .login
@@ -4485,7 +4496,9 @@ impl World {
             source: Uuid::nil(),
             origin: Origin::Live,
         };
+        let time = line.time;
         self.conversation_push(to, line, false);
+        time
     }
 
     /// Add a line said at its own time to a conversation, opening it (the

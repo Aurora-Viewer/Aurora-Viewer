@@ -38,6 +38,7 @@ mod particle_editor;
 mod portals;
 mod poser;
 mod sound_explorer;
+mod translate;
 // Bug report form (disabled, see main.rs):
 // mod bug_report;
 mod alt_graph;
@@ -279,6 +280,8 @@ pub struct App {
     /// startup settings follow an open or a close only).
     startup_windows: ui::StartupWindows,
     chat_ui: ChatUi,
+    /// Translation of private IMs with a local model (`app/translate.rs`).
+    translate: crate::translate::TranslateService,
     toolbar_ui: ui::toolbar::ToolbarUi,
     /// The skin's toolbar as the dock of the islands has it by default.
     dock_layout: ui::bars::dock::DockLayout,
@@ -1109,6 +1112,7 @@ impl App {
             startup_windows: ui::StartupWindows::new(&panels),
             panels,
             chat_ui: ChatUi::default(),
+            translate: crate::translate::TranslateService::default(),
             toolbar_ui: Default::default(),
             dock_layout: Default::default(),
             favorites_access_applied: None,
@@ -2456,6 +2460,7 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        self.translate.clear();
         self.sync_local_picker_bindings();
         self.imports.flush_local_registry();
         for entry in &self.imports.entries {
@@ -11593,6 +11598,12 @@ impl App {
             self.gesture_play(id, None);
         }
         for (to, mut text) in a.ims {
+            if !self.world.is_group_session(&to)
+                && let Some(cmd) = crate::translate::parse_tr(&text)
+            {
+                self.translate_command(to, cmd);
+                continue;
+            }
             // ":" as "/me" in the conversations too (FSFloaterIM::sendMsg)
             if self.settings.colon_emote {
                 ui::chat::colon_emote(&mut text);
@@ -11610,9 +11621,13 @@ impl App {
                     crate::world::notice_topics::Topic::People,
                 );
             }
+            if self.translate_outgoing(to, &text) {
+                continue;
+            }
             self.world.own_im(to, &text);
             self.send(NetCommand::SendIm { to, message: text });
         }
+        self.translate_frame();
         // menu choices made anywhere in the interface (ui::context::request)
         for act in ui::context::take_requests(&self.egui_ctx) {
             self.on_ctx_action(act);
@@ -14150,6 +14165,7 @@ impl App {
                         ui::chat::ConvAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::chat::ConvAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
                         ui::chat::ConvAction::Close(id) => {
+                            self.translate.close_session(id);
                             self.world.conversation_closed(&id);
                             self.world.leave_session(id);
                             self.chat_ui.forget(id);

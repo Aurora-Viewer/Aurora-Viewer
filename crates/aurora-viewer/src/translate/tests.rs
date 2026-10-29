@@ -225,3 +225,96 @@ fn settings_round_trip() {
     let old: TranslateSettings = serde_json::from_str("{}").expect("old");
     assert!(old.sessions.is_empty() && !old.preview);
 }
+
+#[test]
+fn parse_tr_forms() {
+    let code = |t: &str| match parse_tr(t) {
+        Some(TrCommand::Set(l)) => Some(l.code.to_owned()),
+        Some(TrCommand::Off) => Some("off".into()),
+        Some(TrCommand::Status) => Some("status".into()),
+        Some(TrCommand::Unknown(w)) => Some(format!("?{w}")),
+        None => None,
+    };
+    assert_eq!(code("/tr es").as_deref(), Some("es"));
+    assert_eq!(code("/tr Spanish").as_deref(), Some("es"));
+    assert_eq!(code("/TR  español ").as_deref(), Some("es"));
+    assert_eq!(code("/tr off").as_deref(), Some("off"));
+    assert_eq!(code("/tr").as_deref(), Some("status"));
+    assert_eq!(code("/tr klingon").as_deref(), Some("?klingon"));
+    assert_eq!(code("/try this"), None);
+    assert_eq!(code("hello /tr es"), None);
+}
+
+fn settings_with(session_lang: Option<&str>) -> TranslateSettings {
+    let mut s = TranslateSettings {
+        my_language: "en".into(),
+        ..Default::default()
+    };
+    if let Some(l) = session_lang {
+        s.sessions.insert(BOB, l.into());
+    }
+    s
+}
+
+fn poll_until(svc: &mut TranslateService, s: &mut TranslateSettings, n: usize) -> Vec<Effect> {
+    let end = Instant::now() + Duration::from_secs(3);
+    let mut fx = Vec::new();
+    while fx.len() < n && Instant::now() < end {
+        fx.extend(svc.poll(s, Instant::now()).effects);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    fx
+}
+
+#[test]
+fn service_translates_both_ways_with_the_fake_backend() {
+    let mut svc = TranslateService::with_backend(|| Box::new(aurora_translate::FakeBackend::new()));
+    let mut s = settings_with(Some("es"));
+    let fx = svc.submit_outgoing(&s, BOB, key(1).time, "hello there", Instant::now());
+    assert!(fx.is_empty());
+    let fx = poll_until(&mut svc, &mut s, 2);
+    assert_eq!(
+        fx[0],
+        Effect::Send {
+            to: BOB,
+            text: "[es] hello there".into()
+        }
+    );
+    svc.on_incoming(&s, BOB, key(2).time, "¿Dónde estás? Te estoy buscando.");
+    let fx = poll_until(&mut svc, &mut s, 1);
+    assert_eq!(
+        fx,
+        [Effect::Replace {
+            key: key(2),
+            text: "[en] ¿Dónde estás? Te estoy buscando.".into()
+        }]
+    );
+}
+
+#[test]
+fn service_suggests_in_an_untranslated_conversation() {
+    let mut svc = TranslateService::with_backend(|| Box::new(aurora_translate::FakeBackend::new()));
+    let mut s = settings_with(None);
+    svc.on_incoming(&s, BOB, key(1).time, "Hola, ¿cómo estás hoy amigo?");
+    svc.on_incoming(&s, BOB, key(2).time, "¿Quieres ir a la playa conmigo?");
+    assert_eq!(svc.suggestion(BOB, &s).map(|l| l.code), Some("es"));
+    s.dismissed.insert(BOB);
+    assert_eq!(svc.suggestion(BOB, &s), None);
+}
+
+#[test]
+fn set_partner_without_a_model_asks_for_the_download() {
+    let mut svc = TranslateService::default();
+    let mut s = settings_with(None);
+    let r = svc.set_partner(&mut s, BOB, Some(es()), std::path::Path::new("/nonexistent"));
+    if aurora_translate::BUILT {
+        assert_eq!(r, SetResult::NeedsDownload);
+        assert!(s.sessions.is_empty());
+    } else {
+        assert_eq!(r, SetResult::NotBuilt);
+    }
+    assert_eq!(
+        svc.set_partner(&mut s, BOB, None, std::path::Path::new("/nonexistent")),
+        SetResult::Off
+    );
+}
