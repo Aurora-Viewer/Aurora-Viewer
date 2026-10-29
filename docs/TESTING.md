@@ -7099,7 +7099,9 @@ offline; the files and snapshots uploaded in demo stay offline.
   Wide: breadcrumb, Ctrl F inside the empty search field, the filter count,
   the details pane (picture, Give, Properties, creator, owner, acquired,
   next owner switches) and the status bar. Hover an object or clothing row
-  for Wear / Take off (and More at the wide width); widen the narrow
+  for Add / Take off (and More at the wide width); Add preserves existing
+  attachments and clothing regardless of the double-click preferences.
+  Body parts and physics still offer Wear because they cannot stack. Widen the narrow
   window with the title bar button.
 - `aurora-no-details`, `aurora-medium-no-details`,
   `aurora-wide-no-details`: the same three widths with the selection's
