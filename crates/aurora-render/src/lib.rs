@@ -1,4 +1,4 @@
-//! Aurora Viewer renderer: wgpu on the Vulkan backend, bindless textures,
+//! Aurora Viewer renderer: wgpu on Vulkan (Metal on macOS), bindless textures,
 //! sub-allocated geometry and multi-draw-indirect submission.
 //!
 //! Two halves: `main_thread` (the `Renderer` the scene uses: its stores,
@@ -11,7 +11,19 @@ pub mod bc7;
 mod bloom;
 mod contact_shadows;
 mod cutout;
+#[cfg(not(target_os = "macos"))]
 mod dedicated;
+#[cfg(target_os = "macos")]
+mod dedicated {
+    // Metal textures use wgpu's allocator; there are no external Vulkan allocations.
+    pub fn bytes() -> u64 {
+        0
+    }
+    pub fn texture(_: &wgpu::Device, _: &wgpu::TextureDescriptor) -> Option<Result<wgpu::Texture, String>> {
+        None
+    }
+}
+
 mod device_lost;
 mod dof;
 mod drawn_pick;
@@ -84,6 +96,13 @@ pub use upload::{StagedMesh, StagedTexture, StagingPool, TexelFormat};
 pub use egui;
 pub use egui_wgpu;
 pub use wgpu;
+
+/// Native graphics API for this platform.
+pub const BACKENDS: wgpu::Backends = if cfg!(target_os = "macos") {
+    wgpu::Backends::METAL
+} else {
+    wgpu::Backends::VULKAN
+};
 
 pub(crate) const COMMON_SHADER: &str = concat!(
     include_str!("shaders/common.wgsl"),

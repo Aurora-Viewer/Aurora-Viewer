@@ -23,6 +23,7 @@
 //! They now give their memory back as they go, and the texture budget
 //! counts `usage` (scene/texture_budget.rs in the viewer).
 
+#[cfg(not(target_os = "macos"))]
 use ash::vk;
 
 /// Bytes of the device-local heap, see the module: `budget` is what the
@@ -56,6 +57,15 @@ pub struct VideoMemoryProbe {
 }
 
 impl VideoMemoryProbe {
+    #[cfg(target_os = "macos")]
+    fn budget_heap(_: &wgpu::Adapter) -> Option<usize> {
+        None
+    }
+    #[cfg(target_os = "macos")]
+    fn query(_: &wgpu::Adapter, _: usize) -> Option<(u64, u64)> {
+        None
+    }
+
     pub fn new(adapter: wgpu::Adapter) -> Self {
         let heap = Self::budget_heap(&adapter);
         match heap.and_then(|h| Self::query(&adapter, h)) {
@@ -84,6 +94,7 @@ impl VideoMemoryProbe {
     /// The largest device-local heap (the card's own memory on a discrete
     /// GPU, the shared memory on an integrated one), when the extension and
     /// the query it extends are there.
+    #[cfg(not(target_os = "macos"))]
     fn budget_heap(adapter: &wgpu::Adapter) -> Option<usize> {
         // SAFETY: the hal adapter is only borrowed for this call; the
         // queries below read properties and change no state.
@@ -111,6 +122,7 @@ impl VideoMemoryProbe {
     }
 
     /// (budget, usage) of a heap.
+    #[cfg(not(target_os = "macos"))]
     fn query(adapter: &wgpu::Adapter, heap: usize) -> Option<(u64, u64)> {
         // SAFETY: the hal adapter is only borrowed for this call; a physical
         // device query, valid from any thread, with the budget structure the
