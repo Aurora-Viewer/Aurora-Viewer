@@ -1008,9 +1008,11 @@ exe before publishing; the local build also writes it to `version.txt`.
   (the saved choice stays); in the world it opens the place's details; a
   command runs once in the world. When a viewer already runs (same demo
   mode and `--title`), the link goes to it and the new process stops.
-  Preferences › Language and updates › "Open SLURL and Hypergrid links in Aurora"
-  registers all three schemes for the current Windows user. Manage saved grids
-  from the login grid menu or Preferences › Network and cache › Manage grids.
+  Preferences › Language and updates › "Open SLURL and Hypergrid links in
+  Aurora" registers all three schemes for the current user (the registry on
+  Windows, a desktop entry and `mimeapps.list` on Linux, see
+  [docs/LINUX.md](docs/LINUX.md#second-life-links)). Manage saved grids from
+  the login grid menu or Preferences › Network and cache › Manage grids.
 - `--login`: the account follows the usual "remember" choices; a single
   user name is written `<name> Resident`. `--grid` alone selects the grid of
   a new account's form.
