@@ -7222,11 +7222,16 @@ for them (`5 to look up`), as a cold inventory cache.
   choice, save to the chosen outfit and move to the Trash);
   in both `gallery` and `outfits`, right-click a single outfit and choose
   **Copy outfit list to clipboard**, immediately before **Delete outfit**.
-  Paste into a text field or notecard: one resolved item name per line,
+  Paste into a text field or notecard: one resolved item name and creator per line,
   including body parts, clothing, attachments and gestures, in list order.
   Copy remains available on the worn outfit, where Delete is hidden; it is
   disabled while the outfit loads or when it has no usable items. Broken
-  links and folder links are skipped. Inventory menus have no such action.
+  links and folder links are skipped. Creators come from the original item,
+  not its outfit link. Missing names are requested through the avatar name cache;
+  a short Preparing outfit list status shows while they resolve. After three
+  seconds, an unanswered creator lookup uses its UUID; an item with no creator
+  reports unknown / multiple. Closing Appearance still completes the copy;
+  changing sessions cancels it. Inventory menus have no such action.
 - `gallery-fit` / `gallery-fill`: local portrait, landscape and square preview
   cards. Fit shows the whole image; Fill uses a centred crop without stretching.
   The discs stay round, the images stay inside their frames and the names and
