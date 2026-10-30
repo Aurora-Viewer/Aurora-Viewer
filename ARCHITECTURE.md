@@ -53,6 +53,15 @@ a local Items system notice and/or an informational inventory notification;
 either feedback path plays InventoryOffer once. Both off stays silent.
 Shared resident/object application links retain inspection and privacy filtering.
 
+`object.wgsl` tests masked alpha before lighting and blended base alpha before
+the other material maps. Material evaluation and early rejection share the
+same emissive-mask/face-alpha rule. `AURORA_ALPHA_CHECK=1` specializes the demo pipelines
+to compare the original material/shaded-alpha decisions before any candidate
+discard, painting disagreements magenta (coverage and rigged split modes
+included). `alpha_tests.rs` checks production entry points and diagnostic
+positive controls on the GPU. Atomic counters establish discard ordering,
+not execution time; helper invocations may still run for derivatives.
+
 Session layout uses Settings::nearby_chat_window for nearby-chat docking/visibility
 and show_camera_controls / show_movement_controls for the Controls windows.
 ChatUi::from_settings restores only nearby chat at startup and after logout; IMs,

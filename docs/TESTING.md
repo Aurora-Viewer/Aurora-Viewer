@@ -3670,7 +3670,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_HAIR_CARDS=<n>[,layered[,outer]]` | Our avatar wears one face of `n` soft strand cards, overlapping in a shuffled order, or layered as a hair is made (#935) |
 | `AURORA_DEMO_SHEER=1` | Our avatar wears a sheer knit dress over a red layer drawn after it (#1300) |
-| `AURORA_DEMO_SOFT_MASK=1` | Our avatar wears a skin-tone Mask disc on the groin; soft fringe must stay visible (#1492) |
+| `AURORA_DEMO_SOFT_MASK=1` or `visible` | Rigged skin-tone Mask disc; exposed variant for fringe checks (#1492) |
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
 | `AURORA_DEMO_MASK_ZERO=1` | The holed test panel with a Mask legacy material whose cutoff is 0: drawn whole |
 | `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
@@ -3803,6 +3803,8 @@ both open states and the selection count. Capture at frame 620.
   auto-Mask at cutoff 0.5 would punch it out. Look from below / the side:
   a solid peach disc with a soft edge, not a hard cutout or a missing
   attachment (#1492 / Physics Cock Max class).
+  Use `visible` to move the same rigged shell 35 cm forward for an unobstructed
+  fringe check when the demo body hides it; its material and skinning stay the same.
 - **`AURORA_DEMO_MASK_ZERO=1`**: the "Auto: mask" panel of the plaza (round
   holes of alpha 0) gets a Mask legacy material with a cutoff of 0 and the
   hover text "Mask (cutoff 0)". The Legacy Viewer keeps every texel at or
@@ -8483,6 +8485,7 @@ What the inventory must show with these scenarios:
 | `AURORA_LIGHT_TILES=0`, `alt` or `check` | Local lights without sorting by screen tile, or check of the sort |
 | `AURORA_PROBE_WALK=list`, `0`, `alt` or `check` | Reflection probes without sorting by screen tile, or check of the sort |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
+| `AURORA_ALPHA_CHECK=1` | Demo-only magenta comparison of reference/candidate alpha decisions |
 | `AURORA_PBR_OCCLUSION=0` or `alt` | PBR materials without their own occlusion, as before |
 | `AURORA_AO=legacy`, `gtao` or `alt` (`:<0-3>`) | Ambient occlusion method (and GTAO quality) for this launch |
 | `AURORA_GTAO_SPECULAR=0` or `alt` | GTAO without its specular occlusion (reflections in creases), as before |
@@ -8888,6 +8891,19 @@ What the inventory must show with these scenarios:
     one looks (expensive: each fragment walks the whole list again).
   - Reflections, probe faces and impostor photos keep the whole list.
   - In demo: `AURORA_DEMO_LIGHTS=64` with `AURORA_DEMO_CROWD=40`.
+- **`AURORA_ALPHA_CHECK=1`**: in demo mode only, compare the reference
+  material/shaded alpha with the candidate's early decisions before discarding
+  either. A mismatch is opaque magenta, including alpha-to-coverage differences
+  under MSAA. The checker also respects the rigged split-pass threshold and
+  compares the final rez-faded cutoff. Without the switch the compiler removes
+  the reference path; it is ignored outside demo mode. Check the plaza alpha
+  panels, `AURORA_DEMO_MASK_ZERO=1`, `AURORA_DEMO_HAIR=8,24,80,16` with
+  `AURORA_DEMO_CROWD=20`, and `AURORA_DEMO_SOFT_MASK=visible` under `AURORA_AA=3`
+  and `6`, at `AURORA_RENDER_SCALE=100`. No magenta should appear. The GPU
+  regression injects material and shaded-alpha changes to verify that the
+  checker detects a difference in blended, masked and G-buffer masked passes.
+  Enable SSR for the plaza to exercise the G-buffer entry point too. A
+  diagnostic run is for image checks, not performance measurements.
 - **`AURORA_BLEND_EARLY_DISCARD=0|alt`**: by default, a fragment of a
   transparent face whose alpha is below 0.004 is discarded before lighting
   (shadows, lights, haze, probes); it used to be discarded after.

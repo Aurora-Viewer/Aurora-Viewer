@@ -551,9 +551,15 @@ impl super::Scene {
         if demo.soft_mask {
             // pelvis shell: a Mask-classified soft fringe that must Blend when
             // rigged (LLFace::canRenderAsMask never auto-masks skinned faces)
+            // The exposed demo variant keeps the body from hiding the fringe.
+            let forward = if std::env::var("AURORA_DEMO_SOFT_MASK").is_ok_and(|v| v.trim() == "visible") {
+                0.35
+            } else {
+                0.0
+            };
             meshes.push((
                 crate::demo::SOFT_MASK_MESH,
-                vec![sphere("mPelvis", Vec3::new(0.0, 0.0, -0.02), Vec3::new(0.12, 0.1, 0.14))],
+                vec![sphere("mPelvis", Vec3::new(forward, 0.0, -0.02), Vec3::new(0.12, 0.1, 0.14))],
             ));
         }
         for (id, faces) in meshes {
