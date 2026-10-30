@@ -724,6 +724,21 @@ impl<'a> Cx<'a> {
         self.row(label, hint, f, |ui, s| super::combo(ui, get(s), choices))
     }
 
+    /// A drop-down list whose choices with a reason are greyed, the reason
+    /// on hover.
+    pub fn combo_blocked<T: PartialEq + Copy + Clone>(
+        &mut self,
+        label: &str,
+        hint: &str,
+        f: &F<T>,
+        choices: &[(T, &str, Option<&str>)],
+    ) -> bool {
+        let get = f.get_mut;
+        let words: Vec<&str> = choices.iter().map(|(_, l, _)| *l).collect();
+        self.keywords(&words.join(" "));
+        self.row(label, hint, f, |ui, s| super::combo_blocked(ui, get(s), choices))
+    }
+
     /// A few choices side by side (`accent`: in Aurora's accent); a long
     /// one takes both columns.
     pub fn choice<T: PartialEq + Copy + Clone>(&mut self, label: &str, hint: &str, f: &F<T>, choices: &[(T, &str, bool)]) -> bool {

@@ -125,7 +125,8 @@ windows-sys = { version = "0.61.2", features = ["Win32_UI_Input", "Win32_UI_Inpu
 # Windows notifications (system_notify.rs): the WinRT toast API, which
 # windows-sys does not cover; already in the tree through wgpu and cpal
 # and the login device ids (machine_id.rs): WMI through COM
-windows = { version = "0.62.2", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications", "Win32_Foundation", "Win32_System_Com", "Win32_System_Ole", "Win32_System_Registry", "Win32_System_Variant", "Win32_System_WinRT", "Win32_System_Wmi"] }
+# and the network adapters' names (net_adapters.rs): GetAdaptersAddresses
+windows = { version = "0.62.2", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications", "Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_System_Com", "Win32_System_Ole", "Win32_System_Registry", "Win32_System_Variant", "Win32_System_WinRT", "Win32_System_Wmi"] }
 
 [target.'cfg(unix)'.dependencies]
 # getenv without allocating, for the allocator's choice (allocator.rs); already

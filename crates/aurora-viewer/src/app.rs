@@ -1003,7 +1003,9 @@ impl App {
         {
             settings.show_ao = false;
         }
-        let net = NetClient::new()?;
+        // (an adapter known to drop under many downloads keeps them
+        // limited: #1545, net_adapters.rs)
+        let net = NetClient::new(crate::net_adapters::startup_mode(settings.download_connections))?;
         net.set_agent_language(aurora_i18n::language(), settings.language_is_public);
         let voice_http = net.caps_http();
         let login_info = ui::news::LoginInfo::start(net.runtime());
