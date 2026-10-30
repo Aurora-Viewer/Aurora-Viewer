@@ -2829,6 +2829,13 @@ impl App {
             return;
         }
         if let NetEvent::InventoryEdited { request, result } = ev {
+            if self.world.attachment_inventory.owns(request) {
+                self.world.attachment_inventory_result(request, result);
+                if self.appearance_ui.pending.is_some_and(|(id, _)| id == request) {
+                    self.appearance_ui.pending = None;
+                }
+                return;
+            }
             if self.texture_library_result(request, &result) {
                 return;
             }
@@ -7784,9 +7791,25 @@ impl App {
                 self.send(NetCommand::RequestProfile(id));
             }
             self.send_derender_requests();
+            // Parentless server records are filed before their COF links:
+            // reliable MoveInventoryItem, matching AISUpdate::doUpdate.
+            if let Some(change) = self.world.inventory.take_parent_repairs() {
+                let request = uuid::Uuid::new_v4();
+                self.world_edits.insert(request);
+                self.send(NetCommand::EditInventory { request, change });
+            }
             // outfit restore at login (queues the COF fetch below)
             let second_life = !matches!(self.settings.grid, crate::settings::GridChoice::Custom);
             self.world.update_outfit(second_life, Instant::now());
+            let allow_links = self.world.outfit.is_done() && self.appearance_ui.pending.is_none() && self.inventory_ui.pending.is_none();
+            for command in self.world.update_attachment_inventory(Instant::now(), allow_links) {
+                if let NetCommand::EditInventory { request, .. } = &command {
+                    // Serialize COF writes with the same guard as interactive
+                    // outfit changes, including inventory link replacement.
+                    self.appearance_ui.pending = Some((*request, false));
+                }
+                self.send(command);
+            }
             for cmd in std::mem::take(&mut self.world.outfit.commands) {
                 self.send(cmd);
             }
@@ -17116,6 +17139,7 @@ impl ApplicationHandler for App {
                     "default-permissions"
                         | "aurora-default-permissions"
                         | "permissions"
+                        | "lost"
                         | "bulk-permissions"
                         | "bulk-multi"
                         | "bulk-folder"
@@ -17182,6 +17206,13 @@ impl ApplicationHandler for App {
                     );
                     self.settings.inventory = ui::inventory::InventoryPreferences::default();
                     self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
+                    if view == "lost" {
+                        crate::world::inventory::demo::seed_lost(&mut self.world.inventory, self.world.agent_id);
+                        self.panels.inventory = true;
+                        self.inventory_ui
+                            .show_original(&self.world.inventory, crate::world::inventory::demo::LOST_FOLDER);
+                        self.inventory_ui.expand_all = Some(true);
+                    }
                     self.inventory_ui.filters_open = view == "filters";
                     self.inventory_ui.preferences_open = view == "preferences";
                     self.inventory_ui.default_permissions_open = view.ends_with("default-permissions");

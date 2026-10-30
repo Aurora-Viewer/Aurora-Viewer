@@ -2666,6 +2666,18 @@ fn demo_folder(f: Uuid, owner: Uuid) -> aurora_net::inventory::FolderContents {
 }
 
 pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
+    if let aurora_net::NetCommand::FetchInventoryOrphans { request } = cmd {
+        let contents = if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| mode == "lost") {
+            crate::world::inventory::demo::lost_reply(DEMO_AGENT)
+        } else {
+            Default::default()
+        };
+        return vec![NetEvent::InventoryOrphansFetched {
+            request: *request,
+            owner: DEMO_AGENT,
+            result: Ok(contents),
+        }];
+    }
     // what scripts would hear of a click (AURORA_DEMO_WORLD_CLICKS)
     use aurora_net::control::{LBUTTON_DOWN, LBUTTON_UP, ML_LBUTTON_DOWN, ML_LBUTTON_UP};
     match cmd {

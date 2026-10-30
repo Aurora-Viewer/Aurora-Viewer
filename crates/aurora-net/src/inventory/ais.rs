@@ -6,7 +6,7 @@ use aurora_llsd::Llsd;
 use std::collections::HashSet;
 use uuid::Uuid;
 
-fn favorite(record: &Llsd) -> Result<bool, &'static str> {
+pub(super) fn favorite(record: &Llsd) -> Result<bool, &'static str> {
     match &record["favorite"] {
         Llsd::Undef => Ok(false),
         Llsd::Map(map) => match map.get("toggled") {
@@ -18,9 +18,18 @@ fn favorite(record: &Llsd) -> Result<bool, &'static str> {
     }
 }
 
-fn item(record: &Llsd, owner: Uuid) -> Result<InvItem, &'static str> {
-    if record["parent_id"].as_uuid().is_nil() || !record.has("name") || !record.has("type") || !record.has("inv_type") {
-        return Err("incomplete AIS item");
+pub(super) fn item(record: &Llsd, owner: Uuid) -> Result<InvItem, &'static str> {
+    // AISUpdate::parseItem preserves real records with a null parent for
+    // Lost And Found repair. An absent parent field still denotes a partial
+    // response (for example an error carrying only item_id).
+    for (key, error) in [
+        ("parent_id", "AIS item has no parent field"),
+        ("name", "AIS item has no name"),
+        ("type", "AIS item has no asset type"),
+    ] {
+        if !record.has(key) {
+            return Err(error);
+        }
     }
     let mut item = item_from_llsd(record).ok_or("invalid AIS item")?;
     // LLInventoryItem::fromLLSD resets missing favorites on complete records.
@@ -81,7 +90,9 @@ fn parse_folder(doc: &Llsd, id: Uuid, owner: Uuid) -> Result<FolderContents, &'s
         if let Some(records) = embedded[collection].as_map() {
             for (key, record) in records {
                 let child = item(record, owner)?;
-                if key.parse::<Uuid>().ok() != Some(child.id) || child.parent != id {
+                if key.parse::<Uuid>().ok() != Some(child.id)
+                    || child.parent != id && !child.parent.is_nil() && child.parent != Uuid::from_u128(0x10)
+                {
                     return Err("invalid AIS child item");
                 }
                 let target = child.asset_id;
@@ -213,6 +224,24 @@ pub async fn fetch_folders(http: &reqwest::Client, cap: &str, owner: Uuid, ids: 
     Ok(contents)
 }
 
+fn parse_item_reply(doc: &Llsd, id: Uuid, owner: Uuid) -> Result<InvItem, &'static str> {
+    let record = if doc.has("item_id") {
+        doc
+    } else if doc["_embedded"]["item"]["item_id"].as_uuid() == id {
+        &doc["_embedded"]["item"]
+    } else {
+        doc["_embedded"]["items"]
+            .as_map()
+            .and_then(|items| items.get(&id.to_string()))
+            .ok_or("AIS item response has no matching record")?
+    };
+    let item = item(record, owner)?;
+    if item.id != id {
+        return Err("mismatched AIS item");
+    }
+    Ok(item)
+}
+
 pub async fn fetch_items(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[Uuid]) -> Result<Vec<InvItem>, &'static str> {
     let reads = read_items(http, cap, owner, ids).await;
     if reads.missing.is_empty() && reads.failed.is_empty() {
@@ -243,7 +272,7 @@ pub async fn read_items(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[U
             let url = format!("{}/item/{id}", cap.trim_end_matches('/'));
             tasks.spawn(async move {
                 let read = crate::caps::get_llsd_as(&http, &url, crate::probe::HttpKind::Inventory).await;
-                (id, read.map(|doc| item(&doc, owner).ok().filter(|item| item.id == id)))
+                (id, read.map(|doc| parse_item_reply(&doc, id, owner).ok()))
             });
         }
         let mut answered = HashSet::new();
@@ -487,6 +516,93 @@ mod tests {
             malformed.insert("favorite", value);
             assert!(parse_folder(&snapshot(vec![malformed]), id(1), id(2)).is_err());
         }
+    }
+
+    #[test]
+    fn ais_fetched_objects_accept_null_parents_and_omitted_inventory_types() {
+        let mut doc = record(3, false, 6, false);
+        doc.insert("parent_id", Uuid::nil());
+        if let Llsd::Map(map) = &mut doc {
+            map.remove("inv_type");
+        }
+        let parsed = parse_item_reply(&doc, id(3), id(2)).expect("real orphan object");
+        assert_eq!(parsed.id, id(3));
+        assert_eq!(parsed.owner, id(2));
+        assert!(parsed.parent.is_nil());
+        assert_eq!((parsed.asset_type, parsed.inv_type), (6, 6));
+        assert!(parse_item_reply(&llsd_map! { "item_id" => id(3), "error" => "not found" }, id(3), id(2)).is_err());
+        assert!(
+            parse_folder(&snapshot(vec![doc.clone()]), id(1), id(2)).is_ok(),
+            "AISUpdate recovers null-parent children too"
+        );
+        doc.insert("parent_id", id(99));
+        assert!(
+            parse_folder(&snapshot(vec![doc]), id(1), id(2)).is_err(),
+            "unrelated non-null parents are still rejected"
+        );
+    }
+
+    #[test]
+    fn ais_single_item_reads_accept_matching_embedded_records_without_adopting_other_items() {
+        let doc = record(3, false, 6, false);
+        for reply in [
+            doc.clone(),
+            llsd_map! { "_embedded" => llsd_map! { "item" => doc.clone() } },
+            llsd_map! { "_embedded" => llsd_map! { "items" => llsd_map! { id(3).to_string() => doc.clone() } } },
+        ] {
+            assert_eq!(parse_item_reply(&reply, id(3), id(2)).expect("matching record").id, id(3));
+            assert!(parse_item_reply(&reply, id(4), id(2)).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn ais_background_item_fetch_keeps_a_valid_orphan_when_another_record_is_missing() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local server");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut socket, _) = tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
+                    .await
+                    .expect("timeout")
+                    .expect("accept");
+                let mut bytes = Vec::new();
+                while !bytes.windows(4).any(|b| b == b"\r\n\r\n") {
+                    let mut buf = [0; 1024];
+                    let n = socket.read(&mut buf).await.expect("read");
+                    assert!(n > 0);
+                    bytes.extend_from_slice(&buf[..n]);
+                }
+                let request = String::from_utf8_lossy(&bytes);
+                let mut doc = if request.lines().next().expect("request").contains(&id(3).to_string()) {
+                    record(3, false, 6, false)
+                } else {
+                    llsd_map! { "item_id" => id(4), "error" => "not found" }
+                };
+                if doc.has("name") {
+                    doc.insert("parent_id", Uuid::nil());
+                    if let Llsd::Map(map) = &mut doc {
+                        map.remove("inv_type");
+                    }
+                }
+                let body = aurora_llsd::to_xml(&doc);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/llsd+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    String::from_utf8_lossy(&body)
+                );
+                socket.write_all(response.as_bytes()).await.expect("response");
+                crate::test_http::finish(socket);
+            }
+        });
+        let reads = read_items(&reqwest::Client::new(), &url, id(2), &[id(3), id(4)]).await;
+        let items = reads.items;
+        let failed = reads.failed;
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, id(3));
+        assert!(items[0].parent.is_nil());
+        assert_eq!(items[0].inv_type, 6);
+        assert_eq!(failed, vec![id(4)]);
+        server.await.expect("server finished");
     }
 
     #[test]

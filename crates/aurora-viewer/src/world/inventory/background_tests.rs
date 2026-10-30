@@ -7,6 +7,37 @@ fn id(n: u128) -> Uuid {
     Uuid::from_u128(n)
 }
 
+#[test]
+fn startup_orphan_discovery_runs_once_with_a_warm_cache_and_retries_only_after_region_change() {
+    let mut inv = skeleton(&[]);
+    inv.folders.values_mut().for_each(|f| f.state = FetchState::Fetched);
+    let mut fetch = BackgroundFetch::default();
+    fetch.start(&inv);
+    let reads = fetch.pump(&mut inv, AGENT);
+    let [NetCommand::FetchInventoryOrphans { request }] = &reads[..] else {
+        panic!("only orphan discovery is needed");
+    };
+    let request = *request;
+    assert!(!fetch.is_idle());
+    assert!(!fetch.on_orphans_reply(request + 1, true));
+    assert!(fetch.pump(&mut inv, AGENT).is_empty());
+    assert!(fetch.on_orphans_reply(request, false));
+    assert!(fetch.is_idle());
+    assert!(fetch.pump(&mut inv, AGENT).is_empty(), "no failed-read loop");
+    fetch.resume(&inv);
+    let reads = fetch.pump(&mut inv, AGENT);
+    let [NetCommand::FetchInventoryOrphans { request: retry }] = &reads[..] else {
+        panic!("retry after capabilities change");
+    };
+    assert!(fetch.on_orphans_reply(*retry, true));
+    fetch.resume(&inv);
+    assert!(
+        fetch.pump(&mut inv, AGENT).is_empty(),
+        "successful startup discovery is not repeated per teleport"
+    );
+    assert!(!fetch.on_orphans_reply(*retry, true), "duplicate replies are obsolete");
+}
+
 fn record(n: u128, parent: u128, type_default: i32) -> InvFolder {
     InvFolder {
         id: id(n),
@@ -98,6 +129,10 @@ fn run(inv: &mut Inventory, server: &Server) -> Vec<Read> {
             return reads;
         }
         for command in commands {
+            if let NetCommand::FetchInventoryOrphans { request } = command {
+                assert!(fetch.on_orphans_reply(request, true));
+                continue;
+            }
             let NetCommand::FetchInventoryTree {
                 request,
                 parent,
@@ -259,6 +294,10 @@ fn a_folder_the_user_opened_is_not_read_twice() {
     let answer = |inv: &mut Inventory, fetch: &mut BackgroundFetch, commands: Vec<NetCommand>| {
         let mut batches = Vec::new();
         for command in commands {
+            if let NetCommand::FetchInventoryOrphans { request } = command {
+                assert!(fetch.on_orphans_reply(request, true));
+                continue;
+            }
             if let NetCommand::FetchInventoryTree {
                 request,
                 parent,

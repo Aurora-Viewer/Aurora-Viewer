@@ -11,6 +11,8 @@ mod action_tests;
 pub mod actions;
 pub mod background;
 pub mod demo;
+mod lost;
+mod parents;
 pub mod preview;
 pub mod wearable;
 
@@ -35,6 +37,7 @@ pub struct Folder {
 pub struct Inventory {
     /// Session-only RLVa preview restrictions, shared by every inventory floater.
     pub rlva_preview_mask: u8,
+    pub owner: Uuid,
     pub root: Uuid,
     pub lib_root: Uuid,
     pub lib_owner: Uuid,
@@ -54,6 +57,15 @@ pub struct Inventory {
     pub item_failures: HashMap<Uuid, u8>,
     /// Failed item reads to ask for again (`take_item_retries`).
     pub item_retries: HashSet<Uuid>,
+    pub(crate) repaired_parents: HashMap<Uuid, Uuid>,
+    pub(crate) pending_parent_repairs: HashSet<Uuid>,
+    pub(crate) deferred_parents: HashMap<Uuid, parents::ItemSource>,
+    pub(crate) parent_retry_generation: u64,
+    pub(crate) repaired_folder_parents: HashMap<Uuid, Uuid>,
+    pub(crate) pending_folder_repairs: HashSet<Uuid>,
+    pub(crate) hierarchy_repaired: bool,
+    pub(crate) deferred_lost_folders: bool,
+    pub(crate) lost_folder_retry_generation: u64,
 }
 
 /// Reads of one item before it counts as a broken link's original. A failed
@@ -93,6 +105,9 @@ impl Inventory {
     /// Touch only its folder, rather than scanning the whole inventory.
     /// A failed rez is restored by the simulator's inventory update.
     pub fn consume_item(&mut self, id: Uuid) {
+        self.repaired_parents.remove(&id);
+        self.pending_parent_repairs.remove(&id);
+        self.deferred_parents.remove(&id);
         if let Some(item) = self.items.remove(&id) {
             if let Some(folder) = self.folders.get_mut(&item.parent) {
                 folder.items.retain(|other| *other != id);
@@ -102,6 +117,7 @@ impl Inventory {
     }
     pub fn from_login(raw: &Llsd) -> Inventory {
         let mut inv = Inventory {
+            owner: raw["agent_id"].as_uuid(),
             root: first_id(&raw["inventory-root"], "folder_id"),
             lib_root: first_id(&raw["inventory-lib-root"], "folder_id"),
             lib_owner: first_id(&raw["inventory-lib-owner"], "agent_id"),
@@ -210,7 +226,7 @@ impl Inventory {
 
     pub fn apply(&mut self, contents: Vec<FolderContents>) {
         self.generation += 1;
-        for c in contents {
+        for mut c in contents {
             // Inventory versions advance as copies arrive (Firestorm's
             // LLInventoryModel::accountForUpdate). A delayed pre-copy HTTP
             // snapshot must not replace the newer, populated folder.
@@ -223,17 +239,47 @@ impl Inventory {
             }
             let library = self.folders.get(&c.folder_id).map(|f| f.library).unwrap_or(false);
             let child_ids: Vec<Uuid> = c.folders.iter().map(|f| f.id).collect();
-            for f in c.folders {
+            for mut f in c.folders {
+                if let Some(parent) = self.repaired_folder_parents.get(&f.id).copied() {
+                    if f.parent == parent && !self.pending_folder_repairs.contains(&f.id) {
+                        self.repaired_folder_parents.remove(&f.id);
+                    } else {
+                        f.parent = parent;
+                    }
+                }
                 self.upsert_folder(f, library);
             }
-            let item_ids: Vec<Uuid> = c.items.iter().map(|i| i.id).collect();
+            let mut child_ids = child_ids;
+            child_ids.extend(
+                self.repaired_folder_parents
+                    .iter()
+                    .filter_map(|(id, parent)| (*parent == c.folder_id).then_some(*id)),
+            );
+            c.items.retain(|item| {
+                item.parent.is_nil()
+                    || item.parent == parents::LOST_MARKER
+                    || self.repaired_parents.get(&item.id).is_none_or(|parent| *parent == item.parent)
+            });
+            let mut item_ids: Vec<Uuid> = c.items.iter().map(|i| i.id).collect();
+            for item in &c.items {
+                if self.repaired_parents.get(&item.id) == Some(&item.parent) && !self.pending_parent_repairs.contains(&item.id) {
+                    self.repaired_parents.remove(&item.id);
+                    self.pending_parent_repairs.remove(&item.id);
+                }
+            }
+            // A parent read started before its reliable repair can still
+            // omit the item. Retain only those explicitly pending repairs.
+            item_ids.extend(self.repaired_parents.iter().filter_map(|(item, parent)| {
+                (*parent == c.folder_id && self.items.get(item).is_some_and(|it| it.parent == *parent)).then_some(*item)
+            }));
             if let Some(f) = self.folders.get_mut(&c.folder_id) {
                 f.children = child_ids;
                 f.items = item_ids;
                 f.state = FetchState::Fetched;
                 f.info.version = c.version;
             }
-            self.add_items(c.items);
+            self.repair_item_parents(&mut c.items, parents::ItemSource::Snapshot);
+            self.add_items_inner(c.items);
             self.sort_children(c.folder_id);
         }
     }
@@ -245,10 +291,31 @@ impl Inventory {
     /// its sorted place: a folder is not sorted again for each item, which
     /// cost ~1 ms per move into a 5,000-item Trash, twice per moved item
     /// (#1580). Lists stay ordered like `sort_children`'s.
-    pub fn add_items(&mut self, items: Vec<InvItem>) {
+    pub fn add_items(&mut self, mut items: Vec<InvItem>) {
+        self.repair_item_parents(&mut items, parents::ItemSource::Fetch);
+        self.add_items_inner(items);
+    }
+
+    /// A metadata read recovering a newly script-attached original retains
+    /// LLInventoryModel::updateItem's creation rules across HTTP delays.
+    pub fn add_attachment_items(&mut self, mut items: Vec<InvItem>) {
+        self.repair_item_parents(&mut items, parents::ItemSource::Attachment);
+        self.add_items_inner(items);
+    }
+
+    pub fn add_orphan_items(&mut self, mut items: Vec<InvItem>) {
+        self.repair_item_parents(&mut items, parents::ItemSource::Orphans);
+        self.add_items_inner(items);
+    }
+
+    fn add_items_inner(&mut self, items: Vec<InvItem>) {
         self.generation += 1;
         for mut it in items {
             self.preserve_favorite(&mut it);
+            if !it.parent.is_nil() && self.repaired_parents.get(&it.id).is_some_and(|parent| *parent != it.parent) {
+                self.repaired_parents.remove(&it.id);
+                self.pending_parent_repairs.remove(&it.id);
+            }
             if let Some(old) = self.items.get(&it.id)
                 && (old.parent != it.parent || old.name != it.name)
                 && let Some(folder) = self.folders.get_mut(&old.parent)
@@ -257,7 +324,7 @@ impl Inventory {
             }
             let items = &self.items;
             if let Some(f) = self.folders.get_mut(&it.parent)
-                && f.state == FetchState::Fetched
+                && (f.state == FetchState::Fetched || self.repaired_parents.get(&it.id) == Some(&it.parent))
                 && !f.items.contains(&it.id)
             {
                 let key = it.name.to_lowercase();
@@ -285,6 +352,10 @@ impl Inventory {
         for folder in folders {
             let id = folder.id;
             let parent = folder.parent;
+            if self.repaired_folder_parents.get(&id).is_some_and(|known| *known != parent) {
+                self.repaired_folder_parents.remove(&id);
+                self.pending_folder_repairs.remove(&id);
+            }
             if let Some(old) = self.folders.get(&id) {
                 if old.info.parent != parent || old.info.name != folder.name {
                     changed.insert(old.info.parent);
@@ -308,6 +379,7 @@ impl Inventory {
                 parent.children.push(id);
             }
         }
+        self.repair_item_parents(&mut items, parents::ItemSource::Simulator);
         for item in &items {
             if self.items.get(&item.id) != Some(item) {
                 changed.insert(item.parent);
@@ -324,7 +396,7 @@ impl Inventory {
                 folder.info.version = folder.info.version.saturating_add(1);
             }
         }
-        self.add_items(items);
+        self.add_items_inner(items);
         for id in resort {
             self.sort_children(id);
         }
@@ -447,6 +519,14 @@ impl Inventory {
             }
         }
         self.items.retain(|id, it| !removed.contains(id) && !removed.contains(&it.parent));
+        self.repaired_parents
+            .retain(|id, parent| self.items.contains_key(id) && !removed.contains(parent));
+        self.pending_parent_repairs.retain(|id| self.repaired_parents.contains_key(id));
+        self.deferred_parents.retain(|id, _| self.items.contains_key(id));
+        self.repaired_folder_parents
+            .retain(|id, parent| !removed.contains(id) && !removed.contains(parent));
+        self.pending_folder_repairs
+            .retain(|id| self.repaired_folder_parents.contains_key(id));
         self.folders.retain(|id, _| !removed.contains(id));
         self.sort_all();
         self.generation += 1;

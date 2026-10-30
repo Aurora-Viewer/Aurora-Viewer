@@ -30,6 +30,42 @@ Only local source models are offered. Preferences ignore references to the
 retired inventory snapshot format; its rez, capture and cleanup workflow is
 removed.
 
+`inventory/orphans.rs` in aurora-net implements the startup `findLostItems`
+read: agent-only AIS `/orphans`, or a legacy null-folder request with items
+enabled and folders disabled. It validates identities/owners, keeps links and
+folder metadata, and distinguishes empty successful replies from failures.
+`world/inventory/background.rs` includes this once-per-login read in its bounded
+pool, even with a warm cache; obsolete replies are ignored and failures can
+retry after a region capability change. `world/inventory/lost.rs` follows
+`buildParentChildMap`: dangling cached items and ordinary folders go to Lost And
+Found, protected folders return to the root, and library roots stay untouched.
+The return sentinel is translated locally; genuine repairs use reliable parent
+moves. Missing destination folders defer filing until their actual metadata
+arrives. `AURORA_DEMO_INVENTORY=lost` exercises this startup path offline.
+
+`world/attachment_inventory.rs` fetches missing inventory records for ordinary
+attachments independently of open floaters, with bounded retries. Once login
+restoration and interactive outfit changes finish, it adds missing Current Outfit
+links through AIS, without replacing the outfit or reattaching anything. A
+simulator-confirmed detach during link creation removes the late link after
+confirmation; failed readback reloads the COF before retrying. Transient avatar
+absence during teleport preserves links. Temporary attachments are excluded.
+Manual removal recovers our worn roots through `ObjectDetach` when an item or
+the COF remains unavailable, following `LLSelectMgr::sendDetach`. Healthy outfit
+mutations retain their existing path. Recovery preserves RLVa point/source locks
+and refuses unknown folder or scripted nostrip decisions until metadata arrives.
+
+`world/inventory/parents.rs` distinguishes normal creation from AIS orphan
+recovery. Following `processUpdateCreateInventoryItem` / `updateItem`, a newly
+script-attached original retains its known folder or uses the Objects system
+folder when its parent is null. `FetchAttachmentItems` / `AttachmentInventoryItems`
+preserve that creation context through HTTP delays, detachment and teleport.
+Attaching only adds a COF link; it does not move an original with a valid parent.
+Generic AIS orphan reads keep their separate Lost And Found handling. Original
+identities and permissions remain intact. Bounded reliable parent moves precede
+COF registration, and pending assignments survive older folder/metadata reads
+until confirmed readback. Existing RLVa inventory move rules apply.
+
 `scene/anim.rs` restarts active resident and control-avatar motions from one shared
 instant for Ctrl+S, World and the resync toolbar command. Receipt signals,
 simulator state and independent import previews are preserved. Native key dispatch leaves Save
@@ -2443,6 +2479,10 @@ preserve known flags, while complete AIS records can explicitly clear them.
 Cache version 3 invalidates older snapshots once, reloading favorites that
 earlier builds may have lost from their local listing.
 Readback retries never repeat a write, and diagnostics log only field states.
+Item reads accept explicit null parents, derive omitted inventory types from
+asset types, and recognize direct or embedded records with the requested identity.
+Background batches preserve successful items and report only failed identities;
+mutation readback still requires all requested records.
 Inventory links read and modify their original's favorite through
 `world/inventory/actions.rs`; the menu, filter, count and star share that
 rule. Multi-selection sets a common state and deduplicates aliases,

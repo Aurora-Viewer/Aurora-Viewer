@@ -12221,6 +12221,7 @@ inventory-show-main = メインパネルで表示
 inventory-open-current = このウィンドウで開く
 inventory-copy-outfit-list = アウトフィットリストをクリップボードにコピー
 inventory-empty-lost-found = 遺失物を空にする
+common-lost-and-found = 遺失物
 inventory-clean-broken-links = 壊れたリンクを整理
 inventory-no-broken-links = このフォルダに壊れたリンクはありません。
 inventory-save-selected-textures = 選択したものをエクスポート

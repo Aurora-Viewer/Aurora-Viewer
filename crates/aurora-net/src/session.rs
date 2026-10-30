@@ -295,9 +295,13 @@ fn emit(sh: &Shared, ev: NetEvent) {
 }
 
 /// Items read, items the server says do not exist, and failed reads.
-fn send_item_reads(events: &crate::EventSender, reads: crate::inventory::ais::ItemReads) {
+fn send_item_reads(events: &crate::EventSender, reads: crate::inventory::ais::ItemReads, attachment: bool) {
     if !reads.items.is_empty() {
-        let _ = events.send(NetEvent::InventoryItems(reads.items));
+        let _ = events.send(if attachment {
+            NetEvent::AttachmentInventoryItems(reads.items)
+        } else {
+            NetEvent::InventoryItems(reads.items)
+        });
     }
     if !reads.missing.is_empty() {
         let _ = events.send(NetEvent::InventoryItemsMissing { items: reads.missing });
@@ -2164,7 +2168,23 @@ impl Session<'_> {
                 owner,
                 library,
             } => self.fetch_inventory_tree(request, parent, children, depth, owner, library),
-            NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner),
+            NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner, false),
+            NetCommand::FetchAttachmentItems { items } => self.fetch_items(items, self.agent_id(), true),
+            NetCommand::FetchInventoryOrphans { request } => {
+                let ais = self.main_cap("InventoryAPIv3");
+                let legacy = self.main_cap("FetchInventoryDescendents2");
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                let owner = self.agent_id();
+                tokio::spawn(async move {
+                    let result = crate::inventory::orphans::fetch(&http, ais.as_deref(), legacy.as_deref(), owner).await;
+                    let _ = events.send(NetEvent::InventoryOrphansFetched {
+                        request,
+                        owner,
+                        result: result.map_err(str::to_owned),
+                    });
+                });
+            }
             NetCommand::EditInventory { request, change } => {
                 if change.operations.is_empty() && !change.copies.is_empty() && change.copies.len() <= 2048 && !change.refresh.is_empty() {
                     emit(
@@ -3264,7 +3284,7 @@ impl Session<'_> {
         }
     }
 
-    fn fetch_items(&mut self, items: Vec<uuid::Uuid>, owner: uuid::Uuid) {
+    fn fetch_items(&mut self, items: Vec<uuid::Uuid>, owner: uuid::Uuid, attachment: bool) {
         if owner == self.agent_id()
             && let Some(cap) = self.main_cap("InventoryAPIv3")
         {
@@ -3273,7 +3293,7 @@ impl Session<'_> {
             tokio::spawn(async move {
                 for chunk in items.chunks(16) {
                     let reads = crate::inventory::ais::read_items(&http, &cap, owner, chunk).await;
-                    send_item_reads(&events, reads);
+                    send_item_reads(&events, reads, attachment);
                 }
             });
             return;
@@ -3297,7 +3317,7 @@ impl Session<'_> {
                         }
                     }
                 };
-                send_item_reads(&events, reads);
+                send_item_reads(&events, reads, attachment);
             }
         });
     }
