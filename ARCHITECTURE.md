@@ -125,6 +125,20 @@ before completion/editing/sending, preserving the draft and focus.
 The editor grows to four visible rows, then scrolls. Its measured bounded height
 reserves space in the transcript or bar without growing the containing window.
 
+The night sky (`aurora-render/src/stars.rs`, `sky_stars` in `shaders/env.wgsl`)
+draws the 8,920 naked-eye stars of `assets/stars/stars.bin` (HYG database,
+CC BY-SA 4.0) or the Legacy Viewer's 1,000 random stars (LLVOWLSky::initStars).
+Both catalogues are sorted once, at startup, into the cells of a cube map, each
+star repeated in the cells its point reaches, in one storage buffer (frame
+binding 24); a sky pixel reads the stars of its own cell only and draws each
+as a Gaussian about a pixel wide, so the points keep their size at any field
+of view. The procedural Milky Way is computed in galactic coordinates in the
+same function, and `sky_full` adds both under the clouds, so water and probes
+see them too. `world/night_sky.rs` gives the frame the rotation from the
+catalogue to the region: the real sky over Paris, its hour from the region's
+sun and its season from today's date, or the Legacy rotation about the vertical
+(Preferences › Graphics › Environment, "Night sky").
+
 `scene/terrain_surface.rs` streams and detects each region's four ground
 assets, retaining classic texture composition or four shared PBR material
 records. Classic and PBR terrain have their own shaders, pipelines and draw
@@ -1112,6 +1126,7 @@ aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Vie
 ├─ assets/
 │  ├─ branding/                 logos (colour, white, black, violet, teal, on navy), SVG + PNG, aurora.ico
 │  ├─ models/                   self-contained Aurora 3D GLB for material previews
+│  ├─ stars/                    night sky star table (HYG database, CC BY-SA 4.0; `scripts/generate-star-catalog.py`)
 │  ├─ tabler-icons/             full Tabler library (SVG: outline, filled)
 │  └─ emoji/                    Noto Color Emoji font and its licence (built into the exe)
 ├─ crates/                      the code (see below)

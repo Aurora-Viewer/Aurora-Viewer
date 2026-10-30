@@ -118,6 +118,8 @@ struct FrameU {
     sky_obj_light: [f32; 4],
     sky_optics: [f32; 4],
     sky_optics_tex: [u32; 4],
+    /// Night sky (stars.rs `StarFrame::uniform`).
+    sky_stars: [[f32; 4]; 3],
     anim_clock: [u32; 4],
     selection_color: [f32; 4],
     rez_gradient: [[f32; 4]; 3],
@@ -1412,6 +1414,8 @@ pub(crate) struct Backend {
     ssao: Ssao,
     gtao: crate::gtao::Gtao,
     water_effects: crate::water_effects::WaterGpu,
+    /// The night sky's stars (stars.rs), made once.
+    stars: wgpu::Buffer,
     contact: crate::contact_shadows::ContactShadows,
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
@@ -2547,6 +2551,17 @@ impl Backend {
                 float_tex(13),
                 // GTAO's screen-space indirect light (gtao.rs)
                 float_tex(14),
+                // the night sky's stars (stars.rs)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 24,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let records_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -2764,6 +2779,14 @@ impl Backend {
         exposure.bind(&device, &targets.color, &targets.depth_ss, &glow.views[1]);
         let mut histogram = crate::histogram::Histogram::new(&device);
         histogram.bind(&device, &targets.color);
+        let stars = wgpu::util::DeviceExt::create_buffer_init(
+            &device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("night sky stars"),
+                contents: &crate::stars::buffer_contents(),
+                usage: wgpu::BufferUsages::STORAGE,
+            },
+        );
         let groups = Self::make_frame_groups(
             &device,
             &frame_layout,
@@ -2776,6 +2799,7 @@ impl Backend {
             &targets,
             &probes,
             &water_effects,
+            &stars,
         );
         let indirect = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("indirect"),
@@ -2822,6 +2846,7 @@ impl Backend {
             ssao,
             gtao,
             water_effects,
+            stars,
             contact,
             contact_now: false,
             gtao_normals_now: false,
@@ -3933,6 +3958,7 @@ impl Backend {
         t: &Targets,
         probes: &crate::probes::Probes,
         water_effects: &crate::water_effects::WaterGpu,
+        stars: &wgpu::Buffer,
     ) -> FrameGroups {
         let mk = |label: &str,
                   buffer: &wgpu::Buffer,
@@ -3952,6 +3978,10 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 23,
                         resource: wgpu::BindingResource::TextureView(if sample_mask { &t.water_mask } else { &dummies.white }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 24,
+                        resource: stars.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -4265,6 +4295,7 @@ impl Backend {
                 &self.targets,
                 &self.probes,
                 &self.water_effects,
+                &self.stars,
             );
         }
     }
@@ -4283,6 +4314,7 @@ impl Backend {
             &self.targets,
             &self.probes,
             &self.water_effects,
+            &self.stars,
         );
         self.gbuf_group = self.targets.gbuf.as_ref().map(|g| {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -4771,6 +4803,7 @@ impl Backend {
         u.sky_obj_light = s.object_sunlight.extend(0.0).to_array();
         u.sky_optics = [s.moisture_level, s.droplet_radius, s.ice_level, 0.0];
         u.sky_optics_tex = [s.rainbow_texture, s.halo_texture, 0, 0];
+        u.sky_stars = s.stars.uniform();
         // (common.wgsl FEATURE_NO_EMISSIVE)
         u.features[0] = if self.settings.hdr { 0 } else { 1 };
         for (i, m) in cascades.iter().enumerate() {

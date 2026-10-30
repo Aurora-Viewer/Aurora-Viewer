@@ -75,6 +75,9 @@ struct Frame {
     sky_obj_light: vec4<f32>,   // rgb sun / moon color lighting objects (mSunDiffuse, max component <= 1)
     sky_optics: vec4<f32>,      // x moisture level (rainbow), y droplet radius, z ice level (22° halo)
     sky_optics_tex: vec4<u32>,  // x rainbow texture slot, y halo texture slot (0: none)
+    // night sky (stars.rs StarFrame): region directions of the catalogue's
+    // axes; w: catalogue (-1 none), Milky Way strength, 0
+    sky_stars: array<vec4<f32>, 3>,
     anim_clock: vec4<u32>,      // effects clock (rez, portals): x ms (wrapping), y sub-ms fraction (f32 bits); zw the same for texture animations (held while the world is frozen)
     selection_color: vec4<f32>, // selected-face overlay, from the UI palette
     rez_gradient: array<vec4<f32>, 3>, // rez effect: the brand gradient (linear rgb), edge to trail; [0].w its look

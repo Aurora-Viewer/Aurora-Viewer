@@ -1069,6 +1069,8 @@ pub struct SkyParams {
     /// Bindless slots (0 = none) of the rainbow and halo textures.
     pub rainbow_texture: u32,
     pub halo_texture: u32,
+    /// Night sky: which stars and how they are turned (stars.rs).
+    pub stars: crate::stars::StarFrame,
 }
 
 impl Default for SkyParams {
@@ -1115,6 +1117,7 @@ impl Default for SkyParams {
             ice_level: 0.0,
             rainbow_texture: 0,
             halo_texture: 0,
+            stars: crate::stars::StarFrame::default(),
         }
     }
 }

@@ -52,6 +52,7 @@ pub mod maturity;
 pub mod motion;
 pub mod mutes;
 pub mod names;
+pub mod night_sky;
 pub mod notice_topics;
 pub mod notification_history;
 pub mod notifications;
