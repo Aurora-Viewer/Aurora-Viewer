@@ -3528,6 +3528,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_HAIR_CARDS=<n>[,layered[,outer]]` | Our avatar wears one face of `n` soft strand cards, overlapping in a shuffled order, or layered as a hair is made (#935) |
 | `AURORA_DEMO_SHEER=1` | Our avatar wears a sheer knit dress over a red layer drawn after it (#1300) |
+| `AURORA_DEMO_SOFT_MASK=1` | Our avatar wears a skin-tone Mask disc on the groin; soft fringe must stay visible (#1492) |
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
 | `AURORA_DEMO_MASK_ZERO=1` | The holed test panel with a Mask legacy material whose cutoff is 0: drawn whole |
 | `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
@@ -3640,6 +3641,14 @@ both open states and the selection count. Capture at frame 620.
   Legacy Viewer; with `AURORA_RIGGED_BLEND=split` the red layer shows
   through the dress in speckles, wherever its alpha is under one half. The
   default camera looks at our avatar's back.
+- **`AURORA_DEMO_SOFT_MASK=1`** (with or without `AURORA_DEMO_HAIR`): our
+  avatar wears a skin-tone disc on the groin (attach point 53), rigged to
+  `mPelvis`. Its texture classifies as Mask (opaque centre, two-texel soft
+  fringe). The Legacy Viewer never auto-masks rigged faces
+  (`LLFace::canRenderAsMask`), so the fringe stays blended and visible;
+  auto-Mask at cutoff 0.5 would punch it out. Look from below / the side:
+  a solid peach disc with a soft edge, not a hard cutout or a missing
+  attachment (#1492 / Physics Cock Max class).
 - **`AURORA_DEMO_MASK_ZERO=1`**: the "Auto: mask" panel of the plaza (round
   holes of alpha 0) gets a Mask legacy material with a cutoff of 0 and the
   hover text "Mask (cutoff 0)". The Legacy Viewer keeps every texel at or
