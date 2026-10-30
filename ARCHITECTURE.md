@@ -1753,7 +1753,13 @@ folder windows) as flat rows, rebuilt only when the inventory, the sort or an
 open folder changes, and lays out only the rows in sight; it keeps each
 window's open folders (the main window's with the UI layout). Searches,
 filters and the other tabs use the flattened result tree of
-`ui/inventory/view.rs`, drawn the same way.
+`ui/inventory/view.rs`, drawn the same way. Aurora's toolbar exposes Collapse
+all / Expand all above a separate quick/advanced search row. In the explorer,
+these commands affect the folder sidebar; in filtered views they affect only
+the result tree. Bulk folding walks every known descendant within the window's
+scope, including closed branches, and expansion uses the ordinary lazy fetches.
+Unlike LLPanelMainInventory::onCollapseButtonClicked, Aurora retains the query
+when collapsing results, so the chosen search remains usable.
 
 `ui/inventory/smart.rs` is the advanced search's rule model (All/Any groups of
 negatable rules on any item fact) and its matcher: each rule compiles once per
