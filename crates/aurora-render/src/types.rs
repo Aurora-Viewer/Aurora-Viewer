@@ -237,9 +237,9 @@ impl PortalClip {
 }
 
 /// Layout of a skeleton's palette in the palettes buffer: its joints (the
-/// 159 bones and collision volumes, the 46 body attachment points that hang
-/// from a bone, which meshes are skinned to and animations turn as in the
-/// Legacy Viewer, and the identity slot), then its anchors. The first anchor places the
+/// 159 bones and collision volumes, the 47 body attachment points, which
+/// meshes are skinned to and animations turn as in the Legacy Viewer, and
+/// the identity slot), then its anchors. The first anchor places the
 /// skeleton itself (skeleton space to world); the scene gives the others to
 /// the attachment points.
 pub const SKELETON_ANCHOR: u32 = 208;

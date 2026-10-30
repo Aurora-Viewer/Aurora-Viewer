@@ -39,7 +39,8 @@ pub struct Report {
 pub struct WornRigged {
     pub root: Uuid,
     pub point: u8,
-    /// Temporary (FLAGS_TEMPORARY_ON_REZ).
+    /// A temporary attachment: its attachment item is the object itself
+    /// (LLViewerObject::isTempAttachment).
     pub temporary: bool,
     pub prims: usize,
     pub meshes: Vec<MeshSkin>,
@@ -191,7 +192,7 @@ impl super::Scene {
                     worn_rigged.push(WornRigged {
                         root: root.full_id,
                         point: root.attachment_point(),
-                        temporary: root.update_flags & (1 << 29) != 0,
+                        temporary: crate::world::temp_attachments::is_temp_attachment(root.full_id, root.attachment_item_id()),
                         prims: prims.len(),
                         meshes,
                     });
@@ -221,8 +222,13 @@ impl super::Scene {
                 joints: joints.clone(),
                 rest: self.skeletons.get(&root.full_id).map(|s| s.base.local_pos.clone()),
                 pose: controller.map(|c| {
-                    let (rot, delta) = c.held_pose();
-                    (delta.to_vec(), rot.to_vec())
+                    let (rot, delta, pelvis) = c.held_pose();
+                    let mut delta = delta.to_vec();
+                    // the pelvis's animated position counts from its rest
+                    if let (Some(offset), Some(d)) = (pelvis, delta.get_mut(self.avatar_lib.rig.pelvis)) {
+                        *d += offset;
+                    }
+                    (delta, rot.to_vec())
                 }),
                 animations,
                 waiting: signalled,

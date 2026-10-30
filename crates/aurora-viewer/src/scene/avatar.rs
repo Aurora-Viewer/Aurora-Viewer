@@ -311,8 +311,15 @@ impl AvatarLibrary {
                     if let Some(point) = attach_names.get(id).filter(|_| !ap.hud) {
                         let local = Mat4::from_rotation_translation(ap.rotation, ap.local_position);
                         rig.skin_points.entry(point.clone()).or_insert((joint, local));
-                        point_joints.push((*id, point.clone(), joint, ap.local_position, ap.rotation));
+                        point_joints.push((*id, point.clone(), Some(joint), ap.local_position, ap.rotation));
                     }
+                } else if name == "mRoot"
+                    && !ap.hud
+                    && let Some(point) = attach_names.get(id)
+                {
+                    // "Avatar Center": on the avatar's root, which the
+                    // pelvis's motions do not move (#1492)
+                    point_joints.push((*id, point.clone(), None, ap.local_position, ap.rotation));
                 }
             }
         }
@@ -495,11 +502,11 @@ mod tests {
     fn body_attachment_points_are_joints_animations_can_turn() {
         let lib = AvatarLibrary::load();
         let rig = &lib.rig;
-        // every body point that hangs from a bone ("Avatar Center" hangs
-        // from mRoot, which this skeleton has not: it stays the root anchor)
+        // every body point that hangs from a bone, and "Avatar Center" on
+        // the root (mRoot, which this skeleton has not as a bone)
         let body = lib.attach_points.values().filter(|ap| !ap.hud && ap.joint.is_some()).count();
         assert_eq!(body, 46);
-        assert_eq!(rig.len(), 159 + body);
+        assert_eq!(rig.len(), 159 + body + 1);
         assert!(
             rig.len() < super::super::anim::ANCHOR_BASE,
             "the identity slot stays below the anchors"
@@ -537,6 +544,38 @@ mod tests {
             anim.joints.contains(&Some(groin)),
             "an animation keyed on a point binds to its joint"
         );
+    }
+
+    /// #1492: a seat's flower stem rigged between mPelvis and "Avatar
+    /// Center". That point hangs from mRoot, where the pelvis rests (zero
+    /// under it, LLAvatarAppearance::buildCharacter); a sit moves the pelvis
+    /// by position keys, never the root. The point is a root joint of its
+    /// own here: what is rigged to it stays while the pelvis goes.
+    #[test]
+    fn avatar_center_stays_on_the_root_while_the_pelvis_moves() {
+        let lib = AvatarLibrary::load();
+        let rig = &lib.rig;
+        let center = rig.names["Avatar Center"];
+        assert_eq!(rig.parent[center], None);
+        assert!(rig.local_pos[center].abs_diff_eq(rig.local_pos[rig.pelvis], 1e-6));
+        let rot = rig.local_rot.clone();
+        let rest = rig.world_with(&rot, Vec3::ZERO, &rig.local_pos, &rig.scale);
+        // the grid sit: the pelvis 0.7 m forward and 0.95 m down
+        let sat = rig.world_with(&rot, Vec3::new(0.7, 0.0, -0.95), &rig.local_pos, &rig.scale);
+        assert!(sat[center].abs_diff_eq(rest[center], 1e-6), "the root does not follow the pelvis");
+        let moved = sat[rig.pelvis].w_axis.truncate().distance(rest[rig.pelvis].w_axis.truncate());
+        assert!(moved > 1.0, "the pelvis moved {moved}");
+        // a vertex on the root stays, one on the pelvis follows: the stem
+        // stretches between them
+        let bind = Mat4::from_translation(rig.local_pos[rig.pelvis]).inverse();
+        let (root_joint, root_bind) = rig.skin_bind("Avatar Center", bind);
+        assert_eq!(root_joint, center);
+        let (pelvis_joint, pelvis_bind) = rig.skin_bind("mPelvis", bind);
+        let v = rig.local_pos[rig.pelvis];
+        let root_end = (sat[root_joint] * root_bind).transform_point3(v);
+        let pelvis_end = (sat[pelvis_joint] * pelvis_bind).transform_point3(v);
+        assert!(root_end.abs_diff_eq(v, 1e-5), "{root_end:?}");
+        assert!(pelvis_end.distance(v) > 1.0, "{pelvis_end:?}");
     }
 
     #[test]

@@ -6056,6 +6056,11 @@ pub const ANIMESH_POINT_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_
 pub const ANIMESH_POINT: &str = "Groin";
 /// The bar's prim, a child of the worn animesh 9203.
 pub const ANIMESH_POINT_PRIM: u32 = 9207;
+/// AURORA_DEMO_ANIMESH=points: a stem rigged between "Avatar Center" (on
+/// the root) and mPelvis, which the animation moves by position: its root
+/// end stays, its pelvis end follows, as a seat's flower stem (#1492).
+pub const ANIMESH_STEM_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0105);
+pub const ANIMESH_STEM_PRIM: u32 = 9208;
 
 pub fn animesh_points() -> bool {
     std::env::var("AURORA_DEMO_ANIMESH").is_ok_and(|v| v == "points")
@@ -6163,6 +6168,7 @@ pub(crate) fn animesh_objects(ground_mesh: Uuid) -> Vec<ObjectUpdate> {
         (9202, Vec3::ZERO, 9201, false, true, [0.1, 0.85, 0.65, 1.0]),
         (9203, Vec3::new(0.15, 0.0, 0.2), 9001, true, true, [0.55, 0.35, 0.9, 1.0]),
         (ANIMESH_POINT_PRIM, Vec3::ZERO, 9203, false, true, [0.95, 0.3, 0.4, 1.0]),
+        (ANIMESH_STEM_PRIM, Vec3::ZERO, 9203, false, true, [0.3, 0.9, 0.35, 1.0]),
         (
             9204,
             Vec3::new(134.5, 127.0, ground - 0.17),
@@ -6176,13 +6182,14 @@ pub(crate) fn animesh_objects(ground_mesh: Uuid) -> Vec<ObjectUpdate> {
         for f in &mut t.faces {
             f.texture = if is_mesh { ANIMESH_TEXTURE } else { BLANK_TEXTURE };
         }
-        if id == ANIMESH_POINT_PRIM && !animesh_points() {
+        if matches!(id, ANIMESH_POINT_PRIM | ANIMESH_STEM_PRIM) && !animesh_points() {
             continue;
         }
         let mesh = SculptParams {
             texture: match id {
                 9200 => ground_mesh,
                 ANIMESH_POINT_PRIM => ANIMESH_POINT_MESH,
+                ANIMESH_STEM_PRIM => ANIMESH_STEM_MESH,
                 _ => ANIMESH_MESH,
             },
             sculpt_type: LL_SCULPT_TYPE_MESH,
@@ -7698,9 +7705,10 @@ pub fn animesh_animation() -> aurora_assets::Animation {
 }
 
 /// AURORA_DEMO_ANIMESH=points: the attachment point the bar is rigged to,
-/// swung up and down (#1492).
+/// swung up and down, and the pelvis moved forward and down by position,
+/// as a sit (#1492).
 pub fn point_animation() -> aurora_assets::Animation {
-    use aurora_assets::anim::{JointMotion, RotKey};
+    use aurora_assets::anim::{JointMotion, PosKey, RotKey};
     let mut a = idle_animation();
     a.duration = 2.0;
     a.loop_out = 2.0;
@@ -7716,6 +7724,15 @@ pub fn point_animation() -> aurora_assets::Animation {
             .collect(),
         pos_keys: Vec::new(),
     }];
+    a.joints.push(JointMotion {
+        joint_name: "mPelvis".into(),
+        priority: 4,
+        rot_keys: Vec::new(),
+        pos_keys: [(0.0, Vec3::ZERO), (1.0, Vec3::new(0.3, 0.0, -0.2)), (2.0, Vec3::ZERO)]
+            .into_iter()
+            .map(|(time, position)| PosKey { time, position })
+            .collect(),
+    });
     a
 }
 

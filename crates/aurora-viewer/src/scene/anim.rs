@@ -139,21 +139,28 @@ impl Rig {
     /// animations key it ("attachment can potentially be animated, needs a
     /// number"); worn animesh rely on it (#1492). `points`: name, bone, the
     /// point's position and rotation under it (avatar_lad.xml); unit scale.
-    /// Added while the palette has room below its anchors for them and the
-    /// identity slot; a name the skeleton already has keeps its joint.
-    pub(crate) fn add_attachment_points(&mut self, points: &[(String, usize, Vec3, Quat)]) {
+    /// A point on mRoot ("Avatar Center"), which this skeleton has not, is a
+    /// root of its own where mRoot rests (the pelvis's rest position: the
+    /// pelvis is zero under mRoot, LLAvatarAppearance::buildCharacter), so
+    /// it stays put while motions move the pelvis. Added while the palette
+    /// has room below its anchors for them and the identity slot; a name
+    /// the skeleton already has keeps its joint.
+    pub(crate) fn add_attachment_points(&mut self, points: &[(String, Option<usize>, Vec3, Quat)]) {
         for (name, parent, pos, rot) in points {
             if self.len() + 1 >= ANCHOR_BASE {
                 break;
             }
-            if self.names.contains_key(name) || *parent >= self.len() {
+            if self.names.contains_key(name) || parent.is_some_and(|p| p >= self.len()) {
                 continue;
             }
             let j = self.len();
-            self.parent.push(Some(*parent));
-            self.local_pos.push(*pos);
+            self.parent.push(*parent);
+            match parent {
+                Some(_) => self.local_pos.push(*pos),
+                None => self.local_pos.push(self.local_pos[self.pelvis] + *pos),
+            }
             self.local_rot.push(*rot);
-            self.parent_scale.push(self.scale[*parent]);
+            self.parent_scale.push(parent.map_or(Vec3::ONE, |p| self.scale[p]));
             self.scale.push(Vec3::ONE);
             self.names.insert(name.clone(), j);
             self.canonical_names.push(name.clone());
@@ -674,10 +681,11 @@ impl Controller {
             .collect()
     }
 
-    /// Dev Toolbox J9: the last frame's local rotations and animated
-    /// position offsets from the rest skeleton (empty before the first).
-    pub(crate) fn held_pose(&self) -> (&[Quat], &[Vec3]) {
-        (&self.rot, &self.pos_delta)
+    /// Dev Toolbox J9: the last frame's local rotations, animated position
+    /// offsets from the rest skeleton (empty before the first), and the
+    /// pelvis's animated position under the root (kept apart).
+    pub(crate) fn held_pose(&self) -> (&[Quat], &[Vec3], Option<Vec3>) {
+        (&self.rot, &self.pos_delta, self.pelvis_offset)
     }
 
     /// Apply Preferences › Aurora › Animations without restarting live loops.

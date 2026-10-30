@@ -3128,7 +3128,10 @@ Other existing AO modes: interface, interface-group, interface-track, interface-
   so the bar swings with the point. `AURORA_DEMO_TOOLBOX=0:J9` with
   `AURORA_DEMO_POS=134.5,128` and `AURORA_DEMO_CROWD=4` lists `Groin` among
   the bar mesh's joints (not as unknown) and in the control skeleton with a
-  turning rotation.
+  turning rotation. A green stem (prim 9208) is rigged between `Avatar
+  Center` (its back half) and `mPelvis` (its front half), and the animation
+  moves the pelvis by position (0.3 m forward, 0.2 m down, 2 s loop): the
+  back end stays on the root while the front end follows the pelvis.
 - **`AURORA_DEMO_ANIMESH_TRIS=<n>`**: with `AURORA_DEMO_ANIMESH`, adds
   about n triangles to the demo's rigged mesh, as opaque faces of 45,000
   (each a thin tube around the torso, 7 faces at most). With
