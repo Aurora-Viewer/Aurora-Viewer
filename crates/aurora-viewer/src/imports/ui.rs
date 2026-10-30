@@ -11,15 +11,31 @@ use egui::{RichText, Vec2};
 const IMPORT_POSITION: egui::Pos2 = egui::Pos2 { x: 48.0, y: 80.0 };
 
 pub(super) mod destination;
+mod folder_panel;
+mod folder_preview;
+mod footer;
 mod inspector;
-pub(crate) mod launcher;
 pub(crate) mod local_status;
+mod queue;
+mod source_root;
+
+pub(crate) const WINDOW: &str = "asset_imports_v7";
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Tab {
+    #[default]
+    Batch,
+    Folder,
+    Permissions,
+}
 mod material_panel;
 mod mesh_panel;
 pub(crate) mod permission_panel;
 mod sound_panel;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod unified_tests;
 mod zoom;
 
 // egui's menu style and button strokes can change the padding between states.
@@ -89,6 +105,7 @@ pub(crate) fn factor_swatch(ui: &mut egui::Ui, p: &Palette, id_salt: impl egui::
 
 pub enum Action {
     Files,
+    Folder,
     Start,
     Cancel,
     Preview(Uuid),
@@ -108,6 +125,7 @@ pub enum Action {
     Local(Uuid),
     ClearLocal(Uuid),
     RezLocal(Uuid),
+    StageLocalUploads,
     MapFile(Uuid, usize),
     MapInventory(Uuid, usize),
     Zoom(Uuid, Option<usize>),
@@ -205,15 +223,7 @@ fn file_status(ui: &mut egui::Ui, p: &Palette, entry: &Entry) {
     }
 }
 
-fn metadata_controls(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    entry: &mut Entry,
-    inventory: &crate::world::inventory::Inventory,
-    protected: &HashSet<Uuid>,
-    picker: &mut destination::Picker,
-    demo: bool,
-) {
+fn metadata_controls(ui: &mut egui::Ui, entry: &mut Entry) {
     let mesh = matches!(entry.source, Some(Source::Mesh(_)));
     egui::Grid::new("import_metadata")
         .num_columns(2)
@@ -233,12 +243,6 @@ fn metadata_controls(
                         .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
                         .char_limit(127),
                 );
-                ui.end_row();
-                ui.label(aurora_i18n::tr!("import-destination"));
-                if demo {
-                    picker.demo(ui);
-                }
-                picker.show(ui, p, inventory, protected, &mut entry.folder);
                 ui.end_row();
             }
         });
@@ -289,12 +293,15 @@ pub fn show(
     world: &crate::world::World,
     inventory_prefs: &crate::ui::inventory::InventoryPreferences,
 ) -> Vec<Action> {
+    #[cfg(test)]
+    ctx.data_mut(|data| data.remove::<(egui::Rect, egui::Rect, bool)>(egui::Id::unique("import_upload_action")));
     let mut actions = Vec::new();
     let old_permissions = prefs.clone();
-    launcher::show(ctx, p, imports, prefs);
-    if imports.open && std::mem::take(&mut imports.choose_files_on_open) {
-        actions.push(Action::Files);
+    if imports.choice != Choice::Local {
+        imports.choice = Choice::Bulk;
     }
+    imports.sync_destinations(prefs, world, inventory_prefs);
+    imports.reconcile_active();
     let prices = if imports.demo_started {
         Prices {
             texture: Some(10),
@@ -307,9 +314,6 @@ pub fn show(
     };
     let prices = prices.with_fallback(world.upload_cost);
     inspector::show(ctx, p, imports, prefs, world, inventory_prefs, &prices, &mut actions);
-    if imports.launcher_open && imports.open {
-        launcher::keep_accessible(ctx, imports.window_choice().window_id());
-    }
     if prefs.permissions_for(Kind::Mesh) != old_permissions.permissions_for(Kind::Mesh) {
         for entry in &mut imports.entries {
             if let Some(Source::Mesh(draft)) = &mut entry.source {
@@ -330,6 +334,9 @@ pub fn show(
         .show(ctx, p, &mut confirm, |ui| {
             if let Some(cost) = imports.total(&prices) {
                 ui.label(aurora_i18n::tr!("import-confirm-price", cost = cost));
+            }
+            if imports.folders.active() && !imports.folder_plan_ready(world, inventory_prefs) {
+                ui.label(aurora_i18n::tr!("import-folders-auto-create"));
             }
             ui.horizontal(|ui| {
                 let size = Vec2::new(0.0, 26.0);

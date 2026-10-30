@@ -5,8 +5,10 @@
 
 pub mod animation;
 pub mod animation_model;
+mod automatic;
 pub mod demo;
 pub mod files;
+pub mod folders;
 mod live;
 pub mod local;
 pub mod maps;
@@ -15,6 +17,7 @@ pub mod permissions;
 pub mod persistence;
 pub mod preview;
 pub mod sound;
+mod stage;
 #[cfg(test)]
 mod tests;
 pub mod ui;
@@ -50,7 +53,7 @@ impl Choice {
         }
         match entry.source.as_ref().map(Source::kind) {
             Some(kind) => {
-                (self == Choice::Bulk && !matches!(entry.source, Some(Source::Animation { bvh: Some(_), .. })))
+                self == Choice::Bulk
                     || matches!(
                         (self, kind),
                         (Choice::Texture, Kind::Texture)
@@ -75,18 +78,9 @@ impl Choice {
         }
     }
 
-    /// Dedicated floaters keep their own placement and size. Multiple keeps
-    /// the established complete inspector and its per-type tabs.
+    /// Every source type uses the same remembered upload window.
     pub fn window_id(self) -> &'static str {
-        match self {
-            Self::Texture => "import_textures",
-            Self::Sound => "import_sounds",
-            Self::Animation => "import_animations",
-            Self::Material => "import_materials",
-            Self::Mesh => "import_meshes",
-            Self::Local => "import_local",
-            Self::Bulk => "asset_imports_v6",
-        }
+        ui::WINDOW
     }
 }
 
@@ -118,6 +112,10 @@ pub struct Preferences {
     pub everyone_copy: bool,
     pub permissions_by_type: permissions::ByType,
     pub show_payment: bool,
+    pub use_default_folders: bool,
+    pub include_source_folder: bool,
+    pub batch_folder: Uuid,
+    pub folder_layout: Option<folders::Layout>,
     pub preview_on_avatar: bool,
     #[serde(deserialize_with = "animation_model::deserialize_local_models")]
     pub animation_models: Vec<animation_model::Saved>,
@@ -153,6 +151,10 @@ impl Default for Preferences {
             everyone_copy: false,
             permissions_by_type: Default::default(),
             show_payment: true,
+            use_default_folders: true,
+            include_source_folder: true,
+            batch_folder: Uuid::nil(),
+            folder_layout: None,
             preview_on_avatar: false,
             animation_models: Vec::new(),
             animation_model_last: None,
@@ -310,6 +312,9 @@ pub struct Entry {
     pub name: String,
     pub description: String,
     pub folder: Uuid,
+    /// Relative disk folders and the editable inventory path (including the selected root).
+    pub source_folders: Vec<String>,
+    pub upload_path: Option<Vec<String>>,
     pub selected: bool,
     pub source: Option<Source>,
     pub options: import_texture::Options,
@@ -368,6 +373,15 @@ impl Entry {
     }
 
     pub fn new(path: PathBuf, source: Result<Source, String>, options: import_texture::Options) -> Self {
+        Self::with_cached_alpha(path, source, options, None)
+    }
+
+    pub(super) fn with_cached_alpha(
+        path: PathBuf,
+        source: Result<Source, String>,
+        options: import_texture::Options,
+        empty_alpha: Option<bool>,
+    ) -> Self {
         let (source, status) = match source {
             Ok(source) => (Some(source), Status::Ready),
             Err(error) => (None, Status::Error(error)),
@@ -379,8 +393,11 @@ impl Entry {
             from_live: false,
             description: String::new(),
             folder: Uuid::nil(),
+            source_folders: Vec::new(),
+            upload_path: None,
             selected: source.is_some(),
-            empty_alpha: matches!(&source,Some(Source::Texture(image)) if import_texture::empty_alpha(image)),
+            empty_alpha: empty_alpha
+                .unwrap_or_else(|| matches!(&source,Some(Source::Texture(image)) if import_texture::empty_alpha(image))),
             sound: sound::Editor::new(source.as_ref()),
             source,
             options,
@@ -474,15 +491,14 @@ struct Step {
 
 pub struct Imports {
     pub open: bool,
-    pub launcher_open: bool,
-    pub settings_open: bool,
+    pub tab: ui::Tab,
     pub preview_zoom: Option<(Uuid, Option<usize>)>,
     pub mesh_permission_account: Uuid,
     pub mesh_permission_denied: bool,
     pub choice: Choice,
-    /// The window opened from the launcher, independent of Multiple's tab.
-    pub inspector: Option<Choice>,
+    pub type_filters: [bool; 5],
     pub entries: Vec<Entry>,
+    pub folders: folders::Folders,
     pub active: Option<Uuid>,
     pub message: String,
     pub confirm: bool,
@@ -490,12 +506,11 @@ pub struct Imports {
     pub pending_files: Option<Uuid>,
     /// The pending files come from the texture picker's Local tab.
     pub picker_files: bool,
-    /// One-shot menu intent, consumed after drawing the import window.
-    pub choose_files_on_open: bool,
     pub(super) tx: Sender<Worker>,
     rx: Receiver<Worker>,
     queue: VecDeque<Step>,
     current: Option<(Uuid, Step)>,
+    pending_confirmed: Option<automatic::Confirmed>,
     uploaded: HashMap<Uuid, Receipt>,
     pub play_request: Option<Uuid>,
     pub sound_playing: Option<Uuid>,
@@ -531,25 +546,25 @@ impl Default for Imports {
         let (tx, rx) = crossbeam_channel::unbounded();
         Self {
             open: false,
-            launcher_open: false,
-            settings_open: false,
+            tab: Default::default(),
             preview_zoom: None,
             mesh_permission_account: Uuid::nil(),
             mesh_permission_denied: false,
-            choice: Choice::Texture,
-            inspector: None,
+            choice: Choice::Bulk,
+            type_filters: [true; 5],
             entries: Vec::new(),
+            folders: Default::default(),
             active: None,
             message: String::new(),
             confirm: false,
             scale_bulk_1k: false,
             pending_files: None,
             picker_files: false,
-            choose_files_on_open: false,
             tx,
             rx,
             queue: VecDeque::new(),
             current: None,
+            pending_confirmed: None,
             uploaded: HashMap::new(),
             play_request: None,
             sound_playing: None,
@@ -607,24 +622,19 @@ impl Imports {
         self.entries.push(entry);
         self.open(Choice::Animation);
     }
-    /// Repeating the import shortcut closes the visible chooser.
-    pub fn toggle_launcher(&mut self, ctx: &egui::Context) {
-        if self.launcher_open {
-            self.launcher_open = false;
+    /// The shortcut and menu share the same queue window, without a file dialog.
+    pub fn toggle_window(&mut self, ctx: &egui::Context) {
+        if self.open {
+            crate::ui::widgets::toggle_floater(ctx, ui::WINDOW, &mut self.open);
         } else {
-            self.open_launcher(ctx);
+            self.open_window(ctx);
         }
+        self.reconcile_active();
     }
 
-    /// The shortcut opens the type chooser without scheduling a disk dialog.
-    pub fn open_launcher(&mut self, ctx: &egui::Context) {
-        crate::ui::widgets::open_floater(ctx, ui::launcher::WINDOW, &mut self.launcher_open);
-        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(ui::launcher::WINDOW)));
-    }
-
-    pub fn open_file_picker(&mut self, choice: Choice) {
-        self.open(choice);
-        self.choose_files_on_open = true;
+    pub fn open_window(&mut self, ctx: &egui::Context) {
+        crate::ui::widgets::open_floater(ctx, ui::WINDOW, &mut self.open);
+        self.reconcile_active();
     }
 
     pub fn demo_mesh_request(&self) -> Option<Request> {
@@ -640,26 +650,63 @@ impl Imports {
         })
     }
     pub fn busy(&self) -> bool {
-        self.current.is_some() || !self.queue.is_empty()
+        self.pending_confirmed.is_some() || self.current.is_some() || !self.queue.is_empty() || self.folders.busy()
     }
     pub fn open(&mut self, choice: Choice) {
         self.open = true;
-        self.inspector = Some(choice);
         self.select_type(choice);
     }
 
     pub fn window_choice(&self) -> Choice {
-        self.inspector.unwrap_or(self.choice)
+        Choice::Bulk
     }
 
-    /// Switch a tab inside Multiple without turning it into another window.
+    /// External editors may request a type; all paid assets share one queue.
     pub fn select_type(&mut self, choice: Choice) {
-        self.choice = choice;
-        if self
-            .active
-            .is_none_or(|id| self.entries.iter().all(|e| e.id != id || !choice.accepts(e)))
-        {
-            self.active = self.entries.iter().find(|e| choice.accepts(e)).map(|e| e.id);
+        self.choice = if choice == Choice::Local { Choice::Local } else { Choice::Bulk };
+        if let Some(index) = Self::type_index(choice) {
+            self.type_filters[index] = true;
+        }
+        self.reconcile_active();
+    }
+
+    pub fn type_choice(entry: &Entry) -> Choice {
+        match entry.source.as_ref().map(Source::kind) {
+            Some(Kind::Texture | Kind::Snapshot) => Choice::Texture,
+            Some(Kind::Sound) => Choice::Sound,
+            Some(Kind::Animation) => Choice::Animation,
+            Some(Kind::Material) => Choice::Material,
+            Some(Kind::Mesh) => Choice::Mesh,
+            None => Choice::Bulk,
+        }
+    }
+
+    pub fn type_index(choice: Choice) -> Option<usize> {
+        match choice {
+            Choice::Texture => Some(0),
+            Choice::Sound => Some(1),
+            Choice::Animation => Some(2),
+            Choice::Material => Some(3),
+            Choice::Mesh => Some(4),
+            _ => None,
+        }
+    }
+
+    pub fn visible_indices(&self) -> Vec<usize> {
+        let local = self.choice == Choice::Local;
+        self.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| {
+                (e.local == local && Self::type_index(Self::type_choice(e)).is_none_or(|i| self.type_filters[i])).then_some(i)
+            })
+            .collect()
+    }
+
+    pub fn reconcile_active(&mut self) {
+        let rows = self.visible_indices();
+        if self.active.is_none_or(|id| !rows.iter().any(|&i| self.entries[i].id == id)) {
+            self.active = rows.first().map(|&i| self.entries[i].id);
         }
     }
     pub fn options(&self, entry: &Entry) -> import_texture::Options {
@@ -732,6 +779,10 @@ impl Imports {
         if self.busy() {
             return;
         }
+        if !self.folder_plan_ready(world, prefs) {
+            self.message = aurora_i18n::tr!("import-invalid-request").into();
+            return;
+        }
         let Some(total) = self.total(prices) else {
             self.message = aurora_i18n::tr!("import-price-unavailable").into();
             return;
@@ -774,7 +825,11 @@ impl Imports {
                             key,
                             entry: None,
                             kind: Kind::Texture,
-                            folder: Self::default_folder(world, prefs, Kind::Texture),
+                            folder: if self.folders.active() || !permission_prefs.use_default_folders {
+                                entry.folder
+                            } else {
+                                Self::default_folder(world, prefs, Kind::Texture)
+                            },
                             name: image.name.clone(),
                             description: String::new(),
                             source: Source::Texture(image.pixels.clone()),
@@ -842,6 +897,8 @@ impl Imports {
         self.message.clear();
     }
     pub fn cancel_remaining(&mut self) {
+        self.pending_confirmed = None;
+        self.folders.cancel();
         self.queue.clear();
         for entry in &mut self.entries {
             if matches!(entry.status, Status::Preparing) {
@@ -931,6 +988,10 @@ impl Imports {
         prefs: &crate::ui::inventory::InventoryPreferences,
     ) -> Vec<aurora_net::NetCommand> {
         let mut commands = Vec::new();
+        self.sync_folder_plan(world, prefs);
+        if let Some(command) = self.next_import_folder(world, prefs) {
+            commands.push(command);
+        }
         // Retire only acknowledged uploads. Local previews and drafts that
         // failed, were cancelled or were not selected remain available.
         for index in (0..self.entries.len()).rev() {
@@ -945,6 +1006,7 @@ impl Imports {
             match worker {
                 Worker::Loaded(request, mut entries) if self.pending_files == Some(request) => {
                     self.pending_files = None;
+                    let batch_folder = Self::batch_folder(world, self.load_preferences.batch_folder);
                     for entry in &mut entries {
                         // Capture the latest choice on admission, not when the
                         // asynchronous file dialog/load started. Existing rows
@@ -959,7 +1021,11 @@ impl Imports {
                             entry.options.max_height = maximum;
                         }
                         if let Some(source) = &entry.source {
-                            entry.folder = Self::default_folder(world, prefs, source.kind());
+                            entry.folder = if self.folders.active() || self.load_preferences.use_default_folders {
+                                Self::default_folder(world, prefs, source.kind())
+                            } else {
+                                batch_folder
+                            };
                         }
                     }
                     if let Some(entry) = entries.iter().find(|e| e.from_live && self.choice.accepts(e)) {
@@ -974,6 +1040,7 @@ impl Imports {
                         .then(|| entries.iter().find(|e| matches!(e.status, Status::Error(_))).map(|e| e.id))
                         .flatten();
                     self.entries.extend(entries);
+                    self.sync_folder_plan(world, prefs);
                     if let Some(id) = failed {
                         self.open(Choice::Local);
                         self.active = Some(id);

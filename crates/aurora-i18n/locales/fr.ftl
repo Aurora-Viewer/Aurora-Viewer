@@ -387,7 +387,7 @@ import-preview-sphere = Sphère
 import-preview-cube = Cube
 import-preview-aurora = Aurora 3D
 import-no-map = Aucune
-keybinds-import-files = Importer des fichiers
+keybinds-import-files = Ouvrir la fenêtre d’import
 keybinds-hide-interface = Masquer / afficher l'interface
 keybinds-show-huds = Afficher / masquer les HUDs
 import-preview-tools = Outils de visualisation
@@ -451,7 +451,7 @@ import-animation = Animation
 import-material = Matériau PBR
 import-mesh = Mesh
 import-bulk = Multiple
-import-choose-files = Choisir des fichiers…
+import-choose-files = Ajouter des fichiers…
 import-loading = Lecture des fichiers…
 import-limit-bulk-1k = Limiter les textures à 1024 px
 import-files = Fichiers
@@ -12672,3 +12672,48 @@ local-appearance-library = Ouvrir les aperçus locaux
 local-appearance-remove = Retirer toutes les textures / matériaux locaux…
 local-appearance-confirm-title = Retirer les textures et matériaux locaux ?
 local-appearance-confirm-body = Rétablir l’apparence du serveur pour les objets mémorisés sur ce compte et cette grille (total : { $count }), y compris ceux actuellement absents. Ces applications ne seront plus restaurées après reconnexion. Vos fichiers locaux, la bibliothèque d’aperçus et les aperçus de maillages sont conservés.
+
+# Bulk upload folder plan
+import-folders = Dossiers
+import-choose-folder = Ajouter un dossier…
+import-folders-enable = Organiser les dossiers d’import
+import-folders-arrange = Structure
+import-folders-mirror = Reprendre l’arborescence
+import-folders-type = Regrouper par type
+import-folders-flat = Destination unique
+import-folders-preview = Aperçu de l’inventaire
+import-folders-path = Chemin du dossier
+import-folders-path-help = Dossiers relatifs séparés par /. Laisser vide pour utiliser directement la destination.
+import-folders-edit-help = Modifier cette destination dans l’onglet Dossiers.
+import-folders-summary = { $folders } dossiers · { $files } fichiers sélectionnés
+import-folders-create = Créer les dossiers
+import-folders-ready = Destinations prêtes. Vérifiez les fichiers puis confirmez leur import ci-dessous.
+import-folders-prepare-first = Créez les dossiers prévus avant de calculer les frais ou d’importer.
+import-folders-invalid-path = Utilisez des noms de dossiers non vides de 63 octets maximum, séparés par /. Les caractères de contrôle, |, . et .. sont interdits.
+import-folders-failed = La création des dossiers a échoué. Les dossiers confirmés sont conservés ; vérifiez la destination avant de réessayer. Aucun import n’a été lancé.
+import-folders-empty = Ce dossier ne contient aucun fichier compatible avec l’import en lot.
+import-folders-read-failed = Le dossier source n’a pas pu être lu entièrement. Vérifiez ses droits d’accès puis réessayez.
+import-folders-scan-limit = Cette arborescence est trop grande ou trop profonde. Sélectionnez un dossier source plus petit.
+import-folders-textures = Textures
+import-folders-sounds = Sons
+import-folders-animations = Animations
+import-folders-materials = Materiaux
+import-folders-meshes = Maillages
+import-folders-other = Autres
+
+# Unified import window
+import-window-title = Importer
+import-queue = File d’import
+import-queue-empty = Aucun fichier visible dans la file.
+import-queue-clear = Vider la file
+import-tab-batch = Fichiers
+import-tab-folder = Aperçu des dossiers
+import-tab-permissions = Permissions
+import-use-default-folders = Utiliser les dossiers par défaut
+import-folders-auto-create = Les dossiers de destination manquants seront créés après confirmation de l’import.
+
+import-include-source-folder = Inclure le dossier source
+import-source-folder-name-help = Nom du dossier d’inventaire pour { $source }. Le dossier sur votre ordinateur reste inchangé.
+
+import-local-stage-upload = Ajouter à l’upload ({ $count })
+import-local-stage-upload-help = Conserver les aperçus locaux et préparer l’upload des fichiers cochés, y compris les fichiers masqués. Les frais seront confirmés séparément.

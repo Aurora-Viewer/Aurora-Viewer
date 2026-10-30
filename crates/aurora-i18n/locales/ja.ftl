@@ -387,7 +387,7 @@ import-preview-sphere = 球体（スフィア）
 import-preview-cube = 立方体（キューブ）
 import-preview-aurora = Aurora 3D
 import-no-map = なし
-keybinds-import-files = ファイルをインポート
+keybinds-import-files = アップロードウィンドウを開く
 keybinds-hide-interface = インターフェースの表示／非表示
 keybinds-show-huds = ＨＵＤの表示／非表示
 import-preview-tools = プレビューツール
@@ -451,7 +451,7 @@ import-animation = アニメーション
 import-material = ＰＢＲマテリアル
 import-mesh = メッシュ
 import-bulk = 複数
-import-choose-files = ファイルを選択…
+import-choose-files = ファイルを追加…
 import-loading = ファイルを読み込んでいます…
 import-limit-bulk-1k = テクスチャを1024 pxに制限
 import-files = ファイル
@@ -12658,3 +12658,49 @@ local-appearance-library = ローカルプレビューを開く
 local-appearance-remove = すべてのローカルテクスチャ・マテリアルを解除…
 local-appearance-confirm-title = ローカルテクスチャとマテリアルを解除しますか？
 local-appearance-confirm-body = このアカウントとグリッドで記憶されたオブジェクト（合計{ $count }個）をサーバー上の外観に戻します。現在表示されていないオブジェクトも対象です。解除した適用状態は再接続後に復元されません。ローカルファイル、プレビューライブラリ、メッシュプレビューは保持されます。
+
+# Bulk upload folder plan
+import-folders = フォルダー
+import-choose-folder = フォルダーを追加…
+import-folders-enable = アップロード先を整理
+import-folders-arrange = 構成
+import-folders-mirror = 元のフォルダー構成を維持
+import-folders-type = 種類別に分類
+import-folders-flat = 同じ保存先
+import-folders-preview = インベントリのプレビュー
+import-folders-path = フォルダーのパス
+import-folders-path-help = 保存先からの相対パスを/で区切って指定します。空欄にすると保存先をそのまま使用します。
+import-folders-edit-help = 「フォルダー」タブでこの保存先を変更できます。
+import-folders-summary = フォルダー{ $folders }個・選択したファイル{ $files }個
+import-folders-create = フォルダーを作成
+import-folders-ready = 保存先を準備しました。ファイルを確認してから、下のボタンでアップロードしてください。
+import-folders-prepare-first = 料金の計算やアップロードの前に、予定したフォルダーを作成してください。
+import-folders-invalid-path = 空でない６３バイト以内のフォルダー名を/で区切って指定してください。制御文字、|、.、..は使用できません。
+import-folders-failed = フォルダーを作成できませんでした。作成済みのフォルダーは保持されます。保存先を確認してから再試行してください。アップロードは開始していません。
+import-folders-empty = このフォルダーには一括アップロードできるファイルがありません。
+import-folders-read-failed = 元のフォルダーをすべて読み取れませんでした。アクセス権を確認してから再試行してください。
+import-folders-scan-limit = フォルダー構成が大きすぎるか深すぎます。より小さいフォルダーを選択してください。
+# Created inventory names follow the reference ASCII normalization.
+import-folders-textures = Textures
+import-folders-sounds = Sounds
+import-folders-animations = Animations
+import-folders-materials = Materials
+import-folders-meshes = Meshes
+import-folders-other = Other
+
+# Unified import window
+import-window-title = アップロード
+import-queue = アップロード待ち
+import-queue-empty = 表示するファイルがありません。
+import-queue-clear = キューを空にする
+import-tab-batch = ファイル
+import-tab-folder = フォルダープレビュー
+import-tab-permissions = 権限
+import-use-default-folders = 既定のフォルダーを使用
+import-folders-auto-create = アップロードを確定すると、必要な保存先フォルダーが作成されます。
+
+import-include-source-folder = 元のフォルダーを含める
+import-source-folder-name-help = { $source } のインベントリ内のフォルダー名。コンピューター上のフォルダーは変更されません。
+
+import-local-stage-upload = アップロードに追加（{ $count }）
+import-local-stage-upload-help = 非表示を含むチェック済みファイルのアップロードを準備し、ローカルプレビューは保持します。料金は別途確認します。

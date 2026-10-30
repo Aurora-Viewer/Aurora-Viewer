@@ -387,7 +387,7 @@ import-preview-sphere = Sphere
 import-preview-cube = Cube
 import-preview-aurora = Aurora 3D
 import-no-map = None
-keybinds-import-files = Import files
+keybinds-import-files = Open the import window
 keybinds-hide-interface = Hide / show the interface
 keybinds-show-huds = Show / hide HUDs
 import-preview-tools = Preview tools
@@ -451,7 +451,7 @@ import-animation = Animation
 import-material = PBR material
 import-mesh = Mesh
 import-bulk = Multiple
-import-choose-files = Choose files…
+import-choose-files = Add files…
 import-loading = Reading files…
 import-limit-bulk-1k = Limit textures to 1024 px
 import-files = Files
@@ -12676,3 +12676,48 @@ local-appearance-library = Open local previews
 local-appearance-remove = Remove all local textures / materials…
 local-appearance-confirm-title = Remove local textures and materials?
 local-appearance-confirm-body = Restore the server appearance for the remembered objects in this account and grid (total: { $count }), including objects currently absent. These applications will no longer be restored after reconnecting. Your local files, preview library and mesh previews are kept.
+
+# Bulk upload folder plan
+import-folders = Folders
+import-choose-folder = Add folder…
+import-folders-enable = Organize upload folders
+import-folders-arrange = Structure
+import-folders-mirror = Mirror source folders
+import-folders-type = Group by type
+import-folders-flat = Single destination
+import-folders-preview = Inventory preview
+import-folders-path = Folder path
+import-folders-path-help = Relative folders separated by /. Leave empty to use the destination itself.
+import-folders-edit-help = Edit this destination in the Folders tab.
+import-folders-summary = { $folders } folders · { $files } selected files
+import-folders-create = Create folders
+import-folders-ready = Destinations ready. Review the files and confirm their upload below.
+import-folders-prepare-first = Create the planned folders before calculating fees or uploading.
+import-folders-invalid-path = Use non-empty folder names of at most 63 bytes, separated by /. Control characters, |, . and .. are not allowed.
+import-folders-failed = Folder creation failed. Confirmed folders are kept; review the destination before trying again. No upload was started.
+import-folders-empty = This folder contains no supported bulk upload files.
+import-folders-read-failed = The source folder could not be fully read. Check its access permissions and try again.
+import-folders-scan-limit = This folder tree is too large or too deep to scan. Select a smaller source folder.
+import-folders-textures = Textures
+import-folders-sounds = Sounds
+import-folders-animations = Animations
+import-folders-materials = Materials
+import-folders-meshes = Meshes
+import-folders-other = Other
+
+# Unified import window
+import-window-title = Import
+import-queue = Import queue
+import-queue-empty = No visible files in the queue.
+import-queue-clear = Clear queue
+import-tab-batch = Files
+import-tab-folder = Folder preview
+import-tab-permissions = Permissions
+import-use-default-folders = Use default folders
+import-folders-auto-create = Missing destination folders will be created after you confirm the upload.
+
+import-include-source-folder = Include source folder
+import-source-folder-name-help = Name of the inventory folder for { $source }. The folder on your computer is unchanged.
+
+import-local-stage-upload = Add to upload ({ $count })
+import-local-stage-upload-help = Keep the local previews and prepare uploads of the checked files, including hidden files. Upload fees are confirmed separately.

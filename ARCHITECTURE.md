@@ -1,5 +1,40 @@
 # Aurora Viewer architecture
 
+`imports/folders.rs` owns editable relative destinations for bulk uploads.
+`folders/roots.rs` applies the optional source wrapper in mirror, type and flat
+layouts. Include source folder defaults on and is persisted with import settings;
+per-source names stay with the current queue. Wrapper edits retain manual inner
+paths and invalidate affected mesh offers. Loose file selections are never wrapped.
+`ui/source_root.rs` shares the checkbox and name editor below Destination in
+Files and Folder preview. Folder admission retains the current tab; explicit
+left-queue file clicks open Files, including clicks on the already active item.
+`imports/stage.rs` snapshots checked local previews into fresh upload drafts,
+retaining decoded sources and user edits without disk reads or image rescans.
+It preserves local identities/attachments, isolates mesh job controls and fee
+state, resolves local texture UUIDs into upload dependencies, enforces queue/input
+budgets atomically and applies the shared destination policy. The local footer action opens Files on the first new draft; paid transfers
+still require ordinary fee calculation and confirmation.
+`files/folder.rs` scans supported files on the import worker, retaining the selected
+source directory and its nested paths without following reparse points.
+`files/lods.rs` shares configured companion names with the mesh loader and orders
+parents before prospective children; `files/folder.rs` suppresses only companions
+that were successfully decoded and attached, retaining orphan/error rows.
+`automatic.rs` starts acknowledged folder creation only after confirmation,
+refreshes mesh fee offers against actual destinations and enforces the approved
+per-mesh and total budgets before queueing paid transfers.
+`ui/folder_panel.rs` supplies the shared routing header, virtualized result
+preview and subtree edits. Each file row displays its destination with an
+independent relative-path editor and Apply action; default destinations remain
+visible while editing is locked. Upload selection stays in the left queue,
+which always retains insertion order. Its header contains the count and clear
+icon, with no sort controls. Confirmed uploads use
+the existing inventory mutations one acknowledged parent at a time; server UUID
+remapping, cancellation and partial failures retain confirmed progress. Initial
+mesh fee queries may use the permitted root before confirmation; paid transfers
+require acknowledged destinations and fresh offers. Custom routing sends
+material/mesh dependencies to their parent's folder. Per-type destinations
+remain the default until the shared Use default folders choice is unchecked.
+
 Session layout uses Settings::nearby_chat_window for nearby-chat docking/visibility
 and show_camera_controls / show_movement_controls for the Controls windows.
 ChatUi::from_settings restores only nearby chat at startup and after logout; IMs,
@@ -2070,7 +2105,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 
 | Folder / file | Contents |
 |---|---|
-| `imports/`, `app/imports.rs` | Per-file import drafts removed after acknowledged uploads (discarded on a worker), local previews and unfinished drafts kept; preview, selection of the material maps, texture / animation / LOD / physics parameters; sequential upload queue with deduplicated material dependencies, mesh quote frozen before confirmation and processing of the files on the workers. `local.rs` watches the local textures, materials and meshes and prepares their GPU resources; meshes, textures and materials target the selection or a support prim through visual overlays kept in `world/objects.rs`, without changing the server data. The textures use the scene's staging pool; the render loop installs and frees their GPU slots explicitly. The local picker recognises the three types, including glTF/GLB documents according to their content. `ui/local_status.rs` exposes applied texture/material counts, a direct face-coverage highlight toggle and confirmed account/grid-wide appearance removal, retaining the library and mesh previews. `persistence.rs` saves the references/settings and the applications per account/grid in the private profile; read back on a worker, atomic writes batched and flushed on close, missing sources kept. Texture/material face bindings have absolute seven-day deadlines renewed only on application, with backward-compatible migration and expiry during restoration and live sessions; the library and mesh bindings remain intact. Returned parked objects reinstall appearances from current bindings rather than stale render copies. Connection, missing quote, unknown price and account-specific mesh permission denial have distinct statuses. `ui.rs` shows the same Name / Description / Destination rows above every import panel, including the mesh sections; `ui/destination.rs` filters the allowed folders, with a cache and a virtualised list; `ui/material_panel.rs` keeps the 3D canvas and gesture hints stable while loading, beside four distinct PBR cards in a 2 × 2 grid without scrolling, with left-aligned titles and names, right-aligned actions and common parameter rows; `ui/mesh_panel.rs` places metadata beside the preview and its vertical tools, with five tabs and a bounded section viewport above the fixed model/fee summary; `ui/mesh_panel/panels.rs` supplies the Avatar joint/override controls and actual Journal diagnostics; `ui/zoom.rs` enlarges the 3D view with its camera or a square texture preview prepared on a worker at native resolution (2,048 pixels per side maximum, one large GPU cache at a time); `permissions.rs` stores per-type next-owner defaults with migration from the legacy shared preferences, frozen into each confirmed upload step; `ui/permission_panel.rs` exposes only Modify / Copy / Transfer for the five importable types in the main Permissions tab; `animation.rs` keeps an independent clock; `preview.rs` also prepares the imported hand poses, expressions and joint positions |
+| `imports/`, `app/imports.rs` | Per-file import drafts removed after acknowledged uploads (discarded on a worker), local previews and unfinished drafts kept; preview, selection of the material maps, texture / animation / LOD / physics parameters; sequential upload queue with deduplicated material dependencies, mesh quote frozen before confirmation and processing of the files on the workers. `local.rs` watches the local textures, materials and meshes and prepares their GPU resources; meshes, textures and materials target the selection or a support prim through visual overlays kept in `world/objects.rs`, without changing the server data. The textures use the scene's staging pool; the render loop installs and frees their GPU slots explicitly. The local picker recognises the three types, including glTF/GLB documents according to their content. `ui/local_status.rs` exposes applied texture/material counts, a direct face-coverage highlight toggle and confirmed account/grid-wide appearance removal, retaining the library and mesh previews. `persistence.rs` saves the references/settings and the applications per account/grid in the private profile; read back on a worker, atomic writes batched and flushed on close, missing sources kept. Texture/material face bindings have absolute seven-day deadlines renewed only on application, with backward-compatible migration and expiry during restoration and live sessions; the library and mesh bindings remain intact. Returned parked objects reinstall appearances from current bindings rather than stale render copies. Connection, missing quote, unknown price and account-specific mesh permission denial have distinct statuses. `ui.rs` retains Name / Description in each import panel with shared routing above Files and Folder preview; `ui/destination.rs` renders a cached inventory hierarchy with disclosure, virtualized rows, shared naming/sibling order and ancestor-preserving search; `ui/material_panel.rs` keeps the 3D canvas and gesture hints stable while loading, beside four distinct PBR cards in a 2 × 2 grid without scrolling, with left-aligned titles and names, right-aligned actions and common parameter rows; `ui/mesh_panel.rs` places metadata beside the preview and its vertical tools, with five tabs and a bounded section viewport above the fixed model/fee summary; `ui/mesh_panel/panels.rs` supplies the Avatar joint/override controls and actual Journal diagnostics; `ui/zoom.rs` enlarges the 3D view with its camera or a square texture preview prepared on a worker at native resolution (2,048 pixels per side maximum, one large GPU cache at a time); `permissions.rs` stores per-type next-owner defaults with migration from the legacy shared preferences, frozen into each confirmed upload step; `ui/permission_panel.rs` exposes only Modify / Copy / Transfer for the five importable types in the main Permissions tab; `animation.rs` keeps an independent clock; `preview.rs` also prepares the imported hand poses, expressions and joint positions |
 | `aurora-assets/src/import_*` | Pure validation and conversion: dimensions / alpha / JPEG2000, WAV to Vorbis, BVH to animation, RGB / ORM PBR maps, shared glTF / GLB resources, Collada / glTF geometry, LOD through meshoptimizer, spatial transfer of the weights, convex hulls and serialisation of the mesh into compressed LLSD sections. `import_mesh/vhacd.rs` and `native/vhacd/` wrap V-HACD 4.1: bounded allocations, contained exceptions, atomic cancellation / progress; each model runs on a Rust worker |
 | `aurora-net/src/inventory/{upload,mesh_upload}.rs`, `session/asset_imports.rs` | Two-step import protocol, confirmed expected cost retained when the preliminary response carries a lower base texture fee, final paid cost from the upload receipt, read-back of the created item; materials created then saved through their dedicated capability. A preliminary fee above the confirmed amount stops before transfer. The mesh transfer URLs stay private to the session, tied to a local token consumed only once and expiring after five minutes |
 | `aurora-render/src/preview.rs`, `shaders/preview.wgsl` | 3D previews in the windows: PBR rendering and skinning on the GPU thread, off-screen targets linked directly to egui, deduplication of the shared maps, no GPU readback and no wait on the GPU in the interface loop. Shared orbit, screen-space pan, zoom and camera reset; material previews use Sphere / Cube / Aurora 3D and four worker-prepared thumbnails, with a self-contained bundled GLB |
@@ -2324,25 +2359,43 @@ around 0.63), struck-through Tabler microphone (`microphone-off`) for the
 avatars outside voice. `voice.rs` guarantees the entry of our avatar from the
 local microphone, even without an echo of its presence from the voice server.
 
-The configurable Import shortcut and Build › Import both toggle
-`imports/ui/launcher.rs`: seven type-specific actions, Settings and a plain
-close cross in a horizontal toolstrip, without title, shortcut text, help
-footer or common background. Each button uses `widgets::glass_action_icon`
-for independent world blur, a translucent palette tint and the theme's
-border, shadow and radius; opaque skins remain opaque. `widgets::toolstrip`
-retains movable layout placement without painting a group surface. Its first measured opening uses an explicit top-midpoint default below the bars; saved placement wins. Other untouched windows initialize a valid point among all eight perimeter anchors and its offset from their unchanged default geometry; the same eight-point rule applies after completed moves. The
-filtered file picker is scheduled when the chosen type has no listed file;
-otherwise its inspector opens directly. Choosing the displayed type closes
-its window. The chooser stays open above overlapping inspectors. Newly shown import
-windows and Settings share the same top-left default; saved placement wins.
-Settings contains only permissions and payment. Its five independent columns
-per type cover next-owner modify/copy/transfer, group sharing and everyone-copy.
-Missing sharing fields in saved rows inherit the legacy common flags; explicit
-per-type overrides are saved without resetting other rows.
-`imports/ui/inspector.rs` draws dedicated Texture, Sound, Animation,
-Material, Mesh and Local floaters, each with its own saved geometry and a
-filtered file list at the left. The right pane keeps the shared metadata,
-the current asset panel. `imports/sound.rs` retains the original PCM, a cached
+The configurable Import shortcut (Ctrl+U by default), toolbar and Build menu
+open one `asset_imports_v7` floater. `imports/ui/queue.rs` draws five independent
+visibility filters, local-preview mode, file/folder inputs and the mixed queue.
+The type filters use 30-point icon buttons. Queue rows align the checkbox, type
+icon and filename on one line; the ordinary Ready state stays in the tooltip,
+while progress/errors use the existing status indicator. The trash icon follows
+the sort control beside the queue count dispatches the ordinary removal path for every entry in the
+current upload/local mode, including hidden and unchecked entries, preserving
+the other mode. It waits for loading and active uploads to finish before becoming available.
+Insertion order is the default; optional name/type/path sorting never changes
+upload selection. Missing/filtered active entries reconcile to the first visible
+row, and selection switches the existing asset inspector without moving the
+window. Bounded queue/detail panes and the shared steady-size floater retain
+its geometry when the last upload retires or a payment receipt appears;
+the queue measures its footer to leave room for wrapped controls.
+The right pane has Files / Folder preview / Permissions tabs. Files retains the
+active asset inspector; `imports/ui/folder_preview.rs` combines actual UUID-based
+inventory ancestry and shared sibling order with the proposed destination
+children, preserving duplicate names and permitting subtree/file path edits.
+Both views share the saved Use default folders choice (on for existing/new
+profiles), destination and mirror/type/single-folder options. Unchecking the
+default choice unlocks the destination options; changing tabs never changes
+routing. `imports/folders.rs` applies the shared policy and retains edited paths
+when temporarily using per-type defaults. Texture dependencies follow their
+owning mesh/material destination under the custom policy. Permissions embeds
+the existing per-type rights and payment settings. `ui/footer.rs` pins price,
+quote, confirmation and cancellation controls inside Files and Folder preview;
+Permissions has no upload footer. Folder admission retains the current tab; clicking a filename in the left queue
+opens Files even when it is already active. No separate organizer switch or folder-creation action
+is exposed: confirmation schedules acknowledged folder mutations, then refreshes
+mesh quotes against the real destination UUIDs before any paid transfer, within
+the approved price ceiling. The former folder-plan popup and separate
+import-defaults floater are removed.
+`imports/ui/mesh_panel.rs` retains its structure, including its preview, LOD,
+avatar, physics and summary structure. Mixed inputs now accept BVH animations
+through the existing animation decoder/editor and upload encoder.
+`imports/sound.rs` retains the original PCM, a cached
 amplitude envelope and non-destructive crop / gain / segmentation options. `ui/sound_panel.rs`
 draws the waveform and a playhead started when the audio engine receives the
 prepared clip; gain commits restart audition with the processed PCM, while
@@ -2357,14 +2410,12 @@ does not charge its successful pieces again. Bounded long WAV sources are
 accepted for editing; each output still obeys the grid's asset duration limit.
 Animations pair the preview with labelled metadata, loop units and easing
 grids in a narrow inspector, with a full reserved reset-button row below the
-preview. Dedicated materials use a narrow vertical arrangement with a larger
-preview and unframed map rows in one column. Mesh and material palettes open
+preview. Materials retain their preview and map editors, choosing the compact layout
+when the shared detail pane is narrow. Mesh and material palettes open
 a separate small floater, so clicking the shared `widgets::color_button`
 does not dismiss a parent menu. Colors update the preview's render uniforms
 immediately, without rebuilding geometry or changing imported data.
-Multiple keeps the complete inspector and its type tabs;
-`Imports::inspector` keeps that window identity independent of its active
-type tab. Parsing, preview jobs and the confirmed upload queue stay shared.
+Parsing, preview jobs and the confirmed upload queue stay shared across all types.
 Collada skin controllers absent from visual-scene instances are decoded through
 that same scene path, once per controller, following LLDAELoader::OpenFile /
 processDomModel. Explicit instancing and nested transforms remain intact.

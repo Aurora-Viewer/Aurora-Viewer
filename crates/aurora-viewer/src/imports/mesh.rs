@@ -708,6 +708,21 @@ impl Imports {
         prefs: &crate::ui::inventory::InventoryPreferences,
         rights: Permissions,
     ) {
+        if !self.folder_plan_valid(world, prefs) {
+            self.message = aurora_i18n::tr!("import-invalid-request").into();
+            return;
+        }
+        let planned_folder = if self.folders.active() {
+            self.entries
+                .iter()
+                .find(|entry| entry.id == id)
+                .and_then(|entry| entry.upload_path.as_ref())
+                .and_then(|path| self.folders.resolved(path, &world.inventory, &prefs.protected))
+                .or(Some(self.folders.destination))
+        } else {
+            None
+        };
+        let shared_destination = self.folders.active() || !self.load_preferences.use_default_folders;
         let textures = Self::default_folder(world, prefs, Kind::Texture);
         let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && !e.reloading) else {
             return;
@@ -727,7 +742,8 @@ impl Imports {
         let generation = entry.preview_generation;
         draft.pending = Some((request_id, generation));
         let draft = draft.clone();
-        let folder = entry.folder;
+        let folder = planned_folder.unwrap_or(entry.folder);
+        let textures = if shared_destination { folder } else { textures };
         let name = entry.name.clone();
         let description = entry.description.clone();
         let options = entry.options;
