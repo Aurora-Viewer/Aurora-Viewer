@@ -1702,7 +1702,7 @@ pub fn top_bars(
                 if let Some(t) = icons.get("wolf") {
                     let img = egui::Image::new(t).fit_to_exact_size(Vec2::new(18.0, 18.0)).tint(p.ink);
                     menu::button(ui, p, egui::Button::image(img), |ui| {
-                        main_menus(ui, p, panels, st, &mut action, true);
+                        menu::searchable(ui, p, |ui| main_menus(ui, p, panels, st, &mut action, true));
                     })
                     .on_hover_text(aurora_i18n::tr!("ui-bars-aurora-menu"));
                 }

@@ -3851,6 +3851,7 @@ ui-sound-menu-option-6-hovered = Menu: option 6 hovered
 ui-sound-menu-option-7-hovered = Menu: option 7 hovered
 ui-sound-menu-option-8-hovered = Menu: option 8 hovered
 ui-bars-aurora-menu = Aurora menu
+ui-bars-menu-no-match = No entry matches “{ $query }”.
 ui-sound-context-menu-closed = Context menu closed
 ui-sound-context-menu-opened = Context menu opened
 world-mod-test-menu = Test menu
