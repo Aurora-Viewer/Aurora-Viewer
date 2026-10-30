@@ -1831,8 +1831,9 @@ impl Copied<'_> {
 }
 
 /// The selection of the lines (`select.rs`), as in Firestorm's transcript:
-/// a drag selects across them (never moving the window), a click without a
-/// drag clears it; a press gives them the keyboard, then Ctrl+A selects the
+/// a drag selects across them (never moving the window), a double click
+/// selects a word, a click without a drag clears it; a press gives them the
+/// keyboard, then Ctrl+A selects the
 /// whole conversation, Ctrl+C (Ctrl+Insert) copies the selection, Escape
 /// clears it, and what is typed goes to the conversation's field.
 fn select_lines(
@@ -1881,6 +1882,14 @@ fn select_lines(
     }
     if content.clicked() && content.interact_pointer_pos().is_some_and(|p| area.contains(p)) {
         sel.clear();
+    }
+    // a double click selects the word under the pointer (its second click
+    // cleared the selection just above)
+    if content.double_clicked()
+        && let Some(pos) = content.interact_pointer_pos().filter(|p| area.contains(*p))
+        && let Some((seq, range, text)) = select::word_at(drawn, pos)
+    {
+        sel.select_in_row(seq, range, text);
     }
     // (no text cursor over the lines, though a drag selects them: the
     // arrow, the hand on links and names; the human's choice of 2026-10-16)

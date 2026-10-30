@@ -688,6 +688,51 @@ fn the_message_menu_acts() {
     }
 }
 
+/// A double click on the first or the last word of a message, then Ctrl+C,
+/// copies that word alone: not the line's "[time] Name: " prefix, nor the
+/// whole message.
+#[test]
+fn a_double_clicked_word_is_copied_alone() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        for conversation in [None, Some(JANE)] {
+            // the first and last words of a message, and a message of one word
+            for (said, at, word) in [
+                ("hello from Jane", 2.5 / 15.0, "hello"),
+                ("hello from Jane", 13.0 / 15.0, "Jane"),
+                ("hello", 0.5, "hello"),
+            ] {
+                let mut h = H::new(style);
+                let message = line("Jane", JANE, ChatKind::Im, said);
+                if let Some(id) = conversation {
+                    h.world.social.session_mut(id).lines = [message].into();
+                } else {
+                    h.world.chat = [message].into();
+                }
+                h.open(conversation);
+                let text = h.text_rect(said);
+                let pos = egui::pos2(text.left() + text.width() * at, text.center().y);
+                let button = |pressed| egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                };
+                h.frame(vec![egui::Event::PointerMoved(pos)]);
+                for _ in 0..2 {
+                    h.frame(vec![button(true)]);
+                    h.frame(vec![button(false)]);
+                }
+                h.settle();
+                let copied = h.frame_out(vec![egui::Event::Copy]).commands.into_iter().find_map(|c| match c {
+                    egui::OutputCommand::CopyText(t) => Some(t),
+                    _ => None,
+                });
+                assert_eq!(copied.as_deref(), Some(word), "{style:?}, {conversation:?}, {said:?}");
+            }
+        }
+    }
+}
+
 #[test]
 fn selected_messages_copy_from_the_menu_even_after_eviction() {
     for style in [ChatStyle::Aurora, ChatStyle::Compact] {
