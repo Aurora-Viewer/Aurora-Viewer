@@ -9,6 +9,7 @@
 //! 499–599 statuses and transport errors, 1 s doubling backoff capped at
 //! 20 s, `Retry-After` honoured below 30 s).
 
+use crate::fetch_pace::{self, Answer, Pace};
 use crate::probe::{self, HttpKind};
 use crate::stats::NetStats;
 use std::cmp::Ordering as CmpOrdering;
@@ -16,17 +17,45 @@ use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::{Notify, Semaphore, mpsc};
 
 /// Requests to the appearance service (the bakes) under way at once at
-/// most. It is Linden Lab's own service, not a CDN, and must share the
-/// transport bound with the other assets.
+/// most, whatever the pace (`fetch_pace.rs`) lets the asset CDN have: it
+/// is Linden Lab's own service, not a CDN, and the 24 of before were never
+/// its limit (a few hundred bakes in a whole crowd).
 const BAKE_SLOTS: usize = 24;
 
 /// A bake from the appearance service: `…/texture/<avatar>/<bake>/<id>`,
 /// with no query (the CDN's assets always have one, `?texture_id=…`).
 fn is_bake(url: &str) -> bool {
     !url.contains('?') && url.contains("/texture/")
+}
+
+/// The pace shared by the dispatcher and the requests' attempts, and when
+/// its limit was last logged.
+struct Paced {
+    pace: parking_lot::Mutex<Pace>,
+    logged: parking_lot::Mutex<(Instant, usize)>,
+}
+
+impl Paced {
+    fn answer(&self, a: Answer) {
+        let now = Instant::now();
+        let mut pace = self.pace.lock();
+        if !pace.answer(a, now) {
+            return;
+        }
+        // (the limit as it moves, every 2 s at most)
+        let mut logged = self.logged.lock();
+        if now.duration_since(logged.0) >= Duration::from_secs(2) && pace.limit() != logged.1 {
+            *logged = (now, pace.limit());
+            log::info!(
+                "asset fetch: {} requests at once (first byte in {:.0} ms when idle)",
+                pace.limit(),
+                pace.baseline_ms().unwrap_or(0.0)
+            );
+        }
+    }
 }
 
 /// Byte range of a request (`end` inclusive, None = up to the end).
@@ -434,19 +463,30 @@ impl Fetcher {
         max_concurrent: usize,
         stats: Arc<NetStats>,
     ) -> (Fetcher, crossbeam_channel::Receiver<FetchResult>) {
-        Self::with_policy(rt, http, max_concurrent, stats, RetryPolicy::FIRESTORM)
+        Self::with_policy(rt, http, Some(max_concurrent), stats, RetryPolicy::FIRESTORM)
+    }
+
+    /// Requests under way at once follow the link (`fetch_pace.rs`), or
+    /// stay at `fixed` when given (`AURORA_FETCH_SLOTS`).
+    pub fn paced(
+        rt: &tokio::runtime::Handle,
+        http: reqwest::Client,
+        fixed: Option<usize>,
+        stats: Arc<NetStats>,
+    ) -> (Fetcher, crossbeam_channel::Receiver<FetchResult>) {
+        Self::with_policy(rt, http, fixed, stats, RetryPolicy::FIRESTORM)
     }
 
     pub fn with_policy(
         rt: &tokio::runtime::Handle,
         http: reqwest::Client,
-        max_concurrent: usize,
+        fixed: Option<usize>,
         stats: Arc<NetStats>,
         policy: RetryPolicy,
     ) -> (Fetcher, crossbeam_channel::Receiver<FetchResult>) {
         let (tx, rx) = mpsc::unbounded_channel();
         let (res_tx, res_rx) = crossbeam_channel::unbounded();
-        rt.spawn(dispatcher(rx, res_tx, http, max_concurrent, stats, policy));
+        rt.spawn(dispatcher(rx, res_tx, http, fixed, stats, policy));
         (Fetcher { tx }, res_rx)
     }
 
@@ -473,12 +513,21 @@ async fn dispatcher(
     mut rx: mpsc::UnboundedReceiver<Msg>,
     res_tx: crossbeam_channel::Sender<FetchResult>,
     http: reqwest::Client,
-    max_concurrent: usize,
+    fixed: Option<usize>,
     stats: Arc<NetStats>,
     policy: RetryPolicy,
 ) {
-    let sem = Arc::new(Semaphore::new(max_concurrent));
+    // Every request holds a permit while it is under way (not while it
+    // waits for a retry); the pace decides how many of them may be taken.
+    let most = fixed.unwrap_or(fetch_pace::MAX);
+    let sem = Arc::new(Semaphore::new(most));
     let bakes = Arc::new(Semaphore::new(BAKE_SLOTS));
+    let paced = Arc::new(Paced {
+        pace: parking_lot::Mutex::new(Pace::new(fixed, Instant::now())),
+        logged: parking_lot::Mutex::new((Instant::now(), fixed.unwrap_or(fetch_pace::MIN))),
+    });
+    // a request ended: room under the pace again
+    let ended = Arc::new(Notify::new());
     let mut queue = FetchQueue::default();
     loop {
         // Drain incoming messages without blocking when we have work.
@@ -501,6 +550,24 @@ async fn dispatcher(
         stats.http_queued.store(queue.len() as u32, Ordering::Relaxed);
         probe::http_queue(queue.len());
         if queue.next_lane().is_none() {
+            continue;
+        }
+
+        // No room under the pace: wait for a request to end (or a retry to
+        // let its slot go, which tells no one: the short tick), still
+        // accepting messages.
+        let under_way = most - sem.available_permits();
+        if under_way >= paced.pace.lock().limit() {
+            paced.pace.lock().note_saturated();
+            tokio::select! {
+                biased;
+                _ = ended.notified() => {}
+                m = rx.recv() => match m {
+                    Some(m) => queue.apply(m),
+                    None => return,
+                },
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+            }
             continue;
         }
 
@@ -535,6 +602,8 @@ async fn dispatcher(
         let stats = stats.clone();
         let sem = sem.clone();
         let bakes = bakes.clone();
+        let paced = paced.clone();
+        let ended = ended.clone();
         tokio::spawn(async move {
             stats.http_in_flight.fetch_add(1, Ordering::Relaxed);
             let timed = kind.and_then(probe::HttpRequest::start);
@@ -543,7 +612,8 @@ async fn dispatcher(
             } else {
                 None
             };
-            let result = do_fetch(&http, &req, policy, &sem, permit, &stats).await;
+            let result = do_fetch(&http, &req, policy, &sem, permit, &stats, Some(&paced)).await;
+            ended.notify_one();
             stats.http_in_flight.fetch_sub(1, Ordering::Relaxed);
             if let Some(timed) = timed {
                 let bytes = result.data.as_ref().map_or(0, Vec::len);
@@ -580,7 +650,7 @@ enum Attempt {
     },
 }
 
-async fn attempt(http: &reqwest::Client, req: &FetchRequest, attempts: u32) -> Attempt {
+async fn attempt(http: &reqwest::Client, req: &FetchRequest, attempts: u32, paced: Option<&Paced>) -> Attempt {
     // Like llcorehttp's GET: Accept from the caller, Range when asked, and
     // no Accept-Encoding (the client does not decode content).
     let mut rb = http
@@ -601,6 +671,9 @@ async fn attempt(http: &reqwest::Client, req: &FetchRequest, attempts: u32) -> A
     let resp = match rb.send().await {
         Ok(resp) => resp,
         Err(e) => {
+            if let Some(p) = paced {
+                p.answer(Answer::Refused);
+            }
             let host = host_of(&req.url);
             probe::host_response(&host, 0, sent.elapsed(), 0);
             let why = format!("status none, {}, host {host}", describe_transport_error(&e));
@@ -619,6 +692,14 @@ async fn attempt(http: &reqwest::Client, req: &FetchRequest, attempts: u32) -> A
     let host = resp.url().host_str().unwrap_or("?").to_string();
     note_protocol(&host, resp.version());
     let ttfb = sent.elapsed();
+    if let Some(p) = paced {
+        // (a refusal for load slows the pace; other statuses are answers)
+        p.answer(if status == 429 || status == 503 {
+            Answer::Refused
+        } else {
+            Answer::Headers(ttfb)
+        });
+    }
     if classify_status(status) != StatusClass::Success {
         probe::host_response(&host, status, ttfb, 0);
     }
@@ -714,6 +795,7 @@ async fn do_fetch(
     sem: &Arc<Semaphore>,
     permit: tokio::sync::OwnedSemaphorePermit,
     stats: &NetStats,
+    paced: Option<&Paced>,
 ) -> FetchResult {
     let mut first = Some(permit);
     let mut retry = 0u32;
@@ -722,7 +804,7 @@ async fn do_fetch(
             Some(p) => Some(p),
             None => sem.clone().acquire_owned().await.ok(),
         };
-        match attempt(http, req, retry + 1).await {
+        match attempt(http, req, retry + 1, paced).await {
             Attempt::Done(r) => return r,
             Attempt::Retry { status, why, retry_after } => {
                 if retry >= policy.retries {
@@ -971,7 +1053,7 @@ mod tests {
             lane: Lane::Bulk,
             accept: "image/x-j2c",
         };
-        do_fetch(&client(), &req, policy, &sem, permit, &NetStats::default()).await
+        do_fetch(&client(), &req, policy, &sem, permit, &NetStats::default(), None).await
     }
 
     #[tokio::test]

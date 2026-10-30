@@ -1,10 +1,11 @@
-//! Preferences › Network and cache: the bandwidth and the neighbouring
-//! regions, the disk cache (its size, its folder: the Legacy Viewer's
-//! Network & Files › CacheLocation, applied at the next start), the logs
-//! and the Dev Toolbox.
+//! Preferences › Network and cache: the bandwidth, the download
+//! connections and the neighbouring regions, the disk cache (its size, its
+//! folder: the Legacy Viewer's Network & Files › CacheLocation, applied at
+//! the next start), the logs and the Dev Toolbox.
 
 use super::super::cx::{Cx, Nothing, field, fields};
 use super::super::{Folder, FolderChoice, SLIDER_W, format_bytes, path_label};
+use crate::settings::DownloadConnections;
 use crate::ui::widgets::{self, ActionKind, action_button};
 use egui::{RichText, Vec2};
 
@@ -37,10 +38,23 @@ pub fn page(cx: &mut Cx) {
                 .changed()
             },
         );
-        cx.toggle(
-            tr!("ui-options-fast-asset-loading"),
-            tr!("ui-options-fast-asset-loading-help"),
-            &field!(fast_asset_loading),
+        // Aurora's own: the adaptive pace by default, the Legacy Viewer's
+        // bounded connections when asked or for an adapter known to drop
+        // under it (net_adapters.rs, #1545)
+        let mut hint = tr!("ui-options-download-connections-hint").to_owned();
+        if let Some(adapter) = crate::net_adapters::detected() {
+            hint.push('\n');
+            hint.push_str(&tr!("ui-options-download-connections-detected", adapter = adapter.to_owned()));
+        }
+        cx.combo(
+            tr!("ui-options-download-connections"),
+            &hint,
+            &field!(download_connections),
+            &[
+                (DownloadConnections::Automatic, tr!("ui-options-download-connections-automatic")),
+                (DownloadConnections::Adaptive, tr!("ui-options-download-connections-adaptive")),
+                (DownloadConnections::Limited, tr!("ui-options-download-connections-limited")),
+            ],
         );
         // Legacy Viewer › Move & View (FSDisableNeighbourRegionConnections)
         cx.toggle(

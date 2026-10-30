@@ -13,6 +13,7 @@ pub mod currency;
 pub mod estate;
 pub mod experience;
 pub mod fetch;
+mod fetch_pace;
 pub mod freeze;
 pub mod group_money;
 pub mod groups;
@@ -123,23 +124,55 @@ pub(crate) fn simulator_roots() -> Vec<reqwest::Certificate> {
     roots
 }
 
-/// Bound the HTTP/1.1 connections opened for asset arrivals. The former
-/// adaptive ceiling of 192 could exhaust a consumer router or wedge a NIC
-/// driver within seconds of login; 24 is the stable pre-adaptation limit.
-const ASSET_FETCH_SLOTS: usize = 24;
-const ASSET_IDLE_CONNECTIONS_PER_HOST: usize = 32;
-const FAST_ASSET_FETCH_SLOTS: usize = 128;
+/// How many asset downloads may be under way at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetConnections {
+    /// Follow the link (`fetch_pace.rs`): from 24 up to 192 while it keeps
+    /// up. Aurora's default.
+    Adaptive,
+    /// A fixed 24 requests and at most 32 kept connections per host, like
+    /// the Legacy Viewer's bounded llcorehttp policy
+    /// (`LLAppCoreHttp::init_data`, llappcorehttp.cpp). Some network
+    /// adapter drivers lose the link until a reboot under the adaptive
+    /// pace's connections (#1545, #1546).
+    Limited,
+}
 
-fn asset_connection_limits(fast: bool) -> (usize, usize) {
-    if fast {
-        (FAST_ASSET_FETCH_SLOTS, FAST_ASSET_FETCH_SLOTS)
-    } else {
-        (ASSET_FETCH_SLOTS, ASSET_IDLE_CONNECTIONS_PER_HOST)
+/// Requests under way at once in the limited mode.
+pub const LIMITED_FETCH_SLOTS: usize = 24;
+/// Idle connections kept per host in the limited mode.
+const LIMITED_IDLE_PER_HOST: usize = 32;
+
+/// `AURORA_FETCH_SLOTS=<n>` (1 to 256): the requests under way at once
+/// fixed for one launch, to compare, whatever the mode.
+fn fetch_slots_override() -> Option<usize> {
+    match std::env::var("AURORA_FETCH_SLOTS").ok().map(|v| v.trim().parse::<usize>()) {
+        Some(Ok(n)) if (1..=256).contains(&n) => {
+            log::info!("asset fetch: {n} requests at once (AURORA_FETCH_SLOTS)");
+            Some(n)
+        }
+        Some(_) => {
+            log::warn!("AURORA_FETCH_SLOTS: expected 1 to 256, ignored");
+            None
+        }
+        None => None,
+    }
+}
+
+/// The requests under way at once (None: they follow the link) and the
+/// idle connections kept per host, for a mode and an `AURORA_FETCH_SLOTS`
+/// override.
+fn asset_limits(mode: AssetConnections, fixed: Option<usize>) -> (Option<usize>, usize) {
+    match (fixed, mode) {
+        (Some(n), _) => (Some(n), n.max(32)),
+        // (connections kept for every request the pace may have)
+        (None, AssetConnections::Adaptive) => (None, fetch_pace::MAX.max(32)),
+        (None, AssetConnections::Limited) => (Some(LIMITED_FETCH_SLOTS), LIMITED_IDLE_PER_HOST),
     }
 }
 
 impl NetClient {
-    pub fn new(fast_asset_loading: bool) -> Result<NetClient, NetError> {
+    pub fn new(asset_connections: AssetConnections) -> Result<NetClient, NetError> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(3)
             .thread_name("aurora-net")
@@ -159,7 +192,7 @@ impl NetClient {
         let roots = simulator_roots();
         let caps_http = reqwest::Client::builder()
             .user_agent(aurora_version::user_agent())
-            .pool_max_idle_per_host(ASSET_IDLE_CONNECTIONS_PER_HOST)
+            .pool_max_idle_per_host(32)
             .connect_timeout(std::time::Duration::from_secs(15))
             .tls_certs_only(roots.clone())
             .tls_danger_accept_invalid_hostnames(true)
@@ -180,13 +213,14 @@ impl NetClient {
         // decoding, a 30 s connect timeout and up to 10 redirects. Some
         // assets are served with an odd Content-Encoding that must not
         // make the fetch fail.
-        let (fetch_slots, idle_connections) = asset_connection_limits(fast_asset_loading);
+        let (fetch_slots, idle_per_host) = asset_limits(asset_connections, fetch_slots_override());
+        match fetch_slots {
+            None => log::info!("asset fetch: adaptive (24 to {} requests at once)", fetch_pace::MAX),
+            Some(n) => log::info!("asset fetch: limited to {n} requests at once, {idle_per_host} kept connections per host"),
+        }
         let asset_http = reqwest::Client::builder()
             .user_agent(aurora_version::user_agent())
-            // Keep the transport bounded as llcorehttp does. Hundreds of
-            // simultaneous HTTP/1.1 connections can exhaust a consumer
-            // router or wedge a network-adapter driver during login.
-            .pool_max_idle_per_host(idle_connections)
+            .pool_max_idle_per_host(idle_per_host)
             .connect_timeout(std::time::Duration::from_secs(30))
             .gzip(false)
             .redirect(reqwest::redirect::Policy::limited(10))
@@ -194,7 +228,7 @@ impl NetClient {
             .tls_danger_accept_invalid_hostnames(true)
             .build()
             .map_err(|e| NetError::Http(e.to_string()))?;
-        let (fetcher, fetch_results) = Fetcher::new(rt.handle(), asset_http, fetch_slots, stats.clone());
+        let (fetcher, fetch_results) = Fetcher::paced(rt.handle(), asset_http, fetch_slots, stats.clone());
 
         let shared_caps_http = caps_http.clone();
         let shared = session::Shared {
@@ -318,12 +352,15 @@ impl NetClient {
 }
 
 #[cfg(test)]
-mod connection_limit_tests {
+mod asset_limit_tests {
     use super::*;
 
     #[test]
-    fn asset_connections_are_safe_by_default_and_fast_only_when_asked() {
-        assert_eq!(asset_connection_limits(false), (24, 32));
-        assert_eq!(asset_connection_limits(true), (128, 128));
+    fn adaptive_follows_the_link_and_limited_is_bounded() {
+        assert_eq!(asset_limits(AssetConnections::Adaptive, None), (None, fetch_pace::MAX));
+        assert_eq!(asset_limits(AssetConnections::Limited, None), (Some(24), 32));
+        // the comparison override wins in both modes
+        assert_eq!(asset_limits(AssetConnections::Adaptive, Some(64)), (Some(64), 64));
+        assert_eq!(asset_limits(AssetConnections::Limited, Some(8)), (Some(8), 32));
     }
 }

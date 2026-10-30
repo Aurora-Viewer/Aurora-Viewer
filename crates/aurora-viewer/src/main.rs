@@ -66,6 +66,7 @@ mod mac_quit;
 mod machine_id;
 mod media;
 mod movement;
+mod net_adapters;
 mod net_profile;
 mod overlay_hooks;
 mod own_motion;
