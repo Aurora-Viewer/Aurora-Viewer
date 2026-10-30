@@ -967,6 +967,9 @@ pub struct Settings {
     /// Marketplace delivery (Aurora only, the Legacy Viewer just marks the
     /// inbox new; #752). On by default: nothing else tells about a gift.
     pub notify_deliveries: bool,
+    /// AutoAcceptNewInventory: accept new resident/object inventory offers
+    /// without a prompt. Off by default; give-to-RLVa offers still ask.
+    pub auto_accept_inventory: bool,
     /// Preferences › Inventory › Received items: keeping an offer opens the
     /// inventory on what it gave (ShowInInventory, off by default as in the
     /// Legacy Viewer).
@@ -1831,6 +1834,7 @@ impl Default for Settings {
             sort_received_items: false,
             received_items_since: 0,
             notify_deliveries: true,
+            auto_accept_inventory: false,
             show_accepted_in_inventory: false,
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
@@ -2833,6 +2837,22 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn auto_accept_inventory_defaults_off_and_preserves_saved_choices() {
+        assert!(!super::Settings::default().auto_accept_inventory);
+        let old: super::Settings = serde_json::from_str("{}").expect("older preferences");
+        assert!(!old.auto_accept_inventory);
+        for enabled in [false, true] {
+            let settings = super::Settings {
+                auto_accept_inventory: enabled,
+                ..Default::default()
+            };
+            let bytes = serde_json::to_vec(&settings).expect("saved preferences");
+            let loaded: super::Settings = serde_json::from_slice(&bytes).expect("restored preferences");
+            assert_eq!(loaded.auto_accept_inventory, enabled);
+        }
+    }
+
     #[test]
     fn render_scale_defaults_native_and_survives_profile_round_trip() {
         let mut settings = Settings::default();

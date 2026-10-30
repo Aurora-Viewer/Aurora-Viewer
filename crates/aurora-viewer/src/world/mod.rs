@@ -3909,9 +3909,12 @@ impl World {
                     },
                 );
             }
-            d::TASK_INVENTORY_OFFERED => self.on_task_inventory_offer(im, &from),
+            d::TASK_INVENTORY_OFFERED => {
+                if self.on_task_inventory_offer(im, &from) {
+                    return true;
+                }
+            }
             d::INVENTORY_OFFERED => {
-                self.ui_sounds.push(UiSound::InventoryOffer);
                 let asset_type = im.binary_bucket.first().map(|b| *b as i8).unwrap_or(-1);
                 // A resident's offer is in our inventory before we answer:
                 // prefetch it (inventory_offer_handler, llimprocessing.cpp),
@@ -3946,10 +3949,12 @@ impl World {
                         task_offer: None,
                     },
                 );
-                self.on_inventory_offer_card(im, &from, asset_type, entry);
-                if !self.rlva_inventory_offer(im, entry) {
-                    self.received_items.offer(im, entry);
+                n.link_name(entry, from.clone(), notifications::NameTarget::Avatar(im.from_agent_id));
+                if self.receive_inventory_offer(im, entry) {
+                    return true;
                 }
+                self.ui_sounds.push(UiSound::InventoryOffer);
+                self.on_inventory_offer_card(im, &from, asset_type, entry);
             }
             // FSShowJoinedGroupInvitations (FIRE-20385): an invitation to a
             // group we are already in is dropped unless asked for

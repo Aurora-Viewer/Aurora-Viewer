@@ -279,6 +279,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "script-errors" => row(Page::Chat, 0, tr!("ui-options-script-errors-in-chat")),
         "crosshair" => row(Page::Camera, 2, tr!("ui-options-crosshair-image")),
         "recent" | "recent-period" => row(Page::Inventory, 0, tr!("ui-inventory-recent-period")),
+        "auto-accept" => row(Page::Inventory, 0, tr!("received-auto-accept")),
         "animations" | "animations-sync" => row(Page::Aurora, 2, tr!("ui-options-aurora-animation-clock")),
         _ => None,
     };

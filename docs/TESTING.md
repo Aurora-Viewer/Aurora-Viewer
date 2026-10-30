@@ -5054,6 +5054,15 @@ failure. Grid validation and any paid upload are performed by the human.
   whose gift the demo then adds to Objects. Inventory opens on the kept
   item, selected, its folder expanded and the filters cleared. Capture at
   frame 900.
+- **`AURORA_DEMO_INVENTORY=offer-auto|offer-object-auto|offer-auto-show|offer-object-auto-show`**:
+  turn on automatic acceptance for this run. The resident's lantern or the
+  scripted dispenser's object is accepted on arrival, with no pending card,
+  conversation or offer sound. The `-show` variants also turn on "Show
+  accepted items in the inventory" and open Inventory on the delivered item.
+  Capture at frame 900; with `RUST_LOG=info`, the log reports zero pending
+  offers and cards.
+  `AURORA_DEMO_OPTIONS=inventory:auto-accept` reveals the new preference;
+  without an auto-accept scenario or a saved choice it remains off.
 - **`AURORA_DEMO_NOTIFS=object|object-own|object-group|object-history|legacy-object`**: one object inventory offer at frame 700, with the source name, owner and item. `object` shows Accept, Discard and Mute Owner; `object-own` omits owner blocking for our own object; `object-group` uses a group owner; `object-history` refuses the gift and opens History at frame 850, retaining the clickable owner; `legacy-object` exercises the same gift in Legacy toasts. Capture at frame 900 in English and French. Identity names are underlined links to their native profiles; clicking a name keeps the offer pending.
 - **`AURORA_DEMO_NOTIFS=group-notice|legacy-group-notice|group-notice-saved`**: two group notices at frame 700. Aurora Builders (no insignia: the group glyph) from Tess Touch without an attachment, then Northern Wolves (its insignia beside the title) from Orion with a "Texture kit" object attached. Each card is titled "group : subject", its text starts with "Sent by" and the sender, both names are links; the attachment row shows its icon, name and kind with "Save to inventory" beside it, or under it when a long translation leaves the name no room. `legacy-group-notice` shows them in the Legacy toasts; `group-notice-saved` saves the attachment at frame 850: the card stays out with a greyed "Saved". Capture at frame 760 (900 for `group-notice-saved`) in English and French.
 - **`AURORA_DEMO_NOTIFS=1|dnd|list|history|legacy|legacy-history`**: the notification
