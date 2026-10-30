@@ -353,7 +353,8 @@ impl Offers {
                         id: Uuid::new_v4(),
                         parent: inv.root,
                         name: "#RLV".into(),
-                        type_default: 60, // LLFolderType::FT_RLV
+                        // Legacy creates this as FT_NONE (-1); FT_RLV is display-only.
+                        type_default: -1,
                     },
                     vec![inv.root],
                     now,

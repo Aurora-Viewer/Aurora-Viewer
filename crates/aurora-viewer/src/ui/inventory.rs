@@ -1088,7 +1088,10 @@ fn folder_row(
 /// Personal folders can move within inventory or to Marketplace listings.
 fn folder_draggable(inv: &Inventory, id: Uuid, prefs: &InventoryPreferences) -> bool {
     rules::movable(inv, id, &prefs.protected)
-        && inv.folders.get(&id).is_some_and(|f| f.info.type_default == -1 && f.info.name != "#RLV")
+        && inv
+            .folders
+            .get(&id)
+            .is_some_and(|f| f.info.type_default == -1 && f.info.name != "#RLV")
 }
 
 /// What a folder's row does, whichever window draws it: drag and drop (onto
@@ -1144,12 +1147,8 @@ fn folder_name(inv: &Inventory, id: Uuid) -> String {
         aurora_i18n::tr!("common-library").to_owned()
     } else if inv.folders.get(&id).is_some_and(|f| f.info.type_default == 50) {
         aurora_i18n::tr!("received-marketplace-folder").to_owned()
-    } else if inv
-        .folders
-        .get(&id)
-        .is_some_and(|f| f.info.type_default == 60 || f.info.name == "#RLV")
-    {
-        // ViewerFolderEntry "RLV" for FT_RLV; inventory paths still use #RLV.
+    } else if inv.folders.get(&id).is_some_and(|f| f.info.name == "#RLV") {
+        // ViewerFolderEntry "RLV" by name; inventory paths still use #RLV.
         aurora_i18n::tr!("ui-inventory-rlv-folder").to_owned()
     } else {
         rules::name(inv, id)

@@ -1440,7 +1440,9 @@ fn rlva_folder_locks_respect_scope_nearest_exception_other_issuers_and_folded_fo
     assert!(items[0].1, "first clothing layer replaces");
     assert!(items.iter().skip(1).take(3).all(|(_, replace, _)| !*replace));
     assert!(
-        items.iter().any(|(item, replace, point)| *item == object && *replace && *point == 1),
+        items
+            .iter()
+            .any(|(item, replace, point)| *item == object && *replace && *point == 1),
         "a folded attachment folder chooses the attachment point: {items:?}"
     );
     w.rlva.appearance.clear();

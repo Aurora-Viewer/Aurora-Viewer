@@ -29,10 +29,6 @@ pub fn caret(ui: &mut egui::Ui, p: &Palette, open: bool) -> egui::Response {
 pub fn folder_icon(type_default: i32, open: bool) -> &'static str {
     match type_default {
         14 => "Inv_TrashClosed",
-        // FT_RLV: Legacy Inv_RLVOpen / Inv_RLVClosed; Aurora has no RLV glyph
-        // in the inventory atlas, so the shared root keeps a folder icon.
-        60 if open => "Inv_FolderOpen",
-        60 => "Inv_FolderClosed",
         _ if open => "Inv_FolderOpen",
         _ => "Inv_FolderClosed",
     }

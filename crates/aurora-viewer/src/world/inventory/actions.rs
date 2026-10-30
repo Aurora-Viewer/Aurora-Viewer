@@ -64,7 +64,7 @@ pub fn mutable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
 pub fn movable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
     mutable(inv, id, protected)
         && inv.folders.get(&id).is_none_or(|f| {
-            // FT_RLV (60) and an unnamed #RLV root stay fixed, like Legacy.
+            // `#RLV` stays fixed by name (Legacy preferred type is display-only).
             f.info.name != "#RLV" && matches!(f.info.type_default, -1 | 47 | 54)
         })
 }

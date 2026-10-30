@@ -222,19 +222,6 @@ pub(super) fn shared_root(inv: &Inventory) -> Option<Uuid> {
     )
 }
 
-/// Client preferred type for the shared root (`LLFolderType::FT_RLV` = 60),
-/// as `LLFolderBridge::getPreferredType` does when the name is `#RLV`.
-pub(super) fn normalize_shared_root(inv: &mut Inventory) {
-    let Some(id) = shared_root(inv) else {
-        return;
-    };
-    if let Some(folder) = inv.folders.get_mut(&id)
-        && folder.info.type_default != 60
-    {
-        folder.info.type_default = 60;
-    }
-}
-
 fn visible(name: &str) -> bool {
     !name.is_empty() && !name.starts_with('.') && !name.contains('/')
 }
@@ -741,7 +728,6 @@ impl World {
     }
 
     fn rlva_shared_ready(&mut self) -> bool {
-        normalize_shared_root(&mut self.inventory);
         let Some(root) = shared_root(&self.inventory) else {
             let loaded = appearance::loaded(&self.inventory, self.inventory.root);
             if !loaded {
