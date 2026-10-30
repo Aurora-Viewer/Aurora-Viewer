@@ -191,6 +191,8 @@ mod bus {
 
     const PATH: &str = "/org/aurora_viewer/AuroraViewer";
     const INTERFACE: &str = "org.aurora_viewer.AuroraViewer";
+    /// Past it, the launch starts a viewer of its own with the link.
+    const HAND_OFF_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
     /// The viewer that receives the links: its connection keeps the name.
     static OWNER: std::sync::OnceLock<Connection> = std::sync::OnceLock::new();
@@ -230,9 +232,16 @@ mod bus {
 
     /// Sends the link to the viewer already running; false when there is
     /// none (no owner of the name: this process then starts with it).
+    /// Runs before the log is open, so failures go to stderr.
     pub fn hand_off(url: &str) -> bool {
-        let Ok(bus) = Connection::session() else {
-            return false;
+        // an owner that holds the name but does not answer (stopped,
+        // frozen, shutting down) must not keep this launch waiting
+        let bus = match zbus::blocking::connection::Builder::session().and_then(|b| b.method_timeout(HAND_OFF_TIMEOUT).build()) {
+            Ok(bus) => bus,
+            Err(e) => {
+                eprintln!("startup links: no session bus ({e})");
+                return false;
+            }
         };
         let name = bus_name();
         // no service file names it: without an owner the call fails at once
@@ -240,7 +249,7 @@ mod bus {
             Ok(_) => true,
             Err(zbus::Error::MethodError(error, ..)) if error.as_str() == "org.freedesktop.DBus.Error.ServiceUnknown" => false,
             Err(e) => {
-                log::warn!("startup links: not handed over ({e})");
+                eprintln!("startup links: not handed over ({e})");
                 false
             }
         }

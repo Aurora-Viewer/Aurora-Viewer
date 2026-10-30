@@ -513,7 +513,13 @@ mod xdg {
     pub fn register() -> Result<(), String> {
         write_entry()?;
         let list = mimeapps()?;
-        let mut text = std::fs::read_to_string(&list).unwrap_or_default();
+        // a list that exists but cannot be read is left alone: rewriting it
+        // from nothing would drop every other default of the user
+        let mut text = match std::fs::read_to_string(&list) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(format!("{}: {e}", list.display())),
+        };
         for scheme in SCHEMES {
             text = with_value(&text, DEFAULTS, &format!("x-scheme-handler/{scheme}"), Some(DESKTOP_ID));
         }
