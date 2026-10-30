@@ -5,10 +5,12 @@
 use super::*;
 
 pub(super) fn allowed(inv: &Inventory, ids: &[Uuid], prefs: &InventoryPreferences, facts: &Facts) -> bool {
-    !ids.is_empty()
-        && ids
-            .iter()
-            .all(|id| rules::movable(inv, *id, &prefs.protected) && !facts.worn.iter().any(|worn| rules::under(inv, *worn, *id)))
+    if ids.is_empty() {
+        return false;
+    }
+    let holds_worn = rules::worn_ancestors(inv, &facts.worn);
+    ids.iter()
+        .all(|id| rules::movable(inv, *id, &prefs.protected) && !holds_worn.contains(id))
 }
 
 pub(super) fn request(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, facts: &Facts) {
