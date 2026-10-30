@@ -29,8 +29,11 @@ pub const REAL: u32 = 0;
 pub const LEGACY: u32 = 1;
 const CATALOGUES: u32 = 2;
 /// Angular radius (radians) of the widest star point the shader draws: a
-/// star is also listed in every cell within it. Must match `STAR_MARGIN`.
-pub const MARGIN: f32 = 0.021;
+/// star is also listed in every cell within it. Wide enough for a whole
+/// three-sigma point even in the reflection probes' irradiance capture
+/// (128 pixels for 90°); there, only the brightest stars' points and glows
+/// are cut. Must match `STAR_MARGIN`.
+pub const MARGIN: f32 = 0.025;
 
 /// The star table, built into the viewer (`scripts/generate-star-catalog.py`).
 static CATALOGUE: &[u8] = include_bytes!("../../../assets/stars/stars.bin");

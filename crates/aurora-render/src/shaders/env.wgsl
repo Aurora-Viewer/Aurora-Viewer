@@ -32,7 +32,7 @@ fn vs_sky(@builtin(vertex_index) vi: u32) -> SkyOut {
 
 const STAR_FACE_CELLS: u32 = 24u;   // stars.rs FACE_CELLS
 const STAR_CELL_TABLE: u32 = 3460u; // stars.rs CELL_TABLE
-const STAR_MARGIN: f32 = 0.021;     // stars.rs MARGIN (radians)
+const STAR_MARGIN: f32 = 0.025;     // stars.rs MARGIN (radians)
 // a cell holds about 6 stars, up to a few dozen in the Milky Way
 const STAR_MAX_PER_CELL: u32 = 96u;
 
@@ -72,11 +72,36 @@ fn star_cell(q: vec3<f32>) -> u32 {
     return face * STAR_FACE_CELLS * STAR_FACE_CELLS + c.y * STAR_FACE_CELLS + c.x;
 }
 
-// Angle (radians) one pixel of this pass covers at the middle of its view.
-fn sky_pixel_angle() -> f32 {
-    let a = frame.inv_view_proj_rot * vec4<f32>(0.0, 0.0, 0.5, 1.0);
-    let b = frame.inv_view_proj_rot * vec4<f32>(0.0, 2.0 * frame.screen.w, 0.5, 1.0);
-    return max(length(normalize(b.xyz / b.w) - normalize(a.xyz / a.w)), 1e-6);
+// Pixel size of this pass: `frame.sky_star_pass` when set (the water and
+// mirror reflections draw into smaller targets than `frame.screen`), else
+// `frame.screen`.
+fn sky_pass_pixel() -> vec2<f32> {
+    if (frame.sky_star_pass.x > 0.0) {
+        return frame.sky_star_pass.zw;
+    }
+    return frame.screen.zw;
+}
+
+fn sky_ray(ndc: vec2<f32>) -> vec3<f32> {
+    let w = frame.inv_view_proj_rot * vec4<f32>(ndc, 0.5, 1.0);
+    return normalize(w.xyz / w.w);
+}
+
+// How the region direction changes over one pixel of this pass, across and
+// down, at `ndc`: the pixel's own footprint, so stars keep a round shape of
+// the same size in pixels anywhere in the view and in off-centre photo
+// tiles.
+struct SkyFootprint {
+    across: vec3<f32>,
+    down: vec3<f32>,
+};
+
+fn sky_footprint(ndc: vec2<f32>, dir: vec3<f32>) -> SkyFootprint {
+    let step = 2.0 * sky_pass_pixel();
+    var f: SkyFootprint;
+    f.across = sky_ray(ndc + vec2<f32>(step.x, 0.0)) - dir;
+    f.down = sky_ray(ndc + vec2<f32>(0.0, step.y)) - dir;
+    return f;
 }
 
 fn hash3(p: vec3<f32>) -> f32 {
@@ -188,7 +213,7 @@ fn milky_way(q: vec3<f32>) -> vec3<f32> {
 // smoothstep(0, 0.9, ...) * 32 on the star texture's alpha: full brightness
 // from about 100, dimmer only below. The same curve, without the 32 times
 // overdrive.
-fn sky_stars(d: vec3<f32>, background: vec3<f32>) -> vec3<f32> {
+fn sky_stars(d: vec3<f32>, background: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
     let catalogue = frame.sky_stars[0].w;
     let gain = min(smoothstep(0.0, 0.9, frame.sky_misc.w / 500.0) * 8.0, 1.0);
     if (catalogue < 0.0 || gain <= 0.0 || d.z <= 0.0) {
@@ -206,7 +231,12 @@ fn sky_stars(d: vec3<f32>, background: vec3<f32>) -> vec3<f32> {
     if (gain * extinction * glare < 0.003) {
         return vec3<f32>(0.0);
     }
-    let pixel = sky_pixel_angle();
+    // the pixel's footprint in the catalogue's frame
+    let ax = vec3<f32>(dot(frame.sky_stars[0].xyz, foot.across), dot(frame.sky_stars[1].xyz, foot.across), dot(frame.sky_stars[2].xyz, foot.across));
+    let ay = vec3<f32>(dot(frame.sky_stars[0].xyz, foot.down), dot(frame.sky_stars[1].xyz, foot.down), dot(frame.sky_stars[2].xyz, foot.down));
+    let ax2 = max(dot(ax, ax), 1e-14);
+    let ay2 = max(dot(ay, ay), 1e-14);
+    let pixel = sqrt(max(ax2, ay2));
     let t = frame.camera_pos.w;
     let cell = select(0u, STAR_CELL_TABLE, legacy) + star_cell(q);
     let first = star_sky.cells[cell];
@@ -214,15 +244,22 @@ fn sky_stars(d: vec3<f32>, background: vec3<f32>) -> vec3<f32> {
     var sum = vec3<f32>(0.0);
     for (var i = first; i < last; i++) {
         let s = star_sky.stars[i];
-        let sigma = min(pixel * s.color.w, STAR_MARGIN / 12.0);
-        let off = q - s.pos.xyz;
-        let r2 = dot(off, off) / (sigma * sigma);
+        // the star's offset from this pixel, in this pass's pixels
+        let off = s.pos.xyz - q;
+        let px = dot(off, ax) / ax2;
+        let py = dot(off, ay) / ay2;
+        let sigma = s.color.w;
+        let r2 = (px * px + py * py) / (sigma * sigma);
+        // stars are listed in the cells within STAR_MARGIN only: on coarse
+        // targets (reflection probes) the widest points are cut there
+        let reach = STAR_MARGIN / (pixel * sigma);
+        let reach2 = reach * reach;
         // the bright stars' soft glow, four times wider (the eye's
         // scattering, as on a photograph of the sky)
-        if (s.pos.w > 0.3 && r2 < 144.0) {
+        if (s.pos.w > 0.3 && r2 < min(144.0, reach2)) {
             sum += s.color.rgb * (s.pos.w - 0.3) * 0.05 * exp(-0.5 * r2 / 16.0);
         }
-        if (r2 < 9.0) {
+        if (r2 < min(9.0, reach2)) {
             // scintillation: slow and slight overhead, stronger low down
             // (the Legacy Viewer's stars flicker, starsF.glsl twinkle)
             let seed = hash3(floor(s.pos.xyz * 4096.0));
@@ -291,7 +328,14 @@ fn sky_halo(d: f32) -> vec3<f32> {
     return sample_tex_level(slot, vec2<f32>(0.0, 1.0 - v), 0.0).rgb * ice;
 }
 
+// The sky seen through the middle of the view's pixels (rays bent by the
+// water, whose own footprint is not known).
 fn sky_full(dir: vec3<f32>) -> vec3<f32> {
+    let centre = sky_ray(vec2<f32>(0.0));
+    return sky_full_at(dir, sky_footprint(vec2<f32>(0.0), centre));
+}
+
+fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
     let d = normalize(dir);
     let a = atmos_eval(d, false);
     // skyF.glsl: added to the haze color before its x 2, under the clouds
@@ -302,7 +346,7 @@ fn sky_full(dir: vec3<f32>) -> vec3<f32> {
     var col = srgb_to_linear(c) * frame.sky_cloud_pd2.w;
     let cover = 1.0 - clouds.a;
     // stars and Milky Way (above), behind the clouds
-    col += sky_stars(d, col) * cover;
+    col += sky_stars(d, col, foot) * cover;
     // moon
     if (frame.tex_slots.z != 0u) {
         let m = body_disc(d, frame.sky_moon.xyz, 0.035 * frame.sky_moon.w, frame.tex_slots.z);
@@ -324,9 +368,8 @@ fn sky_full(dir: vec3<f32>) -> vec3<f32> {
 fn sky_pixel(in: SkyOut) -> vec4<f32> {
     // from the camera, not region positions minus the camera: those rounded
     // differently each frame and the sky shook as it moved (#1059)
-    let w = frame.inv_view_proj_rot * vec4<f32>(in.ndc, 0.5, 1.0);
-    let dir = normalize(w.xyz / w.w);
-    var col = sky_full(dir);
+    let dir = sky_ray(in.ndc);
+    var col = sky_full_at(dir, sky_footprint(in.ndc, dir));
     if (camera_underwater()) {
         let wf = water_fog_view(dir * 512.0, frame.water_normal.w);
         col = col * wf.transmission + wf.color;
