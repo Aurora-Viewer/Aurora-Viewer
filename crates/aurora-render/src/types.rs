@@ -939,6 +939,8 @@ pub enum AoMethod {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RenderSettings {
+    /// Percentage of the window resolution used by the world; UI stays native.
+    pub render_scale_percent: u32,
     pub water_effects: crate::WaterEffects,
     pub aa: AntiAliasing,
     pub tonemapper: Tonemapper,
@@ -984,6 +986,7 @@ pub struct RenderSettings {
 impl Default for RenderSettings {
     fn default() -> Self {
         RenderSettings {
+            render_scale_percent: 100,
             water_effects: crate::WaterEffects::default(),
             // the state `Renderer::new` builds its pipelines and targets
             // for, not the viewer's default (SMAA, in its own settings)

@@ -1119,6 +1119,8 @@ pub struct Settings {
     /// default, RenderFSAAType 2 of Firestorm's High to Ultra levels in
     /// featuretable.txt)
     pub antialiasing: u8,
+    /// World resolution as a percentage of the window; HUDs and UI stay native.
+    pub render_scale_percent: u32,
     /// Geometric specular anti-aliasing (common.wgsl `specular_aa_roughness`):
     /// highlights widened where the shading normal turns faster than a
     /// pixel, so they stop shimmering as the camera moves. An Aurora
@@ -1889,6 +1891,7 @@ impl Default for Settings {
             projector_shadows: true,
             contact_shadows: false,
             antialiasing: 6,
+            render_scale_percent: 100,
             specular_aa: true,
             tonemapper: 1,
             tonemap_mix: TONEMAP_MIX,
@@ -2493,6 +2496,7 @@ impl Settings {
         };
         self.shadow_quality = self.shadow_quality.min(4);
         self.antialiasing = self.antialiasing.min(6);
+        self.render_scale_percent = self.render_scale_percent.clamp(50, 100);
         self.reflection_probes = self.reflection_probes.min(3);
         self.probe_count = self.probe_count.clamp(8, 64);
         self.tonemapper = self.tonemapper.min(1);
@@ -2640,6 +2644,7 @@ impl Settings {
         let mut water_effects = self.water_effects.render();
         water_effects.particle_budget = self.max_particles;
         aurora_render::RenderSettings {
+            render_scale_percent: self.render_scale_percent.clamp(50, 100),
             water_effects,
             aa: match self.antialiasing {
                 0 => AntiAliasing::None,
@@ -2827,6 +2832,18 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn render_scale_defaults_native_and_survives_profile_round_trip() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.render_settings().render_scale_percent, 100);
+        settings.render_scale_percent = 67;
+        let saved = serde_json::to_vec(&settings).expect("settings JSON");
+        let loaded: Settings = serde_json::from_slice(&saved).expect("settings JSON");
+        assert_eq!(loaded.render_settings().render_scale_percent, 67);
+        settings.render_scale_percent = 0;
+        assert_eq!(settings.sanitized().render_settings().render_scale_percent, 50);
+    }
+
     #[test]
     fn automatic_flight_preferences_default_on_and_keep_independent_saved_choices() {
         use super::Settings;

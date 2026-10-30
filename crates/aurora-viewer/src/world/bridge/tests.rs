@@ -341,7 +341,7 @@ fn an_old_version_in_any_bridge_service_is_updated_then_saved_once() {
         let uploads = (sim.uploads, sim.query_uploads, sim.ik_uploads);
         let detaches = sim.detaches;
         let attaches = sim.attaches;
-        sim.hello_versions[service] = Some("1.37");
+        sim.hello_versions[service] = Some("1.39");
         sim.bridge = Bridge::default();
         sim.world.hand_contacts.relay = None;
         for _ in 0..200 {

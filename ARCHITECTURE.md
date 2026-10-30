@@ -25,17 +25,20 @@ split into filtering options, the filter's scope list and always-visible parcels
 cap switch between the FPS hover card (both bar layouts) and the system menu.
 
 `imports/animation_model.rs` loads local rigged DAE/glTF/GLB preview models
-on the import worker pool. Each animation draft retains its own geometry,
-imported rest skeleton and revisioned selection; cancellation, failures and
-late results preserve the current model. The independent animation clock
+on the import worker pool. A revisioned selection shares geometry and its
+imported rest skeleton across all queued animations, including later additions.
+Cancellation, failures and late results preserve the current model, even if
+the originating row was removed. Each independent animation clock
 uses that rest skeleton, and the existing preview GPU skins Bento joints.
 Worker-computed bone-chain reach frames rotating tails/wings around the pelvis
 without per-frame geometry scans or a rest-bounds crop.
 Choosing Standard restores the dummy avatar. Preview models never enter the
 upload queue or change animation bytes, metadata, inventory or world appearance.
 `Preferences::animation_models` remembers model identifiers, names and local
-paths across sessions. Selecting a saved entry loads it on the worker pool;
-weak cache entries share geometry only while a preview retains it. Each saved
+paths across sessions. `animation_model_last` restores the last successfully
+loaded choice by default; Standard clears it for the whole queue.
+Selecting a saved entry loads it once on the worker pool;
+the queue retains the selected model and caches other models weakly. Each saved
 model has a removal icon at the right of its list row, so it can be removed
 without selecting it first. The list stays open for further removals. Removing a reference
 resets dependent previews and never deletes its file.
@@ -78,6 +81,14 @@ Generic AIS orphan reads keep their separate Lost And Found handling. Original
 identities and permissions remain intact. Bounded reliable parent moves precede
 COF registration, and pending assignments survive older folder/metadata reads
 until confirmed readback. Existing RLVa inventory move rules apply.
+
+Binding-array texture pages are limited independently of ordinary frame texture
+bindings. `RenderSettings::render_scale_percent` reuses the separate world-target
+path in `rlva/resolution.rs`; the RLVa resolution divisor takes precedence,
+following the reference RenderResolutionMultiplier behavior. The user
+scale uses nine bilinear Catmull-Rom taps before native-resolution labels, HUDs
+and egui; RLVa-only scaling retains its nearest-pixel behavior. Target changes
+invalidate depth/occlusion history, and snapshots bypass the user's scale.
 
 `scene/anim.rs` restarts active resident and control-avatar motions from one shared
 instant for Ctrl+S, World and the resync toolbar command. Receipt signals,
@@ -186,6 +197,10 @@ None, flexible prims, HUDs and unknown simulator shape types are excluded.
 Traditional sculpt physics remains undisplayed, as in the reference editor.
 
 `world/bridge.rs` inspects an existing attachment before writing scripts.
+Bridge 1.40 normalizes its copied library container at controller initialization:
+a solid 1 cm box, default plywood mapping, white tint, zero alpha on all faces
+and an empty description. Version checks upgrade the same inventory object;
+attachment initialization reapplies the shape and surface after reattachment.
 The `Verify` phase requires matching controller, query and IK replies from the
 selected worn root, current region, folder and protocol version. A current
 bridge resumes directly, including after a normal reattachment at login.
@@ -1181,6 +1196,27 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
+Inventory local-file thumbnails prepare whole-image square scaling
+(LLViewerTextureList::convertToUploadFile with force_square), proportional fit
+with transparent margins, and a movable crop on bounded background jobs in
+`app/inventory_thumbnail.rs`. The crop retains the full source with a short
+edge of at most 256 px, bounded to 4 MiB even for a thin 4096 px strip.
+`ui/inventory/thumbnail/choices.rs` pans the square viewport by UV coordinates,
+clamped to the image bounds, with no resampling or texture replacement per drag
+frame. Releasing a drag keeps the modal open; an explicit preview click submits
+the selected source rectangle for background cropping and JPEG2000 encoding.
+The shared modal supports both inventory items and folders. Only the chosen
+pixels enter the existing
+InventoryThumbnailUpload/AIS path; cancellation retains the previous thumbnail.
+Scene snapshot framing and existing inventory texture assignment are unchanged.
+
+Thumbnail mutations confirm the expected asset UUID through complete AIS parent
+snapshots, preserving sibling metadata; legacy folder listings can omit it.
+Propagation delays and transient read failures get bounded read-only retries,
+without repeating the upload or PATCH. The image editor stays in its loading
+state until that verification finishes, then retains success or the actual error.
+The same result in each inventory footer expires after five seconds.
+
 The Appearance gallery keeps whole-image previews by default. Its options menu
 can enable saved `Settings::appearance_fill_previews`: `ui/appearance.rs` crops
 centred UVs to fill the existing frame without stretching the image, changing
@@ -1732,7 +1768,13 @@ folder windows) as flat rows, rebuilt only when the inventory, the sort or an
 open folder changes, and lays out only the rows in sight; it keeps each
 window's open folders (the main window's with the UI layout). Searches,
 filters and the other tabs use the flattened result tree of
-`ui/inventory/view.rs`, drawn the same way.
+`ui/inventory/view.rs`, drawn the same way. Aurora's toolbar exposes Collapse
+all / Expand all above a separate quick/advanced search row. In the explorer,
+these commands affect the folder sidebar; in filtered views they affect only
+the result tree. Bulk folding walks every known descendant within the window's
+scope, including closed branches, and expansion uses the ordinary lazy fetches.
+Unlike LLPanelMainInventory::onCollapseButtonClicked, Aurora retains the query
+when collapsing results, so the chosen search remains usable.
 
 `ui/inventory/smart.rs` is the advanced search's rule model (All/Any groups of
 negatable rules on any item fact) and its matcher: each rule compiles once per

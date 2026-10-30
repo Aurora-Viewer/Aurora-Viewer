@@ -956,6 +956,13 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Some(v) = std::env::var("AURORA_AA").ok().and_then(|v| v.parse().ok()) {
         settings.antialiasing = v;
     }
+    if let Some(v) = std::env::var("AURORA_RENDER_SCALE").ok().and_then(|v| v.parse::<u32>().ok()) {
+        settings.render_scale_percent = v.clamp(50, 100);
+    }
+    if let Some(v) = std::env::var("AURORA_TEXTURE_BUDGET_MB").ok().and_then(|v| v.parse::<u32>().ok()) {
+        settings.texture_budget_auto = false;
+        settings.texture_budget_mb = v.clamp(256, 32768);
+    }
     if let Some(v) = std::env::var("AURORA_MAX_COMPLEXITY").ok().and_then(|v| v.parse().ok()) {
         settings.max_complexity = v;
     }
@@ -17599,6 +17606,9 @@ impl ApplicationHandler for App {
                         self.inventory_ui.thumbnail.open(id);
                         self.inventory_ui.thumbnail.picker_open = view == "image-picker";
                         self.inventory_ui.thumbnail.photo_open = matches!(view.as_str(), "image-photo" | "image-photo-save");
+                        if view.starts_with("image-layout") {
+                            self.demo_inventory_file_choices(view.ends_with("wide"));
+                        }
                     } else if !matches!(
                         view.as_str(),
                         "keyboard" | "keyboard-fold" | "aurora-keyboard" | "aurora-keyboard-fold" | "aurora-keyboard-wide"

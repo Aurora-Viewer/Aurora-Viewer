@@ -89,6 +89,8 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
+| `AURORA_RENDER_SCALE=50..100` | World resolution percentage; interface and HUDs stay native |
+| `AURORA_TEXTURE_BUDGET_MB=256..32768` | Manual texture memory budget for this launch |
 | `AURORA_TEST_NEUTRAL_POSE=1` | Local neutral-pose comparison in the online or demo Hover Height floater |
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
@@ -266,6 +268,16 @@ to the vertex shaders or to the passes is therefore checked with both,
 `AURORA_AA=3` and `AURORA_AA=6`: it is with the second that the terrain let
 the sky show through in patches
 (`AURORA_DEMO_POS="60,128"`, `AURORA_DEMO_ALTITUDE=86`).
+
+`AURORA_RENDER_SCALE`: the world's linear resolution percentage (50–100,
+100 by default), before spatial upscaling. HUDs, labels and controls stay at
+native resolution. RLVa's resolution divisor takes precedence; saved photos
+ignore the user scale. `AURORA_TEXTURE_BUDGET_MB` selects a manual texture
+budget (256–32768 MB). Both follow the normal saved graphics settings path;
+use `AURORA_DEMO=1` for isolated comparisons. A Retina comparison can use
+`AURORA_WINDOW_SIZE=1728,1056`, `AURORA_GRAPHICS_PRESET=high`,
+`AURORA_DEMO_TEXTURES=9000`, `AURORA_DEMO_CROWD=20` and the same capture
+frame, changing only `AURORA_RENDER_SCALE` between 100, 67 and 50.
 
 `AURORA_WINDOW_SIZE`: width and height of the render area, in logical pixels
 (at least 800 × 560), to measure according to the size of the window:
@@ -1992,6 +2004,14 @@ The test covers silent startup/URL failures, exact owner/root discovery,
 login revocation, confirmed-session region renewal, 60-second self-detachment, permission checks,
 unpaired peer/HTTP traffic and resumed discovery. It mocks simulator APIs;
 it does not emulate Havok or measure the compiled Mono memory budget.
+
+Bridge 1.40 also checks container normalization at startup and reattachment.
+On the grid, let Aurora upgrade an existing bridge, then inspect its build
+properties: a 0.01 m cube on all three axes, no cut/hollow/twist/taper, default
+plywood texture on every face and 100% transparency. Its old landscaping
+description must be empty. Detach and reattach it, then relog: the same object
+must retain these properties and its bridge services. A fresh bridge must
+finish provisioning with the same appearance.
 
 For bridge 1.38 (#1168), let Aurora upgrade the existing attachment, then
 switch to another viewer without manually removing it. No bridge message
@@ -4667,10 +4687,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   ordinary mannequin. Check seeking,
   pause/resume, base animations and camera controls with both models. Cancel
   the file picker or choose an unrigged/invalid file: keep the current model,
-  with an error for rejected files. Model selection is independent per
-  animation, preview-only, and never adds a mesh upload or changes its fee.
+  with an error for rejected files. Model selection applies to every queued
+  animation, including later additions, and remains preview-only: it never
+  adds a mesh upload or changes its fee.
   Add two models, switch between them in the model list, then return to Standard.
-  Restart the viewer and select either model without reopening a file picker.
+  Restart the viewer and import animations: the last successfully used model
+  loads automatically, without reopening a file picker. Standard applies to
+  the whole queue and remains the default after a restart.
   Remove an unselected entry with its row's icon: the current preview must stay
   selected and the list must stay open. Remove the selected entry: return to
   Standard. In both cases its source file must remain on disk. Long names must
@@ -7415,7 +7438,13 @@ offline; the files and snapshots uploaded in demo stay offline.
   (1180 px) width, on the demo object of the right-click tests, the demo
   shirt in the favourites; `aurora-rights` is the wide window with the
   CMT menu on "Both". Capture at frame 700 with `AURORA_FPS_LIMIT=60`.
-  Narrow: icon tabs, search row (filters, CMT, Sort, New), the tree with
+  At every width, the search field and advanced-search button occupy a full
+  row below the tools. Collapse all / Expand all are directly accessible in
+  the toolbar: they fold the compact tree or filtered results, and the folder
+  sidebar in the explorer. Expand, collapse, then manually reopen a parent:
+  its descendants must remain closed. Check a folder window and hidden Library
+  too; commands stay within that window's scope and retain the current search.
+  Narrow: icon tabs, toolbar (filters, CMT, Sort, New, Collapse all, Expand all), the tree with
   C/M/T at the end of each item, the selection's card (Wear, Add,
   Properties, More). Medium: the column of shortcuts (with their counts) and
   folders, the explorer of the revealed folder with Type and Modified.
@@ -7663,6 +7692,30 @@ offline; the files and snapshots uploaded in demo stay offline.
   as in Firestorm; a landmark already present for the same asset is reused.
 - `image-photo-save`: captures then saves a thumbnail at frame 2100
   and closes the snapshot window while keeping the Image editor open.
+  Capture at frame 2250 to inspect the saved message in both the editor and
+  inventory footer, then at frame 2700 to see only the editor's result.
+  Network mock tests cover stale and unreadable AIS snapshots followed by the
+  expected thumbnail UUID, permanent mismatches and bounded failure: one write,
+  read-only retries, for both items and folders. UI tests keep loading visible
+  until completion and expire the footer after five seconds on success or error.
+  On the grid, the human checks that uploading stays on Loading until confirmed,
+  then shows Picture saved; an actual failure remains visible in the editor.
+- `image-layout` / `image-layout-wide`: open the local-file thumbnail choices
+  for an item with a synthetic portrait / landscape image. Add `-folder`
+  before `-wide` (`image-layout-folder`, `image-layout-folder-wide`) to target
+  a folder instead. Click a preview to use the whole image stretched to the
+  square, fit it proportionally with transparent margins, or crop it.
+  Drag the image inside the right-hand preview to move the crop up/down for a
+  portrait or left/right for a landscape. The image follows the pointer and
+  stops at its edges. Releasing the drag does not upload; click the adjusted
+  preview to use it. Check both extremes, a partial move, repeated drags and
+  square/small images, on both an item and a folder. The saved thumbnail must
+  contain the selected area rather than returning to the centre.
+  No upload occurs before choosing; Cancel or Escape keeps the old image.
+  Repeat using Upload from your computer with a PNG, JPEG or JPEG2000 file;
+  verify transparent pixels, square images and all four source edges. Scene
+  snapshots retain their square viewfinder. The human checks persistence
+  after reconnect on real inventory items and folders.
 - `additional`: the Legacy Viewer's window with its "Additional inventory
   window" button lit at the bottom, right of "+", and the additional window
   opened on its left: Inventory, Recent, Worn and Favorites tabs but no

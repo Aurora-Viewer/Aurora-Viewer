@@ -450,7 +450,7 @@ fn measured(m: &Metrics, name: usize, subs: [Option<usize>; 2]) -> TextSize {
     }
 }
 
-/// A team member's "Aurora Viewer" tag floats from the text's left: the
+/// A team member's "Aurora Team" tag floats from the text's left: the
 /// plate is as wide as it needs, and the floating badges start past it.
 #[test]
 fn the_staff_tag_has_its_room_over_the_top_edge() {
