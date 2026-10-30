@@ -1305,10 +1305,16 @@ same colour, intensity, range and falloff, and its projector controls become
 disabled. Cancel instead restores its texture and projector settings. Use
 `features` without the suffix to inspect the light before or after editing.
 
-`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|worn-other-hidden-inside|mouselook-gun|mouselook-touch|ground`:
+`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|worn-other-hidden-inside|mouselook-gun|mouselook-touch|ground|photo-touch[-ctrl]|photo-hud[-ctrl]`:
 install the fixture at frame 600, issue a real left press at 700 and release
 at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
-or later. `avatar-keep-camera` starts from an off-centre side view and enables
+or later. `photo-touch[-ctrl]` and `photo-hud[-ctrl]` open the photo viewfinder:
+Ctrl + left click touches the scripted cube or the HUD without moving the AF
+point, then releases the touch even if Ctrl is released before the GPU pick
+returns. The plain cube click moves the AF point instead; a visible HUD also
+keeps its plain click. `demo photo press` logs restored keyboard modifiers;
+`demo photo interaction` logs the AF point, dialog and released button.
+`avatar-keep-camera` starts from an off-centre side view and enables
 Preferences › Camera › Behavior › “Click my avatar: keep camera” for the run:
 a plain body click must preserve position, target, lens and tracked object.
 `avatar-return` disables the option and must return to avatar follow.

@@ -487,8 +487,9 @@ impl App {
 
     /// A press of the left button in the world while the viewfinder shows:
     /// the AF point moves there and focuses; a menu open closes instead;
-    /// a HUD or a poser handle under the pointer keeps it. With Shift in
-    /// AF-S, the avatar (Avatar area) or the point there joins the group
+    /// Ctrl alone passes the click to the world; a HUD or a poser handle
+    /// under the pointer keeps it. With Shift in AF-S, the avatar (Avatar
+    /// area) or the point there joins the group
     /// focus, or leaves it. True when taken.
     pub(super) fn viewfinder_click(&mut self) -> bool {
         // Alt + click (focus the camera), Ctrl + Alt (orbit), Ctrl + Alt +
@@ -496,6 +497,16 @@ impl App {
         // camera's: the photographer frames with them
         if !self.viewfinder_on() || self.camera.mouselook() || self.alt || self.object_view {
             return false;
+        }
+        if self.ctrl && !self.shift {
+            // The viewfinder's interaction shortcut acts like an ordinary
+            // left click (LLToolPie::handleMouseDown, indra/newview/lltoolpie.cpp).
+            // Object actions and HUDs reject Ctrl, so consume it before the
+            // press; the deferred pick keeps these normalized modifiers.
+            self.ctrl = false;
+            self.on_left_press();
+            self.ctrl = true;
+            return true;
         }
         let v = &mut self.snapshots.vf;
         if v.menu || v.help {

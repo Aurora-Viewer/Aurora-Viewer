@@ -72,6 +72,11 @@ impl App {
                     .find(|(_, o)| (o.full_id == self.world.agent_id) != mode.contains("other"))
                     .and_then(|(idx, _)| Scene::object_transform(&self.world, idx, Instant::now(), 0))
                     .and_then(|(pos, _, _)| self.build.cam.project_px(pos + Vec3::Z * 0.4))
+            } else if mode.starts_with("photo-hud") {
+                self.scene
+                    .lists
+                    .hud_view
+                    .map(|view| (view.width * 0.5 - 0.18 * view.height, view.height * 0.5 - 0.028 * view.height))
             } else if mode == "ground" {
                 // the plaza's floor, below the avatar
                 self.gfx.as_ref().map(|g| {
@@ -89,6 +94,7 @@ impl App {
                     })
             } else {
                 let local = match mode {
+                    _ if mode.starts_with("photo-touch") => 975,
                     "worn-other-link" => WORN_CHILD,
                     _ if mode.starts_with("worn-") => 975,
                     _ => 971,
@@ -129,6 +135,14 @@ impl App {
             let over_ui = self.ui_takes_pointer();
             log::info!("demo world click UI: over_ui={over_ui}");
             self.mouse_input(MouseButton::Left, true, over_ui);
+            if mode.starts_with("photo-") {
+                log::info!(
+                    "demo photo press: ctrl={}, waiting={}, point={:?}",
+                    self.ctrl,
+                    self.clicks.waiting(),
+                    self.snapshots.vf.point,
+                );
+            }
         }
         if drag && (710..=760).contains(&self.frame_count) {
             self.camera_mouse_delta(6.0, 0.0);
@@ -154,6 +168,22 @@ impl App {
                 self.interactions.held.is_some(),
                 self.mouse_mode == MouseMode::Steer
             );
+            if mode.starts_with("photo-") {
+                let hud_touched = self
+                    .world
+                    .objects
+                    .index_of_uuid(&crate::demo::hud::object(31, false).full_id)
+                    .and_then(|idx| self.world.objects.get(idx))
+                    .is_some_and(|o| o.text.contains(aurora_i18n::tr!("demo-hud-touched")));
+                log::info!(
+                    "demo photo interaction: point={:?}, pick={}, dialog={}, ctrl={}, left_down={}, hud_touched={hud_touched}",
+                    self.snapshots.vf.point,
+                    self.snapshots.vf.pick.is_some(),
+                    self.interactions.dialog.is_some(),
+                    self.ctrl,
+                    self.left_down,
+                );
+            }
         }
     }
 
@@ -174,6 +204,37 @@ impl App {
 
     fn world_click_fixture(&mut self, mode: &str) {
         let mode = mode.strip_suffix("-ctrl").unwrap_or(mode);
+        if mode.starts_with("photo-") {
+            self.panels.snapshot = true;
+            self.settings.photo_window = crate::settings::PhotoWindowStyle::Aurora;
+            self.settings.snapshot.huds = true;
+            self.settings.show_huds = true;
+            self.settings.snapshot.viewfinder.hints = true;
+            self.settings.snapshot.viewfinder.display = crate::snapshot::viewfinder::Display::Full;
+            self.settings.snapshot.dof.focus = crate::dof::PhotoFocus::Click;
+            self.snapshots.ui.freeze_world = false;
+            if mode.starts_with("photo-hud") {
+                for event in crate::demo::hud::events() {
+                    self.world.apply(event);
+                }
+            } else {
+                for mut event in crate::demo::action_events() {
+                    if let NetEvent::ObjectUpdates { objects, .. } = &mut event {
+                        objects.retain(|o| o.local_id == 975);
+                        if let Some(o) = objects.first() {
+                            self.camera.set_view(
+                                o.position + Vec3::new(-3.0, 0.0, 1.0),
+                                o.position,
+                                &mut self.world.agent,
+                                &self.settings.camera,
+                            );
+                        }
+                    }
+                    self.world.apply(event);
+                }
+            }
+            return;
+        }
         if mode.starts_with("avatar") {
             let target = self
                 .world

@@ -2371,6 +2371,13 @@ its mesh and record allocations. Selected invisible meshes temporarily
 retain draw records for their wireframe; manipulation keeps the selection
 outlines visible.
 
+In the photo viewfinder, `app/viewfinder.rs::viewfinder_click` consumes Ctrl
+alone before dispatching an ordinary world press. The asynchronous pick keeps
+the consumed modifier state, while keyboard Ctrl is restored immediately.
+Scene object actions and visible HUDs therefore remain usable without moving
+the AF point; Alt camera gestures and Shift group focus keep their priority.
+The upper-left controls and help in `ui/viewfinder.rs` document the shortcut.
+
 ## Life of a frame
 
 `joystick/` owns persisted NDOF settings, native input and the six-axis flycam
