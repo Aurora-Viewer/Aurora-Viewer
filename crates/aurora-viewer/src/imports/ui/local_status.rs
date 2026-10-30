@@ -183,7 +183,7 @@ mod tests {
             };
             let frame = |state: &mut State, events| {
                 let mut action = None;
-                let _ = ctx.run_ui(
+                let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0))),
                         events,
@@ -191,6 +191,8 @@ mod tests {
                     },
                     |ui| action = show(ui.ctx(), &theme.palette(), state, &status),
                 );
+                // No renderer is attached to this test context.
+                output.textures_delta.clear();
                 action
             };
             let click = |state: &mut State, key: &str| {
