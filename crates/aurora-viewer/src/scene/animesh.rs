@@ -548,6 +548,14 @@ impl super::Scene {
                 meshes.push((id, vec![sphere("mChest", Vec3::new(0.0, 0.0, -0.05), radii)]));
             }
         }
+        if demo.soft_mask {
+            // pelvis shell: a Mask-classified soft fringe that must Blend when
+            // rigged (LLFace::canRenderAsMask never auto-masks skinned faces)
+            meshes.push((
+                crate::demo::SOFT_MASK_MESH,
+                vec![sphere("mPelvis", Vec3::new(0.0, 0.0, -0.02), Vec3::new(0.12, 0.1, 0.14))],
+            ));
+        }
         for (id, faces) in meshes {
             self.meshes.insert_demo_skin(
                 id,
