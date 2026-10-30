@@ -1,5 +1,11 @@
 # Aurora Viewer architecture
 
+Session layout uses Settings::nearby_chat_window for nearby-chat docking/visibility
+and show_camera_controls / show_movement_controls for the Controls windows.
+ChatUi::from_settings restores only nearby chat at startup and after logout; IMs,
+drafts and focus stay session-local. Stable floater ids reuse ui_layout.ron for
+geometry and minimized state; restoration does not raise a minimized window.
+
 `graphics_presets/saved.rs` holds named rendering quality snapshots (#1218),
 persisted as an explicit allowlist in `Settings::graphics_saved`. Selection is
 stored separately in `graphics_saved_active`: identical snapshots remain distinct,
