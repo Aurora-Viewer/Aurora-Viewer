@@ -4349,7 +4349,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_WEARABLE=<type>[:mode]` | Skin, hair, eyes and system clothing editors |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
-| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
+| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|channel\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, commands to worn scripts, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the empty Batch / Permissions tab |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
@@ -4908,6 +4908,12 @@ failure. Grid validation and any paid upload are performed by the human.
   the windows. The build window keeps its width across its six sections,
   including Shape for the advanced settings; long lists scroll in the body,
   the actions stay visible. Modal confirmations keep the blurred background.
+- **`AURORA_DEMO_INVENTORY=link-icons|aurora-link-icons`**: adds original/link pairs
+  for demo item types and all seventeen wearable subtypes, plus a folder link and
+  a broken link. Expand the context-test folder and scroll through it: valid links
+  keep their target's type icon and tint with the shortcut arrow at the lower left;
+  the broken link keeps the generic link icon. Compare the Legacy and Aurora layouts.
+
 - **`AURORA_DEMO_INVENTORY=hover-photo|hover-photo-object|aurora-hover-photo|aurora-hover-photo-object`**:
   hover the synthetic texture or an object with a saved picture after frame 600.
   Capture after frame 700. Both layouts must show the image without selecting

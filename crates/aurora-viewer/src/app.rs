@@ -17608,7 +17608,13 @@ impl ApplicationHandler for App {
                         }
                     } else if !matches!(
                         view.as_str(),
-                        "keyboard" | "keyboard-fold" | "aurora-keyboard" | "aurora-keyboard-fold" | "aurora-keyboard-wide"
+                        "keyboard"
+                            | "keyboard-fold"
+                            | "aurora-keyboard"
+                            | "aurora-keyboard-fold"
+                            | "aurora-keyboard-wide"
+                            | "link-icons"
+                            | "aurora-link-icons"
                     ) {
                         self.inventory_ui.demo_menu = Some(id);
                     }

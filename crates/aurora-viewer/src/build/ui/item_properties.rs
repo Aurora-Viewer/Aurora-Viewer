@@ -64,6 +64,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
             p,
             None,
             PropertyPanel {
+                inventory: None,
                 item: &inv_item,
                 edit: &mut state.edit,
                 can_edit,

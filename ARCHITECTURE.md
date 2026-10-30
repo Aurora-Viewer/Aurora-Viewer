@@ -3755,6 +3755,12 @@ RLVa privacy and shares batch edits with the avatar menus. The existing
 `Settings::render_exceptions` remains the persisted source read by complexity
 rules; distant residents need no scene object to be edited.
 
+Inventory link icons resolve target metadata through the existing cycle-safe
+`world/inventory/actions::original` helper. `ui/inventory::inventory_item_icon`
+shares target-type artwork and tint across inventory rows, details, properties,
+thumbnail pickers, share dialogs and Marketplace listings. `ui/icons.rs` embeds
+the `assets/tabler-icons/**/*-link.svg` variants and rasterizes their dark
+shortcut outline as a transparent cutout in the theme-tinted mask.
 
 Avatar impostor pictures (`scene/impostors.rs`, `aurora-render`): only visible
 avatars allocate or refresh tiles. Offscreen cached pictures expire after five
