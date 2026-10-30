@@ -514,6 +514,14 @@ impl Session<'_> {
         let events = self.sh.events.clone();
         tokio::spawn(async move {
             let result = post_remote_parcel(&http, &url, &body).await;
+            if let Err(e) = result {
+                // the slot asked, to tell a wrong handle from a missing parcel
+                log::warn!(
+                    "RemoteParcelRequest for region {}, {} at {position}: {e:?}",
+                    (handle >> 32) / 256,
+                    (handle & 0xffff_ffff) / 256
+                );
+            }
             let _ = events.send(NetEvent::RemoteParcel { handle, position, result });
         });
     }
