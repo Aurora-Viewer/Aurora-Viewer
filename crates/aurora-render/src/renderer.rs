@@ -35,7 +35,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub const CASCADES: usize = 3;
 const MAX_LIGHTS: usize = 64;
@@ -1508,6 +1508,9 @@ pub(crate) struct Backend {
     /// Set by the device-lost callback: the GPU is never waited on again
     /// (device_lost.rs).
     lost: crate::device_lost::DeviceLost,
+    /// Each frame's submission, read by the main thread before the next
+    /// frame reads its input (pacing.rs).
+    gpu_frames: std::sync::Arc<crate::pacing::GpuFrames<wgpu::SubmissionIndex>>,
 }
 
 /// What the main thread's `Renderer` creates the backend from.
@@ -1530,6 +1533,8 @@ pub(crate) struct BackendInit {
     pub scene: SceneGpu,
     pub anim_clock: crate::tex_anim::AnimClock,
     pub lost: crate::device_lost::DeviceLost,
+    /// Each frame's submission, for the frame pacing (pacing.rs).
+    pub gpu_frames: std::sync::Arc<crate::pacing::GpuFrames<wgpu::SubmissionIndex>>,
 }
 
 fn skin_layout() -> wgpu::VertexBufferLayout<'static> {
@@ -2385,6 +2390,7 @@ impl Backend {
             scene,
             anim_clock,
             lost,
+            gpu_frames,
         } = init;
         let caps = surface.get_capabilities(&adapter);
         let format = caps
@@ -2886,6 +2892,7 @@ impl Backend {
             last_inv_vp: Mat4::IDENTITY,
             msaa_supported,
             lost,
+            gpu_frames,
         };
         r.rebuild_bind_groups();
         Ok(r)
@@ -4902,6 +4909,7 @@ impl Backend {
             drawn,
             capture: wanted,
             histogram,
+            input_at,
         } = packet;
         let mut stats = RenderStats::default();
         if let Some(t) = &mut self.timer {
@@ -7657,7 +7665,15 @@ impl Backend {
             }
         }
         prof.mark("finish");
-        self.queue.submit(upload_cmds.into_iter().chain(extra_cmds));
+        let submission = self.queue.submit(upload_cmds.into_iter().chain(extra_cmds));
+        self.gpu_frames.submitted(index, submission);
+        if self.gpu_frames.enabled {
+            // the news as soon as a poll sees the frame done (the start of
+            // the next frame's job): a GPU that is not the limit does not
+            // hold the main thread until this thread is through a frame
+            let frames = self.gpu_frames.clone();
+            self.queue.on_submitted_work_done(move || frames.finished_through(index));
+        }
         // staging chunks whose copies are now submitted are mapped again
         frame_uploads.after_submit();
         let mut captured = None;
@@ -7709,6 +7725,7 @@ impl Backend {
         if let FrameTarget::Surface(t) = surface_tex {
             self.queue.present(t);
             stats.presented = true;
+            stats.input_ms = input_at.map(|at| at.elapsed().as_secs_f32() * 1000.0);
         }
         self.lost.poll(&self.device);
         // a click answered by now goes back with this frame's result
@@ -7801,6 +7818,43 @@ impl Backend {
             },
         );
         Some((buf, w, h, row))
+    }
+
+    /// Frame pacing (pacing.rs), once frame `frame` is presented: wait, at
+    /// most `timeout`, until the GPU has finished the frames before it, and
+    /// tell the main thread, which then reads the input of the next frame.
+    /// Done here, on the thread that submits and presents: the wait holds
+    /// the device's locks.
+    pub fn finish_frames_before(&self, frame: u64, timeout: Duration) {
+        // (the wait runs the callbacks of `on_submitted_work_done` too)
+        if !self.gpu_frames.enabled || self.lost.get() {
+            return;
+        }
+        let Some(last) = frame.checked_sub(1) else {
+            return;
+        };
+        if let Some(index) = self.gpu_frames.before(frame) {
+            let wait = wgpu::PollType::Wait {
+                submission_index: Some(index),
+                timeout: Some(timeout),
+            };
+            match self.device.poll(wait) {
+                Ok(_) => {}
+                // a GPU that fell behind: no news, the main thread's own
+                // bound lets it go on
+                Err(wgpu::PollError::Timeout) => return,
+                Err(e) => log::debug!("frame pacing: {e:?}"),
+            }
+        }
+        self.gpu_frames.finished_through(last);
+    }
+
+    /// Run the callbacks of the GPU work already finished, without waiting:
+    /// the frame pacing's news of the frames done (pacing.rs).
+    pub fn poll_finished(&self) {
+        if self.gpu_frames.enabled {
+            self.lost.poll(&self.device);
+        }
     }
 
     /// World position of the opaque surface under a pixel of the last frame
