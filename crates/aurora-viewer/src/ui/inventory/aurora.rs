@@ -727,6 +727,71 @@ mod tests {
     }
 
     #[test]
+    fn folder_buttons_fold_each_view_and_search_has_its_own_row() {
+        for width in [DEFAULT_SIZE.x, 800.0, WIDE_SIZE] {
+            for scoped in [false, true] {
+                let mut h = Harness::new(width);
+                let folder = Uuid::from_u128(8000);
+                let child = Uuid::from_u128(8001);
+                if scoped {
+                    h.st.scope = folder;
+                }
+                h.frames(5);
+                let tool = |h: &Harness, icon| {
+                    h.ctx
+                        .data(|data| data.get_temp::<Rect>(egui::Id::unique(("inventory_tool_button", icon))))
+                        .expect("toolbar button drawn")
+                };
+                let collapse = tool(&h, "chevrons-up");
+                let expand = tool(&h, "chevrons-down");
+                let search = h
+                    .ctx
+                    .data(|data| data.get_temp::<Rect>(egui::Id::unique("inventory_search_row")))
+                    .unwrap();
+                assert!(expand.right() <= search.right() + 0.5, "{width}: tools fit inside the window");
+                assert!(search.top() >= expand.bottom(), "{width}: search is below the tools");
+                assert!(
+                    search.contains_rect(tool(&h, "filters-filled")),
+                    "advanced search stays beside its field"
+                );
+                h.click(expand.center(), Default::default());
+                if width == DEFAULT_SIZE.x {
+                    assert!(h.st.plain.is_open(child), "expand reaches nested folders");
+                } else {
+                    assert!(h.st.side.rows.iter().any(|row| row.id == child), "expand reaches the sidebar");
+                }
+                h.click(collapse.center(), Default::default());
+                if width == DEFAULT_SIZE.x {
+                    assert!(!h.st.plain.is_open(child), "collapse closes nested folders too");
+                } else if !scoped {
+                    assert!(
+                        !h.st.side.rows.iter().any(|row| row.id == child),
+                        "the parent is collapsed in the sidebar"
+                    );
+                }
+                assert_eq!(h.st.browse, if scoped { folder } else { h.inv.root }, "folding never navigates");
+                assert!(h.actions.is_empty(), "folding does not mutate inventory");
+
+                h.st.filters.types = 1 << 6;
+                h.frames(3);
+                let filters = h.st.filters.clone();
+                h.click(tool(&h, "chevrons-up").center(), Default::default());
+                if !scoped {
+                    assert!(!h.st.result_tree.is_open(folder, 0), "filtered results consume the command");
+                }
+                h.click(tool(&h, "chevrons-down").center(), Default::default());
+                assert!(h.st.result_tree.is_open(folder, 0));
+                assert_eq!(h.st.filters, filters, "the filter is retained");
+
+                h.click(tool(&h, "filters-filled").center(), Default::default());
+                assert!(h.st.advanced, "the relocated advanced-search button still works");
+                h.click(tool(&h, "filters-filled").center(), Default::default());
+                assert!(!h.st.advanced);
+            }
+        }
+    }
+
+    #[test]
     fn every_width_draws_every_selection_filter_tab_and_choice_of_rights() {
         for width in [DEFAULT_SIZE.x, 800.0, WIDE_SIZE] {
             let mut h = Harness::new(width);
@@ -966,14 +1031,17 @@ mod tests {
                         h.st.side
                             .drawn
                             .iter()
-                            .filter(|(_, rect)| viewport.intersects(**rect))
+                            .filter(|(_, rect)| viewport.intersect(**rect).height() > 1.0)
                             .min_by(|(_, a), (_, b)| {
                                 let order = a.top().total_cmp(&b.top());
                                 if bottom { order.reverse() } else { order }
                             })
                             .expect("visible folder");
                     h.frames(40);
-                    let y = before.center().y.clamp(viewport.top() + 1.0, viewport.bottom() - 1.0);
+                    // A sliver of a row can be less than the old 1 px inset:
+                    // target its visible part rather than its neighbour.
+                    let y = before.intersect(viewport).center().y;
+                    assert!(before.contains(egui::pos2(before.right() - 30.0, y)));
                     h.click(egui::pos2(before.right() - 30.0, y), Default::default());
                     assert_eq!(h.st.browse, id, "{width} px: the click opens the folder");
                     let after = h.st.side.drawn.get(&id).expect("clicked folder still drawn");

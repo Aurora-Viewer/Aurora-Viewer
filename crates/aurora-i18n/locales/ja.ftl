@@ -4664,6 +4664,7 @@ ui-contacts-attach-to-conversations = 会話に結合
 ui-chat-attach-to-conversations = 会話に結合
 build-ui-object-radius = 半径
 ui-minimap-center-map = マップを中央に
+ui-minimap-lock-position = 位置をロック
 ui-media-reload = リロード
 ui-inventory-context-reload-folder = フォルダのリロード
 ui-avatar-picker-search = 検索

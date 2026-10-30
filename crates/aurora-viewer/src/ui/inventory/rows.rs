@@ -17,6 +17,28 @@ pub const MAX_DEPTH: usize = 24;
 /// The height of a row, without the spacing between rows.
 pub const ROW_HEIGHT: f32 = 20.0;
 
+/// LLInventoryPanel::openAllFolders / closeAllFolders recurse through every
+/// known descendant, including branches hidden by a closed ancestor.
+pub(super) fn folders(view: &ViewCache, inv: &Inventory, root: Uuid, show_root: bool, show_library: bool) -> Vec<Uuid> {
+    let mut todo = vec![(root, 0)];
+    let mut seen = HashSet::new();
+    let mut folders = Vec::new();
+    while let Some((id, depth)) = todo.pop() {
+        if depth > MAX_DEPTH || !inv.folders.contains_key(&id) || !seen.insert(id) {
+            continue;
+        }
+        if show_root || id != root {
+            folders.push(id);
+        }
+        todo.extend(
+            view.children_iter(id, show_library, inv.lib_root)
+                .filter(|id| inv.folders.contains_key(id))
+                .map(|id| (id, depth + 1)),
+        );
+    }
+    folders
+}
+
 /// The height of the rows of this window: Aurora's are taller.
 pub fn row_height(st: &InventoryUi) -> f32 {
     if st.aurora.is_some() {
@@ -84,29 +106,11 @@ impl PlainTree {
         }
     }
 
-    /// "Expand" opens only the folders already fetched, to avoid fetching
-    /// everything; "Collapse" closes all but the root.
+    /// Expand every known folder; ordinary lazy loading fetches their contents.
+    /// Collapse also closes descendants, keeping only a displayed root open.
     pub fn expand(&mut self, view: &ViewCache, inv: &Inventory, root: Uuid, show_root: bool, show_library: bool, open: bool) {
-        fn walk(tree: &mut PlainTree, view: &ViewCache, inv: &Inventory, id: Uuid, depth: usize, show_library: bool, open: bool) {
-            let Some(folder) = inv.folders.get(&id) else { return };
-            if depth > MAX_DEPTH {
-                return;
-            }
-            if !open || folder.state == FetchState::Fetched || depth == 0 {
-                tree.set_open(id, open || depth == 0);
-            }
-            if tree.is_open(id) {
-                for child in view.children_iter(id, show_library, inv.lib_root).collect::<Vec<_>>() {
-                    walk(tree, view, inv, child, depth + 1, show_library, open);
-                }
-            }
-        }
-        if show_root {
-            walk(self, view, inv, root, 0, show_library, open);
-        } else {
-            for child in view.children_iter(root, show_library, inv.lib_root).collect::<Vec<_>>() {
-                walk(self, view, inv, child, 1, show_library, open);
-            }
+        for id in folders(view, inv, root, show_root, show_library) {
+            self.set_open(id, open || (show_root && id == root));
         }
     }
 
@@ -524,21 +528,26 @@ mod tests {
     }
 
     #[test]
-    fn expand_opens_fetched_folders_only_and_collapse_keeps_the_root() {
+    fn expand_opens_unknown_folders_and_collapse_closes_every_descendant() {
         let (mut inv, view, _) = fixture();
         if let Some(folder) = inv.folders.get_mut(&id(11)) {
             folder.state = FetchState::Unknown;
         }
         let mut tree = PlainTree::default();
         tree.expand(&view, &inv, inv.root, true, true, true);
-        assert!([1, 10, 20, 3].into_iter().all(|n| tree.is_open(id(n))));
-        assert!(!tree.is_open(id(11)), "not fetched yet");
+        assert!([1, 10, 11, 20, 3].into_iter().all(|n| tree.is_open(id(n))));
+        tree.prepare(&view, &inv, inv.root, true, true);
+        assert!(tree.listed_open.contains(&id(11)), "unknown contents use ordinary lazy loading");
+        tree.set_open(id(10), false);
         tree.expand(&view, &inv, inv.root, true, true, false);
         assert!(tree.is_open(id(1)));
-        assert!(![10, 20, 3].into_iter().any(|n| tree.is_open(id(n))));
+        assert!(![10, 11, 20, 3].into_iter().any(|n| tree.is_open(id(n))));
         // A folder window has no root row to keep open.
         tree.expand(&view, &inv, id(10), false, true, true);
-        assert!(!tree.is_open(id(10)) && !tree.is_open(id(11)));
+        assert!(!tree.is_open(id(10)) && tree.is_open(id(11)));
+        assert!(!tree.is_open(id(20)), "another window's scope stays unchanged");
+        tree.expand(&view, &inv, inv.root, true, false, true);
+        assert!(!tree.is_open(id(3)), "the hidden Library stays closed");
     }
 
     #[test]

@@ -7436,7 +7436,13 @@ offline; the files and snapshots uploaded in demo stay offline.
   (1180 px) width, on the demo object of the right-click tests, the demo
   shirt in the favourites; `aurora-rights` is the wide window with the
   CMT menu on "Both". Capture at frame 700 with `AURORA_FPS_LIMIT=60`.
-  Narrow: icon tabs, search row (filters, CMT, Sort, New), the tree with
+  At every width, the search field and advanced-search button occupy a full
+  row below the tools. Collapse all / Expand all are directly accessible in
+  the toolbar: they fold the compact tree or filtered results, and the folder
+  sidebar in the explorer. Expand, collapse, then manually reopen a parent:
+  its descendants must remain closed. Check a folder window and hidden Library
+  too; commands stay within that window's scope and retain the current search.
+  Narrow: icon tabs, toolbar (filters, CMT, Sort, New, Collapse all, Expand all), the tree with
   C/M/T at the end of each item, the selection's card (Wear, Add,
   Properties, More). Medium: the column of shortcuts (with their counts) and
   folders, the explorer of the revealed folder with Type and Modified.

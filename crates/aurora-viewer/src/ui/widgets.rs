@@ -927,6 +927,9 @@ impl<'a> Floater<'a> {
 /// mini-map): `frame` around `body`, which fills it. Like a floater it is
 /// placed by the layout (`layout::Slot`), snaps to the other windows when
 /// moved with Alt or resized, and is resized by the same edge handles.
+/// `locked`: the user can neither move nor resize it (it still follows the
+/// viewer's edges and the group it is glued to).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn bare_window(
     ctx: &egui::Context,
     p: &Palette,
@@ -935,13 +938,18 @@ pub(crate) fn bare_window(
     frame: egui::Frame,
     default: egui::Rect,
     min_size: Vec2,
+    locked: bool,
     body: impl FnOnce(&mut egui::Ui),
 ) {
     let window_id = egui::Id::unique(id);
     if window_hidden(ctx, window_id, true, false) {
         return;
     }
-    let drag = resize::Drag::prepare(ctx, window_id, min_size);
+    let drag = if locked {
+        None
+    } else {
+        resize::Drag::prepare(ctx, window_id, min_size)
+    };
     let mut w = egui::Window::new(title)
         .id(window_id)
         .title_bar(false)
@@ -951,6 +959,7 @@ pub(crate) fn bare_window(
         .default_pos(default.min)
         .default_size(default.size())
         .min_size(min_size)
+        .movable(!locked)
         .resizable(false)
         .constrain(true);
     let slot = super::layout::slot(ctx, window_id);
@@ -977,12 +986,18 @@ pub(crate) fn bare_window(
     }) else {
         return;
     };
-    window_click_tolerance(&shown.response);
+    // locked: no drag on the move ID at all, or the layout would carry the
+    // windows glued to it while it stays put
+    if !locked {
+        window_click_tolerance(&shown.response);
+    }
     slot.shown(ctx, shown.response.rect, false);
     if let (Some(drag), Some(requested)) = (drag, resized) {
         drag.finish(ctx, window_id, requested, shown.response.rect);
     }
-    resize::handles(ctx, p, &shown.response);
+    if !locked {
+        resize::handles(ctx, p, &shown.response);
+    }
 }
 
 /// A resized window's rect on whole physical pixels. The pointer moves by
