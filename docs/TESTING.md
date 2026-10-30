@@ -7649,6 +7649,30 @@ offline; the files and snapshots uploaded in demo stay offline.
   as in Firestorm; a landmark already present for the same asset is reused.
 - `image-photo-save`: captures then saves a thumbnail at frame 2100
   and closes the snapshot window while keeping the Image editor open.
+  Capture at frame 2250 to inspect the saved message in both the editor and
+  inventory footer, then at frame 2700 to see only the editor's result.
+  Network mock tests cover stale and unreadable AIS snapshots followed by the
+  expected thumbnail UUID, permanent mismatches and bounded failure: one write,
+  read-only retries, for both items and folders. UI tests keep loading visible
+  until completion and expire the footer after five seconds on success or error.
+  On the grid, the human checks that uploading stays on Loading until confirmed,
+  then shows Picture saved; an actual failure remains visible in the editor.
+- `image-layout` / `image-layout-wide`: open the local-file thumbnail choices
+  for an item with a synthetic portrait / landscape image. Add `-folder`
+  before `-wide` (`image-layout-folder`, `image-layout-folder-wide`) to target
+  a folder instead. Click a preview to use the whole image stretched to the
+  square, fit it proportionally with transparent margins, or crop it.
+  Drag the image inside the right-hand preview to move the crop up/down for a
+  portrait or left/right for a landscape. The image follows the pointer and
+  stops at its edges. Releasing the drag does not upload; click the adjusted
+  preview to use it. Check both extremes, a partial move, repeated drags and
+  square/small images, on both an item and a folder. The saved thumbnail must
+  contain the selected area rather than returning to the centre.
+  No upload occurs before choosing; Cancel or Escape keeps the old image.
+  Repeat using Upload from your computer with a PNG, JPEG or JPEG2000 file;
+  verify transparent pixels, square images and all four source edges. Scene
+  snapshots retain their square viewfinder. The human checks persistence
+  after reconnect on real inventory items and folders.
 - `additional`: the Legacy Viewer's window with its "Additional inventory
   window" button lit at the bottom, right of "+", and the additional window
   opened on its left: Inventory, Recent, Worn and Favorites tabs but no

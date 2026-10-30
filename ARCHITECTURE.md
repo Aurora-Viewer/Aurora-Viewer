@@ -1166,6 +1166,27 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
+Inventory local-file thumbnails prepare whole-image square scaling
+(LLViewerTextureList::convertToUploadFile with force_square), proportional fit
+with transparent margins, and a movable crop on bounded background jobs in
+`app/inventory_thumbnail.rs`. The crop retains the full source with a short
+edge of at most 256 px, bounded to 4 MiB even for a thin 4096 px strip.
+`ui/inventory/thumbnail/choices.rs` pans the square viewport by UV coordinates,
+clamped to the image bounds, with no resampling or texture replacement per drag
+frame. Releasing a drag keeps the modal open; an explicit preview click submits
+the selected source rectangle for background cropping and JPEG2000 encoding.
+The shared modal supports both inventory items and folders. Only the chosen
+pixels enter the existing
+InventoryThumbnailUpload/AIS path; cancellation retains the previous thumbnail.
+Scene snapshot framing and existing inventory texture assignment are unchanged.
+
+Thumbnail mutations confirm the expected asset UUID through complete AIS parent
+snapshots, preserving sibling metadata; legacy folder listings can omit it.
+Propagation delays and transient read failures get bounded read-only retries,
+without repeating the upload or PATCH. The image editor stays in its loading
+state until that verification finishes, then retains success or the actual error.
+The same result in each inventory footer expires after five seconds.
+
 The Appearance gallery keeps whole-image previews by default. Its options menu
 can enable saved `Settings::appearance_fill_previews`: `ui/appearance.rs` crops
 centred UVs to fill the existing frame without stretching the image, changing
