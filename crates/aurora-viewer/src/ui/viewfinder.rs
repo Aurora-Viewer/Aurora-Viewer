@@ -1540,13 +1540,7 @@ impl Viewfinder {
                         panel.freeze_world = !panel.freeze_world;
                     }
                     // the drawer's Light section alone, next to the shutter
-                    if dock_button(
-                        ui,
-                        p,
-                        Face::Icon("sun-filled"),
-                        aurora_i18n::tr!("photo-vf-light-tip"),
-                        self.light,
-                    ) {
+                    if dock_button(ui, p, Face::Icon("sun-filled"), aurora_i18n::tr!("photo-vf-light-tip"), self.light) {
                         self.light = !self.light;
                         self.drawer &= !self.light;
                         self.looks &= !self.light;
