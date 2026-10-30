@@ -25,17 +25,20 @@ split into filtering options, the filter's scope list and always-visible parcels
 cap switch between the FPS hover card (both bar layouts) and the system menu.
 
 `imports/animation_model.rs` loads local rigged DAE/glTF/GLB preview models
-on the import worker pool. Each animation draft retains its own geometry,
-imported rest skeleton and revisioned selection; cancellation, failures and
-late results preserve the current model. The independent animation clock
+on the import worker pool. A revisioned selection shares geometry and its
+imported rest skeleton across all queued animations, including later additions.
+Cancellation, failures and late results preserve the current model, even if
+the originating row was removed. Each independent animation clock
 uses that rest skeleton, and the existing preview GPU skins Bento joints.
 Worker-computed bone-chain reach frames rotating tails/wings around the pelvis
 without per-frame geometry scans or a rest-bounds crop.
 Choosing Standard restores the dummy avatar. Preview models never enter the
 upload queue or change animation bytes, metadata, inventory or world appearance.
 `Preferences::animation_models` remembers model identifiers, names and local
-paths across sessions. Selecting a saved entry loads it on the worker pool;
-weak cache entries share geometry only while a preview retains it. Each saved
+paths across sessions. `animation_model_last` restores the last successfully
+loaded choice by default; Standard clears it for the whole queue.
+Selecting a saved entry loads it once on the worker pool;
+the queue retains the selected model and caches other models weakly. Each saved
 model has a removal icon at the right of its list row, so it can be removed
 without selecting it first. The list stays open for further removals. Removing a reference
 resets dependent previews and never deletes its file.

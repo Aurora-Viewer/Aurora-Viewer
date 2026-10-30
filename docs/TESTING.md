@@ -4653,10 +4653,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   ordinary mannequin. Check seeking,
   pause/resume, base animations and camera controls with both models. Cancel
   the file picker or choose an unrigged/invalid file: keep the current model,
-  with an error for rejected files. Model selection is independent per
-  animation, preview-only, and never adds a mesh upload or changes its fee.
+  with an error for rejected files. Model selection applies to every queued
+  animation, including later additions, and remains preview-only: it never
+  adds a mesh upload or changes its fee.
   Add two models, switch between them in the model list, then return to Standard.
-  Restart the viewer and select either model without reopening a file picker.
+  Restart the viewer and import animations: the last successfully used model
+  loads automatically, without reopening a file picker. Standard applies to
+  the whole queue and remains the default after a restart.
   Remove an unselected entry with its row's icon: the current preview must stay
   selected and the list must stay open. Remove the selected entry: return to
   Standard. In both cases its source file must remain on disk. Long names must
