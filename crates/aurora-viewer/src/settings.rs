@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+pub mod area_search;
 pub mod backup;
 mod hover_height;
 pub mod stream_list;
@@ -401,6 +402,7 @@ pub struct Settings {
     /// (Preferences › Language and updates).
     pub update_channel: aurora_updater::feed::Channel,
     pub ignored_update: String,
+    pub area_search: area_search::AreaSearch,
     pub crash_reports: CrashReports,
     /// Firestorm Language: default follows the OS.
     pub language: String,
@@ -800,7 +802,10 @@ pub struct Settings {
     pub script_count_alert: bool,
     pub script_count_threshold: u32,
     /// A notice when the region runs another simulator version than the
-    /// last one (FSShowServerVersionChangeNotice, on).
+    /// last one (FSShowServerVersionChangeNotice). Off, unlike the Legacy
+    /// Viewer's on: it came at nearly every teleport and region crossing
+    /// and told the user nothing they could act on (human choice,
+    /// 2026-10-30).
     pub sim_version_alert: bool,
     /// Object messages from elsewhere dropped (Preferences › Privacy, #623).
     pub object_im_filter: crate::world::object_im_filter::Settings,
@@ -1278,7 +1283,7 @@ pub(crate) const TONEMAP_MIX: f32 = 0.7;
 /// an S32 of seconds).
 pub(crate) const GROUP_SNOOZE_MAX_MINUTES: u32 = i32::MAX as u32 / 60;
 
-const SETTINGS_VERSION: u32 = 28;
+const SETTINGS_VERSION: u32 = 29;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1574,6 +1579,7 @@ impl Default for Settings {
             update_mode: crate::updater::Mode::Ask,
             update_channel: aurora_updater::feed::Channel::Stable,
             ignored_update: String::new(),
+            area_search: Default::default(),
             crash_reports: CrashReports::Ask,
             language: "default".into(),
             language_is_public: true,
@@ -1745,7 +1751,7 @@ impl Default for Settings {
             show_joined_group_invitations: false,
             script_count_alert: false,
             script_count_threshold: 100,
-            sim_version_alert: true,
+            sim_version_alert: false,
             object_im_filter: Default::default(),
             anti_spam: Default::default(),
             rlva_enabled: false,
@@ -2359,6 +2365,11 @@ impl Settings {
             // the levels now set HDR and Emissive: a profile still exactly
             // on Potato or Low turns it off, any other keeps it on
             crate::graphics_presets::upgrade_hdr_emissive(&mut self);
+        }
+        if self.settings_version < 29 {
+            // new default: no simulator version notice (every earlier file
+            // wrote the former default, on)
+            self.sim_version_alert = false;
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -3727,6 +3738,24 @@ mod tests {
         let mut off = Settings::default();
         off.colors.relation_names = false;
         assert!(!off.sanitized().colors.relation_names);
+    }
+
+    #[test]
+    fn the_simulator_version_notice_is_off_by_default_and_for_earlier_files() {
+        assert!(!Settings::default().sanitized().sim_version_alert);
+        // a file that wrote the former default, on
+        let old = Settings {
+            settings_version: 28,
+            sim_version_alert: true,
+            ..Settings::default()
+        };
+        assert!(!old.sanitized().sim_version_alert);
+        // switched on after the migration: kept
+        let on = Settings {
+            sim_version_alert: true,
+            ..Settings::default()
+        };
+        assert!(on.sanitized().sim_version_alert);
     }
 
     #[test]

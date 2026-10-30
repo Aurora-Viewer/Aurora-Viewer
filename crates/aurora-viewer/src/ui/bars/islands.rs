@@ -310,7 +310,7 @@ pub fn top(
             egui::PopupCloseBehavior::CloseOnClick,
             Some((egui::RectAlign::BOTTOM_START, 10.0)),
             |ui| {
-                main_menus(ui, p, panels, st, &mut action, true);
+                menu::searchable(ui, p, |ui| main_menus(ui, p, panels, st, &mut action, true));
             },
         );
         resp.on_hover_text(aurora_i18n::tr!("ui-bars-aurora-menu"));

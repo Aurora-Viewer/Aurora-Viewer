@@ -702,7 +702,7 @@ mod tests {
                 if let Some(reply) = reply {
                     socket.write_all(&reply).await.expect("write reply");
                 }
-                let _ = socket.shutdown().await;
+                crate::test_http::finish(socket);
             }
             bodies
         });
@@ -802,6 +802,7 @@ mod tests {
             );
             socket.write_all(headers.as_bytes()).await.expect("write headers");
             socket.write_all(&body).await.expect("write LLSD");
+            crate::test_http::finish(socket);
             supports_animesh
         });
         let http = reqwest::Client::builder()
@@ -861,6 +862,7 @@ mod tests {
                 let head = format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
                 let _ = socket.write_all(head.as_bytes()).await;
                 let _ = socket.write_all(&body).await;
+                crate::test_http::finish(socket);
             }
         });
         (seed, count)
@@ -904,6 +906,7 @@ mod tests {
                 );
                 socket.write_all(head.as_bytes()).await.expect("response headers");
                 socket.write_all(&body).await.expect("feature response");
+                crate::test_http::finish(socket);
             }
             count
         });

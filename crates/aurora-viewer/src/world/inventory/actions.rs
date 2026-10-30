@@ -19,18 +19,29 @@ pub fn parent(inv: &Inventory, id: Uuid) -> Option<Uuid> {
         .map(|f| f.info.parent)
         .or_else(|| inv.items.get(&id).map(|it| it.parent))
 }
-pub fn under(inv: &Inventory, mut id: Uuid, ancestor: Uuid) -> bool {
-    let mut seen = HashSet::new();
-    while seen.insert(id) {
-        if id == ancestor {
-            return true;
+/// `id` itself or one of its parents (LLInventoryModel::isObjectDescendentOf).
+/// No set of visited ids: the rules ask this for every selected entry, often
+/// several times (#1580). A chain longer than the folder count is a cycle.
+pub fn under(inv: &Inventory, id: Uuid, ancestor: Uuid) -> bool {
+    ancestors(inv, id).any(|a| a == ancestor)
+}
+/// `id`, then its parent, up to the root; ends on a cycle.
+pub fn ancestors(inv: &Inventory, id: Uuid) -> impl Iterator<Item = Uuid> + '_ {
+    std::iter::successors(Some(id), move |id| parent(inv, *id)).take(inv.folders.len() + 1)
+}
+/// The worn items and every folder holding one, at any depth: an entry is
+/// (or holds) something worn when it is in this set. Built once per check of
+/// a selection instead of walking each worn item for each selected entry.
+pub fn worn_ancestors(inv: &Inventory, worn: &HashSet<Uuid>) -> HashSet<Uuid> {
+    let mut set = HashSet::new();
+    for id in worn {
+        for a in ancestors(inv, *id) {
+            if !set.insert(a) {
+                break;
+            }
         }
-        let Some(p) = parent(inv, id) else {
-            return false;
-        };
-        id = p;
     }
-    false
+    set
 }
 pub fn system(inv: &Inventory, kind: i32) -> Option<Uuid> {
     super::super::appearance::system_folder(inv, kind)
@@ -42,11 +53,13 @@ pub fn library(inv: &Inventory, id: Uuid) -> bool {
     inv.folders.get(&id).is_some_and(|f| f.library) || parent(inv, id).and_then(|p| inv.folders.get(&p)).is_some_and(|f| f.library)
 }
 pub fn mutable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
-    (inv.items.contains_key(&id) || inv.folders.contains_key(&id))
-        && !library(inv, id)
-        && !in_type(inv, id, 46)
-        && !in_type(inv, id, 50)
-        && !protected.iter().any(|p| under(inv, id, *p))
+    if !(inv.items.contains_key(&id) || inv.folders.contains_key(&id)) || library(inv, id) {
+        return false;
+    }
+    // Not in the current outfit, Received Items nor a locked folder: one
+    // walk up the parents answers all three (asked per selected entry).
+    let (cof, inbox) = (system(inv, 46), system(inv, 50));
+    !ancestors(inv, id).any(|a| Some(a) == cof || Some(a) == inbox || protected.contains(&a))
 }
 pub fn movable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
     mutable(inv, id, protected) && inv.folders.get(&id).is_none_or(|f| matches!(f.info.type_default, -1 | 47 | 54))
@@ -190,11 +203,15 @@ fn push_move(inv: &Inventory, id: Uuid, to: Uuid, change: &mut Mutation) -> Resu
     change.refresh.extend([from, to]);
     Ok(())
 }
+/// The selected entries whose folder is not selected too, in their order.
+/// Each entry walks its own parents against the selection: linear in the
+/// selection, where comparing every pair froze the viewer on thousands (#1580).
 pub fn roots(inv: &Inventory, ids: &[Uuid]) -> Vec<Uuid> {
+    let selected: HashSet<_> = ids.iter().copied().collect();
     let mut seen = HashSet::new();
     ids.iter()
         .copied()
-        .filter(|id| seen.insert(*id) && !ids.iter().any(|p| p != id && under(inv, *id, *p)))
+        .filter(|id| seen.insert(*id) && !ancestors(inv, *id).skip(1).any(|p| p != *id && selected.contains(&p)))
         .collect()
 }
 pub fn move_selection(
@@ -208,8 +225,10 @@ pub fn move_selection(
         return Err(aurora_i18n::tr!("world-inventory-actions-this-folder-cannot-receive-the-selection").into());
     }
     let mut change = Mutation::default();
+    let to_trash = Some(to) == system(inv, 14);
+    let holds_worn = if to_trash { worn_ancestors(inv, worn) } else { HashSet::new() };
     for id in roots(inv, ids) {
-        if !movable(inv, id, protected) || (Some(to) == system(inv, 14) && worn.iter().any(|w| under(inv, *w, id))) {
+        if !movable(inv, id, protected) || holds_worn.contains(&id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-protected-system-or-worn-item").into());
         }
         push_move(inv, id, to, &mut change)?;
@@ -343,8 +362,9 @@ pub fn group(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>, worn: &Ha
         Operation::Folder { id, .. } => *id,
         _ => return Err(aurora_i18n::tr!("common-folder-not-found").into()),
     };
+    let holds_worn = worn_ancestors(inv, worn);
     for id in ids {
-        if !movable(inv, id, protected) || worn.iter().any(|w| under(inv, *w, id)) {
+        if !movable(inv, id, protected) || holds_worn.contains(&id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-protected-or-worn-item").into());
         }
         push_move(inv, id, new, &mut change)?;
@@ -561,8 +581,9 @@ pub fn marketplace(inv: &Inventory, ids: &[Uuid], copy: bool, protected: &HashSe
         change.refresh.extend([inv.root, id]);
         id
     });
+    let holds_worn = worn_ancestors(inv, worn);
     for id in roots(inv, ids) {
-        if !mutable(inv, id, protected) || in_type(inv, id, 14) || in_type(inv, id, 53) || worn.iter().any(|w| under(inv, *w, id)) {
+        if !mutable(inv, id, protected) || in_type(inv, id, 14) || in_type(inv, id, 53) || holds_worn.contains(&id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-a-protected-worn-trashed-or-already-listed-item-cannot").into());
         }
         let mut seen = HashSet::new();
@@ -654,6 +675,11 @@ pub fn paste_allowed(
             }
         })
     }
+    let holds_worn = if cut && in_type(inv, to, 14) {
+        worn_ancestors(inv, worn)
+    } else {
+        HashSet::new()
+    };
     !ids.is_empty()
         && destination(inv, to, protected)
         && !(links && cut)
@@ -662,7 +688,7 @@ pub fn paste_allowed(
                 return false;
             }
             if cut {
-                movable(inv, *id, protected) && (!in_type(inv, to, 14) || !worn.iter().any(|w| under(inv, *w, *id)))
+                movable(inv, *id, protected) && !holds_worn.contains(id)
             } else if links {
                 original(inv, *id).is_some_and(|id| {
                     !library(inv, id) && !in_type(inv, id, 14) && inv.items.get(&id).is_none_or(|it| !matches!(it.asset_type, 2 | 49))

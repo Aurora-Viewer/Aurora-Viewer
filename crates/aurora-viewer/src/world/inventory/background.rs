@@ -54,6 +54,9 @@ pub struct BackgroundFetch {
     waiting: Vec<(Uuid, Kind)>,
     next_request: u64,
     started: bool,
+    orphans_requested: bool,
+    orphans_pending: Option<u64>,
+    orphans_failed: bool,
     /// Since when the current walk sends requests, and how many (logged
     /// when it ends).
     busy: Option<(Instant, usize)>,
@@ -79,19 +82,32 @@ impl BackgroundFetch {
         if self.started {
             self.queue.push_back((inv.root, Kind::Recursive));
             self.queue.push_back((inv.lib_root, Kind::Recursive));
+            if self.orphans_failed {
+                self.orphans_requested = false;
+            }
         }
     }
 
     pub fn is_idle(&self) -> bool {
-        self.queue.is_empty() && self.in_flight.is_empty()
+        self.queue.is_empty() && self.in_flight.is_empty() && self.orphans_pending.is_none()
     }
 
     /// LLInventoryModelBackgroundFetch::bulkFetchViaAis: the reads to send
     /// this frame, never more than [`MAX_IN_FLIGHT`] at once.
     pub fn pump(&mut self, inv: &mut Inventory, agent: Uuid) -> Vec<NetCommand> {
         let mut out = Vec::new();
+        // llstartup::STATE_INVENTORY_SEND calls findLostItems once per
+        // session, including when the regular folders came from cache.
+        if self.started && !self.orphans_requested {
+            let request = self.next_request;
+            self.next_request += 1;
+            self.orphans_requested = true;
+            self.orphans_pending = Some(request);
+            self.orphans_failed = false;
+            out.push(NetCommand::FetchInventoryOrphans { request });
+        }
         let mut steps = 0;
-        while self.in_flight.len() < MAX_IN_FLIGHT && steps < STEPS_PER_FRAME {
+        while self.in_flight.len() + usize::from(self.orphans_pending.is_some()) < MAX_IN_FLIGHT && steps < STEPS_PER_FRAME {
             let Some((id, kind)) = self.queue.pop_front() else {
                 break;
             };
@@ -111,6 +127,15 @@ impl BackgroundFetch {
             );
         }
         out
+    }
+
+    pub fn on_orphans_reply(&mut self, request: u64, success: bool) -> bool {
+        if self.orphans_pending != Some(request) {
+            return false;
+        }
+        self.orphans_pending = None;
+        self.orphans_failed = !success;
+        true
     }
 
     fn step(&mut self, inv: &mut Inventory, agent: Uuid, id: Uuid, kind: Kind, out: &mut Vec<NetCommand>) {

@@ -931,7 +931,7 @@ mod tests {
                 }
                 heads.push(String::from_utf8_lossy(&request).into_owned());
                 socket.write_all(&response).await.expect("write response");
-                let _ = socket.shutdown().await;
+                crate::test_http::finish(socket);
             }
             heads
         });

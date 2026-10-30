@@ -58,7 +58,7 @@ impl Action {
             AppLink::Event(_) => Self::Event,
             AppLink::WorldMap { .. } => Self::Map,
             AppLink::Chat { .. } => Self::Channel,
-            AppLink::Search { .. } => Self::Search,
+            AppLink::Search { .. } | AppLink::AreaSearch(_) => Self::Search,
             AppLink::Blocked(_) => Self::Blocked,
             AppLink::Unsupported => Self::Unsupported,
         }

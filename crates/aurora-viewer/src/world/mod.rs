@@ -3,6 +3,7 @@
 pub mod animation_log;
 pub mod anti_spam;
 pub mod appearance;
+pub mod attachment_inventory;
 pub mod attention;
 pub mod blocking;
 pub mod body;
@@ -457,6 +458,7 @@ pub struct World {
     inventory_background: inventory::background::BackgroundFetch,
     /// Inventory changes outside the inventory window (`take_inventory_edits`).
     inventory_edits: Vec<aurora_net::inventory::operations::Mutation>,
+    pub attachment_inventory: attachment_inventory::AttachmentInventory,
     pub received_items: received_items::ReceivedItems,
     /// Playing animations per avatar / animesh.
     pub animations: HashMap<Uuid, Vec<PlayingAnimation>>,
@@ -738,6 +740,7 @@ impl World {
             inventory_cache: None,
             inventory_background: Default::default(),
             inventory_edits: Vec::new(),
+            attachment_inventory: Default::default(),
             received_items: Default::default(),
             animations: HashMap::new(),
             ao_pose: None,
@@ -1197,6 +1200,7 @@ impl World {
             return Vec::new();
         }
         self.inventory_background.start(&self.inventory);
+        self.inventory.repair_lost_hierarchy();
         self.inventory_background.pump(&mut self.inventory, self.agent_id)
     }
 
@@ -1970,7 +1974,10 @@ impl World {
     /// purpose (a detach sent by the resident, a script or RLVa).
     pub fn note_outfit_command(&mut self, command: &aurora_net::NetCommand) {
         match command {
-            aurora_net::NetCommand::DetachAttachments(items) => self.outfit.on_detach_requested(items),
+            aurora_net::NetCommand::DetachAttachments(items) => {
+                self.outfit.on_detach_requested(items);
+                self.attachment_inventory.detaching(items);
+            }
             aurora_net::NetCommand::DetachObject { handle, local_id } => {
                 if let Some(item) = self
                     .objects
@@ -1982,6 +1989,7 @@ impl World {
                     .and_then(|o| o.attachment_item_id())
                 {
                     self.outfit.on_detach_requested(&[item]);
+                    self.attachment_inventory.detaching(&[item]);
                 }
             }
             _ => {}
@@ -2126,6 +2134,7 @@ impl World {
                 self.aliases_synced = u64::MAX;
                 self.sync_contact_aliases();
                 self.inventory = inventory::Inventory::from_login(&l.raw);
+                self.inventory.owner = self.agent_id;
                 self.inventory_background = Default::default();
                 // read off the main thread; until `poll_inventory_cache`
                 // applies it, folder requests wait (the root's included)
@@ -3422,6 +3431,29 @@ impl World {
                 self.inventory.add_items(items);
                 None
             }
+            NetEvent::AttachmentInventoryItems(items) => {
+                self.inventory.add_attachment_items(items);
+                None
+            }
+            NetEvent::InventoryOrphansFetched { request, owner, result } => {
+                if owner == self.agent_id && self.inventory_background.on_orphans_reply(request, result.is_ok()) {
+                    match result {
+                        Ok(contents) => {
+                            self.inventory.server_updated(contents.folders, Vec::new());
+                            self.inventory.repair_lost_folders();
+                            let (attachments, orphans): (Vec<_>, Vec<_>) = contents.items.into_iter().partition(|item| {
+                                self.worn_attachment(&item.id).and_then(|i| self.objects.get(i)).is_some_and(|o| {
+                                    o.attachment_point() != 0 && !temp_attachments::is_temp_attachment(o.full_id, Some(item.id))
+                                })
+                            });
+                            self.inventory.add_attachment_items(attachments);
+                            self.inventory.add_orphan_items(orphans);
+                        }
+                        Err(reason) => log::warn!("lost inventory recovery failed: {reason}"),
+                    }
+                }
+                None
+            }
             NetEvent::AttachmentAssetSaved(item) => {
                 if self.rlva.enabled() {
                     self.rlva.watchdog.saved(item, Instant::now());
@@ -3455,6 +3487,12 @@ impl World {
             }
             NetEvent::InventoryItemsFailed { items } => {
                 log::warn!("{} inventory items could not be fetched", items.len());
+                self.inventory.items_failed(&items);
+                None
+            }
+            NetEvent::InventoryItemsMissing { items } => {
+                log::warn!("{} inventory items do not exist (broken links)", items.len());
+                self.inventory.items_missing(items);
                 None
             }
             NetEvent::AppearanceRequestResult {
@@ -4399,6 +4437,9 @@ impl World {
         // LGPL 2.1): temporary attachments have no inventory item, but their
         // root and linked scripts still own motions that must be stopped.
         self.stop_linkset_motions(idx);
+        if let Some(item) = item {
+            self.attachment_inventory.detached(item);
+        }
         if let Some(item) = item
             && self.outfit.keeps_cof_link(item)
         {

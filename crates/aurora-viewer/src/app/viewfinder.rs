@@ -487,8 +487,9 @@ impl App {
 
     /// A press of the left button in the world while the viewfinder shows:
     /// the AF point moves there and focuses; a menu open closes instead;
-    /// a HUD or a poser handle under the pointer keeps it. With Shift in
-    /// AF-S, the avatar (Avatar area) or the point there joins the group
+    /// Ctrl alone passes the click to the world; a HUD or a poser handle
+    /// under the pointer keeps it. With Shift in AF-S, the avatar (Avatar
+    /// area) or the point there joins the group
     /// focus, or leaves it. True when taken.
     pub(super) fn viewfinder_click(&mut self) -> bool {
         // Alt + click (focus the camera), Ctrl + Alt (orbit), Ctrl + Alt +
@@ -496,6 +497,16 @@ impl App {
         // camera's: the photographer frames with them
         if !self.viewfinder_on() || self.camera.mouselook() || self.alt || self.object_view {
             return false;
+        }
+        if self.ctrl && !self.shift {
+            // The viewfinder's interaction shortcut acts like an ordinary
+            // left click (LLToolPie::handleMouseDown, indra/newview/lltoolpie.cpp).
+            // Object actions and HUDs reject Ctrl, so consume it before the
+            // press; the deferred pick keeps these normalized modifiers.
+            self.ctrl = false;
+            self.on_left_press();
+            self.ctrl = true;
+            return true;
         }
         let v = &mut self.snapshots.vf;
         if v.menu || v.help {
@@ -676,6 +687,24 @@ impl App {
         }
     }
 
+    /// The viewfinder's free-camera pad into `controls_free` (Look, Glide,
+    /// Forward rocker and Glide up / down). Must run before
+    /// `photo_free_move`: the free camera path returns before
+    /// `viewfinder_pad`, which used to leave the pad unread. Replaces the
+    /// sticks rather than adding to them: the full-frame viewfinder does not
+    /// draw the Controls window, the only thing that resets them each frame,
+    /// so a sum would grow every frame and keep the camera moving after the
+    /// pad is let go.
+    pub(super) fn apply_viewfinder_free_pad(&mut self) {
+        if !self.viewfinder_on() {
+            self.snapshots.vf_free_up = 0.0;
+            return;
+        }
+        let (mv, look, up) = free_pad_axes(&self.snapshots.vf.pad);
+        self.controls_free = (mv, look);
+        self.snapshots.vf_free_up = up;
+    }
+
     /// The camera pad this frame (`dt` seconds): the free camera's flight
     /// and look, the eyes' look and focal length in the first person
     /// view; around the avatar, the rates of the camera keys it holds
@@ -685,14 +714,12 @@ impl App {
         if !self.viewfinder_on() {
             return None;
         }
-        let pad = self.snapshots.vf.pad;
         if self.camera.free().is_some() {
-            // Regarder, Glisser (and rise), the rocker forward and back
-            self.controls_free = (egui::Vec2::new(pad.pan.x, -pad.rocker), egui::Vec2::new(pad.orbit.x, -pad.orbit.y));
-            self.snapshots.vf_free_up = -pad.pan.y;
+            // Applied in `apply_viewfinder_free_pad` before `photo_free_move`.
             return None;
         }
         self.snapshots.vf_free_up = 0.0;
+        let pad = self.snapshots.vf.pad;
         if self.camera.mouselook() {
             // look around (about 90° a second at full tilt), the rocker on
             // the focal length
@@ -742,7 +769,8 @@ impl App {
     /// lengths. The letters only when no shortcut of the viewer uses the
     /// key: the movement keys stay the camera's and the avatar's.
     pub(super) fn viewfinder_key(&mut self, code: KeyCode, logical: &winit::keyboard::Key, pressed: bool, repeat: bool) -> bool {
-        if !self.viewfinder_on() || self.ctrl || self.alt {
+        let mods = self.mods();
+        if !self.viewfinder_on() || mods.ctrl || mods.alt {
             return false;
         }
         if matches!(code, KeyCode::Enter | KeyCode::NumpadEnter) {
@@ -1113,6 +1141,17 @@ impl App {
 const PAD_TURN: f32 = 0.6;
 const PAD_PAN: f32 = 0.4;
 
+/// Free camera from the viewfinder pad: move (slide X, forward from the
+/// rocker), look (orbit), and rise (glide Y). Rocker up is negative, as
+/// for zoom-in, so forward is `-rocker`.
+fn free_pad_axes(pad: &crate::ui::viewfinder::Pad) -> (egui::Vec2, egui::Vec2, f32) {
+    (
+        egui::Vec2::new(pad.pan.x, -pad.rocker),
+        egui::Vec2::new(pad.orbit.x, -pad.orbit.y),
+        -pad.pan.y,
+    )
+}
+
 /// About half a head's depth (m): from its middle to the face.
 const HEAD_RADIUS: f32 = 0.09;
 
@@ -1125,4 +1164,25 @@ enum VfSound {
     Tick,
     /// A lens ring's detent.
     Click,
+}
+
+#[cfg(test)]
+mod free_pad_tests {
+    use super::free_pad_axes;
+    use crate::ui::viewfinder::Pad;
+    use egui::Vec2;
+
+    #[test]
+    fn viewfinder_free_pad_maps_look_glide_and_forward() {
+        let pad = Pad {
+            orbit: Vec2::new(0.5, -0.25),
+            pan: Vec2::new(-0.4, 0.8),
+            rocker: -0.6, // Forward (+)
+        };
+        let (mv, look, up) = free_pad_axes(&pad);
+        assert!((mv.x - (-0.4)).abs() < 1e-5, "glide left/right");
+        assert!((mv.y - 0.6).abs() < 1e-5, "forward from rocker up");
+        assert!((look.x - 0.5).abs() < 1e-5 && (look.y - 0.25).abs() < 1e-5, "look");
+        assert!((up - (-0.8)).abs() < 1e-5, "glide stick down descends");
+    }
 }

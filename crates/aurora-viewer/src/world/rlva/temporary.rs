@@ -89,6 +89,28 @@ impl World {
         point.is_some_and(|point| self.rlva_attachment_remove_at(item, point, actor))
     }
 
+    pub(super) fn rlva_unloaded_attachment_removable(&self, item: Uuid, actor: Uuid) -> bool {
+        // Manual recovery still honors source/point locks. Without the item
+        // we cannot determine its folder locks or scripted nostrip state.
+        if !actor.is_nil()
+            || [
+                "sharedunwear",
+                "unsharedunwear",
+                "detachthis",
+                "detachallthis",
+                "detachthis_except",
+                "detachallthis_except",
+            ]
+            .iter()
+            .any(|name| self.rlva.has(name))
+        {
+            return false;
+        }
+        self.worn_attachment(&item)
+            .and_then(|i| self.objects.get(i))
+            .is_some_and(|object| object.attachment_point() != 0 && self.rlva_attachment_remove_at(item, object.attachment_point(), actor))
+    }
+
     pub(super) fn rlva_temporary_addable(&self, item: Uuid, point: u8, _actor: Uuid) -> bool {
         let Some(key) = self.rlva_temporary_attachment(item) else {
             return false;

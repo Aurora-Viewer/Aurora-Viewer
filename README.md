@@ -9,7 +9,7 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 [![Download](docs/readme/button-download.svg)](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/latest)&nbsp;
 [![Download for Linux](docs/readme/button-download-linux.svg)](docs/LINUX.md)&nbsp;
-[![Download for macOS](docs/readme/button-download-macos.svg)](docs/MACOS.md)&nbsp;
+[![Download for macOS (experimental)](docs/readme/button-download-macos.svg)](docs/MACOS.md)&nbsp;
 [![Discord](docs/readme/button-discord.svg)](https://discord.gg/TK4nbMGmKt)&nbsp;
 [![Website](docs/readme/button-website.svg)](https://aurora-viewer.org)
 
@@ -221,7 +221,7 @@ are planned or in progress: they are not in the viewer yet.
   underwater.
 - **RLVa, when you want it**: the restrictions, exceptions and commands that
   scripted outfits, furniture and experiences rely on (RLV 3.4.3 /
-  RLVa 2.4.2). Off by default: turn it on in Preferences › Protections;
+  RLVa 2.4.2). Off by default: turn it on in Preferences › RLVa;
   turning it off releases every restriction at once ([details](docs/RLVA.md)).
 - **PBR terrain**: regions whose ground uses PBR materials render with them,
   as in the Legacy Viewer, and estate managers preview a ground-cover change
@@ -675,7 +675,7 @@ while keeping their saved local sizes.
 
 ### RLVa
 
-RLVa is off by default. Turn it on in **Preferences › Protections › Enable
+RLVa is off by default. Turn it on in **Preferences › RLVa › Enable
 RLVa**: scripted outfits, furniture and experiences can then restrict and
 drive your viewer with the RLV 3.4.3 / RLVa 2.4.2 commands. Turning it off
 releases every restriction of the session and drops the queued commands;

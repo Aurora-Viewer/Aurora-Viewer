@@ -26,6 +26,7 @@ use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub(crate) mod drag;
+mod importing;
 mod visuals;
 #[cfg(test)]
 mod window_tests;
@@ -159,6 +160,7 @@ enum Dialog {
 
 #[derive(Default)]
 pub struct ContactsUi {
+    import_job: Option<importing::Job>,
     friend_filter: String,
     friends_sel: Vec<Uuid>,
     friends_anchor: Option<Uuid>,
@@ -340,6 +342,7 @@ pub fn apply_set_edit(world: &mut World, edit: SetEdit) {
 /// or not (they are also asked from the other right-click menus and from
 /// People), and the configuration window of a contact set.
 pub fn dialog_windows(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut ContactsUi) -> Vec<ContactsAction> {
+    importing::poll(world, st);
     let mut actions = Vec::new();
     // the resident picker shared with About Land (LLFloaterAvatarPicker),
     // also opened by the friends tab of the People window
@@ -1607,7 +1610,7 @@ fn sets_tab(
             ui.set_width(list_w);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                let combo_w = list_w - 3.0 * 24.0;
+                let combo_w = list_w - 4.0 * 24.0;
                 egui::ComboBox::from_id_salt("contact_set_combo")
                     .width(combo_w - 8.0)
                     .selected_text(set_label(&choice))
@@ -1633,6 +1636,12 @@ fn sets_tab(
                             }
                         }
                     });
+                if icon_button(ui, p, "file-import", aurora_i18n::tr!("contacts-import"), st.import_job.is_none())
+                    .on_hover_text(aurora_i18n::tr!("contacts-import-hint"))
+                    .clicked()
+                {
+                    st.import_contact_sets(ui.ctx(), world.agent_id);
+                }
                 if icon_button(
                     ui,
                     p,
@@ -2130,6 +2139,15 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
             } else {
                 usize::MAX
             };
+            let message_field = matches!(
+                d,
+                Dialog::Friendship { .. } | Dialog::TeleportRequest { .. } | Dialog::OfferTeleport { .. }
+            );
+            let hint = if message_field {
+                aurora_i18n::tr!("ui-contacts-message-hint")
+            } else {
+                aurora_i18n::tr!("ui-contacts-enter-to-confirm")
+            };
             let buf = match d {
                 Dialog::Friendship { message, .. } | Dialog::TeleportRequest { message, .. } | Dialog::OfferTeleport { message, .. } => {
                     message
@@ -2138,8 +2156,18 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
                 Dialog::SetAlias { alias, .. } => alias,
                 _ => unreachable!("dialog without input"),
             };
-            let r = ui.add(egui::TextEdit::singleline(buf).char_limit(limit).desired_width(f32::INFINITY));
-            if r.lost_focus() && widgets::enter_pressed(ui) {
+            let r = ui
+                .add(
+                    egui::TextEdit::singleline(buf)
+                        .char_limit(limit)
+                        .desired_width(f32::INFINITY)
+                        .hint_text(hint.to_owned()),
+                )
+                .on_hover_text(aurora_i18n::tr!("ui-contacts-enter-to-confirm"));
+            // Enter while the field has focus (or just gave it up) confirms —
+            // same pattern as script search. Relying on lost_focus alone missed
+            // presses that left the field focused, so Send never ran.
+            if (r.has_focus() || r.lost_focus()) && widgets::enter_pressed(ui) {
                 done = Some(true);
             }
         }

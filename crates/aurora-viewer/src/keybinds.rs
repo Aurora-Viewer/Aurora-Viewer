@@ -900,7 +900,7 @@ pub fn chat_bar_held_moves(input: &Input, ctrl: bool) -> bool {
 }
 
 /// Current modifier state.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Mods {
     pub ctrl: bool,
     pub shift: bool,
