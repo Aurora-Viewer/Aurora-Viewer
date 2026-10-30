@@ -240,30 +240,33 @@ impl Inventory {
 
     /// Items fetched by id (FetchInventory2), listed in their folder when
     /// that folder is loaded.
+    ///
+    /// A moved or renamed item is taken out of its old place and inserted at
+    /// its sorted place: a folder is not sorted again for each item, which
+    /// cost ~1 ms per move into a 5,000-item Trash, twice per moved item
+    /// (#1580). Lists stay ordered like `sort_children`'s.
     pub fn add_items(&mut self, items: Vec<InvItem>) {
         self.generation += 1;
-        let mut changed = HashSet::new();
         for mut it in items {
             self.preserve_favorite(&mut it);
             if let Some(old) = self.items.get(&it.id)
-                && old.parent != it.parent
+                && (old.parent != it.parent || old.name != it.name)
                 && let Some(folder) = self.folders.get_mut(&old.parent)
             {
                 folder.items.retain(|id| *id != it.id);
-                changed.insert(old.parent);
             }
+            let items = &self.items;
             if let Some(f) = self.folders.get_mut(&it.parent)
                 && f.state == FetchState::Fetched
+                && !f.items.contains(&it.id)
             {
-                if !f.items.contains(&it.id) {
-                    f.items.push(it.id);
-                }
-                changed.insert(it.parent);
+                let key = it.name.to_lowercase();
+                let at = f
+                    .items
+                    .partition_point(|other| items.get(other).is_some_and(|o| o.name.to_lowercase() <= key));
+                f.items.insert(at, it.id);
             }
             self.items.insert(it.id, it);
-        }
-        for id in changed {
-            self.sort_children(id);
         }
     }
 
@@ -276,6 +279,9 @@ impl Inventory {
             self.preserve_favorite(item);
         }
         let mut changed = HashSet::new();
+        // Folders whose subfolders changed, sorted again below; moved items
+        // take their sorted place in `add_items`.
+        let mut resort = HashSet::new();
         for folder in folders {
             let id = folder.id;
             let parent = folder.parent;
@@ -283,6 +289,7 @@ impl Inventory {
                 if old.info.parent != parent || old.info.name != folder.name {
                     changed.insert(old.info.parent);
                     changed.insert(parent);
+                    resort.extend([old.info.parent, parent]);
                 }
                 let old_parent = old.info.parent;
                 if old_parent != parent
@@ -292,6 +299,7 @@ impl Inventory {
                 }
             } else {
                 changed.insert(parent);
+                resort.insert(parent);
             }
             self.upsert_folder(folder, false);
             if let Some(parent) = self.folders.get_mut(&parent)
@@ -317,7 +325,7 @@ impl Inventory {
             }
         }
         self.add_items(items);
-        for id in changed {
+        for id in resort {
             self.sort_children(id);
         }
         self.generation += 1;
