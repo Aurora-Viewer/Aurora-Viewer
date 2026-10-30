@@ -231,14 +231,15 @@ fn voice_panel(ctx: &egui::Context, p: &Palette, center: Pos2, radius: f32, id: 
         center.y - radius - 8.0 - HEIGHT
     };
     let x = (center.x - WIDTH * 0.5).clamp(screen.left(), (screen.right() - WIDTH).max(screen.left()));
+    // Tooltip sits above the pie's Foreground modal surface so the slider
+    // and mute stay clickable (a same-order Area lost the hit test to the
+    // full-screen Sense::click_and_drag under it).
     egui::Area::new(egui::Id::unique("world_pie_voice"))
-        .order(egui::Order::Foreground)
+        .order(egui::Order::Tooltip)
         .fixed_pos(egui::pos2(x, y))
         .movable(false)
         .fade_in(false)
         .show(ctx, |ui| {
-            // over the pie's input surface
-            ui.ctx().move_to_top(ui.layer_id());
             crate::ui::widgets::overlay(ui, p, egui::Margin::same(4), |ui| {
                 ui.set_width(WIDTH - 10.0);
                 super::voice_control(ui, p, id, voice);
@@ -380,8 +381,15 @@ pub(super) fn show(
                 };
                 response.on_hover_text(tooltip);
             }
-            primary_released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
-            secondary_released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Secondary));
+            // Only releases that landed on this modal surface. A global
+            // button_released also fires when the voice / volume panels
+            // (Tooltip order above us) handle the click, and would close
+            // the pie or steal the drag.
+            let on_surface = response.contains_pointer();
+            primary_released =
+                on_surface && ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
+            secondary_released =
+                on_surface && ui.input(|i| i.pointer.button_released(egui::PointerButton::Secondary));
         });
     // at the first level only, with the avatar's own entries
     if let Some((id, voice)) = voice.filter(|_| menu.pie_path.is_empty()) {

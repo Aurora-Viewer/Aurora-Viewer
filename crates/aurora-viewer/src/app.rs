@@ -9744,6 +9744,7 @@ impl App {
             // In particular, never fsync the crash snapshot during a drag.
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
         }
+        crate::a11y::set_from_settings(&self.settings);
         crate::theme::apply_motion(&self.egui_ctx, self.settings.reduce_motion);
         if actions.settings_changed || std::mem::take(&mut self.snapshots.settings_changed) {
             aurora_i18n::select(&self.settings.language, crate::cli::get().language.as_deref());
@@ -9782,6 +9783,8 @@ impl App {
             self.disk_cache.set_limit_mb(self.settings.cache_size_mb);
             self.net.set_bandwidth(bandwidth_kbps(&self.settings));
         }
+        // After Theme::apply (above) so a skin reload cannot wipe these.
+        crate::theme::apply_accessibility(&self.egui_ctx, &self.palette);
         self.handle_actions(actions, event_loop);
         for r in std::mem::take(&mut self.build.ui.requests) {
             self.on_build_request(r);

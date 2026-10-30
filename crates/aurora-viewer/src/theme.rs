@@ -314,6 +314,38 @@ pub fn apply_motion(ctx: &egui::Context, reduce: bool) {
     }
 }
 
+/// Preferences › Accessibility control toggles applied every frame after
+/// the skin (so a reload cannot wipe them): larger hit targets, quicker
+/// tooltips, and a stronger keyboard focus ring.
+pub fn apply_accessibility(ctx: &egui::Context, p: &Palette) {
+    let larger = crate::a11y::larger_controls();
+    let quick = crate::a11y::quick_tooltips();
+    let focus = crate::a11y::show_keyboard_focus();
+    ctx.all_styles_mut(|s| {
+        // Match Theme::apply's defaults when the toggle is off, so turning
+        // it off mid-session restores the skin without a reload.
+        if larger {
+            s.spacing.button_padding = egui::vec2(14.0, 8.0);
+            s.spacing.interact_size.y = 32.0;
+            s.spacing.item_spacing = egui::vec2(10.0, 8.0);
+        } else {
+            s.spacing.button_padding = egui::vec2(10.0, 5.0);
+            s.spacing.interact_size.y = 26.0;
+            s.spacing.item_spacing = egui::vec2(8.0, 6.0);
+        }
+        // egui's default tooltip delay is 0.5 s; quicker help for motor /
+        // attention needs without waiting half a second.
+        s.interaction.tooltip_delay = if quick { 0.12 } else { 0.5 };
+        s.interaction.show_tooltips_only_when_still = !quick;
+        if focus {
+            let stroke = egui::Stroke::new(2.0, p.violet);
+            s.visuals.widgets.hovered.bg_stroke = stroke;
+            s.visuals.widgets.focused.bg_stroke = stroke;
+            s.visuals.widgets.focused.fg_stroke = egui::Stroke::new(1.5, p.on_accent);
+        }
+    });
+}
+
 /// The size of the text fields: egui 0.37 makes them as high as a button
 /// (`interact_size`, 26 points here) with a button's padding; they keep egui
 /// 0.36's, 4 × 2 points around their text (stroke included) and no minimum

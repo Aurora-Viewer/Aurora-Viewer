@@ -2,9 +2,10 @@
 //! no colour blindness option): the high contrast palette
 //! (`crate::high_contrast`, #906), the colour vision the interface adapts
 //! to (`crate::colorblind`, #418) with a preview of the status dots, the
-//! reduced motion, and the settings of other pages that help to see, read
-//! and hear, gathered here (`Cx::borrow`: their own rows, so the same
-//! settings).
+//! reduced motion, larger controls, always-underlined links, quicker
+//! tooltips and a visible keyboard focus ring, plus the settings of other
+//! pages that help to see, read and hear, gathered here (`Cx::borrow`:
+//! their own rows, so the same settings).
 
 use super::super::Page;
 use super::super::cx::{Cx, Nothing, field};
@@ -24,6 +25,7 @@ pub fn page(cx: &mut Cx) {
             &field!(high_contrast),
         );
         cx.borrow(Page::Avatars, 0, &["name_tag_distance"]);
+        cx.borrow(Page::Avatars, 0, &["show_own_name_tag", "show_friend_name_tags", "show_other_name_tags"]);
     });
     cx.group(tr!("ui-options-interface-colors"), |cx| {
         if crate::high_contrast::current() {
@@ -70,7 +72,29 @@ pub fn page(cx: &mut Cx) {
             },
         );
     });
+    cx.group(tr!("ui-options-controls-a11y"), |cx| {
+        cx.toggle(
+            tr!("ui-options-larger-controls"),
+            tr!("ui-options-larger-controls-help"),
+            &field!(larger_controls),
+        );
+        cx.toggle(
+            tr!("ui-options-quick-tooltips"),
+            tr!("ui-options-quick-tooltips-help"),
+            &field!(quick_tooltips),
+        );
+        cx.toggle(
+            tr!("ui-options-show-keyboard-focus"),
+            tr!("ui-options-show-keyboard-focus-help"),
+            &field!(show_keyboard_focus),
+        );
+    });
     cx.group(tr!("ui-options-reading"), |cx| {
+        cx.toggle(
+            tr!("ui-options-underline-links"),
+            tr!("ui-options-underline-links-help"),
+            &field!(underline_links),
+        );
         cx.borrow(Page::Chat, 0, &["chat_toast_seconds"]);
         cx.borrow(Page::Chat, 1, &["im_toast_seconds"]);
         // world tooltips name what is under the pointer — useful when focus
@@ -85,6 +109,8 @@ pub fn page(cx: &mut Cx) {
             &field!(reduce_motion),
         );
         cx.borrow(Page::Chat, 0, &["flash_unread_conversations"]);
+        cx.borrow(Page::Chat, 0, &["flash_conversations_button", "flash_conversations_nearby"]);
+        cx.borrow(Page::Chat, 1, &["flash_on_message", "flash_on_object_im", "flash_on_script_dialog"]);
         cx.borrow(Page::Graphics, 4, &["dof.enabled"]);
     });
     cx.group(tr!("ui-options-hearing"), |cx| {

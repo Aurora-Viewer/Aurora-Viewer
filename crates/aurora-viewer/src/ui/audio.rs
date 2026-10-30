@@ -221,9 +221,11 @@ pub fn top_controls(
     }
     if st.panel_open {
         let anchor = sp.rect.right_bottom() + Vec2::new(4.0, 6.0);
+        // Above the pie menu's full-screen Foreground catcher so its sliders
+        // and mute buttons stay usable while a radial menu is open.
         let area = egui::Area::new(egui::Id::unique("volume_panel"))
             .fade_in(false)
-            .order(egui::Order::Foreground)
+            .order(egui::Order::Tooltip)
             .pivot(egui::Align2::RIGHT_TOP)
             .fixed_pos(anchor)
             .show(ui.ctx(), |ui| {

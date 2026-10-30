@@ -973,6 +973,19 @@ pub struct Settings {
     /// (`crate::high_contrast`, #906) instead of the skin's colours, off by
     /// default.
     pub high_contrast: bool,
+    /// Preferences › Accessibility › Controls: larger buttons, fields and
+    /// row spacing (Aurora's own; off by default).
+    pub larger_controls: bool,
+    /// Preferences › Accessibility › Reading: always underline chat and
+    /// app links, not only on hover or keyboard focus (off by default).
+    pub underline_links: bool,
+    /// Preferences › Accessibility › Controls: tooltips appear sooner
+    /// after the pointer rests (off by default: egui's usual delay).
+    pub quick_tooltips: bool,
+    /// Preferences › Accessibility › Controls: keep a clear focus ring on
+    /// the focused control so keyboard navigation stays visible (off by
+    /// default).
+    pub show_keyboard_focus: bool,
     /// Preferences › Appearance › Skin: the accent, background and text
     /// colours of the interface (`crate::interface_colors`), each the
     /// skin's by default.
@@ -1804,6 +1817,10 @@ impl Default for Settings {
             color_blindness: crate::colorblind::Deficiency::Off,
             color_blindness_strength: 1.0,
             high_contrast: false,
+            larger_controls: false,
+            underline_links: false,
+            quick_tooltips: false,
+            show_keyboard_focus: false,
             interface_colors: Default::default(),
             classic_controls: false,
             camera_shots: Vec::new(),

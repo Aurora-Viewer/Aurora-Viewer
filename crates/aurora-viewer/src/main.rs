@@ -2,6 +2,7 @@
 
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod a11y;
 mod agent;
 mod allocator;
 mod alt_codes;
