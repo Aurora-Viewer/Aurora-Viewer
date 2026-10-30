@@ -12,7 +12,8 @@
 //! - A popped-out window is a conversation in sight like a shown tab
 //!   (FSFloaterIM::getVisible: a torn-off floater is visible on its own):
 //!   its lines are read while it is drawn, not minimized.
-//! - Not restored at the next login. While it lives, the window keeps its
+//! - Nearby chat's docking and visibility are restored at the next login;
+//!   IM sessions are not. While it lives, the window keeps its
 //!   place; a new one opens where the last one was, cascaded from the
 //!   windows already open (floater_fs_im_session.xml, save_rect).
 //! - An entry of the list dragged out of the Conversations window pops its
@@ -101,6 +102,28 @@ pub(crate) struct Popped {
 }
 
 impl Popped {
+    pub(super) fn nearby_state(&self) -> crate::settings::NearbyChatWindow {
+        use crate::settings::NearbyChatWindow;
+        match self.windows.iter().find(|w| w.conversation.is_none()) {
+            None => NearbyChatWindow::Docked,
+            Some(w) if w.hidden => NearbyChatWindow::Hidden,
+            Some(_) => NearbyChatWindow::Detached,
+        }
+    }
+
+    pub(super) fn restore_nearby(&mut self, state: crate::settings::NearbyChatWindow) {
+        use crate::settings::NearbyChatWindow;
+        if state != NearbyChatWindow::Docked {
+            self.pop_out(None, false, false, false);
+            if let Some(w) = self.windows.last_mut() {
+                // Raising expands a minimized floater: restoring is not a
+                // request to open it. Keep the saved minimized state too.
+                w.raise = false;
+                w.hidden = state == NearbyChatWindow::Hidden;
+            }
+        }
+    }
+
     pub(super) fn contains(&self, conversation: Option<Uuid>) -> bool {
         self.windows.iter().any(|w| w.conversation == conversation)
     }
@@ -395,8 +418,12 @@ pub(super) fn show(ctx: &egui::Context, env: Env, world: &mut World, st: &mut Ch
             .chat()
             .action("login-2", aurora_i18n::tr!("ui-chat-attach-to-conversations"), &mut dock)
             .attention(unread > 0)
-            .steady_size()
-            .cascade(crate::ui::widgets::CascadeGroup::Conversation);
+            .steady_size();
+        // Nearby chat has one stable instance across sessions. A new
+        // conversation's cascade would overwrite its saved position/size.
+        if w.conversation.is_some() {
+            floater = floater.cascade(crate::ui::widgets::CascadeGroup::Conversation);
+        }
         if style.workspace() {
             floater = floater.flush_body();
         }
@@ -465,6 +492,106 @@ mod tests {
 
     fn id(n: u128) -> Option<Uuid> {
         Some(Uuid::from_u128(n))
+    }
+
+    #[test]
+    fn session_layout_round_trip_keeps_nearby_without_account_state() {
+        use crate::settings::{NearbyChatWindow, Settings};
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.nearby_chat_window, NearbyChatWindow::Docked);
+        assert!(!old.show_camera_controls && !old.show_movement_controls);
+        for state in [NearbyChatWindow::Docked, NearbyChatWindow::Detached, NearbyChatWindow::Hidden] {
+            for camera in [false, true] {
+                for movement in [false, true] {
+                    let mut settings = Settings {
+                        nearby_chat_window: state,
+                        show_camera_controls: camera,
+                        show_movement_controls: movement,
+                        ..Settings::default()
+                    };
+                    let mut st = ChatUi::from_settings(&settings);
+                    // Private conversation state is deliberately not a layout.
+                    st.popped.pop_out(id(77), false, false, true);
+                    st.input = "private unsent draft".into();
+                    st.remember_layout(&mut settings);
+                    let saved = serde_json::to_string(&settings).unwrap();
+                    let loaded: Settings = serde_json::from_str(&saved).unwrap();
+                    let restored = ChatUi::from_settings(&loaded);
+                    assert_eq!(restored.popped.nearby_state(), state);
+                    assert!(!restored.popped.contains(id(77)));
+                    assert!(restored.input.is_empty());
+                    assert!(!restored.focus_request && !restored.conv_focus_request);
+                    if let Some(w) = restored.popped.windows.first() {
+                        assert_eq!(w.floater, "conversation:nearby");
+                        assert!(!w.raise && !w.view.conv_focus_request);
+                        assert_eq!(w.hidden, state == NearbyChatWindow::Hidden);
+                    }
+                    let panels = crate::ui::Panels::from_settings(&loaded);
+                    assert_eq!(panels.camera_controls, camera);
+                    assert_eq!(panels.movement_controls, movement);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn session_layout_tracks_hide_show_and_dock() {
+        use crate::settings::{NearbyChatWindow, Settings};
+        let mut settings = Settings::default();
+        let mut st = ChatUi::from_settings(&settings);
+        st.popped.pop_out(None, false, false, false);
+        st.remember_layout(&mut settings);
+        assert_eq!(settings.nearby_chat_window, NearbyChatWindow::Detached);
+        st.popped.set_hidden(None, true);
+        st.remember_layout(&mut settings);
+        assert_eq!(settings.nearby_chat_window, NearbyChatWindow::Hidden);
+        // Same reset path as logout: nearby remains detached but hidden.
+        st = ChatUi::from_settings(&settings);
+        assert!(st.nearby_apart());
+        st.popped.raise(None, false);
+        st.remember_layout(&mut settings);
+        assert_eq!(settings.nearby_chat_window, NearbyChatWindow::Detached);
+        st.popped.remove(None);
+        st.remember_layout(&mut settings);
+        assert_eq!(settings.nearby_chat_window, NearbyChatWindow::Docked);
+        assert!(!ChatUi::from_settings(&settings).nearby_apart());
+    }
+
+    #[test]
+    fn session_layout_keeps_nearby_geometry_after_memory_reload() {
+        use crate::settings::{NearbyChatWindow, Settings};
+        let p = crate::theme::Theme::default().palette();
+        for style in [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy] {
+            let mut kit = Kit::new(style);
+            kit.st = ChatUi::from_settings(&Settings {
+                nearby_chat_window: NearbyChatWindow::Detached,
+                ..Settings::default()
+            });
+            let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+            for _ in 0..4 {
+                frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+            }
+            crate::ui::widgets::place_floater(&frames.ctx, &floater_id(None), egui::pos2(72.0, 110.0), egui::vec2(460.0, 380.0));
+            for _ in 0..4 {
+                frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+            }
+            let key = egui::Id::unique(floater_id(None));
+            let before = frames.ctx.memory(|m| m.area_rect(key)).unwrap();
+            let saved = crate::ui::layout::text(&frames.ctx).unwrap();
+            let mut settings = Settings::default();
+            kit.st.remember_layout(&mut settings);
+            // Recreate both UI and egui memory, like a process restart.
+            kit.st = ChatUi::from_settings(&settings);
+            let mut next = crate::ui::widgets::elide_tests::Frames::new();
+            let memory: egui::Memory = ron::from_str(&saved).unwrap();
+            next.ctx.memory_mut(|m| *m = memory);
+            for _ in 0..4 {
+                next.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+            }
+            let after = next.ctx.memory(|m| m.area_rect(key)).unwrap();
+            assert!((before.min - after.min).length() < 1.0, "{style:?}: {before:?} -> {after:?}");
+            assert!((before.size() - after.size()).length() < 1.0, "{style:?}: {before:?} -> {after:?}");
+        }
     }
 
     const JANE: Uuid = Uuid::from_u128(0xA);
