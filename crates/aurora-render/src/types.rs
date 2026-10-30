@@ -609,6 +609,10 @@ pub struct DrawLists {
 pub const IMPOSTOR_TILE: u32 = 256;
 pub const IMPOSTOR_TILES_PER_ROW: u32 = 8;
 pub const IMPOSTOR_TILES: u32 = IMPOSTOR_TILES_PER_ROW * IMPOSTOR_TILES_PER_ROW;
+/// At most four 32 MiB atlas pages; offscreen pictures are reclaimed first.
+pub const IMPOSTOR_MAX_TILES: u32 = IMPOSTOR_TILES * 4;
+/// A visible avatar waiting for a picture uses a cheap silhouette card.
+pub const IMPOSTOR_PENDING: u32 = 1 << 30;
 /// Impostor pictures taken per frame.
 pub const IMPOSTOR_CAPTURES: usize = 2;
 

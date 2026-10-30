@@ -3654,6 +3654,18 @@ both open states and the selection count. Capture at frame 620.
   `AURORA_DEMO_CROWD=52,100`, `AURORA_DEMO_HAIR=3` and `AURORA_SYNC_CHECK=1`,
   the `impostor pictures` line must count no stale picture, centre or anchor
   (`AURORA_IMPOSTOR_POSES`).
+- **Crowded avatar impostor capacity (#1579)**: Use `AURORA_DEMO_CROWD=120`, `AURORA_DEMO_ANIMESH=1` and
+  `AURORA_DEMO_IMPOSTOR_FLIP=3`. Keep Fully rendered avatars at 16. Turn the
+  camera through the crowd and back: visible avatars must retain a picture, or a
+  neutral silhouette while awaiting their first capture, never disappear for lack
+  of a tile. Offscreen avatars must not reserve slots needed on screen. Repeat
+  with `AURORA_CPU_CULL=1`, and with Occlusion on and off. A silhouette may remain
+  when more than 256 impostors are simultaneously visible (the 128 MiB atlas
+  budget); increasing the full-avatar limit is not required. Capture a steady
+  view and a view immediately after turning. Compare normal and flipped full
+  rendering for attachment visibility. Human grid validation: repeat the failing
+  busy-area camera motion at 16 fully rendered avatars, then at 100.
+
 - **`AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]`**: our
   avatar and each avatar of `AURORA_DEMO_CROWD` wear `layers` rigged
   meshes (8 by default, 32 at most), each a shell around the head and

@@ -3670,3 +3670,12 @@ window and its resident picker. `app/avatar_render_settings.rs` resolves names w
 RLVa privacy and shares batch edits with the avatar menus. The existing
 `Settings::render_exceptions` remains the persisted source read by complexity
 rules; distant residents need no scene object to be edited.
+
+
+Avatar impostor pictures (`scene/impostors.rs`, `aurora-render`): only visible
+avatars allocate or refresh tiles. Offscreen cached pictures expire after five
+seconds and are reclaimed immediately under pressure. The renderer grows an
+array atlas from one to four 64-tile pages (32 to 128 MiB), preserving existing
+pictures by GPU copy. The two-capture frame budget and full-avatar limit remain
+independent. Pending or over-budget avatars draw neutral silhouette cards rather
+than disappearing; cards have a dynamically sized instance buffer.

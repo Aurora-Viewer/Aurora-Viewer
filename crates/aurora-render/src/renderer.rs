@@ -1971,6 +1971,8 @@ fn reflection_matrix(n: Vec3, d: f32) -> Mat4 {
 struct Impostors {
     layout: wgpu::BindGroupLayout,
     atlas: wgpu::Texture,
+    pages: u32,
+    sprite_capacity: usize,
     bind_group: wgpu::BindGroup,
     scratch: wgpu::Texture,
     scratch_view: wgpu::TextureView,
@@ -2000,7 +2002,7 @@ impl Impostors {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
                         multisampled: false,
                     },
                     count: None,
@@ -2013,42 +2015,8 @@ impl Impostors {
                 },
             ],
         });
-        let size = IMPOSTOR_TILE * IMPOSTOR_TILES_PER_ROW;
-        let atlas = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("impostor atlas"),
-            size: wgpu::Extent3d {
-                width: size,
-                height: size,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: HDR_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let atlas_view = atlas.create_view(&Default::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("impostor"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("impostor atlas"),
-            layout: &layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&atlas_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
+        let atlas = Self::make_atlas(device, 1);
+        let bind_group = Self::bind_atlas(device, &layout, &atlas);
         let tile = wgpu::Extent3d {
             width: IMPOSTOR_TILE,
             height: IMPOSTOR_TILE,
@@ -2088,6 +2056,8 @@ impl Impostors {
         Impostors {
             layout,
             atlas,
+            pages: 1,
+            sprite_capacity: IMPOSTOR_TILES as usize,
             bind_group,
             scratch,
             scratch_view,
@@ -2098,6 +2068,86 @@ impl Impostors {
             sprite,
             sprite_depth,
         }
+    }
+
+    fn make_atlas(device: &wgpu::Device, pages: u32) -> wgpu::Texture {
+        let size = IMPOSTOR_TILE * IMPOSTOR_TILES_PER_ROW;
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("impostor atlas"),
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: pages,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: HDR_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        })
+    }
+
+    fn bind_atlas(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, atlas: &wgpu::Texture) -> wgpu::BindGroup {
+        let view = atlas.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("impostor"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("impostor atlas"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        })
+    }
+
+    /// Add pages only for allocated pictures, at most 128 MiB. Return the
+    /// old image for a GPU copy before any pass samples the enlarged cache.
+    fn prepare(&mut self, device: &wgpu::Device, lists: &DrawLists) -> Option<wgpu::Texture> {
+        let tiles = lists
+            .impostor_sprites
+            .iter()
+            .filter(|s| s.tile & IMPOSTOR_PENDING == 0)
+            .map(|s| s.tile & !IMPOSTOR_FULLBRIGHT)
+            .chain(lists.impostor_captures.iter().map(|c| c.tile))
+            .max()
+            .map_or(0, |tile| tile + 1);
+        let pages = tiles
+            .div_ceil(IMPOSTOR_TILES)
+            .next_power_of_two()
+            .clamp(1, IMPOSTOR_MAX_TILES / IMPOSTOR_TILES);
+        let old = if pages > self.pages {
+            let atlas = Self::make_atlas(device, pages);
+            self.bind_group = Self::bind_atlas(device, &self.layout, &atlas);
+            self.pages = pages;
+            Some(std::mem::replace(&mut self.atlas, atlas))
+        } else {
+            None
+        };
+        if lists.impostor_sprites.len() > self.sprite_capacity {
+            self.sprite_capacity = lists.impostor_sprites.len().next_power_of_two();
+            self.sprites = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("impostor cards"),
+                size: self.sprite_capacity as u64 * std::mem::size_of::<ImpostorSprite>() as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+        old
     }
 
     fn rebuild_pipelines(
@@ -5442,7 +5492,8 @@ impl Backend {
             u.screen = [r, r, 1.0 / r, 1.0 / r];
             self.queue.write_buffer(&self.refl_buffers[3 + i], 0, bytemuck::bytes_of(&u));
         }
-        let n_sprites = lists.impostor_sprites.len().min(IMPOSTOR_TILES as usize);
+        let old_impostor_atlas = self.impostors.prepare(&self.device, lists);
+        let n_sprites = lists.impostor_sprites.len();
         if n_sprites > 0 {
             self.queue.write_buffer(
                 &self.impostors.sprites,
@@ -5918,6 +5969,23 @@ impl Backend {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
+        if let Some(old) = old_impostor_atlas {
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &old,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.impostors.atlas,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                old.size(),
+            );
+        }
 
         let timer_slot = self.timer.as_mut().and_then(|t| t.slot());
         let mut first_pass = true;
@@ -6576,7 +6644,7 @@ impl Backend {
                     origin: wgpu::Origin3d {
                         x: (tile % IMPOSTOR_TILES_PER_ROW) * IMPOSTOR_TILE,
                         y: (tile / IMPOSTOR_TILES_PER_ROW) * IMPOSTOR_TILE,
-                        z: 0,
+                        z: c.tile / IMPOSTOR_TILES,
                     },
                     aspect: wgpu::TextureAspect::All,
                 },
@@ -7826,6 +7894,55 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires a GPU"]
+    fn gpu_impostor_atlas_growth_preserves_pictures_and_separates_pages() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).expect("GPU adapter");
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
+        let before = Impostors::make_atlas(&device, 1);
+        let after = Impostors::make_atlas(&device, 2);
+        let extent = wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        };
+        let pixel = [0u8, 60, 0, 56, 0, 52, 0, 60];
+        queue.write_texture(before.as_image_copy(), &pixel, wgpu::TexelCopyBufferLayout::default(), extent);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_texture(before.as_image_copy(), after.as_image_copy(), before.size());
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("impostor atlas test"),
+            size: 512,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        for page in 0..2 {
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    origin: wgpu::Origin3d { x: 0, y: 0, z: page },
+                    ..after.as_image_copy()
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &readback,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: page as u64 * 256,
+                        bytes_per_row: Some(256),
+                        rows_per_image: None,
+                    },
+                },
+                extent,
+            );
+        }
+        queue.submit([encoder.finish()]);
+        readback.map_async(wgpu::MapMode::Read, .., |_| {});
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU readback");
+        let data = readback.get_mapped_range(..).expect("mapped");
+        assert_eq!(&data[..8], &pixel, "the existing picture survives atlas growth");
+        assert_eq!(&data[256..264], &[0; 8], "a new page cannot alias the old one");
+    }
 
     #[test]
     fn specular_aa_follows_the_setting_unless_forced_and_alternates_each_second() {
