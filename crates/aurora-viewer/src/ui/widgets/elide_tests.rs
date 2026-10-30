@@ -13,6 +13,7 @@ pub(crate) const SHORT: &str = "Nova";
 pub(crate) struct Frames {
     pub ctx: egui::Context,
     frame: usize,
+    screen: egui::Vec2,
 }
 
 impl Frames {
@@ -20,6 +21,16 @@ impl Frames {
         Self {
             ctx: egui::Context::default(),
             frame: 0,
+            screen: egui::vec2(1280.0, 900.0),
+        }
+    }
+
+    /// Same as `new`, with a taller or wider screen so a long preferences
+    /// page still receives pointer events on its lower rows.
+    pub fn with_screen(size: egui::Vec2) -> Self {
+        Self {
+            screen: size,
+            ..Self::new()
         }
     }
 
@@ -56,7 +67,7 @@ impl Frames {
         self.frame += 1;
         let mut output = self.ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, self.screen)),
                 time: Some(self.frame as f64 / 60.0),
                 events,
                 ..Default::default()

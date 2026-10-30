@@ -1510,7 +1510,10 @@ fn the_accessibility_page_shows_the_settings_of_other_pages() {
 /// puts that setting back, and the page's reset leaves it to its page.
 #[test]
 fn a_borrowed_row_edits_the_setting_of_its_page() {
-    let mut frames = Frames::new();
+    // Tall enough for the Hearing rows after the borrowed Vision / Reading
+    // / Motion blocks; egui drops pointer events past the screen rect, so a
+    // 900 px frame left the Perceptual volume dot unreachable (also in fr).
+    let mut frames = Frames::with_screen(egui::vec2(1280.0, 1800.0));
     let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
     s.flash_unread_conversations = !s.flash_unread_conversations;
     s.audio.perceptual_volume = !s.audio.perceptual_volume;
@@ -1522,9 +1525,12 @@ fn a_borrowed_row_edits_the_setting_of_its_page() {
         aurora_i18n::tr!("ui-options-flash-unread"),
         aurora_i18n::tr!("ui-options-perceptual-volume"),
     ] {
+        // Prefer the lowest matching label: count/layout may paint the same
+        // string more than once when a setting is borrowed onto this page.
         let label = texts
             .iter()
-            .find(|t| t.source == key)
+            .filter(|t| t.source == key)
+            .max_by(|a, b| a.rect.center().y.total_cmp(&b.rect.center().y))
             .unwrap_or_else(|| panic!("the row {key}"))
             .rect;
         for events in click(egui::pos2(label.left() - 8.0, label.center().y)) {

@@ -7,7 +7,7 @@
 //! the media and the voice.
 
 use super::icons::Icons;
-use crate::settings::{audio_channels, AudioSettings};
+use crate::settings::{AudioSettings, audio_channels};
 use crate::theme::Palette;
 use egui::{RichText, Vec2};
 

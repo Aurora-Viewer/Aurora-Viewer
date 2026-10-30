@@ -65,11 +65,7 @@ fn take_icon(entries: &mut Vec<Entry>, icon: &str) -> Entry {
 fn seated(entries: &mut Vec<Entry>) -> Entry {
     let standing = take_action(entries, |a| matches!(a, CtxAction::StandUp));
     let sitting = take_action(entries, |a| matches!(a, CtxAction::Sit { .. } | CtxAction::SitGround));
-    if standing.enabled {
-        standing
-    } else {
-        sitting
-    }
+    if standing.enabled { standing } else { sitting }
 }
 
 /// Main directions follow Firestorm. Only Aurora's additional/unfinished

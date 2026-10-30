@@ -7,8 +7,8 @@
 //! pages that help to see, read and hear, gathered here (`Cx::borrow`:
 //! their own rows, so the same settings).
 
-use super::super::cx::{field, Cx, Nothing};
 use super::super::Page;
+use super::super::cx::{Cx, Nothing, field};
 use crate::colorblind::Deficiency;
 use crate::ui::presence::{self, Status};
 use egui::{RichText, Sense, Vec2};
