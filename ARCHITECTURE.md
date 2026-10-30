@@ -1,5 +1,10 @@
 # Aurora Viewer architecture
 
+Session layout uses Settings::nearby_chat_window for nearby-chat docking/visibility
+and show_camera_controls / show_movement_controls for the Controls windows.
+ChatUi::from_settings restores only nearby chat at startup and after logout; IMs,
+drafts and focus stay session-local. Stable floater ids reuse ui_layout.ron for
+geometry and minimized state; restoration does not raise a minimized window.
 Contact sets import uses `world/contact_sets/importing.rs` to validate the
 Legacy Viewer's complete LLSD account file and individual exports, then merge
 membership without overwriting local appearance or aliases. It reconstructs
@@ -262,6 +267,14 @@ uploads through the renderer's staging pool and publishes a complete local
 generation. It pins the server bakes for cancellation and releases retired
 GPU slots. `wearable_editor/masks.rs` embeds the original character masks;
 preview textures never enter the inventory or replace server appearance.
+Local imports share their worker-prepared RGBA images with `PreviewSource`.
+Wearable texture pickers accept local textures for private previews; pixel
+revisions trigger a new bake after a watched file reload. Removing a local
+texture restores the edited slots, and saving requires inventory textures.
+The wearable picker snapshots its target slot, previews each selection and
+restores that snapshot on Cancel or close; OK keeps the preview. The build
+and wearable editors share `build/ui/common.rs::swatch`, including bordered,
+crossed empty slots and consistent loading/transparent-image states.
 `aurora-assets/src/wearable.rs` preserves original texture text when unchanged
 and preserves metadata and future sections when textures are edited.
 
@@ -2045,6 +2058,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `demo_blend_shadows.rs` | `AURORA_DEMO_BLEND_SHADOWS` scenario: alpha-blended panels in the sun (greenhouse pane with opaque frame, face and texture alpha above and under the shadow cutoffs), or 400 greenhouse panes for the cost of blended casters |
 | `demo_plants.rs` | `AURORA_DEMO_PLANTS` scenario: the 21 tree species and 6 grass species near or far along the start view, or a forest of about 600 trees and 400 grass tufts; stand-in species textures drawn under their ids, in this scenario only |
 | `demo_sculpt.rs` | `AURORA_DEMO_SCULPT_ZERO` scenario: ordinary torus and two sculpts sharing its path/profile, subtype zero and sphere, with a synthetic JPEG2000 map in the demo cache |
+| `demo_sim_version.rs` | `AURORA_DEMO_SIM_VERSION` scenario: the region's simulator version changes during the run (the notice of Preferences › Confirmations, off by default, or on for the run) |
 | `demo_missing_texture.rs` | `AURORA_DEMO_TEXTURE_MISSING` scenario: boxes whose texture the asset server does not have (the Legacy Viewer's grey, not the rez grid) |
 | `demo_bom_rezzed.rs` | `AURORA_DEMO_BOM_REZZED` scenario: a box of bake-on-mesh placeholders on the ground, with stand-in placeholder textures drawn under their ids, in this scenario only |
 | `demo_social_menu.rs`, `app/social_menu_demo.rs` | `AURORA_DEMO_SOCIAL_MENU` scenario: a resident's "Invite to group" (group picker, then the invitation), "Add to contact set" (a new set), "Block particles" (the fountain they own) and calling cards (given, accepted by the demo server, or offered by the resident) |
@@ -2156,6 +2170,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `mac_quit.rs` | macOS: the Quit item of winit's application menu (Cmd+Q) sent to the window's `performClose:`, so that it shows the exit prompt (`WindowEvent::CloseRequested`) instead of ending the process (handleQuit, llappdelegate-objc.mm) |
 | `window_show.rs` | Showing the startup window once its first frame is drawn: on Windows one `ShowWindow`, already maximized when it has to be, then a foreground and focus request that follows Windows' rules (LLWindowWin32::show), then winit's flags, visible first (winit maximizing a window it thinks hidden showed it, activated it and hid it again, leaving it without the keyboard focus) |
 | `frame_profile.rs` | Frame profile (AURORA_PROFILE): time of each step of the frame, summary line per second in the log (average and maximum of each step, number of slow frames; detail of the streaming on the main thread, `s_*`, of the frame parameters, `p_*`, and of the interface per group of windows, `u_*`; time spent off the CPU per step, `off_cpu:`; meeting of the main thread and the render thread, `thread` segment) |
+| `net_adapters.rs` | Network adapters known to lose their link under many simultaneous downloads (Marvell AQtion / Aquantia, #1545): GetAdaptersAddresses once at startup, and the download mode that follows from it (always limited with such an adapter) and from Preferences › Network and cache › Download connections (`aurora_net::AssetConnections`: adaptive, or the Legacy Viewer's bounded connections) |
 | `net_profile.rs` | Network profile: what the link and the session did over each second, from the counters of `aurora-net` (`NetStats`: packets, resends, sequence gaps, longest pause of the session loop, delay between a key and its AgentUpdate), the wait of the events before the main thread applies them and the corrections and prediction lead of our avatar (`agent.rs`, `own_motion.rs`). Read by the Performance window; one `net summary` line per second in the log with AURORA_PROFILE |
 | `deep_profile.rs` | Deep profile (AURORA_PROFILE): every 10 s, the `msg summary`, `http summary`, `asset summary` (decode and mesh job durations, queues, GPU uploads, disk caches), `avatar summary` and `memory summary` lines, from the probes of `aurora-net` (`probe.rs`), of the background jobs and of the scene |
 | `sys_probe.rs` | What the system knows of the process (Windows): its memory, and the CPU time of its threads by group, written as `cpu summary` every 10 s by a thread of its own (AURORA_PROFILE); while the resource monitor is open, a sampler thread (`aurora-monitor`) reads every half second the threads' groups with their priority, the load of each logical core (the system's `\Processor(*)` counters) and the media plugins' processes with those they started |
@@ -2166,6 +2181,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `app/safe_graphics.rs` | The safe graphics after GPU trouble in the last session: the login card's choices, the Potato level applied only on the user's click, the level's values kept in `graphics-before-safe.json` and put back on request. |
 | `scene/lights.rs` | Local lights of the frame: the prim lights closest to the camera (range × 1.5, falloff, colour) and, for those that have a texture, their projector — cone computed from the position, the rotation and the size of the prim (`aurora-render` `Projector`), texture reserved as long as the light stays in the list; choice of the two projectors that cast shadows (the most present on screen) and fade of their shadow maps (`SpotShadowSlots`) |
 | `scene/animesh.rs` | Standalone skeletons of the animated objects, animations of the linkset, bounds of the poses for culling and shadows, demo scenario |
+| `scene/animesh_report.rs` | Dev Toolbox J9: the skin joints, joint overrides (and the winning mesh), control skeleton and motions of each animesh the target wears; the text builder is pure and tested |
 | `scene/anim_box.rs` | Animated box of each animated object (rigged extents per joint, posed each frame), which the detail level of its rigged meshes is judged by (`LLVOAvatar::calculateSpatialExtents`) |
 | `scene/body_physics.rs` | Avatar body physics (LLPhysicsMotion): six springs per avatar wearing a physics layer, driven by the world motion of its chest and pelvis at a fixed step, move the LEFT_PEC / RIGHT_PEC / BELLY / BUTT collision volumes of the posed palette (what mesh bodies are rigged to), in the parallel pose loop; detail and on/off from Preferences › Graphics |
 | `scene/morph.rs` | Morphs of the system avatar body: the visual parameters that move the vertices of the base meshes (sex, body fat, face, system hair, eyelashes, skirt). A body part is built by a job for a set of weights and shared by the avatars that have them (`GeomKey::AvatarMorph`); hidden parts are not built |

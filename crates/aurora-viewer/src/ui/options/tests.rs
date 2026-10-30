@@ -250,6 +250,7 @@ const BEFORE: &[&str] = &[
     // Colors, network and cache, sound and voice, shortcuts, camera, commands
     "colors",
     "bandwidth_kbps",
+    "download_connections",
     "no_neighbour_regions",
     "cache_size_mb",
     "cache_location",
@@ -573,6 +574,18 @@ fn the_modified_settings_are_counted_on_their_pages() {
     assert_eq!(c.modified(Page::Chat), 1);
     assert_eq!(c.modified(Page::Protections), 1);
     assert_eq!(c.total_modified(), 4);
+}
+
+#[test]
+fn the_simulator_version_notice_has_a_switch_off_by_default() {
+    let mut s = Settings::default();
+    assert!(!s.sim_version_alert);
+    let query = cx::fold(aurora_i18n::tr!("ui-options-sim-version-alert"));
+    assert!(counts(&mut s, &query).hits(Page::Confirmations) >= 1, "found by the search");
+    assert_eq!(counts(&mut s, "").modified(Page::Confirmations), 0);
+    // turned on: its row is the one that differs from the defaults
+    s.sim_version_alert = true;
+    assert_eq!(counts(&mut s, "").modified(Page::Confirmations), 1);
 }
 
 #[test]

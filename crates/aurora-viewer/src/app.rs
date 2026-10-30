@@ -1003,7 +1003,9 @@ impl App {
         {
             settings.show_ao = false;
         }
-        let net = NetClient::new()?;
+        // (an adapter known to drop under many downloads keeps them
+        // limited: #1545, net_adapters.rs)
+        let net = NetClient::new(crate::net_adapters::startup_mode(settings.download_connections))?;
         net.set_agent_language(aurora_i18n::language(), settings.language_is_public);
         let voice_http = net.caps_http();
         let login_info = ui::news::LoginInfo::start(net.runtime());
@@ -1064,6 +1066,7 @@ impl App {
         });
 
         let panels = Panels::from_settings(&settings);
+        let chat_ui = ChatUi::from_settings(&settings);
         let mut scene = Scene::new(cache, lib.clone());
         scene.jobs.execute(|| {
             crate::movement::strokes::pack();
@@ -1118,7 +1121,7 @@ impl App {
             viewer_stats: Default::default(),
             startup_windows: ui::StartupWindows::new(&panels),
             panels,
-            chat_ui: ChatUi::default(),
+            chat_ui,
             toolbar_ui: Default::default(),
             dock_layout: Default::default(),
             favorites_access_applied: None,
@@ -2470,6 +2473,11 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        // Capture the layout before replacing account-specific UI state.
+        self.chat_ui.remember_layout(&mut self.settings);
+        self.settings.show_camera_controls = self.panels.camera_controls;
+        self.settings.show_movement_controls = self.panels.movement_controls;
+        self.settings.save();
         self.sync_local_picker_bindings();
         self.imports.flush_local_registry();
         for entry in &self.imports.entries {
@@ -2568,7 +2576,7 @@ impl App {
         self.neighbours_refused = false;
         // the transcripts shown belong to the account that leaves
         self.history_ui = Default::default();
-        self.chat_ui = ChatUi::default();
+        self.chat_ui = ChatUi::from_settings(&self.settings);
         self.ao_agent = uuid::Uuid::nil();
         self.appearance_ui = Default::default();
         self.shape_ui = Default::default();
@@ -7824,7 +7832,8 @@ impl App {
             self.world.region_alerts.cfg = crate::world::region_alerts::Config {
                 script_count: self.settings.script_count_alert,
                 script_threshold: self.settings.script_count_threshold,
-                version: self.settings.sim_version_alert,
+                // AURORA_DEMO_SIM_VERSION=on: on for the run, not saved
+                version: self.settings.sim_version_alert || (self.demo && crate::demo::sim_version::forced()),
             };
             // AURORA_DEMO_COLLISIONS=chat: the nearby chat lines for this run only
             self.world.collisions.cfg = if self.demo {
@@ -10148,6 +10157,16 @@ impl App {
         }
         if self.demo && crate::demo::region_message::enabled() {
             for event in crate::demo::region_message::events(self.frame_count) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+        }
+        if self.demo
+            && crate::demo::sim_version::mode().is_some()
+            && let Some(handle) = self.world.main_region
+        {
+            for event in crate::demo::sim_version::events(self.frame_count, handle) {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
@@ -15436,6 +15455,9 @@ impl App {
                 self.draw_day_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);
                 self.startup_windows.remember(&self.panels, &mut self.settings);
+                self.chat_ui.remember_layout(&mut self.settings);
+                self.settings.show_camera_controls = self.panels.camera_controls;
+                self.settings.show_movement_controls = self.panels.movement_controls;
                 self.settings.audio.stream_title_window = self.panels.stream_title;
                 self.settings.show_people = self.panels.people;
                 self.settings.people_tab = self.panels.people_tab;
@@ -15783,7 +15805,7 @@ impl ApplicationHandler for App {
                 return;
             }
             // AURORA_DEMO_TOOLBOX=1, or "target:tool" (target 0 nearest, 1
-            // selection, 2 under the cursor; tool: the one "Send a diagnostic"
+            // selection, 2 under the cursor, 3 my avatar; tool: the one "Send a diagnostic"
             // shows, e.g. "0:J4"), or "edit" (Customize): the Dev Toolbox
             if let Ok(v) = std::env::var("AURORA_DEMO_TOOLBOX") {
                 self.panels.dev_toolbox = true;

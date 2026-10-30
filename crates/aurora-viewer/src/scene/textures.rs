@@ -894,6 +894,8 @@ pub struct TextureStreamer {
     cache_dir: PathBuf,
     /// Procedural demo textures: id -> slot.
     local_slots: HashMap<Uuid, u32>,
+    /// Worker-prepared local pixels, shared with avatar baking and UI previews.
+    local_images: HashMap<Uuid, Arc<aurora_render::preview::Image>>,
     /// Bumped whenever a slot's alpha class or alpha channel, or a sculpt
     /// map, changes.
     pub generation: u64,
@@ -972,8 +974,9 @@ pub struct TextureStreamer {
     watch: LoadWatch,
 }
 
-/// Coarse pixels for an isolated appearance preview, decoded on a worker.
+/// Shared image sources for an isolated appearance preview, decoded on a worker.
 pub struct PreviewSource {
+    pub local: Option<Arc<aurora_render::preview::Image>>,
     pub bytes: Arc<Vec<u8>>,
     pub jpeg: PathBuf,
     pub blocks: PathBuf,
@@ -986,6 +989,9 @@ impl PreviewSource {
     /// Inspector pixels at the resident resolution, decoded on a worker.
     /// Exports must wait for discard 0 instead of using the small BC7 preview.
     pub fn inspector_image(self, id: Uuid) -> Option<Arc<aurora_render::preview::Image>> {
+        if let Some(image) = self.local {
+            return Some(image);
+        }
         if let Some((rgba, width, height)) = crate::demo::local_texture(&id) {
             return Some(Arc::new(aurora_render::preview::Image {
                 size: [width, height],
@@ -1005,7 +1011,12 @@ impl PreviewSource {
         }))
     }
     pub fn revision(&self) -> PreviewRevision {
-        (self.bytes.len(), self.decoded, self.size, self.procedural)
+        (
+            self.local.as_ref().map_or(self.bytes.len(), |image| Arc::as_ptr(image) as usize),
+            self.decoded,
+            self.size,
+            self.procedural,
+        )
     }
     /// What `image` depends on: the level it decodes, never finer than
     /// preview_discard, instead of the exact bytes and level held. The
@@ -1013,6 +1024,9 @@ impl PreviewSource {
     /// busy region; small previews built again at each move (the shape
     /// editor's hints) cost a hitch every few hundred milliseconds.
     pub fn image_revision(&self) -> PreviewRevision {
+        if self.local.is_some() {
+            return self.revision();
+        }
         let Some((width, height)) = self.size.filter(|_| self.decoded.is_some()) else {
             return self.revision();
         };
@@ -1020,6 +1034,9 @@ impl PreviewSource {
         (0, Some(level), self.size, self.procedural)
     }
     pub fn image(self, id: Uuid) -> Option<Arc<aurora_render::preview::Image>> {
+        if let Some(image) = self.local {
+            return Some(image);
+        }
         let image = |width, height, rgba: Vec<u8>| {
             Arc::new(aurora_render::preview::Image {
                 size: [width, height],
@@ -1113,6 +1130,7 @@ impl TextureStreamer {
             alpha_channel_by_slot: Vec::new(),
             cache_dir,
             local_slots: HashMap::new(),
+            local_images: HashMap::new(),
             generation: 0,
             max_decodes: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(2),
             decodes: 0,
@@ -1195,6 +1213,7 @@ impl TextureStreamer {
     pub fn preview_source(&self, id: &Uuid) -> PreviewSource {
         let entry = self.entries.get(id);
         PreviewSource {
+            local: self.local_images.get(id).cloned(),
             bytes: entry.map(|e| e.data.clone()).unwrap_or_default(),
             jpeg: Self::cache_path(&self.cache_dir, id, true),
             blocks: Self::transcoded_path(&self.cache_dir, id),
@@ -1564,6 +1583,11 @@ impl TextureStreamer {
 
     pub fn unregister_local(&mut self, id: &Uuid) {
         self.local_slots.remove(id);
+        self.local_images.remove(id);
+    }
+
+    pub fn set_local_pixels(&mut self, id: Uuid, image: Arc<aurora_render::preview::Image>) {
+        self.local_images.insert(id, image);
     }
     pub fn register_local_image(&mut self, id: Uuid, slot: u32, alpha: AlphaKind, has_alpha: bool) {
         set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, &mut self.alpha_changes, slot, alpha);
@@ -3162,8 +3186,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn local_pixels_are_shared_refreshed_and_released_without_a_download() {
+        let mut textures = TextureStreamer::new(PathBuf::new());
+        let id = Uuid::new_v4();
+        let image = |color: [u8; 4]| {
+            Arc::new(aurora_render::preview::Image {
+                size: [1, 1],
+                rgba: color.to_vec().into(),
+            })
+        };
+        let first = image([255, 0, 0, 100]);
+        textures.set_local_pixels(id, first.clone());
+        let source = textures.preview_source(&id);
+        let revision = source.image_revision();
+        assert!(Arc::ptr_eq(&source.inspector_image(id).expect("bake pixels"), &first));
+        assert!(Arc::ptr_eq(&textures.preview_source(&id).image(id).expect("UI pixels"), &first));
+        let second = image([0, 0, 255, 200]);
+        textures.set_local_pixels(id, second.clone());
+        assert_ne!(textures.preview_source(&id).image_revision(), revision);
+        assert!(Arc::ptr_eq(
+            &textures.preview_source(&id).inspector_image(id).expect("reloaded pixels"),
+            &second
+        ));
+        textures.unregister_local(&id);
+        assert!(textures.preview_source(&id).local.is_none());
+        assert!(
+            !textures.entries.contains_key(&id),
+            "no asset fetch or disk cache entry for local pixels"
+        );
+    }
+
+    #[test]
     fn preview_images_ignore_the_budget_moving_finer_levels() {
         let source = |bytes: usize, decoded: Option<u8>| PreviewSource {
+            local: None,
             bytes: Arc::new(vec![0; bytes]),
             jpeg: PathBuf::new(),
             blocks: PathBuf::new(),

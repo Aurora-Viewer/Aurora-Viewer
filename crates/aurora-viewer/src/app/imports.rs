@@ -874,6 +874,9 @@ impl App {
                 {
                     entry.local_slots.insert(texture.id, slot);
                     shared_slots.insert(texture.id, slot);
+                    if let Some(image) = prepared.images.get(&texture.id) {
+                        self.scene.textures.set_local_pixels(texture.id, image.clone());
+                    }
                     self.scene
                         .textures
                         .register_local_image(texture.id, slot, texture.alpha, texture.has_alpha);

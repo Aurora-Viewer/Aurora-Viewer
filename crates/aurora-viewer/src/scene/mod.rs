@@ -5,6 +5,7 @@ pub mod anchors;
 pub mod anim;
 mod anim_box;
 pub mod animesh;
+pub mod animesh_report;
 mod auto_hover;
 pub mod avatar;
 pub mod banlines;

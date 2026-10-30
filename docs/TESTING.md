@@ -4216,6 +4216,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_FRIEND_PROMPT=1\|later` | Friendship offers in the middle of the screen (#465), one waiting behind the other |
 | `AURORA_DEMO_REGION_MESSAGE=1` | Messages to the whole region in the middle of the screen (#1404), one waiting behind the other |
+| `AURORA_DEMO_SIM_VERSION=1\|on` | The region's simulator version changes during the run: no notice by default, one with `on` |
 | `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
 | `AURORA_DEMO_ABOUT=info\|licences[:end]` | Help › About Aurora Viewer opens on its Info or Licences tab |
 | `AURORA_DEMO_COLLISIONS=1\|chat` | Residents bump, push and hit the agent; the "Bumps, pushes & hits" window opens on the list |
@@ -4956,6 +4957,13 @@ failure. Grid validation and any paid upload are performed by the human.
   under the bell and are written in nearby chat. OK closes Orion's and
   Nova's arrives. Capture with `AURORA_FPS_LIMIT=60` at 800, in
   `--language en` and `fr`.
+- **`AURORA_DEMO_SIM_VERSION=1|on`**: the region tells its simulator
+  version at frame 640 (the first one, never told), then another one at
+  700, as after a teleport to a region on another release. `1` follows
+  Preferences › Confirmations › Simulator version change, off by default:
+  no notice comes. `on` turns it on for this run only (the setting is not
+  saved): the "Simulator version changed" card arrives at 700 with both
+  versions. Capture with `AURORA_FPS_LIMIT=60` at 760.
 - **`AURORA_DEMO_ABOUT=info|licences[:end]`**: the About window
   (`ui/about.rs`) opens at frame 600 on the tab asked for (`info` when the
   value is anything else); `:end` scrolls the tab to its last card. Info shows the demo region and simulator, the
@@ -5118,11 +5126,15 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_TOOLBOX`**: `1` opens the Dev Toolbox (Advanced › Dev
   Toolbox, Ctrl+Alt+D); `edit` opens it in Customize (grips, "+ Add a
   tool"); `<target>:<tool>` chooses the target (0 nearest avatar, 1
-  selection, 2 under the cursor) and presses the tool once the world shows
+  selection, 2 under the cursor, 3 my avatar) and presses the tool once the world shows
   (frame 600), its text in "Send a diagnostic": `0:J1` for the worn items of
   the avatar within 3 m (with `AURORA_DEMO_POS=134.5,128`,
   `AURORA_DEMO_CROWD=4`, `AURORA_DEMO_ANIMESH=1`), `0:J4` for the system
-  configuration, `0:N3` for the loads. Prefer J1 to J2 in automated runs:
+  configuration, `0:N3` for the loads, `0:J9` for the skeleton of the
+  animesh the nearest avatar wears (with the same position, crowd and
+  `AURORA_DEMO_ANIMESH=1`; its text also goes to the log after `demo dev
+  toolbox J9:`: one worn animesh on point 6, 5 joint overrides from mesh
+  `d0d0a111-…0100`, the demo animation playing). Prefer J1 to J2 in automated runs:
   J2 copies to the clipboard of the PC. Capture after frame 1000 when names
   are asked (3 s).
 - **`AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]`**: opens the preferences
@@ -7027,6 +7039,20 @@ save feedback. Check texture slots,
 shared clothing tint, sex-filtered parameter groups, the fixed save controls,
 the picker and its permissions, cancellation, and the existing shape/physics
 editors when switching. No grid traffic is used.
+`tattoo:local` applies a private RGBA checker to all three tattoo slots through
+the normal local import publication. `tattoo:local-picker` opens its Local tab
+at frame 700. `tattoo:local-reload` replaces the violet checker with a green
+one at frame 900 using the importer's reload generation; capture before and
+after frame 1100. `tattoo:local-cancel` cancels at frame 1000 and restores the
+server appearance. These modes also accept the other wearable types. Save
+and Save As stay disabled until inventory textures replace the local maps.
+`tattoo:picker-live` opens the Local picker on an empty head slot and selects
+its image with a mouse click at frame 700 without confirming: the avatar and
+swatch must change while the picker remains open. `tattoo:picker-cancel`
+clicks Cancel at frame 1000; `tattoo:picker-close` clicks the title-bar close;
+capture at 850 and 1200 to check restoration of the preceding image and the
+crossed empty slots. Ordinary picker clicks preview immediately too; OK keeps
+the choice, Cancel and the title-bar close button restore the original slot.
 The local preview composites the avatar definition's original masks and
 worn layers on workers and uploads a complete generation through GPU staging.
 It uses 2048-pixel bakes (512 for eyes), or 1024 on a low-memory staging pool;
@@ -8094,7 +8120,8 @@ What the inventory must show with these scenarios:
 | `AURORA_TEXTURE_TODO=0` or `check` | Texture streaming that walks every texture as before, or check of its to-do list |
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
 | `AURORA_WORN_RANK=own` | Meshes worn by other avatars downloaded in the rank of their own size, not their avatar's, as before |
-| `AURORA_FETCH_SLOTS=<n>` | Asset requests under way at once fixed for this launch (1 to 256), instead of following the link |
+| `AURORA_FETCH_SLOTS=<n>` | Asset requests under way at once fixed for this launch (1 to 256), whatever Preferences › Network and cache › Download connections says |
+| `AURORA_DEMO_NET_ADAPTER=<description>` | This network adapter instead of the computer's, for the download connections (e.g. `Marvell AQtion 10Gbit Network Adapter`: always limited, "Follow the connection" greyed) |
 | `AURORA_SYNC_SLICE=1` or `alt` | Scene sync by slice of all the objects, as before |
 | `AURORA_PENDING_PARK=0` | Every object waiting for its geometry asked about by the sync's round, as before |
 | `AURORA_SYNC_CHECK=1` | What the scene sync visits each frame |
