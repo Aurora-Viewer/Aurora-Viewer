@@ -429,10 +429,26 @@ mod xdg {
         application_dirs().into_iter().map(|d| d.join(id)).find(|p| p.is_file())
     }
 
+    /// The executable's path. Once the file is replaced under a running
+    /// viewer (a rebuild, a package upgrade), Linux reports it with
+    /// " (deleted)" appended: the new file at the same path is the one a
+    /// link must start.
+    pub(super) fn live_exe(exe: PathBuf) -> PathBuf {
+        if exe.exists() {
+            return exe;
+        }
+        match exe.to_str().and_then(|s| s.strip_suffix(" (deleted)")) {
+            Some(path) => PathBuf::from(path),
+            None => exe,
+        }
+    }
+
+    fn this_exe() -> Option<PathBuf> {
+        std::env::current_exe().ok().map(live_exe)
+    }
+
     fn is_this(program: &str) -> bool {
-        resolve(program)
-            .zip(std::env::current_exe().ok())
-            .is_some_and(|(exe, this)| same_file(&exe, &this))
+        resolve(program).zip(this_exe()).is_some_and(|(exe, this)| same_file(&exe, &this))
     }
 
     /// The desktop entry that opens `scheme`: the first default of the
@@ -506,7 +522,7 @@ mod xdg {
     }
 
     fn write_entry() -> Result<(), String> {
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let exe = live_exe(std::env::current_exe().map_err(|e| e.to_string())?);
         write_atomic(&own_entry()?, &desktop_entry(&exe.to_string_lossy()))
     }
 
@@ -659,7 +675,22 @@ mod tests {
 
 #[cfg(all(test, target_os = "linux"))]
 mod xdg_tests {
-    use super::xdg::{desktop_entry, exec_line, exec_program, value, with_value};
+    use super::xdg::{desktop_entry, exec_line, exec_program, live_exe, value, with_value};
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_replaced_executable_is_registered_at_its_path() {
+        let dir = std::env::temp_dir().join(format!("aurora-live-exe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let exe = dir.join("aurora-viewer");
+        std::fs::write(&exe, "").expect("temp file");
+        let deleted = PathBuf::from(format!("{} (deleted)", exe.display()));
+        assert_eq!(live_exe(deleted), exe);
+        assert_eq!(live_exe(exe.clone()), exe);
+        // removed and not replaced: still its path, never the suffix
+        assert_eq!(live_exe(dir.join("gone (deleted)")), dir.join("gone"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     const LIST: &str = "[Added Associations]\ntext/html=firefox.desktop;\n\n[Default Applications]\n\
         x-scheme-handler/secondlife=firestorm.desktop;\ntext/plain=kate.desktop\n\n# kept\n";
