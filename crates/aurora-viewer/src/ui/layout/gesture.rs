@@ -392,7 +392,7 @@ mod tests {
                 floater(B, Pos2::new(800.0, 400.0), b_open);
                 let default = Rect::from_min_size(Pos2::new(1200.0, 100.0), Vec2::splat(200.0));
                 let map_frame = egui::Frame::new().inner_margin(egui::Margin::same(2));
-                crate::ui::widgets::bare_window(ctx, &palette, MAP, "Map", map_frame, default, Vec2::splat(64.0), |ui| {
+                crate::ui::widgets::bare_window(ctx, &palette, MAP, "Map", map_frame, default, Vec2::splat(64.0), false, |ui| {
                     ui.allocate_exact_size(ui.available_size(), egui::Sense::click());
                 });
             });

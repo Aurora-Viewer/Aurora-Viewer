@@ -373,6 +373,16 @@ pub(super) fn show(
     // The folders.
     st.view.prepare(inv, prefs.sort_for(st.tab));
     let follow = st.side.follow(inv, st.browse, base);
+    if !st.result_view()
+        && let Some(open) = st.expand_all.take()
+    {
+        for id in super::super::rows::folders(&st.view, inv, base, false, prefs.show_library) {
+            st.side.set_open(id, open);
+            if open {
+                inv.request(id);
+            }
+        }
+    }
     st.side.prepare(&st.view, inv, base, prefs.show_library);
     let trash = rules::system(inv, 14).filter(|_| !scoped);
     let foot = if trash.is_some() { ROW + 8.0 } else { 0.0 };

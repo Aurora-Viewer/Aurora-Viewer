@@ -466,7 +466,9 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "new-note"
         | "folder-window"
         | "move-folder"
-        | "folder-window-search" => 8000,
+        | "folder-window-search"
+        | "image-layout-folder"
+        | "image-layout-folder-wide" => 8000,
         "move-item" | "move-multi" | "move-filter" | "move-window" | "move-menu" => 8100,
         "uuid" | "uuid-restricted" | "uuid-missing" | "uuid-multi" => 8104,
         "landmark" | "aurora-landmark" => 8120,
@@ -492,7 +494,15 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "aurora-keyboard"
         | "aurora-keyboard-fold"
         | "aurora-keyboard-wide" => 8100,
-        "animation" | "animation-open" | "animation-properties" | "image" | "image-photo" | "image-picker" | "image-photo-save" => 8101,
+        "animation"
+        | "animation-open"
+        | "animation-properties"
+        | "image"
+        | "image-photo"
+        | "image-picker"
+        | "image-photo-save"
+        | "image-layout"
+        | "image-layout-wide" => 8101,
         "script" => 8102,
         "note" | "note-open" | "note-edit" | "note-save" | "note-close" | "note-error" | "note-readonly" | "note-embedded" | "note-new"
         | "note-task" | "note-task-save" | "note-task-error" | "note-task-readonly" | "note-drop" | "note-image" | "note-landmark"

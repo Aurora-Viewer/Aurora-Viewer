@@ -56,6 +56,28 @@ pub struct Rig {
     pub(crate) skin_points: HashMap<String, (usize, Mat4)>,
 }
 
+/// Joints in depth-first order, parents before children.
+fn depth_first(parent: &[Option<usize>]) -> Vec<usize> {
+    let n = parent.len();
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut roots = Vec::new();
+    for (i, p) in parent.iter().enumerate() {
+        match *p {
+            Some(p) if p < n => children[p].push(i),
+            _ => roots.push(i),
+        }
+    }
+    let mut order = Vec::with_capacity(n);
+    let mut stack: Vec<usize> = roots.into_iter().rev().collect();
+    while let Some(j) = stack.pop() {
+        order.push(j);
+        for c in children[j].iter().rev() {
+            stack.push(*c);
+        }
+    }
+    order
+}
+
 impl Rig {
     pub fn new(sk: &Skeleton) -> Rig {
         let n = sk.joints.len().min(ANCHOR_BASE);
@@ -76,23 +98,7 @@ impl Rig {
             parent_scale.push(j.parent.and_then(|p| sk.joints.get(p)).map(|p| p.scale).unwrap_or(Vec3::ONE));
             scale.push(j.scale);
         }
-        // depth-first order
-        let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
-        let mut roots = Vec::new();
-        for (i, parent) in parent.iter().enumerate().take(n) {
-            match *parent {
-                Some(p) => children[p].push(i),
-                None => roots.push(i),
-            }
-        }
-        let mut order = Vec::with_capacity(n);
-        let mut stack: Vec<usize> = roots.into_iter().rev().collect();
-        while let Some(j) = stack.pop() {
-            order.push(j);
-            for c in children[j].iter().rev() {
-                stack.push(*c);
-            }
-        }
+        let order = depth_first(&parent);
         let pelvis = names.get("mPelvis").copied().unwrap_or(0);
         let skull = names.get("mSkull").copied();
         let mut joint = skull.or_else(|| names.get("mHead").copied());
@@ -124,6 +130,45 @@ impl Rig {
 
     pub fn len(&self) -> usize {
         self.parent.len()
+    }
+
+    /// LLVOAvatar::initAttachmentPoints (indra/newview/llvoavatar.cpp,
+    /// originally LGPL 2.1): every body attachment point is an
+    /// LLViewerJointAttachment, a joint below its bone that
+    /// LLVOAvatar::getJoint finds by name, so meshes are skinned to it and
+    /// animations key it ("attachment can potentially be animated, needs a
+    /// number"); worn animesh rely on it (#1492). `points`: name, bone, the
+    /// point's position and rotation under it (avatar_lad.xml); unit scale.
+    /// A point on mRoot ("Avatar Center"), which this skeleton has not, is a
+    /// root of its own where mRoot rests (the pelvis's rest position: the
+    /// pelvis is zero under mRoot, LLAvatarAppearance::buildCharacter), so
+    /// it stays put while motions move the pelvis. Added while the palette
+    /// has room below its anchors for them and the identity slot; a name
+    /// the skeleton already has keeps its joint.
+    pub(crate) fn add_attachment_points(&mut self, points: &[(String, Option<usize>, Vec3, Quat)]) {
+        for (name, parent, pos, rot) in points {
+            if self.len() + 1 >= ANCHOR_BASE {
+                break;
+            }
+            if self.names.contains_key(name) || parent.is_some_and(|p| p >= self.len()) {
+                continue;
+            }
+            let j = self.len();
+            self.parent.push(*parent);
+            match parent {
+                Some(_) => self.local_pos.push(*pos),
+                None => self.local_pos.push(self.local_pos[self.pelvis] + *pos),
+            }
+            self.local_rot.push(*rot);
+            self.parent_scale.push(parent.map_or(Vec3::ONE, |p| self.scale[p]));
+            self.scale.push(Vec3::ONE);
+            self.names.insert(name.clone(), j);
+            self.canonical_names.push(name.clone());
+        }
+        self.order = depth_first(&self.parent);
+        let rot = self.local_rot.clone();
+        let world = self.world(&rot, Vec3::ZERO);
+        self.default_world_inv = world.iter().map(|m| m.inverse()).collect();
     }
 
     /// The rig joint a mesh skin joint follows, and the inverse bind to
@@ -636,10 +681,11 @@ impl Controller {
             .collect()
     }
 
-    /// Dev Toolbox J9: the last frame's local rotations and animated
-    /// position offsets from the rest skeleton (empty before the first).
-    pub(crate) fn held_pose(&self) -> (&[Quat], &[Vec3]) {
-        (&self.rot, &self.pos_delta)
+    /// Dev Toolbox J9: the last frame's local rotations, animated position
+    /// offsets from the rest skeleton (empty before the first), and the
+    /// pelvis's animated position under the root (kept apart).
+    pub(crate) fn held_pose(&self) -> (&[Quat], &[Vec3], Option<Vec3>) {
+        (&self.rot, &self.pos_delta, self.pelvis_offset)
     }
 
     /// Apply Preferences › Aurora › Animations without restarting live loops.

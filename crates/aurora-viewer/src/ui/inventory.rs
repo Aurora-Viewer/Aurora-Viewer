@@ -476,7 +476,8 @@ pub struct InventoryUi {
     progress: Option<progress::State>,
     copy_jobs: progress::CopyJobs,
     notice: Option<(String, std::time::Instant)>,
-    contents_notice: Option<progress::ContentsNotice>,
+    contents_notice: Option<progress::Notice>,
+    thumbnail_notice: Option<progress::Notice>,
     pub message: String,
     pub dialog: Option<EditDialog>,
     move_to: Option<move_to::MoveTo>,
@@ -2014,6 +2015,7 @@ pub fn show(
         w.state.copy_jobs.clone_from(&st.copy_jobs);
         w.state.notice.clone_from(&st.notice);
         w.state.contents_notice.clone_from(&st.contents_notice);
+        w.state.thumbnail_notice.clone_from(&st.thumbnail_notice);
         w.state.merchant = st.merchant;
         w.state.marketplace_commands.clone_from(&st.marketplace_commands);
         w.state.playing = st.playing;

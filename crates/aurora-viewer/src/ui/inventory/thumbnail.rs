@@ -4,10 +4,14 @@ use super::*;
 use crate::ui::widgets::{Floater, flat_button, search_field};
 use std::{collections::HashMap, sync::Arc};
 
+mod choices;
+pub(crate) use choices::FileChoices;
+
 pub enum Input {
     File,
     Capture,
-    Photo(Arc<Vec<u8>>),
+    Pixels(Arc<Vec<u8>>),
+    Crop { image: Arc<image::RgbaImage>, origin: [u32; 2] },
     Texture { asset: Uuid, resize: bool },
     Paste,
 }
@@ -17,6 +21,7 @@ pub struct ThumbnailUi {
     pub item: Option<Uuid>,
     pub pending: Option<Uuid>,
     pub error: String,
+    pub saved: bool,
     pub photo_open: bool,
     pub photo: Option<egui::TextureHandle>,
     pub pixels: Option<Arc<Vec<u8>>>,
@@ -24,6 +29,7 @@ pub struct ThumbnailUi {
     selected: Option<Uuid>,
     filter: String,
     uuid_text: String,
+    choices: Vec<choices::Choice>,
 }
 
 impl ThumbnailUi {
@@ -39,6 +45,7 @@ impl ThumbnailUi {
         let request = Uuid::new_v4();
         self.pending = Some(request);
         self.error.clear();
+        self.saved = false;
         actions.push(InvAction::Thumbnail { request, item, input });
     }
     /// LLFloaterSimpleSnapshot::onSend closes the snapshot once upload starts.
@@ -47,7 +54,7 @@ impl ThumbnailUi {
         if let Some(item) = self.item
             && let Some(pixels) = self.pixels.clone()
         {
-            self.request(item, Input::Photo(pixels), actions);
+            self.request(item, Input::Pixels(pixels), actions);
             self.photo_open = false;
         }
     }
@@ -69,6 +76,7 @@ impl ThumbnailUi {
         };
         if !world.inventory.items.contains_key(&item) && !world.inventory.folders.contains_key(&item) {
             self.item = None;
+            self.choices.clear();
             return;
         }
         let asset = image(&world.inventory, item);
@@ -170,6 +178,8 @@ impl ThumbnailUi {
             ui.label(RichText::new(&caption).size(11.0).color(p.muted));
             if self.pending.is_some() || mutation_pending {
                 ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-thumbnail-processing-image")).color(p.muted));
+            } else if self.saved && self.error.is_empty() {
+                ui.label(RichText::new(aurora_i18n::tr!("inventory-thumbnail-upload-complete")).color(p.success));
             }
             if !self.error.is_empty() {
                 ui.label(RichText::new(&self.error).color(p.warn));
@@ -177,10 +187,12 @@ impl ThumbnailUi {
         });
         if !open {
             self.item = None;
+            self.choices.clear();
             self.picker_open = false;
             self.photo_open = false;
             return;
         }
+        self.show_file_choices(ctx, p, ui_id, &rules::name(&world.inventory, item), ready, actions);
         if self.photo_open {
             let mut photo_open = true;
             let mut cancel = false;
@@ -616,7 +628,7 @@ mod tests {
         }
         let output = frame(Vec::new());
         assert!(
-            matches!(&actions[..], [InvAction::Thumbnail { item: target, input: Input::Photo(photo), .. }]
+            matches!(&actions[..], [InvAction::Thumbnail { item: target, input: Input::Pixels(photo), .. }]
             if *target == item && Arc::ptr_eq(photo, &pixels))
         );
         assert!(!st.photo_open);

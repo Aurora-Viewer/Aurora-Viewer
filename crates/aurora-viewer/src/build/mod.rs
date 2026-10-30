@@ -35,6 +35,8 @@ pub mod script_queue;
 mod selection_tests;
 pub mod shapes;
 pub mod silhouette;
+#[cfg(test)]
+mod take_tests;
 pub mod task_inventory;
 pub mod ui;
 
@@ -242,6 +244,28 @@ fn land_highlighted(world: &World) -> Vec<(usize, bool)> {
         }
     }
     out
+}
+
+/// The folder the selected roots were rezzed from, as their full
+/// ObjectProperties give it (nil when unknown), when Take may send them back
+/// there (handle_take): every root that knows its folder names the same
+/// one, and that folder is still in the agent's inventory, outside the Trash
+/// and the Library. None sends them to the Objects folder. The Inbox is
+/// accepted, as the Legacy Viewer does.
+pub(crate) fn take_folder(inv: &crate::world::inventory::Inventory, folders: impl IntoIterator<Item = Uuid>, trash: Uuid) -> Option<Uuid> {
+    let mut chosen = None;
+    for folder in folders.into_iter().filter(|f| !f.is_nil()) {
+        match chosen {
+            None => chosen = Some(folder),
+            // two possible destinations: the default one
+            Some(c) if c != folder => return None,
+            Some(_) => {}
+        }
+    }
+    let folder = chosen?;
+    let known = inv.folders.get(&folder).is_some_and(|f| !f.library);
+    let trashed = !trash.is_nil() && crate::world::inventory::actions::under(inv, folder, trash);
+    (known && !trashed).then_some(folder)
 }
 
 #[cfg(test)]
@@ -1210,6 +1234,21 @@ impl BuildTool {
         m
     }
 
+    /// Take's folder: where the roots were rezzed from (`take_folder`), else
+    /// the Objects folder; a copy always goes to Objects (handle_take_copy).
+    fn take_destination(&self, world: &World, roots: &[usize], copy: bool) -> Uuid {
+        let rezzed_from = (!copy)
+            .then(|| {
+                let folders = roots
+                    .iter()
+                    .filter_map(|&r| world.objects.get(r))
+                    .map(|o| self.props.get(&o.full_id).map_or(Uuid::nil(), |p| p.folder_id));
+                take_folder(&world.inventory, folders, Self::folder_of_type(world, 14))
+            })
+            .flatten();
+        rezzed_from.unwrap_or_else(|| Self::folder_of_type(world, 6))
+    }
+
     fn folder_of_type(world: &World, t: i32) -> Uuid {
         world
             .inventory
@@ -1262,7 +1301,8 @@ impl BuildTool {
         self.deselect_all(world);
     }
 
-    /// Take / take a copy into the Objects folder (derez_objects).
+    /// Take into the folder the objects were rezzed from (handle_take), take
+    /// a copy into the Objects folder (handle_take_copy; derez_objects).
     pub fn take(&mut self, world: &mut World, copy: bool) {
         if self.attachment_selected(world) {
             return;
@@ -1271,7 +1311,7 @@ impl BuildTool {
         if roots.is_empty() {
             return;
         }
-        let objects = Self::folder_of_type(world, 6);
+        let objects = self.take_destination(world, &roots, copy);
         let dest = if copy {
             derez::ACQUIRE_TO_AGENT_INVENTORY
         } else {
@@ -1311,7 +1351,7 @@ impl BuildTool {
             self.status = aurora_i18n::tr!("build-mod-cannot-take-objects-from-multiple-regions-at-once").into();
             return;
         }
-        let objects = Self::folder_of_type(world, 6);
+        let objects = self.take_destination(world, &roots, copy);
         let destination = if copy {
             derez::ACQUIRE_TO_AGENT_INVENTORY
         } else {

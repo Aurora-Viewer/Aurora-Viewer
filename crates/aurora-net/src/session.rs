@@ -6372,7 +6372,11 @@ mod script_dialog_tests {
                         break Some(body.to_owned());
                     }
                 };
-                let reply = "HTTP/1.1 200 OK\r\nContent-Type: application/llsd+xml\r\nContent-Length: 13\r\n\r\n<llsd></llsd>";
+                // `Connection: close`: `finish` shuts this connection, so the
+                // client must not keep it for the next report (a report sent
+                // on it before the client saw the end was drained and lost)
+                let reply =
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/llsd+xml\r\nContent-Length: 13\r\nConnection: close\r\n\r\n<llsd></llsd>";
                 let _ = stream.write_all(reply.as_bytes()).await;
                 crate::test_http::finish(stream);
                 if let Some(body) = body {

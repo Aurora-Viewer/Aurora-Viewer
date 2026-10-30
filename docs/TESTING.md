@@ -89,6 +89,8 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
+| `AURORA_RENDER_SCALE=50..100` | World resolution percentage; interface and HUDs stay native |
+| `AURORA_TEXTURE_BUDGET_MB=256..32768` | Manual texture memory budget for this launch |
 | `AURORA_TEST_NEUTRAL_POSE=1` | Local neutral-pose comparison in the online or demo Hover Height floater |
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
@@ -266,6 +268,16 @@ to the vertex shaders or to the passes is therefore checked with both,
 `AURORA_AA=3` and `AURORA_AA=6`: it is with the second that the terrain let
 the sky show through in patches
 (`AURORA_DEMO_POS="60,128"`, `AURORA_DEMO_ALTITUDE=86`).
+
+`AURORA_RENDER_SCALE`: the world's linear resolution percentage (50–100,
+100 by default), before spatial upscaling. HUDs, labels and controls stay at
+native resolution. RLVa's resolution divisor takes precedence; saved photos
+ignore the user scale. `AURORA_TEXTURE_BUDGET_MB` selects a manual texture
+budget (256–32768 MB). Both follow the normal saved graphics settings path;
+use `AURORA_DEMO=1` for isolated comparisons. A Retina comparison can use
+`AURORA_WINDOW_SIZE=1728,1056`, `AURORA_GRAPHICS_PRESET=high`,
+`AURORA_DEMO_TEXTURES=9000`, `AURORA_DEMO_CROWD=20` and the same capture
+frame, changing only `AURORA_RENDER_SCALE` between 100, 67 and 50.
 
 `AURORA_WINDOW_SIZE`: width and height of the render area, in logical pixels
 (at least 800 × 560), to measure according to the size of the window:
@@ -1993,6 +2005,14 @@ login revocation, confirmed-session region renewal, 60-second self-detachment, p
 unpaired peer/HTTP traffic and resumed discovery. It mocks simulator APIs;
 it does not emulate Havok or measure the compiled Mono memory budget.
 
+Bridge 1.40 also checks container normalization at startup and reattachment.
+On the grid, let Aurora upgrade an existing bridge, then inspect its build
+properties: a 0.01 m cube on all three axes, no cut/hollow/twist/taper, default
+plywood texture on every face and 100% transparency. Its old landscaping
+description must be empty. Detach and reattach it, then relog: the same object
+must retain these properties and its bridge services. A fresh bridge must
+finish provisioning with the same appearance.
+
 For bridge 1.38 (#1168), let Aurora upgrade the existing attachment, then
 switch to another viewer without manually removing it. No bridge message
 should appear at login or after crossings/teleports; the bridge must detach
@@ -2483,7 +2503,7 @@ To check with these scenarios:
 | `AURORA_DEMO_ANIM_LOOP=1\|sync\|sync-edit\|resync` | Animation loops, sequences, stops and synchronization after delayed loading, editing or Ctrl+S |
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
-| `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
+| `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh); `points`: a bar rigged to an attachment point the animation turns |
 | `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
@@ -3097,7 +3117,7 @@ Other existing AO modes: interface, interface-group, interface-track, interface-
   poses, the pause, the cycles and adding / importing from the inventory.
 - **`AURORA_DEMO_AO=movement|movement-rebound|swim`**: test the actual integrated AO window. `movement` opens its persistent Movement (EXPERIMENTAL) tab, with a matching experimental heading and menu/toolbar/keybinding labels; `swim` opens the selected generic swimming list with synthetic contributed inventory links and expands only this owned offline window so the lists and cycle controls can be inspected; normal users retain their saved window size and scrolling. `swim-missing` opens Movement with one slot absent: swimming must remain unavailable with the shared warning triangle and missing-animation message. Confirm independent run/flight/swim/passage toggles, run and flight multipliers starting at x1, the active toolbar indicator, swim-state navigation, AO enable/pause, and animation choice/cycles. Ctrl+Alt+M and the movement toolbar open this same manager. Passage uses Ctrl plus the current jump keys (default E / Page Up); it requires its own switch, leaves text/media focus alone, and yields to explicit shortcut conflicts. Rebind Jump and confirm the displayed chord follows. Disable passage during its pulse to cancel it. In a normal human-driven grid session, assign all eight swimming slots in the selected set, enable swimming and verify another viewer sees the matching idle, movement, cushioned-entry and separate flight/shore exit animations. Ordinary AO disable/pause must not stop active swimming animations. Removing a slot or selecting an incomplete set must stop swimming; a different complete set cannot unlock that selection. No import-pack button or automatic fill/upload prompt may appear. Capture around frame 850.
 - **`AURORA_DEMO_AO=design-current|design-tabs|design-movement|design-section|design-swim`**: a native interactive layout study. The Current view reuses the existing AO body unchanged; the side workbench switches to Animations/Movement tabs or a collapsible section. Ctrl+Alt+M and the movement toolbar button open the prototype Movement tab and reopen its workbench; the separate movement floater stays hidden in this design scenario. Movement switches/sliders are temporary preview values and do not control motors or write account movement preferences. `design-swim` opens the AO swimming list and its matching avatar preview. The workbench selects simulated avatar animation states; swimming selection uses the actual AO state lists, including the eight separate swimming contexts in the synthetic inventory. Check AO activation/pause, state selection, animation double-click/cycles, independent motor switches and reset, and returning from movement controls to swimming animation selection. All inventory changes stay in the offline demo. Capture each layout around frame 850; keep the existing dimensions, palette, fonts and widgets for comparison.
-- **`AURORA_DEMO_ANIMESH=1|churn|alpha|alpha-cycle`**: animated root mesh, linked mesh flagged
+- **`AURORA_DEMO_ANIMESH=1|churn|alpha|alpha-cycle|points`**: animated root mesh, linked mesh flagged
   by a child and worn animesh, with independent skeletons of their own and
   alpha shadows. `churn`: the animesh on the ground (orange) also changes its
   mesh asset every 240 frames, like the rigged meshes that come and go on
@@ -3121,6 +3141,17 @@ Other existing AO modes: interface, interface-group, interface-track, interface-
   mesh 9202 must have red draws only with rigged highlighting, meshes
   9205/9206 (`rigged false`) and root 9201
   whenever the overlay is on, and both must have zero records when off.
+  `points` (#1492) adds to the worn animesh 9203 a child prim 9207, a red
+  bar rigged to the attachment point `Groin` alone, and keys that point in
+  the demo animation (a 0.9 rad swing about Y, 2 s loop): attachment points
+  are joints the skin and the animations reach, as in the Legacy Viewer,
+  so the bar swings with the point. `AURORA_DEMO_TOOLBOX=0:J9` with
+  `AURORA_DEMO_POS=134.5,128` and `AURORA_DEMO_CROWD=4` lists `Groin` among
+  the bar mesh's joints (not as unknown) and in the control skeleton with a
+  turning rotation. A green stem (prim 9208) is rigged between `Avatar
+  Center` (its back half) and `mPelvis` (its front half), and the animation
+  moves the pelvis by position (0.3 m forward, 0.2 m down, 2 s loop): the
+  back end stays on the root while the front end follows the pelvis.
 - **`AURORA_DEMO_ANIMESH_TRIS=<n>`**: with `AURORA_DEMO_ANIMESH`, adds
   about n triangles to the demo's rigged mesh, as opaque faces of 45,000
   (each a thin tube around the torso, 7 faces at most). With
@@ -4642,10 +4673,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   ordinary mannequin. Check seeking,
   pause/resume, base animations and camera controls with both models. Cancel
   the file picker or choose an unrigged/invalid file: keep the current model,
-  with an error for rejected files. Model selection is independent per
-  animation, preview-only, and never adds a mesh upload or changes its fee.
+  with an error for rejected files. Model selection applies to every queued
+  animation, including later additions, and remains preview-only: it never
+  adds a mesh upload or changes its fee.
   Add two models, switch between them in the model list, then return to Standard.
-  Restart the viewer and select either model without reopening a file picker.
+  Restart the viewer and import animations: the last successfully used model
+  loads automatically, without reopening a file picker. Standard applies to
+  the whole queue and remains the default after a restart.
   Remove an unselected entry with its row's icon: the current preview must stay
   selected and the list must stay open. Remove the selected entry: return to
   Standard. In both cases its source file must remain on disk. Long names must
@@ -7396,7 +7430,13 @@ offline; the files and snapshots uploaded in demo stay offline.
   (1180 px) width, on the demo object of the right-click tests, the demo
   shirt in the favourites; `aurora-rights` is the wide window with the
   CMT menu on "Both". Capture at frame 700 with `AURORA_FPS_LIMIT=60`.
-  Narrow: icon tabs, search row (filters, CMT, Sort, New), the tree with
+  At every width, the search field and advanced-search button occupy a full
+  row below the tools. Collapse all / Expand all are directly accessible in
+  the toolbar: they fold the compact tree or filtered results, and the folder
+  sidebar in the explorer. Expand, collapse, then manually reopen a parent:
+  its descendants must remain closed. Check a folder window and hidden Library
+  too; commands stay within that window's scope and retain the current search.
+  Narrow: icon tabs, toolbar (filters, CMT, Sort, New, Collapse all, Expand all), the tree with
   C/M/T at the end of each item, the selection's card (Wear, Add,
   Properties, More). Medium: the column of shortcuts (with their counts) and
   folders, the explorer of the revealed folder with Type and Modified.
@@ -7644,6 +7684,30 @@ offline; the files and snapshots uploaded in demo stay offline.
   as in Firestorm; a landmark already present for the same asset is reused.
 - `image-photo-save`: captures then saves a thumbnail at frame 2100
   and closes the snapshot window while keeping the Image editor open.
+  Capture at frame 2250 to inspect the saved message in both the editor and
+  inventory footer, then at frame 2700 to see only the editor's result.
+  Network mock tests cover stale and unreadable AIS snapshots followed by the
+  expected thumbnail UUID, permanent mismatches and bounded failure: one write,
+  read-only retries, for both items and folders. UI tests keep loading visible
+  until completion and expire the footer after five seconds on success or error.
+  On the grid, the human checks that uploading stays on Loading until confirmed,
+  then shows Picture saved; an actual failure remains visible in the editor.
+- `image-layout` / `image-layout-wide`: open the local-file thumbnail choices
+  for an item with a synthetic portrait / landscape image. Add `-folder`
+  before `-wide` (`image-layout-folder`, `image-layout-folder-wide`) to target
+  a folder instead. Click a preview to use the whole image stretched to the
+  square, fit it proportionally with transparent margins, or crop it.
+  Drag the image inside the right-hand preview to move the crop up/down for a
+  portrait or left/right for a landscape. The image follows the pointer and
+  stops at its edges. Releasing the drag does not upload; click the adjusted
+  preview to use it. Check both extremes, a partial move, repeated drags and
+  square/small images, on both an item and a folder. The saved thumbnail must
+  contain the selected area rather than returning to the centre.
+  No upload occurs before choosing; Cancel or Escape keeps the old image.
+  Repeat using Upload from your computer with a PNG, JPEG or JPEG2000 file;
+  verify transparent pixels, square images and all four source edges. Scene
+  snapshots retain their square viewfinder. The human checks persistence
+  after reconnect on real inventory items and folders.
 - `additional`: the Legacy Viewer's window with its "Additional inventory
   window" button lit at the bottom, right of "+", and the additional window
   opened on its left: Inventory, Recent, Worn and Favorites tabs but no

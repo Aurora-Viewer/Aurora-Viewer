@@ -32,8 +32,13 @@ fn custom_animation_model_moves_bento_vertices_and_keeps_the_uploaded_animation_
         panic!("animation")
     };
     entry.player.bound = Some(Arc::new(BoundAnim::bind(animation.as_ref().clone(), &avatars.rig)));
-    entry.animation_model.generation = 1;
-    complete(&mut entry, 1, Some(Ok(model.clone())));
+    let id = entry.id;
+    let mut imports = Imports {
+        entries: vec![entry],
+        ..Default::default()
+    };
+    imports.complete_animation_model(0, Some(Ok(model.clone())));
+    let entry = &mut imports.entries[0];
     let mut streamer = AnimStreamer::new(PathBuf::new());
     let part = model.geometry.parts.iter().find(|part| part.skin.is_some()).expect("weighted part");
     let skin = part.skin.as_ref().expect("skin");
@@ -64,7 +69,8 @@ fn custom_animation_model_moves_bento_vertices_and_keeps_the_uploaded_animation_
         files::encode(entry.source.as_ref().expect("source"), entry.options, entry.sound.options).expect("upload bytes"),
         before
     );
-    reset(&mut entry);
+    imports.reset_animation_models(id);
+    let entry = &imports.entries[0];
     assert!(entry.animation_model.current.is_none());
     assert!(entry.player.pose.is_none(), "returning to standard must invalidate the paused pose");
     assert_eq!(
@@ -106,23 +112,32 @@ fn custom_animation_model_preserves_imported_joint_positions_in_geometry_and_pau
 fn custom_animation_model_cancel_errors_and_late_results_keep_the_current_selection() {
     let avatars = AvatarLibrary::load();
     let current = model(&avatars);
-    let mut entry = entry();
-    entry.animation_model.generation = 1;
-    complete(&mut entry, 1, Some(Ok(current.clone())));
-    let generation = entry.preview_generation;
+    let mut imports = Imports {
+        entries: vec![entry(), entry()],
+        ..Default::default()
+    };
+    imports.complete_animation_model(0, Some(Ok(current.clone())));
+    let saved = imports.load_preferences.animation_model_last;
+    let generation = imports.entries[0].preview_generation;
     for result in [None, Some(Err("invalid model".into()))] {
-        entry.animation_model.pending = true;
-        complete(&mut entry, 1, result);
-        assert!(!entry.animation_model.pending);
-        assert!(Arc::ptr_eq(
-            entry.animation_model.current.as_ref().expect("current model"),
-            &current
-        ));
-        assert_eq!(entry.preview_generation, generation);
+        imports.animation_model_selection.pending = true;
+        imports.complete_animation_model(0, result);
+        for entry in &imports.entries {
+            assert!(!entry.animation_model.pending);
+            assert!(Arc::ptr_eq(
+                entry.animation_model.current.as_ref().expect("current model"),
+                &current
+            ));
+            assert_eq!(entry.preview_generation, generation);
+        }
+        assert_eq!(imports.load_preferences.animation_model_last, saved);
     }
-    reset(&mut entry);
-    complete(&mut entry, 1, Some(Ok(current)));
-    assert!(entry.animation_model.current.is_none(), "a late file load must not undo Standard");
+    imports.reset_animation_models(imports.entries[1].id);
+    imports.complete_animation_model(0, Some(Ok(current)));
+    assert!(
+        imports.entries.iter().all(|entry| entry.animation_model.current.is_none()),
+        "a late file load must not undo Standard"
+    );
     assert!(prepare("static.dae".into(), super::super::tests::mesh_fixture(), &avatars).is_err());
 }
 
@@ -136,8 +151,7 @@ fn custom_animation_model_loads_a_local_collada_file_without_adding_it_to_the_im
     let avatars = Arc::new(AvatarLibrary::load());
     let model = load(path.clone(), 768, &avatars).expect("load local model");
     assert_eq!(std::fs::read_to_string(&path).expect("unchanged file"), bytes);
-    let mut entry = entry();
-    entry.animation_model.generation = 1;
+    let entry = entry();
     let id = entry.id;
     let mut imports = Imports {
         entries: vec![entry],
@@ -148,7 +162,7 @@ fn custom_animation_model_loads_a_local_collada_file_without_adding_it_to_the_im
     let ctx = egui::Context::default();
     imports
         .tx
-        .send(Worker::AnimationModel(id, 1, Some(Ok(model.clone()))))
+        .send(Worker::AnimationModel(0, Some(Ok(model.clone()))))
         .expect("worker result");
     imports.poll(&ctx, &jobs, &world, &Default::default());
     assert_eq!(imports.entries.len(), 1);
@@ -241,13 +255,21 @@ fn saved_animation_models_round_trip_and_reuse_the_loaded_model_across_animation
         ..Default::default()
     };
     let model = model(&avatars);
-    imports.complete_animation_model(first_id, 0, Some(Ok(model.clone())));
+    imports.complete_animation_model(0, Some(Ok(model.clone())));
     let saved = imports.entries[0].animation_model.saved.expect("saved model");
     assert!(imports.animation_models_dirty);
     assert_eq!(imports.load_preferences.animation_models.len(), 1);
     let json = serde_json::to_string(&imports.load_preferences).expect("save preferences");
     let restored: Preferences = serde_json::from_str(&json).expect("reload preferences");
     assert_eq!(restored.animation_models, imports.load_preferences.animation_models);
+    assert_eq!(restored.animation_model_last, Some(saved));
+    assert!(
+        serde_json::from_str::<Preferences>("{}")
+            .expect("old preferences")
+            .animation_model_last
+            .is_none()
+    );
+    assert!(imports.entries.iter().all(|entry| entry.animation_model.saved == Some(saved)));
     assert_eq!(
         serde_json::from_str::<Preferences>("{}")
             .expect("old preferences")
@@ -263,14 +285,18 @@ fn saved_animation_models_round_trip_and_reuse_the_loaded_model_across_animation
         imports.entries[1].animation_model.current.as_ref().expect("shared model"),
         &model
     ));
-    imports.complete_animation_model(first_id, 0, Some(Ok(model)));
+    imports.complete_animation_model(imports.animation_model_selection.generation, Some(Ok(model)));
     assert_eq!(
         imports.load_preferences.animation_models.len(),
         1,
         "adding the same file never duplicates it"
     );
-    reset(&mut imports.entries[0]);
-    assert_eq!(imports.entries[1].animation_model.saved, Some(saved), "Standard is per animation");
+    imports.reset_animation_models(first_id);
+    assert!(
+        imports.entries.iter().all(|entry| entry.animation_model.saved.is_none()),
+        "Standard applies to the queue"
+    );
+    assert!(imports.load_preferences.animation_model_last.is_none());
 }
 
 #[test]
@@ -301,21 +327,19 @@ fn removing_a_saved_animation_model_keeps_its_file_and_rejects_pending_results()
     let avatars = Arc::new(AvatarLibrary::load());
     let current = load(path.clone(), 768, &avatars).expect("model");
     let entry = entry();
-    let id = entry.id;
     let mut imports = Imports {
         entries: vec![entry],
         ..Default::default()
     };
-    imports.complete_animation_model(id, 0, Some(Ok(current.clone())));
+    imports.complete_animation_model(0, Some(Ok(current.clone())));
     let saved = imports.entries[0].animation_model.saved.expect("saved model");
     let (jobs, _results) = crate::scene::jobs::Jobs::new();
-    imports.entries[0].animation_model.requested = Some(saved);
     imports.remove_animation_model(saved, &jobs);
     assert!(path.is_file(), "removing a reference must never delete the user's file");
     assert!(imports.load_preferences.animation_models.is_empty());
     assert!(imports.animation_model_cache.is_empty());
     assert!(imports.entries[0].animation_model.current.is_none());
-    imports.complete_animation_model(id, 0, Some(Ok(current)));
+    imports.complete_animation_model(0, Some(Ok(current)));
     assert!(
         imports.load_preferences.animation_models.is_empty(),
         "late loading cannot re-add a removed model"
@@ -334,12 +358,12 @@ fn an_unavailable_saved_animation_model_keeps_the_list_and_the_previous_preview(
         entries: vec![entry],
         ..Default::default()
     };
-    imports.complete_animation_model(id, 0, Some(Ok(current.clone())));
+    imports.complete_animation_model(0, Some(Ok(current.clone())));
     let missing = Saved::remember(&mut imports.load_preferences.animation_models, "missing.dae".into());
     let (jobs, _results) = crate::scene::jobs::Jobs::new();
     imports.select_animation_model(id, missing, &jobs, &egui::Context::default(), avatars);
     let generation = imports.entries[0].animation_model.generation;
-    imports.complete_animation_model(id, generation, Some(Err("missing file".into())));
+    imports.complete_animation_model(generation, Some(Err("missing file".into())));
     assert_eq!(
         imports.entries[0].animation_model.saved,
         Some(missing),
@@ -354,4 +378,152 @@ fn an_unavailable_saved_animation_model_keeps_the_list_and_the_previous_preview(
     imports.remove_animation_model(missing, &jobs);
     assert_eq!(imports.load_preferences.animation_models.len(), 1);
     assert!(imports.entries[0].animation_model.current.is_none());
+}
+
+#[test]
+fn last_animation_model_restores_on_import_and_standard_remains_the_default_after_restart() {
+    let _inline = crate::scene::jobs::execute_inline_on_this_thread();
+    let root = std::env::temp_dir().join(format!("aurora-model-default-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("fixture directory");
+    let path = root.join("tail.dae");
+    std::fs::write(&path, demo::tail_dae()).expect("model file");
+    let avatars = Arc::new(AvatarLibrary::load());
+    let world = crate::world::World::new(avatars.clone());
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    let ctx = egui::Context::default();
+    let mut previous = Imports::default();
+    previous.complete_animation_model(0, Some(Ok(load(path.clone(), 768, &avatars).expect("preview"))));
+    let saved = previous.load_preferences.animation_model_last;
+    let json = serde_json::to_string(&previous.load_preferences).expect("saved preferences");
+    drop(previous);
+    let mut imports = Imports {
+        load_preferences: serde_json::from_str(&json).expect("restart"),
+        ..Default::default()
+    };
+    let request = Uuid::new_v4();
+    imports.pending_files = Some(request);
+    imports
+        .tx
+        .send(Worker::Loaded(request, vec![entry(), entry()]))
+        .expect("import animations");
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert!(imports.entries.iter().all(|entry| entry.animation_model.pending));
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    let current = imports.entries[0].animation_model.current.clone().expect("automatically restored");
+    assert_eq!(current.path, path);
+    assert!(imports.entries.iter().all(|entry| entry.animation_model.saved == saved
+        && Arc::ptr_eq(entry.animation_model.current.as_ref().expect("shared model"), &current)));
+
+    imports.entries.push(entry());
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert!(Arc::ptr_eq(
+        imports.entries[2].animation_model.current.as_ref().expect("later addition"),
+        &current
+    ));
+    imports.reset_animation_models(imports.entries[1].id);
+    assert!(imports.entries.iter().all(|entry| entry.animation_model.current.is_none()));
+    let mut restarted = Imports {
+        entries: vec![entry()],
+        load_preferences: serde_json::from_str(&serde_json::to_string(&imports.load_preferences).expect("save Standard")).expect("restart"),
+        ..Default::default()
+    };
+    restarted.poll(&ctx, &jobs, &world, &Default::default());
+    assert!(!restarted.entries[0].animation_model.pending);
+    assert!(restarted.entries[0].animation_model.current.is_none());
+    assert_eq!(
+        restarted.load_preferences.animation_models.len(),
+        1,
+        "Standard keeps the saved list"
+    );
+    std::fs::remove_file(path).expect("remove fixture");
+    std::fs::remove_dir(root).expect("remove fixture directory");
+}
+
+#[test]
+fn animation_model_changes_share_geometry_without_changing_clocks_metadata_or_other_imports() {
+    let avatars = Arc::new(AvatarLibrary::load());
+    let current = model(&avatars);
+    let mut first = entry();
+    first.player.position = 0.25;
+    first.player.playing = false;
+    let mut second = entry();
+    second.player.position = 1.25;
+    second.player.playing = true;
+    let mut mesh = Entry::new(
+        "mesh.dae".into(),
+        Ok(Source::Mesh(Box::new(super::super::tests::mesh_fixture()))),
+        Default::default(),
+    );
+    mesh.animation_model.generation = 42;
+    let mut imports = Imports {
+        entries: vec![first, second, mesh],
+        ..Default::default()
+    };
+    let before: Vec<_> = imports.entries[..2]
+        .iter()
+        .map(|entry| files::encode(entry.source.as_ref().expect("animation"), entry.options, entry.sound.options).expect("upload bytes"))
+        .collect();
+    imports.complete_animation_model(0, Some(Ok(current.clone())));
+    let saved = imports.load_preferences.animation_model_last.expect("last choice");
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    imports.select_animation_model(imports.entries[1].id, saved, &jobs, &egui::Context::default(), avatars);
+    for (entry, bytes) in imports.entries[..2].iter().zip(before) {
+        assert!(Arc::ptr_eq(entry.animation_model.current.as_ref().expect("shared model"), &current));
+        assert!(Arc::ptr_eq(entry.model.as_ref().expect("GPU geometry"), &current.geometry));
+        assert_eq!(
+            files::encode(entry.source.as_ref().expect("animation"), entry.options, entry.sound.options).expect("upload bytes"),
+            bytes
+        );
+    }
+    assert_eq!(
+        (imports.entries[0].player.position, imports.entries[0].player.playing),
+        (0.25, false)
+    );
+    assert_eq!(
+        (imports.entries[1].player.position, imports.entries[1].player.playing),
+        (1.25, true)
+    );
+    assert_eq!(imports.entries[2].animation_model.generation, 42);
+    assert!(imports.entries[2].model.is_none());
+}
+
+#[test]
+fn queued_animation_model_load_survives_row_removal_and_cannot_undo_a_newer_choice() {
+    let _inline = crate::scene::jobs::execute_inline_on_this_thread();
+    let root = std::env::temp_dir().join(format!("aurora-model-queue-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&root).expect("fixture directory");
+    let path = root.join("tail.dae");
+    std::fs::write(&path, demo::tail_dae()).expect("model file");
+    let avatars = Arc::new(AvatarLibrary::load());
+    let world = crate::world::World::new(avatars.clone());
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    let ctx = egui::Context::default();
+    let mut imports = Imports {
+        entries: vec![entry(), entry()],
+        ..Default::default()
+    };
+    let saved = Saved::remember(&mut imports.load_preferences.animation_models, path.clone());
+    imports.select_animation_model(imports.entries[0].id, saved, &jobs, &ctx, avatars.clone());
+    imports.entries.remove(0);
+    imports.entries.push(entry());
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert!(imports.entries.iter().all(|entry| entry.animation_model.saved == Some(saved)
+        && !entry.animation_model.pending
+        && entry.animation_model.current.is_some()));
+
+    let missing = Saved::remember(&mut imports.load_preferences.animation_models, root.join("missing.dae"));
+    imports.select_animation_model(imports.entries[0].id, missing, &jobs, &ctx, avatars.clone());
+    imports.select_animation_model(imports.entries[1].id, saved, &jobs, &ctx, avatars);
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert!(
+        imports
+            .entries
+            .iter()
+            .all(|entry| entry.animation_model.saved == Some(saved) && entry.animation_model.error.is_none())
+    );
+    imports.remove_animation_model(saved, &jobs);
+    assert!(imports.load_preferences.animation_model_last.is_none());
+    assert!(imports.entries.iter().all(|entry| entry.animation_model.current.is_none()));
+    std::fs::remove_file(path).expect("remove fixture");
+    std::fs::remove_dir(root).expect("remove fixture directory");
 }
