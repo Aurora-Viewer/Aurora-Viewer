@@ -130,6 +130,12 @@ impl App {
             && let Some(id) = self.toolbox.demo_press.take()
         {
             self.press_tool(id, renderer);
+            // AURORA_DEMO_TOOLBOX=0:J9: its text in the log, for the demo check
+            if id == "J9"
+                && let Some(text) = self.toolbox.results.get(id)
+            {
+                log::info!("demo dev toolbox J9:\n{text}");
+            }
         }
         if self.toolbox.machine.is_none() {
             let _ = self.system_text(renderer);
@@ -409,6 +415,11 @@ impl App {
                         .describe_ik(edit.active, edit.suppress_script_ik, edit.goals.len(), Instant::now()),
                 )
             }
+            // #1492: the control skeleton of each animesh the target wears
+            "J9" => Some(match self.target_avatar() {
+                Some(avatar) => crate::scene::animesh_report::text(&self.scene.worn_animesh_report(&self.world, avatar, Instant::now())),
+                None => tr!("dev-toolbox-no-target").to_string(),
+            }),
             "N2" => Some(self.region_text()),
             "L1" => Some(self.cursor_text(renderer)),
             "L2" => Some(self.worn_text()),
@@ -447,7 +458,7 @@ impl App {
             view.preview = None;
             return;
         };
-        let per_target = matches!(id, "J1" | "J2" | "L1" | "L2");
+        let per_target = matches!(id, "J1" | "J2" | "J9" | "L1" | "L2");
         let mut text = dev_toolbox::header(
             aurora_version::version(),
             id,
