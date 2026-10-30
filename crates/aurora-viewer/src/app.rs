@@ -17579,6 +17579,9 @@ impl ApplicationHandler for App {
                         self.inventory_ui.thumbnail.open(id);
                         self.inventory_ui.thumbnail.picker_open = view == "image-picker";
                         self.inventory_ui.thumbnail.photo_open = matches!(view.as_str(), "image-photo" | "image-photo-save");
+                        if view.starts_with("image-layout") {
+                            self.demo_inventory_file_choices(view.ends_with("wide"));
+                        }
                     } else if !matches!(
                         view.as_str(),
                         "keyboard" | "keyboard-fold" | "aurora-keyboard" | "aurora-keyboard-fold" | "aurora-keyboard-wide"

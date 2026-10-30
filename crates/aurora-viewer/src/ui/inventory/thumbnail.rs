@@ -4,10 +4,12 @@ use super::*;
 use crate::ui::widgets::{Floater, flat_button, search_field};
 use std::{collections::HashMap, sync::Arc};
 
+mod choices;
+
 pub enum Input {
     File,
     Capture,
-    Photo(Arc<Vec<u8>>),
+    Pixels(Arc<Vec<u8>>),
     Texture { asset: Uuid, resize: bool },
     Paste,
 }
@@ -24,6 +26,7 @@ pub struct ThumbnailUi {
     selected: Option<Uuid>,
     filter: String,
     uuid_text: String,
+    choices: Vec<choices::Choice>,
 }
 
 impl ThumbnailUi {
@@ -47,7 +50,7 @@ impl ThumbnailUi {
         if let Some(item) = self.item
             && let Some(pixels) = self.pixels.clone()
         {
-            self.request(item, Input::Photo(pixels), actions);
+            self.request(item, Input::Pixels(pixels), actions);
             self.photo_open = false;
         }
     }
@@ -69,6 +72,7 @@ impl ThumbnailUi {
         };
         if !world.inventory.items.contains_key(&item) && !world.inventory.folders.contains_key(&item) {
             self.item = None;
+            self.choices.clear();
             return;
         }
         let asset = image(&world.inventory, item);
@@ -177,10 +181,12 @@ impl ThumbnailUi {
         });
         if !open {
             self.item = None;
+            self.choices.clear();
             self.picker_open = false;
             self.photo_open = false;
             return;
         }
+        self.show_file_choices(ctx, p, ui_id, &rules::name(&world.inventory, item), ready, actions);
         if self.photo_open {
             let mut photo_open = true;
             let mut cancel = false;
@@ -616,7 +622,7 @@ mod tests {
         }
         let output = frame(Vec::new());
         assert!(
-            matches!(&actions[..], [InvAction::Thumbnail { item: target, input: Input::Photo(photo), .. }]
+            matches!(&actions[..], [InvAction::Thumbnail { item: target, input: Input::Pixels(photo), .. }]
             if *target == item && Arc::ptr_eq(photo, &pixels))
         );
         assert!(!st.photo_open);

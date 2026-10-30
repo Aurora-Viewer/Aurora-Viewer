@@ -7638,6 +7638,16 @@ offline; the files and snapshots uploaded in demo stay offline.
   as in Firestorm; a landmark already present for the same asset is reused.
 - `image-photo-save`: captures then saves a thumbnail at frame 2100
   and closes the snapshot window while keeping the Image editor open.
+- `image-layout` / `image-layout-wide`: open the local-file thumbnail choices
+  for an item with a synthetic portrait / landscape image. Add `-folder`
+  before `-wide` (`image-layout-folder`, `image-layout-folder-wide`) to target
+  a folder instead. Click a preview to use the whole image stretched to the
+  square, fit it proportionally with transparent margins, or crop its centre.
+  No upload occurs before choosing; Cancel or Escape keeps the old image.
+  Repeat using Upload from your computer with a PNG, JPEG or JPEG2000 file;
+  verify transparent pixels, square images and all four source edges. Scene
+  snapshots retain their square viewfinder. The human checks persistence
+  after reconnect on real inventory items and folders.
 - `additional`: the Legacy Viewer's window with its "Additional inventory
   window" button lit at the bottom, right of "+", and the additional window
   opened on its left: Inventory, Recent, Worn and Favorites tabs but no
