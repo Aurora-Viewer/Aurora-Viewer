@@ -164,7 +164,8 @@ impl TexturePicker {
 
     /// LLTextureCtrl TEXTURE_CHANGE / SELECT / CANCEL (lltexturectrl.cpp):
     /// intentional choices apply while the picker stays open; Cancel restores
-    /// the value captured on opening. OK confirms without a duplicate update.
+    /// the value captured on opening. Closing keeps applied choices, and OK
+    /// confirms without a duplicate update (including restricted choices).
     /// Callers keep their target until `open` becomes false. Multi-face editors
     /// use `show` / `take_preview` to preserve each face's original separately.
     pub(crate) fn show_live(
@@ -178,8 +179,7 @@ impl TexturePicker {
             return None;
         }
         let accepted = self.show(ctx, p, world, images);
-        self.cancelled = !self.open && accepted.is_none();
-        let value = accepted.or_else(|| if self.open { self.take_preview() } else { Some(self.original) })?;
+        let value = accepted.or_else(|| if self.cancelled { Some(self.original) } else { self.take_preview() })?;
         if value == self.live_value {
             return None;
         }
@@ -252,6 +252,7 @@ impl TexturePicker {
         images: &HashMap<Uuid, egui::TextureHandle>,
     ) -> Option<Uuid> {
         self.preview = None;
+        self.cancelled = false;
         if !self.open {
             return None;
         }
@@ -758,6 +759,7 @@ impl TexturePicker {
                     }
                     if cancel.clicked() {
                         self.open = false;
+                        self.cancelled = true;
                     }
                 },
             );
@@ -828,6 +830,16 @@ pub(crate) mod tests {
             for _ in 0..5 {
                 self.frame(vec![], &mut draw);
             }
+        }
+
+        pub(crate) fn close(&mut self, draw: impl FnMut(&egui::Context, &Palette)) {
+            let rect = self
+                .ctx
+                .memory(|memory| memory.area_rect(egui::Id::unique("texture_picker")))
+                .expect("picker");
+            self.labels
+                .insert("picker close".into(), egui::pos2(rect.right() - 18.0, rect.top() + 18.0));
+            self.click("picker close", draw);
         }
 
         pub(crate) fn click(&mut self, label: &str, mut draw: impl FnMut(&egui::Context, &Palette)) {
@@ -905,6 +917,17 @@ pub(crate) mod tests {
             assert_eq!(changes, [blank], "OK does not resend the live edit");
             assert!(!picker.open);
             assert!(!picker.cancelled());
+
+            changes.clear();
+            open(&mut picker, original);
+            ui.settle(|ctx, p| draw(&mut picker, &mut world, &mut changes, ctx, p));
+            ui.click(aurora_i18n::tr!("common-blank"), |ctx, p| {
+                draw(&mut picker, &mut world, &mut changes, ctx, p)
+            });
+            ui.close(|ctx, p| draw(&mut picker, &mut world, &mut changes, ctx, p));
+            assert_eq!(changes, [blank], "closing keeps the live choice without another edit");
+            assert!(!picker.open);
+            assert!(!picker.cancelled());
         }
     }
 
@@ -952,6 +975,11 @@ pub(crate) mod tests {
         ui.click("Restricted texture", |ctx, p| draw(&mut picker, &mut world, &mut changes, ctx, p));
         assert!(changes.is_empty(), "a noncopyable choice must not preview");
         assert!(picker.open);
+        ui.close(|ctx, p| draw(&mut picker, &mut world, &mut changes, ctx, p));
+        assert!(changes.is_empty(), "closing does not apply a restricted unconfirmed choice");
+        picker.open("Texture", Uuid::nil());
+        ui.settle(|ctx, p| draw(&mut picker, &mut world, &mut changes, ctx, p));
+        ui.click("Restricted texture", |ctx, p| draw(&mut picker, &mut world, &mut changes, ctx, p));
         ui.click(aurora_i18n::tr!("common-ok"), |ctx, p| {
             draw(&mut picker, &mut world, &mut changes, ctx, p)
         });

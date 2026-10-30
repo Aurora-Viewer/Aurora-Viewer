@@ -7132,12 +7132,22 @@ and Save As stay disabled until inventory textures replace the local maps.
 its image with a mouse click at frame 700 without confirming: the avatar and
 swatch must change while the picker remains open. `tattoo:picker-cancel`
 clicks Cancel at frame 1000; `tattoo:picker-close` clicks the title-bar close;
-capture at 850 and 1200 to check restoration of the preceding image and the
-crossed empty slots. Ordinary picker clicks preview immediately too; OK keeps
-the choice, Cancel and the title-bar close button restore the original slot.
+capture at 850 and 1200: Cancel restores the preceding image, while closing
+keeps the selected image on the avatar and the swatch. These picker modes
+also accept `skin`, `hair`, `eyes`, every clothing type, `alpha` and `universal`.
+Ordinary inventory picker clicks preview immediately too; OK confirms the
+choice, the title-bar close keeps applied choices and explicit Cancel restores
+the original slot. Closing the editor then asks Save/Discard/Cancel for the
+unsaved draft; keeping the picker choice does not save the wearable asset.
+Leaving an editor idle with parameter groups open must not change its weights
+or restart its bake generation: fractional slider percentages are formatted
+without rounding the stored asset until a real edit. Test skin and clothing
+texture choices with their parameter groups still open.
 The local preview composites the avatar definition's original masks and
 worn layers on workers and uploads a complete generation through GPU staging.
-It uses 2048-pixel bakes (512 for eyes), or 1024 on a low-memory staging pool;
+It uses resident source pixels immediately, including BC7-only cached textures,
+and rebakes when finer source levels arrive. Unrelated worn assets do not block
+an edited region. It uses 2048-pixel bakes (512 for eyes), or 1024 on a low-memory staging pool;
 saving still requests the server's normal bake. Capture `skin:preview`,
 `shirt:preview`, `tattoo:preview` and `alpha:preview` after frame 900; cancellation
 restores the pinned server textures. `AURORA_DEMO_INVENTORY=aurora-menu-folder-uuid`

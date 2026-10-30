@@ -286,7 +286,7 @@ pub fn show(
 ) -> bool {
     contents_selection::finish_if_hidden_or_blurred(ctx, tool, world);
     if !tool.open {
-        tool.cancel_texture_picker(world, env);
+        tool.dismiss_texture_picker();
         tool.cancel_color_picker(world);
         tool.commit_color_edit();
         tool.ui.layout.open = false;
@@ -473,7 +473,7 @@ pub fn show(
     color::finish_gesture(ctx, tool);
     if !open {
         contents_selection::finish_rename(tool, world);
-        tool.cancel_texture_picker(world, env);
+        tool.dismiss_texture_picker();
         tool.close(world, s);
     }
     *s != before || *env.property_lines != property_lines_before
