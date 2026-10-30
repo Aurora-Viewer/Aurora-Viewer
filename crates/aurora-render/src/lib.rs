@@ -30,6 +30,7 @@ pub mod light_tiles;
 pub mod looks;
 pub mod main_thread;
 mod occlusion;
+pub mod pacing;
 mod packet;
 mod pick;
 #[cfg(test)]

@@ -1509,6 +1509,13 @@ pub struct RenderStats {
     pub thread_ms: f32,
     /// Render thread: time it waited for the main thread's packet (ms).
     pub thread_idle_ms: f32,
+    /// From the moment the frame began reading its input to its
+    /// presentation (ms; None when it was not presented). What the GPU
+    /// still has to draw after `present` is not in it.
+    pub input_ms: Option<f32>,
+    /// Main thread: the sleep the frame pacing asks before the next frame
+    /// reads its input (pacing.rs, ms).
+    pub pace_ms: f32,
     /// Bytes of the frame's write journal (writes.rs).
     pub journal_bytes: u64,
 }

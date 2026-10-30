@@ -8184,6 +8184,7 @@ What the inventory must show with these scenarios:
 | `AURORA_TEXTURE_BC7=0` | Textures never compressed to BC7 |
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 without its disk cache |
 | `AURORA_RENDER_THREAD=0` | Frames drawn on the main thread |
+| `AURORA_FRAME_PACING=0` | No frame pacing: the input waits in the frame queue when the GPU sets the pace, as before |
 | `AURORA_FRAME_PRIORITY=normal` or `alt` | The frame's threads at normal priority, or both priorities alternately |
 | `AURORA_ALLOCATOR=system` | The system's memory allocator instead of mimalloc, as before |
 | `AURORA_EYE_RELATIVE=0` | Vertices of the objects and the terrain computed in region coordinates |
@@ -8955,6 +8956,16 @@ What the inventory must show with these scenarios:
   and moves on to the next frame; with `0`, the same packet is executed in
   place. `thread=on|off` in the `perf summary` line, and a log line at
   startup (`renderer: frames drawn by…`).
+- **`AURORA_FRAME_PACING=0`**: turns off the frame pacing, to compare.
+  By default, once it has handed frame N over, the main thread waits, at
+  the place of the frame limiter and before the next frame reads its
+  input, until the GPU has finished frame N−1: when the GPU (or vsync)
+  sets the pace, the next frame reads its input while the GPU draws frame
+  N, at the same frame rate. Without it, the input of a frame waits three
+  or four frames for the screen (windows dragged behind the cursor, a slow
+  camera, #1484). `pace` (that wait) and `input` (input to presentation)
+  in the `perf summary` line; with `0`, `pace` stays at 0
+  (`aurora-render/src/pacing.rs`).
 - **`AURORA_FRAME_PRIORITY=normal|alt`**: by default the threads a frame
   waits for (the main thread, the render thread, the pool workers that
   help the main thread in the frame's parallel loops and the texture page
@@ -9262,7 +9273,13 @@ thread.
     the end of presentation, swapchain wait included (0 with
     `thread=off`);
   - `rt_idle` (render thread): the time spent waiting for the main thread's
-    packet.
+    packet;
+  - `pace` (main thread, in `limiter`): the frame pacing's wait for the
+    GPU to finish the frame before, before the next frame reads its input
+    (0 when the GPU is not the limit, or with `AURORA_FRAME_PACING=0`);
+  - `input`: from the start of the frame, where it reads its input, to its
+    presentation (the latency the pacing cuts; what the GPU still draws
+    after `present` is not in it).
 
   A frame costs roughly the longer of the main thread's work (`frame` minus
   `wait_render` and `limiter`) and of `rt_frame`. `rt_idle` above 0 with

@@ -1508,6 +1508,9 @@ pub(crate) struct Backend {
     /// Set by the device-lost callback: the GPU is never waited on again
     /// (device_lost.rs).
     lost: crate::device_lost::DeviceLost,
+    /// Each frame's submission, read by the main thread before the next
+    /// frame reads its input (pacing.rs).
+    gpu_frames: std::sync::Arc<crate::pacing::GpuFrames<wgpu::SubmissionIndex>>,
 }
 
 /// What the main thread's `Renderer` creates the backend from.
@@ -1530,6 +1533,8 @@ pub(crate) struct BackendInit {
     pub scene: SceneGpu,
     pub anim_clock: crate::tex_anim::AnimClock,
     pub lost: crate::device_lost::DeviceLost,
+    /// Each frame's submission, for the frame pacing (pacing.rs).
+    pub gpu_frames: std::sync::Arc<crate::pacing::GpuFrames<wgpu::SubmissionIndex>>,
 }
 
 fn skin_layout() -> wgpu::VertexBufferLayout<'static> {
@@ -2385,6 +2390,7 @@ impl Backend {
             scene,
             anim_clock,
             lost,
+            gpu_frames,
         } = init;
         let caps = surface.get_capabilities(&adapter);
         let format = caps
@@ -2886,6 +2892,7 @@ impl Backend {
             last_inv_vp: Mat4::IDENTITY,
             msaa_supported,
             lost,
+            gpu_frames,
         };
         r.rebuild_bind_groups();
         Ok(r)
@@ -4902,6 +4909,7 @@ impl Backend {
             drawn,
             capture: wanted,
             histogram,
+            input_at,
         } = packet;
         let mut stats = RenderStats::default();
         if let Some(t) = &mut self.timer {
@@ -7657,7 +7665,8 @@ impl Backend {
             }
         }
         prof.mark("finish");
-        self.queue.submit(upload_cmds.into_iter().chain(extra_cmds));
+        let submission = self.queue.submit(upload_cmds.into_iter().chain(extra_cmds));
+        self.gpu_frames.submitted(index, submission);
         // staging chunks whose copies are now submitted are mapped again
         frame_uploads.after_submit();
         let mut captured = None;
@@ -7709,6 +7718,7 @@ impl Backend {
         if let FrameTarget::Surface(t) = surface_tex {
             self.queue.present(t);
             stats.presented = true;
+            stats.input_ms = input_at.map(|at| at.elapsed().as_secs_f32() * 1000.0);
         }
         self.lost.poll(&self.device);
         // a click answered by now goes back with this frame's result

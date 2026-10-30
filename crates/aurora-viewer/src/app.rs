@@ -7550,6 +7550,11 @@ impl App {
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
+        // the input this frame reads came with the events just handled: its
+        // time to the screen starts here (Performance › latency, pacing.rs)
+        if let Some(g) = &mut self.gfx {
+            g.renderer.mark_input(Instant::now());
+        }
         self.sync_minimized_mute();
         aurora_render::frame_priority::apply();
         self.world.anti_spam.configure(self.settings.anti_spam);
@@ -9905,18 +9910,14 @@ impl App {
         let target = (cap >= 1.0 && !paced_by_vsync).then(|| Duration::from_secs_f32(1.0 / cap));
         // (while Windows holds the window, this thread is left to its loop:
         // the wait is done between the frames, on another thread)
-        if !crate::window_hold::paces(target)
-            && let Some(target) = target
-        {
-            let spent = self.frame_start.elapsed();
-            if spent < target {
-                let rest = target - spent;
-                if rest > Duration::from_millis(2) {
-                    std::thread::sleep(rest - Duration::from_millis(1));
-                }
-                while self.frame_start.elapsed() < target {
-                    std::hint::spin_loop();
-                }
+        if !crate::window_hold::paces(target) {
+            // frame pacing (aurora-render pacing.rs): when the GPU sets the
+            // pace, the next frame reads its input once the GPU has finished
+            // the frame before this one, instead of waiting behind it with
+            // stale input; then the frame limiter
+            gfx.renderer.wait_for_gpu();
+            if let Some(target) = target {
+                wait_until(self.frame_start + target);
             }
         }
         self.frame_profile.lap(Lap::Limiter);
@@ -18493,6 +18494,22 @@ impl ApplicationHandler for App {
         } else if let Some(g) = &self.gfx {
             g.window.request_redraw();
         }
+    }
+}
+
+/// The frame limiter's and the frame pacing's wait: a sleep to a
+/// millisecond before `until` (the scheduler's grain), then a spin.
+fn wait_until(until: Instant) {
+    let now = Instant::now();
+    if until <= now {
+        return;
+    }
+    let rest = until - now;
+    if rest > Duration::from_millis(2) {
+        std::thread::sleep(rest - Duration::from_millis(1));
+    }
+    while Instant::now() < until {
+        std::hint::spin_loop();
     }
 }
 
