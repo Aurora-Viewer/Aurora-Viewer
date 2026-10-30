@@ -204,14 +204,16 @@ pub fn complete(inv: &Inventory, folder: Uuid) -> bool {
 /// wearInventoryCategoryOnAvatar: "Attempt to wear a broken link").
 pub fn usable_links(inv: &Inventory, folder: Uuid) -> Vec<OutfitLink> {
     let mut links = folder_links(inv, folder);
-    links.retain(|l| {
-        let broken = !l.folder && inv.broken(&l.target);
-        if broken {
-            log::warn!("outfit link \"{}\" in folder {folder} is broken: skipped", l.name);
-        }
-        !broken
-    });
+    links.retain(|l| l.folder || !inv.broken(&l.target));
     links
+}
+
+/// Logs the broken links an outfit change skips, once per change (menus
+/// read `usable_links` at every frame).
+fn warn_broken(inv: &Inventory, folder: Uuid) {
+    for l in folder_links(inv, folder).iter().filter(|l| !l.folder && inv.broken(&l.target)) {
+        log::warn!("outfit link \"{}\" in folder {folder} is broken: skipped", l.name);
+    }
 }
 
 /// Only the relevant folders and link targets are fetched, including retry.
@@ -368,6 +370,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
     let cof = cof(inv).ok_or(aurora_i18n::tr!("world-appearance-the-current-outfit-folder-is-unavailable"))?;
     require_complete(inv, cof)?;
     // the rewritten COF drops its broken links
+    warn_broken(inv, cof);
     let mut current = usable_links(inv, cof);
     if matches!(
         action,
@@ -498,6 +501,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                     continue;
                 }
                 require_complete(inv, *id)?;
+                warn_broken(inv, *id);
                 links.extend(if contents {
                     wearable_contents(inv, *id)?
                 } else {
@@ -621,6 +625,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             for id in folders {
                 require_outfit(inv, id)?;
                 require_complete(inv, id)?;
+                warn_broken(inv, id);
                 removable.extend(
                     wearable_contents(inv, id)?
                         .iter()

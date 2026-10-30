@@ -601,7 +601,9 @@ mod tests {
         assert_eq!(reads.missing, [id(5)], "404: a broken link's original");
         assert_eq!(reads.failed, [id(6)], "a server error proves nothing");
         assert!(
-            fetch_items(&reqwest::Client::new(), "http://127.0.0.1:9", id(2), &[id(3)]).await.is_err(),
+            fetch_items(&reqwest::Client::new(), "http://127.0.0.1:9", id(2), &[id(3)])
+                .await
+                .is_err(),
             "the all-or-nothing read still fails"
         );
     }
