@@ -16,6 +16,7 @@ pub(super) fn request_focus(ui: &egui::Ui, st: &mut InventoryUi) {
             focus_id(st),
             egui::EventFilter {
                 vertical_arrows: true,
+                horizontal_arrows: true,
                 ..Default::default()
             },
         );
@@ -238,6 +239,31 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
                     modifiers: egui::Modifiers::NONE,
                 },
             ];
+        }
+        // Left from the object selects its folder, Left again closes it,
+        // Right opens it again.
+        if mode.ends_with("keyboard-fold") {
+            let folder = Uuid::from_u128(8000);
+            if matches!(frame, 690 | 720) {
+                log::info!(
+                    "demo inventory keyboard fold: frame={frame}, selected={:?}, folder_selected={}, folder_open={}",
+                    st.selected,
+                    st.selected == Some(folder),
+                    st.plain.is_open(folder)
+                );
+            }
+            let key = match frame {
+                665 | 680 => egui::Key::ArrowLeft,
+                700 => egui::Key::ArrowRight,
+                _ => return Vec::new(),
+            };
+            return vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }];
         }
         if matches!(frame, 665 | 680 | 710) {
             log::info!(

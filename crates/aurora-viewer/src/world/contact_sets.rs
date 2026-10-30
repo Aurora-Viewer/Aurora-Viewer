@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 pub mod appearance;
+pub mod importing;
 pub use appearance::{Appearance, PlateSize, Visuals};
 #[cfg(test)]
 mod appearance_tests;
@@ -68,7 +69,7 @@ impl ContactSet {
 }
 
 /// Which avatars a set selection lists (FSPanelContactSets::generateAvatarList).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ContactSets {
     sets: BTreeMap<String, ContactSet>,
     pub stack_icons: bool,

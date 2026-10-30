@@ -1175,9 +1175,21 @@ pub enum NetEvent {
     },
     /// Items fetched by id (FetchInventory2).
     InventoryItems(Vec<crate::inventory::InvItem>),
+    /// Original records requested to recover simulator-arrived attachments.
+    /// Keep the creation context even if the object detaches before readback.
+    AttachmentInventoryItems(Vec<crate::inventory::InvItem>),
+    InventoryOrphansFetched {
+        request: u64,
+        owner: Uuid,
+        result: Result<crate::inventory::orphans::Contents, String>,
+    },
     /// A locally requested creation, confirmed by its UDP callback.
     InventoryCreated(crate::inventory::InvItem),
     InventoryItemsFailed {
+        items: Vec<Uuid>,
+    },
+    /// Items the server answered do not exist: broken links' originals.
+    InventoryItemsMissing {
         items: Vec<Uuid>,
     },
     /// Answer to a server appearance (bake) request: success, or the COF
@@ -1913,6 +1925,15 @@ pub enum NetCommand {
     FetchItems {
         items: Vec<Uuid>,
         owner: Uuid,
+    },
+    /// Recover our non-temporary attachment originals, retaining their
+    /// normal creation destination rather than classifying them as lost.
+    FetchAttachmentItems {
+        items: Vec<Uuid>,
+    },
+    /// findLostItems: agent inventory only, AIS /orphans or legacy null folder.
+    FetchInventoryOrphans {
+        request: u64,
     },
     /// Wear objects from the inventory (RezMultipleAttachmentsFromInv).
     RezAttachments(Vec<AttachRequest>),

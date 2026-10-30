@@ -294,6 +294,24 @@ fn emit(sh: &Shared, ev: NetEvent) {
     let _ = sh.events.send(ev);
 }
 
+/// Items read, items the server says do not exist, and failed reads.
+fn send_item_reads(events: &crate::EventSender, reads: crate::inventory::ais::ItemReads, attachment: bool) {
+    if !reads.items.is_empty() {
+        let _ = events.send(if attachment {
+            NetEvent::AttachmentInventoryItems(reads.items)
+        } else {
+            NetEvent::InventoryItems(reads.items)
+        });
+    }
+    if !reads.missing.is_empty() {
+        let _ = events.send(NetEvent::InventoryItemsMissing { items: reads.missing });
+    }
+    if !reads.failed.is_empty() {
+        log::warn!("{} inventory item reads failed", reads.failed.len());
+        let _ = events.send(NetEvent::InventoryItemsFailed { items: reads.failed });
+    }
+}
+
 /// (simulator, seed asked, its capabilities or why they did not come)
 type CapsSender = mpsc::UnboundedSender<(SocketAddr, String, Result<HashMap<String, String>, String>)>;
 
@@ -2150,7 +2168,23 @@ impl Session<'_> {
                 owner,
                 library,
             } => self.fetch_inventory_tree(request, parent, children, depth, owner, library),
-            NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner),
+            NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner, false),
+            NetCommand::FetchAttachmentItems { items } => self.fetch_items(items, self.agent_id(), true),
+            NetCommand::FetchInventoryOrphans { request } => {
+                let ais = self.main_cap("InventoryAPIv3");
+                let legacy = self.main_cap("FetchInventoryDescendents2");
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                let owner = self.agent_id();
+                tokio::spawn(async move {
+                    let result = crate::inventory::orphans::fetch(&http, ais.as_deref(), legacy.as_deref(), owner).await;
+                    let _ = events.send(NetEvent::InventoryOrphansFetched {
+                        request,
+                        owner,
+                        result: result.map_err(str::to_owned),
+                    });
+                });
+            }
             NetCommand::EditInventory { request, change } => {
                 if change.operations.is_empty() && !change.copies.is_empty() && change.copies.len() <= 2048 && !change.refresh.is_empty() {
                     emit(
@@ -3250,7 +3284,7 @@ impl Session<'_> {
         }
     }
 
-    fn fetch_items(&mut self, items: Vec<uuid::Uuid>, owner: uuid::Uuid) {
+    fn fetch_items(&mut self, items: Vec<uuid::Uuid>, owner: uuid::Uuid, attachment: bool) {
         if owner == self.agent_id()
             && let Some(cap) = self.main_cap("InventoryAPIv3")
         {
@@ -3258,15 +3292,8 @@ impl Session<'_> {
             let events = self.sh.events.clone();
             tokio::spawn(async move {
                 for chunk in items.chunks(16) {
-                    match crate::inventory::ais::fetch_items(&http, &cap, owner, chunk).await {
-                        Ok(items) => {
-                            let _ = events.send(NetEvent::InventoryItems(items));
-                        }
-                        Err(error) => {
-                            log::warn!("item fetch failed: {error}");
-                            let _ = events.send(NetEvent::InventoryItemsFailed { items: chunk.to_vec() });
-                        }
-                    }
+                    let reads = crate::inventory::ais::read_items(&http, &cap, owner, chunk).await;
+                    send_item_reads(&events, reads, attachment);
                 }
             });
             return;
@@ -3280,15 +3307,17 @@ impl Session<'_> {
         tokio::spawn(async move {
             for chunk in items.chunks(50) {
                 let body = crate::inventory::fetch_items_body(chunk, owner);
-                match caps::post_llsd(&http, &url, &body).await {
-                    Ok(v) => {
-                        let _ = events.send(NetEvent::InventoryItems(crate::inventory::parse_items_response(&v)));
-                    }
+                let reads = match caps::post_llsd(&http, &url, &body).await {
+                    Ok(v) => crate::inventory::item_reads(&v, chunk),
                     Err(e) => {
                         log::warn!("item fetch failed: {e}");
-                        let _ = events.send(NetEvent::InventoryItemsFailed { items: chunk.to_vec() });
+                        crate::inventory::ais::ItemReads {
+                            failed: chunk.to_vec(),
+                            ..Default::default()
+                        }
                     }
-                }
+                };
+                send_item_reads(&events, reads, attachment);
             }
         });
     }
@@ -5732,6 +5761,7 @@ mod event_queue_tests {
             .await
             .unwrap();
         stream.write_all(&body).await.unwrap();
+        crate::test_http::finish(stream);
         let mut event = parcel_event(main, crate::land::SELECTED_PARCEL_SEQ_ID, 42, 0);
         parcel_block(&mut event, "ParcelEnvironmentBlock").insert("ParcelEnvironmentVersion", 4);
         session.on_eq_event(event);
@@ -6344,6 +6374,7 @@ mod script_dialog_tests {
                 };
                 let reply = "HTTP/1.1 200 OK\r\nContent-Type: application/llsd+xml\r\nContent-Length: 13\r\n\r\n<llsd></llsd>";
                 let _ = stream.write_all(reply.as_bytes()).await;
+                crate::test_http::finish(stream);
                 if let Some(body) = body {
                     let _ = tx.send(body);
                 }

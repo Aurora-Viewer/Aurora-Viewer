@@ -224,10 +224,9 @@ pub(super) fn show(
                                 folder: inv.folders.contains_key(id),
                             })
                             .collect();
+                        let holds_worn = rules::worn_ancestors(inv, &facts.worn);
                         if ids.iter().all(|id| {
-                            rules::movable(inv, *id, &prefs.protected)
-                                && rules::in_type(inv, *id, 14)
-                                && !facts.worn.iter().any(|w| rules::under(inv, *w, *id))
+                            rules::movable(inv, *id, &prefs.protected) && rules::in_type(inv, *id, 14) && !holds_worn.contains(id)
                         }) {
                             Ok(Mutation {
                                 operations,

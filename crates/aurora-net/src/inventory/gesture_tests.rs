@@ -55,6 +55,7 @@ async fn server(stale: bool, reject: bool, material: bool) -> (String, tokio::ta
             );
             socket.write_all(headers.as_bytes()).await.expect("headers");
             socket.write_all(&body).await.expect("body");
+            crate::test_http::finish(socket);
         }
         requests
     });

@@ -62,6 +62,9 @@ const TRUSTED: &[&str] = &[
     // (media*.giphy.com, static*.klipy.com)
     "giphy.com",
     "klipy.com",
+    // the other GIF service most shared in chat (#1551): its pages
+    // (tenor.com/view/...) and media servers (media.tenor.com, c.tenor.com)
+    "tenor.com",
 ];
 
 /// URL shorteners and link hubs: the real destination is hidden.
@@ -322,6 +325,10 @@ mod tests {
             "https://image.prntscr.com/image/Dm0Aur0raExample.png",
             "https://i.gyazo.com/0a1b2c3d4e5f60718293a4b5c6d7e8f9.png",
             "https://i.imgur.com/DemoAb1.jpeg",
+            // the GIF services (#932, #1551)
+            "https://media.giphy.com/media/demo/giphy.gif",
+            "https://tenor.com/view/demo-wave-gif-12345678",
+            "https://media.tenor.com/DemoAb1cD2eAAAAC/demo-wave.gif",
         ] {
             assert_eq!(classify(url), Trust::Trusted, "{url}");
         }
@@ -334,6 +341,7 @@ mod tests {
             "https://github.io",
             "https://raw.githubusercontent.com/x",
             "https://notgithub.com",
+            "https://nottenor.com/view/x",
             "https://docs.google.com/forms/x",
             "https://www.dropbox.com/s/x",
             "ftp://secondlife.com/x",

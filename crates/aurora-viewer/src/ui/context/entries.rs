@@ -793,6 +793,15 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
             true,
             CtxAction::ToggleBlock(id),
         );
+        // Local mute of their nearby/call voice only (flagVoiceChat), same as
+        // People › Block voice and the menu volume row — not land moderation.
+        ui.check(
+            "microphone-off",
+            aurora_i18n::tr!("ui-people-block-voice"),
+            f.voice_blocked,
+            f.can_block_voice,
+            CtxAction::ToggleVoiceMute(id),
+        );
         ui.separator();
         if let Some(object) = attachment {
             // Derender on a clicked attachment has always targeted that
@@ -1813,6 +1822,18 @@ mod tests {
             assert!(row.enabled);
             assert_eq!(row.checked, Some(blocked));
             assert!(matches!(row.kind, Kind::Action(CtxAction::ToggleOwnerParticleFilter(i)) if i == id));
+        }
+        // Disturbance › Block voice: mute list voice flag, greyed for Lindens
+        for (voice_blocked, can_block_voice) in [(false, true), (true, true), (false, false)] {
+            let f = Facts {
+                voice_blocked,
+                can_block_voice,
+                ..Facts::default()
+            };
+            let row = find(world_menu(&target, &f, Vec3::ZERO), "ui-people-block-voice");
+            assert_eq!(row.enabled, can_block_voice);
+            assert_eq!(row.checked, Some(voice_blocked));
+            assert!(matches!(row.kind, Kind::Action(CtxAction::ToggleVoiceMute(i)) if i == id));
         }
     }
 }

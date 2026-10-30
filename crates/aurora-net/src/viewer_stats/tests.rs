@@ -340,6 +340,7 @@ async fn any_2xx_answer_is_a_post_even_with_an_empty_body() {
             let mut buf = [0; 65536];
             let _ = stream.read(&mut buf).await;
             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").await;
+            crate::test_http::finish(stream);
         }
     });
     let http = reqwest::Client::new();
@@ -359,6 +360,7 @@ fn slow_capability(rt: &tokio::runtime::Runtime, delay: Duration) -> String {
                 let _ = stream.read(&mut buf).await;
                 tokio::time::sleep(delay).await;
                 let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").await;
+                crate::test_http::finish(stream);
             });
         }
     });

@@ -13,9 +13,11 @@ instead of asking for a whole log.
 
 1. Open the Dev Toolbox (Ctrl+Alt+D).
 2. Choose the **target**: *Nearest avatar* (stand within 3 m, no need to aim
-   at it), *Selection* (right-click › Edit on the object) or *Under the
-   cursor* (the surface pointed at in the world; press *Aim*, then click
-   the surface: it stays the target, and that click does nothing else).
+   at it), *My avatar* (you and what you wear: when the item that renders
+   wrong is on you), *Selection* (right-click › Edit on the object) or
+   *Under the cursor* (the surface pointed at in the world; press *Aim*,
+   then click the surface: it stays the target, and that click does
+   nothing else).
 3. Press the tool you were asked for. Its text appears in **Send a
    diagnostic** on the right.
 4. Keep **Hide residents' names** on (it is on by default): the names and
@@ -45,7 +47,7 @@ English.
 
 | Report | Ask the human to | Tools | They paste | Read first |
 |---|---|---|---|---|
-| Something worn renders wrong (see-through, missing, invisible body) | Stand within 3 m of the avatar (or select the item), press J2 | J2 | The worn items' faces | `left out` reasons, texture-entry alpha, alpha mode and cutoff, `-> Pass` |
+| Something worn renders wrong (see-through, missing, invisible body) | Stand within 3 m of the avatar, or choose My avatar when you wear it (or select the item), press J2 | J2 | The worn items' faces | `left out` reasons, texture-entry alpha, alpha mode and cutoff, `-> Pass` |
 | An object in the world renders wrong | Select it (right-click › Edit) and press J2; for one face, point at it, then L1 and Copy | J2, L1 | The linkset's faces, or one prim | pass, material state, texture alpha class |
 | Textures stay grey or blurry | Point at a grey face, press L1 and Copy, then J3 | L1, J3, N3 | The face's state, the last warnings | texture state, memory pressure, failed downloads |
 | Stutters or low frame rate | Turn P3 on, reproduce for 30 s, press J5; a screenshot of P1 | P3, J5, P1 | The slow frames and their step | which step peaks (sync, upload, GPU) |
@@ -53,6 +55,7 @@ English.
 | Media or sound does not play | Turn M1 on, retry, press J3 | M1, J3 | The media lines and warnings | plugin and media state |
 | Any report, first message | Press J4 once | J4 | Version, hardware, settings | build, GPU vendor and driver, settings |
 | Scripted IK has no effect | Trigger the affected profile, press J8, then Copy | J8 | Local relay, definitions, accepted activations and target states | last_failure, complete_ack, active_packets, suppress_scripts, resolved/waiting links |
+| A worn animesh is bent, stretched or misplaced | Stand within 3 m of the wearer, or choose My avatar when you wear it (or select the item), press J9, then Copy | J9, J2 | The worn animesh's skin joints, overrides, control skeleton and animations | joints `unknown to the skeleton`, an override that wins over the expected mesh, `rest` vs `now` on keyed joints, position keys far from the rest, animations `signalled, not playing` |
 | The viewer crashed | In the crash window, press Copy trace | — | The crash trace | top frames, panic message |
 
 How to read a copy:
@@ -96,15 +99,16 @@ text in Send a diagnostic), **live** (a text kept up to date there),
 | ID | Tool | Kind | What it gives |
 |---|---|---|---|
 | J1 | Debug to log | copy | The same text as J2, also written to the session log |
-| J2 | Debug to clipboard | copy | The target's worn items (or selection) face by face; with no avatar within 3 m and nothing selected, the objects within 12 m and the worn items around instead. Copied as soon as the names of the worn items came (3 s) |
+| J2 | Debug to clipboard | copy | The target's worn items (yours with My avatar, or the selection) face by face; with no avatar within 3 m and nothing selected, the objects within 12 m and the worn items around instead. Copied as soon as the names of the worn items came (3 s) |
 | J3 | Copy the warnings | copy | The last 50 warnings and errors of the session |
 | J4 | Copy the system configuration | copy | Version, commit, OS, CPU, memory, GPU and driver, screen, graphics settings |
 | J5 | Copy a tool's output | copy | What P3, P4, P5, P6, O9 and M1 wrote in the last 60 s |
 | J6 | Open the logs folder | window | The folder of `aurora.log` |
 | J7 | Script errors | window | The script debug window |
 | J8 | IK state | copy | Local IK reception, activation, editor suppression and target resolution; no scene selection required |
+| J9 | Worn animesh skeleton | copy | Each animated object the target wears (nearest avatar within 3 m, my avatar, or the wearer of the selection): the joints its meshes are skinned to, every joint position override they ask and which one wins, the control skeleton's skeleton-file / rest / current local positions of the overridden and animated joints, the animations playing (priority, joints keyed in position with their first and current values) and its place on its attachment point |
 | L1 | Under the cursor | live | The prim last pointed at, every face; its button shows the face's pass and alpha |
-| L2 | Worn items of the target | live | Each attachment: prims, faces drawn and left out |
+| L2 | Worn items of the target | live | Each attachment of the target's avatar (nearest, mine, or the wearer of the selection): prims, faces drawn and left out |
 | L3 | Live problems | live | The last 20 warnings |
 | N3 | Loading | live | Texture memory and pressure, textures, meshes, materials, downloads |
 | R1 | Show transparency | toggle | Blended, masked and invisible faces in red, material masks in blue (Ctrl+Alt+T) |

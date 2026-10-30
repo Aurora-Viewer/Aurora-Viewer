@@ -320,6 +320,93 @@ fn selected_parent_and_child_are_moved_once_and_cycles_are_refused() {
 }
 
 #[test]
+fn selection_roots_skip_any_selected_ancestor_and_survive_a_folder_cycle() {
+    let mut inv = fixture();
+    // 8100 sits in 8000, in the root: a selected grandparent hides it too.
+    assert_eq!(roots(&inv, &[id(8100), inv.root]), vec![inv.root]);
+    assert_eq!(roots(&inv, &[id(8100), id(8101)]), vec![id(8100), id(8101)]);
+    // A corrupt parent cycle (8000 and its subfolder 8001 holding each
+    // other) ends the walk instead of looping.
+    inv.folders.get_mut(&id(8000)).expect("folder").info.parent = id(8001);
+    assert!(!under(&inv, id(8100), inv.root));
+    assert_eq!(roots(&inv, &[id(8100), id(8001)]), vec![id(8001)]);
+}
+
+#[test]
+fn worn_ancestors_hold_the_worn_item_and_every_folder_above_it() {
+    let inv = fixture();
+    let holds = worn_ancestors(&inv, &HashSet::from([id(8100)]));
+    assert!(holds.contains(&id(8100)) && holds.contains(&id(8000)) && holds.contains(&inv.root));
+    assert!(!holds.contains(&id(8101)) && !holds.contains(&id(8001)));
+}
+
+#[test]
+fn a_system_folder_is_the_roots_child_with_the_smallest_id() {
+    let mut inv = fixture();
+    let trash = system(&inv, 14).expect("trash");
+    assert!(trash > id(4));
+    // A Trash-typed folder deeper down is not the Trash, even with the
+    // smallest id; of two at the root, the smallest wins.
+    for (stray, parent) in [(id(3), id(8000)), (id(4), inv.root)] {
+        inv.folders.insert(
+            stray,
+            Folder {
+                info: InvFolder {
+                    id: stray,
+                    parent,
+                    type_default: 14,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        inv.folders.get_mut(&parent).expect("parent").children.push(stray);
+    }
+    assert_eq!(system(&inv, 14), Some(id(4)));
+    inv.folders.remove(&id(4));
+    assert_eq!(system(&inv, 14), Some(trash));
+}
+
+#[test]
+fn moved_and_renamed_items_take_their_sorted_place() {
+    let mut inv = fixture();
+    let to = id(8001);
+    let before = inv.folders[&to].items.clone();
+    let named = |inv: &Inventory| -> Vec<String> { inv.folders[&to].items.iter().map(|i| inv.items[i].name.to_lowercase()).collect() };
+    let mut expected = named(&inv);
+    expected.sort();
+    assert_eq!(named(&inv), expected, "fixture folder starts sorted");
+    // Moves arrive one by one, in no particular order of names.
+    for (n, name) in [(8100u128, "zebra"), (8101, "Apple"), (8102, "mango")] {
+        let mut moved = inv.items[&id(n)].clone();
+        moved.parent = to;
+        moved.name = name.into();
+        inv.server_updated(Vec::new(), vec![moved]);
+    }
+    let mut expected = named(&inv);
+    expected.sort();
+    assert_eq!(named(&inv), expected);
+    assert_eq!(inv.folders[&to].items.len(), before.len() + 3);
+    assert!(
+        inv.folders[&id(8000)]
+            .items
+            .iter()
+            .all(|i| ![8100, 8101, 8102].contains(&i.as_u128()))
+    );
+    // A rename in place moves the entry too.
+    let mut renamed = inv.items[&id(8100)].clone();
+    renamed.name = "aardvark".into();
+    inv.server_updated(Vec::new(), vec![renamed]);
+    let mut expected = named(&inv);
+    expected.sort();
+    assert_eq!(named(&inv), expected);
+    assert_eq!(inv.folders[&to].items.len(), before.len() + 3);
+}
+
+#[test]
 fn broken_and_cyclic_links_are_not_followed() {
     let mut inv = fixture();
     inv.items.get_mut(&id(8113)).expect("link").asset_id = id(8113);

@@ -820,43 +820,21 @@ impl App {
     }
 
     pub(super) fn apply_appearance_action_from(&mut self, action: crate::world::appearance::Action, actor: Uuid) {
-        use crate::world::appearance::Action;
-        // Temporary attachments have no COF link. Use ObjectDetach directly,
-        // retaining the issuer through the same native policy as other wears.
-        let action = match action {
-            Action::Remove(item) if self.world.rlva_temporary_attachment(item).is_some() => {
-                if let Some(key) = self.world.rlva_temporary_attachment(item) {
-                    self.send_from(
-                        NetCommand::DetachObject {
-                            handle: key.region,
-                            local_id: key.local_id,
-                        },
-                        actor,
-                    );
-                }
-                return;
+        let allow_recovery = self
+            .appearance_ui
+            .pending
+            .is_none_or(|(request, _)| self.world.attachment_inventory.owns(request));
+        let (detach, action) = self.world.recover_attachment_removal(action, allow_recovery);
+        let recovered = !detach.is_empty();
+        for command in detach {
+            self.send_from(command, actor);
+        }
+        let Some(action) = action else {
+            if recovered {
+                self.inventory_ui.message.clear();
+                self.appearance_ui.message.clear();
             }
-            Action::RemoveItems(items) => {
-                let mut regular = Vec::new();
-                for item in items {
-                    if let Some(key) = self.world.rlva_temporary_attachment(item) {
-                        self.send_from(
-                            NetCommand::DetachObject {
-                                handle: key.region,
-                                local_id: key.local_id,
-                            },
-                            actor,
-                        );
-                    } else {
-                        regular.push(item);
-                    }
-                }
-                if regular.is_empty() {
-                    return;
-                }
-                Action::RemoveItems(regular)
-            }
-            other => other,
+            return;
         };
         if let crate::world::appearance::Action::ShowOriginal(id) = action {
             ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);

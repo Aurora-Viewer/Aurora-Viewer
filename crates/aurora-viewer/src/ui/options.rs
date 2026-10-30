@@ -53,6 +53,7 @@ pub enum Page {
     Media,
     Privacy,
     Protections,
+    Rlva,
     Layout,
     Appearance,
     Accessibility,
@@ -67,7 +68,7 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 20] = [
+    pub const ALL: [Page; 21] = [
         Page::Aurora,
         Page::Graphics,
         Page::Camera,
@@ -77,6 +78,7 @@ impl Page {
         Page::Media,
         Page::Privacy,
         Page::Protections,
+        Page::Rlva,
         Page::Layout,
         Page::Appearance,
         Page::Accessibility,
@@ -102,6 +104,7 @@ impl Page {
             Page::Media => "media",
             Page::Privacy => "privacy",
             Page::Protections => "protections",
+            Page::Rlva => "rlva",
             Page::Layout => "layout",
             Page::Appearance => "appearance",
             Page::Accessibility => "accessibility",
@@ -127,6 +130,7 @@ impl Page {
             Page::Media => aurora_i18n::tr!("ui-options-page-media"),
             Page::Privacy => aurora_i18n::tr!("ui-options-privacy"),
             Page::Protections => aurora_i18n::tr!("ui-options-protections"),
+            Page::Rlva => aurora_i18n::tr!("ui-options-rlva"),
             Page::Layout => aurora_i18n::tr!("ui-options-layout"),
             Page::Appearance => aurora_i18n::tr!("ui-options-page-appearance"),
             Page::Accessibility => aurora_i18n::tr!("ui-options-accessibility"),
@@ -153,6 +157,7 @@ impl Page {
             Page::Media => aurora_i18n::tr!("ui-options-about-media"),
             Page::Privacy => aurora_i18n::tr!("ui-options-about-privacy"),
             Page::Protections => aurora_i18n::tr!("ui-options-about-protections"),
+            Page::Rlva => aurora_i18n::tr!("ui-options-about-rlva"),
             Page::Layout => aurora_i18n::tr!("ui-options-about-layout"),
             Page::Appearance => aurora_i18n::tr!("ui-options-about-appearance"),
             Page::Accessibility => aurora_i18n::tr!("ui-options-about-accessibility"),
@@ -178,6 +183,7 @@ impl Page {
             Page::Media => "player-play-filled",
             Page::Privacy => "lock-filled",
             Page::Protections => "shield-filled",
+            Page::Rlva => "lock-square-rounded-filled",
             Page::Layout => "layout-filled",
             Page::Appearance => "palette-filled",
             Page::Accessibility => "accessible-filled",
@@ -190,6 +196,12 @@ impl Page {
             Page::Network => "cloud-data-connection-filled",
             Page::Fun => "confetti-filled",
         }
+    }
+
+    /// A page whose whole feature is still experimental: its sidebar entry
+    /// carries the experimental mark, and the page opens on a notice.
+    pub fn experimental(self) -> bool {
+        matches!(self, Page::Rlva)
     }
 
     /// The title of the sidebar section the page opens (the first page of
@@ -286,7 +298,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         st.demo_open_cogs = true;
     } else if let Some(query) = what.strip_prefix("search=") {
         st.query = query.to_owned();
-    } else if page == Page::Shortcuts && !what.is_empty() && st.reveal.is_none() {
+    } else if page == Page::Shortcuts && !what.is_empty() && what != "altgr" && st.reveal.is_none() {
         // the shortcut page's former filter: the window's search now
         st.query = what.to_owned();
     }
@@ -1288,8 +1300,13 @@ fn sidebar(
                             ui.multiply_opacity(0.4);
                         }
                         let chip = nav_chip(st, page, searching);
-                        let entry = super::widgets::navigation_beside(ui, p, page.icon(), page.name(), on, chip_room(ui, chip));
+                        let marked = page.experimental();
+                        let room = chip_room(ui, chip) + if marked { NAV_MARK + 8.0 } else { 0.0 };
+                        let entry = super::widgets::navigation_beside(ui, p, page.icon(), page.name(), on, room);
                         paint_chip(ui, p, entry.rect, chip, searching);
+                        if marked {
+                            paint_nav_mark(ui, p, entry.rect, chip, page);
+                        }
                         entry
                     })
                     .inner;
@@ -1310,6 +1327,22 @@ fn nav_chip(st: &OptionsUi, page: Page, searching: bool) -> Option<usize> {
         st.counts.modified(page)
     };
     (n > 0).then_some(n)
+}
+
+/// The size of the experimental mark of a sidebar entry.
+const NAV_MARK: f32 = 14.0;
+
+/// The experimental mark at the right end of a page's sidebar entry, left
+/// of its count.
+fn paint_nav_mark(ui: &egui::Ui, p: &Palette, entry: Rect, chip: Option<usize>, page: Page) {
+    let chip_w = chip.map_or(0.0, |n| chip_width(&chip_galley(ui, n, egui::Color32::PLACEHOLDER)) + 6.0);
+    let center = pos2(entry.right() - 8.0 - chip_w - NAV_MARK / 2.0, entry.center().y);
+    super::widgets::experimental_mark(
+        ui,
+        p,
+        Rect::from_center_size(center, vec2(NAV_MARK, NAV_MARK)),
+        egui::Id::unique(("preferences-experimental-page", page)),
+    );
 }
 
 fn chip_galley(ui: &egui::Ui, n: usize, ink: egui::Color32) -> std::sync::Arc<egui::Galley> {

@@ -348,6 +348,31 @@ fn no_setting_of_the_former_pages_is_lost() {
 }
 
 #[test]
+fn rlva_settings_live_on_their_own_page() {
+    let paths = collected();
+    let rlva = |path: &str| path == "rlva_enabled" || path == "rlva" || path.starts_with("rlva.");
+    let on_rlva: Vec<_> = paths
+        .iter()
+        .filter(|(page, _)| *page == Page::Rlva)
+        .map(|(_, p)| p.as_str())
+        .collect();
+    assert!(on_rlva.contains(&"rlva_enabled"), "the global switch: {on_rlva:?}");
+    assert!(on_rlva.iter().filter(|p| p.starts_with("rlva.")).count() >= 20, "{on_rlva:?}");
+    assert!(on_rlva.iter().all(|p| rlva(p)), "only RLVa on its page: {on_rlva:?}");
+    let elsewhere: Vec<_> = paths.iter().filter(|(page, p)| *page != Page::Rlva && rlva(p)).collect();
+    assert!(elsewhere.is_empty(), "RLVa rows left on another page: {elsewhere:?}");
+    assert!(Page::Rlva.experimental() && !Page::Protections.experimental());
+    let mut s = Settings::default();
+    assert_eq!(counts(&mut s, "RLVa").hits(Page::Protections), 0);
+    s.rlva_enabled = !s.rlva_enabled;
+    s.anti_spam.enabled = !s.anti_spam.enabled;
+    reset_page_settings(Page::Protections, &mut s);
+    assert_ne!(s.rlva_enabled, Settings::default().rlva_enabled, "Protections reset preserves RLVa");
+    reset_page_settings(Page::Rlva, &mut s);
+    assert_eq!(s.rlva_enabled, Settings::default().rlva_enabled);
+}
+
+#[test]
 fn a_setting_has_one_page() {
     let paths = collected();
     for (page, path) in &paths {
@@ -530,7 +555,7 @@ fn the_search_finds_settings_on_their_pages() {
     assert!(counts(&mut s, "gtp").hits(Page::Commands) >= 1);
     assert!(counts(&mut s, "Ctrl+I").hits(Page::Shortcuts) >= 1);
     assert!(counts(&mut s, "anti-spam").hits(Page::Protections) >= 8);
-    assert!(counts(&mut s, "RLVa").hits(Page::Protections) >= 1);
+    assert!(counts(&mut s, "RLVa").hits(Page::Rlva) >= 1);
     assert!(counts(&mut s, "").hits.is_empty());
     assert!(counts(&mut s, "zzzzzz").hits.is_empty());
 }
@@ -548,6 +573,18 @@ fn the_modified_settings_are_counted_on_their_pages() {
     assert_eq!(c.modified(Page::Chat), 1);
     assert_eq!(c.modified(Page::Protections), 1);
     assert_eq!(c.total_modified(), 4);
+}
+
+#[test]
+fn the_simulator_version_notice_has_a_switch_off_by_default() {
+    let mut s = Settings::default();
+    assert!(!s.sim_version_alert);
+    let query = cx::fold(aurora_i18n::tr!("ui-options-sim-version-alert"));
+    assert!(counts(&mut s, &query).hits(Page::Confirmations) >= 1, "found by the search");
+    assert_eq!(counts(&mut s, "").modified(Page::Confirmations), 0);
+    // turned on: its row is the one that differs from the defaults
+    s.sim_version_alert = true;
+    assert_eq!(counts(&mut s, "").modified(Page::Confirmations), 1);
 }
 
 #[test]
@@ -1415,6 +1452,9 @@ fn the_accessibility_page_shows_the_settings_of_other_pages() {
         tr!("ui-options-color-vision"),
         tr!("ui-options-chat-bubble-duration"),
         tr!("ui-options-toast-duration"),
+        tr!("ui-options-hover-tips-show"),
+        tr!("ui-options-hover-tips-delay"),
+        tr!("inventory-hover-pictures"),
         tr!("ui-options-reduce-motion"),
         tr!("ui-options-flash-unread"),
         tr!("ui-options-dof-enable"),

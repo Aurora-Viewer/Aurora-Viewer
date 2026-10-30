@@ -2154,6 +2154,8 @@ pub fn show(
 }
 
 #[cfg(test)]
+mod delete_tests;
+#[cfg(test)]
 mod drag_tests;
 #[cfg(test)]
 mod texture_tests;

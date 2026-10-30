@@ -102,6 +102,10 @@ impl App {
                 chat_type: aurora_net::ChatType::Normal,
             }),
             AppLink::Search { category, query } => self.run_search_link(&category, &query),
+            AppLink::AreaSearch(filters) => {
+                self.area_search_ui.open_filters(*filters);
+                ui::widgets::open_floater(&self.egui_ctx, ui::area_search::WINDOW, &mut self.panels.area_search);
+            }
             // UNTRUSTED_BLOCK from a text received from someone else; the
             // Legacy Viewer says it once per session, Aurora at each click
             // so that a click never seems lost

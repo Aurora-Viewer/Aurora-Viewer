@@ -2,6 +2,75 @@
 
 use super::*;
 
+pub const LOST_FOLDER: Uuid = Uuid::from_u128(50_016);
+
+/// Explicit offline startup-recovery fixture. No account inventory is read.
+pub fn seed_lost(inv: &mut Inventory, agent: Uuid) {
+    inv.owner = agent;
+    inv.hierarchy_repaired = false;
+    for (id, parent, kind, name) in [
+        (LOST_FOLDER, inv.root, 16, aurora_i18n::tr!("common-lost-and-found").to_owned()),
+        (
+            Uuid::from_u128(50_014),
+            Uuid::from_u128(50_099),
+            -1,
+            format!("{} 1", aurora_i18n::tr!("world-inventory-demo-subfolder")),
+        ),
+        (
+            Uuid::from_u128(50_015),
+            Uuid::from_u128(50_014),
+            -1,
+            format!("{} 2", aurora_i18n::tr!("world-inventory-demo-subfolder")),
+        ),
+    ] {
+        inv.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent,
+                    name,
+                    type_default: kind,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(folder) = inv.folders.get_mut(&parent) {
+            folder.children.push(id);
+        }
+    }
+    inv.generation += 1;
+}
+
+pub fn lost_reply(agent: Uuid) -> aurora_net::inventory::orphans::Contents {
+    aurora_net::inventory::orphans::Contents {
+        folders: Vec::new(),
+        items: [
+            (50_020, Uuid::nil()),
+            (50_021, Uuid::from_u128(0x10)),
+            (50_022, Uuid::from_u128(50_099)),
+        ]
+        .into_iter()
+        .map(|(n, parent)| InvItem {
+            id: Uuid::from_u128(n),
+            parent,
+            owner: agent,
+            creator: agent,
+            name: format!("{} {n}", aurora_i18n::tr!("common-demo-object")),
+            asset_type: 6,
+            inv_type: 6,
+            owner_mask: 0x7fffffff,
+            ..Default::default()
+        })
+        .collect(),
+    }
+}
+
 pub fn seed(inv: &mut Inventory, agent: Uuid) {
     super::super::appearance::seed_demo(inv, agent);
     if inv.lib_root.is_nil() {
@@ -365,7 +434,9 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "clipboard-progress"
         | "clipboard-window"
         | "keyboard"
+        | "keyboard-fold"
         | "aurora-keyboard"
+        | "aurora-keyboard-fold"
         | "aurora-keyboard-wide" => 8100,
         "animation" | "animation-open" | "animation-properties" | "image" | "image-photo" | "image-picker" | "image-photo-save" => 8101,
         "script" => 8102,

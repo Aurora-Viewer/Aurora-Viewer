@@ -933,7 +933,7 @@ impl World {
             return true;
         }
         let Some(it) = self.inventory.items.get(&item) else {
-            return self.rlva_temporary_removable(item, actor);
+            return self.rlva_temporary_removable(item, actor) || self.rlva_unloaded_attachment_removable(item, actor);
         };
         // Nostrip is the user's override of scripted undressing. It does not
         // prevent the user manually removing an item.
