@@ -1432,22 +1432,16 @@ fn rlva_folder_locks_respect_scope_nearest_exception_other_issuers_and_folded_fo
     w.inventory.folders.get_mut(&ids[3]).unwrap().items.push(object);
     let c = Command::parse("attachalloverorreplace:Outfit=force").unwrap();
     assert!(w.rlva_inventory_force(A, &c));
-    assert_eq!(w.rlva.appearance.len(), 5);
-    assert!(matches!(
-        w.rlva.appearance[0],
-        (_, crate::world::appearance::Action::WearItem { replace: true, .. })
-    ));
+    assert_eq!(w.rlva.appearance.len(), 1, "one COF update for the whole folder");
+    let crate::world::appearance::Action::WearBatch { items } = &w.rlva.appearance[0].1 else {
+        panic!("expected WearBatch, got {:?}", w.rlva.appearance[0].1);
+    };
+    assert_eq!(items.len(), 5);
+    assert!(items[0].1, "first clothing layer replaces");
+    assert!(items.iter().skip(1).take(3).all(|(_, replace, _)| !*replace));
     assert!(
-        w.rlva
-            .appearance
-            .iter()
-            .skip(1)
-            .take(3)
-            .all(|(_, action)| matches!(action, crate::world::appearance::Action::WearItem { replace: false, .. }))
-    );
-    assert!(
-        matches!(w.rlva.appearance[4], (_, crate::world::appearance::Action::WearItem { item, point: 1, replace: true }) if item == object),
-        "a folded attachment folder chooses the attachment point"
+        items.iter().any(|(item, replace, point)| *item == object && *replace && *point == 1),
+        "a folded attachment folder chooses the attachment point: {items:?}"
     );
     w.rlva.appearance.clear();
     command(&mut w.rlva, A, "@attach:Outfit=force,getgroup=123");

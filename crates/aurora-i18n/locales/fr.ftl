@@ -11657,6 +11657,7 @@ received-delivery-several = { $count ->
     }
 received-delivery-demo = Achat Marketplace de démonstration
 received-marketplace-folder = MarketPlace
+ui-inventory-rlv-folder = RLV
 received-filing-demo-gift = Cadeau de démonstration
 received-filing-demo-photo = Photo de démonstration
 received-filing-demo-object = Cadeau envoyé par un objet scripté

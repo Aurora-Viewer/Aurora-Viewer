@@ -188,16 +188,9 @@ pub fn layer(name: &str) -> Option<u8> {
     LAYERS.iter().position(|l| l.eq_ignore_ascii_case(name)).map(|l| l as u8)
 }
 
-pub(super) fn shared_root(inv: &Inventory) -> Option<Uuid> {
-    // RlvInventory::getSharedRootID prefers the first populated #RLV root,
-    // otherwise the last empty one, in native inventory child order.
-    let candidates = inv.folders.get(&inv.root).map(|f| f.children.clone()).unwrap_or_else(|| {
-        let mut ids: Vec<_> = inv.folders.keys().copied().collect();
-        ids.sort();
-        ids
-    });
+fn pick_shared_root(inv: &Inventory, ids: impl IntoIterator<Item = Uuid>) -> Option<Uuid> {
     let mut empty = None;
-    for id in candidates {
+    for id in ids {
         if let Some(f) = inv
             .folders
             .get(&id)
@@ -210,6 +203,36 @@ pub(super) fn shared_root(inv: &Inventory) -> Option<Uuid> {
         }
     }
     empty
+}
+
+pub(super) fn shared_root(inv: &Inventory) -> Option<Uuid> {
+    // RlvInventory::getSharedRootID prefers the first populated #RLV root,
+    // otherwise the last empty one, in native inventory child order.
+    if let Some(root) = inv.folders.get(&inv.root)
+        && let Some(id) = pick_shared_root(inv, root.children.iter().copied())
+    {
+        return Some(id);
+    }
+    // Root children not listed yet (or missing this folder): walk folders that
+    // already sit under the inventory root, never every UUID sorted — that
+    // ordered the wrong #RLV when several existed.
+    pick_shared_root(
+        inv,
+        inv.folders.iter().filter(|(_, f)| f.info.parent == inv.root).map(|(id, _)| *id),
+    )
+}
+
+/// Client preferred type for the shared root (`LLFolderType::FT_RLV` = 60),
+/// as `LLFolderBridge::getPreferredType` does when the name is `#RLV`.
+pub(super) fn normalize_shared_root(inv: &mut Inventory) {
+    let Some(id) = shared_root(inv) else {
+        return;
+    };
+    if let Some(folder) = inv.folders.get_mut(&id)
+        && folder.info.type_default != 60
+    {
+        folder.info.type_default = 60;
+    }
 }
 
 fn visible(name: &str) -> bool {
@@ -718,6 +741,7 @@ impl World {
     }
 
     fn rlva_shared_ready(&mut self) -> bool {
+        normalize_shared_root(&mut self.inventory);
         let Some(root) = shared_root(&self.inventory) else {
             let loaded = appearance::loaded(&self.inventory, self.inventory.root);
             if !loaded {
@@ -877,6 +901,7 @@ impl World {
                 let current = appearance::cof(&self.inventory)
                     .map(|id| appearance::folder_links(&self.inventory, id))
                     .unwrap_or_default();
+                let mut batch = Vec::new();
                 for item in ids.into_iter().take(128) {
                     let it = &self.inventory.items[&item];
                     let point = points.get(&item).copied().unwrap_or(0);
@@ -906,16 +931,12 @@ impl World {
                         continue;
                     }
                     replaced.insert(key);
-                    self.rlva.appearance.push((
-                        source,
-                        appearance::Action::WearItem {
-                            item,
-                            replace: replace_item,
-                            point,
-                        },
-                    ));
+                    batch.push((item, replace_item, point));
                 }
-                None
+                // One COF update for the whole folder (RlvForceWear::done), so
+                // JasX-style getinvworn between state changes sees a finished
+                // outfit instead of one item per frame.
+                (!batch.is_empty()).then_some(appearance::Action::WearBatch { items: batch })
             }
         };
         if let Some(action) = action {

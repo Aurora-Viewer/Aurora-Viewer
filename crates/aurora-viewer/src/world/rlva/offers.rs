@@ -353,7 +353,7 @@ impl Offers {
                         id: Uuid::new_v4(),
                         parent: inv.root,
                         name: "#RLV".into(),
-                        type_default: -1,
+                        type_default: 60, // LLFolderType::FT_RLV
                     },
                     vec![inv.root],
                     now,

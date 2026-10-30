@@ -502,9 +502,13 @@ impl ViewCache {
             .par_iter()
             .map(|(id, f)| {
                 let kind = f.info.type_default;
+                // FT_RLV (60): the shared #RLV root, also recognized by name when
+                // the server still reports type_default -1 (LLFolderBridge).
+                let rlv_root = kind == 60 || f.info.name == "#RLV";
                 // FT_OUTFIT, merchant folders, obsolete outbox and ensembles are
                 // ordinary editable folders, despite having a nonnegative type.
-                let protected = matches!(kind, 0..=3 | 5..=7 | 8 | 10 | 13 | 15 | 16 | 20 | 21 | 23 | 46 | 48 | 49 | 50 | 52 | 56 | 57);
+                let protected = rlv_root
+                    || matches!(kind, 0..=3 | 5..=7 | 8 | 10 | 13 | 15 | 16 | 20 | 21 | 23 | 46 | 48 | 49 | 50 | 52 | 56 | 57);
                 let group = if *id == inv.lib_root {
                     4
                 } else if kind == 14 {

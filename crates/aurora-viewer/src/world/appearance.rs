@@ -69,6 +69,12 @@ pub enum Action {
         replace: bool,
         point: u8,
     },
+    /// Several wearables / attachments / gestures in one COF update, each
+    /// with its own replace mode and attachment point (RLVa
+    /// `RlvForceWear::done`, one folder force-wear).
+    WearBatch {
+        items: Vec<(Uuid, bool, u8)>,
+    },
     ReplaceWearable {
         old: Uuid,
         new: Uuid,
@@ -388,6 +394,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
         Action::Add(_)
             | Action::WearItem { .. }
             | Action::WearItems { .. }
+            | Action::WearBatch { .. }
             | Action::Remove(_)
             | Action::RemoveItems(_)
             | Action::RemoveOutfit(_)
@@ -647,18 +654,20 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             current.retain(|l| l.folder || !removable.contains(&l.target));
             change.links = current;
         }
-        Action::Add(_) | Action::WearItem { .. } | Action::WearItems { .. } => {
+        Action::Add(_) | Action::WearItem { .. } | Action::WearItems { .. } | Action::WearBatch { .. } => {
             // LLInventoryAction::doToSelected handles wear_multiple in bulk:
             // one COF update must include the entire selection before syncing.
-            let (ids, replace, point) = match action {
-                Action::WearItem { item, replace, point } => (vec![item], replace, point),
-                Action::WearItems { items, replace, point } => (items, replace, point),
-                Action::Add(id) => (vec![id], false, 0),
+            // WearBatch keeps each item's replace/point (RlvForceWear::done).
+            let entries: Vec<(Uuid, bool, u8)> = match action {
+                Action::WearItem { item, replace, point } => vec![(item, replace, point)],
+                Action::WearItems { items, replace, point } => items.into_iter().map(|id| (id, replace, point)).collect(),
+                Action::WearBatch { items } => items,
+                Action::Add(id) => vec![(id, false, 0)],
                 _ => unreachable!(),
             };
             let mut seen = HashSet::new();
             let mut replaced_clothing = HashSet::new();
-            for id in ids {
+            for (id, replace, point) in entries {
                 let id = super::inventory::actions::original(inv, id)
                     .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
                 if !seen.insert(id) {
@@ -979,18 +988,25 @@ pub fn sync_commands(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<
 /// Explicit attachment requests retain the chosen point and replace/add mode.
 /// They are sent only after the COF update has been acknowledged.
 pub fn attachments_for_action(inv: &Inventory, agent: Uuid, action: &Action) -> Vec<AttachRequest> {
-    let (items, point, replace) = match action {
-        Action::WearItem { item, point, replace } => (std::slice::from_ref(item), *point, *replace),
-        Action::WearItems { items, point, replace } => (items.as_slice(), *point, *replace),
+    let entries: Vec<(Uuid, bool, u8)> = match action {
+        Action::WearItem { item, point, replace } => vec![(*item, *replace, *point)],
+        Action::WearItems { items, point, replace } => items.iter().map(|id| (*id, *replace, *point)).collect(),
+        Action::WearBatch { items } => items.clone(),
         _ => return Vec::new(),
     };
     let mut seen = HashSet::new();
-    items
-        .iter()
-        .filter_map(|id| super::inventory::actions::original(inv, *id))
-        .filter(|id| seen.insert(*id))
-        .filter_map(|id| inv.items.get(&id).filter(|it| it.asset_type == 6))
-        .map(|it| AttachRequest {
+    let mut out = Vec::new();
+    for (id, replace, point) in entries {
+        let Some(id) = super::inventory::actions::original(inv, id) else {
+            continue;
+        };
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(it) = inv.items.get(&id).filter(|it| it.asset_type == 6) else {
+            continue;
+        };
+        out.push(AttachRequest {
             item_id: it.id,
             owner_id: if it.owner.is_nil() { agent } else { it.owner },
             point,
@@ -1001,8 +1017,9 @@ pub fn attachments_for_action(inv: &Inventory, agent: Uuid, action: &Action) -> 
             next_owner_mask: it.next_owner_mask,
             name: it.name.clone(),
             desc: it.desc.clone(),
-        })
-        .collect()
+        });
+    }
+    out
 }
 
 pub fn apply_attachment_override(commands: &mut Vec<NetCommand>, attachment: AttachRequest) {

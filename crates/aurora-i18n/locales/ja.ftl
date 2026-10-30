@@ -11646,6 +11646,7 @@ received-delivery-several = { $count ->
     }
 received-delivery-demo = マーケットプレイスの購入の例
 received-marketplace-folder = マーケットプレイス
+ui-inventory-rlv-folder = RLV
 received-filing-demo-gift = 贈り物の例
 received-filing-demo-photo = 写真の例
 received-filing-demo-object = スクリプト付きオブジェクトからの贈り物
