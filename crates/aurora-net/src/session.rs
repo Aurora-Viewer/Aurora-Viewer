@@ -297,7 +297,11 @@ fn emit(sh: &Shared, ev: NetEvent) {
 /// Items read, items the server says do not exist, and failed reads.
 fn send_item_reads(events: &crate::EventSender, reads: crate::inventory::ais::ItemReads, attachment: bool) {
     if !reads.items.is_empty() {
-        let _ = events.send(if attachment { NetEvent::AttachmentInventoryItems(reads.items) } else { NetEvent::InventoryItems(reads.items) });
+        let _ = events.send(if attachment {
+            NetEvent::AttachmentInventoryItems(reads.items)
+        } else {
+            NetEvent::InventoryItems(reads.items)
+        });
     }
     if !reads.missing.is_empty() {
         let _ = events.send(NetEvent::InventoryItemsMissing { items: reads.missing });
