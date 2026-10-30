@@ -276,17 +276,33 @@ where
         .operations
         .iter()
         .any(|op| matches!(op, Operation::Patch { body, .. } if body.has("favorite")));
-    let retries = if moved || !created.is_empty() || favorite_changed { 5 } else { 0 };
+    let thumbnail_changed = change
+        .operations
+        .iter()
+        .any(|op| matches!(op, Operation::Patch { body, .. } if body.has("thumbnail")));
+    let retries = if moved || !created.is_empty() || favorite_changed || thumbnail_changed {
+        5
+    } else {
+        0
+    };
     for attempt in 0..=retries {
         contents.clear();
         let mut complete = true;
         for chunk in refresh.chunks(16) {
-            let fetched = if favorite_changed {
+            let fetched = if favorite_changed || thumbnail_changed {
                 // Every sibling's metadata must come from AIS. Overlaying only
-                // this mutation onto a legacy listing erases earlier favorites.
-                super::ais::fetch_folders(http, cap, owner, chunk)
-                    .await
-                    .map_err(|_| aurora_i18n::tr!("inventory-operations-change-sent-but-could-not-read-it-back-reload").to_owned())?
+                // this mutation onto a legacy listing erases earlier favorites
+                // and thumbnails. Thumbnail confirmation must observe its UUID
+                // through AIS, allowing propagation delay without another write.
+                match super::ais::fetch_folders(http, cap, owner, chunk).await {
+                    Ok(fetched) => fetched,
+                    Err(_) if thumbnail_changed && attempt < retries => {
+                        complete = false;
+                        break;
+                    }
+                    Err(_) if thumbnail_changed => return Err(aurora_i18n::tr!("inventory-thumbnail-save-not-confirmed").into()),
+                    Err(_) => return Err(aurora_i18n::tr!("inventory-operations-change-sent-but-could-not-read-it-back-reload").into()),
+                }
             } else {
                 let doc = crate::caps::post_llsd(http, fetch_cap, &super::fetch_request_body(chunk, owner))
                     .await
@@ -316,13 +332,15 @@ where
                     );
                 }
             }
-            return Err(if complete {
+            return Err(if thumbnail_changed {
+                aurora_i18n::tr!("inventory-thumbnail-save-not-confirmed").into()
+            } else if complete {
                 aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-every-change-the-folders").into()
             } else {
                 aurora_i18n::tr!("inventory-operations-read-back-incomplete-reload-inventory-before-trying-again").into()
             });
         }
-        // AIS creation/favorites and reliable UDP moves can become visible to
+        // AIS creation/metadata and reliable UDP moves can become visible to
         // the fetch service after the first HTTP read. Retry reads, never writes.
         tokio::time::sleep(std::time::Duration::from_millis(200 << attempt.min(3))).await;
     }
@@ -1473,6 +1491,102 @@ mod tests {
                 }));
             }
         }
+    }
+
+    #[tokio::test]
+    async fn thumbnail_changes_wait_for_authoritative_metadata_without_repeating_the_write() {
+        for folder in [false, true] {
+            for asset in [Uuid::nil(), id(7)] {
+                let previous = if asset.is_nil() { id(8) } else { Uuid::nil() };
+                let (url, task) = move_server(vec![
+                    Llsd::new_map(),
+                    thumbnail_readback(folder, previous),
+                    Llsd::new_map(), // A transient unreadable snapshot must not end verification.
+                    thumbnail_readback(folder, asset),
+                ])
+                .await;
+                let change = super::super::thumbnail::patch(id(3), folder, id(1), asset);
+                let reply = mutate(&reqwest::Client::new(), &url, &format!("{url}/legacy"), id(2), change)
+                    .await
+                    .expect("eventual thumbnail confirmation");
+                let snapshot = &reply.contents[0];
+                let actual = if folder {
+                    snapshot.folders.iter().find(|record| record.id == id(3)).expect("folder").thumbnail
+                } else {
+                    snapshot.items.iter().find(|record| record.id == id(3)).expect("item").thumbnail
+                };
+                assert_eq!(actual, asset);
+                assert_eq!(
+                    snapshot.items.iter().find(|record| record.id == id(4)).expect("sibling").thumbnail,
+                    id(99)
+                );
+                let requests = task.await.expect("requests");
+                assert_eq!(requests.len(), 4);
+                let kind = if folder { "category" } else { "item" };
+                assert!(requests[0].0.starts_with(&format!("PATCH /{kind}/{} ", id(3))));
+                assert_eq!(requests[0].1, metadata_thumbnail(asset));
+                assert!(
+                    requests[1..]
+                        .iter()
+                        .all(|request| request.0.starts_with(&format!("GET /category/{}/children?depth=0 ", id(1))))
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn thumbnail_confirmation_never_reports_success_for_missing_or_wrong_metadata() {
+        for folder in [false, true] {
+            let snapshot = if folder {
+                Llsd::new_map()
+            } else {
+                thumbnail_readback(false, id(8))
+            };
+            let mut responses = vec![Llsd::new_map()];
+            responses.extend(vec![snapshot; 6]);
+            let (url, task) = move_server(responses).await;
+            let error = mutate(
+                &reqwest::Client::new(),
+                &url,
+                &format!("{url}/legacy"),
+                id(2),
+                super::super::thumbnail::patch(id(3), folder, id(1), id(7)),
+            )
+            .await
+            .expect_err("unconfirmed image");
+            assert_eq!(error, aurora_i18n::tr!("inventory-thumbnail-save-not-confirmed"));
+            let requests = task.await.expect("bounded verification");
+            assert_eq!(requests.len(), 7);
+            assert_eq!(requests.iter().filter(|request| request.0.starts_with("PATCH ")).count(), 1);
+            assert!(requests[1..].iter().all(|request| request.0.starts_with("GET ")));
+        }
+    }
+
+    fn thumbnail_readback(folder: bool, asset: Uuid) -> Llsd {
+        let kind = if folder { "category_id" } else { "item_id" };
+        let mut record = llsd_map! { kind => id(3), "parent_id" => id(1), "name" => "Thumbnail target",
+        "thumbnail" => metadata_thumbnail(asset)["thumbnail"].clone() };
+        if folder {
+            record.insert("type_default", -1);
+        } else {
+            record.insert("type", 1);
+            record.insert("inv_type", 1);
+        }
+        let mut targets = Llsd::new_map();
+        targets.insert(id(3).to_string(), record);
+        let sibling = llsd_map! { "item_id" => id(4), "parent_id" => id(1), "name" => "Other image",
+        "type" => 0, "inv_type" => 0, "thumbnail" => metadata_thumbnail(id(99))["thumbnail"].clone() };
+        let mut items = Llsd::new_map();
+        items.insert(id(4).to_string(), sibling.clone());
+        if !folder {
+            targets.insert(id(4).to_string(), sibling);
+        }
+        let embedded = if folder {
+            llsd_map! { "categories" => targets, "items" => items, "links" => Llsd::new_map() }
+        } else {
+            llsd_map! { "categories" => Llsd::new_map(), "items" => targets, "links" => Llsd::new_map() }
+        };
+        llsd_map! { "category_id" => id(1), "agent_id" => id(2), "version" => 2, "_embedded" => embedded }
     }
 
     fn favorite_change(folder: bool, favorite: bool) -> Mutation {

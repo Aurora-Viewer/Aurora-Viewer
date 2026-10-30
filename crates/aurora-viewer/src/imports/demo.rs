@@ -249,7 +249,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                                         Ok(model) => {
                                             // Feed the ordinary completion path after Loaded so the
                                             // synthetic source exercises the saved model selector too.
-                                            animation_models.push((entry.id, entry.animation_model.generation, model));
+                                            animation_models.push(model);
                                         }
                                         Err(error) => entry.animation_model.error = Some(error),
                                     }
@@ -381,8 +381,8 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
             Err(error) => vec![Entry::new(root, Err(error), prefs.texture())],
         };
         let _ = tx.send(Worker::Loaded(request, entries));
-        for (id, generation, model) in animation_models {
-            let _ = tx.send(Worker::AnimationModel(id, generation, Some(Ok(model))));
+        for model in animation_models {
+            let _ = tx.send(Worker::AnimationModel(0, Some(Ok(model))));
         }
         wake.request_repaint();
     });

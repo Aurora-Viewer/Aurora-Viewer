@@ -606,6 +606,7 @@ impl App {
         if self.inventory_ui.pending != Some(request) {
             return;
         }
+        let thumbnail_upload = self.inventory_images.contains_request(request);
         let result = match result {
             Ok(reply) if !reply.copies.is_empty() => {
                 self.world.inventory.remove(&reply.removed);
@@ -625,7 +626,11 @@ impl App {
         if result.as_ref().is_ok_and(|reply| reply.moves_queued) {
             self.inventory_ui.moves_queued_notice();
         }
-        self.finish_inventory_image(request, result.as_ref().err().cloned());
+        if thumbnail_upload {
+            self.finish_inventory_image_upload(request, result.as_ref().err().cloned());
+        } else {
+            self.finish_inventory_image(request, result.as_ref().err().cloned());
+        }
         match result {
             Ok(reply) => {
                 self.world.inventory.remove(&reply.removed);
@@ -653,7 +658,9 @@ impl App {
                 self.inventory_ui.message.clear();
             }
             Err(reason) => {
-                self.inventory_ui.message = reason;
+                if !thumbnail_upload {
+                    self.inventory_ui.message = reason;
+                }
                 // A multi-operation request can partially succeed. Re-read parents
                 // before another mutation instead of restoring speculative state.
                 for id in &self.inventory_ui.pending_refresh {
