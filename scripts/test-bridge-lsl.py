@@ -47,6 +47,7 @@ class Simulator:
         self.serial = 100
         self.requests = []
         self.listeners = {}
+        self.prim_updates = []
         self.targets = []
         self.reset()
 
@@ -81,13 +82,13 @@ class Simulator:
             "llSetTimerEvent": self.set_timer,
             "llDetachFromAvatar": self.detach,
             "llResetScript": self.reset_request,
+            "llSetLinkPrimitiveParamsFast": lambda link, rules: self.prim_updates.append((link, rules)),
             "llMoveToTarget": lambda target, tau: self.targets.append((target, tau)),
         }
         for name in (
             "llReleaseURL", "llTakeControls", "llReleaseControls",
             "llSetForce", "llStopMoveToTarget", "llSetVehicleType",
             "llSetVehicleFloatParam", "llTargetRemove",
-            "llSetLinkPrimitiveParamsFast",
         ):
             functions[name] = lambda *args: None
         for name, function in functions.items():
@@ -151,6 +152,32 @@ class Simulator:
 
 
 class BridgeScripts(unittest.IsolatedAsyncioTestCase):
+    async def test_container_is_an_invisible_default_cube_on_start_and_reattachment(self):
+        sim = Simulator("bridge.lsl")
+        for _ in range(2):
+            sim.prim_updates.clear()
+            await sim.start()
+            self.assertTrue(sim.prim_updates, "normalize even an existing rock container")
+            link, rules = sim.prim_updates[-1]
+            self.assertEqual(link, -4)  # LINK_THIS
+            parameters = {}
+            # LSL primitive parameter arities, independent of rule order.
+            arities = {9: 7, 7: 1, 17: 5, 18: 3, 28: 1}
+            while rules:
+                flag = rules[0]
+                count = arities[flag]
+                parameters[flag] = rules[1:count + 1]
+                rules = rules[count + 1:]
+            vector = lummao.Vector
+            self.assertEqual(parameters[9], [0, 0, vector((0, 1, 0)), 0.0,
+                                          vector((0, 0, 0)), vector((1, 1, 0)), vector((0, 0, 0))])
+            self.assertEqual(parameters[7], [vector((0.01, 0.01, 0.01))])
+            self.assertEqual(parameters[17], [-1, "89556747-24cb-43ed-920b-47caed15465f",
+                                            vector((1, 1, 0)), vector((0, 0, 0)), 0.0])
+            self.assertEqual(parameters[18], [-1, vector((1, 1, 1)), 0.0])
+            self.assertEqual(parameters[28], [""])
+            await sim.event("attach", NULL)
+
     async def test_cold_start_and_url_grants_are_silent_without_aurora(self):
         for filename in SCRIPTS:
             with self.subTest(script=filename):
@@ -183,7 +210,7 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(sim.messages, [])
                 await sim.probe()
                 self.assertEqual(len(sim.messages), 1)
-                self.assertIn("1.39|", sim.messages[0])
+                self.assertIn("1.40|", sim.messages[0])
                 await sim.probe()
                 self.assertEqual(len(sim.messages), 1, "duplicate probes must be throttled")
 
