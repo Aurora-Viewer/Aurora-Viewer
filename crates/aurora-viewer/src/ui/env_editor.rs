@@ -517,12 +517,13 @@ impl EnvEditorUi {
         world: &mut World,
         images: &HashMap<Uuid, egui::TextureHandle>,
     ) -> bool {
-        let chosen = self.picker.show(ctx, p, world, images);
+        let chosen = self.picker.show_live(ctx, p, world, images);
         self.wanted_images.extend(self.picker.wanted_images.drain());
-        if !self.picker.open && chosen.is_none() {
-            self.picking = self.picking.filter(|_| self.picker.open);
+        let slot = self.picking;
+        if !self.picker.open {
+            self.picking = None;
         }
-        let (Some(id), Some(slot), Some(doc)) = (chosen, self.picking.take(), self.doc.as_mut()) else {
+        let (Some(id), Some(slot), Some(doc)) = (chosen, slot, self.doc.as_mut()) else {
             return false;
         };
         let changed = match slot {
@@ -581,20 +582,29 @@ impl EnvEditorUi {
                     .rect_stroke(rect, radius, egui::Stroke::new(1.0, p.violet), egui::StrokeKind::Inside);
             }
             if resp.clicked() {
-                // LLTextureCtrl: the default image and "None" where allowed
-                let (default, none) = match slot {
-                    TexSlot::Cloud => (Some(eep::DEFAULT_CLOUD_ID), true),
-                    TexSlot::Sun => (Some(Uuid::nil()), true),
-                    TexSlot::Moon => (Some(eep::DEFAULT_MOON_ID), true),
-                    TexSlot::Normal => (Some(eep::DEFAULT_WATER_NORMAL), false),
-                };
-                self.picker.open_with_defaults(label, id, default, none);
-                // LLTextureCtrl offers local files; the settings then cannot
-                // be saved nor applied (WLLocalTextureFixedBlock)
-                self.picker.allow_local = true;
-                self.picking = Some(slot);
+                self.open_texture(slot, label, id);
             }
         });
+    }
+
+    fn open_texture(&mut self, slot: TexSlot, label: &str, id: Uuid) {
+        // LLTextureCtrl: the default image and "None" where allowed.
+        let (default, none) = match slot {
+            TexSlot::Cloud => (Some(eep::DEFAULT_CLOUD_ID), true),
+            TexSlot::Sun => (Some(Uuid::nil()), true),
+            TexSlot::Moon => (Some(eep::DEFAULT_MOON_ID), true),
+            TexSlot::Normal => (Some(eep::DEFAULT_WATER_NORMAL), false),
+        };
+        self.picker.open_with_defaults(label, id, default, none);
+        // Local settings cannot be saved or applied (WLLocalTextureFixedBlock).
+        self.picker.allow_local = true;
+        self.picking = Some(slot);
+    }
+
+    pub(crate) fn demo_cloud_picker(&mut self) {
+        if let Some(doc) = &self.doc {
+            self.open_texture(TexSlot::Cloud, aurora_i18n::tr!("ui-env-editor-cloud-image"), doc.sky().cloud_id);
+        }
     }
 
     fn atmosphere_panel(&mut self, ui: &mut egui::Ui, p: &Palette, out: &mut Vec<EditorAction>) {
@@ -1047,6 +1057,43 @@ pub fn frames(doc: &SettingsDoc) -> (Option<SkyFrame>, Option<WaterFrame>) {
 #[cfg(test)]
 mod window_tests {
     use super::*;
+
+    #[test]
+    fn live_picker_updates_an_environment_slot_repeatedly_and_cancel_preserves_other_edits() {
+        let mut ui = crate::ui::texture_picker::tests::PickerUi::new();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let original = Uuid::from_u128(77);
+        let sky = SkyFrame {
+            cloud_id: original,
+            ..Default::default()
+        };
+        let mut editor = EnvEditorUi::default();
+        editor.start(SettingsDoc::snapshot_sky(&sky, "Test"), None, Rights::default());
+        editor.demo_cloud_picker();
+        ui.settle(|ctx, p| {
+            editor.show_picker(ctx, p, &mut world, &HashMap::new());
+        });
+        ui.click(aurora_i18n::tr!("common-blank"), |ctx, p| {
+            editor.show_picker(ctx, p, &mut world, &HashMap::new());
+        });
+        assert_eq!(editor.doc.as_ref().unwrap().sky().cloud_id, aurora_prim::te::BLANK_TEXTURE);
+        assert!(editor.picker.open);
+        ui.click(aurora_i18n::tr!("common-transparent"), |ctx, p| {
+            editor.show_picker(ctx, p, &mut world, &HashMap::new());
+        });
+        assert_eq!(editor.doc.as_ref().unwrap().sky().cloud_id, aurora_prim::te::TRANSPARENT_TEXTURE);
+        let doc = editor.doc.as_mut().unwrap();
+        let before = doc.sky();
+        let sun = Uuid::from_u128(88);
+        doc.edit_sky(&before, &SkyFrame { sun_id: sun, ..before });
+        ui.click(aurora_i18n::tr!("common-cancel"), |ctx, p| {
+            editor.show_picker(ctx, p, &mut world, &HashMap::new());
+        });
+        let after = editor.doc.as_ref().unwrap().sky();
+        assert_eq!(after.cloud_id, original);
+        assert_eq!(after.sun_id, sun);
+        assert_eq!(editor.picking, None);
+    }
 
     /// The editor keeps its size, with the note of a region without
     /// inventory settings beside its buttons.

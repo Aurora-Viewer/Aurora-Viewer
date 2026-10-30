@@ -321,20 +321,28 @@ They retain complete wearable assets, texture slots and tint parameters,
 validate permissions and stale replies, share the appearance preview and
 save acknowledgement path, and preserve other clothing layers when replacing
 the saved item. The existing shape and physics editors remain separate.
+Wearable percentage sliders round only on user edits and invalidate the preview
+only when a stored weight changes; idle painting must not dirty fractional
+parameters or continually restart the self-bake debounce.
 `wearable_editor/bake.rs` compiles avatar layer definitions and composites
 skin, clothing, tints and visibility masks on background workers.
-`wearable_editor/preview.rs` loads worn assets in bounded batches, requests
-only the affected regions' full-resolution source images, debounces edits,
+`wearable_editor/preview.rs` loads relevant worn assets in bounded batches,
+requests only the affected regions' source images, debounces edits,
 uploads through the renderer's staging pool and publishes a complete local
-generation. It pins the server bakes for cancellation and releases retired
+generation. Resident image levels, including BC7-only cache entries, appear
+without waiting for discard zero and rebake as finer levels arrive. Unrelated
+wearables cannot block the edited region. It pins the server bakes for cancellation and releases retired
 GPU slots. `wearable_editor/masks.rs` embeds the original character masks;
 preview textures never enter the inventory or replace server appearance.
 Local imports share their worker-prepared RGBA images with `PreviewSource`.
+Closing a wearable's texture picker retains the applied choice in its draft;
+explicit Cancel restores the slot. Closing the editor retains the unsaved
+Save/Discard/Cancel confirmation, including when its picker was still open.
 Wearable texture pickers accept local textures for private previews; pixel
 revisions trigger a new bake after a watched file reload. Removing a local
 texture restores the edited slots, and saving requires inventory textures.
 The wearable picker snapshots its target slot, previews each selection and
-restores that snapshot on Cancel or close; OK keeps the preview. The build
+restores that snapshot only on explicit Cancel; OK or close keeps the preview. The build
 and wearable editors share `build/ui/common.rs::swatch`, including bordered,
 crossed empty slots and consistent loading/transparent-image states.
 `aurora-assets/src/wearable.rs` preserves original texture text when unchanged
@@ -2583,9 +2591,14 @@ selected before their first application.
 Its intentional choices are distinct from the confirmation:
 `build/ui/texture_preview.rs` applies the immediate preview to the captured
 selection, keeps the original textures and materials of each face, confirms
-without resending with "OK" or restores with "Cancel". The other users of
-the picker keep their usual confirmation; non-copyable inventory textures
-produce no preview, as in Firestorm.
+without resending with "OK" or restores with "Cancel". Single-value controls
+share `TexturePicker::show_live`: intentional choices apply without closing,
+Closing keeps applied choices; OK confirms once and Cancel restores the opening value. Material/environment
+editors, imported material maps, particles, profiles, group insignias, parcel
+pictures/media and outfit thumbnails retain their targets across live choices.
+Imported maps also restore their original local pixels on Cancel. Wearables
+and region terrain keep their existing specialized rollback sessions.
+Non-copyable inventory textures require confirmation, as in the Legacy Viewer.
 
 The `ui/inventory/move_to.rs` picker offers the destinations of
 "Move to…" for the original selection, with a filter by name and

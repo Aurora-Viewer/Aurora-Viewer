@@ -3561,7 +3561,7 @@ both open states and the selection count. Capture at frame 620.
   found and the time of day after it; capture after the sky's transition
   (`AURORA_CAPTURE_FRAMES=620`). `j` with `AURORA_DEMO_TOD=2` must bring
   back the region's sky (time of day 0).
-- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|beacons|water|item|item-save|day|day-play|day-edit|day-notrans|parcel|region|custom|custom-follow`**: sky,
+- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|clouds-picker|sun|beacons|water|item|item-save|day|day-play|day-edit|day-notrans|parcel|region|custom|custom-follow`**: sky,
   water and day cycle editors (`app/env_editor.rs`, `app/env_day_editor.rs`).
   `day`: the day cycle editor opens on the user's "my day cycle" (frame
   400: midnight, the purple sky at 25 %, noon, sunset), the ground track and
@@ -3574,6 +3574,8 @@ both open states and the selection count. Capture at frame 620.
   snapshot of the shown sky (`sky`, `clouds` and `sun` pick the tab) or
   water (`water`), or on the user's "my purple sky" item once its folder
   has loaded (`item`: the sky turns purple at once, Save is enabled).
+  `clouds-picker` opens the cloud texture picker too: choose successive textures
+  or presets without OK to see the sky update; Cancel restores its opening map.
   `item-save` also raises its brightness and saves over the item (frame
   900), then saves it as "my purple sky, brighter" (1100): both saves
   are logged (`environment settings saved`) and the second item shows in
@@ -7245,12 +7247,22 @@ and Save As stay disabled until inventory textures replace the local maps.
 its image with a mouse click at frame 700 without confirming: the avatar and
 swatch must change while the picker remains open. `tattoo:picker-cancel`
 clicks Cancel at frame 1000; `tattoo:picker-close` clicks the title-bar close;
-capture at 850 and 1200 to check restoration of the preceding image and the
-crossed empty slots. Ordinary picker clicks preview immediately too; OK keeps
-the choice, Cancel and the title-bar close button restore the original slot.
+capture at 850 and 1200: Cancel restores the preceding image, while closing
+keeps the selected image on the avatar and the swatch. These picker modes
+also accept `skin`, `hair`, `eyes`, every clothing type, `alpha` and `universal`.
+Ordinary inventory picker clicks preview immediately too; OK confirms the
+choice, the title-bar close keeps applied choices and explicit Cancel restores
+the original slot. Closing the editor then asks Save/Discard/Cancel for the
+unsaved draft; keeping the picker choice does not save the wearable asset.
+Leaving an editor idle with parameter groups open must not change its weights
+or restart its bake generation: fractional slider percentages are formatted
+without rounding the stored asset until a real edit. Test skin and clothing
+texture choices with their parameter groups still open.
 The local preview composites the avatar definition's original masks and
 worn layers on workers and uploads a complete generation through GPU staging.
-It uses 2048-pixel bakes (512 for eyes), or 1024 on a low-memory staging pool;
+It uses resident source pixels immediately, including BC7-only cached textures,
+and rebakes when finer source levels arrive. Unrelated worn assets do not block
+an edited region. It uses 2048-pixel bakes (512 for eyes), or 1024 on a low-memory staging pool;
 saving still requests the server's normal bake. Capture `skin:preview`,
 `shirt:preview`, `tattoo:preview` and `alpha:preview` after frame 900; cancellation
 restores the pinned server textures. `AURORA_DEMO_INVENTORY=aurora-menu-folder-uuid`

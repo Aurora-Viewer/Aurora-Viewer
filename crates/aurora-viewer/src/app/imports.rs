@@ -630,30 +630,13 @@ impl App {
                     }
                 }
                 Action::MapInventory(id, slot) => {
-                    let asset = self
-                        .imports
-                        .entries
-                        .iter()
-                        .find(|e| e.id == id)
-                        .and_then(|e| match &e.source {
-                            Some(Source::Material { value, .. }) => crate::imports::maps::ids(value)[slot],
-                            _ => None,
-                        })
-                        .unwrap_or_default();
-                    self.imports.map_target = Some((id, slot));
-                    self.imports
-                        .map_picker
-                        .open_with_defaults(aurora_i18n::tr!("import-texture"), asset, None, true);
+                    self.imports.open_map_picker(id, slot);
                 }
             }
         }
         self.save_import_animation_models();
         self.update_import_avatar_preview();
-        if let Some(asset) = self.imports.map_picker.show(ctx, palette, &mut self.world, &self.ui_images)
-            && let Some((id, slot)) = self.imports.map_target.take()
-        {
-            self.imports.select_map(id, slot, asset);
-        }
+        self.imports.show_map_picker(ctx, palette, &mut self.world, &self.ui_images);
         let mut maps: Vec<_> = self.imports.map_picker.wanted_images.drain().collect();
         if let Some(entry) = self.imports.active.and_then(|id| self.imports.entries.iter().find(|e| e.id == id))
             && let Some(Source::Material { value, images }) = &entry.source

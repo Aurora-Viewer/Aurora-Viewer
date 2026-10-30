@@ -295,12 +295,22 @@ pub fn show(
                                     0.0
                                 };
                                 ui.label(param.label());
-                                if ui.add(egui::Slider::new(&mut percent, 0.0..=100.0).fixed_decimals(0)).changed() {
-                                    draft
-                                        .edited
-                                        .params
-                                        .insert(param.id, param.min + percent / 100.0 * (param.max - param.min));
-                                    changed = true;
+                                // Always-clamped sliders round stored percentages
+                                // on every paint. That dirties fractional defaults
+                                // and can restart the bake debounce indefinitely.
+                                if ui
+                                    .add(
+                                        egui::Slider::new(&mut percent, 0.0..=100.0)
+                                            .clamping(egui::SliderClamping::Edits)
+                                            .fixed_decimals(0),
+                                    )
+                                    .changed()
+                                {
+                                    let next = param.min + percent / 100.0 * (param.max - param.min);
+                                    if draft.edited.params.get(&param.id) != Some(&next) {
+                                        draft.edited.params.insert(param.id, next);
+                                        changed = true;
+                                    }
                                 }
                             }
                         },
@@ -313,12 +323,16 @@ pub fn show(
         });
     });
     if let Some(slot) = choose {
-        changed |= st.open_picker(world, slot);
+        st.open_picker(world, slot);
     }
     if let Some(texture) = st.picker.show(ctx, p, world, images) {
         changed |= st.finish_picker(world, Some(texture));
     } else if !st.picker.open {
-        changed |= st.finish_picker(world, None);
+        if st.picker.cancelled() {
+            changed |= st.finish_picker(world, None);
+        } else {
+            st.dismiss_picker();
+        }
     } else if let Some(texture) = st.picker.take_preview() {
         changed |= st.preview_picker(world, texture);
     }
@@ -334,9 +348,7 @@ pub fn show(
         return actions;
     }
     if !open {
-        if st.finish_picker(world, None) {
-            st.changed(world);
-        }
+        st.dismiss_picker();
         if st.draft.as_ref().is_some_and(|draft| draft.pending.is_some()) {
             return actions;
         }
@@ -445,59 +457,165 @@ mod tests {
                 _ => None,
             })
             .max_by(|a, b| a.x.total_cmp(&b.x))
-            .unwrap_or_else(|| panic!("missing label: {text}"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing label: {text}; kind {:?}, unsaved {}",
+                    state.draft.as_ref().map(|draft| draft.edited.kind),
+                    state.close_confirmation
+                )
+            })
     }
 
     #[test]
     fn picker_selections_preview_immediately_and_cancel_close_or_ok_finish_the_transaction() {
-        let (mut world, mut state, _) = crate::wearable_editor::tests::fixture(14);
         let first = Uuid::from_u128(154801);
         let second = Uuid::from_u128(154802);
-        world.local_assets.insert(first, ("Local A".into(), false));
-        world.local_assets.insert(second, ("Local B".into(), false));
-        let original = state.draft.as_ref().expect("draft").edited.textures.clone();
-        let ctx = egui::Context::default();
-        crate::theme::Theme::default().apply(&ctx, 1.0);
-        for finish in [0, 1, 2] {
-            for _ in 0..3 {
-                frame(&ctx, &mut world, &mut state, Vec::new());
-            }
-            let row = demo_row(&ctx).expect("texture row");
-            click(&ctx, &mut world, &mut state, egui::pos2(row.left() + 12.0, row.center().y));
-            assert!(state.picker.open);
-            let pos = label(&ctx, &mut world, &mut state, aurora_i18n::tr!("picker-local-tab"));
-            click(&ctx, &mut world, &mut state, pos);
-            for (name, texture) in [("Local A", first), ("Local B", second)] {
-                let pos = label(&ctx, &mut world, &mut state, name);
-                click(&ctx, &mut world, &mut state, pos);
-                assert!(state.picker.open, "a single selection keeps the picker open");
-                assert_eq!(state.draft.as_ref().expect("draft").edited.textures[&26], texture);
-            }
-            let pos = if finish == 1 {
-                let rect = ctx
-                    .memory(|memory| memory.area_rect(egui::Id::unique("texture_picker")))
-                    .expect("picker window");
-                egui::pos2(rect.right() - 18.0, rect.top() + 18.0)
-            } else {
-                label(
-                    &ctx,
-                    &mut world,
-                    &mut state,
-                    if finish == 0 {
-                        aurora_i18n::tr!("common-cancel")
-                    } else {
-                        aurora_i18n::tr!("common-ok")
+        for kind in (1..=14).chain([16]) {
+            for local in [false, true] {
+                let (mut world, mut state, id) = crate::wearable_editor::tests::fixture(kind);
+                let root = world.inventory.root;
+                world.inventory.folders.insert(
+                    root,
+                    crate::world::inventory::Folder {
+                        info: aurora_net::inventory::InvFolder {
+                            id: root,
+                            name: "Picker inventory".into(),
+                            type_default: -1,
+                            ..Default::default()
+                        },
+                        children: Vec::new(),
+                        items: Vec::new(),
+                        state: crate::world::inventory::FetchState::Fetched,
+                        library: false,
                     },
-                )
-            };
-            click(&ctx, &mut world, &mut state, pos);
-            assert!(!state.picker.open);
-            assert!(state.picker_slot.is_none());
-            if finish == 2 {
-                assert_eq!(state.draft.as_ref().expect("draft").edited.textures[&26], second);
-            } else {
-                assert_eq!(state.draft.as_ref().expect("draft").edited.textures, original);
-                assert!(!state.draft.as_ref().expect("draft").dirty());
+                );
+                for (asset, name) in [(first, "Picker A"), (second, "Picker B")] {
+                    if local {
+                        world.local_assets.insert(asset, (name.into(), false));
+                    } else {
+                        let mut image = world.inventory.items[&id].clone();
+                        image.id = Uuid::from_u128(asset.as_u128() + 100);
+                        image.parent = world.inventory.root;
+                        image.asset_id = asset;
+                        image.asset_type = 0;
+                        image.inv_type = 0;
+                        image.name = name.into();
+                        world.inventory.add_items(vec![image]);
+                    }
+                }
+                let original = state.draft.as_ref().expect("draft").edited.textures.clone();
+                let slot = editor::slots(kind)[0];
+                let ctx = egui::Context::default();
+                crate::theme::Theme::default().apply(&ctx, 1.0);
+                for finish in [0, 1, 2] {
+                    let before_idle = state.draft.as_ref().expect("draft").edited.params.clone();
+                    let generation = state.preview.test_generation();
+                    for _ in 0..3 {
+                        frame(&ctx, &mut world, &mut state, Vec::new());
+                    }
+                    assert_eq!(
+                        state.draft.as_ref().expect("draft").edited.params,
+                        before_idle,
+                        "kind {kind}, local {local}: idle controls cannot edit parameters"
+                    );
+                    assert_eq!(
+                        state.preview.test_generation(),
+                        generation,
+                        "kind {kind}, local {local}: idle controls cannot starve the bake worker"
+                    );
+                    let row = demo_row(&ctx).expect("texture row");
+                    click(&ctx, &mut world, &mut state, egui::pos2(row.left() + 12.0, row.center().y));
+                    assert!(state.picker.open);
+                    let pos = label(
+                        &ctx,
+                        &mut world,
+                        &mut state,
+                        if local {
+                            aurora_i18n::tr!("picker-local-tab")
+                        } else {
+                            aurora_i18n::tr!("picker-inventory-tab")
+                        },
+                    );
+                    click(&ctx, &mut world, &mut state, pos);
+                    for (name, texture) in [("Picker A", first), ("Picker B", second)] {
+                        let pos = label(&ctx, &mut world, &mut state, name);
+                        click(&ctx, &mut world, &mut state, pos);
+                        assert!(state.picker.open, "a single selection keeps the picker open");
+                        assert_eq!(
+                            state.draft.as_ref().expect("draft").edited.textures[&slot],
+                            texture,
+                            "kind {kind}, local {local}"
+                        );
+                    }
+                    let pos = if finish == 1 {
+                        let rect = ctx
+                            .memory(|memory| memory.area_rect(egui::Id::unique("texture_picker")))
+                            .expect("picker window");
+                        egui::pos2(rect.right() - 18.0, rect.top() + 18.0)
+                    } else {
+                        label(
+                            &ctx,
+                            &mut world,
+                            &mut state,
+                            if finish == 0 {
+                                aurora_i18n::tr!("common-cancel")
+                            } else {
+                                aurora_i18n::tr!("common-ok")
+                            },
+                        )
+                    };
+                    click(&ctx, &mut world, &mut state, pos);
+                    assert!(!state.picker.open);
+                    assert!(state.picker_slot.is_none());
+                    if finish != 0 {
+                        assert_eq!(state.draft.as_ref().expect("draft").edited.textures[&slot], second);
+                        assert!(state.draft.as_ref().expect("draft").dirty());
+                    } else {
+                        assert_eq!(state.draft.as_ref().expect("draft").edited.textures, original);
+                        assert!(!state.draft.as_ref().expect("draft").dirty());
+                    }
+                }
+                // Closing the editor itself must retain the draft and ask, including
+                // when its texture picker is still open. No implicit inventory save.
+                {
+                    let draft = state.draft.as_mut().expect("draft");
+                    draft.edited = draft.original.clone();
+                }
+                state.changed(&mut world);
+                state.open_picker(&world, slot);
+                assert!(state.preview_picker(&world, second));
+                state.changed(&mut world);
+                let rect = ctx
+                    .memory(|memory| memory.area_rect(egui::Id::unique("wearable_editor")))
+                    .expect("editor");
+                click(&ctx, &mut world, &mut state, egui::pos2(rect.right() - 18.0, rect.top() + 18.0));
+                assert!(state.open);
+                assert!(state.close_confirmation, "kind {kind}, local {local} keeps its unsaved warning");
+                assert!(state.picker_slot.is_none());
+                assert_eq!(state.draft.as_ref().expect("draft").edited.textures[&slot], second);
+                assert_eq!(state.draft.as_ref().expect("draft").original.textures, original);
+                assert!(state.draft.as_ref().expect("draft").pending.is_none());
+                let pos = label(&ctx, &mut world, &mut state, aurora_i18n::tr!("common-cancel"));
+                click(&ctx, &mut world, &mut state, pos);
+                assert!(!state.close_confirmation);
+                assert!(state.draft.as_ref().expect("draft").dirty());
+                // Let the old modal layer and the editor's animation retire
+                // before sending another pointer press to its title bar.
+                for _ in 0..20 {
+                    frame(&ctx, &mut world, &mut state, Vec::new());
+                }
+                let rect = ctx
+                    .memory(|memory| memory.area_rect(egui::Id::unique("wearable_editor")))
+                    .expect("editor");
+                click(&ctx, &mut world, &mut state, egui::pos2(rect.right() - 18.0, rect.top() + 18.0));
+                assert!(
+                    state.close_confirmation,
+                    "kind {kind}, local {local} asks again after cancelling the close"
+                );
+                let pos = label(&ctx, &mut world, &mut state, aurora_i18n::tr!("wearable-discard"));
+                click(&ctx, &mut world, &mut state, pos);
+                assert!(!state.open);
+                assert!(state.draft.is_none());
             }
         }
     }
