@@ -1041,8 +1041,14 @@ those sent by our avatar's objects. Settings persist; blocks do not. Preferences
 Its Cx rows participate in preference search, modified settings and page reset.
 `demo_anti_spam.rs` supplies synthetic floods through the production event path.
 
-The construction floater uses a single compact presentation (350 by 820 initial
-size), with ordinary saved geometry. Five editing sections share a full-width
+The construction floater defaults to the compact Aurora presentation (350 by 820
+initial size), with ordinary saved geometry. `BuildSettings::legacy_window`,
+exposed in Preferences > Aurora and its bulk look choices, selects
+`build/ui/legacy.rs`: a horizontal tool strip, native tool options and five tabs
+(General, Object, Features, Texture, Content), following `LLFloaterTools`.
+Object combines flags, transforms and shape; the fixed Legacy controls remain
+available independently of the customized Aurora arrangement. Both presentations
+share the native property panels and secondary dialogs. Aurora's five editing sections share a full-width
 folding transform area and an editable footer. `build/layout.rs` owns the saved
 item order/destinations and the versioned, validated notecard profile, excluding
 object properties/transforms. `build/ui/layout.rs` renders the same controls in

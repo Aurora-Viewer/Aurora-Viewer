@@ -1186,6 +1186,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_BUILD_ECHO=<ms>` | The demo answers transform edits a round trip late |
 | `AURORA_DEMO_BUILD_TAB=<tab>` | Tab of the build window; `features:light-picker` opens the projector texture picker |
 | `AURORA_DEMO_BUILD_SIZE=<width>,<height>` | Initial dimensions of the construction window |
+| `AURORA_DEMO_BUILD_STYLE=aurora\|legacy` | Construction window presentation for this demo run |
 | `AURORA_DEMO_PARTICLE_EDITOR=1\|fountain\|inject` | Build › Edit particles on the object selected by `AURORA_DEMO_BUILD` |
 | `AURORA_DEMO_COLOR_PICKER=<mode>` | Colour picker and gestures offline |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
@@ -1235,9 +1236,22 @@ plane squares, rotation rings (`rotate`) and stretch handles (`stretch`)
 with a 100 % capture: everything grows by the same factor, strokes
 included, and a handle can be grabbed anywhere on its larger shape.
 
-`AURORA_DEMO_BUILD_SIZE` sets the compact construction window's initial dimensions
-once for reproducible captures; normal sessions restore saved geometry. There is
-one presentation at every width. The initial request is 350 by 820; the visible icons and expanded transform area
+`AURORA_DEMO_BUILD_STYLE=legacy` selects the Legacy tool strip and five tabs,
+independently of the saved preference. Use `AURORA_DEMO_BUILD=move,object:118`
+with `AURORA_DEMO_BUILD_TAB=general|object|features|texture:bp|texture:pbr|contents`.
+Object contains flags, transforms and shape. Check tool switching, face/linked
+selection, grid modes, ruler settings, collapsing, and short-window scrolling.
+Switch Preferences > Aurora > Build tools between Aurora and Legacy while
+editing; the selection, properties and custom Aurora arrangement must survive.
+The bulk Aurora/Legacy choices include this preference, which persists on restart.
+Legacy keeps Aurora's theme, material panels and mesh inspector, a deliberate
+presentation difference from the reference viewer. Human grid validation covers
+actual property/transform edits, permissions, linking and object contents.
+
+`AURORA_DEMO_BUILD_SIZE` sets the construction window's initial dimensions
+once for reproducible captures; normal sessions restore saved geometry. The chosen
+presentation stays the same at every width. Aurora starts at 350 by 820 and Legacy
+at 400 by 820; Aurora's visible icons and expanded transform area
 can raise its minimum height. Append
 `+settings`, `+organize` or `+folded` to `AURORA_DEMO_BUILD_TAB=general` to inspect
 the side settings, hidden-item storage/notecard buttons or folded numeric values.
