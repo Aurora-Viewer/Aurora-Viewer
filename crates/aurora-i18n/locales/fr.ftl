@@ -2617,9 +2617,11 @@ dev-toolbox-customize = Personnaliser
 dev-toolbox-done = Terminer
 dev-toolbox-target = Cible
 dev-toolbox-target-nearest = Avatar le plus proche
+dev-toolbox-target-me = Mon avatar
 dev-toolbox-target-selection = Sélection
 dev-toolbox-target-cursor = Sous le curseur
 dev-toolbox-target-nearest-hint = à moins de 3 m, sans viser
+dev-toolbox-target-me-hint = vous et ce que vous portez
 dev-toolbox-target-selection-hint = clic droit › Modifier
 dev-toolbox-target-cursor-hint = dernière surface pointée
 dev-toolbox-aim = Viser
@@ -2628,6 +2630,7 @@ dev-toolbox-aim-picking = Cliquez une surface…
 dev-toolbox-aim-help = Appuyez, puis cliquez une surface dans le monde : elle devient la cible et y reste (ce clic ne touche ni ne déplace rien). Appuyez de nouveau pour que la cible suive le pointeur.
 dev-toolbox-target-avatar = { $name } · { $distance } m · { $worn } objets portés
 dev-toolbox-target-nearest-none = Aucun avatar à moins de 3 m
+dev-toolbox-target-me-text = Mon avatar · { $worn } objets portés
 dev-toolbox-target-selected = { $name } · { $count ->
     [one] { $count } objet sélectionné
    *[other] { $count } objets sélectionnés

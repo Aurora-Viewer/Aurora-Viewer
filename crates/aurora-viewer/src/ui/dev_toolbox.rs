@@ -258,22 +258,24 @@ fn header_row(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, view: &View
     });
 }
 
-/// "Target": nearest avatar, selection or under the cursor.
+/// "Target": nearest avatar, my avatar, selection or under the cursor.
 fn target_row(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, view: &View) {
     ui.horizontal(|ui| {
         ui.label(RichText::new(tr!("dev-toolbox-target")).size(12.0).color(p.muted));
-        let labels = [
-            tr!("dev-toolbox-target-nearest"),
-            tr!("dev-toolbox-target-selection"),
-            tr!("dev-toolbox-target-cursor"),
-        ];
-        let mut i = Target::ALL.iter().position(|t| *t == st.target).unwrap_or(0);
-        let options: Vec<(&str, bool)> = labels.iter().map(|l| (*l, true)).collect();
+        let label = |t: Target| match t {
+            Target::Nearest => tr!("dev-toolbox-target-nearest"),
+            Target::MyAvatar => tr!("dev-toolbox-target-me"),
+            Target::Selection => tr!("dev-toolbox-target-selection"),
+            Target::UnderCursor => tr!("dev-toolbox-target-cursor"),
+        };
+        let mut i = Target::BAR.iter().position(|t| *t == st.target).unwrap_or(0);
+        let options: Vec<(&str, bool)> = Target::BAR.iter().map(|t| (label(*t), true)).collect();
         if widgets::segmented(ui, p, &mut i, &options) {
-            st.target = Target::ALL[i];
+            st.target = Target::BAR[i];
         }
         let hint = match st.target {
             Target::Nearest => tr!("dev-toolbox-target-nearest-hint"),
+            Target::MyAvatar => tr!("dev-toolbox-target-me-hint"),
             Target::Selection => tr!("dev-toolbox-target-selection-hint"),
             Target::UnderCursor => tr!("dev-toolbox-target-cursor-hint"),
         };

@@ -15758,7 +15758,7 @@ impl ApplicationHandler for App {
                 return;
             }
             // AURORA_DEMO_TOOLBOX=1, or "target:tool" (target 0 nearest, 1
-            // selection, 2 under the cursor; tool: the one "Send a diagnostic"
+            // selection, 2 under the cursor, 3 my avatar; tool: the one "Send a diagnostic"
             // shows, e.g. "0:J4"), or "edit" (Customize): the Dev Toolbox
             if let Ok(v) = std::env::var("AURORA_DEMO_TOOLBOX") {
                 self.panels.dev_toolbox = true;

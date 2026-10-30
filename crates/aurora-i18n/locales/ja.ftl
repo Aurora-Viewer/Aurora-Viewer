@@ -2613,9 +2613,11 @@ dev-toolbox-customize = カスタマイズ
 dev-toolbox-done = 完了
 dev-toolbox-target = 対象
 dev-toolbox-target-nearest = 最も近いアバター
+dev-toolbox-target-me = 自分のアバター
 dev-toolbox-target-selection = 選択対象
 dev-toolbox-target-cursor = カーソルの下
 dev-toolbox-target-nearest-hint = ３ｍ以内。狙いを定める必要はありません。
+dev-toolbox-target-me-hint = 自分と装着しているもの
 dev-toolbox-target-selection-hint = 右クリック › 編集
 dev-toolbox-target-cursor-hint = 最後にポインターを向けた面
 dev-toolbox-aim = 照準
@@ -2624,6 +2626,7 @@ dev-toolbox-aim-picking = 面をクリック…
 dev-toolbox-aim-help = 押してからワールド内の面をクリックすると、それが対象になり固定されます（クリックしても何にも触れず、移動もしません）。もう一度押すと、対象がポインターを追うようになります。
 dev-toolbox-target-avatar = { $name }・{ $distance }ｍ・装着アイテム{ $worn }個
 dev-toolbox-target-nearest-none = 3 m以内にアバターはいません
+dev-toolbox-target-me-text = 自分のアバター・装着アイテム{ $worn }個
 dev-toolbox-target-selected = { $name }・{ $count ->
     [one] { $count }個のリンクセットを選択中
    *[other] { $count }個のリンクセットを選択中

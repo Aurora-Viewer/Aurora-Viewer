@@ -351,19 +351,35 @@ impl App {
     /// The scene slots "Debug to log" details for the current target.
     fn target_slots(&self) -> Vec<usize> {
         match self.dev_toolbox.target {
-            Target::Nearest => Vec::new(),
+            Target::Nearest | Target::MyAvatar => Vec::new(),
             Target::Selection => self.build.selection.iter().filter_map(|k| self.world.objects.index_of(k)).collect(),
             Target::UnderCursor => self.toolbox.hover.map(|(i, _)| vec![i]).unwrap_or_default(),
         }
     }
 
-    /// The avatar the target stands for: the nearest one, or the wearer of
-    /// the selected or pointed-at object (or that avatar itself).
+    /// The avatar the target stands for: ours, the nearest one, or the
+    /// wearer of the selected or pointed-at object (or that avatar itself).
     fn target_avatar(&self) -> Option<Uuid> {
-        match self.dev_toolbox.target {
-            Target::Nearest => crate::scene::Scene::avatars_near(&self.world, NEAR).first().map(|(_, id)| *id),
-            _ => self.target_slots().into_iter().find_map(|i| self.wearer_of(i)),
+        let target = self.dev_toolbox.target;
+        let nearest = (target == Target::Nearest)
+            .then(|| crate::scene::Scene::avatars_near(&self.world, NEAR).first().map(|(_, id)| *id))
+            .flatten();
+        let wearer = matches!(target, Target::Selection | Target::UnderCursor)
+            .then(|| self.target_slots().into_iter().find_map(|i| self.wearer_of(i)))
+            .flatten();
+        dev_toolbox::target_avatar(target, self.world.agent_id, nearest, wearer)
+    }
+
+    /// What J1 / J2 detail: the selected or pointed-at linksets, our
+    /// avatar's worn items, or (empty) the avatars within 3 m.
+    fn describe_target(&self) -> crate::scene::describe::DescribeScope {
+        if self.dev_toolbox.target == Target::MyAvatar {
+            return crate::scene::describe::DescribeScope {
+                selected: Vec::new(),
+                avatars: self.target_avatar().into_iter().collect(),
+            };
         }
+        self.scene.describe_scope(&self.world, &self.target_slots())
     }
 
     fn wearer_of(&self, mut idx: usize) -> Option<Uuid> {
@@ -379,7 +395,7 @@ impl App {
 
     fn target_object(&self) -> Option<TargetObject> {
         match self.dev_toolbox.target {
-            Target::Nearest => self.target_avatar().map(TargetObject::Avatar),
+            Target::Nearest | Target::MyAvatar => self.target_avatar().map(TargetObject::Avatar),
             _ => {
                 let idx = *self.target_slots().first()?;
                 let o = self.world.objects.get(idx)?;
@@ -400,8 +416,8 @@ impl App {
                     Some(tr!("dev-toolbox-target-selection-none").to_string())
                 } else {
                     self.toolbox.begin(id);
-                    let slots = self.target_slots();
-                    self.start_describe(id, slots);
+                    let scope = self.describe_target();
+                    self.start_describe(id, scope);
                     None
                 }
             }
@@ -619,6 +635,16 @@ impl App {
                 }
                 None => tr!("dev-toolbox-target-nearest-none").to_string(),
             },
+            Target::MyAvatar => {
+                let me = self.world.agent_id;
+                let worn = self
+                    .world
+                    .objects
+                    .index_of_uuid(&me)
+                    .and_then(|i| self.world.objects.get(i))
+                    .map_or(0, |o| self.world.objects.children_of(&o.key).len());
+                tr!("dev-toolbox-target-me-text", worn = worn)
+            }
             Target::Selection => {
                 let slots = self.target_slots();
                 match slots.first().and_then(|&i| self.world.objects.get(i)) {

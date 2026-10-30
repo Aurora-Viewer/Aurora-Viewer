@@ -2614,9 +2614,11 @@ dev-toolbox-customize = Customize
 dev-toolbox-done = Done
 dev-toolbox-target = Target
 dev-toolbox-target-nearest = Nearest avatar
+dev-toolbox-target-me = My avatar
 dev-toolbox-target-selection = Selection
 dev-toolbox-target-cursor = Under the cursor
 dev-toolbox-target-nearest-hint = within 3 m, no need to aim
+dev-toolbox-target-me-hint = you and what you wear
 dev-toolbox-target-selection-hint = right-click › Edit
 dev-toolbox-target-cursor-hint = last surface pointed at
 dev-toolbox-aim = Aim
@@ -2625,6 +2627,7 @@ dev-toolbox-aim-picking = Click a surface…
 dev-toolbox-aim-help = Press, then click a surface in the world: it becomes the target and stays (that click touches and moves nothing). Press again for the target to follow the pointer.
 dev-toolbox-target-avatar = { $name } · { $distance } m · { $worn } worn items
 dev-toolbox-target-nearest-none = No avatar within 3 m
+dev-toolbox-target-me-text = My avatar · { $worn } worn items
 dev-toolbox-target-selected = { $name } · { $count ->
     [one] { $count } linkset selected
    *[other] { $count } linksets selected

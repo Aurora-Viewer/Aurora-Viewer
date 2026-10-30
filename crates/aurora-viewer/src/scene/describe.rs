@@ -232,6 +232,10 @@ impl Scene {
         for &root in &scope.selected {
             self.log_selected(world, renderer, root, names, &mut budget);
         }
+        // the Dev Toolbox's "My avatar": ours, which `avatars_near` leaves out
+        if scope.avatars.contains(&world.agent_id) {
+            self.log_attachments(world, world.agent_id, renderer, names, Some(&mut budget));
+        }
         for (_, id) in Self::avatars_near(world, WORN_RADIUS) {
             let detail = scope.avatars.contains(&id);
             // a press with a target writes that target only
