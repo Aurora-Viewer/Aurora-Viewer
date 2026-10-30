@@ -35,6 +35,18 @@ require acknowledged destinations and fresh offers. Custom routing sends
 material/mesh dependencies to their parent's folder. Per-type destinations
 remain the default until the shared Use default folders choice is unchecked.
 
+`world/inventory_offers.rs::receive_inventory_offer` registers received-item
+filing and applies the saved `Settings::auto_accept_inventory` preference
+(off by default). Automatic answers use `World::respond_notification` before
+creating a conversation card or raising attention, preserving native reply
+destinations, filing, notification history and optional ShowInInventory.
+Mute/flood filtering still runs first; give-to-RLVa offers retain consent.
+The independent `auto_accept_inventory_chat` and `auto_accept_inventory_notify`
+preferences default on, following the reference viewer. Accepted offers emit
+a local Items system notice and/or an informational inventory notification;
+either feedback path plays InventoryOffer once. Both off stays silent.
+Shared resident/object application links retain inspection and privacy filtering.
+
 Session layout uses Settings::nearby_chat_window for nearby-chat docking/visibility
 and show_camera_controls / show_movement_controls for the Controls windows.
 ChatUi::from_settings restores only nearby chat at startup and after logout; IMs,
