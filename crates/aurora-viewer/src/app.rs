@@ -8147,14 +8147,6 @@ impl App {
             if !self.world.agent.flying && self.world.rlva.has("jump") {
                 c.control_flags &= !control::UP_POS;
             }
-            c.control_flags = self.world.agent.immediate_jump_flags(
-                c.control_flags,
-                !self.settings.automatic_fly
-                    && self.movement_runtime.state == crate::movement::State::Ground
-                    && self.movement_runtime.native_fly_allowed()
-                    && self.world.movement_complete
-                    && !self.world.teleporting,
-            );
             if late_camera_frame.is_some() && self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
                 late_controls = Some(c);
             } else {
