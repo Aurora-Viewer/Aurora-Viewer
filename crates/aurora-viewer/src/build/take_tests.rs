@@ -82,13 +82,9 @@ fn take_uses_the_rez_folder_and_take_copy_the_objects_folder() {
         world.apply(event);
     }
     let objects = BuildTool::folder_of_type(&world, 6);
-    let rezzed_from = world
-        .inventory
-        .folders
-        .values()
-        .find(|f| !f.library && f.info.type_default == -1 && f.info.id != objects)
-        .map(|f| f.info.id)
-        .expect("the demo inventory has user folders");
+    // Shopping, a user folder under Landmarks
+    let rezzed_from = crate::demo::u(crate::demo::place::SHOPS_FOLDER);
+    assert!(world.inventory.folders.contains_key(&rezzed_from));
     let idx = world.objects.index_of_uuid(&crate::demo::action_id(99614)).unwrap();
     let full_id = world.objects.get(idx).unwrap().full_id;
     let mut tool = BuildTool::default();
@@ -102,4 +98,50 @@ fn take_uses_the_rez_folder_and_take_copy_the_objects_folder() {
     );
     assert_eq!(tool.take_destination(&world, &[idx], false), rezzed_from);
     assert_eq!(tool.take_destination(&world, &[idx], true), objects);
+}
+
+#[test]
+fn the_demo_coalesces_a_take_of_several_objects_into_one_item() {
+    use crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS;
+    use aurora_net::NetEvent;
+    use aurora_net::build::derez;
+    let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events().into_iter().chain(crate::demo::selection_cycle_events()) {
+        world.apply(event);
+    }
+    let key = |id| {
+        let idx = world.objects.index_of_uuid(&crate::demo::action_id(id)).unwrap();
+        world.objects.get(idx).unwrap().key
+    };
+    let (a, b) = (key(99610), key(99614));
+    assert_eq!(a.region, b.region);
+    let items = |local_ids: Vec<u32>, destination| {
+        let mut sim = super::demo_sim::DemoSim::default();
+        let events = sim.reply(
+            &world,
+            &BuildCmd::DeRez {
+                handle: a.region,
+                local_ids,
+                destination,
+                destination_id: Uuid::from_u128(30),
+                group_id: Uuid::nil(),
+            },
+        );
+        events
+            .into_iter()
+            .find_map(|e| match e {
+                NetEvent::InventoryUpdated { items, .. } => Some(items),
+                _ => None,
+            })
+            .expect("a take answers with an inventory item")
+    };
+    for destination in [derez::TAKE_INTO_AGENT_INVENTORY, derez::ACQUIRE_TO_AGENT_INVENTORY] {
+        let both = items(vec![a.local_id, b.local_id], destination);
+        assert_eq!(both.len(), 1);
+        assert_ne!(both[0].flags & OBJECT_HAS_MULTIPLE_ITEMS, 0);
+        assert_eq!(both[0].parent, Uuid::from_u128(30));
+        let one = items(vec![b.local_id], destination);
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].flags & OBJECT_HAS_MULTIPLE_ITEMS, 0);
+    }
 }

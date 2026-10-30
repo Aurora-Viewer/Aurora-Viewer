@@ -254,8 +254,10 @@ impl DemoSim {
                     local_ids: local_ids.clone(),
                 }]
             }
-            // Take / Take Copy: an object item in the folder asked for; a
-            // take leaves the world.
+            // Take / Take Copy: one object item per DeRez in the folder asked
+            // for, coalesced when it holds several objects, as the simulator
+            // does (take separate sends one DeRez per object); a take leaves
+            // the world.
             BuildCmd::DeRez {
                 handle,
                 local_ids,
@@ -267,18 +269,24 @@ impl DemoSim {
             {
                 let ids = Self::uuids(world, *handle, local_ids);
                 let items = ids
-                    .iter()
+                    .first()
                     .map(|id| aurora_net::inventory::InvItem {
                         id: Uuid::new_v4(),
                         parent: *destination_id,
                         name: self.props_of(world, *id).name.clone(),
                         asset_type: 6,
                         inv_type: 6,
+                        flags: if ids.len() > 1 {
+                            crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS
+                        } else {
+                            0
+                        },
                         owner: world.agent_id,
                         base_mask: PERM_ALL,
                         owner_mask: PERM_ALL,
                         ..Default::default()
                     })
+                    .into_iter()
                     .collect();
                 let mut events = vec![NetEvent::InventoryUpdated {
                     folders: Vec::new(),
