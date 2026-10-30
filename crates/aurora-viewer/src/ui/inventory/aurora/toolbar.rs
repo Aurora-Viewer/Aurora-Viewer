@@ -1,6 +1,6 @@
-//! The bars of Aurora's inventory window: the narrow width's icon tabs and
-//! search row, the explorer's toolbar (where it is, the search with its
-//! Ctrl+F, the filters, the details card or pane, the rights, "New"), the wide
+//! The bars of Aurora's inventory window: the narrow width's icon tabs,
+//! the toolbar (where it is, filters, details, rights, "New", folder controls),
+//! a separate quick/advanced search row with its Ctrl+F hint, the wide
 //! width's filter chips, the line of messages and the status bar. The
 //! sorting, the search field and the preferences are the Legacy Viewer's
 //! (LLPanelMainInventory's gear and view menus), gathered in one "Sort"
@@ -23,6 +23,9 @@ pub const STATUS: f32 = 30.0;
 /// its mode is on).
 fn tool_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, lit: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(BAR), Sense::click());
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_tool_button", icon)), rect));
     let hot = response.hovered() || response.has_focus();
     if lit || hot {
         let fill = if hot { p.raised.lerp_to_gamma(p.ink, 0.16) } else { p.raised };
@@ -337,13 +340,38 @@ fn additional_button(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
     }
 }
 
-/// The room `additional_button` takes in a row whose buttons are `gap` apart.
-fn additional_width(st: &InventoryUi, gap: f32) -> f32 {
-    if st.is_main() { BAR + gap } else { 0.0 }
+/// Direct counterparts of LLPanelMainInventory's collapse_btn / expand_btn.
+fn tree_buttons(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
+    for (open, icon, tip) in [
+        (
+            false,
+            "chevrons-up",
+            aurora_i18n::tr!("ui-inventory-controls-collapse-displayed-folders"),
+        ),
+        (
+            true,
+            "chevrons-down",
+            aurora_i18n::tr!("ui-inventory-controls-expand-displayed-folders"),
+        ),
+    ] {
+        if tool_button(ui, p, icon, tip, false).clicked() {
+            st.expand_all = Some(open);
+        }
+    }
 }
 
-/// The narrow width's row: the search, the filters, the details card, the
-/// rights, the additional window, Sort, New.
+/// Quick search and its advanced-mode button share a full row below the tools.
+fn search_line(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, layout: Layout) {
+    let _row = ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        search(ui, p, inv, st, prefs, ui.available_width(), layout);
+    });
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::unique("inventory_search_row"), _row.response.rect));
+}
+
+/// The narrow width's tools, followed by the search row.
 pub(super) fn search_row(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -353,11 +381,8 @@ pub(super) fn search_row(
     layout: Layout,
     actions: &mut Vec<InvAction>,
 ) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        let cmt = rights::button_width(ui);
-        let width = (ui.available_width() - 4.0 * (BAR + 6.0) - additional_width(st, 6.0) - cmt - 6.0).max(60.0);
-        search(ui, p, inv, st, prefs, width, layout);
         let lit = st.filters_open || st.filters.active();
         if tool_button(ui, p, "adjustments-horizontal-filled", filters_tip(st), lit).clicked() {
             st.filters_open = !st.filters_open;
@@ -373,7 +398,9 @@ pub(super) fn search_row(
         menu::dropdown(&new, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
             new_menu(ui, p, inv, st, prefs, layout, actions);
         });
+        tree_buttons(ui, p, st);
     });
+    search_line(ui, p, inv, st, prefs, layout);
 }
 
 /// A button with an icon, a label and a count on the accent at its end
@@ -407,10 +434,7 @@ fn counted_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, count
     response
 }
 
-/// The explorer's toolbar. Medium: the search, the filters, the details
-/// card, the rights, the columns, the additional window, Sort and New. Wide:
-/// where it is, the search with its key, the filters with their count, the
-/// details pane, the rights, the columns, the additional window and New.
+/// The explorer's tools and breadcrumb, followed by a full-width search row.
 pub(super) fn explorer_row(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -422,7 +446,6 @@ pub(super) fn explorer_row(
 ) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        let cmt = rights::button_width(ui);
         if layout == Layout::Wide {
             let crumbs = (ui.available_width() * 0.32).clamp(140.0, 380.0);
             ui.allocate_ui_with_layout(Vec2::new(crumbs, BAR), egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -430,11 +453,6 @@ pub(super) fn explorer_row(
             });
             let new_label = aurora_i18n::tr!("inventory-new");
             let new_w = widgets::action_button_fit(ui, "plus", new_label);
-            let filters_w = 150.0;
-            let width =
-                (ui.available_width() - (BAR + 8.0) - filters_w - (BAR + 8.0) - additional_width(st, 8.0) - cmt - 8.0 - new_w - 8.0 - 8.0)
-                    .max(120.0);
-            search(ui, p, inv, st, prefs, width, layout);
             let count = chip_list(st).len();
             let lit = st.filters_open || count > 0;
             if counted_button(
@@ -462,8 +480,6 @@ pub(super) fn explorer_row(
                 new_menu(ui, p, inv, st, prefs, layout, actions);
             });
         } else {
-            let width = (ui.available_width() - 4.0 * (BAR + 8.0) - additional_width(st, 8.0) - 112.0 - cmt - 8.0).max(120.0);
-            search(ui, p, inv, st, prefs, width, layout);
             let count = chip_list(st).len();
             let lit = st.filters_open || count > 0;
             if counted_button(
@@ -496,7 +512,9 @@ pub(super) fn explorer_row(
                 new_menu(ui, p, inv, st, prefs, layout, actions);
             });
         }
+        tree_buttons(ui, p, st);
     });
+    search_line(ui, p, inv, st, prefs, layout);
 }
 
 /// The name of the shortcut (tab) shown, for where the list is.
