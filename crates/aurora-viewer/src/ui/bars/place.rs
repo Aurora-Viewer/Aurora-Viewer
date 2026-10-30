@@ -2,7 +2,8 @@
 //! then the place (rating, parcel, region and position, the parcel's
 //! rights) and the landmark star. A click on the place opens its menu
 //! (SLURL, destination, rights, About Land, history, home, Places, recent
-//! places), replacing the location field Firestorm edits in place
+//! places), the destination field ready to type or paste into, replacing
+//! the location field Firestorm edits in place
 //! (LLLocationInputCtrl, LLNavigationBar). The island stretches to the
 //! account island, or takes the width of its content
 //! (`Settings::place_bar_stretch`); what it shows follows the room it has
@@ -27,6 +28,8 @@ const BADGE: f32 = 15.0;
 const RIGHT_GAP: f32 = 2.0;
 const NAME_AFTER: f32 = 6.0;
 const NAME_SIZE: f32 = 11.5;
+/// Set once the destination field of the open place menu took the focus.
+const DEST_FOCUSED: &str = "bars_place_destination_focused";
 
 /// How much the place island says, from the most to the least: every right
 /// named, the forbidden ones named, the position, the parcel and the region
@@ -424,6 +427,10 @@ fn place(
     }
 
     demo_open(ui.ctx(), &resp, super::demo::Open::Place);
+    if !open {
+        // the next opening gives the destination field the keyboard again
+        ui.ctx().data_mut(|d| d.remove::<bool>(Id::unique(DEST_FOCUSED)));
+    }
     menu::dropdown_placed(
         &resp,
         p,
@@ -566,6 +573,17 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
             )
         })
         .inner;
+    // the field takes the keyboard as the menu opens: a click on the place,
+    // paste, Enter teleports, as the Legacy Viewer's location field does
+    // (LLLocationInputCtrl, #1569); once only, so a click elsewhere in the
+    // menu keeps its focus
+    let focused_id = Id::unique(DEST_FOCUSED);
+    if !ui.ctx().data(|d| d.get_temp::<bool>(focused_id)).unwrap_or(false) {
+        field.request_focus();
+        if field.has_focus() {
+            ui.ctx().data_mut(|d| d.insert_temp(focused_id, true));
+        }
+    }
     if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
         let typed = std::mem::take(dest);
         if !typed.trim().is_empty() {
