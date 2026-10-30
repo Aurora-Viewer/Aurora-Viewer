@@ -14,8 +14,11 @@
 //!
 //! So once it has handed frame N over, the main thread waits, at the place
 //! of the frame limiter and before the events of the next frame are read,
-//! until the GPU has finished frame N−1 ([`GpuFrames`], filled by the render
-//! thread at each `submit`). Frame N+1 then reads its input while the GPU
+//! until the GPU has finished frame N−1 ([`GpuFrames`]). The news comes from
+//! the render thread: a poll at the start of each frame's job when the
+//! frame before is already done, else a wait on the device once it has
+//! presented frame N (never the main thread's: it would stall the render
+//! thread's `submit` and `present`). Frame N+1 then reads its input while the GPU
 //! draws frame N, and is ready by the time it is done: the GPU keeps a
 //! frame to draw, and nothing else waits in front of it. When the GPU is not
 //! the limit, frame N−1 is long finished and the wait costs nothing.
@@ -27,23 +30,57 @@
 //!
 //! AURORA_FRAME_PACING=0 turns it off (comparison).
 
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use std::collections::VecDeque;
+use std::time::Instant;
 
 /// Submissions kept: the frames the main thread can still wait for.
 const KEPT: usize = 4;
 
-/// The GPU submission of each frame, newest last: written by the thread
-/// that submits, read by the main thread before it reads the input.
+/// The GPU submission of each frame, newest last, and the frames the GPU
+/// is known to have finished. The thread that submits writes both (the
+/// render thread, which waits on the device itself: a wait on the device
+/// from the main thread holds the device's locks and stalls the render
+/// thread's `submit` and `present`); the main thread only waits for the
+/// news, before it reads the input.
 pub(crate) struct GpuFrames<T> {
+    pub enabled: bool,
     submitted: Mutex<VecDeque<(u64, T)>>,
+    /// Every frame up to this one is finished on the GPU.
+    finished: Mutex<Option<u64>>,
+    news: Condvar,
 }
 
 impl<T: Clone> GpuFrames<T> {
-    pub fn new() -> GpuFrames<T> {
+    pub fn new(enabled: bool) -> GpuFrames<T> {
         GpuFrames {
+            enabled,
             submitted: Mutex::new(VecDeque::with_capacity(KEPT)),
+            finished: Mutex::new(None),
+            news: Condvar::new(),
         }
+    }
+
+    /// Every frame up to `frame` is finished on the GPU (the newest one
+    /// submitted, and those that submitted nothing).
+    pub fn finished_through(&self, frame: u64) {
+        let mut f = self.finished.lock();
+        if f.is_none_or(|done| done < frame) {
+            *f = Some(frame);
+            self.news.notify_all();
+        }
+    }
+
+    /// Wait until `frame` is finished on the GPU, not past `deadline`:
+    /// false when it is not by then.
+    pub fn wait_finished(&self, frame: u64, deadline: Instant) -> bool {
+        let mut f = self.finished.lock();
+        while f.is_none_or(|done| done < frame) {
+            if self.news.wait_until(&mut f, deadline).timed_out() {
+                return f.is_some_and(|done| done >= frame);
+            }
+        }
+        true
     }
 
     /// Frame `frame` submitted its work as `index`.
@@ -174,8 +211,30 @@ mod tests {
     }
 
     #[test]
+    fn the_main_thread_waits_for_the_news_of_the_frame_before() {
+        let frames = std::sync::Arc::new(GpuFrames::<()>::new(true));
+        let soon = || Instant::now() + std::time::Duration::from_millis(20);
+        assert!(!frames.wait_finished(0, soon()), "nothing finished yet");
+        frames.finished_through(3);
+        assert!(frames.wait_finished(2, soon()));
+        assert!(frames.wait_finished(3, soon()));
+        assert!(!frames.wait_finished(4, soon()));
+        // older news does not move it back
+        frames.finished_through(1);
+        assert!(frames.wait_finished(3, soon()));
+        // news from the render thread wakes the main thread
+        let f = frames.clone();
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            f.finished_through(5);
+        });
+        assert!(frames.wait_finished(5, Instant::now() + std::time::Duration::from_secs(10)));
+        t.join().expect("render thread");
+    }
+
+    #[test]
     fn the_frame_before_is_the_one_waited_for() {
-        let frames = GpuFrames::new();
+        let frames = GpuFrames::new(true);
         assert_eq!(frames.before(0), None);
         frames.submitted(0, 'a');
         assert_eq!(frames.before(0), None);

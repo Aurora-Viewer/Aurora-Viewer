@@ -92,7 +92,7 @@ const STALL_POLL: Duration = Duration::from_millis(50);
 const CAPTURE_WAIT: Duration = Duration::from_secs(10);
 /// The longest the frame pacing waits for the GPU (pacing.rs): a frame of
 /// 10 frames per second, well past any frame drawn in a busy region.
-const GPU_WAIT: Duration = Duration::from_millis(100);
+pub(crate) const GPU_WAIT: Duration = Duration::from_millis(100);
 
 /// Interface texture changes kept while the GPU is stalled. Cleared when
 /// dropped with the renderer: egui's debug builds refuse to drop a delta
@@ -197,9 +197,8 @@ pub struct Renderer {
     /// since the last `render` returned.
     last_stats: RenderStats,
     fresh: bool,
-    /// Frame pacing (pacing.rs): on unless AURORA_FRAME_PACING=0; the GPU
-    /// submission of each frame, as the backend made it; the last wait.
-    pacing: bool,
+    /// Frame pacing (pacing.rs, on unless AURORA_FRAME_PACING=0): what the
+    /// GPU has finished, as the backend tells it; the last wait.
     gpu_frames: Arc<crate::pacing::GpuFrames<wgpu::SubmissionIndex>>,
     gpu_waited: Duration,
     /// When the frame being built began reading its input.
@@ -416,7 +415,9 @@ impl Renderer {
         );
         let anim_clock = crate::tex_anim::AnimClock::new(Instant::now());
         let video_memory = crate::vram::VideoMemoryProbe::new(adapter.clone());
-        let gpu_frames = Arc::new(crate::pacing::GpuFrames::new());
+        let gpu_frames = Arc::new(crate::pacing::GpuFrames::new(crate::pacing::wanted(
+            std::env::var("AURORA_FRAME_PACING").ok().as_deref(),
+        )));
         let backend = Backend::new(BackendInit {
             gpu_frames: gpu_frames.clone(),
             device: device.clone(),
@@ -482,7 +483,6 @@ impl Renderer {
             frames: 0,
             last_stats: RenderStats::default(),
             fresh: false,
-            pacing: crate::pacing::wanted(std::env::var("AURORA_FRAME_PACING").ok().as_deref()),
             gpu_frames,
             gpu_waited: Duration::ZERO,
             input_at: None,
@@ -1158,23 +1158,23 @@ impl Renderer {
     /// limit, or with AURORA_FRAME_PACING=0).
     pub fn wait_for_gpu(&mut self) -> Duration {
         self.gpu_waited = Duration::ZERO;
-        if !self.pacing || self.failed || self.stalled || self.lost.get() {
+        if !self.gpu_frames.enabled || self.failed || self.stalled || self.lost.get() {
             return Duration::ZERO;
         }
-        let Some(index) = self.frames.checked_sub(1).and_then(|last| self.gpu_frames.before(last)) else {
+        // the frame handed over last, and the one before it
+        let Some(before) = self.frames.checked_sub(2) else {
             return Duration::ZERO;
         };
         let t = Instant::now();
-        let wait = wgpu::PollType::Wait {
-            submission_index: Some(index),
-            timeout: Some(GPU_WAIT),
-        };
-        // a timeout is a GPU that fell behind: the frames go on, the stall
-        // notice is the render thread's (`stalled_for`)
-        if let Err(e) = self.device.poll(wait)
-            && !matches!(e, wgpu::PollError::Timeout)
-        {
-            log::debug!("frame pacing: {e:?}");
+        match &self.host {
+            // the render thread waits on the device and sends the news; a
+            // timeout is a GPU that fell behind: the frames go on, the stall
+            // notice is the render thread's (`stalled_for`)
+            Host::Thread { .. } => {
+                self.gpu_frames.wait_finished(before, t + GPU_WAIT);
+            }
+            // alone on the device: the wait is this thread's
+            Host::Inline(backend) => backend.finish_frames_before(before + 1, GPU_WAIT),
         }
         self.gpu_waited = t.elapsed();
         self.gpu_waited

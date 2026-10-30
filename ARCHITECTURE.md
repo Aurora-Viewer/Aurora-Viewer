@@ -2961,12 +2961,14 @@ What passes from one thread to the other:
   wait (`wait_render`, `rt_idle` of the profile).
 - **Frame pacing** (`pacing.rs`): back-pressure keeps the rate, but the
   input of a frame that waits for the render thread and the swapchain is
-  stale by the time it is drawn. The render thread records each frame's
-  submission (`GpuFrames`); once frame N is handed over, the main thread
-  waits on the device for frame N−1 (`Renderer::wait_for_gpu`, at most
-  100 ms), at the place of the frame limiter and before the next input: at
-  most one frame waits for the GPU (`pace`, `input` of the profile;
-  `AURORA_FRAME_PACING=0`).
+  stale by the time it is drawn. Once frame N is handed over, the main
+  thread waits for the news that the GPU has finished frame N−1
+  (`Renderer::wait_for_gpu`, at most 100 ms), at the place of the frame
+  limiter and before the next input: at most one frame waits for the GPU.
+  The news (`GpuFrames`) comes from the render thread, which waits on the
+  device itself after presenting N: a device wait on the main thread holds
+  the device's locks and stalls the render thread's `submit` and `present`.
+  `pace`, `input` of the profile; `AURORA_FRAME_PACING=0`.
 - **Frame result**, returned at the next handoff: statistics of the
   rendering, reply to the hover (kept with the camera of the frame that
   requested it), replies to the clicks, culling counters, screenshot,
