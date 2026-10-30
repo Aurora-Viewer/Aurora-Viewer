@@ -202,6 +202,17 @@ pub fn to_xml(v: &Llsd) -> Vec<u8> {
     to_xml_string(v).into_bytes()
 }
 
+/// LLSDSerialize::serialize(..., LLSD_XML), with the stream format header
+/// (indra/llcommon/llsdserialize.cpp and llsdserialize_xml.cpp, originally
+/// LGPL 2.1). Inventory buckets in group notices use this envelope; HTTP
+/// capabilities use `to_xml` instead. The transmitted bytes exclude a NUL.
+pub fn to_serialized_xml(v: &Llsd) -> Vec<u8> {
+    let mut s = String::from("<? LLSD/XML ?>\n<llsd>");
+    write_value(v, &mut s);
+    s.push_str("</llsd>\n");
+    s.into_bytes()
+}
+
 /// The indented form people read and keep in files: one element per line,
 /// four spaces per level below `<llsd>`. Port of LLSDXMLFormatter::format
 /// with OPTIONS_PRETTY (indra/llcommon/llsdserialize_xml.cpp, originally
