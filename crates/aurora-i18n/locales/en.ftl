@@ -12652,7 +12652,7 @@ local-appearance-warning = { $count ->
     }
 local-appearance-pending = Saved local previews (pending)
 local-appearance-details = Local textures: { $textures } · Local materials: { $materials }
-local-appearance-private = These previews are visible only to you and are restored after reconnecting.
+local-appearance-private = These previews are visible only to you and are restored after reconnecting. Each application expires after 7 days.
 local-appearance-reveal = Highlight local surfaces
 local-appearance-stop-reveal = Stop highlighting local surfaces
 local-appearance-library = Open local previews

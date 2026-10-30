@@ -270,10 +270,10 @@ impl Imports {
         };
         if faces.is_empty() {
             self.local_appearance_targets.retain(|(id, _), _| *id != object);
-            self.local_appearance_targets.insert((object, None), appearance);
+            self.set_local_appearance_target(object, None, Some(appearance));
         } else {
             for face in faces {
-                self.local_appearance_targets.insert((object, Some(*face)), appearance);
+                self.set_local_appearance_target(object, Some(*face), Some(appearance));
             }
         }
     }

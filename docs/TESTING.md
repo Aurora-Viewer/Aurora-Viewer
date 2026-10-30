@@ -4673,6 +4673,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   the saved links must restore the GPU application. Without this
   variable, the synthetic scenarios do not fill the persistent library
   of the demo profile. The synthetic sources stay in `.scratch`.
+  Texture/material applications expire seven days after their last application,
+  independently per object/face. Reconnects, autosaves and source reloads do not
+  extend this deadline. Older registries receive seven days on first migration.
+  For an isolated expiry check, close the first process, set its saved
+  `appearance_expirations` deadlines to a past Unix timestamp, then run
+  `local-restored`: the source library stays, the warning disappears and the
+  original server appearance returns. A future deadline must restore normally;
+  a deadline reached while running must remove the application too. Never edit
+  the normal account's registry for this test. Local mesh bindings are unchanged.
   `animation-own` puts the preview at 0.75 s, paused, also on the demo
   avatar. The slider and the pose must stay fixed until Resume.
   `animation-custom` loads a local rigged Bento tail and its looping animation,

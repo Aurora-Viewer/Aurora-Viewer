@@ -1,4 +1,4 @@
-//! Remembered local previews. Firestorm's local bitmap/material/mesh lists
+//! Remembered local previews. The Legacy Viewer's local bitmap/material/mesh lists
 //! inspire the references and live reload; retaining the library and client-only
 //! object bindings across sessions is an intentional Aurora improvement.
 //! Only metadata is saved in the private profile, never source pixels/geometry.
@@ -9,11 +9,16 @@ use std::{
     io::Read,
     path::Path,
     thread::JoinHandle,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const FILE: &str = "local_previews.json";
 const MAX_REGISTRY: u64 = 16 * 1024 * 1024;
+const APPEARANCE_LIFETIME: u64 = 7 * 24 * 60 * 60;
+
+fn unix_now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 enum Map {
@@ -287,6 +292,26 @@ impl Asset {
 struct Profile {
     meshes: Vec<(Uuid, local::Target)>,
     appearances: Vec<(Uuid, Option<u8>, crate::world::objects::LocalAppearance)>,
+    #[serde(default)]
+    appearance_expirations: Vec<(Uuid, Option<u8>, u64)>,
+}
+impl Profile {
+    fn expire_appearances(&mut self, now: u64) {
+        let mut deadlines: HashMap<_, _> = self
+            .appearance_expirations
+            .drain(..)
+            .map(|(object, face, deadline)| ((object, face), deadline))
+            .collect();
+        // Old registries have no timestamps: grant one full lifetime, then
+        // persist the deadline. Reconnects and source reloads never renew it.
+        self.appearances
+            .retain(|(object, face, _)| *deadlines.entry((*object, *face)).or_insert(now.saturating_add(APPEARANCE_LIFETIME)) > now);
+        self.appearance_expirations = self
+            .appearances
+            .iter()
+            .map(|(object, face, _)| (*object, *face, deadlines[&(*object, *face)]))
+            .collect();
+    }
 }
 #[derive(Default, Serialize, Deserialize)]
 struct Registry {
@@ -312,6 +337,8 @@ pub struct State {
     last: Vec<u8>,
     observed: Option<u64>,
     next: Option<Instant>,
+    appearance_expirations: HashMap<(Uuid, Option<u8>), u64>,
+    next_expiration: u64,
 }
 impl Drop for State {
     fn drop(&mut self) {
@@ -388,7 +415,11 @@ impl Imports {
         let wake = ctx.clone();
         let read_path = path.clone();
         jobs.execute(move || {
-            let restored = read_registry(&read_path).map(|registry| {
+            let restored = read_registry(&read_path).map(|mut registry| {
+                let now = unix_now();
+                for profile in registry.profiles.values_mut() {
+                    profile.expire_appearances(now);
+                }
                 let mut retained = 0usize;
                 let entries = registry
                     .assets
@@ -456,6 +487,13 @@ impl Imports {
                             .iter()
                             .map(|(object, face, appearance)| ((*object, *face), *appearance)),
                     );
+                    self.persistence.appearance_expirations.extend(
+                        profile
+                            .appearance_expirations
+                            .iter()
+                            .map(|(object, face, deadline)| ((*object, *face), *deadline)),
+                    );
+                    self.persistence.next_expiration = 0;
                 }
                 self.entries.extend(restored.entries);
                 if self.active.is_none() {
@@ -471,10 +509,22 @@ impl Imports {
         }
     }
     pub fn save_local_registry(&mut self, force: bool) {
+        self.save_local_registry_at(force, unix_now());
+    }
+    fn save_local_registry_at(&mut self, force: bool, now: u64) {
         if !self.persistence.ready || (!force && self.persistence.next.is_some_and(|next| next > Instant::now())) {
             return;
         }
         self.persistence.next = Some(Instant::now() + Duration::from_millis(500));
+        self.persistence
+            .appearance_expirations
+            .retain(|key, _| self.local_appearance_targets.contains_key(key));
+        for key in self.local_appearance_targets.keys() {
+            if let std::collections::hash_map::Entry::Vacant(entry) = self.persistence.appearance_expirations.entry(*key) {
+                entry.insert(now.saturating_add(APPEARANCE_LIFETIME));
+                self.persistence.next_expiration = 0;
+            }
+        }
         // Hash lightweight edit revisions/metadata first: an unchanged library
         // never re-encodes material assets or allocates a JSON snapshot.
         use std::hash::{Hash, Hasher};
@@ -521,6 +571,7 @@ impl Imports {
                 face,
                 appearance.entry(),
                 matches!(appearance, crate::world::objects::LocalAppearance::Material(_)),
+                self.persistence.appearance_expirations[&(*object, *face)],
             )
                 .hash(&mut hash);
         }
@@ -543,14 +594,23 @@ impl Imports {
             .map(|((object, face), appearance)| (*object, *face, *appearance))
             .collect();
         appearances.sort_by_key(|(object, face, _)| (*object, *face));
+        let appearance_expirations = appearances
+            .iter()
+            .map(|(object, face, _)| (*object, *face, self.persistence.appearance_expirations[&(*object, *face)]))
+            .collect();
         self.persistence.registry.assets = assets;
-        self.persistence
-            .registry
-            .profiles
-            .insert(self.persistence.profile.clone(), Profile { meshes, appearances });
+        self.persistence.registry.profiles.insert(
+            self.persistence.profile.clone(),
+            Profile {
+                meshes,
+                appearances,
+                appearance_expirations,
+            },
+        );
         for profile in self.persistence.registry.profiles.values_mut() {
             profile.meshes.retain(|(_, target)| ids.contains(&target.entry));
             profile.appearances.retain(|(_, _, appearance)| ids.contains(&appearance.entry()));
+            profile.expire_appearances(now);
         }
         if let Ok(bytes) = serde_json::to_vec(&self.persistence.registry)
             && bytes.len() as u64 <= MAX_REGISTRY
@@ -567,6 +627,81 @@ impl Imports {
     }
     pub fn registry_path() -> PathBuf {
         crate::settings::config_dir().join(FILE)
+    }
+
+    /// A new application renews only this object's addressed face. Library
+    /// edits, GPU publication and reconnect restoration leave deadlines alone.
+    pub fn set_local_appearance_target(
+        &mut self,
+        object: Uuid,
+        face: Option<u8>,
+        appearance: Option<crate::world::objects::LocalAppearance>,
+    ) {
+        let key = (object, face);
+        if let Some(appearance) = appearance {
+            self.local_appearance_targets.insert(key, appearance);
+            self.persistence
+                .appearance_expirations
+                .insert(key, unix_now().saturating_add(APPEARANCE_LIFETIME));
+            self.persistence.next_expiration = 0;
+        } else {
+            self.local_appearance_targets.remove(&key);
+            self.persistence.appearance_expirations.remove(&key);
+        }
+    }
+
+    pub fn expire_local_appearances(&mut self, objects: &mut crate::world::objects::ObjectStore) -> HashSet<(Uuid, Option<u8>)> {
+        self.expire_local_appearances_at(objects, unix_now())
+    }
+    pub fn sync_local_appearance_changes(
+        &mut self,
+        changes: impl IntoIterator<Item = (Uuid, Option<u8>, Option<crate::world::objects::LocalAppearance>)>,
+    ) {
+        let mut split = HashMap::new();
+        for (object, face, appearance) in changes {
+            // The picker splits a whole-object application into equivalent
+            // face links before editing one face. Preserve the other faces'
+            // original deadlines instead of treating that split as new use.
+            if face.is_none()
+                && appearance.is_none()
+                && let Some(original) = self.local_appearance_targets.get(&(object, None))
+                && let Some(deadline) = self.persistence.appearance_expirations.get(&(object, None))
+            {
+                split.insert(object, (*original, *deadline));
+            }
+            self.set_local_appearance_target(object, face, appearance);
+            if let Some((original, deadline)) = split.get(&object)
+                && appearance == Some(*original)
+            {
+                self.persistence.appearance_expirations.insert((object, face), *deadline);
+            }
+        }
+    }
+    fn expire_local_appearances_at(&mut self, objects: &mut crate::world::objects::ObjectStore, now: u64) -> HashSet<(Uuid, Option<u8>)> {
+        if self.persistence.appearance_expirations.is_empty() || now < self.persistence.next_expiration {
+            return HashSet::new();
+        }
+        let mut expired = HashSet::new();
+        self.persistence.appearance_expirations.retain(|key, deadline| {
+            if *deadline <= now {
+                expired.insert(*key);
+                false
+            } else {
+                true
+            }
+        });
+        self.persistence.next_expiration = self.persistence.appearance_expirations.values().copied().min().unwrap_or(u64::MAX);
+        for (id, face) in &expired {
+            self.local_appearance_targets.remove(&(*id, *face));
+            if let Some(index) = objects.index_of_uuid(id)
+                && let Some(object) = objects.get_mut(index)
+                && object.render.local_appearance.remove(face).is_some()
+            {
+                object.material_dirty = true;
+                object.render.needs_records = true;
+            }
+        }
+        expired
     }
 }
 
@@ -610,6 +745,172 @@ mod tests {
         }
         imports
     }
+    #[test]
+    fn legacy_appearance_bindings_get_seven_days_once_and_expire_at_the_exact_deadline() {
+        let mut profile: Profile = serde_json::from_value(serde_json::json!({
+            "meshes": [],
+            "appearances": [[Uuid::from_u128(1), null, {"Texture": Uuid::from_u128(2)}]]
+        }))
+        .expect("old registry without deadlines");
+        profile.expire_appearances(100);
+        let deadline = 100 + APPEARANCE_LIFETIME;
+        assert_eq!(profile.appearance_expirations, vec![(Uuid::from_u128(1), None, deadline)]);
+        let mut profile: Profile = serde_json::from_slice(&serde_json::to_vec(&profile).expect("save")).expect("restart");
+        profile.expire_appearances(deadline - 1);
+        assert_eq!(profile.appearances.len(), 1);
+        assert_eq!(
+            profile.appearance_expirations[0].2, deadline,
+            "restoration never renews the lifetime"
+        );
+        profile.expire_appearances(deadline);
+        assert!(profile.appearances.is_empty());
+        assert!(profile.appearance_expirations.is_empty());
+    }
+
+    #[test]
+    fn expiration_clears_loaded_and_absent_bindings_but_keeps_newer_faces_library_and_meshes() {
+        let files = Files::new();
+        let path = files.0.join(FILE);
+        let (jobs, _) = crate::scene::jobs::Jobs::new();
+        let mut imports = restored(path.clone(), "account", &jobs);
+        let mut texture = files.entry("texture-demo.png");
+        let mut material = files.entry("material-demo.gltf");
+        let mesh = files.entry("mesh-demo.dae");
+        texture.local_published = true;
+        material.local_published = true;
+        let ids = [texture.id, material.id, mesh.id];
+        imports.entries = vec![texture, material, mesh];
+        let mut objects = crate::world::objects::ObjectStore::default();
+        let mut update = crate::demo::action_avatar(false);
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        let object = update.full_id;
+        let absent = Uuid::from_u128(999);
+        let index = objects.upsert(0, update);
+        let mut parked_update = crate::demo::action_avatar(false);
+        parked_update.full_id = absent;
+        parked_update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        objects.upsert(1, parked_update);
+        imports.target_local(ids[0], object, &[], false);
+        imports.target_local(ids[1], object, &[1], false);
+        imports.target_local(ids[1], absent, &[3], false);
+        imports.target_local(ids[2], object, &[], true);
+        imports.apply_appearance_targets(&mut objects);
+        let mut parked = objects.park_region(1, &[]);
+        assert_eq!(parked.len(), 1);
+        let before = objects.get(index).expect("object").te.clone();
+        let now = unix_now();
+        imports.persistence.appearance_expirations.insert((object, None), now);
+        imports.persistence.appearance_expirations.insert((absent, Some(3)), now);
+        assert!(imports.expire_local_appearances_at(&mut objects, now - 1).is_empty());
+        assert_eq!(
+            imports.expire_local_appearances_at(&mut objects, now),
+            HashSet::from([(object, None), (absent, Some(3))])
+        );
+        assert_eq!(imports.local_appearance_targets.len(), 1);
+        let remaining = objects.get(index).expect("object");
+        assert_eq!(remaining.local_appearance(0), None);
+        assert_eq!(
+            remaining.local_appearance(1),
+            Some(crate::world::objects::LocalAppearance::Material(ids[1]))
+        );
+        assert!(remaining.material_dirty && remaining.render.needs_records);
+        assert!(Arc::ptr_eq(
+            remaining.te.as_ref().expect("server faces"),
+            before.as_ref().expect("server faces")
+        ));
+        assert_eq!(imports.local_targets[&object].entry, ids[2]);
+        let restored_index = objects.restore(parked.remove(0)).expect("returning object");
+        imports.apply_appearance_targets(&mut objects);
+        assert!(
+            objects
+                .get(restored_index)
+                .expect("returning object")
+                .render
+                .local_appearance
+                .is_empty()
+        );
+        imports.flush_local_registry();
+        let restarted = restored(path, "account", &jobs);
+        assert_eq!(restarted.local_appearance_targets.len(), 1);
+        assert_eq!(restarted.entries.len(), 3);
+        assert_eq!(restarted.local_targets[&object].entry, ids[2]);
+        assert!(files.0.join("texture-demo.png").is_file());
+        assert!(files.0.join("material-demo.gltf").is_file());
+    }
+
+    #[test]
+    fn splitting_a_whole_object_binding_keeps_unedited_faces_original_deadlines() {
+        use crate::world::objects::LocalAppearance;
+        let mut imports = Imports::default();
+        let object = Uuid::from_u128(101);
+        let original = LocalAppearance::Texture(Uuid::from_u128(102));
+        let replacement = LocalAppearance::Material(Uuid::from_u128(103));
+        imports.set_local_appearance_target(object, None, Some(original));
+        imports.persistence.appearance_expirations.insert((object, None), 1000);
+        imports.sync_local_appearance_changes([
+            (object, None, None),
+            (object, Some(0), Some(original)),
+            (object, Some(1), Some(original)),
+            (object, Some(1), Some(replacement)),
+        ]);
+        assert!(!imports.persistence.appearance_expirations.contains_key(&(object, None)));
+        assert_eq!(imports.persistence.appearance_expirations[&(object, Some(0))], 1000);
+        assert!(imports.persistence.appearance_expirations[&(object, Some(1))] >= unix_now() + APPEARANCE_LIFETIME - 1);
+        assert_eq!(imports.local_appearance_targets[&(object, Some(1))], replacement);
+    }
+
+    #[test]
+    fn saved_deadlines_survive_reconnect_and_library_edits_and_expired_profiles_are_pruned() {
+        let files = Files::new();
+        let path = files.0.join(FILE);
+        let (jobs, _) = crate::scene::jobs::Jobs::new();
+        let mut imports = restored(path.clone(), "account", &jobs);
+        let texture = files.entry("texture-demo.png");
+        let id = texture.id;
+        imports.entries.push(texture);
+        let object = Uuid::from_u128(100);
+        imports.target_local(id, object, &[1, 2], false);
+        let deadline = unix_now() + 100;
+        imports.persistence.appearance_expirations.insert((object, Some(1)), deadline);
+        imports.flush_local_registry();
+        let mut restarted = restored(path.clone(), "account", &jobs);
+        assert_eq!(restarted.persistence.appearance_expirations[&(object, Some(1))], deadline);
+        restarted.entries[0].name = "Edited library row".into();
+        restarted.save_local_registry_at(true, deadline - 1);
+        assert_eq!(
+            restarted.persistence.registry.profiles["account"].appearance_expirations[0].2,
+            deadline
+        );
+        restarted.target_local(id, object, &[2], false);
+        assert_eq!(restarted.persistence.appearance_expirations[&(object, Some(1))], deadline);
+        assert!(restarted.persistence.appearance_expirations[&(object, Some(2))] > deadline);
+        restarted
+            .persistence
+            .registry
+            .profiles
+            .insert("other".into(), restarted.persistence.registry.profiles["account"].clone());
+        restarted.save_local_registry_at(true, deadline);
+        assert_eq!(restarted.persistence.registry.profiles["account"].appearances.len(), 1);
+        assert_eq!(restarted.persistence.registry.profiles["other"].appearances.len(), 1);
+        restarted.persistence.finish();
+        // Simulate another deadline passing while the viewer is closed.
+        let mut saved = read_registry(&path).expect("saved registry");
+        let profile = saved.profiles.get_mut("account").expect("account");
+        profile
+            .appearances
+            .push((object, Some(3), crate::world::objects::LocalAppearance::Texture(id)));
+        profile.appearance_expirations.push((object, Some(3), unix_now() - 1));
+        write_registry(&path, &serde_json::to_vec(&saved).expect("registry bytes")).expect("synthetic expired registry");
+        let restarted = restored(path, "account", &jobs);
+        assert!(!restarted.local_appearance_targets.contains_key(&(object, Some(1))));
+        assert!(restarted.local_appearance_targets.contains_key(&(object, Some(2))));
+        assert!(
+            !restarted.local_appearance_targets.contains_key(&(object, Some(3))),
+            "expired before restoration"
+        );
+        assert_eq!(restarted.entries[0].name, "Edited library row");
+    }
+
     #[test]
     fn global_appearance_removal_survives_restart_and_keeps_library_meshes_and_other_profiles() {
         let files = Files::new();

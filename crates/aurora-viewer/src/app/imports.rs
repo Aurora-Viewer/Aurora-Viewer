@@ -46,6 +46,9 @@ impl App {
         }
         self.imports.poll_local_registry();
         self.sync_local_picker_bindings();
+        let expired = self.imports.expire_local_appearances(&mut self.world.objects);
+        self.build
+            .forget_expired_local_picker_appearances(&expired, &self.imports.local_appearance_targets);
         self.imports.sound_limit = if self.settings.grid == crate::settings::GridChoice::Custom {
             60
         } else {
@@ -998,14 +1001,8 @@ impl App {
     }
 
     pub(super) fn sync_local_picker_bindings(&mut self) {
-        for (object, face, appearance) in self.build.local_appearance_changes.drain(..) {
-            let key = (object, face);
-            if let Some(appearance) = appearance {
-                self.imports.local_appearance_targets.insert(key, appearance);
-            } else {
-                self.imports.local_appearance_targets.remove(&key);
-            }
-        }
+        self.imports
+            .sync_local_appearance_changes(self.build.local_appearance_changes.drain(..));
     }
 
     pub(super) fn demo_asset_upload(&mut self, request: uuid::Uuid, upload: aurora_net::inventory::upload::Request) {

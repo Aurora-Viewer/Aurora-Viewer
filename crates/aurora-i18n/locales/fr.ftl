@@ -12648,7 +12648,7 @@ local-appearance-warning = { $count ->
     }
 local-appearance-pending = Aperçus locaux mémorisés (en attente)
 local-appearance-details = Textures locales : { $textures } · Matériaux locaux : { $materials }
-local-appearance-private = Ces aperçus sont visibles uniquement par vous et sont restaurés après reconnexion.
+local-appearance-private = Ces aperçus sont visibles uniquement par vous et sont restaurés après reconnexion. Chaque application expire après 7 jours.
 local-appearance-reveal = Faire clignoter les surfaces locales
 local-appearance-stop-reveal = Arrêter le repérage des surfaces locales
 local-appearance-library = Ouvrir les aperçus locaux
