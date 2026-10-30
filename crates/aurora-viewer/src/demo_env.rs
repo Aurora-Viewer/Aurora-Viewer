@@ -58,7 +58,19 @@ pub fn estate_manager() -> bool {
 /// The library and the user's Settings folder: for the selector's and the
 /// editors' scenarios, and for About Land's (its environment picker).
 pub fn enabled() -> bool {
-    select_enabled() || editor().is_some() || std::env::var_os("AURORA_DEMO_LAND").is_some()
+    select_enabled() || editor().is_some() || std::env::var_os("AURORA_DEMO_LAND").is_some() || photo_windlight()
+}
+
+/// `AURORA_DEMO_SNAPSHOT=windlight…`: the photo's Light section picks from
+/// the library.
+fn photo_windlight() -> bool {
+    std::env::var("AURORA_DEMO_SNAPSHOT").is_ok_and(|s| s.trim().starts_with("windlight"))
+}
+
+/// The photo's demo picks: the library's "Coastal Sunset" sky and "Murky
+/// Water".
+pub fn photo_picks() -> (Uuid, Uuid) {
+    (u(0x204), u(0x302))
 }
 
 /// The user's day cycle item the `day` editor scenarios open.

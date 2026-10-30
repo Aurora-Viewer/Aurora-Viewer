@@ -21,6 +21,7 @@
 //! (saveToSettings / loadFromSettings).
 
 use super::eep::{self, DayCycle, EnvAnswer, Settings, SkyFrame, WaterFrame};
+use super::eep_photo::{PhotoChoice, PhotoLayer};
 use super::env_select::{SettingsKind, Shown as ListShown};
 use aurora_llsd::Llsd;
 use aurora_net::RegionHandle;
@@ -192,6 +193,9 @@ pub enum Source {
     /// ENV_LOCAL: the environment selector, the time-of-day presets,
     /// "Personal lighting".
     Local(u64),
+    /// The photo's own sky, water or day over what lies beneath
+    /// (`eep_photo`), while the photo window is open.
+    Photo(u64),
     /// ENV_PARCEL of the main region.
     Parcel(u64),
     /// ENV_REGION: the region's day, or Firestorm's default day asset when
@@ -254,9 +258,11 @@ struct Shown {
     water: WaterFrame,
     /// The selected environment without the crossfade (what Firestorm's
     /// DayInstance holds: the half a fixed sky or water inherits, the sky
-    /// "Personal lighting" starts from).
+    /// "Personal lighting" starts from), without the photo's layer.
     target_sky: SkyFrame,
     target_water: WaterFrame,
+    /// The same with the photo's layer (what "Keep this light" keeps).
+    photo_sky: SkyFrame,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -304,6 +310,11 @@ pub struct EnvSelector {
     /// ENV_EDIT (setEnvironment(ENV_EDIT, sky or water)): the edited half,
     /// the other one frozen at what was shown when the editor opened.
     edit: Option<(SkyFrame, WaterFrame)>,
+    /// The photo's own light over the local environment (`eep_photo`).
+    photo: PhotoLayer,
+    /// The selector changed the photo's choice (a change made elsewhere, a
+    /// camera preset, "Keep this light"): the photo window follows.
+    photo_changed: bool,
 }
 
 impl EnvSelector {
@@ -338,6 +349,7 @@ impl EnvSelector {
         if self.rlva_locked {
             return;
         }
+        self.photo_yield(SettingsKind::Day);
         self.apply_settings(Uuid::nil(), &Settings::Day(day), None, None);
     }
 
@@ -371,6 +383,7 @@ impl EnvSelector {
             return;
         }
         // an edited sky without an asset: "Personal lighting" edits it next
+        self.photo_yield(SettingsKind::Sky);
         self.apply_sky(LocalOrigin::Personal, sky);
     }
 
@@ -378,6 +391,7 @@ impl EnvSelector {
         if self.rlva_locked {
             return;
         }
+        self.photo_yield(SettingsKind::Water);
         self.apply_water(LocalOrigin::Inherited, water);
     }
     fn slot(&mut self, handle: RegionHandle, day: Arc<DayCycle>, settings: Option<Arc<Llsd>>, length: f64, offset: f64) -> Slot {
@@ -463,11 +477,17 @@ impl EnvSelector {
                 out.push(p.asset);
             }
         }
+        for id in self.photo.wanted() {
+            if !out.contains(&id) {
+                out.push(id);
+            }
+        }
         out
     }
 
     /// A settings asset arrived (`None`: it could not be fetched or parsed).
     pub fn on_settings(&mut self, id: Uuid, settings: Option<Arc<Settings>>) {
+        self.photo.on_settings(id, settings.as_ref());
         let mut local = false;
         for p in self.pending.iter_mut().filter(|p| p.asset == id) {
             if matches!(p.state, PendingState::Waiting) {
@@ -565,6 +585,7 @@ impl EnvSelector {
         let Some(asset) = super::env::time_of_day_sky(preset) else {
             return;
         };
+        self.photo_yield(SettingsKind::Sky);
         self.pending
             .retain(|p| !(p.kind == SettingsKind::Sky && matches!(p.state, PendingState::Waiting) && !p.asset.is_nil()));
         self.pending.push_back(Pending {
@@ -597,6 +618,7 @@ impl EnvSelector {
         if self.rlva_locked {
             return;
         }
+        self.photo_yield(kind);
         let mut preset_replaced = false;
         self.pending.retain(|p| {
             let replaced = p.kind == kind && matches!(p.state, PendingState::Waiting) && !p.asset.is_nil();
@@ -749,6 +771,9 @@ impl EnvSelector {
         if self.rlva_locked {
             return;
         }
+        // "Personal lighting" edits the light shown: the photo's becomes the
+        // user's first (opened from the photo's Light section, or meanwhile)
+        self.keep_photo();
         if self.local.as_ref().is_some_and(|l| l.day.is_none()) {
             return;
         }
@@ -772,6 +797,14 @@ impl EnvSelector {
     pub fn edit_personal(&mut self, edit: impl FnOnce(&mut SkyFrame) -> bool) -> bool {
         if self.rlva_locked {
             return false;
+        }
+        if !self.photo.choice.is_empty() {
+            // the photo's light chosen while the window was open: it is
+            // what the user sees, and edits
+            self.keep_photo();
+            if self.personal_sky().is_none() {
+                self.capture_personal();
+            }
         }
         let Some((origin, sky)) = self.local.as_mut().and_then(|l| l.sky.as_mut()) else {
             return false;
@@ -802,33 +835,155 @@ impl EnvSelector {
     /// for a sky / water without an asset; None when there is nothing to keep
     /// (the file is removed). A time of day preset is kept by the settings.
     pub fn saved_local(&self) -> Option<Llsd> {
-        let l = self.local.as_ref()?;
-        let mut m = aurora_llsd::Map::new();
-        if let Some((id, _)) = &l.day {
-            m.insert("day_id".into(), Llsd::from(*id));
-            m.insert("day_length".into(), Llsd::from(l.length as i32));
-            m.insert("day_offset".into(), Llsd::from(l.offset as i32));
+        self.local.as_ref().and_then(saved_of)
+    }
+
+    /// What a camera preset keeps of the light shown: the photo's, as "Keep
+    /// this light" would make it (`saved_local` form, time of day preset);
+    /// None without a photo light.
+    pub fn saved_photo(&self) -> Option<(Option<Llsd>, u8)> {
+        if self.photo.choice.is_empty() {
+            return None;
         }
-        match l.sky {
-            Some((LocalOrigin::Item(id), _)) => {
-                m.insert("sky_id".into(), Llsd::from(id));
-            }
-            Some((o @ (LocalOrigin::Personal | LocalOrigin::Inherited), s)) => {
-                m.insert("sky_llsd".into(), s.settings_llsd());
-                m.insert("sky_personal".into(), Llsd::from(o == LocalOrigin::Personal));
-            }
-            Some((LocalOrigin::Preset(_), _)) | None => {}
+        let (local, preset) = self.kept_photo();
+        Some((local.as_ref().and_then(saved_of), preset))
+    }
+
+    /// The photo's choice, as the selector last left it.
+    pub fn photo_choice(&self) -> PhotoChoice {
+        self.photo.choice
+    }
+
+    /// The photo window's choice for this frame (nothing while RLVa holds
+    /// the environment, @setenv: the user's own light is not theirs to
+    /// change).
+    pub fn set_photo(&mut self, choice: PhotoChoice) {
+        if self.rlva_locked && !choice.is_empty() {
+            self.photo.set(PhotoChoice::default());
+            self.photo_changed = true;
+            return;
         }
-        match l.water {
-            Some((LocalOrigin::Item(id), _)) => {
-                m.insert("water_id".into(), Llsd::from(id));
-            }
-            Some((_, w)) => {
-                m.insert("water_llsd".into(), w.settings_llsd());
-            }
-            None => {}
+        self.photo.set(choice);
+    }
+
+    /// A camera preset's light replaces the photo's too.
+    pub fn drop_photo(&mut self) {
+        if !self.photo.choice.is_empty() {
+            self.photo.set(PhotoChoice::default());
+            self.photo_changed = true;
         }
-        (!m.is_empty()).then_some(Llsd::Map(m))
+    }
+
+    /// The selector changed the photo's choice since the last call.
+    pub fn take_photo_changed(&mut self) -> bool {
+        std::mem::take(&mut self.photo_changed)
+    }
+
+    /// An item of the photo's is still loading.
+    pub fn photo_loading(&self) -> bool {
+        self.photo.loading()
+    }
+
+    /// The sky shown without the crossfade, the photo's layer included.
+    pub fn shown_sky(&self) -> Option<SkyFrame> {
+        self.shown.map(|s| s.photo_sky)
+    }
+
+    /// A change made elsewhere (environment window, World menu, an editor's
+    /// "Apply only to myself") takes over the photo's own choice of that
+    /// list: like the photo's time of day before, it is the user's.
+    fn photo_yield(&mut self, kind: SettingsKind) {
+        let mut c = self.photo.choice;
+        match kind {
+            SettingsKind::Sky => {
+                c.sky = None;
+                c.time = None;
+            }
+            SettingsKind::Water => c.water = None,
+            SettingsKind::Day => c.day = None,
+        }
+        if c != self.photo.choice {
+            self.photo.set(c);
+            self.photo_changed = true;
+        }
+    }
+
+    /// The local environment and its preset as "Keep this light" leaves
+    /// them: the photo's loaded choices applied as the lists apply them
+    /// (a day replaces the fixed halves, a sky or water is fixed on top
+    /// with the other half inherited from what is shown), then its sun on a
+    /// fixed sky, the day's frozen if there is none
+    /// (captureCurrentEnvironment).
+    fn kept_photo(&self) -> (Option<LocalEnv>, u8) {
+        let r = self.photo.resolved();
+        let (under_sky, under_water) = self.current();
+        let mut local = self.local.clone();
+        let mut preset = self.local_preset;
+        if let Some((id, day)) = r.day {
+            let mut l = LocalEnv::new(self.generation);
+            l.day = Some((id, day));
+            local = Some(l);
+            preset = 0;
+        }
+        if let Some((origin, sky)) = r.sky {
+            fixed_halves(&mut local, under_sky, under_water).sky = Some((origin, sky));
+            preset = match origin {
+                LocalOrigin::Preset(n) => n,
+                _ => 0,
+            };
+        }
+        if let Some((id, water)) = r.water {
+            fixed_halves(&mut local, under_sky, under_water).water = Some((LocalOrigin::Item(id), water));
+        }
+        if let Some(sun) = self.photo.choice.sun {
+            let shown = self.shown.map_or_else(SkyFrame::default, |s| s.photo_sky);
+            let l = fixed_halves(&mut local, under_sky, under_water);
+            match &mut l.sky {
+                Some((origin, sky)) => {
+                    sky.sun_rotation = sun;
+                    *origin = LocalOrigin::Personal;
+                }
+                None => {
+                    l.sky = Some((
+                        LocalOrigin::Personal,
+                        SkyFrame {
+                            sun_rotation: sun,
+                            ..shown
+                        },
+                    ));
+                }
+            }
+            preset = 0;
+        }
+        (local, preset)
+    }
+
+    /// "Keep this light": the photo's light becomes the user's local
+    /// environment, kept for the next session like any choice, and the
+    /// photo's layer goes. False when there was nothing to keep.
+    pub fn keep_photo(&mut self) -> bool {
+        if self.rlva_locked || self.photo.choice.is_empty() {
+            return false;
+        }
+        let (local, preset) = self.kept_photo();
+        log::info!("photo light kept as the local environment (time of day {preset})");
+        self.generation += 1;
+        self.local = local.map(|mut l| {
+            l.generation = self.generation;
+            l
+        });
+        if preset != self.local_preset {
+            // the panels' time of day follows (`take_preset_change`)
+            self.local_preset = preset;
+            self.preset_dropped = true;
+        }
+        self.pending.clear();
+        self.local_dirty = true;
+        // the same light, now the user's: no crossfade
+        self.instant_next = true;
+        self.photo.set(PhotoChoice::default());
+        self.photo_changed = true;
+        true
     }
 
     /// A local environment kept by a camera preset (`saved_local`), chosen
@@ -838,6 +993,7 @@ impl EnvSelector {
         if self.rlva_locked {
             return;
         }
+        self.drop_photo();
         self.clear_local();
         self.restore_local(data);
         self.local_dirty = true;
@@ -932,6 +1088,17 @@ impl EnvSelector {
             };
             (source, track, sky, water)
         };
+        // the photo's layer, under an open editor only (`eep_photo`); the
+        // targets stay those beneath it, for what a local change inherits
+        let (target_sky, target_water) = (sky, water);
+        let (source, track, sky, water) = if source == Source::Edit || self.photo.choice.is_empty() {
+            (source, track, sky, water)
+        } else {
+            let r = self.photo.resolve();
+            let (t, s, w) = r.compose(self.photo.choice.sun, &self.altitudes, input, (track, sky, water));
+            let source = if r.any() { Source::Photo(self.photo.generation) } else { source };
+            (source, t, s, w)
+        };
         if let Some(prev) = self.shown
             && (prev.source != source || prev.track != track)
         {
@@ -949,13 +1116,14 @@ impl EnvSelector {
             } else if prev.source == Source::Edit {
                 // onClose: setSelectedEnvironment(ENV_LOCAL), default transition
                 TRANSITION_DEFAULT
-            } else if matches!(source, Source::Local(_)) {
+            } else if matches!(source, Source::Local(_) | Source::Photo(_)) {
+                // (the photo's choices are manual changes too)
                 if std::mem::take(&mut self.instant_next) {
                     0.0
                 } else {
                     self.manual_transition
                 }
-            } else if matches!(prev.source, Source::Local(_)) {
+            } else if matches!(prev.source, Source::Local(_) | Source::Photo(_)) {
                 TRANSITION_DEFAULT
             } else {
                 self.next_fade
@@ -972,7 +1140,7 @@ impl EnvSelector {
                 duration,
             });
         }
-        let (target_sky, target_water) = (sky, water);
+        let photo_sky = sky;
         let (sky, water) = match self.fade {
             Some(f) => {
                 let t = ((input.now - f.start) as f32 / f.duration).clamp(0.0, 1.0);
@@ -992,9 +1160,52 @@ impl EnvSelector {
             water,
             target_sky,
             target_water,
+            photo_sky,
         });
         (sky, water)
     }
+}
+
+/// The local environment a fixed half goes into (`EnvSelector::local_mut`
+/// without its generation): created with the frozen sky and water shown
+/// when it has neither a day nor its own.
+fn fixed_halves(local: &mut Option<LocalEnv>, sky: SkyFrame, water: WaterFrame) -> &mut LocalEnv {
+    let l = local.get_or_insert_with(|| LocalEnv::new(0));
+    if l.day.is_none() {
+        l.sky.get_or_insert((LocalOrigin::Inherited, sky));
+        l.water.get_or_insert((LocalOrigin::Inherited, water));
+    }
+    l
+}
+
+/// The saved form of a local environment (`EnvSelector::saved_local`).
+fn saved_of(l: &LocalEnv) -> Option<Llsd> {
+    let mut m = aurora_llsd::Map::new();
+    if let Some((id, _)) = &l.day {
+        m.insert("day_id".into(), Llsd::from(*id));
+        m.insert("day_length".into(), Llsd::from(l.length as i32));
+        m.insert("day_offset".into(), Llsd::from(l.offset as i32));
+    }
+    match l.sky {
+        Some((LocalOrigin::Item(id), _)) => {
+            m.insert("sky_id".into(), Llsd::from(id));
+        }
+        Some((o @ (LocalOrigin::Personal | LocalOrigin::Inherited), s)) => {
+            m.insert("sky_llsd".into(), s.settings_llsd());
+            m.insert("sky_personal".into(), Llsd::from(o == LocalOrigin::Personal));
+        }
+        Some((LocalOrigin::Preset(_), _)) | None => {}
+    }
+    match l.water {
+        Some((LocalOrigin::Item(id), _)) => {
+            m.insert("water_id".into(), Llsd::from(id));
+        }
+        Some((_, w)) => {
+            m.insert("water_llsd".into(), w.settings_llsd());
+        }
+        None => {}
+    }
+    (!m.is_empty()).then_some(Llsd::Map(m))
 }
 
 impl super::World {
@@ -1612,5 +1823,157 @@ mod tests {
         assert!((now.frame(&input(1.0)).0.gamma - 2.5).abs() < 1e-6);
         assert_eq!(now.local_view().sky, ListShown::Personal);
         assert_ne!(now.local_view().water, ListShown::Item(WATER));
+    }
+
+    fn photo(sky: Option<Uuid>, water: Option<Uuid>) -> PhotoChoice {
+        PhotoChoice {
+            sky,
+            water,
+            ..PhotoChoice::default()
+        }
+    }
+
+    #[test]
+    fn the_photos_light_lies_over_the_users_and_leaves_it_alone() {
+        let mut sel = region_selector();
+        sel.request_local(WATER, SettingsKind::Water);
+        sel.on_settings(WATER, Some(water_asset(9.0)));
+        sel.frame(&input(1.0));
+        sel.take_local_dirty();
+        let saved = sel.saved_local();
+        // the photo's sky and sun: the sky shows once loaded
+        let sun = crate::ui::environment::rotation_from(45.0, 10.0);
+        sel.set_photo(PhotoChoice {
+            sun: Some(sun),
+            ..photo(Some(SKY), None)
+        });
+        assert_eq!(sel.wanted_settings(), vec![SKY]);
+        assert!(sel.photo_loading());
+        let (sky, _) = sel.frame(&input(2.0));
+        assert!((sky.gamma - 0.7).abs() < 1e-6, "the region's sky until the asset arrives");
+        assert!(sky.sun_rotation.abs_diff_eq(sun, 1e-6), "the sun turns at once");
+        sel.on_settings(SKY, Some(sky_asset(1.9)));
+        let (sky, water) = sel.frame(&input(3.0));
+        assert!((sky.gamma - 1.9).abs() < 1e-6);
+        assert!((water.fog_density - 9.0).abs() < 1e-6, "the user's water beneath");
+        assert!(matches!(sel.shown_source(), Some(Source::Photo(_))));
+        // the user's environment is neither changed nor to save
+        assert!(!sel.take_local_dirty());
+        assert_eq!(sel.saved_local(), saved);
+        assert_eq!(sel.local_view().sky, ListShown::Shared);
+        // the window closes: the user's own again
+        sel.set_photo(PhotoChoice::default());
+        let (sky, water) = sel.frame(&input(4.0));
+        assert!((sky.gamma - 0.7).abs() < 1e-6);
+        assert!((water.fog_density - 9.0).abs() < 1e-6);
+        assert!(!sel.take_local_dirty());
+    }
+
+    #[test]
+    fn keeping_the_photos_light_makes_it_the_users() {
+        let mut sel = region_selector();
+        let sun = crate::ui::environment::rotation_from(200.0, 25.0);
+        sel.set_photo(PhotoChoice {
+            sun: Some(sun),
+            ..photo(Some(SKY), Some(WATER))
+        });
+        sel.on_settings(SKY, Some(sky_asset(1.9)));
+        sel.on_settings(WATER, Some(water_asset(9.0)));
+        let shown = sel.frame(&input(1.0));
+        // a camera preset saved now keeps that light
+        let (data, preset) = sel.saved_photo().expect("a photo light");
+        assert_eq!(preset, 0);
+        let data = data.expect("a local environment");
+        assert!(data.has("sky_llsd"), "the turned sun makes the sky a personal one");
+        assert_eq!(data["water_id"].as_uuid(), WATER);
+        assert!(sel.keep_photo());
+        assert!(sel.take_photo_changed());
+        assert!(sel.photo_choice().is_empty());
+        assert!(sel.take_local_dirty(), "kept for the next session");
+        assert_eq!(sel.local_view().sky, ListShown::Personal);
+        assert_eq!(sel.local_view().water, ListShown::Item(WATER));
+        let kept = sel.frame(&input(2.0));
+        assert!((kept.0.gamma - shown.0.gamma).abs() < 1e-6, "the same light, without a crossfade");
+        assert!(kept.0.sun_rotation.abs_diff_eq(sun, 1e-6));
+        assert!((kept.1.fog_density - 9.0).abs() < 1e-6);
+        // nothing more to keep
+        assert!(!sel.keep_photo());
+    }
+
+    #[test]
+    fn a_kept_time_of_day_is_the_panels_one() {
+        let mut sel = region_selector();
+        sel.set_photo(PhotoChoice {
+            time: Some(3),
+            ..PhotoChoice::default()
+        });
+        let asset = super::super::env::time_of_day_sky(3).expect("a preset");
+        sel.on_settings(asset, Some(sky_asset(1.4)));
+        sel.frame(&input(1.0));
+        assert_eq!(sel.saved_photo().map(|s| s.1), Some(3));
+        assert!(sel.keep_photo());
+        let mut time = 0;
+        let mut world_sel = std::mem::take(&mut sel);
+        if let Some(p) = world_sel.take_preset_change() {
+            time = p;
+        }
+        world_sel.set_time_of_day(time);
+        assert_eq!(time, 3, "the panels follow the kept preset");
+        assert!((world_sel.frame(&input(2.0)).0.gamma - 1.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_pick_made_elsewhere_takes_over_the_photos_and_a_preset_replaces_it() {
+        let mut sel = region_selector();
+        sel.set_photo(PhotoChoice {
+            time: Some(1),
+            water: Some(WATER),
+            ..PhotoChoice::default()
+        });
+        // the environment window's sky: the photo's time goes, its water stays
+        sel.request_local(SKY, SettingsKind::Sky);
+        assert!(sel.take_photo_changed());
+        assert_eq!(sel.photo_choice(), photo(None, Some(WATER)));
+        assert!(!sel.take_photo_changed());
+        // a camera preset's light replaces all of it
+        sel.drop_photo();
+        assert!(sel.take_photo_changed());
+        assert!(sel.photo_choice().is_empty());
+        // RLVa holds the environment: no photo light either
+        sel.rlva_locked = true;
+        sel.set_photo(photo(Some(SKY), None));
+        assert!(sel.photo_choice().is_empty());
+        assert!(sel.take_photo_changed());
+    }
+
+    #[test]
+    fn personal_lighting_starts_from_the_photos_light() {
+        let mut sel = region_selector();
+        sel.set_photo(photo(Some(SKY), None));
+        sel.on_settings(SKY, Some(sky_asset(1.9)));
+        sel.frame(&input(1.0));
+        sel.capture_personal();
+        assert!(sel.photo_choice().is_empty());
+        assert!((sel.personal_sky().expect("a personal sky").gamma - 1.9).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_photos_sun_over_a_day_freezes_its_sky_when_kept() {
+        let mut sel = region_selector();
+        let sun = crate::ui::environment::rotation_from(10.0, 40.0);
+        sel.set_photo(PhotoChoice {
+            day: Some(DAY),
+            sun: Some(sun),
+            ..PhotoChoice::default()
+        });
+        sel.on_settings(DAY, Some(day_asset(1.2, 4.0)));
+        sel.frame(&input(1.0));
+        assert!(sel.keep_photo());
+        assert_eq!(sel.local_view().day, ListShown::Item(DAY));
+        assert_eq!(sel.local_view().sky, ListShown::Personal);
+        let (sky, water) = sel.frame(&input(2.0));
+        assert!((sky.gamma - 1.2).abs() < 1e-6);
+        assert!(sky.sun_rotation.abs_diff_eq(sun, 1e-6));
+        assert!((water.fog_density - 4.0).abs() < 1e-6, "the day's water");
     }
 }

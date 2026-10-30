@@ -801,13 +801,13 @@ impl Viewfinder {
                     ui,
                     p,
                     "sun-filled",
-                    time_label(panel.light.time),
+                    time_label(panel.light.env.time),
                     p.ink,
                     aurora_i18n::tr!("photo-vf-time-tip"),
                 )
                 .clicked()
                 {
-                    panel.light.time = next_time(panel.light.time);
+                    panel.light.env.set_time(next_time(panel.light.env.time));
                 }
             });
         y += 24.0;
@@ -2178,12 +2178,12 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
     ));
     v.push((
         aurora_i18n::tr!("photo-vf-time"),
-        time_label(panel.light.time).replace(
+        time_label(panel.light.env.time).replace(
             aurora_i18n::tr!("photo-vf-sky-current"),
             aurora_i18n::tr!("photo-light-time-current"),
         ),
         Box::new(|_, panel| {
-            panel.light.time = next_time(panel.light.time);
+            panel.light.env.set_time(next_time(panel.light.env.time));
             None
         }),
     ));

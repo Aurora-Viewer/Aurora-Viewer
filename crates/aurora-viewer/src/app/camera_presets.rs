@@ -64,9 +64,15 @@ impl App {
             ));
         }
         if include.light {
+            // the light shown: the photo's, as "Keep this light" would keep it
+            let (environment, time_of_day) = self
+                .world
+                .eep
+                .saved_photo()
+                .unwrap_or_else(|| (self.world.eep.saved_local(), self.panels.time_of_day));
             shot.light = Some(Light {
-                environment: self.world.eep.saved_local().map(|d| aurora_llsd::to_notation(&d)),
-                time_of_day: self.panels.time_of_day,
+                environment: environment.map(|d| aurora_llsd::to_notation(&d)),
+                time_of_day,
             });
         }
         Ok(shot)
@@ -147,6 +153,9 @@ impl App {
             .as_ref()
             .and_then(|e| aurora_llsd::from_notation(e.as_bytes()).ok())
             .filter(|d| d.is_map());
+        if !self.world.eep.rlva_locked {
+            self.world.eep.drop_photo();
+        }
         match saved {
             Some(data) => self.world.eep.apply_saved(&data),
             None => self.world.eep.clear_local(),
