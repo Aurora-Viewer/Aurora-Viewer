@@ -2164,15 +2164,8 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
         }
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            // slightly taller than the usual 26 px action row: easier pointer targets
-            let size = Vec2::new(0.0, 32.0);
-            let enter = crate::keybinds::Binding {
-                input: crate::keybinds::Input::key(winit::keyboard::KeyCode::Enter),
-                ctrl: false,
-                shift: false,
-                alt: false,
-            };
-            if widgets::action_button_keyed(ui, p, icon, ok, kind, size, true, has_input.then_some(&enter)).clicked() {
+            let size = Vec2::new(0.0, 26.0);
+            if widgets::action_button(ui, p, icon, ok, kind, size).clicked() {
                 done = Some(true);
             }
             // a warning has nothing to cancel
