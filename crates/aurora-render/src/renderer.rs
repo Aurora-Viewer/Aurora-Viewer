@@ -1387,7 +1387,8 @@ impl FrameTarget {
 pub(crate) struct Backend {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    surface: wgpu::Surface<'static>,
+    /// Destroyed by hand in `Drop`, unless the device is lost.
+    surface: std::mem::ManuallyDrop<wgpu::Surface<'static>>,
     config: wgpu::SurfaceConfiguration,
     /// The window's size while a photo frame draws at its own size in
     /// `config` (`Capture::Snapshot`); put back by `result`.
@@ -1508,6 +1509,25 @@ pub(crate) struct Backend {
     /// Set by the device-lost callback: the GPU is never waited on again
     /// (device_lost.rs).
     lost: crate::device_lost::DeviceLost,
+}
+
+impl Drop for Backend {
+    /// After a device loss the swapchain image of the last frame never comes
+    /// back: the work that holds it never finishes, and destroying the
+    /// surface panics in wgpu (`release_resources`: "SwapchainAcquireSemaphore
+    /// still in use by a SurfaceTexture", wgpu-hal 30). The session closing
+    /// properly after a "GPU device lost" then ended with a Rust panic
+    /// (#1650). A lost device only closes the viewer, so the surface is left
+    /// to the process, which releases it with the driver's objects.
+    fn drop(&mut self) {
+        if self.lost.get() {
+            log::warn!("GPU device lost: the window surface is left to the process");
+            return;
+        }
+        // SAFETY: dropped once, here, and never used again: the backend is
+        // being dropped.
+        unsafe { std::mem::ManuallyDrop::drop(&mut self.surface) };
+    }
 }
 
 /// What the main thread's `Renderer` creates the backend from.
@@ -2801,7 +2821,7 @@ impl Backend {
         let mut r = Backend {
             device,
             queue,
-            surface,
+            surface: std::mem::ManuallyDrop::new(surface),
             config,
             snapshot_window: None,
             surface_srgb,
