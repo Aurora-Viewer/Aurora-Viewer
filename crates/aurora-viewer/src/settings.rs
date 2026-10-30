@@ -2671,6 +2671,10 @@ pub struct MapSettings {
     pub mini_collision: bool,
     /// MiniMapAutoCenter.
     pub mini_auto_center: bool,
+    /// The mini-map window can neither be moved nor resized, and a plain
+    /// drag pans the map (not in the Legacy Viewer, where only Shift + drag
+    /// pans).
+    pub mini_locked: bool,
     /// FSNetMapDoubleClickAction: 0 nothing, 1 world map, 2 teleport.
     pub mini_double_click: u8,
     /// MapScale: world map pixels per region.
@@ -2709,6 +2713,7 @@ impl Default for MapSettings {
             mini_for_sale: false,
             mini_collision: true,
             mini_auto_center: true,
+            mini_locked: false,
             mini_double_click: 2,
             world_scale: 128.0,
             world_people: true,

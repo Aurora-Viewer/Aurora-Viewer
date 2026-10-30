@@ -7,6 +7,7 @@ enum Kind {
     Inspector,
     Minimized,
     Bare,
+    LockedBare,
 }
 
 const WINDOW: &str = "movement_fixture";
@@ -63,7 +64,7 @@ impl Fixture {
                 };
                 let pos = egui::pos2(180.0, 140.0);
                 let size = egui::vec2(360.0, 280.0);
-                if matches!(self.kind, Kind::Bare) {
+                if matches!(self.kind, Kind::Bare | Kind::LockedBare) {
                     bare_window(
                         ctx,
                         &p,
@@ -72,6 +73,7 @@ impl Fixture {
                         egui::Frame::NONE,
                         egui::Rect::from_min_size(pos, size),
                         size,
+                        matches!(self.kind, Kind::LockedBare),
                         body,
                     );
                 } else {
@@ -165,6 +167,23 @@ fn window_background_and_title_wait_for_motion_then_follow_the_full_drag() {
                 dropped,
                 "movement must stop on release"
             );
+        }
+    }
+}
+
+#[test]
+fn a_locked_bare_window_neither_moves_nor_resizes() {
+    for scale in [1.0, 1.5, 2.0] {
+        let mut f = Fixture::new(Kind::LockedBare, scale);
+        let before = f.show(vec![]);
+        // its background, then its bottom right corner (the resize handle)
+        for start in [before.center(), before.right_bottom() - egui::vec2(1.0, 1.0)] {
+            f.grab(start);
+            for step in 1..=4 {
+                f.show(vec![egui::Event::PointerMoved(start + egui::vec2(15.0, 10.0) * step as f32)]);
+            }
+            f.button(start + egui::vec2(60.0, 40.0), false);
+            assert_eq!(f.show(vec![]), before, "locked at {scale}: dragged from {start:?}");
         }
     }
 }

@@ -4654,6 +4654,7 @@ ui-contacts-attach-to-conversations = Attach to Conversations
 ui-chat-attach-to-conversations = Attach to Conversations
 build-ui-object-radius = Radius
 ui-minimap-center-map = Center map
+ui-minimap-lock-position = Lock position
 ui-media-reload = Reload
 ui-inventory-context-reload-folder = Reload folder
 ui-avatar-picker-search = Search

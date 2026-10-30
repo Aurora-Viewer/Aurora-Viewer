@@ -3,7 +3,7 @@
 //! avatars with above / below markers, the camera cone, chat rings,
 //! tracking beacon and cardinal letters; wheel zoom, drag pan with
 //! auto-centering, north-up or camera-up rotation, double-click teleport
-//! and Firestorm's context menu.
+//! and Firestorm's context menu, plus a position lock of our own.
 //!
 //! Ported from Firestorm's llnetmap.cpp, llfloatermap.cpp and
 //! LLViewerObjectList::renderObjectsForMap (originally LGPL 2.1, Linden Research, Inc.).
@@ -411,6 +411,7 @@ impl MiniMap {
             frame,
             default,
             vec2(64.0, 64.0),
+            opts.mini_locked,
             |ui| {
                 let size = ui.available_size().max(vec2(60.0, 60.0));
                 actions = self.draw(ui, p, world, tiles, cam, opts, size, true);
@@ -436,11 +437,12 @@ impl MiniMap {
         interactive: bool,
     ) -> Vec<MiniMapAction> {
         let mut actions = Vec::new();
-        // FIRE-32339: a plain drag moves the floater, Shift + drag pans the map
-        let shift = ui.input(|i| i.modifiers.shift);
+        // FIRE-32339: a plain drag moves the floater, Shift + drag pans the
+        // map; a locked floater does not move, so any drag pans it
+        let pan_drag = ui.input(|i| i.modifiers.shift) || opts.mini_locked;
         let sense = if !interactive {
             Sense::hover()
-        } else if shift || self.dragging {
+        } else if pan_drag || self.dragging {
             Sense::click_and_drag()
         } else {
             Sense::click()
@@ -470,7 +472,7 @@ impl MiniMap {
             }
         }
         self.dragging = interactive && resp.dragged();
-        if interactive && resp.hovered() && shift {
+        if interactive && resp.hovered() && pan_drag {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
         if self.dragging {
@@ -934,6 +936,16 @@ impl MiniMap {
                 !opts.mini_auto_center && self.pan != Vec2::ZERO,
             ) {
                 self.recenter = true;
+            }
+            if menu::check(
+                ui,
+                p,
+                "lock-filled",
+                aurora_i18n::tr!("ui-minimap-lock-position"),
+                opts.mini_locked,
+                true,
+            ) {
+                opts.mini_locked = !opts.mini_locked;
             }
             menu::submenu(ui, p, "messages-filled", aurora_i18n::tr!("ui-minimap-chat-range"), true, |ui| {
                 let mut k = super::colors::get();
