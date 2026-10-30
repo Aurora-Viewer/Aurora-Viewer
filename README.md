@@ -4,7 +4,7 @@
 
 # Aurora Viewer
 
-**A modern Second Life viewer, written from scratch in Rust.**<br>
+**A modern Second Life viewer, written in Rust.**<br>
 A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 [![Download](docs/readme/button-download.svg)](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/latest)&nbsp;
@@ -18,6 +18,8 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-4F46E5)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-5EEAD4?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-070B1F)](#build)
+
+<sub>This software is not provided or supported by Linden Lab, the makers of Second Life.</sub>
 
 [Why Aurora](#why-aurora) · [Creator tools](#creator-tools) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing)
 
@@ -75,10 +77,12 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 </details>
 
 
-Aurora Viewer is a Second Life client built from scratch in Rust, with a
-modern GPU renderer (wgpu on Vulkan) and a clean, flat interface. It follows
-the behaviour of the Legacy Viewer — same protocol,
-same rules, same defaults — while rethinking the user interface.
+Aurora Viewer is a Second Life client written in Rust, with a modern GPU
+renderer (wgpu on Vulkan) and a clean, flat interface. It is a new codebase,
+not a fork: many of its parts are Rust ports of code from the Second Life
+viewer and the Legacy Viewer, credited file by file ([NOTICE.md](NOTICE.md)). It follows the
+behaviour of the Legacy Viewer — same protocol, same rules, same defaults —
+while rethinking the user interface.
 
 > **Status:** early development (0.x). Usable for exploring, chatting and
 > testing. Some implemented features still await live-grid validation — see
@@ -471,7 +475,9 @@ are planned or in progress: they are not in the viewer yet.
 
 ### Open
 
-- **Free software (GPLv3)**, written from scratch: it is not a fork.
+- **Free software (GPLv3)**, a new codebase in Rust, not a fork; the parts
+  ported from the Second Life viewer and the Legacy Viewer are credited in
+  [NOTICE.md](NOTICE.md).
 - **Windows, Linux and macOS**: every release has a Linux build
   ([install guide](docs/LINUX.md)), with its sound through PulseAudio or
   PipeWire and the desktop's notifications, and a macOS application for
@@ -875,8 +881,9 @@ files never leave the machine and are never attached to a bug report.
 
 **What it is**
 
-- A Second Life viewer written from scratch in Rust; it is not a fork of
-  an existing viewer's codebase.
+- A Second Life viewer written in Rust; it is not a fork of an existing
+  viewer's codebase, but many parts are Rust ports of the Second Life viewer
+  and the Legacy Viewer, credited file by file in [NOTICE.md](NOTICE.md).
 - It speaks the same protocol as the Legacy Viewer (same messages, capabilities,
   request rates and defaults), so the servers see a well-behaved, familiar
   client.
