@@ -1186,6 +1186,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_BUILD_ECHO=<ms>` | The demo answers transform edits a round trip late |
 | `AURORA_DEMO_BUILD_TAB=<tab>` | Tab of the build window; `features:light-picker` opens the projector texture picker |
 | `AURORA_DEMO_BUILD_SIZE=<width>,<height>` | Initial dimensions of the construction window |
+| `AURORA_DEMO_BUILD_STYLE=aurora\|legacy` | Construction window presentation for this demo run |
 | `AURORA_DEMO_PARTICLE_EDITOR=1\|fountain\|inject` | Build › Edit particles on the object selected by `AURORA_DEMO_BUILD` |
 | `AURORA_DEMO_COLOR_PICKER=<mode>` | Colour picker and gestures offline |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
@@ -1235,9 +1236,35 @@ plane squares, rotation rings (`rotate`) and stretch handles (`stretch`)
 with a 100 % capture: everything grows by the same factor, strokes
 included, and a handle can be grabbed anywhere on its larger shape.
 
-`AURORA_DEMO_BUILD_SIZE` sets the compact construction window's initial dimensions
-once for reproducible captures; normal sessions restore saved geometry. There is
-one presentation at every width. The initial request is 350 by 820; the visible icons and expanded transform area
+`AURORA_DEMO_BUILD_STYLE=legacy` selects the Legacy tool strip and five tabs,
+independently of the saved preference. Use `AURORA_DEMO_BUILD=move,object:118`
+with `AURORA_DEMO_BUILD_TAB=general|object|features|texture:bp|texture:pbr|contents`.
+Compare with `floater_tools.xml` and `panel_fs_tools_texture.xml`: the compact tool
+block ends with linked-part navigation, Link/Unlink and the ruler on one row;
+counters sit directly above the five tabs. General places sale before permissions.
+Object has flags and vertical XYZ/C/P/p blocks on the left, shape/mesh data on the
+right. Features exposes its flexible/physics columns and light/probe controls
+without folding cards. Texture always exposes PBR, Blinn-Phong and Media as
+three adjacent buttons, including with no editable faces. Blinn-Phong shows its
+three maps vertically with tints beside them and surface parameters on the right.
+PBR shows material/base color, normal/emissive and ORM rows, tint swatches and live
+inline factors. Channel tabs sit above the Scale/Offset/Rotation columns; repeats,
+sync, planar alignment, hide-water and mapping form the footer. Check mode and
+channel switching, all map pickers and tint transactions, alpha/material factors,
+vector copy/paste, linked selection, ruler settings and the bottom collapse strip.
+At 330 by 620 the property panel scrolls while the tool block and tabs stay
+in place.
+Switch Preferences > Aurora > Build tools between Aurora and Legacy while
+editing; the selection, properties and custom Aurora arrangement must survive.
+The bulk Aurora/Legacy choices include this preference, which persists on restart.
+Legacy keeps Aurora's theme and native mesh inspector while following the
+reference control arrangement. Human grid validation covers
+actual property/transform edits, permissions, linking and object contents.
+
+`AURORA_DEMO_BUILD_SIZE` sets the construction window's initial dimensions
+once for reproducible captures; normal sessions restore saved geometry. The chosen
+presentation stays the same at every width. Aurora starts at 350 by 820 and Legacy
+at 360 by 780; Aurora's visible icons and expanded transform area
 can raise its minimum height. Append
 `+settings`, `+organize` or `+folded` to `AURORA_DEMO_BUILD_TAB=general` to inspect
 the side settings, hidden-item storage/notecard buttons or folded numeric values.

@@ -1041,8 +1041,25 @@ those sent by our avatar's objects. Settings persist; blocks do not. Preferences
 Its Cx rows participate in preference search, modified settings and page reset.
 `demo_anti_spam.rs` supplies synthetic floods through the production event path.
 
-The construction floater uses a single compact presentation (350 by 820 initial
-size), with ordinary saved geometry. Five editing sections share a full-width
+The construction floater defaults to the compact Aurora presentation (350 by 820
+initial size), with ordinary saved geometry. `BuildSettings::legacy_window`,
+exposed in Preferences > Aurora and its bulk look choices, selects
+`build/ui/legacy.rs`: the `LLFloaterTools` reference geometry (360 by 780 initial
+size), including the compact tool/options block, linked-part/link/grid row,
+selection counters, five tabs and bottom collapse strip. Its scoped UI tag keeps
+native spinners compact without changing Aurora or standalone object profiles.
+General places sale before ownership permissions. Object keeps flags and vertical
+XYZ blocks with C/P/p buttons on the left and shape/mesh data on the right.
+Features exposes flexible and physics columns above light/projector and probe
+controls. `build/ui/legacy_texture.rs` follows `FSPanelFace` and
+`panel_fs_tools_texture.xml`: three visible PBR/Blinn-Phong/Media tabs, vertical
+classic maps or the PBR map/tint grid on the left, inline parameters on the right,
+then channel tabs above the Scale/Offset/Rotation columns. The shared compact tab
+strip preserves the theme at inspector density. Face repeats, sync, planar
+alignment and mapping form the footer. UV writers, permission checks, pickers and
+simulator commands stay shared with Aurora.
+Contents keeps its three-column action strip. The fixed Legacy controls remain
+independent of the customized Aurora arrangement. Aurora's five editing sections share a full-width
 folding transform area and an editable footer. `build/layout.rs` owns the saved
 item order/destinations and the versioned, validated notecard profile, excluding
 object properties/transforms. `build/ui/layout.rs` renders the same controls in

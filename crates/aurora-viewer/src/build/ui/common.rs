@@ -60,10 +60,23 @@ pub fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
 /// A label of fixed width then the content (Firestorm's two-column rows).
 pub fn row<R>(ui: &mut egui::Ui, p: &Palette, name: &str, width: f32, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.horizontal(|ui| {
-        ui.allocate_ui_with_layout(Vec2::new(width, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            ui.set_min_width(width);
-            label(ui, p, name)
-        });
+        if super::legacy::active(ui) {
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 20.0), egui::Sense::hover());
+            let mut caption = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(rect)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            );
+            caption.set_clip_rect(ui.clip_rect().intersect(rect));
+            caption
+                .add(egui::Label::new(RichText::new(name).size(BODY).color(p.muted)).truncate())
+                .on_hover_text(name);
+        } else {
+            ui.allocate_ui_with_layout(Vec2::new(width, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.set_min_width(width);
+                label(ui, p, name)
+            });
+        }
         body(ui)
     })
     .inner
@@ -131,11 +144,12 @@ pub fn spin_with_min_decimals(
     if tentative {
         dv = dv.custom_formatter(|_, _| "—".into());
     }
+    let height = if super::legacy::active(ui) { 20.0 } else { 26.0 };
     let (r, step) = ui
         .horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            let r = ui.add_sized([(width - 13.0).max(16.0), 26.0], dv);
-            let step = crate::ui::widgets::step_buttons(ui, 26.0);
+            let r = ui.add_sized([(width - 13.0).max(16.0), height], dv);
+            let step = crate::ui::widgets::step_buttons(ui, height);
             (r, step)
         })
         .inner;
@@ -166,18 +180,19 @@ pub fn spin_with_min_decimals(
 /// Integer spinner.
 pub fn spin_i(ui: &mut egui::Ui, v: &mut i32, range: std::ops::RangeInclusive<i32>, width: f32) -> Edit {
     let before = *v;
+    let height = if super::legacy::active(ui) { 20.0 } else { 26.0 };
     let (r, step) = ui
         .horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             let r = ui.add_sized(
-                [(width - 13.0).max(16.0), 26.0],
+                [(width - 13.0).max(16.0), height],
                 egui::DragValue::new(&mut *v)
                     .update_while_editing(false)
                     .custom_parser(aurora_i18n::parse_number)
                     .speed(0.25)
                     .range(range.clone()),
             );
-            (r, crate::ui::widgets::step_buttons(ui, 26.0))
+            (r, crate::ui::widgets::step_buttons(ui, height))
         })
         .inner;
     if step != 0 {

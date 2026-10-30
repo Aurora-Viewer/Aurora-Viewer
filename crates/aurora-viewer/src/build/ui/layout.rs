@@ -208,7 +208,15 @@ pub(super) fn row(
     }
 }
 
-fn control(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods, item: Item) {
+pub(super) fn control(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &mut World,
+    s: &mut BuildSettings,
+    mods: Mods,
+    item: Item,
+) {
     if item == Item::Manipulators {
         compact::manipulation(ui, p, tool, world, s, mods);
         return;
@@ -370,6 +378,21 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
                         tool.ui.layout.open = false;
                         tool.ui.layout.organizing = false;
                         tool.ui.layout.drag = None;
+                    }
+                    if s.legacy_window {
+                        for item in [Item::LandGroup, Item::FollowEdit] {
+                            control(ui, p, tool, world, s, mods, item);
+                        }
+                        widgets::divider(ui, p);
+                        common::section(ui, p, aurora_i18n::tr!("build-layout-ruler"));
+                        floaters::ruler_controls(ui, p, s);
+                        widgets::divider(ui, p);
+                        common::section(ui, p, aurora_i18n::tr!("build-layout-distances"));
+                        floaters::distance_controls(ui, p, s);
+                        widgets::divider(ui, p);
+                        common::section(ui, p, aurora_i18n::tr!("build-layout-handles"));
+                        floaters::handle_controls(ui, p, s);
+                        return;
                     }
                     if tool.ui.layout.organizing {
                         widgets::surface(ui, p, |ui| {
