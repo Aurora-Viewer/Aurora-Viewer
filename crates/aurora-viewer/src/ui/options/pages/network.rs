@@ -39,22 +39,21 @@ pub fn page(cx: &mut Cx) {
             },
         );
         // Aurora's own: the adaptive pace by default, the Legacy Viewer's
-        // bounded connections when asked or for an adapter known to drop
-        // under it (net_adapters.rs, #1545)
+        // bounded connections when asked, and always for an adapter known to
+        // drop under the adaptive pace (net_adapters.rs, #1545)
+        let detected = crate::net_adapters::detected();
         let mut hint = tr!("ui-options-download-connections-hint").to_owned();
-        if let Some(adapter) = crate::net_adapters::detected() {
+        if let Some(adapter) = detected {
             hint.push('\n');
             hint.push_str(&tr!("ui-options-download-connections-detected", adapter = adapter.to_owned()));
         }
-        cx.combo(
+        let choices = download_choices(detected);
+        let choices: Vec<_> = choices.iter().map(|(v, l, why)| (*v, *l, why.as_deref())).collect();
+        cx.combo_blocked(
             tr!("ui-options-download-connections"),
             &hint,
             &field!(download_connections),
-            &[
-                (DownloadConnections::Automatic, tr!("ui-options-download-connections-automatic")),
-                (DownloadConnections::Adaptive, tr!("ui-options-download-connections-adaptive")),
-                (DownloadConnections::Limited, tr!("ui-options-download-connections-limited")),
-            ],
+            &choices,
         );
         // Legacy Viewer › Move & View (FSDisableNeighbourRegionConnections)
         cx.toggle(
@@ -190,4 +189,49 @@ pub fn page(cx: &mut Cx) {
             },
         );
     });
+}
+
+/// The download connections' choices, and why one cannot be picked: with
+/// an adapter known to drop under the adaptive pace, "Follow the
+/// connection" would take it offline until a reboot (#1545).
+fn download_choices(detected: Option<&str>) -> [(DownloadConnections, &'static str, Option<String>); 3] {
+    use aurora_i18n::tr;
+    let blocked = detected.map(|adapter| tr!("ui-options-download-connections-blocked", adapter = adapter.to_owned()).to_string());
+    [
+        (
+            DownloadConnections::Automatic,
+            tr!("ui-options-download-connections-automatic"),
+            None,
+        ),
+        (
+            DownloadConnections::Adaptive,
+            tr!("ui-options-download-connections-adaptive"),
+            blocked,
+        ),
+        (DownloadConnections::Limited, tr!("ui-options-download-connections-limited"), None),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn follow_the_connection_is_blocked_only_with_an_adapter_known_to_drop() {
+        let free = download_choices(None);
+        assert!(free.iter().all(|(_, _, why)| why.is_none()), "nothing blocked without the adapter");
+        let aqtion = download_choices(Some("Marvell AQtion 10Gbit Network Adapter"));
+        for (choice, _, why) in &aqtion {
+            assert_eq!(
+                why.is_some(),
+                *choice == DownloadConnections::Adaptive,
+                "only follow the connection is blocked: {choice:?}"
+            );
+        }
+        let why = aqtion[1].2.as_deref().unwrap_or_default();
+        assert!(
+            why.contains("Marvell AQtion 10Gbit Network Adapter"),
+            "the reason names the adapter: {why}"
+        );
+    }
 }

@@ -4,9 +4,11 @@
 //! Marvell AQtion (formerly Aquantia) 10 Gbit adapters dropped their
 //! connection until a reboot during login or a teleport, while the adaptive
 //! asset pace had up to 192 requests under way (#1545, #1546). With such an
-//! adapter present, the automatic mode keeps the Legacy Viewer's bounded
-//! connections (`aurora_net::AssetConnections::Limited`). Read once at
-//! startup, before the network starts.
+//! adapter present the downloads always keep the Legacy Viewer's bounded
+//! connections (`aurora_net::AssetConnections::Limited`): Automatic means
+//! limited, and "Follow the connection" cannot be picked (a choice saved
+//! before stays in the settings but is not applied). Read once at startup,
+//! before the network starts.
 
 use crate::settings::DownloadConnections;
 use aurora_net::AssetConnections;
@@ -23,14 +25,26 @@ pub fn needs_limited<'a>(descriptions: impl IntoIterator<Item = &'a str>) -> Opt
     })
 }
 
-/// The download mode for a setting and the adapter found, if any.
+/// The download mode for a setting and the adapter found, if any: with
+/// such an adapter, always limited, whatever was chosen.
 pub fn resolve(choice: DownloadConnections, detected: Option<&str>) -> AssetConnections {
     match choice {
-        DownloadConnections::Adaptive => AssetConnections::Adaptive,
+        _ if detected.is_some() => AssetConnections::Limited,
         DownloadConnections::Limited => AssetConnections::Limited,
-        DownloadConnections::Automatic if detected.is_some() => AssetConnections::Limited,
-        DownloadConnections::Automatic => AssetConnections::Adaptive,
+        DownloadConnections::Automatic | DownloadConnections::Adaptive => AssetConnections::Adaptive,
     }
+}
+
+/// The mode the network starts with, telling once in the log when a saved
+/// "Follow the connection" is not applied because of the adapter.
+pub fn startup_mode(choice: DownloadConnections) -> AssetConnections {
+    let detected = detected();
+    if choice == DownloadConnections::Adaptive
+        && let Some(name) = detected
+    {
+        log::info!("download connections: \"follow the connection\" is saved, limited instead for {name:?} (#1545)");
+    }
+    resolve(choice, detected)
 }
 
 static DETECTED: OnceLock<Option<String>> = OnceLock::new();
@@ -47,7 +61,7 @@ pub fn detected() -> Option<&'static str> {
             };
             let found = needs_limited(names.iter().map(String::as_str)).map(str::to_owned);
             if let Some(name) = &found {
-                log::info!("network adapter {name:?}: downloads limited in the automatic mode (#1545)");
+                log::info!("network adapter {name:?}: downloads limited (#1545)");
             }
             found
         })
@@ -130,13 +144,21 @@ mod tests {
     }
 
     #[test]
-    fn automatic_is_adaptive_unless_an_adapter_needs_limits() {
+    fn without_the_adapter_each_choice_keeps_its_mode() {
+        use DownloadConnections::*;
+        assert_eq!(resolve(Automatic, None), AssetConnections::Adaptive);
+        assert_eq!(resolve(Adaptive, None), AssetConnections::Adaptive);
+        assert_eq!(resolve(Limited, None), AssetConnections::Limited);
+    }
+
+    #[test]
+    fn with_the_adapter_every_choice_is_limited() {
         use DownloadConnections::*;
         let aqtion = Some("Marvell AQtion 10Gbit Network Adapter");
-        assert_eq!(resolve(Automatic, None), AssetConnections::Adaptive);
         assert_eq!(resolve(Automatic, aqtion), AssetConnections::Limited);
-        // a choice made by hand wins over the adapter
-        assert_eq!(resolve(Adaptive, aqtion), AssetConnections::Adaptive);
-        assert_eq!(resolve(Limited, None), AssetConnections::Limited);
+        assert_eq!(resolve(Limited, aqtion), AssetConnections::Limited);
+        // "follow the connection" saved before: limited, the setting itself
+        // is left as it was
+        assert_eq!(resolve(Adaptive, aqtion), AssetConnections::Limited);
     }
 }

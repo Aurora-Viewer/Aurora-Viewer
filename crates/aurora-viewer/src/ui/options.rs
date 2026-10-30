@@ -724,6 +724,31 @@ fn combo<T: PartialEq + Copy>(ui: &mut egui::Ui, value: &mut T, choices: &[(T, &
     changed
 }
 
+/// `combo` whose choices with a reason cannot be picked: greyed, the
+/// reason shown on hover.
+fn combo_blocked<T: PartialEq + Copy>(ui: &mut egui::Ui, value: &mut T, choices: &[(T, &str, Option<&str>)]) -> bool {
+    let shown = choices.iter().find(|(v, _, _)| v == value).map_or("", |(_, l, _)| *l);
+    let mut changed = false;
+    egui::ComboBox::from_id_salt(ui.scope_id().with("combo"))
+        .width(COMBO_W)
+        .selected_text(shown)
+        .truncate()
+        .show_ui(ui, |ui| {
+            for (v, label, blocked) in choices {
+                let r = ui
+                    .add_enabled_ui(blocked.is_none(), |ui| ui.selectable_value(value, *v, *label))
+                    .inner;
+                match blocked {
+                    Some(why) => {
+                        r.on_disabled_hover_text(*why);
+                    }
+                    None => changed |= r.changed(),
+                }
+            }
+        });
+    changed
+}
+
 /// A choice among a few options side by side: `widgets::segmented` over a
 /// setting of any type; the options marked are lit in Aurora's accent.
 fn segmented<T: PartialEq + Copy>(ui: &mut egui::Ui, p: &Palette, value: &mut T, choices: &[(T, &str, bool)]) -> bool {
