@@ -82,6 +82,14 @@ identities and permissions remain intact. Bounded reliable parent moves precede
 COF registration, and pending assignments survive older folder/metadata reads
 until confirmed readback. Existing RLVa inventory move rules apply.
 
+Binding-array texture pages are limited independently of ordinary frame texture
+bindings. `RenderSettings::render_scale_percent` reuses the separate world-target
+path in `rlva/resolution.rs`; the RLVa resolution divisor takes precedence,
+following the reference RenderResolutionMultiplier behavior. The user
+scale uses nine bilinear Catmull-Rom taps before native-resolution labels, HUDs
+and egui; RLVa-only scaling retains its nearest-pixel behavior. Target changes
+invalidate depth/occlusion history, and snapshots bypass the user's scale.
+
 `scene/anim.rs` restarts active resident and control-avatar motions from one shared
 instant for Ctrl+S, World and the resync toolbar command. Receipt signals,
 simulator state and independent import previews are preserved. Native key dispatch leaves Save
