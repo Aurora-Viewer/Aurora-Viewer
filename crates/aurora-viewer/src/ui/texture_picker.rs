@@ -155,6 +155,25 @@ impl TexturePicker {
         self.preview.take()
     }
 
+    /// The open picker shows another current value without reopening, like
+    /// LLTextureCtrl::setImageAssetID when the selection changes
+    /// (LLFloaterTexturePicker::setImageID, indra/newview/lltexturectrl.cpp).
+    pub(crate) fn follow(&mut self, current: Uuid) {
+        let selected = (!current.is_nil()).then_some(current);
+        if self.selected == selected {
+            return;
+        }
+        self.select(current, None, false);
+        self.selected = selected;
+        self.selected_lookup = None;
+        self.tree.opened(current);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shown(&self) -> Option<Uuid> {
+        self.selected
+    }
+
     /// Reuse the library's worker-built GPU preview for this selection only.
     pub(crate) fn prepare_material_preview(&mut self, ctx: &egui::Context, scene: &mut crate::scene::Scene) {
         self.material_previews.poll();

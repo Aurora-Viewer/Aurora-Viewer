@@ -90,6 +90,28 @@ impl Session {
         }
     }
 
+    /// The value the picker shows for these faces: the first one's.
+    fn current(&self) -> Uuid {
+        let Some(saved) = self.saved.first() else { return Uuid::nil() };
+        match (&saved.local, &saved.original) {
+            (Some(LocalAppearance::Texture(id)), Original::Diffuse(_))
+            | (Some(LocalAppearance::Material(id)), Original::Material { .. }) => *id,
+            (_, Original::Diffuse(id) | Original::Map(id) | Original::Sculpt(id)) => *id,
+            (_, Original::Material { asset, .. }) => *asset,
+            (_, Original::Legacy(material)) => material
+                .as_ref()
+                .map(|m| {
+                    if self.target == PickTarget::Normal {
+                        m.normal_map
+                    } else {
+                        m.specular_map
+                    }
+                })
+                .unwrap_or_default(),
+            (_, Original::Light(light)) => light.map(|l| l.texture).unwrap_or_default(),
+        }
+    }
+
     fn resolve(&self, tool: &BuildTool, world: &World) -> Vec<Sel> {
         self.saved
             .iter()
@@ -207,6 +229,25 @@ impl BuildTool {
         self.ui.picker.open = false;
         self.ui.pick_target = None;
         self.restore_texture_preview(world, env);
+    }
+
+    /// The selection changed under an open picker. LLTextureCtrl keeps it
+    /// open (LLPanelFace refresh, setImageAssetID): the faces already
+    /// previewed keep their choice, which was sent, and a later Cancel
+    /// restores only the new faces, saved again on selection. Nothing left to
+    /// edit disables the control, and closeDependentFloater closes the picker
+    /// without a cancel (indra/newview/lltexturectrl.cpp).
+    fn follow_texture_selection(&mut self, world: &World, env: &Env) {
+        self.ui.texture_edit = None;
+        let Some(target) = self.ui.pick_target else { return };
+        let session = Session::capture(self, world, env, target);
+        if session.saved.is_empty() {
+            self.ui.picker.open = false;
+            self.ui.pick_target = None;
+            return;
+        }
+        self.ui.picker.follow(session.current());
+        self.ui.texture_edit = Some(session);
     }
 
     fn restore_texture_preview(&mut self, world: &mut World, env: &mut Env) {
@@ -364,8 +405,10 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
         .is_some_and(|s| s.selection != tool.selection || s.faces != tool.faces || s.linked != tool.selection_linked);
     if reopened {
         tool.restore_texture_preview(world, env);
-    } else if changed || !tool.ui.picker.open {
+    } else if !tool.ui.picker.open {
         tool.cancel_texture_picker(world, env);
+    } else if changed {
+        tool.follow_texture_selection(world, env);
     }
     if tool.ui.picker.open
         && tool.ui.texture_edit.is_none()
@@ -445,6 +488,13 @@ mod tests {
 
     fn texture(world: &World, idx: usize, face: usize) -> Uuid {
         world.objects.get(idx).unwrap().te.as_ref().unwrap().faces[face].texture
+    }
+
+    fn set_texture(world: &mut World, idx: usize, face: usize, id: Uuid) {
+        let o = world.objects.get_mut(idx).unwrap();
+        let mut te = o.te.as_deref().unwrap().clone();
+        te.faces[face].texture = id;
+        o.te = Some(Arc::new(te));
     }
 
     #[test]
@@ -950,14 +1000,27 @@ mod tests {
             for &idx in prims {
                 assert_eq!(texture(world, idx, 0), asset);
             }
-            // A selection change also cancels, restoring the original faces.
+            // A selection change keeps the picker open and the preview applied
+            // (#1555); Cancel then restores only the new selection.
             open(tool, world, env, PickTarget::Diffuse);
             tool.preview_texture(world, env, Uuid::from_u128(14));
-            tool.faces.clear();
-            frame(&ctx, tool, world, env, 9.0, vec![]);
-            assert!(!tool.ui.picker.open);
+            let second: Vec<_> = prims.iter().map(|&idx| texture(world, idx, 1)).collect();
             for &idx in prims {
-                assert_eq!(texture(world, idx, 0), asset);
+                let key = world.objects.get(idx).unwrap().key;
+                tool.faces.insert(key, vec![1]);
+            }
+            frame(&ctx, tool, world, env, 9.0, vec![]);
+            assert!(tool.ui.picker.open);
+            tool.preview_texture(world, env, Uuid::from_u128(17));
+            tool.cancel_texture_picker(world, env);
+            for (n, &idx) in prims.iter().enumerate() {
+                assert_eq!(texture(world, idx, 0), Uuid::from_u128(14));
+                assert_eq!(texture(world, idx, 1), second[n]);
+            }
+            for &idx in prims {
+                let key = world.objects.get(idx).unwrap().key;
+                tool.faces.insert(key, vec![0]);
+                set_texture(world, idx, 0, asset);
             }
             // Closing with the window X follows the same cancellation path.
             open(tool, world, env, PickTarget::Diffuse);
@@ -985,6 +1048,69 @@ mod tests {
             }
         });
     }
+    #[test]
+    fn stepping_faces_with_the_material_picker_open_keeps_each_local_mesh_face_material() {
+        // #1555: on a local mesh preview, a material chosen face after face
+        // (◄ ► with the picker open) was taken back at each change of face.
+        fixture(|world, tool, env, prims| {
+            let idx = prims[0];
+            let o = world.objects.get_mut(idx).unwrap();
+            let (key, id) = (o.key, o.full_id);
+            let mut volume = o.volume;
+            volume.sculpt = Some(aurora_prim::params::SculptParams {
+                texture: Uuid::from_u128(0x1555),
+                sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+            });
+            o.render.local_volume = Some(Box::new(volume));
+            tool.face_counts.insert(id, 8);
+            tool.selection.truncate(1);
+            tool.faces.clear();
+            tool.faces.insert(key, vec![5]);
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let material = Uuid::from_u128(0x1555_0001);
+            let fourth = BuildTool::gltf_asset(world, idx, 4);
+            open(tool, world, env, PickTarget::PbrMaterial);
+            for face in 5..8u8 {
+                tool.faces.insert(key, vec![face]);
+                frame(&ctx, tool, world, env, face as f64, vec![]);
+                assert!(tool.ui.picker.open, "a change of face keeps the picker open");
+                if face > 5 {
+                    assert_eq!(
+                        tool.ui.picker.shown(),
+                        BuildTool::gltf_asset(world, idx, face),
+                        "the picker shows the new face's material"
+                    );
+                }
+                tool.preview_texture(world, env, material);
+            }
+            for face in 5..8u8 {
+                assert_eq!(BuildTool::gltf_asset(world, idx, face), Some(material));
+            }
+            // Back on a done face, the picker shows its material.
+            tool.faces.insert(key, vec![5]);
+            frame(&ctx, tool, world, env, 9.0, vec![]);
+            assert_eq!(tool.ui.picker.shown(), Some(material));
+            // Cancel restores only the faces selected since the last change.
+            tool.faces.insert(key, vec![4]);
+            frame(&ctx, tool, world, env, 10.0, vec![]);
+            tool.preview_texture(world, env, material);
+            tool.cancel_texture_picker(world, env);
+            assert_eq!(BuildTool::gltf_asset(world, idx, 4), fourth);
+            for face in 5..8u8 {
+                assert_eq!(BuildTool::gltf_asset(world, idx, face), Some(material));
+            }
+            // Nothing left to edit closes the picker without a cancel.
+            open(tool, world, env, PickTarget::PbrMaterial);
+            tool.preview_texture(world, env, Uuid::from_u128(0x1555_0002));
+            tool.selection.clear();
+            tool.faces.clear();
+            frame(&ctx, tool, world, env, 11.0, vec![]);
+            assert!(!tool.ui.picker.open);
+            assert_eq!(BuildTool::gltf_asset(world, idx, 4), Some(Uuid::from_u128(0x1555_0002)));
+        });
+    }
+
     #[test]
     fn texture_library_surface_drop_preserves_selection_and_other_face_properties() {
         fixture(|world, tool, env, prims| {
