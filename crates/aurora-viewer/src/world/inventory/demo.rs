@@ -365,7 +365,9 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "clipboard-progress"
         | "clipboard-window"
         | "keyboard"
+        | "keyboard-fold"
         | "aurora-keyboard"
+        | "aurora-keyboard-fold"
         | "aurora-keyboard-wide" => 8100,
         "animation" | "animation-open" | "animation-properties" | "image" | "image-photo" | "image-picker" | "image-photo-save" => 8101,
         "script" => 8102,
