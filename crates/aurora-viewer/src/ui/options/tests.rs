@@ -409,6 +409,8 @@ fn a_page_reset_leaves_the_other_pages_alone() {
     s.username = "kept".into();
     s.inventory.sort.by_date = false;
     s.auto_accept_inventory = true;
+    s.auto_accept_inventory_chat = false;
+    s.auto_accept_inventory_notify = false;
     s.inventory.received_sort.folders_by_name = true;
     reset_page_settings(Page::Graphics, &mut s);
     let d = Settings::default();
@@ -441,6 +443,7 @@ fn a_page_reset_leaves_the_other_pages_alone() {
     assert_eq!(s.lookat.head_yaw, d.lookat.head_yaw);
     reset_page_settings(Page::Inventory, &mut s);
     assert!(!s.auto_accept_inventory);
+    assert!(s.auto_accept_inventory_chat && s.auto_accept_inventory_notify);
     assert_eq!(s.inventory.sort, d.inventory.sort);
     assert_eq!(s.inventory.received_sort, d.inventory.received_sort);
     reset_page_settings(Page::Layout, &mut s);

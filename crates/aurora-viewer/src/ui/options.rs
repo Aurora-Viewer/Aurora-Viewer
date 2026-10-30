@@ -289,6 +289,9 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "indicators" => Some(AudioSection::Indicators),
         _ => None,
     };
+    if what == "auto-accept" {
+        st.demo_open_cogs = true;
+    }
     if let Some(section) = audio {
         st.open_audio(section);
     } else if what == "reset" {

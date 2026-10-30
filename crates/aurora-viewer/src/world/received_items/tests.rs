@@ -201,6 +201,8 @@ fn auto_accept_inventory_keeps_received_filing_and_its_delayed_scripted_reply() 
     for task in [false, true] {
         let mut w = world();
         w.inventory_offers.auto_accept = true;
+        w.inventory_offers.auto_accept_chat = false;
+        w.inventory_offers.auto_accept_notify = false;
         w.social.avatar_names.on_legacy(GIVER, "Test", "Resident");
         if !task {
             item(&mut w, 6);

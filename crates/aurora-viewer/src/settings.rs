@@ -970,6 +970,10 @@ pub struct Settings {
     /// AutoAcceptNewInventory: accept new resident/object inventory offers
     /// without a prompt. Off by default; give-to-RLVa offers still ask.
     pub auto_accept_inventory: bool,
+    /// FSLogAutoAcceptInventoryToChat / FSShowAutoAcceptInventoryInNotifications:
+    /// independent receipt feedback, both on by default as in the Legacy Viewer.
+    pub auto_accept_inventory_chat: bool,
+    pub auto_accept_inventory_notify: bool,
     /// Preferences › Inventory › Received items: keeping an offer opens the
     /// inventory on what it gave (ShowInInventory, off by default as in the
     /// Legacy Viewer).
@@ -1835,6 +1839,8 @@ impl Default for Settings {
             received_items_since: 0,
             notify_deliveries: true,
             auto_accept_inventory: false,
+            auto_accept_inventory_chat: true,
+            auto_accept_inventory_notify: true,
             show_accepted_in_inventory: false,
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
@@ -2842,14 +2848,28 @@ mod tests {
         assert!(!super::Settings::default().auto_accept_inventory);
         let old: super::Settings = serde_json::from_str("{}").expect("older preferences");
         assert!(!old.auto_accept_inventory);
+        assert!(old.auto_accept_inventory_chat && old.auto_accept_inventory_notify);
         for enabled in [false, true] {
-            let settings = super::Settings {
-                auto_accept_inventory: enabled,
-                ..Default::default()
-            };
-            let bytes = serde_json::to_vec(&settings).expect("saved preferences");
-            let loaded: super::Settings = serde_json::from_slice(&bytes).expect("restored preferences");
-            assert_eq!(loaded.auto_accept_inventory, enabled);
+            for chat in [false, true] {
+                for notify in [false, true] {
+                    let settings = super::Settings {
+                        auto_accept_inventory: enabled,
+                        auto_accept_inventory_chat: chat,
+                        auto_accept_inventory_notify: notify,
+                        ..Default::default()
+                    };
+                    let bytes = serde_json::to_vec(&settings).expect("saved preferences");
+                    let loaded: super::Settings = serde_json::from_slice(&bytes).expect("restored preferences");
+                    assert_eq!(
+                        (
+                            loaded.auto_accept_inventory,
+                            loaded.auto_accept_inventory_chat,
+                            loaded.auto_accept_inventory_notify
+                        ),
+                        (enabled, chat, notify)
+                    );
+                }
+            }
         }
     }
 

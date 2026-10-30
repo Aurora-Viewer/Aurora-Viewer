@@ -121,15 +121,30 @@ const REVEAL_WAIT: Duration = Duration::from_secs(120);
 /// Lost and Found, Current Outfit, My Outfits.
 const QUIET_FOLDERS: [i32; 4] = [14, 16, 46, 48];
 
-#[derive(Default)]
 pub struct InventoryOffers {
     pub list: Vec<Offer>,
     next: u64,
     /// AutoAcceptNewInventory, off by default.
     pub auto_accept: bool,
+    pub auto_accept_chat: bool,
+    pub auto_accept_notify: bool,
     /// ShowInInventory, from the preferences.
     pub show_accepted: bool,
     reveal: Option<(Reveal, Instant)>,
+}
+
+impl Default for InventoryOffers {
+    fn default() -> Self {
+        Self {
+            list: Vec::new(),
+            next: 0,
+            auto_accept: false,
+            auto_accept_chat: true,
+            auto_accept_notify: true,
+            show_accepted: false,
+            reveal: None,
+        }
+    }
 }
 
 impl InventoryOffers {
@@ -272,9 +287,59 @@ impl World {
         if !self.inventory_offers.auto_accept || self.rlva_inventory_offer_needs_confirmation(im) {
             return false;
         }
+        let feedback = (self.inventory_offers.auto_accept_chat || self.inventory_offers.auto_accept_notify)
+            .then(|| self.auto_accepted_inventory_text(im, id))
+            .flatten();
         let (commands, _) = self.respond_notification(id, Response::Accept);
         self.groups.out.extend(commands);
+        if let Some(text) = feedback {
+            // inventory_offer_handler: local system chat and IMSystemMessageTip
+            // are independent; either enables UISndInventoryOffer, once.
+            if self.inventory_offers.auto_accept_chat {
+                self.system_notice(text.clone(), super::notice_topics::Topic::Items);
+            }
+            if self.inventory_offers.auto_accept_notify {
+                self.notifications
+                    .push(Kind::Inventory, aurora_i18n::tr!("received-auto-accepted-title"), text, Data::None);
+            }
+            self.ui_sounds.push(crate::ui_sound::UiSound::InventoryOffer);
+        }
         true
+    }
+
+    /// InvOfferAutoAcceptUser / InvOfferAutoAcceptObject: use the shared
+    /// application links, which retain inspect actions and RLVa display filtering.
+    fn auto_accepted_inventory_text(&self, im: &InstantMessage, id: u64) -> Option<String> {
+        let n = self.notifications.list.iter().find(|n| n.id == id)?;
+        let Data::Inventory {
+            asset_type, task_offer, ..
+        } = &n.data
+        else {
+            return None;
+        };
+        let kind = kind_label(*asset_type).to_lowercase();
+        Some(if let Some(offer) = task_offer {
+            let object = format!(
+                "secondlife:///app/objectim/{}?name={}&owner={}&groupowned={}",
+                Uuid::nil(),
+                crate::slurl::encode(&offer.object_name),
+                im.from_agent_id,
+                u8::from(offer.from_group),
+            );
+            aurora_i18n::tr!(
+                "received-auto-accepted-object",
+                object = object,
+                kind = kind,
+                item = item_label(&offer.item_name)
+            )
+        } else {
+            aurora_i18n::tr!(
+                "received-auto-accepted-resident",
+                name = super::teleport_invites::agent_link(im.from_agent_id),
+                kind = kind,
+                item = item_label(&im.message)
+            )
+        })
     }
 
     /// LLPostponedOfferNotification resolves avatar/group names asynchronously.
@@ -564,6 +629,8 @@ mod tests {
             let root = temp();
             let mut w = world(&root);
             w.inventory_offers.auto_accept = true;
+            w.inventory_offers.auto_accept_chat = false;
+            w.inventory_offers.auto_accept_notify = false;
             for asset_type in [0, 1, 3, 5, 6, 7, 8, 10, 13, 20, 21, 49, 56, 57] {
                 for offline in [false, true] {
                     let mut gift = offer(dialog, "Gift");
@@ -600,10 +667,118 @@ mod tests {
     }
 
     #[test]
+    fn auto_accept_inventory_feedback_has_independent_chat_notification_and_one_sound() {
+        let defaults = InventoryOffers::default();
+        assert!(!defaults.auto_accept);
+        assert!(defaults.auto_accept_chat && defaults.auto_accept_notify);
+        for task in [false, true] {
+            for chat in [false, true] {
+                for notify in [false, true] {
+                    let root = temp();
+                    let mut w = world(&root);
+                    w.inventory_offers.auto_accept = true;
+                    w.inventory_offers.auto_accept_chat = chat;
+                    w.inventory_offers.auto_accept_notify = notify;
+                    let mut gift = offer(
+                        if task { im::TASK_INVENTORY_OFFERED } else { im::INVENTORY_OFFERED },
+                        "Welcome note",
+                    );
+                    if task {
+                        gift.from_name = "Gift & café + 50%?".into();
+                        gift.message.push_str(" ( https://maps.secondlife.com/secondlife/Demo/1/2/3 )");
+                    }
+                    w.on_im(gift);
+                    let commands = w.take_social_commands();
+                    assert_eq!(
+                        answers(&commands),
+                        [if task {
+                            im::TASK_INVENTORY_ACCEPTED
+                        } else {
+                            im::INVENTORY_ACCEPTED
+                        }]
+                    );
+                    assert_eq!(w.chat.len(), usize::from(chat));
+                    assert_eq!(w.notifications.list.len(), usize::from(notify));
+                    assert_eq!(
+                        w.ui_sounds,
+                        if chat || notify {
+                            vec![crate::ui_sound::UiSound::InventoryOffer]
+                        } else {
+                            vec![]
+                        }
+                    );
+                    assert!(w.social.ims.is_empty() && w.inventory_offers.list.is_empty());
+                    let text = w
+                        .chat
+                        .back()
+                        .map(|line| &line.text)
+                        .or_else(|| w.notifications.list.first().map(|n| &n.body));
+                    if let Some(text) = text {
+                        assert!(text.contains("Welcome note") && text.contains(&kind_label(7).to_lowercase()));
+                        if task {
+                            assert!(text.contains("/objectim/") && text.contains(&crate::slurl::encode("Gift & café + 50%?")));
+                            assert!(!text.contains("maps.secondlife.com"));
+                        } else {
+                            assert!(text.contains(&super::super::teleport_invites::agent_link(JANE)));
+                        }
+                    }
+                    if chat {
+                        let line = w.chat.back().unwrap();
+                        assert_eq!(line.kind, ChatKind::System);
+                        assert!(line.source.is_nil());
+                        assert_eq!(w.notice_topics.of(line), super::super::notice_topics::Topic::Items);
+                    }
+                    if notify {
+                        let n = &w.notifications.list[0];
+                        assert!(matches!(n.data, Data::None));
+                        assert!(!n.interactive() && !n.close_declines() && !n.stays_until_answered());
+                        if chat {
+                            assert_eq!(n.body, w.chat.back().unwrap().text);
+                        }
+                        let id = n.id;
+                        assert!(w.respond_notification(id, Response::Dismiss).0.is_empty());
+                        assert!(w.take_social_commands().is_empty());
+                    }
+                    clean(&w, &root);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn auto_accept_inventory_feedback_never_reports_blocked_or_pending_rlva_gifts_as_received() {
+        for blocked in [false, true] {
+            let root = temp();
+            let mut w = world(&root);
+            w.inventory_offers.auto_accept = true;
+            if blocked {
+                w.block(JANE, "Jane Doe", super::super::mutes::MuteType::Agent).unwrap();
+            } else {
+                w.rlva_configure(true);
+            }
+            w.chat.clear();
+            w.ui_sounds.clear();
+            for task in [false, true] {
+                let mut gift = offer(
+                    if task { im::TASK_INVENTORY_OFFERED } else { im::INVENTORY_OFFERED },
+                    if task { "'#RLV/~Wardrobe/Cuffs'" } else { "#RLV/~Wardrobe/Cuffs" },
+                );
+                gift.binary_bucket[0] = AT_CATEGORY as u8;
+                w.on_im(gift);
+                assert!(w.chat.is_empty());
+                assert!(w.notifications.list.iter().all(|n| matches!(n.data, Data::Inventory { .. })));
+            }
+            clean(&w, &root);
+        }
+    }
+
+    #[test]
     fn auto_accept_inventory_respects_mutes_and_shared_rlva_offer_consent() {
         let root = temp();
         let mut w = world(&root);
         w.inventory_offers.auto_accept = true;
+        w.inventory_offers.auto_accept_chat = false;
+        w.inventory_offers.auto_accept_notify = false;
         w.block(JANE, "Jane Doe", super::super::mutes::MuteType::Agent).unwrap();
         for dialog in [im::INVENTORY_OFFERED, im::TASK_INVENTORY_OFFERED] {
             w.on_im(offer(dialog, "Blocked gift"));
@@ -622,6 +797,8 @@ mod tests {
                 let root = temp();
                 let mut w = world(&root);
                 w.inventory_offers.auto_accept = true;
+                w.inventory_offers.auto_accept_chat = false;
+                w.inventory_offers.auto_accept_notify = false;
                 w.rlva_configure(enabled);
                 w.rlva.preferences.allow_shared_offers = allow_filing;
                 for dialog in [im::INVENTORY_OFFERED, im::TASK_INVENTORY_OFFERED] {
@@ -649,6 +826,8 @@ mod tests {
                 let root = temp();
                 let mut w = world(&root);
                 w.inventory_offers.auto_accept = true;
+                w.inventory_offers.auto_accept_chat = false;
+                w.inventory_offers.auto_accept_notify = false;
                 w.inventory_offers.show_accepted = show;
                 let folder = Uuid::from_u128(0x30);
                 w.inventory.created_folders(vec![InvFolder {

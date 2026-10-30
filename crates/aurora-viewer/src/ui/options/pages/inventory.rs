@@ -83,6 +83,18 @@ pub fn page(cx: &mut Cx) {
             tr!("received-auto-accept-help"),
             &field!(auto_accept_inventory),
         );
+        cx.subs(!cx.s.auto_accept_inventory, |cx| {
+            cx.toggle(
+                tr!("received-auto-accept-chat"),
+                tr!("received-auto-accept-chat-help"),
+                &field!(auto_accept_inventory_chat),
+            );
+            cx.toggle(
+                tr!("received-auto-accept-notify"),
+                tr!("received-auto-accept-notify-help"),
+                &field!(auto_accept_inventory_notify),
+            );
+        });
         // ShowInInventory ("Automatically show newly accepted items in
         // inventory", panel_preferences_privacy.xml)
         cx.toggle(

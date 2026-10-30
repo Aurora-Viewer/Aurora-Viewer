@@ -7737,6 +7737,8 @@ impl App {
         self.sync_script_debug();
         self.world.received_items.enabled = self.settings.sort_received_items;
         self.world.inventory_offers.auto_accept = self.settings.auto_accept_inventory;
+        self.world.inventory_offers.auto_accept_chat = self.settings.auto_accept_inventory_chat;
+        self.world.inventory_offers.auto_accept_notify = self.settings.auto_accept_inventory_notify;
         self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
         self.world.payments.open_for_friends = self.settings.payment_opens_conversation;
         self.world.payments.open_when_paying = self.settings.payment_sent_opens_conversation;
@@ -16730,6 +16732,8 @@ impl ApplicationHandler for App {
             self.settings.auto_accept_inventory |= crate::demo::auto_accept_inventory_scene();
             self.settings.show_accepted_in_inventory |= crate::demo::show_accepted_scene();
             self.world.inventory_offers.auto_accept = self.settings.auto_accept_inventory;
+            self.world.inventory_offers.auto_accept_chat = self.settings.auto_accept_inventory_chat;
+            self.world.inventory_offers.auto_accept_notify = self.settings.auto_accept_inventory_notify;
             self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
@@ -16743,7 +16747,7 @@ impl ApplicationHandler for App {
                         .notifications
                         .list
                         .iter()
-                        .filter(|n| n.kind == crate::world::notifications::Kind::Inventory)
+                        .filter(|n| n.kind == crate::world::notifications::Kind::Inventory && n.interactive())
                         .count(),
                     self.world.inventory_offers.list.len(),
                     self.settings.show_accepted_in_inventory,

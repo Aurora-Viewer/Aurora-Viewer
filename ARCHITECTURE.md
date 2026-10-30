@@ -41,6 +41,11 @@ filing and applies the saved `Settings::auto_accept_inventory` preference
 creating a conversation card or raising attention, preserving native reply
 destinations, filing, notification history and optional ShowInInventory.
 Mute/flood filtering still runs first; give-to-RLVa offers retain consent.
+The independent `auto_accept_inventory_chat` and `auto_accept_inventory_notify`
+preferences default on, following the reference viewer. Accepted offers emit
+a local Items system notice and/or an informational inventory notification;
+either feedback path plays InventoryOffer once. Both off stays silent.
+Shared resident/object application links retain inspection and privacy filtering.
 
 Session layout uses Settings::nearby_chat_window for nearby-chat docking/visibility
 and show_camera_controls / show_movement_controls for the Controls windows.
