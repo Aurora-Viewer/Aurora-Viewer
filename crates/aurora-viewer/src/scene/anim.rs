@@ -627,6 +627,21 @@ fn facing(dir: Vec3) -> Option<Quat> {
 }
 
 impl Controller {
+    /// Dev Toolbox J9: the motions playing, newest first, with their local
+    /// time (s) and blend weight.
+    pub(crate) fn playing(&self, now: Instant) -> Vec<(Uuid, Arc<BoundAnim>, f64, f32)> {
+        self.motions
+            .iter()
+            .map(|m| (m.id, m.anim.clone(), m.local_time(now), m.weight))
+            .collect()
+    }
+
+    /// Dev Toolbox J9: the last frame's local rotations and animated
+    /// position offsets from the rest skeleton (empty before the first).
+    pub(crate) fn held_pose(&self) -> (&[Quat], &[Vec3]) {
+        (&self.rot, &self.pos_delta)
+    }
+
     /// Apply Preferences › Aurora › Animations without restarting live loops.
     /// Enabling catches up to the known phase; disabling keeps the current phase
     /// and uses the Legacy Viewer clock for subsequent starts and pauses.
