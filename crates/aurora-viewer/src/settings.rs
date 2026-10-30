@@ -31,6 +31,16 @@ impl ChatStyle {
     }
 }
 
+/// Nearby chat belongs to the layout, unlike account-specific IM sessions.
+/// Hidden keeps its detached window available to the nearby-chat button.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum NearbyChatWindow {
+    #[default]
+    Docked,
+    Detached,
+    Hidden,
+}
+
 /// Where the thumbnails of the open conversations stand (Preferences ›
 /// Chat, `ui/chat/thumbnails.rs`): the Legacy Viewer's IM chiclets, shown
 /// unless `FSDisableIMChiclets`. Beside the chat bar by default (the human's
@@ -248,6 +258,19 @@ impl PlateClick {
 /// It becomes a public GitHub issue in the tester's name, hence Ask by
 /// default where the Legacy Viewer always sends to its own server
 /// (llcrashlogger.cpp, CrashSubmitBehavior).
+/// How many asset downloads may be under way at once (`aurora_net::AssetConnections`).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DownloadConnections {
+    /// Adaptive, or limited when a network adapter known to lose its link
+    /// under many connections is present (`net_adapters::needs_limited`).
+    #[default]
+    Automatic,
+    /// Always follow the link (`fetch_pace.rs`), Aurora's fast default.
+    Adaptive,
+    /// Always the Legacy Viewer's bounded connections.
+    Limited,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CrashReports {
     #[default]
@@ -546,6 +569,11 @@ pub struct Settings {
     /// turned since (`ui::StartupWindows`).
     pub show_chat: bool,
     pub show_minimap: bool,
+    /// Nearby-chat docking and visibility; geometry stays in ui_layout.ron.
+    pub nearby_chat_window: NearbyChatWindow,
+    /// LLFloaterCamera / LLFloaterMove save_visibility (their floater XML).
+    pub show_camera_controls: bool,
+    pub show_movement_controls: bool,
     /// FSUseStandalonePlaceDetailsFloater: landmarks, place links and history
     /// entries open in their own window instead of the Places window.
     pub standalone_place_details: bool,
@@ -1215,6 +1243,11 @@ pub struct Settings {
     /// (Firestorm's ThrottleBandwidthKBPS; the default and the top of the
     /// range are Aurora's, `aurora_net::throttle::DEFAULT_KBPS`).
     pub bandwidth_kbps: u32,
+    /// How many asset downloads may be under way at once (Preferences ›
+    /// Network and cache): automatic follows the link, or stays limited
+    /// when a network adapter known to drop under it is present
+    /// (`net_adapters.rs`). Read when the network starts.
+    pub download_connections: DownloadConnections,
     /// Connect only to the region we are in (the Legacy Viewer's
     /// FSDisableNeighbourRegionConnections, off): the neighbours are not
     /// shown, and crossings on foot or in vehicles are less reliable.
@@ -1663,6 +1696,9 @@ impl Default for Settings {
             show_perf: false,
             show_chat: true,
             show_minimap: true,
+            nearby_chat_window: NearbyChatWindow::Docked,
+            show_camera_controls: false,
+            show_movement_controls: false,
             standalone_place_details: false,
             inspect_columns: crate::ui::inspect::ALL_COLUMNS,
             landmarks_by_date: true,
@@ -1911,6 +1947,7 @@ impl Default for Settings {
             cache_location: String::new(),
             chat_log_location: String::new(),
             bandwidth_kbps: aurora_net::throttle::DEFAULT_KBPS as u32,
+            download_connections: DownloadConnections::Automatic,
             no_neighbour_regions: false,
             parcel_visibility: Default::default(),
             chat_bar_width: 0.0,
@@ -3769,6 +3806,25 @@ mod tests {
             ..Settings::default()
         };
         assert!(on.sanitized().sim_version_alert);
+    }
+
+    #[test]
+    fn download_connections_stay_automatic_for_earlier_files() {
+        assert_eq!(Settings::default().download_connections, DownloadConnections::Automatic);
+        // a file written before the setting existed: automatic, the fast
+        // adaptive pace unless an adapter known to drop is present
+        let mut value = serde_json::to_value(Settings::default()).expect("settings JSON");
+        value.as_object_mut().expect("object").remove("download_connections");
+        let loaded: Settings = serde_json::from_value(value).expect("settings JSON");
+        assert_eq!(loaded.download_connections, DownloadConnections::Automatic);
+        // a choice made by hand is kept
+        let limited = Settings {
+            download_connections: DownloadConnections::Limited,
+            ..Settings::default()
+        };
+        let saved = serde_json::to_string(&limited).expect("settings JSON");
+        let loaded: Settings = serde_json::from_str(&saved).expect("settings JSON");
+        assert_eq!(loaded.download_connections, DownloadConnections::Limited);
     }
 
     #[test]

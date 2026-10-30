@@ -254,6 +254,7 @@ const BEFORE: &[&str] = &[
     // Colors, network and cache, sound and voice, shortcuts, camera, commands
     "colors",
     "bandwidth_kbps",
+    "download_connections",
     "no_neighbour_regions",
     "cache_size_mb",
     "cache_location",

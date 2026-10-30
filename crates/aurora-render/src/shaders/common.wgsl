@@ -153,9 +153,9 @@ const FLAG_DOUBLE_SIDED: u32 = 2048u;
 const FLAG_ANCHORED: u32 = 4096u;
 const FLAG_LIP_SYNC: u32 = 8192u;
 // a skeleton's own anchor (skeleton space to world), from its first joint
-const SKELETON_ANCHOR: u32 = 160u;
+const SKELETON_ANCHOR: u32 = 208u;
 // the weights of a skeleton's live morphs, after its anchors (object.wgsl)
-const LIVE_MORPH_WEIGHTS: u32 = 208u;
+const LIVE_MORPH_WEIGHTS: u32 = 256u;
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 // atlas of 2x2 tiles, cascade i in tile (i % 2, i / 2)

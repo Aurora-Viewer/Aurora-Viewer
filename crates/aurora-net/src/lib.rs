@@ -124,25 +124,55 @@ pub(crate) fn simulator_roots() -> Vec<reqwest::Certificate> {
     roots
 }
 
-/// Asset requests under way at once: they follow the link
-/// (`fetch_pace.rs`, None), unless `AURORA_FETCH_SLOTS=<n>` (1 to 256)
-/// fixes them for one launch, to compare.
-fn fetch_slots() -> Option<usize> {
+/// How many asset downloads may be under way at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetConnections {
+    /// Follow the link (`fetch_pace.rs`): from 24 up to 192 while it keeps
+    /// up. Aurora's default.
+    Adaptive,
+    /// A fixed 24 requests and at most 32 kept connections per host, like
+    /// the Legacy Viewer's bounded llcorehttp policy
+    /// (`LLAppCoreHttp::init_data`, llappcorehttp.cpp). Some network
+    /// adapter drivers lose the link until a reboot under the adaptive
+    /// pace's connections (#1545, #1546).
+    Limited,
+}
+
+/// Requests under way at once in the limited mode.
+pub const LIMITED_FETCH_SLOTS: usize = 24;
+/// Idle connections kept per host in the limited mode.
+const LIMITED_IDLE_PER_HOST: usize = 32;
+
+/// `AURORA_FETCH_SLOTS=<n>` (1 to 256): the requests under way at once
+/// fixed for one launch, to compare, whatever the mode.
+fn fetch_slots_override() -> Option<usize> {
     match std::env::var("AURORA_FETCH_SLOTS").ok().map(|v| v.trim().parse::<usize>()) {
         Some(Ok(n)) if (1..=256).contains(&n) => {
             log::info!("asset fetch: {n} requests at once (AURORA_FETCH_SLOTS)");
             Some(n)
         }
         Some(_) => {
-            log::warn!("AURORA_FETCH_SLOTS: expected 1 to 256, following the link");
+            log::warn!("AURORA_FETCH_SLOTS: expected 1 to 256, ignored");
             None
         }
         None => None,
     }
 }
 
+/// The requests under way at once (None: they follow the link) and the
+/// idle connections kept per host, for a mode and an `AURORA_FETCH_SLOTS`
+/// override.
+fn asset_limits(mode: AssetConnections, fixed: Option<usize>) -> (Option<usize>, usize) {
+    match (fixed, mode) {
+        (Some(n), _) => (Some(n), n.max(32)),
+        // (connections kept for every request the pace may have)
+        (None, AssetConnections::Adaptive) => (None, fetch_pace::MAX.max(32)),
+        (None, AssetConnections::Limited) => (Some(LIMITED_FETCH_SLOTS), LIMITED_IDLE_PER_HOST),
+    }
+}
+
 impl NetClient {
-    pub fn new() -> Result<NetClient, NetError> {
+    pub fn new(asset_connections: AssetConnections) -> Result<NetClient, NetError> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(3)
             .thread_name("aurora-net")
@@ -183,11 +213,14 @@ impl NetClient {
         // decoding, a 30 s connect timeout and up to 10 redirects. Some
         // assets are served with an odd Content-Encoding that must not
         // make the fetch fail.
-        let fetch_slots = fetch_slots();
+        let (fetch_slots, idle_per_host) = asset_limits(asset_connections, fetch_slots_override());
+        match fetch_slots {
+            None => log::info!("asset fetch: adaptive (24 to {} requests at once)", fetch_pace::MAX),
+            Some(n) => log::info!("asset fetch: limited to {n} requests at once, {idle_per_host} kept connections per host"),
+        }
         let asset_http = reqwest::Client::builder()
             .user_agent(aurora_version::user_agent())
-            // (connections kept for every request the pace may have)
-            .pool_max_idle_per_host(fetch_slots.unwrap_or(fetch_pace::MAX).max(32))
+            .pool_max_idle_per_host(idle_per_host)
             .connect_timeout(std::time::Duration::from_secs(30))
             .gzip(false)
             .redirect(reqwest::redirect::Policy::limited(10))
@@ -315,5 +348,19 @@ impl NetClient {
     /// HTTP client for capabilities (voice provisioning uses it too).
     pub fn caps_http(&self) -> reqwest::Client {
         self.caps_http.clone()
+    }
+}
+
+#[cfg(test)]
+mod asset_limit_tests {
+    use super::*;
+
+    #[test]
+    fn adaptive_follows_the_link_and_limited_is_bounded() {
+        assert_eq!(asset_limits(AssetConnections::Adaptive, None), (None, fetch_pace::MAX));
+        assert_eq!(asset_limits(AssetConnections::Limited, None), (Some(24), 32));
+        // the comparison override wins in both modes
+        assert_eq!(asset_limits(AssetConnections::Adaptive, Some(64)), (Some(64), 64));
+        assert_eq!(asset_limits(AssetConnections::Limited, Some(8)), (Some(8), 32));
     }
 }
