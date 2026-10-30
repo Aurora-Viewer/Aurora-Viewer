@@ -184,7 +184,7 @@ impl App {
         if self.frame_count == 360 {
             self.settings.rlva_enabled = false;
             self.panels.settings = true;
-            self.options_ui.page = ui::options::Page::Protections;
+            self.options_ui.page = ui::options::Page::Rlva;
             self.options_ui.tab = 0;
         }
         if self.frame_count == 700 {

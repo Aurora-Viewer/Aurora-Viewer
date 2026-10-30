@@ -2,7 +2,7 @@
 
 The `rlva` task implements the Legacy Viewer's RLVa 2.4.2 command families,
 targeting RLV protocol 3.4.3, referenced by issue #687. Human grid validation
-is pending. Preferences > Protections > Enable RLVa is
+is pending. Preferences > RLVa > Enable RLVa is
 off by default, including settings written before the option existed.
 Disabling it releases all session restrictions and discards queued commands.
 The preference persists; object locks never do. The native next-login flag
@@ -275,7 +275,7 @@ Strict replacement rejects a target point containing locked attachments,
 including when the real point becomes known only after attachment. The default
 retains locked predecessors while replacing unlocked ones.
 
-Preferences > Protections > RLVa tools opens the native inspector and console.
+Preferences > RLVa > RLVa tools opens the native inspector and console.
 Restrictions and inventory locks show their controller, support filtering and
 copying, and retain exception rows. Modifiers show camera values and live
 sphere/overlay samples. The console executes through the ordinary World command
@@ -307,7 +307,7 @@ documented differences explicit until functional parity is certified.
 
 Before live scripts, inspect the offline viewer in both languages:
 
-1. Open Preferences > Protections. RLVa starts off; subordinate options are
+1. Open Preferences > RLVa. RLVa starts off; subordinate options are
    disabled. Enable it, open RLVa tools and select Console.
 2. Submit `@version=0,fly=n,getstatusall=0`. The local reply shows RLV 3.4.3,
    Fly is blocked, and the restriction appears with the console issuer.
@@ -419,7 +419,8 @@ successfully. Inspected offline captures
 `.scratch/rlva-disabled-fr.png`, `rlva-enabled-fr.png` and
 `rlva-released-en.png` (1440 × 1000, frame 850): the switch is off with no
 locks, on with the synthetic restrictions, then off with an empty list.
-Labels, hints and session controls fit the existing Protections layout.
+Labels, hints and session controls fit the preferences layout, on the RLVa
+page, which opens on a notice that RLVa is very experimental and still in testing.
 
 Native vision validation on 2026-10-22: inspected all five sphere modes,
 the FR overlay with alpha holes, forced textures and release captures.
