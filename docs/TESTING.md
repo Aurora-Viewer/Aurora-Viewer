@@ -7222,8 +7222,11 @@ for them (`5 to look up`), as a cold inventory cache.
   choice, save to the chosen outfit and move to the Trash);
   in both `gallery` and `outfits`, right-click a single outfit and choose
   **Copy outfit list to clipboard**, immediately before **Delete outfit**.
-  Paste into a text field or notecard: one resolved item name and creator per line,
-  including body parts, clothing, attachments and gestures, in list order.
+  Paste into a text field or notecard: first the item names alone, one per line;
+  then, after one blank line, the same items as `item name - creator`, in the
+  same order. The separator is a simple ASCII hyphen in every language, without
+  headings or a Creator label. Both lists include body parts, clothing,
+  attachments and gestures.
   Copy remains available on the worn outfit, where Delete is hidden; it is
   disabled while the outfit loads or when it has no usable items. Broken
   links and folder links are skipped. Creators come from the original item,

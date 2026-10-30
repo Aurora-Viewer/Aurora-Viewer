@@ -132,7 +132,10 @@ fn copy_text(items: &[CopyItem], names: &AvatarNames, fallback: bool) -> Option<
             )
         })
         .collect();
-    (ready || fallback).then(|| lines.join("\n"))
+    (ready || fallback).then(|| {
+        let plain = items.iter().map(|item| item.name.as_str()).collect::<Vec<_>>().join("\n");
+        format!("{plain}\n\n{}", lines.join("\n"))
+    })
 }
 
 /// Complete a requested copy even after closing Appearance. The snapshot
@@ -743,15 +746,10 @@ mod tests {
         assert_eq!(world.social.avatar_names.take_asks(), vec![creator]);
         world.social.avatar_names.on_legacy(creator, "Nova", "Maker");
         let resolved = frame_at(&ctx, &mut world, &mut st, vec![], Some(2.0), false);
-        let expected = [
-            aurora_i18n::tr!("appearance-outfit-copy-entry", item = "Cheveux été — 髪", creator = "Nova Maker"),
-            aurora_i18n::tr!(
-                "appearance-outfit-copy-entry",
-                item = "Mixed object",
-                creator = aurora_i18n::tr!("ui-inventory-properties-creator-unknown-multiple")
-            ),
-        ]
-        .join("\n");
+        let expected = format!(
+            "Cheveux été — 髪\nMixed object\n\nCheveux été — 髪 - Nova Maker\nMixed object - {}",
+            aurora_i18n::tr!("ui-inventory-properties-creator-unknown-multiple")
+        );
         assert!(
             resolved
                 .2
