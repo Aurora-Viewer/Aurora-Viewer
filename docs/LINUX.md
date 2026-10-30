@@ -125,8 +125,8 @@ desktop entry, `~/.local/share/applications/aurora-viewer-slurl.desktop`,
 and makes it the default for the three schemes in `~/.config/mimeapps.list`;
 the rest of that file is kept. Turning it off removes both. A link opened
 while Aurora runs goes to that viewer over the session bus instead of
-starting a second one. On X11 its window comes to the front; Wayland does
-not let it, so the window stays where it is.
+starting a second one. Wayland does not let it bring its window to the
+front, so the window stays where it is (X11 is not tested yet).
 
 A desktop-specific list (`~/.config/<desktop>-mimeapps.list`, such as
 `kde-mimeapps.list`) comes first: if it names another program for these
