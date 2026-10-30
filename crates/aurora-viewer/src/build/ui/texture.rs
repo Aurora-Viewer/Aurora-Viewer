@@ -7,6 +7,9 @@
 //! Every value is read over the selected faces: when they differ the
 //! control shows a mixed value ("Multiple").
 
+#[path = "legacy_texture.rs"]
+mod legacy_texture;
+
 use super::common::{Edit, check, combo, row, same, small, spin, swatch};
 use super::{Confirm, Env, FaceClip, PickTarget};
 use crate::build::materials::{GltfUpdate, MF_HAS_MEDIA};
@@ -362,6 +365,10 @@ pub(super) fn selected(tool: &BuildTool, world: &World) -> Vec<Sel> {
 }
 
 pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env) {
+    if super::legacy::active(ui) {
+        legacy_texture::show(ui, p, tool, world, s, env);
+        return;
+    }
     let sel = selected(tool, world);
     ui.spacing_mut().item_spacing.y = 3.0;
     ui.horizontal(|ui| {
@@ -683,27 +690,138 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
             ui.ctx(),
         )
     });
-    let size = preview_size(ui, 3);
-    egui::Grid::new("pbr_map_grid")
-        .num_columns(3)
-        .spacing(egui::vec2(10.0, 10.0))
-        .show(ui, |ui| {
-            material_asset(ui, p, tool, asset, asset_mixed, model, size);
-            for (index, (id, caption, channel)) in [
-                (mat.base_color_texture, aurora_i18n::tr!("common-color"), 0),
-                (mat.normal_texture, aurora_i18n::tr!("build-ui-texture-normal"), 1),
-                (mat.emissive_texture, aurora_i18n::tr!("build-ui-texture-emissive"), 3),
-                (mat.metallic_roughness_texture, "(O)RM", 2),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                material_map(ui, p, tool, env, id, false, caption, PickTarget::PbrMap(channel), editable, size);
-                if (index + 2) % 3 == 0 {
-                    ui.end_row();
+    if super::legacy::active(ui) {
+        ui.horizontal_top(|ui| {
+            material_asset(ui, p, tool, asset, asset_mixed, model, 76.0);
+            ui.vertical(|ui| {
+                for (channel, label) in [
+                    (0, aurora_i18n::tr!("common-all")),
+                    (1, aurora_i18n::tr!("common-color")),
+                    (3, "(O)RM"),
+                    (4, aurora_i18n::tr!("build-ui-texture-emissive")),
+                    (2, aurora_i18n::tr!("build-ui-texture-normal")),
+                ] {
+                    crate::ui::widgets::radio_value(ui, p, &mut tool.ui.pbr_channel, channel, RichText::new(label).size(11.0));
                 }
-            }
+                if ui
+                    .add_enabled(editable, egui::Button::new(aurora_i18n::tr!("common-edit")))
+                    .clicked()
+                {
+                    tool.ui.legacy_pbr_editor = true;
+                }
+            });
         });
+    } else {
+        let size = preview_size(ui, 3);
+        egui::Grid::new("pbr_map_grid")
+            .num_columns(3)
+            .spacing(egui::vec2(10.0, 10.0))
+            .show(ui, |ui| {
+                material_asset(ui, p, tool, asset, asset_mixed, model, size);
+                for (index, (id, caption, channel)) in [
+                    (mat.base_color_texture, aurora_i18n::tr!("common-color"), 0),
+                    (mat.normal_texture, aurora_i18n::tr!("build-ui-texture-normal"), 1),
+                    (mat.emissive_texture, aurora_i18n::tr!("build-ui-texture-emissive"), 3),
+                    (mat.metallic_roughness_texture, "(O)RM", 2),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    material_map(ui, p, tool, env, id, false, caption, PickTarget::PbrMap(channel), editable, size);
+                    if (index + 2) % 3 == 0 {
+                        ui.end_row();
+                    }
+                }
+            });
+    }
+    if super::legacy::active(ui) {
+        if tool.ui.legacy_pbr_editor {
+            let mut open = true;
+            crate::ui::widgets::Floater::new(
+                "legacy-build-pbr-editor",
+                aurora_i18n::tr!("build-ui-texture-material"),
+                egui::pos2(420.0, 160.0),
+                egui::vec2(350.0, 490.0),
+            )
+            .show(ui.ctx(), p, &mut open, |ui| {
+                super::common::typography(ui);
+                pbr_factors(ui, p, tool, world, env, sel, &mat, editable);
+            });
+            tool.ui.legacy_pbr_editor = open;
+        }
+    } else {
+        pbr_factors(ui, p, tool, world, env, sel, &mat, editable);
+    }
+    if super::legacy::active(ui) {
+        legacy_texture::mapping(ui, p, tool, world, sel);
+    }
+    ui.add_space(5.0);
+    ui.scope(|ui| {
+        if !super::legacy::active(ui) {
+            super::common::section(ui, p, aurora_i18n::tr!("build-material-placement"));
+        }
+        // texture transforms
+        ui.add_space(4.0);
+        let mut ch = tool.ui.pbr_channel;
+        let channels = [
+            (aurora_i18n::tr!("common-all"), 0usize),
+            (aurora_i18n::tr!("common-color"), 1),
+            (aurora_i18n::tr!("build-ui-texture-normal"), 2),
+            ("(O)RM", 3),
+            (aurora_i18n::tr!("build-ui-texture-emissive"), 4),
+        ];
+        let labels: Vec<(&str, bool)> = channels.iter().map(|(name, _)| (*name, true)).collect();
+        if !super::legacy::active(ui) {
+            tabs(ui, p, &mut ch, &labels);
+        }
+        tool.ui.pbr_channel = ch;
+        // "All" shows the base color's, mixed when the channels differ;
+        // the others in the panel's order: base, normal, ORM, emissive
+        let (t, mixed) = if ch == 0 {
+            (mat.transforms[0], mat.transforms.iter().any(|x| *x != mat.transforms[0]))
+        } else {
+            (mat.transforms[ch - 1], false)
+        };
+        let mut nt = t;
+        let mut rot = nt.rotation.to_degrees();
+        let mut e = Edit::default();
+
+        let mut values = [nt.scale[0], nt.scale[1], nt.offset[0], nt.offset[1], rot];
+        e = e.or(if super::legacy::active(ui) {
+            legacy_texture::uv_controls(ui, p, &mut values, [mixed; 5], 5, editable, |ui| {
+                repeats_meter(ui, p, tool, world, sel)
+            })
+        } else {
+            uv_controls(ui, p, &mut values, [mixed; 5], 5, editable, ["U", "V"])
+        });
+        nt.scale = [values[0], values[1]];
+        nt.offset = [values[2], values[3]];
+        rot = values[4];
+
+        nt.rotation = rot.to_radians();
+        if e.commit && nt != t {
+            tool.edit_gltf(world, sel, |o| {
+                if ch == 0 {
+                    o.transforms = [nt; 4];
+                } else {
+                    o.transforms[ch - 1] = nt;
+                }
+            });
+        }
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pbr_factors(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &mut World,
+    env: &mut Env,
+    sel: &[Sel],
+    mat: &aurora_assets::material::PbrMaterial,
+    editable: bool,
+) {
     ui.vertical(|ui| {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
         super::common::section(ui, p, aurora_i18n::tr!("build-material-surface"));
@@ -799,50 +917,6 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                 });
             }
         });
-    });
-    ui.add_space(5.0);
-    ui.scope(|ui| {
-        super::common::section(ui, p, aurora_i18n::tr!("build-material-placement"));
-        // texture transforms
-        ui.add_space(4.0);
-        let mut ch = tool.ui.pbr_channel;
-        let channels = [
-            (aurora_i18n::tr!("common-all"), 0usize),
-            (aurora_i18n::tr!("common-color"), 1),
-            (aurora_i18n::tr!("build-ui-texture-normal"), 2),
-            ("(O)RM", 3),
-            (aurora_i18n::tr!("build-ui-texture-emissive"), 4),
-        ];
-        let labels: Vec<(&str, bool)> = channels.iter().map(|(name, _)| (*name, true)).collect();
-        tabs(ui, p, &mut ch, &labels);
-        tool.ui.pbr_channel = ch;
-        // "All" shows the base color's, mixed when the channels differ;
-        // the others in the panel's order: base, normal, ORM, emissive
-        let (t, mixed) = if ch == 0 {
-            (mat.transforms[0], mat.transforms.iter().any(|x| *x != mat.transforms[0]))
-        } else {
-            (mat.transforms[ch - 1], false)
-        };
-        let mut nt = t;
-        let mut rot = nt.rotation.to_degrees();
-        let mut e = Edit::default();
-
-        let mut values = [nt.scale[0], nt.scale[1], nt.offset[0], nt.offset[1], rot];
-        e = e.or(uv_controls(ui, p, &mut values, [mixed; 5], 5, editable, ["U", "V"]));
-        nt.scale = [values[0], values[1]];
-        nt.offset = [values[2], values[3]];
-        rot = values[4];
-
-        nt.rotation = rot.to_radians();
-        if e.commit && nt != t {
-            tool.edit_gltf(world, sel, |o| {
-                if ch == 0 {
-                    o.transforms = [nt; 4];
-                } else {
-                    o.transforms[ch - 1] = nt;
-                }
-            });
-        }
     });
 }
 
@@ -1040,21 +1114,43 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
         }
     });
     ui.add_space(5.0);
+    bp_transforms(ui, p, tool, world, s, env, sel, &legacy, normal, spec, editable);
+}
+
+/// Shared UV commits for the Aurora controls and the Legacy vertical rows.
+#[allow(clippy::too_many_arguments)]
+fn bp_transforms(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &mut World,
+    s: &mut BuildSettings,
+    env: &mut Env,
+    sel: &[Sel],
+    legacy: &[Option<LegacyMaterial>],
+    normal: Option<Uuid>,
+    spec: Option<Uuid>,
+    editable: bool,
+) {
     ui.scope(|ui| {
-        super::common::section(ui, p, aurora_i18n::tr!("build-material-placement"));
+        if !super::legacy::active(ui) {
+            super::common::section(ui, p, aurora_i18n::tr!("build-material-placement"));
+        }
         // UV of the diffuse / normal / specular maps
         ui.add_space(4.0);
         let mut ch = tool.ui.bp_channel;
-        tabs(
-            ui,
-            p,
-            &mut ch,
-            &[
-                (aurora_i18n::tr!("build-ui-texture-diffuse"), true),
-                (aurora_i18n::tr!("build-ui-texture-normal"), true),
-                (aurora_i18n::tr!("build-ui-texture-specular"), true),
-            ],
-        );
+        if !super::legacy::active(ui) {
+            tabs(
+                ui,
+                p,
+                &mut ch,
+                &[
+                    (aurora_i18n::tr!("build-ui-texture-diffuse"), true),
+                    (aurora_i18n::tr!("build-ui-texture-normal"), true),
+                    (aurora_i18n::tr!("build-ui-texture-specular"), true),
+                ],
+            );
+        }
         tool.ui.bp_channel = ch;
         let planar = sel.iter().all(|x| x.te.media_flags & TEM_TEX_GEN_MASK == TEX_GEN_PLANAR);
         // planar mapping shows twice the scale (FSPanelFace::updateUI)
@@ -1077,7 +1173,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
             }
             .unwrap_or([1.0, 1.0, 0.0, 0.0, 0.0])
         };
-        let vals: Vec<[f32; 5]> = sel.iter().zip(&legacy).map(|(x, m)| read(x, m)).collect();
+        let vals: Vec<[f32; 5]> = sel.iter().zip(legacy).map(|(x, m)| read(x, m)).collect();
         let mixed = |i: usize| vals.iter().any(|v| (v[i] - vals[0][i]).abs() > 1e-5);
         let mut v = vals[0];
         v[0] *= k;
@@ -1087,15 +1183,13 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
         let decimals = s.decimal_precision.min(7) as usize;
         let mut e = Edit::default();
 
-        e = e.or(uv_controls(
-            ui,
-            p,
-            &mut v,
-            std::array::from_fn(mixed),
-            decimals,
-            editable,
-            ["H", "V"],
-        ));
+        e = e.or(if super::legacy::active(ui) {
+            legacy_texture::uv_controls(ui, p, &mut v, std::array::from_fn(mixed), decimals, editable, |ui| {
+                repeats_meter(ui, p, tool, world, sel)
+            })
+        } else {
+            uv_controls(ui, p, &mut v, std::array::from_fn(mixed), decimals, editable, ["H", "V"])
+        });
 
         if e.commit && v != before {
             // only the values that moved are written (non-tentative spinners)
@@ -1140,8 +1234,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
     });
 }
 
-/// A "hide water" face (FSPanelFace: alpha gradient diffuse, opaque,
-/// no maps).
+/// A "hide water" face (FSPanelFace: alpha gradient diffuse, opaque, no maps).
 fn is_hide_water(te: &TextureFace, m: Option<&LegacyMaterial>) -> bool {
     te.texture == IMG_ALPHA_GRAD && te.color[3] >= 1.0 && m.is_none_or(|m| m.normal_map.is_nil() && m.specular_map.is_nil())
 }
@@ -1208,15 +1301,7 @@ mod empty_map_tests {
 }
 
 /// Options under the PBR / Blinn-Phong sub-tabs.
-fn face_options(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    tool: &mut BuildTool,
-    world: &mut World,
-    s: &mut BuildSettings,
-    env: &mut Env,
-    sel: &[Sel],
-) {
+fn repeats_meter(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, sel: &[Sel]) {
     let planar = sel.iter().all(|x| x.te.media_flags & TEM_TEX_GEN_MASK == TEX_GEN_PLANAR);
     ui.vertical(|ui| {
         // repeats per meter: max(scale_s / object s size, scale_t / object t size)
@@ -1247,6 +1332,19 @@ fn face_options(
             });
         });
     });
+}
+
+fn face_options(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &mut World,
+    s: &mut BuildSettings,
+    env: &mut Env,
+    sel: &[Sel],
+) {
+    let planar = sel.iter().all(|x| x.te.media_flags & TEM_TEX_GEN_MASK == TEX_GEN_PLANAR);
+    repeats_meter(ui, p, tool, world, sel);
     ui.add_space(8.0);
     ui.vertical(|ui| {
         ui.vertical(|ui| {

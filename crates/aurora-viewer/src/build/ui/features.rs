@@ -54,6 +54,8 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let enabled = editable && single;
     let (extra, volume, material, is_root, click) = (o.extra.clone(), o.volume, o.prim_material, o.parent_id == 0, o.click_action);
     let mesh = volume.is_mesh();
+    let legacy_canvas =
+        super::legacy::active(ui).then(|| egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 460.0)));
 
     ui.horizontal(|ui| {
         small(
@@ -107,131 +109,196 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         tool.set_extra(world, idx, Extra::ExtendedMesh(Some(f)));
     }
     let (flexibility, open) = (aurora_i18n::tr!("build-ui-features-flexibility"), extra.flexible.is_some());
-    collapsing(ui, p, "attributes_flex", flexibility, open, |ui| {
-        let can_flex = matches!(volume.path.curve_type, LL_PCODE_PATH_LINE | LL_PCODE_PATH_FLEXIBLE) && !mesh;
-        if let Some(v) = check(
-            ui,
-            p,
-            extra.flexible.is_some(),
-            false,
-            aurora_i18n::tr!("build-ui-features-flexibility"),
-            enabled && can_flex,
-        ) {
-            set_flexible(tool, world, idx, v, click);
-        }
-        let flex_on = extra.flexible.is_some() && enabled;
-        let mut f = extra.flexible.unwrap_or(FLEX_DEFAULT);
-        let mut e = Edit::default();
-        ui.add_enabled_ui(flex_on, |ui| {
-            let mut soft = f.softness as i32;
-            row(ui, p, aurora_i18n::tr!("build-ui-features-softness"), 70.0, |ui| {
-                let r = super::common::spin_i(ui, &mut soft, 0..=3, W);
-                e = e.or(r);
-            });
-            f.softness = soft as u8;
-            for (name, v, range, inc) in [
-                (aurora_i18n::tr!("build-ui-features-gravity"), &mut f.gravity, -10.0..=10.0, 0.5),
-                (
-                    aurora_i18n::tr!("build-ui-features-elasticity"),
-                    &mut f.air_friction,
-                    0.0..=10.0,
-                    0.5,
-                ),
-                (aurora_i18n::tr!("common-wind"), &mut f.wind_sensitivity, 0.0..=10.0, 0.5),
-                (aurora_i18n::tr!("build-ui-features-tension"), &mut f.tension, 0.0..=10.0, 0.5),
-            ] {
-                row(ui, p, name, 70.0, |ui| e = e.or(spin(ui, v, inc, range, 3, W, false)));
-            }
-            let mut force = f.user_force.to_array();
-            for (i, name) in [
-                aurora_i18n::tr!("build-ui-features-force-x"),
-                aurora_i18n::tr!("build-ui-features-force-y"),
-                aurora_i18n::tr!("build-ui-features-force-z"),
-            ]
-            .iter()
-            .enumerate()
-            {
-                row(ui, p, name, 70.0, |ui| {
-                    e = e.or(spin(ui, &mut force[i], 0.01, -10.0..=10.0, 3, W, false))
-                });
-            }
-            f.user_force = glam::Vec3::from_array(force);
-        });
-        if e.commit && flex_on && Some(f) != extra.flexible {
-            tool.set_extra(world, idx, Extra::Flexible(Some(f)));
-        }
-    });
-    let physics = aurora_i18n::tr!("build-ui-features-physics-shape-type");
-    let demo_physics = env.demo && std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("physics"));
-    collapsing(ui, p, "attributes_physics", physics, demo_physics, |ui| {
-        label(ui, p, aurora_i18n::tr!("build-ui-features-physics-shape-type"));
-        let phys = tool.physics.get(&key.local_id).copied();
-        ui.horizontal(|ui| {
-            if let Some(t) = combo(ui, "physics_shape", phys.map(|x| x.shape_type), &physics_shapes(), 110.0, editable) {
-                tool.set_physics(world, |x| x.shape_type = t);
-            }
-            let eye = if s.show_physics_shape { "eye-filled" } else { "eye-off" };
-            if super::common::icon_button(
+    feature_group(
+        ui,
+        p,
+        "attributes_flex",
+        flexibility,
+        open,
+        legacy_canvas,
+        [0.0, 43.0, 130.0, 205.0],
+        |ui| {
+            let can_flex = matches!(volume.path.curve_type, LL_PCODE_PATH_LINE | LL_PCODE_PATH_FLEXIBLE) && !mesh;
+            if let Some(v) = check(
                 ui,
                 p,
-                eye,
-                aurora_i18n::tr!("build-ui-features-show-physics-shape-while-editing"),
-                true,
+                extra.flexible.is_some(),
+                false,
+                aurora_i18n::tr!("build-ui-features-flexibility"),
+                enabled && can_flex,
             ) {
-                s.show_physics_shape = !s.show_physics_shape;
+                set_flexible(tool, world, idx, v, click);
             }
-        });
-        let mcode = material & 0x0f;
-        let mut mats: Vec<(&str, u8)> = materials().to_vec();
-        if mcode == LL_MCODE_LIGHT {
-            mats.push((aurora_i18n::tr!("build-ui-features-fullbright-legacy"), LL_MCODE_LIGHT));
-        }
-        if let Some(m) = combo(ui, "material", Some(mcode), &mats, 110.0, enabled && mcode != LL_MCODE_LIGHT)
-            && m != LL_MCODE_LIGHT
-        {
-            tool.set_material(world, m);
-            // the panel shows the material's values (not sent)
-            let k = m as usize;
-            if let Some(x) = tool.physics.get_mut(&key.local_id) {
-                x.gravity_multiplier = 1.0;
-                x.friction = FRICTION[k];
-                x.density = 1000.0;
-                x.restitution = RESTITUTION[k];
+            let flex_on = extra.flexible.is_some() && enabled;
+            let mut f = extra.flexible.unwrap_or(FLEX_DEFAULT);
+            let mut e = Edit::default();
+            ui.add_enabled_ui(flex_on, |ui| {
+                let mut soft = f.softness as i32;
+                row(ui, p, aurora_i18n::tr!("build-ui-features-softness"), 70.0, |ui| {
+                    let r = super::common::spin_i(ui, &mut soft, 0..=3, W);
+                    e = e.or(r);
+                });
+                f.softness = soft as u8;
+                for (name, v, range, inc) in [
+                    (aurora_i18n::tr!("build-ui-features-gravity"), &mut f.gravity, -10.0..=10.0, 0.5),
+                    (
+                        aurora_i18n::tr!("build-ui-features-elasticity"),
+                        &mut f.air_friction,
+                        0.0..=10.0,
+                        0.5,
+                    ),
+                    (aurora_i18n::tr!("common-wind"), &mut f.wind_sensitivity, 0.0..=10.0, 0.5),
+                    (aurora_i18n::tr!("build-ui-features-tension"), &mut f.tension, 0.0..=10.0, 0.5),
+                ] {
+                    row(ui, p, name, 70.0, |ui| e = e.or(spin(ui, v, inc, range, 3, W, false)));
+                }
+                let mut force = f.user_force.to_array();
+                for (i, name) in [
+                    aurora_i18n::tr!("build-ui-features-force-x"),
+                    aurora_i18n::tr!("build-ui-features-force-y"),
+                    aurora_i18n::tr!("build-ui-features-force-z"),
+                ]
+                .iter()
+                .enumerate()
+                {
+                    row(ui, p, name, 70.0, |ui| {
+                        e = e.or(spin(ui, &mut force[i], 0.01, -10.0..=10.0, 3, W, false))
+                    });
+                }
+                f.user_force = glam::Vec3::from_array(force);
+            });
+            if e.commit && flex_on && Some(f) != extra.flexible {
+                tool.set_extra(world, idx, Extra::Flexible(Some(f)));
             }
-        }
-        let mut ph = phys.unwrap_or_default();
-        let mut e = Edit::default();
-        ui.add_enabled_ui(editable && phys.is_some(), |ui| {
-            row(ui, p, aurora_i18n::tr!("build-ui-features-gravity"), 70.0, |ui| {
-                e = e.or(spin(ui, &mut ph.gravity_multiplier, 1.0, -1.0..=28.0, 3, W, false))
+        },
+    );
+    let physics = aurora_i18n::tr!("build-ui-features-physics-shape-type");
+    let demo_physics = env.demo && std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("physics"));
+    feature_group(
+        ui,
+        p,
+        "attributes_physics",
+        physics,
+        demo_physics,
+        legacy_canvas,
+        [140.0, 43.0, 135.0, 205.0],
+        |ui| {
+            label(ui, p, aurora_i18n::tr!("build-ui-features-physics-shape-type"));
+            let phys = tool.physics.get(&key.local_id).copied();
+            ui.horizontal(|ui| {
+                if let Some(t) = combo(ui, "physics_shape", phys.map(|x| x.shape_type), &physics_shapes(), 110.0, editable) {
+                    tool.set_physics(world, |x| x.shape_type = t);
+                }
+                let eye = if s.show_physics_shape { "eye-filled" } else { "eye-off" };
+                if super::common::icon_button(
+                    ui,
+                    p,
+                    eye,
+                    aurora_i18n::tr!("build-ui-features-show-physics-shape-while-editing"),
+                    true,
+                ) {
+                    s.show_physics_shape = !s.show_physics_shape;
+                }
             });
-            row(ui, p, aurora_i18n::tr!("common-friction"), 70.0, |ui| {
-                e = e.or(spin(ui, &mut ph.friction, 0.1, 0.0..=255.0, 3, W, false))
+            let mcode = material & 0x0f;
+            let mut mats: Vec<(&str, u8)> = materials().to_vec();
+            if mcode == LL_MCODE_LIGHT {
+                mats.push((aurora_i18n::tr!("build-ui-features-fullbright-legacy"), LL_MCODE_LIGHT));
+            }
+            if let Some(m) = combo(ui, "material", Some(mcode), &mats, 110.0, enabled && mcode != LL_MCODE_LIGHT)
+                && m != LL_MCODE_LIGHT
+            {
+                tool.set_material(world, m);
+                // the panel shows the material's values (not sent)
+                let k = m as usize;
+                if let Some(x) = tool.physics.get_mut(&key.local_id) {
+                    x.gravity_multiplier = 1.0;
+                    x.friction = FRICTION[k];
+                    x.density = 1000.0;
+                    x.restitution = RESTITUTION[k];
+                }
+            }
+            let mut ph = phys.unwrap_or_default();
+            let mut e = Edit::default();
+            ui.add_enabled_ui(editable && phys.is_some(), |ui| {
+                row(ui, p, aurora_i18n::tr!("build-ui-features-gravity"), 70.0, |ui| {
+                    e = e.or(spin(ui, &mut ph.gravity_multiplier, 1.0, -1.0..=28.0, 3, W, false))
+                });
+                row(ui, p, aurora_i18n::tr!("common-friction"), 70.0, |ui| {
+                    e = e.or(spin(ui, &mut ph.friction, 0.1, 0.0..=255.0, 3, W, false))
+                });
+                row(ui, p, aurora_i18n::tr!("build-ui-features-density-in-100-kg-m-3"), 70.0, |ui| {
+                    e = e.or(spin(ui, &mut ph.density, 0.1, 1.0..=22587.0, 2, W, false))
+                });
+                row(ui, p, aurora_i18n::tr!("common-restitution"), 70.0, |ui| {
+                    e = e.or(spin(ui, &mut ph.restitution, 0.01, 0.0..=1.0, 3, W, false))
+                });
             });
-            row(ui, p, aurora_i18n::tr!("build-ui-features-density-in-100-kg-m-3"), 70.0, |ui| {
-                e = e.or(spin(ui, &mut ph.density, 0.1, 1.0..=22587.0, 2, W, false))
-            });
-            row(ui, p, aurora_i18n::tr!("common-restitution"), 70.0, |ui| {
-                e = e.or(spin(ui, &mut ph.restitution, 0.01, 0.0..=1.0, 3, W, false))
-            });
-        });
-        if e.commit && Some(ph) != phys {
-            tool.set_physics(world, |x| {
-                x.gravity_multiplier = ph.gravity_multiplier;
-                x.friction = ph.friction;
-                x.density = ph.density;
-                x.restitution = ph.restitution;
-            });
-        }
-    });
+            if e.commit && Some(ph) != phys {
+                tool.set_physics(world, |x| {
+                    x.gravity_multiplier = ph.gravity_multiplier;
+                    x.friction = ph.friction;
+                    x.density = ph.density;
+                    x.restitution = ph.restitution;
+                });
+            }
+        },
+    );
     let (light, open) = (aurora_i18n::tr!("common-light"), extra.light.is_some());
-    collapsing(ui, p, "attributes_light", light, open, |ui| {
-        light_section(ui, p, tool, world, idx, &extra, enabled, env);
-    });
+    feature_group(
+        ui,
+        p,
+        "attributes_light",
+        light,
+        open,
+        legacy_canvas,
+        [0.0, 255.0, 275.0, 112.0],
+        |ui| {
+            light_section(ui, p, tool, world, idx, &extra, enabled, env);
+        },
+    );
     let (probe, open) = (aurora_i18n::tr!("common-reflection-probe"), extra.reflection_probe.is_some());
-    collapsing(ui, p, "attributes_probe", probe, open, |ui| {
-        probe_section(ui, p, tool, world, idx, &extra, enabled && !mesh);
-    });
+    feature_group(
+        ui,
+        p,
+        "attributes_probe",
+        probe,
+        open,
+        legacy_canvas,
+        [0.0, 360.0, 275.0, 80.0],
+        |ui| {
+            probe_section(ui, p, tool, world, idx, &extra, enabled && !mesh);
+        },
+    );
+    if let Some(rect) = legacy_canvas {
+        ui.advance_cursor_after_rect(rect);
+    }
+}
+
+/// The reference volume panel keeps all groups exposed, including their
+/// disabled values. Aurora retains its independent folding sections.
+#[allow(clippy::too_many_arguments)]
+fn feature_group(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    id: &str,
+    title: &str,
+    open: bool,
+    canvas: Option<egui::Rect>,
+    bounds: [f32; 4],
+    body: impl FnOnce(&mut egui::Ui),
+) {
+    if let Some(canvas) = canvas {
+        let scale = canvas.width() / 275.0;
+        let rect = egui::Rect::from_min_size(
+            canvas.min + egui::vec2(bounds[0] * scale, bounds[1]),
+            egui::vec2(bounds[2] * scale, bounds[3]),
+        );
+        let mut child = super::legacy::pane(ui, rect, id);
+        body(&mut child);
+    } else {
+        collapsing(ui, p, id, title, open, body);
+    }
 }
 
 /// LLVOVolume::setIsFlexible + LLPanelVolume::onCommitIsFlexible: the
@@ -266,6 +333,8 @@ fn light_section(
     let on = extra.light.is_some() && enabled;
     let l = extra.light.unwrap_or(LIGHT_DEFAULT);
     let img = extra.light_image;
+    let legacy = super::legacy::active(ui);
+    let swatch_size = if legacy { 32.0 } else { 40.0 };
     ui.horizontal(|ui| {
         if let Some(v) = check(ui, p, extra.light.is_some(), false, aurora_i18n::tr!("common-light"), enabled) {
             tool.set_extra(world, idx, Extra::Light(v.then_some(LIGHT_DEFAULT)));
@@ -273,7 +342,15 @@ fn light_section(
         ui.add_space(12.0);
         // the swatch shows sRGB; the wire carries linear (setLightSRGBColor)
         let srgb = [linear_to_srgb(l.color[0]), linear_to_srgb(l.color[1]), linear_to_srgb(l.color[2])];
-        let swatch = color_swatch(ui, p, srgb, aurora_i18n::tr!("common-color"), 40.0, on);
+        let swatch = color_swatch(
+            ui,
+            p,
+            srgb,
+            if legacy { "" } else { aurora_i18n::tr!("common-color") },
+            swatch_size,
+            on,
+        )
+        .on_hover_text(aurora_i18n::tr!("common-color"));
         if let Some(object) = world.objects.get(idx) {
             tool.color_swatch_response(world, env, super::ColorTarget::Light(object.full_id), srgb, swatch);
         }
@@ -283,11 +360,12 @@ fn light_section(
             env.images,
             &mut tool.ui.wanted_images,
             img.map(|i| i.texture),
-            aurora_i18n::tr!("common-texture"),
-            40.0,
+            if legacy { "" } else { aurora_i18n::tr!("common-texture") },
+            swatch_size,
             false,
             on,
-        );
+        )
+        .on_hover_text(aurora_i18n::tr!("common-texture"));
         let demo_picker = egui::Id::unique("demo_light_texture_picker_opened");
         let demo_open = env.demo
             && on
@@ -312,32 +390,43 @@ fn light_section(
     let mut ni = img.unwrap_or(LIGHT_IMAGE_DEFAULT);
     let mut e = Edit::default();
     let mut ei = Edit::default();
-    ui.add_enabled_ui(on, |ui| {
-        ui.vertical(|ui| {
-            row(ui, p, aurora_i18n::tr!("build-ui-features-intensity"), 70.0, |ui| {
-                e = e.or(spin(ui, &mut nl.color[3], 0.1, 0.0..=1.0, 3, W, false))
-            });
-            row(ui, p, aurora_i18n::tr!("build-ui-features-range"), 70.0, |ui| {
-                e = e.or(spin(ui, &mut nl.radius, 0.1, 0.0..=20.0, 3, W, false))
-            });
-            row(ui, p, aurora_i18n::tr!("build-ui-features-falloff"), 70.0, |ui| {
-                e = e.or(spin(ui, &mut nl.falloff, 0.25, 0.0..=2.0, 3, W, false))
-            });
-            // spot light parameters: only with a projector texture
-            ui.add_enabled_ui(img.is_some(), |ui| {
-                let mut v = ni.params.to_array();
-                row(ui, p, aurora_i18n::tr!("build-ui-features-field-of-view"), 70.0, |ui| {
-                    ei = ei.or(spin(ui, &mut v[0], 0.1, 0.0..=3.0, 3, W, false))
-                });
-                row(ui, p, aurora_i18n::tr!("build-ui-features-center-point"), 70.0, |ui| {
-                    ei = ei.or(spin(ui, &mut v[1], 0.5, -20.0..=20.0, 3, W, false))
-                });
-                row(ui, p, aurora_i18n::tr!("common-ambient"), 70.0, |ui| {
-                    ei = ei.or(spin(ui, &mut v[2], 0.05, 0.0..=1.0, 3, W, false))
-                });
-                ni.params = glam::Vec3::from_array(v);
-            });
+    let mut light_values = |ui: &mut egui::Ui| {
+        for (name, value, inc, max) in [
+            (aurora_i18n::tr!("build-ui-features-intensity"), &mut nl.color[3], 0.1, 1.0),
+            (aurora_i18n::tr!("build-ui-features-range"), &mut nl.radius, 0.1, 20.0),
+            (aurora_i18n::tr!("build-ui-features-falloff"), &mut nl.falloff, 0.25, 2.0),
+        ] {
+            row(ui, p, name, 70.0, |ui| e = e.or(spin(ui, value, inc, 0.0..=max, 3, W, false)));
+        }
+    };
+    let mut spot_values = |ui: &mut egui::Ui| {
+        ui.add_enabled_ui(img.is_some(), |ui| {
+            let mut v = ni.params.to_array();
+            for (i, (name, inc, range)) in [
+                (aurora_i18n::tr!("build-ui-features-field-of-view"), 0.1, 0.0..=3.0),
+                (aurora_i18n::tr!("build-ui-features-center-point"), 0.5, -20.0..=20.0),
+                (aurora_i18n::tr!("common-ambient"), 0.05, 0.0..=1.0),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                row(ui, p, name, 70.0, |ui| ei = ei.or(spin(ui, &mut v[i], inc, range, 3, W, false)));
+            }
+            ni.params = glam::Vec3::from_array(v);
         });
+    };
+    ui.add_enabled_ui(on, |ui| {
+        if super::legacy::active(ui) {
+            ui.columns(2, |columns| {
+                light_values(&mut columns[0]);
+                spot_values(&mut columns[1]);
+            });
+        } else {
+            ui.vertical(|ui| {
+                light_values(ui);
+                spot_values(ui);
+            });
+        }
     });
     if e.commit && nl != l {
         tool.set_extra(world, idx, Extra::Light(Some(nl)));
@@ -392,14 +481,25 @@ fn probe_section(
             send = true;
         }
         let mut e = Edit::default();
-        ui.vertical(|ui| {
-            row(ui, p, aurora_i18n::tr!("common-ambient"), 70.0, |ui| {
-                e = e.or(spin(ui, &mut np.ambiance, 0.05, 0.0..=100.0, 3, W, false))
+        let mut field = |ui: &mut egui::Ui, ambient: bool| {
+            let (name, value, max) = if ambient {
+                (aurora_i18n::tr!("common-ambient"), &mut np.ambiance, 100.0)
+            } else {
+                (aurora_i18n::tr!("build-ui-features-coverage"), &mut np.clip_distance, 1024.0)
+            };
+            row(ui, p, name, 70.0, |ui| spin(ui, value, 0.05, 0.0..=max, 3, W, false))
+        };
+        if super::legacy::active(ui) {
+            ui.columns(2, |columns| {
+                e = e.or(field(&mut columns[0], true));
+                e = e.or(field(&mut columns[1], false));
             });
-            row(ui, p, aurora_i18n::tr!("build-ui-features-coverage"), 70.0, |ui| {
-                e = e.or(spin(ui, &mut np.clip_distance, 0.05, 0.0..=1024.0, 3, W, false))
+        } else {
+            ui.vertical(|ui| {
+                e = e.or(field(ui, true));
+                e = e.or(field(ui, false));
             });
-        });
+        }
         send |= e.commit;
     });
     if send && np != pr && on {

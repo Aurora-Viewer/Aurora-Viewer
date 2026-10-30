@@ -1239,19 +1239,28 @@ included, and a handle can be grabbed anywhere on its larger shape.
 `AURORA_DEMO_BUILD_STYLE=legacy` selects the Legacy tool strip and five tabs,
 independently of the saved preference. Use `AURORA_DEMO_BUILD=move,object:118`
 with `AURORA_DEMO_BUILD_TAB=general|object|features|texture:bp|texture:pbr|contents`.
-Object contains flags, transforms and shape. Check tool switching, face/linked
-selection, grid modes, ruler settings, collapsing, and short-window scrolling.
+Compare with `floater_tools.xml` and `panel_tools_texture.xml`: the compact tool
+block ends with linked-part navigation, Link/Unlink and the ruler on one row;
+counters sit directly above the five tabs. General places sale before permissions.
+Object has flags and vertical XYZ/C/P/p blocks on the left, shape/mesh data on the
+right. Features exposes its flexible/physics columns and light/probe controls
+without folding cards. Texture has a tint/transparency/glow row, model dropdown,
+channel radios, one swatch and vertical scale/repeats/rotation/offset fields;
+PBR Edit opens its native live factor window. Check every moved control, vector
+copy/paste, map channels, linked selection, ruler settings and the bottom collapse
+strip. At 330 by 620 the property panel scrolls while the tool block and tabs stay
+in place.
 Switch Preferences > Aurora > Build tools between Aurora and Legacy while
 editing; the selection, properties and custom Aurora arrangement must survive.
 The bulk Aurora/Legacy choices include this preference, which persists on restart.
-Legacy keeps Aurora's theme, material panels and mesh inspector, a deliberate
-presentation difference from the reference viewer. Human grid validation covers
+Legacy keeps Aurora's theme and native mesh inspector while following the
+reference control arrangement. Human grid validation covers
 actual property/transform edits, permissions, linking and object contents.
 
 `AURORA_DEMO_BUILD_SIZE` sets the construction window's initial dimensions
 once for reproducible captures; normal sessions restore saved geometry. The chosen
 presentation stays the same at every width. Aurora starts at 350 by 820 and Legacy
-at 400 by 820; Aurora's visible icons and expanded transform area
+at 360 by 780; Aurora's visible icons and expanded transform area
 can raise its minimum height. Append
 `+settings`, `+organize` or `+folded` to `AURORA_DEMO_BUILD_TAB=general` to inspect
 the side settings, hidden-item storage/notecard buttons or folded numeric values.

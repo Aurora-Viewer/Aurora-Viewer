@@ -1044,11 +1044,19 @@ Its Cx rows participate in preference search, modified settings and page reset.
 The construction floater defaults to the compact Aurora presentation (350 by 820
 initial size), with ordinary saved geometry. `BuildSettings::legacy_window`,
 exposed in Preferences > Aurora and its bulk look choices, selects
-`build/ui/legacy.rs`: a horizontal tool strip, native tool options and five tabs
-(General, Object, Features, Texture, Content), following `LLFloaterTools`.
-Object combines flags, transforms and shape; the fixed Legacy controls remain
-available independently of the customized Aurora arrangement. Both presentations
-share the native property panels and secondary dialogs. Aurora's five editing sections share a full-width
+`build/ui/legacy.rs`: the `LLFloaterTools` reference geometry (360 by 780 initial
+size), including the compact tool/options block, linked-part/link/grid row,
+selection counters, five tabs and bottom collapse strip. Its scoped UI tag keeps
+native spinners compact without changing Aurora or standalone object profiles.
+General places sale before ownership permissions. Object keeps flags and vertical
+XYZ blocks with C/P/p buttons on the left and shape/mesh data on the right.
+Features exposes flexible and physics columns above light/projector and probe
+controls. `build/ui/legacy_texture.rs` follows `panel_tools_texture.xml`: surface
+controls across the top, material/channel selection, one texture swatch and
+vertical UV rows. The UV writers, permission checks and simulator commands stay
+shared; Legacy PBR Edit opens the same factor controls in a native floater.
+Contents keeps its three-column action strip. The fixed Legacy controls remain
+independent of the customized Aurora arrangement. Aurora's five editing sections share a full-width
 folding transform area and an editable footer. `build/layout.rs` owns the saved
 item order/destinations and the versioned, validated notecard profile, excluding
 object properties/transforms. `build/ui/layout.rs` renders the same controls in

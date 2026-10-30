@@ -5780,6 +5780,9 @@ impl App {
                 let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()).unwrap_or_default();
                 self.build.paste_vector(&mut self.world, &self.settings.build, which, &text);
             }
+            Request::CopyKeys => self
+                .egui_ctx
+                .copy_text(self.build.copy_keys(&self.world, &self.settings.build, self.shift)),
             Request::Script { object, item } => self.open_script(aurora_net::scripts::ScriptTarget { object, item }),
         }
         self.flush_build();

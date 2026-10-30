@@ -79,6 +79,7 @@ pub enum Request {
     /// "p" of the Object tab: read the system clipboard for this vector
     /// (0 position, 1 size, 2 rotation) and call BuildTool::paste_vector.
     PasteVector(usize),
+    CopyKeys,
     Script {
         object: Uuid,
         item: Uuid,
@@ -147,6 +148,7 @@ pub enum Confirm {
 pub struct FloaterState {
     /// Active presentation, mirrored before input routing (not a preference).
     legacy_window: bool,
+    legacy_pbr_editor: bool,
     pub layout: layout::State,
     pub notecards: notecards::State,
     mesh_inspection: mesh::Inspection,
@@ -366,6 +368,7 @@ pub fn show(
     tool.ui.layout.zones.clear();
     let mut open = true;
     let mut toggle_sections = false;
+    let mut legacy_toggle_sections = false;
     let mut copy_uuid = false;
     let mut toggle_settings = false;
     if s.legacy_window {
@@ -385,22 +388,23 @@ pub fn show(
     };
     let mut floater = Floater::new(INSPECTOR_ID, title, egui::pos2(screen.left() + 12.0, 40.0), default_size)
         .help(aurora_i18n::tr!("build-compact-help"))
-        .framed_header(title_icon)
-        .action(
+        .steady_size()
+        .silent();
+    if !s.legacy_window {
+        floater = floater.framed_header(title_icon).action(
             if s.expanded { "caret-up-filled" } else { "caret-down-filled" },
             aurora_i18n::tr!("build-compact-collapse"),
             &mut toggle_sections,
-        )
-        .steady_size()
-        .silent();
-    floater.header_status = compact::object_status(tool, world, p);
-    floater.header_status_action = Some((
-        "clipboard-text-filled",
-        aurora_i18n::tr!("build-compact-uuid"),
-        aurora_i18n::tr!("build-ui-general-copy-object-keys-shift-all-parts"),
-        &mut copy_uuid,
-    ));
-    if s.legacy_window || !matches!(tool.tool, Tool::Edit | Tool::Create) {
+        );
+        floater.header_status = compact::object_status(tool, world, p);
+        floater.header_status_action = Some((
+            "clipboard-text-filled",
+            aurora_i18n::tr!("build-compact-uuid"),
+            aurora_i18n::tr!("build-ui-general-copy-object-keys-shift-all-parts"),
+            &mut copy_uuid,
+        ));
+    }
+    if !s.legacy_window && !matches!(tool.tool, Tool::Edit | Tool::Create) {
         floater = floater.action("settings-filled", aurora_i18n::tr!("build-layout-settings"), &mut toggle_settings);
     }
     floater.min_size = if s.legacy_window {
@@ -417,11 +421,12 @@ pub fn show(
     floater.show(ctx, p, &mut open, |ui| {
         common::typography(ui);
         if s.legacy_window {
-            legacy::body(ui, p, tool, world, s, mods, env);
+            legacy_toggle_sections = legacy::body(ui, p, tool, world, s, mods, env);
         } else {
             compact::body(ui, p, tool, world, s, mods, env);
         }
     });
+    toggle_sections |= legacy_toggle_sections;
     if copy_uuid && !tool.selection.is_empty() {
         ctx.copy_text(tool.copy_keys(world, s, mods.shift));
     }
