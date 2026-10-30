@@ -5,7 +5,7 @@ use super::super::{
     World, appearance,
     inventory::{Inventory, actions},
 };
-use super::Command;
+use super::{Command, Param};
 use aurora_net::outfits::OutfitLink;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -236,6 +236,32 @@ fn folded_parent(inv: &Inventory, mut id: Uuid, legacy: bool) -> Uuid {
         id = f.info.parent;
     }
     id
+}
+
+/// Inventory force wears and worn-state replies need a quiet appearance
+/// queue; sit/tpto/camera and status replies must not wait on COF sync.
+pub fn appearance_bound(command: &Command) -> bool {
+    if force_kind(&command.behaviour).is_some() {
+        return true;
+    }
+    matches!(command.param, Param::Reply(_))
+        && matches!(
+            command.behaviour.as_str(),
+            "getinv"
+                | "getinvworn"
+                | "findfolder"
+                | "findfolders"
+                | "getattach"
+                | "getattachnames"
+                | "getaddattachnames"
+                | "getremattachnames"
+                | "getoutfit"
+                | "getoutfitnames"
+                | "getaddoutfitnames"
+                | "getremoutfitnames"
+                | "getpath"
+                | "getpathnew"
+        )
 }
 
 pub fn force_kind(name: &str) -> Option<&'static str> {

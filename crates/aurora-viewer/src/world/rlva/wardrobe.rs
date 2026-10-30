@@ -16,6 +16,11 @@ impl World {
         if !self.rlva.enabled() || self.rlva.wardrobe.generation == Some(self.inventory.generation) {
             return;
         }
+        // Hold clothing worn/unworn notifies across a multi-step force wear so
+        // collars and activity HUDs are not flooded mid-transaction.
+        if self.rlva.appearance_busy || !self.rlva.appearance.is_empty() {
+            return;
+        }
         self.rlva.wardrobe.generation = Some(self.inventory.generation);
         let Some(cof) = appearance::cof(&self.inventory).filter(|cof| {
             appearance::complete(&self.inventory, *cof)

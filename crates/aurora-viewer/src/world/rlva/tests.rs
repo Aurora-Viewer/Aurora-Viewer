@@ -1450,17 +1450,36 @@ fn rlva_folder_locks_respect_scope_nearest_exception_other_issuers_and_folded_fo
         "a folded attachment folder chooses the attachment point"
     );
     w.rlva.appearance.clear();
-    command(&mut w.rlva, A, "@attach:Outfit=force,getgroup=123");
-    w.rlva_pending();
-    assert_eq!(w.rlva.pending.len(), 1, "the query waits for the outfit transaction");
-    assert!(w.rlva.out.is_empty());
+    command(&mut w.rlva, A, "@attach:Outfit=force,getinvworn:Outfit=123,getgroup=124,sitground=force");
+    let forced = w.rlva_pending();
+    assert!(
+        w.rlva.pending.iter().any(|(_, c)| c.behaviour == "getinvworn"),
+        "worn-state replies wait for the outfit transaction"
+    );
+    assert!(
+        matches!(w.rlva.out.iter().find(|c| matches!(c, NetCommand::ChatReply { channel: 124, .. })), Some(NetCommand::ChatReply { message, .. }) if message == "none"),
+        "non-inventory replies drain while COF sync runs"
+    );
+    assert!(
+        forced
+            .iter()
+            .any(|(_, c)| matches!(c, NetCommand::OneShotControl(flags) if *flags & aurora_net::control::SIT_ON_GROUND != 0)),
+        "force sit is not stalled behind appearance"
+    );
     w.rlva.appearance.clear();
     w.rlva.appearance_busy = true;
+    w.rlva.out.clear();
     w.rlva_pending();
-    assert_eq!(w.rlva.pending.len(), 1);
+    assert!(
+        w.rlva.pending.iter().any(|(_, c)| c.behaviour == "getinvworn"),
+        "appearance_busy still defers worn queries"
+    );
+    command(&mut w.rlva, A, "@getgroup=125");
+    w.rlva_pending();
+    assert!(matches!(w.rlva.out.last(), Some(NetCommand::ChatReply { channel: 125, message, .. }) if message == "none"));
     w.rlva.appearance_busy = false;
     w.rlva_pending();
-    assert!(matches!(w.rlva.out.last(), Some(NetCommand::ChatReply { channel: 123, message, .. }) if message == "none"));
+    assert!(matches!(w.rlva.out.iter().rev().find(|c| matches!(c, NetCommand::ChatReply { channel: 123, .. })), Some(_)));
 }
 
 #[test]

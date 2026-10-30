@@ -340,18 +340,24 @@ impl World {
 
     /// Queries requiring world state and force commands are consumed in their
     /// original order. The issuing object may bypass only its own locks.
+    /// Outfit transactions only stall inventory forces and worn-state replies;
+    /// sit, teleport, camera and status replies keep draining so activity HUDs
+    /// and pose relays are not frozen behind COF sync.
     pub fn rlva_pending(&mut self) -> Vec<(Uuid, NetCommand)> {
         self.rlva_relative_tick(std::time::Instant::now());
         let mut commands = Vec::new();
-        if self.rlva.appearance_busy || !self.rlva.appearance.is_empty() {
-            return commands;
-        }
+        let mut appearance_blocked = self.rlva.appearance_busy || !self.rlva.appearance.is_empty();
+        let mut deferred = Vec::new();
         let mut pending = std::mem::take(&mut self.rlva.pending).into_iter();
         while let Some((source, c)) = pending.next() {
             if !self.rlva.enabled() {
                 break;
             }
             if !self.rlva.controllers.accepts(source, c.param) {
+                continue;
+            }
+            if appearance_blocked && super::inventory::appearance_bound(&c) {
+                deferred.push((source, c));
                 continue;
             }
             if self.rlva_environment_command(source, &c) {
@@ -385,8 +391,9 @@ impl World {
                 if let Some(text) = text {
                     self.rlva.reply(channel, text);
                 } else {
-                    self.rlva.pending.push((source, c));
-                    self.rlva.pending.extend(pending);
+                    // Folders still loading: keep this reply ahead of later work.
+                    deferred.push((source, c));
+                    deferred.extend(pending);
                     break;
                 }
                 continue;
@@ -409,11 +416,12 @@ impl World {
             }
             if super::inventory::force_kind(&c.behaviour).is_some() {
                 if !self.rlva_inventory_force(source, &c) {
-                    self.rlva.pending.push((source, c));
+                    deferred.push((source, c));
+                    appearance_blocked = true;
+                    continue;
                 }
-                if !self.rlva.pending.is_empty() || !self.rlva.appearance.is_empty() {
-                    self.rlva.pending.extend(pending);
-                    break;
+                if !self.rlva.appearance.is_empty() {
+                    appearance_blocked = true;
                 }
                 continue;
             }
@@ -471,6 +479,8 @@ impl World {
                 commands.push((source, command));
             }
         }
+        deferred.extend(pending);
+        self.rlva.pending = deferred;
         commands
     }
 }

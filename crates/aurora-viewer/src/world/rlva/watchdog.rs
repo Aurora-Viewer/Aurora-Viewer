@@ -252,30 +252,96 @@ impl super::super::World {
             aurora_net::NetCommand::RezAttachments(items) if actor != ACTOR => {
                 let previous = self.rlva_attachment_snapshot();
                 for item in items.iter().take(256) {
-                    if self.rlva.watchdog.wears.len() >= 256 && !self.rlva.watchdog.wears.contains_key(&item.item_id) {
+                    self.rlva_note_wear(item.item_id, !item.add, actor, &previous, now);
+                }
+            }
+            // Force wear goes through UpdateOutfit first; register the same
+            // RlvWearInfo transaction Legacy records in onWearAttachment so
+            // folder locks do not fight the scripted strip mid-COF.
+            aurora_net::NetCommand::UpdateOutfit { change, .. } if actor != ACTOR => {
+                let Some(cof) = super::super::appearance::cof(&self.inventory) else {
+                    return;
+                };
+                let before = super::super::appearance::folder_links(&self.inventory, cof);
+                let links = if change.folder == cof {
+                    &change.links
+                } else if let Some((id, links)) = &change.cof {
+                    if *id != cof {
+                        return;
+                    }
+                    links
+                } else {
+                    return;
+                };
+                let previous = self.rlva_attachment_snapshot();
+                let mut removed = Vec::new();
+                for old in &before {
+                    if old.folder || links.iter().any(|link| link.target == old.target) {
                         continue;
                     }
-                    let allowed = self
-                        .avatar_lib
-                        .attach_points
-                        .keys()
-                        .copied()
-                        .filter(|point| self.rlva_can_add(item.item_id, *point, actor))
-                        .collect();
-                    self.rlva.watchdog.wears.insert(
-                        item.item_id,
-                        Wear {
-                            replace: !item.add,
-                            preserve: previous.keys().filter(|id| !self.rlva_can_remove(**id, actor)).copied().collect(),
-                            allowed,
-                            previous: previous.clone(),
-                            at: now,
-                        },
-                    );
+                    if self.inventory.items.get(&old.target).is_some_and(|item| item.asset_type == 6) {
+                        removed.push(old.target);
+                    }
+                }
+                if !removed.is_empty() {
+                    self.rlva.watchdog.requested_detach(&removed, now);
+                }
+                for link in links.iter().take(256) {
+                    if link.folder || before.iter().any(|old| old.target == link.target) {
+                        continue;
+                    }
+                    if !self.inventory.items.get(&link.target).is_some_and(|item| item.asset_type == 6) {
+                        continue;
+                    }
+                    let point = previous
+                        .get(&link.target)
+                        .map(|attachment| attachment.point)
+                        .or_else(|| self.inventory.items.get(&link.target).map(|item| (item.flags & 0xff) as u8))
+                        .unwrap_or(0);
+                    let replace = removed.iter().any(|old| {
+                        previous.get(old).is_some_and(|attachment| attachment.point == point)
+                            || (point != 0
+                                && self
+                                    .inventory
+                                    .items
+                                    .get(old)
+                                    .is_some_and(|item| (item.flags & 0xff) as u8 == point))
+                    });
+                    self.rlva_note_wear(link.target, replace, actor, &previous, now);
                 }
             }
             _ => {}
         }
+    }
+
+    fn rlva_note_wear(
+        &mut self,
+        item: Uuid,
+        replace: bool,
+        actor: Uuid,
+        previous: &BTreeMap<Uuid, Attachment>,
+        now: Instant,
+    ) {
+        if self.rlva.watchdog.wears.len() >= 256 && !self.rlva.watchdog.wears.contains_key(&item) {
+            return;
+        }
+        let allowed = self
+            .avatar_lib
+            .attach_points
+            .keys()
+            .copied()
+            .filter(|point| self.rlva_can_add(item, *point, actor))
+            .collect();
+        self.rlva.watchdog.wears.insert(
+            item,
+            Wear {
+                replace,
+                preserve: previous.keys().filter(|id| !self.rlva_can_remove(**id, actor)).copied().collect(),
+                allowed,
+                previous: previous.clone(),
+                at: now,
+            },
+        );
     }
 
     pub fn rlva_watchdog_tick(&mut self, now: Instant) {
@@ -346,7 +412,11 @@ impl super::super::World {
             now,
         );
         self.rlva.watchdog.checked = Some(checked);
+        let defer_notices = self.rlva.appearance_busy || !self.rlva.appearance.is_empty();
         for notice in notices {
+            if defer_notices {
+                continue;
+            }
             let point = self
                 .avatar_lib
                 .attach_names

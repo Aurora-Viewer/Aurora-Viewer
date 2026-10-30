@@ -53,8 +53,10 @@ impl crate::world::World {
             return;
         }
         let mut waiting = std::mem::take(&mut self.rlva.relative);
+        // Child prim issuers resolve to their worn linkset root; waiting for
+        // the exact source UUID alone stranded relative wears from HUD children.
         let ready = waiting.update(now, 256usize.saturating_sub(self.rlva.pending.len()), |source| {
-            self.rlva_own_attachment_root(source) == Some(source)
+            self.rlva_own_attachment_root(source).is_some()
         });
         self.rlva.relative = waiting;
         self.rlva.pending.extend(
