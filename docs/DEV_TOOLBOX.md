@@ -55,7 +55,7 @@ English.
 | Media or sound does not play | Turn M1 on, retry, press J3 | M1, J3 | The media lines and warnings | plugin and media state |
 | Any report, first message | Press J4 once | J4 | Version, hardware, settings | build, GPU vendor and driver, settings |
 | Scripted IK has no effect | Trigger the affected profile, press J8, then Copy | J8 | Local relay, definitions, accepted activations and target states | last_failure, complete_ack, active_packets, suppress_scripts, resolved/waiting links |
-| A worn animesh is bent, stretched or misplaced | Stand within 3 m of the wearer, or choose My avatar when you wear it (or select the item), press J9, then Copy | J9, J2 | The worn animesh's skin joints, overrides, control skeleton and animations | joints `unknown to the skeleton`, an override that wins over the expected mesh, `rest` vs `now` on keyed joints, position keys far from the rest, animations `signalled, not playing` |
+| A worn animesh, or a rigged attachment that should move, is bent, stretched, misplaced or stays still | Stand within 3 m of the wearer, or choose My avatar when you wear it (or select the item), press J9, then Copy | J9, J2 | The worn animesh's skin joints, overrides, control skeleton and animations | joints `unknown to the skeleton`, an override that wins over the expected mesh, `rest` vs `now` on keyed joints, position keys far from the rest, animations `signalled, not playing` |
 | The viewer crashed | In the crash window, press Copy trace | — | The crash trace | top frames, panic message |
 
 How to read a copy:
@@ -106,7 +106,7 @@ text in Send a diagnostic), **live** (a text kept up to date there),
 | J6 | Open the logs folder | window | The folder of `aurora.log` |
 | J7 | Script errors | window | The script debug window |
 | J8 | IK state | copy | Local IK reception, activation, editor suppression and target resolution; no scene selection required |
-| J9 | Worn animesh skeleton | copy | Each animated object the target wears (nearest avatar within 3 m, my avatar, or the wearer of the selection): the joints its meshes are skinned to, every joint position override they ask and which one wins, the control skeleton's skeleton-file / rest / current local positions of the overridden and animated joints, the animations playing (priority, joints keyed in position with their first and current values) and its place on its attachment point |
+| J9 | Worn animesh skeleton | copy | Each animated object the target wears (nearest avatar within 3 m, my avatar, or the wearer of the selection): the joints its meshes are skinned to, every joint position override they ask and which one wins, the control skeleton's skeleton-file / rest / current local positions of the overridden and animated joints, the animations playing (priority, joints keyed in position with their first and current values) and its place on its attachment point; then each ordinary worn attachment with rigged meshes (point, temporary or not; identical meshes written once with `and N more alike`), the joints its meshes are skinned to, the overrides all worn rigged meshes ask of the wearer's skeleton, and the animations playing on the wearer with the keyed joints that are attachment points or unknown |
 | L1 | Under the cursor | live | The prim last pointed at, every face; its button shows the face's pass and alpha |
 | L2 | Worn items of the target | live | Each attachment of the target's avatar (nearest, mine, or the wearer of the selection): prims, faces drawn and left out |
 | L3 | Live problems | live | The last 20 warnings |
