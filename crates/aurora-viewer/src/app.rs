@@ -1066,6 +1066,7 @@ impl App {
         });
 
         let panels = Panels::from_settings(&settings);
+        let chat_ui = ChatUi::from_settings(&settings);
         let mut scene = Scene::new(cache, lib.clone());
         scene.jobs.execute(|| {
             crate::movement::strokes::pack();
@@ -1120,7 +1121,7 @@ impl App {
             viewer_stats: Default::default(),
             startup_windows: ui::StartupWindows::new(&panels),
             panels,
-            chat_ui: ChatUi::default(),
+            chat_ui,
             toolbar_ui: Default::default(),
             dock_layout: Default::default(),
             favorites_access_applied: None,
@@ -2472,6 +2473,11 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        // Capture the layout before replacing account-specific UI state.
+        self.chat_ui.remember_layout(&mut self.settings);
+        self.settings.show_camera_controls = self.panels.camera_controls;
+        self.settings.show_movement_controls = self.panels.movement_controls;
+        self.settings.save();
         self.sync_local_picker_bindings();
         self.imports.flush_local_registry();
         for entry in &self.imports.entries {
@@ -2570,7 +2576,7 @@ impl App {
         self.neighbours_refused = false;
         // the transcripts shown belong to the account that leaves
         self.history_ui = Default::default();
-        self.chat_ui = ChatUi::default();
+        self.chat_ui = ChatUi::from_settings(&self.settings);
         self.ao_agent = uuid::Uuid::nil();
         self.appearance_ui = Default::default();
         self.shape_ui = Default::default();
@@ -15449,6 +15455,9 @@ impl App {
                 self.draw_day_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);
                 self.startup_windows.remember(&self.panels, &mut self.settings);
+                self.chat_ui.remember_layout(&mut self.settings);
+                self.settings.show_camera_controls = self.panels.camera_controls;
+                self.settings.show_movement_controls = self.panels.movement_controls;
                 self.settings.audio.stream_title_window = self.panels.stream_title;
                 self.settings.show_people = self.panels.people;
                 self.settings.people_tab = self.panels.people_tab;

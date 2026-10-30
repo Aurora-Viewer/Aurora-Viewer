@@ -31,6 +31,16 @@ impl ChatStyle {
     }
 }
 
+/// Nearby chat belongs to the layout, unlike account-specific IM sessions.
+/// Hidden keeps its detached window available to the nearby-chat button.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum NearbyChatWindow {
+    #[default]
+    Docked,
+    Detached,
+    Hidden,
+}
+
 /// Where the thumbnails of the open conversations stand (Preferences ›
 /// Chat, `ui/chat/thumbnails.rs`): the Legacy Viewer's IM chiclets, shown
 /// unless `FSDisableIMChiclets`. Beside the chat bar by default (the human's
@@ -559,6 +569,11 @@ pub struct Settings {
     /// turned since (`ui::StartupWindows`).
     pub show_chat: bool,
     pub show_minimap: bool,
+    /// Nearby-chat docking and visibility; geometry stays in ui_layout.ron.
+    pub nearby_chat_window: NearbyChatWindow,
+    /// LLFloaterCamera / LLFloaterMove save_visibility (their floater XML).
+    pub show_camera_controls: bool,
+    pub show_movement_controls: bool,
     /// FSUseStandalonePlaceDetailsFloater: landmarks, place links and history
     /// entries open in their own window instead of the Places window.
     pub standalone_place_details: bool,
@@ -1668,6 +1683,9 @@ impl Default for Settings {
             show_perf: false,
             show_chat: true,
             show_minimap: true,
+            nearby_chat_window: NearbyChatWindow::Docked,
+            show_camera_controls: false,
+            show_movement_controls: false,
             standalone_place_details: false,
             inspect_columns: crate::ui::inspect::ALL_COLUMNS,
             landmarks_by_date: true,

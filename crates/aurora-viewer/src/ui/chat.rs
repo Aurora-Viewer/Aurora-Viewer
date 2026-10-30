@@ -278,6 +278,19 @@ pub(crate) fn line_style(style: crate::settings::ChatStyle, group: Option<bool>)
 }
 
 impl ChatUi {
+    /// Recreate only the account-independent nearby window. IMs, messages,
+    /// drafts and focus never cross sessions. Its stable floater id lets the
+    /// existing layout restore position, size and minimized state.
+    pub fn from_settings(settings: &crate::settings::Settings) -> Self {
+        let mut st = Self::default();
+        st.popped.restore_nearby(settings.nearby_chat_window);
+        st
+    }
+
+    pub fn remember_layout(&self, settings: &mut crate::settings::Settings) {
+        settings.nearby_chat_window = self.popped.nearby_state();
+    }
+
     /// `start_gesture` and FSNearbyChat::showDefaultChatBar
     /// (indra/newview/llviewerinput.cpp, fsnearbychathub.cpp): take the local
     /// bar's keyboard, adding `/` only to an empty editor. A conversation's

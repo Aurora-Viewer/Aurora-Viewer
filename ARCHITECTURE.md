@@ -1,5 +1,10 @@
 # Aurora Viewer architecture
 
+Session layout uses Settings::nearby_chat_window for nearby-chat docking/visibility
+and show_camera_controls / show_movement_controls for the Controls windows.
+ChatUi::from_settings restores only nearby chat at startup and after logout; IMs,
+drafts and focus stay session-local. Stable floater ids reuse ui_layout.ron for
+geometry and minimized state; restoration does not raise a minimized window.
 Contact sets import uses `world/contact_sets/importing.rs` to validate the
 Legacy Viewer's complete LLSD account file and individual exports, then merge
 membership without overwriting local appearance or aliases. It reconstructs
