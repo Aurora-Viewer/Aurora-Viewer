@@ -5126,11 +5126,15 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_TOOLBOX`**: `1` opens the Dev Toolbox (Advanced › Dev
   Toolbox, Ctrl+Alt+D); `edit` opens it in Customize (grips, "+ Add a
   tool"); `<target>:<tool>` chooses the target (0 nearest avatar, 1
-  selection, 2 under the cursor) and presses the tool once the world shows
+  selection, 2 under the cursor, 3 my avatar) and presses the tool once the world shows
   (frame 600), its text in "Send a diagnostic": `0:J1` for the worn items of
   the avatar within 3 m (with `AURORA_DEMO_POS=134.5,128`,
   `AURORA_DEMO_CROWD=4`, `AURORA_DEMO_ANIMESH=1`), `0:J4` for the system
-  configuration, `0:N3` for the loads. Prefer J1 to J2 in automated runs:
+  configuration, `0:N3` for the loads, `0:J9` for the skeleton of the
+  animesh the nearest avatar wears (with the same position, crowd and
+  `AURORA_DEMO_ANIMESH=1`; its text also goes to the log after `demo dev
+  toolbox J9:`: one worn animesh on point 6, 5 joint overrides from mesh
+  `d0d0a111-…0100`, the demo animation playing). Prefer J1 to J2 in automated runs:
   J2 copies to the clipboard of the PC. Capture after frame 1000 when names
   are asked (3 s).
 - **`AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]`**: opens the preferences
