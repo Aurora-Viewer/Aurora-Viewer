@@ -600,7 +600,7 @@ impl ProfileUi {
             self.picker.open(title, current);
             self.picker_slot = Some(slot);
         }
-        if let Some(asset) = self.picker.show(ctx, p, world, images) {
+        if let Some(asset) = self.picker.show_live(ctx, p, world, images) {
             // a snapshot goes into the edit, saved with it
             match self.picker_slot {
                 Some(PictureSlot::Pick(id)) => {

@@ -95,6 +95,10 @@ pub struct TexturePicker {
     uuid_text: String,
     /// Intentional choices, separate from OK so callers can opt into preview.
     preview: Option<Uuid>,
+    /// Single-value callers share the same reversible live-edit session.
+    original: Uuid,
+    live_value: Uuid,
+    cancelled: bool,
     pub(crate) generation: u64,
 }
 
@@ -120,6 +124,9 @@ impl TexturePicker {
         self.material_model = None;
         self.material_view.reset_camera();
         self.preview = None;
+        self.original = current;
+        self.live_value = current;
+        self.cancelled = false;
         self.generation = self.generation.wrapping_add(1);
     }
 
@@ -153,6 +160,35 @@ impl TexturePicker {
 
     pub(crate) fn take_preview(&mut self) -> Option<Uuid> {
         self.preview.take()
+    }
+
+    /// LLTextureCtrl TEXTURE_CHANGE / SELECT / CANCEL (lltexturectrl.cpp):
+    /// intentional choices apply while the picker stays open; Cancel restores
+    /// the value captured on opening. OK confirms without a duplicate update.
+    /// Callers keep their target until `open` becomes false. Multi-face editors
+    /// use `show` / `take_preview` to preserve each face's original separately.
+    pub(crate) fn show_live(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        world: &mut World,
+        images: &HashMap<Uuid, egui::TextureHandle>,
+    ) -> Option<Uuid> {
+        if !self.open {
+            return None;
+        }
+        let accepted = self.show(ctx, p, world, images);
+        self.cancelled = !self.open && accepted.is_none();
+        let value = accepted.or_else(|| if self.open { self.take_preview() } else { Some(self.original) })?;
+        if value == self.live_value {
+            return None;
+        }
+        self.live_value = value;
+        Some(value)
+    }
+
+    pub(crate) fn cancelled(&self) -> bool {
+        self.cancelled
     }
 
     /// The open picker shows another current value without reopening, like
@@ -747,8 +783,181 @@ fn wearable_demo_input() -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    pub(crate) struct PickerUi {
+        ctx: egui::Context,
+        time: f64,
+        labels: HashMap<String, egui::Pos2>,
+    }
+
+    impl PickerUi {
+        pub(crate) fn new() -> Self {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            Self {
+                ctx,
+                time: 0.0,
+                labels: HashMap::new(),
+            }
+        }
+
+        fn frame(&mut self, events: Vec<egui::Event>, mut draw: impl FnMut(&egui::Context, &Palette)) {
+            self.time += 1.0 / 60.0;
+            let mut output = self.ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1200.0, 900.0))),
+                    time: Some(self.time),
+                    events,
+                    ..Default::default()
+                },
+                |_| draw(&self.ctx, &crate::theme::Theme::default().palette()),
+            );
+            output.textures_delta.clear();
+            self.labels.clear();
+            for shape in output.shapes {
+                if let egui::Shape::Text(text) = shape.shape {
+                    self.labels
+                        .insert(text.galley.text().to_owned(), text.pos + text.galley.size() * 0.5);
+                }
+            }
+        }
+
+        pub(crate) fn settle(&mut self, mut draw: impl FnMut(&egui::Context, &Palette)) {
+            for _ in 0..5 {
+                self.frame(vec![], &mut draw);
+            }
+        }
+
+        pub(crate) fn click(&mut self, label: &str, mut draw: impl FnMut(&egui::Context, &Palette)) {
+            let pos = self.labels[label];
+            self.time += 1.0;
+            for pressed in [true, false] {
+                self.frame(
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    &mut draw,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn live_picker_applies_repeated_choices_restores_on_cancel_and_confirms_once() {
+        for materials in [false, true] {
+            let mut ui = PickerUi::new();
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let mut picker = TexturePicker::default();
+            let original = Uuid::from_u128(77);
+            let open = |picker: &mut TexturePicker, current| {
+                if materials {
+                    picker.open_materials("Material", current);
+                } else {
+                    picker.open_with_defaults("Texture", current, None, true);
+                }
+            };
+            let blank = if materials { BLANK_MATERIAL } else { BLANK_TEXTURE };
+            let mut changes = Vec::new();
+            open(&mut picker, original);
+            let draw = |picker: &mut TexturePicker, world: &mut World, changes: &mut Vec<Uuid>, ctx: &egui::Context, p: &Palette| {
+                if let Some(value) = picker.show_live(ctx, p, world, &HashMap::new()) {
+                    changes.push(value);
+                }
+            };
+            ui.settle(|ctx, p| draw(&mut picker, &mut world, &mut changes, ctx, p));
+            assert!(changes.is_empty(), "opening is not an intentional edit");
+            ui.click(aurora_i18n::tr!("common-blank"), |ctx, p| {
+                draw(&mut picker, &mut world, &mut changes, ctx, p)
+            });
+            assert_eq!(changes, [blank]);
+            assert!(picker.open);
+            ui.click(aurora_i18n::tr!("common-none-2"), |ctx, p| {
+                draw(&mut picker, &mut world, &mut changes, ctx, p)
+            });
+            assert_eq!(changes, [blank, Uuid::nil()]);
+            assert!(picker.open);
+            ui.click(aurora_i18n::tr!("common-cancel"), |ctx, p| {
+                draw(&mut picker, &mut world, &mut changes, ctx, p)
+            });
+            assert_eq!(changes, [blank, Uuid::nil(), original]);
+            assert!(!picker.open);
+            ui.settle(|ctx, p| draw(&mut picker, &mut world, &mut changes, ctx, p));
+            assert_eq!(changes.len(), 3, "a closed picker cannot repeat the rollback");
+
+            // Opening another control captures its own baseline.
+            changes.clear();
+            open(&mut picker, Uuid::nil());
+            ui.settle(|ctx, p| draw(&mut picker, &mut world, &mut changes, ctx, p));
+            ui.click(aurora_i18n::tr!("common-blank"), |ctx, p| {
+                draw(&mut picker, &mut world, &mut changes, ctx, p)
+            });
+            ui.click(aurora_i18n::tr!("common-ok"), |ctx, p| {
+                draw(&mut picker, &mut world, &mut changes, ctx, p)
+            });
+            assert_eq!(changes, [blank], "OK does not resend the live edit");
+            assert!(!picker.open);
+            assert!(!picker.cancelled());
+        }
+    }
+
+    #[test]
+    fn live_picker_requires_confirmation_for_a_noncopyable_inventory_choice() {
+        let mut ui = PickerUi::new();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let root = Uuid::from_u128(1);
+        let item = Uuid::from_u128(2);
+        let asset = Uuid::from_u128(3);
+        world.inventory.root = root;
+        world.inventory.folders.insert(
+            root,
+            crate::world::inventory::Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id: root,
+                    ..Default::default()
+                },
+                state: crate::world::inventory::FetchState::Fetched,
+                children: Vec::new(),
+                items: vec![item],
+                library: false,
+            },
+        );
+        world.inventory.items.insert(
+            item,
+            aurora_net::inventory::InvItem {
+                id: item,
+                parent: root,
+                asset_id: asset,
+                name: "Restricted texture".into(),
+                inv_type: INV_TEXTURE,
+                ..Default::default()
+            },
+        );
+        let mut picker = TexturePicker::default();
+        picker.open("Texture", Uuid::nil());
+        let mut changes = Vec::new();
+        let draw = |picker: &mut TexturePicker, world: &mut World, changes: &mut Vec<Uuid>, ctx: &egui::Context, p: &Palette| {
+            if let Some(asset) = picker.show_live(ctx, p, world, &HashMap::new()) {
+                changes.push(asset);
+            }
+        };
+        ui.settle(|ctx, p| draw(&mut picker, &mut world, &mut changes, ctx, p));
+        ui.click("Restricted texture", |ctx, p| draw(&mut picker, &mut world, &mut changes, ctx, p));
+        assert!(changes.is_empty(), "a noncopyable choice must not preview");
+        assert!(picker.open);
+        ui.click(aurora_i18n::tr!("common-ok"), |ctx, p| {
+            draw(&mut picker, &mut world, &mut changes, ctx, p)
+        });
+        assert_eq!(changes, [asset]);
+        assert!(!picker.open);
+    }
 
     fn frame(
         ctx: &egui::Context,

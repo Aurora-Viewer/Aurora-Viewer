@@ -2520,9 +2520,14 @@ selected before their first application.
 Its intentional choices are distinct from the confirmation:
 `build/ui/texture_preview.rs` applies the immediate preview to the captured
 selection, keeps the original textures and materials of each face, confirms
-without resending with "OK" or restores with "Cancel". The other users of
-the picker keep their usual confirmation; non-copyable inventory textures
-produce no preview, as in Firestorm.
+without resending with "OK" or restores with "Cancel". Single-value controls
+share `TexturePicker::show_live`: intentional choices apply without closing,
+OK confirms once and Cancel restores the opening value. Material/environment
+editors, imported material maps, particles, profiles, group insignias, parcel
+pictures/media and outfit thumbnails retain their targets across live choices.
+Imported maps also restore their original local pixels on Cancel. Wearables
+and region terrain keep their existing specialized rollback sessions.
+Non-copyable inventory textures require confirmation, as in the Legacy Viewer.
 
 The `ui/inventory/move_to.rs` picker offers the destinations of
 "Move to…" for the original selection, with a filter by name and

@@ -3554,7 +3554,7 @@ both open states and the selection count. Capture at frame 620.
   found and the time of day after it; capture after the sky's transition
   (`AURORA_CAPTURE_FRAMES=620`). `j` with `AURORA_DEMO_TOD=2` must bring
   back the region's sky (time of day 0).
-- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|beacons|water|item|item-save|day|day-play|day-edit|day-notrans|parcel|region|custom|custom-follow`**: sky,
+- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|clouds-picker|sun|beacons|water|item|item-save|day|day-play|day-edit|day-notrans|parcel|region|custom|custom-follow`**: sky,
   water and day cycle editors (`app/env_editor.rs`, `app/env_day_editor.rs`).
   `day`: the day cycle editor opens on the user's "my day cycle" (frame
   400: midnight, the purple sky at 25 %, noon, sunset), the ground track and
@@ -3567,6 +3567,8 @@ both open states and the selection count. Capture at frame 620.
   snapshot of the shown sky (`sky`, `clouds` and `sun` pick the tab) or
   water (`water`), or on the user's "my purple sky" item once its folder
   has loaded (`item`: the sky turns purple at once, Save is enabled).
+  `clouds-picker` opens the cloud texture picker too: choose successive textures
+  or presets without OK to see the sky update; Cancel restores its opening map.
   `item-save` also raises its brightness and saves over the item (frame
   900), then saves it as "my purple sky, brighter" (1100): both saves
   are logged (`environment settings saved`) and the second item shows in

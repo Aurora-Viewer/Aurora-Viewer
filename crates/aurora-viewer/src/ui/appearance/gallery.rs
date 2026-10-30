@@ -480,8 +480,8 @@ pub(super) fn dialogs(
             st.gallery.confirm = None;
         }
     }
-    if let Some(image) = st.gallery.picker.show(ctx, p, world, images)
-        && let Some(id) = st.gallery.image_for.take()
+    if let Some(image) = st.gallery.picker.show_live(ctx, p, world, images)
+        && let Some(id) = st.gallery.image_for
     {
         actions.push(Action::Category(id, Update::Thumbnail(image)));
     }
