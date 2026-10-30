@@ -133,6 +133,22 @@ fn one_pass_while_the_card_holds_it_tiles_otherwise() {
 }
 
 #[test]
+fn a_card_over_its_budget_still_draws_passes_of_the_windows_size() {
+    // half of the free memory at 88 bytes a pixel (MSAA 4x)
+    assert_eq!(pass_pixels(880_000_000, 88, (1318, 745)), 10_000_000);
+    // nothing free (1,818 MB used of a 1,248 MB budget): the window's frame
+    assert_eq!(pass_pixels(0, 88, (1318, 745)), 1318 * 745);
+    assert_eq!(pass_pixels(0, 0, (1920, 1080)), 1920 * 1080);
+    // a photo of the window at twice its size (the photo quality) takes a
+    // handful of passes, not the thousands of 32-pixel tiles drawn before
+    let tiles = plan((2636, 1490), 16384, pass_pixels(0, 88, (1318, 745)), TILE_GUARD);
+    assert!(tiles.len() <= 16, "{}", tiles.len());
+    let tiles = plan((3840, 2160), 16384, pass_pixels(0, 88, (1920, 1080)), TILE_GUARD);
+    assert!(tiles.len() <= 16, "{}", tiles.len());
+    assert!(plan((2636, 1490), 16384, 0, TILE_GUARD).len() > 1000);
+}
+
+#[test]
 fn a_tile_is_drawn_with_a_guard_band_on_the_sides_it_shares() {
     // 3200 x 1800 with sides of 1024 at most: 5 x 3 tiles of 640 x 600,
     // drawn with up to 128 pixels more on each inner side
