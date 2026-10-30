@@ -782,6 +782,24 @@ when unfocused") is ignored during a screenshot.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).
+
+- **AltGr shortcut checks (#1371)**, on a keyboard layout with AltGr: in
+  Preferences › Shortcuts, bind an action to AltGr + F9, then AltGr + Shift +
+  F9 in its other slot. They must display Ctrl + Alt + F9 and Ctrl + Alt +
+  Shift + F9, report the same conflicts as those combinations, survive a
+  restart and run the same actions with either spelling. Outside a text
+  field, AltGr + Up must orbit the camera vertically as Ctrl + Alt + Up;
+  AltGr + Shift + an arrow pans. Existing Ctrl + Alt bindings stay intact.
+  With chat, a script/notecard editor, a login field or a web/media field
+  focused, type the layout's AltGr characters (`@`, `€`, braces, backslash):
+  they must type normally, without opening a viewer window, changing a
+  shortcut's key label or moving the camera. AltGr + mouse drag keeps its
+  orbit and pan; AltGr alone in mouselook must not free the cursor.
+  AltGr + F9 still runs its shortcut with a text field focused. In the
+  build tools and photo viewfinder, a shortcut on AltGr + G must not also
+  trigger plain G (snap / guide). Releasing a key first pressed without
+  AltGr must always release it, even if AltGr was held in the meantime.
+
 - **`AURORA_DEMO_CAMERA=alt,x,y|altgr,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|zoom-resident|tag|ml|ml-alt|ml-zoom|ml-zoom-alt|wheel|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `altgr`: the same orbit with AltGr alone held, as
@@ -5077,6 +5095,11 @@ failure. Grid validation and any paid upload are performed by the human.
   voice, `8` Shortcuts, `10` Camera, `11` Commands, `12` Privacy, `13`
   Aurora, `14` Accessibility); `9`, the former Debug page, opens the Dev
   Toolbox instead. `<what>`:
+  - `altgr` on `shortcuts`: at frame 600, captures AltGr + F9 and AltGr +
+    Shift + F9 in the Dev Toolbox's two slots, dispatches each through the
+    real shortcut handler and restores the demo's saved bindings. Both
+    `demo altgr shortcuts` log lines must say `captured=true opened=true`;
+    the toolbox stays open, the shortcut page shows its ordinary binding.
   - `group-titles` on `avatars/1`: reveals the group-title dropdown with
     All except mine selected. The separate hide-own-title switch is absent;
     check None / Only mine / All except mine / All and the French labels.

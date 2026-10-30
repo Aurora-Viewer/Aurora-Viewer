@@ -337,7 +337,7 @@ pub struct App {
     /// Right-click menu of the text fields (Cut, Copy, Paste…).
     text_menu: ui::text_menu::TextMenu,
     alt: bool,
-    /// AltGr held: Ctrl + Alt for the mouse only (app/alt_graph.rs).
+    /// AltGr held: Ctrl + Alt for shortcuts and the mouse (app/alt_graph.rs).
     alt_graph: bool,
     left_down: bool,
     /// An unhandled world press may start steering when the right button joins.
@@ -3727,11 +3727,11 @@ impl App {
     }
 
     fn mods(&self) -> Mods {
-        Mods {
+        self.shortcut_mods(Mods {
             ctrl: self.ctrl,
             shift: self.shift,
             alt: self.alt,
-        }
+        })
     }
 
     /// Walk bindings taking part in double-tap running: 0 forward, 1 back,
@@ -5677,11 +5677,12 @@ impl App {
 
     /// End of a shortcut capture (None = cancelled).
     fn finish_capture(&mut self, input: Option<Input>) {
+        let mods = self.mods();
         let Some(ui::options::Capture::Binding(action, slot)) = self.options_ui.take_capture() else {
             return;
         };
         if let Some(input) = input {
-            let b = crate::keybinds::Binding::captured(input, self.mods());
+            let b = crate::keybinds::Binding::captured(input, mods);
             self.settings.keybinds.set(action, slot, Some(b));
             if action == Action::HudDrag {
                 self.down.clear();
@@ -10937,6 +10938,7 @@ impl App {
                 );
             }
         }
+        self.demo_altgr_shortcuts();
         // AURORA_DEMO_KEY="down" (up, left, right): hold that arrow from frame
         // 235, log the agent and drawn body headings every 30 frames;
         // "up:pulse": 2 s held, 2 s released, over and over (by the clock,
@@ -17982,15 +17984,19 @@ impl ApplicationHandler for App {
         );
         // Keep a lens shortcut out of egui: Ctrl+0 otherwise also resets
         // the interface scale at the end of the frame.
+        let key_mods = match &event {
+            WindowEvent::KeyboardInput { event: ke, .. } => self.key_mods(ke),
+            _ => self.mods(),
+        };
         let lens_shortcut = matches!(
             &event,
             WindowEvent::KeyboardInput { event: ke, .. }
                 if ke.state == ElementState::Pressed
                     && matches!(ke.physical_key, PhysicalKey::Code(code)
-                        if matches!(self.settings.keybinds.triggered(&Input::key(code), self.mods()),
+                        if matches!(self.settings.keybinds.triggered(&Input::key(code), key_mods),
                             Some(Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault))
                             && (!(self.egui_ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(&self.egui_ctx))
-                                || shortcut_while_typing(true, self.ctrl, self.alt, code, true)))
+                                || shortcut_while_typing(true, key_mods.ctrl, key_mods.alt, code, true)))
         ) && self.in_world()
             && self.options_ui.capture.is_none()
             && !self.exit_prompt.open
@@ -18000,10 +18006,15 @@ impl ApplicationHandler for App {
         // the hidden cursor the camera holds is the tool's (cursor_hold.rs):
         // it never hovers, clicks or scrolls the windows (#1343)
         let held_pointer = self.cursor_hold.held() && cursor_hold::held_from_ui(&event);
+        // AltGr's shortcut key must not also reach egui as a plain key:
+        // for example G would snap a selection while Ctrl+Alt+G runs.
+        // Releases still clear any key pressed before AltGr was held.
+        let altgr_shortcut = matches!(&event, WindowEvent::KeyboardInput { event: ke, .. }
+            if self.altgr_native_key(ke));
         let Some(g) = self.gfx.as_mut() else {
             return;
         };
-        let resp = if chat_pass || lens_shortcut || held_pointer {
+        let resp = if chat_pass || lens_shortcut || held_pointer || altgr_shortcut {
             egui_winit::EventResponse {
                 consumed: false,
                 repaint: true,
@@ -18091,6 +18102,8 @@ impl ApplicationHandler for App {
                 }
                 if let PhysicalKey::Code(code) = ke.physical_key {
                     let pressed = ke.state == ElementState::Pressed;
+                    let mods = self.key_mods(ke);
+                    let altgr_text = self.altgr_text_input(ke);
                     // The color dialog and an emoji picker own Escape before
                     // camera shortcuts. egui already received the event above.
                     let eyedropper = ui::widgets::color::pipette::armed(&self.egui_ctx);
@@ -18110,6 +18123,7 @@ impl ApplicationHandler for App {
                         && !self.shift
                         && !self.ctrl
                         && !self.alt
+                        && !self.alt_graph
                         && let winit::keyboard::Key::Character(s) = &ke.logical_key
                         && !format!("{code:?}").starts_with("Digit")
                         && !format!("{code:?}").starts_with(aurora_i18n::tr!("common-numpad"))
@@ -18125,7 +18139,7 @@ impl ApplicationHandler for App {
                     }
                     // egui received Ctrl+W above; reserve its physical key
                     // before gestures or movement can keep it held.
-                    if pressed && ui::close_key::take_native_key(&ke.logical_key, code, self.mods(), &mut self.down) {
+                    if pressed && ui::close_key::take_native_key(&ke.logical_key, code, mods, &mut self.down) {
                         self.check_temp_run();
                         return;
                     }
@@ -18137,9 +18151,10 @@ impl ApplicationHandler for App {
                     // The command table is shared with egui's dispatcher:
                     // an editing accelerator must never become a held move.
                     let input = Input::key(code);
-                    let mods = self.mods();
-                    let build_keyboard =
-                        self.in_world() && !self.egui_ctx.egui_wants_keyboard_input() && !egui::Popup::is_any_open(&self.egui_ctx);
+                    let build_keyboard = self.in_world()
+                        && !altgr_text
+                        && !self.egui_ctx.egui_wants_keyboard_input()
+                        && !egui::Popup::is_any_open(&self.egui_ctx);
                     let build_shortcut = pressed
                         .then(|| {
                             crate::build::ui::Shortcut::take_native_key(
@@ -18153,14 +18168,14 @@ impl ApplicationHandler for App {
                         })
                         .flatten();
                     let ui_shortcut = build_shortcut.is_some();
-                    let command_key = pressed && self.settings.keybinds.triggered(&input, mods).is_some();
+                    let command_key = pressed && !altgr_text && self.settings.keybinds.triggered(&input, mods).is_some();
                     if ui_shortcut || command_key {
                         self.down.remove(&input);
                         self.check_temp_run();
                     }
                     // A gesture key must still be held when the chat or a web
                     // page has keyboard focus; it only owns a visible HUD drag.
-                    if pressed && !ke.repeat && !ui_shortcut && self.settings.keybinds.uses_input(Action::HudDrag, &input) {
+                    if pressed && !ke.repeat && !altgr_text && !ui_shortcut && self.settings.keybinds.uses_input(Action::HudDrag, &input) {
                         let _ = self.settings.keybinds.update_held_input(&mut self.down, &input, pressed, mods);
                     }
                     // Releases always go through so keys never get stuck.
@@ -18179,7 +18194,7 @@ impl ApplicationHandler for App {
                         && (!ke.repeat || gesture_key.is_some_and(crate::gestures::Manager::repeat_triggers))
                         && !typing
                         && self.in_world()
-                        && !self.alt
+                        && !mods.alt
                         && self.profile_ui.focused_web().is_none()
                         && self.search_ui.focused_web().is_none()
                         && self.media.focus.is_none()
@@ -18187,7 +18202,7 @@ impl ApplicationHandler for App {
                         && let Some(id) = self
                             .gesture_state
                             .manager
-                            .key_trigger(key, u32::from(self.ctrl) | if self.shift { 4 } else { 0 })
+                            .key_trigger(key, u32::from(mods.ctrl) | if mods.shift { 4 } else { 0 })
                     {
                         self.gesture_play(id, Some(key));
                         return;
@@ -18251,8 +18266,8 @@ impl ApplicationHandler for App {
                         && !self.settings.letter_keys_move
                         && !ui_shortcut
                         && self.in_world()
-                        && !self.ctrl
-                        && !self.alt
+                        && !mods.ctrl
+                        && !mods.alt
                         && self.media.focus.is_none()
                         && let Some(text) = ke.text.as_deref()
                         && !text.is_empty()
@@ -18266,10 +18281,10 @@ impl ApplicationHandler for App {
                     let shortcut = pressed
                         && shortcut_while_typing(
                             typing,
-                            self.ctrl,
-                            self.alt,
+                            mods.ctrl,
+                            mods.alt,
                             code,
-                            self.settings.keybinds.triggered(&Input::key(code), self.mods()).is_some(),
+                            self.settings.keybinds.triggered(&input, mods).is_some(),
                         );
                     // Ctrl+F belongs to the window with its own find when the
                     // script editor is active, the keyboard is in a conversation, or the

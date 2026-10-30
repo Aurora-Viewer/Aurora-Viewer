@@ -414,6 +414,14 @@ impl ProfileUi {
     }
 
     /// The "Feed" page that has the keyboard, if any.
+    pub fn web_has_focus(&self) -> bool {
+        self.windows
+            .iter()
+            .find(|w| w.open && w.tab == TAB_FEED && w.web.focused)
+            .is_some_and(|w| w.web.running())
+    }
+
+    /// The "Feed" page that has the keyboard, if any.
     pub fn focused_web(&mut self) -> Option<&mut aurora_media::MediaPlugin> {
         self.windows
             .iter_mut()
