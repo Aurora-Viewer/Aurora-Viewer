@@ -3622,6 +3622,9 @@ impl World {
             self.rlva_prepare_version(c.source_id, &c.message);
         }
         if controller_allowed && self.rlva.receive(&c) {
+            if let Some(root) = self.rlva_own_attachment_root(c.source_id) {
+                self.rlva.issuer_roots.insert(c.source_id, root);
+            }
             self.eep.rlva_locked = self.rlva.has("setenv");
             let environment_owner = self.rlva.rules_for("setenv", Uuid::nil()).next().map(|(id, _)| id);
             if self.eep.rlva_locked
@@ -4432,6 +4435,25 @@ impl World {
         let item = object.attachment_item_id();
         if !ours {
             return;
+        }
+        // RlvHandler::onDetach (rlvhandler.cpp): clear every issuer on this
+        // worn root immediately. Child ObjectKill often lands first, so the
+        // cached issuer_roots map is authoritative (Legacy m_idRoot).
+        if self.rlva.enabled() && object.attachment_point() != 0 {
+            let root = object.full_id;
+            let issuers: Vec<_> = self
+                .rlva
+                .issuer_roots
+                .iter()
+                .filter(|(_, cached)| **cached == root)
+                .map(|(id, _)| *id)
+                .chain(std::iter::once(root))
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            for issuer in issuers {
+                self.rlva.forget(issuer);
+            }
         }
         // LLVOAvatarSelf::detachObject (indra/newview/llvoavatarself.cpp,
         // LGPL 2.1): temporary attachments have no inventory item, but their

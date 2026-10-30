@@ -439,6 +439,9 @@ pub struct Rlva {
     pub offers: offers::Offers,
     pub controllers: controllers::Controllers,
     pub relative: relative::RelativeWear,
+    /// Root of each issuer's worn linkset, for immediate clear on detach
+    /// (Legacy RlvObject::m_idRoot). Survives child ObjectKill order.
+    pub issuer_roots: BTreeMap<Uuid, Uuid>,
     pub version: version::Version,
     pub diagnostics: diagnostics::Diagnostics,
     pub im: im_queries::Queries,
@@ -538,6 +541,7 @@ impl Rlva {
         self.offers = Default::default();
         self.controllers = Default::default();
         self.relative = Default::default();
+        self.issuer_roots.clear();
         self.version = Default::default();
         self.im = Default::default();
         self.pending.clear();
@@ -569,6 +573,7 @@ impl Rlva {
     pub fn forget(&mut self, source: Uuid) {
         self.relative.forget(source);
         self.version.forget(source);
+        self.issuer_roots.remove(&source);
         let was_fov_locked = self.has("setcam_fovmin") || self.has("setcam_fovmax");
         self.watchdog.sources.remove(&source);
         self.visuals.forget(source);

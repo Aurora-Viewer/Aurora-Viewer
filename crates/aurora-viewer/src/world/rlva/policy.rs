@@ -394,7 +394,8 @@ impl World {
                     // Folders still loading: keep this reply ahead of later work.
                     deferred.push((source, c));
                     deferred.extend(pending);
-                    break;
+                    self.rlva.pending = deferred;
+                    return commands;
                 }
                 continue;
             }
@@ -434,15 +435,18 @@ impl World {
                 "sitground" if c.option.is_empty() => self.rlva_force_ground_sit(source),
                 "sit" => match Uuid::parse_str(&c.option) {
                     Ok(id) if id.is_nil() => self.rlva_force_ground_sit(source),
-                    Ok(id) => self
-                        .objects
-                        .index_of_uuid(&id)
-                        .and_then(|i| self.objects.get(i))
-                        .map(|o| NetCommand::RequestSit {
+                    Ok(id) => match self.objects.index_of_uuid(&id).and_then(|i| self.objects.get(i)) {
+                        Some(o) => Some(NetCommand::RequestSit {
                             handle: o.key.region,
                             target: o.full_id,
                             offset: Vec3::ZERO,
                         }),
+                        None => {
+                            // Pose balls often arrive after the relay OwnerSay.
+                            self.rlva.relative.wait(source, c.clone(), std::time::Instant::now());
+                            None
+                        }
+                    },
                     Err(_) => None,
                 },
                 "setrot" => {

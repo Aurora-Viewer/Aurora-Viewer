@@ -1450,7 +1450,11 @@ fn rlva_folder_locks_respect_scope_nearest_exception_other_issuers_and_folded_fo
         "a folded attachment folder chooses the attachment point"
     );
     w.rlva.appearance.clear();
-    command(&mut w.rlva, A, "@attach:Outfit=force,getinvworn:Outfit=123,getgroup=124,sitground=force");
+    command(
+        &mut w.rlva,
+        A,
+        "@attach:Outfit=force,getinvworn:Outfit=123,getgroup=124,sitground=force",
+    );
     let forced = w.rlva_pending();
     assert!(
         w.rlva.pending.iter().any(|(_, c)| c.behaviour == "getinvworn"),
@@ -1479,7 +1483,14 @@ fn rlva_folder_locks_respect_scope_nearest_exception_other_issuers_and_folded_fo
     assert!(matches!(w.rlva.out.last(), Some(NetCommand::ChatReply { channel: 125, message, .. }) if message == "none"));
     w.rlva.appearance_busy = false;
     w.rlva_pending();
-    assert!(matches!(w.rlva.out.iter().rev().find(|c| matches!(c, NetCommand::ChatReply { channel: 123, .. })), Some(_)));
+    assert!(matches!(
+        w.rlva
+            .out
+            .iter()
+            .rev()
+            .find(|c| matches!(c, NetCommand::ChatReply { channel: 123, .. })),
+        Some(_)
+    ));
 }
 
 #[test]

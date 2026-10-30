@@ -30,13 +30,13 @@ impl RelativeWear {
         self.waiting.retain(|waiting| waiting.source != source);
     }
 
-    pub fn update(&mut self, now: Instant, capacity: usize, attached: impl Fn(Uuid) -> bool) -> Vec<(Uuid, Command)> {
+    pub fn update(&mut self, now: Instant, capacity: usize, ready_for: impl Fn(Uuid, &Command) -> bool) -> Vec<(Uuid, Command)> {
         let mut ready = Vec::new();
         self.waiting.retain(|waiting| {
             if now.saturating_duration_since(waiting.since) > Duration::from_secs(30) {
                 return false;
             }
-            if ready.len() < capacity && attached(waiting.source) {
+            if ready.len() < capacity && ready_for(waiting.source, &waiting.command) {
                 ready.push((waiting.source, waiting.command.clone()));
                 false
             } else {
@@ -55,8 +55,16 @@ impl crate::world::World {
         let mut waiting = std::mem::take(&mut self.rlva.relative);
         // Child prim issuers resolve to their worn linkset root; waiting for
         // the exact source UUID alone stranded relative wears from HUD children.
-        let ready = waiting.update(now, 256usize.saturating_sub(self.rlva.pending.len()), |source| {
-            self.rlva_own_attachment_root(source).is_some()
+        // Pose `@sit:<uuid>=force` waits the same window for the seat object.
+        let ready = waiting.update(now, 256usize.saturating_sub(self.rlva.pending.len()), |source, command| {
+            if command.behaviour == "sit" {
+                Uuid::parse_str(&command.option)
+                    .ok()
+                    .filter(|id| !id.is_nil())
+                    .is_some_and(|id| self.objects.index_of_uuid(&id).is_some())
+            } else {
+                self.rlva_own_attachment_root(source).is_some()
+            }
         });
         self.rlva.relative = waiting;
         self.rlva.pending.extend(
@@ -79,19 +87,19 @@ mod tests {
         let mut waiting = RelativeWear::default();
         waiting.wait(a, command.clone(), now);
         waiting.wait(b, command.clone(), now);
-        assert!(waiting.update(now, 256, |_| false).is_empty());
+        assert!(waiting.update(now, 256, |_, _| false).is_empty());
         assert_eq!(
-            waiting.update(now + Duration::from_secs(5), 256, |source| source == b),
+            waiting.update(now + Duration::from_secs(5), 256, |source, _| source == b),
             [(b, command.clone())]
         );
-        assert!(waiting.update(now + Duration::from_secs(31), 256, |_| true).is_empty());
+        assert!(waiting.update(now + Duration::from_secs(31), 256, |_, _| true).is_empty());
         assert!(waiting.waiting.is_empty());
         waiting.wait(a, command.clone(), now);
         waiting.forget(a);
-        assert!(waiting.update(now, 256, |_| true).is_empty());
+        assert!(waiting.update(now, 256, |_, _| true).is_empty());
         waiting.wait(b, command.clone(), now);
-        assert!(waiting.update(now, 0, |_| true).is_empty());
-        assert_eq!(waiting.update(now, 1, |_| true), [(b, command)]);
+        assert!(waiting.update(now, 0, |_, _| true).is_empty());
+        assert_eq!(waiting.update(now, 1, |_, _| true), [(b, command)]);
     }
 
     #[test]

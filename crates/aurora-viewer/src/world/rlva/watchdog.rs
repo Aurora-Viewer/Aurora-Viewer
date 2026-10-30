@@ -300,12 +300,7 @@ impl super::super::World {
                         .unwrap_or(0);
                     let replace = removed.iter().any(|old| {
                         previous.get(old).is_some_and(|attachment| attachment.point == point)
-                            || (point != 0
-                                && self
-                                    .inventory
-                                    .items
-                                    .get(old)
-                                    .is_some_and(|item| (item.flags & 0xff) as u8 == point))
+                            || (point != 0 && self.inventory.items.get(old).is_some_and(|item| (item.flags & 0xff) as u8 == point))
                     });
                     self.rlva_note_wear(link.target, replace, actor, &previous, now);
                 }
@@ -314,14 +309,7 @@ impl super::super::World {
         }
     }
 
-    fn rlva_note_wear(
-        &mut self,
-        item: Uuid,
-        replace: bool,
-        actor: Uuid,
-        previous: &BTreeMap<Uuid, Attachment>,
-        now: Instant,
-    ) {
+    fn rlva_note_wear(&mut self, item: Uuid, replace: bool, actor: Uuid, previous: &BTreeMap<Uuid, Attachment>, now: Instant) {
         if self.rlva.watchdog.wears.len() >= 256 && !self.rlva.watchdog.wears.contains_key(&item) {
             return;
         }
