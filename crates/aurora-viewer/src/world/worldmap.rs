@@ -453,12 +453,17 @@ impl WorldMap {
     pub fn apply_blocks(&mut self, blocks: Vec<MapBlock>) {
         for b in blocks {
             let key = (b.x as u32, b.y as u32);
-            if b.name.is_empty() {
-                // only "non-existent" answers are kept (insertRegion)
-                if b.access == SIM_ACCESS_NONE {
+            // a non-existent slot is never a region (insertRegion), whatever
+            // its name: a name search ends on a block that repeats the
+            // requested name with this access, away from the real region
+            if b.access == SIM_ACCESS_NONE {
+                if b.name.is_empty() {
                     self.null_sims.insert(key);
                     self.sims.remove(&key);
                 }
+                continue;
+            }
+            if b.name.is_empty() {
                 continue;
             }
             self.null_sims.remove(&key);
@@ -1311,6 +1316,40 @@ mod tests {
         m.track_region("ahern", glam::Vec3::new(1.0, 2.0, 3.0));
         assert!(m.take_commands().iter().all(|c| !matches!(c, NetCommand::MapNameRequest { .. })));
         assert!(m.track.is_some());
+    }
+
+    #[test]
+    fn the_name_search_terminator_is_not_a_region() {
+        let block = |x, y, name: &str, access| MapBlock {
+            x,
+            y,
+            name: name.into(),
+            access,
+            region_flags: 0,
+            water_height: 20,
+            agents: 0,
+            map_image_id: uuid::Uuid::nil(),
+            size_x: 256,
+            size_y: 256,
+        };
+        let mut m = WorldMap::default();
+        m.track_region("alphatribe island", glam::Vec3::new(168.0, 34.0, 21.0));
+        m.take_commands();
+        // the reply to MapNameRequest: the match, then the closing block
+        // that repeats the requested name with access 255
+        m.apply_blocks(vec![
+            block(1000, 1001, "Alphatribe Island", SIM_ACCESS_PG),
+            block(0, 0, "alphatribe island", SIM_ACCESS_NONE),
+        ]);
+        assert_eq!(m.sims.len(), 1);
+        assert!(!m.sims.contains_key(&(0, 0)));
+        assert!(!m.null_sims.contains(&(0, 0)), "a named block says nothing of its slot");
+        assert_eq!(m.region_by_name("alphatribe island"), Some((1000, 1001)));
+        let t = m.track.as_ref().expect("tracked");
+        assert_eq!((t.x, t.y), (256_168.0, 256_290.0));
+        // nor does it replace a region already known at its slot
+        m.apply_blocks(vec![block(1000, 1001, "alphatribe island", SIM_ACCESS_NONE)]);
+        assert_eq!(m.sims[&(1000, 1001)].access, SIM_ACCESS_PG);
     }
 
     #[test]
