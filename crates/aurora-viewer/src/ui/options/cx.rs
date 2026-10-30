@@ -498,6 +498,35 @@ impl<'a> Cx<'a> {
         self.ui.add_space(4.0);
     }
 
+    /// A framed notice at the top of an experimental page: the experimental
+    /// mark, then `text`, on the surface of an open cog's block (shown on
+    /// the page only).
+    pub fn experimental_notice(&mut self, text: &str) {
+        if self.mode != Mode::Show || self.pick.is_some() {
+            return;
+        }
+        self.end_block();
+        self.end_line();
+        const PAD: f32 = 12.0;
+        const MARK: f32 = 16.0;
+        let p = self.p;
+        let width = self.ui.available_width();
+        let galley = self.ui.painter().layout(
+            text.to_owned(),
+            egui::FontId::proportional(12.5),
+            p.ink,
+            (width - 3.0 * PAD - MARK).max(1.0),
+        );
+        let height = galley.size().y.max(MARK) + 2.0 * PAD;
+        let (rect, _) = self.ui.allocate_exact_size(vec2(width, height), Sense::hover());
+        self.ui.painter().rect_filled(rect, self.ui.visuals().window_corner_radius, p.field);
+        let mark = Rect::from_min_size(pos2(rect.left() + PAD, rect.top() + PAD), Vec2::splat(MARK));
+        crate::ui::widgets::experimental_mark(self.ui, &p, mark, egui::Id::unique(("preferences-notice", self.page)));
+        let text_top = rect.top() + PAD + (MARK - galley.size().y).max(0.0) / 2.0;
+        self.ui.painter().galley(pos2(mark.right() + PAD, text_top), galley, p.ink);
+        self.ui.add_space(14.0);
+    }
+
     /// Settings the page resets without a row of their own (they follow
     /// another row, or another window edits them).
     pub fn track(&mut self, t: &dyn Track) {

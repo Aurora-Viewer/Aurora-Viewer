@@ -4108,7 +4108,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PEOPLE=<mode>[:width]` | People scenarios, including nearby/friends lists and contact-set visual editors |
 | `AURORA_DEMO_PEOPLE_FILTER=<text>` | Initial name filter for a People demo scenario |
 | `AURORA_DEMO_ANTI_SPAM=1` | Synthetic offer, script prompt and sound floods with Protections controls |
-| `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > Protections |
+| `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > RLVa |
 | `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, reset, or a graphics profile dialog/list |
 | `AURORA_DEMO_GRIDS=1\|pages` | Opens the grid manager with synthetic metadata |
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
@@ -4243,7 +4243,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 
 ### Details
 
-- **`AURORA_DEMO_RLVA`**: `enabled` opens Preferences > Protections and
+- **`AURORA_DEMO_RLVA`**: `enabled` opens Preferences > RLVa and
   applies synthetic object restrictions at frame 700. `disabled` delivers
   the same commands while the global opt-in stays off; `released` enables
   them, then switches RLVa off at frame 760. Capture after frame 800 in EN

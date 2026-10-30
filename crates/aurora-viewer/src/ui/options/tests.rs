@@ -348,6 +348,31 @@ fn no_setting_of_the_former_pages_is_lost() {
 }
 
 #[test]
+fn rlva_settings_live_on_their_own_page() {
+    let paths = collected();
+    let rlva = |path: &str| path == "rlva_enabled" || path == "rlva" || path.starts_with("rlva.");
+    let on_rlva: Vec<_> = paths
+        .iter()
+        .filter(|(page, _)| *page == Page::Rlva)
+        .map(|(_, p)| p.as_str())
+        .collect();
+    assert!(on_rlva.contains(&"rlva_enabled"), "the global switch: {on_rlva:?}");
+    assert!(on_rlva.iter().filter(|p| p.starts_with("rlva.")).count() >= 20, "{on_rlva:?}");
+    assert!(on_rlva.iter().all(|p| rlva(p)), "only RLVa on its page: {on_rlva:?}");
+    let elsewhere: Vec<_> = paths.iter().filter(|(page, p)| *page != Page::Rlva && rlva(p)).collect();
+    assert!(elsewhere.is_empty(), "RLVa rows left on another page: {elsewhere:?}");
+    assert!(Page::Rlva.experimental() && !Page::Protections.experimental());
+    let mut s = Settings::default();
+    assert_eq!(counts(&mut s, "RLVa").hits(Page::Protections), 0);
+    s.rlva_enabled = !s.rlva_enabled;
+    s.anti_spam.enabled = !s.anti_spam.enabled;
+    reset_page_settings(Page::Protections, &mut s);
+    assert_ne!(s.rlva_enabled, Settings::default().rlva_enabled, "Protections reset preserves RLVa");
+    reset_page_settings(Page::Rlva, &mut s);
+    assert_eq!(s.rlva_enabled, Settings::default().rlva_enabled);
+}
+
+#[test]
 fn a_setting_has_one_page() {
     let paths = collected();
     for (page, path) in &paths {
@@ -530,7 +555,7 @@ fn the_search_finds_settings_on_their_pages() {
     assert!(counts(&mut s, "gtp").hits(Page::Commands) >= 1);
     assert!(counts(&mut s, "Ctrl+I").hits(Page::Shortcuts) >= 1);
     assert!(counts(&mut s, "anti-spam").hits(Page::Protections) >= 8);
-    assert!(counts(&mut s, "RLVa").hits(Page::Protections) >= 1);
+    assert!(counts(&mut s, "RLVa").hits(Page::Rlva) >= 1);
     assert!(counts(&mut s, "").hits.is_empty());
     assert!(counts(&mut s, "zzzzzz").hits.is_empty());
 }

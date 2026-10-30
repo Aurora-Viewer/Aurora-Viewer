@@ -19,6 +19,7 @@ pub mod media;
 pub mod network;
 pub mod privacy;
 pub mod protections;
+pub mod rlva;
 pub mod shortcuts;
 pub mod sound;
 pub mod spelling;
@@ -97,6 +98,7 @@ pub fn draw(cx: &mut Cx, page: Page, tab: usize) {
         Page::Media => media::page(cx),
         Page::Privacy => privacy::page(cx),
         Page::Protections => protections::page(cx),
+        Page::Rlva => rlva::page(cx),
         Page::Layout => layout::page(cx, tab),
         Page::Appearance => appearance::page(cx, tab),
         Page::Accessibility => accessibility::page(cx),
