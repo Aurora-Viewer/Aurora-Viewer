@@ -241,6 +241,7 @@ mod tests {
                 );
                 socket.write_all(headers.as_bytes()).await.expect("headers");
                 socket.write_all(&body).await.expect("body");
+                crate::test_http::finish(socket);
             });
             let parsed = tokio::time::timeout(
                 std::time::Duration::from_secs(5),

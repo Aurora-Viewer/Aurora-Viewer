@@ -571,6 +571,7 @@ mod tests {
                 );
                 socket.write_all(headers.as_bytes()).await.expect("headers");
                 socket.write_all(&body).await.expect("response");
+                crate::test_http::finish(socket);
             });
             session.on_command(if attachment {
                 NetCommand::FetchAttachmentItems {

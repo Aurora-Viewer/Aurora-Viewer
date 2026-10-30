@@ -591,6 +591,7 @@ mod tests {
                     String::from_utf8_lossy(&body)
                 );
                 socket.write_all(response.as_bytes()).await.expect("response");
+                crate::test_http::finish(socket);
             }
         });
         let reads = read_items(&reqwest::Client::new(), &url, id(2), &[id(3), id(4)]).await;

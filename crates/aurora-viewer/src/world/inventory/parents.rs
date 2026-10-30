@@ -459,6 +459,30 @@ mod tests {
     }
 
     #[test]
+    fn recovered_parents_keep_sorted_rows_through_snapshot_replay_and_rename() {
+        for state in [FetchState::Unknown, FetchState::Fetched] {
+            let mut inv = fixture(state);
+            let recovered: Vec<_> = [(20, "Zulu"), (21, "alpha"), (22, "Middle")]
+                .into_iter()
+                .map(|(n, name)| InvItem {
+                    name: name.to_owned(),
+                    ..object(n, Uuid::nil())
+                })
+                .collect();
+            inv.add_items(recovered);
+            assert_eq!(inv.folders[&id(2)].items, [id(21), id(22), id(20)], "recovered rows: {state:?}");
+            assert_eq!(inv.take_parent_repairs().expect("parent moves").operations.len(), 3);
+            inv.apply(vec![snapshot(id(2), Vec::new())]);
+            assert_eq!(inv.folders[&id(2)].items, [id(21), id(22), id(20)], "delayed empty snapshot");
+            let mut renamed = inv.items[&id(20)].clone();
+            renamed.name = "Beta".to_owned();
+            inv.server_updated(Vec::new(), vec![renamed.clone()]);
+            inv.server_updated(Vec::new(), vec![renamed]);
+            assert_eq!(inv.folders[&id(2)].items, [id(21), id(20), id(22)], "rename without duplicate rows");
+        }
+    }
+
+    #[test]
     fn orphan_repair_dispatch_is_bounded_and_deleted_records_are_not_sent() {
         let mut inv = fixture(FetchState::Fetched);
         inv.add_items((20..53).map(|n| object(n, Uuid::nil())).collect());
