@@ -677,18 +677,20 @@ impl App {
     }
 
     /// The viewfinder's free-camera pad into `controls_free` (Look, Glide,
-    /// Forward rocker and Glide up / down). Added to the Controls window's
-    /// sticks so both work. Must run before `photo_free_move`: the free
-    /// camera path returns before `viewfinder_pad`, which used to leave the
-    /// pad unread.
+    /// Forward rocker and Glide up / down). Must run before
+    /// `photo_free_move`: the free camera path returns before
+    /// `viewfinder_pad`, which used to leave the pad unread. Replaces the
+    /// sticks rather than adding to them: the full-frame viewfinder does not
+    /// draw the Controls window, the only thing that resets them each frame,
+    /// so a sum would grow every frame and keep the camera moving after the
+    /// pad is let go.
     pub(super) fn apply_viewfinder_free_pad(&mut self) {
         if !self.viewfinder_on() {
             self.snapshots.vf_free_up = 0.0;
             return;
         }
         let (mv, look, up) = free_pad_axes(&self.snapshots.vf.pad);
-        self.controls_free.0 += mv;
-        self.controls_free.1 += look;
+        self.controls_free = (mv, look);
         self.snapshots.vf_free_up = up;
     }
 
