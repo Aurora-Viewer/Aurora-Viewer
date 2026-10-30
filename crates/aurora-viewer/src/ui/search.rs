@@ -437,6 +437,11 @@ impl SearchUi {
     }
 
     /// The web page that has the keyboard, if any.
+    pub fn web_has_focus(&self) -> bool {
+        self.tab() == Tab::Web && self.web.focused && self.web.running()
+    }
+
+    /// The web page that has the keyboard, if any.
     pub fn focused_web(&mut self) -> Option<&mut aurora_media::MediaPlugin> {
         (self.tab() == Tab::Web && self.web.focused)
             .then(|| self.web.plugin_mut())

@@ -298,7 +298,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         st.demo_open_cogs = true;
     } else if let Some(query) = what.strip_prefix("search=") {
         st.query = query.to_owned();
-    } else if page == Page::Shortcuts && !what.is_empty() && st.reveal.is_none() {
+    } else if page == Page::Shortcuts && !what.is_empty() && what != "altgr" && st.reveal.is_none() {
         // the shortcut page's former filter: the window's search now
         st.query = what.to_owned();
     }

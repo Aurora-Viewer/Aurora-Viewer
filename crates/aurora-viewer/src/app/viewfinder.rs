@@ -769,7 +769,8 @@ impl App {
     /// lengths. The letters only when no shortcut of the viewer uses the
     /// key: the movement keys stay the camera's and the avatar's.
     pub(super) fn viewfinder_key(&mut self, code: KeyCode, logical: &winit::keyboard::Key, pressed: bool, repeat: bool) -> bool {
-        if !self.viewfinder_on() || self.ctrl || self.alt {
+        let mods = self.mods();
+        if !self.viewfinder_on() || mods.ctrl || mods.alt {
             return false;
         }
         if matches!(code, KeyCode::Enter | KeyCode::NumpadEnter) {
