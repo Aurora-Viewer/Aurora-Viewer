@@ -245,6 +245,9 @@ impl AppearanceUi {
         for id in &ids {
             ready &= model::loaded(inv, *id);
             for link in model::folder_links(inv, *id).into_iter().filter(|link| !link.folder) {
+                if inv.broken(&link.target) {
+                    continue;
+                }
                 ready &= inv.items.contains_key(&link.target);
                 items.insert(link.target);
             }
@@ -291,6 +294,10 @@ impl AppearanceUi {
         agent: Uuid,
         worn: &HashSet<Uuid>,
     ) -> Vec<aurora_net::NetCommand> {
+        // a failed read is asked again (`Inventory::items_failed` counts them)
+        for id in inv.take_item_retries() {
+            self.requested_items.remove(&id);
+        }
         let changed = self.prepared.as_ref().is_none_or(|p| p.generation != inv.generation);
         if changed {
             let folders = model::prepare_folders(inv);
@@ -331,7 +338,7 @@ impl AppearanceUi {
                     .missing
                     .values()
                     .flat_map(|(_, targets)| targets)
-                    .filter(|id| !inv.items.contains_key(id)),
+                    .filter(|id| !inv.items.contains_key(id) && !inv.missing_items.contains(id)),
             );
         }
         self.filter_requests(model::fetch_items(missing, agent))

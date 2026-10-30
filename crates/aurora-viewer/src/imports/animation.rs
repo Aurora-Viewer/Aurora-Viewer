@@ -1,5 +1,5 @@
 //! Independent animation preview clock. Joint palettes use the existing
-//! Firestorm motion blender; vertex skinning is performed by the preview GPU.
+//! Legacy Viewer motion blender; vertex skinning is performed by the preview GPU.
 
 use super::*;
 use crate::scene::anim::{AnimStreamer, BoundAnim, Controller, Rig};
@@ -48,7 +48,7 @@ impl Player {
     pub fn clock(&self) -> (Instant, Instant) {
         (self.epoch, self.epoch + Duration::from_secs_f32(self.position.max(0.0)))
     }
-    pub fn tick(&mut self, id: Uuid, rig: &Rig, streamer: &mut AnimStreamer) {
+    pub fn tick(&mut self, id: Uuid, rig: &Rig, streamer: &mut AnimStreamer, skeleton: Option<&crate::scene::anim::SkeletonBase>) {
         let now = Instant::now();
         let dt = now.duration_since(self.last).as_secs_f32().min(0.1);
         self.last = now;
@@ -83,7 +83,7 @@ impl Player {
             if *motion == id { Some(bound.clone()) } else { streamer.get(motion) }
         });
         let mut pose = vec![glam::Mat4::IDENTITY.to_cols_array_2d(); rig.len() + 1];
-        self.controller.evaluate(rig, sample, None, &mut pose);
+        self.controller.evaluate(rig, sample, skeleton, &mut pose);
         self.pose = Some(pose.into());
     }
 }

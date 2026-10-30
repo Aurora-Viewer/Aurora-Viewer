@@ -612,6 +612,7 @@ pub struct App {
     notif_ui: ui::notifications::NotifUi,
     /// A friendship offer in the middle of the screen (#465).
     friend_prompt: ui::friend_prompt::FriendPromptUi,
+    region_message_prompt: ui::region_message_prompt::RegionMessagePromptUi,
     /// The region restart alert (app/region_restart.rs).
     region_restart: region_restart::State,
     /// Taskbar flashes and system notifications (app/attention.rs).
@@ -1315,6 +1316,7 @@ impl App {
             audio_ui: Default::default(),
             notif_ui: Default::default(),
             friend_prompt: Default::default(),
+            region_message_prompt: Default::default(),
             region_restart: Default::default(),
             attention: Default::default(),
             reconnect_place: None,
@@ -1758,7 +1760,8 @@ impl App {
                     amount = format!("{}", amount)
                 ));
             }
-            // the simulator's MoneyBalanceReply names a gift (the money tracker)
+            // the simulator's MoneyBalanceReply names a gift (the money
+            // tracker, the card in the payee's conversation)
             if let NetCommand::PayResident {
                 to,
                 group,
@@ -1767,7 +1770,7 @@ impl App {
             } = &cmd
             {
                 let item = if message.is_empty() { "Payment" } else { message.as_str() };
-                self.record_money(&NetEvent::MoneyTransaction {
+                let reply = NetEvent::MoneyTransaction {
                     id: uuid::Uuid::new_v4(),
                     success: true,
                     kind: 5001,
@@ -1778,7 +1781,9 @@ impl App {
                     amount: *amount,
                     item: item.to_owned(),
                     description: String::new(),
-                });
+                };
+                self.record_money(&reply);
+                self.world.payment(&reply);
             }
             // a sit on any prim, and the stand up from it (app/own_motion.rs);
             // the stand up's animations still come from demo::respond
@@ -2643,7 +2648,7 @@ impl App {
         } = ev
         {
             self.record_money(&ev);
-            self.world.payment_received(&ev);
+            self.world.payment(&ev);
             self.pay_ui.on_transaction(success, kind, dest, description);
             return;
         }
@@ -6659,7 +6664,10 @@ impl App {
         self.joystick_avatar(&mut i);
         if self.camera.free().is_some() {
             // the photo's free camera takes the movement keys: the avatar
-            // stays where it is (no walk, turn, jump or flight start)
+            // stays where it is (no walk, turn, jump or flight start).
+            // The viewfinder pad must be applied here: this path returns
+            // before `viewfinder_pad`, so Look / Glide / Forward were ignored.
+            self.apply_viewfinder_free_pad();
             self.photo_free_move(&i, dt);
             self.input = MoveInput::default();
             self.fb_since = None;
@@ -7692,6 +7700,7 @@ impl App {
         self.world.received_items.enabled = self.settings.sort_received_items;
         self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
         self.world.payments.open_for_friends = self.settings.payment_opens_conversation;
+        self.world.payments.open_when_paying = self.settings.payment_sent_opens_conversation;
         self.world.received_items.enabled_since = self.settings.received_items_since;
         if self.demo
             && self.frame_count == 700
@@ -10105,6 +10114,13 @@ impl App {
             }
             if mode == "later" && self.frame_count == crate::demo::friend_prompt::LATER_AT {
                 self.friend_prompt.put_off();
+            }
+        }
+        if self.demo && crate::demo::region_message::enabled() {
+            for event in crate::demo::region_message::events(self.frame_count) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
             }
         }
         if self.demo && crate::demo::object_im::settings().is_some() {
@@ -14725,8 +14741,32 @@ impl App {
                 // the toasts it replaces (AURORA_DEMO_FRIEND_PROMPT: on for the run)
                 let prompt_on = self.settings.friend_request_prompt || (self.demo && crate::demo::friend_prompt::mode().is_some());
                 let prompt_allowed = !toasts_hidden && !dnd && self.world.notifications.started;
+                // #1404: a message to the whole region there too, first: the
+                // friendship offers wait behind it
+                // (AURORA_DEMO_REGION_MESSAGE: on for the run)
+                let region_on = self.settings.region_message_prompt || (self.demo && crate::demo::region_message::enabled());
+                let mut region_action = None;
+                let region_shown = self
+                    .region_message_prompt
+                    .next(&mut self.world.notifications, region_on, prompt_allowed);
+                if let Some((id, from)) = region_shown {
+                    let name = Some(self.world.social.display_name_of(&from))
+                        .filter(|n| n != "…")
+                        .or_else(|| self.world.avatar_name(&from));
+                    if name.is_none() {
+                        self.world.social.want_name(from);
+                    }
+                    let env = ui::region_message_prompt::PromptEnv {
+                        name,
+                        motion: !self.settings.reduce_motion,
+                    };
+                    region_action = self
+                        .region_message_prompt
+                        .show(&ctx, &p, &self.skin.icons, &self.world.notifications, id, &env);
+                }
                 let mut prompt_action = None;
-                if let Some((id, from)) = self.friend_prompt.next(&mut self.world.notifications, prompt_on, prompt_allowed) {
+                let friend_allowed = prompt_allowed && region_shown.is_none();
+                if let Some((id, from)) = self.friend_prompt.next(&mut self.world.notifications, prompt_on, friend_allowed) {
                     self.notif_ui.wanted_pics.insert(from);
                     let name = Some(self.world.social.display_name_of(&from))
                         .filter(|n| n != "…")
@@ -14800,6 +14840,11 @@ impl App {
                 match prompt_action {
                     Some(ui::friend_prompt::PromptAction::Answer(id, r)) => answers.push((id, r)),
                     Some(ui::friend_prompt::PromptAction::Profile(id)) => self.profile_ui.open(&mut self.world, id),
+                    None => {}
+                }
+                match region_action {
+                    Some(ui::region_message_prompt::PromptAction::Answer(id, r)) => answers.push((id, r)),
+                    Some(ui::region_message_prompt::PromptAction::Profile(id)) => self.profile_ui.open(&mut self.world, id),
                     None => {}
                 }
                 for (id, r) in answers {
@@ -16969,6 +17014,9 @@ impl ApplicationHandler for App {
                 if view.starts_with("wearables") {
                     crate::world::appearance::seed_demo_wearables(&mut self.world.inventory, self.world.agent_id);
                 }
+                if view == "broken" {
+                    crate::world::appearance::seed_demo_broken(&mut self.world.inventory, self.world.agent_id);
+                }
                 if matches!(view.as_str(), "gallery-fit" | "gallery-fill") {
                     ui::appearance::demo_previews(&self.egui_ctx, &mut self.world.inventory, &mut self.ui_images);
                     self.settings.appearance_fill_previews = view == "gallery-fill";
@@ -16986,7 +17034,7 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
                 self.appearance_ui.open(
                     match view.as_str() {
-                        "outfits" | "multi-outfits" | "folders-outfits" | "wearables-outfits" => 1,
+                        "outfits" | "multi-outfits" | "folders-outfits" | "wearables-outfits" | "broken" => 1,
                         "worn" | "save" | "wearables" => 2,
                         _ => 0,
                     },
@@ -17001,7 +17049,7 @@ impl ApplicationHandler for App {
                 if view == "duplicates" {
                     crate::world::appearance::seed_duplicate_response(&mut self.world.inventory, self.world.agent_id);
                 }
-                if matches!(view.as_str(), "menu" | "duplicates") {
+                if matches!(view.as_str(), "menu" | "duplicates" | "broken") {
                     self.appearance_ui.open_outfit(uuid::Uuid::from_u128(704));
                 }
                 if view == "wearables-outfits" {

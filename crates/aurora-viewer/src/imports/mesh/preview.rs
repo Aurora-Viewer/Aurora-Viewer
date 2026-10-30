@@ -45,7 +45,7 @@ impl Player {
     }
 }
 
-fn imported_base(draft: &Draft, rig: &Rig) -> SkeletonBase {
+pub(crate) fn imported_base(draft: &Draft, rig: &Rig) -> SkeletonBase {
     let mut base = SkeletonBase {
         local_pos: rig.local_pos.clone(),
         scale: rig.scale.clone(),

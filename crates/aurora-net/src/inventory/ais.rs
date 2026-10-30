@@ -3,6 +3,7 @@
 
 use super::{FolderContents, InvFolder, InvItem, folder_from_llsd, item_from_llsd};
 use aurora_llsd::Llsd;
+use std::collections::HashSet;
 use uuid::Uuid;
 
 fn favorite(record: &Llsd) -> Result<bool, &'static str> {
@@ -213,25 +214,52 @@ pub async fn fetch_folders(http: &reqwest::Client, cap: &str, owner: Uuid, ids: 
 }
 
 pub async fn fetch_items(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[Uuid]) -> Result<Vec<InvItem>, &'static str> {
-    let mut items = Vec::with_capacity(ids.len());
+    let reads = read_items(http, cap, owner, ids).await;
+    if reads.missing.is_empty() && reads.failed.is_empty() {
+        Ok(reads.items)
+    } else {
+        Err("AIS inventory read failed")
+    }
+}
+
+/// Each item's own outcome: one item gone from the server must not hide
+/// the others read with it.
+#[derive(Debug, Default, PartialEq)]
+pub struct ItemReads {
+    pub items: Vec<InvItem>,
+    /// Answered 404 or 410: the item does not exist (a broken link's original).
+    pub missing: Vec<Uuid>,
+    /// Network error, other status, unreadable answer: proves nothing.
+    pub failed: Vec<Uuid>,
+}
+
+/// Bounded parallel reads of single items (AISAPI::FetchItem).
+pub async fn read_items(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[Uuid]) -> ItemReads {
+    let mut reads = ItemReads::default();
     for chunk in ids.chunks(16) {
         let mut tasks = tokio::task::JoinSet::new();
         for id in chunk.iter().copied() {
             let http = http.clone();
             let url = format!("{}/item/{id}", cap.trim_end_matches('/'));
             tasks.spawn(async move {
-                let item = item(&get(&http, url).await?, owner)?;
-                if item.id != id {
-                    return Err("mismatched AIS item");
-                }
-                Ok(item)
+                let read = crate::caps::get_llsd_as(&http, &url, crate::probe::HttpKind::Inventory).await;
+                (id, read.map(|doc| item(&doc, owner).ok().filter(|item| item.id == id)))
             });
         }
+        let mut answered = HashSet::new();
         while let Some(result) = tasks.join_next().await {
-            items.push(result.map_err(|_| "AIS inventory task failed")??);
+            let Ok((id, read)) = result else { continue };
+            answered.insert(id);
+            match read {
+                Ok(Some(item)) => reads.items.push(item),
+                Err(crate::caps::CapsError::Status(404 | 410)) => reads.missing.push(id),
+                Ok(None) | Err(_) => reads.failed.push(id),
+            }
         }
+        // a panicked read task answers nothing: failed, asked again
+        reads.failed.extend(chunk.iter().filter(|id| !answered.contains(id)));
     }
-    Ok(items)
+    reads
 }
 
 #[cfg(test)]
@@ -532,5 +560,51 @@ mod tests {
         // the parent is no snapshot of its own; 20 came back incomplete
         assert_eq!(fetched(&contents), [id(10), id(30)]);
         assert!(parse_tree_reply(&tree(), id(2), id(99), &[id(10)], MAX_FOLDER_DEPTH).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_deleted_item_does_not_fail_the_items_read_with_it() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local test server");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let server = tokio::spawn(async move {
+            for _ in 0..3 {
+                let (mut socket, _) = tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
+                    .await
+                    .expect("request timeout")
+                    .expect("request");
+                let mut bytes = Vec::new();
+                while !bytes.windows(4).any(|b| b == b"\r\n\r\n") {
+                    let mut buffer = [0; 1024];
+                    let n = socket.read(&mut buffer).await.expect("read");
+                    assert!(n > 0);
+                    bytes.extend_from_slice(&buffer[..n]);
+                }
+                let request = String::from_utf8_lossy(&bytes).into_owned();
+                let (status, body) = if request.contains(&id(3).to_string()) {
+                    ("200 OK", aurora_llsd::to_xml(&record(3, false, 5, false)))
+                } else if request.contains(&id(5).to_string()) {
+                    ("404 Not Found", Vec::new())
+                } else {
+                    ("500 Internal Server Error", Vec::new())
+                };
+                let header = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/llsd+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(header.as_bytes()).await.expect("header");
+                socket.write_all(&body).await.expect("body");
+            }
+        });
+        let reads = read_items(&reqwest::Client::new(), &url, id(2), &[id(3), id(5), id(6)]).await;
+        server.await.expect("server");
+        assert_eq!(reads.items.iter().map(|it| it.id).collect::<Vec<_>>(), [id(3)]);
+        assert_eq!(reads.missing, [id(5)], "404: a broken link's original");
+        assert_eq!(reads.failed, [id(6)], "a server error proves nothing");
+        assert!(
+            fetch_items(&reqwest::Client::new(), "http://127.0.0.1:9", id(2), &[id(3)])
+                .await
+                .is_err(),
+            "the all-or-nothing read still fails"
+        );
     }
 }

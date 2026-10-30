@@ -1180,6 +1180,10 @@ pub enum NetEvent {
     InventoryItemsFailed {
         items: Vec<Uuid>,
     },
+    /// Items the server answered do not exist: broken links' originals.
+    InventoryItemsMissing {
+        items: Vec<Uuid>,
+    },
     /// Answer to a server appearance (bake) request: success, or the COF
     /// version the server expected.
     AppearanceRequestResult {

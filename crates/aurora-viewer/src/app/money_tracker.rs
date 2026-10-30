@@ -1,7 +1,7 @@
 //! Application bridge for the money tracker (`ui/money_tracker.rs`): what it
 //! records and when, the look chosen in Preferences › Aurora, what it asks
 //! for, and the demo's scenario; with the demo of a direct payment's card in
-//! the payer's conversation (`world/payments.rs`).
+//! the conversation with the other resident (`world/payments.rs`).
 
 use super::*;
 use ui::money_tracker::{Party, TrackerAction};
@@ -105,39 +105,51 @@ impl App {
         }
     }
 
-    /// AURORA_DEMO_PAYMENT=card|legacy|friend|off (docs/TESTING.md): a
-    /// resident's conversation open on their message, then their two
-    /// payments as cards, in the bubbles or the legacy lines; `friend`: a
-    /// friend's payment opens their conversation, a stranger's (no
-    /// conversation) shows nowhere; `off`: the same with the option off, no
-    /// conversation opens.
+    /// AURORA_DEMO_PAYMENT=card|legacy|sent|sent-open|friend|off
+    /// (docs/TESTING.md): a resident's conversation open on their message,
+    /// then their two payments as cards, in the bubbles or the legacy lines;
+    /// `sent`: then ours to them (the demo keeps no transcript: what comes
+    /// back when the conversation is opened again is a unit test's);
+    /// `sent-open`: no conversation open, ours opens it with "Open the
+    /// conversation when you pay a resident" on; `friend`: a friend's payment opens their conversation, a stranger's
+    /// (no conversation) shows nowhere; `off`: the same with the option off,
+    /// no conversation opens.
     pub(super) fn demo_payment(&mut self) {
         let Ok(mode) = std::env::var("AURORA_DEMO_PAYMENT") else {
             return;
         };
         use crate::demo::{DEMO_FRIEND, DEMO_NOVA, DEMO_TESS};
         let agent = self.world.agent_id;
-        let paid = |n: u128, source, amount, item: &str| NetEvent::MoneyTransaction {
+        let gift = |n: u128, source, dest, amount, item: &str| NetEvent::MoneyTransaction {
             id: uuid::Uuid::from_u128(0x9A1D_0000 + n),
             success: true,
             kind: GIFT,
             source,
             source_group: false,
-            dest: agent,
+            dest,
             dest_group: false,
             amount,
             item: item.into(),
             description: String::new(),
         };
+        let paid = |n, source, amount, item: &str| gift(n, source, agent, amount, item);
         self.panels.perf = false;
         self.panels.chat = true;
         ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 300.0), egui::vec2(600.0, 440.0));
+        if mode == "sent-open" {
+            self.settings.payment_sent_opens_conversation = true;
+            self.world.payments.open_when_paying = true;
+            self.world
+                .payment(&gift(6, agent, DEMO_NOVA, 300, aurora_i18n::tr!("demo-payment-rent")));
+            self.chat_ui.open(DEMO_NOVA);
+            return;
+        }
         if mode == "friend" || mode == "off" {
             self.settings.payment_opens_conversation = mode == "friend";
             self.world.payments.open_for_friends = self.settings.payment_opens_conversation;
-            self.world.payment_received(&paid(1, DEMO_TESS, 20, "Payment"));
+            self.world.payment(&paid(1, DEMO_TESS, 20, "Payment"));
             self.world
-                .payment_received(&paid(2, DEMO_FRIEND, 250, aurora_i18n::tr!("demo-payment-boat")));
+                .payment(&paid(2, DEMO_FRIEND, 250, aurora_i18n::tr!("demo-payment-boat")));
             if self.world.social.has_session(&DEMO_FRIEND) {
                 self.chat_ui.open(DEMO_FRIEND);
             }
@@ -156,8 +168,12 @@ impl App {
             timestamp: 0,
         }));
         self.world
-            .payment_received(&paid(3, DEMO_NOVA, 1500, aurora_i18n::tr!("demo-payment-thanks")));
-        self.world.payment_received(&paid(4, DEMO_NOVA, 75, "Payment"));
+            .payment(&paid(3, DEMO_NOVA, 1500, aurora_i18n::tr!("demo-payment-thanks")));
+        self.world.payment(&paid(4, DEMO_NOVA, 75, "Payment"));
+        if mode == "sent" {
+            self.world
+                .payment(&gift(5, agent, DEMO_NOVA, 300, aurora_i18n::tr!("demo-payment-rent")));
+        }
         self.chat_ui.open(DEMO_NOVA);
         if mode == "legacy" {
             self.chat_ui.demo_style = Some(crate::settings::ChatStyle::Legacy);

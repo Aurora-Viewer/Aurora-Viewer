@@ -294,6 +294,20 @@ fn emit(sh: &Shared, ev: NetEvent) {
     let _ = sh.events.send(ev);
 }
 
+/// Items read, items the server says do not exist, and failed reads.
+fn send_item_reads(events: &crate::EventSender, reads: crate::inventory::ais::ItemReads) {
+    if !reads.items.is_empty() {
+        let _ = events.send(NetEvent::InventoryItems(reads.items));
+    }
+    if !reads.missing.is_empty() {
+        let _ = events.send(NetEvent::InventoryItemsMissing { items: reads.missing });
+    }
+    if !reads.failed.is_empty() {
+        log::warn!("{} inventory item reads failed", reads.failed.len());
+        let _ = events.send(NetEvent::InventoryItemsFailed { items: reads.failed });
+    }
+}
+
 /// (simulator, seed asked, its capabilities or why they did not come)
 type CapsSender = mpsc::UnboundedSender<(SocketAddr, String, Result<HashMap<String, String>, String>)>;
 
@@ -3258,15 +3272,8 @@ impl Session<'_> {
             let events = self.sh.events.clone();
             tokio::spawn(async move {
                 for chunk in items.chunks(16) {
-                    match crate::inventory::ais::fetch_items(&http, &cap, owner, chunk).await {
-                        Ok(items) => {
-                            let _ = events.send(NetEvent::InventoryItems(items));
-                        }
-                        Err(error) => {
-                            log::warn!("item fetch failed: {error}");
-                            let _ = events.send(NetEvent::InventoryItemsFailed { items: chunk.to_vec() });
-                        }
-                    }
+                    let reads = crate::inventory::ais::read_items(&http, &cap, owner, chunk).await;
+                    send_item_reads(&events, reads);
                 }
             });
             return;
@@ -3280,15 +3287,17 @@ impl Session<'_> {
         tokio::spawn(async move {
             for chunk in items.chunks(50) {
                 let body = crate::inventory::fetch_items_body(chunk, owner);
-                match caps::post_llsd(&http, &url, &body).await {
-                    Ok(v) => {
-                        let _ = events.send(NetEvent::InventoryItems(crate::inventory::parse_items_response(&v)));
-                    }
+                let reads = match caps::post_llsd(&http, &url, &body).await {
+                    Ok(v) => crate::inventory::item_reads(&v, chunk),
                     Err(e) => {
                         log::warn!("item fetch failed: {e}");
-                        let _ = events.send(NetEvent::InventoryItemsFailed { items: chunk.to_vec() });
+                        crate::inventory::ais::ItemReads {
+                            failed: chunk.to_vec(),
+                            ..Default::default()
+                        }
                     }
-                }
+                };
+                send_item_reads(&events, reads);
             }
         });
     }

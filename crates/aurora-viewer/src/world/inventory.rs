@@ -46,7 +46,20 @@ pub struct Inventory {
     pub held: Option<Vec<Uuid>>,
     /// Bumped whenever folders or items change (cached views rebuild).
     pub generation: u64,
+    /// Link originals the server answered do not exist, or still unreadable
+    /// after `ITEM_FETCH_ATTEMPTS`: broken links, which outfits skip instead
+    /// of waiting for them (LLViewerInventoryItem::getIsBrokenLink).
+    pub missing_items: HashSet<Uuid>,
+    /// Failed item reads (network, server error), by attempt.
+    pub item_failures: HashMap<Uuid, u8>,
+    /// Failed item reads to ask for again (`take_item_retries`).
+    pub item_retries: HashSet<Uuid>,
 }
+
+/// Reads of one item before it counts as a broken link's original. A failed
+/// read proves nothing; the Legacy Viewer treats a link still unresolved once
+/// its background fetch ended as broken (LLAppearanceMgr::updateAppearanceFromCOF).
+pub const ITEM_FETCH_ATTEMPTS: u8 = 3;
 
 fn first_id(v: &Llsd, key: &str) -> Uuid {
     v.at(0)[key].as_uuid()
@@ -345,6 +358,42 @@ impl Inventory {
                 folder.state = FetchState::Fetched;
             }
         }
+    }
+
+    /// A broken link's original: confirmed gone, and not received since.
+    pub fn broken(&self, id: &Uuid) -> bool {
+        self.missing_items.contains(id) && !self.items.contains_key(id)
+    }
+
+    /// The server answered that these items do not exist.
+    pub fn items_missing(&mut self, ids: Vec<Uuid>) {
+        self.generation += 1;
+        for id in ids {
+            self.item_failures.remove(&id);
+            self.item_retries.remove(&id);
+            self.missing_items.insert(id);
+        }
+    }
+
+    /// These item reads failed: asked again, up to `ITEM_FETCH_ATTEMPTS`.
+    pub fn items_failed(&mut self, ids: &[Uuid]) {
+        self.generation += 1;
+        for id in ids {
+            let attempts = self.item_failures.entry(*id).or_insert(0);
+            *attempts += 1;
+            if *attempts >= ITEM_FETCH_ATTEMPTS {
+                log::warn!("inventory item {id} still unreadable after {attempts} attempts: treated as a broken link");
+                self.item_retries.remove(id);
+                self.missing_items.insert(*id);
+            } else {
+                self.item_retries.insert(*id);
+            }
+        }
+    }
+
+    /// The failed item reads to send again, once each.
+    pub fn take_item_retries(&mut self) -> HashSet<Uuid> {
+        std::mem::take(&mut self.item_retries)
     }
 
     pub fn failed(&mut self, folders: &[Uuid]) {

@@ -925,7 +925,7 @@ mod tests {
                                 let mut player = super::super::animation::Player::default();
                                 player.bound = Some(bound);
                                 player.seek(animation.duration * 0.5);
-                                player.tick(entry.id, &rig, &mut crate::scene::anim::AnimStreamer::new(PathBuf::new()));
+                                player.tick(entry.id, &rig, &mut crate::scene::anim::AnimStreamer::new(PathBuf::new()), None);
                                 assert!(player.pose.expect("sampled pose").iter().flatten().flatten().all(|v| v.is_finite()));
                                 3
                             }
