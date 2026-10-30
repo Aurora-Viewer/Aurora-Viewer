@@ -189,11 +189,29 @@ pub fn loaded(inv: &Inventory, folder: Uuid) -> bool {
     inv.folders.get(&folder).is_some_and(|f| f.state == FetchState::Fetched)
 }
 
+/// Loaded, and every link resolved: to its original, or known broken. A
+/// broken link never holds an outfit back (LLAppearanceMgr::
+/// updateAppearanceFromCOF waits only while the inventory is still fetched).
 pub fn complete(inv: &Inventory, folder: Uuid) -> bool {
     loaded(inv, folder)
         && folder_links(inv, folder)
             .iter()
-            .all(|l| l.folder || inv.items.contains_key(&l.target))
+            .all(|l| l.folder || inv.items.contains_key(&l.target) || inv.broken(&l.target))
+}
+
+/// `folder_links` without the links to a broken original, which are skipped
+/// and dropped from the rewritten folder (LLAppearanceMgr::
+/// wearInventoryCategoryOnAvatar: "Attempt to wear a broken link").
+pub fn usable_links(inv: &Inventory, folder: Uuid) -> Vec<OutfitLink> {
+    let mut links = folder_links(inv, folder);
+    links.retain(|l| {
+        let broken = !l.folder && inv.broken(&l.target);
+        if broken {
+            log::warn!("outfit link \"{}\" in folder {folder} is broken: skipped", l.name);
+        }
+        !broken
+    });
+    links
 }
 
 /// Only the relevant folders and link targets are fetched, including retry.
@@ -228,7 +246,7 @@ pub fn missing_targets(inv: &Inventory, folder: Uuid) -> impl Iterator<Item = Uu
         .filter_map(|id| inv.items.get(id))
         .filter(move |it| it.parent == folder && it.asset_type == 24 && !it.asset_id.is_nil())
         .map(|it| it.asset_id)
-        .filter(|target| !inv.items.contains_key(target))
+        .filter(|target| !inv.items.contains_key(target) && !inv.missing_items.contains(target))
 }
 
 /// One FetchInventory2 request for these items, none when there are none.
@@ -260,7 +278,7 @@ pub fn prepare_contents(inv: &mut Inventory, agent: Uuid, folder: Uuid) -> Vec<N
         }
         pending.extend(f.children.iter().copied());
         for link in folder_links(inv, id) {
-            if !link.folder && !link.target.is_nil() && !inv.items.contains_key(&link.target) {
+            if !link.folder && !link.target.is_nil() && !inv.items.contains_key(&link.target) && !inv.broken(&link.target) {
                 missing.insert(link.target);
             }
         }
@@ -279,7 +297,8 @@ pub fn prepare_contents(inv: &mut Inventory, agent: Uuid, folder: Uuid) -> Vec<N
 }
 
 /// LLAppearanceMgr::wearInventoryCategory: ordinary folders are recursive;
-/// unrelated inventory types are ignored, incomplete or broken links are refused.
+/// unrelated inventory types and broken links are skipped, links still
+/// loading are refused.
 pub fn wearable_contents(inv: &Inventory, folder: Uuid) -> Result<Vec<OutfitLink>, String> {
     let mut pending = vec![folder];
     let mut seen = HashSet::new();
@@ -290,7 +309,7 @@ pub fn wearable_contents(inv: &Inventory, folder: Uuid) -> Result<Vec<OutfitLink
         }
         let f = inv.folders.get(&id).ok_or(aurora_i18n::tr!("common-folder-not-found"))?;
         require_complete(inv, id)?;
-        for link in folder_links(inv, id).into_iter().filter(|l| !l.folder) {
+        for link in usable_links(inv, id).into_iter().filter(|l| !l.folder) {
             let item = inv
                 .items
                 .get(&link.target)
@@ -340,7 +359,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             OutfitMutation {
                 folder,
                 create: None,
-                links: folder_links(inv, folder).into_iter().filter(|l| l.target != item).collect(),
+                links: usable_links(inv, folder).into_iter().filter(|l| l.target != item).collect(),
                 cof: None,
             },
             false,
@@ -348,7 +367,8 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
     }
     let cof = cof(inv).ok_or(aurora_i18n::tr!("world-appearance-the-current-outfit-folder-is-unavailable"))?;
     require_complete(inv, cof)?;
-    let mut current = folder_links(inv, cof);
+    // the rewritten COF drops its broken links
+    let mut current = usable_links(inv, cof);
     if matches!(
         action,
         Action::Add(_)
@@ -439,7 +459,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 require_complete(inv, change.folder)?;
                 change.links = links;
                 change.links.extend(
-                    folder_links(inv, change.folder)
+                    usable_links(inv, change.folder)
                         .into_iter()
                         .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| it.asset_type == 0)),
                 );
@@ -481,7 +501,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 links.extend(if contents {
                     wearable_contents(inv, *id)?
                 } else {
-                    folder_links(inv, *id)
+                    usable_links(inv, *id)
                 });
             }
             let mut next: Vec<_> = links
@@ -1095,6 +1115,25 @@ pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
     demo_replace(inv, agent, cof, &current);
 }
 
+/// `AURORA_DEMO_APPEARANCE=broken`: the third outfit and the current
+/// outfit hold a link to a deleted original, answered missing as the grid
+/// would (issue #1441): both still wear, without it.
+pub fn seed_demo_broken(inv: &mut Inventory, agent: Uuid) {
+    let gone = OutfitLink {
+        target: Uuid::from_u128(729),
+        name: aurora_i18n::tr!("world-appearance-deleted-scarf").into(),
+        desc: String::new(),
+        folder: false,
+        inv_type: 18,
+    };
+    for folder in [Uuid::from_u128(704)].into_iter().chain(cof(inv)) {
+        let mut links = folder_links(inv, folder);
+        links.push(gone.clone());
+        demo_replace(inv, agent, folder, &links);
+    }
+    inv.items_missing(vec![gone.target]);
+}
+
 /// `AURORA_DEMO_APPEARANCE=layers…`: two more tattoos worn over the star
 /// tattoo of `seed_demo`, for the layer order of the outfit editor.
 pub fn seed_demo_layers(inv: &mut Inventory, agent: Uuid) {
@@ -1626,6 +1665,95 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    /// Issue #1441: a link to a deleted original held every outfit change
+    /// on "still loading" forever.
+    #[test]
+    fn an_outfit_link_to_a_deleted_original_waits_for_the_server_then_is_skipped() {
+        let mut inv = fixture();
+        let outfit = Uuid::from_u128(704);
+        let gone = Uuid::from_u128(723);
+        let original = inv.items.remove(&gone).expect("linked original");
+        assert!(!complete(&inv, outfit), "not read yet: still loading");
+        assert!(plan(&inv, Action::Wear(outfit, false), &HashMap::new()).is_err());
+        assert_eq!(missing_targets(&inv, outfit).collect::<Vec<_>>(), [gone]);
+        inv.items_missing(vec![gone]);
+        assert!(complete(&inv, outfit));
+        assert!(missing_targets(&inv, outfit).next().is_none(), "never asked for again");
+        for action in [
+            Action::Wear(outfit, false),
+            Action::Wear(outfit, true),
+            Action::WearContents {
+                folder: outfit,
+                mode: WearMode::ReplaceOutfit,
+            },
+            Action::RemoveOutfit(outfit),
+        ] {
+            let (change, _) = plan(&inv, action.clone(), &HashMap::new()).unwrap_or_else(|e| panic!("{action:?}: {e}"));
+            assert!(!change.links.iter().any(|l| l.target == gone), "{action:?} skips the broken link");
+        }
+        let (change, _) = plan(&inv, Action::Wear(outfit, false), &HashMap::new()).expect("wear");
+        assert!(
+            change.links.iter().any(|l| l.target == Uuid::from_u128(710)),
+            "the rest of the outfit is worn"
+        );
+        // the original comes back (restored from the trash): no longer broken
+        inv.add_items(vec![original]);
+        assert!(!inv.broken(&gone));
+        let (change, _) = plan(&inv, Action::Wear(outfit, false), &HashMap::new()).expect("wear");
+        assert!(change.links.iter().any(|l| l.target == gone));
+    }
+
+    #[test]
+    fn a_broken_link_in_the_current_outfit_no_longer_blocks_outfit_changes() {
+        let mut inv = fixture();
+        let cof = cof(&inv).expect("COF");
+        let gone = Uuid::from_u128(950);
+        inv.add_items(vec![InvItem {
+            id: Uuid::from_u128(951),
+            parent: cof,
+            name: "Deleted shirt".into(),
+            asset_type: 24,
+            inv_type: 18,
+            asset_id: gone,
+            ..Default::default()
+        }]);
+        assert!(!complete(&inv, cof));
+        assert!(plan(&inv, Action::Wear(Uuid::from_u128(704), false), &HashMap::new()).is_err());
+        inv.items_missing(vec![gone]);
+        assert!(complete(&inv, cof));
+        let clothing: Vec<_> = worn_clothing(&inv).into_iter().map(|(id, _)| id).collect();
+        for action in [
+            Action::Wear(Uuid::from_u128(704), false),
+            Action::Wear(Uuid::from_u128(703), true),
+            Action::RemoveItems(clothing.clone()),
+            Action::Save(Some("Without the shirt".into())),
+        ] {
+            let (change, _) = plan(&inv, action.clone(), &HashMap::new()).unwrap_or_else(|e| panic!("{action:?}: {e}"));
+            assert!(
+                !change.links.iter().any(|l| l.target == gone)
+                    && change.cof.iter().all(|(_, links)| !links.iter().any(|l| l.target == gone)),
+                "{action:?}: the rewritten folders drop the broken link"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_item_reads_are_retried_then_count_as_broken() {
+        let mut inv = fixture();
+        let id = Uuid::from_u128(723);
+        inv.items.remove(&id);
+        for _ in 1..super::super::inventory::ITEM_FETCH_ATTEMPTS {
+            inv.items_failed(&[id]);
+            assert!(!inv.broken(&id), "one failed read proves nothing");
+            assert_eq!(inv.take_item_retries(), HashSet::from([id]));
+            assert!(!complete(&inv, Uuid::from_u128(704)));
+        }
+        inv.items_failed(&[id]);
+        assert!(inv.broken(&id));
+        assert!(inv.take_item_retries().is_empty());
+        assert!(complete(&inv, Uuid::from_u128(704)));
     }
 
     #[test]
