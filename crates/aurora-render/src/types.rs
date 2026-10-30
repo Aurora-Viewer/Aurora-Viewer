@@ -236,14 +236,17 @@ impl PortalClip {
     }
 }
 
-/// Layout of a skeleton's palette in the palettes buffer: its joints, then
-/// its anchors. The first anchor places the skeleton itself (skeleton space
-/// to world); the scene gives the others to the attachment points.
-pub const SKELETON_ANCHOR: u32 = 160;
+/// Layout of a skeleton's palette in the palettes buffer: its joints (the
+/// 159 bones and collision volumes, the 46 body attachment points that hang
+/// from a bone, which meshes are skinned to and animations turn as in the
+/// Legacy Viewer, and the identity slot), then its anchors. The first anchor places the
+/// skeleton itself (skeleton space to world); the scene gives the others to
+/// the attachment points.
+pub const SKELETON_ANCHOR: u32 = 208;
 
-/// First matrix of the weights of a skeleton's live morphs, after its
+/// First matrix of the weights of a skeleton's live morphs, after its 48
 /// anchors: column `k` is `palettes[base + LIVE_MORPH_WEIGHTS + k / 16][k / 4 % 4][k % 4]`.
-pub const LIVE_MORPH_WEIGHTS: u32 = 208;
+pub const LIVE_MORPH_WEIGHTS: u32 = 256;
 
 /// Per-face GPU record (must match `DrawRecord` in common.wgsl).
 #[repr(C)]

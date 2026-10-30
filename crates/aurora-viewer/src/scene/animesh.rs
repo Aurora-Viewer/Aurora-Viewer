@@ -666,9 +666,72 @@ impl super::Scene {
     }
 
     /// Synthetic quadruped with a custom rest skeleton and smooth alpha fur.
+    /// AURORA_DEMO_ANIMESH=points: a bar rigged to the attachment point
+    /// "Groin" alone (#1492): the point is a joint of the skeleton, which
+    /// the animation turns (LLVOAvatar::getJoint finds attachment points,
+    /// indra/newview/llvoavatar.cpp).
+    fn install_demo_point_mesh(&mut self, renderer: &mut aurora_render::Renderer) {
+        use aurora_render::SkinVertex;
+        let rig = self.avatar_lib.rig.clone();
+        let Some(&(joint, local)) = rig.skin_points.get(crate::demo::ANIMESH_POINT) else {
+            return;
+        };
+        let point = rig.default_world_inv[joint].inverse() * local;
+        self.meshes.insert_demo_skin(
+            crate::demo::ANIMESH_POINT_MESH,
+            aurora_assets::SkinInfo {
+                joint_names: vec![crate::demo::ANIMESH_POINT.to_string()],
+                inverse_bind: vec![point.inverse()],
+                ..Default::default()
+            },
+        );
+        // a bar 0.4 m long ahead of the point, in skeleton space
+        let bar = point * Mat4::from_scale_rotation_translation(Vec3::new(0.4, 0.05, 0.05), glam::Quat::IDENTITY, Vec3::new(0.2, 0.0, 0.0));
+        let cube = aurora_prim::generate_volume(&aurora_prim::VolumeParams::default(), 1.0);
+        let (mut faces, _, _) = super::jobs::volume_to_faces(&cube);
+        let (mut min, mut max) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for face in faces.iter_mut().flatten() {
+            for v in &mut face.vertices {
+                let p = bar.transform_point3(Vec3::from(v.pos));
+                (min, max) = (min.min(p), max.max(p));
+                v.pos = p.to_array();
+            }
+            face.skin = Some(vec![
+                SkinVertex {
+                    joints: [0, 0, 0, 0],
+                    weights: [255, 0, 0, 0],
+                };
+                face.vertices.len()
+            ]);
+        }
+        for lod in 0..4 {
+            let faces = faces
+                .iter()
+                .map(|f| {
+                    f.as_ref().map(|f| super::jobs::FaceGeom {
+                        vertices: f.vertices.clone(),
+                        indices: f.indices.clone(),
+                        skin: f.skin.clone(),
+                    })
+                })
+                .collect();
+            self.upload_geom(
+                renderer,
+                super::GeomKey::Mesh {
+                    id: crate::demo::ANIMESH_POINT_MESH,
+                    lod,
+                },
+                super::jobs::PreparedGeom::new(faces, min, max, true, None),
+            );
+        }
+    }
+
     pub fn install_demo_animesh(&mut self, renderer: &mut aurora_render::Renderer) {
         use super::jobs::JobResult;
         self.install_demo_animesh_mesh(renderer, crate::demo::ANIMESH_MESH);
+        if crate::demo::animesh_points() {
+            self.install_demo_point_mesh(renderer);
+        }
         if std::env::var("AURORA_DEMO_ANIMESH").is_ok_and(|v| matches!(v.as_str(), "alpha" | "alpha-cycle")) {
             // No skin metadata or skin vertex stream: sharing an animated
             // parent must not make these mesh children rigged.
