@@ -12274,6 +12274,7 @@ wearable-changed = Cet élément a changé ou n’est plus porté. Ouvrez-le à 
 wearable-error = Cet élément d’apparence n’a pas pu être lu ou enregistré.
 wearable-readonly = Cet élément n’est pas modifiable.
 wearable-texture-permissions = Choisissez une texture d’inventaire copiable et, pour un vêtement transférable, transférable.
+wearable-local-preview = Les textures locales servent d’aperçu privé. Importez la texture puis sélectionnez-la dans l’inventaire pour enregistrer.
 wearable-loading = Chargement de l’élément d’apparence…
 wearable-saving = Enregistrement…
 wearable-saved = Élément d’apparence enregistré.

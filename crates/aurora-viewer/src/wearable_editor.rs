@@ -102,7 +102,18 @@ pub fn dragged_texture(world: &World, item: Uuid) -> Option<Uuid> {
 /// (LLTextureCtrl::allowDrop refuses a disabled control), so the drop
 /// highlight never promises what `State::set_texture` then refuses.
 pub fn accepts_texture(world: &World, draft: &Draft, slot: u32, texture: Uuid) -> bool {
-    draft.pending.is_none() && draft.can_modify(world) && slots(draft.edited.kind).contains(&slot) && texture_allowed(world, draft, texture)
+    draft.pending.is_none()
+        && draft.can_modify(world)
+        && slots(draft.edited.kind).contains(&slot)
+        && (world.local_assets.get(&texture).is_some_and(|(_, material)| !material) || texture_allowed(world, draft, texture))
+}
+
+pub fn has_local_textures(world: &World, draft: &Draft) -> bool {
+    draft
+        .edited
+        .textures
+        .values()
+        .any(|texture| world.local_assets.contains_key(texture))
 }
 
 pub fn slot_label(slot: u32) -> &'static str {
@@ -165,15 +176,27 @@ pub struct State {
     pub close_after_save: bool,
     pub picker: crate::ui::texture_picker::TexturePicker,
     pub picker_slot: Option<u32>,
+    picker_before: Option<TextureSnapshot>,
     pub wanted_images: HashSet<Uuid>,
     pub group: String,
     pub camera_pending: bool,
     pub alpha_previous: HashMap<u32, Uuid>,
+    local_textures: HashSet<Uuid>,
     pub preview: preview::Preview,
+}
+
+struct TextureSnapshot {
+    item: Uuid,
+    asset: Uuid,
+    texture: Option<Uuid>,
+    local: bool,
 }
 
 impl State {
     pub fn open_item(&mut self, world: &mut World, item: Uuid) -> Option<NetCommand> {
+        if self.finish_picker(world, None) {
+            self.changed(world);
+        }
         if self.draft.as_ref().is_some_and(|draft| draft.pending.is_some() || draft.dirty()) {
             self.open = true;
             self.close_confirmation = true;
@@ -284,12 +307,49 @@ impl State {
         self.copy_name = None;
         self.picker.open = false;
         self.picker_slot = None;
+        self.picker_before = None;
         self.wanted_images.clear();
         self.alpha_previous.clear();
+        self.local_textures.clear();
         world.preview_shape(None);
     }
 
     pub fn update(&mut self, world: &mut World) {
+        let mut changed = false;
+        if let Some(draft) = &mut self.draft {
+            // LLLocalBitmap::updateUserLayers replaces removed local maps.
+            // Restore this slot's original instead of fetching a private ID.
+            draft.edited.textures.retain(|slot, texture| {
+                if self.local_textures.contains(texture) && !world.local_assets.contains_key(texture) {
+                    changed = true;
+                    let Some(original) = draft.original.textures.get(slot) else {
+                        return false;
+                    };
+                    *texture = *original;
+                }
+                true
+            });
+            self.alpha_previous.retain(|slot, texture| {
+                if self.local_textures.contains(texture) && !world.local_assets.contains_key(texture) {
+                    let Some(original) = draft.original.textures.get(slot) else {
+                        return false;
+                    };
+                    *texture = *original;
+                }
+                true
+            });
+            self.local_textures.retain(|id| {
+                draft
+                    .edited
+                    .textures
+                    .values()
+                    .chain(self.alpha_previous.values())
+                    .any(|texture| texture == id)
+            });
+        }
+        if changed {
+            self.changed(world);
+        }
         if self.open
             && self.draft.as_ref().is_some_and(|draft| {
                 draft.pending.is_none()
@@ -318,16 +378,89 @@ impl State {
         if !slots(draft.edited.kind).contains(&slot) {
             return false;
         }
-        if !texture_allowed(world, draft, texture) {
+        if !accepts_texture(world, draft, slot, texture) {
             self.message = aurora_i18n::tr!("wearable-texture-permissions").into();
             return false;
         }
         draft.edited.textures.insert(slot, texture);
+        if world.local_assets.contains_key(&texture) {
+            self.local_textures.insert(texture);
+        }
         self.message.clear();
         true
     }
 
+    /// Match the build editor's picker transaction: every selection previews,
+    /// OK keeps it, and Cancel or the close button restores this one slot.
+    pub fn open_picker(&mut self, world: &World, slot: u32) -> bool {
+        let changed = self.finish_picker(world, None);
+        let Some(draft) = &self.draft else { return changed };
+        if draft.pending.is_some() || !draft.can_modify(world) || !slots(draft.edited.kind).contains(&slot) {
+            return changed;
+        }
+        let texture = draft.edited.textures.get(&slot).copied();
+        self.picker_before = Some(TextureSnapshot {
+            item: draft.item.id,
+            asset: draft.item.asset_id,
+            texture,
+            local: texture.is_some_and(|id| world.local_assets.contains_key(&id)),
+        });
+        self.picker_slot = Some(slot);
+        self.picker.open_with_defaults(
+            aurora_i18n::tr!("wearable-choose-texture"),
+            texture.unwrap_or_default(),
+            None,
+            matches!(draft.edited.kind, 1 | 13 | 14 | 16),
+        );
+        self.picker.allow_local = true;
+        changed
+    }
+
+    pub fn preview_picker(&mut self, world: &World, texture: Uuid) -> bool {
+        self.picker_slot.is_some_and(|slot| self.set_texture(world, slot, texture))
+    }
+
+    pub fn finish_picker(&mut self, world: &World, accepted: Option<Uuid>) -> bool {
+        self.picker.open = false;
+        let before = self.picker_before.take();
+        let Some(slot) = self.picker_slot.take() else { return false };
+        if let Some(texture) = accepted {
+            let previous = self.draft.as_ref().and_then(|draft| draft.edited.textures.get(&slot)).copied();
+            if self.set_texture(world, slot, texture) {
+                return previous != Some(texture);
+            }
+        } else {
+            self.message.clear();
+        }
+        let Some(before) = before else { return false };
+        let Some(draft) = self
+            .draft
+            .as_mut()
+            .filter(|draft| draft.item.id == before.item && draft.item.asset_id == before.asset)
+        else {
+            return false;
+        };
+        let texture = if before.local && before.texture.is_some_and(|id| !world.local_assets.contains_key(&id)) {
+            draft.original.textures.get(&slot).copied()
+        } else {
+            before.texture
+        };
+        let changed = draft.edited.textures.get(&slot).copied() != texture;
+        if let Some(texture) = texture {
+            draft.edited.textures.insert(slot, texture);
+            if world.local_assets.contains_key(&texture) {
+                self.local_textures.insert(texture);
+            }
+        } else {
+            draft.edited.textures.remove(&slot);
+        }
+        changed
+    }
+
     pub fn save(&mut self, world: &World, name: Option<String>) -> Option<NetCommand> {
+        if self.picker_slot.is_some() {
+            return None;
+        }
         let draft = self.draft.as_mut()?;
         let valid = if name.is_some() {
             draft.can_copy(world) && (draft.can_modify(world) || !draft.dirty())
@@ -335,6 +468,10 @@ impl State {
             draft.can_modify(world)
         };
         if draft.pending.is_some() {
+            return None;
+        }
+        if has_local_textures(world, draft) || draft.edited.textures.values().any(|texture| self.local_textures.contains(texture)) {
+            self.message = aurora_i18n::tr!("wearable-local-preview").into();
             return None;
         }
         let current = world.inventory.items.get(&draft.item.id)?;

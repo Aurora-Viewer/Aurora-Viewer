@@ -262,6 +262,14 @@ uploads through the renderer's staging pool and publishes a complete local
 generation. It pins the server bakes for cancellation and releases retired
 GPU slots. `wearable_editor/masks.rs` embeds the original character masks;
 preview textures never enter the inventory or replace server appearance.
+Local imports share their worker-prepared RGBA images with `PreviewSource`.
+Wearable texture pickers accept local textures for private previews; pixel
+revisions trigger a new bake after a watched file reload. Removing a local
+texture restores the edited slots, and saving requires inventory textures.
+The wearable picker snapshots its target slot, previews each selection and
+restores that snapshot on Cancel or close; OK keeps the preview. The build
+and wearable editors share `build/ui/common.rs::swatch`, including bordered,
+crossed empty slots and consistent loading/transparent-image states.
 `aurora-assets/src/wearable.rs` preserves original texture text when unchanged
 and preserves metadata and future sections when textures are edited.
 

@@ -12278,6 +12278,7 @@ wearable-changed = This appearance item changed or is no longer worn. Open it ag
 wearable-error = This appearance asset could not be read or saved.
 wearable-readonly = This item cannot be modified.
 wearable-texture-permissions = Choose an inventory texture with Copy permission and, for transferable clothing, Transfer permission.
+wearable-local-preview = Local textures are a private preview. Upload the texture and select it from inventory before saving.
 wearable-loading = Loading appearance item…
 wearable-saving = Saving…
 wearable-saved = Appearance item saved.

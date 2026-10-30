@@ -973,6 +973,7 @@ mod tests {
             textures: HashMap::from([(
                 id,
                 crate::scene::textures::PreviewSource {
+                    local: None,
                     bytes: Arc::new(vec![0]),
                     jpeg: Default::default(),
                     blocks: Default::default(),

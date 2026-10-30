@@ -16,6 +16,7 @@ pub struct Prepared {
     pub entry: Uuid,
     pub generation: u64,
     pub textures: Vec<Texture>,
+    pub images: HashMap<Uuid, Arc<aurora_render::preview::Image>>,
     pub material: Option<PbrMaterial>,
     pub meshes: Vec<Mesh>,
 }
@@ -78,6 +79,7 @@ fn prepare(
         entry: id,
         generation,
         textures: Vec::new(),
+        images: HashMap::new(),
         material: None,
         meshes: Vec::new(),
     };
@@ -163,6 +165,13 @@ fn prepare(
         let rgba = crate::scene::jobs::to_rgba(pixels.components, &pixels.data, pixels.width as usize * pixels.height as usize);
         let alpha = crate::scene::jobs::classify_alpha(&rgba);
         let has_alpha = pixels.components == 4;
+        prepared.images.insert(
+            id,
+            Arc::new(aurora_render::preview::Image {
+                size: [pixels.width, pixels.height],
+                rgba: rgba.clone().into(),
+            }),
+        );
         let mips = aurora_render::build_mips(pixels.width, pixels.height, rgba, 12);
         let refs = mips.iter().map(|(w, h, data)| (*w, *h, data.as_slice())).collect::<Vec<_>>();
         let staged = StagedTexture::new(pool, &refs).ok_or_else(|| aurora_i18n::tr!("import-local-staging-busy").to_owned())?;

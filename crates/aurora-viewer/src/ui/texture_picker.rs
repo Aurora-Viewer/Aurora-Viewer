@@ -507,6 +507,10 @@ impl TexturePicker {
                             Vec2::new(ui.available_width(), 22.0),
                             if enabled { egui::Sense::click() } else { egui::Sense::hover() },
                         );
+                        if local && !folder && wearable_demo_input() {
+                            ui.ctx()
+                                .data_mut(|data| data.insert_temp(egui::Id::unique(("wearable_picker_row", id)), rect));
+                        }
                         if selected || response.hovered() {
                             ui.painter().rect_filled(rect, radius, if selected { p.violet } else { p.raised });
                         }
@@ -711,7 +715,12 @@ impl TexturePicker {
                     {
                         chosen = self.selected;
                     }
-                    if widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(84.0, 26.0)).clicked() {
+                    let cancel = widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(84.0, 26.0));
+                    if wearable_demo_input() {
+                        ui.ctx()
+                            .data_mut(|data| data.insert_temp(egui::Id::unique("wearable_picker_cancel"), cancel.rect));
+                    }
+                    if cancel.clicked() {
                         self.open = false;
                     }
                 },
@@ -727,6 +736,14 @@ impl TexturePicker {
         }
         chosen
     }
+}
+
+fn wearable_demo_input() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("AURORA_DEMO").as_deref() == Ok("1")
+            && std::env::var("AURORA_DEMO_WEARABLE").is_ok_and(|mode| mode.contains(":picker-"))
+    })
 }
 
 #[cfg(test)]

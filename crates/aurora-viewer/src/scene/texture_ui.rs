@@ -94,6 +94,7 @@ mod tests {
         let (jobs, _results) = Jobs::new();
         let bytes = aurora_assets::j2k::encode_texture_j2k(64, 64, 3, &vec![128; 64 * 64 * 3], true).unwrap();
         let source = || PreviewSource {
+            local: None,
             bytes: Arc::new(bytes.clone()),
             jpeg: std::env::temp_dir().join("unused-hover-cache.j2c"),
             blocks: std::env::temp_dir().join("unused-hover-cache.bc7"),
@@ -129,6 +130,7 @@ mod tests {
         std::fs::write(&jpeg, &bytes).unwrap();
         for resident in [false, true] {
             let source = PreviewSource {
+                local: None,
                 bytes: if resident { Arc::new(bytes.clone()) } else { Arc::default() },
                 jpeg: jpeg.clone(),
                 blocks: cache.join("missing.bc7"),

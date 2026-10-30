@@ -9,6 +9,7 @@
 
 mod color;
 mod common;
+pub(crate) use common::swatch as texture_swatch;
 mod compact;
 pub(crate) mod contents;
 pub(crate) mod contents_permissions;
