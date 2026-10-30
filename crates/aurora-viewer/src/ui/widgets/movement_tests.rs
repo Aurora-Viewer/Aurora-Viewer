@@ -181,6 +181,12 @@ fn a_locked_bare_window_neither_moves_nor_resizes() {
             f.grab(start);
             for step in 1..=4 {
                 f.show(vec![egui::Event::PointerMoved(start + egui::vec2(15.0, 10.0) * step as f32)]);
+                // the layout moves the glued windows with any drag of the move ID
+                assert_ne!(
+                    f.ctx.dragged_id(),
+                    Some(egui::Id::unique(WINDOW).with("move")),
+                    "locked at {scale}: dragged from {start:?}"
+                );
             }
             f.button(start + egui::vec2(60.0, 40.0), false);
             assert_eq!(f.show(vec![]), before, "locked at {scale}: dragged from {start:?}");

@@ -986,7 +986,11 @@ pub(crate) fn bare_window(
     }) else {
         return;
     };
-    window_click_tolerance(&shown.response);
+    // locked: no drag on the move ID at all, or the layout would carry the
+    // windows glued to it while it stays put
+    if !locked {
+        window_click_tolerance(&shown.response);
+    }
     slot.shown(ctx, shown.response.rect, false);
     if let (Some(drag), Some(requested)) = (drag, resized) {
         drag.finish(ctx, window_id, requested, shown.response.rect);
