@@ -830,10 +830,14 @@ impl Viewfinder {
                 Dial::Exposure => aurora_i18n::tr!("photo-vf-dial-exposure"),
                 Dial::Distance => aurora_i18n::tr!("photo-vf-dial-distance"),
             };
-            let rows: [(&str, String); 9] = [
+            let rows: [(&str, String); 10] = [
                 (
                     aurora_i18n::tr!("photo-vf-cheat-click-key"),
                     aurora_i18n::tr!("photo-vf-cheat-click").to_owned(),
+                ),
+                (
+                    aurora_i18n::tr!("photo-vf-cheat-ctrl-click-key"),
+                    aurora_i18n::tr!("photo-vf-cheat-ctrl-click").to_owned(),
                 ),
                 (
                     aurora_i18n::tr!("photo-vf-cheat-shift-click-key"),
@@ -1718,6 +1722,10 @@ impl Viewfinder {
                                     aurora_i18n::tr!("photo-vf-help-click-text"),
                                 ),
                                 (
+                                    aurora_i18n::tr!("photo-vf-cheat-ctrl-click-key").to_owned(),
+                                    aurora_i18n::tr!("photo-vf-help-ctrl-click-text"),
+                                ),
+                                (
                                     aurora_i18n::tr!("photo-vf-help-shift-click").to_owned(),
                                     aurora_i18n::tr!("photo-vf-help-shift-click-text"),
                                 ),
@@ -1791,28 +1799,33 @@ impl Viewfinder {
                             v
                         }),
                     ];
-                    for (title, rows) in sections {
-                        ui.add_space(6.0);
-                        ui.label(egui::RichText::new(title).font(bold(ctx, 12.0)).color(p.teal));
-                        egui::Grid::new(("vf_help", title))
-                            .num_columns(2)
-                            .spacing(Vec2::new(14.0, 8.0))
-                            .min_col_width(170.0)
-                            .show(ui, |ui| {
-                                for (key, text) in rows {
-                                    ui.label(egui::RichText::new(key).font(bold(ctx, 13.0)).color(p.ink));
-                                    ui.add(egui::Label::new(egui::RichText::new(text).size(13.0).color(p.muted)).wrap());
-                                    ui.end_row();
-                                }
-                            });
-                    }
-                    ui.add_space(8.0);
-                    widgets::divider(ui, p);
-                    ui.label(
-                        egui::RichText::new(aurora_i18n::tr!("photo-vf-help-free-camera"))
-                            .size(12.0)
-                            .color(p.muted),
-                    );
+                    egui::ScrollArea::vertical()
+                        .id_salt("vf_help_scroll")
+                        .max_height((screen.height() - 112.0).max(80.0))
+                        .show(ui, |ui| {
+                            for (title, rows) in sections {
+                                ui.add_space(6.0);
+                                ui.label(egui::RichText::new(title).font(bold(ctx, 12.0)).color(p.teal));
+                                egui::Grid::new(("vf_help", title))
+                                    .num_columns(2)
+                                    .spacing(Vec2::new(14.0, 8.0))
+                                    .min_col_width(170.0)
+                                    .show(ui, |ui| {
+                                        for (key, text) in rows {
+                                            ui.label(egui::RichText::new(key).font(bold(ctx, 13.0)).color(p.ink));
+                                            ui.add(egui::Label::new(egui::RichText::new(text).size(13.0).color(p.muted)).wrap());
+                                            ui.end_row();
+                                        }
+                                    });
+                            }
+                            ui.add_space(8.0);
+                            widgets::divider(ui, p);
+                            ui.label(
+                                egui::RichText::new(aurora_i18n::tr!("photo-vf-help-free-camera"))
+                                    .size(12.0)
+                                    .color(p.muted),
+                            );
+                        });
                 });
             });
     }
