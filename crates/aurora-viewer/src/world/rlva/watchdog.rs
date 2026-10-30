@@ -400,11 +400,12 @@ impl super::super::World {
             now,
         );
         self.rlva.watchdog.checked = Some(checked);
-        let defer_notices = self.rlva.appearance_busy || !self.rlva.appearance.is_empty();
+        // Attachment @notify lines fire as observe() produces them (Legacy
+        // RlvAttachmentLockWatchdog). Do not skip them while appearance is
+        // busy: observe() has already consumed the transition, so a continue
+        // would drop the notice. Clothing notifies in wardrobe.rs are held
+        // separately without advancing generation.
         for notice in notices {
-            if defer_notices {
-                continue;
-            }
             let point = self
                 .avatar_lib
                 .attach_names

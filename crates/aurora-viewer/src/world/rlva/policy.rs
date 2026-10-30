@@ -442,7 +442,9 @@ impl World {
                             offset: Vec3::ZERO,
                         }),
                         None => {
-                            // Pose balls often arrive after the relay OwnerSay.
+                            // Deliberate difference from Legacy (which fails at
+                            // once): pose balls often arrive after the relay
+                            // OwnerSay, so wait up to 30 s like relative wear.
                             self.rlva.relative.wait(source, c.clone(), std::time::Instant::now());
                             None
                         }
