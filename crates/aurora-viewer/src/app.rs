@@ -17011,6 +17011,9 @@ impl ApplicationHandler for App {
                 if view.starts_with("wearables") {
                     crate::world::appearance::seed_demo_wearables(&mut self.world.inventory, self.world.agent_id);
                 }
+                if view == "broken" {
+                    crate::world::appearance::seed_demo_broken(&mut self.world.inventory, self.world.agent_id);
+                }
                 if matches!(view.as_str(), "gallery-fit" | "gallery-fill") {
                     ui::appearance::demo_previews(&self.egui_ctx, &mut self.world.inventory, &mut self.ui_images);
                     self.settings.appearance_fill_previews = view == "gallery-fill";
@@ -17028,7 +17031,7 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
                 self.appearance_ui.open(
                     match view.as_str() {
-                        "outfits" | "multi-outfits" | "folders-outfits" | "wearables-outfits" => 1,
+                        "outfits" | "multi-outfits" | "folders-outfits" | "wearables-outfits" | "broken" => 1,
                         "worn" | "save" | "wearables" => 2,
                         _ => 0,
                     },
@@ -17043,7 +17046,7 @@ impl ApplicationHandler for App {
                 if view == "duplicates" {
                     crate::world::appearance::seed_duplicate_response(&mut self.world.inventory, self.world.agent_id);
                 }
-                if matches!(view.as_str(), "menu" | "duplicates") {
+                if matches!(view.as_str(), "menu" | "duplicates" | "broken") {
                     self.appearance_ui.open_outfit(uuid::Uuid::from_u128(704));
                 }
                 if view == "wearables-outfits" {

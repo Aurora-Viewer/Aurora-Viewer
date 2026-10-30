@@ -241,6 +241,33 @@ pub fn parse_items_response(v: &Llsd) -> Vec<InvItem> {
     v["items"].as_array().iter().filter_map(legacy_item).collect()
 }
 
+/// A `FetchInventory2` answer to `asked`: an item absent from a valid answer
+/// does not exist; a 200-with-error answer
+/// (LLInventoryModel::FetchItemHttpHandler::onCompleted) proves nothing.
+pub fn item_reads(v: &Llsd, asked: &[Uuid]) -> ais::ItemReads {
+    if !v.is_map() || v.has("error") {
+        return ais::ItemReads {
+            failed: asked.to_vec(),
+            ..Default::default()
+        };
+    }
+    let answered: std::collections::HashSet<_> = v["items"].as_array().iter().map(|it| it["item_id"].as_uuid()).collect();
+    let items = parse_items_response(v);
+    let read: std::collections::HashSet<_> = items.iter().map(|it| it.id).collect();
+    let mut reads = ais::ItemReads {
+        items,
+        ..Default::default()
+    };
+    for id in asked {
+        if !answered.contains(id) {
+            reads.missing.push(*id);
+        } else if !read.contains(id) {
+            reads.failed.push(*id);
+        }
+    }
+    reads
+}
+
 fn legacy_item(v: &Llsd) -> Option<InvItem> {
     let mut item = item_from_llsd(v)?;
     item.favorite_known = item.favorite;
@@ -298,5 +325,24 @@ mod tests {
         assert_eq!(r[0].folders[0].name, "Objects");
         assert_eq!(r[0].items[0].asset_type, 3);
         assert_eq!(r[0].items[0].asset_id, Uuid::from_u128(5));
+    }
+
+    #[test]
+    fn fetch_inventory2_answers_tell_missing_items_from_failures() {
+        let asked = [Uuid::from_u128(4), Uuid::from_u128(6)];
+        let found = llsd_map! {
+            "item_id" => Uuid::from_u128(4), "parent_id" => Uuid::from_u128(1), "name" => "Shirt", "type" => 5, "inv_type" => 18,
+        };
+        let reply = llsd_map! { "agent_id" => Uuid::from_u128(2), "items" => Llsd::Array(vec![found]) };
+        let reads = item_reads(&reply, &asked);
+        assert_eq!(reads.items.iter().map(|it| it.id).collect::<Vec<_>>(), [asked[0]]);
+        assert_eq!(reads.missing, [asked[1]], "absent from a valid answer: deleted");
+        assert!(reads.failed.is_empty());
+        // 200-with-error and malformed answers prove nothing
+        for bad in [llsd_map! { "error" => llsd_map! { "message" => "busy" } }, Llsd::Undef] {
+            let reads = item_reads(&bad, &asked);
+            assert_eq!(reads.failed, asked);
+            assert!(reads.items.is_empty() && reads.missing.is_empty());
+        }
     }
 }

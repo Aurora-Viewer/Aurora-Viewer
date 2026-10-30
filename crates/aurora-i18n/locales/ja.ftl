@@ -1209,6 +1209,7 @@ ui-notifications-mute-owner = 所有者をミュート
 world-inventory-offers-object = { $owner }が所有する「{ $object }」という名前のオブジェクトが、あなたにこのオブジェクトを渡しました：
 world-inventory-offers-own-object = あなたの「{ $object }」という名前のオブジェクトが、あなたにこのオブジェクトを渡しました：
 world-appearance-spare-attachment = 予備の装着物
+world-appearance-deleted-scarf = 削除されたスカーフ
 world-inventory-demo-attachments = 装着物
 ui-land-options-newcomer-friendly = 新住民歓迎
 ui-land-mod-access = アクセス

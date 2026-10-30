@@ -3455,6 +3455,12 @@ impl World {
             }
             NetEvent::InventoryItemsFailed { items } => {
                 log::warn!("{} inventory items could not be fetched", items.len());
+                self.inventory.items_failed(&items);
+                None
+            }
+            NetEvent::InventoryItemsMissing { items } => {
+                log::warn!("{} inventory items do not exist (broken links)", items.len());
+                self.inventory.items_missing(items);
                 None
             }
             NetEvent::AppearanceRequestResult {

@@ -1212,6 +1212,7 @@ ui-notifications-mute-owner = Ignorer le propriétaire
 world-inventory-offers-object = Un objet nommé « { $object } » appartenant à { $owner } vous a donné cet objet :
 world-inventory-offers-own-object = Votre objet nommé « { $object } » vous a donné cet objet :
 world-appearance-spare-attachment = Accessoire de rechange
+world-appearance-deleted-scarf = Écharpe supprimée
 world-inventory-demo-attachments = Accessoires
 ui-land-options-newcomer-friendly = Accueil pour les nouveaux
 ui-land-mod-access = Accès
