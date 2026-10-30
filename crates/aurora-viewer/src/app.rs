@@ -2851,6 +2851,10 @@ impl App {
                 }
                 return;
             }
+            if self.imports.folders.owns(request) {
+                self.imports.import_folder_result(request, result, &mut self.world.inventory);
+                return;
+            }
             if self.texture_library_result(request, &result) {
                 return;
             }
@@ -3983,7 +3987,7 @@ impl App {
             Action::ToggleInterface => self.toggle_interface(),
             Action::HoverTips => self.toggle_hover_tips(),
             Action::ShowHuds => self.set_show_huds(!self.settings.show_huds),
-            Action::Import => self.imports.toggle_launcher(&self.egui_ctx),
+            Action::Import => self.imports.toggle_window(&self.egui_ctx),
             Action::Beacons => ui::widgets::toggle_floater(&self.egui_ctx, ui::beacons::WINDOW, &mut self.panels.beacons),
             Action::PropertyLines => {
                 self.settings.world_overlays.property_lines = !self.settings.world_overlays.property_lines;
@@ -5780,6 +5784,9 @@ impl App {
                 let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()).unwrap_or_default();
                 self.build.paste_vector(&mut self.world, &self.settings.build, which, &text);
             }
+            Request::CopyKeys => self
+                .egui_ctx
+                .copy_text(self.build.copy_keys(&self.world, &self.settings.build, self.shift)),
             Request::Script { object, item } => self.open_script(aurora_net::scripts::ScriptTarget { object, item }),
         }
         self.flush_build();
@@ -7550,6 +7557,11 @@ impl App {
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
+        // the input this frame reads came with the events just handled: its
+        // time to the screen starts here (Performance › latency, pacing.rs)
+        if let Some(g) = &mut self.gfx {
+            g.renderer.mark_input(Instant::now());
+        }
         self.sync_minimized_mute();
         aurora_render::frame_priority::apply();
         self.world.anti_spam.configure(self.settings.anti_spam);
@@ -8144,14 +8156,6 @@ impl App {
             if !self.world.agent.flying && self.world.rlva.has("jump") {
                 c.control_flags &= !control::UP_POS;
             }
-            c.control_flags = self.world.agent.immediate_jump_flags(
-                c.control_flags,
-                !self.settings.automatic_fly
-                    && self.movement_runtime.state == crate::movement::State::Ground
-                    && self.movement_runtime.native_fly_allowed()
-                    && self.world.movement_complete
-                    && !self.world.teleporting,
-            );
             if late_camera_frame.is_some() && self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
                 late_controls = Some(c);
             } else {
@@ -8581,7 +8585,14 @@ impl App {
             }
             self.scene.set_wire_selection(&mut self.world, selection_wire);
             self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
-            let selected_faces = self.build.face_selection(&self.world, &self.settings.build);
+            // Use face coverage while highlighting local appearances. Actual
+            // build selection, wire outlines and edits stay untouched; its
+            // ordinary face overlay returns when the mode is switched off.
+            let selected_faces = if self.imports.local_status.revealing() {
+                self.imports.appearance_status(&self.world.objects).faces
+            } else {
+                self.build.face_selection(&self.world, &self.settings.build)
+            };
             self.scene.set_face_selection(&mut self.world, selected_faces);
             if std::mem::take(&mut self.build.ui.reveal_faces) {
                 self.scene.reveal_selected_faces();
@@ -9146,7 +9157,12 @@ impl App {
                 })
                 .collect(),
             rlva_spheres: self.world.rlva_sphere_frames(self.camera.position, Instant::now()),
-            selection_color: egui::Rgba::from(self.palette.violet_light).to_array(),
+            selection_color: egui::Rgba::from(if self.imports.local_status.revealing() {
+                self.palette.warn
+            } else {
+                self.palette.violet_light
+            })
+            .to_array(),
             rez_gradient: {
                 // AURORA_REZ_STYLE=1|2|3: the effect's look (grid, scanlines,
                 // wireframe, the one chosen), to compare them
@@ -9164,7 +9180,11 @@ impl App {
                 g[1][3] = if self.scene.rez.enabled { 1.0 } else { 0.0 };
                 g
             },
-            selection_pulse: self.scene.selection_pulse(Instant::now()),
+            selection_pulse: self
+                .imports
+                .local_status
+                .pulse(Instant::now(), self.settings.reduce_motion)
+                .unwrap_or_else(|| self.scene.selection_pulse(Instant::now())),
             selection_scale: self.egui_ctx.pixels_per_point(),
             view,
             proj,
@@ -9389,6 +9409,7 @@ impl App {
         }
         let ctx = self.egui_ctx.clone();
         if self.demo {
+            self.local_appearance_demo_input(&mut raw);
             self.texture_library_demo_input(&mut raw);
             self.portal_drop_demo_input(&mut raw);
             self.give_demo_input(&mut raw, vp, (w, h));
@@ -9905,18 +9926,14 @@ impl App {
         let target = (cap >= 1.0 && !paced_by_vsync).then(|| Duration::from_secs_f32(1.0 / cap));
         // (while Windows holds the window, this thread is left to its loop:
         // the wait is done between the frames, on another thread)
-        if !crate::window_hold::paces(target)
-            && let Some(target) = target
-        {
-            let spent = self.frame_start.elapsed();
-            if spent < target {
-                let rest = target - spent;
-                if rest > Duration::from_millis(2) {
-                    std::thread::sleep(rest - Duration::from_millis(1));
-                }
-                while self.frame_start.elapsed() < target {
-                    std::hint::spin_loop();
-                }
+        if !crate::window_hold::paces(target) {
+            // frame pacing (aurora-render pacing.rs): when the GPU sets the
+            // pace, the next frame reads its input once the GPU has finished
+            // the frame before this one, instead of waiting behind it with
+            // stale input; then the frame limiter
+            gfx.renderer.wait_for_gpu();
+            if let Some(target) = target {
+                wait_until(self.frame_start + target);
             }
         }
         self.frame_profile.lap(Lap::Limiter);
@@ -11812,7 +11829,7 @@ impl App {
             // FSCommon::report_to_nearby_chat(gAgent.mMOTD)
             BarAction::MessageOfTheDay => self.world.system_message(self.world.motd.clone()),
             BarAction::Import => {
-                self.imports.toggle_launcher(&self.egui_ctx);
+                self.imports.toggle_window(&self.egui_ctx);
                 self.egui_ctx.request_repaint();
             }
             BarAction::BlenderLive => {
@@ -15471,8 +15488,8 @@ impl App {
                 self.settings.show_inventory = self.panels.inventory;
                 self.settings.show_appearance = self.panels.appearance;
                 self.settings.show_ao = self.panels.ao;
-                // (not the photo's time of day, which is never saved)
-                if self.panels.time_of_day != self.settings.time_of_day && !self.photo_time_held() {
+                // (the photo's time of day is its own layer, never saved)
+                if self.panels.time_of_day != self.settings.time_of_day {
                     self.settings.time_of_day = self.panels.time_of_day;
                 }
                 if let Some(msg) = self.world.alerts.pop_front() {
@@ -18499,6 +18516,22 @@ impl ApplicationHandler for App {
         } else if let Some(g) = &self.gfx {
             g.window.request_redraw();
         }
+    }
+}
+
+/// The frame limiter's and the frame pacing's wait: a sleep to a
+/// millisecond before `until` (the scheduler's grain), then a spin.
+fn wait_until(until: Instant) {
+    let now = Instant::now();
+    if until <= now {
+        return;
+    }
+    let rest = until - now;
+    if rest > Duration::from_millis(2) {
+        std::thread::sleep(rest - Duration::from_millis(1));
+    }
+    while Instant::now() < until {
+        std::hint::spin_loop();
     }
 }
 

@@ -131,15 +131,11 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
     let Ok(mode) = std::env::var("AURORA_DEMO_IMPORTS") else { return };
     if matches!(mode.as_str(), "launcher" | "settings" | "permissions") {
         imports.demo_mode = mode.clone();
-        imports.launcher_open = mode == "launcher";
-        imports.settings_open = mode != "launcher";
+        imports.open = true;
+        imports.tab = if mode == "launcher" { ui::Tab::Batch } else { ui::Tab::Permissions };
         return;
     }
     imports.open = true;
-    if mode == "inspectors" {
-        imports.open = false;
-        imports.launcher_open = true;
-    }
     imports.demo_mode = mode.clone();
     imports.choice = match mode.as_str() {
         "texture" | "destination" => Choice::Texture,
@@ -159,6 +155,27 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
     };
     imports.mesh_permission_denied = mode == "bulk-mesh-denied";
     let choice = imports.choice;
+    if mode.starts_with("folders") {
+        imports.folders.enabled = true;
+        imports.tab = ui::Tab::Folder;
+        if mode == "folders-type" {
+            imports.folders.layout = folders::Layout::Type;
+        } else if mode == "folders-flat" {
+            imports.folders.layout = folders::Layout::Flat;
+        }
+        let request = Uuid::new_v4();
+        imports.pending_files = Some(request);
+        let tx = imports.tx.clone();
+        let wake = ctx.clone();
+        let prefs = imports.load_preferences.clone();
+        jobs.execute(move || {
+            let root = PathBuf::from(".scratch").join("import-demo").join(request.to_string());
+            let entries = folder_fixtures(&root, &prefs).unwrap_or_else(|reason| vec![Entry::new(root, Err(reason), prefs.texture())]);
+            let _ = tx.send(Worker::Loaded(request, entries));
+            wake.request_repaint();
+        });
+        return;
+    }
     if mode == "local-restored" {
         return;
     }
@@ -208,6 +225,13 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                         ("animation-demo.anim", Choice::Animation),
                     ],
                     Choice::Sound => &[("sound-demo.wav", Choice::Sound)],
+                    Choice::Bulk if mode.starts_with("unified") => &[
+                        ("mesh-demo.dae", Choice::Bulk),
+                        ("texture-demo.png", Choice::Bulk),
+                        ("sound-demo.wav", Choice::Bulk),
+                        ("animation-demo.bvh", Choice::Bulk),
+                        ("material-demo.gltf", Choice::Bulk),
+                    ],
                     Choice::Bulk if mode == "bulk-mesh-denied" => &[("mesh-demo.dae", Choice::Bulk), ("texture-demo.png", Choice::Bulk)],
                     Choice::Local if local_mesh => &[("mesh-demo.dae", Choice::Local)],
                     Choice::Local if mode.starts_with("local-material") => &[("material-demo.gltf", Choice::Local)],
@@ -386,4 +410,34 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
         }
         wake.request_repaint();
     });
+}
+
+fn folder_fixtures(root: &Path, prefs: &Preferences) -> Result<Vec<Entry>, String> {
+    fixtures(root)?;
+    let pack = root.join("Creator Pack");
+    for directory in ["Coat/Empty", "Hat", "Animations", "Sounds"] {
+        std::fs::create_dir_all(pack.join(directory)).map_err(|e| e.to_string())?;
+    }
+    for (from, to) in [
+        ("texture-demo.png", "Coat/Fabric.png"),
+        ("texture-demo.png", "Hat/Fabric.png"),
+        ("mesh-demo.dae", "Coat/Coat.dae"),
+        ("animation-demo.anim", "Animations/Idle.anim"),
+        ("sound-demo.wav", "Sounds/Bell.wav"),
+    ] {
+        std::fs::copy(root.join(from), pack.join(to)).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(pack.join("Readme.txt"), b"Not an uploadable asset").map_err(|e| e.to_string())?;
+    for suffix in prefs
+        .mesh_suffixes
+        .iter()
+        .enumerate()
+        .filter_map(|(level, suffix)| (level != 3).then_some(suffix))
+    {
+        if !suffix.is_empty() && !suffix.contains(['/', '\\', ':']) {
+            std::fs::write(pack.join(format!("Coat/Coat_{suffix}.dae")), DAE).map_err(|error| error.to_string())?;
+        }
+    }
+    let entries = files::load_folder(&pack, prefs, prefs.texture(), 30, 0, 0);
+    Ok(entries)
 }

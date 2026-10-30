@@ -367,8 +367,12 @@ fn run(mut backend: Backend, worker: Worker<Job, Done>) -> Backend {
     );
     while let Some((job, idle)) = worker.next() {
         crate::frame_priority::apply();
+        let mut presented = None;
         let done = match job {
             Job::Frame(packet) => {
+                presented = Some(packet.index);
+                // the frame before already done: the main thread hears it now
+                backend.poll_finished();
                 if let Some((frame, hold)) = stall
                     && packet.index == frame
                 {
@@ -384,6 +388,12 @@ fn run(mut backend: Backend, worker: Worker<Job, Done>) -> Backend {
             Job::Pick { x, y } => Done::Pick(backend.pick_world(x, y)),
         };
         worker.complete(done);
+        // frame pacing (pacing.rs): the frame is handed back; the main
+        // thread reads the next input once the GPU is through the frame
+        // before it
+        if let Some(frame) = presented {
+            backend.finish_frames_before(frame, crate::main_thread::GPU_WAIT);
+        }
     }
     backend
 }

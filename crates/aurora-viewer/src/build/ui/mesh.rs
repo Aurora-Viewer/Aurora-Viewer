@@ -23,7 +23,9 @@ impl BuildTool {
         let asset = primary
             .and_then(|k| world.objects.index_of(&k))
             .and_then(|i| world.objects.get(i))
-            .filter(|o| self.open && self.tool == Tool::Edit && o.visual_volume().is_mesh())
+            .filter(|o| {
+                self.open && (self.tool == Tool::Edit || (self.ui.legacy_window && self.tool != Tool::Land)) && o.visual_volume().is_mesh()
+            })
             .and_then(|o| o.visual_volume().sculpt.map(|s| s.texture));
         let inspection = &mut self.ui.mesh_inspection;
         if asset.is_none() {

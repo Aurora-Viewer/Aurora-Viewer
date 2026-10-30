@@ -1,4 +1,4 @@
-//! Single compact construction presentation, with ordinary saved geometry.
+//! Construction presentation and reproducible offline capture geometry.
 use super::INSPECTOR_ID;
 use crate::ui::widgets;
 use egui::{Vec2, vec2};
@@ -6,13 +6,20 @@ pub(super) const DEFAULT_SIZE: Vec2 = vec2(350.0, 820.0);
 pub(super) const MIN_SIZE: Vec2 = vec2(344.0, 420.0);
 
 /// A reproducible initial size for captures; production uses the floater's
-/// ordinary saved geometry. There is no saved presentation preference.
-pub(super) fn prepare(ctx: &egui::Context, demo: bool) {
+/// ordinary saved geometry; the style override is limited to this demo run.
+pub(super) fn prepare(ctx: &egui::Context, demo: bool, s: &mut crate::build::BuildSettings) {
     let id = egui::Id::unique((INSPECTOR_ID, "demo-size"));
     if !demo || ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false) {
         return;
     }
     ctx.data_mut(|d| d.insert_temp(id, true));
+    if let Ok(style) = std::env::var("AURORA_DEMO_BUILD_STYLE") {
+        match style.as_str() {
+            "legacy" => s.legacy_window = true,
+            "aurora" => s.legacy_window = false,
+            _ => {}
+        }
+    }
     if let Ok(value) = std::env::var("AURORA_DEMO_BUILD_SIZE")
         && let Some((width, height)) = value.split_once(',')
         && let (Ok(width), Ok(height)) = (width.trim().parse::<f32>(), height.trim().parse::<f32>())
@@ -26,7 +33,9 @@ pub(super) fn prepare(ctx: &egui::Context, demo: bool) {
             ctx,
             INSPECTOR_ID,
             work.min + vec2(12.0, 12.0),
-            vec2(width, height).max(MIN_SIZE).min(work.size()),
+            vec2(width, height)
+                .max(if s.legacy_window { super::legacy::MIN_SIZE } else { MIN_SIZE })
+                .min(work.size()),
         );
     }
 }

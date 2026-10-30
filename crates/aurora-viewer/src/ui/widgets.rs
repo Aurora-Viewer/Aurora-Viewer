@@ -1324,14 +1324,6 @@ fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
     title_button_sized(ui, p, icon, Vec2::splat(16.0))
 }
 
-/// The standard plain close glyph, with a toolbar-sized hit target.
-pub(crate) fn close_button(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
-    let label = aurora_i18n::tr!("common-close");
-    let response = title_button_sized(ui, p, "x", Vec2::new(24.0, 36.0));
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
-    response.on_hover_text(label).on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
 fn title_button_sized(ui: &mut egui::Ui, p: &Palette, icon: &str, size: Vec2) -> egui::Response {
     let (_, resp) = ui.allocate_exact_size(size, Sense::click());
     paint_title_button(ui, p, icon, &resp);
@@ -1693,24 +1685,30 @@ fn control_font(ui: &egui::Ui, default_size: f32) -> egui::FontId {
 
 /// Flat tab strip. Returns true when the selection changed.
 pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
-    tabs_row(ui, p, selected, labels, false)
+    tabs_row(ui, p, selected, labels, false, false)
+}
+
+/// The same tab strip at the density of fixed inspector controls.
+pub fn compact_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
+    tabs_row(ui, p, selected, labels, false, true)
 }
 
 /// Equal-width tabs spanning a data inspector, with the usual theme and input handling.
 pub fn stretched_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
-    tabs_row(ui, p, selected, labels, true)
+    tabs_row(ui, p, selected, labels, true, false)
 }
 
-fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)], stretched: bool) -> bool {
+fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)], stretched: bool, compact: bool) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let n = labels.len().max(1) as f32;
         let font = control_font(ui, 12.0);
+        let minimum_height = if compact { 22.0 } else { 30.0 };
         let height = if ui.style().override_font_id.is_some() {
-            (ui.fonts_mut(|f| f.row_height(&font)) + 12.0).max(30.0)
+            (ui.fonts_mut(|f| f.row_height(&font)) + if compact { 8.0 } else { 12.0 }).max(minimum_height)
         } else {
-            30.0
+            minimum_height
         };
         let text_w: Vec<f32> = labels
             .iter()
@@ -1934,8 +1932,17 @@ pub fn icon_toggle(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bo
     small_icon_button(ui, p, icon, tip, true, on)
 }
 
+/// Flat icon toggle with a larger glyph and hit target, in logical points.
+pub fn icon_toggle_sized(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool, side: f32) -> bool {
+    sized_icon_button(ui, p, icon, tip, true, on, side)
+}
+
 fn small_icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: bool, on: bool) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(20.0, 20.0), if enabled { Sense::click() } else { Sense::hover() });
+    sized_icon_button(ui, p, icon, tip, enabled, on, 20.0)
+}
+
+fn sized_icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: bool, on: bool, side: f32) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(side), if enabled { Sense::click() } else { Sense::hover() });
     let fill = if on {
         p.violet
     } else if resp.hovered() && enabled {
@@ -1953,7 +1960,7 @@ fn small_icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enab
         Some(t) => {
             ui.painter().image(
                 t.id(),
-                egui::Rect::from_center_size(rect.center(), Vec2::splat(14.0)),
+                egui::Rect::from_center_size(rect.center(), Vec2::splat(side * 0.7)),
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                 col,
             );

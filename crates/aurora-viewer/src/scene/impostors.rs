@@ -5,9 +5,12 @@
 //! of them, taken from the camera and refreshed now and then (more often when
 //! near, at once when the view turns or the avatar moves).
 
-use aurora_render::{DrawCmd, IMPOSTOR_CAPTURES, IMPOSTOR_FULLBRIGHT, IMPOSTOR_TILE, IMPOSTOR_TILES, ImpostorCapture, ImpostorSprite};
+use aurora_render::{
+    DrawCmd, IMPOSTOR_CAPTURES, IMPOSTOR_FULLBRIGHT, IMPOSTOR_MAX_TILES, IMPOSTOR_PENDING, IMPOSTOR_TILE, IMPOSTOR_TILES, ImpostorCapture,
+    ImpostorSprite,
+};
 use glam::Vec3;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 /// Half size of the framed square around an avatar (m): body, hair, worn
@@ -103,7 +106,7 @@ struct State {
 pub struct Impostors {
     states: HashMap<usize, State>,
     free: Vec<u32>,
-    initialized: bool,
+    capacity: u32,
 }
 
 /// This frame's impostor work: avatars to picture (slot in the captures)
@@ -150,25 +153,48 @@ impl Impostors {
 
     /// `avatars`: the avatars to draw as impostors.
     pub fn plan(&mut self, avatars: &[Far], eye: Vec3, now: Instant) -> Plan {
-        if !self.initialized {
-            self.initialized = true;
+        if self.capacity == 0 {
+            self.capacity = IMPOSTOR_TILES;
             self.free = (0..IMPOSTOR_TILES).rev().collect();
         }
-        // forget avatars not seen as impostors for a while
+        // LLVOAvatar::updateImpostors (indra/newview/llvoavatar.cpp) only
+        // pictures visible avatars. Cached offscreen pictures are expendable.
+        let visible: HashSet<usize> = avatars.iter().filter(|a| a.in_view).map(|a| a.idx).collect();
+        // Forget absent or offscreen avatars after five seconds. A visible
+        // picture survives long frames and is never evicted for a refresh.
         let free = &mut self.free;
-        self.states.retain(|_, s| {
-            let keep = now.duration_since(s.seen).as_secs_f32() < 5.0;
+        self.states.retain(|idx, s| {
+            let keep = visible.contains(idx) || now.duration_since(s.seen).as_secs_f32() < 5.0;
             if !keep {
                 free.push(s.tile);
             }
             keep
         });
         let mut wanted: Vec<(f32, usize)> = Vec::new();
-        for a in avatars {
-            let Far { idx, center, distance, .. } = *a;
+        let mut in_view: Vec<&Far> = avatars.iter().filter(|a| a.in_view).collect();
+        in_view.sort_by(|a, b| a.distance.total_cmp(&b.distance).then(a.idx.cmp(&b.idx)));
+        for a in &in_view {
+            let Far { idx, center, distance, .. } = **a;
             if !self.states.contains_key(&idx) {
+                if self.free.is_empty() {
+                    let victim = self
+                        .states
+                        .iter()
+                        .filter(|(i, _)| !visible.contains(i))
+                        .min_by_key(|(i, s)| (s.seen, **i))
+                        .map(|(&i, _)| i);
+                    if let Some(victim) = victim {
+                        if let Some(s) = self.states.remove(&victim) {
+                            self.free.push(s.tile);
+                        }
+                    } else if self.capacity < IMPOSTOR_MAX_TILES {
+                        let next = (self.capacity * 2).min(IMPOSTOR_MAX_TILES);
+                        self.free.extend((self.capacity..next).rev());
+                        self.capacity = next;
+                    }
+                }
                 let Some(tile) = self.free.pop() else {
-                    continue; // atlas full: not drawn
+                    continue; // Memory budget reached: a silhouette below, never full geometry.
                 };
                 self.states.insert(
                     idx,
@@ -186,9 +212,6 @@ impl Impostors {
                 continue;
             };
             s.seen = now;
-            if !a.in_view {
-                continue;
-            }
             let dir = (center - eye).normalize_or(Vec3::X);
             let stale = match s.taken {
                 None => f32::INFINITY,
@@ -209,7 +232,7 @@ impl Impostors {
             wanted.push((stale, idx));
         }
         // the stalest first
-        wanted.sort_by(|a, b| b.0.total_cmp(&a.0));
+        wanted.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
         let mut plan = Plan {
             capture: HashMap::new(),
             captures: Vec::new(),
@@ -243,19 +266,22 @@ impl Impostors {
                 blend: Vec::new(),
             });
         }
-        // cards of the pictured avatars in view, following them
-        for a in avatars {
-            let Some(s) = self.states.get(&a.idx) else {
-                continue;
-            };
-            if a.in_view && s.taken.is_some() {
-                plan.sprites.push(ImpostorSprite {
-                    center: a.center.to_array(),
-                    tile: s.tile | if s.silhouette { IMPOSTOR_FULLBRIGHT } else { 0 },
-                    right: s.right.to_array(),
-                    up: s.up.to_array(),
-                });
-            }
+        // A card for every visible impostor, even before its first capture
+        // or beyond the memory budget. Existing pictures survive refreshes.
+        for a in in_view {
+            let s = self.states.get(&a.idx).filter(|s| s.taken.is_some());
+            let dir = (a.center - eye).normalize_or(Vec3::X);
+            let world_up = if dir.z.abs() > 0.95 { Vec3::Y } else { Vec3::Z };
+            let right = dir.cross(world_up).normalize_or(Vec3::X);
+            let up = right.cross(dir);
+            plan.sprites.push(ImpostorSprite {
+                center: a.center.to_array(),
+                tile: s.map_or(IMPOSTOR_PENDING | IMPOSTOR_FULLBRIGHT, |s| {
+                    s.tile | if s.silhouette { IMPOSTOR_FULLBRIGHT } else { 0 }
+                }),
+                right: s.map_or(right * HALF, |s| s.right).to_array(),
+                up: s.map_or(up * HALF, |s| s.up).to_array(),
+            });
         }
         plan
     }
@@ -346,7 +372,14 @@ mod tests {
         let n = IMPOSTOR_CAPTURES + 1;
         let before: Vec<Far> = (0..n).map(|i| far(i, false)).collect();
         let mut t = t0;
-        while imp.plan(&before, Vec3::ZERO, t).sprites.len() < n {
+        while imp
+            .plan(&before, Vec3::ZERO, t)
+            .sprites
+            .iter()
+            .filter(|s| s.tile & IMPOSTOR_PENDING == 0)
+            .count()
+            < n
+        {
             t += Duration::from_millis(1);
         }
         let after: Vec<Far> = (0..n).map(|i| far(i, true)).collect();
@@ -354,6 +387,78 @@ mod tests {
         assert_eq!(plan.captures.len(), IMPOSTOR_CAPTURES);
         let marked = plan.sprites.iter().filter(|s| s.tile & IMPOSTOR_FULLBRIGHT != 0).count();
         assert_eq!(marked, IMPOSTOR_CAPTURES, "the avatar not pictured yet still shows its old picture");
+    }
+
+    #[test]
+    fn offscreen_avatars_do_not_reserve_picture_slots() {
+        let mut imp = Impostors::default();
+        let mut crowd: Vec<_> = (0..200)
+            .map(|i| Far {
+                in_view: false,
+                ..far(i, false)
+            })
+            .collect();
+        crowd.push(far(200, false));
+        let plan = imp.plan(&crowd, Vec3::ZERO, Instant::now());
+        assert_eq!(plan.capture.len(), 1);
+        assert!(plan.capture.contains_key(&200));
+        assert_eq!(plan.sprites.len(), 1);
+        assert_eq!(imp.states.len(), 1);
+        assert_eq!(imp.capacity, IMPOSTOR_TILES);
+    }
+
+    #[test]
+    fn a_camera_turn_reclaims_offscreen_slots_before_growing() {
+        let mut imp = Impostors::default();
+        let t = Instant::now();
+        let mut crowd: Vec<_> = (0..IMPOSTOR_TILES as usize).map(|i| far(i, false)).collect();
+        imp.plan(&crowd, Vec3::ZERO, t);
+        for a in &mut crowd {
+            a.in_view = false;
+        }
+        crowd.push(far(1000, false));
+        let plan = imp.plan(&crowd, Vec3::ZERO, t + Duration::from_millis(1));
+        assert!(plan.capture.contains_key(&1000));
+        assert_eq!(plan.sprites.len(), 1);
+        assert_eq!(plan.sprites[0].tile & IMPOSTOR_PENDING, 0);
+        assert_eq!(imp.capacity, IMPOSTOR_TILES);
+    }
+
+    #[test]
+    fn more_than_one_page_of_visible_impostors_all_receive_distinct_pictures() {
+        let mut imp = Impostors::default();
+        let crowd: Vec<_> = (0..96).map(|i| far(i, false)).collect();
+        let mut t = Instant::now();
+        for _ in 0..48 {
+            let plan = imp.plan(&crowd, Vec3::ZERO, t);
+            assert_eq!(plan.sprites.len(), crowd.len(), "waiting avatars still have a card");
+            assert!(plan.captures.len() <= IMPOSTOR_CAPTURES);
+            t += Duration::from_millis(1);
+        }
+        let plan = imp.plan(&crowd, Vec3::ZERO, t);
+        assert!(plan.sprites.iter().all(|s| s.tile & IMPOSTOR_PENDING == 0));
+        let tiles: HashSet<_> = plan.sprites.iter().map(|s| s.tile).collect();
+        assert_eq!(tiles.len(), crowd.len());
+        assert_eq!(imp.capacity, 128);
+        // A changed view refreshes only two pictures, keeping all the others.
+        let turned = imp.plan(&crowd, Vec3::new(0.0, 30.0, 0.0), t);
+        assert_eq!(turned.captures.len(), IMPOSTOR_CAPTURES);
+        assert!(turned.sprites.iter().all(|s| s.tile & IMPOSTOR_PENDING == 0));
+    }
+
+    #[test]
+    fn excess_visible_avatars_keep_a_card_without_exceeding_the_memory_budget() {
+        let mut imp = Impostors::default();
+        let crowd: Vec<_> = (0..IMPOSTOR_MAX_TILES as usize + 10).map(|i| far(i, false)).collect();
+        let plan = imp.plan(&crowd, Vec3::ZERO, Instant::now());
+        assert_eq!(imp.capacity, IMPOSTOR_MAX_TILES);
+        assert_eq!(imp.states.len(), IMPOSTOR_MAX_TILES as usize);
+        assert_eq!(plan.sprites.len(), crowd.len());
+        assert_eq!(
+            plan.sprites.iter().filter(|s| s.tile & IMPOSTOR_PENDING == 0).count(),
+            IMPOSTOR_CAPTURES
+        );
+        assert!(plan.captures.iter().all(|c| c.tile < IMPOSTOR_MAX_TILES));
     }
 
     #[test]

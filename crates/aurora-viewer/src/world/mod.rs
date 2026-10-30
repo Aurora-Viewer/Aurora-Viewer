@@ -20,6 +20,7 @@ pub mod derender;
 pub mod edit_echo;
 pub mod eep;
 pub mod eep_env;
+pub mod eep_photo;
 pub mod env;
 pub mod env_apply;
 pub mod env_day_edit;

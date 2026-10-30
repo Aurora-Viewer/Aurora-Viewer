@@ -34,7 +34,7 @@ fn authored_native_animation_opens_the_normal_inspector_without_starting_or_char
         animation,
     );
     assert!(imports.open);
-    assert_eq!(imports.inspector, Some(Choice::Animation));
+    assert_eq!(imports.window_choice(), Choice::Bulk);
     assert_eq!(imports.entries.len(), 1);
     let entry = &imports.entries[0];
     assert_eq!(imports.active, Some(entry.id));

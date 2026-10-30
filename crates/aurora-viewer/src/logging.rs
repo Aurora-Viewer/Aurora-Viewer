@@ -245,7 +245,7 @@ pub fn init() {
     // cpal's error callback, which reopens the device.
     env_logger::Builder::from_env(
         env_logger::Env::default()
-            .default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,reqwest=warn,symphonia=warn,pulseaudio=off"),
+            .default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,reqwest=warn,symphonia=warn,pulseaudio=off,zbus=warn"),
     )
     .format_timestamp_millis()
     .target(env_logger::Target::Pipe(Box::new(Tee {
