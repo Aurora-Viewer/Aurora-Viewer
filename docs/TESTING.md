@@ -6288,6 +6288,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 
   For assignment, drag a resident's name from the chat, or a row from People, onto a real set pill or the selected set's member pane. The resident is added without leaving their other sets; internal pseudo-sets do not accept drops, and an inventory drag is left for its original destination. Close the editor to inspect the resolved world plate; change priority to check that one set can supply the border while another supplies the name/background. With `AURORA_DEMO_PROFILE=wolf:compact`, the profile shows the selected set badges side by side.
 
+- **`AURORA_DEMO_PEOPLE=sets-import`** opens contact sets after merging a synthetic
+  Legacy Viewer account file through the real import parser. Family keeps its
+  existing colour and gains the imported membership; Networking is new and
+  includes a non-friend. Demo sets remain in memory. People > Contact sets > gear
+  and Conversations > Contacts > Contact sets share **Import contact sets…**.
+  Choose `settings_friends_groups.xml` from a Legacy Viewer account directory,
+  or an individual set export (XML, at most 16 MiB). Same-name sets merge members
+  and retain their current settings; existing nicknames and global preferences
+  stay in place. Cancellation and invalid files leave the current contacts intact.
+
 - **`AURORA_DEMO_PEOPLE_FILTER=<text>`**: combine with a People scenario to prefill its search. With `rows` or `legacy`, `tesstouch` and `tesstouch Resident` must find the resident displayed as `Tess ✧`; `TESS` must find the same resident. An empty filter restores all rows; unrelated text shows no matches. This deliberately searches display, legacy and account names regardless of the chosen name format, while retaining contact aliases and RLVa anonymity.
 - **`AURORA_DEMO_PEOPLE=rows|crowd|sheet|legacy|friends|groups|sets|recent|blocked`**: People › Near you in
   Aurora's look, with the residents of the People mock-up (names, ranges,

@@ -1,5 +1,13 @@
 # Aurora Viewer architecture
 
+Contact sets import uses `world/contact_sets/importing.rs` to validate the
+Legacy Viewer's complete LLSD account file and individual exports, then merge
+membership without overwriting local appearance or aliases. It reconstructs
+non-friend retention for individual exports and atomically saves the complete
+merge before changing live state. `ui/contacts/importing.rs` shares the native
+file picker and background XML reader between People and Conversations;
+completion is scoped to the originating account.
+
 `graphics_presets/saved.rs` holds named rendering quality snapshots (#1218),
 persisted as an explicit allowlist in `Settings::graphics_saved`. Selection is
 stored separately in `graphics_saved_active`: identical snapshots remain distinct,
