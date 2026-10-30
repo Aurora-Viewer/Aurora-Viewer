@@ -2,6 +2,7 @@
 //! encoding run off the event thread; AIS is applied only after confirmation.
 
 use super::*;
+use crate::ui::inventory::thumbnail::FileChoices;
 use crate::ui::inventory::{
     AnimationStats, InventoryUi,
     thumbnail::{Input as ImageInput, ThumbnailUi},
@@ -12,7 +13,7 @@ use uuid::Uuid;
 
 enum Prepared {
     Photo(Vec<u8>),
-    Choices([Vec<u8>; 3]),
+    Choices(FileChoices),
     Upload(Vec<u8>),
     Existing(Uuid),
 }
@@ -126,6 +127,17 @@ impl App {
                     let result = aurora_assets::j2k::encode_thumbnail_j2k(256, 256, 4, &pixels)
                         .map(|data| Some(Prepared::Upload(data)))
                         .map_err(|_| aurora_i18n::tr!("app-inventory-thumbnail-could-not-encode-the-picture").into());
+                    let _ = tx.send(Reply { request, result });
+                });
+            }
+            ImageInput::Crop { image, origin } => {
+                std::thread::spawn(move || {
+                    let result = crop_at(&image, origin)
+                        .and_then(|pixels| {
+                            aurora_assets::j2k::encode_thumbnail_j2k(256, 256, 4, pixels.as_raw())
+                                .map_err(|_| aurora_i18n::tr!("app-inventory-thumbnail-could-not-encode-the-picture").to_owned())
+                        })
+                        .map(|data| Some(Prepared::Upload(data)));
                     let _ = tx.send(Reply { request, result });
                 });
             }
@@ -367,7 +379,7 @@ fn texture_thumbnail(asset: Uuid, resize: bool, bytes: &[u8]) -> Result<Prepared
         .map(Prepared::Upload)
         .map_err(|_| aurora_i18n::tr!("app-inventory-thumbnail-could-not-encode-the-image").into())
 }
-fn file_thumbnails(path: &std::path::Path) -> Result<[Vec<u8>; 3], String> {
+fn file_thumbnails(path: &std::path::Path) -> Result<FileChoices, String> {
     if std::fs::metadata(path)
         .map_err(|_| aurora_i18n::tr!("app-inventory-thumbnail-cannot-access-file").to_owned())?
         .len()
@@ -398,7 +410,7 @@ fn file_thumbnails(path: &std::path::Path) -> Result<[Vec<u8>; 3], String> {
     file_choices(&image)
 }
 
-fn file_choices(image: &image::RgbaImage) -> Result<[Vec<u8>; 3], String> {
+fn file_choices(image: &image::RgbaImage) -> Result<FileChoices, String> {
     if image.width() == 0 || image.height() == 0 {
         return Err(aurora_i18n::tr!("app-inventory-thumbnail-the-image-is-empty").into());
     }
@@ -412,7 +424,33 @@ fn file_choices(image: &image::RgbaImage) -> Result<[Vec<u8>; 3], String> {
     let fitted = image::imageops::resize(image, width, height, image::imageops::FilterType::Lanczos3);
     let mut padded = image::RgbaImage::new(256, 256);
     image::imageops::replace(&mut padded, &fitted, i64::from((256 - width) / 2), i64::from((256 - height) / 2));
-    Ok([stretched.into_raw(), padded.into_raw(), square(image)?.into_raw()])
+    // A draggable crop keeps the entire source, with its short edge at most 256 px.
+    // This retains every output pixel's detail while bounding the canvas to 4 MiB,
+    // including 1 x 4096 inputs; never upscale a long strip just for its preview.
+    let short = image.width().min(image.height());
+    let crop = if short > 256 {
+        image::imageops::resize(
+            image,
+            (u64::from(image.width()) * 256 / u64::from(short)) as u32,
+            (u64::from(image.height()) * 256 / u64::from(short)) as u32,
+            image::imageops::FilterType::Lanczos3,
+        )
+    } else {
+        image.clone()
+    };
+    Ok(FileChoices {
+        pixels: [stretched.into_raw(), padded.into_raw()],
+        crop,
+    })
+}
+
+fn crop_at(image: &image::RgbaImage, [x, y]: [u32; 2]) -> Result<image::RgbaImage, String> {
+    let edge = image.width().min(image.height());
+    if edge == 0 || x > image.width() - edge || y > image.height() - edge {
+        return Err(aurora_i18n::tr!("app-inventory-thumbnail-invalid-image-pixels").into());
+    }
+    let pixels = image::imageops::crop_imm(image, x, y, edge, edge).to_image();
+    Ok(image::imageops::resize(&pixels, 256, 256, image::imageops::FilterType::Lanczos3))
 }
 
 #[cfg(test)]
@@ -425,7 +463,14 @@ mod tests {
         source.save(&path).expect("generated PNG");
         let result = file_thumbnails(&path);
         let _ = std::fs::remove_file(&path);
-        for pixels in result.expect("thumbnail choices") {
+        let choices = result.expect("thumbnail choices");
+        let edge = choices.crop.width().min(choices.crop.height());
+        let cropped = crop_at(
+            &choices.crop,
+            [(choices.crop.width() - edge) / 2, (choices.crop.height() - edge) / 2],
+        )
+        .expect("center crop");
+        for pixels in choices.pixels.into_iter().chain([cropped.into_raw()]) {
             let data = aurora_assets::j2k::encode_thumbnail_j2k(256, 256, 4, &pixels).expect("encode chosen thumbnail");
             let image = rgba(&data).expect("JPEG2000");
             assert_eq!(image.dimensions(), (256, 256));
@@ -471,8 +516,15 @@ mod tests {
                     image::Rgba([21, 42, 63, 170])
                 }
             });
-            let [stretched, fitted, cropped] = file_choices(&source)
-                .expect("choices")
+            let choices = file_choices(&source).expect("choices");
+            let edge = choices.crop.width().min(choices.crop.height());
+            let cropped = crop_at(
+                &choices.crop,
+                [(choices.crop.width() - edge) / 2, (choices.crop.height() - edge) / 2],
+            )
+            .expect("center crop");
+            let [stretched, fitted] = choices
+                .pixels
                 .map(|pixels| image::RgbaImage::from_raw(256, 256, pixels).expect("256 px RGBA"));
             assert_eq!(stretched.get_pixel(128, 8), &red);
             assert_eq!(stretched.get_pixel(128, 248), &blue);
@@ -498,7 +550,48 @@ mod tests {
         assert!(file_choices(&image::RgbaImage::new(0, 1)).is_err());
         assert!(file_choices(&image::RgbaImage::new(1, 0)).is_err());
         for (width, height) in [(1, 4096), (4096, 1)] {
-            assert!(file_choices(&image::RgbaImage::from_pixel(width, height, red)).is_ok());
+            let choices = file_choices(&image::RgbaImage::from_pixel(width, height, red)).expect("thin source");
+            assert_eq!(choices.crop.dimensions(), (width, height));
+        }
+    }
+
+    #[test]
+    fn dragged_crop_uploads_the_selected_source_region_with_alpha() {
+        for (width, height) in [(256, 640), (640, 256)] {
+            let source = image::RgbaImage::from_fn(width, height, |x, y| image::Rgba([(x / 3) as u8, (y / 3) as u8, 77, 170]));
+            let choices = file_choices(&source).expect("choices");
+            let edge = choices.crop.width().min(choices.crop.height());
+            let limit = [width - edge, height - edge];
+            for origin in [[0, 0], [limit[0] / 2, limit[1] / 2], limit] {
+                let cropped = crop_at(&choices.crop, origin).expect("valid position");
+                assert_eq!(cropped.dimensions(), (256, 256));
+                assert_eq!(cropped.get_pixel(128, 128), source.get_pixel(origin[0] + 128, origin[1] + 128));
+                let data = aurora_assets::j2k::encode_thumbnail_j2k(256, 256, 4, cropped.as_raw()).expect("encoded crop");
+                assert_eq!(rgba(&data).expect("decoded crop"), cropped);
+            }
+            assert!(crop_at(&choices.crop, [limit[0] + 1, 0]).is_err());
+            assert!(crop_at(&choices.crop, [0, limit[1] + 1]).is_err());
+        }
+        assert!(crop_at(&image::RgbaImage::new(0, 1), [0, 0]).is_err());
+        let small = image::RgbaImage::from_pixel(32, 80, image::Rgba([21, 42, 63, 170]));
+        assert_eq!(
+            crop_at(&small, [0, 48]).expect("small source").get_pixel(128, 128),
+            &image::Rgba([21, 42, 63, 170])
+        );
+    }
+
+    #[test]
+    fn panning_source_keeps_full_image_content_in_a_bounded_canvas() {
+        for (width, height) in [(1024, 2048), (4096, 256), (256, 4096), (1, 4096), (4096, 1)] {
+            let source = image::RgbaImage::from_pixel(width, height, image::Rgba([21, 42, 63, 170]));
+            let choices = file_choices(&source).expect("choices");
+            assert!(choices.crop.width().min(choices.crop.height()) <= 256);
+            assert!(choices.crop.as_raw().len() <= 4 * 1024 * 1024);
+            assert_eq!(choices.crop.get_pixel(0, 0), source.get_pixel(0, 0));
+            assert_eq!(
+                choices.crop.get_pixel(choices.crop.width() - 1, choices.crop.height() - 1),
+                source.get_pixel(width - 1, height - 1)
+            );
         }
     }
     #[test]

@@ -7642,7 +7642,13 @@ offline; the files and snapshots uploaded in demo stay offline.
   for an item with a synthetic portrait / landscape image. Add `-folder`
   before `-wide` (`image-layout-folder`, `image-layout-folder-wide`) to target
   a folder instead. Click a preview to use the whole image stretched to the
-  square, fit it proportionally with transparent margins, or crop its centre.
+  square, fit it proportionally with transparent margins, or crop it.
+  Drag the image inside the right-hand preview to move the crop up/down for a
+  portrait or left/right for a landscape. The image follows the pointer and
+  stops at its edges. Releasing the drag does not upload; click the adjusted
+  preview to use it. Check both extremes, a partial move, repeated drags and
+  square/small images, on both an item and a folder. The saved thumbnail must
+  contain the selected area rather than returning to the centre.
   No upload occurs before choosing; Cancel or Escape keeps the old image.
   Repeat using Upload from your computer with a PNG, JPEG or JPEG2000 file;
   verify transparent pixels, square images and all four source edges. Scene

@@ -5,11 +5,13 @@ use crate::ui::widgets::{Floater, flat_button, search_field};
 use std::{collections::HashMap, sync::Arc};
 
 mod choices;
+pub(crate) use choices::FileChoices;
 
 pub enum Input {
     File,
     Capture,
     Pixels(Arc<Vec<u8>>),
+    Crop { image: Arc<image::RgbaImage>, origin: [u32; 2] },
     Texture { asset: Uuid, resize: bool },
     Paste,
 }

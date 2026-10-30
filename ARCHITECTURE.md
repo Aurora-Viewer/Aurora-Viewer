@@ -1166,12 +1166,17 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
-Inventory local-file thumbnails prepare three 256 px RGBA variants on the
-bounded background jobs in `app/inventory_thumbnail.rs`: whole-image square
-scaling (LLViewerTextureList::convertToUploadFile with force_square), proportional
-fit with transparent margins, and centre crop. `ui/inventory/thumbnail/choices.rs`
-shows clickable previews in the shared modal for both inventory items and folders.
-Only the chosen pixels enter the background JPEG2000 encoder and the existing
+Inventory local-file thumbnails prepare whole-image square scaling
+(LLViewerTextureList::convertToUploadFile with force_square), proportional fit
+with transparent margins, and a movable crop on bounded background jobs in
+`app/inventory_thumbnail.rs`. The crop retains the full source with a short
+edge of at most 256 px, bounded to 4 MiB even for a thin 4096 px strip.
+`ui/inventory/thumbnail/choices.rs` pans the square viewport by UV coordinates,
+clamped to the image bounds, with no resampling or texture replacement per drag
+frame. Releasing a drag keeps the modal open; an explicit preview click submits
+the selected source rectangle for background cropping and JPEG2000 encoding.
+The shared modal supports both inventory items and folders. Only the chosen
+pixels enter the existing
 InventoryThumbnailUpload/AIS path; cancellation retains the previous thumbnail.
 Scene snapshot framing and existing inventory texture assignment are unchanged.
 

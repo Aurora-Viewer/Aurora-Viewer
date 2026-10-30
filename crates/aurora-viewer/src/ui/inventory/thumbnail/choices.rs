@@ -2,14 +2,76 @@
 
 use super::*;
 
+#[derive(Debug, PartialEq)]
+pub(crate) struct FileChoices {
+    pub pixels: [Vec<u8>; 2],
+    pub crop: image::RgbaImage,
+}
+
+enum Source {
+    Pixels(Arc<Vec<u8>>),
+    Crop(Crop),
+}
+
+struct Crop {
+    image: Arc<image::RgbaImage>,
+    origin: Vec2,
+    drag_origin: Vec2,
+}
+
+impl Crop {
+    fn new(image: image::RgbaImage) -> Self {
+        let edge = image.width().min(image.height());
+        let origin = egui::vec2(((image.width() - edge) / 2) as f32, ((image.height() - edge) / 2) as f32);
+        Self {
+            image: Arc::new(image),
+            origin,
+            drag_origin: origin,
+        }
+    }
+
+    fn offset(&self) -> [u32; 2] {
+        [self.origin.x.round() as u32, self.origin.y.round() as u32]
+    }
+
+    fn uv(&self) -> egui::Rect {
+        let edge = self.image.width().min(self.image.height()) as f32;
+        let size = egui::vec2(self.image.width() as f32, self.image.height() as f32);
+        let [x, y] = self.offset();
+        egui::Rect::from_min_max(
+            egui::pos2(x as f32 / size.x, y as f32 / size.y),
+            egui::pos2((x as f32 + edge) / size.x, (y as f32 + edge) / size.y),
+        )
+    }
+
+    fn pan(&mut self, delta: Vec2, side: f32) {
+        let edge = self.image.width().min(self.image.height());
+        let limit = egui::vec2((self.image.width() - edge) as f32, (self.image.height() - edge) as f32);
+        self.origin = (self.drag_origin - delta * (edge as f32 / side)).clamp(Vec2::ZERO, limit);
+    }
+}
+
 pub(super) struct Choice {
     texture: egui::TextureHandle,
-    pixels: Arc<Vec<u8>>,
+    source: Source,
+}
+
+impl Choice {
+    fn input(&self) -> Input {
+        match &self.source {
+            Source::Pixels(pixels) => Input::Pixels(pixels.clone()),
+            Source::Crop(crop) => Input::Crop {
+                image: crop.image.clone(),
+                origin: crop.offset(),
+            },
+        }
+    }
 }
 
 impl ThumbnailUi {
-    pub(crate) fn set_file_choices(&mut self, ctx: &egui::Context, pixels: [Vec<u8>; 3]) {
-        self.choices = pixels
+    pub(crate) fn set_file_choices(&mut self, ctx: &egui::Context, choices: FileChoices) {
+        self.choices = choices
+            .pixels
             .into_iter()
             .enumerate()
             .map(|(index, pixels)| Choice {
@@ -18,9 +80,19 @@ impl ThumbnailUi {
                     egui::ColorImage::from_rgba_unmultiplied([256, 256], &pixels),
                     egui::TextureOptions::LINEAR,
                 ),
-                pixels: Arc::new(pixels),
+                source: Source::Pixels(Arc::new(pixels)),
             })
             .collect();
+        let crop = Crop::new(choices.crop);
+        let texture = ctx.load_texture(
+            "inventory_crop_source",
+            egui::ColorImage::from_rgba_unmultiplied([crop.image.width() as usize, crop.image.height() as usize], crop.image.as_raw()),
+            egui::TextureOptions::LINEAR,
+        );
+        self.choices.push(Choice {
+            texture,
+            source: Source::Crop(crop),
+        });
     }
 
     pub(super) fn show_file_choices(
@@ -60,11 +132,38 @@ impl ThumbnailUi {
             ui.add_space(8.0);
             ui.columns(3, |columns| {
                 for (index, ui) in columns.iter_mut().enumerate() {
-                    let choice = &self.choices[index];
+                    let choice = &mut self.choices[index];
                     ui.vertical_centered(|ui| {
-                        let image = egui::Image::new((choice.texture.id(), Vec2::splat(side)));
-                        let response = ui.add_enabled(ready, egui::Button::new(image)).on_hover_text(tips[index]);
+                        let mut image = egui::Image::new((choice.texture.id(), Vec2::splat(side)));
+                        let sense = if let Source::Crop(crop) = &choice.source {
+                            image = image.uv(crop.uv());
+                            egui::Sense::click_and_drag()
+                        } else {
+                            egui::Sense::click()
+                        };
+                        let response = ui
+                            .add_enabled(ready, egui::Button::new(image).sense(sense))
+                            .on_hover_text(tips[index]);
                         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ready, labels[index]));
+                        if let Source::Crop(crop) = &mut choice.source {
+                            if ready && response.drag_started_by(egui::PointerButton::Primary) {
+                                crop.drag_origin = crop.origin;
+                            }
+                            if ready
+                                && response.dragged_by(egui::PointerButton::Primary)
+                                && let Some(delta) = response.total_drag_delta()
+                            {
+                                crop.pan(delta, side);
+                                ctx.request_repaint();
+                            }
+                            if ready {
+                                response.clone().on_hover_cursor(if response.dragged() {
+                                    egui::CursorIcon::Grabbing
+                                } else {
+                                    egui::CursorIcon::Grab
+                                });
+                            }
+                        }
                         if response.clicked() {
                             chosen = Some(index);
                         }
@@ -76,9 +175,9 @@ impl ThumbnailUi {
             cancel = flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked();
         });
         if let Some(index) = chosen {
-            let pixels = self.choices[index].pixels.clone();
+            let input = self.choices[index].input();
             self.choices.clear();
-            self.request(item, Input::Pixels(pixels), actions);
+            self.request(item, input, actions);
         } else if cancel || modal.should_close() {
             self.choices.clear();
         }
@@ -88,6 +187,13 @@ impl ThumbnailUi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn choices(width: u32, height: u32) -> FileChoices {
+        FileChoices {
+            pixels: std::array::from_fn(|index| vec![index as u8 + 40; 256 * 256 * 4]),
+            crop: image::RgbaImage::from_pixel(width, height, image::Rgba([42; 4])),
+        }
+    }
 
     fn frame(
         ctx: &egui::Context,
@@ -128,8 +234,8 @@ mod tests {
                 let mut state = ThumbnailUi::default();
                 let item = Uuid::from_u128(target);
                 state.open(item);
-                state.set_file_choices(&ctx, std::array::from_fn(|index| vec![index as u8 + 40; 256 * 256 * 4]));
-                let expected = state.choices[chosen].pixels.clone();
+                state.set_file_choices(&ctx, choices(256, 256));
+                let expected = vec![chosen as u8 + 40; 256 * 256 * 4];
                 let texture = state.choices[chosen].texture.id();
                 let textures: Vec<_> = state.choices.iter().map(|choice| choice.texture.id()).collect();
                 let mut actions = Vec::new();
@@ -169,10 +275,18 @@ mod tests {
                 for pressed in [true, false] {
                     frame(&ctx, &mut state, &mut actions, true, pointer(rect.center(), pressed));
                 }
-                assert!(
-                    matches!(&actions[..], [InvAction::Thumbnail { item: actual, input: Input::Pixels(pixels), .. }]
-                    if *actual == item && Arc::ptr_eq(pixels, &expected))
-                );
+                let [InvAction::Thumbnail { item: actual, input, .. }] = &actions[..] else {
+                    panic!("one selected upload")
+                };
+                assert_eq!(*actual, item);
+                match input {
+                    Input::Pixels(pixels) if chosen < 2 => assert_eq!(pixels.as_ref(), &expected),
+                    Input::Crop { image, origin } if chosen == 2 => {
+                        assert_eq!(image.as_raw(), &expected);
+                        assert_eq!(*origin, [0, 0]);
+                    }
+                    _ => panic!("chosen image source"),
+                }
                 assert!(state.pending.is_some());
                 assert!(state.choices.is_empty());
                 assert_eq!(state.item, Some(item));
@@ -187,7 +301,7 @@ mod tests {
             crate::theme::Theme::default().apply(&ctx, 1.0);
             let mut state = ThumbnailUi::default();
             state.open(Uuid::from_u128(8000));
-            state.set_file_choices(&ctx, std::array::from_fn(|_| vec![128; 256 * 256 * 4]));
+            state.set_file_choices(&ctx, choices(256, 256));
             let texture = state.choices[0].texture.id();
             let mut actions = Vec::new();
             for _ in 0..4 {
@@ -239,6 +353,74 @@ mod tests {
             assert!(state.choices.is_empty());
             assert!(state.pending.is_none());
             assert!(actions.is_empty());
+        }
+    }
+
+    #[test]
+    fn dragging_the_crop_changes_its_viewport_without_uploading_and_stays_in_bounds() {
+        for target in [8101, 8000] {
+            for (width, height) in [(256, 640), (640, 256)] {
+                let ctx = egui::Context::default();
+                crate::theme::Theme::default().apply(&ctx, 1.0);
+                let mut state = ThumbnailUi::default();
+                let item = Uuid::from_u128(target);
+                state.open(item);
+                state.set_file_choices(&ctx, choices(width, height));
+                let texture = state.choices[2].texture.id();
+                let mut actions = Vec::new();
+                for _ in 0..4 {
+                    frame(&ctx, &mut state, &mut actions, true, Vec::new());
+                }
+                let output = frame(&ctx, &mut state, &mut actions, true, Vec::new());
+                let rect = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Rect(rect) if rect.fill_texture_id() == texture => Some(rect.rect),
+                        egui::Shape::Mesh(mesh) if mesh.texture_id == texture => Some(mesh.calc_bounds()),
+                        _ => None,
+                    })
+                    .expect("crop image");
+                let center = rect.center();
+                let edge = width.min(height);
+                let limit = [width - edge, height - edge];
+                let expected = [(limit[0] / 2).saturating_sub(edge / 4), (limit[1] / 2).saturating_sub(edge / 4)];
+                let deltas = [rect.size() / 4.0, Vec2::splat(4000.0), Vec2::splat(-4000.0)];
+                let offsets = [expected, [0, 0], limit];
+                for (delta, offset) in deltas.into_iter().zip(offsets) {
+                    frame(&ctx, &mut state, &mut actions, true, pointer(center, true));
+                    for fraction in [0.5, 1.0] {
+                        frame(
+                            &ctx,
+                            &mut state,
+                            &mut actions,
+                            true,
+                            vec![egui::Event::PointerMoved(center + delta * fraction)],
+                        );
+                    }
+                    frame(&ctx, &mut state, &mut actions, true, pointer(center + delta, false));
+                    assert!(actions.is_empty(), "releasing a drag must not upload");
+                    assert_eq!(state.choices.len(), 3);
+                    let Source::Crop(crop) = &state.choices[2].source else {
+                        panic!("crop")
+                    };
+                    assert_eq!(crop.offset(), offset);
+                    let uv = crop.uv();
+                    assert_eq!(
+                        uv.min,
+                        egui::pos2(offset[0] as f32 / width as f32, offset[1] as f32 / height as f32)
+                    );
+                    assert!((uv.size() - egui::vec2(edge as f32 / width as f32, edge as f32 / height as f32)).length() < 1e-6);
+                    assert!(state.pending.is_none());
+                }
+                for pressed in [true, false] {
+                    frame(&ctx, &mut state, &mut actions, true, pointer(center, pressed));
+                }
+                assert!(
+                    matches!(&actions[..], [InvAction::Thumbnail { item: actual, input: Input::Crop { origin, .. }, .. }]
+                    if *actual == item && *origin == limit)
+                );
+            }
         }
     }
 }
