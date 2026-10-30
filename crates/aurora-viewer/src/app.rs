@@ -15488,8 +15488,8 @@ impl App {
                 self.settings.show_inventory = self.panels.inventory;
                 self.settings.show_appearance = self.panels.appearance;
                 self.settings.show_ao = self.panels.ao;
-                // (not the photo's time of day, which is never saved)
-                if self.panels.time_of_day != self.settings.time_of_day && !self.photo_time_held() {
+                // (the photo's time of day is its own layer, never saved)
+                if self.panels.time_of_day != self.settings.time_of_day {
                     self.settings.time_of_day = self.panels.time_of_day;
                 }
                 if let Some(msg) = self.world.alerts.pop_front() {
