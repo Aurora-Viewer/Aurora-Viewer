@@ -2166,6 +2166,21 @@ impl Session<'_> {
             } => self.fetch_inventory_tree(request, parent, children, depth, owner, library),
             NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner, false),
             NetCommand::FetchAttachmentItems { items } => self.fetch_items(items, self.agent_id(), true),
+            NetCommand::FetchInventoryOrphans { request } => {
+                let ais = self.main_cap("InventoryAPIv3");
+                let legacy = self.main_cap("FetchInventoryDescendents2");
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                let owner = self.agent_id();
+                tokio::spawn(async move {
+                    let result = crate::inventory::orphans::fetch(&http, ais.as_deref(), legacy.as_deref(), owner).await;
+                    let _ = events.send(NetEvent::InventoryOrphansFetched {
+                        request,
+                        owner,
+                        result: result.map_err(str::to_owned),
+                    });
+                });
+            }
             NetCommand::EditInventory { request, change } => {
                 if change.operations.is_empty() && !change.copies.is_empty() && change.copies.len() <= 2048 && !change.refresh.is_empty() {
                     emit(

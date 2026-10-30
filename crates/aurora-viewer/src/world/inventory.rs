@@ -11,6 +11,7 @@ mod action_tests;
 pub mod actions;
 pub mod background;
 pub mod demo;
+mod lost;
 mod parents;
 pub mod preview;
 pub mod wearable;
@@ -58,6 +59,13 @@ pub struct Inventory {
     pub item_retries: HashSet<Uuid>,
     pub(crate) repaired_parents: HashMap<Uuid, Uuid>,
     pub(crate) pending_parent_repairs: HashSet<Uuid>,
+    pub(crate) deferred_parents: HashMap<Uuid, parents::ItemSource>,
+    pub(crate) parent_retry_generation: u64,
+    pub(crate) repaired_folder_parents: HashMap<Uuid, Uuid>,
+    pub(crate) pending_folder_repairs: HashSet<Uuid>,
+    pub(crate) hierarchy_repaired: bool,
+    pub(crate) deferred_lost_folders: bool,
+    pub(crate) lost_folder_retry_generation: u64,
 }
 
 /// Reads of one item before it counts as a broken link's original. A failed
@@ -99,6 +107,7 @@ impl Inventory {
     pub fn consume_item(&mut self, id: Uuid) {
         self.repaired_parents.remove(&id);
         self.pending_parent_repairs.remove(&id);
+        self.deferred_parents.remove(&id);
         if let Some(item) = self.items.remove(&id) {
             if let Some(folder) = self.folders.get_mut(&item.parent) {
                 folder.items.retain(|other| *other != id);
@@ -230,11 +239,27 @@ impl Inventory {
             }
             let library = self.folders.get(&c.folder_id).map(|f| f.library).unwrap_or(false);
             let child_ids: Vec<Uuid> = c.folders.iter().map(|f| f.id).collect();
-            for f in c.folders {
+            for mut f in c.folders {
+                if let Some(parent) = self.repaired_folder_parents.get(&f.id).copied() {
+                    if f.parent == parent && !self.pending_folder_repairs.contains(&f.id) {
+                        self.repaired_folder_parents.remove(&f.id);
+                    } else {
+                        f.parent = parent;
+                    }
+                }
                 self.upsert_folder(f, library);
             }
-            c.items
-                .retain(|item| item.parent.is_nil() || self.repaired_parents.get(&item.id).is_none_or(|parent| *parent == item.parent));
+            let mut child_ids = child_ids;
+            child_ids.extend(
+                self.repaired_folder_parents
+                    .iter()
+                    .filter_map(|(id, parent)| (*parent == c.folder_id).then_some(*id)),
+            );
+            c.items.retain(|item| {
+                item.parent.is_nil()
+                    || item.parent == parents::LOST_MARKER
+                    || self.repaired_parents.get(&item.id).is_none_or(|parent| *parent == item.parent)
+            });
             let mut item_ids: Vec<Uuid> = c.items.iter().map(|i| i.id).collect();
             for item in &c.items {
                 if self.repaired_parents.get(&item.id) == Some(&item.parent) && !self.pending_parent_repairs.contains(&item.id) {
@@ -253,7 +278,8 @@ impl Inventory {
                 f.state = FetchState::Fetched;
                 f.info.version = c.version;
             }
-            self.add_items(c.items);
+            self.repair_item_parents(&mut c.items, parents::ItemSource::Snapshot);
+            self.add_items_inner(c.items);
             self.sort_children(c.folder_id);
         }
     }
@@ -274,6 +300,11 @@ impl Inventory {
     /// LLInventoryModel::updateItem's creation rules across HTTP delays.
     pub fn add_attachment_items(&mut self, mut items: Vec<InvItem>) {
         self.repair_item_parents(&mut items, parents::ItemSource::Attachment);
+        self.add_items_inner(items);
+    }
+
+    pub fn add_orphan_items(&mut self, mut items: Vec<InvItem>) {
+        self.repair_item_parents(&mut items, parents::ItemSource::Orphans);
         self.add_items_inner(items);
     }
 
@@ -321,6 +352,10 @@ impl Inventory {
         for folder in folders {
             let id = folder.id;
             let parent = folder.parent;
+            if self.repaired_folder_parents.get(&id).is_some_and(|known| *known != parent) {
+                self.repaired_folder_parents.remove(&id);
+                self.pending_folder_repairs.remove(&id);
+            }
             if let Some(old) = self.folders.get(&id) {
                 if old.info.parent != parent || old.info.name != folder.name {
                     changed.insert(old.info.parent);
@@ -487,6 +522,11 @@ impl Inventory {
         self.repaired_parents
             .retain(|id, parent| self.items.contains_key(id) && !removed.contains(parent));
         self.pending_parent_repairs.retain(|id| self.repaired_parents.contains_key(id));
+        self.deferred_parents.retain(|id, _| self.items.contains_key(id));
+        self.repaired_folder_parents
+            .retain(|id, parent| !removed.contains(id) && !removed.contains(parent));
+        self.pending_folder_repairs
+            .retain(|id| self.repaired_folder_parents.contains_key(id));
         self.folders.retain(|id, _| !removed.contains(id));
         self.sort_all();
         self.generation += 1;

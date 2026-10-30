@@ -9,6 +9,7 @@ mod gesture_tests;
 pub mod mesh_upload;
 pub mod notecard;
 pub mod operations;
+pub mod orphans;
 pub mod rez;
 pub mod thumbnail;
 pub mod upload;

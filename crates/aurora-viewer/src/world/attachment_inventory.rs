@@ -1031,4 +1031,58 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn orphan_discovery_is_account_scoped_and_preserves_live_attachment_creation() {
+        let (mut world, object, mut attached) = fixture();
+        let objects = attached.parent;
+        let lost = with_lost_folder(&mut world, &attached);
+        let root = Uuid::from_u128(90_090);
+        world.inventory.root = root;
+        let mut folder = world.inventory.folders[&objects].clone();
+        folder.info.id = root;
+        folder.info.parent = Uuid::nil();
+        folder.info.type_default = 8;
+        world.inventory.folders.insert(root, folder);
+        let commands = world.pump_inventory_background();
+        let request = commands
+            .iter()
+            .find_map(|cmd| match cmd {
+                NetCommand::FetchInventoryOrphans { request } => Some(*request),
+                _ => None,
+            })
+            .expect("startup orphan scan");
+        attached.parent = Uuid::nil();
+        let mut orphan = attached.clone();
+        orphan.id = Uuid::from_u128(90_095);
+        let contents = aurora_net::inventory::orphans::Contents {
+            folders: Vec::new(),
+            items: vec![attached.clone(), orphan.clone()],
+        };
+        world.apply(NetEvent::InventoryOrphansFetched {
+            request,
+            owner: Uuid::from_u128(90_099),
+            result: Ok(contents.clone()),
+        });
+        assert!(
+            !world.inventory.items.contains_key(&orphan.id),
+            "a previous account's response cannot apply"
+        );
+        world.apply(NetEvent::InventoryOrphansFetched {
+            request,
+            owner: world.agent_id,
+            result: Ok(contents.clone()),
+        });
+        assert_eq!(world.inventory.items[&attached.id].parent, objects);
+        assert_eq!(world.inventory.items[&orphan.id].parent, lost);
+        assert!(world.objects.index_of_uuid(&object.full_id).is_some());
+        assert_eq!(world.worn_attachment_items().len(), 1, "recovery never wears the lost original");
+        let generation = world.inventory.generation;
+        world.apply(NetEvent::InventoryOrphansFetched {
+            request,
+            owner: world.agent_id,
+            result: Ok(contents),
+        });
+        assert_eq!(world.inventory.generation, generation, "duplicate results are obsolete");
+    }
 }

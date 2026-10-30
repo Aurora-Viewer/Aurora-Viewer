@@ -1200,6 +1200,7 @@ impl World {
             return Vec::new();
         }
         self.inventory_background.start(&self.inventory);
+        self.inventory.repair_lost_hierarchy();
         self.inventory_background.pump(&mut self.inventory, self.agent_id)
     }
 
@@ -3432,6 +3433,25 @@ impl World {
             }
             NetEvent::AttachmentInventoryItems(items) => {
                 self.inventory.add_attachment_items(items);
+                None
+            }
+            NetEvent::InventoryOrphansFetched { request, owner, result } => {
+                if owner == self.agent_id && self.inventory_background.on_orphans_reply(request, result.is_ok()) {
+                    match result {
+                        Ok(contents) => {
+                            self.inventory.server_updated(contents.folders, Vec::new());
+                            self.inventory.repair_lost_folders();
+                            let (attachments, orphans): (Vec<_>, Vec<_>) = contents.items.into_iter().partition(|item| {
+                                self.worn_attachment(&item.id).and_then(|i| self.objects.get(i)).is_some_and(|o| {
+                                    o.attachment_point() != 0 && !temp_attachments::is_temp_attachment(o.full_id, Some(item.id))
+                                })
+                            });
+                            self.inventory.add_attachment_items(attachments);
+                            self.inventory.add_orphan_items(orphans);
+                        }
+                        Err(reason) => log::warn!("lost inventory recovery failed: {reason}"),
+                    }
+                }
                 None
             }
             NetEvent::AttachmentAssetSaved(item) => {

@@ -29,6 +29,20 @@ resets dependent previews and never deletes its file.
 Only local source models are offered. Preferences ignore references to the
 retired inventory snapshot format; its rez, capture and cleanup workflow is
 removed.
+
+`inventory/orphans.rs` in aurora-net implements the startup `findLostItems`
+read: agent-only AIS `/orphans`, or a legacy null-folder request with items
+enabled and folders disabled. It validates identities/owners, keeps links and
+folder metadata, and distinguishes empty successful replies from failures.
+`world/inventory/background.rs` includes this once-per-login read in its bounded
+pool, even with a warm cache; obsolete replies are ignored and failures can
+retry after a region capability change. `world/inventory/lost.rs` follows
+`buildParentChildMap`: dangling cached items and ordinary folders go to Lost And
+Found, protected folders return to the root, and library roots stay untouched.
+The return sentinel is translated locally; genuine repairs use reliable parent
+moves. Missing destination folders defer filing until their actual metadata
+arrives. `AURORA_DEMO_INVENTORY=lost` exercises this startup path offline.
+
 `world/attachment_inventory.rs` fetches missing inventory records for ordinary
 attachments independently of open floaters, with bounded retries. Once login
 restoration and interactive outfit changes finish, it adds missing Current Outfit

@@ -6,7 +6,7 @@ use aurora_llsd::Llsd;
 use std::collections::HashSet;
 use uuid::Uuid;
 
-fn favorite(record: &Llsd) -> Result<bool, &'static str> {
+pub(super) fn favorite(record: &Llsd) -> Result<bool, &'static str> {
     match &record["favorite"] {
         Llsd::Undef => Ok(false),
         Llsd::Map(map) => match map.get("toggled") {
@@ -18,7 +18,7 @@ fn favorite(record: &Llsd) -> Result<bool, &'static str> {
     }
 }
 
-fn item(record: &Llsd, owner: Uuid) -> Result<InvItem, &'static str> {
+pub(super) fn item(record: &Llsd, owner: Uuid) -> Result<InvItem, &'static str> {
     // AISUpdate::parseItem preserves real records with a null parent for
     // Lost And Found repair. An absent parent field still denotes a partial
     // response (for example an error carrying only item_id).
@@ -90,7 +90,9 @@ fn parse_folder(doc: &Llsd, id: Uuid, owner: Uuid) -> Result<FolderContents, &'s
         if let Some(records) = embedded[collection].as_map() {
             for (key, record) in records {
                 let child = item(record, owner)?;
-                if key.parse::<Uuid>().ok() != Some(child.id) || child.parent != id {
+                if key.parse::<Uuid>().ok() != Some(child.id)
+                    || child.parent != id && !child.parent.is_nil() && child.parent != Uuid::from_u128(0x10)
+                {
                     return Err("invalid AIS child item");
                 }
                 let target = child.asset_id;
@@ -530,8 +532,13 @@ mod tests {
         assert_eq!((parsed.asset_type, parsed.inv_type), (6, 6));
         assert!(parse_item_reply(&llsd_map! { "item_id" => id(3), "error" => "not found" }, id(3), id(2)).is_err());
         assert!(
+            parse_folder(&snapshot(vec![doc.clone()]), id(1), id(2)).is_ok(),
+            "AISUpdate recovers null-parent children too"
+        );
+        doc.insert("parent_id", id(99));
+        assert!(
             parse_folder(&snapshot(vec![doc]), id(1), id(2)).is_err(),
-            "a direct child must still belong to its folder"
+            "unrelated non-null parents are still rejected"
         );
     }
 

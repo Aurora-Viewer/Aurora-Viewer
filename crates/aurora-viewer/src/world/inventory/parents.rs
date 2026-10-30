@@ -10,36 +10,52 @@ use aurora_net::inventory::{
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum ItemSource {
+pub(crate) enum ItemSource {
     Fetch,
     Simulator,
     Attachment,
+    Orphans,
+    Cache,
+    Snapshot,
 }
+
+// CATEGORIZE_LOST_AND_FOUND_ID (indra/llmessage/llassetstorage.cpp).
+pub(super) const LOST_MARKER: uuid::Uuid = uuid::Uuid::from_u128(0x10);
 
 impl Inventory {
     pub(super) fn repair_item_parents(&mut self, items: &mut [InvItem], source: ItemSource) {
         if self.owner.is_nil()
-            || !items
-                .iter()
-                .any(|it| it.parent.is_nil() && !it.id.is_nil() && it.owner == self.owner)
+            || !items.iter().any(|it| {
+                !it.id.is_nil()
+                    && it.owner == self.owner
+                    && (it.parent.is_nil() || it.parent == LOST_MARKER || !self.folders.contains_key(&it.parent))
+            })
         {
             return;
         }
-        let system: HashMap<_, _> = self
+        let mut system = HashMap::new();
+        for f in self
             .folders
             .values()
-            .filter(|f| !f.library && !f.info.id.is_nil() && f.info.type_default >= 0)
-            .map(|f| (f.info.type_default, f.info.id))
-            .collect();
-        let root = self
-            .folders
-            .get(&self.root)
-            .filter(|f| !f.library && !self.root.is_nil())
-            .map(|_| self.root);
+            .filter(|f| !f.library && !f.info.id.is_nil() && f.info.type_default >= 0 && f.info.parent == self.root)
+        {
+            // findCategoryUUIDForTypeInRoot picks the smallest UUID when a
+            // corrupt skeleton contains duplicate system folders.
+            system
+                .entry(f.info.type_default)
+                .and_modify(|id: &mut uuid::Uuid| *id = (*id).min(f.info.id))
+                .or_insert(f.info.id);
+        }
         for item in items {
-            if !item.parent.is_nil() || item.id.is_nil() || item.owner != self.owner {
+            if item.id.is_nil() || item.owner != self.owner {
                 continue;
             }
+            let marker = item.parent == LOST_MARKER;
+            let unknown = !item.parent.is_nil() && !self.folders.contains_key(&item.parent);
+            if !marker && !item.parent.is_nil() && (!unknown || source == ItemSource::Simulator && self.items.contains_key(&item.id)) {
+                continue;
+            }
+            self.deferred_parents.remove(&item.id);
             let previous = self
                 .items
                 .get(&item.id)
@@ -51,20 +67,38 @@ impl Inventory {
             // AIS orphan repair is a separate path; a delayed metadata read
             // cannot undo an already pending normal parent assignment.
             let pending = previous.filter(|parent| self.repaired_parents.get(&item.id) == Some(parent));
+            let lost = marker
+                || unknown
+                || matches!(
+                    source,
+                    ItemSource::Fetch | ItemSource::Snapshot | ItemSource::Orphans | ItemSource::Cache
+                )
+                || source == ItemSource::Simulator && self.items.get(&item.id).is_some_and(|it| it.parent.is_nil());
             let parent = pending
-                .or_else(|| {
-                    if source == ItemSource::Fetch {
-                        system.get(&16).copied()
-                    } else {
-                        previous
-                    }
-                })
-                .or_else(|| system.get(&item.asset_type).copied())
-                .or(root);
+                .filter(|_| !marker)
+                .or_else(|| if lost { system.get(&16).copied() } else { previous })
+                .or_else(|| (!lost).then(|| system.get(&item.asset_type).copied()).flatten());
             let Some(parent) = parent else {
+                self.deferred_parents.insert(item.id, source);
                 continue;
             };
             item.parent = parent;
+            if marker && source != ItemSource::Cache {
+                // The simulator has already categorized this return. Legacy
+                // translates the sentinel locally, without sending a move.
+                self.repaired_parents.insert(item.id, parent);
+                self.pending_parent_repairs.remove(&item.id);
+                if !matches!(source, ItemSource::Simulator | ItemSource::Snapshot)
+                    && previous != Some(parent)
+                    && let Some(folder) = self.folders.get_mut(&parent)
+                    && folder.state == FetchState::Fetched
+                    && folder.info.version >= 0
+                {
+                    folder.info.version = folder.info.version.saturating_add(1);
+                }
+                self.request(parent);
+                continue;
+            }
             if self.repaired_parents.insert(item.id, parent) != Some(parent) {
                 self.pending_parent_repairs.insert(item.id);
                 if source != ItemSource::Simulator
@@ -82,6 +116,11 @@ impl Inventory {
 
     /// Keep a burst of orphaned records from flooding the simulator.
     pub fn take_parent_repairs(&mut self) -> Option<Mutation> {
+        if self.deferred_lost_folders && self.lost_folder_retry_generation != self.generation {
+            self.repair_lost_folders();
+            self.lost_folder_retry_generation = self.generation;
+        }
+        self.retry_deferred_parents();
         let ids: Vec<_> = self.pending_parent_repairs.iter().take(32).copied().collect();
         let mut operations = Vec::new();
         let mut refresh = HashSet::new();
@@ -100,11 +139,47 @@ impl Inventory {
             });
             refresh.insert(parent);
         }
+        let folders: Vec<_> = self.pending_folder_repairs.iter().take(32 - operations.len()).copied().collect();
+        for id in folders {
+            self.pending_folder_repairs.remove(&id);
+            let Some(parent) = self.repaired_folder_parents.get(&id).copied() else {
+                continue;
+            };
+            if !self.folders.get(&id).is_some_and(|f| !f.library && f.info.parent == parent) {
+                continue;
+            }
+            operations.push(Operation::Patch {
+                id,
+                folder: true,
+                body: llsd_map! { "parent_id" => parent },
+            });
+            refresh.insert(parent);
+        }
         (!operations.is_empty()).then_some(Mutation {
             operations,
             refresh: refresh.into_iter().collect(),
             ..Default::default()
         })
+    }
+
+    fn retry_deferred_parents(&mut self) {
+        if self.parent_retry_generation == self.generation || self.deferred_parents.is_empty() {
+            return;
+        }
+        self.parent_retry_generation = self.generation;
+        let before = self.generation;
+        let mut progressed = false;
+        let pending: Vec<_> = self.deferred_parents.iter().take(32).map(|(id, source)| (*id, *source)).collect();
+        for (id, source) in pending {
+            self.deferred_parents.remove(&id);
+            if let Some(mut item) = self.items.get(&id).cloned() {
+                let old_parent = item.parent;
+                self.repair_item_parents(std::slice::from_mut(&mut item), source);
+                progressed |= item.parent != old_parent;
+                self.add_items_inner(vec![item]);
+            }
+        }
+        self.parent_retry_generation = if progressed { before } else { self.generation };
     }
 }
 
@@ -186,6 +261,68 @@ mod tests {
     }
 
     #[test]
+    fn simulator_return_marker_is_translated_without_sending_a_redundant_move() {
+        let mut inv = fixture(FetchState::Fetched);
+        inv.server_updated(Vec::new(), vec![object(20, LOST_MARKER)]);
+        assert_eq!(inv.items[&id(20)].parent, id(2));
+        assert_eq!(inv.folders[&id(2)].items, vec![id(20)]);
+        assert_eq!(inv.folders[&id(2)].info.version, 6);
+        assert!(inv.take_parent_repairs().is_none());
+        let mut returned = object(21, LOST_MARKER);
+        inv.add_attachment_items(vec![object(21, Uuid::nil())]);
+        assert_eq!(inv.items[&id(21)].parent, id(3));
+        returned.owner_mask = 0x1234;
+        inv.apply(vec![snapshot(id(2), vec![inv.items[&id(20)].clone(), returned])]);
+        assert_eq!(inv.items[&id(21)].parent, id(2));
+        assert_eq!(inv.items[&id(21)].owner_mask, 0x1234);
+        assert_eq!(
+            inv.folders[&id(2)].info.version,
+            9,
+            "the snapshot already accounts for its returned item"
+        );
+        assert!(inv.take_parent_repairs().is_none());
+    }
+
+    #[test]
+    fn invalid_new_parents_and_existing_null_parents_follow_legacy_recovery() {
+        let mut inv = fixture(FetchState::Fetched);
+        inv.server_updated(Vec::new(), vec![object(20, id(999))]);
+        assert_eq!(inv.items[&id(20)].parent, id(2));
+        assert!(inv.take_parent_repairs().is_some());
+        // A cached, already known null-parent record is lost; a genuinely
+        // new simulator-created record still goes to its type folder.
+        inv.items.insert(id(21), object(21, Uuid::nil()));
+        inv.server_updated(Vec::new(), vec![object(21, Uuid::nil()), object(22, Uuid::nil())]);
+        assert_eq!(inv.items[&id(21)].parent, id(2));
+        assert_eq!(inv.items[&id(22)].parent, id(3));
+        assert_eq!(inv.take_parent_repairs().expect("two repairs").operations.len(), 2);
+    }
+
+    #[test]
+    fn missing_lost_folder_defers_recovery_until_the_real_folder_arrives() {
+        let mut inv = fixture(FetchState::Fetched);
+        inv.folders.remove(&id(2));
+        inv.add_orphan_items((20..55).map(|n| object(n, Uuid::nil())).collect());
+        assert!(inv.take_parent_repairs().is_none());
+        assert!(inv.items[&id(20)].parent.is_nil());
+        inv.server_updated(
+            vec![InvFolder {
+                id: id(2),
+                parent: inv.root,
+                type_default: 16,
+                ..Default::default()
+            }],
+            Vec::new(),
+        );
+        let mut moved = 0;
+        for _ in 0..3 {
+            moved += inv.take_parent_repairs().map_or(0, |change| change.operations.len());
+        }
+        assert_eq!(moved, 35);
+        assert!(inv.items.values().all(|it| it.parent == id(2)));
+    }
+
+    #[test]
     fn attachment_reads_preserve_known_folders_and_use_objects_for_new_originals() {
         let mut inv = fixture(FetchState::Fetched);
         let custom = id(4);
@@ -212,7 +349,22 @@ mod tests {
         let mut inv = fixture(FetchState::Fetched);
         inv.folders.remove(&id(3));
         inv.add_attachment_items(vec![object(20, Uuid::nil())]);
-        assert_eq!(inv.items[&id(20)].parent, inv.root);
+        assert!(inv.items[&id(20)].parent.is_nil());
+        assert!(
+            inv.take_parent_repairs().is_none(),
+            "wait for the actual system folder instead of filing at root"
+        );
+        inv.server_updated(
+            vec![InvFolder {
+                id: id(3),
+                parent: inv.root,
+                type_default: 6,
+                ..Default::default()
+            }],
+            Vec::new(),
+        );
+        assert!(inv.take_parent_repairs().is_some());
+        assert_eq!(inv.items[&id(20)].parent, id(3));
         assert!(inv.folders[&id(2)].items.is_empty());
         let mut foreign = object(21, Uuid::nil());
         foreign.owner = id(99);

@@ -12232,6 +12232,7 @@ inventory-show-main = Show in main view
 inventory-open-current = Open in this window
 inventory-copy-outfit-list = Copy outfit list to clipboard
 inventory-empty-lost-found = Empty Lost And Found
+common-lost-and-found = Lost And Found
 inventory-clean-broken-links = Clean broken links
 inventory-no-broken-links = No broken links in this folder.
 inventory-save-selected-textures = Export selection

@@ -17133,6 +17133,7 @@ impl ApplicationHandler for App {
                     "default-permissions"
                         | "aurora-default-permissions"
                         | "permissions"
+                        | "lost"
                         | "bulk-permissions"
                         | "bulk-multi"
                         | "bulk-folder"
@@ -17199,6 +17200,13 @@ impl ApplicationHandler for App {
                     );
                     self.settings.inventory = ui::inventory::InventoryPreferences::default();
                     self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
+                    if view == "lost" {
+                        crate::world::inventory::demo::seed_lost(&mut self.world.inventory, self.world.agent_id);
+                        self.panels.inventory = true;
+                        self.inventory_ui
+                            .show_original(&self.world.inventory, crate::world::inventory::demo::LOST_FOLDER);
+                        self.inventory_ui.expand_all = Some(true);
+                    }
                     self.inventory_ui.filters_open = view == "filters";
                     self.inventory_ui.preferences_open = view == "preferences";
                     self.inventory_ui.default_permissions_open = view.ends_with("default-permissions");

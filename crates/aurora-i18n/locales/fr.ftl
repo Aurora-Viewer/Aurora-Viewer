@@ -12228,6 +12228,7 @@ inventory-show-main = Afficher dans la vue principale
 inventory-open-current = Ouvrir dans cette fenêtre
 inventory-copy-outfit-list = Copier la liste de la tenue
 inventory-empty-lost-found = Vider les objets perdus et trouvés
+common-lost-and-found = Objets perdus et trouvés
 inventory-clean-broken-links = Nettoyer les liens cassés
 inventory-no-broken-links = Aucun lien cassé dans ce dossier.
 inventory-save-selected-textures = Exporter la sélection

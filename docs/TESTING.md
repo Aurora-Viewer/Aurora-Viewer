@@ -4212,7 +4212,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_WEARABLE=<type>[:mode]` | Skin, hair, eyes and system clothing editors |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
-| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
+| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|channel\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, commands to worn scripts, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
@@ -10181,3 +10181,16 @@ is kept from one run to the next; a failing input is uploaded as the job's
 artifact. Locally on Linux:
 `cargo +nightly fuzz run -O mesh --features libfuzzer`. Pull
 requests that change `fuzz/` only check that every target reads its seeds.
+
+### Lost inventory recovery
+
+`AURORA_DEMO_INVENTORY=lost` opens Lost And Found with three synthetic originals:
+a null-parent orphan, a simulator return using the categorization sentinel, and
+an item with a missing parent. A dangling folder and its child exercise startup
+hierarchy repair. The normal background orphan request receives a synthetic reply;
+all filing uses the production model and reliable-move planner. Capture at frame
+900. Originals keep their UUIDs and permissions; recovery does not attach them.
+Check ordinary `AURORA_DEMO_INVENTORY=1` and the existing attachment regressions
+alongside it. Online validation is done by the human: check returned objects,
+startup orphan retrieval and ordinary script attachments remaining in Objects or
+their original folder. No credentials or grid actions are automated.
