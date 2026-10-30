@@ -12644,3 +12644,15 @@ area-search-range-options = 範囲
 area-search-reset-ranges-tip = 距離と販売価格の範囲を既定に戻します。
 
 area-search-results = 結果
+
+# Applied local textures and materials (#1375).
+local-appearance-warning = ローカルテクスチャ・マテリアル：オブジェクト{ $count }個
+local-appearance-pending = 保存済みのローカルプレビュー（待機中）
+local-appearance-details = ローカルテクスチャ：{ $textures }、ローカルマテリアル：{ $materials }
+local-appearance-private = このプレビューは自分にだけ表示され、再接続後に復元されます。適用から７日後に期限切れになります。
+local-appearance-reveal = ローカルの面を点滅表示
+local-appearance-stop-reveal = ローカルの面の点滅表示を停止
+local-appearance-library = ローカルプレビューを開く
+local-appearance-remove = すべてのローカルテクスチャ・マテリアルを解除…
+local-appearance-confirm-title = ローカルテクスチャとマテリアルを解除しますか？
+local-appearance-confirm-body = このアカウントとグリッドで記憶されたオブジェクト（合計{ $count }個）をサーバー上の外観に戻します。現在表示されていないオブジェクトも対象です。解除した適用状態は再接続後に復元されません。ローカルファイル、プレビューライブラリ、メッシュプレビューは保持されます。

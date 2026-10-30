@@ -524,6 +524,7 @@ pub struct Imports {
     pub retired_local_slots: Vec<(Uuid, u32)>,
     pub local_rez: Option<local::Rez>,
     pub persistence: persistence::State,
+    pub local_status: ui::local_status::State,
 }
 impl Default for Imports {
     fn default() -> Self {
@@ -577,6 +578,7 @@ impl Default for Imports {
             retired_local_slots: Vec::new(),
             local_rez: None,
             persistence: Default::default(),
+            local_status: Default::default(),
         }
     }
 }

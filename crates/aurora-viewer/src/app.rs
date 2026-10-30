@@ -8584,7 +8584,14 @@ impl App {
             }
             self.scene.set_wire_selection(&mut self.world, selection_wire);
             self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
-            let selected_faces = self.build.face_selection(&self.world, &self.settings.build);
+            // Use face coverage while highlighting local appearances. Actual
+            // build selection, wire outlines and edits stay untouched; its
+            // ordinary face overlay returns when the mode is switched off.
+            let selected_faces = if self.imports.local_status.revealing() {
+                self.imports.appearance_status(&self.world.objects).faces
+            } else {
+                self.build.face_selection(&self.world, &self.settings.build)
+            };
             self.scene.set_face_selection(&mut self.world, selected_faces);
             if std::mem::take(&mut self.build.ui.reveal_faces) {
                 self.scene.reveal_selected_faces();
@@ -9149,7 +9156,12 @@ impl App {
                 })
                 .collect(),
             rlva_spheres: self.world.rlva_sphere_frames(self.camera.position, Instant::now()),
-            selection_color: egui::Rgba::from(self.palette.violet_light).to_array(),
+            selection_color: egui::Rgba::from(if self.imports.local_status.revealing() {
+                self.palette.warn
+            } else {
+                self.palette.violet_light
+            })
+            .to_array(),
             rez_gradient: {
                 // AURORA_REZ_STYLE=1|2|3: the effect's look (grid, scanlines,
                 // wireframe, the one chosen), to compare them
@@ -9167,7 +9179,11 @@ impl App {
                 g[1][3] = if self.scene.rez.enabled { 1.0 } else { 0.0 };
                 g
             },
-            selection_pulse: self.scene.selection_pulse(Instant::now()),
+            selection_pulse: self
+                .imports
+                .local_status
+                .pulse(Instant::now(), self.settings.reduce_motion)
+                .unwrap_or_else(|| self.scene.selection_pulse(Instant::now())),
             selection_scale: self.egui_ctx.pixels_per_point(),
             view,
             proj,
@@ -9392,6 +9408,7 @@ impl App {
         }
         let ctx = self.egui_ctx.clone();
         if self.demo {
+            self.local_appearance_demo_input(&mut raw);
             self.texture_library_demo_input(&mut raw);
             self.portal_drop_demo_input(&mut raw);
             self.give_demo_input(&mut raw, vp, (w, h));

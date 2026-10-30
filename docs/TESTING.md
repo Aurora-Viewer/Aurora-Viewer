@@ -4335,6 +4335,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
+| `AURORA_DEMO_LOCAL_APPEARANCES=1\|menu\|reveal\|confirm\|remove\|cancel` | Applied-local-appearance warning, highlight toggle and confirmed removal |
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
@@ -4681,6 +4682,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   follow the same demo object: active GPU texture/material, then restoration
   or detection of the supporting prim. They require `AURORA_DEMO_ACTIONS=1`.
   The traces also check that the server data received no local UUID.
+  Add `AURORA_DEMO_LOCAL_APPEARANCES=1|menu|reveal|confirm|remove|cancel`
+  to `local-material-applied` (or `local-texture-applied`) to hide the import,
+  People and Inventory windows and focus the preview object at frame 600,
+  then exercise the warning through real pointer events.
+  Capture frame 670 for the menu, 700 for the highlight/confirmation and 740
+  for removal/cancellation. The warning has a direct highlight toggle;
+  `reveal` switches it on at frame 680 and off at frame 850 without opening
+  the menu. Capture frames 700/800 while pulsing and 950 after switching off.
+  Highlight stays enabled until switched off and respects Reduce motion.
   `local` loads texture, material and mesh together through the same filter.
   `AURORA_DEMO_IMPORT_REGISTRY=<test file>` enables the persistence of the
   import scenarios to this isolated file. First launch `local-texture-applied`,
@@ -4690,6 +4700,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   the saved links must restore the GPU application. Without this
   variable, the synthetic scenarios do not fill the persistent library
   of the demo profile. The synthetic sources stay in `.scratch`.
+  Texture/material applications expire seven days after their last application,
+  independently per object/face. Reconnects, autosaves and source reloads do not
+  extend this deadline. Older registries receive seven days on first migration.
+  For an isolated expiry check, close the first process, set its saved
+  `appearance_expirations` deadlines to a past Unix timestamp, then run
+  `local-restored`: the source library stays, the warning disappears and the
+  original server appearance returns. A future deadline must restore normally;
+  a deadline reached while running must remove the application too. Never edit
+  the normal account's registry for this test. Local mesh bindings are unchanged.
   `animation-own` puts the preview at 0.75 s, paused, also on the demo
   avatar. The slider and the pose must stay fixed until Resume.
   `animation-custom` loads a local rigged Bento tail and its looping animation,
