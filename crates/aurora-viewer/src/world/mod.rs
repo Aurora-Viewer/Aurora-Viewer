@@ -2153,6 +2153,14 @@ impl World {
                 if self.set_main_region(handle) {
                     // no agent update before the new region completes the move
                     self.movement_complete = false;
+                    // LLViewerParcelMgr::onTeleportFinished: the new region's
+                    // parcel is awaited; the one left must not lend its rules
+                    // (flight, build, the bar's icons) in the meantime. The
+                    // session sends it after this event, never before.
+                    if self.parcel.take().is_some() {
+                        log::info!("agent parcel: cleared, region {handle:x} entered");
+                    }
+                    self.parcel_name.clear();
                 }
                 // back in a region left moments ago: its objects first, its
                 // simulator only sends what changed since
@@ -3193,6 +3201,20 @@ impl World {
                 None
             }
             NetEvent::AgentParcel(info) => {
+                // one line per parcel entered, or when its flight rule changes
+                let fly = info.flags & aurora_net::parcel_flags::ALLOW_FLY != 0;
+                if self
+                    .parcel
+                    .as_ref()
+                    .is_none_or(|p| p.local_id != info.local_id || (p.flags & aurora_net::parcel_flags::ALLOW_FLY != 0) != fly)
+                {
+                    log::info!(
+                        "agent parcel: local id {} in region {:x}, flight {}",
+                        info.local_id,
+                        self.main_region.unwrap_or(0),
+                        if fly { "allowed" } else { "forbidden" }
+                    );
+                }
                 self.parcel_name = info.name.clone();
                 if !info.is_group_owned {
                     self.social.want_name(info.owner_id);
