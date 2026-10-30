@@ -919,6 +919,7 @@ pub(super) fn parse_properties(m: &msgs::ObjectProperties) -> Vec<ObjectProps> {
             sale_price: b.sale_price,
             category: b.category,
             inventory_serial: b.inventory_serial,
+            folder_id: b.folder_id,
             name: field_str(&b.name),
             description: field_str(&b.description),
             touch_name: field_str(&b.touch_name),
