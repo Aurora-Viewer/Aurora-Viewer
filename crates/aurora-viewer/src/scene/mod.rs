@@ -3553,6 +3553,11 @@ impl Scene {
                 continue;
             }
             let mut rec = te_record_base(model, &tf);
+            // Linden plants cut at 0.5, not the 0.33 of other faces without a
+            // material (LLDrawPoolTree, setMinimumAlpha(0.5))
+            if plant.is_some() {
+                rec.params[3] = 0.5;
+            }
             // LLVOVolume: prims of the "light" material are fullbright
             if o.prim_material == LL_MCODE_LIGHT {
                 rec.flags[0] |= flags::FULLBRIGHT;
