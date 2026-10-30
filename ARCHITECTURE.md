@@ -1052,7 +1052,7 @@ General places sale before ownership permissions. Object keeps flags and vertica
 XYZ blocks with C/P/p buttons on the left and shape/mesh data on the right.
 Features exposes flexible and physics columns above light/projector and probe
 controls. `build/ui/legacy_texture.rs` follows `FSPanelFace` and
-`panel_fs_tools_texture.xml`: three visible Blinn-Phong/PBR/Media tabs, vertical
+`panel_fs_tools_texture.xml`: three visible PBR/Blinn-Phong/Media tabs, vertical
 classic maps or the PBR map/tint grid on the left, inline parameters on the right,
 then channel tabs above the Scale/Offset/Rotation columns. The shared compact tab
 strip preserves the theme at inspector density. Face repeats, sync, planar

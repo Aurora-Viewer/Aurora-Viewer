@@ -14,16 +14,28 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: 
         ui.horizontal(|ui| {
             let width = (ui.available_width() - 46.0).max(120.0);
             ui.allocate_ui_with_layout(vec2(width, 22.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                widgets::compact_tabs(
+                // Keep mode values shared with Aurora while presenting PBR first.
+                let mut tab = match tool.ui.tex_tab {
+                    0 => 1,
+                    1 => 0,
+                    _ => 2,
+                };
+                if widgets::compact_tabs(
                     ui,
                     p,
-                    &mut tool.ui.tex_tab,
+                    &mut tab,
                     &[
-                        (aurora_i18n::tr!("build-ui-texture-blinn-phong"), true),
                         ("PBR", true),
+                        (aurora_i18n::tr!("build-ui-texture-blinn-phong"), true),
                         (aurora_i18n::tr!("extra-media"), true),
                     ],
-                );
+                ) {
+                    tool.ui.tex_tab = match tab {
+                        0 => 1,
+                        1 => 0,
+                        _ => 2,
+                    };
+                }
             });
             copy_actions(ui, p, tool, world, env, &sel);
         });

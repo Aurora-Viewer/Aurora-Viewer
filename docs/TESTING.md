@@ -1244,7 +1244,7 @@ block ends with linked-part navigation, Link/Unlink and the ruler on one row;
 counters sit directly above the five tabs. General places sale before permissions.
 Object has flags and vertical XYZ/C/P/p blocks on the left, shape/mesh data on the
 right. Features exposes its flexible/physics columns and light/probe controls
-without folding cards. Texture always exposes Blinn-Phong, PBR and Media as
+without folding cards. Texture always exposes PBR, Blinn-Phong and Media as
 three adjacent buttons, including with no editable faces. Blinn-Phong shows its
 three maps vertically with tints beside them and surface parameters on the right.
 PBR shows material/base color, normal/emissive and ORM rows, tint swatches and live

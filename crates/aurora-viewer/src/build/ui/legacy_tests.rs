@@ -308,8 +308,8 @@ fn legacy_texture_exposes_material_tabs_vertical_maps_and_three_uv_columns() {
     }
     let (_, texts) = inspector.show(vec![]);
     let modes = [
-        aurora_i18n::tr!("build-ui-texture-blinn-phong"),
         "PBR",
+        aurora_i18n::tr!("build-ui-texture-blinn-phong"),
         aurora_i18n::tr!("extra-media"),
     ]
     .map(|label| texts.iter().find(|(text, _)| text == label).unwrap().1);
