@@ -49,6 +49,7 @@ pub struct Preview {
     published: HashMap<usize, (Uuid, u32)>,
     retired: Vec<(Uuid, u32)>,
     wanted: HashSet<Uuid>,
+    sources: HashMap<Uuid, crate::scene::textures::PreviewRevision>,
     held: HashSet<Uuid>,
     original: HashSet<Uuid>,
     active: bool,
@@ -75,6 +76,7 @@ impl Preview {
         self.built = None;
         self.active = false;
         self.wanted.clear();
+        self.sources.clear();
         self.requested.clear();
         self.failed.clear();
         world.preview_bakes(HashMap::new());
@@ -155,6 +157,7 @@ impl Preview {
             }
         }
         let mut sources = HashMap::new();
+        let mut revisions = HashMap::new();
         let mut available = true;
         self.wanted.clear();
         for texture in values
@@ -175,10 +178,19 @@ impl Preview {
             scene.textures.note_usage(&texture, f32::MAX);
             self.wanted.insert(texture);
             let source = scene.textures.preview_source(&texture);
+            if source.local.is_some() {
+                revisions.insert(texture, source.revision());
+            }
             if source.decoded.is_none_or(|level| level != 0) && !source.procedural {
                 available = false;
             }
             sources.insert(texture, source);
+        }
+        // LLLocalBitmap::updateUserLayers rebakes when a watched file changes.
+        // A local ID stays stable; its shared pixel revision changes on upload.
+        if self.sources != revisions {
+            self.sources = revisions;
+            self.invalidate();
         }
         if !available
             || self.receiver.is_some()
@@ -400,4 +412,56 @@ fn prepare(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_tattoo_reload_invalidates_the_bake_and_cancel_restores_server_appearance() {
+        let (mut world, mut state, _) = super::super::tests::fixture(14);
+        let id = Uuid::new_v4();
+        world.local_assets.insert(id, ("tattoo.png".into(), false));
+        assert!(state.set_texture(&world, 26, id));
+        for item in world.inventory.items.values().filter(|item| matches!(item.asset_type, 5 | 13)) {
+            let bytes = crate::world::inventory::wearable::create((item.flags & 0xff) as u8, &item.name, world.agent_id);
+            if let Ok(value) = bytes.and_then(|bytes| Wearable::parse(&bytes).map_err(|error| error.to_string())) {
+                state.preview.cache(item.id, item.asset_id, value);
+            }
+        }
+        let mut scene = Scene::new(
+            std::env::temp_dir().join(format!("aurora-local-tattoo-{}", Uuid::new_v4())),
+            world.avatar_lib.clone(),
+        );
+        scene.textures.register_local(id, 0);
+        let image = |color: [u8; 4]| {
+            Arc::new(aurora_render::preview::Image {
+                size: [1, 1],
+                rgba: color.to_vec().into(),
+            })
+        };
+        scene.textures.set_local_pixels(id, image([255, 0, 0, 160]));
+        let draft = state.draft.as_ref().expect("draft");
+        state.preview.update(&world, &mut scene, draft);
+        assert_eq!(state.preview.sources.len(), 1, "local map participates in the real bake inputs");
+        let generation = state.preview.generation.load(Ordering::Relaxed);
+        state.preview.update(&world, &mut scene, draft);
+        assert_eq!(
+            state.preview.generation.load(Ordering::Relaxed),
+            generation,
+            "unchanged pixels do not rebake every frame"
+        );
+        scene.textures.set_local_pixels(id, image([0, 255, 0, 160]));
+        state.preview.update(&world, &mut scene, draft);
+        assert!(
+            state.preview.generation.load(Ordering::Relaxed) > generation,
+            "a file reload invalidates the bake without changing its ID"
+        );
+        state.close(&mut world);
+        assert!(state.preview.sources.is_empty());
+        assert!(state.preview.wanted.is_empty());
+        assert!(!state.preview.active);
+        assert!(state.draft.is_none());
+    }
 }
