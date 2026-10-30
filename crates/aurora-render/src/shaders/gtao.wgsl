@@ -520,8 +520,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         // slopes
         projected_length = mix(projected_length, 1.0, 0.05);
         // line 27: the visible arc between the two horizons, cosine weighted
-        let h0 = -fast_acos(horizon1);
-        let h1 = fast_acos(horizon0);
+        // (XeGTAO's clamp: fast_acos is approximate, and the arc must stay
+        // within the hemisphere around the normal)
+        let h0 = nn + clamp(-fast_acos(horizon1) - nn, -PI_HALF, PI_HALF);
+        let h1 = nn + clamp(fast_acos(horizon0) - nn, -PI_HALF, PI_HALF);
         let iarc0 = (cos_norm + 2.0 * h0 * sin(nn) - cos(2.0 * h0 - nn)) / 4.0;
         let iarc1 = (cos_norm + 2.0 * h1 * sin(nn) - cos(2.0 * h1 - nn)) / 4.0;
         visibility += projected_length * (iarc0 + iarc1);
