@@ -741,10 +741,10 @@ mod tests {
         let t = days_from_civil(2024, 4, 2) * 86_400 + 14 * 3600 + 42 * 60 + 28;
         assert_eq!(
             acquired_date(t),
-            if aurora_i18n::language() == "fr" {
-                "mar. 02 avr. 2024 07:42:28"
-            } else {
-                "Tue 02 Apr 2024 07:42:28"
+            match aurora_i18n::language() {
+                "fr" => "mar. 02 avr. 2024 07:42:28",
+                "pt-BR" => "ter 02 abr 2024 07:42:28",
+                _ => "Tue 02 Apr 2024 07:42:28",
             }
         );
         assert_eq!(acquired_date(0), aurora_i18n::tr!("status-unknown"));
