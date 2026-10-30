@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+pub mod area_search;
 pub mod backup;
 mod hover_height;
 pub mod stream_list;
@@ -401,6 +402,7 @@ pub struct Settings {
     /// (Preferences › Language and updates).
     pub update_channel: aurora_updater::feed::Channel,
     pub ignored_update: String,
+    pub area_search: area_search::AreaSearch,
     pub crash_reports: CrashReports,
     /// Firestorm Language: default follows the OS.
     pub language: String,
@@ -1571,6 +1573,7 @@ impl Default for Settings {
             update_mode: crate::updater::Mode::Ask,
             update_channel: aurora_updater::feed::Channel::Stable,
             ignored_update: String::new(),
+            area_search: Default::default(),
             crash_reports: CrashReports::Ask,
             language: "default".into(),
             language_is_public: true,

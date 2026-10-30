@@ -130,6 +130,7 @@ pub(super) fn label(world: &World, want_names: &mut HashSet<Uuid>, url: &str, li
         AppLink::Blocked(Blocked::WearFolder) => aurora_i18n::tr!("ui-chat-applink-wear-label").to_owned(),
         // Human-requested fallback: an unsupported URI has no destination
         // name to resolve. Keep the actual address in the copy-link menu.
+        AppLink::AreaSearch(_) => aurora_i18n::tr!("toolbar-command-area-search").to_owned(),
         AppLink::Unsupported => aurora_i18n::tr!("ui-chat-applink-unsupported-label").to_owned(),
         _ => unescape(url),
     };
@@ -162,7 +163,7 @@ pub(super) fn tooltip(link: &AppLink) -> &'static str {
         AppLink::Event(_) => aurora_i18n::tr!("ui-chat-applink-event-tip"),
         AppLink::WorldMap { .. } => aurora_i18n::tr!("ui-chat-applink-map-tip"),
         AppLink::Chat { .. } => aurora_i18n::tr!("ui-chat-applink-chat-tip"),
-        AppLink::Search { .. } => aurora_i18n::tr!("ui-chat-applink-search-tip"),
+        AppLink::Search { .. } | AppLink::AreaSearch(_) => aurora_i18n::tr!("ui-chat-applink-search-tip"),
         AppLink::Blocked(_) => aurora_i18n::tr!("ui-chat-applink-blocked-tip"),
         AppLink::Unsupported => aurora_i18n::tr!("ui-chat-applink-unsupported-tip"),
     }

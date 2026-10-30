@@ -139,7 +139,7 @@ area-search-refresh = Actualiser
 area-search-parcel = Parcelle actuelle uniquement
 area-search-children = Inclure les prims liés
 area-search-mine = Mes objets
-area-search-filters = Champs de recherche et filtres
+area-search-filters = Filtres
 area-search-sale = À vendre
 area-search-physical = Physique
 area-search-phantom = Fantôme
@@ -148,7 +148,7 @@ area-search-distance = Distance maximale
 area-search-reset = Réinitialiser les filtres
 area-search-count = { $shown } / { $total } objets · { $pending } en attente de détails
 area-search-parcel-pending = En attente des limites de la parcelle actuelle…
-area-search-scope = Seuls les objets reçus par le viewer sont listés. Les pièces jointes sont exclues.
+area-search-scope = Seuls les objets reçus par le visualiseur sont listés.
 area-search-range = Distance
 area-search-price = Prix
 area-search-inspect = Inspecter
@@ -12555,3 +12555,50 @@ keybinds-lens-zoom-out = Élargir l’angle de vue
 keybinds-lens-zoom-default = Réinitialiser l’angle de vue
 inventory-hover-pictures = Afficher les images au survol
 inventory-hover-pictures-help = Affiche les photos et les vignettes des objets ou dossiers après un court survol.
+
+area-search-group = Groupe
+area-search-last-owner = Dernier propriétaire
+area-search-land-impact = Impact sur le terrain
+area-search-prim-count = Nombre de primitives
+
+area-search-search = Rechercher
+area-search-columns = Colonnes
+area-search-regex = Utiliser les expressions régulières
+area-search-regex-error = Expression régulière : { $error }
+
+area-search-required = Ne lister que les objets qui sont
+area-search-excluded = Exclure les objets qui sont
+area-search-ranges = Distance et prix de vente
+area-search-attachment = Pièces jointes
+area-search-media = Média partagé
+area-search-copy-perm = Copie
+area-search-modify-perm = Modification
+area-search-transfer-perm = Transfert
+area-search-probes = Sondes de réflexion
+area-search-child-prim = Prims enfants
+area-search-neighbor-regions = Dans les régions voisines
+area-search-distance-range = Distance
+area-search-min = Min
+area-search-max = Max
+area-search-click-action = Action au clic de souris
+area-search-click-unrestricted = Sans restriction
+area-search-click-any = Toute action
+area-search-click-pay = Payer
+area-search-click-open = Ouvrir
+area-search-click-play = Lire
+area-search-click-media = Ouvrir le média
+area-search-save-defaults = Enregistrer par défaut
+area-search-copy-link = Copier le lien
+area-search-reset-columns = Réinitialiser les colonnes
+
+area-search-regex-limit = Limite de recherche dépassée. Simplifiez l'expression.
+
+area-search-reset-all-tip = Réinitialiser toute la recherche.
+area-search-reset-search-tip = Effacer les champs de recherche et les expressions régulières.
+area-search-reset-options-tip = Rétablir les options de filtrage d’origine.
+area-search-reset-columns-tip = Rétablir les colonnes par défaut.
+
+area-search-range-options = Plages
+area-search-reset-ranges-tip = Rétablir les plages de distance et de prix par défaut.
+
+area-search-results = Résultats
