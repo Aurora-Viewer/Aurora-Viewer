@@ -53,6 +53,9 @@ pub struct Selection {
     /// The text of the lines its ends are in, as laid out when they were
     /// set (a partly selected line is copied from it).
     texts: HashMap<u64, String>,
+    /// Set by a double click: the copy is the word alone, never the line's
+    /// "[time] Name: " prefix, even for a word at the start of its line.
+    word: bool,
 }
 
 impl Selection {
@@ -74,6 +77,7 @@ impl Selection {
 
     /// Start a selection at a point (a press on the lines).
     pub fn start_at(&mut self, p: Point, row_text: &str) {
+        self.word = false;
         self.texts.clear();
         self.texts.insert(p.seq, row_text.to_owned());
         self.anchor = Some(p);
@@ -90,6 +94,7 @@ impl Selection {
 
     /// Characters `range` of one line (a double click on a word).
     pub fn select_in_row(&mut self, seq: u64, range: Range<usize>, row_text: &str) {
+        self.word = true;
         self.texts.clear();
         self.texts.insert(seq, row_text.to_owned());
         self.anchor = Some(Point { seq, at: range.start });
@@ -98,6 +103,7 @@ impl Selection {
 
     /// Every line, from the first to the last one shown.
     pub fn select_all(&mut self, first: u64, last: u64) {
+        self.word = false;
         self.texts.clear();
         self.anchor = Some(Point::start(first));
         self.head = Some(Point::end(last));
@@ -129,7 +135,7 @@ impl Selection {
             let chars = text.chars().count();
             let (from, to) = (range.start.min(chars), range.end.min(chars));
             let part: String = text.chars().skip(from).take(to - from).collect();
-            if from == 0 {
+            if from == 0 && !self.word {
                 out.push(format!("{prefix}{part}"));
             } else if !part.is_empty() {
                 out.push(part);
