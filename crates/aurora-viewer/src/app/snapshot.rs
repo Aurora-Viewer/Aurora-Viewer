@@ -275,6 +275,7 @@ struct DemoViewfinder {
     menu: bool,
     help: bool,
     drawer: bool,
+    light: bool,
     focus_mode: Option<crate::dof::PhotoFocus>,
     point: bool,
     focus: bool,
@@ -1978,12 +1979,13 @@ LUT_3D_SIZE {n}
                 self.world.photo_isolation.set_picking(false);
             } else if v.preset_form.picking {
                 v.preset_form.picking = false;
-            } else if v.menu || v.help || v.drawer || v.isolate || v.presets {
+            } else if v.menu || v.help || v.drawer || v.isolate || v.presets || v.light {
                 v.menu = false;
                 v.help = false;
                 v.drawer = false;
                 v.isolate = false;
                 v.presets = false;
+                v.light = false;
             } else if self.camera.free().is_some() {
                 self.snapshots.ui.free.on = false;
                 self.photo_free_camera();
@@ -2258,6 +2260,7 @@ LUT_3D_SIZE {n}
                     menu: has("menu"),
                     help: has("help"),
                     drawer: has("drawer"),
+                    light: has("light"),
                     focus_mode: if has("mf") {
                         Some(crate::dof::PhotoFocus::Manual)
                     } else if has("afc") {
@@ -2410,7 +2413,8 @@ LUT_3D_SIZE {n}
                 vf.menu = v.menu;
                 vf.help = v.help;
                 vf.drawer = v.drawer;
-                vf.hinted = v.menu || v.help || v.drawer || vf.looks;
+                vf.light = v.light;
+                vf.hinted = v.menu || v.help || v.drawer || vf.looks || v.light;
                 if v.poser && self.ik_editor.toggle_poser() {
                     crate::ui::widgets::open_floater(&self.egui_ctx, "poser", &mut self.ik_editor.open);
                 }

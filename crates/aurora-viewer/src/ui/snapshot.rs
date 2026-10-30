@@ -309,6 +309,17 @@ impl SnapshotUi {
         }
     }
 
+    /// The viewfinder's light panel: the Light section alone, the dock's
+    /// shortcut to the drawer's section of the same name.
+    pub fn light_only(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Vec<Action>) {
+        ui.spacing_mut().item_spacing.y = 6.0;
+        let before = self.light;
+        light_rows(ui, p, &mut self.light, view.exposure, view.hdr, &view.env, out);
+        if self.light != before && !out.contains(&Action::Changed) {
+            out.push(Action::Changed);
+        }
+    }
+
     /// The shutter (or the destination's button), the progress or the last
     /// outcome, and the latest photos.
     fn actions(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Vec<Action>) {
