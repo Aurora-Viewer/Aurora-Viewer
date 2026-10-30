@@ -3,7 +3,7 @@
 //! avatars with above / below markers, the camera cone, chat rings,
 //! tracking beacon and cardinal letters; wheel zoom, drag pan with
 //! auto-centering, north-up or camera-up rotation, double-click teleport
-//! and Firestorm's context menu, plus a position lock of our own.
+//! and the Legacy Viewer's context menu, plus a position lock of our own.
 //!
 //! Ported from Firestorm's llnetmap.cpp, llfloatermap.cpp and
 //! LLViewerObjectList::renderObjectsForMap (originally LGPL 2.1, Linden Research, Inc.).
