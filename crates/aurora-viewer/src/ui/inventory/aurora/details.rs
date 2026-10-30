@@ -162,10 +162,7 @@ fn picture(
             let kind = inv.folders.get(&id).map_or(-1, |f| f.info.type_default);
             (tree::folder_icon(kind, false), p.muted_dim)
         },
-        |it| {
-            let color = item_icon_color(it.asset_type, it.inv_type, p);
-            (item_icon(it.asset_type, it.inv_type, it.flags), color)
-        },
+        |it| inventory_item_icon(inv, it, p),
     );
     let size = (rect.height() * 0.42).clamp(20.0, 44.0);
     if let Some(texture) = icons.get(icon) {

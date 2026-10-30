@@ -17570,7 +17570,13 @@ impl ApplicationHandler for App {
                         self.inventory_ui.thumbnail.photo_open = matches!(view.as_str(), "image-photo" | "image-photo-save");
                     } else if !matches!(
                         view.as_str(),
-                        "keyboard" | "keyboard-fold" | "aurora-keyboard" | "aurora-keyboard-fold" | "aurora-keyboard-wide"
+                        "keyboard"
+                            | "keyboard-fold"
+                            | "aurora-keyboard"
+                            | "aurora-keyboard-fold"
+                            | "aurora-keyboard-wide"
+                            | "link-icons"
+                            | "aurora-link-icons"
                     ) {
                         self.inventory_ui.demo_menu = Some(id);
                     }

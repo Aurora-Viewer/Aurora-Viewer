@@ -200,6 +200,60 @@ pub fn seed(inv: &mut Inventory, agent: Uuid) {
         owner_mask: 0x7fffffff,
         ..Default::default()
     }]);
+    if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "link-icons" | "aurora-link-icons")) {
+        for (kind, &name) in super::super::appearance::wearables().iter().enumerate() {
+            inv.add_items(vec![InvItem {
+                id: Uuid::from_u128(82_000 + kind as u128),
+                parent: personal,
+                name: name.into(),
+                asset_type: if kind < 4 { 13 } else { 5 },
+                inv_type: 18,
+                flags: kind as u32,
+                owner: agent,
+                ..Default::default()
+            }]);
+        }
+        let mut targets: Vec<_> = inv
+            .items
+            .values()
+            .filter(|it| it.parent == personal && !matches!(it.asset_type, 24 | 25))
+            .cloned()
+            .collect();
+        targets.sort_by_key(|it| it.id);
+        let mut links: Vec<_> = targets
+            .into_iter()
+            .enumerate()
+            .map(|(n, it)| InvItem {
+                id: Uuid::from_u128(83_000 + n as u128),
+                parent: personal,
+                name: aurora_i18n::tr!("inventory-kind-link-to", kind = &it.name),
+                asset_type: 24,
+                asset_id: it.id,
+                inv_type: it.inv_type,
+                owner: agent,
+                ..Default::default()
+            })
+            .collect();
+        links.push(InvItem {
+            id: Uuid::from_u128(84_000),
+            parent: personal,
+            name: aurora_i18n::tr!("inventory-kind-folder-link").into(),
+            asset_type: 25,
+            asset_id: Uuid::from_u128(8001),
+            owner: agent,
+            ..Default::default()
+        });
+        links.push(InvItem {
+            id: Uuid::from_u128(84_001),
+            parent: personal,
+            name: aurora_i18n::tr!("inventory-kind-broken-link").into(),
+            asset_type: 24,
+            asset_id: Uuid::from_u128(84_999),
+            owner: agent,
+            ..Default::default()
+        });
+        inv.add_items(links);
+    }
     inv.queue.clear();
     inv.sort_all();
 }
@@ -447,6 +501,7 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         "nocopy" => 8109,
         "notransfer" => 8110,
         "link" => 8113,
+        "link-icons" | "aurora-link-icons" => 83_000,
         _ => return None,
     }))
 }
