@@ -4332,7 +4332,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|channel\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, commands to worn scripts, completion, the chat bar's list of gestures and menu access |
-| `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
+| `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the empty Batch / Permissions tab |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
 | `AURORA_DEMO_LOCAL_APPEARANCES=1\|menu\|reveal\|confirm\|remove\|cancel` | Applied-local-appearance warning, highlight toggle and confirmed removal |
@@ -4548,27 +4548,51 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   without passes, `own`: the avatar's; both show a notice saying why instead
   of the question. Capture at frame 620. `AURORA_DEMO_RCLICK="x,y"` on the
   ground shows the entry in the menu.
-- **`AURORA_DEMO_IMPORTS=launcher|settings`** opens the compact horizontal
-  import chooser or its saved-defaults window, without loading fixtures or
-  opening a disk dialog. The configurable Import shortcut (Ctrl+U by default)
-  toggles the chooser; a type button opens the filtered picker when its list
-  is empty, otherwise the existing inspector. Clicking the displayed type
-  closes its inspector. The icon bar stays open. Check that another type can be clicked while
-  an inspector is displayed, even when a narrow viewport causes overlap.
-  Build › Import performs the same toggle; Contents has no Import entry.
-  The glass variant has eight independent frosted buttons with clear gaps,
-  no group background, and a plain close cross at the right. A fresh profile opens
-  the strip centered below the top bars, retaining its top-midpoint offset
-  while the viewer is resized. Move it, close/reopen and restart: personalized
-  placement must take priority over this default.
-  The Settings icon toggles the permissions/payment window, closing it on the
-  second click even if its title bar was minimized.
-- **`AURORA_DEMO_IMPORTS=inspectors`** opens the chooser with fixtures already
-  loaded for every type, including local previews. A type button therefore
-  opens its inspector directly without a disk dialog, as in the normal viewer.
-  Check each dedicated window and its filtered file list, then Multiple's
-  complete tabs. Permissions belong only to Settings. First-opened windows
-  have the same top-left position; moved windows retain their placement.
+- **`AURORA_DEMO_IMPORTS=launcher|settings`** opens the empty unified import
+  window or its Permissions tab. Ctrl+U and Build > Import open the same
+  window directly, without a separate type strip or an automatic disk dialog.
+- **`AURORA_DEMO_IMPORTS=unified`** loads a mixed queue with a mesh first,
+  followed by a texture, sound, BVH animation and material. The first row is
+  selected automatically. Click each queue row: the right inspector follows
+  the selection in Files, below the destination options. The right pane has
+  Files / Folder preview / Permissions tabs; switch among them without losing the active
+  file or mesh section. Folder preview shows the resulting inventory hierarchy
+  with optional path edits; Permissions contains the per-type rights and payment
+  preference, without opening another window. Mesh preview,
+  LOD, avatar and physics controls retain their established structure.
+  Toggle the type icons: they change visibility, preserving upload checkboxes.
+  Use default folders starts checked and remembers the last choice. Uncheck it,
+  choose an inventory root and mirror/type/single-folder routing. These options
+  are shared by Files and Folder preview; switching tabs must never change
+  destinations. With single-folder routing, imported files and their mesh/material textures
+  share the source wrapper when included, or the chosen destination when omitted. Recheck defaults to restore per-type targets;
+  uncheck again to restore edited paths. Price and import actions stay pinned at
+  the bottom of Files and Folder preview and are absent from Permissions.
+  The larger type icons wrap in a narrow column. Each queue row aligns its
+  checkbox, type icon and filename on one line, without a repeated type label or
+  Ready subtitle; hover retains its path/status, and non-ready rows retain their
+  progress/error indicator. The trash icon beside the queue count removes all files
+  in the current upload/local mode, including hidden and unchecked rows; local
+  previews stay when clearing uploads. It is disabled while loading or busy.
+  Neither upload nor local queues expose sort/reverse controls.
+  Check Add files, Add folder, insertion order through filter changes, removal and
+  return to the mesh without losing its section/options. Local previews use
+  the eye toggle in this same window; the Permissions tab retains the rights settings.
+  In local mode, check several files (including a hidden type) and choose Add to
+  upload (count). Only checked, ready local files are copied; the view switches to
+  Files on the first upload draft and reveals its selected types. Original local
+  previews stay applied and available through the eye toggle. Material edits and
+  individual materials from the same glTF, mesh LOD/physics options, names and
+  descriptions survive. A material using a local texture must upload its pixels as
+  a dependency, even when that texture is unchecked; server texture references
+  stay existing assets. Upload drafts have fresh IDs and independent mesh fee/job
+  state; staging sends nothing and spends nothing. The ordinary destination,
+  quote and paid confirmation flow follows. No selection, loading and busy states
+  disable the action; exceeding queue/input budgets creates no partial batch.
+  Empty the queue and complete an upload with its payment receipt visible:
+  the window keeps its size, and the controls below the queue stay reachable.
+- **`AURORA_DEMO_IMPORTS=inspectors`** loads every type, including local
+  previews, in the same window. Queue selection replaces the former type tabs.
 - **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|mesh-avatar|mesh-avatar-rigged|mesh-journal|permissions|animation|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
   writes files specific to this launch into `.scratch/import-demo/<uuid>/`
   then opens the chosen flow: RGBA image, PBR material, Collada cube,
@@ -4583,16 +4607,58 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   through `AURORA_DEMO_IMPORT_FILE`, check that toggling it changes the
   upload size between 1024 × 512 and 2048 × 1024 and updates the fee. Only
   the final power-of-two dimensions are shown, as in `LLFloaterImagePreview`.
-  Each type has a dedicated window with the file list at the left and only
-  its relevant metadata, preview and controls at the right. There
-  are no other type tabs in these windows. Sound uses a shorter window.
-  `bulk` is labelled Multiple and retains every type tab and the existing
-  mixed import flow. Switching its tabs keeps the
-  same window and never reopens the picker.
+  Every scenario uses the same window and queue. Clicking a row in the left queue opens Files, including the already active
+  item from Folder preview or Permissions; checkbox/filter changes retain the tab. Files shows its
+  asset inspector; Folder preview shows that file's destination and can edit its path.
+  The left column’s **Add folder** action scans supported
+  files recursively on a worker. The selected source folder is retained in
+  the editable inventory preview; unsupported files, empty directories and
+  links/reparse points are skipped. Existing batch limits remain 256 source
+  files per selection, 512 drafts and 1 GiB of retained non-mesh data; scans
+  also stop explicitly beyond 100,000 entries or 64 directory levels.
+  **`AURORA_DEMO_IMPORTS=folders|folders-lods|folders-type|folders-flat|folders-upload`** supplies a
+  nested Creator Pack with equal Fabric names in Coat and Hat, a mesh, an
+  animation and a sound. Recognized configured LOD/physics companions are
+  attached to the mesh and omitted from the queue and preview; invalid or
+  unmatched files stay visible. `folders-lods` selects the mesh in Files;
+  `folders-type` starts grouped by asset type inside Creator Pack, retaining
+  the imported folder's name as in mirror mode. Different imported root names keep
+  their own type folders; individually added files group directly by type.
+  `folders-flat` places all imported contents directly inside Creator Pack.
+  Adding a folder keeps the currently selected tab. Under Destination, Include
+  source folder defaults on and remembers its last checkbox state across restarts.
+  Toggle it in Files and Folder preview for all three layouts; off removes only
+  the source wrapper. Rename it beside the checkbox and apply: the inventory plan
+  changes, the PC directory does not, and manual inner paths survive. For multiple
+  source names, select which wrapper to rename; loose files have no wrapper.
+  `folders-upload` exercises
+  confirmation, folder acknowledgements, mesh requoting and the existing paid
+  queue entirely offline. The other modes never create or upload
+  automatically. Check mirror/type/single-destination arrangements, selection
+  in the left queue, and selecting a folder then editing its whole
+  relative path. Folder preview has no sorting or All/None controls and no
+  per-file checkboxes. Each file row shows its destination beside its name,
+  with a relative-path field and Apply action; defaults show real inventory
+  paths while editing is locked. Test equal names with independent unfinished
+  edits, invalid paths, an empty path targeting the chosen root, and busy-state
+  locking. Applying one row must not select it for upload or change another row.
+  The former active-file editor below the list is removed. Empty relative
+  paths target the common destination directly. The preview includes actual
+  inventory ancestors above proposed children; per-type default mode shows
+  each real target. Calculate mesh fees, then confirm upload: missing folders
+  are created automatically using ordinary inventory-name normalization, parent
+  first. No folder is created during inspection or fee calculation. After the
+  acknowledgements, meshes refresh their quotes against actual destinations;
+  a higher price stops before paid transfer and requires a new confirmation.
+  Cancellation keeps acknowledged folders and stops subsequent creations;
+  failures do not start uploads. On the grid (human only), verify nested inventory
+  destinations, material/mesh texture destinations, protected folders and
+  failure/cancel/retry before confirming the paid operation.
   `material-cube` / `material-aurora` select the additional preview shapes.
-  `material-maps` shows four unframed rows in one column below a compact preview,
-  95.2-point square thumbnails (1.7× the previous size) preserving original proportions, left-aligned titles
-  and texture names, right-aligned commands and common parameter rows.
+  `material-maps` shows its four map editors beside the preview in a 2 × 2 grid;
+  a narrow detail pane uses unframed rows below a compact preview, with
+  95.2-point thumbnails preserving original proportions. Check the left-aligned
+  titles and texture names, right-aligned commands and common parameter rows.
   Metallic / Roughness use only numeric fields; Normal appears only in
   its row title. The narrower vertical inspector uses a 176 × 176 canvas;
   `material-loading` keeps that same canvas
@@ -4621,23 +4687,31 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   (`_01`–`_03`), the short tail and a three-asset price. Split length is limited
   to the grid's asset maximum; long WAV sources enable splitting on load.
   `animation` shows aligned settings beside its preview, with loop units
-  labelled and easing fields aligned. The batch includes a mesh and needs its quote
-  before confirmation. Ctrl+U toggles the compact chooser; the file picker
-  opens after clicking a type. Rebind it in Preferences › Shortcuts.
+  labelled and easing fields aligned. A mixed queue containing meshes needs their
+  quotes before confirmation. Ctrl+U toggles the unified import window; the file picker
+  opens only after Add files. Rebind it in Preferences › Shortcuts.
   The quote and the uploads stay entirely inside the demo server.
-  `destination` opens the folder choice with the "Textures" filter;
-  typing another name must filter without changing the destination or
-  closing the list. Choosing a result closes the list and applies that folder.
-  Each type has its own default size, with narrower file lists for Material
-  and Animation and closer checkbox / name spacing. Name, Description and
-  Destination use the same three rows above every asset panel, including
-  meshes; Upload no longer repeats them. Preview and LOD cards are side
+  In `destination`, uncheck Use default folders to open the inventory destination
+  tree, with the current path expanded. Toggle a parent caret: only its children fold/unfold; the selected
+  destination and popup stay unchanged. Search for a nested folder: its ancestors
+  remain visible, and duplicate names keep their own paths/UUIDs. Typing must
+  not change the destination or close the popup. Choosing a name applies that
+  folder and closes the popup. Trash, protected/library/outfit/inbox subtrees
+  remain unavailable. Check that inventory renames, protection changes and sort
+  preferences refresh the tree. In Folder preview, folding the result must
+  preserve upload selection and relative paths.
+  All types retain one window geometry and share the visible queue.
+  Destination options stay above the content in Files and Folder preview.
+  Mesh metadata and tabs keep their existing layout. Preview and LOD cards are side
   by side, with gesture hints directly under the preview and compact tools.
   High is shown by default; clicking anywhere within a LOD card selects
   its preview, including its fields and counters. File / Browse share
   a row, generated criteria / targets are below; results and retained
   percentage are right-aligned, and triangles are spelled out.
   `mesh-normals` shows 105° without a stray character or clipping.
+  In `mesh-physics`, open the collision-source list: File is first, followed by
+  the other existing sources. The current choice and the initial convex-only
+  default stay unchanged; File exposes Browse for a local physics mesh.
   `bulk-mesh-denied` simulates a connected account without mesh upload
   rights, with a mesh and a texture selected. The footer reports the
   mesh refusal; deselecting the mesh allows the texture upload.

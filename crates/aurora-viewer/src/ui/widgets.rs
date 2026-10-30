@@ -1324,14 +1324,6 @@ fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
     title_button_sized(ui, p, icon, Vec2::splat(16.0))
 }
 
-/// The standard plain close glyph, with a toolbar-sized hit target.
-pub(crate) fn close_button(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
-    let label = aurora_i18n::tr!("common-close");
-    let response = title_button_sized(ui, p, "x", Vec2::new(24.0, 36.0));
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
-    response.on_hover_text(label).on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
 fn title_button_sized(ui: &mut egui::Ui, p: &Palette, icon: &str, size: Vec2) -> egui::Response {
     let (_, resp) = ui.allocate_exact_size(size, Sense::click());
     paint_title_button(ui, p, icon, &resp);
@@ -1940,8 +1932,17 @@ pub fn icon_toggle(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bo
     small_icon_button(ui, p, icon, tip, true, on)
 }
 
+/// Flat icon toggle with a larger glyph and hit target, in logical points.
+pub fn icon_toggle_sized(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool, side: f32) -> bool {
+    sized_icon_button(ui, p, icon, tip, true, on, side)
+}
+
 fn small_icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: bool, on: bool) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(20.0, 20.0), if enabled { Sense::click() } else { Sense::hover() });
+    sized_icon_button(ui, p, icon, tip, enabled, on, 20.0)
+}
+
+fn sized_icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: bool, on: bool, side: f32) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(side), if enabled { Sense::click() } else { Sense::hover() });
     let fill = if on {
         p.violet
     } else if resp.hovered() && enabled {
@@ -1959,7 +1960,7 @@ fn small_icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enab
         Some(t) => {
             ui.painter().image(
                 t.id(),
-                egui::Rect::from_center_size(rect.center(), Vec2::splat(14.0)),
+                egui::Rect::from_center_size(rect.center(), Vec2::splat(side * 0.7)),
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                 col,
             );

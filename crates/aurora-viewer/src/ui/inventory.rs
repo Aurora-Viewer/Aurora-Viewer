@@ -1137,7 +1137,7 @@ fn folder_response(
     r
 }
 
-fn folder_name(inv: &Inventory, id: Uuid) -> String {
+pub(crate) fn folder_name(inv: &Inventory, id: Uuid) -> String {
     if id == inv.root {
         aurora_i18n::tr!("common-my-inventory").to_owned()
     } else if id == inv.lib_root {
