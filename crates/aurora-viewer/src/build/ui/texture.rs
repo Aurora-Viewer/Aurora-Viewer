@@ -1,5 +1,5 @@
 //! Texture tab (FSPanelFace, indra/newview/fspanelface.cpp and
-//! panel_fs_tools_texture.xml of Firestorm, originally LGPL 2.1): the PBR,
+//! panel_fs_tools_texture.xml of the Legacy Viewer, originally LGPL 2.1): the PBR,
 //! Blinn-Phong and Media sub-tabs of the selected faces, copy / paste of
 //! face parameters and the face options under them (repeats per meter,
 //! hide water, mapping, material sync).
@@ -491,7 +491,7 @@ fn material_asset(
 ) {
     ui.vertical(|ui| {
         ui.set_width(size);
-        ui.spacing_mut().item_spacing.y = 6.0;
+        ui.spacing_mut().item_spacing.y = if super::legacy::active(ui) { 0.0 } else { 6.0 };
         let loading = model.is_none() && asset.is_some();
         #[cfg(test)]
         ui.ctx()
@@ -532,7 +532,7 @@ fn material_asset(
             .data_mut(|d| d.insert_temp(egui::Id::unique(("material_preview", "PbrMaterial".to_string())), response.rect));
         let caption = aurora_i18n::tr!("build-ui-texture-material");
         ui.add_sized(
-            [size, 16.0],
+            [size, if super::legacy::active(ui) { 14.0 } else { 16.0 }],
             egui::Label::new(RichText::new(caption).size(super::common::SMALL).color(p.muted)).truncate(),
         );
         if response
@@ -561,14 +561,14 @@ fn material_map(
 ) {
     ui.vertical(|ui| {
         ui.set_width(size);
-        ui.spacing_mut().item_spacing.y = 6.0;
+        ui.spacing_mut().item_spacing.y = if super::legacy::active(ui) { 0.0 } else { 6.0 };
         // A material asset is glTF, not an image: only its maps enter the image loader.
         let response = swatch(ui, p, env.images, &mut tool.ui.wanted_images, id, "", size, mixed, enabled);
         #[cfg(test)]
         ui.ctx()
             .data_mut(|d| d.insert_temp(egui::Id::unique(("material_preview", format!("{target:?}"))), response.rect));
         ui.add_sized(
-            [size, 16.0],
+            [size, if super::legacy::active(ui) { 14.0 } else { 16.0 }],
             egui::Label::new(RichText::new(caption).size(super::common::SMALL).color(p.muted)).truncate(),
         )
         .on_hover_text(caption);
@@ -625,7 +625,8 @@ fn uv_controls(
                 (1, 75.0, aurora_i18n::tr!("build-ui-texture-offset")),
                 (2, 71.0, aurora_i18n::tr!("build-ui-texture-rotation")),
             ] {
-                ui.allocate_ui_with_layout(egui::vec2(width, 78.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                let height = if super::legacy::active(ui) { 60.0 } else { 78.0 };
+                ui.allocate_ui_with_layout(egui::vec2(width, height), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.label(RichText::new(title).size(super::common::SMALL).color(p.muted));
                     for (axis, name) in axes.iter().enumerate().take(if column == 2 { 1 } else { 2 }) {
                         let index = if column == 2 { 4 } else { column * 2 + axis };
@@ -691,26 +692,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
         )
     });
     if super::legacy::active(ui) {
-        ui.horizontal_top(|ui| {
-            material_asset(ui, p, tool, asset, asset_mixed, model, 76.0);
-            ui.vertical(|ui| {
-                for (channel, label) in [
-                    (0, aurora_i18n::tr!("common-all")),
-                    (1, aurora_i18n::tr!("common-color")),
-                    (3, "(O)RM"),
-                    (4, aurora_i18n::tr!("build-ui-texture-emissive")),
-                    (2, aurora_i18n::tr!("build-ui-texture-normal")),
-                ] {
-                    crate::ui::widgets::radio_value(ui, p, &mut tool.ui.pbr_channel, channel, RichText::new(label).size(11.0));
-                }
-                if ui
-                    .add_enabled(editable, egui::Button::new(aurora_i18n::tr!("common-edit")))
-                    .clicked()
-                {
-                    tool.ui.legacy_pbr_editor = true;
-                }
-            });
-        });
+        legacy_texture::pbr_surface(ui, p, tool, world, env, sel, &mat, asset, asset_mixed, model, editable);
     } else {
         let size = preview_size(ui, 3);
         egui::Grid::new("pbr_map_grid")
@@ -734,26 +716,8 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                 }
             });
     }
-    if super::legacy::active(ui) {
-        if tool.ui.legacy_pbr_editor {
-            let mut open = true;
-            crate::ui::widgets::Floater::new(
-                "legacy-build-pbr-editor",
-                aurora_i18n::tr!("build-ui-texture-material"),
-                egui::pos2(420.0, 160.0),
-                egui::vec2(350.0, 490.0),
-            )
-            .show(ui.ctx(), p, &mut open, |ui| {
-                super::common::typography(ui);
-                pbr_factors(ui, p, tool, world, env, sel, &mat, editable);
-            });
-            tool.ui.legacy_pbr_editor = open;
-        }
-    } else {
+    if !super::legacy::active(ui) {
         pbr_factors(ui, p, tool, world, env, sel, &mat, editable);
-    }
-    if super::legacy::active(ui) {
-        legacy_texture::mapping(ui, p, tool, world, sel);
     }
     ui.add_space(5.0);
     ui.scope(|ui| {
@@ -771,7 +735,9 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
             (aurora_i18n::tr!("build-ui-texture-emissive"), 4),
         ];
         let labels: Vec<(&str, bool)> = channels.iter().map(|(name, _)| (*name, true)).collect();
-        if !super::legacy::active(ui) {
+        if super::legacy::active(ui) {
+            crate::ui::widgets::compact_tabs(ui, p, &mut ch, &labels);
+        } else {
             tabs(ui, p, &mut ch, &labels);
         }
         tool.ui.pbr_channel = ch;
@@ -787,13 +753,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
         let mut e = Edit::default();
 
         let mut values = [nt.scale[0], nt.scale[1], nt.offset[0], nt.offset[1], rot];
-        e = e.or(if super::legacy::active(ui) {
-            legacy_texture::uv_controls(ui, p, &mut values, [mixed; 5], 5, editable, |ui| {
-                repeats_meter(ui, p, tool, world, sel)
-            })
-        } else {
-            uv_controls(ui, p, &mut values, [mixed; 5], 5, editable, ["U", "V"])
-        });
+        e = e.or(uv_controls(ui, p, &mut values, [mixed; 5], 5, editable, ["U", "V"]));
         nt.scale = [values[0], values[1]];
         nt.offset = [values[2], values[3]];
         rot = values[4];
@@ -1139,17 +1099,15 @@ fn bp_transforms(
         // UV of the diffuse / normal / specular maps
         ui.add_space(4.0);
         let mut ch = tool.ui.bp_channel;
-        if !super::legacy::active(ui) {
-            tabs(
-                ui,
-                p,
-                &mut ch,
-                &[
-                    (aurora_i18n::tr!("build-ui-texture-diffuse"), true),
-                    (aurora_i18n::tr!("build-ui-texture-normal"), true),
-                    (aurora_i18n::tr!("build-ui-texture-specular"), true),
-                ],
-            );
+        let labels = [
+            (aurora_i18n::tr!("build-ui-texture-diffuse"), true),
+            (aurora_i18n::tr!("build-ui-texture-normal"), true),
+            (aurora_i18n::tr!("build-ui-texture-specular"), true),
+        ];
+        if super::legacy::active(ui) {
+            crate::ui::widgets::compact_tabs(ui, p, &mut ch, &labels);
+        } else {
+            tabs(ui, p, &mut ch, &labels);
         }
         tool.ui.bp_channel = ch;
         let planar = sel.iter().all(|x| x.te.media_flags & TEM_TEX_GEN_MASK == TEX_GEN_PLANAR);
@@ -1183,13 +1141,8 @@ fn bp_transforms(
         let decimals = s.decimal_precision.min(7) as usize;
         let mut e = Edit::default();
 
-        e = e.or(if super::legacy::active(ui) {
-            legacy_texture::uv_controls(ui, p, &mut v, std::array::from_fn(mixed), decimals, editable, |ui| {
-                repeats_meter(ui, p, tool, world, sel)
-            })
-        } else {
-            uv_controls(ui, p, &mut v, std::array::from_fn(mixed), decimals, editable, ["H", "V"])
-        });
+        let axes = if super::legacy::active(ui) { ["U", "V"] } else { ["H", "V"] };
+        e = e.or(uv_controls(ui, p, &mut v, std::array::from_fn(mixed), decimals, editable, axes));
 
         if e.commit && v != before {
             // only the values that moved are written (non-tentative spinners)

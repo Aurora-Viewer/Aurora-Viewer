@@ -1051,10 +1051,13 @@ native spinners compact without changing Aurora or standalone object profiles.
 General places sale before ownership permissions. Object keeps flags and vertical
 XYZ blocks with C/P/p buttons on the left and shape/mesh data on the right.
 Features exposes flexible and physics columns above light/projector and probe
-controls. `build/ui/legacy_texture.rs` follows `panel_tools_texture.xml`: surface
-controls across the top, material/channel selection, one texture swatch and
-vertical UV rows. The UV writers, permission checks and simulator commands stay
-shared; Legacy PBR Edit opens the same factor controls in a native floater.
+controls. `build/ui/legacy_texture.rs` follows `FSPanelFace` and
+`panel_fs_tools_texture.xml`: three visible Blinn-Phong/PBR/Media tabs, vertical
+classic maps or the PBR map/tint grid on the left, inline parameters on the right,
+then channel tabs above the Scale/Offset/Rotation columns. The shared compact tab
+strip preserves the theme at inspector density. Face repeats, sync, planar
+alignment and mapping form the footer. UV writers, permission checks, pickers and
+simulator commands stay shared with Aurora.
 Contents keeps its three-column action strip. The fixed Legacy controls remain
 independent of the customized Aurora arrangement. Aurora's five editing sections share a full-width
 folding transform area and an editable footer. `build/layout.rs` owns the saved

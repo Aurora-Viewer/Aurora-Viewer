@@ -1239,16 +1239,20 @@ included, and a handle can be grabbed anywhere on its larger shape.
 `AURORA_DEMO_BUILD_STYLE=legacy` selects the Legacy tool strip and five tabs,
 independently of the saved preference. Use `AURORA_DEMO_BUILD=move,object:118`
 with `AURORA_DEMO_BUILD_TAB=general|object|features|texture:bp|texture:pbr|contents`.
-Compare with `floater_tools.xml` and `panel_tools_texture.xml`: the compact tool
+Compare with `floater_tools.xml` and `panel_fs_tools_texture.xml`: the compact tool
 block ends with linked-part navigation, Link/Unlink and the ruler on one row;
 counters sit directly above the five tabs. General places sale before permissions.
 Object has flags and vertical XYZ/C/P/p blocks on the left, shape/mesh data on the
 right. Features exposes its flexible/physics columns and light/probe controls
-without folding cards. Texture has a tint/transparency/glow row, model dropdown,
-channel radios, one swatch and vertical scale/repeats/rotation/offset fields;
-PBR Edit opens its native live factor window. Check every moved control, vector
-copy/paste, map channels, linked selection, ruler settings and the bottom collapse
-strip. At 330 by 620 the property panel scrolls while the tool block and tabs stay
+without folding cards. Texture always exposes Blinn-Phong, PBR and Media as
+three adjacent buttons, including with no editable faces. Blinn-Phong shows its
+three maps vertically with tints beside them and surface parameters on the right.
+PBR shows material/base color, normal/emissive and ORM rows, tint swatches and live
+inline factors. Channel tabs sit above the Scale/Offset/Rotation columns; repeats,
+sync, planar alignment, hide-water and mapping form the footer. Check mode and
+channel switching, all map pickers and tint transactions, alpha/material factors,
+vector copy/paste, linked selection, ruler settings and the bottom collapse strip.
+At 330 by 620 the property panel scrolls while the tool block and tabs stay
 in place.
 Switch Preferences > Aurora > Build tools between Aurora and Legacy while
 editing; the selection, properties and custom Aurora arrangement must survive.

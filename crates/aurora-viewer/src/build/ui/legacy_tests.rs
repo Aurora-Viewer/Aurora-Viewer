@@ -44,7 +44,7 @@ fn legacy_build_tabs_reuse_native_panels_and_ignore_hidden_aurora_sections() {
         (
             aurora_i18n::tr!("build-legacy-texture"),
             3,
-            aurora_i18n::tr!("build-legacy-textures"),
+            aurora_i18n::tr!("build-ui-texture-blinn-phong"),
         ),
         (aurora_i18n::tr!("build-compact-contents"), 4, aurora_i18n::tr!("common-new-script")),
         (aurora_i18n::tr!("build-compact-general"), 6, "Presentation test"),
@@ -300,53 +300,87 @@ fn legacy_general_places_sale_before_permissions_and_features_exposes_both_colum
 }
 
 #[test]
-fn legacy_texture_uses_a_single_channel_preview_and_vertical_full_width_uv_rows() {
+fn legacy_texture_exposes_material_tabs_vertical_maps_and_three_uv_columns() {
     let mut inspector = legacy();
     inspector.tool.tab = 3;
     for _ in 0..5 {
         inspector.show(vec![]);
     }
     let (_, texts) = inspector.show(vec![]);
-    let rows: Vec<_> = [
-        aurora_i18n::tr!("build-legacy-scale-horizontal"),
-        aurora_i18n::tr!("build-legacy-scale-vertical"),
-        aurora_i18n::tr!("build-ui-object-rotation-degrees"),
-        aurora_i18n::tr!("build-legacy-offset-horizontal"),
-        aurora_i18n::tr!("build-legacy-offset-vertical"),
+    let modes = [
+        aurora_i18n::tr!("build-ui-texture-blinn-phong"),
+        "PBR",
+        aurora_i18n::tr!("extra-media"),
     ]
-    .map(|label| texts.iter().find(|(text, _)| text == label).unwrap().1)
-    .into();
-    assert!(rows.windows(2).all(|pair| pair[0].bottom() <= pair[1].top() + 1.0));
-    assert!(rows.iter().all(|row| (row.left() - rows[0].left()).abs() < 1.0));
-    let preview = inspector
-        .ctx
-        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("material_preview", "Diffuse".to_string()))))
-        .unwrap();
-    assert!(
+    .map(|label| texts.iter().find(|(text, _)| text == label).unwrap().1);
+    assert!(modes.windows(2).all(|pair| pair[0].right() < pair[1].left()));
+    assert!(modes.iter().all(|rect| (rect.top() - modes[0].top()).abs() < 1.0));
+    let maps = ["Diffuse", "Normal", "Specular"].map(|target| {
         inspector
             .ctx
-            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("material_preview", "Normal".to_string()))))
-            .is_none()
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("material_preview", target.to_string()))))
+            .unwrap()
+    });
+    assert!(maps.windows(2).all(|pair| pair[0].bottom() < pair[1].top()));
+    assert!(
+        maps.iter()
+            .all(|rect| (rect.left() - maps[0].left()).abs() < 1.0 && (rect.width() - 60.0).abs() < 1.0)
     );
-    let radio = texts
+    let uv = [
+        aurora_i18n::tr!("common-scale"),
+        aurora_i18n::tr!("build-ui-texture-offset"),
+        aurora_i18n::tr!("build-ui-texture-rotation"),
+    ]
+    .map(|label| texts.iter().find(|(text, _)| text == label).unwrap().1);
+    assert!(uv.windows(2).all(|pair| pair[0].right() < pair[1].left()));
+    assert!(uv.iter().all(|rect| (rect.top() - uv[0].top()).abs() < 1.0));
+    assert!(uv[0].top() > maps[2].bottom());
+    let normal_tab = texts
         .iter()
-        .find(|(text, _)| text == aurora_i18n::tr!("build-ui-texture-bumpiness"))
+        .rev()
+        .find(|(text, _)| text == aurora_i18n::tr!("build-ui-texture-normal"))
         .unwrap()
-        .1
-        .center();
-    click(&mut inspector, radio);
+        .1;
+    click(&mut inspector, normal_tab.center());
     assert_eq!(inspector.tool.ui.bp_channel, 1);
-    let normal = inspector
-        .ctx
-        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("material_preview", "Normal".to_string()))))
-        .unwrap();
-    assert_eq!(normal, preview, "Changing the channel must reuse the single reference texture slot");
-    click(&mut inspector, normal.center());
+    click(&mut inspector, maps[1].center());
     assert_eq!(inspector.tool.ui.pick_target, Some(super::super::super::PickTarget::Normal));
 }
 
 #[test]
-fn legacy_pbr_edit_opens_live_factors_without_inline_cards() {
+fn legacy_texture_material_choices_remain_visible_without_editable_faces_and_switch_native_modes() {
+    let mut inspector = legacy();
+    inspector.tool.tab = 3;
+    let index = inspector.tool.sel_prims(&inspector.world)[0];
+    let asset = uuid::Uuid::from_u128(0x7992);
+    inspector.world.objects.get_mut(index).unwrap().extra.render_materials = (0..6).map(|face| (face, asset)).collect();
+    inspector.scene.materials.insert(asset, Default::default());
+    for mode in [1, 2, 0] {
+        let (_, texts) = inspector.show(vec![]);
+        let labels = [
+            aurora_i18n::tr!("build-ui-texture-blinn-phong"),
+            "PBR",
+            aurora_i18n::tr!("extra-media"),
+        ];
+        let target = texts.iter().find(|(text, _)| text == labels[mode]).unwrap().1.center();
+        click(&mut inspector, target);
+        assert_eq!(inspector.tool.ui.tex_tab, mode);
+        inspector.tool.update_material_preview(&mut inspector.world, &inspector.settings);
+        assert_eq!(inspector.world.objects.get(index).unwrap().visual_material(0).is_none(), mode == 0);
+    }
+    inspector.tool.selection.clear();
+    let (_, texts) = inspector.show(vec![]);
+    for label in [
+        aurora_i18n::tr!("build-ui-texture-blinn-phong"),
+        "PBR",
+        aurora_i18n::tr!("extra-media"),
+    ] {
+        assert!(texts.iter().any(|(text, _)| text == label));
+    }
+}
+
+#[test]
+fn legacy_pbr_keeps_all_maps_left_of_live_inline_factors() {
     let _inline = crate::scene::jobs::execute_inline_on_this_thread();
     let mut inspector = legacy();
     inspector.tool.tab = 3;
@@ -359,20 +393,22 @@ fn legacy_pbr_edit_opens_live_factors_without_inline_cards() {
         inspector.show(vec![]);
     }
     let (_, texts) = inspector.show(vec![]);
-    assert!(!texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-ui-texture-metallic")));
-    let edit = texts
+    let maps = ["PbrMaterial", "PbrMap(0)", "PbrMap(1)", "PbrMap(3)", "PbrMap(2)"].map(|target| {
+        inspector
+            .ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("material_preview", target.to_string()))))
+            .unwrap()
+    });
+    assert!((maps[0].top() - maps[1].top()).abs() < 1.0);
+    assert!(maps[0].right() < maps[1].left());
+    assert!((maps[2].top() - maps[3].top()).abs() < 1.0);
+    assert!(maps[2].top() > maps[0].bottom() && maps[4].top() > maps[2].bottom());
+    let metallic = texts
         .iter()
-        .find(|(text, _)| text == aurora_i18n::tr!("common-edit"))
+        .find(|(text, _)| text == aurora_i18n::tr!("build-ui-texture-metallic"))
         .unwrap()
-        .1
-        .center();
-    click(&mut inspector, edit);
-    assert!(inspector.tool.ui.legacy_pbr_editor);
-    for _ in 0..5 {
-        inspector.show(vec![]);
-    }
-    let (_, texts) = inspector.show(vec![]);
-    assert!(texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-ui-texture-metallic")));
+        .1;
+    assert!(maps.iter().all(|rect| rect.right() < metallic.left()));
     let double_sided = texts
         .iter()
         .find(|(text, _)| text == aurora_i18n::tr!("common-double-sided"))
@@ -381,4 +417,6 @@ fn legacy_pbr_edit_opens_live_factors_without_inline_cards() {
         .center();
     click(&mut inspector, double_sided);
     assert_eq!(BuildTool::gltf_override(&inspector.world, index, 0).double_sided, Some(true));
+    click(&mut inspector, maps[1].center());
+    assert_eq!(inspector.tool.ui.pick_target, Some(super::super::super::PickTarget::PbrMap(0)));
 }

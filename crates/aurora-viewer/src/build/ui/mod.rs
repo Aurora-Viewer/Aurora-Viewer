@@ -148,7 +148,6 @@ pub enum Confirm {
 pub struct FloaterState {
     /// Active presentation, mirrored before input routing (not a preference).
     legacy_window: bool,
-    legacy_pbr_editor: bool,
     pub layout: layout::State,
     pub notecards: notecards::State,
     mesh_inspection: mesh::Inspection,
