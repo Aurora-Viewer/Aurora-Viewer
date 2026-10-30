@@ -927,6 +927,9 @@ impl<'a> Floater<'a> {
 /// mini-map): `frame` around `body`, which fills it. Like a floater it is
 /// placed by the layout (`layout::Slot`), snaps to the other windows when
 /// moved with Alt or resized, and is resized by the same edge handles.
+/// `locked`: the user can neither move nor resize it (it still follows the
+/// viewer's edges and the group it is glued to).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn bare_window(
     ctx: &egui::Context,
     p: &Palette,
@@ -935,13 +938,18 @@ pub(crate) fn bare_window(
     frame: egui::Frame,
     default: egui::Rect,
     min_size: Vec2,
+    locked: bool,
     body: impl FnOnce(&mut egui::Ui),
 ) {
     let window_id = egui::Id::unique(id);
     if window_hidden(ctx, window_id, true, false) {
         return;
     }
-    let drag = resize::Drag::prepare(ctx, window_id, min_size);
+    let drag = if locked {
+        None
+    } else {
+        resize::Drag::prepare(ctx, window_id, min_size)
+    };
     let mut w = egui::Window::new(title)
         .id(window_id)
         .title_bar(false)
@@ -951,6 +959,7 @@ pub(crate) fn bare_window(
         .default_pos(default.min)
         .default_size(default.size())
         .min_size(min_size)
+        .movable(!locked)
         .resizable(false)
         .constrain(true);
     let slot = super::layout::slot(ctx, window_id);
@@ -977,12 +986,18 @@ pub(crate) fn bare_window(
     }) else {
         return;
     };
-    window_click_tolerance(&shown.response);
+    // locked: no drag on the move ID at all, or the layout would carry the
+    // windows glued to it while it stays put
+    if !locked {
+        window_click_tolerance(&shown.response);
+    }
     slot.shown(ctx, shown.response.rect, false);
     if let (Some(drag), Some(requested)) = (drag, resized) {
         drag.finish(ctx, window_id, requested, shown.response.rect);
     }
-    resize::handles(ctx, p, &shown.response);
+    if !locked {
+        resize::handles(ctx, p, &shown.response);
+    }
 }
 
 /// A resized window's rect on whole physical pixels. The pointer moves by
@@ -1678,24 +1693,30 @@ fn control_font(ui: &egui::Ui, default_size: f32) -> egui::FontId {
 
 /// Flat tab strip. Returns true when the selection changed.
 pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
-    tabs_row(ui, p, selected, labels, false)
+    tabs_row(ui, p, selected, labels, false, false)
+}
+
+/// The same tab strip at the density of fixed inspector controls.
+pub fn compact_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
+    tabs_row(ui, p, selected, labels, false, true)
 }
 
 /// Equal-width tabs spanning a data inspector, with the usual theme and input handling.
 pub fn stretched_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
-    tabs_row(ui, p, selected, labels, true)
+    tabs_row(ui, p, selected, labels, true, false)
 }
 
-fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)], stretched: bool) -> bool {
+fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)], stretched: bool, compact: bool) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let n = labels.len().max(1) as f32;
         let font = control_font(ui, 12.0);
+        let minimum_height = if compact { 22.0 } else { 30.0 };
         let height = if ui.style().override_font_id.is_some() {
-            (ui.fonts_mut(|f| f.row_height(&font)) + 12.0).max(30.0)
+            (ui.fonts_mut(|f| f.row_height(&font)) + if compact { 8.0 } else { 12.0 }).max(minimum_height)
         } else {
-            30.0
+            minimum_height
         };
         let text_w: Vec<f32> = labels
             .iter()

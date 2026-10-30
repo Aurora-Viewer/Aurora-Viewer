@@ -956,6 +956,13 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Some(v) = std::env::var("AURORA_AA").ok().and_then(|v| v.parse().ok()) {
         settings.antialiasing = v;
     }
+    if let Some(v) = std::env::var("AURORA_RENDER_SCALE").ok().and_then(|v| v.parse::<u32>().ok()) {
+        settings.render_scale_percent = v.clamp(50, 100);
+    }
+    if let Some(v) = std::env::var("AURORA_TEXTURE_BUDGET_MB").ok().and_then(|v| v.parse::<u32>().ok()) {
+        settings.texture_budget_auto = false;
+        settings.texture_budget_mb = v.clamp(256, 32768);
+    }
     if let Some(v) = std::env::var("AURORA_MAX_COMPLEXITY").ok().and_then(|v| v.parse().ok()) {
         settings.max_complexity = v;
     }
@@ -5773,6 +5780,9 @@ impl App {
                 let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()).unwrap_or_default();
                 self.build.paste_vector(&mut self.world, &self.settings.build, which, &text);
             }
+            Request::CopyKeys => self
+                .egui_ctx
+                .copy_text(self.build.copy_keys(&self.world, &self.settings.build, self.shift)),
             Request::Script { object, item } => self.open_script(aurora_net::scripts::ScriptTarget { object, item }),
         }
         self.flush_build();

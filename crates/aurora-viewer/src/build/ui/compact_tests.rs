@@ -8,6 +8,8 @@ use std::sync::Arc;
 mod contents_keyboard_tests;
 #[path = "layout_tests.rs"]
 mod layout_tests;
+#[path = "legacy_tests.rs"]
+mod legacy_tests;
 
 fn fixture() -> (World, BuildTool, BuildSettings) {
     let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));

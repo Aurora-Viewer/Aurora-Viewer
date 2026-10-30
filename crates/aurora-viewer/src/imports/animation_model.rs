@@ -42,7 +42,7 @@ pub struct Model {
     pub base: SkeletonBase,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Selection {
     pub current: Option<Arc<Model>>,
     pub generation: u64,
@@ -145,49 +145,88 @@ fn refresh(entry: &mut Entry) {
     entry.view = Default::default();
 }
 
-pub fn reset(entry: &mut Entry) {
-    entry.animation_model.generation += 1;
-    entry.animation_model.current = None;
-    entry.animation_model.pending = false;
-    entry.animation_model.error = None;
-    entry.animation_model.saved = None;
-    entry.animation_model.requested = None;
-    refresh(entry);
-}
-
-pub(super) fn complete(entry: &mut Entry, generation: u64, result: Option<Result<Arc<Model>, String>>) {
-    if entry.animation_model.generation != generation || !matches!(entry.source, Some(Source::Animation { .. })) {
-        return;
-    }
-    entry.animation_model.pending = false;
-    match result {
-        Some(Ok(model)) => {
-            entry.animation_model.current = Some(model);
-            entry.animation_model.error = None;
-            refresh(entry);
-        }
-        Some(Err(error)) => entry.animation_model.error = Some(error),
-        None => {}
-    }
-}
-
 impl Imports {
-    pub(super) fn complete_animation_model(&mut self, id: Uuid, generation: u64, result: Option<Result<Arc<Model>, String>>) {
-        let Some(entry) = self.entries.iter_mut().find(|entry| {
-            entry.id == id && entry.animation_model.generation == generation && matches!(entry.source, Some(Source::Animation { .. }))
-        }) else {
+    /// A single revision covers the queue, so removing the originating row
+    /// cannot orphan a load, and a late worker cannot undo a newer choice.
+    pub(super) fn complete_animation_model(&mut self, generation: u64, result: Option<Result<Arc<Model>, String>>) {
+        if self.animation_model_selection.generation != generation {
             return;
-        };
-        if let Some(Ok(model)) = &result {
-            let saved = entry.animation_model.requested.take().unwrap_or_else(|| {
-                self.animation_models_dirty = true;
-                Saved::remember(&mut self.load_preferences.animation_models, model.path.clone())
-            });
-            self.animation_model_cache.insert(saved, Arc::downgrade(model));
-            entry.animation_model.saved = Some(saved);
         }
-        entry.animation_model.requested = None;
-        complete(entry, generation, result);
+        let selection = &mut self.animation_model_selection;
+        selection.pending = false;
+        match result {
+            Some(Ok(model)) => {
+                let saved = selection
+                    .requested
+                    .unwrap_or_else(|| Saved::remember(&mut self.load_preferences.animation_models, model.path.clone()));
+                self.animation_model_cache.insert(saved, Arc::downgrade(&model));
+                selection.saved = Some(saved);
+                selection.current = Some(model);
+                selection.error = None;
+                self.load_preferences.animation_model_last = Some(saved);
+                self.animation_models_dirty = true;
+            }
+            Some(Err(error)) => selection.error = Some(error),
+            None => {}
+        }
+        selection.requested = None;
+        self.sync_animation_models();
+    }
+
+    pub(super) fn sync_animation_models(&mut self) {
+        for entry in &mut self.entries {
+            if !matches!(entry.source, Some(Source::Animation { .. })) {
+                continue;
+            }
+            let changed = match (&entry.animation_model.current, &self.animation_model_selection.current) {
+                (Some(current), Some(next)) => !Arc::ptr_eq(current, next),
+                (None, None) => false,
+                _ => true,
+            };
+            entry.animation_model = self.animation_model_selection.clone();
+            if changed {
+                refresh(entry);
+            }
+        }
+    }
+
+    pub(super) fn restore_animation_model(&mut self, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, avatars: Arc<AvatarLibrary>) {
+        if self.animation_model_selection.generation == 0
+            && self.animation_model_selection.current.is_none()
+            && let Some(saved) = self.load_preferences.animation_model_last
+        {
+            if !self.load_preferences.animation_models.iter().any(|model| model.id == saved) {
+                self.load_preferences.animation_model_last = None;
+                self.animation_models_dirty = true;
+            } else if let Some(entry) = self
+                .entries
+                .iter()
+                .find(|entry| matches!(entry.source, Some(Source::Animation { .. })))
+            {
+                self.select_animation_model(entry.id, saved, jobs, ctx, avatars);
+            }
+        }
+    }
+
+    pub fn reset_animation_models(&mut self, id: Uuid) {
+        if !self
+            .entries
+            .iter()
+            .any(|entry| entry.id == id && matches!(entry.source, Some(Source::Animation { .. })))
+        {
+            return;
+        }
+        self.reset_animation_model_selection();
+    }
+
+    fn reset_animation_model_selection(&mut self) {
+        self.animation_model_selection = Selection {
+            generation: self.animation_model_selection.generation + 1,
+            ..Default::default()
+        };
+        self.load_preferences.animation_model_last = None;
+        self.animation_models_dirty = true;
+        self.sync_animation_models();
     }
 
     pub fn select_animation_model(
@@ -202,29 +241,31 @@ impl Imports {
             return;
         };
         let path = model.path.clone();
-        let Some(entry) = self
+        if !self
             .entries
-            .iter_mut()
-            .find(|entry| entry.id == id && matches!(entry.source, Some(Source::Animation { .. })))
-        else {
-            return;
-        };
-        entry.animation_model.generation += 1;
-        let generation = entry.animation_model.generation;
-        entry.animation_model.requested = Some(saved);
-        entry.animation_model.saved = Some(saved);
-        entry.animation_model.error = None;
-        if let Some(model) = self.animation_model_cache.get(&saved).and_then(std::sync::Weak::upgrade) {
-            self.complete_animation_model(id, generation, Some(Ok(model)));
+            .iter()
+            .any(|entry| entry.id == id && matches!(entry.source, Some(Source::Animation { .. })))
+        {
             return;
         }
-        entry.animation_model.pending = true;
+        let selection = &mut self.animation_model_selection;
+        selection.generation += 1;
+        let generation = selection.generation;
+        selection.requested = Some(saved);
+        selection.saved = Some(saved);
+        selection.error = None;
+        selection.pending = true;
+        if let Some(model) = self.animation_model_cache.get(&saved).and_then(std::sync::Weak::upgrade) {
+            self.complete_animation_model(generation, Some(Ok(model)));
+            return;
+        }
+        self.sync_animation_models();
         let model_limit = self.load_preferences.mesh_model_limit;
         let tx = self.tx.clone();
         let wake = ctx.clone();
         jobs.execute(move || {
             let result = load(path, model_limit, &avatars);
-            let _ = tx.send(Worker::AnimationModel(id, generation, Some(result)));
+            let _ = tx.send(Worker::AnimationModel(generation, Some(result)));
             wake.request_repaint();
         });
     }
@@ -238,37 +279,37 @@ impl Imports {
             .map(|model| model.path.clone());
         self.load_preferences.animation_models.retain(|model| model.id != saved);
         self.animation_models_dirty = true;
-        for entry in &mut self.entries {
-            if entry.animation_model.saved == Some(saved)
-                || entry.animation_model.requested == Some(saved)
-                || entry
-                    .animation_model
-                    .current
-                    .as_ref()
-                    .is_some_and(|model| Some(&model.path) == path.as_ref())
-            {
-                reset(entry);
-            }
+        if self.load_preferences.animation_model_last == Some(saved) {
+            self.load_preferences.animation_model_last = None;
+        }
+        let selection = &self.animation_model_selection;
+        if selection.saved == Some(saved)
+            || selection.requested == Some(saved)
+            || selection.current.as_ref().is_some_and(|model| Some(&model.path) == path.as_ref())
+        {
+            self.reset_animation_model_selection();
         }
         jobs.discard(self.animation_model_cache.remove(&saved));
     }
 
     pub fn animation_model_file(&mut self, id: Uuid, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, avatars: Arc<AvatarLibrary>) {
-        let Some(entry) = self
+        if !self
             .entries
-            .iter_mut()
-            .find(|e| e.id == id && matches!(e.source, Some(Source::Animation { .. })))
-        else {
-            return;
-        };
-        if entry.animation_model.pending {
+            .iter()
+            .any(|e| e.id == id && matches!(e.source, Some(Source::Animation { .. })))
+        {
             return;
         }
-        entry.animation_model.generation += 1;
-        let generation = entry.animation_model.generation;
-        entry.animation_model.pending = true;
-        entry.animation_model.error = None;
-        entry.animation_model.requested = None;
+        let selection = &mut self.animation_model_selection;
+        if selection.pending {
+            return;
+        }
+        selection.generation += 1;
+        let generation = selection.generation;
+        selection.pending = true;
+        selection.error = None;
+        selection.requested = None;
+        self.sync_animation_models();
         let model_limit = self.load_preferences.mesh_model_limit;
         let tx = self.tx.clone();
         let wake = ctx.clone();
@@ -278,7 +319,7 @@ impl Imports {
                 .add_filter(aurora_i18n::tr!("import-mesh"), &["dae", "gltf", "glb"])
                 .pick_file()
                 .map(|path| load(path, model_limit, &avatars));
-            let _ = tx.send(Worker::AnimationModel(id, generation, result));
+            let _ = tx.send(Worker::AnimationModel(generation, result));
             wake.request_repaint();
         });
     }

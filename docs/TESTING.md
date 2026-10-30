@@ -89,6 +89,8 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
+| `AURORA_RENDER_SCALE=50..100` | World resolution percentage; interface and HUDs stay native |
+| `AURORA_TEXTURE_BUDGET_MB=256..32768` | Manual texture memory budget for this launch |
 | `AURORA_TEST_NEUTRAL_POSE=1` | Local neutral-pose comparison in the online or demo Hover Height floater |
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
@@ -266,6 +268,16 @@ to the vertex shaders or to the passes is therefore checked with both,
 `AURORA_AA=3` and `AURORA_AA=6`: it is with the second that the terrain let
 the sky show through in patches
 (`AURORA_DEMO_POS="60,128"`, `AURORA_DEMO_ALTITUDE=86`).
+
+`AURORA_RENDER_SCALE`: the world's linear resolution percentage (50–100,
+100 by default), before spatial upscaling. HUDs, labels and controls stay at
+native resolution. RLVa's resolution divisor takes precedence; saved photos
+ignore the user scale. `AURORA_TEXTURE_BUDGET_MB` selects a manual texture
+budget (256–32768 MB). Both follow the normal saved graphics settings path;
+use `AURORA_DEMO=1` for isolated comparisons. A Retina comparison can use
+`AURORA_WINDOW_SIZE=1728,1056`, `AURORA_GRAPHICS_PRESET=high`,
+`AURORA_DEMO_TEXTURES=9000`, `AURORA_DEMO_CROWD=20` and the same capture
+frame, changing only `AURORA_RENDER_SCALE` between 100, 67 and 50.
 
 `AURORA_WINDOW_SIZE`: width and height of the render area, in logical pixels
 (at least 800 × 560), to measure according to the size of the window:
@@ -1174,6 +1186,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_BUILD_ECHO=<ms>` | The demo answers transform edits a round trip late |
 | `AURORA_DEMO_BUILD_TAB=<tab>` | Tab of the build window; `features:light-picker` opens the projector texture picker |
 | `AURORA_DEMO_BUILD_SIZE=<width>,<height>` | Initial dimensions of the construction window |
+| `AURORA_DEMO_BUILD_STYLE=aurora\|legacy` | Construction window presentation for this demo run |
 | `AURORA_DEMO_PARTICLE_EDITOR=1\|fountain\|inject` | Build › Edit particles on the object selected by `AURORA_DEMO_BUILD` |
 | `AURORA_DEMO_COLOR_PICKER=<mode>` | Colour picker and gestures offline |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
@@ -1223,9 +1236,35 @@ plane squares, rotation rings (`rotate`) and stretch handles (`stretch`)
 with a 100 % capture: everything grows by the same factor, strokes
 included, and a handle can be grabbed anywhere on its larger shape.
 
-`AURORA_DEMO_BUILD_SIZE` sets the compact construction window's initial dimensions
-once for reproducible captures; normal sessions restore saved geometry. There is
-one presentation at every width. The initial request is 350 by 820; the visible icons and expanded transform area
+`AURORA_DEMO_BUILD_STYLE=legacy` selects the Legacy tool strip and five tabs,
+independently of the saved preference. Use `AURORA_DEMO_BUILD=move,object:118`
+with `AURORA_DEMO_BUILD_TAB=general|object|features|texture:bp|texture:pbr|contents`.
+Compare with `floater_tools.xml` and `panel_fs_tools_texture.xml`: the compact tool
+block ends with linked-part navigation, Link/Unlink and the ruler on one row;
+counters sit directly above the five tabs. General places sale before permissions.
+Object has flags and vertical XYZ/C/P/p blocks on the left, shape/mesh data on the
+right. Features exposes its flexible/physics columns and light/probe controls
+without folding cards. Texture always exposes PBR, Blinn-Phong and Media as
+three adjacent buttons, including with no editable faces. Blinn-Phong shows its
+three maps vertically with tints beside them and surface parameters on the right.
+PBR shows material/base color, normal/emissive and ORM rows, tint swatches and live
+inline factors. Channel tabs sit above the Scale/Offset/Rotation columns; repeats,
+sync, planar alignment, hide-water and mapping form the footer. Check mode and
+channel switching, all map pickers and tint transactions, alpha/material factors,
+vector copy/paste, linked selection, ruler settings and the bottom collapse strip.
+At 330 by 620 the property panel scrolls while the tool block and tabs stay
+in place.
+Switch Preferences > Aurora > Build tools between Aurora and Legacy while
+editing; the selection, properties and custom Aurora arrangement must survive.
+The bulk Aurora/Legacy choices include this preference, which persists on restart.
+Legacy keeps Aurora's theme and native mesh inspector while following the
+reference control arrangement. Human grid validation covers
+actual property/transform edits, permissions, linking and object contents.
+
+`AURORA_DEMO_BUILD_SIZE` sets the construction window's initial dimensions
+once for reproducible captures; normal sessions restore saved geometry. The chosen
+presentation stays the same at every width. Aurora starts at 350 by 820 and Legacy
+at 360 by 780; Aurora's visible icons and expanded transform area
 can raise its minimum height. Append
 `+settings`, `+organize` or `+folded` to `AURORA_DEMO_BUILD_TAB=general` to inspect
 the side settings, hidden-item storage/notecard buttons or folded numeric values.
@@ -1992,6 +2031,14 @@ The test covers silent startup/URL failures, exact owner/root discovery,
 login revocation, confirmed-session region renewal, 60-second self-detachment, permission checks,
 unpaired peer/HTTP traffic and resumed discovery. It mocks simulator APIs;
 it does not emulate Havok or measure the compiled Mono memory budget.
+
+Bridge 1.40 also checks container normalization at startup and reattachment.
+On the grid, let Aurora upgrade an existing bridge, then inspect its build
+properties: a 0.01 m cube on all three axes, no cut/hollow/twist/taper, default
+plywood texture on every face and 100% transparency. Its old landscaping
+description must be empty. Detach and reattach it, then relog: the same object
+must retain these properties and its bridge services. A fresh bridge must
+finish provisioning with the same appearance.
 
 For bridge 1.38 (#1168), let Aurora upgrade the existing attachment, then
 switch to another viewer without manually removing it. No bridge message
@@ -4653,10 +4700,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   ordinary mannequin. Check seeking,
   pause/resume, base animations and camera controls with both models. Cancel
   the file picker or choose an unrigged/invalid file: keep the current model,
-  with an error for rejected files. Model selection is independent per
-  animation, preview-only, and never adds a mesh upload or changes its fee.
+  with an error for rejected files. Model selection applies to every queued
+  animation, including later additions, and remains preview-only: it never
+  adds a mesh upload or changes its fee.
   Add two models, switch between them in the model list, then return to Standard.
-  Restart the viewer and select either model without reopening a file picker.
+  Restart the viewer and import animations: the last successfully used model
+  loads automatically, without reopening a file picker. Standard applies to
+  the whole queue and remains the default after a restart.
   Remove an unselected entry with its row's icon: the current preview must stay
   selected and the list must stay open. Remove the selected entry: return to
   Standard. In both cases its source file must remain on disk. Long names must
@@ -7401,7 +7451,13 @@ offline; the files and snapshots uploaded in demo stay offline.
   (1180 px) width, on the demo object of the right-click tests, the demo
   shirt in the favourites; `aurora-rights` is the wide window with the
   CMT menu on "Both". Capture at frame 700 with `AURORA_FPS_LIMIT=60`.
-  Narrow: icon tabs, search row (filters, CMT, Sort, New), the tree with
+  At every width, the search field and advanced-search button occupy a full
+  row below the tools. Collapse all / Expand all are directly accessible in
+  the toolbar: they fold the compact tree or filtered results, and the folder
+  sidebar in the explorer. Expand, collapse, then manually reopen a parent:
+  its descendants must remain closed. Check a folder window and hidden Library
+  too; commands stay within that window's scope and retain the current search.
+  Narrow: icon tabs, toolbar (filters, CMT, Sort, New, Collapse all, Expand all), the tree with
   C/M/T at the end of each item, the selection's card (Wear, Add,
   Properties, More). Medium: the column of shortcuts (with their counts) and
   folders, the explorer of the revealed folder with Type and Modified.

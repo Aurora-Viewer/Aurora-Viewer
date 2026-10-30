@@ -45,6 +45,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_search = !aurora;
     s.classic_region_estate = !aurora;
     s.classic_inventory = !aurora;
+    s.build.legacy_window = !aurora;
     s.classic_places = !aurora;
     s.classic_pay_window = !aurora;
     s.legacy_money_tracker = !aurora;
@@ -267,6 +268,14 @@ pub fn page(cx: &mut Cx, tab: usize) {
             );
             look(
                 cx,
+                tr!("ui-options-aurora-build"),
+                tr!("ui-options-aurora-build-help"),
+                aurora,
+                classic,
+                &field!(build.legacy_window),
+            );
+            look(
+                cx,
                 tr!("ui-options-aurora-pay-window"),
                 tr!("ui-options-aurora-pay-window-help"),
                 tr!("ui-options-aurora-pay-aurora"),
@@ -437,6 +446,7 @@ mod tests {
         assert!(s.classic_search, "Search opens the Legacy Viewer's tabs");
         assert!(s.classic_region_estate);
         assert!(s.classic_inventory, "the Legacy Viewer's single inventory tree");
+        assert!(s.build.legacy_window, "the Legacy Viewer's build tools and tabs");
         assert!(s.classic_places, "Places opens the Legacy Viewer's three tabs");
         assert!(s.classic_pay_window);
         assert!(s.legacy_money_tracker, "the Legacy Viewer's Time / Name / Amount list");
@@ -475,6 +485,7 @@ mod tests {
             "the Aurora inventory is the default"
         );
         assert!(!s.classic_places && !fresh.classic_places, "Aurora's Places is the default");
+        assert!(!s.build.legacy_window && !fresh.build.legacy_window);
         assert!(!s.classic_pay_window && !fresh.classic_pay_window);
         assert!(!s.legacy_money_tracker && !fresh.legacy_money_tracker);
         assert!(!s.classic_controls && !fresh.classic_controls);

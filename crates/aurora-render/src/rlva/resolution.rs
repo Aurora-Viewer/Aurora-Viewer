@@ -1,6 +1,8 @@
 //! RenderResolutionDivisor, following LLPipeline::allocateScreenBuffer
 //! (pipeline.cpp, originally LGPL 2.1). Only the 3D targets shrink; HUDs,
 //! world labels, overlays and viewer controls retain their window resolution.
+//! The user scale follows RenderResolutionMultiplier in the same reference:
+//! an RLVa divisor takes precedence over the optional multiplier.
 
 pub(crate) fn size(window: (u32, u32), divisor: u32) -> (u32, u32) {
     let (w, h) = (window.0.max(1), window.1.max(1));
@@ -18,7 +20,20 @@ pub(crate) fn pixel(pixel: (u32, u32), window: (u32, u32), scene: (u32, u32)) ->
     )
 }
 
+pub(crate) fn render_size(window: (u32, u32), divisor: u32, percent: u32) -> (u32, u32) {
+    let (w, h) = size(window, divisor);
+    if divisor > 1 {
+        return (w, h);
+    }
+    let percent = u64::from(percent.clamp(50, 100));
+    (
+        ((u64::from(w) * percent / 100) as u32).max(1),
+        ((u64::from(h) * percent / 100) as u32).max(1),
+    )
+}
+
 pub(crate) struct Scaled {
+    pub smooth: bool,
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pipeline: wgpu::RenderPipeline,
@@ -26,7 +41,7 @@ pub(crate) struct Scaled {
 }
 
 impl Scaled {
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, size: (u32, u32)) -> Self {
+    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, size: (u32, u32), smooth: bool) -> Self {
         let (texture, view) = crate::renderer::make_view(
             device,
             "RLVa reduced scene",
@@ -52,7 +67,10 @@ impl Scaled {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &[("spatial_upscale", if smooth { 1.0 } else { 0.0 })],
+                    ..Default::default()
+                },
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
                     blend: None,
@@ -65,15 +83,27 @@ impl Scaled {
             multiview_mask: None,
             cache: None,
         });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("RLVa reduced scene"),
             layout: &pipeline.get_bind_group_layout(0),
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
         });
         Self {
+            smooth,
             texture,
             view,
             pipeline,
@@ -118,5 +148,14 @@ mod tests {
         assert_eq!(pixel((1439, 999), (1440, 1000), (360, 250)), (359, 249));
         assert_eq!(pixel((720, 500), (1440, 1000), (360, 250)), (180, 125));
         assert_eq!(pixel((1440, 0), (1440, 1000), (360, 250)), (u32::MAX, u32::MAX));
+    }
+
+    #[test]
+    fn render_scale_preserves_native_size_and_rlva_restrictions() {
+        assert_eq!(render_size((3456, 2112), 1, 100), (3456, 2112));
+        assert_eq!(render_size((3456, 2112), 1, 50), (1728, 1056));
+        assert_eq!(render_size((1441, 1001), 4, 75), (360, 250));
+        assert_eq!(render_size((1, 0), u32::MAX, 0), (1, 1));
+        assert_eq!(pixel((1728, 1056), (3456, 2112), (1728, 1056)), (864, 528));
     }
 }

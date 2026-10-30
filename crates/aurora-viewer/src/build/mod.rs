@@ -73,6 +73,8 @@ pub const MAX_ATTACHMENT_DIST: f32 = 3.5;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct BuildSettings {
+    /// Legacy Viewer tool strip and tabs instead of the Aurora workspace.
+    pub legacy_window: bool,
     /// Personal compact inspector arrangement, independent of edited objects.
     pub layout: layout::Layout,
     pub transform_expanded: bool,
@@ -412,6 +414,7 @@ mod hud_tests {
 impl Default for BuildSettings {
     fn default() -> Self {
         BuildSettings {
+            legacy_window: false,
             layout: layout::Layout::default(),
             transform_expanded: true,
             color_picker: crate::ui::color_picker::Preferences::default(),

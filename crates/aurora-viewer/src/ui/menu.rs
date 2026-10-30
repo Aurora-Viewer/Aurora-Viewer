@@ -1403,6 +1403,7 @@ mod tests {
                             egui::Frame::window(&ctx.global_style()),
                             egui::Rect::from_min_size(egui::pos2(600.0, 200.0), egui::vec2(400.0, 300.0)),
                             egui::vec2(220.0, 120.0),
+                            false,
                             |_| {},
                         );
                     } else {
