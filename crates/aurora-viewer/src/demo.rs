@@ -192,6 +192,10 @@ pub mod seat_kill;
 /// AURORA_DEMO_SIM_CONSOLE, AURORA_DEMO_VOICE_MODERATION).
 #[path = "demo_sim_extras.rs"]
 pub mod sim_extras;
+/// The region's simulator version changing during the run
+/// (AURORA_DEMO_SIM_VERSION).
+#[path = "demo_sim_version.rs"]
+pub mod sim_version;
 /// A rainbow or a 22° halo in the region's sky (AURORA_DEMO_SKY_OPTICS).
 #[path = "demo_sky.rs"]
 pub mod sky;
