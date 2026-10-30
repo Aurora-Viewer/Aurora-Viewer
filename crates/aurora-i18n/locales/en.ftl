@@ -2367,6 +2367,8 @@ common-debug = Debug
 world-mod-requesting-teleport = Requesting teleport…
 common-request-teleport = Request teleport
 ui-contacts-ask-to-teleport-you = { "Ask " }{ $value0 }{ " to teleport you?" }
+ui-contacts-message-hint = Message (optional)
+ui-contacts-enter-to-confirm = Press Enter to confirm
 ui-contacts-offer-teleport-to = { "Offer " }{ $value0 }{ " a teleport to your location with the following message?" }
 ui-contacts-offer-teleport-to-residents = { $count ->
     [one] Offer { $count } resident a teleport to your location with the following message?

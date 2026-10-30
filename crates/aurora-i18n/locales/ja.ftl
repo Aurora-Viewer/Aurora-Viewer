@@ -2366,6 +2366,8 @@ common-debug = デバッグ
 world-mod-requesting-teleport = テレポートを要求中…
 common-request-teleport = テレポートを要求
 ui-contacts-ask-to-teleport-you = { "" }{ $value0 }{ "にテレポートしてもらいますか？" }
+ui-contacts-message-hint = メッセージ（任意）
+ui-contacts-enter-to-confirm = Enterキーで確定
 ui-contacts-offer-teleport-to = { "" }{ $value0 }{ "にあなたの場所へのテレポートをオファーしますか？次のメッセージを添えますか？" }
 ui-contacts-offer-teleport-to-residents = { $count ->
     [one] { $count }人の住人に、次のメッセージを添えてあなたの場所へのテレポートをオファーしますか？
