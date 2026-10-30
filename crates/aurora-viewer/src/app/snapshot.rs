@@ -919,15 +919,16 @@ impl App {
         }
     }
 
-    /// The most pixels drawn in one pass: half of the free video memory,
-    /// besides what the window's frame holds.
+    /// The most pixels drawn in one pass (`snapshot::pass_pixels`): half of
+    /// the free video memory, besides what the window's frame holds, and
+    /// never fewer than the window's.
     fn photo_max_pixels(&self, renderer: &Renderer) -> u64 {
         let per_pixel = TARGET_BYTES_PER_PIXEL + TARGET_BYTES_PER_SAMPLE * u64::from(self.msaa_samples(renderer));
         let free = renderer
             .video_memory
             .read(&renderer.device)
             .map_or(DEFAULT_TARGET_BYTES, |m| m.budget.saturating_sub(m.usage) / 2);
-        free / per_pixel
+        snapshot::pass_pixels(free, per_pixel, renderer.size())
     }
 
     /// LLViewerWindow::playSnapshotAnimAndSound: the snapshot animation and
