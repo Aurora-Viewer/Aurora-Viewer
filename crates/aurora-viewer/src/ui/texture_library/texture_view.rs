@@ -476,6 +476,7 @@ mod tests {
         let ctx = egui::Context::default();
         for level in [2, 0] {
             let source = crate::scene::textures::PreviewSource {
+                local: None,
                 bytes: bytes.clone(),
                 jpeg: Default::default(),
                 blocks: Default::default(),

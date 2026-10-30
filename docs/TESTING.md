@@ -7027,6 +7027,20 @@ save feedback. Check texture slots,
 shared clothing tint, sex-filtered parameter groups, the fixed save controls,
 the picker and its permissions, cancellation, and the existing shape/physics
 editors when switching. No grid traffic is used.
+`tattoo:local` applies a private RGBA checker to all three tattoo slots through
+the normal local import publication. `tattoo:local-picker` opens its Local tab
+at frame 700. `tattoo:local-reload` replaces the violet checker with a green
+one at frame 900 using the importer's reload generation; capture before and
+after frame 1100. `tattoo:local-cancel` cancels at frame 1000 and restores the
+server appearance. These modes also accept the other wearable types. Save
+and Save As stay disabled until inventory textures replace the local maps.
+`tattoo:picker-live` opens the Local picker on an empty head slot and selects
+its image with a mouse click at frame 700 without confirming: the avatar and
+swatch must change while the picker remains open. `tattoo:picker-cancel`
+clicks Cancel at frame 1000; `tattoo:picker-close` clicks the title-bar close;
+capture at 850 and 1200 to check restoration of the preceding image and the
+crossed empty slots. Ordinary picker clicks preview immediately too; OK keeps
+the choice, Cancel and the title-bar close button restore the original slot.
 The local preview composites the avatar definition's original masks and
 worn layers on workers and uploads a complete generation through GPU staging.
 It uses 2048-pixel bakes (512 for eyes), or 1024 on a low-memory staging pool;
