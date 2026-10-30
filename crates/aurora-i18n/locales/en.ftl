@@ -12644,3 +12644,18 @@ area-search-range-options = Ranges
 area-search-reset-ranges-tip = Restore default distance and sale price ranges.
 
 area-search-results = Results
+
+# Applied local textures and materials (#1375).
+local-appearance-warning = { $count ->
+    [one] Local textures / materials: { $count } object
+   *[other] Local textures / materials: { $count } objects
+    }
+local-appearance-pending = Saved local previews (pending)
+local-appearance-details = Local textures: { $textures } · Local materials: { $materials }
+local-appearance-private = These previews are visible only to you and are restored after reconnecting.
+local-appearance-reveal = Highlight local surfaces
+local-appearance-stop-reveal = Stop highlighting local surfaces
+local-appearance-library = Open local previews
+local-appearance-remove = Remove all local textures / materials…
+local-appearance-confirm-title = Remove local textures and materials?
+local-appearance-confirm-body = Restore the server appearance for the remembered objects in this account and grid (total: { $count }), including objects currently absent. These applications will no longer be restored after reconnecting. Your local files, preview library and mesh previews are kept.

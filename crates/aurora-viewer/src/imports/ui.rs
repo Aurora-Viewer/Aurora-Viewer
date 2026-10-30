@@ -13,6 +13,7 @@ const IMPORT_POSITION: egui::Pos2 = egui::Pos2 { x: 48.0, y: 80.0 };
 pub(super) mod destination;
 mod inspector;
 pub(crate) mod launcher;
+pub(crate) mod local_status;
 mod material_panel;
 mod mesh_panel;
 pub(crate) mod permission_panel;

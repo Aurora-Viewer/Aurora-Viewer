@@ -611,6 +611,50 @@ mod tests {
         imports
     }
     #[test]
+    fn global_appearance_removal_survives_restart_and_keeps_library_meshes_and_other_profiles() {
+        let files = Files::new();
+        let path = files.0.join(FILE);
+        let (jobs, _) = crate::scene::jobs::Jobs::new();
+        let mut imports = restored(path.clone(), "first", &jobs);
+        let mut texture = files.entry("texture-demo.png");
+        let mut material = files.entry("material-demo.gltf");
+        let mesh = files.entry("mesh-demo.dae");
+        texture.local_published = true;
+        material.local_published = true;
+        let ids = [texture.id, material.id, mesh.id];
+        imports.entries = vec![texture, material, mesh];
+        let mut objects = crate::world::objects::ObjectStore::default();
+        let mut update = crate::demo::action_avatar(false);
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        let object = update.full_id;
+        let index = objects.upsert(0, update);
+        imports.target_local(ids[0], object, &[], false);
+        imports.target_local(ids[1], Uuid::from_u128(555), &[3], false);
+        imports.target_local(ids[2], object, &[], true);
+        imports.apply_appearance_targets(&mut objects);
+        assert_eq!(imports.appearance_status(&objects).remembered_objects, 2);
+        imports.flush_local_registry();
+
+        let mut other = restored(path.clone(), "second", &jobs);
+        other.target_local(ids[0], object, &[1], false);
+        other.flush_local_registry();
+        let mut imports = restored(path.clone(), "first", &jobs);
+        imports.clear_all_appearance_targets(&mut objects);
+        assert!(objects.get(index).expect("object").render.local_appearance.is_empty());
+        assert_eq!(imports.entries.len(), 3);
+        assert_eq!(imports.local_targets[&object].entry, ids[2]);
+        imports.flush_local_registry();
+        let restarted = restored(path.clone(), "first", &jobs);
+        assert!(restarted.local_appearance_targets.is_empty());
+        assert_eq!(restarted.entries.len(), 3);
+        assert_eq!(restarted.local_targets[&object].entry, ids[2]);
+        let other = restored(path, "second", &jobs);
+        assert_eq!(other.local_appearance_targets.len(), 1);
+        assert!(files.0.join("texture-demo.png").is_file());
+        assert!(files.0.join("material-demo.gltf").is_file());
+    }
+
+    #[test]
     fn restart_preserves_all_types_settings_and_bindings_and_removal_never_deletes_sources() {
         let files = Files::new();
         let path = files.0.join(FILE);

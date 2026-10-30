@@ -665,6 +665,64 @@ impl App {
             }
         }
         self.imports.save_local_registry(false);
+        self.show_local_appearance_status(ctx, palette);
+    }
+
+    fn show_local_appearance_status(&mut self, ctx: &egui::Context, palette: &Palette) {
+        use crate::imports::ui::local_status::{self, Action};
+        let status = self.imports.appearance_status(&self.world.objects);
+        match local_status::show(ctx, palette, &mut self.imports.local_status, &status) {
+            Some(Action::Library) => {
+                self.imports.open(crate::imports::Choice::Local);
+                ui::widgets::open_floater(ctx, crate::imports::Choice::Local.window_id(), &mut self.imports.open);
+            }
+            Some(Action::Remove) => {
+                self.sync_local_picker_bindings();
+                self.build.forget_local_picker_appearances();
+                self.imports.clear_all_appearance_targets(&mut self.world.objects);
+                self.imports.local_status.reveal = None;
+            }
+            None => {}
+        }
+    }
+
+    pub(super) fn local_appearance_demo_input(&mut self, raw: &mut egui::RawInput) {
+        let Ok(mode) = std::env::var("AURORA_DEMO_LOCAL_APPEARANCES") else {
+            return;
+        };
+        if self.frame_count == 600 {
+            self.imports.open = false;
+            self.panels.people = false;
+            self.panels.inventory = false;
+            self.panels.perf = false;
+            if let Some(index) = self.world.objects.index_of_uuid(&crate::demo::action_id(970))
+                && let Some(focus) = crate::camera::pick_focus_object(&self.world, index, Instant::now())
+            {
+                self.camera
+                    .zoom_to(focus.1.position, Some(focus), &mut self.world.agent, &self.settings.camera);
+            }
+        }
+        let (key, start) = match self.frame_count {
+            650..=651 if !matches!(mode.as_str(), "1" | "reveal") => ("local_appearance_warning_rect", 650),
+            680..=681 if mode == "reveal" => ("local_appearance_reveal_rect", 680),
+            850..=851 if mode == "reveal" => ("local_appearance_reveal_rect", 850),
+            680..=681 if matches!(mode.as_str(), "confirm" | "remove" | "cancel") => ("local_appearance_remove_rect", 680),
+            710..=711 if mode == "remove" => ("local_appearance_confirm_rect", 710),
+            710..=711 if mode == "cancel" => ("local_appearance_cancel_rect", 710),
+            _ => return,
+        };
+        if let Some(rect) = self.egui_ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(key))) {
+            let pos = rect.center();
+            raw.events.extend([
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: self.frame_count == start,
+                    modifiers: Default::default(),
+                },
+            ]);
+        }
     }
 
     fn update_import_avatar_preview(&mut self) {

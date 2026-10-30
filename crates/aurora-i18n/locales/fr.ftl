@@ -12640,3 +12640,18 @@ area-search-range-options = Plages
 area-search-reset-ranges-tip = Rétablir les plages de distance et de prix par défaut.
 
 area-search-results = Résultats
+
+# Applied local textures and materials (#1375).
+local-appearance-warning = { $count ->
+    [one] Textures / matériaux locaux : { $count } objet
+   *[other] Textures / matériaux locaux : { $count } objets
+    }
+local-appearance-pending = Aperçus locaux mémorisés (en attente)
+local-appearance-details = Textures locales : { $textures } · Matériaux locaux : { $materials }
+local-appearance-private = Ces aperçus sont visibles uniquement par vous et sont restaurés après reconnexion.
+local-appearance-reveal = Faire clignoter les surfaces locales
+local-appearance-stop-reveal = Arrêter le repérage des surfaces locales
+local-appearance-library = Ouvrir les aperçus locaux
+local-appearance-remove = Retirer toutes les textures / matériaux locaux…
+local-appearance-confirm-title = Retirer les textures et matériaux locaux ?
+local-appearance-confirm-body = Rétablir l’apparence du serveur pour les objets mémorisés sur ce compte et cette grille (total : { $count }), y compris ceux actuellement absents. Ces applications ne seront plus restaurées après reconnexion. Vos fichiers locaux, la bibliothèque d’aperçus et les aperçus de maillages sont conservés.

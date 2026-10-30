@@ -36,6 +36,68 @@ pub struct Rez {
     pub entry: Uuid,
     pub known: HashSet<Uuid>,
 }
+
+#[derive(Default)]
+pub struct AppearanceStatus {
+    pub faces: HashMap<usize, u64>,
+    pub textures: usize,
+    pub materials: usize,
+    pub remembered_objects: usize,
+}
+
+impl Imports {
+    /// Only applied appearances count: loading a file into the library alone
+    /// must not announce that it is replacing a surface in the world.
+    pub fn appearance_status(&self, objects: &crate::world::objects::ObjectStore) -> AppearanceStatus {
+        use crate::world::objects::LocalAppearance;
+        let ids: HashSet<_> = self.local_appearance_targets.keys().map(|(id, _)| *id).collect();
+        let mut status = AppearanceStatus {
+            remembered_objects: ids.len(),
+            ..Default::default()
+        };
+        let mut textures = HashSet::new();
+        let mut materials = HashSet::new();
+        for id in ids {
+            let Some(index) = objects.index_of_uuid(&id) else { continue };
+            let Some(object) = objects.get(index) else { continue };
+            let mut mask = 0u64;
+            for face in 0..aurora_prim::te::MAX_TES {
+                if let Some(appearance) = object.local_appearance(face) {
+                    mask |= 1u64.checked_shl(face as u32).unwrap_or(0);
+                    match appearance {
+                        LocalAppearance::Texture(id) => {
+                            textures.insert(id);
+                        }
+                        LocalAppearance::Material(id) => {
+                            materials.insert(id);
+                        }
+                    }
+                }
+            }
+            if mask != 0 {
+                status.faces.insert(index, mask);
+            }
+        }
+        status.textures = textures.len();
+        status.materials = materials.len();
+        status
+    }
+
+    /// Clear this account/grid's applications, including absent objects, while
+    /// keeping the local library, source files and local mesh geometry intact.
+    pub fn clear_all_appearance_targets(&mut self, objects: &mut crate::world::objects::ObjectStore) {
+        let ids: Vec<_> = self
+            .local_appearance_targets
+            .keys()
+            .map(|(id, _)| *id)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        self.local_appearance_targets.clear();
+        self.clear_appearance_targets(objects, &ids, None);
+        self.save_local_registry(true);
+    }
+}
 pub type Stamp = Vec<(PathBuf, Option<(SystemTime, u64)>)>;
 pub fn stamp(paths: &[PathBuf]) -> Stamp {
     paths
@@ -414,6 +476,12 @@ mod tests {
             Some(LocalAppearance::Texture(texture_id))
         );
         assert_eq!(objects.get(index).expect("object").visual_material(1), Some(material_id));
+        // Only effective local appearances are reported, once per source,
+        // even when the all-face binding is overridden on a particular face.
+        let status = imports.appearance_status(&objects);
+        assert_eq!((status.textures, status.materials, status.remembered_objects), (1, 1, 1));
+        assert_eq!(status.faces.len(), 1);
+        assert_eq!(status.faces[&index] & 3, 3);
         // Simulator updates remain authoritative underneath both local previews.
         update.extra.render_materials = vec![(0, Uuid::new_v4()), (1, server_material)];
         objects.upsert(0, update.clone());
@@ -431,6 +499,7 @@ mod tests {
         assert_eq!(object.visual_texture_face(0), *update.texture_entry.as_ref().expect("TE").face(0));
         assert!(object.material_dirty && object.render.needs_records);
         assert!(imports.local_appearance_targets.is_empty());
+        assert!(imports.appearance_status(&objects).faces.is_empty());
     }
 
     #[test]
