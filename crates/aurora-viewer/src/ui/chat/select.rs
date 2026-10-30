@@ -88,6 +88,14 @@ impl Selection {
         self.head = Some(p);
     }
 
+    /// Characters `range` of one line (a double click on a word).
+    pub fn select_in_row(&mut self, seq: u64, range: Range<usize>, row_text: &str) {
+        self.texts.clear();
+        self.texts.insert(seq, row_text.to_owned());
+        self.anchor = Some(Point { seq, at: range.start });
+        self.head = Some(Point { seq, at: range.end });
+    }
+
     /// Every line, from the first to the last one shown.
     pub fn select_all(&mut self, first: u64, last: u64) {
         self.texts.clear();
@@ -386,8 +394,55 @@ pub fn hit(rows: &[Row], pos: Pos2) -> Option<(Point, &str)> {
         return Some((Point::end(last.seq), &last.text));
     }
     let row = rows.iter().find(|r| pos.y < r.rect.bottom()).unwrap_or(last);
-    // the piece on the pointer's row of text, else the nearest one above
-    // or below it
+    let at = match nearest_piece(row, pos) {
+        Some(p) => p.at(pos),
+        // a line without text (a card): its start or its end
+        None if pos.y < row.rect.center().y => 0,
+        None => usize::MAX,
+    };
+    Some((Point { seq: row.seq, at }, &row.text))
+}
+
+/// What a double click at `pos` selects, like LLTextEditor::handleDoubleClick
+/// (indra/llui/lltexteditor.cpp): a link, a name or an emoji whole, else the
+/// word under the pointer (`word_range`). None off the lines or on a space.
+pub fn word_at(rows: &[Row], pos: Pos2) -> Option<(u64, Range<usize>, &str)> {
+    let row = rows.iter().find(|r| r.rect.top() <= pos.y && pos.y < r.rect.bottom())?;
+    let piece = nearest_piece(row, pos)?;
+    let range = match piece.shape {
+        Shape::Atom(_) => piece.start..piece.start + piece.len,
+        Shape::Galley { .. } => word_range(&row.text, piece.at(pos))?,
+    };
+    Some((row.seq, range, &row.text))
+}
+
+/// LLWStringUtil::isPartOfWord: a letter, a digit or '_'.
+fn part_of_word(c: char) -> bool {
+    c == '_' || c.is_alphanumeric()
+}
+
+/// The characters a double click at caret `at` of `text` selects: the run of
+/// word characters it is on, else the one character that is not a space;
+/// nothing on a space. The caret falls between two characters: the one after
+/// it counts first, then the one before (the pointer on the right half of a
+/// word's last letter).
+fn word_range(text: &str, at: usize) -> Option<Range<usize>> {
+    let chars: Vec<char> = text.chars().collect();
+    let word = [Some(at), at.checked_sub(1)]
+        .into_iter()
+        .flatten()
+        .find(|&i| chars.get(i).copied().is_some_and(part_of_word));
+    let Some(i) = word else {
+        return chars.get(at).is_some_and(|c| !c.is_whitespace()).then(|| at..at + 1);
+    };
+    let start = chars[..i].iter().rposition(|c| !part_of_word(*c)).map_or(0, |p| p + 1);
+    let end = chars[i..].iter().position(|c| !part_of_word(*c)).map_or(chars.len(), |p| i + p);
+    Some(start..end)
+}
+
+/// The piece on the pointer's row of text, else the nearest one above or
+/// below it.
+fn nearest_piece(row: &Row, pos: Pos2) -> Option<&Piece> {
     let distance = |p: &Piece| {
         let r = p.rect();
         let dy = if pos.y < r.top() {
@@ -402,17 +457,9 @@ pub fn hit(rows: &[Row], pos: Pos2) -> Option<(Point, &str)> {
         };
         (dy, dx)
     };
-    let at = match row
-        .pieces
+    row.pieces
         .iter()
         .min_by(|a, b| distance(a).partial_cmp(&distance(b)).unwrap_or(std::cmp::Ordering::Equal))
-    {
-        Some(p) => p.at(pos),
-        // a line without text (a card): its start or its end
-        None if pos.y < row.rect.center().y => 0,
-        None => usize::MAX,
-    };
-    Some((Point { seq: row.seq, at }, &row.text))
 }
 
 #[cfg(test)]
@@ -478,6 +525,26 @@ mod tests {
         sel.start_at(Point { seq: 10, at: 0 }, "hello there");
         sel.extend_to(Point { seq: 11, at: 7 }, "hi @Jane Doe");
         assert_eq!(copy(&sel, &LINES), "[12:00] Jane: hello there\n[12:01] Bob: hi @Jan");
+    }
+
+    /// LLTextEditor::handleDoubleClick: the word under the caret (letters,
+    /// digits, '_'), else the one character that is not a space.
+    #[test]
+    fn a_double_click_takes_the_word_or_the_character_under_it() {
+        let text = "hi, l'été_2 !";
+        // on a word, from either side of a letter
+        assert_eq!(word_range(text, 0), Some(0..2));
+        assert_eq!(word_range(text, 2), Some(0..2), "right half of its last letter");
+        // accents and digits are part of a word, the apostrophe is not
+        assert_eq!(word_range(text, 7), Some(6..11));
+        assert_eq!(word_range(text, 5), Some(4..5));
+        // punctuation alone, nothing on a space or past the end
+        assert_eq!(word_range(text, 12), Some(12..13));
+        assert_eq!(word_range("a , b", 2), Some(2..3));
+        assert_eq!(word_range("a  b", 2), None);
+        assert_eq!(word_range(text, usize::MAX), None);
+        // a message of one word
+        assert_eq!(word_range("hello", 3), Some(0..5));
     }
 
     #[test]
