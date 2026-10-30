@@ -451,12 +451,16 @@ impl WorldMap {
     }
 
     pub fn apply_blocks(&mut self, blocks: Vec<MapBlock>) {
+        // slots of this reply with no region, named or not: a tracked spot
+        // in one of them is invalid (insertRegion)
+        let mut no_region = Vec::new();
         for b in blocks {
             let key = (b.x as u32, b.y as u32);
             // a non-existent slot is never a region (insertRegion), whatever
             // its name: a name search ends on a block that repeats the
             // requested name with this access, away from the real region
             if b.access == SIM_ACCESS_NONE {
+                no_region.push(key);
                 if b.name.is_empty() {
                     self.null_sims.insert(key);
                     self.sims.remove(&key);
@@ -499,7 +503,7 @@ impl WorldMap {
                     teleport = Some((t.x, t.y, t.z));
                 }
                 t.teleport = false;
-            } else if self.null_sims.contains(&(gx, gy)) {
+            } else if self.null_sims.contains(&(gx, gy)) || no_region.contains(&(gx, gy)) {
                 t.pending = false;
                 t.invalid = true;
                 t.teleport = false;
@@ -1350,6 +1354,15 @@ mod tests {
         // nor does it replace a region already known at its slot
         m.apply_blocks(vec![block(1000, 1001, "alphatribe island", SIM_ACCESS_NONE)]);
         assert_eq!(m.sims[&(1000, 1001)].access, SIM_ACCESS_PG);
+        // a spot waiting for its slot is invalid when a named block of this
+        // access answers for it, as for an unnamed one
+        m.track_location(2000.0 * 256.0 + 10.0, 2000.0 * 256.0 + 20.0, 30.0, true);
+        m.take_commands();
+        m.apply_blocks(vec![block(2000, 2000, "somewhere", SIM_ACCESS_NONE)]);
+        let t = m.track.as_ref().expect("tracked");
+        assert!(!t.pending && t.invalid);
+        assert!(!t.teleport);
+        assert!(m.take_commands().is_empty(), "no teleport to a missing region");
     }
 
     #[test]
