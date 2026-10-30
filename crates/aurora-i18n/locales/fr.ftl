@@ -3059,7 +3059,7 @@ ui-options-letter-keys-move-help = Désactivé : appuyer sur une lettre commence
 ui-options-walk-backwards-without-turning = Marcher à reculons sans me retourner
 ui-options-walk-backwards-without-turning-help = Les avatars qui marchent à reculons reculent au lieu de se retourner vers où ils vont. Seulement sur votre écran : les autres voient ce que montre leur viewer. Un AO peut quand même les retourner.
 ui-options-automatic-fly = Décoller en maintenant Monter
-ui-options-automatic-fly-help = Maintenir la commande Sauter / Monter déclenche le vol. Désactivée, le saut au sol est immédiat et se répète tant que la commande reste appuyée ; la montée en vol fonctionne toujours. Utilisez le bouton Vol ou son raccourci pour décoller.
+ui-options-automatic-fly-help = Maintenir la commande Sauter / Monter déclenche le vol. Désactivée, le saut au sol se répète tant que la commande reste appuyée, sans décoller ; la montée en vol fonctionne toujours. Utilisez le bouton Vol ou son raccourci pour décoller.
 ui-options-automatic-land = Atterrir en maintenant Descendre
 ui-options-automatic-land-help = Maintenir la commande S'accroupir / Descendre arrête le vol au contact du sol ou d'une plateforme. Désactivée, elle permet toujours de s'accroupir au sol et de descendre en vol. Utilisez le bouton Vol ou son raccourci pour arrêter de voler.
 ui-options-crouch-toggle = S'accroupir en bascule
@@ -12277,7 +12277,9 @@ inventory-listing-refresh = Actualiser la fiche
 inventory-recover-folder = Déplacer vers les objets perdus et trouvés
 inventory-show-main = Afficher dans la vue principale
 inventory-open-current = Ouvrir dans cette fenêtre
-inventory-copy-outfit-list = Copier la liste de la tenue
+inventory-copy-outfit-list = Copier la liste de la tenue dans le presse-papiers
+appearance-outfit-copy-entry = { $item } - { $creator }
+appearance-outfit-copy-preparing = Préparation de la liste de la tenue…
 inventory-empty-lost-found = Vider les objets perdus et trouvés
 common-lost-and-found = Objets perdus et trouvés
 inventory-clean-broken-links = Nettoyer les liens cassés
@@ -12655,3 +12657,18 @@ area-search-range-options = Plages
 area-search-reset-ranges-tip = Rétablir les plages de distance et de prix par défaut.
 
 area-search-results = Résultats
+
+# Applied local textures and materials (#1375).
+local-appearance-warning = { $count ->
+    [one] Textures / matériaux locaux : { $count } objet
+   *[other] Textures / matériaux locaux : { $count } objets
+    }
+local-appearance-pending = Aperçus locaux mémorisés (en attente)
+local-appearance-details = Textures locales : { $textures } · Matériaux locaux : { $materials }
+local-appearance-private = Ces aperçus sont visibles uniquement par vous et sont restaurés après reconnexion. Chaque application expire après 7 jours.
+local-appearance-reveal = Faire clignoter les surfaces locales
+local-appearance-stop-reveal = Arrêter le repérage des surfaces locales
+local-appearance-library = Ouvrir les aperçus locaux
+local-appearance-remove = Retirer toutes les textures / matériaux locaux…
+local-appearance-confirm-title = Retirer les textures et matériaux locaux ?
+local-appearance-confirm-body = Rétablir l’apparence du serveur pour les objets mémorisés sur ce compte et cette grille (total : { $count }), y compris ceux actuellement absents. Ces applications ne seront plus restaurées après reconnexion. Vos fichiers locaux, la bibliothèque d’aperçus et les aperçus de maillages sont conservés.

@@ -3055,7 +3055,7 @@ ui-options-letter-keys-move-help = 無効にすると、文字キーを押した
 ui-options-walk-backwards-without-turning = 向きを変えずに後ろ向きに歩く
 ui-options-walk-backwards-without-turning-help = アバターが後ろ向きに歩くとき、進行方向を向かずに後退します。これは自分の画面だけに適用され、他の人には各自のビューアーでの表示が見えます。アニメーションオーバーライダーによって向きが変わる場合があります。
 ui-options-automatic-fly = 上昇キーを押しっぱなしで飛行する
-ui-options-automatic-fly-help = ジャンプ／上昇キーを押し続けると飛行を開始します。オフの場合は、地上でジャンプがすぐに開始され、押し続けている間は繰り返します。飛行中は上昇することも可能です。飛行を開始するには、飛行ボタンまたはショートカットを使用してください。
+ui-options-automatic-fly-help = ジャンプ／上昇キーを押し続けると飛行を開始します。オフの場合は、地上でのジャンプを押し続けている間は飛行せずに繰り返します。飛行中は上昇することも可能です。飛行を開始するには、飛行ボタンまたはショートカットを使用してください。
 ui-options-automatic-land = 下降キーを押しっぱなしで着地する
 ui-options-automatic-land-help = しゃがむ／下降キーを押し続けると、地面や足場に触れたときに飛行を終了します。オフの場合も、地上ではしゃがみ、飛行中は下降します。飛行を終了するには、飛行ボタンまたはショートカットを使用してください。
 ui-options-script-errors-channel-hint = 負の値を含む任意のチャンネル。0はパブリックチャットで、近くにいる全員に聞こえます。
@@ -12267,6 +12267,8 @@ inventory-recover-folder = 遺失物に移動
 inventory-show-main = メインパネルで表示
 inventory-open-current = このウィンドウで開く
 inventory-copy-outfit-list = アウトフィットリストをクリップボードにコピー
+appearance-outfit-copy-entry = { $item } - { $creator }
+appearance-outfit-copy-preparing = アウトフィットリストを準備しています…
 inventory-empty-lost-found = 遺失物を空にする
 common-lost-and-found = 遺失物
 inventory-clean-broken-links = 壊れたリンクを整理
@@ -12644,3 +12646,15 @@ area-search-range-options = 範囲
 area-search-reset-ranges-tip = 距離と販売価格の範囲を既定に戻します。
 
 area-search-results = 結果
+
+# Applied local textures and materials (#1375).
+local-appearance-warning = ローカルテクスチャ・マテリアル：オブジェクト{ $count }個
+local-appearance-pending = 保存済みのローカルプレビュー（待機中）
+local-appearance-details = ローカルテクスチャ：{ $textures }、ローカルマテリアル：{ $materials }
+local-appearance-private = このプレビューは自分にだけ表示され、再接続後に復元されます。適用から７日後に期限切れになります。
+local-appearance-reveal = ローカルの面を点滅表示
+local-appearance-stop-reveal = ローカルの面の点滅表示を停止
+local-appearance-library = ローカルプレビューを開く
+local-appearance-remove = すべてのローカルテクスチャ・マテリアルを解除…
+local-appearance-confirm-title = ローカルテクスチャとマテリアルを解除しますか？
+local-appearance-confirm-body = このアカウントとグリッドで記憶されたオブジェクト（合計{ $count }個）をサーバー上の外観に戻します。現在表示されていないオブジェクトも対象です。解除した適用状態は再接続後に復元されません。ローカルファイル、プレビューライブラリ、メッシュプレビューは保持されます。

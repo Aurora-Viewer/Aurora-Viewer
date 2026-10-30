@@ -3056,7 +3056,7 @@ ui-options-letter-keys-move-help = Off: pressing a letter key starts typing in t
 ui-options-walk-backwards-without-turning = Walk backward without turning around
 ui-options-walk-backwards-without-turning-help = Avatars walking backward step back instead of turning to face where they go. Only on your screen: others see what their viewer shows. An animation overrider can still turn them.
 ui-options-automatic-fly = Fly by holding Up
-ui-options-automatic-fly-help = Holding the Jump / Up control starts flying. When off, ground jumps start immediately and repeat while held; moving up in flight still works. Use the Fly button or shortcut to start flying.
+ui-options-automatic-fly-help = Holding the Jump / Up control starts flying. When off, ground jumps repeat while held, without taking off; moving up in flight still works. Use the Fly button or shortcut to start flying.
 ui-options-automatic-land = Land by holding Down
 ui-options-automatic-land-help = Holding the Crouch / Down control ends flight on contact with the ground or a platform. When off, it still crouches on the ground and moves down in flight. Use the Fly button or shortcut to end flight.
 ui-options-crouch-toggle = Crouch as a toggle
@@ -12282,6 +12282,8 @@ inventory-recover-folder = Move to Lost And Found
 inventory-show-main = Show in main view
 inventory-open-current = Open in this window
 inventory-copy-outfit-list = Copy outfit list to clipboard
+appearance-outfit-copy-entry = { $item } - { $creator }
+appearance-outfit-copy-preparing = Preparing outfit list…
 inventory-empty-lost-found = Empty Lost And Found
 common-lost-and-found = Lost And Found
 inventory-clean-broken-links = Clean broken links
@@ -12659,3 +12661,18 @@ area-search-range-options = Ranges
 area-search-reset-ranges-tip = Restore default distance and sale price ranges.
 
 area-search-results = Results
+
+# Applied local textures and materials (#1375).
+local-appearance-warning = { $count ->
+    [one] Local textures / materials: { $count } object
+   *[other] Local textures / materials: { $count } objects
+    }
+local-appearance-pending = Saved local previews (pending)
+local-appearance-details = Local textures: { $textures } · Local materials: { $materials }
+local-appearance-private = These previews are visible only to you and are restored after reconnecting. Each application expires after 7 days.
+local-appearance-reveal = Highlight local surfaces
+local-appearance-stop-reveal = Stop highlighting local surfaces
+local-appearance-library = Open local previews
+local-appearance-remove = Remove all local textures / materials…
+local-appearance-confirm-title = Remove local textures and materials?
+local-appearance-confirm-body = Restore the server appearance for the remembered objects in this account and grid (total: { $count }), including objects currently absent. These applications will no longer be restored after reconnecting. Your local files, preview library and mesh previews are kept.
