@@ -916,6 +916,38 @@ fn wearable_icon(asset_type: i32, flags: u32) -> &'static str {
     }
 }
 
+/// LLItemBridge::getIcon/getIconOverlay (indra/newview/llinventorybridge.cpp):
+/// links retain the original's type, wearable subtype and multi-object flags.
+/// Missing and cyclic targets retain the generic link icon until metadata arrives.
+pub(crate) fn inventory_item_icon(inv: &Inventory, it: &aurora_net::inventory::InvItem, p: &Palette) -> (&'static str, egui::Color32) {
+    if !matches!(it.asset_type, 24 | 25) {
+        return (
+            item_icon(it.asset_type, it.inv_type, it.flags),
+            item_icon_color(it.asset_type, it.inv_type, p),
+        );
+    }
+    if let Some(id) = rules::original(inv, it.id) {
+        if let Some(target) = inv.items.get(&id) {
+            return (
+                super::icons::inventory_link_name(item_icon(target.asset_type, target.inv_type, target.flags)),
+                item_icon_color(target.asset_type, target.inv_type, p),
+            );
+        }
+        if let Some(folder) = inv.folders.get(&id) {
+            return (
+                super::icons::inventory_link_name(tree::folder_icon(folder.info.type_default, false)),
+                p.violet_light,
+            );
+        }
+    }
+    (if it.asset_type == 25 { "Inv_LinkFolder" } else { "Inv_LinkItem" }, p.muted)
+}
+
+fn resolved_item_type_icon(ui: &mut egui::Ui, icons: &Icons, inv: &Inventory, it: &aurora_net::inventory::InvItem, p: &Palette) {
+    let (name, color) = inventory_item_icon(inv, it, p);
+    tree::icon(ui, icons, name, p, Some(color));
+}
+
 /// The height of an item row in Aurora's lists, shared with Appearance.
 pub const AURORA_ROW_HEIGHT: f32 = aurora::rows::HEIGHT;
 
@@ -937,11 +969,6 @@ pub fn item_icon_color(asset_type: i32, inv_type: i32, p: &Palette) -> egui::Col
 
 fn icon(ui: &mut egui::Ui, icons: &Icons, name: &str, p: &Palette) {
     tree::icon(ui, icons, name, p, None);
-}
-
-fn item_type_icon(ui: &mut egui::Ui, icons: &Icons, it: &aurora_net::inventory::InvItem, p: &Palette) {
-    let color = item_icon_color(it.asset_type, it.inv_type, p);
-    tree::icon(ui, icons, item_icon(it.asset_type, it.inv_type, it.flags), p, Some(color));
 }
 
 fn item_row(
@@ -966,7 +993,7 @@ fn item_row(
     st.visible.push(*id);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        item_type_icon(ui, icons, it, p);
+        resolved_item_type_icon(ui, icons, inv, it, p);
         if rename_row(ui, p, inv, *id, st, prefs, actions) {
             return;
         }
@@ -2500,6 +2527,100 @@ mod tests {
             &Default::default(),
         )
         .expect("replacement can be planned without opening Appearance");
+    }
+
+    #[test]
+    fn inventory_shortcuts_follow_target_metadata_and_handle_broken_chains() {
+        use aurora_net::inventory::InvItem;
+        let p = crate::theme::Theme::default().palette();
+        let mut inv = Inventory::default();
+        let id = Uuid::from_u128;
+        let link = InvItem {
+            id: id(2),
+            asset_type: 24,
+            asset_id: id(1),
+            flags: u32::MAX,
+            ..Default::default()
+        };
+        inv.items.insert(link.id, link.clone());
+        let snapshot_link = InvItem {
+            inv_type: 15,
+            ..link.clone()
+        };
+        assert_eq!(inventory_item_icon(&inv, &snapshot_link, &p), ("Inv_LinkItem", p.muted));
+        assert_eq!(inventory_item_icon(&inv, &link, &p), ("Inv_LinkItem", p.muted));
+        let mut types = vec![
+            (0, 0, 0),
+            (0, 15, 0),
+            (1, 1, 0),
+            (2, 2, 0),
+            (3, 3, 0),
+            (6, 6, 0),
+            (6, 6, OBJECT_HAS_MULTIPLE_ITEMS),
+            (7, 7, 0),
+            (10, 10, 0),
+            (20, 19, 0),
+            (21, 20, 0),
+            (49, 22, 0),
+            (56, 25, 0),
+            (57, 26, 0),
+            (5, 18, 255),
+            (99, 99, 0),
+        ];
+        types.extend((0..=16).map(|kind| (if kind < 4 { 13 } else { 5 }, 18, kind)));
+        for (asset_type, inv_type, flags) in types {
+            let target = InvItem {
+                id: id(1),
+                asset_type,
+                inv_type,
+                flags,
+                ..Default::default()
+            };
+            inv.items.insert(target.id, target.clone());
+            let (name, tint) = inventory_item_icon(&inv, &link, &p);
+            assert_eq!(name, format!("{}_Link", item_icon(asset_type, inv_type, flags)));
+            assert_eq!(tint, item_icon_color(asset_type, inv_type, &p));
+            assert_eq!(
+                inventory_item_icon(&inv, &target, &p),
+                (item_icon(asset_type, inv_type, flags), tint)
+            );
+        }
+        inv.items.insert(
+            id(1),
+            InvItem {
+                id: id(1),
+                asset_type: 24,
+                asset_id: id(3),
+                ..Default::default()
+            },
+        );
+        inv.items.insert(
+            id(3),
+            InvItem {
+                id: id(3),
+                asset_type: 13,
+                flags: 1,
+                ..Default::default()
+            },
+        );
+        assert_eq!(inventory_item_icon(&inv, &link, &p), ("Inv_Skin_Link", p.violet_light));
+        inv.items.get_mut(&id(3)).expect("target").asset_type = 24;
+        inv.items.get_mut(&id(3)).expect("target").asset_id = link.id;
+        assert_eq!(inventory_item_icon(&inv, &link, &p), ("Inv_LinkItem", p.muted));
+        inv.items.remove(&id(1));
+        inv.created_folders(vec![aurora_net::inventory::InvFolder {
+            id: id(1),
+            type_default: -1,
+            ..Default::default()
+        }]);
+        let folder_link = InvItem { asset_type: 25, ..link };
+        inv.items.insert(folder_link.id, folder_link.clone());
+        assert_eq!(
+            inventory_item_icon(&inv, &folder_link, &p),
+            ("Inv_FolderClosed_Link", p.violet_light)
+        );
+        inv.folders.remove(&id(1));
+        assert_eq!(inventory_item_icon(&inv, &folder_link, &p), ("Inv_LinkFolder", p.muted));
     }
 
     #[test]

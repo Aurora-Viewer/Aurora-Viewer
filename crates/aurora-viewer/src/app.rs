@@ -7741,6 +7741,9 @@ impl App {
         self.world.events_this_frame = 0;
         self.sync_script_debug();
         self.world.received_items.enabled = self.settings.sort_received_items;
+        self.world.inventory_offers.auto_accept = self.settings.auto_accept_inventory;
+        self.world.inventory_offers.auto_accept_chat = self.settings.auto_accept_inventory_chat;
+        self.world.inventory_offers.auto_accept_notify = self.settings.auto_accept_inventory_notify;
         self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
         self.world.payments.open_for_friends = self.settings.payment_opens_conversation;
         self.world.payments.open_when_paying = self.settings.payment_sent_opens_conversation;
@@ -13259,6 +13262,15 @@ impl App {
                         self.ik_editor.show(&ctx, &p, &self.world, projector);
                         self.ik_editor.over_viewfinder = false;
                     }
+                    // Personal Lighting, opened from the light panel, stays
+                    // over it too: the photo's light refined without leaving
+                    if self.panels.personal_lighting {
+                        let screen = ctx.content_rect();
+                        ui::layout::set_work_area(&ctx, screen);
+                        ui::layout::set_move_area(&ctx, screen);
+                        let reset = self.personal_lighting(&ctx, &p, true);
+                        self.env_actions(reset);
+                    }
                     // the exit's question still shows over the photo mode
                     a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
                     return a;
@@ -15458,28 +15470,8 @@ impl App {
                     &mut lighting,
                 );
                 self.panels.environment = open;
-                // captureCurrentEnvironment: on opening, and again when another
-                // local change left no fixed sky to edit (onEnvironmentUpdated)
-                if lighting && (!self.lighting_was_open || self.world.eep.personal_sky().is_none()) {
-                    self.world.eep.capture_personal();
-                }
-                self.env_ui.beacons = [self.settings.sun_beacon, self.settings.moon_beacon];
-                let reset = self.env_ui.show_lighting(&ctx, &p, &mut self.world.eep, &mut lighting);
-                if lighting {
-                    self.set_env_beacons(self.env_ui.beacons);
-                }
-                self.lighting_was_open = lighting;
-                self.panels.personal_lighting = lighting;
-                for action in env_actions.into_iter().chain(reset) {
-                    match action {
-                        ui::environment::EnvAction::Pick(kind, asset) => self.world.eep.request_local(asset, kind),
-                        ui::environment::EnvAction::Shared => {
-                            self.world.eep.clear_local();
-                            self.panels.time_of_day = 0;
-                        }
-                        ui::environment::EnvAction::Preset(n) => self.panels.time_of_day = n,
-                    }
-                }
+                let reset = self.personal_lighting(&ctx, &p, lighting);
+                self.env_actions(env_actions.into_iter().chain(reset));
                 self.draw_env_editor(&ctx, &p);
                 self.draw_day_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);
@@ -16731,10 +16723,29 @@ impl ApplicationHandler for App {
             }
             self.sync_chat_log();
             self.sync_script_debug();
+            self.settings.auto_accept_inventory |= crate::demo::auto_accept_inventory_scene();
+            self.settings.show_accepted_in_inventory |= crate::demo::show_accepted_scene();
+            self.world.inventory_offers.auto_accept = self.settings.auto_accept_inventory;
+            self.world.inventory_offers.auto_accept_chat = self.settings.auto_accept_inventory_chat;
+            self.world.inventory_offers.auto_accept_notify = self.settings.auto_accept_inventory_notify;
+            self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
                 }
+            }
+            if crate::demo::auto_accept_inventory_scene() {
+                log::info!(
+                    "demo inventory auto-accept: pending={}, cards={}, show={}",
+                    self.world
+                        .notifications
+                        .list
+                        .iter()
+                        .filter(|n| n.kind == crate::world::notifications::Kind::Inventory && n.interactive())
+                        .count(),
+                    self.world.inventory_offers.list.len(),
+                    self.settings.show_accepted_in_inventory,
+                );
             }
             if let Ok(mode) = std::env::var("AURORA_DEMO_PARCEL_VISIBILITY") {
                 crate::demo::parcel_visibility::install(&mut self.world, &mut self.settings, &mode);
@@ -17613,7 +17624,13 @@ impl ApplicationHandler for App {
                         }
                     } else if !matches!(
                         view.as_str(),
-                        "keyboard" | "keyboard-fold" | "aurora-keyboard" | "aurora-keyboard-fold" | "aurora-keyboard-wide"
+                        "keyboard"
+                            | "keyboard-fold"
+                            | "aurora-keyboard"
+                            | "aurora-keyboard-fold"
+                            | "aurora-keyboard-wide"
+                            | "link-icons"
+                            | "aurora-link-icons"
                     ) {
                         self.inventory_ui.demo_menu = Some(id);
                     }

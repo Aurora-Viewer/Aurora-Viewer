@@ -337,7 +337,7 @@ their edge). A layout is only written by a normal exit, for example
 viewfinder at frame 600 (whatever Preferences › Aurora › Photo window
 says), with the depth of field on at f/1.8 in AF-S on the Avatar area;
 words joined by `-` add to it: `essential` or `hidden` the display level,
-`menu`, `help` or `drawer` a panel open, `mf` or `afc` the focus mode
+`menu`, `help`, `drawer` or `light` (the dock's light panel) a panel open, `mf` or `afc` the focus mode
 (`mf` focused by hand at 3.3 m, the sharp edges outlined by the focus
 peaking), `point` the Point area, `sharp` the aperture ring on All sharp (the
 window's depth of field off), `prefsdof` Preferences › Graphics › Depth of
@@ -4349,7 +4349,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_WEARABLE=<type>[:mode]` | Skin, hair, eyes and system clothing editors |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
-| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
+| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|channel\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, commands to worn scripts, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the empty Batch / Permissions tab |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
@@ -4908,6 +4908,12 @@ failure. Grid validation and any paid upload are performed by the human.
   the windows. The build window keeps its width across its six sections,
   including Shape for the advanced settings; long lists scroll in the body,
   the actions stay visible. Modal confirmations keep the blurred background.
+- **`AURORA_DEMO_INVENTORY=link-icons|aurora-link-icons`**: adds original/link pairs
+  for demo item types and all seventeen wearable subtypes, plus a folder link and
+  a broken link. Expand the context-test folder and scroll through it: valid links
+  keep their target's type icon and tint with the shortcut arrow at the lower left;
+  the broken link keeps the generic link icon. Compare the Legacy and Aurora layouts.
+
 - **`AURORA_DEMO_INVENTORY=hover-photo|hover-photo-object|aurora-hover-photo|aurora-hover-photo-object`**:
   hover the synthetic texture or an object with a saved picture after frame 600.
   Capture after frame 700. Both layouts must show the image without selecting
@@ -5054,6 +5060,22 @@ failure. Grid validation and any paid upload are performed by the human.
   whose gift the demo then adds to Objects. Inventory opens on the kept
   item, selected, its folder expanded and the filters cleared. Capture at
   frame 900.
+- **`AURORA_DEMO_INVENTORY=offer-auto|offer-object-auto|offer-auto-show|offer-object-auto-show`**:
+  turn on automatic acceptance for this run. The resident's lantern or the
+  scripted dispenser's object is accepted on arrival, with no pending card,
+  conversation or acceptance buttons. The two receipt-feedback settings are
+  on by default: a private nearby-chat system line, an informational inventory
+  notification and one InventoryOffer sound. Disable either independently;
+  disabling both makes acceptance silent. The `-show` variants also turn on "Show
+  accepted items in the inventory" and open Inventory on the delivered item.
+  Capture at frame 620 for the notification, 900 for the delivered selection;
+  with `RUST_LOG=info`, the log reports zero pending
+  offers and cards.
+  `AURORA_DEMO_OPTIONS=inventory:auto-accept` reveals the preference and opens
+  its sub-options. Without an auto-accept scenario or a saved choice it remains
+  off, with both sub-options checked and disabled. Test all four combinations
+  of `auto_accept_inventory_chat` / `auto_accept_inventory_notify` in the
+  isolated profile; closing a receipt must never send another acceptance.
 - **`AURORA_DEMO_NOTIFS=object|object-own|object-group|object-history|legacy-object`**: one object inventory offer at frame 700, with the source name, owner and item. `object` shows Accept, Discard and Mute Owner; `object-own` omits owner blocking for our own object; `object-group` uses a group owner; `object-history` refuses the gift and opens History at frame 850, retaining the clickable owner; `legacy-object` exercises the same gift in Legacy toasts. Capture at frame 900 in English and French. Identity names are underlined links to their native profiles; clicking a name keeps the offer pending.
 - **`AURORA_DEMO_NOTIFS=group-notice|legacy-group-notice|group-notice-saved`**: two group notices at frame 700. Aurora Builders (no insignia: the group glyph) from Tess Touch without an attachment, then Northern Wolves (its insignia beside the title) from Orion with a "Texture kit" object attached. Each card is titled "group : subject", its text starts with "Sent by" and the sender, both names are links; the attachment row shows its icon, name and kind with "Save to inventory" beside it, or under it when a long translation leaves the name no room. `legacy-group-notice` shows them in the Legacy toasts; `group-notice-saved` saves the attachment at frame 850: the card stays out with a greyed "Saved". Capture at frame 760 (900 for `group-notice-saved`) in English and French.
 - **`AURORA_DEMO_NOTIFS=1|dnd|list|history|legacy|legacy-history`**: the notification
