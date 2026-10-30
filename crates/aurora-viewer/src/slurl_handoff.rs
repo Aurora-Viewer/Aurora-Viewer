@@ -12,11 +12,21 @@
 //! default security lets only its creator's account write to it, and remote
 //! clients are refused. Demo mode and `--title` test windows use pipes of
 //! their own, so a test never takes the links meant for the human's viewer.
+//!
+//! On Linux the hand-over goes over the session bus, as the Legacy Viewer's
+//! (LLAppViewerLinux::sendURLToOtherInstance and initSLURLHandler, method
+//! `GoSLURL(s)`; indra/newview/llappviewerlinux.cpp): the first viewer owns
+//! a well-known name, the bus gives it up when that viewer exits (even on a
+//! crash), and only the user's own processes reach the session bus. The
+//! name is Aurora's and not the Legacy Viewer's `com.secondlife.ViewerAppAPIService`,
+//! which every viewer of that family owns: a link would otherwise go to
+//! whichever of them started first. Demo mode and `--title` windows add
+//! their own part to the name.
 
 use crossbeam_channel::Receiver;
 
-/// Longest link read from the pipe (a SLURL is far shorter).
-#[cfg(windows)]
+/// Longest link received (a SLURL is far shorter).
+#[cfg(any(windows, target_os = "linux"))]
 const MAX_URL: usize = 8 * 1024;
 
 /// `\\.\pipe\aurora-viewer-slurl-<session>[-demo][-<title>]`.
@@ -70,7 +80,10 @@ pub fn hand_off(url: &str) -> bool {
     false
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub use bus::hand_off;
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn hand_off(_url: &str) -> bool {
     false
 }
@@ -92,7 +105,10 @@ pub fn listen() -> Option<Receiver<String>> {
     ready_rx.recv().unwrap_or(false).then_some(rx)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub use bus::listen;
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn listen() -> Option<Receiver<String>> {
     None
 }
@@ -163,5 +179,120 @@ fn serve(name: &str, ready: &crossbeam_channel::Sender<bool>, links: &crossbeam_
     // SAFETY: the handle is not used after this.
     unsafe {
         CloseHandle(pipe);
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod bus {
+    use super::{MAX_URL, Receiver};
+    use crossbeam_channel::Sender;
+    use zbus::blocking::Connection;
+    use zbus::fdo::{RequestNameFlags, RequestNameReply};
+
+    const PATH: &str = "/org/aurora_viewer/AuroraViewer";
+    const INTERFACE: &str = "org.aurora_viewer.AuroraViewer";
+
+    /// The viewer that receives the links: its connection keeps the name.
+    static OWNER: std::sync::OnceLock<Connection> = std::sync::OnceLock::new();
+
+    /// `org.aurora_viewer.AuroraViewer[.Demo][.T_<title>]`.
+    fn bus_name() -> String {
+        name_for(std::env::var_os("AURORA_DEMO").is_some(), crate::cli::title_slug().as_deref())
+    }
+
+    /// A bus name's elements hold only `[A-Za-z0-9_]` and do not start with
+    /// a digit, and the whole name stays under 255 bytes.
+    pub(super) fn name_for(demo: bool, title_slug: Option<&str>) -> String {
+        let mut name = String::from(INTERFACE);
+        if demo {
+            name.push_str(".Demo");
+        }
+        if let Some(slug) = title_slug {
+            name.push_str(".T_");
+            name.extend(slug.chars().take(100).map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }));
+        }
+        name
+    }
+
+    struct Links(Sender<String>);
+
+    #[zbus::interface(name = "org.aurora_viewer.AuroraViewer")]
+    impl Links {
+        /// A link of a later launch (the Legacy Viewer's method name).
+        #[zbus(name = "GoSLURL")]
+        fn go_slurl(&self, slurl: String) {
+            let url = slurl.trim();
+            if !url.is_empty() && url.len() <= MAX_URL {
+                let _ = self.0.send(url.to_owned());
+            }
+        }
+    }
+
+    /// Sends the link to the viewer already running; false when there is
+    /// none (no owner of the name: this process then starts with it).
+    pub fn hand_off(url: &str) -> bool {
+        let Ok(bus) = Connection::session() else {
+            return false;
+        };
+        let name = bus_name();
+        // no service file names it: without an owner the call fails at once
+        match bus.call_method(Some(name.as_str()), PATH, Some(INTERFACE), "GoSLURL", &(url,)) {
+            Ok(_) => true,
+            Err(zbus::Error::MethodError(error, ..)) if error.as_str() == "org.freedesktop.DBus.Error.ServiceUnknown" => false,
+            Err(e) => {
+                log::warn!("startup links: not handed over ({e})");
+                false
+            }
+        }
+    }
+
+    /// Owns the name when no other viewer of this session (same demo mode
+    /// and title) does; the object is served before the name is taken, so
+    /// a launch that finds the name finds the method too.
+    pub fn listen() -> Option<Receiver<String>> {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let bus = match Connection::session() {
+            Ok(bus) => bus,
+            Err(e) => {
+                log::warn!("startup links: no session bus ({e})");
+                return None;
+            }
+        };
+        if let Err(e) = bus.object_server().at(PATH, Links(tx)) {
+            log::warn!("startup links: {e}");
+            return None;
+        }
+        match bus.request_name_with_flags(bus_name(), RequestNameFlags::DoNotQueue.into()) {
+            Ok(RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner) => {
+                let _ = OWNER.set(bus);
+                Some(rx)
+            }
+            Ok(_) => {
+                log::info!("startup links: received by another viewer");
+                None
+            }
+            Err(e) => {
+                log::warn!("startup links: {e}");
+                None
+            }
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    #[test]
+    fn bus_names_are_valid() {
+        use super::bus::name_for;
+        assert_eq!(name_for(false, None), "org.aurora_viewer.AuroraViewer");
+        assert_eq!(
+            name_for(true, Some("test-linux-slurl")),
+            "org.aurora_viewer.AuroraViewer.Demo.T_test_linux_slurl"
+        );
+        // non-ASCII letters of a title, a leading digit, a very long title
+        for slug in ["été-2", "9lives", &"a".repeat(400)] {
+            let name = name_for(false, Some(slug));
+            assert!(zbus::names::WellKnownName::try_from(name.as_str()).is_ok(), "{name}");
+        }
     }
 }

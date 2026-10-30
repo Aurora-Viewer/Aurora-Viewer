@@ -6,6 +6,14 @@
 //! (HKCU\Software\Classes\secondlife, which wins over a machine-wide one),
 //! from Preferences › Interface. The command is the installer's
 //! (`"<exe>" -url "%1"`, MAINT-8305): `cli.rs` reads nothing after the link.
+//!
+//! On Linux the Legacy Viewer's register_secondlifeprotocol.sh
+//! (indra/newview/linux_tools/) writes a hidden desktop entry for the scheme
+//! into the user's applications folder and makes it the default with
+//! `xdg-mime default`. Aurora writes the same two files itself, per the XDG
+//! specifications: `$XDG_DATA_HOME/applications/aurora-viewer-slurl.desktop`
+//! and its `x-scheme-handler/<scheme>` defaults in
+//! `$XDG_CONFIG_HOME/mimeapps.list`, the rest of which it leaves untouched.
 
 /// Who opens `secondlife:` links.
 #[derive(Debug, Clone, PartialEq)]
@@ -19,19 +27,20 @@ pub enum Handler {
 
 /// Whether this system lets Aurora register itself.
 pub fn supported() -> bool {
-    cfg!(windows)
+    cfg!(any(windows, target_os = "linux"))
 }
+
+#[cfg(any(windows, target_os = "linux"))]
+const SCHEMES: [&str; 3] = ["secondlife", "hop", "x-grid-location-info"];
 
 #[cfg(windows)]
 mod win {
-    use super::Handler;
+    use super::{Handler, SCHEMES};
     use windows_sys::Win32::Foundation::ERROR_SUCCESS;
     use windows_sys::Win32::System::Registry::{
         HKEY, HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ, RegDeleteTreeW, RegGetValueW,
         RegSetKeyValueW,
     };
-
-    const SCHEMES: [&str; 3] = ["secondlife", "hop", "x-grid-location-info"];
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -213,12 +222,374 @@ mod win {
 #[cfg(windows)]
 pub use win::{register, unregister};
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+mod xdg {
+    use super::{Handler, SCHEMES};
+    use std::path::{Path, PathBuf};
+
+    /// Aurora's own entry, hidden from the menus (the shipped
+    /// `aurora-viewer.desktop` claims no scheme: registering stays a choice).
+    const DESKTOP_ID: &str = "aurora-viewer-slurl.desktop";
+    const DEFAULTS: &str = "Default Applications";
+
+    fn home_dir(var: &str, fallback: &str) -> Option<PathBuf> {
+        std::env::var_os(var)
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(fallback)))
+    }
+
+    fn dirs(var: &str, fallback: &str) -> Vec<PathBuf> {
+        let list = std::env::var(var).ok().filter(|v| !v.is_empty());
+        list.as_deref()
+            .unwrap_or(fallback)
+            .split(':')
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .collect()
+    }
+
+    fn config_home() -> Option<PathBuf> {
+        home_dir("XDG_CONFIG_HOME", ".config")
+    }
+
+    fn data_home() -> Option<PathBuf> {
+        home_dir("XDG_DATA_HOME", ".local/share")
+    }
+
+    /// The `applications` folders, the user's first.
+    fn application_dirs() -> Vec<PathBuf> {
+        data_home()
+            .into_iter()
+            .chain(dirs("XDG_DATA_DIRS", "/usr/local/share:/usr/share"))
+            .map(|d| d.join("applications"))
+            .collect()
+    }
+
+    /// The `mimeapps.list` files in the order the specification reads them
+    /// (Association between MIME types and applications 1.0.1): per folder,
+    /// the current desktops' own lists first.
+    fn mimeapps_lists() -> Vec<PathBuf> {
+        let desktops: Vec<String> = std::env::var("XDG_CURRENT_DESKTOP")
+            .unwrap_or_default()
+            .split(':')
+            .filter(|d| !d.is_empty())
+            .map(str::to_lowercase)
+            .collect();
+        let folders = config_home()
+            .into_iter()
+            .chain(dirs("XDG_CONFIG_DIRS", "/etc/xdg"))
+            .chain(application_dirs());
+        folders
+            .flat_map(|folder| {
+                desktops
+                    .iter()
+                    .map(|d| format!("{d}-mimeapps.list"))
+                    .chain(std::iter::once("mimeapps.list".to_owned()))
+                    .map(move |name| folder.join(name))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// The values of `key` in `[section]` of a desktop-entry style file.
+    pub(super) fn value<'a>(text: &'a str, section: &str, key: &str) -> Option<&'a str> {
+        let mut inside = false;
+        for line in text.lines().map(str::trim) {
+            if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+                inside = name == section;
+            } else if inside
+                && let Some((k, v)) = line.split_once('=')
+                && k.trim() == key
+            {
+                return Some(v.trim());
+            }
+        }
+        None
+    }
+
+    /// `text` with `key` of `[section]` set to `value`, or removed (`None`);
+    /// every other line is kept as it was.
+    pub(super) fn with_value(text: &str, section: &str, key: &str, value: Option<&str>) -> String {
+        let mut out: Vec<String> = Vec::new();
+        let mut inside = false;
+        let mut found = false;
+        // where a new key goes: after the section's last non-blank line
+        let mut insert_at = None;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if let Some(name) = trimmed.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+                inside = name == section;
+                found |= inside;
+            } else if inside && trimmed.split_once('=').is_some_and(|(k, _)| k.trim() == key) {
+                continue;
+            }
+            out.push(line.to_owned());
+            if inside && !trimmed.is_empty() {
+                insert_at = Some(out.len());
+            }
+        }
+        if let Some(value) = value {
+            let entry = format!("{key}={value}");
+            match insert_at {
+                Some(at) => out.insert(at, entry),
+                None => {
+                    if !found {
+                        if out.last().is_some_and(|l| !l.trim().is_empty()) {
+                            out.push(String::new());
+                        }
+                        out.push(format!("[{section}]"));
+                    }
+                    out.push(entry);
+                }
+            }
+        }
+        let mut text = out.join("\n");
+        text.push('\n');
+        text
+    }
+
+    /// The program of an `Exec` value as the file holds it, its escapes and
+    /// quoting undone (Desktop Entry Specification, "The Exec key").
+    pub(super) fn exec_program(exec: &str) -> Option<String> {
+        let exec = exec.replace("\\\\", "\\").replace("%%", "%");
+        let exec = exec.trim();
+        let program = match exec.strip_prefix('"') {
+            Some(rest) => {
+                let mut out = String::new();
+                let mut chars = rest.chars();
+                loop {
+                    match chars.next()? {
+                        '"' => break,
+                        '\\' => out.push(chars.next()?),
+                        c => out.push(c),
+                    }
+                }
+                out
+            }
+            None => exec.split_whitespace().next()?.to_owned(),
+        };
+        (!program.is_empty()).then_some(program)
+    }
+
+    /// The `Exec` line that opens a link with `exe`. A plain path stays bare:
+    /// xdg-utils' xdg-open and xdg-mime take the first word of `Exec` as the
+    /// program, quotes included, so they ignore a quoted entry and fall back
+    /// to another handler. A path with a reserved character must be quoted
+    /// (escaped once for the quoting and once more for the file's string
+    /// values); only the desktops' own openers (GLib, KDE) read it then.
+    pub(super) fn exec_line(exe: &str) -> String {
+        const RESERVED: &str = " \t\n\"'\\><~|&;$*?#()`";
+        if !exe.is_empty() && !exe.contains(|c| RESERVED.contains(c)) {
+            return format!("{} -url %u", exe.replace('%', "%%"));
+        }
+        let mut quoted = String::from("\"");
+        for c in exe.chars() {
+            match c {
+                '"' | '`' | '$' => {
+                    quoted.push_str("\\\\");
+                    quoted.push(c);
+                }
+                '\\' => quoted.push_str("\\\\\\\\"),
+                '%' => quoted.push_str("%%"),
+                c => quoted.push(c),
+            }
+        }
+        quoted.push('"');
+        format!("{quoted} -url %u")
+    }
+
+    pub(super) fn desktop_entry(exe: &str) -> String {
+        let mimes: String = SCHEMES.iter().map(|s| format!("x-scheme-handler/{s};")).collect();
+        format!(
+            "[Desktop Entry]\nType=Application\nName=Aurora Viewer\nComment=Opens Second Life and Hypergrid links\n\
+             Exec={}\nIcon=aurora-viewer\nTerminal=false\nNoDisplay=true\nMimeType={mimes}\n",
+            exec_line(exe)
+        )
+    }
+
+    /// The program found on the PATH, as a launcher would run it.
+    fn resolve(program: &str) -> Option<PathBuf> {
+        if program.contains('/') {
+            return Some(PathBuf::from(program));
+        }
+        std::env::split_paths(&std::env::var_os("PATH")?)
+            .map(|dir| dir.join(program))
+            .find(|p| p.is_file())
+    }
+
+    fn same_file(a: &Path, b: &Path) -> bool {
+        match (a.canonicalize(), b.canonicalize()) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => a == b,
+        }
+    }
+
+    fn desktop_file(id: &str) -> Option<PathBuf> {
+        application_dirs().into_iter().map(|d| d.join(id)).find(|p| p.is_file())
+    }
+
+    fn is_this(program: &str) -> bool {
+        resolve(program)
+            .zip(std::env::current_exe().ok())
+            .is_some_and(|(exe, this)| same_file(&exe, &this))
+    }
+
+    /// The desktop entry that opens `scheme`: the first default of the
+    /// lists that is installed, else the first entry claiming it in a
+    /// `mimeinfo.cache` (what `xdg-open` and GLib fall back on).
+    fn handler_id(scheme: &str) -> Option<String> {
+        let key = format!("x-scheme-handler/{scheme}");
+        let installed = |ids: &str| {
+            ids.split(';')
+                .map(str::trim)
+                .find(|id| !id.is_empty() && desktop_file(id).is_some())
+                .map(str::to_owned)
+        };
+        let from_lists = mimeapps_lists()
+            .iter()
+            .filter_map(|list| std::fs::read_to_string(list).ok())
+            .find_map(|text| value(&text, DEFAULTS, &key).and_then(installed));
+        from_lists.or_else(|| {
+            application_dirs()
+                .iter()
+                .filter_map(|d| std::fs::read_to_string(d.join("mimeinfo.cache")).ok())
+                .find_map(|text| value(&text, "MIME Cache", &key).and_then(installed))
+        })
+    }
+
+    fn handler_for(scheme: &str) -> Handler {
+        let Some(id) = handler_id(scheme) else {
+            return Handler::None;
+        };
+        let text = desktop_file(&id).and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default();
+        let entry = "Desktop Entry";
+        if value(&text, entry, "Exec").and_then(exec_program).is_some_and(|p| is_this(&p)) {
+            return Handler::This;
+        }
+        let name = value(&text, entry, "Name").filter(|n| !n.is_empty());
+        Handler::Other(name.map_or(id.trim_end_matches(".desktop").to_owned(), str::to_owned))
+    }
+
+    pub fn handler() -> Handler {
+        SCHEMES
+            .iter()
+            .map(|scheme| handler_for(scheme))
+            .find(|handler| *handler != Handler::This)
+            .unwrap_or(Handler::This)
+    }
+
+    /// Writes beside the target, then renames: a reader never sees half a
+    /// file. A symbolic link (a dotfiles folder) keeps pointing at it.
+    fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
+        let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        let tmp = path.with_extension("aurora-tmp");
+        std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, &path)).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            format!("{}: {e}", path.display())
+        })
+    }
+
+    fn own_entry() -> Result<PathBuf, String> {
+        data_home()
+            .map(|d| d.join("applications").join(DESKTOP_ID))
+            .ok_or_else(|| "no home folder".into())
+    }
+
+    fn mimeapps() -> Result<PathBuf, String> {
+        config_home()
+            .map(|d| d.join("mimeapps.list"))
+            .ok_or_else(|| "no home folder".into())
+    }
+
+    fn write_entry() -> Result<(), String> {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        write_atomic(&own_entry()?, &desktop_entry(&exe.to_string_lossy()))
+    }
+
+    pub fn register() -> Result<(), String> {
+        write_entry()?;
+        let list = mimeapps()?;
+        let mut text = std::fs::read_to_string(&list).unwrap_or_default();
+        for scheme in SCHEMES {
+            text = with_value(&text, DEFAULTS, &format!("x-scheme-handler/{scheme}"), Some(DESKTOP_ID));
+        }
+        write_atomic(&list, &text)?;
+        log::info!("secondlife links: registered for this user");
+        Ok(())
+    }
+
+    /// Removes this viewer's defaults and entry; another handler of the
+    /// lists or of the system takes the links again. An entry left by
+    /// another Aurora executable stays.
+    pub fn unregister() -> Result<(), String> {
+        let entry = own_entry()?;
+        let text = std::fs::read_to_string(&entry).unwrap_or_default();
+        let ours = value(&text, "Desktop Entry", "Exec")
+            .and_then(exec_program)
+            .is_some_and(|p| is_this(&p));
+        if !ours {
+            return Ok(());
+        }
+        let list = mimeapps()?;
+        if let Ok(old) = std::fs::read_to_string(&list) {
+            let mut text = old.clone();
+            for scheme in SCHEMES {
+                let key = format!("x-scheme-handler/{scheme}");
+                let rest: Vec<&str> = value(&text, DEFAULTS, &key)
+                    .unwrap_or_default()
+                    .split(';')
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty() && *id != DESKTOP_ID)
+                    .collect();
+                let joined = rest.iter().map(|id| format!("{id};")).collect::<String>();
+                let kept = (!rest.is_empty()).then_some(joined.as_str());
+                if kept != value(&text, DEFAULTS, &key) {
+                    text = with_value(&text, DEFAULTS, &key, kept);
+                }
+            }
+            if text != old {
+                write_atomic(&list, &text)?;
+            }
+        }
+        std::fs::remove_file(&entry).map_err(|e| format!("{}: {e}", entry.display()))?;
+        log::info!("secondlife links: unregistered");
+        Ok(())
+    }
+
+    /// Aurora's entry left pointing at an executable that no longer exists
+    /// (moved or rebuilt elsewhere) is pointed at this one.
+    pub fn repair() {
+        let Ok(entry) = own_entry() else {
+            return;
+        };
+        let Ok(text) = std::fs::read_to_string(&entry) else {
+            return;
+        };
+        let gone = value(&text, "Desktop Entry", "Exec")
+            .and_then(exec_program)
+            .is_some_and(|p| Path::new(&p).is_absolute() && !Path::new(&p).exists());
+        if gone {
+            log::info!("secondlife links: the registered viewer moved");
+            if let Err(e) = write_entry() {
+                log::warn!("secondlife links: {e}");
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub use xdg::{register, unregister};
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn register() -> Result<(), String> {
     Err("not supported on this system".into())
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn unregister() -> Result<(), String> {
     Ok(())
 }
@@ -238,7 +609,9 @@ pub fn handler() -> Handler {
     }
     #[cfg(windows)]
     let handler = win::handler();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    let handler = xdg::handler();
+    #[cfg(not(any(windows, target_os = "linux")))]
     let handler = Handler::None;
     *cache = Some((std::time::Instant::now(), handler.clone()));
     handler
@@ -254,9 +627,11 @@ pub fn refresh() {
 /// At start, published builds outside demo mode only: a registration left
 /// on a moved Aurora is pointed at this one (test builds never take it).
 pub fn repair_at_start() {
-    #[cfg(windows)]
     if env!("AURORA_BUILD_PROFILE") == "release" && std::env::var_os("AURORA_DEMO").is_none() {
+        #[cfg(windows)]
         win::repair();
+        #[cfg(target_os = "linux")]
+        xdg::repair();
     }
 }
 
@@ -273,5 +648,65 @@ mod tests {
             Some(std::path::PathBuf::from(r"C:\Viewer\viewer.exe"))
         );
         assert_eq!(super::win::command_exe("  "), None);
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod xdg_tests {
+    use super::xdg::{desktop_entry, exec_line, exec_program, value, with_value};
+
+    const LIST: &str = "[Added Associations]\ntext/html=firefox.desktop;\n\n[Default Applications]\n\
+        x-scheme-handler/secondlife=firestorm.desktop;\ntext/plain=kate.desktop\n\n# kept\n";
+
+    #[test]
+    fn mimeapps_defaults_are_edited_in_place() {
+        let key = "x-scheme-handler/secondlife";
+        let set = with_value(LIST, "Default Applications", key, Some("aurora-viewer-slurl.desktop"));
+        assert_eq!(value(&set, "Default Applications", key), Some("aurora-viewer-slurl.desktop"));
+        // the other sections, keys and the comment stay
+        assert_eq!(value(&set, "Added Associations", "text/html"), Some("firefox.desktop;"));
+        assert_eq!(value(&set, "Default Applications", "text/plain"), Some("kate.desktop"));
+        assert!(set.contains("# kept"));
+        assert_eq!(set.matches(key).count(), 1);
+        let removed = with_value(&set, "Default Applications", key, None);
+        assert_eq!(value(&removed, "Default Applications", key), None);
+        assert_eq!(value(&removed, "Default Applications", "text/plain"), Some("kate.desktop"));
+        // no list yet, or no defaults section
+        let fresh = with_value("", "Default Applications", "x-scheme-handler/hop", Some("a.desktop"));
+        assert_eq!(fresh, "[Default Applications]\nx-scheme-handler/hop=a.desktop\n");
+        let added = with_value("[Added Associations]\nx=y\n", "Default Applications", "k", Some("v"));
+        assert_eq!(added, "[Added Associations]\nx=y\n\n[Default Applications]\nk=v\n");
+    }
+
+    #[test]
+    fn exec_lines_round_trip() {
+        for exe in [
+            "/usr/bin/aurora-viewer",
+            "/home/me/My Viewers/aurora-viewer",
+            "/opt/100%/aurora-viewer",
+            r#"/odd/"q"$x`b\\%/aurora"#,
+        ] {
+            let line = exec_line(exe);
+            assert!(line.ends_with(" -url %u"), "{line}");
+            assert_eq!(exec_program(&line).as_deref(), Some(exe), "{line}");
+        }
+        assert_eq!(exec_program("firestorm %u").as_deref(), Some("firestorm"));
+        assert_eq!(exec_program("  "), None);
+    }
+
+    #[test]
+    fn desktop_entry_claims_the_three_schemes() {
+        let entry = desktop_entry("/usr/bin/aurora-viewer");
+        assert_eq!(value(&entry, "Desktop Entry", "NoDisplay"), Some("true"));
+        assert_eq!(
+            value(&entry, "Desktop Entry", "MimeType"),
+            Some("x-scheme-handler/secondlife;x-scheme-handler/hop;x-scheme-handler/x-grid-location-info;")
+        );
+        // bare, or xdg-utils skips the entry
+        assert_eq!(value(&entry, "Desktop Entry", "Exec"), Some("/usr/bin/aurora-viewer -url %u"));
+        assert_eq!(
+            value(&desktop_entry("/opt/My Viewers/aurora-viewer"), "Desktop Entry", "Exec"),
+            Some(r#""/opt/My Viewers/aurora-viewer" -url %u"#)
+        );
     }
 }
