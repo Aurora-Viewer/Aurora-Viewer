@@ -120,9 +120,9 @@ fn gradient_noise(p: vec3<f32>) -> f32 {
     return clamp(0.5 + 0.75 * n, 0.0, 1.0);
 }
 
-// Four octaves, each turned by a fixed rotation so that the lattices do not
-// line up from one octave to the next.
-fn fbm3(p: vec3<f32>) -> f32 {
+// `octaves` octaves, each turned by a fixed rotation so that the lattices
+// do not line up from one octave to the next.
+fn fbm3(p: vec3<f32>, octaves: i32) -> f32 {
     let turn = mat3x3<f32>(
         vec3<f32>(0.00, 0.80, 0.60),
         vec3<f32>(-0.80, 0.36, -0.48),
@@ -130,13 +130,15 @@ fn fbm3(p: vec3<f32>) -> f32 {
     );
     var sum = 0.0;
     var amp = 0.5;
+    var total = 0.0;
     var q = turn * p;
-    for (var i = 0; i < 4; i++) {
+    for (var i = 0; i < octaves; i++) {
         sum += gradient_noise(q) * amp;
+        total += amp;
         q = turn * q * 2.03 + vec3<f32>(1.7, 9.2, 5.3);
         amp *= 0.5;
     }
-    return sum / 0.9375;
+    return sum / total;
 }
 
 // The Milky Way at catalogue direction `q` (J2000 equatorial), linear.
@@ -158,16 +160,22 @@ fn milky_way(q: vec3<f32>) -> vec3<f32> {
     let along = 0.3 + 0.7 * (0.5 + 0.5 * cos(l));
     let band = exp(-(b * b) / (width * width)) * along;
     let bulge = exp(-(l * l + 2.4 * b * b) / (0.2 * 0.2));
-    let coarse = fbm3(g * 5.0);
-    let fine = fbm3(g * 21.0 + vec3<f32>(7.1, 3.3, 1.9));
+    // most of the sky is far from the band: no noise there
+    if (band + bulge < 0.004) {
+        return vec3<f32>(0.0);
+    }
+    let coarse = fbm3(g * 5.0, 4);
+    let fine = fbm3(g * 21.0 + vec3<f32>(7.1, 3.3, 1.9), 3);
     // star clouds: the band is patchy, not a smooth stripe
     let clouds = smoothstep(0.3, 0.75, coarse) * (0.45 + 0.75 * fine);
     var light = band * (0.15 + 1.2 * clouds) + bulge * (0.6 + 0.6 * fine);
     // the Great Rift: l from -10° to 90°, centred a little north of the plane
     let rift_l = smoothstep(-0.35, -0.1, l) * smoothstep(1.75, 1.3, l);
     let rift_b = (b - 0.025 - 0.02 * sin(l * 3.0)) / 0.035;
-    let rift = exp(-rift_b * rift_b) * rift_l * (0.55 + 0.45 * fbm3(g * 13.0 + vec3<f32>(2.0)));
-    light *= 1.0 - 0.8 * rift;
+    let rift_shape = exp(-rift_b * rift_b) * rift_l;
+    if (rift_shape > 0.01) {
+        light *= 1.0 - 0.8 * rift_shape * (0.55 + 0.45 * fbm3(g * 13.0 + vec3<f32>(2.0), 3));
+    }
     let tint = mix(vec3<f32>(0.80, 0.86, 1.0), vec3<f32>(1.0, 0.86, 0.68), clamp(centre * 0.7 + bulge, 0.0, 1.0));
     return tint * light * 0.09;
 }
@@ -175,8 +183,8 @@ fn milky_way(q: vec3<f32>) -> vec3<f32> {
 // Stars and Milky Way in region direction `d` (unit), linear, before the
 // clouds' cover. `background` is the sky's own linear colour there: in the
 // real sky a bright sky drowns them (twilight shows the brightest first,
-// daylight none), where the Legacy Viewer adds its stars whatever the sky. LLDrawPoolWLSky::renderStarsDeferred passes the sky's
-// star_brightness / 500, which starsF.glsl turns into
+// daylight none), where the Legacy Viewer adds its stars whatever the sky.
+// LLDrawPoolWLSky::renderStarsDeferred passes the sky's star_brightness / 500, which starsF.glsl turns into
 // smoothstep(0, 0.9, ...) * 32 on the star texture's alpha: full brightness
 // from about 100, dimmer only below. The same curve, without the 32 times
 // overdrive.
@@ -194,6 +202,10 @@ fn sky_stars(d: vec3<f32>, background: vec3<f32>) -> vec3<f32> {
     let glow = dot(background, vec3<f32>(0.2126, 0.7152, 0.0722)) / 0.045;
     let glow2 = glow * glow;
     let glare = select(1.0 / (1.0 + glow2 * glow2), 1.0, legacy);
+    // daylight, or right on the horizon: nothing would show
+    if (gain * extinction * glare < 0.003) {
+        return vec3<f32>(0.0);
+    }
     let pixel = sky_pixel_angle();
     let t = frame.camera_pos.w;
     let cell = select(0u, STAR_CELL_TABLE, legacy) + star_cell(q);
