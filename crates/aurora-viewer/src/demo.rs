@@ -586,7 +586,7 @@ fn compressed_particle_block(block: &[u8], legacy: bool) -> Option<aurora_net::o
 /// First friend of the demo buddy list (AURORA_DEMO_PROFILE=friend).
 pub const DEMO_FRIEND: Uuid = Uuid::from_u128(0xD0D0_0000_0000_0000_0000_0000_0000_0000 | 100);
 
-fn u(n: u128) -> Uuid {
+pub(crate) fn u(n: u128) -> Uuid {
     Uuid::from_u128(0xD0D0_0000_0000_0000_0000_0000_0000_0000 | n)
 }
 
