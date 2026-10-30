@@ -57,6 +57,16 @@ const DROPPED: [(u8, u8); MAX_PRESSURE as usize + 1] = [(0, 0), (0, 0), (0, 1), 
 const RAISE_AFTER: Duration = Duration::from_secs(1);
 const LOWER_AFTER: Duration = Duration::from_secs(5);
 
+/// A step up without waiting for the last one to be done, still above the
+/// target this long after it. Textures keep arriving in a busy place and
+/// the camera keeps moving: each pass lists new reductions, so the step
+/// was never done and the pressure stayed at 1, the video memory past the
+/// driver's budget until the driver reset (#1561; in demo, a 6,000-texture
+/// arrival held step 1 for 14 s at 2.4 GB for a 2 GB budget). The Legacy
+/// Viewer raises its bias all the while it is above the target, done or
+/// not (LLViewerTexture::updateClass).
+const RAISE_UNSETTLED_AFTER: Duration = Duration::from_secs(3);
+
 /// Under pressure, textures nothing uses are evicted after this long.
 pub const PRESSURE_EVICT: Duration = Duration::from_secs(5);
 
@@ -144,15 +154,18 @@ impl Pressure {
 
     /// The step for this reading. Up: at once from none (textures only come
     /// down to their size on screen), then one step each time the memory is
-    /// still above the target a second after the step was fully applied.
-    /// Down: under 90 % of the target for a while, and only if the textures
-    /// would still fit there one step below.
+    /// still above the target a second after the step was fully applied,
+    /// or [`RAISE_UNSETTLED_AFTER`] after it if it never is. Down: under
+    /// 90 % of the target for a while, and only if the textures would still
+    /// fit there one step below.
     pub fn update(&mut self, now: Instant, r: Reading) -> u8 {
         let free = r.target / 10 * 9;
         if r.used > r.target {
             let since = *self.over_since.get_or_insert(now);
-            let waited = now.duration_since(since) >= RAISE_AFTER && now.duration_since(self.changed) >= RAISE_AFTER;
-            if self.step == 0 || (self.step < MAX_PRESSURE && r.settled && waited) {
+            let at_step = now.duration_since(self.changed);
+            let waited = now.duration_since(since) >= RAISE_AFTER && at_step >= RAISE_AFTER;
+            let done = r.settled || at_step >= RAISE_UNSETTLED_AFTER;
+            if self.step == 0 || (self.step < MAX_PRESSURE && done && waited) {
                 self.step += 1;
                 self.changed = now;
             }
@@ -254,6 +267,21 @@ mod tests {
             settled,
             below,
         }
+    }
+
+    #[test]
+    fn pressure_rises_while_reductions_never_end() {
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        let mut p = Pressure::new(t0);
+        assert_eq!(p.update(t0, reading(1200, false, 1200)), 1);
+        // a busy place: new reductions at every pass, never settled
+        assert_eq!(p.update(t0 + ms(2900), reading(1200, false, 1200)), 1);
+        assert_eq!(p.update(t0 + ms(3000), reading(1200, false, 1200)), 2);
+        assert_eq!(p.update(t0 + ms(5900), reading(1200, false, 1200)), 2);
+        assert_eq!(p.update(t0 + ms(6000), reading(1200, false, 1200)), 3);
+        // settled again: back to a second
+        assert_eq!(p.update(t0 + ms(7000), reading(1200, true, 1200)), 4);
     }
 
     #[test]
