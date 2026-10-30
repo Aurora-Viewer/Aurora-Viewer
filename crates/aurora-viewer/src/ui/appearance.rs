@@ -1694,6 +1694,13 @@ pub fn show(
         if !st.message.is_empty() {
             ui.add(egui::Label::new(RichText::new(&st.message).size(11.0).color(p.warn)).wrap());
         }
+        if gallery::preparing_copy(st) {
+            ui.label(
+                RichText::new(aurora_i18n::tr!("appearance-outfit-copy-preparing"))
+                    .size(11.0)
+                    .color(p.muted),
+            );
+        }
         widgets::divider(ui, p);
         let buttons = ui.horizontal_wrapped(|ui| {
             let available = st.pending.is_none() && model::cof(&world.inventory).is_some_and(|id| model::complete(&world.inventory, id));
@@ -1786,6 +1793,7 @@ pub fn show(
     items::profile(ctx, p, world, st, &mut actions);
     gallery::dialogs(ctx, p, world, st, images, &mut actions);
     folders::dialogs(ctx, p, world, st, &mut actions);
+    gallery::finish_copy(ctx, world, st);
     actions
 }
 
