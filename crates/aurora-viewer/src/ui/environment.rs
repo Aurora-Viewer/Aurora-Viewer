@@ -38,8 +38,11 @@ const SLIDER_SCALE_GLOW_B: f32 = -5.0;
 /// F_APPROXIMATELY_ZERO (llmath.h).
 const APPROXIMATELY_ZERO: f32 = 0.00001;
 
-const LABEL_W: f32 = 74.0;
-const COMBO_W: f32 = 216.0;
+/// Room for "Sky environment" / "Water environment" (EN) without the combo
+/// covering the label. FR/JA strings are shorter.
+const LABEL_W: f32 = 120.0;
+/// Each ‹ › control (`widgets::icon_button`).
+const ARROW_W: f32 = 20.0;
 
 #[derive(Default)]
 pub struct EnvironmentUi {
@@ -126,15 +129,13 @@ impl EnvironmentUi {
                 widgets::surface(ui, p, |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        let (rect, resp) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
-                        ui.painter().text(
-                            rect.left_center(),
-                            egui::Align2::LEFT_CENTER,
-                            label,
-                            egui::FontId::proportional(12.5),
-                            p.ink,
-                        );
-                        resp.on_hover_text(tip);
+                        // Fixed label column so long names cannot paint under
+                        // the combo (LABEL_W was 74 px and overflowed EN).
+                        ui.add_sized(
+                            Vec2::new(LABEL_W, 20.0),
+                            egui::Label::new(RichText::new(label).size(12.5).color(p.ink)).truncate(),
+                        )
+                        .on_hover_text(tip);
                         if let Some(a) = self.list_row(ui, p, kind, shown) {
                             out.push(a);
                         }
@@ -165,13 +166,9 @@ impl EnvironmentUi {
             });
             widgets::divider(ui, p);
             ui.horizontal(|ui| {
-                let (rect, _) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
-                ui.painter().text(
-                    rect.left_center(),
-                    egui::Align2::LEFT_CENTER,
-                    aurora_i18n::tr!("ui-environment-time"),
-                    egui::FontId::proportional(12.5),
-                    p.ink,
+                ui.add_sized(
+                    Vec2::new(LABEL_W, 20.0),
+                    egui::Label::new(RichText::new(aurora_i18n::tr!("ui-environment-time")).size(12.5).color(p.ink)).truncate(),
                 );
                 for (i, name) in [
                     aurora_i18n::tr!("ui-environment-sunrise"),
@@ -243,35 +240,44 @@ impl EnvironmentUi {
             Shown::Personal => aurora_i18n::tr!("ui-environment-personal-lighting").to_owned(),
         };
         let mut picked = None;
-        egui::ComboBox::from_id_salt(salt)
-            .width(COMBO_W)
-            .height(420.0)
-            .selected_text(RichText::new(text).size(12.0).color(p.ink))
-            .truncate()
-            .show_ui(ui, |ui| {
-                // the two fixed entries show the state; they cannot be picked
-                // (setDefaultPresetsEnabled(false))
-                for (i, label) in [aurora_i18n::tr!("ui-environment-shared-environment"), second]
-                    .into_iter()
-                    .enumerate()
-                {
-                    let on = env_select::shown_index(list, shown) == i && !matches!(shown, Shown::Preset(_) | Shown::Personal);
-                    ui.add_enabled(false, egui::Button::selectable(on, RichText::new(label).size(12.0)));
-                }
-                widgets::divider(ui, p);
-                for c in list {
-                    let on = shown == Shown::Item(c.asset);
-                    if ui.selectable_label(on, RichText::new(&c.name).size(12.0)).clicked() && !on {
-                        picked = Some(c.asset);
-                    }
-                }
+        // Pin ‹ › to the trailing edge (right_to_left), then give the combo
+        // only the leftover width. egui ComboBox::width is a minimum: without
+        // a max, long windlight names grew the button and the arrows drifted.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if widgets::icon_button(ui, p, "caret-right-filled", aurora_i18n::tr!("common-next"), !list.is_empty()) {
+                picked = env_select::step(list, env_select::shown_index(list, shown), true);
+            }
+            if widgets::icon_button(ui, p, "caret-left-filled", aurora_i18n::tr!("common-previous"), !list.is_empty()) {
+                picked = env_select::step(list, env_select::shown_index(list, shown), false);
+            }
+            let combo_w = ui.available_width().max(ARROW_W);
+            ui.allocate_ui_with_layout(Vec2::new(combo_w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.set_max_width(combo_w);
+                egui::ComboBox::from_id_salt(salt)
+                    .width(combo_w)
+                    .height(420.0)
+                    .selected_text(RichText::new(text).size(12.0).color(p.ink))
+                    .truncate()
+                    .show_ui(ui, |ui| {
+                        // the two fixed entries show the state; they cannot be picked
+                        // (setDefaultPresetsEnabled(false))
+                        for (i, label) in [aurora_i18n::tr!("ui-environment-shared-environment"), second]
+                            .into_iter()
+                            .enumerate()
+                        {
+                            let on = env_select::shown_index(list, shown) == i && !matches!(shown, Shown::Preset(_) | Shown::Personal);
+                            ui.add_enabled(false, egui::Button::selectable(on, RichText::new(label).size(12.0)));
+                        }
+                        widgets::divider(ui, p);
+                        for c in list {
+                            let on = shown == Shown::Item(c.asset);
+                            if ui.selectable_label(on, RichText::new(&c.name).size(12.0)).clicked() && !on {
+                                picked = Some(c.asset);
+                            }
+                        }
+                    });
             });
-        if widgets::icon_button(ui, p, "caret-left-filled", aurora_i18n::tr!("common-previous"), !list.is_empty()) {
-            picked = env_select::step(list, env_select::shown_index(list, shown), false);
-        }
-        if widgets::icon_button(ui, p, "caret-right-filled", aurora_i18n::tr!("common-next"), !list.is_empty()) {
-            picked = env_select::step(list, env_select::shown_index(list, shown), true);
-        }
+        });
         picked.map(|id| EnvAction::Pick(kind, id))
     }
 
@@ -574,6 +580,7 @@ pub fn rotation_from(azimuth: f32, elevation: f32) -> Quat {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::Theme;
 
     #[test]
     fn azimuth_and_elevation_round_trip() {
@@ -590,5 +597,92 @@ mod tests {
         assert!(d.y < -0.99, "90° is south of east: {d}");
         let (_, e) = azimuth_elevation(rotation_from(0.0, 90.0));
         assert!((e - 90.0).abs() < 0.1, "{e}");
+    }
+
+    /// One picker row as `list_row` lays it out. Returns
+    /// `(label_right, combo_left, combo_right, next_arrow_left)`.
+    fn row_edges(ui: &mut egui::Ui, p: &crate::theme::Palette, label: &str, selected: &str, salt: u8) -> (f32, f32, f32, f32) {
+        let mut label_right = 0.0;
+        let mut combo_left = 0.0;
+        let mut combo_right = 0.0;
+        let mut next_arrow_left = 0.0;
+        ui.horizontal(|ui| {
+            let r = ui.add_sized(
+                Vec2::new(LABEL_W, 20.0),
+                egui::Label::new(RichText::new(label).size(12.5).color(p.ink)).truncate(),
+            );
+            label_right = r.rect.right();
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let (next, _) = ui.allocate_exact_size(Vec2::splat(ARROW_W), egui::Sense::click());
+                next_arrow_left = next.left();
+                let _ = ui.allocate_exact_size(Vec2::splat(ARROW_W), egui::Sense::click());
+                let combo_w = ui.available_width().max(ARROW_W);
+                let combo = ui
+                    .allocate_ui_with_layout(Vec2::new(combo_w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.set_max_width(combo_w);
+                        egui::ComboBox::from_id_salt(("env_list", salt))
+                            .width(combo_w)
+                            .selected_text(RichText::new(selected).size(12.0).color(p.ink))
+                            .truncate()
+                            .show_ui(ui, |_| {});
+                    })
+                    .response
+                    .rect;
+                combo_left = combo.left();
+                combo_right = combo.right();
+                let _ = p;
+            });
+        });
+        (label_right, combo_left, combo_right, next_arrow_left)
+    }
+
+    #[test]
+    fn picker_rows_keep_labels_and_arrows_aligned_for_short_and_long_names() {
+        let ctx = egui::Context::default();
+        Theme::default().apply(&ctx, 1.0);
+        let p = Theme::default().palette();
+        let mut short = (0.0, 0.0, 0.0, 0.0);
+        let mut long = (0.0, 0.0, 0.0, 0.0);
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(440.0, 300.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_width(400.0);
+                    ui.spacing_mut().item_spacing = Vec2::new(4.0, 6.0);
+                    short = row_edges(ui, &p, "Sky environment", "Nothing", 1);
+                    long = row_edges(ui, &p, "Water environment", "_5BAnaLu_5D_20outdoor_20night 1 and then some more", 2);
+                },
+            );
+            out.textures_delta.clear();
+        }
+        let (short_label, short_combo_l, short_combo_r, short_arrow) = short;
+        let (long_label, long_combo_l, long_combo_r, long_arrow) = long;
+        assert!(
+            (short_arrow - long_arrow).abs() < 1.0,
+            "‹ › must share one column for short and long names: short={short_arrow} long={long_arrow}"
+        );
+        assert!(
+            (short_combo_r - long_combo_r).abs() < 1.0,
+            "combo right edges must align: short={short_combo_r} long={long_combo_r}"
+        );
+        assert!(
+            (short_label - long_label).abs() < 1.0,
+            "labels must share one column: short={short_label} long={long_label}"
+        );
+        assert!(
+            short_combo_l >= short_label - 0.5,
+            "short combo must start after the label: combo={short_combo_l} label_right={short_label}"
+        );
+        assert!(
+            long_combo_l >= long_label - 0.5,
+            "long combo must start after the label: combo={long_combo_l} label_right={long_label}"
+        );
+        assert!(
+            (short_combo_r - short_combo_l - (long_combo_r - long_combo_l)).abs() < 1.0,
+            "combo widths must match regardless of the selected name"
+        );
     }
 }
