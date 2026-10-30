@@ -65,7 +65,11 @@ fn take_icon(entries: &mut Vec<Entry>, icon: &str) -> Entry {
 fn seated(entries: &mut Vec<Entry>) -> Entry {
     let standing = take_action(entries, |a| matches!(a, CtxAction::StandUp));
     let sitting = take_action(entries, |a| matches!(a, CtxAction::Sit { .. } | CtxAction::SitGround));
-    if standing.enabled { standing } else { sitting }
+    if standing.enabled {
+        standing
+    } else {
+        sitting
+    }
 }
 
 /// Main directions follow Firestorm. Only Aurora's additional/unfinished
@@ -373,6 +377,12 @@ pub(super) fn show(
                 FontId::proportional(10.0 * scale),
                 p.muted,
             );
+            // Only releases that landed on this modal surface. A global
+            // button_released also fires when the voice / volume panels
+            // (Tooltip order above us) handle the click, and would close
+            // the pie or steal the drag. Read before on_hover_text, which
+            // consumes the Response.
+            let on_surface = response.contains_pointer();
             if let Some(entry) = hovered.and_then(|i| current.get(i)) {
                 let tooltip = if matches!(entry.kind, Kind::Unavailable) && !entry.label.is_empty() {
                     format!("{}\n{}", entry.label, super::menu::not_yet())
@@ -381,15 +391,8 @@ pub(super) fn show(
                 };
                 response.on_hover_text(tooltip);
             }
-            // Only releases that landed on this modal surface. A global
-            // button_released also fires when the voice / volume panels
-            // (Tooltip order above us) handle the click, and would close
-            // the pie or steal the drag.
-            let on_surface = response.contains_pointer();
-            primary_released =
-                on_surface && ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
-            secondary_released =
-                on_surface && ui.input(|i| i.pointer.button_released(egui::PointerButton::Secondary));
+            primary_released = on_surface && ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
+            secondary_released = on_surface && ui.input(|i| i.pointer.button_released(egui::PointerButton::Secondary));
         });
     // at the first level only, with the avatar's own entries
     if let Some((id, voice)) = voice.filter(|_| menu.pie_path.is_empty()) {

@@ -7,8 +7,8 @@
 //! pages that help to see, read and hear, gathered here (`Cx::borrow`:
 //! their own rows, so the same settings).
 
+use super::super::cx::{field, Cx, Nothing};
 use super::super::Page;
-use super::super::cx::{Cx, Nothing, field};
 use crate::colorblind::Deficiency;
 use crate::ui::presence::{self, Status};
 use egui::{RichText, Sense, Vec2};
@@ -25,7 +25,11 @@ pub fn page(cx: &mut Cx) {
             &field!(high_contrast),
         );
         cx.borrow(Page::Avatars, 0, &["name_tag_distance"]);
-        cx.borrow(Page::Avatars, 0, &["show_own_name_tag", "show_friend_name_tags", "show_other_name_tags"]);
+        cx.borrow(
+            Page::Avatars,
+            0,
+            &["show_own_name_tag", "show_friend_name_tags", "show_other_name_tags"],
+        );
     });
     cx.group(tr!("ui-options-interface-colors"), |cx| {
         if crate::high_contrast::current() {

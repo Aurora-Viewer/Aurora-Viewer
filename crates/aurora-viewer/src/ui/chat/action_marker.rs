@@ -3,7 +3,7 @@
 //! including a labelled link, and are presentation only when copying chat.
 
 use crate::slapp::{AgentVerb, AppLink};
-use egui::{Color32, FontId, Response, TextFormat, Ui, text::LayoutJob};
+use egui::{text::LayoutJob, Color32, FontId, Response, TextFormat, Ui};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Action {
@@ -65,7 +65,11 @@ impl Action {
     }
 
     pub fn place(teleport: bool) -> Self {
-        if teleport { Self::Teleport } else { Self::Place }
+        if teleport {
+            Self::Teleport
+        } else {
+            Self::Place
+        }
     }
 
     pub fn icon(self) -> &'static str {
