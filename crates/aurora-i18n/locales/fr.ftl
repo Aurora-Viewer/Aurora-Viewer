@@ -6226,6 +6226,7 @@ photo-vf-menu-tip = Menu rapide ({ $key })
 photo-vf-menu-hint = Clic : valeur suivante · { $key } ou Échap : fermer
 photo-vf-drawer = Tous les réglages
 photo-vf-drawer-tip = Tous les réglages de la photo
+photo-vf-light-tip = La lumière de la photo : ciel, eau et soleil
 photo-isolate = Isoler
 photo-isolate-tip = Isoler : votre avatar seul, ou les avatars et objets que vous choisissez
 photo-isolate-off = Tout

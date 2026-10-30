@@ -337,7 +337,7 @@ their edge). A layout is only written by a normal exit, for example
 viewfinder at frame 600 (whatever Preferences › Aurora › Photo window
 says), with the depth of field on at f/1.8 in AF-S on the Avatar area;
 words joined by `-` add to it: `essential` or `hidden` the display level,
-`menu`, `help` or `drawer` a panel open, `mf` or `afc` the focus mode
+`menu`, `help`, `drawer` or `light` (the dock's light panel) a panel open, `mf` or `afc` the focus mode
 (`mf` focused by hand at 3.3 m, the sharp edges outlined by the focus
 peaking), `point` the Point area, `sharp` the aperture ring on All sharp (the
 window's depth of field off), `prefsdof` Preferences › Graphics › Depth of

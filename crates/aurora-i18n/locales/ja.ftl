@@ -6221,6 +6221,7 @@ photo-vf-menu-tip = クイックメニュー（{ $key }）
 photo-vf-menu-hint = クリック：次の値・{ $key }またはEscape：閉じる
 photo-vf-drawer = すべての設定
 photo-vf-drawer-tip = 写真のすべての設定
+photo-vf-light-tip = 写真のライト：空、水、太陽
 photo-isolate = 分離
 photo-isolate-tip = 分離：自分のアバターだけ、または選んだアバターとオブジェクトだけ
 photo-isolate-off = すべて

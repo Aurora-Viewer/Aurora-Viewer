@@ -17,6 +17,7 @@ use egui::{Align2, Color32, FontId, Id, Order, Pos2, Rect, Sense, Stroke, Stroke
 
 mod controls;
 mod isolate;
+mod light;
 mod looks;
 mod presets;
 pub use controls::{CamMode, Pad, roll_text};
@@ -47,6 +48,8 @@ pub struct Viewfinder {
     pub isolate: bool,
     /// The filter panel (`looks`).
     pub looks: bool,
+    /// The light panel (`light`): the photo's sky, water and sun.
+    pub light: bool,
     /// The camera presets panel (`presets`) and its saving form.
     pub presets: bool,
     pub preset_form: PresetForm,
@@ -584,6 +587,9 @@ impl Viewfinder {
         }
         if self.looks {
             self.looks_panel(ctx, p, screen, s, panel, &mut out);
+        }
+        if self.light {
+            self.light_panel(ctx, p, screen, panel, view, &mut out);
         }
         if self.isolate {
             self.isolate_picking(ctx, p, frame, f, &mut out);
@@ -1506,6 +1512,7 @@ impl Viewfinder {
                         self.drawer = !self.drawer;
                         self.looks &= !self.drawer;
                         self.presets &= !self.drawer;
+                        self.light &= !self.drawer;
                         if self.drawer && self.isolate {
                             self.isolate = false;
                             out.push(Out::Isolate(Isolate::Picking(false)));
@@ -1532,7 +1539,18 @@ impl Viewfinder {
                     ) {
                         panel.freeze_world = !panel.freeze_world;
                     }
-                    // five above the shutter, seven under it (the panels of
+                    // the drawer's Light section alone, next to the shutter
+                    if dock_button(ui, p, Face::Icon("sun-filled"), aurora_i18n::tr!("photo-vf-light-tip"), self.light) {
+                        self.light = !self.light;
+                        self.drawer &= !self.light;
+                        self.looks &= !self.light;
+                        self.presets &= !self.light;
+                        if self.light && self.isolate {
+                            self.isolate = false;
+                            out.push(Out::Isolate(Isolate::Picking(false)));
+                        }
+                    }
+                    // six above the shutter, seven under it (the panels of
                     // the shot together)
                     ui.add_space(6.0);
                     self.shutter_button(ui, p, out);
@@ -1543,6 +1561,7 @@ impl Viewfinder {
                         self.drawer &= !self.isolate;
                         self.looks &= !self.isolate;
                         self.presets &= !self.isolate;
+                        self.light &= !self.isolate;
                         if !self.isolate {
                             out.push(Out::Isolate(Isolate::Picking(false)));
                         }
@@ -1557,6 +1576,7 @@ impl Viewfinder {
                         self.looks = !self.looks;
                         self.drawer &= !self.looks;
                         self.presets &= !self.looks;
+                        self.light &= !self.looks;
                         // opens on the tab of the chosen look
                         if self.looks
                             && let Some(layer) = s.looks.get(panel.looks.selected)
@@ -1578,6 +1598,7 @@ impl Viewfinder {
                         self.presets = !self.presets;
                         self.drawer &= !self.presets;
                         self.looks &= !self.presets;
+                        self.light &= !self.presets;
                         if self.presets && self.isolate {
                             self.isolate = false;
                             out.push(Out::Isolate(Isolate::Picking(false)));
