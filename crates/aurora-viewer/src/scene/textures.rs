@@ -917,6 +917,10 @@ pub struct TextureStreamer {
     /// pass under pressure and done a few per frame, the largest (the
     /// bytes they hold, last of the tuple) first: taken from the end.
     reductions: Vec<(Uuid, u8, u64)>,
+    /// Bytes of textures the reductions should give back, from the last
+    /// budget reading (texture_budget::lowering_goal); no limit until the
+    /// first one.
+    to_lower: u64,
     /// Bytes the textures would hold one pressure step below, from the
     /// last pass.
     bytes_below: u64,
@@ -1190,6 +1194,7 @@ impl TextureStreamer {
             last_budget: Instant::now(),
             passes_at_step: 0,
             reductions: Vec::new(),
+            to_lower: u64::MAX,
             bytes_below: 0,
             full_resolution: false,
             pending_in_view: 0,
@@ -1963,6 +1968,19 @@ impl TextureStreamer {
         // (memory comes back soonest from the largest; the id settles ties,
         // the table has no order of its own)
         reductions.sort_unstable_by_key(|&(id, _, bytes)| (bytes, id));
+        // only what brings the memory back under its goal, the rest kept
+        // as it is: lowering every texture finer than its size on screen
+        // gave back gigabytes for a few megabytes over, loaded again as
+        // soon as the camera moved (texture_budget.rs)
+        let mut freed = 0u64;
+        let mut first = reductions.len();
+        while first > 0 && freed < self.to_lower {
+            first -= 1;
+            let (id, keep, held) = reductions[first];
+            let levels = entries.get(&id).and_then(|e| e.decoded).map_or(0, |d| keep.saturating_sub(d));
+            freed += held - (held >> (2 * levels as u32).min(63));
+        }
+        reductions.drain(..first);
         self.bytes_below = bytes_below;
         self.pending_in_view = pending;
         self.passes_at_step = self.passes_at_step.saturating_add(1);
@@ -2891,6 +2909,7 @@ impl TextureStreamer {
                 below,
             },
         );
+        self.to_lower = texture_budget::lowering_goal(used, live, target);
         if step != before {
             self.passes_at_step = 0;
             renderer.textures.set_eager_compaction(step > 0);
@@ -3928,6 +3947,25 @@ mod tests {
         assert!(s.bytes_below > 0);
         // the sizes decay for the next pass
         assert_eq!(s.entries[&Uuid::from_u128(1)].need_px, 100.0);
+    }
+
+    #[test]
+    fn pressure_lowers_only_what_brings_the_memory_under_its_goal() {
+        // three 1024 textures loaded whole, 200 px on screen: each would
+        // give back three quarters of its bytes at level 1
+        let mb = 1024 * 1024 * 16 / 3;
+        let lower = |to_lower: u64| {
+            let mut s = pressed(1, (1..=3).map(|id| (id, entry(Some(0), 200.0))).collect());
+            s.to_lower = to_lower;
+            s.recompute_wants();
+            s.reductions.iter().map(|r| r.0.as_u128()).collect::<Vec<_>>()
+        };
+        // a little more than one gives back: two of them, taken from the end
+        assert_eq!(lower(mb), vec![2, 3]);
+        // under the goal: nothing lowered
+        assert!(lower(0).is_empty());
+        // far over it: all of them
+        assert_eq!(lower(10 * mb), vec![1, 2, 3]);
     }
 
     fn pending(id: u128, discard: u8) -> PendingUpload {

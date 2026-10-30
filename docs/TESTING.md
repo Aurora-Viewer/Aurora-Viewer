@@ -8703,14 +8703,18 @@ What the inventory must show with these scenarios:
     (`texture memory: pressure 0 -> 1 (… MB in pages for a target of … MB, …
     lowered so far)`): 1 brings the textures back to their on-screen size,
     2 to 7 then remove half a level at a time, up to two levels, off-screen
-    first. The same line gives the viewer's video memory: its resources,
+    first. Each step lowers only what brings the pages back to 85 % of the
+    target, the largest textures first. The same line gives the viewer's video memory: its resources,
     what the driver counts for it and the budget granted. The full
     Performance window shows the target and the step ("Texture budget", in
     Memory and streaming).
   - In demo, with `AURORA_DEMO_STREAM=3000` (4.7 GB of textures):
     `AURORA_DEMO_POS="168,126"` places the avatar in the middle of the
-    objects; 512 stays at step 1, 96 climbs to step 4 or 5 depending on the
-    run. The textures of this scenario are then reloaded on demand, like
+    objects; 512 climbs to step 3 and settles near 440 MB of pages, 96
+    climbs to step 6 or 7. Without `AURORA_DEMO_POS`, 3000 goes over the
+    target once, by a few megabytes: about 460 textures are lowered, 2.5 GB
+    stay, and the step comes back to 0 (before the lowering was limited to
+    the goal: 3,571 lowered, 105 MB left). The textures of this scenario are then reloaded on demand, like
     those of the grid (camera moved closer after a reduction). A huge value
     (1000000) removes all pressure, to compare.
 - **`AURORA_VRAM_BUDGET_MB=<n>`**: the budget the driver grants the viewer

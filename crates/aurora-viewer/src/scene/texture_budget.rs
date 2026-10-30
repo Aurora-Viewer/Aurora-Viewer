@@ -27,7 +27,13 @@
 //!   then hold fits: Firestorm lowers its bias as soon as memory is free,
 //!   the textures load again and the memory fills again, in a loop;
 //! - textures nothing uses any more are evicted after a few seconds under
-//!   pressure instead of waiting their full time.
+//!   pressure instead of waiting their full time;
+//! - a step lowers only what brings the pages back under 85 % of the target
+//!   ([`lowering_goal`]), the largest textures first, instead of every
+//!   texture finer than its size on screen. On the grid, a busy region
+//!   13 MB over a 4.2 GB target lost 2.6 GB of textures at step 1, was back
+//!   at step 0 five seconds later, and loaded them again as the camera
+//!   moved, every few minutes.
 
 use aurora_render::vram::VideoMemory;
 use std::time::{Duration, Instant};
@@ -79,6 +85,15 @@ pub fn dropped(pressure: u8) -> (f32, f32) {
     let (in_view, away) = DROPPED[pressure.min(MAX_PRESSURE) as usize];
     let divisor = |half_levels: u8| std::f32::consts::SQRT_2.powi(half_levels as i32);
     (divisor(in_view), divisor(away))
+}
+
+/// Bytes of the textures to lower under pressure: what brings the pages
+/// down to 85 % of the target, under the 90 % a step down waits for, told in
+/// bytes of textures (`live`) rather than of pages, which hold free room on
+/// top that compaction gives back.
+pub fn lowering_goal(used: u64, live: u64, target: u64) -> u64 {
+    let goal = target / 100 * 85;
+    (used.saturating_sub(goal) as f64 * live as f64 / used.max(1) as f64) as u64
 }
 
 /// AURORA_TEXTURE_BUDGET_MB: the texture memory target forced to this many
@@ -218,6 +233,17 @@ mod tests {
         // under 768 MB for the process nor 256 MB for the textures
         assert_eq!(texture_target(6 * GB, 0, video(2 * GB, 0)), 2 * GB - 512 * MB);
         assert_eq!(texture_target(6 * GB, 100 * MB, video(GB, 900 * MB)), 256 * MB);
+    }
+
+    #[test]
+    fn lowering_gives_back_only_what_is_over_the_goal() {
+        // the grid case: 13 MB over a 4,167 MB target, pages 5 % larger
+        // than the textures in them; 85 % of the target is 3,541 MB
+        let lower = lowering_goal(4180 * MB, 3971 * MB, 4167 * MB);
+        assert!(lower > 600 * MB && lower < 620 * MB, "{}", lower / MB);
+        // under the goal: nothing
+        assert_eq!(lowering_goal(3000 * MB, 2900 * MB, 4167 * MB), 0);
+        assert_eq!(lowering_goal(0, 0, 4167 * MB), 0);
     }
 
     #[test]
