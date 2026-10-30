@@ -172,6 +172,10 @@ None, flexible prims, HUDs and unknown simulator shape types are excluded.
 Traditional sculpt physics remains undisplayed, as in the reference editor.
 
 `world/bridge.rs` inspects an existing attachment before writing scripts.
+Bridge 1.40 normalizes its copied library container at controller initialization:
+a solid 1 cm box, default plywood mapping, white tint, zero alpha on all faces
+and an empty description. Version checks upgrade the same inventory object;
+attachment initialization reapplies the shape and surface after reattachment.
 The `Verify` phase requires matching controller, query and IK replies from the
 selected worn root, current region, folder and protocol version. A current
 bridge resumes directly, including after a normal reattachment at login.

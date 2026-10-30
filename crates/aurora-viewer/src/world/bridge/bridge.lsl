@@ -1,10 +1,10 @@
-// Aurora LSL Bridge v1.39. Movelock physics follow the Legacy Viewer's movelockMe
+// Aurora LSL Bridge v1.40. Movelock physics follow the Legacy Viewer's movelockMe
 // (EBEDD1D2-A320-43f5-88CF-DD47BBCA5DFB.lsltxt, originally LGPL 2.1).
 // Mono's 64 KB holds this compiled controller too, with little to spare: the
 // read-only queries run in query.lsl, so a busy region cannot halt Movelock
 // with a Stack-Heap Collision. Keep new services out of this script.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.39";
+string VERSION = "1.40";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -668,7 +668,15 @@ initialize() {
     llStopMoveToTarget();
     llSetVehicleType(VEHICLE_TYPE_NONE);
     gLocked = FALSE;
-    llSetLinkPrimitiveParamsFast(LINK_THIS, [PRIM_SIZE, <0.01,0.01,0.01>, PRIM_COLOR, ALL_SIDES, <1,1,1>, 0.0]);
+    // The library rock is only a copyable container. Normalize it on every
+    // attachment, including upgrades of an existing bridge.
+    llSetLinkPrimitiveParamsFast(LINK_THIS, [
+        PRIM_TYPE, PRIM_TYPE_BOX, PRIM_HOLE_DEFAULT, <0,1,0>, 0.0, ZERO_VECTOR, <1,1,0>, ZERO_VECTOR,
+        PRIM_SIZE, <0.01,0.01,0.01>,
+        PRIM_TEXTURE, ALL_SIDES, TEXTURE_PLYWOOD, <1,1,0>, ZERO_VECTOR, 0.0,
+        PRIM_COLOR, ALL_SIDES, <1,1,1>, 0.0,
+        PRIM_DESC, ""
+    ]);
     // Request all together: a later request would replace the controls grant.
     // Camera tracking is optional; Movelock still needs only TAKE_CONTROLS.
     llRequestPermissions(gOwner, PERMISSION_TAKE_CONTROLS | PERMISSION_TRACK_CAMERA | PERMISSION_ATTACH);

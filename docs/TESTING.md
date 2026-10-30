@@ -1993,6 +1993,14 @@ login revocation, confirmed-session region renewal, 60-second self-detachment, p
 unpaired peer/HTTP traffic and resumed discovery. It mocks simulator APIs;
 it does not emulate Havok or measure the compiled Mono memory budget.
 
+Bridge 1.40 also checks container normalization at startup and reattachment.
+On the grid, let Aurora upgrade an existing bridge, then inspect its build
+properties: a 0.01 m cube on all three axes, no cut/hollow/twist/taper, default
+plywood texture on every face and 100% transparency. Its old landscaping
+description must be empty. Detach and reattach it, then relog: the same object
+must retain these properties and its bridge services. A fresh bridge must
+finish provisioning with the same appearance.
+
 For bridge 1.38 (#1168), let Aurora upgrade the existing attachment, then
 switch to another viewer without manually removing it. No bridge message
 should appear at login or after crossings/teleports; the bridge must detach
