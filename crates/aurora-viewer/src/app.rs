@@ -7824,7 +7824,8 @@ impl App {
             self.world.region_alerts.cfg = crate::world::region_alerts::Config {
                 script_count: self.settings.script_count_alert,
                 script_threshold: self.settings.script_count_threshold,
-                version: self.settings.sim_version_alert,
+                // AURORA_DEMO_SIM_VERSION=on: on for the run, not saved
+                version: self.settings.sim_version_alert || (self.demo && crate::demo::sim_version::forced()),
             };
             // AURORA_DEMO_COLLISIONS=chat: the nearby chat lines for this run only
             self.world.collisions.cfg = if self.demo {
@@ -10148,6 +10149,16 @@ impl App {
         }
         if self.demo && crate::demo::region_message::enabled() {
             for event in crate::demo::region_message::events(self.frame_count) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+        }
+        if self.demo
+            && crate::demo::sim_version::mode().is_some()
+            && let Some(handle) = self.world.main_region
+        {
+            for event in crate::demo::sim_version::events(self.frame_count, handle) {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }

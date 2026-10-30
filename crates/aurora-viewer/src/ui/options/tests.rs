@@ -576,6 +576,18 @@ fn the_modified_settings_are_counted_on_their_pages() {
 }
 
 #[test]
+fn the_simulator_version_notice_has_a_switch_off_by_default() {
+    let mut s = Settings::default();
+    assert!(!s.sim_version_alert);
+    let query = cx::fold(aurora_i18n::tr!("ui-options-sim-version-alert"));
+    assert!(counts(&mut s, &query).hits(Page::Confirmations) >= 1, "found by the search");
+    assert_eq!(counts(&mut s, "").modified(Page::Confirmations), 0);
+    // turned on: its row is the one that differs from the defaults
+    s.sim_version_alert = true;
+    assert_eq!(counts(&mut s, "").modified(Page::Confirmations), 1);
+}
+
+#[test]
 fn the_pages_are_counted_again_only_when_something_may_have_changed() {
     let mut st = OptionsUi::default();
     assert!(count_due(&st, 10.0, false), "never counted");
