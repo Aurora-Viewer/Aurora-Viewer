@@ -7638,6 +7638,14 @@ offline; the files and snapshots uploaded in demo stay offline.
   as in Firestorm; a landmark already present for the same asset is reused.
 - `image-photo-save`: captures then saves a thumbnail at frame 2100
   and closes the snapshot window while keeping the Image editor open.
+  Capture at frame 2250 to inspect the saved message in both the editor and
+  inventory footer, then at frame 2700 to see only the editor's result.
+  Network mock tests cover stale and unreadable AIS snapshots followed by the
+  expected thumbnail UUID, permanent mismatches and bounded failure: one write,
+  read-only retries, for both items and folders. UI tests keep loading visible
+  until completion and expire the footer after five seconds on success or error.
+  On the grid, the human checks that uploading stays on Loading until confirmed,
+  then shows Picture saved; an actual failure remains visible in the editor.
 - `image-layout` / `image-layout-wide`: open the local-file thumbnail choices
   for an item with a synthetic portrait / landscape image. Add `-folder`
   before `-wide` (`image-layout-folder`, `image-layout-folder-wide`) to target

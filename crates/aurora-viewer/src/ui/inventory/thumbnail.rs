@@ -21,6 +21,7 @@ pub struct ThumbnailUi {
     pub item: Option<Uuid>,
     pub pending: Option<Uuid>,
     pub error: String,
+    pub saved: bool,
     pub photo_open: bool,
     pub photo: Option<egui::TextureHandle>,
     pub pixels: Option<Arc<Vec<u8>>>,
@@ -44,6 +45,7 @@ impl ThumbnailUi {
         let request = Uuid::new_v4();
         self.pending = Some(request);
         self.error.clear();
+        self.saved = false;
         actions.push(InvAction::Thumbnail { request, item, input });
     }
     /// LLFloaterSimpleSnapshot::onSend closes the snapshot once upload starts.
@@ -176,6 +178,8 @@ impl ThumbnailUi {
             ui.label(RichText::new(&caption).size(11.0).color(p.muted));
             if self.pending.is_some() || mutation_pending {
                 ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-thumbnail-processing-image")).color(p.muted));
+            } else if self.saved && self.error.is_empty() {
+                ui.label(RichText::new(aurora_i18n::tr!("inventory-thumbnail-upload-complete")).color(p.success));
             }
             if !self.error.is_empty() {
                 ui.label(RichText::new(&self.error).color(p.warn));

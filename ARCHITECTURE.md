@@ -1180,6 +1180,13 @@ pixels enter the existing
 InventoryThumbnailUpload/AIS path; cancellation retains the previous thumbnail.
 Scene snapshot framing and existing inventory texture assignment are unchanged.
 
+Thumbnail mutations confirm the expected asset UUID through complete AIS parent
+snapshots, preserving sibling metadata; legacy folder listings can omit it.
+Propagation delays and transient read failures get bounded read-only retries,
+without repeating the upload or PATCH. The image editor stays in its loading
+state until that verification finishes, then retains success or the actual error.
+The same result in each inventory footer expires after five seconds.
+
 The Appearance gallery keeps whole-image previews by default. Its options menu
 can enable saved `Settings::appearance_fill_previews`: `ui/appearance.rs` crops
 centred UVs to fill the existing frame without stretching the image, changing

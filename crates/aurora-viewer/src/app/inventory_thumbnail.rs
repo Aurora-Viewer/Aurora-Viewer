@@ -44,6 +44,11 @@ impl Default for ImageJobs {
         }
     }
 }
+impl ImageJobs {
+    pub(super) fn contains_request(&self, request: Uuid) -> bool {
+        self.requests.contains_key(&request)
+    }
+}
 fn panel(st: &mut InventoryUi, request: Uuid) -> Option<&mut ThumbnailUi> {
     if st.thumbnail.pending == Some(request) {
         return Some(&mut st.thumbnail);
@@ -207,6 +212,14 @@ impl App {
             st.error = error.unwrap_or_default();
         }
     }
+    pub(super) fn finish_inventory_image_upload(&mut self, request: Uuid, error: Option<String>) {
+        if let Some(st) = panel(&mut self.inventory_ui, request) {
+            st.saved = error.is_none();
+        }
+        self.inventory_ui
+            .finish_thumbnail_upload(request, error.as_deref(), std::time::Instant::now());
+        self.finish_inventory_image(request, error);
+    }
     pub(super) fn poll_inventory_images(&mut self) {
         while let Some(request) = self.inventory_images.paste.pop_front() {
             let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()).unwrap_or_default();
@@ -279,6 +292,7 @@ impl App {
                             ) {
                                 Ok(change) => {
                                     self.inventory_ui.pending = Some(reply.request);
+                                    self.inventory_ui.begin_thumbnail_upload(reply.request);
                                     self.inventory_ui.pending_refresh = change.refresh.clone();
                                     self.send(NetCommand::EditInventory {
                                         request: reply.request,
@@ -290,6 +304,7 @@ impl App {
                         }
                         Prepared::Upload(data) => {
                             self.inventory_ui.pending = Some(reply.request);
+                            self.inventory_ui.begin_thumbnail_upload(reply.request);
                             self.inventory_ui.pending_refresh = vec![parent];
                             self.send(NetCommand::UploadInventoryThumbnail {
                                 request: reply.request,

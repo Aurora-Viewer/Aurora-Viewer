@@ -207,7 +207,7 @@ async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, &'static str> 
 }
 
 /// Bounded parallel reads, outside the viewer thread. Never substitute a
-/// legacy listing: it may omit the favorites of every sibling in this folder.
+/// legacy listing: it may omit the favorites and thumbnails of siblings.
 pub async fn fetch_folders(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[Uuid]) -> Result<Vec<FolderContents>, &'static str> {
     let mut contents = Vec::with_capacity(ids.len());
     for chunk in ids.chunks(16) {
