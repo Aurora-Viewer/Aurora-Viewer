@@ -195,7 +195,9 @@ fn milky_way(q: vec3<f32>) -> vec3<f32> {
     let clouds = smoothstep(0.3, 0.75, coarse) * (0.45 + 0.75 * fine);
     var light = band * (0.15 + 1.2 * clouds) + bulge * (0.6 + 0.6 * fine);
     // the Great Rift: l from -10° to 90°, centred a little north of the plane
-    let rift_l = smoothstep(-0.35, -0.1, l) * smoothstep(1.75, 1.3, l);
+    // (1 - smoothstep: reversed edges are undefined in SPIR-V's and
+    // Metal's smoothstep)
+    let rift_l = smoothstep(-0.35, -0.1, l) * (1.0 - smoothstep(1.3, 1.75, l));
     let rift_b = (b - 0.025 - 0.02 * sin(l * 3.0)) / 0.035;
     let rift_shape = exp(-rift_b * rift_b) * rift_l;
     if (rift_shape > 0.01) {
