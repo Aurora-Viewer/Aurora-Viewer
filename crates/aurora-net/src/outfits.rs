@@ -200,6 +200,7 @@ pub(crate) mod tests {
                 );
                 socket.write_all(header.as_bytes()).await.expect("HTTP header");
                 socket.write_all(&body).await.expect("HTTP body");
+                crate::test_http::finish(socket);
             }
             requests
         });

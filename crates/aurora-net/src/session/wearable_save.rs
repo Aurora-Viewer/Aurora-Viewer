@@ -256,6 +256,7 @@ mod tests {
                     .await
                     .expect("header");
                 socket.write_all(&body).await.expect("body");
+                crate::test_http::finish(socket);
             }
             requests
         });

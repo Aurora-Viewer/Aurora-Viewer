@@ -48,6 +48,7 @@ async fn server(replies: impl FnOnce(&str) -> Vec<(u16, Llsd)>) -> (String, toki
                 .await
                 .expect("headers");
             socket.write_all(&body).await.expect("body");
+            crate::test_http::finish(socket);
         }
         requests
     });

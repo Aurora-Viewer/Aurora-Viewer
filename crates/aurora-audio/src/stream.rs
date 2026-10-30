@@ -313,9 +313,15 @@ mod tests {
             let Ok((mut sock, _)) = listener.accept() else {
                 return;
             };
-            let mut req = [0u8; 1024];
-            let n = sock.read(&mut req).unwrap_or(0);
-            let req = String::from_utf8_lossy(&req[..n]).to_string();
+            let mut req = Vec::new();
+            let mut buf = [0u8; 1024];
+            while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                match sock.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => req.extend_from_slice(&buf[..n]),
+                }
+            }
+            let req = String::from_utf8_lossy(&req).to_string();
             assert!(req.contains("Icy-MetaData: 1"), "{req}");
             let head = format!("ICY 200 OK\r\nicy-name: Loopback FM\r\ncontent-type: audio/mpeg\r\nicy-metaint: {metaint}\r\n\r\n");
             let _ = sock.write_all(head.as_bytes());
@@ -332,6 +338,13 @@ mod tests {
                     let _ = sock.write_all(&block);
                 }
             }
+            // Dropping the socket now can reset the connection and discard
+            // what the client has not read yet, the response head included
+            // (#1422, Windows 11 26H2). End the stream cleanly and keep the
+            // socket until the client hangs up.
+            let _ = sock.shutdown(std::net::Shutdown::Write);
+            let _ = sock.set_read_timeout(Some(Duration::from_secs(10)));
+            while matches!(sock.read(&mut buf), Ok(n) if n > 0) {}
         });
         (format!("http://{addr}/stream"), handle)
     }

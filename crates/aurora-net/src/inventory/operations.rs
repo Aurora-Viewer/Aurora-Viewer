@@ -767,6 +767,7 @@ mod tests {
                 );
                 socket.write_all(header.as_bytes()).await.expect("header");
                 socket.write_all(&body).await.expect("body");
+                crate::test_http::finish(socket);
             }
             requests
         });
@@ -979,6 +980,7 @@ mod tests {
                 );
                 socket.write_all(response.as_bytes()).await.expect("header");
                 socket.write_all(&body).await.expect("body");
+                crate::test_http::finish(socket);
                 if rejected {
                     break;
                 }

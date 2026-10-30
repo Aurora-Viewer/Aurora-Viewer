@@ -222,6 +222,7 @@ mod tests {
             );
             socket.write_all(head.as_bytes()).await.expect("write");
             socket.write_all(&out).await.expect("write");
+            crate::test_http::finish(socket);
             aurora_llsd::from_xml(&body).expect("request body")
         });
         (url, server)

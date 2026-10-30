@@ -369,6 +369,7 @@ mod tests {
                     .await
                     .expect("header");
                 socket.write_all(&body).await.expect("body");
+                crate::test_http::finish(socket);
             }
             requests
         });
@@ -593,6 +594,7 @@ mod tests {
                 );
                 socket.write_all(header.as_bytes()).await.expect("header");
                 socket.write_all(&body).await.expect("body");
+                crate::test_http::finish(socket);
             }
         });
         let reads = read_items(&reqwest::Client::new(), &url, id(2), &[id(3), id(5), id(6)]).await;

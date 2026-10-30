@@ -5741,6 +5741,7 @@ mod event_queue_tests {
             .await
             .unwrap();
         stream.write_all(&body).await.unwrap();
+        crate::test_http::finish(stream);
         let mut event = parcel_event(main, crate::land::SELECTED_PARCEL_SEQ_ID, 42, 0);
         parcel_block(&mut event, "ParcelEnvironmentBlock").insert("ParcelEnvironmentVersion", 4);
         session.on_eq_event(event);
@@ -6353,6 +6354,7 @@ mod script_dialog_tests {
                 };
                 let reply = "HTTP/1.1 200 OK\r\nContent-Type: application/llsd+xml\r\nContent-Length: 13\r\n\r\n<llsd></llsd>";
                 let _ = stream.write_all(reply.as_bytes()).await;
+                crate::test_http::finish(stream);
                 if let Some(body) = body {
                     let _ = tx.send(body);
                 }
