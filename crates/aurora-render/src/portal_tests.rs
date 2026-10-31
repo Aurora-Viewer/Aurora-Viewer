@@ -1,5 +1,5 @@
 //! Render the production fragment cut: CPU picking and every surface pass
-//! must agree at the oval's sides/corners, from both entry directions.
+//! must agree beyond the oval's sides/corners, from both entry directions.
 use crate::{DrawRecord, PORTAL_HALF_HEIGHT, PORTAL_HALF_WIDTH, PortalClip, arena::RecordStore, types::flags};
 use glam::Vec3;
 use wgpu::util::DeviceExt;
@@ -13,7 +13,7 @@ struct Case {
 }
 
 #[test]
-fn portal_aperture_on_gpu_keeps_side_and_corner_geometry_and_matches_picking() {
+fn portal_plane_on_gpu_cuts_side_and_corner_geometry_and_matches_picking() {
     let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
     let cut = &object[object.find("fn portal_clip(").unwrap()..object.find("// One analytically bounded Aurora surface").unwrap()];
     // Exercise the actual GTAO entry points too: a colour-only cut leaves

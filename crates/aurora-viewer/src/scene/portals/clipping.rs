@@ -132,13 +132,34 @@ mod tests {
         assert!(visible(plane, Vec3::new(0.2, 0.0, 0.0)));
         assert!(!visible(plane, Vec3::new(-0.2, 0.0, 0.0)));
         assert!(
-            visible(plane, Vec3::new(-0.2, 1.1, 0.0)),
-            "a wide attachment beyond the rim remains visible"
+            !visible(plane, Vec3::new(-0.2, 1.1, 0.0)),
+            "a wide attachment disappears beyond the plane, including outside the rim"
         );
         assert!(
-            visible(plane, Vec3::new(-0.2, 0.0, 1.6)),
-            "an extended limb above the opening remains visible"
+            !visible(plane, Vec3::new(-0.2, 0.0, 1.6)),
+            "an extended limb disappears beyond the plane, including above the opening"
         );
+    }
+
+    #[test]
+    fn turning_back_restores_body_and_attachments_without_releasing_or_flipping_the_plane() {
+        for side in [-1.0, 1.0] {
+            let mut clipping = Clipping::default();
+            let root = Vec3::X * side;
+            let plane = clipping.update(&[portal()], &[avatar(root, vec![(root, 1.0)])])[&7];
+            // Advance, reverse before teleport confirmation, then cross again.
+            // Changing facing must not invert the latched entry side.
+            for distance in [0.2, -0.2, -1.0, -0.2, 0.2, 1.0, 0.2, -0.2] {
+                let root = Vec3::X * (distance * side);
+                let mut posed = avatar(root, vec![(root, 1.0)]);
+                posed.forward = Vec3::X * side;
+                let active = clipping.update(&[portal()], &[posed])[&7];
+                assert_eq!(active, plane);
+                for offset in [Vec3::ZERO, Vec3::Y * 4.0, Vec3::Z * 3.0] {
+                    assert_eq!(visible(active, root + offset), distance > 0.0);
+                }
+            }
+        }
     }
 
     #[test]

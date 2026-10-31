@@ -708,7 +708,7 @@ impl RecordStore {
         }
     }
 
-    /// Bodies and world attachments share one finite portal opening.
+    /// Bodies and world attachments share one reversible portal plane cut.
     pub fn set_portal_clip(&mut self, id: u32, clip: Option<crate::PortalClip>) {
         if let Some(slot) = self.mirror.get_mut(id as usize) {
             let flags =

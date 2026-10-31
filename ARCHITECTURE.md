@@ -538,19 +538,21 @@ animations; late packets from a previous region cannot restore stale flight.
 `scene/portals/clipping.rs` assigns a stable entry side from the posed
 body and worn-object bounds, independently of locomotion or teleport gates.
 Every system-body, skinned-mesh and rigid world-attachment face receives the
-same finite elliptical opening. Fragment clipping uses world positions after deformation;
+same reversible entry-plane cut. Fragment clipping uses world positions after deformation;
 stationary roots, moving limbs, large attachments and animated attachment
-points are included; fragments beyond the plane but outside the oval remain
-visible, including its rectangular corners. The decorative corona never
-enlarges the cut. Active subjects stay fully animated instead of using an
-impostor. Color, alpha, depth/Hi-Z/contact shadows, picking, glow and reflection
+points are included; all fragments beyond the plane disappear, including
+above or beside the oval. Returning to the entry side restores them each frame,
+without modifying mesh data or waiting for a teleport gate. This Aurora-specific
+effect follows the requested traversal behavior; the oval still bounds the
+portal surface and nearby-avatar selection. Active subjects stay fully animated
+instead of using an impostor. Color, alpha, depth/Hi-Z/contact shadows, picking, glow and reflection
 passes agree, including GTAO mesh-normal and blended-contact depth. Its opaque
 normal pass uses a clipped variant only during an intersection; the ordinary
 compact normal vertex path is retained otherwise. MSAA depth uses the same cut.
 Opaque depth and shadow fast paths remain unchanged when no
 cut is active. The existing one-vector draw-record field holds the center and
 a compact horizontal entry direction, with no record-stride growth. CPU picking
-uses the same opening; `aurora-render/src/portal_tests.rs` renders the production
+uses the same plane; `aurora-render/src/portal_tests.rs` renders the production
 fragment cut against rotated/transformed samples. HUDs and unrelated geometry
 are excluded.
 

@@ -54,7 +54,7 @@ impl Portals {
             ];
             // Two windings for the ordinary back-face-culled blend/glow passes.
             // The shader keeps the actual opening at r=1 and fades its corona
-            // outside it; the corona never enlarges avatar clipping.
+            // outside it; avatar traversal uses the portal's entry plane.
             let indices = [0, 1, 2, 0, 2, 3, 2, 1, 0, 3, 2, 0];
             self.quad = renderer.upload_mesh(&vertices, &indices);
         }

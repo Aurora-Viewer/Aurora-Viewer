@@ -229,12 +229,14 @@ impl App {
         let phase = (self.frame_count.saturating_sub(420) % 360) as f32 / 60.0;
         let distance = match mode {
             "slice-still" | "slice-large" | "slice-wide" | "slice-wide-reverse" => 0.12,
+            "slice-turnback" | "slice-turnback-reverse" => 1.2 - phase.min(6.0 - phase) * 0.7,
             "slice-run" => 2.0 - phase * 0.9,
             _ => 1.2 - phase * 0.4,
         };
         let mut peer = crate::demo::poser::peer();
         peer.position = center + normal * distance;
-        peer.rotation = glam::Quat::from_rotation_z(portal.yaw + std::f32::consts::PI);
+        let turning_back = mode.starts_with("slice-turnback") && phase >= 3.0;
+        peer.rotation = glam::Quat::from_rotation_z(portal.yaw + if turning_back { 0.0 } else { std::f32::consts::PI });
         peer.velocity = Vec3::ZERO;
         let id = peer.full_id;
         let local = peer.local_id;

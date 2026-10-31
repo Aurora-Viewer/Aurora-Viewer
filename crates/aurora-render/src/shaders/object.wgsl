@@ -4,18 +4,15 @@
 override ALPHA_TO_COVERAGE: bool = true;
 
 // Evaluated after skinning/attachment placement, in every surface/depth pass.
-// Outside the actual ellipse, even geometry beyond the plane stays visible.
+// The entry side is latched per avatar; crossing back restores each fragment.
+// Cut the whole worn/body mesh beyond the plane, including outside the oval.
 fn portal_clip(rec: DrawRecord, position: vec3<f32>) {
     if ((rec.flags.x & FLAG_PORTAL_CLIP) != 0u) {
         let code = rec.portal_clip.w;
         let y = select(code, sign(code) * (2.0 - abs(code)), abs(code) > 1.0);
         let normal = normalize(vec2<f32>(1.0 - abs(code), y));
         let local = position - rec.portal_clip.xyz;
-        if (dot(local.xy, normal) < -0.0001) {
-            let across = dot(local.xy, vec2<f32>(-normal.y, normal.x)) / PORTAL_HALF_WIDTH;
-            let height = local.z / PORTAL_HALF_HEIGHT;
-            if (across * across + height * height <= 1.0) { discard; }
-        }
+        if (dot(local.xy, normal) < -0.0001) { discard; }
     }
 }
 

@@ -223,16 +223,10 @@ impl PortalClip {
         Vec3::new(1.0 - code.abs(), y, 0.0).normalize()
     }
 
-    /// CPU picking uses the same finite aperture as every GPU surface pass.
+    /// CPU picking uses the same reversible plane cut as every GPU surface pass.
     pub fn keeps_point(self, point: Vec3) -> bool {
         let local = point - Vec3::from_slice(&self.data[..3]);
-        let normal = self.normal();
-        if local.dot(normal) >= -0.0001 {
-            return true;
-        }
-        let across = local.dot(Vec3::new(-normal.y, normal.x, 0.0)) / PORTAL_HALF_WIDTH;
-        let height = local.z / PORTAL_HALF_HEIGHT;
-        across * across + height * height > 1.0
+        local.dot(self.normal()) >= -0.0001
     }
 }
 
@@ -284,7 +278,7 @@ pub struct DrawRecord {
     /// its own in the 4 bits above (0: the frame's), z and w the world
     /// height of the object's bottom and its height (f32 bits).
     pub rez: [u32; 4],
-    /// Finite portal cut: center.xyz and encoded horizontal entry direction.
+    /// Portal plane cut: center.xyz and encoded horizontal entry direction.
     /// Only active with PORTAL_CLIP; zero is also a valid opening at the origin.
     pub portal_clip: [f32; 4],
 }
@@ -1864,7 +1858,7 @@ mod tests {
     }
 
     #[test]
-    fn portal_aperture_keeps_geometry_outside_the_oval_for_both_sides_and_rotated_centers() {
+    fn portal_plane_cuts_the_whole_mesh_for_both_sides_and_rotated_centers() {
         let wgsl = include_str!("shaders/common.wgsl");
         assert!(wgsl.contains(&format!("const PORTAL_HALF_WIDTH: f32 = {PORTAL_HALF_WIDTH:.1};")));
         assert!(wgsl.contains(&format!("const PORTAL_HALF_HEIGHT: f32 = {PORTAL_HALF_HEIGHT:.1};")));
@@ -1883,11 +1877,13 @@ mod tests {
                     assert!(clip.keeps_point(front));
                     assert!(!clip.keeps_point(back));
                     assert!(!clip.keeps_point(back + across * (PORTAL_HALF_WIDTH * 0.99)));
-                    assert!(clip.keeps_point(back + across * (PORTAL_HALF_WIDTH * 1.01)));
-                    assert!(clip.keeps_point(back + Vec3::Z * (PORTAL_HALF_HEIGHT * 1.01)));
+                    assert!(!clip.keeps_point(back + across * (PORTAL_HALF_WIDTH * 1.01)));
+                    assert!(!clip.keeps_point(back + Vec3::Z * (PORTAL_HALF_HEIGHT * 1.01)));
                     assert!(!clip.keeps_point(back + across * 0.5 + Vec3::Z * 0.5));
                     // Inside the bounding rectangle, outside the ellipse.
-                    assert!(clip.keeps_point(back + across * 0.8 + Vec3::Z * (PORTAL_HALF_HEIGHT * 0.8)));
+                    assert!(!clip.keeps_point(back + across * 0.8 + Vec3::Z * (PORTAL_HALF_HEIGHT * 0.8)));
+                    // Returning to the entry side restores oversized attachments too.
+                    assert!(clip.keeps_point(front + across * 4.0 + Vec3::Z * 3.0));
                 }
             }
         }
