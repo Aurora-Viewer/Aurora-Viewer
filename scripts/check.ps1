@@ -21,7 +21,16 @@ try {
     foreach ($s in $steps) {
         if ($s.Heavy -and -not $slot) { $slot = Enter-BuildSlot }
         Write-Host "==> $($s.Name)" -ForegroundColor Cyan
-        & $s.Run
+        # a step that throws (a missing command under a child script's
+        # 'Stop') skipped every later step and still ended "All green."
+        # (#1659): it fails like a non-zero exit code
+        $global:LASTEXITCODE = 0
+        try {
+            & $s.Run
+        } catch {
+            Write-Host $_ -ForegroundColor Red
+            $global:LASTEXITCODE = 1
+        }
         if ($LASTEXITCODE -ne 0) {
             Write-Host "FAILED: $($s.Name)" -ForegroundColor Red
             exit 1
