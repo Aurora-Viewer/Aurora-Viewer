@@ -349,13 +349,7 @@ impl App {
                 }
                 if start {
                     self.record_library_asset(asset, 20);
-                    self.inventory_ui.preview = self
-                        .world
-                        .inventory
-                        .items
-                        .values()
-                        .find(|it| it.asset_type == 20 && it.asset_id == asset)
-                        .map(|it| it.id);
+                    self.inventory_ui.open_animation(&self.egui_ctx, &self.world.inventory, asset);
                     if local || self.demo {
                         self.world.preview_animation(asset, true);
                     }

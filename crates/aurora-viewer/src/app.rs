@@ -17632,8 +17632,17 @@ impl ApplicationHandler for App {
                         }
                         self.inventory_ui.preview = Some(id);
                         self.apply_inventory_action(ui::inventory::InvAction::Preview(id));
-                    } else if view == "animation-open" {
-                        self.inventory_ui.preview = Some(id);
+                    } else if matches!(view.as_str(), "animation-open" | "animation-play-local" | "animation-play-world") {
+                        self.apply_inventory_action(ui::inventory::InvAction::Preview(id));
+                        if view != "animation-open"
+                            && let Some(asset) = self.world.inventory.items.get(&id).map(|item| item.asset_id)
+                        {
+                            self.apply_inventory_action(ui::inventory::InvAction::Animation {
+                                asset,
+                                local: view == "animation-play-local",
+                                start: true,
+                            });
+                        }
                     } else if view.starts_with("image") {
                         self.inventory_ui.thumbnail.open(id);
                         self.inventory_ui.thumbnail.picker_open = view == "image-picker";
