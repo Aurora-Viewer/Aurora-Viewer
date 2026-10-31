@@ -74,8 +74,9 @@ pub fn suggestions(landmarks: &[Named], history: &[TpEntry], typed: &str) -> Vec
     }
     let lower = typed.to_lowercase();
     let mut out: Vec<Suggestion> = Vec::new();
+    let mut labels = std::collections::HashSet::new();
     let mut push = |label: String, target: Target| {
-        if !out.iter().any(|s| s.label == label) {
+        if labels.insert(label.clone()) {
             out.push(Suggestion { label, target });
         }
     };
@@ -184,31 +185,122 @@ pub const DEMO_TYPED: &str = "Aur";
 /// Frame the demo types it at (the place menu opens at frame 300).
 pub const DEMO_FRAME: u64 = 320;
 
-/// The arrows move the choice, Enter takes it (when the field has the
-/// keyboard and the list rows). Read before the field, which would lose its
-/// focus on Enter. Returns the row Enter took.
-pub fn keys(ui: &egui::Ui, n: usize, chosen: &mut usize) -> Option<usize> {
-    if n == 0 {
-        return None;
+/// What a location field remembers between frames: the list for its text,
+/// built again only when the text, the landmarks or the history change
+/// (not every frame), and the row chosen. A row chosen with the arrows is
+/// kept by where it goes, so a list refreshed under it (landmarks still
+/// arriving) cannot turn Enter to another place; otherwise the choice is
+/// `pick`'s, again for each new list.
+#[derive(Clone, Default)]
+pub struct Picker {
+    key: Option<(String, usize, u64)>,
+    list: std::sync::Arc<[Suggestion]>,
+    chosen: usize,
+    /// The row the arrows chose, for this text.
+    explicit: Option<Target>,
+}
+
+impl Picker {
+    pub fn load(ctx: &egui::Context, id: egui::Id) -> Picker {
+        ctx.data(|d| d.get_temp::<Picker>(id)).unwrap_or_default()
     }
-    ui.input_mut(|i| {
-        if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
-            *chosen = (*chosen + 1) % n;
+
+    pub fn store(self, ctx: &egui::Context, id: egui::Id) {
+        ctx.data_mut(|d| d.insert_temp(id, self));
+    }
+
+    /// The list for `text` (empty when `enabled` is false: the location
+    /// hidden, the SLURL the field opens with).
+    pub fn refresh(&mut self, landmarks: &std::sync::Arc<[Named]>, history: &[TpEntry], text: &str, enabled: bool) {
+        let key = (
+            if enabled { text.to_owned() } else { String::new() },
+            std::sync::Arc::as_ptr(landmarks).cast::<u8>() as usize,
+            history_print(history),
+        );
+        if self.key.as_ref() == Some(&key) {
+            return;
         }
-        if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
-            *chosen = (*chosen + n - 1) % n;
+        if self.key.as_ref().is_none_or(|old| old.0 != key.0) {
+            // new text: the arrows' choice was for the old one
+            self.explicit = None;
         }
-        i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
-            .then_some((*chosen).min(n - 1))
-    })
+        self.list = suggestions(landmarks, history, &key.0).into();
+        self.chosen = self
+            .explicit
+            .as_ref()
+            .and_then(|t| self.list.iter().position(|s| &s.target == t))
+            .or_else(|| pick(&self.list, &key.0))
+            .unwrap_or(0);
+        self.key = Some(key);
+    }
+
+    pub fn list(&self) -> &[Suggestion] {
+        &self.list
+    }
+
+    pub fn chosen(&self) -> usize {
+        self.chosen
+    }
+
+    /// The arrows move the choice, Enter takes it, while the list has rows
+    /// and `field` the keyboard. Read before the field, which would lose its
+    /// focus on Enter; the field keeps the keyboard and egui does not move
+    /// it on (as the chat's suggestions, `chat/suggest.rs`). Returns the
+    /// row Enter took, and whether the arrows moved the choice.
+    pub fn keys(&mut self, ui: &egui::Ui, field: egui::Id) -> (Option<Suggestion>, bool) {
+        let n = self.list.len();
+        if n == 0 {
+            return (None, false);
+        }
+        let none = egui::Modifiers::NONE;
+        let (down, up, enter) = ui.input_mut(|i| {
+            (
+                i.consume_key(none, egui::Key::ArrowDown),
+                i.consume_key(none, egui::Key::ArrowUp),
+                i.consume_key(none, egui::Key::Enter),
+            )
+        });
+        if down {
+            self.chosen = (self.chosen + 1) % n;
+        }
+        if up {
+            self.chosen = (self.chosen + n - 1) % n;
+        }
+        let moved = down || up;
+        if moved {
+            self.explicit = self.list.get(self.chosen).map(|s| s.target.clone());
+        }
+        if moved || enter {
+            ui.ctx().memory_mut(|m| {
+                m.request_focus(field);
+                m.move_focus(egui::FocusDirection::None);
+            });
+        }
+        (enter.then(|| self.list[self.chosen.min(n - 1)].clone()), moved)
+    }
+}
+
+/// What tells two teleport histories apart, cheaply (a hundred places at
+/// most): a parcel's name arriving changes a title.
+fn history_print(history: &[TpEntry]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for e in history {
+        e.region.hash(&mut h);
+        e.parcel.hash(&mut h);
+        e.handle.hash(&mut h);
+        e.position.to_array().map(f32::to_bits).hash(&mut h);
+    }
+    h.finish()
 }
 
 /// Most rows shown at once; the rest scroll.
 const ROWS: f32 = 10.0;
 const ROW_HEIGHT: f32 = 26.0;
 
-/// The rows, the chosen one lit; the row clicked, if any.
-pub fn rows(ui: &mut egui::Ui, p: &Palette, list: &[Suggestion], chosen: usize) -> Option<usize> {
+/// The rows, the chosen one lit and scrolled into view when the arrows
+/// `moved` it; the row clicked, if any.
+pub fn rows(ui: &mut egui::Ui, p: &Palette, list: &[Suggestion], chosen: usize, moved: bool) -> Option<usize> {
     let mut clicked = None;
     egui::ScrollArea::vertical()
         .id_salt("location_suggestions")
@@ -218,11 +310,7 @@ pub fn rows(ui: &mut egui::Ui, p: &Palette, list: &[Suggestion], chosen: usize) 
             ui.spacing_mut().item_spacing.y = 0.0;
             for (i, s) in list.iter().enumerate() {
                 let row = menu::suggestion_row(ui, p, s.icon(), &s.label, "", i == chosen);
-                if i == chosen
-                    && ui
-                        .ctx()
-                        .input(|inp| inp.key_pressed(egui::Key::ArrowDown) || inp.key_pressed(egui::Key::ArrowUp))
-                {
+                if i == chosen && moved {
                     row.scroll_to_me(None);
                 }
                 if row.clicked() {
@@ -235,7 +323,7 @@ pub fn rows(ui: &mut egui::Ui, p: &Palette, list: &[Suggestion], chosen: usize) 
 
 /// The rows in a list of their own under `field` (the Legacy bars' location
 /// field); the row clicked, if any.
-pub fn list_area(ui: &egui::Ui, p: &Palette, id: egui::Id, field: Rect, list: &[Suggestion], chosen: usize) -> Option<usize> {
+pub fn list_area(ui: &egui::Ui, p: &Palette, id: egui::Id, field: Rect, list: &[Suggestion], chosen: usize, moved: bool) -> Option<usize> {
     egui::Area::new(id)
         .fade_in(false)
         .order(egui::Order::Foreground)
@@ -245,7 +333,7 @@ pub fn list_area(ui: &egui::Ui, p: &Palette, id: egui::Id, field: Rect, list: &[
             crate::ui::widgets::overlay(ui, p, egui::Margin::same(4), |ui| {
                 ui.set_min_width(field.width().max(240.0));
                 ui.set_max_width(field.width().max(240.0));
-                rows(ui, p, list, chosen)
+                rows(ui, p, list, chosen, moved)
             })
             .inner
         })
@@ -333,6 +421,50 @@ mod tests {
         let list = suggestions(&lms, &[], "Land");
         assert_eq!(pick(&list, "Land"), Some(0));
         assert_eq!(pick(&[], "Land"), None, "nothing matches: the text is a SLURL or a region");
+    }
+
+    #[test]
+    fn landmarks_arriving_late_refresh_the_default_choice() {
+        let mut picker = Picker::default();
+        let early: std::sync::Arc<[Named]> = named(&[("A KB view", 1)]).into();
+        picker.refresh(&early, &[], "KB", true);
+        assert_eq!(picker.list()[picker.chosen()].label, "A KB view");
+        // the exact landmark arrives: Enter now takes it, not row 0
+        let late: std::sync::Arc<[Named]> = named(&[("A KB view", 1), ("KB", 2)]).into();
+        picker.refresh(&late, &[], "KB", true);
+        assert_eq!(picker.list()[picker.chosen()].target, Target::Landmark(Uuid::from_u128(2)));
+    }
+
+    #[test]
+    fn a_choice_made_with_the_arrows_follows_its_row() {
+        let mut picker = Picker::default();
+        let early: std::sync::Arc<[Named]> = named(&[("KB", 2), ("KB east", 3)]).into();
+        picker.refresh(&early, &[], "KB", true);
+        // as the down arrow does
+        picker.chosen = 1;
+        picker.explicit = Some(Target::Landmark(Uuid::from_u128(3)));
+        let late: std::sync::Arc<[Named]> = named(&[("A KB view", 1), ("KB", 2), ("KB east", 3)]).into();
+        picker.refresh(&late, &[], "KB", true);
+        assert_eq!(picker.list()[picker.chosen()].target, Target::Landmark(Uuid::from_u128(3)));
+        // new text: the arrows' choice is forgotten
+        picker.refresh(&late, &[], "KB e", true);
+        assert!(picker.explicit.is_none());
+        picker.refresh(&late, &[], "KB", false);
+        assert!(picker.list().is_empty(), "disabled: no list");
+    }
+
+    #[test]
+    fn many_matches_stay_one_row_per_label() {
+        let names: Vec<(String, u128)> = (0..3000).map(|n| (format!("Spot {}", n % 2000), n as u128)).collect();
+        let lms: Vec<Named> = names
+            .iter()
+            .map(|(name, n)| Named {
+                name: name.clone(),
+                lower: name.to_lowercase(),
+                asset: Uuid::from_u128(*n),
+            })
+            .collect();
+        assert_eq!(suggestions(&lms, &[], "spot").len(), 2000);
     }
 
     #[test]

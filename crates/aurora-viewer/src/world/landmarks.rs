@@ -400,7 +400,14 @@ pub fn named(inv: &Inventory) -> Vec<Named> {
             };
             // reversed: the walk goes down the subfolders in their order
             stack.extend(folder.children.iter().rev().copied());
-            for it in folder.items.iter().filter_map(|i| inv.items.get(i)) {
+            // a link stands for its original: its name, type and asset
+            // (LLViewerInventoryItem::getName / getType / getAssetUUID)
+            let originals = folder
+                .items
+                .iter()
+                .filter_map(|i| crate::world::inventory::actions::original(inv, *i))
+                .filter_map(|i| inv.items.get(&i));
+            for it in originals {
                 if it.asset_type != ASSET_LANDMARK || it.asset_id.is_nil() {
                     continue;
                 }
@@ -695,7 +702,21 @@ mod tests {
         )]);
         let mut no_asset = landmark(210, 21, "Broken");
         no_asset.asset_id = Uuid::nil();
-        inv.apply(vec![contents(trips, Vec::new(), vec![landmark(211, 21, "KB Store"), no_asset])]);
+        // a link to a landmark kept elsewhere stands for it
+        let link = InvItem {
+            id: Uuid::from_u128(212),
+            parent: Uuid::from_u128(21),
+            name: "link name".into(),
+            asset_id: Uuid::from_u128(300),
+            asset_type: 24,
+            inv_type: 3,
+            ..Default::default()
+        };
+        inv.apply(vec![contents(
+            trips,
+            Vec::new(),
+            vec![landmark(211, 21, "KB Store"), no_asset, link],
+        )]);
         inv.apply(vec![contents(notes, Vec::new(), vec![landmark(300, 30, "Elsewhere")])]);
         let names: Vec<(String, Uuid)> = named(&inv).into_iter().map(|n| (n.name, n.asset)).collect();
         assert_eq!(
@@ -704,8 +725,9 @@ mod tests {
                 ("Chonk Landing".into(), Uuid::from_u128(1100)),
                 ("Beach".into(), Uuid::from_u128(1201)),
                 ("KB Store".into(), Uuid::from_u128(1211)),
+                ("Elsewhere".into(), Uuid::from_u128(1300)),
             ],
-            "the Favorites copy wins; subfolders count; other folders and assetless items do not"
+            "the Favorites copy wins; subfolders and links count; other folders and assetless items do not"
         );
     }
 

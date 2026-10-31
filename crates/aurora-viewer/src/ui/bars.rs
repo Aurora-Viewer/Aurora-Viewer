@@ -1628,21 +1628,14 @@ fn location_field(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &Stat
     };
     // the landmarks and places the typed text names: none for the SLURL
     // the field opens with, nor with the location hidden
-    let (list_id, chosen_key) = (id.with("suggestions"), id.with("chosen"));
-    let suggest = |text: &str| {
-        if st.location_hidden || text == slurl {
-            Vec::new()
-        } else {
-            location_suggest::suggestions(&st.landmarks, st.tp_session.items, text)
-        }
-    };
-    let mut list = suggest(text);
-    let mut chosen = ui.ctx().data(|d| d.get_temp::<usize>(chosen_key)).unwrap_or(0);
+    let (list_id, picker_key) = (id.with("suggestions"), id.with("picker"));
+    let mut picker = location_suggest::Picker::load(ui.ctx(), picker_key);
+    picker.refresh(&st.landmarks, st.tp_session.items, text, !st.location_hidden && *text != slurl);
     // the arrows and Enter go to the list before the field takes them
-    let mut take = if !panels.nav_edit_new && ui.memory(|m| m.has_focus(id)) {
-        location_suggest::keys(ui, list.len(), &mut chosen)
+    let (mut take, moved) = if !panels.nav_edit_new && ui.memory(|m| m.has_focus(id)) {
+        picker.keys(ui, id)
     } else {
-        None
+        (None, false)
     };
     let resp = ui.add(
         egui::TextEdit::singleline(text)
@@ -1670,24 +1663,22 @@ fn location_field(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &Stat
         ui.ctx().request_repaint();
         return None;
     }
-    if resp.changed() {
-        list = suggest(text);
-        chosen = location_suggest::pick(&list, text).unwrap_or(0);
-    }
-    ui.ctx().data_mut(|d| d.insert_temp(chosen_key, chosen));
-    if !list.is_empty()
-        && let Some(i) = location_suggest::list_area(ui, p, list_id, resp.rect, &list, chosen)
+    picker.refresh(&st.landmarks, st.tp_session.items, text, !st.location_hidden && *text != slurl);
+    if !picker.list().is_empty()
+        && let Some(i) = location_suggest::list_area(ui, p, list_id, resp.rect, picker.list(), picker.chosen(), moved)
     {
-        take = Some(i);
+        take = picker.list().get(i).cloned();
     }
-    if let Some(s) = take.and_then(|i| list.get(i)) {
+    let has_list = !picker.list().is_empty();
+    picker.store(ui.ctx(), picker_key);
+    if let Some(s) = take {
         panels.nav_edit = None;
         ui.memory_mut(|m| m.surrender_focus(id));
         return Some(s.action());
     }
     // a press on the list takes the field's focus: the list stays until
     // the click lands on a row
-    let on_list = !list.is_empty()
+    let on_list = has_list
         && ui.ctx().pointer_interact_pos().and_then(|pos| ui.ctx().layer_id_at(pos))
             == Some(egui::LayerId::new(egui::Order::Foreground, list_id));
     let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
