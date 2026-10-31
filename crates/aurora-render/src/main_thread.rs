@@ -1107,6 +1107,7 @@ impl Renderer {
             // counted twice
             stats = RenderStats {
                 gpu_ms: self.last_stats.gpu_ms,
+                gpu_pixels: self.last_stats.gpu_pixels,
                 gpu_elements: self.last_stats.gpu_elements,
                 shadow: ShadowStats {
                     gpu_ms: self.last_stats.shadow.gpu_ms,

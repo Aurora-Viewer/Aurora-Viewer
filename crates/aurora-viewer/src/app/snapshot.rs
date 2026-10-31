@@ -191,6 +191,8 @@ pub(super) struct Snapshots {
     fit: Option<QualityFit>,
     /// The photo quality was just lowered: the viewfinder says so once.
     fit_note: bool,
+    /// What a pixel costs the GPU: the pixels of a photo pass.
+    gpu_cost: snapshot::GpuCost,
     /// The world frozen by the photo mode (`SnapshotUi::freeze_world`):
     /// the instant and the shaders' clock it shows.
     world_freeze: Option<snapshot::Hold>,
@@ -380,6 +382,7 @@ impl Default for Snapshots {
             detail_ready: false,
             fit: None,
             fit_note: false,
+            gpu_cost: Default::default(),
             world_freeze: None,
             free_flying: false,
             free_opened_controls: false,
@@ -501,6 +504,12 @@ impl App {
         })
     }
 
+    /// The GPU time of a frame just reported, which plans the photo's
+    /// passes (`snapshot::GpuCost`).
+    pub(super) fn photo_gpu_time(&mut self, stats: &aurora_render::RenderStats) {
+        self.snapshots.gpu_cost.note(stats.gpu_ms, stats.gpu_pixels);
+    }
+
     /// After a frame was drawn: the part of the photo it carried.
     pub(super) fn photo_drawn(&mut self, renderer: &mut Renderer) {
         let Some(answer) = renderer.snapshot.take() else {
@@ -517,6 +526,49 @@ impl App {
             self.snapshots.message = Some((aurora_i18n::tr!("photo-draw-failed").to_owned(), true));
             return;
         };
+        // the device lost under the pass: nothing it read back is the photo
+        if renderer.device_lost() {
+            log::warn!(
+                "photo: the GPU was lost while part {} of {} was drawn",
+                job.next + 1,
+                job.tiles.len()
+            );
+            self.snapshots.job = None;
+            self.snapshots.message = Some((aurora_i18n::tr!("photo-draw-failed").to_owned(), true));
+            return;
+        }
+        // a pass the driver ended (the GPU reset under it, past its time
+        // limit) reads back black, its alpha opaque: drawn again from the
+        // start in smaller parts, for the rest of the photo. A part no
+        // larger than the window's frame, which is drawn every frame, is
+        // black for real (a dark scene, a look's bars): kept. A cut-out
+        // photo is black where nothing is drawn: not checked.
+        if !job.cutout
+            && snapshot::blank(&pixels)
+            && self
+                .snapshots
+                .gpu_cost
+                .failed(u64::from(pass.draw.width) * u64::from(pass.draw.height), renderer.size())
+        {
+            let part = (job.next + 1, job.tiles.len());
+            let size = job.size;
+            let tiles = self.photo_tiles(renderer, size);
+            log::warn!(
+                "photo: part {} of {} ({} x {}) came back black (a GPU reset, or a black part): drawn again in {} part(s)",
+                part.0,
+                part.1,
+                pass.draw.width,
+                pass.draw.height,
+                tiles.len()
+            );
+            if let Some(job) = self.snapshots.job.as_mut() {
+                job.tiles = tiles;
+                job.next = 0;
+                job.pixels = Vec::new();
+                job.hold = None;
+            }
+            return;
+        }
         if job.tiles.len() == 1 {
             job.pixels = pixels;
         } else {
@@ -865,7 +917,17 @@ impl App {
         if purpose != Purpose::Preview {
             self.world.photo_isolation.set_picking(false);
         }
+        self.snapshots.gpu_cost.new_photo();
         let tiles = self.photo_tiles(renderer, size);
+        if purpose != Purpose::Preview {
+            log::info!(
+                "photo: {} x {} planned in {} part(s), at most {} Mpx a pass (memory and GPU time)",
+                size.0,
+                size.1,
+                tiles.len(),
+                self.photo_max_pixels(renderer) / 1_000_000
+            );
+        }
         let interface = s.interface && snapshot::same_proportions(full, window);
         self.snapshots.job = Some(Job {
             purpose,
@@ -968,14 +1030,22 @@ impl App {
 
     /// The most pixels drawn in one pass (`snapshot::pass_pixels`): half of
     /// the free video memory, besides what the window's frame holds, and
-    /// never fewer than the window's.
+    /// what the GPU draws within its time (`snapshot::GpuCost`; longer with
+    /// the interface or the HUDs, which a photo in parts leaves out), never
+    /// fewer than the window's.
     fn photo_max_pixels(&self, renderer: &Renderer) -> u64 {
+        let s = &self.settings.snapshot;
+        let ms = if s.interface || s.huds {
+            snapshot::OVERLAY_PASS_GPU_MS
+        } else {
+            snapshot::PASS_GPU_MS
+        };
         let per_pixel = TARGET_BYTES_PER_PIXEL + TARGET_BYTES_PER_SAMPLE * u64::from(self.msaa_samples(renderer));
         let free = renderer
             .video_memory
             .read(&renderer.device)
             .map_or(DEFAULT_TARGET_BYTES, |m| m.budget.saturating_sub(m.usage) / 2);
-        snapshot::pass_pixels(free, per_pixel, renderer.size())
+        snapshot::pass_pixels(free, per_pixel, renderer.size()).min(self.snapshots.gpu_cost.pass_pixels(renderer.size(), ms))
     }
 
     /// LLViewerWindow::playSnapshotAnimAndSound: the snapshot animation and

@@ -874,6 +874,11 @@ struct GpuTimer {
     next: usize,
     period_ns: f32,
     last_ms: Option<f32>,
+    /// The world pixels of the frame `last_ms` measures (a photo frame's are
+    /// the photo's): the cost of a pixel, which plans the photo's tiles.
+    last_pixels: u64,
+    /// The world pixels of each readback slot's frame.
+    slot_pixels: [std::cell::Cell<u64>; 3],
     /// Marks between and inside passes are written
     /// (TIMESTAMP_QUERY_INSIDE_ENCODERS + TIMESTAMP_QUERY_INSIDE_PASSES).
     marks: bool,
@@ -1095,6 +1100,8 @@ impl GpuTimer {
             next: 0,
             period_ns: queue.get_timestamp_period(),
             last_ms: None,
+            last_pixels: 0,
+            slot_pixels: Default::default(),
             marks: device
                 .features()
                 .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
@@ -1122,6 +1129,7 @@ impl GpuTimer {
                     };
                     if ts[1] > ts[0] {
                         self.last_ms = Some(ms(0, 1));
+                        self.last_pixels = self.slot_pixels[slot].get();
                         if self.marks {
                             let mut e = [0.0; GpuElement::ALL.len()];
                             for (t, ranges) in e.iter_mut().zip(GPU_ELEMENTS) {
@@ -6177,6 +6185,9 @@ impl Backend {
         }
 
         let timer_slot = self.timer.as_mut().and_then(|t| t.slot());
+        if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
+            t.slot_pixels[slot].set(u64::from(world_size.0) * u64::from(world_size.1));
+        }
         let mut first_pass = true;
         let mut take_first = || {
             let first = first_pass && timer_slot.is_some();
@@ -8004,6 +8015,7 @@ impl Backend {
         }
 
         stats.gpu_ms = self.timer.as_ref().and_then(|t| t.last_ms);
+        stats.gpu_pixels = self.timer.as_ref().map_or(0, |t| t.last_pixels);
         stats.gpu_elements = self.timer.as_ref().and_then(|t| t.last_elements);
         stats.shadow.gpu_ms = self.timer.as_ref().and_then(|t| t.last_shadow_parts);
         stats.gpu_depth = self.timer.as_ref().and_then(|t| t.last_depth);
