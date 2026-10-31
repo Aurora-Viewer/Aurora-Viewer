@@ -129,15 +129,15 @@ mod tests {
         let stretched = avatar(root, vec![(root, 0.5), (Vec3::new(1.0, 0.0, 0.0), 2.0)]);
         let plane = clipping.update(&[portal()], &[stretched])[&7];
         assert!(visible(plane, root));
-        assert!(visible(plane, Vec3::new(0.2, 0.0, 0.0)));
-        assert!(!visible(plane, Vec3::new(-0.2, 0.0, 0.0)));
+        assert!(visible(plane, Vec3::new(0.5, 0.0, 0.0)));
+        assert!(!visible(plane, Vec3::new(-0.5, 0.0, 0.0)));
         assert!(
-            !visible(plane, Vec3::new(-0.2, 1.1, 0.0)),
-            "a wide attachment disappears beyond the plane, including outside the rim"
+            !visible(plane, Vec3::new(-0.5, 1.1, 0.0)),
+            "a wide attachment dissolves beyond the contact band, including outside the rim"
         );
         assert!(
-            !visible(plane, Vec3::new(-0.2, 0.0, 1.6)),
-            "an extended limb disappears beyond the plane, including above the opening"
+            !visible(plane, Vec3::new(-0.5, 0.0, 1.6)),
+            "an extended limb dissolves beyond the contact band, including above the opening"
         );
     }
 
@@ -149,7 +149,7 @@ mod tests {
             let plane = clipping.update(&[portal()], &[avatar(root, vec![(root, 1.0)])])[&7];
             // Advance, reverse before teleport confirmation, then cross again.
             // Changing facing must not invert the latched entry side.
-            for distance in [0.2, -0.2, -1.0, -0.2, 0.2, 1.0, 0.2, -0.2] {
+            for distance in [0.5, -0.5, -1.0, -0.5, 0.5, 1.0, 0.5, -0.5] {
                 let root = Vec3::X * (distance * side);
                 let mut posed = avatar(root, vec![(root, 1.0)]);
                 posed.forward = Vec3::X * side;

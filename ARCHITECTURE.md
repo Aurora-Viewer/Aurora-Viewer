@@ -538,12 +538,15 @@ animations; late packets from a previous region cannot restore stale flight.
 `scene/portals/clipping.rs` assigns a stable entry side from the posed
 body and worn-object bounds, independently of locomotion or teleport gates.
 Every system-body, skinned-mesh and rigid world-attachment face receives the
-same reversible entry-plane cut. Fragment clipping uses world positions after deformation;
-stationary roots, moving limbs, large attachments and animated attachment
-points are included; all fragments beyond the plane disappear, including
-above or beside the oval. Returning to the entry side restores them each frame,
-without modifying mesh data or waiting for a teleport gate. This Aurora-specific
-effect follows the requested traversal behavior; the oval still bounds the
+same reversible local dissolution. World positions after deformation drive
+a 60 cm contact band around the portal. Smooth spatial noise opens irregular
+holes with falling coverage instead of slicing the mesh at one plane. Integer
+hashing and portal-local tangent/height coordinates share the pattern across
+CPU picking and GPU passes, independent of time, camera and traversal depth.
+Advancing normally only removes fragments; retracing positions restores the
+same fragments immediately. Stationary roots, moving limbs, large attachments
+and animated attachment points are included, even above or beside the oval,
+without modifying mesh data or waiting for a teleport gate. The oval still bounds the
 portal surface and nearby-avatar selection. Active subjects stay fully animated
 instead of using an impostor. Color, alpha, depth/Hi-Z/contact shadows, picking, glow and reflection
 passes agree, including GTAO mesh-normal and blended-contact depth. Its opaque
@@ -552,8 +555,8 @@ compact normal vertex path is retained otherwise. MSAA depth uses the same cut.
 Opaque depth and shadow fast paths remain unchanged when no
 cut is active. The existing one-vector draw-record field holds the center and
 a compact horizontal entry direction, with no record-stride growth. CPU picking
-uses the same plane; `aurora-render/src/portal_tests.rs` renders the production
-fragment cut against rotated/transformed samples. HUDs and unrelated geometry
+uses the same dissolution field; `aurora-render/src/portal_tests.rs` renders the
+production fragments throughout the band against rotated/transformed samples. HUDs and unrelated geometry
 are excluded.
 
 Bridge 1.35 repairs the query script's posing-consent key checks: LSL permits

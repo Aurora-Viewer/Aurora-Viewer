@@ -189,8 +189,10 @@ pub mod flags {
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;
 pub const PORTAL_HALF_HEIGHT: f32 = 1.5;
 pub const PORTAL_SURFACE_SCALE: f32 = 1.16;
+pub const PORTAL_DISSOLVE_HALF_WIDTH: f32 = 0.30;
+pub const PORTAL_DISSOLVE_CELLS_PER_METER: f32 = 32.0;
 
-/// One vector keeps the cut local without growing every world-face record:
+/// One vector locates dissolution without growing every world-face record:
 /// center.xyz, and the horizontal entry normal on a signed diamond perimeter.
 /// Decoding needs only normalization, no per-fragment trigonometry.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -223,10 +225,45 @@ impl PortalClip {
         Vec3::new(1.0 - code.abs(), y, 0.0).normalize()
     }
 
-    /// CPU picking uses the same reversible plane cut as every GPU surface pass.
+    /// CPU picking shares the smooth spatial dissolution used by every GPU pass.
     pub fn keeps_point(self, point: Vec3) -> bool {
+        if !point.is_finite() {
+            return false;
+        }
         let local = point - Vec3::from_slice(&self.data[..3]);
-        local.dot(self.normal()) >= -0.0001
+        let normal = self.normal();
+        let distance = local.dot(normal);
+        if distance >= PORTAL_DISSOLVE_HALF_WIDTH {
+            return true;
+        }
+        if distance <= -PORTAL_DISSOLVE_HALF_WIDTH {
+            return false;
+        }
+        // Portal-local tangent/height, independent of camera, time and depth.
+        let x = local.dot(Vec3::new(-normal.y, normal.x, 0.0)) * PORTAL_DISSOLVE_CELLS_PER_METER;
+        let y = local.z * PORTAL_DISSOLVE_CELLS_PER_METER;
+        let cell = [x.floor() as i32, y.floor() as i32];
+        let smooth = |t: f32| t * t * (3.0 - 2.0 * t);
+        let u = smooth(x - x.floor());
+        let v = smooth(y - y.floor());
+        let hash = |dx, dy| {
+            let x = cell[0].wrapping_add(dx) as u32;
+            let y = cell[1].wrapping_add(dy) as u32;
+            let mut h = x.wrapping_mul(0x8da6b343) ^ y.wrapping_mul(0xd8163841);
+            h = (h ^ (h >> 16)).wrapping_mul(0x7feb352d);
+            h = (h ^ (h >> 15)).wrapping_mul(0x846ca68b);
+            h ^= h >> 16;
+            ((h & 65535) as f32 + 0.5) / 65536.0
+        };
+        let a = hash(0, 0);
+        let b = hash(1, 0);
+        let c = hash(0, 1);
+        let d = hash(1, 1);
+        let lower = a + (b - a) * u;
+        let upper = c + (d - c) * u;
+        let noise = lower + (upper - lower) * v;
+        let t = (distance + PORTAL_DISSOLVE_HALF_WIDTH) / (2.0 * PORTAL_DISSOLVE_HALF_WIDTH);
+        smooth(t) >= noise
     }
 }
 
@@ -278,7 +315,7 @@ pub struct DrawRecord {
     /// its own in the 4 bits above (0: the frame's), z and w the world
     /// height of the object's bottom and its height (f32 bits).
     pub rez: [u32; 4],
-    /// Portal plane cut: center.xyz and encoded horizontal entry direction.
+    /// Portal dissolution: center.xyz and encoded horizontal entry direction.
     /// Only active with PORTAL_CLIP; zero is also a valid opening at the origin.
     pub portal_clip: [f32; 4],
 }
@@ -1858,12 +1895,17 @@ mod tests {
     }
 
     #[test]
-    fn portal_plane_cuts_the_whole_mesh_for_both_sides_and_rotated_centers() {
+    fn portal_dissolution_keeps_and_removes_the_whole_mesh_on_either_side_of_its_band() {
         let wgsl = include_str!("shaders/common.wgsl");
         assert!(wgsl.contains(&format!("const PORTAL_HALF_WIDTH: f32 = {PORTAL_HALF_WIDTH:.1};")));
         assert!(wgsl.contains(&format!("const PORTAL_HALF_HEIGHT: f32 = {PORTAL_HALF_HEIGHT:.1};")));
         assert!(wgsl.contains(&format!("const PORTAL_SURFACE_SCALE: f32 = {PORTAL_SURFACE_SCALE:.2};")));
         assert!(wgsl.contains(&format!("const FLAG_PORTAL_EFFECT: u32 = {}u;", flags::PORTAL_EFFECT)));
+        let object = include_str!("shaders/object.wgsl");
+        assert!(object.contains(&format!("const PORTAL_DISSOLVE_HALF_WIDTH: f32 = {PORTAL_DISSOLVE_HALF_WIDTH:.2};")));
+        assert!(object.contains(&format!(
+            "const PORTAL_DISSOLVE_CELLS_PER_METER: f32 = {PORTAL_DISSOLVE_CELLS_PER_METER:.1};"
+        )));
         for center in [Vec3::ZERO, Vec3::new(214.0, 185.0, 60.0)] {
             for step in 0..32 {
                 let angle = step as f32 * std::f32::consts::TAU / 32.0;
@@ -1872,8 +1914,8 @@ mod tests {
                 for side in [-1.0, 1.0] {
                     let clip = PortalClip::new(center, normal * side).unwrap();
                     assert!(clip.normal().dot(normal * side) > 0.999999);
-                    let front = center + normal * side * 0.2;
-                    let back = center - normal * side * 0.2;
+                    let front = center + normal * side * 0.5;
+                    let back = center - normal * side * 0.5;
                     assert!(clip.keeps_point(front));
                     assert!(!clip.keeps_point(back));
                     assert!(!clip.keeps_point(back + across * (PORTAL_HALF_WIDTH * 0.99)));
@@ -1891,6 +1933,38 @@ mod tests {
         assert_eq!(PortalClip::new(Vec3::ZERO, Vec3::ZERO), None);
         assert_eq!(PortalClip::new(Vec3::ZERO, Vec3::Z), None);
         assert_eq!(PortalClip::new(Vec3::ZERO, Vec3::X).unwrap().data, [0.0; 4]);
+    }
+
+    #[test]
+    fn portal_dissolution_erodes_fragments_gradually_and_restores_the_same_pattern_on_retreat() {
+        for side in [-1.0, 1.0] {
+            let clip = PortalClip::new(Vec3::ZERO, Vec3::X * side).unwrap();
+            let depths = [0.4, 0.12, 0.0, -0.12, -0.4];
+            let pattern = |depth| {
+                (-16..16)
+                    .flat_map(|y| (-16..16).map(move |z| (y, z)))
+                    .map(|(y, z)| {
+                        clip.keeps_point(Vec3::new(
+                            side * depth,
+                            (y as f32 + 0.375) / PORTAL_DISSOLVE_CELLS_PER_METER,
+                            (z as f32 + 0.375) / PORTAL_DISSOLVE_CELLS_PER_METER,
+                        ))
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let patterns: Vec<_> = depths.iter().map(|&depth| pattern(depth)).collect();
+            let counts: Vec<_> = patterns.iter().map(|row| row.iter().filter(|&&kept| kept).count()).collect();
+            assert_eq!(counts[0], 1024);
+            assert_eq!(counts[4], 0);
+            assert!(counts.windows(2).all(|pair| pair[0] > pair[1]), "gradual coverage: {counts:?}");
+            assert!((410..615).contains(&counts[2]), "contact contains both holes and intact fragments");
+            for pair in patterns.windows(2) {
+                assert!(pair[0].iter().zip(&pair[1]).all(|(&before, &after)| before || !after));
+            }
+            for (&depth, original) in depths.iter().zip(&patterns).rev() {
+                assert_eq!(&pattern(depth), original, "retreat restores the exact fragments");
+            }
+        }
     }
 
     #[test]

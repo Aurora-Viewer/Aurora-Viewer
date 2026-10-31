@@ -306,8 +306,14 @@ impl App {
                 handle,
                 objects: vec![worn],
             });
+            let close = mode.starts_with("slice-turnback");
+            let across = if close { 2.5 } else { 5.0 };
+            let ahead = if close { 2.0 } else { 4.0 };
             self.camera.set_view(
-                center + tangent * 5.0 + normal * if mode.ends_with("reverse") { -4.0 } else { 4.0 } + Vec3::Z * 2.2,
+                center
+                    + tangent * across
+                    + normal * if mode.ends_with("reverse") { -ahead } else { ahead }
+                    + Vec3::Z * if close { 1.2 } else { 2.2 },
                 center,
                 &mut self.world.agent,
                 &self.settings.camera,

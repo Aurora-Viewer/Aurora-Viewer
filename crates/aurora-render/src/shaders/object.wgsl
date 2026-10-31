@@ -4,16 +4,49 @@
 override ALPHA_TO_COVERAGE: bool = true;
 
 // Evaluated after skinning/attachment placement, in every surface/depth pass.
-// The entry side is latched per avatar; crossing back restores each fragment.
-// Cut the whole worn/body mesh beyond the plane, including outside the oval.
+// A spatial dissolution front shared by color, depth, shadow and picking.
+// Entry side is latched; retreat restores the same fragments without a timer.
 fn portal_clip(rec: DrawRecord, position: vec3<f32>) {
-    if ((rec.flags.x & FLAG_PORTAL_CLIP) != 0u) {
-        let code = rec.portal_clip.w;
-        let y = select(code, sign(code) * (2.0 - abs(code)), abs(code) > 1.0);
-        let normal = normalize(vec2<f32>(1.0 - abs(code), y));
-        let local = position - rec.portal_clip.xyz;
-        if (dot(local.xy, normal) < -0.0001) { discard; }
+    if ((rec.flags.x & FLAG_PORTAL_CLIP) != 0u && !portal_dissolve_keeps(rec.portal_clip, position)) {
+        discard;
     }
+}
+
+const PORTAL_DISSOLVE_HALF_WIDTH: f32 = 0.30;
+const PORTAL_DISSOLVE_CELLS_PER_METER: f32 = 32.0;
+
+// Integer hashing keeps CPU picking and every GPU pass on the same pattern.
+fn portal_dissolve_hash(cell: vec2<i32>) -> f32 {
+    var h = (bitcast<u32>(cell.x) * 0x8da6b343u) ^ (bitcast<u32>(cell.y) * 0xd8163841u);
+    h = (h ^ (h >> 16u)) * 0x7feb352du;
+    h = (h ^ (h >> 15u)) * 0x846ca68bu;
+    h = h ^ (h >> 16u);
+    return (f32(h & 65535u) + 0.5) / 65536.0;
+}
+
+fn portal_dissolve_keeps(clip: vec4<f32>, position: vec3<f32>) -> bool {
+    let code = clip.w;
+    let y = select(code, sign(code) * (2.0 - abs(code)), abs(code) > 1.0);
+    let normal = normalize(vec2<f32>(1.0 - abs(code), y));
+    let local = position - clip.xyz;
+    let distance = dot(local.xy, normal);
+    if (distance >= PORTAL_DISSOLVE_HALF_WIDTH) { return true; }
+    if (distance <= -PORTAL_DISSOLVE_HALF_WIDTH) { return false; }
+    // Tangent/height only: advancing through the front cannot change the
+    // noise threshold and make already vanished pieces flicker back on.
+    let q = vec2<f32>(dot(local.xy, vec2<f32>(-normal.y, normal.x)), local.z) * PORTAL_DISSOLVE_CELLS_PER_METER;
+    let cell = vec2<i32>(floor(q));
+    let f = fract(q);
+    let u = f * f * (vec2<f32>(3.0) - 2.0 * f);
+    let a = portal_dissolve_hash(cell);
+    let b = portal_dissolve_hash(cell + vec2<i32>(1, 0));
+    let c = portal_dissolve_hash(cell + vec2<i32>(0, 1));
+    let d = portal_dissolve_hash(cell + vec2<i32>(1, 1));
+    let lower = a + (b - a) * u.x;
+    let upper = c + (d - c) * u.x;
+    let noise = lower + (upper - lower) * u.y;
+    let t = (distance + PORTAL_DISSOLVE_HALF_WIDTH) / (2.0 * PORTAL_DISSOLVE_HALF_WIDTH);
+    return t * t * (3.0 - 2.0 * t) >= noise;
 }
 
 // One analytically bounded Aurora surface, animated by the GPU clock. The

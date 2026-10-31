@@ -83,7 +83,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO_AVATAR_RENDER_SETTINGS=1\|empty` | Open the avatar display-exceptions editor |
 | `AURORA_DEMO_POS="x,y"` | Start position |
 | `AURORA_DEMO_PORTALS=1\|near\|friends` | Open the portal creator and a shared-portal preview |
-| `AURORA_PORTAL_CLIP=0` | Disable avatar portal clipping for before/after comparison |
+| `AURORA_PORTAL_CLIP=0` | Disable avatar portal dissolution for before/after comparison |
 | `AURORA_DEMO_TOD=0..5` | Time of day (5: the legacy midday) |
 | `AURORA_DEMO_SUN=<azimuth>,<elevation>` | Sun direction for the lighting and the shadows, in degrees |
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
@@ -176,18 +176,22 @@ inspect wire-level tests, not just labels. Old portal-v1 traffic is not accepted
 adds an observed avatar with continuous locomotion animation, a skinned mesh
 and a long rigid hand attachment. The camera observes the portal obliquely
 (from the other side with `slice-reverse`). `slice-still` and `slice-large`
-keep the avatar root fixed: animated limbs and worn geometry must still be
-cut at the portal plane. Capture several animation phases; compare the same
+keep the avatar root fixed: animated limbs and worn geometry must still
+dissolve as they enter the portal's 60 cm contact band. The band contains
+irregular holes and intact fragments together, with gradually falling coverage;
+it must not leave a straight sliced edge. Capture several animation phases; compare the same
 scenario with `AURORA_PORTAL_CLIP=0`. Traversal never pauses or restarts an
-animation. Portal clipping is visual and does not arm a teleport gate.
+animation. Portal dissolution is visual and does not arm a teleport gate.
 Use `AURORA_DEMO_POS=100,100` for a clear patch away from the plaza exhibits.
 `slice-wide` and `slice-wide-reverse` keep the root still with a
-4.2 m rigid attachment: every part beyond the portal plane must disappear,
-including above or beside the oval. `slice-turnback` and `slice-turnback-reverse`
-advance through the plane, turn around, and retreat without teleporting;
-returning body and attachment fragments must reappear immediately. Capture
+4.2 m rigid attachment: parts dissolve across the contact band, including
+above or beside the oval. `slice-turnback` and `slice-turnback-reverse`
+use a closer camera, advance through the band, turn around, and retreat without teleporting;
+returning body and attachment fragments must reappear in the same spatial pattern. Capture
 frames 840, 930, 1020 and 1110 to inspect both directions after the loading fade.
-The cut never removes mesh data or changes with camera position.
+Use `AURORA_REZ_EFFECT=0` to inspect opaque surfaces without the loading grid.
+The pattern has no timer and is independent of the camera; advancing normally
+cannot make already dissolved fragments flicker back on.
 Check body, skinned and rigid worn geometry from both
 camera sides. Ordinary portals now show theme-based Aurora currents, a dark
 indigo/navy core and a violet/teal rim with glow; reduced motion freezes their

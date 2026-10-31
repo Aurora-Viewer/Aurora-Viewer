@@ -1,6 +1,8 @@
-//! Render the production fragment cut: CPU picking and every surface pass
-//! must agree beyond the oval's sides/corners, from both entry directions.
-use crate::{DrawRecord, PORTAL_HALF_HEIGHT, PORTAL_HALF_WIDTH, PortalClip, arena::RecordStore, types::flags};
+//! Render the production dissolution: CPU picking and every surface pass
+//! must share the same fragments throughout the contact band, in both directions.
+use crate::{
+    DrawRecord, PORTAL_DISSOLVE_CELLS_PER_METER, PORTAL_HALF_HEIGHT, PORTAL_HALF_WIDTH, PortalClip, arena::RecordStore, types::flags,
+};
 use glam::Vec3;
 use wgpu::util::DeviceExt;
 
@@ -13,7 +15,7 @@ struct Case {
 }
 
 #[test]
-fn portal_plane_on_gpu_cuts_side_and_corner_geometry_and_matches_picking() {
+fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band() {
     let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
     let cut = &object[object.find("fn portal_clip(").unwrap()..object.find("// One analytically bounded Aurora surface").unwrap()];
     // Exercise the actual GTAO entry points too: a colour-only cut leaves
@@ -60,11 +62,17 @@ fn portal_plane_on_gpu_cuts_side_and_corner_geometry_and_matches_picking() {
             let across = Vec3::new(-normal.y, normal.x, 0.0);
             for side in [-1.0, 1.0] {
                 let clip = PortalClip::new(center, normal * side).unwrap();
-                for depth in [-0.2, 0.2] {
+                for depth in [-0.5, -0.2, -0.1, 0.0, 0.1, 0.2, 0.5] {
                     for x in [-1.1, -0.8, 0.0, 0.8, 1.1] {
                         for z in [-1.1, -0.8, 0.0, 0.8, 1.1] {
-                            let point =
-                                center + normal * side * depth + across * (x * PORTAL_HALF_WIDTH) + Vec3::Z * (z * PORTAL_HALF_HEIGHT);
+                            // Stay inside noise cells so coordinate-rounding at
+                            // rotated cell boundaries cannot select a neighbour.
+                            let sample =
+                                |value: f32| ((value * PORTAL_DISSOLVE_CELLS_PER_METER).floor() + 0.375) / PORTAL_DISSOLVE_CELLS_PER_METER;
+                            let point = center
+                                + normal * side * depth
+                                + across * sample(x * PORTAL_HALF_WIDTH)
+                                + Vec3::Z * sample(z * PORTAL_HALF_HEIGHT);
                             cases.push(Case {
                                 clip: clip.data,
                                 point: point.extend(1.0).to_array(),
@@ -85,6 +93,14 @@ fn portal_plane_on_gpu_cuts_side_and_corner_geometry_and_matches_picking() {
             ..*case
         }));
         expected.extend_from_slice(&aperture_expected);
+    }
+    for pass in 0..=3 {
+        cases.push(Case {
+            clip: [0.0; 4],
+            point: [-0.5, 0.0, 0.0, 1.0],
+            flags: [0, pass, 0, 0],
+        });
+        expected.push(true);
     }
     // The normal contact pass must share the analytic portal core rather
     // than treating the decorative quad's corners as solid depth.
