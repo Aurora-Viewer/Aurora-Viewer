@@ -389,6 +389,7 @@ import-preview-aurora = Aurora 3D
 import-no-map = なし
 keybinds-import-files = アップロードウィンドウを開く
 keybinds-hide-interface = インターフェースの表示／非表示
+keybinds-teleport-home = ホームにテレポート
 keybinds-show-huds = ＨＵＤの表示／非表示
 import-preview-tools = プレビューツール
 import-local-mesh-instance = 適用するモデル

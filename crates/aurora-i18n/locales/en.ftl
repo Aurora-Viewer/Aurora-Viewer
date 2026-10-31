@@ -389,6 +389,7 @@ import-preview-aurora = Aurora 3D
 import-no-map = None
 keybinds-import-files = Open the import window
 keybinds-hide-interface = Hide / show the interface
+keybinds-teleport-home = Teleport home
 keybinds-show-huds = Show / hide HUDs
 import-preview-tools = Preview tools
 import-local-mesh-instance = Model to apply
