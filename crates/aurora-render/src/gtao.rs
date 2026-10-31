@@ -62,13 +62,16 @@ const INDIRECT_RADIUS: f32 = 1.5;
 const BENT_BLUR: u32 = 3;
 /// Blur passes of the indirect light beyond the occlusion's.
 const INDIRECT_EXTRA_BLUR: u32 = 4;
-/// The accumulation: the current frame's least weight (the history then
-/// holds about thirty frames), the same where the point moves on screen by
+/// The accumulation: the current frame's least weight with the motion
+/// vectors (the history then holds about thirty frames) and without them
+/// (`AURORA_GTAO_NORMALS=depth`: about ten, as before them, since what
+/// moved on its own would trail), the same where the point moves on screen by
 /// a pixel a frame or more (about ten frames: the long history lagged
 /// behind the camera, and the motion hides the grain it quiets), and the
 /// half width of the neighbourhood the history is clipped to, in standard
 /// deviations.
 const TEMPORAL_MIN_WEIGHT: f32 = 0.03;
+const TEMPORAL_DEPTH_MIN_WEIGHT: f32 = 0.1;
 const TEMPORAL_MOVING_WEIGHT: f32 = 0.1;
 const TEMPORAL_CLIP: f32 = 1.25;
 /// Times more slices on a frame that accumulates without a history.
@@ -439,12 +442,18 @@ fn uniforms(
         ],
         reproj: reproj.to_cols_array_2d(),
         il: [INDIRECT_THICKNESS, INDIRECT_RADIUS, intensity, TEMPORAL_MOVING_WEIGHT],
-        temporal: [noise, if history { 0.0 } else { 1.0 }, TEMPORAL_MIN_WEIGHT, TEMPORAL_CLIP],
+        temporal: [noise, if history { 0.0 } else { 1.0 }, min_weight(normals.is_some()), TEMPORAL_CLIP],
         normal_view: normals.map_or([[0.0; 4]; 3], |view| {
             let m = normal_view(view);
             [m.x_axis.extend(0.0), m.y_axis.extend(0.0), m.z_axis.extend(0.0)].map(|c| c.to_array())
         }),
     }
+}
+
+/// The current frame's least weight in the accumulation: the long history
+/// only where the prepass writes the motion (with the mesh normals).
+fn min_weight(motion: bool) -> f32 {
+    if motion { TEMPORAL_MIN_WEIGHT } else { TEMPORAL_DEPTH_MIN_WEIGHT }
 }
 
 /// The rotation from world directions to the view space of the GTAO pass
@@ -1078,6 +1087,9 @@ mod tests {
         assert!(glam::Mat3::from_cols(col(0), col(1), col(2)).abs_diff_eq(m, 1e-6));
         let off = uniforms(proj, Mat4::IDENTITY, 1.0, (64, 64), quality(2), None, None);
         assert_eq!(off.misc[3], 0.0);
+        // the long history only where the prepass writes the motion
+        assert_eq!(on.temporal[2], TEMPORAL_MIN_WEIGHT);
+        assert_eq!(off.temporal[2], TEMPORAL_DEPTH_MIN_WEIGHT);
     }
 
     /// The history targets take turns while frames follow each other; a

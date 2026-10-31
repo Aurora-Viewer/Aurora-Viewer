@@ -768,10 +768,22 @@ fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
         var prev_uv = cam_uv;
         // with the mesh normals, the prepass wrote where each point was on
         // screen, avatars and objects that moved included (zw, in uv)
+        // At half resolution the pixel covers 2 x 2 of them: the one that
+        // moved least apart from the camera, so that a still pixel beside
+        // a depth edge does not take its neighbour's motion in a fast turn
         if (g.misc.w > 0.5) {
             let full = vec2<i32>(textureDimensions(normal_tex));
-            let src = min(px * i32(g.misc.y), full - vec2<i32>(1));
-            prev_uv = uv - textureLoad(normal_tex, src, 0).zw;
+            let scale = i32(g.misc.y);
+            var best = 1e30;
+            for (var k = 0; k < scale * scale; k++) {
+                let src = min(px * scale + vec2<i32>(k % scale, k / scale), full - vec2<i32>(1));
+                let cand = uv - textureLoad(normal_tex, src, 0).zw;
+                let apart = dot(cand - cam_uv, cand - cam_uv);
+                if (apart < best) {
+                    best = apart;
+                    prev_uv = cand;
+                }
+            }
         }
         // the point moved on its own when its motion parts from the camera's
         // by more than half a pixel

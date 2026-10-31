@@ -1497,6 +1497,9 @@ pub(crate) struct Backend {
     /// The scene moved as a whole (`FramePacket::motion_cut`) and no frame
     /// was submitted since: the next one takes its matrices as the previous.
     motion_cut: bool,
+    /// The last submitted frame kept its matrices for the next one: only
+    /// while something reads the motion (`gtao_normals_now`).
+    motion_kept: bool,
     cull_cpu: Vec<crate::occlusion::CullDraw>,
     particle_buffer: wgpu::Buffer,
     timer: Option<GpuTimer>,
@@ -2987,6 +2990,7 @@ impl Backend {
             impostors,
             motion_history,
             motion_cut: true,
+            motion_kept: false,
             cull_cpu: Vec::new(),
             particle_buffer,
             timer,
@@ -5284,6 +5288,9 @@ impl Backend {
         self.show_ao_method();
         self.contact_now = self.contact_on(f.shadows);
         self.gtao_normals_now = self.targets.gtao_shown && gtao_mesh_normals_now();
+        // nothing kept the matrices while nothing read the motion: the
+        // first frame that reads it again starts the history again
+        self.motion_cut |= self.gtao_normals_now && !self.motion_kept;
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.cam_up[3] = camera_water_level;
         {
@@ -6065,7 +6072,7 @@ impl Backend {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
-        if self.motion_cut {
+        if self.motion_cut && self.gtao_normals_now {
             self.motion_history.encode(&self.device, &mut encoder, &scene);
         }
         if let Some(old) = old_impostor_atlas {
@@ -7817,8 +7824,11 @@ impl Backend {
         }
 
         prof.mark("egui");
-        // after every pass that read this frame's matrices
-        self.motion_history.encode(&self.device, &mut encoder, &scene);
+        // after every pass that read this frame's matrices; without a
+        // reader of the motion (GTAO off or from the depth) no copy runs
+        if self.gtao_normals_now {
+            self.motion_history.encode(&self.device, &mut encoder, &scene);
+        }
         if wanted == Some(Capture::Full) {
             capture = self.encode_capture(&mut encoder, surface_tex.texture(), false);
         } else if snapshot.is_some() {
@@ -7852,6 +7862,7 @@ impl Backend {
             self.queue.on_submitted_work_done(move || frames.finished_through(index));
         }
         self.motion_cut = false;
+        self.motion_kept = self.gtao_normals_now;
         // staging chunks whose copies are now submitted are mapped again
         frame_uploads.after_submit();
         let mut captured = None;
