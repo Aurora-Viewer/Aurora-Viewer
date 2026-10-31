@@ -526,7 +526,7 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     ui.item_if(
         "paperclip",
         aurora_i18n::tr!("common-detach"),
-        f.object.attachment_item.is_some(),
+        f.object.detach,
         CtxAction::Detach(key),
     );
     save_as_submenu(ui);
@@ -1745,6 +1745,10 @@ mod tests {
         f.object.drop = true;
         let drop = row(menu(&f), "ui-context-drop");
         assert!(drop.enabled && matches!(drop.kind, Kind::Action(CtxAction::Drop(k)) if k == key));
+        // enable_detach: greyed while an RLVa remove lock holds it
+        assert!(!row(menu(&f), "common-detach").enabled);
+        f.object.detach = true;
+        assert!(row(menu(&f), "common-detach").enabled);
         // the favorite row, once the item is known: the one that applies
         f.object.attachment_item = Some(item);
         f.object.favorite = Some(false);

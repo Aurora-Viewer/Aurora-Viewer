@@ -219,6 +219,8 @@ pub struct Facts {
     pub pictures: std::collections::HashMap<Uuid, egui::TextureHandle>,
     pub online: HashSet<Uuid>,
     pub parcel_environment: bool,
+    /// What RLVa locks leave of wearing and taking off, for the menus.
+    pub rlva: crate::world::rlva::WearLocks,
 }
 
 impl Facts {
@@ -285,7 +287,22 @@ impl Facts {
                             .is_some_and(|region| region.caps.contains_key("ExtEnvironment")),
                     )
                 }),
+            rlva: world.rlva_wear_locks(),
         }
+    }
+
+    /// RLVa: whether the wear button of `id` does something a lock allows:
+    /// taking it off when worn, else adding it (`add`) or wearing it in
+    /// place of what is worn in its slot.
+    pub fn rlva_allows(&self, inv: &Inventory, id: Uuid, add: bool) -> bool {
+        let Some(item) = rules::original(inv, id) else {
+            return true;
+        };
+        if self.worn.contains(&item) {
+            return self.rlva.can_remove(item);
+        }
+        let wear = self.rlva.wear(inv, item, 0);
+        if add { wear.add } else { wear.replace }
     }
 
     fn worn_label(&self, inv: &Inventory, id: Uuid) -> Option<&str> {
