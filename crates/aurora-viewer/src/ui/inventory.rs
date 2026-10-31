@@ -384,13 +384,15 @@ pub(crate) struct WorldDrag {
 /// Read before egui's end-pass clears released cargo. A dragging widget keeps
 /// wants-pointer set even over the world; only the destination area counts.
 pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
-    let cargo = egui::DragAndDrop::payload::<InvDrag>(ctx)?;
+    let item = egui::DragAndDrop::payload::<InvDrag>(ctx)
+        .map(|cargo| cargo.0)
+        .or_else(|| egui::DragAndDrop::payload::<super::places::drag::PlaceDrag>(ctx).and_then(|cargo| cargo.target.item()))?;
     if ctx.is_pointer_over_egui() {
         return None;
     }
     ctx.input(|i| {
         Some(WorldDrag {
-            item: cargo.0,
+            item,
             position: i.pointer.interact_pos()?,
             released: i.pointer.button_released(egui::PointerButton::Primary),
             ctrl: i.modifiers.ctrl,

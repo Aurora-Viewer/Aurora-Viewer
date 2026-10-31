@@ -540,6 +540,15 @@ announcement/close delivery retries the same immutable action at most twice,
 with one- and two-second backoff. Only exhausted failures remove the
 local aperture. Replacement, expiry and region/session changes retire retries.
 
+`ui/places/drag.rs` shares landmark/history cargo and a floating icon/thumbnail preview
+between all Favorites access modes and both Places layouts. Favorite reordering
+consumes only releases inside its visible list; scene releases reuse the inventory
+portal path. `ui/portals.rs` includes the actual remaining lifetime in world labels.
+History drags snapshot the exact arrival, including visits without a landmark;
+the map resolves their region asynchronously without inventory creation or asset
+requests. Only Favorites rows reserve a reorder grip. Landmarks and History retain
+their ordinary row layout while accepting drags. Pending history drops keep the
+same timeout, teleport and session guards as landmark drops.
 `app/portals/landmark.rs` resolves inventory landmark drops asynchronously through
 the ordinary landmark and map caches, including variable regions. A scene drop
 opens a Friends portal at the selected support; Shift at release makes it public.

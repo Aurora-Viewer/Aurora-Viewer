@@ -12216,6 +12216,7 @@ portal-private = Private portal
 portal-drop-friends = Open a portal for you and your friends · Hold Shift for public
 portal-drop-public = Open a public portal · Release Shift for friends only
 portal-landmark-unavailable = This landmark's destination could not be resolved. No portal was opened.
+portal-place-unavailable = This place's destination could not be resolved. No portal was opened.
 portal-destination = Destination
 portal-destination-hint = Paste a place link or Region/x/y/z
 portal-access = Who can use this portal?
