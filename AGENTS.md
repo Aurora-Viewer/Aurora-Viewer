@@ -449,7 +449,13 @@ Labels (created by `scripts/setup-labels.ps1`):
   `network`, `audio-voice`, `ui`, `chat` (chat window), `nameplate` (name
   tags above avatars), `contact-group` (contact groups / sets), `inventory`,
   `build-tools` (in-world building and editing), `tooling` (repository, CI,
-  scripts).
+  scripts);
+- **`on-hold`**, for PRs only, when a human asks to put a PR on hold: add
+  the label (`gh pr edit <n> --add-label on-hold`) and a comment saying why
+  and what will unblock it. The PR panel of `aurora-tools.cmd` stops
+  showing it. An agent neither reviews nor merges a PR on hold. When the
+  human resumes it, remove the label (`--remove-label on-hold`). Issues use
+  the board's `On hold` Status instead (section 15).
 
 ### Link the PR and its issues
 
