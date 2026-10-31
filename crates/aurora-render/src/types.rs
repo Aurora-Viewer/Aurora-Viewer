@@ -1207,6 +1207,11 @@ pub struct FrameParams {
     /// and their casters are fitted to the whole photo, so that every tile
     /// reads the shadow maps of one pass.
     pub photo_tile: Mat4,
+    /// How many times taller, in pixels, the image is than the viewfinder's
+    /// view of the same field: 1 in the window, the photo's height over
+    /// the viewfinder's in a photo. The screen-space effects measured in
+    /// pixels (the contact shadows) keep their size in the image with it.
+    pub photo_scale: f32,
     pub camera_pos: Vec3,
     pub near: f32,
     pub far: f32,

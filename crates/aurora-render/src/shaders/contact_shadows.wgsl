@@ -33,8 +33,10 @@
 // screen reads the far depth), the early-out of a whole wavefront through
 // workgroup memory (no wave intrinsics in WGSL), the shadow stored rather
 // than the light, no debug outputs, occluders taken as deep as the ray went
-// under them (up to `tuning.w`) rather than a shell (`depth_delta`), Bend's
-// defaults otherwise
+// under them (up to `tuning.w`) rather than a shell (`depth_delta`), more
+// samples in a photo larger than the viewfinder (the four constants below
+// replaced in a pipeline of its own, `shader_source` in contact_shadows.rs:
+// the shadow keeps its length in the image), Bend's defaults otherwise
 // (BilinearSamplingOffsetMode and IgnoreEdgePixels off, no precision
 // offset).
 
@@ -56,7 +58,9 @@ struct Params {
 
 // Must match WAVE_SIZE in contact_shadows.rs.
 const WAVE_SIZE: i32 = 64;
-// Shadow samples per pixel: the length of the shadow in pixels.
+// Shadow samples per pixel: the length of the shadow in pixels. This line
+// and the next three are rewritten for a photo (`shader_source`): keep them
+// as they are.
 const SAMPLE_COUNT: i32 = 60;
 // The first samples: one of them alone can shadow the pixel.
 const HARD_SHADOW_SAMPLES: i32 = 4;
@@ -68,7 +72,7 @@ const READ_COUNT: i32 = 2;
 const FAR_DEPTH: f32 = 0.0;
 const NEAR_DEPTH: f32 = 1.0;
 
-var<workgroup> depth_data: array<f32, 128>;
+var<workgroup> depth_data: array<f32, READ_COUNT * WAVE_SIZE>;
 // set by any thread whose pixel needs a shadow (zero at the start)
 var<workgroup> any_live: u32;
 
@@ -147,10 +151,10 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
     // ---- the depths along the ray
     let direction = -params.light.w;
     let z_sign = select(1.0, -1.0, NEAR_DEPTH > FAR_DEPTH);
-    var sampling_depth: array<f32, 2>;
-    var shadowing_depth: array<f32, 2>;
-    var depth_thickness_scale: array<f32, 2>;
-    var sample_distance: array<f32, 2>;
+    var sampling_depth: array<f32, READ_COUNT>;
+    var shadowing_depth: array<f32, READ_COUNT>;
+    var depth_thickness_scale: array<f32, READ_COUNT>;
+    var sample_distance: array<f32, READ_COUNT>;
     let write_xy = vec2<i32>(floor(pixel_xy));
     for (var i = 0; i < READ_COUNT; i++) {
         // two reads per sample, blended on the minor axis of the ray unless
