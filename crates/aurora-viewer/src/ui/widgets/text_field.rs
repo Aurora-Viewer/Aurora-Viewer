@@ -22,7 +22,11 @@ pub fn text_field(
     }
     let mut shown: &str = text.as_str();
     let edit = make(&mut shown, ui).text_color(ui.visuals().weak_text_color());
-    ui.add(edit)
+    let mut response = ui.add(edit);
+    // egui still reports a change when keys are pressed in a focused
+    // read-only field; nothing changed, and callers save on a change
+    response.flags.remove(egui::response::Flags::CHANGED);
+    response
 }
 
 #[cfg(test)]
@@ -63,12 +67,17 @@ mod tests {
         // a disabled field would sense nothing: this one can be selected
         assert!(r.sense.senses_click() || r.sense.senses_drag(), "the text can be selected");
         let at = r.rect.center();
+        // focused (clicked into), it still takes no typing
         frame(&ctx, click(at), &mut text, false);
+        ctx.memory_mut(|m| m.request_focus(r.id));
+        frame(&ctx, vec![], &mut text, false);
         let r = frame(&ctx, vec![egui::Event::Text("typed".into())], &mut text, false);
         assert!(!r.changed());
         assert_eq!(text, "No modify object");
         // editable, the same field takes what is typed
-        frame(&ctx, click(at), &mut text, true);
+        let r = frame(&ctx, vec![], &mut text, true);
+        ctx.memory_mut(|m| m.request_focus(r.id));
+        frame(&ctx, vec![], &mut text, true);
         frame(&ctx, vec![egui::Event::Text("!".into())], &mut text, true);
         assert!(text.contains('!'), "{text}");
     }
