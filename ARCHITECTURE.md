@@ -490,10 +490,13 @@ membership at crossing, then `app/portals.rs` uses the ordinary user location
 teleport boundary, retaining RLVa and simulator destination access checks.
 Near-spawn observers must first leave a 3.5 m clearance; standing inside,
 involuntary motion, position jumps and replayed announcements never trigger.
-`scene/portals.rs` shares one GPU quad with an analytic Aurora surface,
+`scene/portals.rs` shares one GPU aperture/rim mesh with an analytic Aurora surface,
 depth-tested and sorted with world transparency/glow. Theme violet, indigo,
 teal and navy drive its flowing depth, fine rim and soft corona; the GPU
-animation clock runs it, with a static reduced-motion variant. No texture or
+animation clock runs it, with a static reduced-motion variant. The closed elliptical
+rim has real 15 cm thickness; its UV tag selects normal-shaped energy streams.
+Four receding core layers shift with viewing direction to give the vortex depth.
+Only the aperture writes contact depth; the decorative rim/corona cannot enlarge it. No texture or
 particle uploads; unchanged portal records are not rewritten. `ui/portals.rs` provides
 World > Portals and depth-occluded destination/creator/access labels. This is
 an Aurora feature; ordinary teleport behavior follows LLAgent::teleportViaLocation
@@ -539,12 +542,16 @@ animations; late packets from a previous region cannot restore stale flight.
 body and worn-object bounds, independently of locomotion or teleport gates.
 Every system-body, skinned-mesh and rigid world-attachment face receives the
 same reversible local dissolution. World positions after deformation drive
-a 60 cm contact band around the portal. Smooth spatial noise opens irregular
+a 45 cm contact band strictly on the entry side. All fragments on or beyond the
+aperture plane are removed. Smooth spatial noise opens irregular
 holes with falling coverage instead of slicing the mesh at one plane. Integer
 hashing and portal-local tangent/height coordinates share the pattern across
 CPU picking and GPU passes, independent of time, camera and traversal depth.
 Advancing normally only removes fragments; retracing positions restores the
-same fragments immediately. Stationary roots, moving limbs, large attachments
+same fragments immediately. A contact-progress-driven variant of the existing
+rez/derez hologram turns vanishing surfaces into the selected grid style and
+lights their eroding edges. It shares the theme gradient and glow pass, respecting
+masked/blended alpha and existing material glow. Stationary roots, moving limbs, large attachments
 and animated attachment points are included, even above or beside the oval,
 without modifying mesh data or waiting for a teleport gate. The oval still bounds the
 portal surface and nearby-avatar selection. Active subjects stay fully animated

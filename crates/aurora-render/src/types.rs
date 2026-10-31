@@ -189,7 +189,7 @@ pub mod flags {
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;
 pub const PORTAL_HALF_HEIGHT: f32 = 1.5;
 pub const PORTAL_SURFACE_SCALE: f32 = 1.16;
-pub const PORTAL_DISSOLVE_HALF_WIDTH: f32 = 0.30;
+pub const PORTAL_DISSOLVE_WIDTH: f32 = 0.45;
 pub const PORTAL_DISSOLVE_CELLS_PER_METER: f32 = 32.0;
 
 /// One vector locates dissolution without growing every world-face record:
@@ -233,11 +233,11 @@ impl PortalClip {
         let local = point - Vec3::from_slice(&self.data[..3]);
         let normal = self.normal();
         let distance = local.dot(normal);
-        if distance >= PORTAL_DISSOLVE_HALF_WIDTH {
-            return true;
-        }
-        if distance <= -PORTAL_DISSOLVE_HALF_WIDTH {
+        if distance <= 0.0 {
             return false;
+        }
+        if distance >= PORTAL_DISSOLVE_WIDTH {
+            return true;
         }
         // Portal-local tangent/height, independent of camera, time and depth.
         let x = local.dot(Vec3::new(-normal.y, normal.x, 0.0)) * PORTAL_DISSOLVE_CELLS_PER_METER;
@@ -262,7 +262,7 @@ impl PortalClip {
         let lower = a + (b - a) * u;
         let upper = c + (d - c) * u;
         let noise = lower + (upper - lower) * v;
-        let t = (distance + PORTAL_DISSOLVE_HALF_WIDTH) / (2.0 * PORTAL_DISSOLVE_HALF_WIDTH);
+        let t = distance / PORTAL_DISSOLVE_WIDTH;
         smooth(t) >= noise
     }
 }
@@ -1902,7 +1902,7 @@ mod tests {
         assert!(wgsl.contains(&format!("const PORTAL_SURFACE_SCALE: f32 = {PORTAL_SURFACE_SCALE:.2};")));
         assert!(wgsl.contains(&format!("const FLAG_PORTAL_EFFECT: u32 = {}u;", flags::PORTAL_EFFECT)));
         let object = include_str!("shaders/object.wgsl");
-        assert!(object.contains(&format!("const PORTAL_DISSOLVE_HALF_WIDTH: f32 = {PORTAL_DISSOLVE_HALF_WIDTH:.2};")));
+        assert!(object.contains(&format!("const PORTAL_DISSOLVE_WIDTH: f32 = {PORTAL_DISSOLVE_WIDTH:.2};")));
         assert!(object.contains(&format!(
             "const PORTAL_DISSOLVE_CELLS_PER_METER: f32 = {PORTAL_DISSOLVE_CELLS_PER_METER:.1};"
         )));
@@ -1939,7 +1939,7 @@ mod tests {
     fn portal_dissolution_erodes_fragments_gradually_and_restores_the_same_pattern_on_retreat() {
         for side in [-1.0, 1.0] {
             let clip = PortalClip::new(Vec3::ZERO, Vec3::X * side).unwrap();
-            let depths = [0.4, 0.12, 0.0, -0.12, -0.4];
+            let depths = [0.6, 0.315, 0.225, 0.135, 0.0];
             let pattern = |depth| {
                 (-16..16)
                     .flat_map(|y| (-16..16).map(move |z| (y, z)))
@@ -1957,12 +1957,37 @@ mod tests {
             assert_eq!(counts[0], 1024);
             assert_eq!(counts[4], 0);
             assert!(counts.windows(2).all(|pair| pair[0] > pair[1]), "gradual coverage: {counts:?}");
-            assert!((410..615).contains(&counts[2]), "contact contains both holes and intact fragments");
+            assert!(
+                (410..615).contains(&counts[2]),
+                "the entry band contains both holes and intact fragments"
+            );
             for pair in patterns.windows(2) {
                 assert!(pair[0].iter().zip(&pair[1]).all(|(&before, &after)| before || !after));
             }
             for (&depth, original) in depths.iter().zip(&patterns).rev() {
                 assert_eq!(&pattern(depth), original, "retreat restores the exact fragments");
+            }
+        }
+    }
+
+    #[test]
+    fn portal_dissolution_never_keeps_fragments_on_or_beyond_the_aperture_plane() {
+        for center in [Vec3::ZERO, Vec3::new(214.0, 185.0, 60.0)] {
+            for step in 0..16 {
+                let yaw = step as f32 * std::f32::consts::TAU / 16.0;
+                let normal = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
+                let across = Vec3::new(-normal.y, normal.x, 0.0);
+                for side in [-1.0, 1.0] {
+                    let clip = PortalClip::new(center, normal * side).unwrap();
+                    for depth in [-0.5, -0.01, -0.0001, 0.0] {
+                        for y in -8..8 {
+                            for z in -8..8 {
+                                let point = center + normal * side * depth + across * (y as f32 * 0.17) + Vec3::Z * (z as f32 * 0.23);
+                                assert!(!clip.keeps_point(point), "exit-side fragment at {point:?}");
+                            }
+                        }
+                    }
+                }
             }
         }
     }

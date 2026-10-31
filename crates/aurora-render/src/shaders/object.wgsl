@@ -7,12 +7,15 @@ override ALPHA_TO_COVERAGE: bool = true;
 // A spatial dissolution front shared by color, depth, shadow and picking.
 // Entry side is latched; retreat restores the same fragments without a timer.
 fn portal_clip(rec: DrawRecord, position: vec3<f32>) {
+    portal_contact = vec2<f32>(0.0);
     if ((rec.flags.x & FLAG_PORTAL_CLIP) != 0u && !portal_dissolve_keeps(rec.portal_clip, position)) {
         discard;
     }
 }
 
-const PORTAL_DISSOLVE_HALF_WIDTH: f32 = 0.30;
+// Progress and the surviving edge of a hole, reused by color and glow.
+var<private> portal_contact: vec2<f32> = vec2<f32>(0.0);
+const PORTAL_DISSOLVE_WIDTH: f32 = 0.45;
 const PORTAL_DISSOLVE_CELLS_PER_METER: f32 = 32.0;
 
 // Integer hashing keeps CPU picking and every GPU pass on the same pattern.
@@ -30,8 +33,8 @@ fn portal_dissolve_keeps(clip: vec4<f32>, position: vec3<f32>) -> bool {
     let normal = normalize(vec2<f32>(1.0 - abs(code), y));
     let local = position - clip.xyz;
     let distance = dot(local.xy, normal);
-    if (distance >= PORTAL_DISSOLVE_HALF_WIDTH) { return true; }
-    if (distance <= -PORTAL_DISSOLVE_HALF_WIDTH) { return false; }
+    if (distance <= 0.0) { return false; }
+    if (distance >= PORTAL_DISSOLVE_WIDTH) { return true; }
     // Tangent/height only: advancing through the front cannot change the
     // noise threshold and make already vanished pieces flicker back on.
     let q = vec2<f32>(dot(local.xy, vec2<f32>(-normal.y, normal.x)), local.z) * PORTAL_DISSOLVE_CELLS_PER_METER;
@@ -45,8 +48,10 @@ fn portal_dissolve_keeps(clip: vec4<f32>, position: vec3<f32>) -> bool {
     let lower = a + (b - a) * u.x;
     let upper = c + (d - c) * u.x;
     let noise = lower + (upper - lower) * u.y;
-    let t = (distance + PORTAL_DISSOLVE_HALF_WIDTH) / (2.0 * PORTAL_DISSOLVE_HALF_WIDTH);
-    return t * t * (3.0 - 2.0 * t) >= noise;
+    let t = distance / PORTAL_DISSOLVE_WIDTH;
+    let coverage = t * t * (3.0 - 2.0 * t);
+    portal_contact = vec2<f32>(1.0 - t, 1.0 - smoothstep(0.0, 0.10, coverage - noise));
+    return coverage >= noise;
 }
 
 // One analytically bounded Aurora surface, animated by the GPU clock. The
@@ -68,11 +73,30 @@ fn portal_noise(p: vec2<f32>) -> f32 {
         mix(portal_hash(cell + vec2<f32>(0.0, 1.0)), portal_hash(cell + vec2<f32>(1.0)), u.x), u.y);
 }
 
-fn portal_surface(rec: DrawRecord, uv: vec2<f32>, aa: f32) -> PortalSurface {
+fn portal_surface(rec: DrawRecord, uv: vec2<f32>, position: vec3<f32>, normal: vec3<f32>, aa: f32) -> PortalSurface {
+    let time = f32(frame.anim_clock.x) * 0.001 * rec.params.y;
+    let violet = srgb_to_linear(rec.base_color.rgb);
+    let teal = srgb_to_linear(rec.emissive.rgb);
+    let indigo = srgb_to_linear(rec.spec_color.rgb);
+    let navy = srgb_to_linear(rec.legacy.rgb);
+    let energy = rec.params.z;
+    let view = normalize(frame.camera_pos.xyz - position);
+    if (uv.x >= 1.5) {
+        let angle = (uv.x - 2.0) * 6.2831853;
+        let tube = uv.y * 6.2831853;
+        let n = normalize(normal);
+        let light = normalize(rec.model[0].xyz * 0.3 - rec.model[1].xyz * 0.7 + rec.model[2].xyz * 0.6);
+        let volume = 0.22 + 0.78 * abs(dot(n, light));
+        let fresnel = pow(1.0 - abs(dot(n, view)), 2.2);
+        let stream = pow(0.5 + 0.5 * sin(angle * 11.0 - tube * 3.0 - time * 2.2), 12.0);
+        let ribs = pow(0.5 + 0.5 * cos(angle * 36.0 + tube * 2.0 - time * 0.8), 20.0);
+        let accent = mix(violet, teal, 0.5 + 0.5 * sin(angle * 2.0 - tube - time * 0.4));
+        let color = indigo * volume * 0.12 + accent * (volume * 0.10 + stream * 0.36 + ribs * 0.08 + fresnel * 0.16) * energy;
+        return PortalSurface(color, 1.0, (0.025 + stream * 0.055 + fresnel * 0.03) * energy);
+    }
     let q = (uv * 2.0 - vec2<f32>(1.0)) * PORTAL_SURFACE_SCALE;
     let r = length(q);
     let angle = atan2(q.y, q.x);
-    let time = f32(frame.anim_clock.x) * 0.001 * rec.params.y;
     let turn = r * 2.1 - time * 0.09;
     let flow = mat2x2<f32>(vec2<f32>(cos(turn), sin(turn)), vec2<f32>(-sin(turn), cos(turn))) * q;
     let drift = vec2<f32>(time * 0.045, -time * 0.028);
@@ -83,13 +107,25 @@ fn portal_surface(rec: DrawRecord, uv: vec2<f32>, aa: f32) -> PortalSurface {
     let mist = smoothstep(0.2, 0.88, cloud);
     let current = pow(0.5 + 0.5 * sin(angle * 3.0 + r * 10.0 + cloud * 4.0 - time * 0.8), 8.0) * depth;
     let braid = pow(0.5 + 0.5 * sin(angle * 5.0 - r * 14.0 + cloud * 5.0 + time * 0.5), 14.0) * depth;
-    let violet = srgb_to_linear(rec.base_color.rgb);
-    let teal = srgb_to_linear(rec.emissive.rgb);
-    let indigo = srgb_to_linear(rec.spec_color.rgb);
-    let navy = srgb_to_linear(rec.legacy.rgb);
-    let energy = rec.params.z;
     var core = navy * (0.7 + 2.0 * mist) + mix(indigo, violet, cloud) * (0.035 + mist * 0.22);
     core += (violet * current * 0.34 + teal * braid * 0.095) * energy;
+    // Receding energy layers shift with the view through the aperture,
+    // giving its dark core depth while the actual rim supplies the volume.
+    let plane_normal = normalize(rec.model[1].xyz);
+    let projection = clamp(vec2<f32>(dot(view, normalize(rec.model[0].xyz)), -dot(view, normalize(rec.model[2].xyz)))
+        / max(abs(dot(view, plane_normal)), 0.3), vec2<f32>(-1.5), vec2<f32>(1.5));
+    var tunnel_light = 0.0;
+    for (var layer = 0u; layer < 4u; layer += 1u) {
+        let layer_depth = f32(layer) * 0.22 + 0.12;
+        let p = q - projection * layer_depth * 0.18;
+        let a = atan2(p.y, p.x);
+        let radius = 0.83 - f32(layer) * 0.18 + sin(a * 5.0 - time * 0.7 + layer_depth * 8.0) * 0.018;
+        let contour = exp(-pow((length(p) - radius) / (0.012 + layer_depth * 0.01), 2.0));
+        let strands = pow(0.5 + 0.5 * sin(a * 7.0 + layer_depth * 9.0 - time * 1.1), 6.0);
+        let light = contour * (0.16 + strands * 0.18) * (1.0 - layer_depth * 0.7);
+        core += mix(violet, teal, 0.5 + 0.5 * sin(a * 2.0 + layer_depth * 5.0)) * light * energy;
+        tunnel_light += light;
+    }
     let star_cell = floor(q * 42.0);
     let star_distance = length(fract(q * 42.0) - vec2<f32>(0.5));
     let stars = step(0.992, portal_hash(star_cell)) * (1.0 - smoothstep(0.025, 0.12 + aa * 42.0, star_distance))
@@ -104,9 +140,9 @@ fn portal_surface(rec: DrawRecord, uv: vec2<f32>, aa: f32) -> PortalSurface {
     let rim_color = mix(violet, teal, 0.5 + 0.5 * sin(angle * 2.0 - time * 0.6));
     let coverage = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, r);
     let color = mix(indigo * 0.12, core, coverage)
-        + rim_color * (rim * 0.85 + inner + corona * 0.24 + arcs * 0.6) * energy;
+        + rim_color * (rim * 0.12 + inner * 0.3 + corona * 0.12 + arcs * 0.15) * energy;
     let alpha = clamp(coverage + corona * 0.32 + rim * 0.7 + arcs * 0.25, 0.0, 1.0);
-    return PortalSurface(color, alpha, clamp(rim * 0.22 + inner * 0.12 + corona * 0.04 + arcs * 0.08, 0.0, 1.0) * energy);
+    return PortalSurface(color, alpha, clamp(rim * 0.03 + inner * 0.025 + corona * 0.012 + arcs * 0.02 + tunnel_light * 0.03, 0.0, 1.0) * energy);
 }
 
 struct VsIn {
@@ -729,7 +765,7 @@ fn depth_contact(in: VsOut) {
     if ((rec.flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         // Its solid core occludes through the same opening; the decorative
         // quad corners/corona must never add a rectangular occluder.
-        if (length((in.uv * 2.0 - vec2<f32>(1.0)) * PORTAL_SURFACE_SCALE) > 1.0) { discard; }
+        if (in.uv.x >= 1.5 || length((in.uv * 2.0 - vec2<f32>(1.0)) * PORTAL_SURFACE_SCALE) > 1.0) { discard; }
         return;
     }
     portal_clip(rec, in.world_pos);
@@ -1291,6 +1327,28 @@ fn rez_glow(rec: DrawRecord, in: VsOut) -> f32 {
     return max(line * 0.9, select(0.0, grid, above > 0.0));
 }
 
+// The rez/derez vocabulary follows traversal progress instead of a clock:
+// texture becomes a holographic grid with a luminous eroding edge, and
+// retracing the same position restores the same appearance.
+fn portal_rez_apply(rec: DrawRecord, in: VsOut, n: vec3<f32>, col: vec3<f32>) -> vec3<f32> {
+    let progress = portal_contact.x;
+    if (progress <= 0.0) { return col; }
+    let weight = smoothstep(0.0, 0.8, progress);
+    let edge = portal_contact.y * smoothstep(0.0, 0.12, progress);
+    let style = u32(frame.rez_gradient[0].w);
+    let hologram = rez_hologram(col, in, n, progress, progress, progress * 0.8, style);
+    let leading = mix(rez_gradient(progress), vec3<f32>(1.0), 0.25);
+    return mix(col, hologram, weight * 0.94) + leading * edge * 1.1;
+}
+
+fn portal_rez_glow(in: VsOut) -> f32 {
+    let progress = portal_contact.x;
+    if (progress <= 0.0) { return 0.0; }
+    let grid = rez_lines(in.world_pos, normalize(in.normal), 0.125);
+    let edge = portal_contact.y * smoothstep(0.0, 0.12, progress);
+    return progress * (0.015 + grid * 0.045) + edge * 0.12;
+}
+
 fn shade(in: VsOut, front: bool) -> Shaded {
     return shade_material(in, eval_material(in, front));
 }
@@ -1364,6 +1422,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         col = max(col-m.emissive,vec3<f32>(0.0))*water_scene_light(in.world_pos)+m.emissive;
     }
     col = rez_apply(rec, in, m.n, col);
+    col = portal_rez_apply(rec, in, m.n, col);
     if (!hazed || camera_underwater() || (water_fx_on(256u) && in.world_pos.z<camera_water_level())) {
         col = apply_fog(col, in.world_pos);
     }
@@ -1488,7 +1547,7 @@ override BLEND_SPLIT: u32 = 0u;
 fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
     if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
-        let surface = portal_surface(records[in.record], in.uv, portal_aa);
+        let surface = portal_surface(records[in.record], in.uv, in.world_pos, in.normal, portal_aa);
         if (surface.alpha < 0.004) { discard; }
         let color = apply_fog(surface.color * frame.sky_cloud_pd2.w, in.world_pos);
         return vec4<f32>(color * surface.alpha, surface.alpha);
@@ -1534,7 +1593,7 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
 fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
     if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
-        let surface = portal_surface(records[in.record], in.uv, portal_aa);
+        let surface = portal_surface(records[in.record], in.uv, in.world_pos, in.normal, portal_aa);
         if (surface.glow <= 0.0) { discard; }
         return vec4<f32>(0.0, 0.0, 0.0, surface.glow);
     }
@@ -1556,6 +1615,13 @@ fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
         a = base.a * rec.emissive.w;
     }
     a = max(a, rez_glow(rec, in));
+    // Keep transparent texels and existing material glow semantics intact.
+    var contact_alpha = 1.0;
+    if ((rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u) {
+        contact_alpha = base.a * rec.base_color.a;
+        if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && contact_alpha < rec.params.w) { contact_alpha = 0.0; }
+    }
+    a = max(a, portal_rez_glow(in) * contact_alpha);
     if (a <= 0.0) {
         discard;
     }

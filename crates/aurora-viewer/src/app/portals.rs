@@ -229,6 +229,7 @@ impl App {
         let phase = (self.frame_count.saturating_sub(420) % 360) as f32 / 60.0;
         let distance = match mode {
             "slice-still" | "slice-large" | "slice-wide" | "slice-wide-reverse" => 0.12,
+            "slice-profile" | "slice-profile-reverse" => 0.18,
             "slice-turnback" | "slice-turnback-reverse" => 1.2 - phase.min(6.0 - phase) * 0.7,
             "slice-run" => 2.0 - phase * 0.9,
             _ => 1.2 - phase * 0.4,
@@ -306,9 +307,22 @@ impl App {
                 handle,
                 objects: vec![worn],
             });
-            let close = mode.starts_with("slice-turnback");
-            let across = if close { 2.5 } else { 5.0 };
-            let ahead = if close { 2.0 } else { 4.0 };
+            let profile = mode.starts_with("slice-profile");
+            let close = mode.starts_with("slice-turnback") || profile;
+            let across = if profile {
+                3.8
+            } else if close {
+                2.5
+            } else {
+                5.0
+            };
+            let ahead = if profile {
+                0.35
+            } else if close {
+                2.0
+            } else {
+                4.0
+            };
             self.camera.set_view(
                 center
                     + tangent * across

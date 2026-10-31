@@ -29,6 +29,7 @@ fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band(
         "fs_depth_mask_normal",
         "depth_contact",
         "fs_depth_contact_normal",
+        "fs_glow",
     ] {
         let start = object.find(&format!("fn {name}(")).unwrap();
         let end = start + object[start..].find("\n}").unwrap() + 2;
@@ -39,6 +40,9 @@ fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band(
         );
         normal_passes.push('\n');
     }
+    let glow_start = object.find("fn portal_rez_glow(").unwrap();
+    let glow_end = glow_start + object[glow_start..].find("\n}").unwrap() + 2;
+    normal_passes.push_str(&object[glow_start..glow_end]);
     let _gpu = crate::test_gpu::lock();
     let instance = wgpu::Instance::default();
     let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
@@ -62,7 +66,7 @@ fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band(
             let across = Vec3::new(-normal.y, normal.x, 0.0);
             for side in [-1.0, 1.0] {
                 let clip = PortalClip::new(center, normal * side).unwrap();
-                for depth in [-0.5, -0.2, -0.1, 0.0, 0.1, 0.2, 0.5] {
+                for depth in [-0.5, -0.0001, 0.0, 0.05, 0.15, 0.225, 0.35, 0.6] {
                     for x in [-1.1, -0.8, 0.0, 0.8, 1.1] {
                         for z in [-1.1, -0.8, 0.0, 0.8, 1.1] {
                             // Stay inside noise cells so coordinate-rounding at
@@ -87,20 +91,44 @@ fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band(
     }
     let aperture_cases = cases.clone();
     let aperture_expected = expected.clone();
-    for pass in 1..=3 {
+    for pass in 1..=4 {
         cases.extend(aperture_cases.iter().map(|case| Case {
             flags: [flags::PORTAL_CLIP, pass, 0, 0],
             ..*case
         }));
-        expected.extend_from_slice(&aperture_expected);
+        if pass == 4 {
+            expected.extend(aperture_cases.iter().zip(&aperture_expected).map(|(case, &kept)| {
+                kept && PortalClip { data: case.clip }
+                    .normal()
+                    .dot(Vec3::from_slice(&case.point[..3]) - Vec3::from_slice(&case.clip[..3]))
+                    < crate::PORTAL_DISSOLVE_WIDTH
+            }));
+        } else {
+            expected.extend_from_slice(&aperture_expected);
+        }
     }
-    for pass in 0..=3 {
+    for pass in 0..=4 {
         cases.push(Case {
             clip: [0.0; 4],
             point: [-0.5, 0.0, 0.0, 1.0],
             flags: [0, pass, 0, 0],
         });
-        expected.push(true);
+        expected.push(pass != 4);
+    }
+    // A contact glow cannot fill transparent texture holes or invisible
+    // blended faces. Opaque material texture alpha remains non-opacity data.
+    for (material, texture, alpha, glow) in [
+        (flags::ALPHA_MASK, 1, 0, false),
+        (flags::PBR | flags::ALPHA_MASK, 1, 0, false),
+        (flags::ALPHA_BLEND, 0, 1, false),
+        (0, 1, 0, true),
+    ] {
+        cases.push(Case {
+            clip: [0.0; 4],
+            point: [0.225, 0.0, 0.0, 1.0],
+            flags: [flags::PORTAL_CLIP | material, 4, texture, alpha],
+        });
+        expected.push(glow);
     }
     // The normal contact pass must share the analytic portal core rather
     // than treating the decorative quad's corners as solid depth.
@@ -126,16 +154,26 @@ fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band(
         r#"
 const FLAG_PORTAL_CLIP:u32=16384u;
 const FLAG_PORTAL_EFFECT:u32=32768u;
+const FLAG_PBR:u32=8u;
+const FLAG_ALPHA_MASK:u32=2u;
+const FLAG_ALPHA_BLEND:u32=4u;
+const FLAG_DOUBLE_SIDED:u32=2048u;
 const PORTAL_HALF_WIDTH:f32={PORTAL_HALF_WIDTH:.1};
 const PORTAL_HALF_HEIGHT:f32={PORTAL_HALF_HEIGHT:.1};
 const PORTAL_SURFACE_SCALE:f32=1.16;
-struct DrawRecord {{portal_clip:vec4<f32>,flags:vec4<u32>,tex:vec4<u32>,base_color:vec4<f32>,params:vec4<f32>}};
-struct VsOut {{world_pos:vec3<f32>,record:u32,uv:vec2<f32>,normal:vec3<f32>}};
+struct DrawRecord {{portal_clip:vec4<f32>,flags:vec4<u32>,tex:vec4<u32>,base_color:vec4<f32>,params:vec4<f32>,emissive:vec4<f32>}};
+struct VsOut {{world_pos:vec3<f32>,record:u32,uv:vec2<f32>,normal:vec3<f32>,uv_e:vec2<f32>}};
 struct Case {{clip:vec4<f32>,point:vec4<f32>,flags:vec4<u32>}};
 @group(0) @binding(0) var<storage,read> cases:array<Case>;
 @group(0) @binding(1) var<storage,read> records:array<DrawRecord>;
-fn sample_tex(i:u32,uv:vec2<f32>)->vec4<f32>{{return vec4<f32>(1.0);}}
+fn sample_tex(i:u32,uv:vec2<f32>)->vec4<f32>{{return vec4<f32>(1.0,1.0,1.0,select(1.0,0.0,i==1u));}}
 fn depth_normal(n:vec3<f32>,front:bool)->vec4<f32>{{return vec4<f32>(1.0);}}
+fn srgb_to_linear(c:vec3<f32>)->vec3<f32>{{return c;}}
+var<private> rez_fw:vec3<f32>;
+fn rez_lines(p:vec3<f32>,n:vec3<f32>,step:f32)->f32{{return 0.5;}}
+fn rez_glow(rec:DrawRecord,v:VsOut)->f32{{return 0.0;}}
+struct PortalSurface{{glow:f32}};
+fn portal_surface(rec:DrawRecord,uv:vec2<f32>,p:vec3<f32>,n:vec3<f32>,aa:f32)->PortalSurface{{return PortalSurface(0.0);}}
 {cut}
 {normal_passes}
 @vertex fn vs(@builtin(vertex_index) i:u32)->@builtin(position) vec4<f32>{{
@@ -144,12 +182,13 @@ fn depth_normal(n:vec3<f32>,front:bool)->vec4<f32>{{return vec4<f32>(1.0);}}
 }}
 @fragment fn fs(@builtin(position) p:vec4<f32>)->@location(0) vec4<f32>{{
     let c=cases[u32(p.x)+64u*u32(p.y)];
-    let rec=DrawRecord(c.clip,c.flags,vec4<u32>(0u),vec4<f32>(1.0),vec4<f32>(0.5));
+    let rec=records[u32(p.x)+64u*u32(p.y)];
     let index=u32(p.x)+64u*u32(p.y);
-    let v=VsOut(c.point.xyz,index,(c.point.xy/PORTAL_SURFACE_SCALE+vec2<f32>(1.0))*0.5,vec3<f32>(0.0,0.0,1.0));
+    let v=VsOut(c.point.xyz,index,(c.point.xy/PORTAL_SURFACE_SCALE+vec2<f32>(1.0))*0.5,vec3<f32>(0.0,0.0,1.0),vec2<f32>(0.0));
     if(c.flags.y==1u){{return fs_depth_portal_normal(v,true);}}
     if(c.flags.y==2u){{return fs_depth_mask_normal(v,true);}}
     if(c.flags.y==3u){{return fs_depth_contact_normal(v,true);}}
+    if(c.flags.y==4u){{return fs_glow(v,true);}}
     portal_clip(rec,c.point.xyz);
     return vec4<f32>(1.0);
 }}
@@ -189,8 +228,15 @@ fn depth_normal(n:vec3<f32>,front:bool)->vec4<f32>{{return vec4<f32>(1.0);}}
             portal_clip: case.clip,
             flags: case.flags,
             base_color: [1.0; 4],
+            tex: [case.flags[2], 0, 0, 0],
             params: [0.5; 4],
             ..Default::default()
+        })
+        .map(|mut record| {
+            if record.flags[3] == 1 {
+                record.base_color[3] = 0.0;
+            }
+            record
         })
         .collect();
     // The reduced WGSL record above includes only fields these passes read.
@@ -200,9 +246,10 @@ fn depth_normal(n:vec3<f32>,front:bool)->vec4<f32>{{return vec4<f32>(1.0);}}
             rec.portal_clip
                 .into_iter()
                 .chain(rec.flags.map(f32::from_bits))
-                .chain([0.0; 4])
+                .chain(rec.tex.map(f32::from_bits))
                 .chain(rec.base_color)
                 .chain(rec.params)
+                .chain([0.0; 4])
         })
         .collect();
     let normal_records = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -283,6 +330,11 @@ fn depth_normal(n:vec3<f32>,front:bool)->vec4<f32>{{return vec4<f32>(1.0);}}
     device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU completion");
     let pixels = readback.get_mapped_range(..).expect("portal pixels");
     for (index, visible) in expected.into_iter().enumerate() {
-        assert_eq!(pixels[index * 4] > 0, visible, "portal sample {index}: {:?}", cases[index].point);
+        assert_eq!(
+            pixels[index * 4 + 3] > 0,
+            visible,
+            "portal sample {index}: {:?}",
+            cases[index].point
+        );
     }
 }

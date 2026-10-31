@@ -12,6 +12,42 @@ use glam::{Mat4, Quat, Vec3};
 use std::collections::{HashMap, HashSet};
 mod clipping;
 
+// One shared upload: the aperture plus a closed elliptical energy tube.
+// UVs above 2 select the volumetric rim in the portal shader.
+fn portal_mesh() -> (Vec<Vertex>, Vec<u16>) {
+    let scale = aurora_render::PORTAL_SURFACE_SCALE;
+    let mut vertices = vec![
+        Vertex::new([-WIDTH * scale, 0.0, -HEIGHT * scale], [0.0, -1.0, 0.0], [0.0, 1.0]),
+        Vertex::new([WIDTH * scale, 0.0, -HEIGHT * scale], [0.0, -1.0, 0.0], [1.0, 1.0]),
+        Vertex::new([WIDTH * scale, 0.0, HEIGHT * scale], [0.0, -1.0, 0.0], [1.0, 0.0]),
+        Vertex::new([-WIDTH * scale, 0.0, HEIGHT * scale], [0.0, -1.0, 0.0], [0.0, 0.0]),
+    ];
+    let mut indices = vec![0, 1, 2, 0, 2, 3, 2, 1, 0, 3, 2, 0];
+    const AROUND: usize = 96;
+    const TUBE: usize = 12;
+    for i in 0..=AROUND {
+        let u = i as f32 / AROUND as f32;
+        let angle = u * std::f32::consts::TAU;
+        let (sin, cos) = angle.sin_cos();
+        let center = Vec3::new(WIDTH * cos, 0.0, HEIGHT * sin);
+        let radial = Vec3::new(cos / WIDTH, 0.0, sin / HEIGHT).normalize();
+        for j in 0..=TUBE {
+            let v = j as f32 / TUBE as f32;
+            let (sin, cos) = (v * std::f32::consts::TAU).sin_cos();
+            let normal = radial * cos + Vec3::Y * sin;
+            vertices.push(Vertex::new((center + normal * 0.075).to_array(), normal.to_array(), [2.0 + u, v]));
+        }
+    }
+    for i in 0..AROUND {
+        for j in 0..TUBE {
+            let a = (4 + i * (TUBE + 1) + j) as u16;
+            let b = a + (TUBE + 1) as u16;
+            indices.extend_from_slice(&[a, b + 1, b, a, a + 1, b + 1]);
+        }
+    }
+    (vertices, indices)
+}
+
 fn object_plane(gpu: &super::ObjGpu, index: usize, planes: &HashMap<usize, PortalClip>) -> Option<PortalClip> {
     if gpu.hud {
         return None;
@@ -22,9 +58,9 @@ fn object_plane(gpu: &super::ObjGpu, index: usize, planes: &HashMap<usize, Porta
 #[derive(Default)]
 pub struct Portals {
     pub planes: HashMap<usize, PortalClip>,
-    clipped: HashSet<usize>,
+    pub(super) clipped: HashSet<usize>,
     clipping: clipping::Clipping,
-    quad: Option<MeshAlloc>,
+    mesh: Option<MeshAlloc>,
     records: Vec<u32>,
     pub cmds: Vec<(f32, DrawCmd)>,
 }
@@ -37,7 +73,7 @@ impl Portals {
         for record in self.records.drain(..) {
             renderer.records.free(record);
         }
-        if let Some(mesh) = self.quad.take() {
+        if let Some(mesh) = self.mesh.take() {
             renderer.free_mesh(mesh);
         }
         self.cmds.clear();
@@ -45,20 +81,11 @@ impl Portals {
 
     pub fn update(&mut self, renderer: &mut Renderer, world: &World, eye: Vec3, palette: &Palette, _time: f32, animate: bool) {
         self.cmds.clear();
-        if world.portals.visible(world).next().is_some() && self.quad.is_none() {
-            let vertices = [
-                Vertex::new([-1.0, 0.0, -1.0], [0.0, -1.0, 0.0], [0.0, 1.0]),
-                Vertex::new([1.0, 0.0, -1.0], [0.0, -1.0, 0.0], [1.0, 1.0]),
-                Vertex::new([1.0, 0.0, 1.0], [0.0, -1.0, 0.0], [1.0, 0.0]),
-                Vertex::new([-1.0, 0.0, 1.0], [0.0, -1.0, 0.0], [0.0, 0.0]),
-            ];
-            // Two windings for the ordinary back-face-culled blend/glow passes.
-            // The shader keeps the actual opening at r=1 and fades its corona
-            // outside it; avatar traversal uses the portal's entry plane.
-            let indices = [0, 1, 2, 0, 2, 3, 2, 1, 0, 3, 2, 0];
-            self.quad = renderer.upload_mesh(&vertices, &indices);
+        if world.portals.visible(world).next().is_some() && self.mesh.is_none() {
+            let (vertices, indices) = portal_mesh();
+            self.mesh = renderer.upload_mesh(&vertices, &indices);
         }
-        let Some(quad) = self.quad else {
+        let Some(mesh) = self.mesh else {
             return;
         };
         let mut used = 0;
@@ -69,16 +96,8 @@ impl Portals {
             let rgba = |color: egui::Color32| color.to_srgba_unmultiplied().map(|value| value as f32 / 255.0);
             let accent = |color| rgba(if allowed { color } else { palette.muted });
             let record = DrawRecord {
-                model: Mat4::from_scale_rotation_translation(
-                    Vec3::new(
-                        WIDTH * aurora_render::PORTAL_SURFACE_SCALE,
-                        1.0,
-                        HEIGHT * aurora_render::PORTAL_SURFACE_SCALE,
-                    ),
-                    Quat::from_rotation_z(portal.yaw - std::f32::consts::FRAC_PI_2),
-                    center,
-                )
-                .to_cols_array_2d(),
+                model: Mat4::from_rotation_translation(Quat::from_rotation_z(portal.yaw - std::f32::consts::FRAC_PI_2), center)
+                    .to_cols_array_2d(),
                 base_color: accent(palette.violet),
                 emissive: accent(palette.teal),
                 spec_color: accent(palette.indigo_light),
@@ -104,9 +123,9 @@ impl Portals {
             self.cmds.push((
                 eye.distance(center),
                 DrawCmd {
-                    index_count: quad.index_count,
-                    first_index: quad.index_offset,
-                    base_vertex: quad.vertex_offset as i32,
+                    index_count: mesh.index_count,
+                    first_index: mesh.index_offset,
+                    base_vertex: mesh.vertex_offset as i32,
                     record: slot,
                     bounds: [0.0; 4],
                 },
@@ -195,6 +214,21 @@ impl super::Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn portal_mesh_has_real_thickness_and_outward_rim_winding() {
+        let (vertices, indices) = portal_mesh();
+        assert_eq!(WIDTH, aurora_render::PORTAL_HALF_WIDTH);
+        assert_eq!(HEIGHT, aurora_render::PORTAL_HALF_HEIGHT);
+        assert!(vertices.iter().any(|v| v.pos[1] > 0.07));
+        assert!(vertices.iter().any(|v| v.pos[1] < -0.07));
+        for triangle in indices[12..].as_chunks::<3>().0 {
+            let v = [triangle[0], triangle[1], triangle[2]].map(|i| vertices[i as usize]);
+            let [a, b, c] = v.map(|v| Vec3::from(v.pos));
+            let normal = Vec3::new(v[0].normal[0] as f32, v[0].normal[1] as f32, v[0].normal[2] as f32);
+            assert!((b - a).cross(c - a).dot(normal) > 0.0);
+            assert!(v.iter().all(|v| (2.0..=3.0).contains(&v.uv[0])));
+        }
+    }
     #[test]
     fn portal_plane_is_shared_by_body_rigid_and_skinned_attachments_but_never_huds_or_world_objects() {
         let plane = PortalClip::new(Vec3::new(12.0, 0.0, 0.0), Vec3::X).unwrap();

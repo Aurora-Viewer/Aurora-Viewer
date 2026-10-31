@@ -4311,6 +4311,7 @@ impl Scene {
                     let usage = usage_due(i);
                     if usage
                         || bits & list_index::SPECIAL != 0
+                        || (bits & list_index::AVATAR_PART != 0 && self.portals.clipped.contains(&i))
                         || debug
                         || selection.contains_key(&i)
                         || self.selection_faces.contains_key(&i)
@@ -4330,6 +4331,7 @@ impl Scene {
                     let usage = usage_due(i);
                     if usage
                         || g.special
+                        || self.portals.clipped.contains(&i)
                         || debug
                         || selection.contains_key(&i)
                         || self.selection_faces.contains_key(&i)
@@ -4495,13 +4497,14 @@ impl Scene {
             let rig = g.rig_order.filter(|_| g.rigged);
             let blend_center = rig.and_then(|r| self.gpu.get(r.skeleton as usize)).map_or(g.center, |s| s.center);
             let blend_d = (blend_center - view.eye).length();
+            let portal_glow = self.portals.clipped.contains(&idx);
             for f in &g.faces {
                 // object sphere for the GPU occlusion test
                 let in_view = in_view && !(own_first_person == Some(true) && (g.first_person_hidden || f.first_person_hidden));
                 let cmd = f.cmd.with_bounds(sc, sr);
                 let pass = f.pass;
                 // blended faces glow in their sorted place; hidden faces do not glow
-                if f.glow && in_view && pass != Pass::Blend && pass != Pass::Hidden {
+                if (f.glow || portal_glow) && in_view && pass != Pass::Blend && pass != Pass::Hidden {
                     if f.glow_pool {
                         l.glow_alpha.push(cmd);
                     } else {
@@ -4591,7 +4594,7 @@ impl Scene {
                     Pass::Blend => l.blend.push(blend_order::BlendEntry {
                         distance: blend_d,
                         cmd,
-                        glow: f.glow,
+                        glow: f.glow || portal_glow,
                         rigged: g.rigged,
                         object: idx as u32,
                         face: f.te_index,

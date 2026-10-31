@@ -172,12 +172,14 @@ requests, revocation before a queued reply, close/expiry and bridge 1.37 upgrade
 Both creation announcements and discovery replies must omit private destinations;
 inspect wire-level tests, not just labels. Old portal-v1 traffic is not accepted.
 
-`AURORA_DEMO_PORTALS=slice-walk|slice-run|slice-fly|slice-still|slice-large|slice-reverse|slice-wide|slice-wide-reverse|slice-turnback|slice-turnback-reverse`
+`AURORA_DEMO_PORTALS=slice-walk|slice-run|slice-fly|slice-still|slice-large|slice-reverse|slice-wide|slice-wide-reverse|slice-turnback|slice-turnback-reverse|slice-profile|slice-profile-reverse`
 adds an observed avatar with continuous locomotion animation, a skinned mesh
 and a long rigid hand attachment. The camera observes the portal obliquely
 (from the other side with `slice-reverse`). `slice-still` and `slice-large`
 keep the avatar root fixed: animated limbs and worn geometry must still
-dissolve as they enter the portal's 60 cm contact band. The band contains
+dissolve in the 45 cm band before the portal. No fragment may survive on or
+beyond its plane, including glow. Approaching fragments change into the existing
+rez/derez hologram style with a luminous eroding edge and theme colors. The band contains
 irregular holes and intact fragments together, with gradually falling coverage;
 it must not leave a straight sliced edge. Capture several animation phases; compare the same
 scenario with `AURORA_PORTAL_CLIP=0`. Traversal never pauses or restarts an
@@ -188,8 +190,8 @@ Use `AURORA_DEMO_POS=100,100` for a clear patch away from the plaza exhibits.
 above or beside the oval. `slice-turnback` and `slice-turnback-reverse`
 use a closer camera, advance through the band, turn around, and retreat without teleporting;
 returning body and attachment fragments must reappear in the same spatial pattern. Capture
-frames 840, 885, 930, 1020, 1035 and 1110 to inspect both directions after the loading fade;
-885 and 1035 show the fragmented contact zone on entry and retreat.
+frames 840, 860, 875, 900, 1030, 1050, 1080 and 1110 to inspect both directions after the loading fade;
+860 and 1050 show the fragmented contact zone on entry and retreat.
 Use `AURORA_REZ_EFFECT=0` to inspect opaque surfaces without the loading grid.
 The pattern has no timer and is independent of the camera; advancing normally
 cannot make already dissolved fragments flicker back on.
@@ -197,6 +199,11 @@ Check body, skinned and rigid worn geometry from both
 camera sides. Ordinary portals now show theme-based Aurora currents, a dark
 indigo/navy core and a violet/teal rim with glow; reduced motion freezes their
 animation, and denied/private observers retain muted colors and hidden details.
+`slice-profile` and `slice-profile-reverse` observe the aperture at a grazing angle:
+the rim must show actual thickness from both sides. Energy flows around its curved
+surface; the layered core shifts in perspective. Verify the rim never enlarges
+the physical crossing opening or the depth-contact mask. The same band and glow
+must work with the ordinary loading rez effect enabled or disabled.
 
 `AURORA_TEST_NEUTRAL_POSE=1`: exposes "Neutral pose — local test" in
 Appearance › Hover Height, initially off. Our avatar starts with normal
