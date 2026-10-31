@@ -155,20 +155,19 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
             body.add_enabled_ui(editor.saving.is_none(), |ui| {
                 egui::Grid::new("gesture_fields").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
                     ui.label(aurora_i18n::tr!("common-description"));
-                    ui.add_enabled(
-                        modifiable,
-                        egui::TextEdit::singleline(&mut editor.description)
-                            .char_limit(127)
-                            .desired_width(ui.available_width()),
-                    );
+                    crate::ui::widgets::text_field(ui, modifiable, &mut editor.description, |b, ui| {
+                        egui::TextEdit::singleline(b).char_limit(127).desired_width(ui.available_width())
+                    });
                     ui.end_row();
                     ui.label(aurora_i18n::tr!("gesture-trigger"));
-                    ui.add_enabled(editable, egui::TextEdit::singleline(&mut g.trigger).char_limit(255));
+                    crate::ui::widgets::text_field(ui, editable, &mut g.trigger, |b, _| egui::TextEdit::singleline(b).char_limit(255));
                     ui.end_row();
                     ui.label(aurora_i18n::tr!("gesture-replacement"));
-                    ui.add_enabled(
+                    crate::ui::widgets::text_field(
+                        ui,
                         editable && (!g.trigger.is_empty() || !g.replacement.is_empty()),
-                        egui::TextEdit::singleline(&mut g.replacement).char_limit(255),
+                        &mut g.replacement,
+                        |b, _| egui::TextEdit::singleline(b).char_limit(255),
                     );
                     ui.end_row();
                     ui.label(aurora_i18n::tr!("gesture-shortcut"));

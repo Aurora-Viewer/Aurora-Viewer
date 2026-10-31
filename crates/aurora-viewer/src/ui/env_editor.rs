@@ -326,7 +326,9 @@ impl EnvEditorUi {
             // a fixed width: a field following the window would grow it
             let w = 280.0;
             let enabled = self.rights.modify && self.doc.is_some();
-            let r = ui.add_enabled(enabled, egui::TextEdit::singleline(&mut self.name).desired_width(w).char_limit(63));
+            let r = crate::ui::widgets::text_field(ui, enabled, &mut self.name, |b, _| {
+                egui::TextEdit::singleline(b).desired_width(w).char_limit(63)
+            });
             // setCommitOnFocusLost: the name is committed when the field is left
             if (r.lost_focus() || r.changed() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                 && let Some(doc) = &mut self.doc

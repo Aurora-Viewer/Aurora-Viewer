@@ -675,7 +675,9 @@ impl SearchUi {
                             saved = true;
                             go = true;
                         }
-                        let field = ui.add_enabled(*on, egui::TextEdit::singleline(text).desired_width(54.0).char_limit(9));
+                        let field = crate::ui::widgets::text_field(ui, *on, text, |b, _| {
+                            egui::TextEdit::singleline(b).desired_width(54.0).char_limit(9)
+                        });
                         if field.changed() {
                             text.retain(|ch| ch.is_ascii_digit());
                         }

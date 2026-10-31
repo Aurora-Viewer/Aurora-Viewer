@@ -30,6 +30,7 @@ mod resize;
 pub(crate) mod scroll_offset;
 #[cfg(test)]
 pub(crate) mod steady_tests;
+mod text_field;
 mod unread;
 mod volume;
 mod workspace;
@@ -39,6 +40,7 @@ pub use pills::{
     clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide,
     search_box,
 };
+pub use text_field::text_field;
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{

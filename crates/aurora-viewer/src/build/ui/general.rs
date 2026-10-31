@@ -270,24 +270,11 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 } else {
                     ""
                 };
-                if !modify {
-                    // Read only, not disabled: the text still selects and
-                    // copies (a disabled egui field takes no pointer at all)
-                    let mut shown = current.as_str();
-                    ui.add(
-                        egui::TextEdit::singleline(&mut shown)
-                            .desired_width(ui.available_width())
-                            .text_color(p.muted)
-                            .hint_text(hint),
-                    );
-                    return;
-                }
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut v)
-                        .desired_width(ui.available_width())
-                        .char_limit(limit)
-                        .hint_text(hint),
-                );
+                let width = ui.available_width();
+                // read only without the modify right, still selectable
+                let r = crate::ui::widgets::text_field(ui, modify, &mut v, |b, _| {
+                    egui::TextEdit::singleline(b).desired_width(width).char_limit(limit).hint_text(hint)
+                });
                 if description {
                     r.clone().on_hover_text(aurora_i18n::tr!("build-ui-general-127-bytes-maximum"));
                 } else {

@@ -868,14 +868,12 @@ fn notecard_description(
         rules::mutable(inv, it.id, &prefs.protected) && it.owner_mask & rules::MODIFY != 0 && st.pending.is_none() && !st.save_pending;
     ui.horizontal(|ui| {
         ui.label(aurora_i18n::tr!("common-description"));
-        let response = ui.add_enabled(
-            can_edit,
-            egui::TextEdit::singleline(&mut description.text)
+        let response = crate::ui::widgets::text_field(ui, can_edit, &mut description.text, |b, ui| {
+            egui::TextEdit::singleline(b)
                 .id(egui::Id::unique(("notecard_description", st.ui_id, it.id)))
-                .interactive(can_edit)
                 .char_limit(127)
-                .desired_width(ui.available_width()),
-        );
+                .desired_width(ui.available_width())
+        });
         if can_edit
             && response.lost_focus()
             && description.text != it.desc
@@ -913,12 +911,9 @@ fn animation(
             ui.label(aurora_i18n::tr!("common-description"));
             if let Some((_, description)) = &mut st.animation_description {
                 let can_edit = rules::mutable(inv, it.id, &prefs.protected) && it.owner_mask & rules::MODIFY != 0 && st.pending.is_none();
-                let response = ui.add_enabled(
-                    can_edit,
-                    egui::TextEdit::singleline(description)
-                        .char_limit(127)
-                        .desired_width(ui.available_width()),
-                );
+                let response = crate::ui::widgets::text_field(ui, can_edit, description, |b, ui| {
+                    egui::TextEdit::singleline(b).char_limit(127).desired_width(ui.available_width())
+                });
                 if can_edit
                     && description != &it.desc
                     && response.lost_focus()
