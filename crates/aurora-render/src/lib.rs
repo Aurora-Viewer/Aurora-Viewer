@@ -979,6 +979,35 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
         assert_eq!(position_steps(src, "vs_depth_normal"), scene);
     }
 
+    #[test]
+    fn portal_decoration_keeps_frame_uniforms_out_of_shadow_vertices() {
+        let source = format!(
+            "{}\n{}\n{}",
+            crate::COMMON_SHADER,
+            include_str!("shaders/object.wgsl"),
+            include_str!("shaders/env.wgsl")
+        );
+        let module = naga::front::wgsl::parse_str(&source).expect("scene shader parses");
+        let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+            .validate(&module)
+            .expect("scene shader validates");
+        let frame = module
+            .global_variables
+            .iter()
+            .find(|(_, global)| global.name.as_deref() == Some("frame"))
+            .unwrap()
+            .0;
+        for name in ["vs_shadow", "vs_shadow_terrain"] {
+            let index = module.entry_points.iter().position(|entry| entry.name == name).unwrap();
+            assert!(
+                info.get_entry_point(index)[frame].is_empty(),
+                "{name} requires the frame group absent from shadow layouts"
+            );
+        }
+        let main = module.entry_points.iter().position(|entry| entry.name == "vs_main").unwrap();
+        assert!(!info.get_entry_point(main)[frame].is_empty());
+    }
+
     /// Equal operations give equal depths only if the compiler may not
     /// rearrange them differently in each shader: the three positions are
     /// declared invariant.

@@ -172,6 +172,18 @@ requests, revocation before a queued reply, close/expiry and bridge 1.37 upgrade
 Both creation announcements and discovery replies must omit private destinations;
 inspect wire-level tests, not just labels. Old portal-v1 traffic is not accepted.
 
+`AURORA_DEMO_PORTALS=rift|rift-reverse|rift-profile|rift-static` creates a portal
+at frame 660, after the loading fade, and frames it without the creation window.
+Use `AURORA_DEMO_POS=100,100`, a 60 FPS cap and captures at 665, 690, 720, 750,
+780, 820, 900 and 1050. A dark cloud must swell in volume before a crooked
+vertical fissure stretches and splits sideways into the vortex. Its rim, clouds
+and currents remain irregular after opening. `rift-reverse` observes the other
+side; `rift-profile` shows cloud depth and rim deformation at a grazing angle.
+`rift-static` enables reduced motion: show the settled tear immediately, with
+no growth or moving turbulence. Refreshing an invitation, relaying it or
+reordering visible portals must never replay the opening. The cloud and
+decorative edge must not expand the physical oval or write its contact depth.
+
 `AURORA_DEMO_PORTALS=slice-walk|slice-run|slice-fly|slice-still|slice-large|slice-reverse|slice-wide|slice-wide-reverse|slice-turnback|slice-turnback-reverse|slice-profile|slice-profile-reverse`
 adds an observed avatar with continuous locomotion animation, a skinned mesh
 and a long rigid hand attachment. The camera observes the portal obliquely

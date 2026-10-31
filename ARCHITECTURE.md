@@ -490,13 +490,24 @@ membership at crossing, then `app/portals.rs` uses the ordinary user location
 teleport boundary, retaining RLVa and simulator destination access checks.
 Near-spawn observers must first leave a 3.5 m clearance; standing inside,
 involuntary motion, position jumps and replayed announcements never trigger.
-`scene/portals.rs` shares one GPU aperture/rim mesh with an analytic Aurora surface,
+`scene/portals.rs` shares one GPU aperture/rim/cloud mesh with an analytic Aurora surface,
 depth-tested and sorted with world transparency/glow. Theme violet, indigo,
 teal and navy drive its flowing depth, fine rim and soft corona; the GPU
 animation clock runs it, with a static reduced-motion variant. The closed elliptical
 rim has real 15 cm thickness; its UV tag selects normal-shaped energy streams.
+An oblate cloud volume grows from a dark seed, then a crooked vertical fissure
+widens over 3.8 seconds. GPU deformation and spatial noise keep the rim and
+vortex turbulent after opening. Eight ray samples integrate a shared 3D density
+field inside the cloud bounds, with soft extinction and a view-aligned tear mask.
+Deformation is confined to blended portal outputs: opaque geometry retains its
+common prepass placement and shadow vertices acquire no frame-clock bindings.
+A renderer-clock origin and a stable phase seed
+are retained per creator/portal/region identity; record reorder, announcements
+and frame updates cannot restart the opening. Closed identities release their clocks.
+Reduced motion immediately shows the settled tear with frozen turbulence.
 Four receding core layers shift with viewing direction to give the vortex depth.
-Only the aperture writes contact depth; the decorative rim/corona cannot enlarge it. No texture or
+Only the currently revealed physical aperture writes contact depth; the decorative cloud,
+rim and corona cannot enlarge it. No texture or
 particle uploads; unchanged portal records are not rewritten. `ui/portals.rs` provides
 World > Portals and depth-occluded destination/creator/access labels. This is
 an Aurora feature; ordinary teleport behavior follows LLAgent::teleportViaLocation

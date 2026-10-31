@@ -18,6 +18,7 @@ struct Case {
 fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band() {
     let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
     let cut = &object[object.find("fn portal_clip(").unwrap()..object.find("// One analytically bounded Aurora surface").unwrap()];
+    let opening = &object[object.find("fn portal_hash(").unwrap()..object.find("// Deform only the shared decorative geometry").unwrap()];
     // Exercise the actual GTAO entry points too: a colour-only cut leaves
     // invisible limbs in occlusion if a new depth/normal pass omits it.
     let mut normal_passes = String::new();
@@ -142,6 +143,23 @@ fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band(
             expected.push(x * x + y * y <= 1.0);
         }
     }
+    // A cloud cannot write the depth of a fully open oval before its tear
+    // exists. The vertical slit opens into that same physical aperture.
+    for (elapsed, x, visible) in [
+        (0, 0.0, false),
+        (400, 0.0, false),
+        (1800, 0.0, true),
+        (1800, 0.5, false),
+        (2600, 0.2, true),
+        (4500, 0.8, true),
+    ] {
+        cases.push(Case {
+            clip: [0.0; 4],
+            point: [x, 0.0, 0.0, 1.0],
+            flags: [flags::PORTAL_EFFECT, 3, 0, 8000 - elapsed],
+        });
+        expected.push(visible);
+    }
     let width = 64;
     let height = (cases.len() as u32).div_ceil(width);
     cases.resize((width * height) as usize, cases[0]);
@@ -164,6 +182,8 @@ const PORTAL_SURFACE_SCALE:f32=1.16;
 struct DrawRecord {{portal_clip:vec4<f32>,flags:vec4<u32>,tex:vec4<u32>,base_color:vec4<f32>,params:vec4<f32>,emissive:vec4<f32>}};
 struct VsOut {{world_pos:vec3<f32>,record:u32,uv:vec2<f32>,normal:vec3<f32>,uv_e:vec2<f32>}};
 struct Case {{clip:vec4<f32>,point:vec4<f32>,flags:vec4<u32>}};
+struct Frame {{anim_clock:vec4<u32>}};
+const frame=Frame(vec4<u32>(8000u,0u,0u,0u));
 @group(0) @binding(0) var<storage,read> cases:array<Case>;
 @group(0) @binding(1) var<storage,read> records:array<DrawRecord>;
 fn sample_tex(i:u32,uv:vec2<f32>)->vec4<f32>{{return vec4<f32>(1.0,1.0,1.0,select(1.0,0.0,i==1u));}}
@@ -175,6 +195,7 @@ fn rez_glow(rec:DrawRecord,v:VsOut)->f32{{return 0.0;}}
 struct PortalSurface{{glow:f32}};
 fn portal_surface(rec:DrawRecord,uv:vec2<f32>,p:vec3<f32>,n:vec3<f32>,aa:f32)->PortalSurface{{return PortalSurface(0.0);}}
 {cut}
+{opening}
 {normal_passes}
 @vertex fn vs(@builtin(vertex_index) i:u32)->@builtin(position) vec4<f32>{{
     let p=array<vec2<f32>,3>(vec2<f32>(-1.0,-1.0),vec2<f32>(3.0,-1.0),vec2<f32>(-1.0,3.0));

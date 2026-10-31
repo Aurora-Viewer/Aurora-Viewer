@@ -73,14 +73,111 @@ fn portal_noise(p: vec2<f32>) -> f32 {
         mix(portal_hash(cell + vec2<f32>(0.0, 1.0)), portal_hash(cell + vec2<f32>(1.0)), u.x), u.y);
 }
 
+// One opening per locally discovered identity. Reduced motion shows the
+// settled tear immediately. Wrapping subtraction matches the scene clock.
+fn portal_age(rec: DrawRecord) -> f32 {
+    return select(max(f32(bitcast<i32>(frame.anim_clock.x - rec.flags.w)) * 0.001, 0.0), 8.0, rec.params.y < 0.5);
+}
+
+fn portal_time(rec: DrawRecord) -> f32 {
+    return f32(frame.anim_clock.x) * 0.001 * rec.params.y + f32(rec.flags.z) * 0.001;
+}
+
+fn portal_opening_size(age: f32) -> vec2<f32> {
+    return vec2<f32>(mix(0.007, 1.0, smoothstep(1.4, 3.8, age)), smoothstep(0.65, 1.75, age));
+}
+
+// A jagged vertical fissure stretches first, then pulls sideways. Its
+// settled boundary always encloses the unchanged physical oval.
+fn portal_tear_distance(q: vec2<f32>, age: f32, time: f32) -> f32 {
+    let size = max(portal_opening_size(age), vec2<f32>(0.001));
+    let crooked = (portal_noise(vec2<f32>(q.y * 9.0, time * 0.35)) - 0.5) * 0.14 * (1.0 - size.x);
+    let p = vec2<f32>((q.x - crooked) / size.x, q.y / size.y);
+    let edge = portal_noise(q * 18.0 + vec2<f32>(time * 0.19, -time * 0.11));
+    return length(p) - (1.0 + edge * 0.075);
+}
+
+fn portal_opening(q: vec2<f32>, age: f32, time: f32, aa: f32) -> f32 {
+    let feather = max(0.008, aa / max(portal_opening_size(age).x, 0.02));
+    return (1.0 - smoothstep(-feather, feather, portal_tear_distance(q, age, time))) * smoothstep(0.55, 0.9, age);
+}
+
+// Deform only the shared decorative geometry on the GPU. World geometry,
+// worn meshes and the physical aperture keep their ordinary placement.
+fn portal_vertex(rec: DrawRecord, position: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+    let age = portal_age(rec);
+    let time = portal_time(rec);
+    if (uv.x >= 3.5) {
+        let grow = mix(0.025, 1.0, smoothstep(0.0, 1.65, age));
+        // Raster bounds enclose the soft density field, never its silhouette.
+        return position * grow * 1.04;
+    }
+    if (uv.x >= 1.5) {
+        let angle = (uv.x - 2.0) * 6.2831853;
+        let size = portal_opening_size(age);
+        let warp = portal_noise(vec2<f32>(cos(angle), sin(angle)) * 8.0 + vec2<f32>(time * 0.2));
+        let ripple = sin(angle * 19.0 - time * 1.3) * 0.013;
+        let radial = vec3<f32>(cos(angle), 0.0, sin(angle));
+        let torn = position + radial * (warp * 0.075 + ripple) + vec3<f32>(0.0, (warp - 0.5) * 0.12, 0.0);
+        return torn * vec3<f32>(size.x, 1.0, size.y);
+    }
+    return position;
+}
+
 fn portal_surface(rec: DrawRecord, uv: vec2<f32>, position: vec3<f32>, normal: vec3<f32>, aa: f32) -> PortalSurface {
-    let time = f32(frame.anim_clock.x) * 0.001 * rec.params.y;
+    let time = portal_time(rec);
+    let age = portal_age(rec);
     let violet = srgb_to_linear(rec.base_color.rgb);
     let teal = srgb_to_linear(rec.emissive.rgb);
     let indigo = srgb_to_linear(rec.spec_color.rgb);
     let navy = srgb_to_linear(rec.legacy.rgb);
     let energy = rec.params.z;
     let view = normalize(frame.camera_pos.xyz - position);
+    if (uv.x >= 3.5) {
+        let delta = position - rec.model[3].xyz;
+        let p = vec3<f32>(dot(delta, rec.model[0].xyz), dot(delta, rec.model[1].xyz), dot(delta, rec.model[2].xyz));
+        let eye_delta = frame.camera_pos.xyz - rec.model[3].xyz;
+        let eye = vec3<f32>(dot(eye_delta, rec.model[0].xyz), dot(eye_delta, rec.model[1].xyz), dot(eye_delta, rec.model[2].xyz));
+        let ray = normalize(p - eye);
+        let size = vec3<f32>(1.5, 0.6, 2.0) * mix(0.025, 1.0, smoothstep(0.0, 1.65, age));
+        let origin = eye / size;
+        let direction = ray / size;
+        let a = dot(direction, direction);
+        let b = dot(origin, direction);
+        let discriminant = b * b - a * (dot(origin, origin) - 1.0);
+        if (discriminant <= 0.0) { return PortalSurface(vec3<f32>(0.0), 0.0, 0.0); }
+        let near = max(0.0, (-b - sqrt(discriminant)) / a);
+        let far = (-b + sqrt(discriminant)) / a;
+        let step = max(0.0, far - near) / 8.0;
+        var opacity = 0.0;
+        var billow = 0.0;
+        // Integrate an actual 3D density field, with a soft extinction edge.
+        // Both camera sides see the same storm rather than a transparent shell.
+        for (var i = 0u; i < 8u; i += 1u) {
+            let sample = eye + ray * (near + (f32(i) + 0.5) * step);
+            let curl = portal_noise(sample.xy * 3.1 + vec2<f32>(time * 0.12)) * 0.4
+                + portal_noise(sample.yz * 4.7 - vec2<f32>(time * 0.09)) * 0.35
+                + portal_noise(sample.zx * 8.3 + vec2<f32>(time * 0.17, -time * 0.13)) * 0.25;
+            let edge = length(sample / size) + (curl - 0.5) * 0.24;
+            let density = (1.0 - smoothstep(0.4, 1.0, edge)) * smoothstep(0.23, 0.7, curl);
+            let weight = (1.0 - exp(-density * step * 7.0)) * (1.0 - opacity);
+            billow += weight * curl;
+            opacity += weight;
+        }
+        // Cut along the ray's intersection with the portal plane, so the
+        // fissure and its light remain aligned through the cloud's depth.
+        var at = p;
+        if (abs(ray.y) > 0.0001) { at = eye - ray * (eye.y / ray.y); }
+        let q = at.xz / vec2<f32>(PORTAL_HALF_WIDTH, -PORTAL_HALF_HEIGHT);
+        let opening = portal_opening(q, age, time, aa);
+        let tear = abs(portal_tear_distance(q, age, time));
+        let lightning = exp(-tear * 16.0) * smoothstep(0.7, 1.2, age)
+            * (0.4 + 0.6 * pow(0.5 + 0.5 * sin(q.y * 26.0 + time * 3.0 + billow * 7.0), 4.0));
+        let color = navy * (0.05 + billow * 0.15) + indigo * (0.006 + billow * 0.018)
+            + mix(violet, teal, billow) * lightning * 0.65 * energy;
+        let alpha = opacity * (1.0 - opening) * smoothstep(0.0, 0.18, age) * mix(1.0, 0.55, smoothstep(2.8, 4.2, age));
+        return PortalSurface(color, alpha, lightning * alpha * 0.08 * energy);
+    }
     if (uv.x >= 1.5) {
         let angle = (uv.x - 2.0) * 6.2831853;
         let tube = uv.y * 6.2831853;
@@ -91,14 +188,17 @@ fn portal_surface(rec: DrawRecord, uv: vec2<f32>, position: vec3<f32>, normal: v
         let stream = pow(0.5 + 0.5 * sin(angle * 11.0 - tube * 3.0 - time * 2.2), 12.0);
         let ribs = pow(0.5 + 0.5 * cos(angle * 36.0 + tube * 2.0 - time * 0.8), 20.0);
         let accent = mix(violet, teal, 0.5 + 0.5 * sin(angle * 2.0 - tube - time * 0.4));
-        let color = indigo * volume * 0.12 + accent * (volume * 0.10 + stream * 0.36 + ribs * 0.08 + fresnel * 0.16) * energy;
-        return PortalSurface(color, 1.0, (0.025 + stream * 0.055 + fresnel * 0.03) * energy);
+        let ragged = portal_noise(vec2<f32>(angle * 9.0, tube * 2.0 - time * 0.6));
+        let reveal = smoothstep(0.9, 1.4, age);
+        let color = indigo * volume * 0.07 + accent * (volume * 0.07 + stream * 0.30 + ribs * 0.05 + fresnel * 0.12) * energy;
+        return PortalSurface(color, (0.65 + ragged * 0.35) * reveal, (0.018 + stream * 0.045 + fresnel * 0.025) * reveal * energy);
     }
     let q = (uv * 2.0 - vec2<f32>(1.0)) * PORTAL_SURFACE_SCALE;
     let r = length(q);
     let angle = atan2(q.y, q.x);
     let turn = r * 2.1 - time * 0.09;
-    let flow = mat2x2<f32>(vec2<f32>(cos(turn), sin(turn)), vec2<f32>(-sin(turn), cos(turn))) * q;
+    let distortion = vec2<f32>(portal_noise(q * 3.7 + vec2<f32>(time * 0.17)), portal_noise(q.yx * 4.3 - vec2<f32>(time * 0.13))) - vec2<f32>(0.5);
+    let flow = mat2x2<f32>(vec2<f32>(cos(turn), sin(turn)), vec2<f32>(-sin(turn), cos(turn))) * (q + distortion * 0.2);
     let drift = vec2<f32>(time * 0.045, -time * 0.028);
     let cloud = portal_noise(flow * 3.4 + drift) * 0.55
         + portal_noise(flow * 7.3 - drift * 1.5) * 0.3
@@ -119,7 +219,8 @@ fn portal_surface(rec: DrawRecord, uv: vec2<f32>, position: vec3<f32>, normal: v
         let layer_depth = f32(layer) * 0.22 + 0.12;
         let p = q - projection * layer_depth * 0.18;
         let a = atan2(p.y, p.x);
-        let radius = 0.83 - f32(layer) * 0.18 + sin(a * 5.0 - time * 0.7 + layer_depth * 8.0) * 0.018;
+        let radius = 0.83 - f32(layer) * 0.18 + sin(a * 5.0 - time * 0.9 + layer_depth * 8.0) * 0.035
+            + portal_noise(p * 12.0 + vec2<f32>(time * 0.2)) * 0.035;
         let contour = exp(-pow((length(p) - radius) / (0.012 + layer_depth * 0.01), 2.0));
         let strands = pow(0.5 + 0.5 * sin(a * 7.0 + layer_depth * 9.0 - time * 1.1), 6.0);
         let light = contour * (0.16 + strands * 0.18) * (1.0 - layer_depth * 0.7);
@@ -139,10 +240,13 @@ fn portal_surface(rec: DrawRecord, uv: vec2<f32>, position: vec3<f32>, normal: v
         * exp(-pow((r - 1.035) / 0.024, 2.0));
     let rim_color = mix(violet, teal, 0.5 + 0.5 * sin(angle * 2.0 - time * 0.6));
     let coverage = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, r);
+    let opening = portal_opening(q, age, time, aa);
+    let torn_edge = exp(-abs(portal_tear_distance(q, age, time)) * 65.0) * smoothstep(0.7, 1.0, age);
+    let cracks = pow(0.5 + 0.5 * sin(angle * 9.0 + cloud * 12.0 - time * 1.7), 40.0) * smoothstep(0.45, 0.95, r);
     let color = mix(indigo * 0.12, core, coverage)
-        + rim_color * (rim * 0.12 + inner * 0.3 + corona * 0.12 + arcs * 0.15) * energy;
-    let alpha = clamp(coverage + corona * 0.32 + rim * 0.7 + arcs * 0.25, 0.0, 1.0);
-    return PortalSurface(color, alpha, clamp(rim * 0.03 + inner * 0.025 + corona * 0.012 + arcs * 0.02 + tunnel_light * 0.03, 0.0, 1.0) * energy);
+        + rim_color * (rim * 0.08 + inner * 0.15 + corona * 0.12 + arcs * 0.15 + torn_edge * 0.38 + cracks * 0.12) * energy;
+    let alpha = clamp((coverage + corona * 0.32 + rim * 0.7 + arcs * 0.25) * opening + torn_edge * 0.65, 0.0, 1.0);
+    return PortalSurface(color, alpha, clamp((rim * 0.02 + inner * 0.015 + corona * 0.012 + arcs * 0.02 + tunnel_light * 0.03 + cracks * 0.015) * opening + torn_edge * 0.045, 0.0, 1.0) * energy);
 }
 
 struct VsIn {
@@ -635,6 +739,20 @@ fn vs_main(in: VsIn) -> VsOut {
     }
     out.record = in.instance;
     out.view_depth = distance(ep.xyz, frame.camera_pos.xyz - frame.eye.xyz);
+    return portal_placed(out, rec, in);
+}
+
+// Only blended portal decoration moves. The physical aperture and ordinary
+// world faces retain the exact opaque/prepass position. Shadow entries must
+// never inherit a dependency on the frame camera or animation uniforms.
+fn portal_placed(placed: VsOut, rec: DrawRecord, in: VsIn) -> VsOut {
+    if ((rec.flags.x & FLAG_PORTAL_EFFECT) == 0u || in.uv.x < 1.5) { return placed; }
+    var out = placed;
+    let model = eye_model(rec, in);
+    let ep = model * vec4<f32>(portal_vertex(rec, vertex_position(rec, in), in.uv), 1.0);
+    out.clip = frame.eye_view_proj * ep;
+    out.world_pos = ep.xyz + frame.eye.xyz;
+    out.view_depth = distance(ep.xyz, frame.camera_pos.xyz - frame.eye.xyz);
     return out;
 }
 
@@ -765,7 +883,8 @@ fn depth_contact(in: VsOut) {
     if ((rec.flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         // Its solid core occludes through the same opening; the decorative
         // quad corners/corona must never add a rectangular occluder.
-        if (in.uv.x >= 1.5 || length((in.uv * 2.0 - vec2<f32>(1.0)) * PORTAL_SURFACE_SCALE) > 1.0) { discard; }
+        let q = (in.uv * 2.0 - vec2<f32>(1.0)) * PORTAL_SURFACE_SCALE;
+        if (in.uv.x >= 1.5 || length(q) > 1.0 || portal_opening(q, portal_age(rec), portal_time(rec), 0.001) < DEPTH_CONTACT_ALPHA) { discard; }
         return;
     }
     portal_clip(rec, in.world_pos);
@@ -1545,7 +1664,8 @@ override BLEND_SPLIT: u32 = 0u;
 
 @fragment
 fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
+    // World-space footprint stays smooth at the cloud proxy's UV poles.
+    let portal_aa = max(length(fwidth(in.world_pos)) / PORTAL_HALF_WIDTH, 0.001);
     if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         let surface = portal_surface(records[in.record], in.uv, in.world_pos, in.normal, portal_aa);
         if (surface.alpha < 0.004) { discard; }
@@ -1591,7 +1711,7 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
 // without being dimmed by it.
 @fragment
 fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
+    let portal_aa = max(length(fwidth(in.world_pos)) / PORTAL_HALF_WIDTH, 0.001);
     if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         let surface = portal_surface(records[in.record], in.uv, in.world_pos, in.normal, portal_aa);
         if (surface.glow <= 0.0) { discard; }

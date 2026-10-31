@@ -12,8 +12,20 @@ use glam::{Mat4, Quat, Vec3};
 use std::collections::{HashMap, HashSet};
 mod clipping;
 
-// One shared upload: the aperture plus a closed elliptical energy tube.
-// UVs above 2 select the volumetric rim in the portal shader.
+type Identity = (uuid::Uuid, uuid::Uuid, u64);
+
+fn opening_birth(births: &mut HashMap<Identity, u32>, key: Identity, now: u32, animate: bool) -> u32 {
+    let birth = births.entry(key).or_insert(now);
+    // Settling once also prevents a partial opening from coming back when
+    // reduced motion is switched off. Do not rewrite settled clocks each frame.
+    if !animate && now.wrapping_sub(*birth) < 8000 {
+        *birth = now.wrapping_sub(8000);
+    }
+    *birth
+}
+
+// One shared upload: aperture, energy rim and a closed storm-cloud shell.
+// UV.x in [2, 3] selects the rim; [4, 5] selects the cloud in the shader.
 fn portal_mesh() -> (Vec<Vertex>, Vec<u16>) {
     let scale = aurora_render::PORTAL_SURFACE_SCALE;
     let mut vertices = vec![
@@ -45,6 +57,30 @@ fn portal_mesh() -> (Vec<Vertex>, Vec<u16>) {
             indices.extend_from_slice(&[a, b + 1, b, a, a + 1, b + 1]);
         }
     }
+    let first = vertices.len();
+    const LATITUDE: usize = 24;
+    for i in 0..=AROUND {
+        let u = i as f32 / AROUND as f32;
+        let (sin, cos) = (u * std::f32::consts::TAU).sin_cos();
+        for j in 0..=LATITUDE {
+            let v = j as f32 / LATITUDE as f32;
+            let (ring, depth) = (v * std::f32::consts::PI).sin_cos();
+            let unit = Vec3::new(cos * ring, depth, sin * ring);
+            let size = Vec3::new(1.5, 0.6, 2.0);
+            vertices.push(Vertex::new(
+                (unit * size).to_array(),
+                (unit / size).normalize().to_array(),
+                [4.0 + u, v],
+            ));
+        }
+    }
+    for i in 0..AROUND {
+        for j in 0..LATITUDE {
+            let a = (first + i * (LATITUDE + 1) + j) as u16;
+            let b = a + (LATITUDE + 1) as u16;
+            indices.extend_from_slice(&[a, b, b + 1, a, b + 1, a + 1]);
+        }
+    }
     (vertices, indices)
 }
 
@@ -61,6 +97,9 @@ pub struct Portals {
     pub(super) clipped: HashSet<usize>,
     clipping: clipping::Clipping,
     mesh: Option<MeshAlloc>,
+    // First local sighting, not announcement refresh or record order. The
+    // GPU clock drives the opening once without per-frame record writes.
+    births: HashMap<Identity, u32>,
     records: Vec<u32>,
     pub cmds: Vec<(f32, DrawCmd)>,
 }
@@ -70,6 +109,7 @@ impl Portals {
         self.planes.clear();
         self.clipped.clear();
         self.clipping.clear();
+        self.births.clear();
         for record in self.records.drain(..) {
             renderer.records.free(record);
         }
@@ -81,6 +121,13 @@ impl Portals {
 
     pub fn update(&mut self, renderer: &mut Renderer, world: &World, eye: Vec3, palette: &Palette, _time: f32, animate: bool) {
         self.cmds.clear();
+        self.births.retain(|&(owner, id, region), _| {
+            world
+                .portals
+                .entries
+                .iter()
+                .any(|entry| entry.owner == owner && entry.portal.id == id && entry.portal.region == region)
+        });
         if world.portals.visible(world).next().is_some() && self.mesh.is_none() {
             let (vertices, indices) = portal_mesh();
             self.mesh = renderer.upload_mesh(&vertices, &indices);
@@ -93,6 +140,12 @@ impl Portals {
             let portal = &entry.portal;
             let center = Vec3::from(portal.center);
             let allowed = entry.allowed(world);
+            let birth = opening_birth(
+                &mut self.births,
+                (entry.owner, portal.id, portal.region),
+                renderer.anim_clock().ms(std::time::Instant::now()),
+                animate,
+            );
             let rgba = |color: egui::Color32| color.to_srgba_unmultiplied().map(|value| value as f32 / 255.0);
             let accent = |color| rgba(if allowed { color } else { palette.muted });
             let record = DrawRecord {
@@ -106,8 +159,8 @@ impl Portals {
                 flags: [
                     flags::FULLBRIGHT | flags::ALPHA_BLEND | flags::DOUBLE_SIDED | flags::PORTAL_EFFECT,
                     0,
-                    0,
-                    0,
+                    (portal.id.as_u128() as u16) as u32,
+                    birth,
                 ],
                 ..Default::default()
             };
@@ -215,19 +268,45 @@ impl super::Scene {
 mod tests {
     use super::*;
     #[test]
+    fn portal_opening_survives_reordering_motion_changes_and_clock_wrap() {
+        use uuid::Uuid;
+        let a = (Uuid::from_u128(1), Uuid::from_u128(2), 256);
+        let b = (Uuid::from_u128(3), Uuid::from_u128(4), 256);
+        let mut births = HashMap::new();
+        assert_eq!(opening_birth(&mut births, a, 1000, true), 1000);
+        assert_eq!(opening_birth(&mut births, b, 2000, true), 2000);
+        assert_eq!(opening_birth(&mut births, a, 3000, true), 1000);
+        let settled = opening_birth(&mut births, a, 3500, false);
+        assert_eq!(3500_u32.wrapping_sub(settled), 8000);
+        assert_eq!(opening_birth(&mut births, a, 4000, false), settled);
+        assert_eq!(opening_birth(&mut births, a, 4500, true), settled);
+        assert_eq!(births[&b], 2000);
+        births.clear();
+        let origin = u32::MAX - 100;
+        assert_eq!(opening_birth(&mut births, a, origin, true), origin);
+        assert_eq!(opening_birth(&mut births, a, 200, true), origin);
+        let settled = opening_birth(&mut births, a, 400, false);
+        assert_eq!(400_u32.wrapping_sub(settled), 8000);
+        assert_eq!(opening_birth(&mut births, a, 500, true), settled);
+    }
+    #[test]
     fn portal_mesh_has_real_thickness_and_outward_rim_winding() {
         let (vertices, indices) = portal_mesh();
         assert_eq!(WIDTH, aurora_render::PORTAL_HALF_WIDTH);
         assert_eq!(HEIGHT, aurora_render::PORTAL_HALF_HEIGHT);
         assert!(vertices.iter().any(|v| v.pos[1] > 0.07));
         assert!(vertices.iter().any(|v| v.pos[1] < -0.07));
-        for triangle in indices[12..].as_chunks::<3>().0 {
+        for triangle in indices[12..12 + 96 * 12 * 6].as_chunks::<3>().0 {
             let v = [triangle[0], triangle[1], triangle[2]].map(|i| vertices[i as usize]);
             let [a, b, c] = v.map(|v| Vec3::from(v.pos));
             let normal = Vec3::new(v[0].normal[0] as f32, v[0].normal[1] as f32, v[0].normal[2] as f32);
             assert!((b - a).cross(c - a).dot(normal) > 0.0);
             assert!(v.iter().all(|v| (2.0..=3.0).contains(&v.uv[0])));
         }
+        let cloud: Vec<_> = vertices.iter().filter(|v| v.uv[0] >= 4.0).collect();
+        assert!(cloud.iter().any(|v| v.pos[1] > 0.59));
+        assert!(cloud.iter().any(|v| v.pos[1] < -0.59));
+        assert!(cloud.iter().any(|v| v.pos[2] > HEIGHT + 0.4));
     }
     #[test]
     fn portal_plane_is_shared_by_body_rigid_and_skinned_attachments_but_never_huds_or_world_objects() {
