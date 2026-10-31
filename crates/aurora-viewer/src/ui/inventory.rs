@@ -1117,7 +1117,7 @@ fn folder_row(
 
 /// Personal folders and saved outfits use the shared move validation on drop.
 fn folder_draggable(inv: &Inventory, id: Uuid, prefs: &InventoryPreferences) -> bool {
-    rules::movable(inv, id, &prefs.protected)
+    rules::relocatable(inv, id, &prefs.protected)
         && inv
             .folders
             .get(&id)

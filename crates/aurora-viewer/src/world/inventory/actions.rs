@@ -64,6 +64,21 @@ pub fn mutable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
 pub fn movable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
     mutable(inv, id, protected) && inv.folders.get(&id).is_none_or(|f| matches!(f.info.type_default, -1 | 47 | 54))
 }
+/// The viewer support folders the Legacy Viewer keeps in place at the root
+/// (FIRE-28977 in LLFolderBridge::isItemMovable, llinventorybridge.cpp):
+/// #RLV, which RLVa only finds there (RlvInventory::getSharedRootID),
+/// #Firestorm and its Aurora counterpart #Aurora. Deleting and renaming
+/// stay allowed. Unlike the Legacy Viewer, only a root child is held: one
+/// misplaced elsewhere can still be moved back.
+pub fn pinned(inv: &Inventory, id: Uuid) -> bool {
+    inv.folders
+        .get(&id)
+        .is_some_and(|f| !f.library && f.info.parent == inv.root && matches!(f.info.name.as_str(), "#RLV" | "#Firestorm" | "#Aurora"))
+}
+/// Can move to another folder than the trash: drag, cut, Move to.
+pub fn relocatable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
+    movable(inv, id, protected) && !pinned(inv, id)
+}
 pub fn renameable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
     mutable(inv, id, protected)
         && inv.folders.get(&id).map_or_else(
@@ -224,7 +239,7 @@ pub fn move_selection(
     // LLFolderBridge::dragCategoryIntoFolder permits saved outfits and their
     // groups inside My Outfits, while ordinary item drops remain forbidden.
     if in_type(inv, to, 48) {
-        if !mutable(inv, to, protected) || ids.iter().any(|id| !movable(inv, *id, protected)) {
+        if !mutable(inv, to, protected) || ids.iter().any(|id| !relocatable(inv, *id, protected)) {
             return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-protected-system-or-worn-item").into());
         }
         return super::super::outfit_folders::move_into(inv, ids, to);
@@ -241,7 +256,12 @@ pub fn move_selection(
         holds_worn.extend(ancestors(inv, current));
     }
     for id in roots(inv, ids) {
-        if !movable(inv, id, protected) || holds_worn.contains(&id) {
+        let allowed = if to_trash {
+            movable(inv, id, protected)
+        } else {
+            relocatable(inv, id, protected)
+        };
+        if !allowed || holds_worn.contains(&id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-protected-system-or-worn-item").into());
         }
         push_move(inv, id, to, &mut change)?;
@@ -377,7 +397,7 @@ pub fn group(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>, worn: &Ha
     };
     let holds_worn = worn_ancestors(inv, worn);
     for id in ids {
-        if !movable(inv, id, protected) || holds_worn.contains(&id) {
+        if !relocatable(inv, id, protected) || holds_worn.contains(&id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-protected-or-worn-item").into());
         }
         push_move(inv, id, new, &mut change)?;
@@ -386,7 +406,7 @@ pub fn group(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>, worn: &Ha
 }
 pub fn ungroup(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Result<Mutation, String> {
     let f = inv.folders.get(&id).ok_or(aurora_i18n::tr!("common-folder-not-found"))?;
-    if f.state != FetchState::Fetched || !movable(inv, id, protected) {
+    if f.state != FetchState::Fetched || !relocatable(inv, id, protected) {
         return Err(aurora_i18n::tr!("world-inventory-actions-load-an-unprotected-folder-before-ungrouping-it").into());
     }
     let ids: Vec<_> = f.children.iter().chain(&f.items).copied().collect();
@@ -701,7 +721,7 @@ pub fn paste_allowed(
                 return false;
             }
             if cut {
-                movable(inv, *id, protected) && !holds_worn.contains(id)
+                relocatable(inv, *id, protected) && !holds_worn.contains(id)
             } else if links {
                 original(inv, *id).is_some_and(|id| {
                     !library(inv, id) && !in_type(inv, id, 14) && inv.items.get(&id).is_none_or(|it| !matches!(it.asset_type, 2 | 49))

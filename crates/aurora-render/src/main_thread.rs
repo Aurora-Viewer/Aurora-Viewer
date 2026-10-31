@@ -224,6 +224,12 @@ pub struct Renderer {
     /// The answer to the last photo: its image (width, height, RGBA8), or
     /// None when it could not be drawn.
     pub snapshot: Option<Option<(u32, u32, Vec<u8>)>>,
+    /// The photo asked left with a frame the GPU had not finished within
+    /// `CAPTURE_WAIT`: its answer comes with a later frame, which does not
+    /// draw it again (a second answer would be taken for the next part).
+    snapshot_sent: bool,
+    /// That photo was given up (`drop_snapshot`): its answer is not kept.
+    snapshot_dropped: bool,
     /// Count the luminance histogram of the next frame shown at that
     /// exposure (asked each frame the photo viewfinder shows it).
     pub histogram_request: Option<f32>,
@@ -495,6 +501,8 @@ impl Renderer {
             captured: None,
             snapshot_request: None,
             snapshot: None,
+            snapshot_sent: false,
+            snapshot_dropped: false,
             histogram_request: None,
             histogram: None,
             lost,
@@ -766,6 +774,13 @@ impl Renderer {
         }
     }
 
+    /// Give up the photo asked: not drawn, or its answer not kept when its
+    /// frame is still on the GPU.
+    pub fn drop_snapshot(&mut self) {
+        self.snapshot_request = None;
+        self.snapshot_dropped = self.snapshot_sent;
+    }
+
     /// Apply quality settings: pipelines and targets are rebuilt by the
     /// backend with the next frame, only when needed.
     pub fn apply_settings(&mut self, s: RenderSettings) {
@@ -912,8 +927,13 @@ impl Renderer {
             self.drawn_answers.drain(..self.drawn_answers.len() - KEPT);
         }
         self.cull.last = r.cull;
-        if r.snapshot {
+        if r.snapshot && std::mem::take(&mut self.snapshot_dropped) {
+            // the answer of a photo given up: a photo asked since is drawn
+            // with the next frame
+            self.snapshot_sent = false;
+        } else if r.snapshot {
             self.snapshot_request = None;
+            self.snapshot_sent = false;
             self.snapshot = Some(r.captured);
         } else if let Some(c) = r.captured {
             self.captured = Some(c);
@@ -963,6 +983,8 @@ impl Renderer {
             if self.snapshot_request.take().is_some() {
                 self.snapshot = Some(None);
             }
+            self.snapshot_sent = false;
+            self.snapshot_dropped = false;
             return RenderStats {
                 render_thread: self.host.threaded(),
                 ..Default::default()
@@ -1023,8 +1045,10 @@ impl Renderer {
         let mut spent = self.spare.pop().unwrap_or_default();
         std::mem::swap(&mut self.writes, &mut spent.writes);
         spent.lists.copy_from(lists);
-        // a photo first: the other captures wait for the next frame
+        // a photo first: the other captures wait for the next frame (and
+        // for the answer of a photo still on the GPU)
         let capture = match self.snapshot_request {
+            Some(_) if self.snapshot_sent => None,
             Some(s) => Some(crate::packet::Capture::Snapshot(s)),
             None => capture_for(self.capture_scene, self.capture_request, self.can_capture),
         };
@@ -1082,7 +1106,11 @@ impl Renderer {
                             }
                             results[1] = Some(r);
                         }
-                        Ok(_) => {}
+                        Ok(_) => {
+                            if matches!(capture, Some(crate::packet::Capture::Snapshot(_))) {
+                                self.snapshot_sent = true;
+                            }
+                        }
                         Err(_) => gone = true,
                     }
                     waited += t.elapsed();
@@ -1107,6 +1135,7 @@ impl Renderer {
             // counted twice
             stats = RenderStats {
                 gpu_ms: self.last_stats.gpu_ms,
+                gpu_pixels: self.last_stats.gpu_pixels,
                 gpu_elements: self.last_stats.gpu_elements,
                 shadow: ShadowStats {
                     gpu_ms: self.last_stats.shadow.gpu_ms,
