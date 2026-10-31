@@ -9567,13 +9567,13 @@ thread.
   stays tiny.
 - `off_cpu:`: on the same principle, the steps of both threads that spent
   at least 1 ms **off the processor** in a frame (elapsed time minus the
-  thread's CPU time, Windows only), the longest first. A slow step listed
-  there waited instead of working: a lock (the heap while the background
-  tasks allocate, for example), or a core taken by another thread when the
-  machine is loaded. The steps that hand work to the pool (`sync`, `lists`,
-  `poses`, `r_finish`) wait there for their threads by construction; those
-  that wait by nature (`render`, `limiter`, `r_acquire`, `r_present`) are
-  not listed there.
+  thread's CPU time, Windows and Linux), the longest first. A slow step
+  listed there waited instead of working: a lock (the heap while the
+  background tasks allocate, for example), or a core taken by another
+  thread when the machine is loaded. The steps that hand work to the pool
+  (`sync`, `lists`, `poses`, `r_finish`) wait there for their threads by
+  construction; those that wait by nature (`render`, `limiter`,
+  `r_acquire`, `r_present`) are not listed there.
 - `thread=on|off`, then where the two threads meet:
   - `packet` (main thread, in `render`): the closing of the frame — the
     modified ranges of the scene tables in the frame's write journal, a
@@ -9848,19 +9848,22 @@ tens of thousands of objects), the threads listed by a thread of their own.
   the geometry (render targets, shadow maps, tables); then the textures
   (`texture_mb` their levels, `pages`, `pages_mb` allocated),
   `texture_target_mb` and `pressure` of the texture budget, `geometry_mb`
-  the geometry arena and `geometry_used_mb` what is used of it.
-- `cpu summary` (Windows), written by the `aurora-probe` thread: the
-  process's CPU time as a share of one core and of all the cores,
+  the geometry arena and `geometry_used_mb` what is used of it. On Linux
+  `working_set` is the resident memory (`VmRSS`), `peak` its high-water
+  mark (`VmHWM`) and `private` the anonymous memory, resident or swapped
+  out (`RssAnon` + `VmSwap`).
+- `cpu summary` (Windows and Linux), written by the `aurora-probe` thread:
+  the process's CPU time as a share of one core and of all the cores,
   `machine=` how busy all the cores were (every process: another program
   loading the PC shows there), then each group of threads as a share of
   one core, the busiest first: `main`, `aurora-render`, `aurora-worker`
   (the frame's parallel loops), `aurora-jobs` (decodes, meshes, disk),
   `aurora-net` (the network runtime), `aurora-pages`, `aurora-trash`,
-  audio, voice, `unnamed` (the driver's and the system's threads)…; a
-  pool gives its threads and its busiest one (`aurora-jobs=320%(14t
-  max=31%)`); the groups under 0.1 % of a core are only counted
-  (`quiet_groups=`). `main` near 100 %: the main thread is the limit; a pool near
-  its thread count × 100 %: that pool is; `machine` near 100 %: the PC is.
+  audio, voice, `unnamed` (the driver's and the system's threads)…; a pool
+  gives its threads and its busiest one (`aurora-jobs=320%(14t max=31%)`);
+  the groups under 0.1 % of a core are only counted (`quiet_groups=`).
+  `main` near 100 %: the main thread is the limit; a pool near its thread
+  count × 100 %: that pool is; `machine` near 100 %: the PC is.
 
 ### Teleports and region crossings
 

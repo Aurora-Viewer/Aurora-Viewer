@@ -7667,6 +7667,7 @@ monitor-priority-normal = Normale
 monitor-priority-above-normal = Au-dessus de la normale
 monitor-priority-highest = Haute
 monitor-priority-time-critical = Temps critique
+monitor-priority-nice = Nice { $value }
 monitor-thread-main = Boucle principale : événements, scène, interface
 monitor-thread-render = Thread de rendu : encodage des passes, envoi au GPU
 monitor-thread-render-finish = Finalisation des tampons de commandes

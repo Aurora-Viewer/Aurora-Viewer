@@ -1,7 +1,9 @@
 //! What the system knows of the process (AURORA_PROFILE and the resource
-//! monitor, Windows only):
+//! monitor, Windows and Linux):
 //! its memory, and the CPU time of each of its threads, gathered by group
 //! of threads (the decode pool, the frame workers, the network runtime…).
+//! Linux reads it from `/proc` ([`proc_text`] parses it, on every system for
+//! the tests).
 //! The threads are read by a thread of their own every 10 s, which writes
 //! the `cpu summary` line: listing the system's threads takes a few
 //! milliseconds that the frame must not pay. Elsewhere nothing is read and
@@ -32,7 +34,12 @@ pub fn current_thread_id() -> u32 {
         // SAFETY: no argument, no state changed.
         unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: no argument, no state changed.
+        unsafe { libc::gettid() as u32 }
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     0
 }
 
@@ -56,12 +63,34 @@ pub fn process_memory() -> Option<ProcessMemory> {
             page_faults: c.PageFaultCount,
         })
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        let status = proc_text::parse_status(&std::fs::read_to_string("/proc/self/status").ok()?)?;
+        // SAFETY: plain-old-data structure, all zeroes is a valid value.
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        // SAFETY: the call writes one rusage for the calling process.
+        let faults = if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } == 0 {
+            (usage.ru_minflt as u64).wrapping_add(usage.ru_majflt as u64)
+        } else {
+            0
+        };
+        Some(ProcessMemory {
+            working_set: status.rss,
+            peak_working_set: status.peak_rss,
+            // Windows' private bytes count what is committed whether resident
+            // or not: here the anonymous memory, resident or swapped out
+            private: status.anon + status.swap,
+            // (the counter wraps as Windows' does: readers take differences)
+            page_faults: faults as u32,
+        })
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     None
 }
 
 /// One thread of the process: its name (empty when it has none) and the
-/// processor cycles it has run.
+/// processor cycles it has run (nanoseconds on Linux, as
+/// `thread_cpu::cycles`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadTime {
     pub id: u32,
@@ -138,6 +167,69 @@ fn system_times() -> Option<(u64, u64)> {
     let ok = unsafe { GetSystemTimes(&mut idle, &mut kernel, &mut user) };
     // (kernel time includes idle time)
     (ok != 0).then(|| (t(idle), t(kernel) + t(user)))
+}
+
+/// Every thread of the process now, and the CPU time of the whole process
+/// (that of finished threads included), in nanoseconds; nothing where
+/// unknown. One thread's files gone between the listing and the read means
+/// it ended: it is left out.
+#[cfg(target_os = "linux")]
+fn read_threads() -> (Vec<ThreadTime>, u64) {
+    let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: the call writes one timespec; the process's clock always exists.
+    let process = if unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut t) } == 0 {
+        (t.tv_sec as u64).wrapping_mul(1_000_000_000).wrapping_add(t.tv_nsec as u64)
+    } else {
+        0
+    };
+    let mut out = Vec::new();
+    let Ok(dir) = std::fs::read_dir("/proc/self/task") else {
+        return (out, process);
+    };
+    let ns_per_tick = 1e9 / clock_ticks();
+    // a thread nobody named inherits the process's name: unnamed, as on
+    // Windows (the driver's threads, the system's)
+    let process_name = std::fs::read_to_string("/proc/self/comm").unwrap_or_default();
+    for entry in dir.flatten() {
+        let Some(id) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else {
+            continue;
+        };
+        let path = entry.path();
+        let Some(stat) = std::fs::read_to_string(path.join("stat"))
+            .ok()
+            .and_then(|t| proc_text::parse_stat(&t))
+        else {
+            continue;
+        };
+        // the scheduler's own count is in nanoseconds; the ticks of `stat`
+        // (10 ms) are too coarse for half a second, and only a fallback
+        let cycles = std::fs::read_to_string(path.join("schedstat"))
+            .ok()
+            .and_then(|t| proc_text::parse_schedstat(&t))
+            .unwrap_or(((stat.utime + stat.stime) as f64 * ns_per_tick) as u64);
+        let name = if stat.comm == process_name.trim_end() {
+            String::new()
+        } else {
+            proc_text::full_thread_name(&stat.comm).to_string()
+        };
+        out.push(ThreadTime { id, name, cycles });
+    }
+    (out, process)
+}
+
+/// The machine's (idle, total) times, in clock ticks.
+#[cfg(target_os = "linux")]
+fn system_times() -> Option<(u64, u64)> {
+    let text = std::fs::read_to_string("/proc/stat").ok()?;
+    proc_text::parse_proc_stat(&text).map(|(machine, _)| machine)
+}
+
+/// Clock ticks of a second, the unit of `/proc`'s CPU times.
+#[cfg(target_os = "linux")]
+fn clock_ticks() -> f64 {
+    // SAFETY: no pointer, no state changed.
+    let n = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    if n > 0 { n as f64 } else { 100.0 }
 }
 
 /// The group of a thread: its name without the number of its pool
@@ -234,7 +326,7 @@ const QUIET_PERCENT: f64 = 0.1;
 /// Starts the thread that writes `cpu summary` every 10 s; `main` is the
 /// main thread's id. Nothing where threads cannot be read.
 pub fn start(main: u32) {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     {
         let spawned = std::thread::Builder::new().name("aurora-probe".into()).spawn(move || {
             let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
@@ -269,7 +361,7 @@ pub fn start(main: u32) {
             log::warn!("cpu probe not started: {e}");
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     let _ = main;
 }
 
@@ -396,17 +488,40 @@ struct Sampler {
     children: HashMap<u32, u64>,
     #[cfg(windows)]
     cores: Option<CoreCounters>,
+    /// Each core's (idle, total) ticks at the previous sample.
+    #[cfg(target_os = "linux")]
+    cores: Vec<(u64, u64)>,
 }
 
 impl Sampler {
-    /// A snapshot from the second sample on.
+    /// The machine's (idle, total) times and each core's load since the
+    /// last call.
     #[cfg(windows)]
+    fn system_and_cores(&mut self) -> (Option<(u64, u64)>, Vec<f32>) {
+        let system = system_times();
+        (system, self.cores.get_or_insert_with(CoreCounters::open).read())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn system_and_cores(&mut self) -> (Option<(u64, u64)>, Vec<f32>) {
+        let Some((system, cores)) = std::fs::read_to_string("/proc/stat")
+            .ok()
+            .and_then(|t| proc_text::parse_proc_stat(&t))
+        else {
+            return (None, Vec::new());
+        };
+        let loads = proc_text::core_loads(&self.cores, &cores);
+        self.cores = cores;
+        (Some(system), loads)
+    }
+
+    /// A snapshot from the second sample on.
+    #[cfg(any(windows, target_os = "linux"))]
     fn sample(&mut self, main: u32, children: &[u32]) -> Option<CpuSnapshot> {
         let rate = aurora_render::thread_cpu::cycles_per_ms();
         let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
         let (threads, process) = read_threads();
-        let system = system_times();
-        let per_core = self.cores.get_or_insert_with(CoreCounters::open).read();
+        let (system, per_core) = self.system_and_cores();
         // each watched process with its descendants: (root, pid, time, memory)
         let trees = if children.is_empty() {
             HashMap::new()
@@ -475,7 +590,7 @@ impl Sampler {
         out
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     fn sample(&mut self, _main: u32, _children: &[u32]) -> Option<CpuSnapshot> {
         None
     }
@@ -500,6 +615,16 @@ fn group_priority(threads: &[ThreadTime], group: &str, main: u32) -> Option<i32>
         CloseHandle(handle);
         (p != THREAD_PRIORITY_ERROR_RETURN).then_some(p)
     }
+}
+
+/// The nice value of the first thread of a group (a pool's threads share
+/// theirs): -20 to 19, higher gives way (`scene::jobs` lowers its pool by
+/// 10).
+#[cfg(target_os = "linux")]
+fn group_priority(threads: &[ThreadTime], group: &str, main: u32) -> Option<i32> {
+    let t = threads.iter().find(|t| group_of(&t.name, t.id, main) == group)?;
+    let text = std::fs::read_to_string(format!("/proc/self/task/{}/stat", t.id)).ok()?;
+    proc_text::parse_stat(&text).map(|s| s.nice)
 }
 
 /// Each of `roots` that still runs, with every process it started
@@ -527,6 +652,22 @@ fn process_trees(roots: &[u32]) -> HashMap<u32, Vec<u32>> {
         }
         CloseHandle(snapshot);
     }
+    descendants(roots, &parents)
+}
+
+#[cfg(target_os = "linux")]
+fn process_trees(roots: &[u32]) -> HashMap<u32, Vec<u32>> {
+    let Ok(dir) = std::fs::read_dir("/proc") else {
+        return HashMap::new();
+    };
+    let parents: Vec<(u32, u32)> = dir
+        .flatten()
+        .filter_map(|e| e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()))
+        .filter_map(|pid| {
+            let stat = proc_text::parse_stat(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)?;
+            Some((pid, stat.ppid))
+        })
+        .collect();
     descendants(roots, &parents)
 }
 
@@ -579,6 +720,16 @@ fn child_times(pid: u32) -> Option<(u64, u64)> {
         CloseHandle(handle);
         ok.then(|| (t(kernel) + t(user), if mem { m.WorkingSetSize as u64 } else { 0 }))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn child_times(pid: u32) -> Option<(u64, u64)> {
+    let stat = proc_text::parse_stat(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)?;
+    // SAFETY: no pointer, no state changed.
+    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(0) as u64;
+    // ticks to the 100 ns of Windows' process times, which the sampler counts in
+    let time = ((stat.utime + stat.stime) as f64 * 1e7 / clock_ticks()) as u64;
+    Some((time, stat.rss_pages.saturating_mul(page)))
 }
 
 /// The system's per-core load counters (`\Processor(*)\% Processor Time`,
@@ -673,9 +824,217 @@ impl Drop for CoreCounters {
     }
 }
 
+/// The text of Linux's `/proc` files, parsed. Pure, so that the tests run
+/// on every system; nothing here trusts the text: a line missing or
+/// malformed gives None, never a panic.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub mod proc_text {
+    /// The fields of `/proc/<pid>/stat` (or of a thread's,
+    /// `/proc/<pid>/task/<tid>/stat`) the probes read.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Stat {
+        /// The name, cut to 15 bytes by the kernel.
+        pub comm: String,
+        pub ppid: u32,
+        /// CPU time in user and system mode, in clock ticks.
+        pub utime: u64,
+        pub stime: u64,
+        pub nice: i32,
+        pub rss_pages: u64,
+    }
+
+    /// `pid (comm) state ppid …`: the name may hold spaces and brackets,
+    /// so the fields are counted from the last `)`.
+    pub fn parse_stat(text: &str) -> Option<Stat> {
+        let open = text.find('(')?;
+        let close = text.rfind(')')?;
+        let comm = text.get(open + 1..close)?.to_string();
+        // fields from the 3rd (state) on: ppid is the 4th, utime the 14th,
+        // stime the 15th, nice the 19th, rss the 24th (proc_pid_stat(5))
+        let f: Vec<&str> = text.get(close + 1..)?.split_whitespace().collect();
+        let field = |n: usize| f.get(n - 3).copied();
+        Some(Stat {
+            comm,
+            ppid: field(4)?.parse().ok()?,
+            utime: field(14)?.parse().ok()?,
+            stime: field(15)?.parse().ok()?,
+            nice: field(19)?.parse().ok()?,
+            rss_pages: field(24)?.parse().ok()?,
+        })
+    }
+
+    /// `schedstat`: the time on the processor in nanoseconds, its first
+    /// field (absent from a kernel built without schedstats).
+    pub fn parse_schedstat(text: &str) -> Option<u64> {
+        text.split_whitespace().next()?.parse().ok()
+    }
+
+    /// The memory lines of `/proc/self/status`, in bytes.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    pub struct Status {
+        pub rss: u64,
+        pub peak_rss: u64,
+        pub anon: u64,
+        pub swap: u64,
+    }
+
+    /// `VmRSS`, `VmHWM`, `RssAnon` and `VmSwap` (in kB); None without
+    /// `VmRSS`. A kernel thread or an old kernel may lack the others: 0.
+    pub fn parse_status(text: &str) -> Option<Status> {
+        let mut out = Status::default();
+        let mut rss = None;
+        for line in text.lines() {
+            let Some((key, value)) = line.split_once(':') else {
+                continue;
+            };
+            let Some(kb) = value.split_whitespace().next().and_then(|v| v.parse::<u64>().ok()) else {
+                continue;
+            };
+            let bytes = kb.saturating_mul(1024);
+            match key {
+                "VmRSS" => rss = Some(bytes),
+                "VmHWM" => out.peak_rss = bytes,
+                "RssAnon" => out.anon = bytes,
+                "VmSwap" => out.swap = bytes,
+                _ => {}
+            }
+        }
+        out.rss = rss?;
+        out.peak_rss = out.peak_rss.max(out.rss);
+        Some(out)
+    }
+
+    /// `/proc/stat`: the whole machine's (idle, total) ticks, then each
+    /// core's in core order. Idle counts the wait for the disk (`iowait`),
+    /// as Windows' idle time does; `guest` is already inside `user`.
+    pub fn parse_proc_stat(text: &str) -> Option<((u64, u64), Vec<(u64, u64)>)> {
+        let times = |rest: &str| -> Option<(u64, u64)> {
+            let v: Vec<u64> = rest.split_whitespace().take(8).map(|x| x.parse().ok()).collect::<Option<_>>()?;
+            // user nice system idle iowait irq softirq steal
+            (v.len() >= 5).then(|| (v[3] + v[4], v.iter().sum()))
+        };
+        let mut machine = None;
+        let mut cores: Vec<(u32, (u64, u64))> = Vec::new();
+        for line in text.lines() {
+            let Some(rest) = line.strip_prefix("cpu") else {
+                continue;
+            };
+            if let Some(rest) = rest.strip_prefix(' ') {
+                machine = times(rest);
+            } else if let Some((n, rest)) = rest.split_once(' ')
+                && let Ok(n) = n.parse::<u32>()
+                && let Some(t) = times(rest)
+            {
+                cores.push((n, t));
+            }
+        }
+        cores.sort_by_key(|c| c.0);
+        Some((machine?, cores.into_iter().map(|c| c.1).collect()))
+    }
+
+    /// Each core's load (%) between two readings of `/proc/stat`; nothing
+    /// until there are two, or when the cores changed (one brought online).
+    pub fn core_loads(before: &[(u64, u64)], now: &[(u64, u64)]) -> Vec<f32> {
+        if before.len() != now.len() {
+            return Vec::new();
+        }
+        before
+            .iter()
+            .zip(now)
+            .map(|(&(idle0, total0), &(idle1, total1))| {
+                let total = total1.saturating_sub(total0);
+                if total == 0 {
+                    return 0.0;
+                }
+                ((1.0 - idle1.saturating_sub(idle0) as f64 / total as f64) * 100.0).clamp(0.0, 100.0) as f32
+            })
+            .collect()
+    }
+
+    /// The names the viewer gives its threads that the kernel cuts to 15
+    /// bytes, as the resource monitor knows them (`ui/monitor/threads.rs`).
+    const LONG_NAMES: &[&str] = &[
+        "aurora-render-finish",
+        "aurora-audio-out",
+        "aurora-audio-stream",
+        "aurora-inventory-cache",
+        "aurora-notification-history",
+        "aurora-transcript",
+    ];
+
+    /// A thread's whole name from the cut one, when the cut one starts
+    /// exactly one of [`LONG_NAMES`]. A pool's numbered name cut short
+    /// (`aurora-worker-1` for `aurora-worker-12`) keeps its group anyway.
+    pub fn full_thread_name(comm: &str) -> &str {
+        if comm.len() != 15 {
+            return comm;
+        }
+        let mut found = LONG_NAMES.iter().filter(|n| n.starts_with(comm));
+        match (found.next(), found.next()) {
+            (Some(n), None) => n,
+            _ => comm,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proc_stat_files_are_read_from_their_last_bracket() {
+        // captured on Linux 7.2 (a viewer thread, then a name with a space
+        // and a bracket in it)
+        let line = "4242 (aurora-jobs-3) S 4100 4100 4000 0 -1 4194368 120 0 0 0 731 52 0 0 30 10 61 0 9001 \
+                    10485760 2560 18446744073709551615 1 1 0 0 0 0 0 4096 0 0 0 0 -1 7 0 0 0 0 0\n";
+        let s = proc_text::parse_stat(line).expect("parsed");
+        assert_eq!(
+            (s.comm.as_str(), s.ppid, s.utime, s.stime, s.nice, s.rss_pages),
+            ("aurora-jobs-3", 4100, 731, 52, 10, 2560)
+        );
+        let odd = "17 (a) b (c) R 1 17 17 0 -1 0 0 0 0 0 5 6 0 0 20 -3 1 0 0 0 99 0";
+        let s = proc_text::parse_stat(odd).expect("parsed");
+        assert_eq!((s.comm.as_str(), s.utime, s.stime, s.nice, s.rss_pages), ("a) b (c", 5, 6, -3, 99));
+        assert_eq!(proc_text::parse_stat("17 (cut"), None);
+        assert_eq!(proc_text::parse_stat("17 (short) R 1 2"), None);
+        assert_eq!(proc_text::parse_schedstat("97843117 1593 2\n"), Some(97_843_117));
+        assert_eq!(proc_text::parse_schedstat(""), None);
+    }
+
+    #[test]
+    fn proc_status_gives_the_process_memory() {
+        let text = "Name:\taurora-viewer\nVmPeak:\t 9000000 kB\nVmHWM:\t  812340 kB\nVmRSS:\t  700000 kB\n\
+                    RssAnon:\t  500000 kB\nRssFile:\t  190000 kB\nVmSwap:\t    1000 kB\nThreads:\t112\n";
+        let s = proc_text::parse_status(text).expect("parsed");
+        assert_eq!(
+            (s.rss, s.peak_rss, s.anon, s.swap),
+            (700_000 << 10, 812_340 << 10, 500_000 << 10, 1000 << 10)
+        );
+        assert_eq!(proc_text::parse_status("Name:\tx\nThreads:\t1\n"), None);
+    }
+
+    #[test]
+    fn proc_stat_gives_each_core_and_the_machine() {
+        let text = "cpu  100 0 50 800 50 0 0 0 0 0\ncpu1 60 0 20 400 20 0 0 0 0 0\ncpu0 40 0 30 400 30 0 0 0 0 0\n\
+                    intr 1 2 3\nctxt 99\n";
+        let (machine, cores) = proc_text::parse_proc_stat(text).expect("parsed");
+        assert_eq!(machine, (850, 1000));
+        assert_eq!(cores, [(430, 500), (420, 500)]);
+        // core 0 then ran 30 ticks of 100, core 1 all of them
+        let later = [(500, 600), (420, 600)];
+        assert_eq!(proc_text::core_loads(&cores, &later), [30.0, 100.0]);
+        assert!(proc_text::core_loads(&[], &later).is_empty());
+        assert_eq!(proc_text::parse_proc_stat("intr 1\n"), None);
+    }
+
+    #[test]
+    fn thread_names_cut_by_the_kernel_are_made_whole() {
+        assert_eq!(proc_text::full_thread_name("aurora-render-f"), "aurora-render-finish");
+        assert_eq!(proc_text::full_thread_name("aurora-audio-ou"), "aurora-audio-out");
+        assert_eq!(proc_text::full_thread_name("aurora-audio-st"), "aurora-audio-stream");
+        assert_eq!(proc_text::full_thread_name("aurora-render"), "aurora-render");
+        assert_eq!(group_of(proc_text::full_thread_name("aurora-worker-1"), 9, 1), "aurora-worker");
+    }
 
     #[test]
     fn threads_are_grouped_by_pool() {
@@ -729,10 +1088,40 @@ mod tests {
         assert_eq!(trees[&10], [10, 11, 12, 13]);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
-    fn the_process_memory_is_known_on_windows() {
+    fn the_sampler_reads_the_threads_and_the_cores_on_linux() {
+        let main = current_thread_id();
+        let mut sampler = Sampler::default();
+        assert_eq!(sampler.sample(main, &[]), None, "the first sample is the baseline");
+        // a named thread busy for most of the period, and a child process
+        let busy = std::thread::Builder::new()
+            .name("probe-busy-1".into())
+            .spawn(|| {
+                let t0 = Instant::now();
+                while t0.elapsed() < Duration::from_millis(200) {
+                    std::hint::spin_loop();
+                }
+            })
+            .expect("spawned");
+        let mut child = std::process::Command::new("sleep").arg("5").spawn().expect("sleep runs");
+        std::thread::sleep(Duration::from_millis(100));
+        let snapshot = sampler.sample(main, &[child.id()]).expect("second sample");
+        busy.join().expect("joined");
+        let _ = child.kill();
+        let _ = child.wait();
+        let group = snapshot.groups.iter().find(|g| g.group == "probe-busy").expect("busy group listed");
+        assert!(group.percent > 20.0, "{group:?}");
+        assert!(snapshot.groups.iter().any(|g| g.group == "main"));
+        assert!(!snapshot.per_core.is_empty() && snapshot.machine.is_some());
+        assert_eq!(snapshot.children.len(), 1);
+        assert!(snapshot.children[0].working_set > 0);
+    }
+
+    #[test]
+    fn the_process_memory_is_known_on_windows_and_linux() {
         let m = process_memory();
-        if cfg!(windows) {
+        if cfg!(any(windows, target_os = "linux")) {
             let m = m.expect("read");
             assert!(m.working_set > 0 && m.private > 0 && m.peak_working_set >= m.working_set);
         }

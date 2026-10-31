@@ -647,6 +647,7 @@ dependencies = [
  "egui-wgpu",
  "glam 0.34.1",
  "intel_tex_2",
+ "libc",
  "log",
  "naga",
  "objc2-metal 0.3.2",
