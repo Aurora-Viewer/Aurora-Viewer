@@ -5673,7 +5673,8 @@ impl Backend {
             // an infinite reversed projection keeps its near plane there
             // (centred or not: tiled photos); a photo larger than the
             // viewfinder marches as much further
-            self.contact.write(&self.queue, t, light, fu.proj.w_axis.z, f.photo_scale);
+            self.contact
+                .write(&self.device, &self.queue, t, light, fu.proj.w_axis.z, f.photo_scale);
         }
         if let (true, Some(t)) = (self.targets.gtao_shown, &mut self.targets.gtao) {
             let prev = self.prev_view_proj.unwrap_or(unjittered_vp);

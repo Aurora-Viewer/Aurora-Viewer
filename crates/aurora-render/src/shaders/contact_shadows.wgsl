@@ -24,7 +24,7 @@
 //
 // How it works: each workgroup is one "wavefront" of WAVE_SIZE pixels lined
 // up along a ray towards the light's point on screen. Its threads read the
-// depth of their pixel and of the pixels up to the sample count further towards
+// depth of their pixel and of the pixels up to SAMPLE_COUNT further towards
 // the light, divide them by their distance to the light point (in that
 // space every ray of light is parallel), share them in workgroup memory,
 // and a pixel is in shadow when one of the depths before it along the ray
@@ -33,10 +33,10 @@
 // screen reads the far depth), the early-out of a whole wavefront through
 // workgroup memory (no wave intrinsics in WGSL), the shadow stored rather
 // than the light, no debug outputs, occluders taken as deep as the ray went
-// under them (up to `tuning.w`) rather than a shell (`depth_delta`), the
-// sample count a constant of the dispatch rather than of the shader (60, its
-// hard and fade-out samples in proportion, times the photo's scale: the
-// shadow keeps its length in the image), Bend's defaults otherwise
+// under them (up to `tuning.w`) rather than a shell (`depth_delta`), more
+// samples in a photo larger than the viewfinder (the four constants below
+// replaced in a pipeline of its own, `shader_source` in contact_shadows.rs:
+// the shadow keeps its length in the image), Bend's defaults otherwise
 // (BilinearSamplingOffsetMode and IgnoreEdgePixels off, no precision
 // offset).
 
@@ -44,11 +44,7 @@ struct Params {
     // x, y: the light on screen (pixels, y down), z: its depth, w: 1 when
     // the light is in front of the camera, -1 behind (LightCoordinate)
     light: vec4<f32>,
-    // xy: this dispatch's first wave, relative to the light (WaveOffset);
-    // z: the shadow samples per pixel, its length in pixels (SampleCount,
-    // 60 in the window, more in a photo larger than the viewfinder);
-    // w: the first of them that alone can shadow the pixel
-    // (HardShadowSamples, 4 for 60)
+    // xy: this dispatch's first wave, relative to the light (WaveOffset)
     wave_offset: vec4<i32>,
     // x surface thickness, y bilinear threshold, z shadow contrast, w the
     // occluders' depth in units of surface thickness per unit of reversed
@@ -62,16 +58,21 @@ struct Params {
 
 // Must match WAVE_SIZE in contact_shadows.rs.
 const WAVE_SIZE: i32 = 64;
-// The most shadow samples per pixel. Must match MAX_SAMPLE_COUNT in
-// contact_shadows.rs.
-const MAX_SAMPLE_COUNT: i32 = 480;
-// Depth reads per thread: the sample count / WAVE_SIZE + 2, at most.
-const MAX_READ_COUNT: i32 = MAX_SAMPLE_COUNT / WAVE_SIZE + 2;
+// Shadow samples per pixel: the length of the shadow in pixels. This line
+// and the next three are rewritten for a photo (`shader_source`): keep them
+// as they are.
+const SAMPLE_COUNT: i32 = 60;
+// The first samples: one of them alone can shadow the pixel.
+const HARD_SHADOW_SAMPLES: i32 = 4;
+// The last samples fade out, softening the end of the shadow.
+const FADE_OUT_SAMPLES: i32 = 8;
+// Depth reads per thread: SAMPLE_COUNT / WAVE_SIZE + 2.
+const READ_COUNT: i32 = 2;
 // Reversed depth: the far plane at 0, the near plane at 1.
 const FAR_DEPTH: f32 = 0.0;
 const NEAR_DEPTH: f32 = 1.0;
 
-var<workgroup> depth_data: array<f32, MAX_READ_COUNT * WAVE_SIZE>;
+var<workgroup> depth_data: array<f32, READ_COUNT * WAVE_SIZE>;
 // set by any thread whose pixel needs a shadow (zero at the start)
 var<workgroup> any_live: u32;
 
@@ -150,19 +151,12 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
     // ---- the depths along the ray
     let direction = -params.light.w;
     let z_sign = select(1.0, -1.0, NEAR_DEPTH > FAR_DEPTH);
-    let sample_count = clamp(params.wave_offset.z, 1, MAX_SAMPLE_COUNT);
-    let hard_samples = clamp(params.wave_offset.w, 1, sample_count);
-    let fade_samples = min(2 * hard_samples, sample_count - hard_samples);
-    let read_count = sample_count / WAVE_SIZE + 2;
-    // the pixel's own read (Bend's arrays at index 0); the others are only
-    // shared, written to workgroup memory as they are read (the original
-    // keeps them in registers until the early-out below: a loop of up to
-    // MAX_READ_COUNT would spill them)
-    var sampling_depth = 0.0;
-    var depth_thickness_scale = 0.0;
-    var sample_distance = 0.0;
+    var sampling_depth: array<f32, READ_COUNT>;
+    var shadowing_depth: array<f32, READ_COUNT>;
+    var depth_thickness_scale: array<f32, READ_COUNT>;
+    var sample_distance: array<f32, READ_COUNT>;
     let write_xy = vec2<i32>(floor(pixel_xy));
-    for (var i = 0; i < read_count; i++) {
+    for (var i = 0; i < READ_COUNT; i++) {
         // two reads per sample, blended on the minor axis of the ray unless
         // they straddle an edge; the major axis stays on pixel centres
         let read_xy = vec2<i32>(floor(pixel_xy));
@@ -173,67 +167,65 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
         let d0 = load_depth(read_xy);
         let d1 = load_depth(read_xy + offset_xy);
         // thresholds are fractions of what is left to the far plane
-        let thickness = abs(FAR_DEPTH - d0);
-        let use_point_filter = abs(d0 - d1) > thickness * params.tuning.y;
+        depth_thickness_scale[i] = abs(FAR_DEPTH - d0);
+        let use_point_filter = abs(d0 - d1) > depth_thickness_scale[i] * params.tuning.y;
         // the pixel starts at its own depth and casts from the further of
         // its two reads (BilinearSamplingOffsetMode off)
+        sampling_depth[i] = d0;
         let shadow_depth = d0 + abs(d0 - d1) * z_sign;
-        let shadowing_depth = select(shadow_depth, d0, use_point_filter);
-        let distance = pixel_distance + f32(WAVE_SIZE * i) * direction;
-        // ---- shared, made perspective-correct towards the light
-        var stored_depth = (shadowing_depth - params.light.z) / distance;
-        if (i == 0) {
-            sampling_depth = d0;
-            depth_thickness_scale = thickness;
-            sample_distance = distance;
-        } else {
-            // reads that overshoot the light point are ignored
-            stored_depth = select(1e10, stored_depth, distance > 0.0);
-        }
-        depth_data[i * WAVE_SIZE + i32(tid)] = stored_depth;
+        shadowing_depth[i] = select(shadow_depth, d0, use_point_filter);
+        sample_distance[i] = pixel_distance + f32(WAVE_SIZE * i) * direction;
         pixel_xy += xy_delta * direction;
     }
 
-    // ---- early out of a wavefront with nothing but sky (DepthBounds 0, 1);
-    // the uniform load is also the barrier after the shared depths
-    let skip_pixel = sampling_depth >= NEAR_DEPTH || sampling_depth <= FAR_DEPTH;
+    // ---- early out of a wavefront with nothing but sky (DepthBounds 0, 1)
+    let skip_pixel = sampling_depth[0] >= NEAR_DEPTH || sampling_depth[0] <= FAR_DEPTH;
     if (!skip_pixel) {
         any_live = 1u;
     }
     if (workgroupUniformLoad(&any_live) == 0u) {
         return;
     }
+
+    // ---- share the depths, made perspective-correct towards the light
+    for (var i = 0; i < READ_COUNT; i++) {
+        var stored_depth = (shadowing_depth[i] - params.light.z) / sample_distance[i];
+        if (i != 0) {
+            // reads that overshoot the light point are ignored
+            stored_depth = select(1e10, stored_depth, sample_distance[i] > 0.0);
+        }
+        depth_data[i * WAVE_SIZE + i32(tid)] = stored_depth;
+    }
+    workgroupBarrier();
     if (skip_pixel) {
         return;
     }
 
-    let start_depth = (sampling_depth - params.light.z) / sample_distance;
+    let start_depth = (sampling_depth[0] - params.light.z) / sample_distance[0];
     let sample_index = i32(tid) + 1;
     var shadow_value = vec4<f32>(1.0);
     var hard_shadow = 1.0;
     // the shadowing window, in units of SurfaceThickness of the depth left
     // to the far plane (at least one pixel near the light point)
-    let depth_scale = min(sample_distance + direction, 1.0 / params.tuning.x) * sample_distance / depth_thickness_scale;
+    let depth_scale = min(sample_distance[0] + direction, 1.0 / params.tuning.x) * sample_distance[0] / depth_thickness_scale[0];
     let window = ShadowWindow(
         start_depth * depth_scale,
         depth_scale,
         z_sign,
-        sample_distance,
+        sample_distance[0],
         direction,
-        max(1.0, params.tuning.w * sampling_depth),
+        max(1.0, params.tuning.w * sampling_depth[0]),
     );
     // sample i lies i + 1 pixels along the ray
-    for (var i = 0; i < hard_samples; i++) {
+    for (var i = 0; i < HARD_SHADOW_SAMPLES; i++) {
         hard_shadow = min(hard_shadow, depth_delta(window, depth_data[sample_index + i], i + 1));
     }
     // the bulk, in four groups averaged at the end
-    let fade_start = sample_count - fade_samples;
-    for (var i = hard_samples; i < fade_start; i++) {
+    for (var i = HARD_SHADOW_SAMPLES; i < SAMPLE_COUNT - FADE_OUT_SAMPLES; i++) {
         shadow_value[i & 3] = min(shadow_value[i & 3], depth_delta(window, depth_data[sample_index + i], i + 1));
     }
-    // the last ones fade out, softening the end of the shadow
-    for (var i = fade_start; i < sample_count; i++) {
-        let fade_out = f32(i + 1 - fade_start) / f32(fade_samples + 1) * 0.75;
+    for (var i = SAMPLE_COUNT - FADE_OUT_SAMPLES; i < SAMPLE_COUNT; i++) {
+        let fade_out = f32(i + 1 - (SAMPLE_COUNT - FADE_OUT_SAMPLES)) / f32(FADE_OUT_SAMPLES + 1) * 0.75;
         shadow_value[i & 3] = min(shadow_value[i & 3], depth_delta(window, depth_data[sample_index + i], i + 1) + fade_out);
     }
     // a sample on the reference depth is full shadow; the contrast widens it
