@@ -17178,6 +17178,9 @@ impl ApplicationHandler for App {
                 crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
                 if view.starts_with("folders") {
                     crate::world::outfit_folders::seed_demo(&mut self.world.inventory, self.world.agent_id);
+                    if view.starts_with("folders-many") {
+                        crate::world::outfit_folders::seed_demo_many(&mut self.world.inventory);
+                    }
                 }
                 if view.starts_with("layers") {
                     crate::world::appearance::seed_demo_layers(&mut self.world.inventory, self.world.agent_id);
@@ -17207,7 +17210,7 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
                 self.appearance_ui.open(
                     match view.as_str() {
-                        "outfits" | "multi-outfits" | "folders-outfits" | "wearables-outfits" | "broken" => 1,
+                        "outfits" | "multi-outfits" | "folders-outfits" | "folders-many-outfits" | "wearables-outfits" | "broken" => 1,
                         "worn" | "save" | "wearables" => 2,
                         _ => 0,
                     },
