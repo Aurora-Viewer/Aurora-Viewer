@@ -6477,7 +6477,10 @@ impl App {
     /// the FLY flag changes. No STOP with it: that flag brakes the avatar,
     /// and the fall must keep the flight's momentum, as in Firestorm.
     fn toggle_fly(&mut self) {
-        if !self.world.agent.flying && self.world.rlva.has("fly") {
+        // LLAgent::setFlying: no takeoff where LLAgent::canFly says no (the
+        // parcel's or the region's no-fly, RLVa @fly, seated); a flight
+        // already under way may go on and always land
+        if !self.world.agent.flying && !crate::autopilot::can_takeoff(&self.world) {
             return;
         }
         self.world.cancel_friend_join_flight();
@@ -6748,12 +6751,14 @@ impl App {
         if i.up {
             self.world.agent.record_jump_input(now);
         }
+        // agent_jump (indra/newview/llviewerinput.cpp) takes off through
+        // LLAgent::setFlying, which refuses where LLAgent::canFly says no
         if automatic_fly_held(&mut self.up_since, i.up, self.settings.automatic_fly, now)
             && self.movement_runtime.native_fly_allowed()
-            && !self.world.rlva.has("fly")
             && !self.world.agent.flying
             && !self.world.agent.seated
             && self.in_world()
+            && crate::autopilot::can_takeoff(&self.world)
         {
             self.world.agent.flying = true;
         }
