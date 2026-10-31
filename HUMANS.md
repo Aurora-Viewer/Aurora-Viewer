@@ -306,8 +306,11 @@ the agent's review), the PRs **waiting on the author** (dimmed, with why:
 `■ DRAFT`, `■ CI FAIL`, or `■ CHANGES ASKED` when a GitHub review requests
 changes or a comment opening with `## Maintainer review` or `## Changes
 requested` came after the last commit; a new commit brings the PR back to
-review) and the **recently merged** ones (how long ago: "04 min"), with for
-each PR its author and its added and deleted lines (**+120** in green,
+review) and the **recently merged** ones (how long ago: "04 min"). A PR with
+the `on-hold` label (put on hold at a human's request, AGENTS.md section 9)
+is left out of the panel, the banner and the notifications until the label
+is removed, unless it is in the merge queue. Each section shows, for
+each PR, its author and its added and deleted lines (**+120** in green,
 **-8** in red). Each state is a tag preceded by a square of its colour:
 `■ CI OK` (green), `■ CI FAIL clippy` (red), `■ CI RUN 4:00` (amber),
 `■ QUEUE #1 TESTS`, `■ AUTO-MERGE`, `■ REVIEW OK`, `■ REVIEW WARN` (to

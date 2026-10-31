@@ -13,6 +13,7 @@ query($o: String!, $r: String!) {
       nodes {
         number title url isDraft additions deletions reviewDecision
         author { login }
+        labels(first: 20) { nodes { name } }
         mergeQueueEntry { position state enqueuedAt }
         autoMergeRequest { enabledAt }
         commits(last: 1) { nodes { commit { committedDate statusCheckRollup {
@@ -32,6 +33,10 @@ query($o: String!, $r: String!) {
   }
 }
 '@
+
+# A PR a human put on hold carries this label (AGENTS.md section 9): the
+# tools hide it until the label is removed, unless it is in the merge queue.
+$OnHoldLabel = 'on-hold'
 
 # Shared with the background runspace: the last answer, its time, an error.
 $GitHub = [hashtable]::Synchronized(@{ Data = $null; Error = $null; Updated = $null; Version = 0; Force = $false; Stop = $false })
@@ -205,6 +210,7 @@ function Get-PrRows {
             QueueState = $queueState; Queue = $queue; QueueColor = $queueColor; QueueSince = $queueSince; QueuePosition = $position
             ReviewState = $reviewState; Verdict = $verdict; VerdictColor = $verdictColor; Status = $status
             Waiting = $waiting
+            OnHold = -not $queueState -and [bool]@($p.labels.nodes | Where-Object { $_.name -eq $OnHoldLabel }).Count
         }
     }
 }
@@ -235,7 +241,7 @@ function Get-PrSummary {
         if ($GitHub.Error) { return , @("GitHub: $($GitHub.Error)", 'warn') }
         return , @('GitHub…', 'muted')
     }
-    $rows = @(Get-PrRows)
+    $rows = @(Get-PrRows | Where-Object { -not $_.OnHold })
     if (-not $rows) { return , @('PR: none open', 'muted') }
     $counts = @(
         @(@($rows | Where-Object { -not $_.Waiting -and -not $_.QueueState }).Count, 'to review', 'violet_light'),
@@ -290,11 +296,14 @@ function Update-PrNotifications {
                 continue
             }
             $was = $before[$n]; $is = $now[$n]
+            # on hold: silent, but kept in the snapshot, so taking it off
+            # hold is not reported as a new PR
+            if ($is.OnHold) { continue }
             if ($is.CiState -eq 'Fail' -and $was.CiState -ne 'Fail') { Send-Toast "CI red on PR #$n" $is.Title }
             if ($was.QueueState -in 'Queued', 'Blocked' -and $is.QueueState -notin 'Queued', 'Blocked') { Send-Toast "PR #$n left the merge queue" $is.Title }
         }
         foreach ($n in $now.Keys) {
-            if (-not $before.ContainsKey($n)) { Send-Toast "New PR #$n ($($now[$n].Author))" $now[$n].Title }
+            if (-not $before.ContainsKey($n) -and -not $now[$n].OnHold) { Send-Toast "New PR #$n ($($now[$n].Author))" $now[$n].Title }
         }
         if ($mainState -in 'FAILURE', 'ERROR' -and $script:PrSeen.Main -notin 'FAILURE', 'ERROR') {
             Send-Toast 'main is red' 'CI failed on main: check the last merge.'
@@ -353,8 +362,9 @@ function Write-PanelLine([object[]]$Segments, [int]$Width, [switch]$Selected) {
 
 # The PRs in the panel's order: the merge queue (by position, auto-merge
 # requests after), then the others as GitHub sorts them (last updated first).
+# The PRs on hold are left out.
 function Get-PanelRows {
-    $rows = @(Get-PrRows)
+    $rows = @(Get-PrRows | Where-Object { -not $_.OnHold })
     foreach ($r in $rows) { $r | Add-Member -NotePropertyName InQueue -NotePropertyValue ([bool]$r.QueueState) -Force }
     $position = { if ($_.QueueState -eq 'Auto') { 1000 } else { $_.QueuePosition } }
     @($rows | Where-Object InQueue | Sort-Object $position) + @($rows | Where-Object { -not $_.InQueue -and -not $_.Waiting }) +
