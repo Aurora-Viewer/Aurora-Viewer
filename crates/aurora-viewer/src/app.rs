@@ -2198,10 +2198,24 @@ impl App {
             // the demo backpack comes back with its prims; other outfit
             // objects are invisible placeholders
             if let NetCommand::RezAttachments(items) = &cmd {
+                // the simulator refuses a coalesced object, with its own
+                // English alert (CantAttackMultipleObjOneSpot)
+                let (refused, items): (Vec<_>, Vec<_>) = items.iter().partition(|item| {
+                    self.world
+                        .inventory
+                        .items
+                        .get(&item.item_id)
+                        .is_some_and(crate::world::appearance::coalesced)
+                });
+                for _ in refused {
+                    self.world.apply(NetEvent::Alert {
+                        message: "You can't attach multiple objects to one spot.".into(),
+                    });
+                }
                 self.world.apply(NetEvent::ObjectUpdates {
                     handle: self.world.main_region.unwrap_or_default(),
                     objects: items
-                        .iter()
+                        .into_iter()
                         .flat_map(|item| crate::demo::worn::rez(item).unwrap_or_else(|| vec![crate::demo::outfit_attachment(item)]))
                         .collect(),
                 });

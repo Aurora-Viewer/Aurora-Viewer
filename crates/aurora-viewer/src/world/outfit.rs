@@ -146,7 +146,8 @@ impl Default for OutfitRestore {
 }
 
 /// Target ids of the object links in the COF (the links are sorted by name
-/// in the folder; duplicates and broken links are skipped). A link whose
+/// in the folder; duplicates, broken links and coalesced objects are
+/// skipped). A link whose
 /// target the inventory does not know yet counts when the link says object.
 pub fn cof_objects(inv: &Inventory, cof: Uuid) -> Vec<Uuid> {
     let Some(f) = inv.folders.get(&cof) else {
@@ -162,7 +163,8 @@ pub fn cof_objects(inv: &Inventory, cof: Uuid) -> Vec<Uuid> {
         }
         let target = inv.items.get(&link.asset_id);
         let is_object = match target {
-            Some(t) => t.asset_type == ASSET_OBJECT,
+            // a link left to a coalesced object is never worn (#1668)
+            Some(t) => t.asset_type == ASSET_OBJECT && !super::appearance::coalesced(t),
             None => matches!(link.inv_type, INV_OBJECT | INV_ATTACHMENT),
         };
         if is_object && !out.contains(&link.asset_id) {
