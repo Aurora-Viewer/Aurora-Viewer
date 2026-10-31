@@ -1856,7 +1856,23 @@ impl Camera {
             return flycam.up();
         }
         let direction = self.forward();
-        glam::Quat::from_axis_angle(direction, self.roll) * view_reference_up(direction)
+        let up = self
+            .seated_mouselook_up()
+            .filter(|up| direction.cross(*up).length_squared() > 1e-6)
+            .unwrap_or_else(|| view_reference_up(direction));
+        glam::Quat::from_axis_angle(direction, self.roll) * up
+    }
+
+    /// LLAgentCamera::updateCamera (indra/newview/llagentcamera.cpp,
+    /// originally LGPL 2.1): seated in mouselook, the camera's up is the
+    /// avatar's +Z, so the view banks and pitches with the vehicle; the
+    /// mode of a running transition is the one it leaves (mLastCameraMode).
+    fn seated_mouselook_up(&self) -> Option<Vec3> {
+        let mode = if self.anim.is_some() { self.last_mode } else { self.mode };
+        if mode != CameraMode::Mouselook {
+            return None;
+        }
+        self.avatar.rotation.map(|rotation| rotation * Vec3::Z)
     }
 
     /// LLAgent::getHeadRotation (indra/newview/llagent.cpp, LGPL 2.1): a
@@ -2660,6 +2676,45 @@ mod tests {
         // without the head offset of a standing avatar
         assert!((cam.position.distance(seated) - 3.09).abs() < 0.05, "{:?}", cam.position);
         assert!((cam.target.distance(seated) - 1.41).abs() < 0.05, "{:?}", cam.target);
+    }
+
+    /// LLAgentCamera::updateCamera: seated in mouselook the view's up is the
+    /// avatar's, so it banks and pitches with a vehicle; in third person and
+    /// standing it stays the world's.
+    #[test]
+    fn seated_mouselook_banks_with_the_vehicle() {
+        let mut world = hover_world(true);
+        let settings = CameraSettings::default();
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &settings);
+        let seat = world
+            .objects
+            .iter()
+            .find(|(_, o)| !o.is_avatar() && o.parent_id == 0)
+            .map(|(idx, _)| idx)
+            .unwrap();
+        let banked = Quat::from_rotation_z(0.6) * Quat::from_rotation_x(0.5);
+        world.objects.get_mut(seat).unwrap().rotation = banked;
+        world.objects.settle(seat);
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        assert!(camera.view_up().abs_diff_eq(Vec3::Z, 1e-5), "third person keeps the world's up");
+        camera.change_to_mouselook(&mut world.agent, &settings, false);
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let index = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let (_, rotation, _) = Scene::object_transform_unshifted(&world, index, Instant::now()).unwrap();
+        let up = rotation * Vec3::Z;
+        assert!(up.angle_between(Vec3::Z) > 0.3, "the seat is banked");
+        assert!(camera.view_up().abs_diff_eq(up, 1e-4), "{:?} vs {up:?}", camera.view_up());
+        // the vehicle turns and banks the other way: the view follows it
+        let turned = Quat::from_rotation_z(-0.9) * Quat::from_rotation_x(-0.4);
+        world.objects.get_mut(seat).unwrap().rotation = turned;
+        world.objects.settle(seat);
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let (_, rotation, _) = Scene::object_transform_unshifted(&world, index, Instant::now()).unwrap();
+        assert!(camera.view_up().abs_diff_eq(rotation * Vec3::Z, 1e-4));
+        camera.change_to_default(&mut world.agent, &settings);
+        camera.update(&mut world, &settings, &frame(10.0));
+        assert!(camera.view_up().abs_diff_eq(Vec3::Z, 1e-5), "back in third person");
     }
 
     #[test]
