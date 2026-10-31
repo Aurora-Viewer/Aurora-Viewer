@@ -34,7 +34,7 @@ const SETTLE: Duration = Duration::from_millis(250);
 /// 4x, 150 with MSAA 8x; with some room. The photo is tiled when the free
 /// memory cannot hold it.
 const TARGET_BYTES_PER_PIXEL: u64 = 16;
-const TARGET_BYTES_PER_SAMPLE: u64 = 18;
+const TARGET_BYTES_PER_SAMPLE: u64 = snapshot::quality::BYTES_PER_SAMPLE;
 /// Bytes a photo may take when the driver does not report its memory.
 const DEFAULT_TARGET_BYTES: u64 = 1_600_000_000;
 
@@ -183,6 +183,11 @@ pub(super) struct Snapshots {
     detail_wait: Option<Instant>,
     /// The wait is over: the next "Take" goes ahead.
     detail_ready: bool,
+    /// The photo quality's step for the video memory while it is on
+    /// (`snapshot::quality::plan`).
+    fit: Option<QualityFit>,
+    /// The photo quality was just lowered: the viewfinder says so once.
+    fit_note: bool,
     /// The world frozen by the photo mode (`SnapshotUi::freeze_world`):
     /// the instant and the shaders' clock it shows.
     world_freeze: Option<snapshot::Hold>,
@@ -228,6 +233,32 @@ pub(super) struct Snapshots {
     pub(super) isolate_hover: Option<Uuid>,
 }
 
+/// The photo quality's step for the video memory, and when it was read and
+/// changed (`App::photo_quality_fit`).
+struct QualityFit {
+    step: usize,
+    checked: Instant,
+    changed: Instant,
+}
+
+/// The video memory read again this often while the photo quality is on…
+const FIT_EVERY: Duration = Duration::from_secs(1);
+/// …but not this soon after a step, while the driver's figures follow
+/// the render targets just made or freed…
+const FIT_SETTLE: Duration = Duration::from_secs(2);
+/// …and a step up only this long after the last change.
+const FIT_RAISE_AFTER: Duration = Duration::from_secs(5);
+
+/// AURORA_DEMO_SNAPSHOT=quality-tight: the driver's budget as the photo
+/// quality reads it, `room` MB above what the viewer held when it came on,
+/// `later` MB from AURORA_DEMO_SNAPSHOT_FRAME (the budget shrinking or
+/// growing while the window stays open).
+struct DemoTight {
+    room: u64,
+    later: Option<u64>,
+    base: Option<u64>,
+}
+
 struct DemoPhoto {
     frame: u64,
     /// None: only the window.
@@ -250,6 +281,9 @@ struct DemoPhoto {
     prefs_dof: bool,
     /// AURORA_DEMO_SNAPSHOT=quality: the window with its photo quality on.
     quality: bool,
+    /// AURORA_DEMO_SNAPSHOT=quality-tight[:<MB>[:<MB later>]]: the same
+    /// on a card short of memory.
+    tight: Option<DemoTight>,
     /// The photo mode's look for the run (classic, panel, full…,
     /// viewfinder…), the setting itself left alone.
     style: Option<crate::settings::PhotoWindowStyle>,
@@ -341,6 +375,8 @@ impl Default for Snapshots {
             message_profile: false,
             detail_wait: None,
             detail_ready: false,
+            fit: None,
+            fit_note: false,
             world_freeze: None,
             free_flying: false,
             free_opened_controls: false,
@@ -1811,6 +1847,9 @@ LUT_3D_SIZE {n}
         }
         let window = renderer.size();
         let photo = self.photo_size(window);
+        let quality_reduced = self.settings.photo_held.is_some() && self.snapshots.fit.as_ref().is_some_and(|f| f.step > 0);
+        // (the panel shows it in its own line, the viewfinder once at the top)
+        let quality_note = std::mem::take(&mut self.snapshots.fit_note) && quality_reduced;
         let mut actions = self.snapshots.ui.dialogs(ctx, p, self.snapshots.confirm, self.snapshots.short);
         if self.viewfinder_on() {
             // the held photo under the overlay
@@ -1825,6 +1864,11 @@ LUT_3D_SIZE {n}
             if let Some((_, what)) = &busy {
                 let now = ctx.input(|i| i.time);
                 self.snapshots.vf.message = Some((what.clone(), false, now + 0.3));
+            } else if quality_note {
+                // the photo quality lowered for the video memory: said once
+                let now = ctx.input(|i| i.time);
+                let line = aurora_i18n::tr!("photo-quality-reduced").to_owned();
+                self.snapshots.vf.message = Some((line, false, now + 4.0));
             }
             let message = self.snapshots.message.clone();
             let last_saved = self.snapshots.last_saved.clone();
@@ -1851,6 +1895,7 @@ LUT_3D_SIZE {n}
                 hdr: self.settings.hdr_emissive,
                 env: env_view(&env_ui, &self.world.eep),
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
+                quality_reduced,
             };
             self.viewfinder_ui(ctx, p, projector, renderer, &view);
             drop(view);
@@ -1920,6 +1965,7 @@ LUT_3D_SIZE {n}
                 hdr: self.settings.hdr_emissive,
                 env: env_view(&self.env_ui, &self.world.eep),
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
+                quality_reduced,
             };
             let mut open = self.panels.snapshot;
             let classic = self.photo_style() == crate::settings::PhotoWindowStyle::Legacy;
@@ -2156,15 +2202,37 @@ LUT_3D_SIZE {n}
         let want = self.panels.snapshot && self.settings.snapshot.quality;
         match (&self.settings.photo_held, want) {
             (None, true) => {
-                let held = snapshot::quality::boost(&mut self.settings);
+                let mut held = snapshot::quality::boost(&mut self.settings);
+                // within what the video memory leaves, from the start: the
+                // whole boost is never drawn first on a card short of it
+                let plan = self.photo_quality_plan(renderer, held.user(), None, false);
+                if plan.reduced() {
+                    held.retarget(&mut self.settings, plan.values);
+                }
                 let samples = self.msaa_samples(renderer);
                 log::info!(
                     "photo quality: on (draw distance {} m, shadows {}, LOD {}, MSAA {samples}x{})",
                     self.settings.draw_distance,
                     self.settings.shadow_quality,
                     self.settings.lod_factor,
-                    if samples < 8 { ", the most this GPU supports" } else { "" }
+                    if plan.reduced() {
+                        ", lowered for the video memory"
+                    } else if samples < 8 {
+                        ", the most this GPU supports"
+                    } else {
+                        ""
+                    }
                 );
+                if plan.reduced() {
+                    self.photo_quality_log(renderer, &plan);
+                }
+                let now = Instant::now();
+                self.snapshots.fit = Some(QualityFit {
+                    step: plan.step,
+                    checked: now,
+                    changed: now,
+                });
+                self.snapshots.fit_note = plan.reduced();
                 self.settings.photo_held = Some(held);
                 self.snapshots.settings_changed = true;
             }
@@ -2174,6 +2242,7 @@ LUT_3D_SIZE {n}
                     held.restore(&mut self.settings);
                 }
                 log::info!("photo quality: off, the user's settings back");
+                self.snapshots.fit = None;
                 self.snapshots.settings_changed = true;
             }
             (Some(_), true) => {
@@ -2181,12 +2250,113 @@ LUT_3D_SIZE {n}
                 let mut held = self.settings.photo_held.take();
                 if let Some(h) = held.as_mut() {
                     h.sync(&self.settings);
+                    self.photo_quality_fit(renderer, h);
                 }
                 self.settings.photo_held = held;
             }
             (None, false) => {}
         }
-        self.scene.textures.full_resolution = self.settings.photo_held.is_some();
+        // the textures in view at full resolution only with the whole boost:
+        // lowered, the video memory has no room for them either
+        self.scene.textures.full_resolution = self.settings.photo_held.is_some() && self.snapshots.fit.as_ref().is_none_or(|f| f.step == 0);
+    }
+
+    /// The photo quality follows the video memory while it is on (the
+    /// budget the driver grants can shrink while the window stays open):
+    /// a step down as soon as the boost no longer fits, a step up once
+    /// there is room to spare (`snapshot::quality::choose`). Never while a
+    /// photo is drawn: its passes keep the targets they started with.
+    fn photo_quality_fit(&mut self, renderer: &Renderer, held: &mut snapshot::quality::Held) {
+        let now = Instant::now();
+        let Some(fit) = &self.snapshots.fit else {
+            return;
+        };
+        if self.snapshots.job.is_some() || now.duration_since(fit.checked) < FIT_EVERY || now.duration_since(fit.changed) < FIT_SETTLE {
+            return;
+        }
+        let (current, may_raise) = (fit.step, now.duration_since(fit.changed) >= FIT_RAISE_AFTER);
+        let plan = self.photo_quality_plan(renderer, held.user(), Some(current), may_raise);
+        let Some(fit) = &mut self.snapshots.fit else {
+            return;
+        };
+        fit.checked = now;
+        if plan.step == current {
+            return;
+        }
+        fit.step = plan.step;
+        fit.changed = now;
+        held.retarget(&mut self.settings, plan.values);
+        self.snapshots.settings_changed = true;
+        self.snapshots.fit_note |= plan.step > current;
+        log::info!(
+            "photo quality: {} (draw distance {} m, shadows {}, MSAA {}x)",
+            if plan.step > current { "lowered" } else { "raised" },
+            self.settings.draw_distance,
+            self.settings.shadow_quality,
+            self.msaa_samples(renderer),
+        );
+        self.photo_quality_log(renderer, &plan);
+    }
+
+    /// The step of the photo quality for the video memory of the moment.
+    fn photo_quality_plan(
+        &mut self,
+        renderer: &Renderer,
+        user: crate::graphics_presets::Values,
+        current: Option<usize>,
+        may_raise: bool,
+    ) -> snapshot::quality::Plan {
+        let (w, h) = renderer.size();
+        let screen = snapshot::quality::Screen {
+            pixels: u64::from(w) * u64::from(h),
+            max_samples: renderer.msaa_supported().iter().copied().filter(|&n| n <= 8).max().unwrap_or(1),
+        };
+        let memory = self.photo_memory(renderer);
+        snapshot::quality::plan(memory, user, screen, current, may_raise)
+    }
+
+    /// The video memory as the photo quality reads it: the driver's
+    /// figures (what it counts or the live resources, the larger) and the
+    /// textures' pressure; in demo with `quality-tight`, a budget of its own.
+    fn photo_memory(&mut self, renderer: &Renderer) -> Option<snapshot::quality::Memory> {
+        let video = renderer.video_memory.read(&renderer.device)?;
+        let mut memory = snapshot::quality::Memory {
+            budget: video.budget,
+            usage: video.usage.max(video.allocated),
+            pressure: self.scene.textures.stats.pressure,
+        };
+        let frame = self.frame_count;
+        if let Some(demo) = self.snapshots.demo.as_mut()
+            && let Some(tight) = demo.tight.as_mut()
+        {
+            let base = *tight.base.get_or_insert(memory.usage);
+            let room = if frame >= demo.frame {
+                tight.later.unwrap_or(tight.room)
+            } else {
+                tight.room
+            };
+            memory.budget = base + (room << 20);
+        }
+        Some(memory)
+    }
+
+    /// The step chosen, with the figures it was chosen on.
+    fn photo_quality_log(&mut self, renderer: &Renderer, plan: &snapshot::quality::Plan) {
+        let Some(m) = self.photo_memory(renderer) else {
+            return;
+        };
+        let live = renderer.video_memory.read(&renderer.device).map_or(0, |v| v.allocated);
+        log::info!(
+            "photo quality: step {} of {} for the video memory, about {} MB beyond the user's settings ({} MB taken, {} MB of resources, of a budget of {} MB, {} MB kept free, texture pressure {})",
+            plan.step,
+            plan.steps - 1,
+            plan.extra >> 20,
+            m.usage >> 20,
+            live >> 20,
+            m.budget >> 20,
+            snapshot::quality::margin(m) >> 20,
+            m.pressure,
+        );
     }
 
     /// AURORA_DEMO_SNAPSHOT=open | full[-<W>x<H> proportions, e.g. full-4x5] |
@@ -2208,6 +2378,15 @@ LUT_3D_SIZE {n}
                 .unwrap_or(700);
             let mut parts = mode.split(':');
             let kind = parts.next().unwrap_or("open");
+            // quality-tight[:<MB>[:<MB later>]], 900 MB by default
+            let tight = (kind == "quality-tight").then(|| {
+                let mut mb = mode.split(':').skip(1).map(|v| v.trim().parse::<u64>().ok());
+                DemoTight {
+                    room: mb.next().flatten().unwrap_or(900),
+                    later: mb.next().flatten(),
+                    base: None,
+                }
+            });
             // save-quality: the same with the photo quality on
             let save = kind.starts_with("save").then(|| {
                 let size = parts
@@ -2314,7 +2493,8 @@ LUT_3D_SIZE {n}
                 postcard: kind.starts_with("postcard"),
                 dof: kind.ends_with("dof") && kind != "prefs-dof",
                 prefs_dof: kind == "prefs-dof" || words.contains(&"prefsdof"),
-                quality: kind.ends_with("quality"),
+                quality: kind.ends_with("quality") || tight.is_some(),
+                tight,
                 light: kind == "light",
                 windlight: kind.starts_with("windlight").then(|| kind == "windlight-keep"),
                 style,

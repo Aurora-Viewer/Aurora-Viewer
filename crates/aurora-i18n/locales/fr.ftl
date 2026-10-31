@@ -6221,6 +6221,7 @@ photo-freeze = Figer l'image
 photo-quality = Qualité photo
 photo-quality-hint = Tout au mieux pour la photo : distance, détails, ombres, reflets, textures nettes, MSAA 8x et rendu au double. Vos réglages reviennent à la fermeture.
 photo-quality-loading = Chargement des détails… ({ $count } textures)
+photo-quality-reduced = Qualité réduite : mémoire vidéo presque pleine
 photo-freeze-hint = Prise tout de suite et gardée à l'écran jusqu'à l'enregistrement
 photo-freeze-world = Figer le monde
 photo-freeze-world-hint = Les avatars, les animations et tout ce qui bouge restent immobiles, la caméra reste libre.

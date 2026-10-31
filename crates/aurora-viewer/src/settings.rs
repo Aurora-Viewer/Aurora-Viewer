@@ -2640,7 +2640,12 @@ impl Settings {
 
     /// (resolution, distance) for the shadow quality step.
     pub fn shadow_params(&self) -> (u32, f32) {
-        match self.shadow_quality {
+        Self::shadow_params_of(self.shadow_quality)
+    }
+
+    /// (resolution, distance) of a shadow quality step.
+    pub fn shadow_params_of(quality: u8) -> (u32, f32) {
+        match quality {
             0 => (0, 0.0),
             1 => (1024, 48.0),
             2 => (2048, 96.0),

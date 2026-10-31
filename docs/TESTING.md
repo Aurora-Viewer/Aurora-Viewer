@@ -328,7 +328,7 @@ the background still applies outside screenshots.
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
 | `AURORA_CAPTURE_LAYOUT=1` | The screenshot reloads the saved layout (`ui_layout.ron`) |
-| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory, posted to the profile or sent by e-mail |
+| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory, posted to the profile or sent by e-mail, the photo quality on a card short of video memory |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 | `AURORA_DEMO_FREEZE_WORLD=1` | With `AURORA_DEMO_SNAPSHOT=viewfinder-frozen`: a prop derezzed and particles started while the world is frozen |
@@ -468,6 +468,28 @@ settings keep the user's own values (`draw_distance` unchanged in
 `photo quality: details loaded in … ms` and is drawn at twice its size
 (`photo: reduced to …`); `save-quality:<W>x<H>…` takes such a photo like
 `save`.
+`quality-tight[:<MB>[:<MB later>]]` opens it the same on a card short of
+video memory: the photo quality reads the driver's budget as what the
+viewer held when it came on plus `<MB>` (900 by default), then plus
+`<MB later>` from `AURORA_DEMO_SNAPSHOT_FRAME`. It lowers itself to fit,
+with a tenth of the budget (at least 512 MB) kept free and more as the
+textures are pressed: the MSAA first (8x, 4x, 2x, then the user's own
+anti-aliasing), then the draw distance (384, 256, 128 m, then the
+user's), then the shadows, then everything else, never below the user's
+own settings (`snapshot::quality::plan`), and the textures in view are no
+longer forced to full resolution. The panel shows "Quality reduced: video
+memory almost full" under the Resolution section (the viewfinder says it
+once at the top), and the log gives `photo quality: on (…, lowered for the video
+memory)` then `photo quality: step <k> of <n> for the video memory, about
+<x> MB beyond the user's settings (…)`. What the driver counts grows
+by more than the estimate when the render targets are rebuilt (the free
+room of the allocator's blocks), so the first step often settles one or
+two lower (the default: step 3 of 7, then 5). The window stays open and the
+memory is read again every second: `quality-tight:2000:100` starts with
+the whole boost and lowers it at frame 700 (`photo quality: lowered`),
+`quality-tight:100:3000` starts lowered and climbs back one step every
+five seconds (`photo quality: raised`), the line gone at step 0. With
+enough room (`quality-tight:5000`) nothing changes from `quality`.
 `light` opens the window with its quick light set: sunset, exposure 1.6,
 the clouds still and the worn lights off (the log gives `photo light:
 PhotoChoice { … time: Some(3) … }`); the saved `time_of_day` and
