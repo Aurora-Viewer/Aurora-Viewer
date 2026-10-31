@@ -112,8 +112,9 @@ jobs:
         if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || steps.cache.outputs.cache-hit != 'true')
         run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings -A dead-code
       # the whole workspace, on pull requests too: the Linux-only tests
-      # (links, notifications, the media cache…) cannot run on the agents'
-      # PCs. None needs a display or a session bus.
+      # (the secondlife:// handler, its hand-over over the session bus) and
+      # the Linux paths of the others cannot run on the agents' PCs. None
+      # needs a display or a session bus.
       - name: Tests
         if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
         run: cargo test --profile ci --workspace --locked
