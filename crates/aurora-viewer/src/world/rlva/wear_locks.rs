@@ -59,6 +59,8 @@ pub struct WearLocks {
     /// Wearable types worn by an item that cannot come off: add only.
     held_layers: HashSet<u8>,
     folders: Arc<FolderSets>,
+    /// The point each object was last seen attached to this session.
+    last_points: std::collections::HashMap<Uuid, u8>,
 }
 
 impl WearLocks {
@@ -98,11 +100,15 @@ impl WearLocks {
                 // item or its folder. Deliberate difference (human decision
                 // of 2026-10-31): without one, the point it was last worn
                 // on, where Wear sends it, instead of RLV_WEAR; Wear is then
-                // greyed when a locked attachment holds that point.
+                // greyed when a locked attachment holds that point. The
+                // inventory often has no saved point (flags 0): the point
+                // it was last seen on this session stands in.
                 let at = if point != 0 {
                     Some(point)
                 } else {
-                    super::collection::attachment_point(inv, item, self.legacy_naming).or(Some((it.flags & 0xff) as u8).filter(|p| *p != 0))
+                    super::collection::attachment_point(inv, item, self.legacy_naming)
+                        .or(Some((it.flags & 0xff) as u8).filter(|p| *p != 0))
+                        .or_else(|| self.last_points.get(&item).copied())
                 };
                 match at {
                     Some(p) if self.closed_points.contains(&p) => Wear::LOCKED,
@@ -142,6 +148,7 @@ impl World {
             active: true,
             legacy_naming: self.rlva.preferences.legacy_naming,
             attach_closed: self.rlva.rules_for("addattach", nil).any(|(_, option)| option.is_empty()),
+            last_points: self.rlva.last_points.snapshot(),
             ..Default::default()
         };
         let worn = self.rlva_worn_attachment_points();

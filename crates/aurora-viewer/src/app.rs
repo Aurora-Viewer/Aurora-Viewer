@@ -3257,6 +3257,13 @@ impl App {
                         crate::settings::account_dir(&l.agent_id).join(crate::world::hover_height::FILE),
                     )
                 };
+                self.world.rlva.last_points = if self.demo {
+                    Default::default()
+                } else {
+                    crate::world::rlva::last_points::LastPoints::load(
+                        crate::settings::account_dir(&l.agent_id).join(crate::world::rlva::last_points::FILE),
+                    )
+                };
                 self.world.favorites = if self.demo {
                     Default::default()
                 } else {

@@ -1011,6 +1011,10 @@ ordinary inventory model without restarting the naming workflow.
 and taking off, by item, point, layer and folder, for the inventory menus
 and buttons (`Facts::rlva`), which see the inventory but not the world; its
 per-folder lock sets are cached while the lock inputs stay equal.
+`rlva/last_points.rs` remembers, per account (`rlva_attach_points.json`,
+written in the background once changes settle), the point each object was
+last seen attached to, RLVa on or off: an inventory item often carries no
+saved point, and Wear needs one to know which lock it meets.
 `rlva/offers.rs` keeps native acceptance separate from shared-gift filing.
 UDP and HTTP inventory deliveries retain their transaction after applying
 their folder headers. Only the matching accepted gift may create its path,

@@ -1972,6 +1972,13 @@ fn rlva_wear_locks_follow_the_legacy_wear_masks() {
         "Wear goes to the chest it was last worn on"
     );
     assert_eq!(locks.wear(&w.inventory, id(47), 2), all, "Attach To another point still works");
+    w.rlva.last_points.note(id(46), 1, std::time::Instant::now());
+    assert_eq!(
+        w.rlva_wear_locks().wear(&w.inventory, id(46), 0),
+        locked,
+        "without a saved point, the point it was last seen on"
+    );
+    w.rlva.last_points = Default::default();
     assert!(locks.folder_allows(clothes, true) && locks.folder_allows(clothes, false));
 
     command(&mut w.rlva, A, "@clear");
