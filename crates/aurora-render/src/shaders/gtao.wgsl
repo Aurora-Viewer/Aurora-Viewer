@@ -222,31 +222,27 @@ fn depth0(px: vec2<i32>) -> f32 {
 }
 
 // XE_HILBERT_LEVEL 6: the index of a pixel along a Hilbert curve over a
-// 64 x 64 tile (HilbertIndex).
+// 64 x 64 tile (HilbertIndex). Written with `select` rather than XeGTAO's
+// nested `if` that swaps the coordinates: on Linux with the NVIDIA driver
+// (615) that form came out wrong for whole quadrants of the tile, the noise
+// turned into rows and the occlusion into crawling horizontal stripes.
 const HILBERT_WIDTH: u32 = 64u;
 
 fn hilbert_index(px: u32, py: u32) -> u32 {
     var x = px;
     var y = py;
     var index = 0u;
-    var level = HILBERT_WIDTH / 2u;
-    loop {
-        if (level == 0u) {
-            break;
-        }
-        let rx = select(0u, 1u, (x & level) > 0u);
-        let ry = select(0u, 1u, (y & level) > 0u);
+    for (var shift = 5u; shift < 6u; shift--) {
+        let level = 1u << shift;
+        let rx = (x >> shift) & 1u;
+        let ry = (y >> shift) & 1u;
         index += level * level * ((3u * rx) ^ ry);
-        if (ry == 0u) {
-            if (rx == 1u) {
-                x = HILBERT_WIDTH - 1u - x;
-                y = HILBERT_WIDTH - 1u - y;
-            }
-            let t = x;
-            x = y;
-            y = t;
-        }
-        level = level / 2u;
+        // the quadrant's frame: mirrored, then the axes swapped, when ry is 0
+        let flip = ry == 0u && rx == 1u;
+        let mx = select(x, HILBERT_WIDTH - 1u - x, flip);
+        let my = select(y, HILBERT_WIDTH - 1u - y, flip);
+        x = select(mx, my, ry == 0u);
+        y = select(my, mx, ry == 0u);
     }
     return index;
 }
