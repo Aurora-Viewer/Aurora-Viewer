@@ -194,21 +194,28 @@ pub(super) fn move_menu(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mu
         movable,
         |ui| {
             let parents: Vec<_> = ids.iter().filter_map(|id| inv.folders.get(id).map(|f| f.info.parent)).collect();
-            for (target, depth) in folders::targets(inv) {
-                let name = if depth == 0 {
-                    aurora_i18n::tr!("common-my-outfits").to_string()
-                } else {
-                    inv.folders.get(&target).map(|f| f.info.name.clone()).unwrap_or_default()
-                };
-                let label = format!("{}{name}", "   ".repeat(depth));
-                let here = parents.iter().all(|p| *p == target);
-                let allowed = ids.iter().all(|id| folders::can_move(inv, *id, target));
-                if menu::check(ui, p, "folder-filled", &label, here, allowed && !here)
-                    && let Ok(change) = folders::move_into(inv, ids, target)
-                {
-                    actions.push(Action::Folders(change));
-                }
-            }
+            // Keep the popup within the viewport, leaving its New folder action
+            // outside the scrolling list even for wardrobes with many groups.
+            egui::ScrollArea::vertical()
+                .id_salt("outfit_move_targets")
+                .max_height((ui.ctx().content_rect().height() * 0.6).min(440.0))
+                .show(ui, |ui| {
+                    for (target, depth) in folders::targets(inv) {
+                        let name = if depth == 0 {
+                            aurora_i18n::tr!("common-my-outfits").to_string()
+                        } else {
+                            inv.folders.get(&target).map(|f| f.info.name.clone()).unwrap_or_default()
+                        };
+                        let label = format!("{}{name}", "   ".repeat(depth));
+                        let here = parents.iter().all(|p| *p == target);
+                        let allowed = ids.iter().all(|id| folders::can_move(inv, *id, target));
+                        if menu::check(ui, p, "folder-filled", &label, here, allowed && !here)
+                            && let Ok(change) = folders::move_into(inv, ids, target)
+                        {
+                            actions.push(Action::Folders(change));
+                        }
+                    }
+                });
             menu::separator(ui, p);
             if let Some(my) = folders::my_outfits(inv)
                 && menu::item(ui, p, "folder-filled", aurora_i18n::tr!("ui-appearance-folders-new"))
@@ -293,5 +300,98 @@ pub(super) fn dialogs(ctx: &egui::Context, p: &Palette, world: &World, st: &mut 
     });
     if done || response.should_close() {
         st.folders.dialog = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::widgets::elide_tests::{Frames, painted};
+
+    #[test]
+    fn long_move_menu_scrolls_to_last_folder_and_keeps_new_folder_visible() {
+        for zoom in [1.0, 2.0] {
+            let mut inv = Inventory::default();
+            crate::world::appearance::seed_demo(&mut inv, Uuid::from_u128(1));
+            folders::seed_demo(&mut inv, Uuid::from_u128(1));
+            folders::seed_demo_many(&mut inv);
+            let mut frames = Frames::new();
+            frames.ctx.set_zoom_factor(zoom);
+            let p = crate::theme::Theme::default().palette();
+            let mut st = AppearanceUi::default();
+            let mut actions = Vec::new();
+            let mut open = true;
+            {
+                let mut draw = |ui: &mut egui::Ui| {
+                    let screen = ui.ctx().content_rect();
+                    menu::popup_at(
+                        ui.ctx(),
+                        egui::Id::unique("outfit_move_test"),
+                        egui::pos2(80.0, screen.bottom() - 60.0),
+                        &mut open,
+                        &p,
+                        |ui| move_menu(ui, &p, &inv, &mut st, &[Uuid::from_u128(744)], &mut actions),
+                    );
+                };
+                let mut texts = Vec::new();
+                for _ in 0..4 {
+                    texts = frames.run(Vec::new(), &mut draw);
+                }
+                let heading = painted(&texts, aurora_i18n::tr!("ui-appearance-folders-move")).rect.center();
+                texts = frames.hover(heading, &mut draw);
+                let screen = frames.ctx.content_rect();
+                let new_folder = painted(&texts, aurora_i18n::tr!("ui-appearance-folders-new")).rect;
+                assert!(screen.contains_rect(new_folder), "New folder stays on screen at zoom {zoom}");
+                assert!(!texts.iter().any(|t| t.source.trim() == "Style 319"));
+                let top = painted(&texts, aurora_i18n::tr!("common-my-outfits")).rect.center();
+                let pointer = top + Vec2::new(30.0, 70.0);
+                frames.run(
+                    vec![
+                        egui::Event::PointerMoved(pointer),
+                        egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: Vec2::new(0.0, -30_000.0),
+                            phase: egui::TouchPhase::Move,
+                            source: egui::MouseWheelSource::Unknown,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    &mut draw,
+                );
+                for _ in 0..60 {
+                    texts = frames.run(Vec::new(), &mut draw);
+                }
+                let last = texts
+                    .iter()
+                    .find(|t| t.source.trim() == "Style 319")
+                    .expect("last target after scrolling");
+                assert!(screen.contains_rect(last.rect));
+                assert_eq!(painted(&texts, aurora_i18n::tr!("ui-appearance-folders-new")).rect, new_folder);
+                let pos = last.rect.center();
+                for pressed in [true, false] {
+                    frames.run(
+                        vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ],
+                        &mut draw,
+                    );
+                }
+            }
+            let [Action::Folders(change)] = actions.as_slice() else {
+                panic!("one folder move")
+            };
+            assert!(change.move_only());
+            assert!(matches!(
+                change.operations.as_slice(),
+                [aurora_net::inventory::operations::Operation::Patch { id, folder: true, body }]
+                    if *id == Uuid::from_u128(744) && body["parent_id"].as_uuid() == Uuid::from_u128(1_485_319)
+            ));
+        }
     }
 }

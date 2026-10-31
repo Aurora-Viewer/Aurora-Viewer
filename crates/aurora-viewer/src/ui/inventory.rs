@@ -1113,9 +1113,13 @@ fn folder_row(
     });
 }
 
-/// Personal folders can move within inventory or to Marketplace listings.
+/// Personal folders and saved outfits use the shared move validation on drop.
 fn folder_draggable(inv: &Inventory, id: Uuid, prefs: &InventoryPreferences) -> bool {
-    rules::movable(inv, id, &prefs.protected) && inv.folders.get(&id).is_some_and(|f| f.info.type_default == -1)
+    rules::movable(inv, id, &prefs.protected)
+        && inv
+            .folders
+            .get(&id)
+            .is_some_and(|f| f.info.type_default == -1 || crate::world::outfit_folders::in_my_outfits(inv, id))
 }
 
 /// What a folder's row does, whichever window draws it: drag and drop (onto
