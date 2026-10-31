@@ -1147,6 +1147,23 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         let detail=clamp(length(frame.water_normal.xy)*0.35,0.5,1.5);
         n=normalize(vec3<f32>((n.xy*0.18-micro.xy*detail)*furrow,1.0)+water_fx_normal(in.world_pos.xy,in.level,wake.xy));
     } else { n=water_unit(n+water_fx_normal(in.world_pos.xy,in.level,wake.xy)); }
+    // waterF.glsl (enhanced water off): the reflection follows the waves
+    // scaled by the EEP normal scale (wave_ibl), the sun glint the unscaled
+    // waves flattened with distance. With a normal scale of 0, wave_ibl is
+    // normalize(0), NaN on the GPU: the probe lookup gives nothing and the
+    // final max(color, 0) leaves the water without any reflection, only its
+    // refraction and fog. Regions made for it rely on that (a flat, dark
+    // blue sea), so the reflection is dropped the same way.
+    let legacy_water = !water_fx_on(1u);
+    var wave_ibl = wavef * frame.water_normal.xyz;
+    wave_ibl.z *= 2.0;
+    let legacy_reflects = length(wave_ibl) > 1e-6;
+    var legacy_glint_n = n;
+    if (legacy_water) {
+        let vdu = clamp(-view_vec.z * 2.0, 0.0, 1.0);
+        let up_bias = max(dist, 32.0) / 32.0 * (1.0 - vdu);
+        legacy_glint_n = water_unit(water_unit(wavef) + vec3<f32>(0.0, 0.0, up_bias));
+    }
 
     // Below water, transmit the world through the moving Snell window and
     // reflect the submerged scene at grazing angles. The sky itself is unchanged.
@@ -1206,7 +1223,8 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     } else { fb = fb * wf.transmission + wf.color; }
 
     // reflection: planar texture, screen-space rays, or the sky
-    let r = reflect(view_vec, normalize(mix(vec3<f32>(0.0, 0.0, 1.0), n, 0.6)));
+    var r = reflect(view_vec, normalize(mix(vec3<f32>(0.0, 0.0, 1.0), n, 0.6)));
+    if (legacy_water && legacy_reflects) { r = reflect(view_vec, normalize(wave_ibl)); }
     var radiance = sky_color(vec3<f32>(r.x, r.y, abs(r.z)));
     if (probes_on()) {
         // without a planar reflection the water reflects its probes
@@ -1227,6 +1245,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         radiance = mix(radiance, hit.rgb, hit.a);
     }
     if (!water_fx_on(512u)) { radiance *= df2.y; }
+    if (legacy_water && !legacy_reflects) { radiance = vec3<f32>(0.0); }
 
     // sun glint (punctual light, roughness = blur multiplier)
     let l = normalize(frame.sun_dir.xyz);
@@ -1235,9 +1254,10 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     var rough=clamp(frame.water_params.w,0.02,1.0);
     if(water_fx_on(1u)){rough=clamp(rough*0.65+footprint*0.06,0.035,0.25);}
     rough=mix(rough,0.055,smoothstep(0.004,0.045,-wake.z)*0.65);
-    let nh = max(dot(n, h), 0.0);
-    let nl = max(dot(n, l), 0.0);
-    let spec = d_ggx(nh, rough * rough) * v_smith(max(dot(n, vv), 1e-3), nl, rough * rough) * nl;
+    let gn = select(n, legacy_glint_n, legacy_water);
+    let nh = max(dot(gn, h), 0.0);
+    let nl = max(dot(gn, l), 0.0);
+    let spec = d_ggx(nh, rough * rough) * v_smith(max(dot(gn, vv), 1e-3), nl, rough * rough) * nl;
     let shadow = shadow_factor(in.world_pos, vec3<f32>(0.0, 0.0, 1.0), dist);
     // a sky with a probe ambiance: waterF.glsl's sunlit_linear (env.rs keeps
     // it x 3 for the surfaces)
