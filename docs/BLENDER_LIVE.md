@@ -607,7 +607,8 @@ ignored, as in Blender. Alpha is opaque or blended.
 Use the mesh's active UV map, flat Image Texture nodes, Repeat extension and
 Linear interpolation. A Point Mapping node supports translation, scale and Z
 rotation. Metallic and roughness maps must share the same UV transform. Image
-color spaces are sRGB, Linear Rec.709/Linear or Non-Color. Each source image is
+color spaces are sRGB, Linear Rec.709/Linear or Non-Color/Raw (Blender 3.x
+names included); float images are read in any space. Each source image is
 limited to 16 megapixels and downsampled to at most 1024 pixels on its longest
 edge. At most 16 images and 16 MiB of RGBA pixels travel in one snapshot.
 Unchanged images reuse GPU slots; old materials/images remain until their last
@@ -616,8 +617,10 @@ on the socket worker too; a temporary staging shortage retries automatically.
 
 Bake procedural shaders, material groups and advanced Principled effects
 (coat, transmission, subsurface, sheen) to compatible images first. SL's PBR
-model does not represent every Blender shader input. The plug-in reports
-unsupported connected inputs and keeps the last valid preview. Reload an
+model does not represent every Blender shader input. When a material cannot be
+captured, the live preview keeps syncing the mesh in the material's viewport
+display color and the object's warning icon gives the reason; **Import / LOD**
+still rejects the material until it is fixed. Reload an
 externally edited image in Blender; **Update now** also refreshes image caches.
 
 ## Rig and coordinate conventions

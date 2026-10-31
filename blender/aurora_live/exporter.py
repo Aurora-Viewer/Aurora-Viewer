@@ -385,7 +385,7 @@ def static_roots(objects, overrides=None):
     return roots
 
 
-def material_snapshot(objects, previous, source_ids, revision, errors):
+def material_snapshot(objects, previous, source_ids, revision, errors, warnings=None):
     """Reuse detached geometry when only materials or texture pixels changed."""
     if not previous or len(previous["meshes"]) != len(objects):
         return None
@@ -394,11 +394,12 @@ def material_snapshot(objects, previous, source_ids, revision, errors):
         return None
     if any(len(mesh.get("_slots", [])) != len(mesh["faces"]) for mesh in by_id.values()):
         return None
-    capture, meshes = Capture(), []
+    capture, meshes = Capture(lenient=warnings is not None), []
     for source in objects:
         before = len(capture.images), dict(capture.ids), capture.bytes
         mesh = by_id[source_ids[source.as_pointer()]]
         faces = []
+        capture.warnings = []
         try:
             for slot, face in zip(mesh["_slots"], mesh["faces"]):
                 color, material = capture.material(source, slot)
@@ -408,6 +409,8 @@ def material_snapshot(objects, previous, source_ids, revision, errors):
             capture.ids, capture.bytes = before[1:]
             errors[source.as_pointer()] = str(error) or type(error).__name__
             continue
+        if capture.warnings:
+            warnings[source.as_pointer()] = capture.warnings[0]
         meshes.append(dict(mesh, faces=faces))
     _valid_links(meshes)
     return dict(previous, revision=revision, meshes=meshes, images=capture.images)
@@ -420,8 +423,13 @@ def _valid_links(meshes):
             mesh.pop("link", None)
 
 
-def snapshot(objects, supported, revision, forward="AUTO", rest_axes=None, source_ids=None, link_roots=None, errors=None, packed=False):
-    """Capture strictly for imports, or isolate live source failures in errors."""
+def snapshot(objects, supported, revision, forward="AUTO", rest_axes=None, source_ids=None, link_roots=None, errors=None, packed=False,
+             warnings=None):
+    """Capture strictly for imports, or isolate live source failures in errors.
+
+    With warnings, a material that cannot be captured falls back to its plain
+    colour and the source keeps syncing; the reason is kept in warnings.
+    """
     valid = []
     for source in objects:
         try:
@@ -432,7 +440,7 @@ def snapshot(objects, supported, revision, forward="AUTO", rest_axes=None, sourc
     objects = valid
     roots = static_roots(objects, link_roots)
     meshes = []
-    capture = Capture()
+    capture = Capture(lenient=warnings is not None)
     corners = 0
     for source in objects:
         try:
@@ -443,6 +451,7 @@ def snapshot(objects, supported, revision, forward="AUTO", rest_axes=None, sourc
             # A failed source may already have stored images. Roll back its
             # budget and IDs so it cannot poison later, otherwise valid sources.
             image_count, image_ids, image_bytes = len(capture.images), dict(capture.ids), capture.bytes
+            capture.warnings = []
             try:
                 mesh = (_mesh(source, supported, forward, rest_axes or {}, capture, packed=True) if packed else
                         _mesh(source, supported, forward, rest_axes or {}, capture))
@@ -468,6 +477,8 @@ def snapshot(objects, supported, revision, forward="AUTO", rest_axes=None, sourc
                 capture.ids, capture.bytes = image_ids, image_bytes
                 errors[source.as_pointer()] = str(error) or type(error).__name__
                 continue
+            if capture.warnings:
+                warnings[source.as_pointer()] = capture.warnings[0]
             meshes.append(mesh)
             corners += count
     # Failed roots must not leave dangling links that reject the whole frame.
