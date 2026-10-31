@@ -1892,6 +1892,10 @@ report an editable object; sale and permission controls remain disabled.
 Denied rights leave the object movable but its surfaces/properties read-only.
 The variant `mode,object:<local id>[,part,dx,dy]` selects an object of the
 demo without fixed click coordinates.
+`megaprim,object:118` makes the selected object a 128.125 × 96.25 × 0.5 m
+platform below the plaza. With `AURORA_DEMO_BUILD_TAB=object`, verify that
+opening Edit retains these dimensions in both construction presentations.
+Moving or rotating must retain its size; deliberate size edits keep the normal limits.
 
 **Seated object editing:** combine `AURORA_DEMO_CAMERA=sit`,
 `AURORA_DEMO_WORN=1` and `AURORA_DEMO_BUILD=linked-click-ready,object:950` (whole seat) or
