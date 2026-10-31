@@ -18598,7 +18598,7 @@ fn capture_files(path: &std::path::Path, frames: &str) -> Vec<(u64, std::path::P
 
 #[cfg(test)]
 mod tests {
-    use super::{RightGesture, capture_files, frame_cap};
+    use super::{RightGesture, UiActions, capture_files, frame_cap};
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
 
@@ -18769,5 +18769,33 @@ mod tests {
             capture_files(Path::new("c/a.png"), "2560, 2500"),
             vec![(2500, PathBuf::from("c/a-2500.png")), (2560, PathBuf::from("c/a-2560.png"))]
         );
+    }
+
+    #[test]
+    fn ui_actions_of_a_discarded_pass_survive_the_next_one() {
+        let a = uuid::Uuid::from_u128(1);
+        let b = uuid::Uuid::from_u128(2);
+        // the first pass took the click, the second got no input
+        let mut actions = UiActions {
+            settings_changed: true,
+            landmark: Some(a),
+            gestures: vec![a],
+            ..Default::default()
+        };
+        actions.merge(UiActions::default());
+        assert!(actions.settings_changed);
+        assert_eq!(actions.landmark, Some(a));
+        assert_eq!(actions.gestures, vec![a]);
+        // a second pass that acts too keeps the first one-off action and adds
+        // to the lists
+        actions.merge(UiActions {
+            landmark: Some(b),
+            gestures: vec![b],
+            font_changed: true,
+            ..Default::default()
+        });
+        assert_eq!(actions.landmark, Some(a));
+        assert_eq!(actions.gestures, vec![a, b]);
+        assert!(actions.settings_changed && actions.font_changed);
     }
 }
