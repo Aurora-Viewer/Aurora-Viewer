@@ -1326,7 +1326,12 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(camera_underwater()) {
         let fog=water_fog_view(rel,frame.water_normal.w);
         color=color*fog.transmission+fog.color;
-    } else {color=apply_air_fog(color,in.world_pos);}
+    }
+    // No air haze on the surface, enhanced water or not: waterF.glsl leaves
+    // it out ("color = mix(color, additive * water_haze_scale, (1 - atten))"
+    // is commented out) and the water is drawn after the deferred haze.
+    // Under a hazy, bright classic sky the haze colour is near white, and a
+    // distant sea took it whole.
     return vec4<f32>(color, 1.0);
 }
 
