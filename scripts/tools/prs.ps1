@@ -28,6 +28,7 @@ query($o: String!, $r: String!) {
     merged: pullRequests(states: MERGED, first: 5, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes { number title url mergedAt additions deletions author { login } }
     }
+    latestRelease { tagName releaseAssets(first: 30) { nodes { name downloadCount } } }
   }
 }
 '@
@@ -208,6 +209,22 @@ function Get-PrRows {
     }
 }
 
+# Downloads of the Windows zip of the latest stable release (GitHub's
+# latestRelease skips pre-releases, so the nightly betas never count), and
+# how many since the tools opened: @{ Tag; Count; Since } or $null.
+$DownloadsAtStart = $null
+function Get-WindowsDownloads {
+    $release = if ($GitHub.Data) { $GitHub.Data.data.repository.latestRelease }
+    if (-not $release) { return $null }
+    $asset = $release.releaseAssets.nodes | Where-Object { $_.name -match '-windows-x64\.zip$' } | Select-Object -First 1
+    if (-not $asset) { return $null }
+    $count = [int]$asset.downloadCount
+    if (-not $script:DownloadsAtStart -or $script:DownloadsAtStart.Tag -ne $release.tagName) {
+        $script:DownloadsAtStart = @{ Tag = $release.tagName; Count = $count }
+    }
+    [pscustomobject]@{ Tag = $release.tagName; Count = $count; Since = $count - $script:DownloadsAtStart.Count }
+}
+
 # The square drawn before a count or a PR number, in the status colour.
 $StatusMark = '■'
 
@@ -234,6 +251,8 @@ function Get-PrSummary {
         $segments += , @("  $StatusMark ", $c[2])
         $segments += , @("$($c[0]) $($c[1])", 'ink')
     }
+    $dl = Get-WindowsDownloads
+    if ($dl) { $segments += , @("   ↓ $($dl.Count.ToString('N0')) $($dl.Tag)", 'teal') }
     $segments
 }
 
@@ -393,7 +412,15 @@ function Show-PrPanel {
             # switch skips a null value entirely, default included: test it first
             $main = if (-not $mainState) { '…', 'muted' } else { switch ($mainState) { 'SUCCESS' { 'CI OK', 'success' } { $_ -in 'FAILURE', 'ERROR' } { 'CI FAIL', 'danger' } { $_ -in 'PENDING', 'EXPECTED' } { 'CI RUN', 'amber' } default { '?', 'muted' } } }
             $fresh = if ($GitHub.Updated) { Format-Ago $GitHub.Updated } else { 'loading…' }
-            Write-PanelLine @(@(' Aurora · PR', 'violet_light'), @('   main  ', 'muted'), @("$StatusMark $($main[0])", $main[1]), @("   updated $fresh", 'muted_dim'), @("   $(Get-Date -Format 'HH:mm:ss')", 'muted_dim')) $w
+            $header = @(@(' Aurora · PR', 'violet_light'), @('   main  ', 'muted'), @("$StatusMark $($main[0])", $main[1]))
+            # the Windows downloads of the latest stable release, live
+            $dl = Get-WindowsDownloads
+            if ($dl) {
+                $header += , @("   ↓ $($dl.Count.ToString('N0')) Windows $($dl.Tag)", 'teal')
+                if ($dl.Since -gt 0) { $header += , @(" (+$($dl.Since))", 'success') }
+            }
+            $header += @(@("   updated $fresh", 'muted_dim'), @("   $(Get-Date -Format 'HH:mm:ss')", 'muted_dim'))
+            Write-PanelLine $header $w
             if ($GitHub.Error) { Write-PanelLine @(@(" GitHub: $($GitHub.Error)", 'warn')) $w }
             Write-PanelLine @(, @((' ' + ('─' * ($w - 2))), 'muted_dim')) $w
 
