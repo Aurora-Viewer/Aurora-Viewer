@@ -449,7 +449,13 @@ Labels (created by `scripts/setup-labels.ps1`):
   `network`, `audio-voice`, `ui`, `chat` (chat window), `nameplate` (name
   tags above avatars), `contact-group` (contact groups / sets), `inventory`,
   `build-tools` (in-world building and editing), `tooling` (repository, CI,
-  scripts).
+  scripts);
+- **`on-hold`**, for PRs only, when a human asks to put a PR on hold: add
+  the label (`gh pr edit <n> --add-label on-hold`) and a comment saying why
+  and what will unblock it. The PR panel of `aurora-tools.cmd` stops
+  showing it. An agent neither reviews nor merges a PR on hold. When the
+  human resumes it, remove the label (`--remove-label on-hold`). Issues use
+  the board's `On hold` Status instead (section 15).
 
 ### Link the PR and its issues
 
@@ -528,8 +534,12 @@ explain it to the human and propose 2–3 solutions.
 Then post the review as a comment (`gh pr comment <n> --body-file …`). The
 file given to `--body-file` (like the one of the PR description) is a draft
 in `.scratch/`, never committed: the review lives in the PR comment, not in
-the repository. Structure (keep the `## Review` heading and the `Verdict:`
-line as they are: the PR tracking of `aurora-tools.cmd` reads them):
+the repository. When you ask the author of someone else's PR for changes,
+open that comment with `## Changes requested`: the PR tracking of
+`aurora-tools.cmd` lists the PR as waiting on its author until a new
+commit. Structure of your review (keep the `## Review` heading and the
+`Verdict:` line as they are: the PR tracking of `aurora-tools.cmd` reads
+them):
 
 ```markdown
 ## Review

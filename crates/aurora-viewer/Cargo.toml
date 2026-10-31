@@ -143,6 +143,12 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std"
 # The freedesktop notification service (system_notify.rs), over the session
 # bus; already in the tree through keyring's Secret Service store
 zbus = "5.19.0"
+# The keyboard layout (keybinds/layout/linux.rs): the XKB keymap of the
+# Wayland compositor or the X server. All three already in the tree through
+# winit, with its features (MIT, MIT / Apache-2.0, MIT)
+wayland-client = "0.31.15"
+x11rb = { version = "0.13.2", features = ["allow-unsafe-code", "dl-libxcb"] }
+xkbcommon-dl = { version = "0.4.2", features = ["x11"] }
 
 # icon and version block of aurora-viewer.exe (build.rs; runs rc.exe of the
 # Windows SDK). Without `toml`: nothing is read from Cargo.toml.

@@ -152,7 +152,7 @@ pub(super) fn shortcuts(
                 let mut ids: Vec<_> = st.selection.iter().copied().collect();
                 ids.sort();
                 let allowed = if cut {
-                    !ids.is_empty() && ids.iter().all(|id| rules::movable(inv, *id, &prefs.protected))
+                    !ids.is_empty() && ids.iter().all(|id| rules::relocatable(inv, *id, &prefs.protected))
                 } else {
                     copy_allowed(inv, &ids)
                 };

@@ -544,6 +544,92 @@ pub fn browser_settings(cache_dir: &std::path::Path, language: &str) -> BrowserS
     }
 }
 
+/// The profiles of the earlier builds on Linux and macOS: their cache path
+/// ended with a backslash, so the plugin kept every profile in one folder
+/// named `cef\cef_cache` next to `cef`. Nothing reads it any more; each
+/// profile (`<plugin pid>`) is removed unless its plugin still runs (an
+/// older viewer open at the same time), then the folder once empty.
+#[cfg(unix)]
+pub fn remove_misplaced_cache(cache_dir: &std::path::Path) {
+    let dir = cache_dir.join("cef\\cef_cache");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let running = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<libc::pid_t>().ok())
+            .is_some_and(process_runs);
+        if running {
+            continue;
+        }
+        // a stray file or link is removed itself, never followed
+        let removed = match entry.file_type() {
+            Ok(t) if t.is_dir() => std::fs::remove_dir_all(entry.path()),
+            _ => std::fs::remove_file(entry.path()),
+        };
+        if let Err(e) = removed {
+            log::warn!("media: misplaced browser cache not removed ({e})");
+        }
+    }
+    if std::fs::remove_dir(&dir).is_ok() {
+        log::info!("media: misplaced browser cache removed");
+    }
+}
+
+/// Whether a process of this id exists (signal 0 only checks).
+#[cfg(unix)]
+fn process_runs(pid: libc::pid_t) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    // SAFETY: kill with signal 0 sends nothing; it only reports whether the
+    // process exists and may be signalled.
+    let r = unsafe { libc::kill(pid, 0) };
+    r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn the_plugin_cache_lands_inside_cef() {
+        let dir = std::env::temp_dir().join("aurora-cef-path");
+        let s = browser_settings(&dir, "en");
+        // what MediaPluginCEF builds from it
+        assert_eq!(Path::new(&format!("{}cef_cache", s.cache_path)), dir.join("cef").join("cef_cache"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_misplaced_cache_is_removed_but_a_running_profile_stays() {
+        let root = std::env::temp_dir().join(format!("aurora-misplaced-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let misplaced = root.join("cef\\cef_cache");
+        // a plugin id far above any pid_max, and ours, which runs
+        let gone = misplaced.join("2147483000");
+        let running = misplaced.join(std::process::id().to_string());
+        std::fs::create_dir_all(gone.join("Cache")).unwrap();
+        std::fs::create_dir_all(&running).unwrap();
+        std::fs::write(misplaced.join("stray"), b"").unwrap();
+        remove_misplaced_cache(&root);
+        assert!(!gone.exists() && !misplaced.join("stray").exists() && running.is_dir());
+        std::fs::remove_dir_all(&running).unwrap();
+        remove_misplaced_cache(&root);
+        assert!(!misplaced.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn without_a_misplaced_cache_nothing_happens() {
+        remove_misplaced_cache(Path::new("/nonexistent/aurora"));
+    }
+}
+
 fn effective_parcel_url(pm: &aurora_net::ParcelMedia, url: &str) -> String {
     // LLViewerParcelMedia::update: shared HTML media uses its current URL
     if !pm.current_url.trim().is_empty() && pm.mime == "text/html" {

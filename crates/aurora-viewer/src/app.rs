@@ -731,6 +731,8 @@ pub struct App {
     outfit_restore_demo: Option<crate::demo::outfit_restore::OutfitRestoreDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
+    /// AURORA_DEMO_AA_SWITCH: the anti-aliasing changes still to come.
+    aa_switch_demo: Vec<(u64, u8)>,
     /// AURORA_DEMO_SCULPT_MISSING: a sculpt whose map is missing.
     sculpt_missing_demo: Option<crate::demo::sculpt::MissingMapDemo>,
     /// AURORA_DEMO_TEXTURE_MISSING: boxes whose texture is missing.
@@ -1431,6 +1433,11 @@ impl App {
             arrival_demo: None,
             outfit_restore_demo: None,
             tex_refresh_demo: None,
+            aa_switch_demo: if std::env::var_os("AURORA_DEMO").is_some() {
+                crate::demo::aa_switch::from_env()
+            } else {
+                Vec::new()
+            },
             sculpt_missing_demo: None,
             texture_missing_demo: None,
             experience_demo: None,
@@ -8418,6 +8425,11 @@ impl App {
         {
             gfx.renderer.apply_settings(self.settings.render_settings());
         }
+        if let Some(mode) = crate::demo::aa_switch::due(&mut self.aa_switch_demo, self.frame_count) {
+            log::info!("demo: anti-aliasing {mode} at frame {}", self.frame_count);
+            self.settings.antialiasing = mode;
+            gfx.renderer.apply_settings(self.settings.render_settings());
+        }
         let mut view = self.camera.view();
         let mut proj = frame_proj(&self.camera);
         let mut vp = proj * view;
@@ -9976,6 +9988,7 @@ impl App {
         // capture is waited for, its pixels are read in the tail below.
         let lists = if self.in_world() { &self.scene.lists } else { &self.empty_lists };
         let stats = gfx.renderer.render(fp, lists, Some(egui_frame));
+        self.photo_gpu_time(&stats);
         self.photo_drawn(&mut gfx.renderer);
         self.last_render = stats;
         if stats.presented && !gfx.shown {
@@ -10522,6 +10535,8 @@ impl App {
                 && files.iter().any(|(at, _)| *at <= self.frame_count)
                 && self.inventory_images.capturing.is_none()
                 && !self.scene_capture_pending
+                // (with the MSAA and SSR asked, once their pipelines compiled)
+                && gfx.renderer.settings_applied()
             {
                 gfx.renderer.capture_request = true;
                 self.inventory_images.auto_capture_pending = true;

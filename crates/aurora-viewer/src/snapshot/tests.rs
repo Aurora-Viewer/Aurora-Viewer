@@ -664,3 +664,103 @@ fn a_refused_configuration_stops_the_post() {
     let result = rt.block_on(profile::post(&web, "_my_session=demo-auth", vec![1, 2, 3], "", false));
     assert_eq!(result, Err(profile::Error::Config(500)));
 }
+
+#[test]
+fn a_photo_pass_stays_within_the_gpus_time() {
+    let window = (1226, 2055);
+    // no measure: 4K at most, never less than the window
+    let mut cost = GpuCost::default();
+    assert_eq!(cost.pass_pixels(window, PASS_GPU_MS), UNTIMED_PASS_PIXELS);
+    // 50 ms for 2.5 Mpx (20 ns a pixel): 25 Mpx in the 500 ms of a pass
+    cost.note(Some(50.0), 2_500_000);
+    assert_eq!(cost.pass_pixels(window, PASS_GPU_MS), 25_000_000);
+    // an 8K photo is split, a 4K one is not
+    let max = cost.pass_pixels(window, PASS_GPU_MS);
+    assert!(plan((7680, 4320), 16384, max, TILE_GUARD).len() > 1);
+    assert_eq!(plan((3840, 2160), 16384, max, TILE_GUARD).len(), 1);
+    // a fast GPU (1 ns a pixel) draws 8K in one pass
+    let mut fast = GpuCost::default();
+    fast.note(Some(8.0), 8_000_000);
+    assert_eq!(
+        plan((7680, 4320), 16384, fast.pass_pixels(window, PASS_GPU_MS), TILE_GUARD).len(),
+        1
+    );
+    // never fewer pixels than the window's frame, however slow
+    let mut slow = GpuCost::default();
+    slow.note(Some(10_000.0), 2_500_000);
+    assert_eq!(slow.pass_pixels(window, PASS_GPU_MS), 1226 * 2055);
+}
+
+#[test]
+fn the_cost_of_a_pixel_keeps_the_slowest_recent_frame() {
+    let mut cost = GpuCost::default();
+    cost.note(Some(40.0), 2_000_000);
+    // a faster frame lowers it a little only
+    cost.note(Some(10.0), 2_000_000);
+    assert_eq!(
+        cost.pass_pixels((1, 1), PASS_GPU_MS),
+        (500e6 / f64::from(20.0f32 * COST_DECAY)) as u64
+    );
+    // a slower one raises it at once
+    cost.note(Some(80.0), 2_000_000);
+    assert_eq!(cost.pass_pixels((1, 1), PASS_GPU_MS), 12_500_000);
+    // no time, no time, or a frame too small to tell (the preview's):
+    // nothing changes
+    let before = cost;
+    cost.note(None, 2_000_000);
+    cost.note(Some(0.0), 2_000_000);
+    cost.note(Some(f32::NAN), 2_000_000);
+    cost.note(Some(500.0), 720 * 405);
+    assert_eq!(cost, before);
+    // it falls back after a hitch: half in about 70 frames
+    for _ in 0..70 {
+        cost.note(Some(1.0), 2_000_000);
+    }
+    assert!(cost.pass_pixels((1, 1), PASS_GPU_MS) > 24_000_000);
+}
+
+#[test]
+fn a_blank_pass_splits_the_next_ones() {
+    let window = (1226, 2055);
+    let mut cost = GpuCost::default();
+    cost.note(Some(1.0), 8_000_000);
+    // 7040 x 3960 came back blank: a quarter of it at most from now on
+    assert!(cost.failed(7040 * 3960, window));
+    assert_eq!(cost.pass_pixels(window, PASS_GPU_MS), 7040 * 3960 / 4);
+    // a larger failure does not raise it again
+    assert!(cost.failed(7680 * 4320, window));
+    assert_eq!(cost.pass_pixels(window, PASS_GPU_MS), 7040 * 3960 / 4);
+    assert!(plan((7040, 3960), 16384, cost.pass_pixels(window, PASS_GPU_MS), TILE_GUARD).len() >= 4);
+    // down to the window's frame, then it cannot be split any more
+    assert!(cost.failed(4_000_000, window));
+    assert_eq!(cost.pass_pixels(window, PASS_GPU_MS), 1226 * 2055);
+    assert!(!cost.failed(1226 * 2055, window));
+    // the next photo starts from the measure alone
+    cost.new_photo();
+    assert_eq!(cost.pass_pixels(window, PASS_GPU_MS), 4_000_000_000);
+}
+
+#[test]
+fn a_photo_with_the_interface_takes_longer_passes() {
+    let window = (1920, 1080);
+    let mut cost = GpuCost::default();
+    // 20 ns a pixel: 25 Mpx a pass, 75 Mpx with the interface or the HUDs
+    cost.note(Some(50.0), 2_500_000);
+    assert_eq!(cost.pass_pixels(window, OVERLAY_PASS_GPU_MS), 75_000_000);
+    assert_eq!(
+        plan((7680, 4320), 16384, cost.pass_pixels(window, OVERLAY_PASS_GPU_MS), TILE_GUARD).len(),
+        1
+    );
+    // unmeasured: the slowest GPU's 4K either way
+    let untimed = GpuCost::default();
+    assert_eq!(untimed.pass_pixels(window, OVERLAY_PASS_GPU_MS), UNTIMED_PASS_PIXELS);
+}
+
+#[test]
+fn a_pass_the_driver_ended_reads_back_blank() {
+    // black, opaque (the render target's clear) or not
+    assert!(blank(&[0, 0, 0, 255, 0, 0, 0, 255]));
+    assert!(blank(&[0; 16]));
+    // one pixel of light is a photo
+    assert!(!blank(&[0, 0, 0, 255, 0, 0, 1, 255]));
+}
