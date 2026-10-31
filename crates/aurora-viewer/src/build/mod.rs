@@ -154,8 +154,8 @@ pub struct BuildSettings {
     pub show_physics_shape: bool,
     /// FSCopyObjKeySeparator for "Copy UUID".
     pub copy_key_separator: String,
-    /// LimitSelectDistance. Off by default, unlike the Legacy Viewer: the
-    /// simulator keeps its own limits, so nothing near or far is out of reach.
+    /// LimitSelectDistance, on by default like the Legacy Viewer: a
+    /// rectangle drawn from a skybox stops before the ground's objects.
     pub limit_select_distance: bool,
     /// MaxSelectDistance (m from the avatar).
     pub max_select_distance: f32,
@@ -483,7 +483,7 @@ impl Default for BuildSettings {
             sync_materials: false,
             show_physics_shape: false,
             copy_key_separator: ",".into(),
-            limit_select_distance: false,
+            limit_select_distance: true,
             max_select_distance: MAX_SELECT_DISTANCE,
             limit_drag_distance: true,
             max_drag_distance: MAX_DRAG_DISTANCE,
@@ -568,6 +568,19 @@ pub struct Bounds {
     pub half: Vec3,
 }
 
+/// The prims of an unlinked whole-object selection. The Legacy Viewer keeps
+/// one LLSelectNode per prim, so after LLSelectMgr::sendDelink every former
+/// child is still selected as its own object; Aurora selects roots only, so
+/// each prim joins the selection once the simulator makes it a root.
+#[derive(Debug)]
+struct PendingUnlink {
+    /// Every prim of the unlink, the former roots included.
+    prims: Vec<ObjKey>,
+    /// Prims still waiting for the update that makes them roots.
+    waiting: Vec<ObjKey>,
+    started: Instant,
+}
+
 pub struct BuildTool {
     wheel_selection: cycle::Wheel,
     /// Last inspected selection/mode; object display choices live in the world.
@@ -622,6 +635,8 @@ pub struct BuildTool {
     pub selection_linked: bool,
     /// Ordered link instruction awaiting confirmed simulator parents.
     pending_link: Option<(Vec<Uuid>, Instant)>,
+    /// Unlink awaiting the simulator's new roots.
+    pending_unlink: Option<PendingUnlink>,
     /// ObjectProperties of selected objects.
     pub props: HashMap<Uuid, ObjectProps>,
     pub cam: Cam,
@@ -677,6 +692,7 @@ impl Default for BuildTool {
             menu_selection: false,
             selection_linked: false,
             pending_link: None,
+            pending_unlink: None,
             props: HashMap::new(),
             cam: Cam::default(),
             out: Vec::new(),
@@ -1230,9 +1246,43 @@ impl BuildTool {
         }
     }
 
+    /// Prims of an unlink join the selection as the simulator makes them
+    /// roots, after the selected former root (PendingUnlink).
+    fn advance_unlink(&mut self, world: &World, now: Instant) {
+        let Some(mut pending) = self.pending_unlink.take() else {
+            return;
+        };
+        // a selection changed in the meantime is the user's: leave it alone
+        if self.selection_linked || !pending.prims.iter().any(|k| self.is_selected(k)) {
+            return;
+        }
+        let mut joined = Vec::new();
+        pending.waiting.retain(|key| match world.objects.index_of(key) {
+            None => false,
+            Some(i) if root_of(world, i) != i => true,
+            Some(_) => {
+                joined.push(*key);
+                false
+            }
+        });
+        for key in &joined {
+            if !self.is_selected(key) {
+                self.selection.push(*key);
+            }
+        }
+        // ObjectSelect brings the new roots' properties to the edit floater
+        for (handle, ids) in self.wire_ids(world, &joined, false) {
+            self.send(BuildCmd::Select { handle, local_ids: ids });
+        }
+        if !pending.waiting.is_empty() && now.saturating_duration_since(pending.started) < Duration::from_secs(30) {
+            self.pending_unlink = Some(pending);
+        }
+    }
+
     /// Forget objects that are gone; drop a selection left far behind
     /// (LLSelectMgr::deselectAllIfTooFar).
     fn prune(&mut self, world: &World, s: &BuildSettings, now: Instant) {
+        self.advance_unlink(world, now);
         // Parent changes are authoritative only after simulator object updates.
         // Former roots become one whole-object selection after a successful link.
         if !self.selection_linked
@@ -1487,6 +1537,18 @@ impl BuildTool {
         }
         for (handle, ids) in self.group_by_region(world, &prims) {
             self.send(BuildCmd::Delink { handle, local_ids: ids });
+        }
+        // with "Edit linked" the selection already holds each prim
+        if !self.selection_linked {
+            let keys: Vec<ObjKey> = highlighted_of(world, &self.selection, false)
+                .into_iter()
+                .filter_map(|(i, _)| world.objects.get(i).map(|o| o.key))
+                .collect();
+            self.pending_unlink = Some(PendingUnlink {
+                waiting: keys.iter().copied().filter(|k| !self.is_selected(k)).collect(),
+                prims: keys,
+                started: Instant::now(),
+            });
         }
         self.status = aurora_i18n::tr!("build-mod-object-unlinked").into();
         self.costs_stale();

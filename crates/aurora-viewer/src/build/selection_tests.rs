@@ -314,6 +314,85 @@ fn confirmed_link_reconciles_selection_colors_and_packet_order() {
     assert_eq!(tool.highlighted(&world), highlighted);
 }
 
+/// Three free prims of ours, linked through the demo simulator with
+/// `99882` as root; the tool keeps the linkset selected.
+fn linked_three(world: &mut World, tool: &mut BuildTool, settings: &BuildSettings, sim: &mut demo_sim::DemoSim) -> Vec<u32> {
+    let handle = world.objects.get(object(world, 99610)).unwrap().key.region;
+    let ids = [99880, 99881, 99882];
+    let mut updates = Vec::new();
+    for local_id in ids {
+        let mut update = crate::demo::action_avatar(false);
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        update.local_id = local_id;
+        update.full_id = crate::demo::action_id(local_id);
+        update.parent_id = 0;
+        update.owner_id = world.agent_id;
+        updates.push(update);
+    }
+    world.apply(NetEvent::ObjectUpdates { handle, objects: updates });
+    for (i, id) in ids.iter().enumerate() {
+        let idx = object(world, *id);
+        tool.click_select(world, settings, Some(idx), i > 0);
+    }
+    tool.link(world);
+    run_sim(world, tool, sim);
+    tool.advance_link(world, Instant::now());
+    tool.prune(world, settings, Instant::now());
+    assert_eq!(selected(tool), [99882]);
+    assert_eq!(family(world, object(world, 99882)).len(), 3);
+    ids.to_vec()
+}
+
+fn run_sim(world: &mut World, tool: &mut BuildTool, sim: &mut demo_sim::DemoSim) {
+    for command in std::mem::take(&mut tool.out) {
+        if let NetCommand::Build(command) = command {
+            for event in sim.reply(world, &command) {
+                world.apply(event);
+            }
+        }
+    }
+}
+
+#[test]
+fn unlink_keeps_every_former_prim_selected() {
+    let (mut world, mut tool, settings) = fixture();
+    let mut sim = demo_sim::DemoSim::default();
+    linked_three(&mut world, &mut tool, &settings, &mut sim);
+    tool.unlink(&mut world);
+    // nothing changes before the simulator answers
+    tool.prune(&world, &settings, Instant::now());
+    assert_eq!(selected(&tool), [99882]);
+    run_sim(&mut world, &mut tool, &mut sim);
+    tool.prune(&world, &settings, Instant::now());
+    // LLSelectMgr::sendDelink: each prim stays selected as its own object,
+    // the former root first
+    let mut ids = selected(&tool);
+    assert_eq!(ids[0], 99882);
+    ids.sort_unstable();
+    assert_eq!(ids, [99880, 99881, 99882]);
+    assert!(tool.highlighted(&world).iter().all(|(_, root)| *root));
+    assert_eq!(tool.highlighted(&world).len(), 3);
+    assert!(tool.pending_unlink.is_none());
+    // and once more: the selection stays as it is
+    tool.prune(&world, &settings, Instant::now());
+    assert_eq!(tool.selection.len(), 3);
+}
+
+#[test]
+fn unlink_leaves_a_selection_changed_before_the_reply_alone() {
+    let (mut world, mut tool, settings) = fixture();
+    let mut sim = demo_sim::DemoSim::default();
+    linked_three(&mut world, &mut tool, &settings, &mut sim);
+    tool.unlink(&mut world);
+    let delink = std::mem::take(&mut tool.out);
+    tool.deselect_all(&world);
+    tool.out = delink;
+    run_sim(&mut world, &mut tool, &mut sim);
+    tool.prune(&world, &settings, Instant::now());
+    assert!(tool.selection.is_empty());
+    assert!(tool.pending_unlink.is_none());
+}
+
 #[test]
 fn typed_transforms_require_effective_move_rights_before_local_preview_or_commit() {
     use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
@@ -679,7 +758,8 @@ fn far_selection_stays_unless_the_select_distance_is_limited() {
     assert_eq!(key.len(), 1);
     let home = world.agent.position;
     world.agent.position = home + Vec3::X * (MAX_SELECT_DISTANCE + 50.0);
-    // LimitSelectDistance is off by default: nothing is deselected
+    // LimitSelectDistance off: nothing is deselected
+    settings.limit_select_distance = false;
     tool.prune(&world, &settings, Instant::now());
     assert_eq!(tool.selection, key);
     // on, LLSelectMgr::updateSelectionCenter deselects past MaxSelectDistance
@@ -696,10 +776,11 @@ fn far_selection_stays_unless_the_select_distance_is_limited() {
 #[test]
 fn distance_limits_follow_their_switches_and_stay_in_range() {
     let mut s = BuildSettings::default();
-    assert_eq!(s.select_limit(), None);
-    assert_eq!(s.drag_limit(), Some(MAX_DRAG_DISTANCE));
-    s.limit_select_distance = true;
     assert_eq!(s.select_limit(), Some(MAX_SELECT_DISTANCE));
+    assert_eq!(s.drag_limit(), Some(MAX_DRAG_DISTANCE));
+    s.limit_select_distance = false;
+    assert_eq!(s.select_limit(), None);
+    s.limit_select_distance = true;
     s.max_select_distance = 5000.0;
     assert_eq!(s.select_limit(), Some(1024.0));
     s.max_select_distance = f32::NAN;
@@ -708,7 +789,7 @@ fn distance_limits_follow_their_switches_and_stay_in_range() {
     assert_eq!(s.drag_limit(), None);
     // older settings files read the new fields' defaults
     let old: BuildSettings = serde_json::from_str("{}").unwrap();
-    assert!(!old.limit_select_distance && old.limit_drag_distance);
+    assert!(old.limit_select_distance && old.limit_drag_distance);
 }
 
 /// Gives `idx`'s root the update flags `flags`.
