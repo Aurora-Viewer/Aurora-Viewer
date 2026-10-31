@@ -312,6 +312,40 @@ fn protected_system_worn_and_unknown_elements_cannot_be_deleted() {
 }
 
 #[test]
+fn root_support_folders_stay_in_place_but_can_still_be_deleted() {
+    let mut inv = fixture();
+    let trash = system(&inv, 14).expect("trash");
+    let none = HashSet::new();
+    let folder = |id: Uuid, parent: Uuid, name: &str| InvFolder {
+        id,
+        parent,
+        name: name.into(),
+        type_default: -1,
+        ..Default::default()
+    };
+    inv.created_folders(vec![
+        folder(id(9100), inv.root, "#RLV"),
+        folder(id(9101), id(8001), "#RLV"),
+        folder(id(9102), inv.root, "#Firestorm"),
+        folder(id(9103), inv.root, "#rlv"),
+    ]);
+    for pinned_id in [id(9100), id(9102)] {
+        assert!(pinned(&inv, pinned_id));
+        assert!(!relocatable(&inv, pinned_id, &none));
+        assert!(move_selection(&inv, &[pinned_id], id(8001), &none, &none).is_err());
+        assert!(!paste_allowed(&inv, &[pinned_id], id(8001), true, false, &none, &none));
+        assert!(
+            move_selection(&inv, &[pinned_id], trash, &none, &none).is_ok(),
+            "delete stays allowed"
+        );
+        assert!(renameable(&inv, pinned_id, &none));
+    }
+    // A misplaced #RLV goes back to the root; names match exactly, as RLVa's.
+    assert!(move_selection(&inv, &[id(9101)], inv.root, &none, &none).is_ok());
+    assert!(relocatable(&inv, id(9103), &none));
+}
+
+#[test]
 fn selected_parent_and_child_are_moved_once_and_cycles_are_refused() {
     let inv = fixture();
     assert_eq!(roots(&inv, &[id(8100), id(8000), id(8100)]), vec![id(8000)]);
