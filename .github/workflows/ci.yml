@@ -74,8 +74,8 @@ jobs:
   lint-linux:
     # The Linux code paths (media plugins' shared memory and keyboard, the
     # Unix permissions of the packs…) are never built on Windows: clippy on
-    # Linux keeps them compiling, and the tests of the two crates whose
-    # Linux paths differ run there. No agent can run them locally.
+    # Linux keeps them compiling, and the workspace's tests run there. No
+    # agent can run them locally.
     name: clippy (Linux)
     runs-on: ubuntu-24.04
     steps:
@@ -97,19 +97,31 @@ jobs:
         run: |
           rustup update stable --no-self-update
           rustup component add clippy
+      # the key is named, not the job's: the old one holds clippy's output
+      # only, and main, finding it, would never build the tests into it
+      # (as in macos.yml)
       - uses: Swatinem/rust-cache@v2
         id: cache
         if: steps.changes.outputs.code == 'true'
         with:
+          shared-key: linux-tests
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # dead code is the Windows job's: Windows-only helpers (system probes,
       # toasts…) build here without their callers
       - name: Clippy (warnings are errors)
         if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || steps.cache.outputs.cache-hit != 'true')
         run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings -A dead-code
-      - name: Tests of the media host and the updater
+      # the whole workspace, on pull requests too: the Linux-only tests
+      # (links, notifications, the media cache…) cannot run on the agents'
+      # PCs. None needs a display or a session bus.
+      - name: Tests
         if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
-        run: cargo test --profile ci --locked -p aurora-media -p aurora-updater
+        run: cargo test --profile ci --workspace --locked
+      # main: build the tests without running them, for the cache only, so
+      # that pull requests compile the workspace and not its dependencies
+      - name: Build the tests (cache)
+        if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        run: cargo test --profile ci --workspace --locked --no-run
 
   tests:
     # Not on pull requests: the agent ran them locally (check.ps1) and the
