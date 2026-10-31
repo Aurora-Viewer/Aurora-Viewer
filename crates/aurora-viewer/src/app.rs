@@ -872,10 +872,38 @@ fn login_shortcut(screen: &Screen, action: Option<Action>) -> bool {
 
 /// A Ctrl / Alt shortcut of the viewer still works while a text field has
 /// the focus, as the Legacy Viewer's menu accelerators go before the focused
-/// field (LLViewerWindow::handleKey); the field keeps its own editing
-/// shortcuts (copy, paste, undo, words...).
-fn shortcut_while_typing(typing: bool, ctrl: bool, alt: bool, code: KeyCode, bound: bool) -> bool {
-    typing && (ctrl || alt) && !crate::keybinds::is_text_edit_key(code) && bound
+/// field (LLViewerWindow::handleKey). The field keeps the exact editing
+/// chords (Select All is Ctrl/Cmd+A; People is Ctrl/Cmd+Shift+A).
+fn shortcut_while_typing(typing: bool, mods: Mods, code: KeyCode, bound: bool) -> bool {
+    typing && (mods.ctrl || mods.alt) && bound && !crate::keybinds::text_field_keeps(code, mods)
+}
+
+/// The shortcut wins over the focused widget, so egui must not also treat
+/// the key as editing. Find, the script editor and a document save still
+/// own their chords (the checks in the key handler).
+fn shortcut_claims_focus(
+    ctx: &egui::Context,
+    code: KeyCode,
+    logical: &winit::keyboard::Key,
+    mods: Mods,
+    shift: bool,
+    alt: bool,
+    bound: bool,
+) -> bool {
+    if !shortcut_while_typing(true, mods, code, bound) {
+        return false;
+    }
+    let letter = |ch: &str| matches!(logical, winit::keyboard::Key::Character(s) if s.eq_ignore_ascii_case(ch));
+    if mods.ctrl && letter("f") && ui::find_shortcut::window_takes_it(ctx) {
+        return false;
+    }
+    if mods.ctrl && (letter("k") || (letter("s") && !shift && !alt)) && ui::scripts::editor_focused(ctx) {
+        return false;
+    }
+    if mods.ctrl && !shift && !alt && letter("s") && ui::inventory::document_save_focused(ctx) {
+        return false;
+    }
+    true
 }
 
 /// The interface scale, or AURORA_UI_SCALE for this launch (brought into
@@ -9590,6 +9618,7 @@ impl App {
         // Control is Command for key events on macOS. Leave pointer
         // modifiers and ModifiersChanged alone (Command-click stays distinct).
         crate::keybinds::adopt_mac_control_keys(&mut raw.events, cfg!(target_os = "macos"));
+        crate::keybinds::keep_select_all_exact(&mut raw.events);
         self.sound_cues.before(&ctx, &raw);
         self.options_ui
             .prepare_scale_input(&raw, ctx.pixels_per_point(), self.numeric_drag.active());
@@ -18150,7 +18179,7 @@ impl ApplicationHandler for App {
                         if matches!(self.settings.keybinds.triggered(&Input::key(code), key_mods),
                             Some(Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault))
                             && (!(self.egui_ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(&self.egui_ctx))
-                                || shortcut_while_typing(true, key_mods.ctrl, key_mods.alt, code, true)))
+                                || shortcut_while_typing(true, key_mods, code, true)))
         ) && self.in_world()
             && self.options_ui.capture.is_none()
             && !self.exit_prompt.open
@@ -18165,10 +18194,30 @@ impl ApplicationHandler for App {
         // Releases still clear any key pressed before AltGr was held.
         let altgr_shortcut = matches!(&event, WindowEvent::KeyboardInput { event: ke, .. }
             if self.altgr_native_key(ke));
+        // People is Command/Ctrl+Shift+A. A focused widget otherwise keeps
+        // the key, and egui selects all on any Command+A.
+        let claim_over_focus = matches!(
+            &event,
+            WindowEvent::KeyboardInput { event: ke, .. }
+                if ke.state == ElementState::Pressed
+                    && !ke.repeat
+                    && !self.exit_prompt.open
+                    && self.options_ui.capture.is_none()
+                    && matches!(ke.physical_key, PhysicalKey::Code(code)
+                        if shortcut_claims_focus(
+                            &self.egui_ctx,
+                            code,
+                            &ke.logical_key,
+                            key_mods,
+                            self.shift,
+                            self.alt,
+                            self.settings.keybinds.triggered(&Input::key(code), key_mods).is_some(),
+                        ))
+        );
         let Some(g) = self.gfx.as_mut() else {
             return;
         };
-        let resp = if chat_pass || lens_shortcut || held_pointer || altgr_shortcut {
+        let resp = if chat_pass || lens_shortcut || held_pointer || altgr_shortcut || claim_over_focus {
             egui_winit::EventResponse {
                 consumed: false,
                 repaint: true,
@@ -18434,14 +18483,8 @@ impl ApplicationHandler for App {
                     }
                     // Ctrl / Alt shortcuts of the viewer still work while a text
                     // field has the focus (chat bar, login fields...)
-                    let shortcut = pressed
-                        && shortcut_while_typing(
-                            typing,
-                            mods.ctrl,
-                            mods.alt,
-                            code,
-                            self.settings.keybinds.triggered(&input, mods).is_some(),
-                        );
+                    let shortcut =
+                        pressed && shortcut_while_typing(typing, mods, code, self.settings.keybinds.triggered(&input, mods).is_some());
                     // Ctrl+F belongs to the window with its own find when the
                     // script editor is active, the keyboard is in a conversation, or the
                     // pointer over a conversation with the keyboard nowhere:
@@ -18701,11 +18744,19 @@ mod tests {
         assert_eq!(action, Some(Action::Preferences), "Ctrl+P is the preferences' shortcut");
         assert_eq!(bindings.triggered(&Input::key(KeyCode::KeyP), Mods::default()), None);
         // a field focused: the key still reaches the viewer's shortcuts
-        assert!(shortcut_while_typing(true, true, false, KeyCode::KeyP, action.is_some()));
+        assert!(shortcut_while_typing(true, ctrl, KeyCode::KeyP, action.is_some()));
         // the fields keep their own editing shortcuts (Ctrl+C, Ctrl+V…)
-        assert!(!shortcut_while_typing(true, true, false, KeyCode::KeyV, true));
+        assert!(!shortcut_while_typing(true, ctrl, KeyCode::KeyV, true));
+        // Select All stays in the field; People (Ctrl+Shift+A) does not
+        assert!(!shortcut_while_typing(true, ctrl, KeyCode::KeyA, true));
+        let people = Mods {
+            ctrl: true,
+            shift: true,
+            alt: false,
+        };
+        assert!(shortcut_while_typing(true, people, KeyCode::KeyA, true));
         // a plain P while typing is the field's
-        assert!(!shortcut_while_typing(true, false, false, KeyCode::KeyP, false));
+        assert!(!shortcut_while_typing(true, Mods::default(), KeyCode::KeyP, false));
         assert!(login_shortcut(&Screen::Login, action));
         // the other shortcuts wait for the world
         assert!(!login_shortcut(&Screen::Login, Some(Action::Fly)));

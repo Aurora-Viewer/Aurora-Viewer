@@ -872,31 +872,35 @@ impl KeyBindings {
     }
 }
 
-/// Keys a focused text field uses with Ctrl (select all, copy, cut, paste,
-/// undo / redo, word moves and deletes): a viewer shortcut on them never
-/// fires while typing. Physical keys, so both the QWERTY and the AZERTY
-/// places of A and Z count.
+/// Keys that take part in an editing chord. The chord itself is
+/// [`text_field_keeps`]: Ctrl+Shift+A is People, not Select All.
 pub fn is_text_edit_key(code: KeyCode) -> bool {
+    let ctrl = Mods {
+        ctrl: true,
+        ..Mods::default()
+    };
+    let shifted = Mods { shift: true, ..ctrl };
+    text_field_keeps(code, ctrl) || text_field_keeps(code, shifted)
+}
+
+/// Chords a focused text field keeps. Menu accelerators match the mask
+/// exactly and run before the field (LLViewerWindow::handleKey,
+/// LLMenuItemGL::handleAcceleratorKey): Select All is `control|A`
+/// (menu_edit.xml) and People is `control|shift|A` (menu_viewer.xml).
+/// Physical keys, so the AZERTY places of A and Z count too. egui's cursor
+/// selects all on any Command+A, Shift included; that is not this chord.
+pub fn text_field_keeps(code: KeyCode, mods: Mods) -> bool {
+    if !mods.ctrl || mods.alt {
+        return false;
+    }
     use KeyCode as K;
-    matches!(
-        code,
-        K::KeyA
-            | K::KeyQ
-            | K::KeyC
-            | K::KeyV
-            | K::KeyX
-            | K::KeyZ
-            | K::KeyW
-            | K::KeyY
-            | K::ArrowLeft
-            | K::ArrowRight
-            | K::ArrowUp
-            | K::ArrowDown
-            | K::Home
-            | K::End
-            | K::Backspace
-            | K::Delete
-    )
+    match code {
+        K::KeyA | K::KeyQ | K::KeyC | K::KeyX | K::KeyV | K::KeyY if !mods.shift => true,
+        // Undo, and redo on Ctrl+Shift+Z. AZERTY's Z is the physical W key.
+        K::KeyZ | K::KeyW => true,
+        K::ArrowLeft | K::ArrowRight | K::ArrowUp | K::ArrowDown | K::Home | K::End | K::Backspace | K::Delete => true,
+        _ => false,
+    }
 }
 
 /// Keys the chat bar hands to the avatar instead of its text: the arrows,
@@ -1011,6 +1015,25 @@ pub fn adopt_mac_control_keys(events: &mut [egui::Event], mac: bool) {
             && modifiers.ctrl
         {
             modifiers.command = true;
+        }
+    }
+}
+
+/// Select All is Command/Ctrl+A with no Shift. egui's cursor treats every
+/// Command+A as select all (`CCursorRange::on_key_press`), which would
+/// swallow People (Command+Shift+A) inside a text field.
+pub fn keep_select_all_exact(events: &mut [egui::Event]) {
+    for event in events {
+        if let egui::Event::Key {
+            key: egui::Key::A,
+            modifiers,
+            ..
+        } = event
+            && modifiers.command
+            && modifiers.shift
+        {
+            modifiers.command = false;
+            modifiers.mac_cmd = false;
         }
     }
 }
@@ -1593,6 +1616,19 @@ mod tests {
             egui::Event::Key { modifiers, .. } if modifiers.command && modifiers.shift && !modifiers.matches_exact(egui::Modifiers::COMMAND)
         ));
         assert!(matches!(events[2], egui::Event::ModifiersChanged(m) if m == egui::Modifiers::CTRL));
+        events[0] = egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+        };
+        adopt_mac_control_keys(&mut events, true);
+        keep_select_all_exact(&mut events);
+        assert!(matches!(
+            events[0],
+            egui::Event::Key { modifiers, .. } if !modifiers.command && modifiers.shift && modifiers.ctrl
+        ));
     }
 
     #[test]
@@ -1716,6 +1752,16 @@ mod tests {
         for code in [KeyCode::KeyC, KeyCode::KeyV, KeyCode::KeyZ, KeyCode::KeyQ, KeyCode::ArrowLeft] {
             assert!(is_text_edit_key(code), "{code:?}");
         }
+        let ctrl = Mods {
+            ctrl: true,
+            ..Mods::default()
+        };
+        let shifted = Mods { shift: true, ..ctrl };
+        assert!(text_field_keeps(KeyCode::KeyA, ctrl), "Select All");
+        assert!(!text_field_keeps(KeyCode::KeyA, shifted), "People is Ctrl+Shift+A");
+        assert!(!text_field_keeps(KeyCode::KeyQ, shifted), "the same chord on AZERTY");
+        assert!(!text_field_keeps(KeyCode::KeyY, shifted), "Ctrl+Shift+Y is not redo");
+        assert!(text_field_keeps(KeyCode::KeyZ, shifted));
     }
 
     /// LLViewerWindow::handleKey: the chat bar hands the arrows, Page Up /

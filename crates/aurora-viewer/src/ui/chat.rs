@@ -1931,7 +1931,7 @@ fn select_lines(
                 pressed: true,
                 modifiers,
                 ..
-            } if modifiers.command && !modifiers.alt => {
+            } if modifiers.command && !modifiers.alt && !modifiers.shift => {
                 if let Some((first, last)) = copied.ends() {
                     sel.select_all(first, last);
                 }
