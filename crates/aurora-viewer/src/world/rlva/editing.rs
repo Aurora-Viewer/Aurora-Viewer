@@ -85,9 +85,27 @@ impl World {
                     .iter()
                     .all(|entry| local(*handle, entry["ID"].as_i32() as u32))
             }),
+            BuildCmd::DropAttachment { handle, local_ids } => self.rlva_can_drop(*handle, local_ids),
             // Creation, terrain, buying, read requests and release messages
             // retain their own permissions; @edit is not a rez restriction.
             _ => true,
         }
+    }
+
+    /// LLAttachmentDrop::handleEvent (llviewermenu.cpp): dropping takes the
+    /// attachment off, so a locked one stays worn, and @rez forbids putting
+    /// it in-world. The menus grey Drop on the same answer.
+    pub fn rlva_can_drop(&self, handle: RegionHandle, local_ids: &[u32]) -> bool {
+        if !self.rlva.enabled() {
+            return true;
+        }
+        !self.rlva.has("rez")
+            && local_ids.iter().all(|&local_id| {
+                self.objects
+                    .index_of(&ObjKey { region: handle, local_id })
+                    .and_then(|i| self.objects.get(i))
+                    .and_then(|o| o.attachment_item_id())
+                    .is_none_or(|item| self.rlva_can_remove(item, uuid::Uuid::nil()))
+            })
     }
 }

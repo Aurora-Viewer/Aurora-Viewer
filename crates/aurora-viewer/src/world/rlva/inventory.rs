@@ -1028,10 +1028,17 @@ impl World {
                 .rules_for("detach", Uuid::nil())
                 .any(|(_, option)| !option.is_empty() && point(option) == Some(p))
     }
-    fn rlva_layer_locked(&self, name: &str, kind: u8, _actor: Uuid) -> bool {
+    pub(super) fn rlva_layer_locked(&self, name: &str, kind: u8, _actor: Uuid) -> bool {
         self.rlva
             .rules_for(name, Uuid::nil())
             .any(|(_, option)| option.is_empty() || layer(option) == Some(kind))
+    }
+    /// A rule a folder lock check can match (`folder_rule`) is set.
+    pub(super) fn rlva_has_folder_rule(&self) -> bool {
+        self.rlva
+            .rules
+            .values()
+            .any(|rules| rules.iter().any(|r| folder_rule(&r.behaviour)))
     }
 
     /// LLAppearanceMgr::updateCOF and removeItemsFromAvatar with RLVa

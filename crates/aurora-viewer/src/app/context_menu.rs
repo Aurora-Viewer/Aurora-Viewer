@@ -277,6 +277,7 @@ impl App {
         f.local_preview = o.is_editable_preview();
         if f.local_preview {
             f.wear = true;
+            f.detach = true;
             f.drop = true;
         }
         f
