@@ -18759,6 +18759,13 @@ mod tests {
             alt: false,
         };
         assert!(shortcut_while_typing(true, people, KeyCode::KeyA, true));
+        // Alt+arrows are camera chords, and Option+arrows move by word:
+        // both stay in the field
+        let alt = Mods {
+            alt: true,
+            ..Default::default()
+        };
+        assert!(!shortcut_while_typing(true, alt, KeyCode::ArrowLeft, true));
         // a plain P while typing is the field's
         assert!(!shortcut_while_typing(true, Mods::default(), KeyCode::KeyP, false));
         assert!(login_shortcut(&Screen::Login, action));

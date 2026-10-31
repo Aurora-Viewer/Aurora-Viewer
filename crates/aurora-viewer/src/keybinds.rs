@@ -895,15 +895,18 @@ pub fn is_text_edit_key(code: KeyCode) -> bool {
 /// (menu_edit.xml) and People is `control|shift|A` (menu_viewer.xml).
 /// Physical keys, so the AZERTY places of A and Z count too. egui's cursor
 /// selects all on any Command+A, Shift included; that is not this chord.
+/// Arrows, Home, End, Backspace and Delete stay in the field with any
+/// modifier: Option+Left / Right moves by word on macOS, and the camera
+/// chords on Alt+arrows must not take them.
 pub fn text_field_keeps(code: KeyCode, mods: Mods) -> bool {
-    if !mods.ctrl || mods.alt {
+    if !mods.ctrl && !mods.alt {
         return false;
     }
     use KeyCode as K;
     match code {
-        K::KeyA | K::KeyQ | K::KeyC | K::KeyX | K::KeyV | K::KeyY if !mods.shift => true,
+        K::KeyA | K::KeyQ | K::KeyC | K::KeyX | K::KeyV | K::KeyY => mods.ctrl && !mods.alt && !mods.shift,
         // Undo, and redo on Ctrl+Shift+Z. AZERTY's Z is the physical W key.
-        K::KeyZ | K::KeyW => true,
+        K::KeyZ | K::KeyW => mods.ctrl && !mods.alt,
         K::ArrowLeft | K::ArrowRight | K::ArrowUp | K::ArrowDown | K::Home | K::End | K::Backspace | K::Delete => true,
         _ => false,
     }
@@ -1798,6 +1801,22 @@ mod tests {
         assert!(!text_field_keeps(KeyCode::KeyQ, shifted), "the same chord on AZERTY");
         assert!(!text_field_keeps(KeyCode::KeyY, shifted), "Ctrl+Shift+Y is not redo");
         assert!(text_field_keeps(KeyCode::KeyZ, shifted));
+        let alt = Mods {
+            alt: true,
+            ..Mods::default()
+        };
+        assert!(text_field_keeps(KeyCode::ArrowLeft, alt), "Option+Left stays in the field");
+        assert!(
+            text_field_keeps(
+                KeyCode::ArrowUp,
+                Mods {
+                    ctrl: true,
+                    alt: true,
+                    shift: true,
+                }
+            ),
+            "Ctrl+Alt+Shift+Up stays in the field"
+        );
     }
 
     /// LLViewerWindow::handleKey: the chat bar hands the arrows, Page Up /
