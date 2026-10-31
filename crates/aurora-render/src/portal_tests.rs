@@ -108,6 +108,20 @@ fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band(
             expected.extend_from_slice(&aperture_expected);
         }
     }
+    // Completed travelers have no remaining body, feet, attachments or glow,
+    // even after moving beside the opening while the teleport is pending.
+    for pass in 0..=4 {
+        for point in [Vec3::ZERO, Vec3::new(2.0, 4.0, -2.0), Vec3::new(-2.0, -4.0, 3.0)] {
+            let clip = PortalClip::hidden();
+            assert!(!clip.keeps_point(point));
+            cases.push(Case {
+                clip: clip.data,
+                point: point.extend(1.0).to_array(),
+                flags: [flags::PORTAL_CLIP, pass, 0, 0],
+            });
+            expected.push(false);
+        }
+    }
     for pass in 0..=4 {
         cases.push(Case {
             clip: [0.0; 4],

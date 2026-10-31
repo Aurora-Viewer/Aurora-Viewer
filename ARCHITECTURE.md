@@ -575,31 +575,35 @@ arrival path applies both flying and grounded states with the explicit fly-after
 teleport preference. Only the current agent circuit may update our avatar's
 animations; late packets from a previous region cannot restore stale flight.
 
-`scene/portals/clipping.rs` assigns a stable entry side from the posed
-body and worn-object bounds, independently of locomotion or teleport gates.
-Every system-body, skinned-mesh and rigid world-attachment face receives the
-same reversible local dissolution. World positions after deformation drive
-a 45 cm contact band strictly on the entry side. All fragments on or beyond the
-aperture plane are removed. Smooth spatial noise opens irregular
-holes with falling coverage instead of slicing the mesh at one plane. Integer
-hashing and portal-local tangent/height coordinates share the pattern across
-CPU picking and GPU passes, independent of time, camera and traversal depth.
-Advancing normally only removes fragments; retracing positions restores the
-same fragments immediately. A contact-progress-driven variant of the existing
-rez/derez hologram turns vanishing surfaces into the selected grid style and
-lights their eroding edges. It shares the theme gradient and glow pass, respecting
-masked/blended alpha and existing material glow. Stationary roots, moving limbs, large attachments
-and animated attachment points are included, even above or beside the oval,
-without modifying mesh data or waiting for a teleport gate. The oval still bounds the
-portal surface and nearby-avatar selection. Active subjects stay fully animated
+`scene/portals/clipping.rs` follows each avatar's crossing, independently of
+teleport authorization. The aperture qualifies contact and swept entry; it is
+never an elliptical world-space occlusion volume. A neighboring avatar is not
+affected merely because a large culling sphere overlaps the doorway. The scene
+uses the actual drawn system/morphed geometry, joint palettes and rigid anchors
+to build posed boxes, only for nearby candidates or active travelers. Their
+true normal extent determines when the whole mesh has passed; body height is
+not mistaken for crossing depth as it was with culling spheres.
+
+While engaged, all body, skinned and rigid world-attachment faces share one
+45 cm dissolution front. The front applies to the traveling mesh as a whole,
+including feet and worn portions outside the doorway's silhouette. Smooth
+spatial noise, the selected rez/derez hologram and its luminous edge follow
+traversal progress, with no timer or global world mask. A partial lateral exit
+restores the mesh; a completed crossing keeps the entire traveler hidden even
+if they subsequently move beside the portal. Returning through the opening can
+reverse the effect. AgentMovementComplete resets our traveler's state; large
+placement jumps and contact with the paired endpoint handle remote emergence.
+The existing one-vector draw record holds the front or the completed-traveler
+marker (w = 3), without increasing record stride. CPU picking and every GPU pass
+share both states, including the absence of feet, material glow and shadows
+after completion. Active subjects stay fully animated
 instead of using an impostor. Color, alpha, depth/Hi-Z/contact shadows, picking, glow and reflection
 passes agree, including GTAO mesh-normal and blended-contact depth. Its opaque
 normal pass uses a clipped variant only during an intersection; the ordinary
 compact normal vertex path is retained otherwise. MSAA depth uses the same cut.
 Opaque depth and shadow fast paths remain unchanged when no
-cut is active. The existing one-vector draw-record field holds the center and
-a compact horizontal entry direction, with no record-stride growth. CPU picking
-uses the same dissolution field; `aurora-render/src/portal_tests.rs` renders the
+cut is active. CPU picking uses the same dissolution field;
+`aurora-render/src/portal_tests.rs` renders the
 production fragments throughout the band against rotated/transformed samples. HUDs and unrelated geometry
 are excluded.
 

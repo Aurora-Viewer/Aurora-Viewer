@@ -1,7 +1,7 @@
-//! Geometry-driven portal cuts. An avatar root may stay still while its posed
-//! body or a worn object reaches the plane. Entry side is independent of camera.
+//! The aperture starts a per-avatar crossing, never a fixed occlusion volume.
+//! Partial lateral exits restore the mesh; completed crossings stay hidden.
 use aurora_render::PortalClip;
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -19,63 +19,147 @@ pub struct Avatar {
     pub index: usize,
     pub root: Vec3,
     pub forward: Vec3,
-    pub bounds: Vec<(Vec3, f32)>,
+    pub bounds: Vec<Bounds>,
+}
+
+/// Posed joint/rigid box. Keeping its axes avoids treating a tall body's
+/// culling-sphere radius as its depth through the doorway.
+pub struct Bounds {
+    center: Vec3,
+    axes: [Vec3; 3],
+}
+
+impl Bounds {
+    pub fn new(min: Vec3, max: Vec3, model: Mat4) -> Option<Self> {
+        if !min.is_finite() || !max.is_finite() || !model.is_finite() || !min.cmple(max).all() {
+            return None;
+        }
+        let half = (max - min) * 0.5;
+        let bounds = Self {
+            center: model.transform_point3((min + max) * 0.5),
+            axes: [
+                model.x_axis.truncate() * half.x,
+                model.y_axis.truncate() * half.y,
+                model.z_axis.truncate() * half.z,
+            ],
+        };
+        (bounds.center.is_finite() && bounds.axes.iter().all(|v| v.is_finite())).then_some(bounds)
+    }
+
+    fn range(&self, origin: Vec3, normal: Vec3) -> (f32, f32) {
+        let center = (self.center - origin).dot(normal);
+        let radius: f32 = self.axes.iter().map(|axis| axis.dot(normal).abs()).sum();
+        (center - radius, center + radius)
+    }
+
+    fn touches(&self, portal: &Aperture) -> bool {
+        let (a, b) = self.range(portal.center, portal.normal);
+        if a >= aurora_render::PORTAL_DISSOLVE_WIDTH || b < -aurora_render::PORTAL_DISSOLVE_WIDTH {
+            return false;
+        }
+        let tangent = Vec3::new(-portal.normal.y, portal.normal.x, 0.0);
+        let (lo, hi) = self.range(portal.center, tangent);
+        let x = 0.0_f32.clamp(lo, hi) / crate::world::portals::WIDTH;
+        let (lo, hi) = self.range(portal.center, Vec3::Z);
+        let z = 0.0_f32.clamp(lo, hi) / crate::world::portals::HEIGHT;
+        x * x + z * z <= 1.0
+    }
+}
+
+impl Avatar {
+    fn range(&self, portal: &Aperture, side: f32) -> Option<(f32, f32)> {
+        self.bounds
+            .iter()
+            .map(|b| b.range(portal.center, portal.normal * side))
+            .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
+    }
 }
 
 #[derive(Clone, Copy)]
-struct Cut {
+struct Crossing {
     key: Key,
     side: f32,
+    complete: bool,
+    backtrack: f32,
 }
 
 #[derive(Default)]
 pub struct Clipping {
-    cuts: HashMap<Uuid, Cut>,
+    crossings: HashMap<Uuid, Crossing>,
+    samples: HashMap<Uuid, Vec3>,
 }
 
 impl Aperture {
-    fn near(&self, (center, radius): (Vec3, f32)) -> bool {
-        if !center.is_finite() || !radius.is_finite() || radius < 0.0 {
-            return false;
-        }
-        let delta = center - self.center;
-        if delta.dot(self.normal).abs() > radius + 3.5 {
-            return false;
-        }
+    pub fn inside(&self, root: Vec3) -> bool {
+        let delta = root - self.center;
         let tangent = Vec3::new(-self.normal.y, self.normal.x, 0.0);
-        let width = crate::world::portals::WIDTH + radius + 0.25;
-        let height = crate::world::portals::HEIGHT + radius + 0.25;
-        (delta.dot(tangent) / width).powi(2) + (delta.z / height).powi(2) <= 1.0
+        (delta.dot(tangent) / crate::world::portals::WIDTH).powi(2) + (delta.z / crate::world::portals::HEIGHT).powi(2) <= 1.0
     }
 
-    fn plane(&self, side: f32) -> Option<PortalClip> {
-        PortalClip::new(self.center, self.normal * side)
+    pub fn near(&self, (center, radius): (Vec3, f32)) -> bool {
+        center.is_finite()
+            && radius.is_finite()
+            && radius >= 0.0
+            && (center - self.center).dot(self.normal).abs() <= radius + aurora_render::PORTAL_DISSOLVE_WIDTH
+    }
+
+    fn crossed(&self, from: Vec3, to: Vec3) -> bool {
+        let a = (from - self.center).dot(self.normal);
+        let b = (to - self.center).dot(self.normal);
+        a * b <= 0.0 && (a - b).abs() > 1e-5 && self.inside(from.lerp(to, (a / (a - b)).clamp(0.0, 1.0)))
     }
 }
 
 impl Clipping {
     pub fn clear(&mut self) {
-        self.cuts.clear();
+        self.crossings.clear();
+        self.samples.clear();
+    }
+
+    pub fn forget(&mut self, id: Uuid) {
+        self.crossings.remove(&id);
+        self.samples.remove(&id);
+    }
+
+    pub fn active(&self, id: Uuid) -> bool {
+        self.crossings.contains_key(&id)
     }
 
     pub fn update(&mut self, portals: &[Aperture], avatars: &[Avatar]) -> HashMap<usize, PortalClip> {
-        let mut planes = HashMap::new();
+        let mut visible = HashMap::new();
         let mut next = HashMap::new();
         for avatar in avatars {
-            let near = |portal: &&Aperture| avatar.bounds.iter().any(|&sphere| portal.near(sphere));
-            let previous = self.cuts.get(&avatar.id);
-            let selected = previous
-                .and_then(|old| portals.iter().find(|portal| portal.key == old.key).filter(near))
-                .or_else(|| {
-                    portals.iter().filter(near).min_by(|a, b| {
-                        let distance = |p: &Aperture| (avatar.root - p.center).dot(p.normal).abs();
-                        distance(a).total_cmp(&distance(b))
-                    })
-                });
+            if !avatar.root.is_finite() {
+                continue;
+            }
+            // Simulator/region placement is not a continuation of the old cut.
+            let from = self.samples.get(&avatar.id).copied().filter(|p| p.distance(avatar.root) <= 3.0);
+            let old = from.and_then(|_| self.crossings.get(&avatar.id)).copied().filter(|old| {
+                // A close same-region arrival can be below the jump threshold.
+                (!old.complete && portals.iter().any(|p| p.key == old.key && p.inside(avatar.root)))
+                    || (old.complete
+                        && !portals.iter().any(|p| {
+                            p.key.0 == old.key.0
+                                && p.key.1.as_u128() == (old.key.1.as_u128() ^ 1)
+                                && p.inside(avatar.root)
+                                && avatar.bounds.iter().any(|b| b.touches(p))
+                        }))
+            });
+            let contact = |portal: &&Aperture| {
+                portal.inside(avatar.root)
+                    && (avatar.bounds.iter().any(|b| b.touches(portal)) || from.is_some_and(|p| portal.crossed(p, avatar.root)))
+            };
+            let selected = old.and_then(|c| portals.iter().find(|p| p.key == c.key)).or_else(|| {
+                portals.iter().filter(contact).min_by(|a, b| {
+                    let distance = |p: &Aperture| (avatar.root - p.center).dot(p.normal).abs();
+                    distance(a).total_cmp(&distance(b))
+                })
+            });
             let Some(portal) = selected else { continue };
-            let side = previous.filter(|old| old.key == portal.key).map_or_else(
+            let side = old.filter(|c| c.key == portal.key).map_or_else(
                 || {
-                    let distance = (avatar.root - portal.center).dot(portal.normal);
+                    let start = from.filter(|&p| portal.crossed(p, avatar.root)).unwrap_or(avatar.root);
+                    let distance = (start - portal.center).dot(portal.normal);
                     if distance.abs() > 1e-3 {
                         distance.signum()
                     } else if avatar.forward.dot(portal.normal) > 0.0 {
@@ -84,15 +168,54 @@ impl Clipping {
                         1.0
                     }
                 },
-                |old| old.side,
+                |c| c.side,
             );
-            if let Some(clip) = portal.plane(side) {
-                next.insert(avatar.id, Cut { key: portal.key, side });
-                planes.insert(avatar.index, clip);
+            let mut complete = old.filter(|c| c.key == portal.key).is_some_and(|c| c.complete);
+            let mut backtrack = old.filter(|c| c.key == portal.key).map_or(0.0, |c| c.backtrack);
+            let range = avatar.range(portal, side);
+            let inside = portal.inside(avatar.root);
+            if complete {
+                // A canceled teleport can be retraced through the same opening.
+                // Animation alone cannot resurrect a completed traveler.
+                backtrack = if inside {
+                    (backtrack + from.map_or(0.0, |p| (avatar.root - p).dot(portal.normal * side))).max(0.0)
+                } else {
+                    0.0
+                };
+                let reverse_crossed =
+                    from.is_some_and(|p| portal.crossed(p, avatar.root) && (avatar.root - p).dot(portal.normal * side) > 0.0);
+                if inside
+                    && backtrack >= 0.02
+                    && (reverse_crossed || range.is_some_and(|(a, b)| a < aurora_render::PORTAL_DISSOLVE_WIDTH && b > 0.0))
+                {
+                    complete = false;
+                }
+            } else if !inside || range.is_some_and(|(a, _)| a >= aurora_render::PORTAL_DISSOLVE_WIDTH) {
+                continue;
+            } else if range.is_some_and(|(_, b)| b <= 0.0) {
+                complete = true;
+            }
+            let clip = if complete {
+                Some(PortalClip::hidden())
+            } else {
+                PortalClip::new(portal.center, portal.normal * side)
+            };
+            if let Some(clip) = clip {
+                next.insert(
+                    avatar.id,
+                    Crossing {
+                        key: portal.key,
+                        side,
+                        complete,
+                        backtrack,
+                    },
+                );
+                visible.insert(avatar.index, clip);
             }
         }
-        self.cuts = next;
-        planes
+        self.crossings = next;
+        self.samples = avatars.iter().filter(|a| a.root.is_finite()).map(|a| (a.id, a.root)).collect();
+        visible
     }
 }
 
@@ -106,108 +229,169 @@ mod tests {
             normal: Vec3::X,
         }
     }
-    fn avatar(root: Vec3, bounds: Vec<(Vec3, f32)>) -> Avatar {
+    fn avatar(root: Vec3, half: Vec3) -> Avatar {
         Avatar {
             id: Uuid::from_u128(3),
             index: 7,
             root,
             forward: Vec3::NEG_X,
-            bounds,
+            bounds: vec![Bounds::new(-half, half, Mat4::from_translation(root)).unwrap()],
         }
     }
-    fn visible(plane: PortalClip, vertex: Vec3) -> bool {
-        plane.keeps_point(vertex)
+    fn body(root: Vec3) -> Avatar {
+        avatar(root, Vec3::new(0.2, 0.3, 1.1))
     }
 
     #[test]
-    fn a_stationary_root_keeps_its_plane_when_an_animated_arm_or_large_attachment_crosses() {
-        let mut clipping = Clipping::default();
+    fn adjacent_and_already_distant_avatars_do_not_enter_an_occlusion_zone() {
+        let mut state = Clipping::default();
+        for root in [Vec3::new(0.15, 2.4, 0.0), Vec3::new(-2.0, 0.0, 0.0), Vec3::new(0.1, 0.0, 4.0)] {
+            let mut a = body(root);
+            if root.y != 0.0 {
+                a.bounds
+                    .push(Bounds::new(Vec3::splat(-3.0), Vec3::splat(3.0), Mat4::IDENTITY).unwrap());
+            }
+            assert!(state.update(&[portal()], &[a]).is_empty());
+            state.clear();
+        }
+    }
+
+    #[test]
+    fn an_animated_limb_can_start_contact_without_moving_the_root() {
+        let mut state = Clipping::default();
         let root = Vec3::new(6.0, 0.0, 0.0);
-        let before = avatar(root, vec![(root, 0.5)]);
-        assert!(clipping.update(&[portal()], &[before]).is_empty());
-        // Only the deformed/worn bound changes; the root never moved.
-        let stretched = avatar(root, vec![(root, 0.5), (Vec3::new(1.0, 0.0, 0.0), 2.0)]);
-        let plane = clipping.update(&[portal()], &[stretched])[&7];
-        assert!(visible(plane, root));
-        assert!(visible(plane, Vec3::new(0.5, 0.0, 0.0)));
-        assert!(!visible(plane, Vec3::new(-0.5, 0.0, 0.0)));
-        assert!(
-            !visible(plane, Vec3::new(-0.5, 1.1, 0.0)),
-            "a wide attachment dissolves beyond the contact band, including outside the rim"
-        );
-        assert!(
-            !visible(plane, Vec3::new(-0.5, 0.0, 1.6)),
-            "an extended limb dissolves beyond the contact band, including above the opening"
-        );
+        assert!(state.update(&[portal()], &[body(root)]).is_empty());
+        let mut reaching = body(root);
+        reaching
+            .bounds
+            .push(Bounds::new(Vec3::new(-0.2, -0.1, -0.1), Vec3::new(0.3, 0.1, 0.1), Mat4::IDENTITY).unwrap());
+        let clip = state.update(&[portal()], &[reaching])[&7];
+        assert!(clip.keeps_point(root));
+        assert!(!clip.keeps_point(Vec3::new(-0.1, 0.0, 0.0)));
     }
 
     #[test]
-    fn turning_back_restores_body_and_attachments_without_releasing_or_flipping_the_plane() {
+    fn a_partial_lateral_exit_restores_the_mesh_without_leaving_feet_or_caps() {
+        let mut state = Clipping::default();
+        let clip = state.update(&[portal()], &[body(Vec3::X * 0.15)])[&7];
+        assert!(!clip.keeps_point(Vec3::new(-0.1, 0.0, -2.0)));
+        assert!(!clip.keeps_point(Vec3::new(-0.1, 2.0, 0.0)));
+        assert!(state.update(&[portal()], &[body(Vec3::new(0.15, 2.4, 0.0))]).is_empty());
+        let again = state.update(&[portal()], &[body(Vec3::X * 0.15)])[&7];
+        assert_eq!(again, clip);
+    }
+
+    #[test]
+    fn a_fully_crossed_mesh_stays_gone_beside_the_portal_until_arrival_or_reverse_entry() {
+        let mut state = Clipping::default();
+        state.update(&[portal()], &[body(Vec3::X * 0.3)]);
+        let complete = state.update(&[portal()], &[body(Vec3::X * -0.4)])[&7];
+        assert!(complete.is_hidden());
+        let animated = state.update(&[portal()], &[avatar(Vec3::X * -0.4, Vec3::new(0.8, 0.3, 1.1))])[&7];
+        assert!(animated.is_hidden(), "a pose change cannot resurrect an already vanished mesh");
+        for root in [Vec3::new(-0.4, 2.4, 0.0), Vec3::new(0.2, 2.4, 0.0)] {
+            let clip = state.update(&[portal()], &[body(root)])[&7];
+            assert!(clip.is_hidden());
+            for point in [root, root - Vec3::Z * 2.0, root + Vec3::Y * 4.0] {
+                assert!(!clip.keeps_point(point));
+            }
+        }
+        let root = Vec3::new(0.2, 2.4, 0.0);
+        let mut neighbor = body(root);
+        neighbor.id = Uuid::from_u128(4);
+        neighbor.index = 8;
+        let same_position = state.update(&[portal()], &[body(root), neighbor]);
+        assert!(same_position[&7].is_hidden());
+        assert!(!same_position.contains_key(&8), "the same position must not hide a non-traveler");
+        assert!(state.update(&[portal()], &[body(Vec3::new(-0.4, 2.4, 0.0))])[&7].is_hidden());
+        assert!(state.update(&[portal()], &[body(Vec3::X * -0.4)])[&7].is_hidden());
+        let reverse = state.update(&[portal()], &[body(Vec3::X * 0.15)])[&7];
+        assert!(!reverse.is_hidden());
+        assert!(!reverse.keeps_point(Vec3::X * -0.1));
+        assert!(reverse.keeps_point(Vec3::X * 0.6));
+        assert!(state.update(&[portal()], &[body(Vec3::X * 0.8)]).is_empty());
+    }
+
+    #[test]
+    fn retreat_restores_the_same_fragments_without_flipping_the_entry_side() {
         for side in [-1.0, 1.0] {
-            let mut clipping = Clipping::default();
-            let root = Vec3::X * side;
-            let plane = clipping.update(&[portal()], &[avatar(root, vec![(root, 1.0)])])[&7];
-            // Advance, reverse before teleport confirmation, then cross again.
-            // Changing facing must not invert the latched entry side.
-            for distance in [0.5, -0.5, -1.0, -0.5, 0.5, 1.0, 0.5, -0.5] {
-                let root = Vec3::X * (distance * side);
-                let mut posed = avatar(root, vec![(root, 1.0)]);
-                posed.forward = Vec3::X * side;
-                let active = clipping.update(&[portal()], &[posed])[&7];
-                assert_eq!(active, plane);
-                for offset in [Vec3::ZERO, Vec3::Y * 4.0, Vec3::Z * 3.0] {
-                    assert_eq!(visible(active, root + offset), distance > 0.0);
+            let mut state = Clipping::default();
+            let first = state.update(&[portal()], &[body(Vec3::X * (side * 0.3))])[&7];
+            for distance in [0.15, -0.1, -0.5, -0.1, 0.15, 0.3] {
+                let mut a = body(Vec3::X * (distance * side));
+                a.forward = Vec3::X * side;
+                let clip = state.update(&[portal()], &[a])[&7];
+                assert_eq!(state.crossings[&Uuid::from_u128(3)].side, side);
+                if !clip.is_hidden() {
+                    assert_eq!(clip, first);
                 }
+                assert_eq!(clip.keeps_point(Vec3::X * (side * 0.6)), !clip.is_hidden());
             }
         }
     }
 
     #[test]
-    fn the_entry_side_is_latched_as_the_root_crosses_and_cut_is_released_when_leaving() {
-        let mut clipping = Clipping::default();
-        let plane = clipping.update(&[portal()], &[avatar(Vec3::X, vec![(Vec3::X, 1.0)])])[&7];
-        let after = clipping.update(&[portal()], &[avatar(-Vec3::X, vec![(-Vec3::X, 1.0)])])[&7];
-        assert_eq!(after, plane);
-        assert!(!visible(after, -Vec3::X));
-        assert!(clipping.update(&[], &[avatar(-Vec3::X, vec![(-Vec3::X, 1.0)])]).is_empty());
-        let reverse = clipping.update(&[portal()], &[avatar(-Vec3::X, vec![(-Vec3::X, 1.0)])])[&7];
-        assert!(visible(reverse, -Vec3::X));
-        assert!(!visible(reverse, Vec3::X));
-    }
-
-    #[test]
-    fn arrivals_restore_fragments_as_the_body_moves_out_of_the_aperture() {
+    fn arrivals_restore_the_body_as_it_emerges() {
         for side in [-1.0, 1.0] {
-            let mut clipping = Clipping::default();
+            let mut state = Clipping::default();
             let mut counts = Vec::new();
-            for distance in [0.15, 0.3, 0.6, 1.0] {
-                let root = Vec3::X * side * distance;
-                let mut body = avatar(root, vec![(root, 1.0)]);
-                body.forward = Vec3::X * side;
-                let plane = clipping.update(&[portal()], &[body])[&7];
+            for distance in [0.15, 0.3, 0.7] {
+                let root = Vec3::X * (side * distance);
+                let clip = state.update(&[portal()], &[body(root)]).get(&7).copied();
                 counts.push(
                     (0..256)
                         .filter(|&i| {
-                            visible(
-                                plane,
-                                root + Vec3::Y * ((i % 16) as f32 * 0.06) + Vec3::Z * ((i / 16) as f32 * 0.06),
-                            )
+                            clip.is_none_or(|p| {
+                                p.keeps_point(root + Vec3::Y * ((i % 16) as f32 * 0.06) + Vec3::Z * ((i / 16) as f32 * 0.06))
+                            })
                         })
                         .count(),
                 );
             }
             assert!((1..256).contains(&counts[0]));
-            assert!(counts.windows(2).all(|pair| pair[0] <= pair[1]));
-            assert_eq!(counts[3], 256);
+            assert!(counts.windows(2).all(|p| p[0] <= p[1]));
+            assert_eq!(counts[2], 256);
         }
     }
 
     #[test]
-    fn unrelated_avatars_outside_the_aperture_and_malformed_bounds_are_not_cut() {
-        let mut clipping = Clipping::default();
-        for root in [Vec3::new(0.0, 10.0, 0.0), Vec3::new(0.0, 0.0, 10.0)] {
-            assert!(clipping.update(&[portal()], &[avatar(root, vec![(root, 0.5)])]).is_empty());
-        }
-        assert!(clipping.update(&[portal()], &[avatar(Vec3::X, vec![(Vec3::NAN, 1.0)])]).is_empty());
+    fn swept_crossings_handle_fast_motion_but_teleports_and_arrivals_clear_the_state() {
+        let mut state = Clipping::default();
+        state.update(&[portal()], &[body(Vec3::X * 0.8)]);
+        assert!(state.update(&[portal()], &[body(Vec3::X * -0.8)])[&7].is_hidden());
+        state.forget(Uuid::from_u128(3));
+        assert!(state.update(&[portal()], &[body(Vec3::X * -0.8)]).is_empty());
+        state.update(&[portal()], &[body(Vec3::X * -0.3)]);
+        assert!(state.update(&[portal()], &[body(Vec3::X * 8.0)]).is_empty());
+    }
+
+    #[test]
+    fn a_close_paired_arrival_starts_emergence_instead_of_retaining_the_completed_source() {
+        let mut state = Clipping::default();
+        let exit = Aperture {
+            key: Key(Uuid::from_u128(1), Uuid::from_u128(3), 256),
+            center: Vec3::X * -1.5,
+            normal: Vec3::NEG_X,
+        };
+        let portals = [portal(), exit];
+        state.update(&portals, &[body(Vec3::X * 0.3)]);
+        assert!(state.update(&portals, &[body(Vec3::X * -0.4)])[&7].is_hidden());
+        let arrived = state.update(&portals, &[body(Vec3::X * -1.35)])[&7];
+        assert!(!arrived.is_hidden());
+        assert!(arrived.normal().dot(Vec3::X) > 0.99);
+        assert!(arrived.keeps_point(Vec3::X * -0.9));
+        assert!(!arrived.keeps_point(Vec3::X * -1.6));
+    }
+
+    #[test]
+    fn tall_posed_boxes_keep_their_true_crossing_depth_and_invalid_data_is_ignored() {
+        let b = Bounds::new(Vec3::new(-0.2, -0.3, -3.0), Vec3::new(0.2, 0.3, 3.0), Mat4::IDENTITY).unwrap();
+        assert_eq!(b.range(Vec3::ZERO, Vec3::X), (-0.2, 0.2));
+        assert!(Bounds::new(Vec3::NAN, Vec3::ONE, Mat4::IDENTITY).is_none());
+        assert!(Bounds::new(Vec3::ONE, Vec3::ZERO, Mat4::IDENTITY).is_none());
+        let mut state = Clipping::default();
+        state.update(&[portal()], &[body(Vec3::X * 0.15)]);
+        assert!(state.update(&[], &[body(Vec3::X * 0.15)]).is_empty());
+        assert!(!state.active(Uuid::from_u128(3)));
     }
 }

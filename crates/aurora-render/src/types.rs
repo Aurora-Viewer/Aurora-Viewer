@@ -191,6 +191,7 @@ pub const PORTAL_HALF_HEIGHT: f32 = 1.5;
 pub const PORTAL_SURFACE_SCALE: f32 = 1.16;
 pub const PORTAL_DISSOLVE_WIDTH: f32 = 0.45;
 pub const PORTAL_DISSOLVE_CELLS_PER_METER: f32 = 32.0;
+const PORTAL_HIDDEN: f32 = 3.0;
 
 /// One vector locates dissolution without growing every world-face record:
 /// center.xyz, and the horizontal entry normal on a signed diamond perimeter.
@@ -201,6 +202,17 @@ pub struct PortalClip {
 }
 
 impl PortalClip {
+    /// A completed traveler stays dematerialized until arrival or re-entry.
+    pub fn hidden() -> Self {
+        Self {
+            data: [0.0, 0.0, 0.0, PORTAL_HIDDEN],
+        }
+    }
+
+    pub fn is_hidden(self) -> bool {
+        self.data[3] == PORTAL_HIDDEN
+    }
+
     pub fn new(center: Vec3, normal: Vec3) -> Option<Self> {
         if !center.is_finite() || !normal.is_finite() || normal.z.abs() > 1e-5 {
             return None;
@@ -216,6 +228,9 @@ impl PortalClip {
     }
 
     pub fn normal(self) -> Vec3 {
+        if self.is_hidden() {
+            return Vec3::ZERO;
+        }
         let code = self.data[3];
         let y = if code.abs() > 1.0 {
             code.signum() * (2.0 - code.abs())
@@ -227,7 +242,7 @@ impl PortalClip {
 
     /// CPU picking shares the smooth spatial dissolution used by every GPU pass.
     pub fn keeps_point(self, point: Vec3) -> bool {
-        if !point.is_finite() {
+        if self.is_hidden() || !point.is_finite() {
             return false;
         }
         let local = point - Vec3::from_slice(&self.data[..3]);
@@ -315,7 +330,8 @@ pub struct DrawRecord {
     /// its own in the 4 bits above (0: the frame's), z and w the world
     /// height of the object's bottom and its height (f32 bits).
     pub rez: [u32; 4],
-    /// Portal dissolution: center.xyz and encoded horizontal entry direction.
+    /// Traveler dissolution: center.xyz and horizontal entry direction, or
+    /// PORTAL_HIDDEN after the whole mesh has crossed.
     /// Only active with PORTAL_CLIP; zero is also a valid opening at the origin.
     pub portal_clip: [f32; 4],
 }

@@ -121,6 +121,10 @@ pub struct Portals {
 }
 
 impl Portals {
+    pub fn arrived(&mut self, avatar: uuid::Uuid) {
+        self.clipping.forget(avatar);
+    }
+
     pub fn clear(&mut self, renderer: &mut Renderer) {
         self.planes.clear();
         self.clipped.clear();
@@ -218,6 +222,65 @@ impl Portals {
 }
 
 impl super::Scene {
+    fn portal_mesh_bounds(&self, renderer: &Renderer, gpu: &super::ObjGpu) -> Vec<clipping::Bounds> {
+        let Some(record) = gpu
+            .faces
+            .iter()
+            .find(|f| !f.fully_transparent())
+            .and_then(|face| renderer.records.get(face.record))
+        else {
+            return Vec::new();
+        };
+        let skinned = record.flags[0] & flags::SKINNED != 0;
+        let anchored = record.flags[0] & flags::ANCHORED != 0;
+        let model = if anchored {
+            let slot = record.flags[1] as usize + if skinned { aurora_render::SKELETON_ANCHOR as usize } else { 0 };
+            let Some(anchor) = self.palettes.get(slot) else { return Vec::new() };
+            let anchor = Mat4::from_cols_array_2d(anchor);
+            if skinned {
+                anchor
+            } else {
+                anchor * Mat4::from_cols_array_2d(&record.model)
+            }
+        } else {
+            Mat4::from_cols_array_2d(&record.model)
+        };
+        let geometry = gpu.geom.and_then(|key| self.geom_ready(&key));
+        if skinned {
+            let skin_box = |joint: &super::animesh::JointBounds| {
+                let bind = self.skin_binds.list().get(record.flags[2] as usize + joint.joint as usize)?;
+                let posed = self.palettes.get(record.flags[1] as usize + bind.joint[0] as usize)?;
+                let matrix = model * Mat4::from_cols_array_2d(posed) * Mat4::from_cols_array_2d(&bind.inverse_bind);
+                clipping::Bounds::new(joint.min, joint.max, matrix)
+            };
+            let mut bounds = Vec::new();
+            if gpu.is_avatar {
+                // Only currently drawn system parts count, including their
+                // morphed geometry. Hidden bakes cannot delay completion.
+                let keys = (0..self.avatar_lib.parts.len())
+                    .map(|p| super::GeomKey::AvatarPart(p as u8))
+                    .chain(gpu.morph_geoms.iter().copied());
+                for key in keys {
+                    let Some(geom) = self.geom_ready(&key) else { continue };
+                    if geom.faces.iter().flatten().any(|alloc| {
+                        gpu.faces
+                            .iter()
+                            .any(|f| !f.fully_transparent() && f.cmd.base_vertex == alloc.vertex_offset as i32)
+                    }) {
+                        bounds.extend(geom.joint_bounds.iter().filter_map(skin_box));
+                    }
+                }
+            } else if let Some(geom) = geometry {
+                bounds.extend(geom.joint_bounds.iter().filter_map(skin_box));
+            }
+            return bounds;
+        }
+        geometry
+            .and_then(|g| clipping::Bounds::new(g.min, g.max, model))
+            .into_iter()
+            .collect()
+    }
+
     pub fn portal_keeps_point(&self, avatar: usize, point: Vec3) -> bool {
         self.portals.planes.get(&avatar).is_none_or(|plane| plane.keeps_point(point))
     }
@@ -255,13 +318,16 @@ impl super::Scene {
                     });
                 }
             }
-            // The byte index selects only bodies and world attachments. Posed
-            // spheres include skinning and rigid attachment-point animation.
+            // Spheres only shortlist nearby travelers. Posed joint/rigid boxes
+            // decide when the whole mesh has passed, without a fixed world mask.
             for (index, _) in self.list_index.with(super::list_index::AVATAR_PART) {
                 if let Some(gpu) = self.gpu.get(index)
                     && let Some(owner) = gpu.avatar(index).and_then(|owner| owners.get(&owner))
                 {
-                    avatars[*owner].bounds.push(gpu.sphere());
+                    let avatar = &mut avatars[*owner];
+                    if self.portals.clipping.active(avatar.id) || portals.iter().any(|p| p.inside(avatar.root) && p.near(gpu.sphere())) {
+                        avatar.bounds.extend(self.portal_mesh_bounds(renderer, gpu));
+                    }
                 }
             }
             self.portals.planes = self.portals.clipping.update(&portals, &avatars);

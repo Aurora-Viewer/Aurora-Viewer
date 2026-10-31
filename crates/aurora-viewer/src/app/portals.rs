@@ -277,10 +277,18 @@ impl App {
         let tangent = Vec3::new(-normal.y, normal.x, 0.0);
         let center = Vec3::from(portal.center);
         let exiting = mode.starts_with("slice-exit");
+        let sideways = mode == "slice-sideways";
+        let complete_sideways = mode == "slice-complete-sideways";
         // Let the arrival pose and attachments settle at the plane before
         // walking out. Capture the first exit without a loop-reset teleport.
-        let phase = (self.frame_count.saturating_sub(if exiting { 780 } else { 420 }) % 360) as f32 / 60.0;
+        let phase = (self
+            .frame_count
+            .saturating_sub(if exiting || sideways || complete_sideways { 780 } else { 420 })
+            % 360) as f32
+            / 60.0;
         let distance = match mode {
+            "slice-sideways" => 0.15,
+            "slice-complete-sideways" => 0.6 - phase.min(2.0) * 0.8,
             "slice-exit-still" => -EXIT_OFFSET,
             "slice-exit" | "slice-exit-reverse" => -EXIT_OFFSET - phase * 0.35,
             "slice-still" | "slice-large" | "slice-wide" | "slice-wide-reverse" => 0.12,
@@ -290,7 +298,16 @@ impl App {
             _ => 1.2 - phase * 0.4,
         };
         let mut peer = crate::demo::poser::peer();
-        peer.position = center + normal * distance;
+        peer.position = center
+            + normal * distance
+            + tangent
+                * if sideways {
+                    phase.min(6.0 - phase) * 1.2
+                } else if complete_sideways {
+                    (phase - 2.0).clamp(0.0, 2.0) * 1.2
+                } else {
+                    0.0
+                };
         let turning_back = mode.starts_with("slice-turnback") && phase >= 3.0;
         peer.rotation = glam::Quat::from_rotation_z(portal.yaw + if turning_back { 0.0 } else { std::f32::consts::PI });
         peer.velocity = Vec3::ZERO;
@@ -342,13 +359,13 @@ impl App {
             worn.parent_id = local;
             worn.state = 0x60;
             worn.position = Vec3::ZERO;
-            worn.rotation = if mode.starts_with("slice-wide") {
+            worn.rotation = if mode.starts_with("slice-wide") || sideways {
                 glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)
             } else {
                 glam::Quat::IDENTITY
             };
             worn.scale = Vec3::new(
-                if mode.starts_with("slice-wide") {
+                if mode.starts_with("slice-wide") || sideways {
                     4.2
                 } else if mode == "slice-large" {
                     3.0
@@ -381,12 +398,13 @@ impl App {
         } else {
             4.0
         };
+        let focus = center + tangent * if sideways || complete_sideways { 1.2 } else { 0.0 };
         self.camera.set_view(
-            center
+            focus
                 + tangent * across
                 + normal * if mode.ends_with("reverse") ^ exiting { -ahead } else { ahead }
                 + Vec3::Z * if close { 1.2 } else { 2.2 },
-            center,
+            focus,
             &mut self.world.agent,
             &self.settings.camera,
         );
@@ -562,7 +580,8 @@ mod tests {
             let coverage = |forward: f32| {
                 (0..256)
                     .filter(|&i| {
-                        let point = actual + normal * forward + across * ((i % 16) as f32 * 0.06) + Vec3::Z * ((i / 16) as f32 * 0.06);
+                        let point =
+                            actual + normal * forward + across * ((i % 16) as f32 - 7.5) * 0.06 + Vec3::Z * ((i / 16) as f32 - 7.5) * 0.06;
                         clip.keeps_point(point)
                     })
                     .count()

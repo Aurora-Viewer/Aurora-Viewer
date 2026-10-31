@@ -3377,6 +3377,7 @@ impl App {
                 }
             }
             NetEvent::AgentMovementComplete { .. } => {
+                self.scene.portals.arrived(self.world.agent_id);
                 if let Some(journey) = &mut self.portal_journey {
                     journey.arrived = true;
                 }

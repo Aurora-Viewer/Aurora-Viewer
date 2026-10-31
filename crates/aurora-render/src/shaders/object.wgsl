@@ -17,6 +17,7 @@ fn portal_clip(rec: DrawRecord, position: vec3<f32>) {
 var<private> portal_contact: vec2<f32> = vec2<f32>(0.0);
 const PORTAL_DISSOLVE_WIDTH: f32 = 0.45;
 const PORTAL_DISSOLVE_CELLS_PER_METER: f32 = 32.0;
+const PORTAL_HIDDEN: f32 = 3.0;
 
 // Integer hashing keeps CPU picking and every GPU pass on the same pattern.
 fn portal_dissolve_hash(cell: vec2<i32>) -> f32 {
@@ -29,6 +30,7 @@ fn portal_dissolve_hash(cell: vec2<i32>) -> f32 {
 
 fn portal_dissolve_keeps(clip: vec4<f32>, position: vec3<f32>) -> bool {
     let code = clip.w;
+    if (code == PORTAL_HIDDEN) { return false; }
     let y = select(code, sign(code) * (2.0 - abs(code)), abs(code) > 1.0);
     let normal = normalize(vec2<f32>(1.0 - abs(code), y));
     let local = position - clip.xyz;

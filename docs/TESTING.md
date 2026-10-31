@@ -207,13 +207,15 @@ applies when another resident's portal appears nearby.
 request arrives, then changes their region after the grant is sent: the
 visitor must still receive the destination and teleport without chat focus.
 
-`AURORA_DEMO_PORTALS=slice-walk|slice-run|slice-fly|slice-still|slice-large|slice-reverse|slice-wide|slice-wide-reverse|slice-turnback|slice-turnback-reverse|slice-profile|slice-profile-reverse`
+`AURORA_DEMO_PORTALS=slice-walk|slice-run|slice-fly|slice-still|slice-large|slice-reverse|slice-wide|slice-wide-reverse|slice-turnback|slice-turnback-reverse|slice-profile|slice-profile-reverse|slice-sideways|slice-complete-sideways`
 adds an observed avatar with continuous locomotion animation, a skinned mesh
 and a long rigid hand attachment. The camera observes the portal obliquely
 (from the other side with `slice-reverse`). `slice-still` and `slice-large`
 keep the avatar root fixed: animated limbs and worn geometry must still
-dissolve in the 45 cm band before the portal. No fragment may survive on or
-beyond its plane, including glow. Approaching fragments change into the existing
+dissolve when the traveler engages the opening. The whole traveling mesh follows
+the 45 cm front: feet and worn portions outside the portal silhouette must not
+remain as isolated pieces. Avatars standing beside the doorway without entering
+it stay intact. Approaching fragments change into the existing
 rez/derez hologram style with a luminous eroding edge and theme colors. The band contains
 irregular holes and intact fragments together, with gradually falling coverage;
 it must not leave a straight sliced edge. Capture several animation phases; compare the same
@@ -221,8 +223,18 @@ scenario with `AURORA_PORTAL_CLIP=0`. Traversal never pauses or restarts an
 animation. Portal dissolution is visual and does not arm a teleport gate.
 Use `AURORA_DEMO_POS=100,100` for a clear patch away from the plaza exhibits.
 `slice-wide` and `slice-wide-reverse` keep the root still with a
-4.2 m rigid attachment: parts dissolve across the contact band, including
-above or beside the oval. `slice-turnback` and `slice-turnback-reverse`
+4.2 m rigid attachment: its traversing portions disappear with the body, even
+above or beside the oval; they restore on retreat.
+`slice-sideways` moves the avatar and its large attachment parallel to the plane,
+out of the oval and back. Capture frames 780, 840, 900, 960, 1080 and 1130:
+the partially crossed traveler must fully restore when stepping out laterally,
+then dissolve again on returning into the opening.
+Compare with `AURORA_PORTAL_CLIP=0`; no halo may remain on the adjacent body.
+`slice-complete-sideways` instead crosses fully before moving beside the portal.
+Capture 780, 840, 900, 960, 1020 and 1100: after the whole mesh passes, no feet,
+accessories or glow may reappear during the sideways move while teleport is
+pending. An unrelated avatar at that same position must remain unaffected.
+`slice-turnback` and `slice-turnback-reverse`
 use a closer camera, advance through the band, turn around, and retreat without teleporting;
 returning body and attachment fragments must reappear in the same spatial pattern. Capture
 frames 840, 860, 875, 900, 1030, 1050, 1080 and 1110 to inspect both directions after the loading fade;
