@@ -188,7 +188,8 @@ Use `AURORA_DEMO_POS=100,100` for a clear patch away from the plaza exhibits.
 above or beside the oval. `slice-turnback` and `slice-turnback-reverse`
 use a closer camera, advance through the band, turn around, and retreat without teleporting;
 returning body and attachment fragments must reappear in the same spatial pattern. Capture
-frames 840, 930, 1020 and 1110 to inspect both directions after the loading fade.
+frames 840, 885, 930, 1020, 1035 and 1110 to inspect both directions after the loading fade;
+885 and 1035 show the fragmented contact zone on entry and retreat.
 Use `AURORA_REZ_EFFECT=0` to inspect opaque surfaces without the loading grid.
 The pattern has no timer and is independent of the camera; advancing normally
 cannot make already dissolved fragments flicker back on.

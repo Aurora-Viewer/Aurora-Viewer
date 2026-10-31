@@ -547,7 +547,8 @@ fn shadow_surface(vi: u32, sample_index: u32) -> TerrainShadowOut {
         common[common.find("fn srgb_to_linear(").unwrap()..common.find("fn in_reflection_pass(").unwrap()].to_owned(),
         wgsl_function(env, "terrain_transform_tangent").to_owned(),
         env[env.find("const TERRAIN_ALPHA_RAMP:").unwrap()..env.find("fn terrain_color(").unwrap()].to_owned(),
-        wgsl_function(object, "portal_clip").to_owned(),
+        // Keep the production dissolution helpers with the shadow entry point.
+        object[object.find("fn portal_clip(").unwrap()..object.find("// One analytically bounded Aurora surface").unwrap()].to_owned(),
         wgsl_function(env, "terrain_shadow_mask").to_owned(),
         wgsl_function(env, "terrain_depth_mask").to_owned(),
         format!("@fragment {}", wgsl_function(env, "fs_shadow_terrain")),
