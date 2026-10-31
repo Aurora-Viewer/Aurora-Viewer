@@ -63,9 +63,13 @@ const BENT_BLUR: u32 = 3;
 /// Blur passes of the indirect light beyond the occlusion's.
 const INDIRECT_EXTRA_BLUR: u32 = 4;
 /// The accumulation: the current frame's least weight (the history then
-/// holds about thirty frames), and the half width of the neighbourhood the
-/// history is clipped to, in standard deviations.
+/// holds about thirty frames), the same where the point moves on screen by
+/// a pixel a frame or more (about ten frames: the long history lagged
+/// behind the camera, and the motion hides the grain it quiets), and the
+/// half width of the neighbourhood the history is clipped to, in standard
+/// deviations.
 const TEMPORAL_MIN_WEIGHT: f32 = 0.03;
+const TEMPORAL_MOVING_WEIGHT: f32 = 0.1;
 const TEMPORAL_CLIP: f32 = 1.25;
 /// Times more slices on a frame that accumulates without a history.
 const NO_HISTORY_SLICES: u32 = 4;
@@ -434,7 +438,7 @@ fn uniforms(
             if normals.is_some() { 1.0 } else { 0.0 },
         ],
         reproj: reproj.to_cols_array_2d(),
-        il: [INDIRECT_THICKNESS, INDIRECT_RADIUS, intensity, 0.0],
+        il: [INDIRECT_THICKNESS, INDIRECT_RADIUS, intensity, TEMPORAL_MOVING_WEIGHT],
         temporal: [noise, if history { 0.0 } else { 1.0 }, TEMPORAL_MIN_WEIGHT, TEMPORAL_CLIP],
         normal_view: normals.map_or([[0.0; 4]; 3], |view| {
             let m = normal_view(view);

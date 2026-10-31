@@ -88,8 +88,9 @@ struct GtaoParams {
     // (z in front) to the clip space of the previous frame, whose lit
     // colour `scene_tex` holds
     reproj: mat4x4<f32>,
-    // its thickness of a surface (metres), radius (metres), strength,
-    // unused
+    // its thickness of a surface (metres), radius (metres), strength;
+    // the accumulation's least weight of the current frame where the point
+    // moves on screen
     il: vec4<f32>,
     // the accumulation (`temporal`): the noise's frame index (0 without
     // it), 1 when there is no history to read (first frame, new targets, a
@@ -756,6 +757,7 @@ fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
     let sigma = sqrt(max(m2 / 9.0 - m1 * m1, vec4<f32>(0.0)));
 
     var count = 0.0;
+    var moved = 0.0;
     var hist = cur;
     let isize = vec2<i32>(size);
     let uv = (vec2<f32>(px) + vec2<f32>(0.5)) / size;
@@ -765,6 +767,7 @@ fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
         let pp = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * size - vec2<f32>(0.5);
         let base = vec2<i32>(floor(pp));
         let f = pp - floor(pp);
+        moved = smoothstep(0.25, 1.0, length(pp - vec2<f32>(px)));
         // the history texels lie within a pixel of the point: allow the
         // surface's own slope over that pixel (the smaller step on each
         // axis, so a depth edge beside the pixel does not count), and a
@@ -807,7 +810,9 @@ fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
             count = 0.0;
         }
     }
-    let alpha = max(1.0 / (count + 1.0), g.temporal.z);
+    // (a shorter history where the point moves: the long one lags behind
+    // the camera, and the motion hides the grain it quiets)
+    let alpha = max(1.0 / (count + 1.0), mix(g.temporal.z, g.il.w, moved));
     textureStore(hist_out, px, mix(hist, cur, alpha));
     let frames = min(count + 1.0, 255.0);
     textureStore(meta_out, px, vec4<u32>(pack2x16float(vec2<f32>(min(zc, 60000.0), frames)), 0u, 0u, 0u));
