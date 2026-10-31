@@ -27,6 +27,7 @@
 //! Copyright (C) Linden Research, Inc. and The Phoenix Firestorm Project,
 //! originally LGPL 2.1.
 
+pub mod cef_cache;
 pub mod entry;
 pub mod filter;
 mod interact;
@@ -519,11 +520,17 @@ pub fn user_agent() -> String {
     format!("SecondLife (Aurora Viewer {})", aurora_version::version())
 }
 
+/// The shared cache of our CEF browsers, in which the plugin creates
+/// `cef_cache` (emptied at every start, `cef_cache.rs`).
+pub fn browser_cache(cache_dir: &std::path::Path) -> std::path::PathBuf {
+    cache_dir.join("cef")
+}
+
 /// Settings of our CEF browsers (newSourceFromMediaType): cache, log,
 /// language and the viewer's user agent.
 pub fn browser_settings(cache_dir: &std::path::Path, language: &str) -> BrowserSettings {
     BrowserSettings {
-        cache_path: format!("{}\\", cache_dir.join("cef").display()),
+        cache_path: format!("{}\\", browser_cache(cache_dir).display()),
         username: "aurora".into(),
         cef_log_file: cache_dir.join("cef.log").display().to_string(),
         language: language.to_string(),
