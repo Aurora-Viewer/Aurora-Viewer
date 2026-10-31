@@ -764,7 +764,8 @@ fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
     let clip = g.reproj * vec4<f32>(view_position(uv, zc), 1.0);
     if (g.temporal.y < 0.5 && clip.w > 1e-4) {
         let ndc = clip.xy / clip.w;
-        var prev_uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+        let cam_uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+        var prev_uv = cam_uv;
         // with the mesh normals, the prepass wrote where each point was on
         // screen, avatars and objects that moved included (zw, in uv)
         if (g.misc.w > 0.5) {
@@ -772,6 +773,9 @@ fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
             let src = min(px * i32(g.misc.y), full - vec2<i32>(1));
             prev_uv = uv - textureLoad(normal_tex, src, 0).zw;
         }
+        // the point moved on its own when its motion parts from the camera's
+        // by more than half a pixel
+        let own = length((prev_uv - cam_uv) * size) > 0.5;
         let pp = prev_uv * size - vec2<f32>(0.5);
         let base = vec2<i32>(floor(pp));
         let f = pp - floor(pp);
@@ -783,12 +787,13 @@ fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
         let gx = min(abs(depth0(px + vec2<i32>(-1, 0)) - zc), abs(depth0(px + vec2<i32>(1, 0)) - zc));
         let gy = min(abs(depth0(px + vec2<i32>(0, -1)) - zc), abs(depth0(px + vec2<i32>(0, 1)) - zc));
         // (the point's previous depth is the camera's estimate for what
-        // stood still, its depth now for what moved with the camera, and in
-        // between for most of what moved: either end and the span between
-        // match)
+        // stood still: only that depth matches, so a surface the camera
+        // uncovers rejects its occluder's history. What moved on its own
+        // was at its depth now if it moved with the camera, and in between
+        // for most of the rest: either end and the span between match)
         let slope = 1.5 * (gx + gy);
-        let z_lo = min(clip.w, zc);
-        let z_hi = max(clip.w, zc);
+        let z_lo = select(clip.w, min(clip.w, zc), own);
+        let z_hi = select(clip.w, max(clip.w, zc), own);
         var weight = 0.0;
         var sum = vec4<f32>(0.0);
         for (var k = 0; k < 4; k++) {
