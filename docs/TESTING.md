@@ -174,10 +174,12 @@ inspect wire-level tests, not just labels. Old portal-v1 traffic is not accepted
 
 `AURORA_DEMO_PORTALS=rift|rift-reverse|rift-profile|rift-static` creates a portal
 at frame 660, after the loading fade, and frames it without the creation window.
-Use `AURORA_DEMO_POS=100,100`, a 60 FPS cap and captures at 665, 690, 720, 750,
-780, 820, 900 and 1050. A dark cloud must swell in volume before a crooked
-vertical fissure stretches and splits sideways into the vortex. Its rim, clouds
-and currents remain irregular after opening. `rift-reverse` observes the other
+Use `AURORA_DEMO_POS=100,100`, a 60 FPS cap and captures at 665, 675, 690, 705,
+720, 750, 780 and 900. The opening completes about 1.5 seconds after spawning
+(around frame 752). A dark cloud must swell before a crooked
+vertical fissure stretches and splits sideways into the vortex. Its rim must
+look diffuse and translucent, with soft wisps instead of a solid rounded tube.
+Clouds and currents remain irregular after opening. `rift-reverse` observes the other
 side; `rift-profile` shows cloud depth and rim deformation at a grazing angle.
 `rift-static` enables reduced motion: show the settled tear immediately, with
 no growth or moving turbulence. Refreshing an invitation, relaying it or
@@ -226,8 +228,8 @@ camera sides. Ordinary portals now show theme-based Aurora currents, a dark
 indigo/navy core and a violet/teal rim with glow; reduced motion freezes their
 animation, and denied/private observers retain muted colors and hidden details.
 `slice-profile` and `slice-profile-reverse` observe the aperture at a grazing angle:
-the rim must show actual thickness from both sides. Energy flows around its curved
-surface; the layered core shifts in perspective. Verify the rim never enlarges
+cloud and rim wisps must retain depth from both sides without a continuous opaque
+tube; the layered core shifts in perspective. Verify the rim never enlarges
 the physical crossing opening or the depth-contact mask. The same band and glow
 must work with the ordinary loading rez effect enabled or disabled.
 

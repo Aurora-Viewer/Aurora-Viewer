@@ -147,11 +147,11 @@ fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band(
     // exists. The vertical slit opens into that same physical aperture.
     for (elapsed, x, visible) in [
         (0, 0.0, false),
-        (400, 0.0, false),
-        (1800, 0.0, true),
-        (1800, 0.5, false),
-        (2600, 0.2, true),
-        (4500, 0.8, true),
+        (160, 0.0, false),
+        (720, 0.0, true),
+        (720, 0.5, false),
+        (1040, 0.2, true),
+        (1800, 0.8, true),
     ] {
         cases.push(Case {
             clip: [0.0; 4],

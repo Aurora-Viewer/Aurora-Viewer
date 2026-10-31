@@ -503,10 +503,14 @@ nearby-chat focus can pass movement arrows and does not independently veto them.
 `scene/portals.rs` shares one GPU aperture/rim/cloud mesh with an analytic Aurora surface,
 depth-tested and sorted with world transparency/glow. Theme violet, indigo,
 teal and navy drive its flowing depth, fine rim and soft corona; the GPU
-animation clock runs it, with a static reduced-motion variant. The closed elliptical
-rim has real 15 cm thickness; its UV tag selects normal-shaped energy streams.
+animation clock runs it, with a static reduced-motion variant. The elliptical
+rim supplies 15 cm bounds for translucent wisps; opacity fades at the silhouette
+without solid-material lighting or Fresnel highlights. A broad noisy corona
+softens the aperture edge instead of outlining a continuous tube.
 An oblate cloud volume grows from a dark seed, then a crooked vertical fissure
-widens over 3.8 seconds. GPU deformation and spatial noise keep the rim and
+widens over 1.52 seconds. Only the opening clock runs at 2.5x speed; ordinary
+turbulence and reversible body dissolution retain their own progress.
+GPU deformation and spatial noise keep the rim and
 vortex turbulent after opening. Eight ray samples integrate a shared 3D density
 field inside the cloud bounds, with soft extinction and a view-aligned tear mask.
 Deformation is confined to blended portal outputs: opaque geometry retains its

@@ -75,8 +75,9 @@ fn portal_noise(p: vec2<f32>) -> f32 {
 
 // One opening per locally discovered identity. Reduced motion shows the
 // settled tear immediately. Wrapping subtraction matches the scene clock.
+const PORTAL_OPENING_SPEED: f32 = 2.5;
 fn portal_age(rec: DrawRecord) -> f32 {
-    return select(max(f32(bitcast<i32>(frame.anim_clock.x - rec.flags.w)) * 0.001, 0.0), 8.0, rec.params.y < 0.5);
+    return select(max(f32(bitcast<i32>(frame.anim_clock.x - rec.flags.w)) * 0.001 * PORTAL_OPENING_SPEED, 0.0), 8.0, rec.params.y < 0.5);
 }
 
 fn portal_time(rec: DrawRecord) -> f32 {
@@ -171,27 +172,29 @@ fn portal_surface(rec: DrawRecord, uv: vec2<f32>, position: vec3<f32>, normal: v
         let q = at.xz / vec2<f32>(PORTAL_HALF_WIDTH, -PORTAL_HALF_HEIGHT);
         let opening = portal_opening(q, age, time, aa);
         let tear = abs(portal_tear_distance(q, age, time));
-        let lightning = exp(-tear * 16.0) * smoothstep(0.7, 1.2, age)
+        let lightning = exp(-tear * 7.0) * smoothstep(0.7, 1.2, age)
             * (0.4 + 0.6 * pow(0.5 + 0.5 * sin(q.y * 26.0 + time * 3.0 + billow * 7.0), 4.0));
         let color = navy * (0.05 + billow * 0.15) + indigo * (0.006 + billow * 0.018)
-            + mix(violet, teal, billow) * lightning * 0.65 * energy;
+            + mix(violet, teal, billow) * lightning * 0.28 * energy;
         let alpha = opacity * (1.0 - opening) * smoothstep(0.0, 0.18, age) * mix(1.0, 0.55, smoothstep(2.8, 4.2, age));
-        return PortalSurface(color, alpha, lightning * alpha * 0.08 * energy);
+        return PortalSurface(color, alpha, lightning * alpha * 0.035 * energy);
     }
     if (uv.x >= 1.5) {
         let angle = (uv.x - 2.0) * 6.2831853;
         let tube = uv.y * 6.2831853;
         let n = normalize(normal);
-        let light = normalize(rec.model[0].xyz * 0.3 - rec.model[1].xyz * 0.7 + rec.model[2].xyz * 0.6);
-        let volume = 0.22 + 0.78 * abs(dot(n, light));
-        let fresnel = pow(1.0 - abs(dot(n, view)), 2.2);
-        let stream = pow(0.5 + 0.5 * sin(angle * 11.0 - tube * 3.0 - time * 2.2), 12.0);
-        let ribs = pow(0.5 + 0.5 * cos(angle * 36.0 + tube * 2.0 - time * 0.8), 20.0);
+        // Broken wisps fade at the proxy silhouette. There is no lit, opaque
+        // tube or Fresnel highlight outlining a solid material.
+        let facing = smoothstep(0.0, 0.6, abs(dot(n, view)));
+        let flow = vec2<f32>(cos(angle), sin(angle)) * 9.0 + vec2<f32>(time * 0.17, tube * 0.45);
+        let billow = portal_noise(flow) * 0.65 + portal_noise(flow * 2.1 - vec2<f32>(time * 0.25)) * 0.35;
+        let wisps = smoothstep(0.3, 0.82, billow);
+        let stream = pow(0.5 + 0.5 * sin(angle * 5.0 - time + billow * 7.0), 5.0);
         let accent = mix(violet, teal, 0.5 + 0.5 * sin(angle * 2.0 - tube - time * 0.4));
-        let ragged = portal_noise(vec2<f32>(angle * 9.0, tube * 2.0 - time * 0.6));
         let reveal = smoothstep(0.9, 1.4, age);
-        let color = indigo * volume * 0.07 + accent * (volume * 0.07 + stream * 0.30 + ribs * 0.05 + fresnel * 0.12) * energy;
-        return PortalSurface(color, (0.65 + ragged * 0.35) * reveal, (0.018 + stream * 0.045 + fresnel * 0.025) * reveal * energy);
+        let alpha = wisps * facing * reveal * 0.22;
+        let color = accent * (0.08 + stream * 0.18) * energy;
+        return PortalSurface(color, alpha, (0.02 + stream * 0.04) * alpha * energy);
     }
     let q = (uv * 2.0 - vec2<f32>(1.0)) * PORTAL_SURFACE_SCALE;
     let r = length(q);
@@ -235,18 +238,19 @@ fn portal_surface(rec: DrawRecord, uv: vec2<f32>, position: vec3<f32>, normal: v
     let ripple = sin(angle * 11.0 - time * 1.7 + cloud * 3.0) * 0.003;
     let rim = exp(-pow((r - 1.0 - ripple) / max(0.006, aa * 0.8), 2.0));
     let inner = exp(-pow((r - 0.967) / 0.014, 2.0)) * 0.3;
-    let corona = exp(-pow((r - 1.0) / 0.075, 2.0)) * (1.0 - smoothstep(1.08, PORTAL_SURFACE_SCALE, r));
+    let corona = exp(-pow((r - 1.0) / (0.10 + cloud * 0.055), 2.0)) * (1.0 - smoothstep(1.05, PORTAL_SURFACE_SCALE, r));
     let arcs = pow(0.5 + 0.5 * sin(angle * 5.0 + time * 0.9 + cloud * 2.0), 12.0)
         * exp(-pow((r - 1.035) / 0.024, 2.0));
     let rim_color = mix(violet, teal, 0.5 + 0.5 * sin(angle * 2.0 - time * 0.6));
-    let coverage = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, r);
+    let coverage = 1.0 - smoothstep(1.0 - aa, 1.035 + cloud * 0.04 + aa, r);
     let opening = portal_opening(q, age, time, aa);
-    let torn_edge = exp(-abs(portal_tear_distance(q, age, time)) * 65.0) * smoothstep(0.7, 1.0, age);
+    let edge_width = mix(0.018, 0.06, smoothstep(1.4, 3.8, age));
+    let torn_edge = exp(-pow(portal_tear_distance(q, age, time) / edge_width, 2.0)) * smoothstep(0.7, 1.0, age);
     let cracks = pow(0.5 + 0.5 * sin(angle * 9.0 + cloud * 12.0 - time * 1.7), 40.0) * smoothstep(0.45, 0.95, r);
     let color = mix(indigo * 0.12, core, coverage)
-        + rim_color * (rim * 0.08 + inner * 0.15 + corona * 0.12 + arcs * 0.15 + torn_edge * 0.38 + cracks * 0.12) * energy;
-    let alpha = clamp((coverage + corona * 0.32 + rim * 0.7 + arcs * 0.25) * opening + torn_edge * 0.65, 0.0, 1.0);
-    return PortalSurface(color, alpha, clamp((rim * 0.02 + inner * 0.015 + corona * 0.012 + arcs * 0.02 + tunnel_light * 0.03 + cracks * 0.015) * opening + torn_edge * 0.045, 0.0, 1.0) * energy);
+        + rim_color * (rim * 0.015 + inner * 0.04 + corona * 0.16 + arcs * 0.06 + torn_edge * 0.16 + cracks * 0.12) * energy;
+    let alpha = clamp((coverage + corona * 0.24 + arcs * 0.12) * opening + torn_edge * 0.2, 0.0, 1.0);
+    return PortalSurface(color, alpha, clamp((corona * 0.018 + arcs * 0.008 + tunnel_light * 0.03 + cracks * 0.015) * opening + torn_edge * 0.018, 0.0, 1.0) * energy);
 }
 
 struct VsIn {
