@@ -250,7 +250,9 @@ fn sky_stars(d: vec3<f32>, background: vec3<f32>, foot: SkyFootprint) -> vec3<f3
         let off = s.pos.xyz - q;
         let px = dot(off, ax) / ax2;
         let py = dot(off, ay) / ay2;
-        let sigma = s.color.w;
+        // the real stars' size is in pixels; the Legacy Viewer's is an
+        // angle in the sky (stars.rs legacy_sigma), at least 0.75 px wide
+        let sigma = select(s.color.w, max(s.color.w / pixel, 0.75), legacy);
         let r2 = (px * px + py * py) / (sigma * sigma);
         // stars are listed in the cells within STAR_MARGIN only: on coarse
         // targets (reflection probes) the widest points are cut there
@@ -330,11 +332,20 @@ fn sky_halo(d: f32) -> vec3<f32> {
     return sample_tex_level(slot, vec2<f32>(0.0, 1.0 - v), 0.0).rgb * ice;
 }
 
-// The sky seen through the middle of the view's pixels (rays bent by the
-// water, whose own footprint is not known).
+// The sky seen along a ray whose own footprint is not known (bent by the
+// water, reflected): the size of the view's middle pixel, laid at right
+// angles to the ray. The middle pixel's own axes would lie along a ray far
+// from the view and draw its stars as dashes.
 fn sky_full(dir: vec3<f32>) -> vec3<f32> {
     let centre = sky_ray(vec2<f32>(0.0));
-    return sky_full_at(dir, sky_footprint(vec2<f32>(0.0), centre));
+    let middle = sky_footprint(vec2<f32>(0.0), centre);
+    let d = normalize(dir);
+    let side = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(d.z) > 0.9);
+    let u = normalize(cross(side, d));
+    var foot: SkyFootprint;
+    foot.across = u * length(middle.across);
+    foot.down = cross(d, u) * length(middle.down);
+    return sky_full_at(dir, foot);
 }
 
 fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {

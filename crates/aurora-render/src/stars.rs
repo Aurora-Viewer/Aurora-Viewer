@@ -170,14 +170,9 @@ pub fn real_stars() -> Vec<GpuStar> {
 /// (`r, b` in 0.75..1, `g` 1). Their random generator is not
 /// reproducible; this one is seeded so that the sky is the same each run.
 pub fn legacy_stars() -> Vec<GpuStar> {
-    let mut seed: u32 = 0x5EED_57A5;
-    let mut frand = move || {
-        // xorshift32
-        seed ^= seed << 13;
-        seed ^= seed >> 17;
-        seed ^= seed << 5;
-        (seed >> 8) as f32 / (1u32 << 24) as f32
-    };
+    let mut frand = xorshift(0x5EED_57A5);
+    // the sizes from a generator of their own: the sky keeps its stars
+    let mut size = xorshift(0x51E5_0F57);
     (0..1000)
         .map(|_| {
             let d = Vec3::new(frand() - 0.5, frand() - 0.5, frand() / 2.0).normalize_or(Vec3::Z);
@@ -185,10 +180,30 @@ pub fn legacy_stars() -> Vec<GpuStar> {
             let c = Vec3::new(0.75 + frand() * 0.25, 1.0, 0.75 + frand() * 0.25);
             GpuStar {
                 pos: [d.x, d.y, d.z, i * 1.6],
-                color: [c.x, c.y, c.z, 0.75],
+                color: [c.x, c.y, c.z, legacy_sigma(size())],
             }
         })
         .collect()
+}
+
+/// A seeded xorshift32 giving numbers in 0..1.
+fn xorshift(mut seed: u32) -> impl FnMut() -> f32 {
+    move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        (seed >> 8) as f32 / (1u32 << 24) as f32
+    }
+}
+
+/// Angular size (sigma, radians) of a Legacy Viewer star from a random
+/// `r` in 0..1: LLVOWLSky::updateStarGeometry draws each star as a quad of
+/// 16 to 36 m on a sky dome of 15 km (LLSettingsSky::DOME_RADIUS), whose
+/// soft sprite is taken as three sigmas wide. A size in the sky, not in
+/// pixels: the stars grow when the camera zooms in, as there. The shader
+/// keeps them at least 0.75 px wide, their size at the usual field of view.
+pub fn legacy_sigma(r: f32) -> f32 {
+    (16.0 + r * 20.0) / 15_000.0 / 3.0
 }
 
 /// Cell of a direction (any length). Mirrors `star_cell` in env.wgsl.
@@ -391,5 +406,11 @@ mod tests {
         assert_eq!(stars.len(), 1000);
         assert!(stars.iter().all(|s| s.pos[2] >= 0.0 && s.pos[3] > 0.0));
         assert_eq!(stars, legacy_stars());
+        // quads of 16 to 36 m on the 15 km dome, a size in the sky: about
+        // a third of a pixel to a pixel of a 1080-line view with a 60° field
+        let (small, large) = (legacy_sigma(0.0), legacy_sigma(1.0));
+        assert!(stars.iter().all(|s| (small..=large).contains(&s.color[3])));
+        let pixel = 60f32.to_radians() / 1080.0;
+        assert!((0.3..0.45).contains(&(small / pixel)) && (0.75..0.9).contains(&(large / pixel)));
     }
 }
