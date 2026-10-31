@@ -530,7 +530,10 @@ pub fn browser_cache(cache_dir: &std::path::Path) -> std::path::PathBuf {
 /// language and the viewer's user agent.
 pub fn browser_settings(cache_dir: &std::path::Path, language: &str) -> BrowserSettings {
     BrowserSettings {
-        cache_path: format!("{}\\", browser_cache(cache_dir).display()),
+        // the system's own separator, as the plugin appends `cef_cache`
+        // (LLPluginClassMedia::init gets getCacheDir + getDirDelimiter): a
+        // `\` made a folder named `cef\cef_cache` on macOS and Linux
+        cache_path: format!("{}{}", browser_cache(cache_dir).display(), std::path::MAIN_SEPARATOR),
         username: "aurora".into(),
         cef_log_file: cache_dir.join("cef.log").display().to_string(),
         language: language.to_string(),
