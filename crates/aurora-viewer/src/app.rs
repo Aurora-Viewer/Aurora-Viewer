@@ -8075,6 +8075,7 @@ impl App {
         let window_aspect = w as f32 / h.max(1) as f32;
         let aspect = photo.as_ref().map_or(window_aspect, |f| f.aspect);
         let photo_tile = photo.as_ref().map_or(glam::Mat4::IDENTITY, |f| f.tile);
+        let photo_scale = photo.as_ref().map_or(1.0, |f| f.scale);
         let lod_height = photo.as_ref().map_or(h, |f| f.height);
         let frame_proj = |camera: &crate::camera::Camera| match &photo {
             Some(f) => photo_tile * camera.photo_proj(f.aspect, window_aspect),
@@ -9279,6 +9280,7 @@ impl App {
             view,
             proj,
             photo_tile,
+            photo_scale,
             camera_pos: self.camera.position,
             near: self.camera.near,
             far: self.settings.draw_distance,

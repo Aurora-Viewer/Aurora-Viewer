@@ -29,6 +29,43 @@ use glam::{Mat4, Vec3};
 /// Pixels per wavefront (one workgroup). Must match the shader's.
 pub(crate) const WAVE_SIZE: i32 = 64;
 
+/// Bend's samples per pixel (SampleCount): the shadow's length in pixels
+/// of the window, and HardShadowSamples, the first of them that alone can
+/// shadow the pixel (the last twice as many fade out).
+const SAMPLE_COUNT: f32 = 60.0;
+const HARD_SHADOW_SAMPLES: f32 = 4.0;
+
+/// The most samples per pixel (8 times Bend's), for a photo up to 8 times
+/// taller than the viewfinder's view of it. Must match the shader's
+/// MAX_SAMPLE_COUNT, which sizes its workgroup memory.
+pub(crate) const MAX_SAMPLE_COUNT: i32 = 480;
+
+/// The samples per pixel and the hard ones for an image `scale` times
+/// taller than the viewfinder's view of the same field (1 in the window).
+/// At a fixed 60 pixels a 4K or 8K photo, 3 to 7 times the window's
+/// height, had shadows 3 to 7 times shorter than the viewfinder showed
+/// (issue #1662); in proportion they keep their length in the image.
+pub(crate) fn samples(scale: f32) -> (i32, i32) {
+    let scale = if scale.is_finite() { scale.max(1.0) } else { 1.0 };
+    let count = ((SAMPLE_COUNT * scale).round() as i32).min(MAX_SAMPLE_COUNT);
+    let hard = ((HARD_SHADOW_SAMPLES * count as f32 / SAMPLE_COUNT).round() as i32).max(1);
+    (count, hard)
+}
+
+/// How far, in pixels of the image, the contact shadow of a pixel reads the
+/// depth around it at `scale` ([`samples`]): its samples, the bilinear
+/// read beside the ray, and the filter's radius (contact_shadows_filter.wgsl).
+/// A photo drawn in tiles draws this much around each one; 0 when the
+/// contact shadows are off (`on`, the setting; `AURORA_CONTACT_SHADOWS`
+/// included).
+pub fn tile_reach(on: bool, scale: f32) -> u32 {
+    if Override::from_env().needed(on) {
+        samples(scale).0 as u32 + 1 + 2
+    } else {
+        0
+    }
+}
+
 /// Bend's starting values (DispatchParameters::SetDefaults): the surface
 /// thickness is a share of the depth left to the far plane (0.5 %: about
 /// 5 cm at 10 m with the reversed depth of an infinite projection), the
@@ -588,16 +625,18 @@ impl ContactShadows {
 
     /// The dispatches and their constants for a light at `light` (clip
     /// position, [`light_projection`]) seen through a projection whose near
-    /// plane is `near` metres away, before the encoder runs.
-    pub(crate) fn write(&mut self, queue: &wgpu::Queue, t: &Targets, light: [f32; 4], near: f32) {
+    /// plane is `near` metres away, in an image `scale` times taller than
+    /// the viewfinder's view of it ([`samples`]), before the encoder runs.
+    pub(crate) fn write(&mut self, queue: &wgpu::Queue, t: &Targets, light: [f32; 4], near: f32, scale: f32) {
         let (w, h) = (t.size.0 as i32, t.size.1 as i32);
         self.list = build_dispatch_list(light, [w, h], [0, 0], [w, h], WAVE_SIZE);
         let occluder = occluder_units(Override::from_env().occluder_depth(), near);
+        let (count, hard) = samples(scale);
         let mut bytes = vec![0u8; (self.stride as usize) * self.list.count];
         for (i, d) in self.list.dispatches().iter().enumerate() {
             let u = ParamsU {
                 light: self.list.light,
-                wave_offset: [d.wave_offset[0], d.wave_offset[1], 0, 0],
+                wave_offset: [d.wave_offset[0], d.wave_offset[1], count, hard],
                 tuning: [SURFACE_THICKNESS, BILINEAR_THRESHOLD, SHADOW_CONTRAST, occluder],
             };
             let at = i * self.stride as usize;
@@ -795,5 +834,29 @@ mod tests {
         let alt: Vec<bool> = (0..4).map(|s| Override::Alternate.on_now(false, s)).collect();
         assert_eq!(alt, [false, true, false, true]);
         assert!((0..4).all(|s| Override::None.on_now(true, s)));
+    }
+
+    #[test]
+    fn a_photo_keeps_the_shadows_length_in_the_image() {
+        // the window: Bend's 60 samples, 4 hard
+        assert_eq!(samples(1.0), (60, 4));
+        // never shorter than the window's, whatever comes in
+        assert_eq!(samples(0.5), (60, 4));
+        assert_eq!(samples(f32::NAN), (60, 4));
+        // an 8K photo of a 1080p viewfinder, 4 times taller
+        assert_eq!(samples(4.0), (240, 16));
+        assert_eq!(samples(3.2), (192, 13));
+        // up to the workgroup memory the shader has
+        assert_eq!(samples(8.0), (480, 32));
+        assert_eq!(samples(20.0), (MAX_SAMPLE_COUNT, 32));
+        // the tiles' guard band covers the samples and the filter
+        assert_eq!(tile_reach(true, 4.0), 243);
+    }
+
+    #[test]
+    fn the_shader_has_room_for_the_most_samples() {
+        let shader = include_str!("shaders/contact_shadows.wgsl");
+        assert!(shader.contains(&format!("const MAX_SAMPLE_COUNT: i32 = {MAX_SAMPLE_COUNT};")));
+        assert!(shader.contains(&format!("const WAVE_SIZE: i32 = {WAVE_SIZE};")));
     }
 }

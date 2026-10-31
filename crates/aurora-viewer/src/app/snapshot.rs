@@ -132,6 +132,9 @@ pub(super) struct PhotoFrame {
     pub tile: Mat4,
     /// The photo's height: the levels of detail are chosen for it.
     pub height: u32,
+    /// How many times taller it is than the viewfinder's view of it
+    /// (`snapshot::viewfinder_scale`).
+    pub scale: f32,
     /// Its look, placed for the part drawn.
     pub look: Option<aurora_render::looks::PhotoLook>,
 }
@@ -457,6 +460,7 @@ impl App {
                 snapshot::tile_matrix(job.size, tile)
             },
             height: job.size.1,
+            scale: snapshot::viewfinder_scale(job.size, renderer.size(), self.settings.render_scale_percent),
             look,
         })
     }
@@ -891,13 +895,19 @@ impl App {
     /// How a photo of `size` is drawn (`snapshot::plan`), with the guard
     /// band its effects need: the bloom and the depth of field (at the blur
     /// this photo gets, its `max_coc` grows with its height) read the image
-    /// farther than the screen-space passes.
+    /// farther than the screen-space passes, and the contact shadows as far
+    /// as their rays reach at this photo's scale.
     fn photo_tiles(&self, renderer: &Renderer, size: (u32, u32)) -> Vec<snapshot::TilePass> {
         let bloom = if self.settings.bloom { self.settings.bloom_strength } else { 0.0 };
         let dof = self
             .photo_dof_max_coc(size.1, renderer.size().1)
             .map_or(0, aurora_render::dof_tile_reach);
-        let guard = snapshot::TILE_GUARD.max(aurora_render::bloom_tile_reach(bloom)).max(dof);
+        let scale = snapshot::viewfinder_scale(size, renderer.size(), self.settings.render_scale_percent);
+        let contact = aurora_render::contact_tile_reach(self.settings.contact_shadows, scale);
+        let guard = snapshot::TILE_GUARD
+            .max(aurora_render::bloom_tile_reach(bloom))
+            .max(dof)
+            .max(contact);
         snapshot::plan(size, self.photo_max_side(renderer), self.photo_max_pixels(renderer), guard)
     }
 
