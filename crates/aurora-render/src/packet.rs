@@ -73,7 +73,11 @@ pub(crate) struct SceneGpu {
     pub records: wgpu::Buffer,
     pub palettes: wgpu::Buffer,
     pub skin_binds: wgpu::Buffer,
-    /// Changes when one of the three buffers above was reallocated.
+    /// What the records' model matrices and the palettes were when the last
+    /// frame was drawn (motion vectors; `motion_history.rs` keeps them).
+    pub prev_models: wgpu::Buffer,
+    pub prev_palettes: wgpu::Buffer,
+    /// Changes when one of the five buffers above was reallocated.
     pub records_key: (u64, u64),
     /// Face table (one entry per draw record) and object table of the GPU
     /// culling, with their sizes.
@@ -122,6 +126,8 @@ pub(crate) struct FramePacket {
     /// Count the luminance histogram of this frame shown at that exposure
     /// (the photo viewfinder; answered a few frames later).
     pub histogram: Option<f32>,
+    /// Start the motion history again (`Renderer::cut_motion_history`).
+    pub motion_cut: bool,
 }
 
 pub(crate) struct FrameResult {

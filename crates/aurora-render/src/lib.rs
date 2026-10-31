@@ -29,6 +29,7 @@ mod label_depth;
 pub mod light_tiles;
 pub mod looks;
 pub mod main_thread;
+mod motion_history;
 mod occlusion;
 mod packet;
 mod pick;
@@ -147,6 +148,11 @@ mod shader_tests {
         if let Err(e) = v.validate(&module) {
             panic!("{}", e.emit_to_string(src));
         }
+    }
+
+    #[test]
+    fn motion_history_shader_is_valid() {
+        validate(include_str!("shaders/motion_history.wgsl"));
     }
 
     #[test]

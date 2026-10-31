@@ -1483,6 +1483,11 @@ pub(crate) struct Backend {
     /// them (label_depth.rs).
     label_depth: crate::label_depth::LabelDepth,
     impostors: Impostors,
+    /// Last frame's matrices for the motion vectors (motion_history.rs).
+    motion_history: crate::motion_history::MotionHistory,
+    /// The scene moved as a whole (`FramePacket::motion_cut`) and no frame
+    /// was submitted since: the next one takes its matrices as the previous.
+    motion_cut: bool,
     cull_cpu: Vec<crate::occlusion::CullDraw>,
     particle_buffer: wgpu::Buffer,
     timer: Option<GpuTimer>,
@@ -2788,6 +2793,7 @@ impl Backend {
         let label_depth = crate::label_depth::LabelDepth::new(&device, format);
         let occlusion = crate::occlusion::Occlusion::new(&device);
         let cull = GpuCull::new(&device);
+        let motion_history = crate::motion_history::MotionHistory::new(&device);
         let impostors = Impostors::new(&device, &frame_layout, &records_layout, &tex_layout, msaa_samples, settings.ssr);
         let particle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("particles"),
@@ -2869,6 +2875,8 @@ impl Backend {
             drawn_pick,
             label_depth,
             impostors,
+            motion_history,
+            motion_cut: true,
             cull_cpu: Vec::new(),
             particle_buffer,
             timer,
@@ -4902,7 +4910,9 @@ impl Backend {
             drawn,
             capture: wanted,
             histogram,
+            motion_cut,
         } = packet;
+        self.motion_cut |= motion_cut;
         let mut stats = RenderStats::default();
         if let Some(t) = &mut self.timer {
             t.harvest();
@@ -5918,6 +5928,9 @@ impl Backend {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
+        if self.motion_cut {
+            self.motion_history.encode(&self.device, &mut encoder, &scene);
+        }
 
         let timer_slot = self.timer.as_mut().and_then(|t| t.slot());
         let mut first_pass = true;
@@ -7634,6 +7647,8 @@ impl Backend {
         }
 
         prof.mark("egui");
+        // after every pass that read this frame's matrices
+        self.motion_history.encode(&self.device, &mut encoder, &scene);
         if wanted == Some(Capture::Full) {
             capture = self.encode_capture(&mut encoder, surface_tex.texture(), false);
         } else if snapshot.is_some() {
@@ -7658,6 +7673,7 @@ impl Backend {
         }
         prof.mark("finish");
         self.queue.submit(upload_cmds.into_iter().chain(extra_cmds));
+        self.motion_cut = false;
         // staging chunks whose copies are now submitted are mapped again
         frame_uploads.after_submit();
         let mut captured = None;

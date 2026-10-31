@@ -110,6 +110,7 @@ fn scene_gpu(
     textures: &TextureTable,
     geometry: &GeometryArena,
     palettes: &wgpu::Buffer,
+    prev_palettes: &wgpu::Buffer,
     skin_binds: &wgpu::Buffer,
     bind_generation: u64,
 ) -> SceneGpu {
@@ -117,6 +118,8 @@ fn scene_gpu(
         records: records.buffer.clone(),
         palettes: palettes.clone(),
         skin_binds: skin_binds.clone(),
+        prev_models: records.prev_models.clone(),
+        prev_palettes: prev_palettes.clone(),
         records_key: (records.generation, bind_generation),
         faces: records.faces.buffer().clone(),
         face_count: records.faces.len(),
@@ -153,6 +156,13 @@ pub struct Renderer {
     /// Queue writes of the frame being built (writes.rs).
     writes: GpuWrites,
     palette_buffer: wgpu::Buffer,
+    /// The palettes as the last frame drew them (the motion vectors): the
+    /// renderer copies `palette_buffer` into it at the end of each frame
+    /// (`motion_history.rs`). The same size, unless video memory was full
+    /// when the palettes grew.
+    prev_palette_buffer: wgpu::Buffer,
+    /// The next frame starts the motion history again (`cut_motion_history`).
+    motion_cut: bool,
     /// Palette bytes written since the last frame (AURORA_PROFILE).
     palettes_uploaded: u64,
     /// Bytes of vertices deformed in place this frame (profile).
@@ -392,6 +402,7 @@ impl Renderer {
         let records = RecordStore::new(&device);
         let cull = CullTables::new(&device);
         let palette_buffer = Self::make_palette_buffer(&device, 64 * 160);
+        let prev_palette_buffer = device.create_buffer(&Self::prev_palette_desc(64 * 160));
         let skin_bind_buffer = Self::make_skin_bind_buffer(&device, 256);
         // staging memory of the streamed uploads, created once here
         let uploads = UploadQueue::new(&device, info.integrated || info.vram_mb.is_some_and(|mb| mb < 4096));
@@ -418,7 +429,16 @@ impl Renderer {
             adapter_specific,
             gpu_cull,
             tex_layout: textures.layout.clone(),
-            scene: scene_gpu(&records, &cull, &textures, &geometry, &palette_buffer, &skin_bind_buffer, 0),
+            scene: scene_gpu(
+                &records,
+                &cull,
+                &textures,
+                &geometry,
+                &palette_buffer,
+                &prev_palette_buffer,
+                &skin_bind_buffer,
+                0,
+            ),
             anim_clock,
             lost: lost.clone(),
         })?;
@@ -446,6 +466,8 @@ impl Renderer {
             cull,
             writes,
             palette_buffer,
+            prev_palette_buffer,
+            motion_cut: false,
             palettes_uploaded: 0,
             vertices_uploaded: 0,
             geometry_uploaded: 0,
@@ -497,6 +519,7 @@ impl Renderer {
             &self.textures,
             &self.geometry,
             &self.palette_buffer,
+            &self.prev_palette_buffer,
             &self.skin_bind_buffer,
             self.bind_generation,
         )
@@ -582,9 +605,45 @@ impl Renderer {
         wgpu::BufferDescriptor {
             label: Some("joint palettes"),
             size: (matrices.max(1) * 64) as u64,
+            // COPY_SRC: the previous palettes are copied from it
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        }
+    }
+
+    fn prev_palette_desc(matrices: usize) -> wgpu::BufferDescriptor<'static> {
+        wgpu::BufferDescriptor {
+            label: Some("previous joint palettes"),
+            size: (matrices.max(1) * 64) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }
+    }
+
+    /// Palette slots given to new skeletons, after this frame's palette
+    /// uploads: each is written whole, as its pose and as its previous
+    /// pose, or it would seem to come from the last owner's (or from
+    /// nothing).
+    pub fn seed_palette_slots(&mut self, mats: &[[[f32; 4]; 4]], slots: &[usize], per: usize) {
+        let fits = mats.len().min(self.palette_buffer.size() as usize / 64);
+        let prev_fits = fits.min(self.prev_palette_buffer.size() as usize / 64);
+        for &slot in slots {
+            let a = slot * per;
+            for (buffer, end) in [(&self.palette_buffer, fits), (&self.prev_palette_buffer, prev_fits)] {
+                let b = ((slot + 1) * per).min(end);
+                if a < b {
+                    self.writes.write_buffer(buffer, (a * 64) as u64, bytemuck::cast_slice(&mats[a..b]));
+                }
+            }
+        }
+    }
+
+    /// The next frame has no motion: the scene moved as a whole (a new main
+    /// region shifts every position), so last frame's matrices are not
+    /// where this frame's things came from. The renderer takes the current
+    /// ones as the previous ones before drawing it.
+    pub fn cut_motion_history(&mut self) {
+        self.motion_cut = true;
     }
 
     /// Upload joint palettes (column-major matrices). Indices referenced by
@@ -602,6 +661,14 @@ impl Renderer {
             if let Some(b) = self.grow_table(&Self::palette_desc(n)) {
                 self.palette_buffer = b;
                 self.bind_generation += 1;
+                // (the whole set is written below: the previous palettes
+                // start from it, no skeleton moves in this frame)
+                match crate::gpu_alloc::try_buffer(&self.device, &Self::prev_palette_desc(n)) {
+                    Ok(prev) => self.prev_palette_buffer = prev,
+                    Err(e) => log::warn!("previous joint palettes not grown ({e}): the skeletons past them get no motion"),
+                }
+                let prev = &mats[..mats.len().min(self.prev_palette_buffer.size() as usize / 64)];
+                self.writes.write_buffer(&self.prev_palette_buffer, 0, bytemuck::cast_slice(prev));
             }
         }
         let mats = &mats[..mats.len().min(self.palette_buffer.size() as usize / 64)];
@@ -1024,6 +1091,7 @@ impl Renderer {
             drawn: std::mem::take(&mut self.drawn_requests),
             capture,
             histogram: self.histogram_request.take(),
+            motion_cut: std::mem::take(&mut self.motion_cut),
         };
         self.frames += 1;
         let built = t0.elapsed();
