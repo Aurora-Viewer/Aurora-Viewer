@@ -493,7 +493,9 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
             let open = window(ctx, p, aurora_i18n::tr!("ui-land-dialogs-media-url"), 420.0, |ui| {
                 ui.horizontal(|ui| {
                     dim(ui, p, aurora_i18n::tr!("status-url"));
-                    ui.add_enabled(!waiting, egui::TextEdit::singleline(&mut url).desired_width(f32::INFINITY));
+                    crate::ui::widgets::text_field(ui, !waiting, &mut url, |b, _| {
+                        egui::TextEdit::singleline(b).desired_width(f32::INFINITY)
+                    });
                 });
                 if waiting {
                     dim(ui, p, aurora_i18n::tr!("common-loading"));

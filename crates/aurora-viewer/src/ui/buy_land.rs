@@ -971,13 +971,12 @@ impl BuyLandUi {
             if !funds.have_enough() {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(aurora_i18n::tr!("buy-land-buy-additional")).size(12.0).color(p.ink));
-                    let field = ui.add_enabled(
-                        self.site_txn.is_none(),
-                        egui::TextEdit::singleline(&mut self.text)
+                    let field = crate::ui::widgets::text_field(ui, self.site_txn.is_none(), &mut self.text, |b, _| {
+                        egui::TextEdit::singleline(b)
                             .desired_width(80.0)
                             .char_limit(10)
-                            .align(egui::Align2::RIGHT_TOP),
-                    );
+                            .align(egui::Align2::RIGHT_TOP)
+                    });
                     ui.label(RichText::new("L$").size(12.0).color(p.muted));
                     if field.changed() {
                         self.typed(Instant::now());

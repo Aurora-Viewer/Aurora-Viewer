@@ -103,10 +103,9 @@ pub(super) fn show(
     });
     super::row(ui, p, aurora_i18n::tr!("common-home-page"), |ui| {
         let mut url = parcel.media_url.clone();
-        ui.add_enabled(
-            false,
-            egui::TextEdit::singleline(&mut url).desired_width(ui.available_width() - 80.0),
-        );
+        crate::ui::widgets::text_field(ui, false, &mut url, |b, ui| {
+            egui::TextEdit::singleline(b).desired_width(ui.available_width() - 80.0)
+        });
         if super::button(ui, p, aurora_i18n::tr!("common-choose"), can).clicked() {
             world.land.media_type = None;
             s.dialog = Some(Dialog::MediaUrl(parcel.media_url.clone()));
@@ -114,7 +113,9 @@ pub(super) fn show(
     });
     super::row(ui, p, aurora_i18n::tr!("common-description"), |ui| {
         s.media_desc.sync(&parcel.media.desc);
-        let r = ui.add_enabled(can, egui::TextEdit::singleline(&mut s.media_desc.text).desired_width(f32::INFINITY));
+        let r = crate::ui::widgets::text_field(ui, can, &mut s.media_desc.text, |b, _| {
+            egui::TextEdit::singleline(b).desired_width(f32::INFINITY)
+        });
         let r = r.on_hover_text(aurora_i18n::tr!("ui-land-media-text-displayed-beside-the-play-load-button"));
         if let Some(d) = s.media_desc.after(&r) {
             world.land.update(|u| u.media_desc = d);

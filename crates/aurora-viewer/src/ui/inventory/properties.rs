@@ -162,12 +162,9 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
             } else {
                 ui.add_space(16.0);
             }
-            ui.add_enabled(
-                can_describe,
-                egui::TextEdit::singleline(&mut edit.name)
-                    .char_limit(63)
-                    .desired_width(ui.available_width()),
-            );
+            crate::ui::widgets::text_field(ui, can_describe, &mut edit.name, |b, ui| {
+                egui::TextEdit::singleline(b).char_limit(63).desired_width(ui.available_width())
+            });
         });
         ui.add_space(6.0);
         ui.horizontal_top(|ui| {
@@ -214,13 +211,12 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
             });
         });
         ui.label(aurora_i18n::tr!("common-description"));
-        ui.add_enabled(
-            can_describe,
-            egui::TextEdit::multiline(&mut edit.desc)
+        crate::ui::widgets::text_field(ui, can_describe, &mut edit.desc, |b, ui| {
+            egui::TextEdit::multiline(b)
                 .char_limit(127)
                 .desired_rows(2)
-                .desired_width(ui.available_width()),
-        );
+                .desired_width(ui.available_width())
+        });
         ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-properties-experience")).color(p.muted));
         crate::ui::widgets::divider(ui, p);
         ui.label(aurora_i18n::tr!("ui-inventory-properties-permissions"));
