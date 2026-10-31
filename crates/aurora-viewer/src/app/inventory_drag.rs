@@ -238,10 +238,8 @@ impl App {
         if give.is_some() || !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open {
             return Vec::new();
         }
-        if egui::DragAndDrop::payload::<ui::places::drag::PlaceDrag>(ctx)
-            .is_some_and(|cargo| matches!(cargo.target, ui::places::drag::Target::History(_)))
-        {
-            self.history_portal_input(ctx, renderer);
+        if egui::DragAndDrop::payload::<ui::places::drag::PlaceDrag>(ctx).is_some_and(|cargo| cargo.target.item().is_none()) {
+            self.location_portal_input(ctx, renderer);
             return Vec::new();
         }
         if egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx) || place_drag {
@@ -347,9 +345,9 @@ impl App {
         None
     }
 
-    /// History carries an arrival snapshot, never an inventory item to rez or give.
-    fn history_portal_input(&mut self, ctx: &egui::Context, renderer: &Renderer) {
-        let Some(drag) = ui::places::drag::history_world_drag(ctx) else {
+    /// History and directory places carry locations, never items to rez or give.
+    fn location_portal_input(&mut self, ctx: &egui::Context, renderer: &Renderer) {
+        let Some(drag) = ui::places::drag::location_world_drag(ctx) else {
             return;
         };
         let ppp = ctx.pixels_per_point();
@@ -380,7 +378,7 @@ impl App {
             egui::DragAndDrop::clear_payload(ctx);
             match result {
                 Ok(point) => {
-                    self.queue_history_portal(drag.global, point, drag.shift);
+                    self.queue_location_portal(drag.target, point, drag.shift);
                     self.inventory_ui.release_world_drag_focus(ctx);
                 }
                 Err(reason) => self.portal_drop_notice(reason),

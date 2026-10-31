@@ -936,6 +936,7 @@ fn results(ui: &mut egui::Ui, c: &mut Ctx, list: &List, actions: &mut Vec<Search
                 }
                 let cut = paint_row(ui, p, row, &cells(rect), &font);
                 let resp = if cut { resp.on_hover_text(&row.name) } else { resp };
+                let resp = place_drag_source(resp, c, tab, row);
                 if resp.clicked() && !selected {
                     actions.push(SearchAction::Select(tab, row.key));
                 }
@@ -974,6 +975,31 @@ fn results(ui: &mut egui::Ui, c: &mut Ctx, list: &List, actions: &mut Vec<Search
             }
         });
     });
+}
+
+/// FSFloaterSearch::displayParcelDetails uses ParcelInfoReply's arrival for
+/// places and land sales. Keep the result's identity while those details load.
+fn place_drag_source(response: egui::Response, c: &Ctx, tab: Tab, row: &Row) -> egui::Response {
+    let (Tab::Places | Tab::Land, Key::Id(id)) = (tab, row.key) else {
+        return response;
+    };
+    if id.is_nil() {
+        return response;
+    }
+    let response = response.interact(Sense::click_and_drag());
+    super::places::drag::source(&response, || super::places::drag::PlaceDrag {
+        target: super::places::drag::Target::Parcel(id),
+        favorite: None,
+        name: row.name.clone(),
+        thumbnail: c
+            .world
+            .profiles
+            .parcels
+            .get(&id)
+            .and_then(|p| c.images.get(&p.snapshot))
+            .map(|t| t.id()),
+    });
+    response
 }
 
 /// Paint a row in its cells; true when the name was cut short.

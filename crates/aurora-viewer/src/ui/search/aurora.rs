@@ -1054,6 +1054,7 @@ impl SearchUi {
             }
             _ => return,
         };
+        let resp = super::place_drag_source(resp, c, tab, row);
         if resp.clicked() && !selected {
             self.aurora.selected = Some((tab, row.key));
             actions.push(SearchAction::Select(tab, row.key));

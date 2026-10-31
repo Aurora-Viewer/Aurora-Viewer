@@ -177,6 +177,14 @@ History rows; reorder grips remain in Favorites only. Pointer regressions also
 cover both History layouts, wide/filtered views and a visit near an owned landmark
 whose exact arrival differs from the landmark's saved point.
 
+`drop-search|drop-search-public|drop-search-hover` opens Search on Places and
+drags a directory parcel without creating a landmark. Check the floating place
+preview, Friends/Shift-public access and portal destination. Pointer regressions
+start actual drags in both Search layouts (Places and Land) and All's Places
+section even before ParcelInfoReply arrives; people and groups remain ordinary
+rows. Resolver tests cover delayed parcel/map replies, immutable arrivals,
+variable regions, invalid coordinates and cancellation guards.
+
 `AURORA_DEMO_PORTALS=private-friends-allowed|private-friends-denied|private-group-allowed|private-group-denied`
 exchanges real v2 codec messages between two offline peer states. Everyone sees
 the aperture; denied observers see only the creator and private/access labels.

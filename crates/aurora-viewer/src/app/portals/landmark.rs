@@ -1,5 +1,5 @@
-//! Place drops reuse landmark assets or immutable history arrivals with the
-//! ordinary region-map resolver. No inventory item is created or consumed.
+//! Place drops resolve landmarks, history and directory parcels through the
+//! ordinary caches. No inventory item is created or consumed.
 use super::*;
 use crate::world::{
     inventory::{Inventory, actions},
@@ -31,21 +31,34 @@ pub(in crate::app) fn access(shift: bool) -> Access {
 #[derive(Clone, Copy)]
 enum DropDestination {
     Landmark { item: uuid::Uuid, asset: uuid::Uuid },
-    History(glam::DVec3),
+    Location(glam::DVec3),
+    Parcel(uuid::Uuid),
 }
 
 impl DropDestination {
     fn error_key(self) -> &'static str {
         match self {
             Self::Landmark { .. } => "portal-landmark-unavailable",
-            Self::History(_) => "portal-place-unavailable",
+            Self::Location(_) | Self::Parcel(_) => "portal-place-unavailable",
         }
     }
 
-    fn resolve(self, world: &mut World) -> Result<Option<aurora_net::bridge::portal::Destination>, ()> {
-        match self {
+    fn resolve(&mut self, world: &mut World) -> Result<Option<aurora_net::bridge::portal::Destination>, ()> {
+        if let Self::Parcel(id) = *self {
+            let Some(parcel) = world.profiles.parcels.get(&id) else {
+                return Ok(None);
+            };
+            if parcel.global == glam::DVec3::ZERO {
+                return Err(());
+            }
+            // Freeze the reply before waiting for the region map. Another
+            // query or details selection cannot retarget an accepted drop.
+            *self = Self::Location(parcel.global);
+        }
+        match *self {
             Self::Landmark { asset, .. } => destination(world, asset),
-            Self::History(global) => destination_at(world, global),
+            Self::Location(global) => destination_at(world, global),
+            Self::Parcel(_) => Ok(None),
         }
     }
 }
@@ -90,7 +103,8 @@ impl Pending {
             && now.saturating_duration_since(self.started) <= Duration::from_secs(30)
             && match self.destination {
                 DropDestination::Landmark { item, asset } => cargo(&world.inventory, item).is_some_and(|item| item.asset_id == asset),
-                DropDestination::History(global) => global.is_finite() && global.x >= 0.0 && global.y >= 0.0,
+                DropDestination::Location(global) => global.is_finite() && global.x >= 0.0 && global.y >= 0.0,
+                DropDestination::Parcel(id) => !id.is_nil(),
             }
     }
 }
@@ -108,8 +122,18 @@ impl App {
         self.queue_place_portal(destination, point, shift);
     }
 
-    pub(in crate::app) fn queue_history_portal(&mut self, global: glam::DVec3, point: Vec3, shift: bool) {
-        self.queue_place_portal(DropDestination::History(global), point, shift);
+    pub(in crate::app) fn queue_location_portal(&mut self, target: ui::places::drag::Target, point: Vec3, shift: bool) {
+        let destination = match target {
+            ui::places::drag::Target::History(global) => DropDestination::Location(global),
+            ui::places::drag::Target::Parcel(id) if !id.is_nil() => {
+                if !self.world.profiles.parcels.contains_key(&id) {
+                    self.send(NetCommand::ParcelInfoRequest(id));
+                }
+                DropDestination::Parcel(id)
+            }
+            _ => return,
+        };
+        self.queue_place_portal(destination, point, shift);
     }
 
     fn queue_place_portal(&mut self, destination: DropDestination, point: Vec3, shift: bool) {
@@ -139,7 +163,7 @@ impl App {
     }
 
     pub(in crate::app) fn update_place_portal(&mut self) {
-        let Some(pending) = self.portal_drop.take() else { return };
+        let Some(mut pending) = self.portal_drop.take() else { return };
         if self.world.teleporting || pending.agent != self.world.agent_id || Some(pending.region) != self.world.main_region {
             return;
         }
@@ -325,7 +349,7 @@ mod tests {
         world.agent_id = uuid::Uuid::from_u128(1);
         world.main_region = Some(256);
         let global = glam::DVec3::new(701.0, 901.0, 32.0);
-        let source = DropDestination::History(global);
+        let mut source = DropDestination::Location(global);
         assert_eq!(source.resolve(&mut world), Ok(None));
         assert!(world.landmarks.take_wanted().is_empty());
         assert!(world.inventory.items.is_empty());
@@ -350,7 +374,7 @@ mod tests {
         let destination = source.resolve(&mut world).unwrap().unwrap();
         assert_eq!(destination.region, "Demo wide region");
         assert_eq!(destination.position, [445.0, 389.0, 32.0]);
-        assert!(DropDestination::History(glam::DVec3::NAN).resolve(&mut world).is_err());
+        assert!(DropDestination::Location(glam::DVec3::NAN).resolve(&mut world).is_err());
         let now = Instant::now();
         let pending = Pending {
             destination: source,
@@ -373,5 +397,86 @@ mod tests {
         world.agent_id = uuid::Uuid::from_u128(2);
         assert!(!pending.valid(&world, now));
         assert!(world.inventory.items.is_empty());
+    }
+
+    #[test]
+    fn search_portal_waits_for_its_parcel_then_freezes_the_arrival_while_the_map_loads() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        let id = uuid::Uuid::from_u128(12);
+        let mut source = DropDestination::Parcel(id);
+        assert_eq!(source.resolve(&mut world), Ok(None));
+        assert!(world.map.take_commands().is_empty());
+        world.profiles.parcels.insert(
+            uuid::Uuid::from_u128(13),
+            aurora_net::profile::ParcelSummary {
+                global: glam::DVec3::new(800.0, 800.0, 40.0),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            source.resolve(&mut world),
+            Ok(None),
+            "another result cannot supply this drop's arrival"
+        );
+        world.profiles.parcels.insert(
+            id,
+            aurora_net::profile::ParcelSummary {
+                id,
+                global: glam::DVec3::new(701.0, 901.0, 32.0),
+                ..Default::default()
+            },
+        );
+        assert_eq!(source.resolve(&mut world), Ok(None));
+        assert!(
+            world
+                .map
+                .take_commands()
+                .iter()
+                .any(|c| matches!(c, NetCommand::MapBlockRequest { .. }))
+        );
+        world.profiles.parcels.clear();
+        world.map.sims.insert(
+            (1, 2),
+            SimInfo {
+                name: "Demo wide region".into(),
+                access: 13,
+                flags: 0,
+                image: uuid::Uuid::nil(),
+                size_x: 512,
+                size_y: 512,
+            },
+        );
+        let destination = source.resolve(&mut world).unwrap().unwrap();
+        assert_eq!(destination.region, "Demo wide region");
+        assert_eq!(destination.position, [445.0, 389.0, 32.0]);
+        assert!(world.landmarks.take_wanted().is_empty() && world.inventory.items.is_empty());
+        for global in [glam::DVec3::ZERO, glam::DVec3::NAN, glam::DVec3::new(-1.0, 100.0, 30.0)] {
+            world.profiles.parcels.insert(
+                id,
+                aurora_net::profile::ParcelSummary {
+                    global,
+                    ..Default::default()
+                },
+            );
+            assert!(DropDestination::Parcel(id).resolve(&mut world).is_err());
+        }
+        let now = Instant::now();
+        let pending = Pending {
+            destination: DropDestination::Parcel(id),
+            agent: world.agent_id,
+            region: 256,
+            center: Vec3::ONE,
+            yaw: 0.0,
+            access: access(true),
+            started: now,
+        };
+        world.main_region = Some(256);
+        assert!(pending.valid(&world, now));
+        assert!(!pending.valid(&world, now + Duration::from_secs(31)));
+        world.teleporting = true;
+        assert!(!pending.valid(&world, now));
+        world.teleporting = false;
+        world.main_region = Some(512);
+        assert!(!pending.valid(&world, now));
     }
 }
