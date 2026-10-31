@@ -154,6 +154,8 @@ pub struct View<'a> {
     pub env: EnvView<'a>,
     /// The key that brings the free camera back (Escape by default).
     pub back_key: Option<crate::keybinds::Binding>,
+    /// The photo quality is lowered to stay within the video memory.
+    pub quality_reduced: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -560,6 +562,11 @@ impl SnapshotUi {
             (None, _, Some(prof)) => long_sides(ui, p, &mut s.profile_size, prof.size),
             (None, Some(inv), None) => texture_sizes(ui, p, s, inv),
             (None, None, None) => resolutions(ui, p, s, view),
+        }
+        // the photo quality lowered for the video memory (the switch is
+        // further down, often out of sight): with how the photo is drawn
+        if view.quality_reduced && s.quality {
+            ui.add(egui::Label::new(RichText::new(aurora_i18n::tr!("photo-quality-reduced")).size(11.5).color(p.warn)).wrap());
         }
 
         section(ui, p, "send-filled", aurora_i18n::tr!("photo-section-destination"));

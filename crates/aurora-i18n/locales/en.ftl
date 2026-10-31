@@ -6233,6 +6233,7 @@ photo-freeze = Freeze frame
 photo-quality = Photo quality
 photo-quality-hint = Everything at its best for the photo: distance, details, shadows, reflections, sharp textures, MSAA 8x and drawn at twice the size. Your settings come back on closing.
 photo-quality-loading = Loading the details… ({ $count } textures)
+photo-quality-reduced = Quality reduced: video memory almost full
 photo-freeze-hint = Taken now and kept on screen until saved
 photo-freeze-world = Freeze the world
 photo-freeze-world-hint = Avatars, animations and everything that moves hold still while the camera moves on.

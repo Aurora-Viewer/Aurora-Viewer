@@ -6233,6 +6233,7 @@ photo-freeze = フレームを固定
 photo-quality = 写真の品質
 photo-quality-hint = 写真のためにすべてを最高にします：距離、詳細、影、反射、鮮明なテクスチャ、MSAA 8x、2倍のサイズで描画。閉じると設定は元に戻ります。
 photo-quality-loading = 詳細を読み込んでいます…（テクスチャ{ $count }枚）
+photo-quality-reduced = 品質を下げています：ビデオメモリがほぼいっぱいです
 photo-freeze-hint = 今撮影し、保存するまで画面に保持します
 photo-freeze-world = ワールドを止める
 photo-freeze-world-hint = カメラは動かせますが、アバター、アニメーション、動くものはすべて静止します。
