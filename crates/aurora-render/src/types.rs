@@ -1427,6 +1427,10 @@ pub struct RenderStats {
     /// Presentation mode the swapchain is configured with (present.rs);
     /// None until the backend has answered a frame.
     pub present_mode: Option<wgpu::PresentMode>,
+    /// The settings the frame was drawn with: the MSAA samples and SSR of
+    /// the previous ones while the pipelines for new ones compile (#1746).
+    /// None until the backend has answered a frame.
+    pub settings: Option<RenderSettings>,
     pub draws: u32,
     pub shadow_draws: u32,
     pub shadow: ShadowStats,
@@ -1441,6 +1445,9 @@ pub struct RenderStats {
     pub index_used: u64,
     pub records: u32,
     pub gpu_ms: Option<f32>,
+    /// The world pixels of the frame `gpu_ms` measures (a photo frame's are
+    /// the photo's).
+    pub gpu_pixels: u64,
     /// CPU time the main thread spent on the frame's rendering (ms): the
     /// whole encoding when the renderer runs on it, only the frame packet
     /// with a render thread.
@@ -1483,6 +1490,11 @@ pub struct RenderStats {
     /// GPU time of the bloom levels alone (ms), part of
     /// [`GpuElement::Post`] (0 while off).
     pub gpu_bloom: Option<f32>,
+    /// GPU time of the rest of [`GpuElement::Effects`] (ms): the planar
+    /// reflections (with the refracted water light), the reflection probe,
+    /// the scene copy (with the cut-out pass and the submerged water
+    /// particles), the SSR.
+    pub gpu_effects: Option<[f32; 4]>,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
     /// Spent on the render thread when there is one (then they are those

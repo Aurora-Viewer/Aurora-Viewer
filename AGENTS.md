@@ -528,8 +528,12 @@ explain it to the human and propose 2–3 solutions.
 Then post the review as a comment (`gh pr comment <n> --body-file …`). The
 file given to `--body-file` (like the one of the PR description) is a draft
 in `.scratch/`, never committed: the review lives in the PR comment, not in
-the repository. Structure (keep the `## Review` heading and the `Verdict:`
-line as they are: the PR tracking of `aurora-tools.cmd` reads them):
+the repository. When you ask the author of someone else's PR for changes,
+open that comment with `## Changes requested`: the PR tracking of
+`aurora-tools.cmd` lists the PR as waiting on its author until a new
+commit. Structure of your review (keep the `## Review` heading and the
+`Verdict:` line as they are: the PR tracking of `aurora-tools.cmd` reads
+them):
 
 ```markdown
 ## Review

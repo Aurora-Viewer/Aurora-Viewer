@@ -731,6 +731,8 @@ pub struct App {
     outfit_restore_demo: Option<crate::demo::outfit_restore::OutfitRestoreDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
+    /// AURORA_DEMO_AA_SWITCH: the anti-aliasing changes still to come.
+    aa_switch_demo: Vec<(u64, u8)>,
     /// AURORA_DEMO_SCULPT_MISSING: a sculpt whose map is missing.
     sculpt_missing_demo: Option<crate::demo::sculpt::MissingMapDemo>,
     /// AURORA_DEMO_TEXTURE_MISSING: boxes whose texture is missing.
@@ -1431,6 +1433,11 @@ impl App {
             arrival_demo: None,
             outfit_restore_demo: None,
             tex_refresh_demo: None,
+            aa_switch_demo: if std::env::var_os("AURORA_DEMO").is_some() {
+                crate::demo::aa_switch::from_env()
+            } else {
+                Vec::new()
+            },
             sculpt_missing_demo: None,
             texture_missing_demo: None,
             experience_demo: None,
@@ -8418,6 +8425,11 @@ impl App {
         {
             gfx.renderer.apply_settings(self.settings.render_settings());
         }
+        if let Some(mode) = crate::demo::aa_switch::due(&mut self.aa_switch_demo, self.frame_count) {
+            log::info!("demo: anti-aliasing {mode} at frame {}", self.frame_count);
+            self.settings.antialiasing = mode;
+            gfx.renderer.apply_settings(self.settings.render_settings());
+        }
         let mut view = self.camera.view();
         let mut proj = frame_proj(&self.camera);
         let mut vp = proj * view;
@@ -9658,7 +9670,10 @@ impl App {
             ui::close_key::begin(ui.ctx());
             let t = Instant::now();
             let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
-            actions = self.draw_ui(ui, &projector, &gfx.renderer);
+            // A discarded pass (`request_discard`) is followed by one that
+            // gets no input events: what the first pass clicked must survive
+            // the second, or a click that changed a row's size is lost.
+            actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
             if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
@@ -9973,6 +9988,7 @@ impl App {
         // capture is waited for, its pixels are read in the tail below.
         let lists = if self.in_world() { &self.scene.lists } else { &self.empty_lists };
         let stats = gfx.renderer.render(fp, lists, Some(egui_frame));
+        self.photo_gpu_time(&stats);
         self.photo_drawn(&mut gfx.renderer);
         self.last_render = stats;
         if stats.presented && !gfx.shown {
@@ -10519,6 +10535,8 @@ impl App {
                 && files.iter().any(|(at, _)| *at <= self.frame_count)
                 && self.inventory_images.capturing.is_none()
                 && !self.scene_capture_pending
+                // (with the MSAA and SSR asked, once their pipelines compiled)
+                && gfx.renderer.settings_applied()
             {
                 gfx.renderer.capture_request = true;
                 self.inventory_images.auto_capture_pending = true;
@@ -15736,6 +15754,40 @@ struct UiActions {
     gestures: Vec<uuid::Uuid>,
 }
 
+impl UiActions {
+    /// Adds a later egui pass's actions to the earlier ones'.
+    fn merge(&mut self, later: UiActions) {
+        fn first<T>(a: &mut Option<T>, b: Option<T>) {
+            if a.is_none() {
+                *a = b;
+            }
+        }
+        first(&mut self.exit, later.exit);
+        self.update_quit |= later.update_quit;
+        if !matches!(later.login, LoginAction::None) {
+            self.login = later.login;
+        }
+        first(&mut self.chat, later.chat);
+        if !matches!(later.bar, BarAction::None) {
+            self.bar = later.bar;
+        }
+        self.settings_changed |= later.settings_changed;
+        self.ui_scale_changed |= later.ui_scale_changed;
+        self.font_changed |= later.font_changed;
+        self.cancel_loading |= later.cancel_loading;
+        self.ims.extend(later.ims);
+        self.offer_tp.extend(later.offer_tp);
+        first(&mut self.landmark, later.landmark);
+        first(&mut self.audio, later.audio);
+        first(&mut self.ctx_action, later.ctx_action);
+        first(&mut self.object_confirm, later.object_confirm);
+        first(&mut self.set_display_name, later.set_display_name);
+        self.currency.extend(later.currency);
+        self.typing.extend(later.typing);
+        self.gestures.extend(later.gestures);
+    }
+}
+
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gfx.is_some() {
@@ -18771,7 +18823,7 @@ fn capture_files(path: &std::path::Path, frames: &str) -> Vec<(u64, std::path::P
 
 #[cfg(test)]
 mod tests {
-    use super::{RightGesture, capture_files, frame_cap};
+    use super::{RightGesture, UiActions, capture_files, frame_cap};
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
 
@@ -18957,5 +19009,33 @@ mod tests {
             capture_files(Path::new("c/a.png"), "2560, 2500"),
             vec![(2500, PathBuf::from("c/a-2500.png")), (2560, PathBuf::from("c/a-2560.png"))]
         );
+    }
+
+    #[test]
+    fn ui_actions_of_a_discarded_pass_survive_the_next_one() {
+        let a = uuid::Uuid::from_u128(1);
+        let b = uuid::Uuid::from_u128(2);
+        // the first pass took the click, the second got no input
+        let mut actions = UiActions {
+            settings_changed: true,
+            landmark: Some(a),
+            gestures: vec![a],
+            ..Default::default()
+        };
+        actions.merge(UiActions::default());
+        assert!(actions.settings_changed);
+        assert_eq!(actions.landmark, Some(a));
+        assert_eq!(actions.gestures, vec![a]);
+        // a second pass that acts too keeps the first one-off action and adds
+        // to the lists
+        actions.merge(UiActions {
+            landmark: Some(b),
+            gestures: vec![b],
+            font_changed: true,
+            ..Default::default()
+        });
+        assert_eq!(actions.landmark, Some(a));
+        assert_eq!(actions.gestures, vec![a, b]);
+        assert!(actions.settings_changed && actions.font_changed);
     }
 }
