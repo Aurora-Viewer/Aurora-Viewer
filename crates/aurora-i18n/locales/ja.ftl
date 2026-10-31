@@ -12201,6 +12201,7 @@ portal-private = プライベートなポータル
 portal-drop-friends = 自分とフレンド用のポータルを開く · Shiftを押すと公開
 portal-drop-public = 公開のポータルを開く · Shiftを離すとフレンドのみ
 portal-landmark-unavailable = このランドマークの行き先を解決できませんでした。ポータルは開かれていません。
+portal-place-unavailable = この場所の行き先を解決できませんでした。ポータルは開かれていません。
 portal-destination = 目的地
 portal-destination-hint = 場所のリンクまたは Region/x/y/z を貼り付け
 portal-access = このポータルを使える人

@@ -170,6 +170,13 @@ with its live remaining lifetime above the aperture. Pointer regressions cover
 starting drags in all three Favorites access modes and both Places layouts,
 including wide and filtered lists, without reordering on a world release.
 
+`drop-history|drop-history-public|drop-history-hover` uses an actual arrival
+snapshot without creating or requiring a landmark. Check its portal destination,
+Friends/Shift-public access, and the unchanged left alignment of Landmarks and
+History rows; reorder grips remain in Favorites only. Pointer regressions also
+cover both History layouts, wide/filtered views and a visit near an owned landmark
+whose exact arrival differs from the landmark's saved point.
+
 `AURORA_DEMO_PORTALS=private-friends-allowed|private-friends-denied|private-group-allowed|private-group-denied`
 exchanges real v2 codec messages between two offline peer states. Everyone sees
 the aperture; denied observers see only the creator and private/access labels.

@@ -589,8 +589,8 @@ impl PlacesUi {
                 false,
             );
             if row.folder.is_none() {
-                drag::source(&r.response, || drag::LandmarkDrag {
-                    item: row.id,
+                drag::source(&r.response, || drag::PlaceDrag {
+                    target: drag::Target::Landmark(row.id),
                     favorite: (self.tab == TAB_FAVORITES).then_some(row.id),
                     name: row.name.clone(),
                     thumbnail: None,
@@ -882,6 +882,12 @@ impl PlacesUi {
                     self.selected == Some(Sel::History(i)),
                     true,
                 );
+                drag::source(&r.response, || drag::PlaceDrag {
+                    target: drag::Target::History(it.global),
+                    favorite: None,
+                    name: it.title.clone(),
+                    thumbnail: None,
+                });
                 if r.response.clicked() || r.response.secondary_clicked() {
                     self.selected = Some(Sel::History(i));
                 }
@@ -1162,7 +1168,7 @@ fn list_row(
     info_button: bool,
 ) -> RowResponse {
     let w = ui.available_width();
-    let sense = if folder.is_none() && !info_button {
+    let sense = if folder.is_none() {
         Sense::click_and_drag()
     } else {
         Sense::click()

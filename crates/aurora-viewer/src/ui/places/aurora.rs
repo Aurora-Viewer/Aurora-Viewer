@@ -709,7 +709,7 @@ impl PlacesUi {
         self.here_bar(ui, p, world, footer, true, actions);
     }
 
-    /// Landmark rows share scene cargo; unfiltered favorites also reorder.
+    /// Place rows share scene cargo; only Favorites reserve a reorder grip.
     fn rows(&mut self, ui: &mut egui::Ui, c: &mut Ctx, lines: &[Line], wide: bool, actions: &mut Vec<PlacesAction>) {
         let p = c.p;
         let world = c.world;
@@ -742,11 +742,15 @@ impl PlacesUi {
                 Some((s, ..)) => world.place_snapshots.snapshot(s, &world.profiles.parcels).unwrap_or_default(),
                 None => place.thumbnail,
             };
-            let out = place_row(ui, p, c, place, selected, snapshot, place.item.is_some(), wide);
-            if let Some(item) = place.item {
-                super::drag::source(&out.resp, || super::drag::LandmarkDrag {
-                    item,
-                    favorite: place.favorite,
+            let out = place_row(ui, p, c, place, selected, snapshot, self.aurora.source == Source::Favorites, wide);
+            let target = match key {
+                Key::Visit(_) => place.global.map(super::drag::Target::History),
+                Key::Landmark(_) => place.item.map(super::drag::Target::Landmark),
+            };
+            if let Some(target) = target {
+                super::drag::source(&out.resp, || super::drag::PlaceDrag {
+                    target,
+                    favorite: target.item().and(place.favorite),
                     name: place.name.clone(),
                     thumbnail: texture(c, snapshot).map(egui::TextureHandle::id),
                 });
@@ -790,7 +794,7 @@ impl PlacesUi {
             }
         }
         // a favourite dropped between two others (LLFavoritesBarCtrl's drop)
-        if let Some(dragged) = egui::DragAndDrop::payload::<super::drag::LandmarkDrag>(ui.ctx()).and_then(|cargo| cargo.favorite)
+        if let Some(dragged) = egui::DragAndDrop::payload::<super::drag::PlaceDrag>(ui.ctx()).and_then(|cargo| cargo.favorite)
             && reorder
         {
             let pointer = ui
@@ -1685,7 +1689,7 @@ fn place_row(
     place: &Place,
     selected: bool,
     picture_id: Uuid,
-    draggable: bool,
+    grip: bool,
     wide: bool,
 ) -> RowOut {
     let subtitle = if wide {
@@ -1741,10 +1745,10 @@ fn place_row(
         }
         badge_slot(ui, p, place.rating);
     };
-    let resp = if draggable {
+    let resp = if grip {
         place_card::draggable_row(ui, p, size, &card, trailing)
     } else {
-        place_card::row(ui, p, size, &card, trailing)
+        place_card::row(ui, p, size, &card, trailing).interact(egui::Sense::click_and_drag())
     };
     RowOut { resp, star: starred }
 }

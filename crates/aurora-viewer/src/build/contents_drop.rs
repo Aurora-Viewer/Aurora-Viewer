@@ -105,6 +105,15 @@ fn linkset(world: &World, idx: usize) -> Option<(usize, bool)> {
 /// Viewer). With Ctrl the item goes into the contents and the object must
 /// accept it.
 pub fn target_allowed(world: &World, idx: usize, item: &InvItem, ctrl: bool) -> Result<(), &'static str> {
+    surface_allowed(world, idx)?;
+    if ctrl {
+        accepts(world, idx, item)?;
+    }
+    Ok(())
+}
+
+/// A world support, independent of any inventory cargo.
+pub fn surface_allowed(world: &World, idx: usize) -> Result<(), &'static str> {
     let o = world.objects.get(idx).ok_or("rez-no-surface")?;
     if o.is_avatar() || o.is_tree() {
         return Err("rez-no-surface");
@@ -112,9 +121,6 @@ pub fn target_allowed(world: &World, idx: usize, item: &InvItem, ctrl: bool) -> 
     match linkset(world, idx) {
         Some((_, false)) => {}
         _ => return Err("rez-no-surface"),
-    }
-    if ctrl {
-        accepts(world, idx, item)?;
     }
     Ok(())
 }

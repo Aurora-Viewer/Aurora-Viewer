@@ -29,13 +29,27 @@ impl App {
             self.panels.chat = false;
             self.panels.people = false;
             self.panels.inventory = mode == "drop-focus";
-            self.panels.places = mode.contains("places") || mode.contains("favorites");
+            self.panels.places = mode.contains("places") || mode.contains("favorites") || mode.contains("history");
             if self.panels.places {
-                self.places_ui.open_tab(usize::from(!mode.contains("favorites")));
+                self.places_ui.open_tab(if mode.contains("history") {
+                    2
+                } else {
+                    usize::from(!mode.contains("favorites"))
+                });
                 ui::widgets::place_floater(&self.egui_ctx, "places", egui::pos2(20.0, 85.0), egui::vec2(420.0, 560.0));
             }
             if self.panels.inventory {
                 ui::widgets::place_floater(&self.egui_ctx, "inventory", egui::pos2(20.0, 85.0), egui::vec2(460.0, 560.0));
+            }
+            if mode.contains("history") {
+                let region = self.world.main_region.unwrap_or_default();
+                self.world.tp_storage.items.push(crate::world::tphistory::HistoryItem {
+                    title: "Portal history destination".into(),
+                    global: glam::DVec3::new((region >> 32) as f64 + 140.0, f64::from(region as u32) + 120.0, 25.0),
+                    date: crate::world::portals::unix_time() as f64,
+                    slurl: String::new(),
+                });
+                return true;
             }
             let (item, asset) = crate::demo::place::landmark_ids(0);
             self.world.inventory.add_items(vec![aurora_net::inventory::InvItem {
@@ -97,11 +111,23 @@ impl App {
         }
         if self.frame_count == 482 {
             let item = crate::demo::place::landmark_ids(0).0;
-            if mode.contains("places") || mode.contains("favorites") {
+            if mode.contains("history") {
+                if let Some(place) = self.world.tp_storage.items.last() {
+                    egui::DragAndDrop::set_payload(
+                        &self.egui_ctx,
+                        ui::places::drag::PlaceDrag {
+                            target: ui::places::drag::Target::History(place.global),
+                            favorite: None,
+                            name: place.title.clone(),
+                            thumbnail: None,
+                        },
+                    );
+                }
+            } else if mode.contains("places") || mode.contains("favorites") {
                 egui::DragAndDrop::set_payload(
                     &self.egui_ctx,
-                    ui::places::drag::LandmarkDrag {
-                        item,
+                    ui::places::drag::PlaceDrag {
+                        target: ui::places::drag::Target::Landmark(item),
                         favorite: mode.contains("favorites").then_some(item),
                         name: self
                             .world

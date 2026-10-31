@@ -3,17 +3,58 @@
 //! This cargo keeps list reordering separate from inventory moves and gifts.
 
 use crate::{theme::Palette, ui::widgets};
+use glam::DVec3;
 use uuid::Uuid;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Target {
+    Landmark(Uuid),
+    /// Snapshot the actual arrival, independent of history edits or landmarks.
+    History(DVec3),
+}
+
+impl Target {
+    pub(crate) fn item(self) -> Option<Uuid> {
+        match self {
+            Self::Landmark(item) => Some(item),
+            Self::History(_) => None,
+        }
+    }
+}
+
 #[derive(Clone)]
-pub(crate) struct LandmarkDrag {
-    pub item: Uuid,
+pub(crate) struct PlaceDrag {
+    pub target: Target,
     pub favorite: Option<Uuid>,
     pub name: String,
     pub thumbnail: Option<egui::TextureId>,
 }
 
-pub(crate) fn source(response: &egui::Response, cargo: impl FnOnce() -> LandmarkDrag) {
+pub(crate) struct HistoryDrag {
+    pub global: DVec3,
+    pub position: egui::Pos2,
+    pub released: bool,
+    pub shift: bool,
+}
+
+pub(crate) fn history_world_drag(ctx: &egui::Context) -> Option<HistoryDrag> {
+    let Target::History(global) = egui::DragAndDrop::payload::<PlaceDrag>(ctx)?.target else {
+        return None;
+    };
+    if ctx.is_pointer_over_egui() {
+        return None;
+    }
+    ctx.input(|i| {
+        Some(HistoryDrag {
+            global,
+            position: i.pointer.interact_pos()?,
+            released: i.pointer.button_released(egui::PointerButton::Primary),
+            shift: i.modifiers.shift,
+        })
+    })
+}
+
+pub(crate) fn source(response: &egui::Response, cargo: impl FnOnce() -> PlaceDrag) {
     if response.drag_started() {
         response.dnd_set_drag_payload(cargo());
     }
@@ -21,7 +62,7 @@ pub(crate) fn source(response: &egui::Response, cargo: impl FnOnce() -> Landmark
 
 /// Draw after all source windows, so closing a popup cannot hide the preview.
 pub(crate) fn ghost(ctx: &egui::Context, p: &Palette) {
-    let Some(cargo) = egui::DragAndDrop::payload::<LandmarkDrag>(ctx) else {
+    let Some(cargo) = egui::DragAndDrop::payload::<PlaceDrag>(ctx) else {
         return;
     };
     let Some(pointer) = ctx.pointer_interact_pos() else { return };

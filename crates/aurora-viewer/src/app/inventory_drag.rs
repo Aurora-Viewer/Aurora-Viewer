@@ -65,6 +65,25 @@ fn reason_text(reason: &str) -> &'static str {
     }
 }
 
+fn portal_support(world: &World, surface: (Vec3, Option<usize>), ready: bool) -> Result<(), &'static str> {
+    if let Some(idx) = surface.1 {
+        contents_drop::surface_allowed(world, idx)?;
+    }
+    if !ready {
+        return Err("portal-bridge-required");
+    }
+    let center = surface.0 + Vec3::Z * crate::world::portals::HEIGHT;
+    if !center.is_finite()
+        || !(0.0..=4096.0).contains(&center.z)
+        || world
+            .main()
+            .is_none_or(|region| !crate::world::portals::fits_region(center, [region.heightmap.size_x, region.heightmap.size_y]))
+    {
+        return Err("portal-invalid");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 fn original(world: &World, id: Uuid) -> Result<&InvItem, &'static str> {
     cargo(world, id, false)
@@ -210,13 +229,19 @@ impl App {
         self.inventory_drag.cursor = ui::inventory::task_drop::cursor(ctx).or_else(|| ui::inventory::drag::cursor(ctx));
         ui::inventory::drag::badge(ctx, &self.palette);
         ui::places::drag::ghost(ctx, &self.palette);
-        let place_drag = egui::DragAndDrop::has_payload_of_type::<ui::places::drag::LandmarkDrag>(ctx);
+        let place_drag = egui::DragAndDrop::has_payload_of_type::<ui::places::drag::PlaceDrag>(ctx);
         if ui::inventory::drag::carried_count(ctx).is_none() && !place_drag {
             self.inventory_drag.checked = None;
         }
         let give = self.avatar_give_input(ctx, renderer);
         self.scene.mark_give_target(&self.world, give);
         if give.is_some() || !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open {
+            return Vec::new();
+        }
+        if egui::DragAndDrop::payload::<ui::places::drag::PlaceDrag>(ctx)
+            .is_some_and(|cargo| matches!(cargo.target, ui::places::drag::Target::History(_)))
+        {
+            self.history_portal_input(ctx, renderer);
             return Vec::new();
         }
         if egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx) || place_drag {
@@ -322,6 +347,47 @@ impl App {
         None
     }
 
+    /// History carries an arrival snapshot, never an inventory item to rez or give.
+    fn history_portal_input(&mut self, ctx: &egui::Context, renderer: &Renderer) {
+        let Some(drag) = ui::places::drag::history_world_drag(ctx) else {
+            return;
+        };
+        let ppp = ctx.pixels_per_point();
+        let Some(ray) = renderer.cursor_ray(drag.position.x * ppp, drag.position.y * ppp) else {
+            return;
+        };
+        self.inventory_drag.refresh_surface(
+            &self.scene,
+            &self.world,
+            self.settings.draw_distance,
+            ray,
+            (drag.position.x * ppp, drag.position.y * ppp),
+            drag.released,
+        );
+        let ready = self.demo || self.bridge_runtime.query_endpoint().is_some();
+        super::portals::landmark::preview(ctx, &self.palette, drag.position, drag.shift, ready);
+        let result = self
+            .inventory_drag
+            .surface
+            .ok_or("rez-no-surface")
+            .and_then(|surface| portal_support(&self.world, surface, ready).map(|()| surface.0));
+        self.inventory_drag.cursor = Some(if result.is_ok() {
+            egui::CursorIcon::Copy
+        } else {
+            egui::CursorIcon::NotAllowed
+        });
+        if drag.released {
+            egui::DragAndDrop::clear_payload(ctx);
+            match result {
+                Ok(point) => {
+                    self.queue_history_portal(drag.global, point, drag.shift);
+                    self.inventory_ui.release_world_drag_focus(ctx);
+                }
+                Err(reason) => self.portal_drop_notice(reason),
+            }
+        }
+    }
+
     /// One inventory item dragged over the world: rezzed, put into an
     /// object's contents, or a landmark turned into a portal.
     fn item_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<InventoryDrop> {
@@ -364,20 +430,10 @@ impl App {
                 target_allowed(&self.world, idx, item, false)?;
             }
             if landmark {
-                if !portal_ready {
-                    return Err("portal-bridge-required");
-                }
                 if item.asset_id.is_nil() {
                     return Err("portal-landmark-unavailable");
                 }
-                let center = surface.0 + Vec3::Z * crate::world::portals::HEIGHT;
-                if !(0.0..=4096.0).contains(&center.z)
-                    || self.world.main().is_none_or(|region| {
-                        !crate::world::portals::fits_region(center, [region.heightmap.size_x, region.heightmap.size_y])
-                    })
-                {
-                    return Err("portal-invalid");
-                }
+                portal_support(&self.world, surface, portal_ready)?;
                 Ok(egui::CursorIcon::Copy)
             } else if let Some(idx) = surface.1.filter(|_| contents) {
                 self.inventory_drag

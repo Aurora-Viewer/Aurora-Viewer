@@ -1,5 +1,5 @@
-//! Scene drops reuse the ordinary landmark asset/region-map resolvers. The
-//! landmark stays in inventory; only its resolved destination reaches a portal.
+//! Place drops reuse landmark assets or immutable history arrivals with the
+//! ordinary region-map resolver. No inventory item is created or consumed.
 use super::*;
 use crate::world::{
     inventory::{Inventory, actions},
@@ -8,8 +8,7 @@ use crate::world::{
 use aurora_net::inventory::InvItem;
 
 pub(in crate::app) struct Pending {
-    item: uuid::Uuid,
-    asset: uuid::Uuid,
+    destination: DropDestination,
     agent: uuid::Uuid,
     region: u64,
     center: Vec3,
@@ -29,33 +28,57 @@ pub(in crate::app) fn access(shift: bool) -> Access {
     if shift { Access::Everyone } else { Access::Friends }
 }
 
+#[derive(Clone, Copy)]
+enum DropDestination {
+    Landmark { item: uuid::Uuid, asset: uuid::Uuid },
+    History(glam::DVec3),
+}
+
+impl DropDestination {
+    fn error_key(self) -> &'static str {
+        match self {
+            Self::Landmark { .. } => "portal-landmark-unavailable",
+            Self::History(_) => "portal-place-unavailable",
+        }
+    }
+
+    fn resolve(self, world: &mut World) -> Result<Option<aurora_net::bridge::portal::Destination>, ()> {
+        match self {
+            Self::Landmark { asset, .. } => destination(world, asset),
+            Self::History(global) => destination_at(world, global),
+        }
+    }
+}
+
 fn destination(world: &mut World, asset: uuid::Uuid) -> Result<Option<aurora_net::bridge::portal::Destination>, ()> {
     match world.landmarks.resolve(asset) {
         Resolved::Failed => Err(()),
         Resolved::Pending => Ok(None),
-        Resolved::Ready { global, .. } => {
-            if !global.is_finite() || global.x < 0.0 || global.y < 0.0 {
-                return Err(());
-            }
-            if let Some(((x, y), sim)) = world.map.sim_at_global(global.x, global.y) {
-                if sim.is_down() {
-                    return Err(());
-                }
-                // Modulo 256 loses the internal coordinates of variable regions.
-                Ok(Some(aurora_net::bridge::portal::Destination {
-                    region: sim.name.clone(),
-                    position: [
-                        (global.x - f64::from(x) * 256.0) as f32,
-                        (global.y - f64::from(y) * 256.0) as f32,
-                        global.z as f32,
-                    ],
-                }))
-            } else {
-                let (x, y) = ((global.x / 256.0) as i64, (global.y / 256.0) as i64);
-                world.map.want_regions(x, y, x, y);
-                Ok(None)
-            }
+        Resolved::Ready { global, .. } => destination_at(world, global),
+    }
+}
+
+fn destination_at(world: &mut World, global: glam::DVec3) -> Result<Option<aurora_net::bridge::portal::Destination>, ()> {
+    if !global.is_finite() || global.x < 0.0 || global.y < 0.0 {
+        return Err(());
+    }
+    if let Some(((x, y), sim)) = world.map.sim_at_global(global.x, global.y) {
+        if sim.is_down() {
+            return Err(());
         }
+        // Modulo 256 loses the internal coordinates of variable regions.
+        Ok(Some(aurora_net::bridge::portal::Destination {
+            region: sim.name.clone(),
+            position: [
+                (global.x - f64::from(x) * 256.0) as f32,
+                (global.y - f64::from(y) * 256.0) as f32,
+                global.z as f32,
+            ],
+        }))
+    } else {
+        let (x, y) = ((global.x / 256.0) as i64, (global.y / 256.0) as i64);
+        world.map.want_regions(x, y, x, y);
+        Ok(None)
     }
 }
 
@@ -65,7 +88,10 @@ impl Pending {
             && self.agent == world.agent_id
             && Some(self.region) == world.main_region
             && now.saturating_duration_since(self.started) <= Duration::from_secs(30)
-            && cargo(&world.inventory, self.item).is_some_and(|item| item.asset_id == self.asset)
+            && match self.destination {
+                DropDestination::Landmark { item, asset } => cargo(&world.inventory, item).is_some_and(|item| item.asset_id == asset),
+                DropDestination::History(global) => global.is_finite() && global.x >= 0.0 && global.y >= 0.0,
+            }
     }
 }
 
@@ -75,10 +101,21 @@ impl App {
             self.portal_drop_notice("portal-landmark-unavailable");
             return;
         };
-        let Some(region) = self.world.main_region else { return };
-        self.portal_drop = Some(Pending {
+        let destination = DropDestination::Landmark {
             item: cargo.id,
             asset: cargo.asset_id,
+        };
+        self.queue_place_portal(destination, point, shift);
+    }
+
+    pub(in crate::app) fn queue_history_portal(&mut self, global: glam::DVec3, point: Vec3, shift: bool) {
+        self.queue_place_portal(DropDestination::History(global), point, shift);
+    }
+
+    fn queue_place_portal(&mut self, destination: DropDestination, point: Vec3, shift: bool) {
+        let Some(region) = self.world.main_region else { return };
+        self.portal_drop = Some(Pending {
+            destination,
             agent: self.world.agent_id,
             region,
             center: point + Vec3::Z * crate::world::portals::HEIGHT,
@@ -94,23 +131,24 @@ impl App {
             "portal-invalid" => aurora_i18n::tr!("portal-invalid"),
             "portal-bridge-required" => aurora_i18n::tr!("portal-bridge-required"),
             "portal-landmark-unavailable" => aurora_i18n::tr!("portal-landmark-unavailable"),
+            "portal-place-unavailable" => aurora_i18n::tr!("portal-place-unavailable"),
             _ => aurora_i18n::tr!("rez-no-surface"),
         };
         self.portal_ui.notice = Some(message.into());
         self.world.system_notice(message, crate::world::notice_topics::Topic::Items);
     }
 
-    pub(in crate::app) fn update_landmark_portal(&mut self) {
+    pub(in crate::app) fn update_place_portal(&mut self) {
         let Some(pending) = self.portal_drop.take() else { return };
         if self.world.teleporting || pending.agent != self.world.agent_id || Some(pending.region) != self.world.main_region {
             return;
         }
         if !pending.valid(&self.world, Instant::now()) {
-            self.portal_drop_notice("portal-landmark-unavailable");
+            self.portal_drop_notice(pending.destination.error_key());
             return;
         }
-        match destination(&mut self.world, pending.asset) {
-            Err(()) => self.portal_drop_notice("portal-landmark-unavailable"),
+        match pending.destination.resolve(&mut self.world) {
+            Err(()) => self.portal_drop_notice(pending.destination.error_key()),
             Ok(None) => self.portal_drop = Some(pending),
             Ok(Some(destination)) => self.create_portal_at(
                 destination.region,
@@ -124,7 +162,7 @@ impl App {
 }
 
 pub(in crate::app) fn preview(ctx: &egui::Context, p: &Palette, point: egui::Pos2, shift: bool, ready: bool) {
-    let offset = if egui::DragAndDrop::has_payload_of_type::<ui::places::drag::LandmarkDrag>(ctx) {
+    let offset = if egui::DragAndDrop::has_payload_of_type::<ui::places::drag::PlaceDrag>(ctx) {
         68.0
     } else {
         20.0
@@ -262,8 +300,7 @@ mod tests {
         assert_eq!(world.inventory.items.len(), 2);
         let now = Instant::now();
         let pending = Pending {
-            item: id,
-            asset,
+            destination: DropDestination::Landmark { item: id, asset },
             agent: world.agent_id,
             region: 256,
             center: Vec3::ONE,
@@ -280,5 +317,61 @@ mod tests {
         assert!(!pending.valid(&world, now));
         world.landmarks.on_data(asset, None);
         assert_eq!(destination(&mut world, asset), Err(()));
+    }
+
+    #[test]
+    fn history_portal_resolves_the_arrival_without_inventory_and_retains_session_guards() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        world.agent_id = uuid::Uuid::from_u128(1);
+        world.main_region = Some(256);
+        let global = glam::DVec3::new(701.0, 901.0, 32.0);
+        let source = DropDestination::History(global);
+        assert_eq!(source.resolve(&mut world), Ok(None));
+        assert!(world.landmarks.take_wanted().is_empty());
+        assert!(world.inventory.items.is_empty());
+        assert!(
+            world
+                .map
+                .take_commands()
+                .iter()
+                .any(|c| matches!(c, NetCommand::MapBlockRequest { .. }))
+        );
+        world.map.sims.insert(
+            (1, 2),
+            SimInfo {
+                name: "Demo wide region".into(),
+                access: 13,
+                flags: 0,
+                image: uuid::Uuid::nil(),
+                size_x: 512,
+                size_y: 512,
+            },
+        );
+        let destination = source.resolve(&mut world).unwrap().unwrap();
+        assert_eq!(destination.region, "Demo wide region");
+        assert_eq!(destination.position, [445.0, 389.0, 32.0]);
+        assert!(DropDestination::History(glam::DVec3::NAN).resolve(&mut world).is_err());
+        let now = Instant::now();
+        let pending = Pending {
+            destination: source,
+            agent: world.agent_id,
+            region: 256,
+            center: Vec3::ONE,
+            yaw: 0.0,
+            access: access(true),
+            started: now,
+        };
+        world.tp_storage.items.clear();
+        assert!(pending.valid(&world, now), "the drag retains its immutable arrival snapshot");
+        assert!(!pending.valid(&world, now + Duration::from_secs(31)));
+        world.teleporting = true;
+        assert!(!pending.valid(&world, now));
+        world.teleporting = false;
+        world.main_region = Some(512);
+        assert!(!pending.valid(&world, now));
+        world.main_region = Some(256);
+        world.agent_id = uuid::Uuid::from_u128(2);
+        assert!(!pending.valid(&world, now));
+        assert!(world.inventory.items.is_empty());
     }
 }

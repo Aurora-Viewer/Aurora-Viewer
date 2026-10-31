@@ -15,7 +15,7 @@ use crate::settings::FavoritesAccess;
 use crate::theme::Palette;
 use crate::ui::icons::Icons;
 use crate::ui::menu;
-use crate::ui::places::drag::{self, LandmarkDrag as Dragged};
+use crate::ui::places::drag::{self, PlaceDrag as Dragged};
 use egui::{Color32, FontId, Id, Pos2, Rect, Sense, Vec2};
 use glam::DVec3;
 use uuid::Uuid;
@@ -77,7 +77,7 @@ impl From<FavAction> for BarAction {
 
 fn drag_source(response: &egui::Response, fav: &Favorite) {
     drag::source(response, || Dragged {
-        item: fav.item,
+        target: drag::Target::Landmark(fav.item),
         favorite: Some(fav.item),
         name: fav.name.clone(),
         thumbnail: fav.thumbnail,
@@ -378,7 +378,7 @@ fn menu_row(
         let edge = Rect::from_min_size(rect.min, Vec2::new(2.0, rect.height()));
         ui.painter().rect_filled(edge, egui::CornerRadius::ZERO, p.violet_light);
     }
-    if egui::DragAndDrop::payload::<Dragged>(ui.ctx()).is_some_and(|d| d.item == fav.item) {
+    if egui::DragAndDrop::payload::<Dragged>(ui.ctx()).is_some_and(|d| d.target.item() == Some(fav.item)) {
         ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.5));
     }
     let cy = rect.center().y;
@@ -667,7 +667,7 @@ pub fn row(ctx: &egui::Context, p: &Palette, icons: &Icons, view: &View, under: 
             x = pill.right() + GAP;
             rects.push((i, pill));
             let resp = ui.interact(pill, Id::unique(("bars_favorites_pill", fav.item)), Sense::click_and_drag());
-            let moving = egui::DragAndDrop::payload::<Dragged>(ui.ctx()).is_some_and(|d| d.item == fav.item);
+            let moving = egui::DragAndDrop::payload::<Dragged>(ui.ctx()).is_some_and(|d| d.target.item() == Some(fav.item));
             let hot = !dragging && resp.hovered();
             slot_face(ui, p, pill, hot, false);
             let alpha = if moving { 0.35 } else { 1.0 };
