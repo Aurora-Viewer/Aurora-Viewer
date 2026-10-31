@@ -762,6 +762,9 @@ pub struct App {
     env_scan: bool,
     /// "Personal lighting" was open last frame (captures on opening).
     lighting_was_open: bool,
+    /// Personal Lighting changed the night sky's place: saved once the
+    /// mouse button is up.
+    night_sky_unsaved: bool,
     /// Sky and water editors (LLFloaterFixedEnvironment).
     env_editor: ui::env_editor::EnvEditorUi,
     /// A Windlight preset being read for "Import" (bytes and preset name).
@@ -1443,6 +1446,7 @@ impl App {
             env_ui: Default::default(),
             env_scan: false,
             lighting_was_open: false,
+            night_sky_unsaved: false,
             env_editor: Default::default(),
             env_import: None,
             day_editor: Default::default(),
@@ -9156,6 +9160,8 @@ impl App {
         env.sky.halo_texture = slots[5];
         env.sky.stars = crate::world::night_sky::star_frame(
             self.settings.night_sky,
+            self.settings.night_sky_latitude,
+            self.settings.night_sky_gain,
             env.sky.sun_dir,
             crate::world::night_sky::unix_days_now(),
             self.start.elapsed().as_secs_f64(),
@@ -16202,6 +16208,14 @@ impl ApplicationHandler for App {
             if let Some((mode, _)) = crate::demo::night_sky::scenario() {
                 self.settings.night_sky = mode;
                 self.panels.time_of_day = 4;
+            }
+            if let Some((latitude, gain)) = crate::demo::night_sky::place() {
+                self.settings.night_sky_place = crate::world::night_sky::SkyPlace::Custom;
+                self.settings.night_sky_latitude = latitude;
+                if let Some(gain) = gain {
+                    self.settings.night_sky_gain = gain;
+                }
+                self.settings.sync_night_sky();
             }
             if let Some(t) = std::env::var("AURORA_DEMO_TOD").ok().and_then(|v| v.parse::<u8>().ok()) {
                 self.panels.time_of_day = t.min(crate::world::env::TIME_OF_DAY_PRESETS);

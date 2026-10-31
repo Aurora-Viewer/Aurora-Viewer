@@ -529,6 +529,13 @@ pub struct Settings {
     /// Which stars the night sky shows: the real sky over Paris (Aurora's
     /// default) or the Legacy Viewer's random stars (world/night_sky.rs).
     pub night_sky: crate::world::night_sky::NightSky,
+    /// Where on Earth the real sky is seen from (Paris by default).
+    pub night_sky_place: crate::world::night_sky::SkyPlace,
+    /// Its latitude (degrees north): the preset's, or the one typed for
+    /// Custom.
+    pub night_sky_latitude: f32,
+    /// Brightness of the real stars, 0.5 to 4 times the catalogue's.
+    pub night_sky_gain: f32,
     pub exposure: f32,
     /// Contrast adaptive sharpening (Firestorm RenderCASSharpness, 0.4).
     pub sharpen: f32,
@@ -1671,6 +1678,9 @@ impl Default for Settings {
             env_manual_transition: 0.0,
             env_persist: true,
             night_sky: Default::default(),
+            night_sky_place: Default::default(),
+            night_sky_latitude: crate::world::night_sky::LATITUDE as f32,
+            night_sky_gain: crate::world::night_sky::DEFAULT_GAIN,
             exposure: 1.0,
             sharpen: 0.4,
             glow: true,
@@ -2213,6 +2223,23 @@ impl Settings {
         s
     }
 
+    /// The night sky's place and latitude agree (a preset gives its own
+    /// latitude, Custom keeps the one typed), within range; the stars'
+    /// brightness within 0.5 to 4.
+    pub(crate) fn sync_night_sky(&mut self) {
+        use crate::world::night_sky::{DEFAULT_GAIN, GAIN_RANGE, LATITUDE};
+        self.night_sky_latitude = match self.night_sky_place.latitude() {
+            Some(latitude) => latitude,
+            None if self.night_sky_latitude.is_finite() => self.night_sky_latitude.clamp(-90.0, 90.0),
+            None => LATITUDE as f32,
+        };
+        self.night_sky_gain = if self.night_sky_gain.is_finite() {
+            self.night_sky_gain.clamp(*GAIN_RANGE.start(), *GAIN_RANGE.end())
+        } else {
+            DEFAULT_GAIN
+        };
+    }
+
     pub(crate) fn sanitized(mut self) -> Settings {
         if self
             .graphics_saved_active
@@ -2233,6 +2260,7 @@ impl Settings {
         if self.audio.ui.play.remove("Snapshot") == Some(false) {
             self.snapshot.sound = false;
         }
+        self.sync_night_sky();
         if self.settings_version < 2 {
             // new defaults: 96 m draw distance, LOD factor 2
             self.draw_distance = 96.0;

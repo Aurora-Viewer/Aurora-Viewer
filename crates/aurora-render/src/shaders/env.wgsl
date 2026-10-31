@@ -272,7 +272,8 @@ fn sky_stars(d: vec3<f32>, background: vec3<f32>, foot: SkyFootprint) -> vec3<f3
             sum += s.color.rgb * s.pos.w * exp(-0.5 * r2) * (1.0 + depth * wave);
         }
     }
-    var col = sum;
+    // Preferences › "Star brightness" (1 for the Legacy Viewer's stars)
+    var col = sum * max(frame.sky_stars[2].w, 0.0);
     if (frame.sky_stars[1].w > 0.0) {
         col += milky_way(q) * frame.sky_stars[1].w;
     }

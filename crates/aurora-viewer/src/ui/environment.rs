@@ -54,6 +54,9 @@ pub struct EnvironmentUi {
     confirm_reset: bool,
     /// The sun and moon beacons of "Personal lighting" (kept by the app).
     pub beacons: [bool; 2],
+    /// Where the real night sky is seen from (kept by the app in the
+    /// settings; `None` with the Legacy Viewer's stars).
+    pub night: Option<NightSkyPick>,
     /// Open this list's drop-down on the next frame (demo captures).
     pub open_list: Option<SettingsKind>,
 }
@@ -368,6 +371,9 @@ impl EnvironmentUi {
             if a || e {
                 s.moon_rotation = rotation_from(az, el);
             }
+            if let Some(night) = &mut self.night {
+                night_sky_rows(ui, p, night);
+            }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 if self.confirm_reset {
@@ -405,6 +411,50 @@ impl EnvironmentUi {
         }
         out
     }
+}
+
+/// Personal Lighting's night sky rows: the same place and latitude as
+/// Preferences › Graphics › Environment (world/night_sky.rs), so a photo's
+/// stars can be set from the photo window's light panel.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NightSkyPick {
+    pub place: crate::world::night_sky::SkyPlace,
+    pub latitude: f32,
+    /// Changed this frame.
+    pub changed: bool,
+}
+
+fn night_sky_rows(ui: &mut egui::Ui, p: &Palette, night: &mut NightSkyPick) {
+    use crate::world::night_sky::SkyPlace;
+    section(ui, p, aurora_i18n::tr!("ui-options-night-sky"));
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(130.0, 18.0), egui::Sense::hover());
+        ui.painter().text(
+            rect.left_center(),
+            egui::Align2::LEFT_CENTER,
+            aurora_i18n::tr!("ui-options-night-sky-place"),
+            egui::FontId::proportional(12.0),
+            p.ink,
+        );
+        egui::ComboBox::from_id_salt("personal_lighting_sky_place")
+            .width(160.0)
+            .selected_text(night.place.label())
+            .show_ui(ui, |ui| {
+                for place in SkyPlace::ALL {
+                    night.changed |= ui.selectable_value(&mut night.place, place, place.label()).changed();
+                }
+            });
+    })
+    .response
+    .on_hover_text(aurora_i18n::tr!("ui-options-night-sky-place-help"));
+    if let Some(latitude) = night.place.latitude() {
+        night.latitude = latitude;
+    }
+    // a preset's latitude is shown, greyed; Custom sets its own
+    let custom = night.place == SkyPlace::Custom;
+    ui.add_enabled_ui(custom, |ui| {
+        night.changed |= slider(ui, p, aurora_i18n::tr!("ui-options-night-sky-latitude"), &mut night.latitude, -90.0..=90.0).changed();
+    });
 }
 
 fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
