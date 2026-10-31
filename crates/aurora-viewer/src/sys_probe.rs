@@ -967,6 +967,7 @@ pub mod proc_text {
         "aurora-favorites",
         "aurora-web-profile",
         "aurora-web-cache",
+        "aurora-web-misplaced",
         "aurora-hud-scales",
         "aurora-local-previews",
         "aurora-photo-save",
