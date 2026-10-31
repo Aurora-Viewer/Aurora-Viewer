@@ -199,7 +199,7 @@ fn place_portal_drags_start_from_every_favorites_and_places_view_and_leave_reord
                         }
                     }
                     world_drop.replace(crate::ui::inventory::world_drag(root.ctx()));
-                    history_drop.replace(history_world_drag(root.ctx()));
+                    history_drop.replace(location_world_drag(root.ctx()));
                     ghost(root.ctx(), &p);
                 },
             );
@@ -249,7 +249,7 @@ fn place_portal_drags_start_from_every_favorites_and_places_view_and_leave_reord
                 .borrow_mut()
                 .take()
                 .expect("history reaches the world without an inventory item");
-            assert_eq!(drop.global, expected_history);
+            assert_eq!(drop.target, Target::History(expected_history));
             assert!(drop.released && drop.shift);
             assert!(world_drop.borrow().is_none(), "history cannot be inserted or given as inventory");
             assert_eq!(world.inventory.items.len(), 2);

@@ -30,6 +30,23 @@ impl App {
             self.panels.people = false;
             self.panels.inventory = mode == "drop-focus";
             self.panels.places = mode.contains("places") || mode.contains("favorites") || mode.contains("history");
+            self.panels.search = mode.contains("search");
+            if self.panels.search {
+                let tab = crate::world::search::Tab::Places;
+                self.search_ui.open_tab(tab);
+                self.search_ui.set_text(tab, "aurora");
+                let requests = if self.settings.classic_search {
+                    self.search_ui.request(tab, &self.settings.search).into_iter().collect()
+                } else {
+                    self.search_ui.aurora_requests(&self.settings.search)
+                };
+                let access = self.world.agent_access();
+                for request in requests {
+                    self.world.search.find(request, access, Instant::now());
+                }
+                ui::widgets::place_floater(&self.egui_ctx, ui::search::WINDOW, egui::pos2(20.0, 85.0), egui::vec2(720.0, 560.0));
+                return true;
+            }
             if self.panels.places {
                 self.places_ui.open_tab(if mode.contains("history") {
                     2
@@ -111,7 +128,25 @@ impl App {
         }
         if self.frame_count == 482 {
             let item = crate::demo::place::landmark_ids(0).0;
-            if mode.contains("history") {
+            if mode.contains("search") {
+                if let Some(row) = self
+                    .world
+                    .search
+                    .list(crate::world::search::Tab::Places)
+                    .and_then(|list| list.rows.first())
+                    && let crate::world::search::Key::Id(id) = row.key
+                {
+                    egui::DragAndDrop::set_payload(
+                        &self.egui_ctx,
+                        ui::places::drag::PlaceDrag {
+                            target: ui::places::drag::Target::Parcel(id),
+                            favorite: None,
+                            name: row.name.clone(),
+                            thumbnail: None,
+                        },
+                    );
+                }
+            } else if mode.contains("history") {
                 if let Some(place) = self.world.tp_storage.items.last() {
                     egui::DragAndDrop::set_payload(
                         &self.egui_ctx,

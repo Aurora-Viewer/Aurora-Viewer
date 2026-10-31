@@ -564,6 +564,10 @@ the map resolves their region asynchronously without inventory creation or asset
 requests. Only Favorites rows reserve a reorder grip. Landmarks and History retain
 their ordinary row layout while accepting drags. Pending history drops keep the
 same timeout, teleport and session guards as landmark drops.
+Search Places and Land rows, including All's places, share this cargo in both
+layouts without a reorder grip. Their parcel UUID survives query/selection
+changes; a missing arrival uses one ordinary ParcelInfoRequest on drop, then
+freezes ParcelInfoReply's coordinates before the asynchronous region-map lookup.
 `app/portals/landmark.rs` resolves inventory landmark drops asynchronously through
 the ordinary landmark and map caches, including variable regions. A scene drop
 opens a Friends portal at the selected support; Shift at release makes it public.
