@@ -956,6 +956,40 @@ pub fn chat_bar_held_moves(input: &Input, ctrl: bool) -> bool {
     is_chat_bar_move_input(input) && !(arrow && ctrl)
 }
 
+/// The navigation key a keypad key stands for with NumLock off (keypad 8 is
+/// Up, 7 Home, 9 Page Up…), as the keypad labels show.
+pub fn keypad_navigation(code: KeyCode) -> Option<KeyCode> {
+    use KeyCode as K;
+    Some(match code {
+        K::Numpad0 => K::Insert,
+        K::Numpad1 => K::End,
+        K::Numpad2 => K::ArrowDown,
+        K::Numpad3 => K::PageDown,
+        K::Numpad4 => K::ArrowLeft,
+        K::Numpad6 => K::ArrowRight,
+        K::Numpad7 => K::Home,
+        K::Numpad8 => K::ArrowUp,
+        K::Numpad9 => K::PageUp,
+        K::NumpadDecimal => K::Delete,
+        _ => return None,
+    })
+}
+
+/// The key a press counts as for the shortcuts. With NumLock off the
+/// system turns the keypad into arrows, Home and Page keys, and the Legacy
+/// Viewer binds them as those keys: keypad 8 walks forward, 9 / 3 jump and
+/// crouch, 7 flies (LLKeyboardWin32::translateKey and
+/// inverseTranslateExtendedKey, indra/llwindow/llkeyboardwin32.cpp,
+/// originally LGPL 2.1). winit keeps the keypad's physical code and reports
+/// the navigation key as the logical one; with NumLock on (a digit) or on
+/// macOS (no NumLock) the keypad keeps its own code.
+pub fn binding_code(code: KeyCode, logical: &winit::keyboard::Key) -> KeyCode {
+    match (keypad_navigation(code), logical) {
+        (Some(nav), winit::keyboard::Key::Named(_)) => nav,
+        _ => code,
+    }
+}
+
 /// Current modifier state.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Mods {
@@ -1866,6 +1900,41 @@ mod tests {
         }
         assert!(chat_bar_held_moves(&Input::key(KeyCode::PageUp), true));
         assert!(!chat_bar_held_moves(&Input::key(KeyCode::KeyW), false));
+    }
+
+    /// NumLock off: the keypad moves and flies like the Legacy Viewer's
+    /// (8 / 2 / 4 / 6 walk and turn, 9 / 3 jump and crouch, 7 flies).
+    /// NumLock on, its digits keep their own bindings (Ctrl+keypad 8).
+    #[test]
+    fn keypad_without_numlock_moves_like_the_navigation_keys() {
+        use winit::keyboard::{Key, NamedKey};
+        let kb = KeyBindings::default();
+        let none = Mods::default();
+        for (code, named, action) in [
+            (KeyCode::Numpad8, NamedKey::ArrowUp, Action::Forward),
+            (KeyCode::Numpad2, NamedKey::ArrowDown, Action::Back),
+            (KeyCode::Numpad4, NamedKey::ArrowLeft, Action::Left),
+            (KeyCode::Numpad6, NamedKey::ArrowRight, Action::Right),
+            (KeyCode::Numpad9, NamedKey::PageUp, Action::Up),
+            (KeyCode::Numpad3, NamedKey::PageDown, Action::Down),
+            (KeyCode::Numpad7, NamedKey::Home, Action::Fly),
+        ] {
+            let input = Input::key(binding_code(code, &Key::Named(named)));
+            if is_held(action) {
+                assert!(kb.held(action, &HashSet::from([input]), none), "{code:?}");
+            } else {
+                assert_eq!(kb.triggered(&input, none), Some(action), "{code:?}");
+            }
+        }
+        let digit = binding_code(KeyCode::Numpad8, &Key::Character("8".into()));
+        assert_eq!(digit, KeyCode::Numpad8);
+        let ctrl = Mods {
+            ctrl: true,
+            ..Mods::default()
+        };
+        assert_eq!(kb.triggered(&Input::key(digit), ctrl), Some(Action::LensZoomOut));
+        assert_eq!(binding_code(KeyCode::KeyW, &Key::Character("w".into())), KeyCode::KeyW);
+        assert_eq!(binding_code(KeyCode::ArrowUp, &Key::Named(NamedKey::ArrowUp)), KeyCode::ArrowUp);
     }
 
     #[test]

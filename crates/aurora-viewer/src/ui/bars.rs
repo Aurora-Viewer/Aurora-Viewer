@@ -787,7 +787,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             }
             for (zoom, icon, label) in [
                 (1.0, "restore", aurora_i18n::tr!("ui-bars-normal-size")),
-                ((st.hud_zoom / 1.2).max(0.1), "zoom-out-filled", aurora_i18n::tr!("common-collapse")),
+                (
+                    (st.hud_zoom / 1.2).max(0.1),
+                    "zoom-out-filled",
+                    aurora_i18n::tr!("ui-bars-zoom-out"),
+                ),
                 ((st.hud_zoom * 1.2).min(1.0), "zoom-in-filled", aurora_i18n::tr!("ui-bars-zoom-in")),
             ] {
                 if menu::item(ui, p, icon, label) {

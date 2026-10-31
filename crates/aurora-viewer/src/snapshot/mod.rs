@@ -419,10 +419,27 @@ pub struct TilePass {
 /// wall: a dark line along the seams. GTAO's radius (0.73 m) spans fewer
 /// pixels than the band beyond 9 m in a photo 1,800 pixels high, and its
 /// farthest samples weigh the least; the band costs 128 pixels of a side of
-/// 4,096 or more in the photos that need tiles. The bloom and the depth of
-/// field reach farther and widen it while they are on
-/// (`aurora_render::bloom_tile_reach`, `dof_tile_reach`).
+/// 4,096 or more in the photos that need tiles. The bloom, the depth of
+/// field and the contact shadows of a photo larger than the viewfinder
+/// (their rays as much longer, [`viewfinder_scale`]) reach farther and
+/// widen it while they are on (`aurora_render::bloom_tile_reach`,
+/// `dof_tile_reach`, `contact_tile_reach`).
 pub const TILE_GUARD: u32 = 128;
+
+/// How many times taller, in pixels, a photo of `photo` pixels is than the
+/// viewfinder's view of it, in a window of `window` pixels whose 3D is drawn
+/// at `render_percent` of it (50 to 100, as the setting is kept): the
+/// photo's projection keeps the window's
+/// height of view when it is narrower than the window, its width when it is
+/// wider (`Camera::photo_proj`), so the viewfinder shows it `window height`
+/// or `window width / its aspect` pixels high. The contact shadows march
+/// that many times further in the photo (issue #1662). At least 1.
+pub fn viewfinder_scale(photo: (u32, u32), window: (u32, u32), render_percent: u32) -> f32 {
+    let (pw, ph) = (photo.0.max(1) as f32, photo.1.max(1) as f32);
+    let (ww, wh) = (window.0.max(1) as f32, window.1.max(1) as f32);
+    let shown = wh.min(ww * ph / pw) * render_percent.clamp(50, 100) as f32 / 100.0;
+    (ph / shown).max(1.0)
+}
 
 /// The pixel a drawn tile starts on, and the multiple its size is rounded
 /// to (but at the photo's edges): the bloom halves the image six times, so
@@ -441,6 +458,100 @@ const TILE_ALIGN: u32 = 64;
 pub fn pass_pixels(free_bytes: u64, per_pixel: u64, window: (u32, u32)) -> u64 {
     let window = u64::from(window.0) * u64::from(window.1);
     (free_bytes / per_pixel.max(1)).max(window)
+}
+
+/// A pass read back black in every pixel (RGBA, alpha left out): what a
+/// pass the driver ended returns. A lit scene never is.
+pub fn blank(rgba: &[u8]) -> bool {
+    rgba.as_chunks::<4>().0.iter().all(|p| p[..3] == [0, 0, 0])
+}
+
+/// The GPU time a photo pass is planned to take (ms). A driver ends a job
+/// that keeps the GPU past about two seconds: Windows resets the card
+/// (TDR, 2 s by default), Linux's amdgpu resets the ring (measured on a
+/// Radeon 610M: passes of 2.46 s went through, 2.67 s did not). The pass
+/// then reads back black, which was saved as the photo, or the device is
+/// lost and the viewer closes. A quarter of that leaves room for the
+/// estimate (`GpuCost`), which scales a frame of the window to the photo.
+pub const PASS_GPU_MS: f32 = 500.0;
+
+/// The GPU time of a photo that shows the interface or the HUDs (ms):
+/// they are drawn in a single pass only (the window places them on its own
+/// screen), so such a photo is split only past three times
+/// [`PASS_GPU_MS`], still within the driver's limit, the estimate erring
+/// slow.
+pub const OVERLAY_PASS_GPU_MS: f32 = 1500.0;
+
+/// The pixels of a pass when the GPU time is not measured (no timestamp
+/// queries): 4K, which the slowest GPU measured draws in 1.1 s.
+pub const UNTIMED_PASS_PIXELS: u64 = 3840 * 2160;
+
+/// Frames smaller than this tell little of a pixel's cost: their fixed
+/// work (shadow maps, culling) weighs on few pixels. The preview's frames
+/// are 720 pixels high.
+const MIN_TIMED_PIXELS: u64 = 1_000_000;
+
+/// The share of the slowest cost kept from one frame to the next.
+const COST_DECAY: f32 = 0.99;
+
+/// What a pixel of a frame costs the GPU, which bounds the pixels of a
+/// photo pass ([`PASS_GPU_MS`]). The slowest of the recent frames: a new
+/// measure higher than it replaces it, otherwise it falls by
+/// [`COST_DECAY`] a frame (half in about a second). The whole frame's time
+/// over its pixels counts its fixed work as if it grew with them: a large
+/// photo is estimated slower than it is, never faster.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct GpuCost {
+    /// Nanoseconds a pixel.
+    ns: Option<f32>,
+    /// The pixels of a pass the GPU failed to draw, divided by 4: never
+    /// more in one pass for the rest of the photo.
+    ceiling: Option<u64>,
+}
+
+impl GpuCost {
+    /// A frame's GPU time (`RenderStats::gpu_ms`) and its world pixels.
+    pub fn note(&mut self, ms: Option<f32>, pixels: u64) {
+        if let Some(ms) = ms.filter(|ms| ms.is_finite() && *ms > 0.0)
+            && pixels >= MIN_TIMED_PIXELS
+        {
+            let ns = ms * 1e6 / pixels as f32;
+            self.ns = Some(self.ns.map_or(ns, |old| ns.max(old * COST_DECAY)));
+        }
+    }
+
+    /// A new photo: the passes of the one before that came back blank
+    /// bound it no more (a dark scene, a look's black bars, read back as
+    /// black as a pass the driver ended).
+    pub fn new_photo(&mut self) {
+        self.ceiling = None;
+    }
+
+    /// A pass of `pixels` came back blank (the GPU may have been reset
+    /// under it): false when it cannot be split further than the
+    /// `window`'s frame, which is drawn every frame: the black is the
+    /// photo's.
+    pub fn failed(&mut self, pixels: u64, window: (u32, u32)) -> bool {
+        let window = u64::from(window.0) * u64::from(window.1);
+        if pixels <= window.max(u64::from(MIN_SIDE) * u64::from(MIN_SIDE)) {
+            return false;
+        }
+        let ceiling = (pixels / 4).max(window);
+        self.ceiling = Some(self.ceiling.map_or(ceiling, |c| c.min(ceiling)));
+        true
+    }
+
+    /// The most pixels one pass may draw within `ms` ([`PASS_GPU_MS`] or
+    /// [`OVERLAY_PASS_GPU_MS`]), never fewer than the `window`'s frame,
+    /// which is drawn every frame. Unmeasured: [`UNTIMED_PASS_PIXELS`]
+    /// whatever `ms`, the slowest GPU's limit.
+    pub fn pass_pixels(&self, window: (u32, u32), ms: f32) -> u64 {
+        let window = u64::from(window.0) * u64::from(window.1);
+        let timed = self
+            .ns
+            .map_or(UNTIMED_PASS_PIXELS, |ns| (f64::from(ms) * 1e6 / f64::from(ns.max(1e-3))) as u64);
+        timed.min(self.ceiling.unwrap_or(u64::MAX)).max(window)
+    }
 }
 
 /// How a photo of `size` is drawn: one pass when the card holds it (a side

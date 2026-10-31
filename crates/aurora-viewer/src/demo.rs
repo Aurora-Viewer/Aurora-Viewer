@@ -31,6 +31,9 @@ pub mod water;
 
 const HANDLE: u64 = (256000u64 << 32) | 256000;
 
+/// AURORA_DEMO_AA_SWITCH: the anti-aliasing changed at given frames.
+#[path = "demo_aa_switch.rs"]
+pub mod aa_switch;
 /// Help › About Aurora Viewer on one of its tabs (AURORA_DEMO_ABOUT).
 #[path = "demo_about.rs"]
 pub mod about;
@@ -133,6 +136,10 @@ pub mod land;
 pub mod link;
 #[path = "demo_missing_texture.rs"]
 pub mod missing_texture;
+/// The real or the Legacy Viewer's night sky, the camera on the stars
+/// (AURORA_DEMO_NIGHT_SKY).
+#[path = "demo_night_sky.rs"]
+pub mod night_sky;
 /// The notification center's mockup scenario, in either style
 /// (AURORA_DEMO_NOTIFS).
 #[path = "demo_notifs.rs"]
@@ -5297,6 +5304,14 @@ pub fn events() -> Vec<NetEvent> {
                 velocities: [Vec3::new(3.0, 2.0, 0.0); 256],
             }),
         });
+    }
+    // A large existing platform exercises opening Edit without a size change.
+    if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|spec| spec.starts_with("megaprim,"))
+        && let Some(object) = objs.iter_mut().find(|object| object.local_id == 118)
+    {
+        object.scale = Vec3::new(128.125, 96.25, 0.5);
+        object.position = Vec3::new(cx, cy, g(cx, cy) - 0.5);
+        object.rotation = Quat::IDENTITY;
     }
     ev.push(NetEvent::ObjectUpdates {
         handle: HANDLE,

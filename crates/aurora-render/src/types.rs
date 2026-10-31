@@ -1076,6 +1076,8 @@ pub struct SkyParams {
     /// Bindless slots (0 = none) of the rainbow and halo textures.
     pub rainbow_texture: u32,
     pub halo_texture: u32,
+    /// Night sky: which stars and how they are turned (stars.rs).
+    pub stars: crate::stars::StarFrame,
 }
 
 impl Default for SkyParams {
@@ -1122,6 +1124,7 @@ impl Default for SkyParams {
             ice_level: 0.0,
             rainbow_texture: 0,
             halo_texture: 0,
+            stars: crate::stars::StarFrame::default(),
         }
     }
 }
@@ -1204,6 +1207,11 @@ pub struct FrameParams {
     /// and their casters are fitted to the whole photo, so that every tile
     /// reads the shadow maps of one pass.
     pub photo_tile: Mat4,
+    /// How many times taller, in pixels, the image is than the viewfinder's
+    /// view of the same field: 1 in the window, the photo's height over
+    /// the viewfinder's in a photo. The screen-space effects measured in
+    /// pixels (the contact shadows) keep their size in the image with it.
+    pub photo_scale: f32,
     pub camera_pos: Vec3,
     pub near: f32,
     pub far: f32,
@@ -1419,6 +1427,10 @@ pub struct RenderStats {
     /// Presentation mode the swapchain is configured with (present.rs);
     /// None until the backend has answered a frame.
     pub present_mode: Option<wgpu::PresentMode>,
+    /// The settings the frame was drawn with: the MSAA samples and SSR of
+    /// the previous ones while the pipelines for new ones compile (#1746).
+    /// None until the backend has answered a frame.
+    pub settings: Option<RenderSettings>,
     pub draws: u32,
     pub shadow_draws: u32,
     pub shadow: ShadowStats,
@@ -1433,6 +1445,9 @@ pub struct RenderStats {
     pub index_used: u64,
     pub records: u32,
     pub gpu_ms: Option<f32>,
+    /// The world pixels of the frame `gpu_ms` measures (a photo frame's are
+    /// the photo's).
+    pub gpu_pixels: u64,
     /// CPU time the main thread spent on the frame's rendering (ms): the
     /// whole encoding when the renderer runs on it, only the frame packet
     /// with a render thread.
@@ -1475,6 +1490,11 @@ pub struct RenderStats {
     /// GPU time of the bloom levels alone (ms), part of
     /// [`GpuElement::Post`] (0 while off).
     pub gpu_bloom: Option<f32>,
+    /// GPU time of the rest of [`GpuElement::Effects`] (ms): the planar
+    /// reflections (with the refracted water light), the reflection probe,
+    /// the scene copy (with the cut-out pass and the submerged water
+    /// particles), the SSR.
+    pub gpu_effects: Option<[f32; 4]>,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
     /// Spent on the render thread when there is one (then they are those

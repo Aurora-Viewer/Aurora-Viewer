@@ -45,7 +45,7 @@ use crate::world::World;
 use crate::world::objects::{LocalAppearance, ObjKey};
 use aurora_net::build::{BuildCmd, ObjectProps, TransformUpdate, derez};
 use aurora_net::{NetCommand, RegionHandle};
-use geom::Cam;
+use geom::{Cam, RectCover, verts_in_rect};
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -130,6 +130,11 @@ pub struct BuildSettings {
     pub select_owned_only: bool,
     /// SelectMovableOnly: the same for the objects we may move.
     pub select_movable_only: bool,
+    /// RectangleSelectInclusive, the Legacy Viewer's "Select By Surrounding"
+    /// (on by default): the selection rectangle takes only the prims it
+    /// wholly surrounds; off, any prim it touches (`rect_select`). The
+    /// setting's own comment there describes the opposite of what it does.
+    pub select_surrounding: bool,
     /// FSBuildToolDecimalPrecision: decimals of the Object tab numbers.
     pub decimal_precision: u8,
     /// CreateToolCopySelection / CopyCenters / CopyRotates.
@@ -149,8 +154,8 @@ pub struct BuildSettings {
     pub show_physics_shape: bool,
     /// FSCopyObjKeySeparator for "Copy UUID".
     pub copy_key_separator: String,
-    /// LimitSelectDistance. Off by default, unlike the Legacy Viewer: the
-    /// simulator keeps its own limits, so nothing near or far is out of reach.
+    /// LimitSelectDistance, on by default like the Legacy Viewer: a
+    /// rectangle drawn from a skybox stops before the ground's objects.
     pub limit_select_distance: bool,
     /// MaxSelectDistance (m from the avatar).
     pub max_select_distance: f32,
@@ -466,6 +471,7 @@ impl Default for BuildSettings {
             select_probes: false,
             select_owned_only: false,
             select_movable_only: false,
+            select_surrounding: true,
             decimal_precision: 5,
             copy_selection: false,
             copy_centers: true,
@@ -477,7 +483,7 @@ impl Default for BuildSettings {
             sync_materials: false,
             show_physics_shape: false,
             copy_key_separator: ",".into(),
-            limit_select_distance: false,
+            limit_select_distance: true,
             max_select_distance: MAX_SELECT_DISTANCE,
             limit_drag_distance: true,
             max_drag_distance: MAX_DRAG_DISTANCE,
@@ -562,6 +568,19 @@ pub struct Bounds {
     pub half: Vec3,
 }
 
+/// The prims of an unlinked whole-object selection. The Legacy Viewer keeps
+/// one LLSelectNode per prim, so after LLSelectMgr::sendDelink every former
+/// child is still selected as its own object; Aurora selects roots only, so
+/// each prim joins the selection once the simulator makes it a root.
+#[derive(Debug)]
+struct PendingUnlink {
+    /// Every prim of the unlink, the former roots included.
+    prims: Vec<ObjKey>,
+    /// Prims still waiting for the update that makes them roots.
+    waiting: Vec<ObjKey>,
+    started: Instant,
+}
+
 pub struct BuildTool {
     wheel_selection: cycle::Wheel,
     /// Last inspected selection/mode; object display choices live in the world.
@@ -616,6 +635,8 @@ pub struct BuildTool {
     pub selection_linked: bool,
     /// Ordered link instruction awaiting confirmed simulator parents.
     pending_link: Option<(Vec<Uuid>, Instant)>,
+    /// Unlink awaiting the simulator's new roots.
+    pending_unlink: Option<PendingUnlink>,
     /// ObjectProperties of selected objects.
     pub props: HashMap<Uuid, ObjectProps>,
     pub cam: Cam,
@@ -671,6 +692,7 @@ impl Default for BuildTool {
             menu_selection: false,
             selection_linked: false,
             pending_link: None,
+            pending_unlink: None,
             props: HashMap::new(),
             cam: Cam::default(),
             out: Vec::new(),
@@ -1224,9 +1246,43 @@ impl BuildTool {
         }
     }
 
+    /// Prims of an unlink join the selection as the simulator makes them
+    /// roots, after the selected former root (PendingUnlink).
+    fn advance_unlink(&mut self, world: &World, now: Instant) {
+        let Some(mut pending) = self.pending_unlink.take() else {
+            return;
+        };
+        // a selection changed in the meantime is the user's: leave it alone
+        if self.selection_linked || !pending.prims.iter().any(|k| self.is_selected(k)) {
+            return;
+        }
+        let mut joined = Vec::new();
+        pending.waiting.retain(|key| match world.objects.index_of(key) {
+            None => false,
+            Some(i) if root_of(world, i) != i => true,
+            Some(_) => {
+                joined.push(*key);
+                false
+            }
+        });
+        for key in &joined {
+            if !self.is_selected(key) {
+                self.selection.push(*key);
+            }
+        }
+        // ObjectSelect brings the new roots' properties to the edit floater
+        for (handle, ids) in self.wire_ids(world, &joined, false) {
+            self.send(BuildCmd::Select { handle, local_ids: ids });
+        }
+        if !pending.waiting.is_empty() && now.saturating_duration_since(pending.started) < Duration::from_secs(30) {
+            self.pending_unlink = Some(pending);
+        }
+    }
+
     /// Forget objects that are gone; drop a selection left far behind
     /// (LLSelectMgr::deselectAllIfTooFar).
     fn prune(&mut self, world: &World, s: &BuildSettings, now: Instant) {
+        self.advance_unlink(world, now);
         // Parent changes are authoritative only after simulator object updates.
         // Former roots become one whole-object selection after a successful link.
         if !self.selection_linked
@@ -1482,6 +1538,18 @@ impl BuildTool {
         for (handle, ids) in self.group_by_region(world, &prims) {
             self.send(BuildCmd::Delink { handle, local_ids: ids });
         }
+        // with "Edit linked" the selection already holds each prim
+        if !self.selection_linked {
+            let keys: Vec<ObjKey> = highlighted_of(world, &self.selection, false)
+                .into_iter()
+                .filter_map(|(i, _)| world.objects.get(i).map(|o| o.key))
+                .collect();
+            self.pending_unlink = Some(PendingUnlink {
+                waiting: keys.iter().copied().filter(|k| !self.is_selected(k)).collect(),
+                prims: keys,
+                started: Instant::now(),
+            });
+        }
         self.status = aurora_i18n::tr!("build-mod-object-unlinked").into();
         self.costs_stale();
     }
@@ -1556,22 +1624,30 @@ impl BuildTool {
         }
     }
 
-    /// LLToolSelectRect: objects whose center is inside the dragged
-    /// rectangle (in front of the camera, within the selection distance).
-    fn rect_select(&mut self, world: &mut World, s: &BuildSettings, a: (f32, f32), b: (f32, f32), extend: bool) {
+    /// LLToolSelectRect::handleRectangleSelection (indra/newview/llglsandbox.cpp,
+    /// originally LGPL 2.1): each prim, children included, whose drawn shape
+    /// the dragged rectangle takes (in front of the camera, within the
+    /// selection distance). A prim's box decides when it is wholly inside or
+    /// outside; across an edge its vertices do, all of them with "Select by
+    /// surrounding", one otherwise (LLViewerCamera::areVertsVisible). Outside
+    /// linked editing a prim brings its linkset, as
+    /// LLSelectMgr::updateSelectionSilhouette roots the rect selection.
+    /// Without `scene` (tests) or geometry yet, a prim across the edge is
+    /// taken only without "Select by surrounding".
+    fn rect_select(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>, a: (f32, f32), b: (f32, f32), extend: bool) {
         if (a.0 - b.0).abs() < 3.0 && (a.1 - b.1).abs() < 3.0 {
             return; // a click, already handled
         }
-        let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
-        let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
+        let rect = egui::Rect::from_two_pos(egui::pos2(a.0, a.1), egui::pos2(b.0, b.1));
         let now = Instant::now();
         self.selection_linked = s.edit_linked;
         let mut units = Vec::new();
+        let mut seen = HashSet::new();
         for (idx, o) in world.objects.iter() {
-            if o.is_avatar() || (!s.select_probes && o.extra.reflection_probe.is_some()) || (!s.edit_linked && root_of(world, idx) != idx) {
+            if o.is_avatar() || (!s.select_probes && o.extra.reflection_probe.is_some()) {
                 continue;
             }
-            let Some((p, _, hud)) = crate::scene::Scene::object_transform(world, idx, now, 0) else {
+            let Some((p, rot, hud)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
             if hud != self.cam.hud.is_some() || (!hud && s.select_limit().is_some_and(|max| p.distance(world.agent.position) > max)) {
@@ -1582,13 +1658,35 @@ impl BuildTool {
             if !hud && select_type(world, idx) != SelectType::World {
                 continue;
             }
-            let Some((x, y)) = self.cam.project_px(p) else { continue };
-            if x >= x0
-                && x <= x1
-                && y >= y0
-                && y <= y1
+            let drawn = scene
+                .and_then(|scene| scene.drawn_geometry(world, idx, now))
+                .filter(|(_, g)| g.pick_faces.iter().flatten().any(|f| !f.positions.is_empty()));
+            let (model, min, max) = match &drawn {
+                Some((model, g)) => (*model, g.min, g.max),
+                None => {
+                    let scale = world.visual_scale_at(idx, now);
+                    (
+                        glam::Mat4::from_scale_rotation_translation(scale, rot, p),
+                        Vec3::splat(-0.5),
+                        Vec3::splat(0.5),
+                    )
+                }
+            };
+            let taken = match self.cam.box_in_rect(model, min, max, rect) {
+                RectCover::Inside => true,
+                RectCover::Outside => false,
+                RectCover::Across => drawn.as_ref().map_or(!s.select_surrounding, |(model, g)| {
+                    let vertices = g.pick_faces.iter().flatten().flat_map(|f| &f.positions);
+                    verts_in_rect(
+                        vertices.map(|v| self.cam.in_rect(model.transform_point3(Vec3::from(*v)), rect)),
+                        s.select_surrounding,
+                    )
+                }),
+            };
+            if taken
                 && passes_select_filters(world, s, idx)
                 && let Some(u) = Self::unit_of(world, idx, s.edit_linked)
+                && seen.insert(u)
             {
                 units.push(u);
             }
@@ -1882,9 +1980,10 @@ impl BuildTool {
         self.last_face = Some(face);
     }
 
-    pub fn mouse_up(&mut self, world: &mut World, s: &BuildSettings) {
+    /// `scene` gives the selection rectangle the drawn vertices of the prims.
+    pub fn mouse_up(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>) {
         if let Some((a, b, extend)) = self.rect.take() {
-            self.rect_select(world, s, a, b, extend);
+            self.rect_select(world, s, scene, a, b, extend);
         }
         let mut cmds = Vec::new();
         self.manip.release(world, s, self.selection_linked, &mut cmds);

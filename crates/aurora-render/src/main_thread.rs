@@ -789,6 +789,13 @@ impl Renderer {
         self.last_stats.present_mode
     }
 
+    /// The last frame the backend finished was drawn with the settings last
+    /// applied: false while the pipelines for new MSAA samples or SSR compile
+    /// on their worker (#1746), and until the backend has seen them.
+    pub fn settings_applied(&self) -> bool {
+        self.last_stats.settings == Some(self.settings)
+    }
+
     // ------------------------------------------------------------ resources
 
     pub fn upload_mesh(&mut self, vertices: &[Vertex], indices: &[u16]) -> Option<MeshAlloc> {
@@ -1100,6 +1107,7 @@ impl Renderer {
             // counted twice
             stats = RenderStats {
                 gpu_ms: self.last_stats.gpu_ms,
+                gpu_pixels: self.last_stats.gpu_pixels,
                 gpu_elements: self.last_stats.gpu_elements,
                 shadow: ShadowStats {
                     gpu_ms: self.last_stats.shadow.gpu_ms,
@@ -1109,6 +1117,7 @@ impl Renderer {
                 gpu_ssao: self.last_stats.gpu_ssao,
                 gpu_contact: self.last_stats.gpu_contact,
                 gpu_bloom: self.last_stats.gpu_bloom,
+                gpu_effects: self.last_stats.gpu_effects,
                 occluded: self.last_stats.occluded,
                 visible_objects: self.last_stats.visible_objects,
                 gpu_cull: self.last_stats.gpu_cull,
@@ -1392,6 +1401,18 @@ fn open_device(adapter: &wgpu::Adapter) -> Result<OpenedDevice, RenderError> {
         features |= wgpu::Features::INDIRECT_FIRST_INSTANCE;
     } else {
         return Err(RenderError::Device("INDIRECT_FIRST_INSTANCE unsupported".into()));
+    }
+    // The fragment stage of the world passes reads five storage buffers
+    // (the frame group's 9, 16 and 24, the night sky's stars in stars.rs;
+    // the records; the texture pages), one more than wgpu's downlevel
+    // minimum. Drivers with descriptor indexing give far more: say so here
+    // rather than fail when the pipelines are made.
+    const FRAGMENT_STORAGE_BUFFERS: u32 = 5;
+    if alim.max_storage_buffers_per_shader_stage < FRAGMENT_STORAGE_BUFFERS {
+        return Err(RenderError::Device(format!(
+            "the GPU driver allows {} storage buffers per shader stage, {FRAGMENT_STORAGE_BUFFERS} are needed",
+            alim.max_storage_buffers_per_shader_stage
+        )));
     }
     let timestamps = afeat.contains(wgpu::Features::TIMESTAMP_QUERY);
     if timestamps {

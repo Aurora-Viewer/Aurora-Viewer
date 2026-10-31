@@ -28,6 +28,8 @@ pub enum Item {
     OwnedOnly,
     #[serde(rename = "movableOnly")]
     MovableOnly,
+    #[serde(rename = "surrounding")]
+    Surrounding,
     #[serde(rename = "landGroup")]
     LandGroup,
     #[serde(rename = "followEdit")]
@@ -56,7 +58,7 @@ pub enum Item {
     Land,
 }
 
-pub const ITEMS: [Item; 24] = [
+pub const ITEMS: [Item; 25] = [
     Item::Manipulators,
     Item::Face,
     Item::StretchTextures,
@@ -68,6 +70,7 @@ pub const ITEMS: [Item; 24] = [
     Item::Probes,
     Item::OwnedOnly,
     Item::MovableOnly,
+    Item::Surrounding,
     Item::LandGroup,
     Item::FollowEdit,
     Item::Actions,
@@ -109,7 +112,14 @@ impl Item {
             Panel::Navigation
         } else if matches!(
             self,
-            Self::Snap | Self::Highlight | Self::Probes | Self::OwnedOnly | Self::MovableOnly | Self::LandGroup | Self::FollowEdit
+            Self::Snap
+                | Self::Highlight
+                | Self::Probes
+                | Self::OwnedOnly
+                | Self::MovableOnly
+                | Self::Surrounding
+                | Self::LandGroup
+                | Self::FollowEdit
         ) {
             Panel::Settings
         } else {
@@ -198,8 +208,14 @@ pub struct Options {
     pub owned_only: bool,
     #[serde(default)]
     pub movable_only: bool,
+    /// On when absent, its default.
+    #[serde(default = "surrounding_default")]
+    pub surrounding: bool,
     pub land_group: bool,
     pub follow_edit: bool,
+}
+fn surrounding_default() -> bool {
+    true
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -241,6 +257,7 @@ impl Profile {
                 probes: s.select_probes,
                 owned_only: s.select_owned_only,
                 movable_only: s.select_movable_only,
+                surrounding: s.select_surrounding,
                 land_group: s.rez_under_land_group,
                 follow_edit: s.follow_edit_object,
             },
@@ -310,6 +327,7 @@ impl Profile {
         s.select_probes = self.options.probes;
         s.select_owned_only = self.options.owned_only;
         s.select_movable_only = self.options.movable_only;
+        s.select_surrounding = self.options.surrounding;
         s.rez_under_land_group = self.options.land_group;
         s.follow_edit_object = self.options.follow_edit;
         s.grid_resolution = self.ruler.grid_unit;
