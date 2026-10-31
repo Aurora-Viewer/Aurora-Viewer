@@ -11,23 +11,24 @@ query($o: String!, $r: String!) {
     defaultBranchRef { target { ... on Commit { statusCheckRollup { state } } } }
     open: pullRequests(states: OPEN, first: 30, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {
-        number title url isDraft additions deletions
+        number title url isDraft additions deletions reviewDecision
         author { login }
         mergeQueueEntry { position state enqueuedAt }
         autoMergeRequest { enabledAt }
-        commits(last: 1) { nodes { commit { statusCheckRollup {
+        commits(last: 1) { nodes { commit { committedDate statusCheckRollup {
           state
           contexts(first: 20) { nodes {
             ... on CheckRun { name status conclusion startedAt }
             ... on StatusContext { context state }
           } }
         } } } }
-        comments(last: 10) { nodes { body } }
+        comments(last: 10) { nodes { body createdAt } }
       }
     }
     merged: pullRequests(states: MERGED, first: 5, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes { number title url mergedAt additions deletions author { login } }
     }
+    latestRelease { tagName releaseAssets(first: 30) { nodes { name downloadCount } } }
   }
 }
 '@
@@ -175,6 +176,20 @@ function Get-PrRows {
             'Done' { 'REVIEWED', 'muted' }
             default { 'REVIEW PENDING', 'violet_light' }
         }
+        # waiting on its author: a draft, a red CI, or changes asked for since
+        # its last commit (a GitHub review requesting changes, or a comment
+        # opening with "## Maintainer review" or "## Changes requested" that
+        # the agent's later "## Review" ✅ has not answered). A new commit
+        # brings it back among the PRs to review.
+        $lastCommit = $p.commits.nodes[0].commit.committedDate
+        $lastWord = $p.comments.nodes | Where-Object { $_.body -match '^\s*## (Review|Relecture|Maintainer review|Changes requested)' } | Select-Object -Last 1
+        $asked = $lastWord -and $lastWord.body -match '^\s*## (Maintainer review|Changes requested)' -and $lastWord.body -notmatch 'Verdict ?: ✅' -and
+            (-not $lastCommit -or [datetime]$lastWord.createdAt -gt [datetime]$lastCommit)
+        $waiting = if ($p.mergeQueueEntry -or $p.autoMergeRequest) { '' }
+            elseif ($p.isDraft) { 'DRAFT' }
+            elseif ($ciState -eq 'Fail') { 'CI FAIL' }
+            elseif ($asked -or $p.reviewDecision -eq 'CHANGES_REQUESTED') { 'CHANGES ASKED' }
+            else { '' }
         # one colour for the whole PR (the square before its number), worst first
         $status = if ($p.isDraft) { 'muted_dim' }
             elseif ($ciState -eq 'Fail' -or $queueState -eq 'Blocked' -or $reviewState -eq 'Fail') { 'danger' }
@@ -189,8 +204,25 @@ function Get-PrRows {
             CiState = $ciState; Ci = $ci; CiColor = $ciColor; CiRunning = $ciState -eq 'Run'; CiSince = $since
             QueueState = $queueState; Queue = $queue; QueueColor = $queueColor; QueueSince = $queueSince; QueuePosition = $position
             ReviewState = $reviewState; Verdict = $verdict; VerdictColor = $verdictColor; Status = $status
+            Waiting = $waiting
         }
     }
+}
+
+# Downloads of the Windows zip of the latest stable release (GitHub's
+# latestRelease skips pre-releases, so the nightly betas never count), and
+# how many since the tools opened: @{ Tag; Count; Since } or $null.
+$DownloadsAtStart = $null
+function Get-WindowsDownloads {
+    $release = if ($GitHub.Data) { $GitHub.Data.data.repository.latestRelease }
+    if (-not $release) { return $null }
+    $asset = $release.releaseAssets.nodes | Where-Object { $_.name -match '-windows-x64\.zip$' } | Select-Object -First 1
+    if (-not $asset) { return $null }
+    $count = [int]$asset.downloadCount
+    if (-not $script:DownloadsAtStart -or $script:DownloadsAtStart.Tag -ne $release.tagName) {
+        $script:DownloadsAtStart = @{ Tag = $release.tagName; Count = $count }
+    }
+    [pscustomobject]@{ Tag = $release.tagName; Count = $count; Since = $count - $script:DownloadsAtStart.Count }
 }
 
 # The square drawn before a count or a PR number, in the status colour.
@@ -206,7 +238,8 @@ function Get-PrSummary {
     $rows = @(Get-PrRows)
     if (-not $rows) { return , @('PR: none open', 'muted') }
     $counts = @(
-        @($rows.Count, 'open', 'violet_light'),
+        @(@($rows | Where-Object { -not $_.Waiting -and -not $_.QueueState }).Count, 'to review', 'violet_light'),
+        @(@($rows | Where-Object Waiting).Count, 'waiting', 'muted'),
         @(@($rows | Where-Object CiRunning).Count, 'CI', 'amber'),
         @(@($rows | Where-Object { $_.QueueState -in 'Queued', 'Blocked' }).Count, 'queued', 'teal'),
         @(@($rows | Where-Object { $_.Status -eq 'success' }).Count, 'ready', 'success'),
@@ -218,6 +251,8 @@ function Get-PrSummary {
         $segments += , @("  $StatusMark ", $c[2])
         $segments += , @("$($c[0]) $($c[1])", 'ink')
     }
+    $dl = Get-WindowsDownloads
+    if ($dl) { $segments += , @("   ↓ $($dl.Count.ToString('N0')) $($dl.Tag)", 'teal') }
     $segments
 }
 
@@ -302,8 +337,13 @@ function Write-PanelLine([object[]]$Segments, [int]$Width, [switch]$Selected) {
         $text = [string]$s[0]
         if ($used + $text.Length -gt $Width) { $text = $text.Substring(0, [Math]::Max(0, $Width - $used)) }
         if ($text) {
+            # a segment's third item is a link: Ctrl + click opens it in
+            # Windows Terminal (OSC 8); the escapes take no column
+            $link = if ($Vt -and $s.Count -gt 2 -and $s[2]) { [string]$s[2] }
+            if ($link) { Write-Host "$Esc]8;;$link$Esc\" -NoNewline }
             if ($Selected) { Write-Color $text $s[1] -Background raised -NoNewline }
             else { Write-Color $text $s[1] -NoNewline }
+            if ($link) { Write-Host "$Esc]8;;$Esc\" -NoNewline }
         }
         $used += $text.Length
     }
@@ -317,7 +357,8 @@ function Get-PanelRows {
     $rows = @(Get-PrRows)
     foreach ($r in $rows) { $r | Add-Member -NotePropertyName InQueue -NotePropertyValue ([bool]$r.QueueState) -Force }
     $position = { if ($_.QueueState -eq 'Auto') { 1000 } else { $_.QueuePosition } }
-    @($rows | Where-Object InQueue | Sort-Object $position) + @($rows | Where-Object { -not $_.InQueue })
+    @($rows | Where-Object InQueue | Sort-Object $position) + @($rows | Where-Object { -not $_.InQueue -and -not $_.Waiting }) +
+        @($rows | Where-Object { -not $_.InQueue -and $_.Waiting })
 }
 
 function Show-PrPanel {
@@ -376,7 +417,15 @@ function Show-PrPanel {
             # switch skips a null value entirely, default included: test it first
             $main = if (-not $mainState) { '…', 'muted' } else { switch ($mainState) { 'SUCCESS' { 'CI OK', 'success' } { $_ -in 'FAILURE', 'ERROR' } { 'CI FAIL', 'danger' } { $_ -in 'PENDING', 'EXPECTED' } { 'CI RUN', 'amber' } default { '?', 'muted' } } }
             $fresh = if ($GitHub.Updated) { Format-Ago $GitHub.Updated } else { 'loading…' }
-            Write-PanelLine @(@(' Aurora · PR', 'violet_light'), @('   main  ', 'muted'), @("$StatusMark $($main[0])", $main[1]), @("   updated $fresh", 'muted_dim'), @("   $(Get-Date -Format 'HH:mm:ss')", 'muted_dim')) $w
+            $header = @(@(' Aurora · PR', 'violet_light'), @('   main  ', 'muted'), @("$StatusMark $($main[0])", $main[1]))
+            # the Windows downloads of the latest stable release, live
+            $dl = Get-WindowsDownloads
+            if ($dl) {
+                $header += , @("   ↓ $($dl.Count.ToString('N0')) Windows $($dl.Tag)", 'teal')
+                if ($dl.Since -gt 0) { $header += , @(" (+$($dl.Since))", 'success') }
+            }
+            $header += @(@("   updated $fresh", 'muted_dim'), @("   $(Get-Date -Format 'HH:mm:ss')", 'muted_dim'))
+            Write-PanelLine $header $w
             if ($GitHub.Error) { Write-PanelLine @(@(" GitHub: $($GitHub.Error)", 'warn')) $w }
             Write-PanelLine @(, @((' ' + ('─' * ($w - 2))), 'muted_dim')) $w
 
@@ -412,7 +461,8 @@ function Show-PrPanel {
             $diffW = $addL + $delL + 3
             $diff = { param($Add, $Del) @((("+$Add").PadLeft($addL) + ' '), 'success'), @((("-$Del").PadRight($delL) + '  '), 'danger') }
             $queued = @(for ($i = 0; $i -lt $rows.Count; $i++) { if ($rows[$i].InQueue) { $i } })
-            $open = @(for ($i = 0; $i -lt $rows.Count; $i++) { if (-not $rows[$i].InQueue) { $i } })
+            $open = @(for ($i = 0; $i -lt $rows.Count; $i++) { if (-not $rows[$i].InQueue -and -not $rows[$i].Waiting) { $i } })
+            $waiting = @(for ($i = 0; $i -lt $rows.Count; $i++) { if (-not $rows[$i].InQueue -and $rows[$i].Waiting) { $i } })
             # lists of indexes: test their .Count, @(0) alone is false
 
             if (-not $rows) {
@@ -422,7 +472,7 @@ function Show-PrPanel {
                 & $heading 'MERGE QUEUE' $queued.Count
                 foreach ($i in $queued) {
                     $c = $cells[$i]; $r = $c.Row
-                    $start = @(@(" $StatusMark ", $r.Status), @(("#$($r.Number)").PadRight(6), 'violet_light'))
+                    $start = @(@(" $StatusMark ", $r.Status), @(("#$($r.Number)").PadRight(6), 'violet_light', $r.Url))
                     if ($compact) {
                         & $line ($start + @(, @((Format-Cell $r.Title ($w - 9)), 'ink'))) $i
                         & $line (@(, @('         ', 'muted')) + (& $diff $r.Additions $r.Deletions) + (& $tag "$($c.Queue)  " $r.QueueColor) + @(, @($c.Author, 'muted_dim')))
@@ -434,10 +484,10 @@ function Show-PrPanel {
             }
             if ($open.Count) {
                 if ($queued.Count) { & $line @(, @('', 'muted')) }
-                & $heading 'OPEN PRs' $open.Count
+                & $heading 'READY TO REVIEW / MERGE' $open.Count
                 foreach ($i in $open) {
                     $c = $cells[$i]; $r = $c.Row
-                    $start = @(@(" $StatusMark ", $r.Status), @(("#$($r.Number)").PadRight(6), 'violet_light'))
+                    $start = @(@(" $StatusMark ", $r.Status), @(("#$($r.Number)").PadRight(6), 'violet_light', $r.Url))
                     if ($compact) {
                         $titleW = [Math]::Max(10, $w - 9 - $ciW)
                         & $line ($start + @(, @((Format-Cell $r.Title $titleW), 'ink')) + (& $tag $c.Ci $r.CiColor)) $i
@@ -449,6 +499,25 @@ function Show-PrPanel {
                     }
                 }
             }
+            # waiting on their author: dimmed, with why instead of CI and review
+            if ($waiting.Count) {
+                if ($queued.Count -or $open.Count) { & $line @(, @('', 'muted')) }
+                & $heading 'WAITING ON THE AUTHOR' $waiting.Count
+                $whyW = 2 + (& $fit ($waiting | ForEach-Object { $rows[$_].Waiting }) 6 16)
+                foreach ($i in $waiting) {
+                    $c = $cells[$i]; $r = $c.Row
+                    $whyColor = switch ($r.Waiting) { 'CI FAIL' { 'danger' } 'CHANGES ASKED' { 'warn' } default { 'muted_dim' } }
+                    $start = @(@(" $StatusMark ", $whyColor), @(("#$($r.Number)").PadRight(6), 'muted', $r.Url))
+                    if ($compact) {
+                        & $line ($start + @(, @((Format-Cell $r.Title ($w - 9)), 'muted'))) $i
+                        & $line (@(, @('         ', 'muted')) + (& $diff $r.Additions $r.Deletions) + (& $tag $r.Waiting $whyColor) + @(, @("  $($r.Author)", 'muted_dim')))
+                    } else {
+                        $titleW = [Math]::Max(20, $w - 9 - $authorW - $diffW - $whyW)
+                        & $line ($start + @(@((Format-Cell $r.Title $titleW), 'muted'), @((Format-Cell $r.Author $authorW), 'muted_dim')) + (& $diff $r.Additions $r.Deletions) +
+                            (& $tag $r.Waiting $whyColor)) $i
+                    }
+                }
+            }
             $prLines = $body.Count
             if ($merged) {
                 & $line @(, @('', 'muted'))
@@ -456,7 +525,7 @@ function Show-PrPanel {
                 for ($j = 0; $j -lt $merged.Count; $j++) {
                     $m = $merged[$j]
                     $titleW = [Math]::Max(10, $w - 9 - $mergedAuthorW - $diffW - $whenW)
-                    & $line (@(@(" $StatusMark ", 'teal'), @(("#$($m.number)").PadRight(6), 'teal'), @((Format-Cell $m.title $titleW), 'muted'),
+                    & $line (@(@(" $StatusMark ", 'teal'), @(("#$($m.number)").PadRight(6), 'teal', $m.url), @((Format-Cell $m.title $titleW), 'muted'),
                         @((Format-Cell $m.author.login $mergedAuthorW), 'muted_dim')) + (& $diff $m.additions $m.deletions) + @(, @($whens[$j].PadLeft($whenW - 1), 'muted_dim')))
                 }
             }
@@ -472,7 +541,7 @@ function Show-PrPanel {
                 for ($j = 0; $j -lt $body.Count; $j++) { if ($body[$j].Pr -eq $sel) { $at = $j; break } }
                 # the selected PR, its second line (compact), and the heading
                 # of its section when it comes first
-                $firstOfSection = $sel -eq $(if ($rows[$sel].InQueue) { $queued[0] } else { $open[0] })
+                $firstOfSection = $sel -eq $(if ($rows[$sel].InQueue) { $queued[0] } elseif ($rows[$sel].Waiting) { $waiting[0] } else { $open[0] })
                 $top = if ($firstOfSection -and $at -gt 0) { $at - 1 } else { $at }
                 $bottom = if ($compact) { $at + 1 } else { $at }
                 if ($top -lt $first) { $first = $top }
@@ -492,7 +561,7 @@ function Show-PrPanel {
             # what the square before a PR number says
             Write-PanelLine @(@(" $StatusMark", 'danger'), @(' FAIL  ', 'muted_dim'), @($StatusMark, 'amber'), @(' CI RUN  ', 'muted_dim'), @($StatusMark, 'teal'), @(' QUEUE  ', 'muted_dim'),
                 @($StatusMark, 'warn'), @(' REVIEW WARN  ', 'muted_dim'), @($StatusMark, 'success'), @(' READY  ', 'muted_dim'), @($StatusMark, 'violet_light'), @(' REVIEW PENDING  ', 'muted_dim'), @($StatusMark, 'muted_dim'), @(' DRAFT', 'muted_dim')) $w
-            Write-PanelLine @(, @(' ↑↓ choose · Enter open · R refresh · Esc back', 'muted_dim')) $w
+            Write-PanelLine @(, @(' ↑↓ choose · Enter open · Ctrl + click a #number · R refresh · Esc back', 'muted_dim')) $w
             # erase what a longer previous frame left below
             if ($Interactive -and $Vt) { Write-Host "$Esc[J" -NoNewline }
             else { for ($i = $script:PanelRow; $i -lt $lastHeight; $i++) { Write-PanelLine @(@('', 'muted')) $w } }
