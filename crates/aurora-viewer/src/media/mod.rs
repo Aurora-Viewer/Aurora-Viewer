@@ -555,7 +555,12 @@ pub fn remove_misplaced_cache(cache_dir: &std::path::Path) {
         if running {
             continue;
         }
-        if let Err(e) = std::fs::remove_dir_all(entry.path()) {
+        // a stray file or link is removed itself, never followed
+        let removed = match entry.file_type() {
+            Ok(t) if t.is_dir() => std::fs::remove_dir_all(entry.path()),
+            _ => std::fs::remove_file(entry.path()),
+        };
+        if let Err(e) = removed {
             log::warn!("media: misplaced browser cache not removed ({e})");
         }
     }
@@ -600,8 +605,9 @@ mod cache_tests {
         let running = misplaced.join(std::process::id().to_string());
         std::fs::create_dir_all(gone.join("Cache")).unwrap();
         std::fs::create_dir_all(&running).unwrap();
+        std::fs::write(misplaced.join("stray"), b"").unwrap();
         remove_misplaced_cache(&root);
-        assert!(!gone.exists() && running.is_dir());
+        assert!(!gone.exists() && !misplaced.join("stray").exists() && running.is_dir());
         std::fs::remove_dir_all(&running).unwrap();
         remove_misplaced_cache(&root);
         assert!(!misplaced.exists());
