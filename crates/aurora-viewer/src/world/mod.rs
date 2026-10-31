@@ -277,6 +277,9 @@ pub enum LocalAssetRequest {
 pub struct World {
     /// mScreen's Y scale (LLVOAvatarSelf::updateCharacter).
     pub hud_aspect: f32,
+    /// Where the HUDs are laid out in the window (left, top, right, bottom
+    /// pixels; `None`: the whole window). `hud_aspect` is its aspect.
+    pub hud_area: Option<[f32; 4]>,
     /// HUD zoom is local to the current session (LLAgentCamera).
     pub hud_zoom: f32,
     pub hud_scales: hud_scale::HudScales,
@@ -640,6 +643,7 @@ impl World {
     pub fn new(avatar_lib: Arc<AvatarLibrary>) -> World {
         World {
             hud_aspect: 1.0,
+            hud_area: None,
             hud_zoom: 1.0,
             hud_scales: Default::default(),
             hud_locks: Default::default(),

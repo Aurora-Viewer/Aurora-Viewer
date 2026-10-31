@@ -1311,6 +1311,7 @@ ui-appearance-items-show-original = オリジナルを表示
 ui-place-details-show-more-options = その他のオプションを表示
 common-show-on-map = マップに表示
 ui-bars-zoom-in = ズームイン
+ui-bars-zoom-out = ズームアウト
 common-help = ヘルプ
 ui-appearance-items-right-wing = 右の翼
 ui-appearance-items-left-wing = 左の翼

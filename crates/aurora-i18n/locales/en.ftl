@@ -1311,6 +1311,7 @@ ui-appearance-items-show-original = Show original
 ui-place-details-show-more-options = Show more options
 common-show-on-map = Show on map
 ui-bars-zoom-in = Zoom in
+ui-bars-zoom-out = Zoom out
 common-help = Help
 ui-appearance-items-right-wing = Right wing
 ui-appearance-items-left-wing = Left wing

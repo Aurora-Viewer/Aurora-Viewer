@@ -205,10 +205,10 @@ mod tests {
         let root = world.objects.index_of_uuid(&crate::demo::hud::object(32, false).full_id).unwrap();
         let view = HudView::new([1280, 720], 0.5, -1.0, 1.0);
         let pos = Scene::object_transform(&world, root, Instant::now(), 0).unwrap().0;
-        let cursor = (
-            view.width * 0.5 - pos.y * view.height * view.zoom + 10.0,
-            view.height * 0.5 - pos.z * view.height * view.zoom,
-        );
+        let cursor = {
+            let p = view.pixel(pos);
+            (p[0] + 10.0, p[1])
+        };
         let drag = HudDrag::start(&world, root, view, cursor).unwrap();
         assert!(drag.update(&mut world, view, (cursor.0 + 72.0, cursor.1 - 36.0)));
         let moved = Scene::object_transform(&world, root, Instant::now(), 0).unwrap().0;

@@ -1314,6 +1314,7 @@ ui-appearance-items-show-original = Afficher l’original
 ui-place-details-show-more-options = Afficher plus d'options
 common-show-on-map = Afficher sur la carte
 ui-bars-zoom-in = Agrandir
+ui-bars-zoom-out = Réduire
 common-help = Aide
 ui-appearance-items-right-wing = Aile droite
 ui-appearance-items-left-wing = Aile gauche
