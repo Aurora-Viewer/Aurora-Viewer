@@ -600,7 +600,7 @@ fn not_worn_row(ui: &mut egui::Ui, p: &Palette, icon_name: &str, text: &str) {
     ui.painter().galley(pos, galley, p.muted_dim);
 }
 
-fn item_menu(response: &egui::Response, p: &Palette, it: &InvItem, actions: &mut Vec<Action>) {
+fn item_menu(response: &egui::Response, p: &Palette, it: &InvItem, removable: bool, actions: &mut Vec<Action>) {
     menu::context_menu(response, p, |ui| {
         let editable = matches!(it.asset_type, 5 | 13);
         if editable && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit")) {
@@ -611,7 +611,7 @@ fn item_menu(response: &egui::Response, p: &Palette, it: &InvItem, actions: &mut
         } else {
             aurora_i18n::tr!("common-remove")
         };
-        if it.asset_type != 13 && menu::item(ui, p, "circle-x-filled", label) {
+        if it.asset_type != 13 && menu::item_if(ui, p, "circle-x-filled", label, removable) {
             actions.push(Action::Remove(it.id));
         }
     });
@@ -1063,6 +1063,9 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
     let mut links = model::cof(inv).map(|id| model::folder_links(inv, id)).unwrap_or_default();
     let worn = world.worn_attachment_items();
     let labels = items::worn_labels(world);
+    // LLPanelWearing / LLWearableItemsList: an RLVa-locked item's Take off
+    // and Detach are greyed (llpanelwearing.cpp, llwearableitemslist.cpp).
+    let locks = world.rlva_wear_locks();
     for id in &worn {
         if !links.iter().any(|l| l.target == *id)
             && let Some(it) = inv.items.get(id)
@@ -1139,21 +1142,26 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
             if resp.clicked() {
                 st.selected_item = Some(it.id);
             }
-            item_menu(&resp, p, it, actions);
+            let removable = locks.can_remove(it.id);
+            item_menu(&resp, p, it, removable, actions);
             // a body part has none of these buttons: no empty row under it
             if edit && st.selected_item == Some(it.id) && it.asset_type != 13 {
                 ui.horizontal(|ui| {
-                    if icon_button(
-                        ui,
-                        p,
-                        "circle-x-filled",
-                        if it.asset_type == 6 {
-                            aurora_i18n::tr!("common-detach")
-                        } else {
-                            aurora_i18n::tr!("common-remove")
-                        },
-                    )
-                    .clicked()
+                    if ui
+                        .add_enabled_ui(removable, |ui| {
+                            icon_button(
+                                ui,
+                                p,
+                                "circle-x-filled",
+                                if it.asset_type == 6 {
+                                    aurora_i18n::tr!("common-detach")
+                                } else {
+                                    aurora_i18n::tr!("common-remove")
+                                },
+                            )
+                        })
+                        .inner
+                        .clicked()
                     {
                         actions.push(Action::Remove(it.id));
                     }
@@ -1283,6 +1291,8 @@ fn add_list(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Appearan
         aurora_i18n::tr!("ui-appearance-filter-wearable-items"),
         ui.available_width(),
     );
+    // RLVa: a double click adds only what a lock lets be added.
+    let locks = world.rlva_wear_locks();
     let folders: Vec<_> = world
         .inventory
         .folders
@@ -1292,7 +1302,7 @@ fn add_list(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Appearan
         .collect();
     for id in folders {
         if st.add_search.trim().is_empty() {
-            add_folder(ui, p, &mut world.inventory, id, st, actions, 0);
+            add_folder(ui, p, &mut world.inventory, &locks, id, st, actions, 0);
         } else {
             world.inventory.request(id);
         }
@@ -1323,7 +1333,7 @@ fn add_list(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Appearan
         if response.clicked() {
             st.selected_item = Some(it.id);
         }
-        if response.double_clicked() {
+        if response.double_clicked() && locks.wear(&world.inventory, it.id, 0).add {
             actions.push(Action::Add(it.id));
             st.adding = false;
         }
@@ -1331,10 +1341,12 @@ fn add_list(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Appearan
 }
 
 /// Lazy folder traversal keeps nested inventory available without fetching it all.
+#[allow(clippy::too_many_arguments)]
 fn add_folder(
     ui: &mut egui::Ui,
     p: &Palette,
     inv: &mut crate::world::inventory::Inventory,
+    locks: &crate::world::rlva::WearLocks,
     id: Uuid,
     st: &mut AppearanceUi,
     actions: &mut Vec<Action>,
@@ -1350,7 +1362,7 @@ fn add_folder(
     widgets::collapsing(ui, p, ("add_outfit_folder", id), name, depth == 0, |ui| {
         inv.request(id);
         for child in children {
-            add_folder(ui, p, inv, child, st, actions, depth + 1);
+            add_folder(ui, p, inv, locks, child, st, actions, depth + 1);
         }
         let worn: HashSet<_> = model::cof(inv)
             .map(|id| model::folder_links(inv, id))
@@ -1375,7 +1387,7 @@ fn add_folder(
             if response.clicked() {
                 st.selected_item = Some(it.id);
             }
-            if response.double_clicked() {
+            if response.double_clicked() && locks.wear(inv, it.id, 0).add {
                 actions.push(Action::Add(it.id));
                 st.adding = false;
             }
@@ -1604,12 +1616,13 @@ pub fn show(
                     st.adding = !st.adding;
                     st.selected_item = None;
                 }
+                // It adds the selection (Action::Add): RLVa's add mask.
+                let addable = st
+                    .selected_item
+                    .is_some_and(|id| world.rlva_wear_locks().wear(&world.inventory, id, 0).add);
                 if st.adding
                     && ui
-                        .add_enabled(
-                            st.selected_item.is_some() && st.pending.is_none(),
-                            egui::Button::new(aurora_i18n::tr!("common-wear")),
-                        )
+                        .add_enabled(addable && st.pending.is_none(), egui::Button::new(aurora_i18n::tr!("common-wear")))
                         .clicked()
                     && let Some(id) = st.selected_item
                 {
@@ -1724,7 +1737,11 @@ pub fn show(
                 }
             } else if st.tab < 2 {
                 let selection = st.outfit_selection.ordered(&outfits);
-                let ready = available && st.selection_info(&world.inventory, selection).1;
+                // getCanAddToCOF / getCanReplaceCOF: no outfit under an RLVa
+                // add lock on its folder.
+                let locks = world.rlva_wear_locks();
+                let unlocked = selection.iter().all(|id| locks.folder_allows(*id, true));
+                let ready = available && unlocked && st.selection_info(&world.inventory, selection).1;
                 for (icon, label, kind, append) in [
                     ("plus", aurora_i18n::tr!("common-add"), ActionKind::Flat, true),
                     ("shirt-filled", aurora_i18n::tr!("common-wear"), ActionKind::Primary, false),
