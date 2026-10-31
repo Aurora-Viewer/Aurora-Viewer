@@ -1960,7 +1960,7 @@ impl World {
             .as_ref()
             .is_some_and(|l| l.raw["login-flags"].at(0)["ever_logged_in"].as_str() == "N");
         let inputs = outfit::OutfitInputs {
-            worn: self.worn_attachment_items(),
+            worn: self.outfit_attachment_items(),
             received_cof_version: self.appearance_cof_version(&self.agent_id),
             inventory: &mut self.inventory,
             agent: self.agent_id,

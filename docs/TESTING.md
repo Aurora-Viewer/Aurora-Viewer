@@ -2452,6 +2452,15 @@ access to a grid.
   Detach sends ObjectDetach and the demo simulator kills the object. The
   log writes `demo temporary attachments` with the one found. Capture at
   frame 720.
+- `temporary-outfit`: the same temporary object stays worn while ordinary
+  outfit actions add an inventory attachment (frame 720), remove it (900),
+  remove a jacket (1080), and put the jacket back (1260). At frames 840,
+  1020, 1200 and 1380, `demo temporary outfit` logs one temporary object,
+  no pending mutation or error, and attachment/clothing states of
+  `true/true`, `false/true`, `false/false`, `false/true`. Capture frame 1440;
+  Appearance > Worn must still show the temporary object. This exercises
+  the production outfit plan, acknowledged COF update and simulator commands
+  offline, without fetching the temporary task UUID as an inventory item.
 - `temporary-detach` / `temporary-drop`: the backpack becomes a temporary
   attachment at frame 600, with a nil AttachItemID; its linked prim starts
   a dance. At frame 900 the simulator kills the root or unparents it,
