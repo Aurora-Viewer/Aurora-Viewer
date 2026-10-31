@@ -1991,3 +1991,65 @@ fn rlva_wear_locks_follow_the_legacy_wear_masks() {
     w.rlva.configure(false);
     assert_eq!(w.rlva_wear_locks().wear(&w.inventory, id(42), 0), all);
 }
+
+/// Wear onto a point a locked attachment holds is greyed (deliberate
+/// difference, human decision of 2026-10-31), Add stays: RLV lets an object
+/// attach beside a locked one.
+#[test]
+fn rlva_wear_on_a_point_held_by_a_locked_attachment_keeps_add() {
+    use super::wear_locks::Wear;
+    use aurora_net::{AttachRequest, inventory::InvItem};
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    let region = world.main_region.expect("demo region");
+    let (held, named, unnamed) = (Uuid::from_u128(60), Uuid::from_u128(61), Uuid::from_u128(62));
+    for (id, flags) in [(held, 1), (named, 1), (unnamed, 0)] {
+        world.inventory.items.insert(
+            id,
+            InvItem {
+                id,
+                asset_type: 6,
+                flags,
+                owner_mask: 0x4000,
+                ..Default::default()
+            },
+        );
+    }
+    world.objects.upsert(
+        region,
+        crate::demo::outfit_attachment(&AttachRequest {
+            item_id: held,
+            owner_id: world.agent_id,
+            point: 1,
+            add: true,
+            flags: 1,
+            group_mask: 0,
+            everyone_mask: 0,
+            next_owner_mask: 0,
+            name: String::new(),
+            desc: String::new(),
+        }),
+    );
+    let all = Wear { add: true, replace: true };
+    let add_only = Wear { add: true, replace: false };
+    assert_eq!(world.rlva_wear_locks().wear(&world.inventory, named, 0), all, "no lock yet");
+    command(&mut world.rlva, A, "@remattach:chest=n");
+    let locks = world.rlva_wear_locks();
+    assert!(!locks.can_remove(held));
+    assert_eq!(locks.wear(&world.inventory, named, 0), add_only, "the item names the held chest");
+    assert_eq!(locks.wear(&world.inventory, named, 2), all, "Attach To another point");
+    assert_eq!(
+        locks.wear(&world.inventory, unnamed, 0),
+        all,
+        "no point known: it attaches where it can"
+    );
+    world.rlva.last_points.note(unnamed, 1, std::time::Instant::now());
+    assert_eq!(
+        world.rlva_wear_locks().wear(&world.inventory, unnamed, 0),
+        add_only,
+        "last worn on the held chest"
+    );
+}

@@ -4,9 +4,11 @@
 //! the point from the object when it attaches, so the wear menus remember
 //! where each object went to grey Wear under an RLVa lock, across sessions.
 
+use crossbeam_channel::{self as mpsc, Sender};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -23,6 +25,54 @@ struct Saved {
     points: Vec<(Uuid, u8)>,
 }
 
+/// One background writer, started at the first save: it writes the newest
+/// snapshot it has, in order, and finishes the last one when dropped.
+struct Writer {
+    snapshots: Option<Sender<Vec<u8>>>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl Writer {
+    fn start(path: PathBuf) -> Option<Self> {
+        let (snapshots, received) = mpsc::unbounded::<Vec<u8>>();
+        let worker = std::thread::Builder::new().name("aurora-rlva-points".into()).spawn(move || {
+            while let Ok(mut bytes) = received.recv() {
+                while let Ok(newer) = received.try_recv() {
+                    bytes = newer;
+                }
+                let written = path
+                    .parent()
+                    .map_or(Ok(()), std::fs::create_dir_all)
+                    .and_then(|()| crate::atomic_file::write(&path, &bytes));
+                if let Err(e) = written {
+                    log::warn!("rlva: attachment points not saved to {}: {e}", path.display());
+                }
+            }
+        });
+        match worker {
+            Ok(worker) => Some(Self {
+                snapshots: Some(snapshots),
+                worker: Some(worker),
+            }),
+            Err(e) => {
+                log::warn!("rlva: attachment points writer not started: {e}");
+                None
+            }
+        }
+    }
+}
+
+impl Drop for Writer {
+    fn drop(&mut self) {
+        self.snapshots.take();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+/// Dropped on logout, account switch and quit: the pending changes are
+/// written then (`Drop`).
 #[derive(Default)]
 pub struct LastPoints {
     /// Point and the order it was seen in.
@@ -30,6 +80,13 @@ pub struct LastPoints {
     seq: u64,
     path: Option<PathBuf>,
     dirty_since: Option<Instant>,
+    writer: Option<Writer>,
+}
+
+impl Drop for LastPoints {
+    fn drop(&mut self) {
+        self.flush();
+    }
 }
 
 impl LastPoints {
@@ -38,7 +95,10 @@ impl LastPoints {
         match std::fs::read(&path) {
             Ok(bytes) => match serde_json::from_slice::<Saved>(&bytes) {
                 Ok(saved) => {
-                    for (item, point) in saved.points.into_iter().filter(|(_, point)| *point != 0) {
+                    // Only the newest LIMIT entries of a file that holds more
+                    // (edited by hand): the others would be evicted anyway.
+                    let skip = saved.points.len().saturating_sub(LIMIT);
+                    for (item, point) in saved.points.into_iter().skip(skip).filter(|(_, point)| *point != 0) {
                         this.insert(item, point);
                     }
                 }
@@ -68,28 +128,35 @@ impl LastPoints {
         self.dirty_since.get_or_insert(now);
     }
 
+    /// One entry at a time: past the limit, only the oldest one goes.
     fn insert(&mut self, item: Uuid, point: u8) {
         self.seq += 1;
         self.points.insert(item, (point, self.seq));
-        if self.points.len() > LIMIT {
-            let mut order: Vec<_> = self.points.iter().map(|(item, (_, seq))| (*seq, *item)).collect();
-            order.sort_unstable();
-            let extra = self.points.len() - LIMIT;
-            for (_, item) in order.into_iter().take(extra) {
-                self.points.remove(&item);
-            }
+        if self.points.len() > LIMIT
+            && let Some(oldest) = self.points.iter().min_by_key(|(_, (_, seq))| *seq).map(|(item, _)| *item)
+        {
+            self.points.remove(&oldest);
         }
     }
 
     /// Writes the file in the background once the changes have settled.
     pub fn save_due(&mut self, now: Instant) {
-        let (Some(path), Some(since)) = (&self.path, self.dirty_since) else {
+        if self
+            .dirty_since
+            .is_some_and(|since| now.saturating_duration_since(since) >= SAVE_DELAY)
+        {
+            self.flush();
+        }
+    }
+
+    /// Hands the pending changes to the writer now.
+    fn flush(&mut self) {
+        let Some(path) = &self.path else {
             return;
         };
-        if now.saturating_duration_since(since) < SAVE_DELAY {
+        if self.dirty_since.take().is_none() {
             return;
         }
-        self.dirty_since = None;
         let mut order: Vec<_> = self.points.iter().map(|(item, (point, seq))| (*seq, *item, *point)).collect();
         order.sort_unstable();
         let saved = Saved {
@@ -102,24 +169,29 @@ impl LastPoints {
                 return;
             }
         };
-        let path = path.clone();
-        std::thread::spawn(move || {
-            let temporary = path.with_extension("json.tmp");
-            let written = path
-                .parent()
-                .map_or(Ok(()), std::fs::create_dir_all)
-                .and_then(|()| std::fs::write(&temporary, &bytes))
-                .and_then(|()| std::fs::rename(&temporary, &path));
-            if let Err(e) = written {
-                log::warn!("rlva: attachment points not saved to {}: {e}", path.display());
-            }
-        });
+        if self.writer.is_none() {
+            self.writer = Writer::start(path.clone());
+        }
+        if let Some(sender) = self.writer.as_ref().and_then(|w| w.snapshots.as_ref())
+            && sender.send(bytes).is_err()
+        {
+            log::warn!("rlva: attachment points writer stopped");
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn wait_for(path: &std::path::Path) {
+        for _ in 0..200 {
+            if path.exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 
     #[test]
     fn points_survive_a_reload_and_the_oldest_go_first() {
@@ -135,20 +207,48 @@ mod tests {
         points.save_due(now);
         assert!(!path.exists(), "the write waits for the changes to settle");
         points.save_due(now + SAVE_DELAY);
-        for _ in 0..200 {
-            if path.exists() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        wait_for(&path);
         assert_eq!(LastPoints::load(path.clone()).get(&Uuid::from_u128(1)), Some(2));
         for n in 0..LIMIT as u128 + 1 {
             points.note(Uuid::from_u128(100 + n), 5, now);
         }
         assert_eq!(points.points.len(), LIMIT);
         assert_eq!(points.get(&Uuid::from_u128(1)), None, "the oldest went first");
+        drop(points);
         std::fs::write(&path, b"not json").expect("write");
         assert_eq!(LastPoints::load(path).get(&Uuid::from_u128(1)), None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn pending_points_are_written_when_dropped() {
+        let dir = std::env::temp_dir().join(format!("aurora-rlva-points-{}", Uuid::new_v4()));
+        let path = dir.join(FILE);
+        let mut points = LastPoints::load(path.clone());
+        points.note(Uuid::from_u128(1), 2, Instant::now());
+        drop(points);
+        assert_eq!(
+            LastPoints::load(path).get(&Uuid::from_u128(1)),
+            Some(2),
+            "logout or quit within the save delay keeps the point"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_oversized_file_keeps_only_its_newest_entries() {
+        let dir = std::env::temp_dir().join(format!("aurora-rlva-points-{}", Uuid::new_v4()));
+        let path = dir.join(FILE);
+        std::fs::create_dir_all(&dir).expect("directory");
+        let saved = Saved {
+            points: (0..LIMIT as u128 + 10).map(|n| (Uuid::from_u128(n + 1), 3)).collect(),
+        };
+        std::fs::write(&path, serde_json::to_vec(&saved).expect("json")).expect("write");
+        let points = LastPoints::load(path);
+        assert_eq!(points.points.len(), LIMIT);
+        assert_eq!(points.get(&Uuid::from_u128(10)), None, "the oldest are skipped");
+        assert_eq!(points.get(&Uuid::from_u128(LIMIT as u128 + 10)), Some(3));
+        drop(points);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

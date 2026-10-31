@@ -279,16 +279,16 @@ impl super::super::World {
     }
 
     pub fn rlva_watchdog_tick(&mut self, now: Instant) {
-        // The point each object is seen on, RLVa on or off, for the wear
-        // menus: an inventory item often carries no saved point.
-        if self.movement_complete {
-            for (item, point) in self.rlva_worn_attachment_points() {
-                self.rlva.last_points.note(item, point, now);
-            }
-        }
+        // Changes noted while RLVa was on are still written after it is
+        // turned off.
         self.rlva.last_points.save_due(now);
         if !self.rlva.enabled() || !self.movement_complete {
             return;
+        }
+        // The point each object is seen on, for the wear menus: an
+        // inventory item often carries no saved point.
+        for (item, point) in self.rlva_worn_attachment_points() {
+            self.rlva.last_points.note(item, point, now);
         }
         let current = self.rlva_attachment_snapshot();
         let bindings: Vec<_> = self

@@ -59,7 +59,7 @@ pub struct WearLocks {
     /// Wearable types worn by an item that cannot come off: add only.
     held_layers: HashSet<u8>,
     folders: Arc<FolderSets>,
-    /// The point each object was last seen attached to this session.
+    /// The point each object was last seen attached to (`LastPoints`).
     last_points: std::collections::HashMap<Uuid, u8>,
 }
 
@@ -102,7 +102,7 @@ impl WearLocks {
                 // on, where Wear sends it, instead of RLV_WEAR; Wear is then
                 // greyed when a locked attachment holds that point. The
                 // inventory often has no saved point (flags 0): the point
-                // it was last seen on this session stands in.
+                // it was last seen on (kept per account) stands in.
                 let at = if point != 0 {
                     Some(point)
                 } else {
