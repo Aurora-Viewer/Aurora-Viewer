@@ -8513,7 +8513,7 @@ What the inventory must show with these scenarios:
 | `AURORA_TEXTURE_BC7=0` | Textures never compressed to BC7 |
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 without its disk cache |
 | `AURORA_RENDER_THREAD=0` | Frames drawn on the main thread |
-| `AURORA_FRAME_PACING=0` | No frame pacing: the input waits in the frame queue when the GPU sets the pace, as before |
+| `AURORA_FRAME_PACING=0\|always` | No frame pacing (the input waits in the frame queue when the GPU sets the pace), or the wait on every frame (0.8.4) |
 | `AURORA_FRAME_PRIORITY=normal` or `alt` | The frame's threads at normal priority, or both priorities alternately |
 | `AURORA_ALLOCATOR=system` | The system's memory allocator instead of mimalloc, as before |
 | `AURORA_EYE_RELATIVE=0` | Vertices of the objects and the terrain computed in region coordinates |
@@ -9293,9 +9293,16 @@ What the inventory must show with these scenarios:
   sets the pace, the next frame reads its input while the GPU draws frame
   N, at the same frame rate. Without it, the input of a frame waits three
   or four frames for the screen (windows dragged behind the cursor, a slow
-  camera, #1484). `pace` (that wait) and `input` (input to presentation)
-  in the `perf summary` line; with `0`, `pace` stays at 0
-  (`aurora-render/src/pacing.rs`).
+  camera, #1484). The wait is on only while the GPU's time covers the
+  main and render threads' together (smoothed over about ten frames, 5 %
+  margins): with the three stages close, a busy region on a fast card or
+  two viewers on one card, waiting cost a quarter of the frame rate
+  (#1711), so the frames overlap there as without pacing. Without GPU
+  timestamps it stays off. `pace` (that wait, 0 while it is off) and
+  `input` (input to presentation) in the `perf summary` line; with `0`,
+  `pace` stays at 0 (`aurora-render/src/pacing.rs`). `always` waits on
+  every frame, whoever sets the pace, as 0.8.4 did: the "before" of a
+  comparison in a busy region.
 - **`AURORA_FRAME_PRIORITY=normal|alt`**: by default the threads a frame
   waits for (the main thread, the render thread, the pool workers that
   help the main thread in the frame's parallel loops and the texture page

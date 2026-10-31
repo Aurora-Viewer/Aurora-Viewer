@@ -203,6 +203,10 @@ pub struct Renderer {
     gpu_waited: Duration,
     /// When the frame being built began reading its input.
     input_at: Option<Instant>,
+    /// The same for the pacing's gate (`input_at` leaves with the packet),
+    /// and the gate: whether the GPU alone sets the pace (pacing.rs).
+    frame_began: Option<Instant>,
+    pace_gate: crate::pacing::Gate,
     spare: Vec<Spent>,
     failed: bool,
     /// The render thread has held a frame past [`STALL_AFTER`]: frames are
@@ -421,9 +425,9 @@ impl Renderer {
         );
         let anim_clock = crate::tex_anim::AnimClock::new(Instant::now());
         let video_memory = crate::vram::VideoMemoryProbe::new(adapter.clone());
-        let gpu_frames = Arc::new(crate::pacing::GpuFrames::new(crate::pacing::wanted(
-            std::env::var("AURORA_FRAME_PACING").ok().as_deref(),
-        )));
+        let pacing = std::env::var("AURORA_FRAME_PACING").ok();
+        let gpu_frames = Arc::new(crate::pacing::GpuFrames::new(crate::pacing::wanted(pacing.as_deref())));
+        let pace_gate = crate::pacing::Gate::new(crate::pacing::always(pacing.as_deref()));
         let backend = Backend::new(BackendInit {
             gpu_frames: gpu_frames.clone(),
             device: device.clone(),
@@ -492,6 +496,8 @@ impl Renderer {
             gpu_frames,
             gpu_waited: Duration::ZERO,
             input_at: None,
+            frame_began: None,
+            pace_gate,
             spare: Vec::new(),
             failed: false,
             stalled: false,
@@ -1088,7 +1094,9 @@ impl Renderer {
             Host::Thread { owner, .. } => {
                 match owner.submit(Job::Frame(Box::new(packet))) {
                     Ok(s) => {
-                        waited = s.waited;
+                        // (added to the wait before the packet: replaced,
+                        // the back-pressure counted as the packet's work)
+                        waited += s.waited;
                         if let Some(Done::Frame(r)) = s.previous {
                             results[0] = Some(r);
                         }
@@ -1127,7 +1135,8 @@ impl Renderer {
         // ---- statistics: the stores' side is this frame's, the backend's
         // side that of the last frame it finished (counted once)
         let main = stats;
-        if std::mem::take(&mut self.fresh) {
+        let fresh = std::mem::take(&mut self.fresh);
+        if fresh {
             stats = self.last_stats;
         } else {
             // no result since the last call (first frame, frame after a
@@ -1180,6 +1189,16 @@ impl Renderer {
             stats.cpu_encode_ms += stats.packet_ms;
         }
         stats.pace_ms = ms(self.gpu_waited);
+        // the pacing's gate (pacing.rs): this frame's main-thread time, from
+        // its input to the hand-over, without the back-pressure; the render
+        // thread's and the GPU's of the last frame finished, the swapchain
+        // wait left out (the GPU's pace, not work)
+        if fresh && let Some(began) = self.frame_began.take() {
+            let main = ms(began.elapsed().saturating_sub(waited));
+            let render = stats.thread_ms - stats.cpu_phases[0];
+            let on = self.pace_gate.update(main, render, stats.gpu_ms);
+            self.gpu_frames.set_active(on);
+        }
         stats
     }
 
@@ -1187,6 +1206,7 @@ impl Renderer {
     /// the viewer's frame): its time to the screen is measured from here.
     pub fn mark_input(&mut self, at: Instant) {
         self.input_at = Some(at);
+        self.frame_began = Some(at);
     }
 
     /// Once a frame is handed over, before the next one reads its input:
@@ -1195,7 +1215,7 @@ impl Renderer {
     /// limit, or with AURORA_FRAME_PACING=0).
     pub fn wait_for_gpu(&mut self) -> Duration {
         self.gpu_waited = Duration::ZERO;
-        if !self.gpu_frames.enabled || self.failed || self.stalled || self.lost.get() {
+        if !self.gpu_frames.active() || self.failed || self.stalled || self.lost.get() {
             return Duration::ZERO;
         }
         // the frame handed over last, and the one before it

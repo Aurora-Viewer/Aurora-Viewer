@@ -3135,6 +3135,10 @@ What passes from one thread to the other:
   The news (`GpuFrames`) comes from the render thread, which waits on the
   device itself after presenting N: a device wait on the main thread holds
   the device's locks and stalls the render thread's `submit` and `present`.
+  Both waits run only while the GPU alone sets the pace, its time over the
+  main and render threads' together (`pacing::Gate`, fed by each frame
+  result): otherwise the stages overlap as without pacing, which the wait
+  would cost up to a third of the frame rate (#1711).
   `pace`, `input` of the profile; `AURORA_FRAME_PACING=0`.
 - **Frame result**, returned at the next handoff: statistics of the
   rendering, reply to the hover (kept with the camera of the frame that
