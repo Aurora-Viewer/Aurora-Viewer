@@ -610,6 +610,22 @@ impl Scene {
         Some((pos + rot * ((min + max) * 0.5 * scale), (max - min) * scale))
     }
 
+    /// The geometry drawn for object `idx` and its model matrix; its
+    /// `pick_faces` hold the vertices on the CPU. The build tool's rectangle
+    /// tests them, as LLViewerCamera::areVertsVisible walks the volume faces.
+    /// None while it loads, and for a rigged mesh (bind pose).
+    pub fn drawn_geometry(&self, world: &World, idx: usize, now: Instant) -> Option<(Mat4, Arc<GpuGeom>)> {
+        let g = self.gpu.get(idx)?;
+        let o = world.objects.get(idx)?;
+        if g.rigged {
+            return None;
+        }
+        let key = g.geom?;
+        let geom = self.geom_ready(&key)?;
+        let (pos, rot, _) = Self::object_transform(world, idx, now, 0)?;
+        Some((self.drawn_model(g, o, world.visual_scale_at(idx, now), Some(key), pos, rot), geom))
+    }
+
     /// What undoes the bind shape of the geometry `g` draws: a skinned mesh
     /// drawn without a skeleton (`sync_plan`'s placement).
     fn unbind_of(&self, g: &ObjGpu) -> Option<Mat4> {

@@ -8230,6 +8230,7 @@ build-compact-highlight = Afficher le surlignage
 build-compact-probes = Sélectionner les sondes de réflexion
 build-compact-owned-only = Sélectionner mes objets uniquement
 build-compact-movable-only = Sélectionner les objets déplaçables uniquement
+build-compact-surrounding = Sélectionner en entourant
 build-compact-undo = Annuler (Ctrl+Z)
 build-compact-redo = Rétablir (Ctrl+Y)
 build-compact-duplicate = Dupliquer

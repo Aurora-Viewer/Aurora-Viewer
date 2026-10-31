@@ -8237,6 +8237,7 @@ build-compact-highlight = Show highlight
 build-compact-probes = Select reflection probes
 build-compact-owned-only = Select only my objects
 build-compact-movable-only = Select only movable objects
+build-compact-surrounding = Select by surrounding
 build-compact-undo = Undo (Ctrl+Z)
 build-compact-redo = Redo (Ctrl+Y)
 build-compact-duplicate = Duplicate

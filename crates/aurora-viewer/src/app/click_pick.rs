@@ -601,7 +601,7 @@ impl App {
             self.clicks.hold(Held::BuildRelease);
             return;
         }
-        self.build.mouse_up(&mut self.world, &self.settings.build);
+        self.build.mouse_up(&mut self.world, &self.settings.build, Some(&self.scene));
         self.flush_build();
     }
 
