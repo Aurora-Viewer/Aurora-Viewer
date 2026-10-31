@@ -19,6 +19,7 @@ pub struct Avatar {
     pub index: usize,
     pub root: Vec3,
     pub forward: Vec3,
+    pub placement_serial: u64,
     pub bounds: Vec<Bounds>,
 }
 
@@ -86,7 +87,7 @@ struct Crossing {
 #[derive(Default)]
 pub struct Clipping {
     crossings: HashMap<Uuid, Crossing>,
-    samples: HashMap<Uuid, Vec3>,
+    samples: HashMap<Uuid, (Vec3, u64)>,
 }
 
 impl Aperture {
@@ -133,7 +134,11 @@ impl Clipping {
                 continue;
             }
             // Simulator/region placement is not a continuation of the old cut.
-            let from = self.samples.get(&avatar.id).copied().filter(|p| p.distance(avatar.root) <= 3.0);
+            let from = self
+                .samples
+                .get(&avatar.id)
+                .filter(|(p, serial)| *serial == avatar.placement_serial && p.distance(avatar.root) <= 3.0)
+                .map(|(p, _)| *p);
             let old = from.and_then(|_| self.crossings.get(&avatar.id)).copied().filter(|old| {
                 // A close same-region arrival can be below the jump threshold.
                 (!old.complete && portals.iter().any(|p| p.key == old.key && p.inside(avatar.root)))
@@ -214,7 +219,11 @@ impl Clipping {
             }
         }
         self.crossings = next;
-        self.samples = avatars.iter().filter(|a| a.root.is_finite()).map(|a| (a.id, a.root)).collect();
+        self.samples = avatars
+            .iter()
+            .filter(|a| a.root.is_finite())
+            .map(|a| (a.id, (a.root, a.placement_serial)))
+            .collect();
         visible
     }
 }
@@ -235,6 +244,7 @@ mod tests {
             index: 7,
             root,
             forward: Vec3::NEG_X,
+            placement_serial: 0,
             bounds: vec![Bounds::new(-half, half, Mat4::from_translation(root)).unwrap()],
         }
     }
@@ -363,6 +373,18 @@ mod tests {
         assert!(state.update(&[portal()], &[body(Vec3::X * -0.8)]).is_empty());
         state.update(&[portal()], &[body(Vec3::X * -0.3)]);
         assert!(state.update(&[portal()], &[body(Vec3::X * 8.0)]).is_empty());
+    }
+
+    #[test]
+    fn explicit_short_placements_do_not_sweep_or_retain_the_old_crossing() {
+        let mut state = Clipping::default();
+        state.update(&[portal()], &[body(Vec3::X * 0.3)]);
+        assert!(state.update(&[portal()], &[body(Vec3::X * -0.4)])[&7].is_hidden());
+        let mut arrived = body(Vec3::X * -0.15);
+        arrived.placement_serial = 1;
+        let clip = state.update(&[portal()], &[arrived])[&7];
+        assert!(!clip.is_hidden());
+        assert!(clip.normal().dot(Vec3::NEG_X) > 0.99, "arrival starts on its own side");
     }
 
     #[test]

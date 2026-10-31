@@ -314,6 +314,7 @@ impl super::Scene {
                         index,
                         root,
                         forward: rotation * Vec3::X,
+                        placement_serial: object.placement_serial,
                         bounds: Vec::new(),
                     });
                 }

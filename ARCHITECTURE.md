@@ -494,7 +494,7 @@ existing portals once, with targeted replies and bounded traffic. The bridge
 never teleports anyone. Each recipient checks friendship or their own group
 membership at crossing, then `app/portals.rs` uses the ordinary user location
 teleport boundary, retaining RLVa and simulator destination access checks.
-Near-spawn observers must first leave a 3.5 m clearance; standing inside,
+Newly placed portals require only 25 cm of initial clearance; standing inside,
 involuntary motion, position jumps and replayed announcements never trigger.
 After that initial clearance, observer retries use the ordinary 1 m clearance,
 including after a private grant arrived too late for the first crossing.
@@ -552,9 +552,10 @@ Starting a teleport preserves source-region invitations and pending grants until
 the actual region/session change. Traversal is disarmed during the transition;
 the arrival segment cannot trigger a portal. This lets the creator's still-local
 bridge finish authenticating visitors while departure is in progress.
-Locally created portals and personal returns use a 1 m clearance without startup suppression; other observers retain the initial 3.5 m anti-drop guard and 600 ms appearance delay.
+Both creators and observers can approach a newly placed portal from 25 cm away; observers retain the 600 ms appearance delay. A portal placed directly on the root still requires leaving that small clearance and deliberately crossing back. Personal returns and consumed crossings retain the 1 m clearance, preventing arrival bounce and delayed or accidental retries.
 `app/portals.rs::Journey` carries a single, expiring return intent across the ordinary teleport boundary. It is installed after policy checks and the ordinary teleport reset, before dispatch, so even an immediate local AgentMovementComplete can confirm it. Only AgentMovementComplete enables publication; failure, logout, expiry and a different arrival region discard it. The return aperture is placed 15 cm behind the actual landed root, including simulator-adjusted height, so the body and worn geometry emerge through the ordinary reversible band. Arrivals face outward; the unarmed clearance gate prevents held input or landing corrections from bouncing them back. Returning to the source also targets its contact band. The first shared aperture retains its geometry for later travelers. The return derives a paired UUID from the source (reversing twice restores it), preserving the creator and expiry. Each regional entry merges bounded authenticated relay identities, preserving its first geometry and crossing gate; discovery includes locally shared returns. A traveler retains a local return grant. Friends grants require the original creator to be present; a relay never substitutes its own friends. Group relays verify a fresh complete server roster. Restricted announcements remain redacted.
 HTTP-in renewal within the same region preserves invitations and clearance gates.
+Observers recognize authoritative avatar placement gaps of at least 50 cm at a live opening before applying full or terse object reports. The comparison uses extrapolated simulator motion rather than its visual damping, so walking/running and small corrections keep their normal smoothing. A recognized placement clears the correction and increments the object's placement serial; portal clipping discards the old crossing sample even for same-region jumps shorter than 3 m. No intermediate positions are drawn between the source and arrival. Source contact suffices without disclosing private destinations or waiting for the paired announcement. This is a local presentation rule; positions and teleport authority still come from the simulator.
 The query endpoint is invalidated on region changes or a dead-URL response;
 announcement/close delivery retries the same immutable action at most twice,
 with one- and two-second backoff. Only exhausted failures remove the

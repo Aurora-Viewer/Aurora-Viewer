@@ -162,7 +162,9 @@ impl App {
             self.portal_ui.destination = "Demo destination/128/128/25".into();
             let position = self.world.agent.position;
             let ahead = Vec3::new(self.world.agent.yaw.cos(), self.world.agent.yaw.sin(), 0.0);
-            let center = if mode == "near" {
+            let center = if mode.contains("-near-") {
+                position + ahead * 0.3
+            } else if mode == "near" {
                 position
             } else if mode.starts_with("return") {
                 position - ahead * EXIT_OFFSET
@@ -178,7 +180,7 @@ impl App {
                 } else {
                     self.world.agent.yaw
                 },
-                destination: if mode.starts_with("private-") {
+                destination: if mode.starts_with("private-") || mode.starts_with("slice-local-teleport") {
                     // The offline teleport stays in the plaza. Keep the real
                     // arrival-region check active so it also creates the exit.
                     self.world.region_name()
@@ -187,7 +189,10 @@ impl App {
                 } else {
                     "Demo destination".into()
                 },
-                position: if mode.starts_with("private-") {
+                position: if mode.starts_with("slice-local-teleport") {
+                    let tangent = Vec3::new(-ahead.y, ahead.x, 0.0);
+                    (center + tangent * 3.0 + ahead * 2.65).to_array()
+                } else if mode.starts_with("private-") {
                     // Land on open terrain, away from the raised plaza's edge.
                     // 0.84 m is the offline simulator's standing root height.
                     [116.0, 108.0, crate::demo::floor_at(116.0, 108.0) + 0.84]
@@ -233,7 +238,12 @@ impl App {
                     state.receive(&self.world, &format!("<auroraPortal>{owner}|{wire}</auroraPortal>"), now, unix);
                 }
             } else {
-                state.create(portal, position, now, unix);
+                state.create(portal.clone(), position, now, unix);
+                if mode.starts_with("slice-local-teleport") {
+                    let mut journey = Journey::new(&self.world, self.world.agent_id, &portal, now);
+                    journey.place_arrival(portal.region, Vec3::from(portal.position));
+                    state.share_return(journey.portal, self.world.agent_id, position, now, unix);
+                }
             }
             if mode.starts_with("rift") {
                 self.portal_ui.open = false;
@@ -279,14 +289,20 @@ impl App {
         let exiting = mode.starts_with("slice-exit");
         let sideways = mode == "slice-sideways";
         let complete_sideways = mode == "slice-complete-sideways";
+        let local_teleport = mode.starts_with("slice-local-teleport");
         // Let the arrival pose and attachments settle at the plane before
         // walking out. Capture the first exit without a loop-reset teleport.
         let phase = (self
             .frame_count
-            .saturating_sub(if exiting || sideways || complete_sideways { 780 } else { 420 })
+            .saturating_sub(if exiting || sideways || complete_sideways || local_teleport {
+                780
+            } else {
+                420
+            })
             % 360) as f32
             / 60.0;
         let distance = match mode {
+            "slice-local-teleport" | "slice-local-teleport-terse" => 1.2 - phase * 0.9,
             "slice-sideways" => 0.15,
             "slice-complete-sideways" => 0.6 - phase.min(2.0) * 0.8,
             "slice-exit-still" => -EXIT_OFFSET,
@@ -308,16 +324,51 @@ impl App {
                 } else {
                     0.0
                 };
-        let turning_back = mode.starts_with("slice-turnback") && phase >= 3.0;
+        if local_teleport
+            && self.frame_count >= 900
+            && let Some(destination) = &portal.destination
+        {
+            peer.position = Vec3::from(destination.position) + normal * (self.frame_count - 900) as f32 / 60.0 * 0.35;
+        }
+        let turning_back = (mode.starts_with("slice-turnback") && phase >= 3.0) || (local_teleport && self.frame_count >= 900);
         peer.rotation = glam::Quat::from_rotation_z(portal.yaw + if turning_back { 0.0 } else { std::f32::consts::PI });
         peer.velocity = Vec3::ZERO;
         let id = peer.full_id;
         let local = peer.local_id;
         let first = self.world.objects.index_of_uuid(&id).is_none();
-        self.world.apply(NetEvent::ObjectUpdates {
-            handle,
-            objects: vec![peer],
-        });
+        let target = peer.position;
+        if local_teleport && mode.ends_with("terse") && !first {
+            self.world.apply(NetEvent::TerseUpdates {
+                handle,
+                updates: vec![aurora_net::objects::TerseUpdate {
+                    local_id: local,
+                    state: peer.state,
+                    is_avatar: true,
+                    foot_plane: peer.foot_plane,
+                    position: peer.position,
+                    rotation: peer.rotation,
+                    velocity: peer.velocity,
+                    acceleration: peer.acceleration,
+                    angular_velocity: peer.angular_velocity,
+                    texture_entry: None,
+                }],
+            });
+        } else {
+            self.world.apply(NetEvent::ObjectUpdates {
+                handle,
+                objects: vec![peer],
+            });
+        }
+        if local_teleport
+            && self.frame_count == 900
+            && let Some(object) = self.world.objects.index_of_uuid(&id).and_then(|idx| self.world.objects.get(idx))
+        {
+            log::info!(
+                "portal observer demo: placement serial {}, arrival gap {} m",
+                object.placement_serial,
+                self.world.objects.predicted(object, Instant::now()).0.distance(target)
+            );
+        }
         if first {
             if let Some(gfx) = &mut self.gfx {
                 self.scene.install_demo_animesh(&mut gfx.renderer);
@@ -398,7 +449,16 @@ impl App {
         } else {
             4.0
         };
-        let focus = center + tangent * if sideways || complete_sideways { 1.2 } else { 0.0 };
+        let focus = center
+            + tangent
+                * if local_teleport {
+                    1.5
+                } else if sideways || complete_sideways {
+                    1.2
+                } else {
+                    0.0
+                }
+            + normal * if local_teleport { 1.2 } else { 0.0 };
         self.camera.set_view(
             focus
                 + tangent * across

@@ -201,8 +201,14 @@ still see the full surface.
 The authorized visitor must teleport in both focus modes; the denied visitor
 must walk through without teleporting. Logs record focus, effective controls,
 authorization, position and return journey. A refused crossing can be retried
-after the ordinary 1 m clearance; the initial 3.5 m anti-drop clearance still
-applies when another resident's portal appears nearby.
+after the ordinary 1 m clearance. Newly placed portals require only 25 cm of
+initial clearance, including another resident's portal; the 600 ms observer
+appearance delay and deliberate plane crossing remain required. A portal
+placed directly on an avatar must not teleport them until they step outside
+the small clearance and cross back. Personal returns retain the 1 m guard.
+`private-friends-near-keyboard-allowed` puts the initial opening just 30 cm
+ahead and holds Forward from frame 600: the authorized visitor must teleport
+directly, without first walking away, and must not bounce back on arrival.
 `keyboard-departing-allowed` starts the creator's teleport when the access
 request arrives, then changes their region after the grant is sent: the
 visitor must still receive the destination and teleport without chat focus.
@@ -251,6 +257,19 @@ cloud and rim wisps must retain depth from both sides without a continuous opaqu
 tube; the layered core shifts in perspective. Verify the rim never enlarges
 the physical crossing opening or the depth-contact mask. The same band and glow
 must work with the ordinary loading rez effect enabled or disabled.
+
+`AURORA_DEMO_PORTALS=slice-local-teleport|slice-local-teleport-reverse|slice-local-teleport-terse` observes
+another avatar enter a source and jump to its paired exit about four metres
+away at frame 900, through full or terse simulator reports. Capture 899, 900,
+901, 905 and 990: neither body nor attachments may glide across the space
+between the openings, and the arrival must start its own progressive emergence.
+The offline log reports a new placement serial and a zero arrival-position gap.
+The reverse view observes departure from the other side of the source.
+Normal walking/running and small simulator corrections must remain smooth.
+On the grid, use two Aurora viewers in the same region: one crosses, the other
+watches departure and arrival, including a private portal without destination
+access. Repeat after placing the portal 30–50 cm ahead; no preliminary retreat
+should be required. Arrival must not immediately teleport the traveler back.
 
 `AURORA_DEMO_PORTALS=slice-exit|slice-exit-reverse|slice-exit-still` shows an
 observed traveler at a paired arrival endpoint. Capture frames 780, 795, 810,

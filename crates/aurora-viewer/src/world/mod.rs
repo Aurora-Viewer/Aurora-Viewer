@@ -2392,7 +2392,17 @@ impl World {
                     }
                     self.on_camera_parent_change(handle, &u);
                     let foot_plane = u.foot_plane;
-                    self.objects.upsert_at(handle, u, self.received);
+                    let placement = !is_me
+                        && u.pcode == aurora_prim::params::LL_PCODE_LEGACY_AVATAR
+                        && u.parent_id == 0
+                        && self
+                            .objects
+                            .index_of_uuid(&avatar_id)
+                            .is_some_and(|idx| self.portal_relocation(handle, idx, pos));
+                    let idx = self.objects.upsert_at(handle, u, self.received);
+                    if placement && let Some(object) = self.objects.get_mut(idx) {
+                        object.accept_placement();
+                    }
                     self.note_friend_join_object(handle, avatar_id, foot_plane);
                     if is_me {
                         let at = self.agent_report_time();
@@ -2417,7 +2427,11 @@ impl World {
                     if let Some(idx) = self.objects.index_of(&key) {
                         let mut mine = false;
                         let mut seated = false;
+                        let placement = self.portal_relocation(handle, idx, t.position);
                         self.objects.apply_terse_at(idx, &t, self.received);
+                        if placement && let Some(object) = self.objects.get_mut(idx) {
+                            object.accept_placement();
+                        }
                         if let Some(o) = self.objects.get(idx) {
                             mine = o.full_id == me;
                             seated = o.parent_id != 0;

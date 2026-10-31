@@ -40,6 +40,152 @@ pub(super) fn fixture() -> (World, State) {
 }
 
 #[test]
+fn observer_portal_placements_snap_full_and_terse_reports_even_without_private_details() {
+    use aurora_net::{NetEvent, objects::TerseUpdate};
+    for terse in [false, true] {
+        for private in [false, true] {
+            let (mut world, mut state) = fixture();
+            world.ensure_region(256, (256, 256));
+            let now = Instant::now();
+            let mut p = portal();
+            if private {
+                p.access = Access::Friends;
+            }
+            state.receive(&world, &wire(Uuid::from_u128(2), Message::Open(p.announcement())), now, 1000);
+            assert_eq!(state.entries[0].details.is_none(), private);
+            world.portals = state;
+            let mut peer = crate::demo::poser::peer();
+            peer.velocity = Vec3::ZERO;
+            peer.acceleration = Vec3::ZERO;
+            for distance in [0.8, 2.0, 7.0] {
+                peer.position = point(0.1);
+                world.apply_received(
+                    NetEvent::ObjectUpdates {
+                        handle: 256,
+                        objects: vec![peer.clone()],
+                    },
+                    now,
+                );
+                let idx = world.objects.index_of_uuid(&peer.full_id).unwrap();
+                let before = world.objects.get(idx).unwrap().placement_serial;
+                let target = point(0.1 + distance);
+                let at = now + Duration::from_millis(100);
+                let event = if terse {
+                    NetEvent::TerseUpdates {
+                        handle: 256,
+                        updates: vec![TerseUpdate {
+                            local_id: peer.local_id,
+                            state: peer.state,
+                            is_avatar: true,
+                            foot_plane: None,
+                            position: target,
+                            rotation: peer.rotation,
+                            velocity: Vec3::ZERO,
+                            acceleration: Vec3::ZERO,
+                            angular_velocity: Vec3::ZERO,
+                            texture_entry: None,
+                        }],
+                    }
+                } else {
+                    let mut arrival = peer.clone();
+                    arrival.position = target;
+                    NetEvent::ObjectUpdates {
+                        handle: 256,
+                        objects: vec![arrival],
+                    }
+                };
+                world.apply_received(event, at);
+                let object = world.objects.get(idx).unwrap();
+                assert_eq!(object.position, target);
+                assert_eq!(
+                    object.predicted(at, world.objects.motion_time(256)).0,
+                    target,
+                    "no intermediate position at arrival"
+                );
+                assert_eq!(object.placement_serial, before + 1);
+            }
+        }
+    }
+}
+
+#[test]
+fn portal_jump_detection_preserves_walking_small_corrections_and_unrelated_objects() {
+    use aurora_net::NetEvent;
+    let (mut world, mut state) = fixture();
+    world.ensure_region(256, (256, 256));
+    let now = Instant::now();
+    state.receive(&world, &wire(Uuid::from_u128(2), Message::Open(portal().announcement())), now, 1000);
+    world.portals = state;
+    let mut peer = crate::demo::poser::peer();
+    peer.position = point(0.1);
+    peer.velocity = Vec3::X * 6.0;
+    peer.acceleration = Vec3::ZERO;
+    world.apply_received(
+        NetEvent::ObjectUpdates {
+            handle: 256,
+            objects: vec![peer.clone()],
+        },
+        now,
+    );
+    world.objects.advance_motion(256, 0.1);
+    peer.position += Vec3::X * 0.61;
+    world.apply_received(
+        NetEvent::ObjectUpdates {
+            handle: 256,
+            objects: vec![peer.clone()],
+        },
+        now + Duration::from_millis(100),
+    );
+    let idx = world.objects.index_of_uuid(&peer.full_id).unwrap();
+    assert_eq!(
+        world.objects.get(idx).unwrap().placement_serial,
+        0,
+        "predicted running is continuous"
+    );
+    for (pcode, parent, from, to) in [
+        (peer.pcode, 0, point(0.1), point(0.3)),
+        (peer.pcode, 0, point(0.1) + Vec3::Y * 4.0, point(7.0)),
+        (aurora_prim::params::LL_PCODE_VOLUME, 0, point(0.1), point(7.0)),
+        (peer.pcode, 999, point(0.1), point(7.0)),
+    ] {
+        peer.pcode = pcode;
+        peer.parent_id = parent;
+        peer.velocity = Vec3::ZERO;
+        peer.position = from;
+        world.apply_received(
+            NetEvent::ObjectUpdates {
+                handle: 256,
+                objects: vec![peer.clone()],
+            },
+            now,
+        );
+        let before = world.objects.get(idx).unwrap().placement_serial;
+        peer.position = to;
+        world.apply_received(
+            NetEvent::ObjectUpdates {
+                handle: 256,
+                objects: vec![peer.clone()],
+            },
+            now,
+        );
+        let object = world.objects.get(idx).unwrap();
+        assert_eq!(object.placement_serial, before);
+        assert_ne!(
+            object.predicted(now, world.objects.motion_time(256)).0,
+            to,
+            "ordinary motion retains its correction"
+        );
+    }
+    assert!(!world.portals.observed_relocation(512, point(0.1), point(7.0), now));
+    assert!(!world.portals.observed_relocation(256, Vec3::NAN, point(7.0), now));
+    assert!(
+        !world
+            .portals
+            .observed_relocation(256, point(0.1), point(7.0), now + Duration::from_secs(121))
+    );
+}
+
+#[test]
 fn portal_can_be_entered_immediately_from_nearby_and_after_a_distant_stall() {
     let p = portal().announcement();
     let now = Instant::now();
@@ -59,7 +205,7 @@ fn portal_can_be_entered_immediately_from_nearby_and_after_a_distant_stall() {
 fn a_near_plane_arrival_does_not_bounce_before_leaving_the_return_aperture() {
     let p = portal().announcement();
     let now = Instant::now();
-    let mut gate = Gate::new(Vec3::from(p.center), point(-0.15), now);
+    let mut gate = Gate::arrival(Vec3::from(p.center), point(-0.15), now);
     assert!(!gate.armed);
     // A landing correction can straddle the plane before we walk out.
     for (i, x) in [0.1, -0.3, -1.2, -0.4].into_iter().enumerate() {
@@ -260,42 +406,63 @@ fn portal_dropped_on_someone_requires_leaving_then_a_voluntary_plane_crossing() 
     let mut gate = Gate::observer(Vec3::from(p.center), point(0.0), now);
     let later = now + Duration::from_secs(1);
     assert!(!gate.sample(&p.announcement(), point(0.0), true, later));
-    for x in [0.5, -0.5, 1.0, 2.0, 3.0] {
+    for x in [0.1, -0.1, 0.2] {
         assert!(!gate.sample(&p.announcement(), point(x), true, later));
     }
     assert!(!gate.armed);
-    assert!(!gate.sample(&p.announcement(), point(3.5), true, later));
+    assert!(!gate.sample(&p.announcement(), point(0.3), true, later));
     assert!(gate.armed);
-    assert!(!gate.sample(&p.announcement(), point(1.0), true, later));
-    assert!(gate.sample(&p.announcement(), point(-0.5), true, later));
-    assert!(!gate.sample(&p.announcement(), point(0.5), true, later));
-    assert!(!gate.sample(&p.announcement(), point(-0.5), true, later));
+    assert!(gate.sample(&p.announcement(), point(-0.2), true, later));
+    assert!(!gate.sample(&p.announcement(), point(0.2), true, later));
+    assert!(!gate.sample(&p.announcement(), point(-0.2), true, later));
 }
 
 #[test]
-fn portal_observer_uses_the_wide_clearance_only_before_its_first_approach() {
+fn portal_observer_initial_clearance_is_small_but_retries_keep_the_ordinary_guard() {
     let p = portal().announcement();
     let now = Instant::now();
     for nearby in [false, true] {
         let mut gate = Gate::observer(Vec3::from(p.center), point(if nearby { 0.0 } else { 4.0 }), now);
         let later = now + Duration::from_millis(700);
         if nearby {
-            for x in [0.5, 2.0, 3.0] {
+            for x in [0.1, -0.1, 0.2] {
                 assert!(!gate.sample(&p, point(x), true, later));
                 assert!(!gate.armed, "initial anti-drop clearance remains mandatory");
             }
-            assert!(!gate.sample(&p, point(3.5), true, later));
+            assert!(!gate.sample(&p, point(0.3), true, later));
         }
         assert!(gate.armed);
         assert!(!gate.sample(&p, point(1.0), true, later));
-        assert!(!gate.sample(&p, point(-0.5), false, later));
+        assert!(!gate.sample(&p, point(-0.2), false, later));
         assert!(!gate.armed, "a refused crossing is consumed");
-        assert!(!gate.sample(&p, point(-0.5), true, later));
+        assert!(!gate.sample(&p, point(-0.2), true, later));
         assert!(!gate.armed, "standing inside does not cause a delayed teleport");
         assert!(!gate.sample(&p, point(-1.2), true, later));
         assert!(gate.armed, "a deliberate retry needs only the ordinary clearance");
         assert!(gate.sample(&p, point(0.5), true, later));
     }
+}
+
+#[test]
+fn nearby_portals_allow_first_crossing_from_thirty_centimetres_on_either_side() {
+    let p = portal().announcement();
+    let now = Instant::now();
+    for side in [-1.0, 1.0] {
+        for observer in [false, true] {
+            let start = point(0.3 * side);
+            let mut gate = if observer {
+                Gate::observer(Vec3::from(p.center), start, now)
+            } else {
+                Gate::new(Vec3::from(p.center), start, now)
+            };
+            assert!(gate.armed);
+            assert!(gate.sample(&p, point(-0.2 * side), true, now + Duration::from_millis(700)));
+        }
+    }
+    let mut gate = Gate::observer(Vec3::from(p.center), point(0.3), now);
+    assert!(!gate.sample(&p, point(-0.2), true, now + Duration::from_millis(100)));
+    assert!(!gate.sample(&p, point(-0.2), true, now + Duration::from_millis(700)));
+    assert!(gate.sample(&p, point(0.3), true, now + Duration::from_millis(800)));
 }
 
 #[test]

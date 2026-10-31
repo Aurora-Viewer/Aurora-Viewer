@@ -20,6 +20,7 @@ pub const WIDTH: f32 = aurora_render::PORTAL_HALF_WIDTH;
 pub const HEIGHT: f32 = aurora_render::PORTAL_HALF_HEIGHT;
 const LIMIT: usize = 64;
 const CLEARANCE: f32 = 1.0;
+const INITIAL_CLEARANCE: f32 = 0.25;
 const SEND_INTERVAL: Duration = Duration::from_millis(250);
 
 pub fn fits_region(center: Vec3, size: [u32; 2]) -> bool {
@@ -38,6 +39,19 @@ pub fn allowed(world: &World, owner: Uuid, access: Access) -> bool {
                 Access::Friends => world.social.friends.iter().any(|friend| friend.id == owner),
                 Access::Group(id) => world.groups.groups.iter().any(|group| group.id == id),
             })
+}
+
+impl World {
+    pub(super) fn portal_relocation(&self, region: u64, index: usize, position: Vec3) -> bool {
+        let Some(object) = self.objects.get(index) else { return false };
+        if !object.is_avatar() || object.full_id == self.agent_id || object.parent_id != 0 || object.key.region != region {
+            return false;
+        }
+        let now = self.received.unwrap_or_else(Instant::now);
+        let clock = self.objects.report_clock(region, self.received);
+        self.portals
+            .observed_relocation(region, object.reported_pose(clock).0, position, now)
+    }
 }
 
 pub struct Entry {
@@ -100,22 +114,24 @@ impl Gate {
     fn new(center: Vec3, position: Vec3, now: Instant) -> Self {
         Self {
             previous: position,
-            armed: position.distance(center) >= CLEARANCE,
+            armed: position.distance(center) >= INITIAL_CLEARANCE,
             last_sample: now,
-            clearance: CLEARANCE,
+            clearance: INITIAL_CLEARANCE,
             ready_at: now,
         }
     }
 
     fn observer(center: Vec3, position: Vec3, now: Instant) -> Self {
-        let armed = position.distance(center) > 3.0;
         Self {
-            armed,
-            // The wider anti-drop clearance is only needed on appearance.
-            // Once approached from outside, a refused crossing must permit
-            // an ordinary retry without retreating another 3.5 metres.
-            clearance: if armed { CLEARANCE } else { 3.5 },
             ready_at: now + Duration::from_millis(600),
+            ..Self::new(center, position, now)
+        }
+    }
+
+    fn arrival(center: Vec3, position: Vec3, now: Instant) -> Self {
+        Self {
+            armed: position.distance(center) >= CLEARANCE,
+            clearance: CLEARANCE,
             ..Self::new(center, position, now)
         }
     }
@@ -128,6 +144,9 @@ impl Gate {
         let center = Vec3::from(portal.center);
         // Arrival, simulator corrections and stale frame gaps cannot be entry.
         if !position.is_finite() || !previous.is_finite() || previous.distance(position) > 3.0 || gap > Duration::from_secs(1) {
+            if !position.is_finite() || !previous.is_finite() || previous.distance(position) > 3.0 {
+                self.clearance = CLEARANCE;
+            }
             // Reject this segment, but do not make an already distant observer
             // walk farther away after a frame stall or a server correction.
             self.armed = position.is_finite() && position.distance(center) >= self.clearance;
@@ -158,6 +177,7 @@ impl Gate {
         if inside {
             // Consume even a refused or involuntary crossing; no delayed TP.
             self.armed = false;
+            self.clearance = CLEARANCE;
         }
         inside && voluntary
     }
@@ -208,6 +228,30 @@ pub struct State {
 }
 
 impl State {
+    /// A simulator placement at a known doorway is discontinuous, even within
+    /// LLDrawable::updateXform's ordinary 10 m damping range. This only affects
+    /// presentation of an authoritative report, never an avatar's position.
+    fn observed_relocation(&self, region: u64, from: Vec3, to: Vec3, now: Instant) -> bool {
+        if !from.is_finite() || !to.is_finite() || from.distance_squared(to) < 0.5 * 0.5 {
+            return false;
+        }
+        self.entries.iter().any(|entry| {
+            let portal = &entry.portal;
+            if portal.region != region || now >= entry.expires_at {
+                return false;
+            }
+            let center = Vec3::from(portal.center);
+            let normal = Vec3::new(portal.yaw.cos(), portal.yaw.sin(), 0.0);
+            let tangent = Vec3::new(-normal.y, normal.x, 0.0);
+            let delta = from - center;
+            // Compare against extrapolated simulator motion, without its
+            // visual damping: ordinary walking/running has no placement gap.
+            // A source is sufficient, including for observers who cannot see
+            // a private destination or have not received its return yet.
+            delta.dot(normal).abs() <= 1.0 && (delta.dot(tangent) / WIDTH).powi(2) + (delta.z / HEIGHT).powi(2) <= 1.0
+        })
+    }
+
     pub fn sync(&mut self, world: &World, endpoint: Option<Uuid>, now: u64) {
         if self.agent != world.agent_id || self.region != world.main_region {
             *self = Self {
@@ -372,7 +416,7 @@ impl State {
                 owner: creator,
                 portal: announcement.clone(),
                 details: Some(portal.details()),
-                gate: Gate::new(Vec3::from(portal.center), position, now),
+                gate: Gate::arrival(Vec3::from(portal.center), position, now),
                 expires_at: now + Duration::from_secs(portal.expires.saturating_sub(unix).min(LIFETIME)),
                 relays: Vec::new(),
                 shared: true,

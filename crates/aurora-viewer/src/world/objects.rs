@@ -149,6 +149,8 @@ pub struct Object {
     seat: Option<Seat>,
     /// Full updates carry parentage; terse motion packets do not confirm it.
     pub full_update_serial: u64,
+    /// Explicit simulator placement, rather than a correction to interpolate.
+    pub placement_serial: u64,
     pub volume: VolumeParams,
     pub te: Option<Arc<TextureEntry>>,
     pub extra: ExtraParams,
@@ -273,6 +275,7 @@ impl Object {
             scale_correction: None,
             seat: None,
             full_update_serial: 1,
+            placement_serial: 0,
             volume: u.volume,
             te: u.texture_entry,
             extra: u.extra,
@@ -495,7 +498,7 @@ impl Object {
     }
 
     /// Where its last report sends it at `motion_time`, nothing smoothed.
-    fn reported_pose(&self, motion_time: f64) -> (Vec3, Quat) {
+    pub(super) fn reported_pose(&self, motion_time: f64) -> (Vec3, Quat) {
         if self.extrapolates() && self.motion_time.is_finite() {
             motion::extrapolate(&self.reported(), motion_time - self.motion_time)
         } else {
@@ -578,6 +581,12 @@ impl Object {
         let drawn = if self.seat_damping() { None } else { drawn };
         self.correction = drawn.and_then(|drawn| Correction::between(drawn, (self.position, self.rotation), now));
         self.correction.is_some()
+    }
+
+    pub(super) fn accept_placement(&mut self) {
+        self.correction = None;
+        self.placement_serial = self.placement_serial.wrapping_add(1);
+        self.render.needs_records = true;
     }
 }
 
