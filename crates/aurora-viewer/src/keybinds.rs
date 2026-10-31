@@ -206,32 +206,69 @@ impl Binding {
     }
 
     pub fn label(&self) -> String {
+        self.label_on(cfg!(target_os = "macos"))
+    }
+
+    /// Shortcut text for one platform. `mac` follows
+    /// LLKeyboard::stringFromAccelerator (indra/llwindow/llkeyboard.cpp):
+    /// ⌘, or ⌃ when the chord is `use_mac_ctrl` in menu_viewer.xml, then ⌥
+    /// and ⇧, with no "+". Other platforms keep "Ctrl+", "Alt+" and "Shift+".
+    pub fn label_on(&self, mac: bool) -> String {
         let mut s = String::new();
+        if !mac {
+            if self.ctrl {
+                s.push_str("Ctrl+");
+            }
+            if self.alt {
+                s.push_str("Alt+");
+            }
+            if self.shift {
+                s.push_str(aurora_i18n::tr!("keybinds-shift-2"));
+            }
+            s.push_str(&self.input.label());
+            return s;
+        }
         if self.ctrl {
-            s.push_str("Ctrl+");
+            s.push_str(if uses_mac_control(self) { "⌃" } else { "⌘" });
         }
         if self.alt {
-            s.push_str("Alt+");
+            s.push('⌥');
         }
         if self.shift {
-            s.push_str(aurora_i18n::tr!("keybinds-shift-2"));
+            s.push('⇧');
         }
-        s.push_str(&self.input.label());
+        let key = self.input.label();
+        // A leading "-" / "=" / "+" would glue to the modifier symbols.
+        if (self.ctrl || self.alt || self.shift) && key.starts_with(['-', '=', '+']) {
+            s.push(' ');
+        }
+        s.push_str(&key);
         s
     }
 
     /// The keys to hold, modifiers first, for the keycaps of the shortcuts
     /// list.
     pub fn caps(&self) -> Vec<KeyCap> {
+        self.caps_on(cfg!(target_os = "macos"))
+    }
+
+    pub fn caps_on(&self, mac: bool) -> Vec<KeyCap> {
         let mut caps = Vec::new();
         if self.ctrl {
-            caps.push(KeyCap::named(key_label("ControlLeft")));
+            let name = if !mac {
+                key_label("ControlLeft")
+            } else if uses_mac_control(self) {
+                "⌃".into()
+            } else {
+                "⌘".into()
+            };
+            caps.push(KeyCap::named(name));
         }
         if self.alt {
-            caps.push(KeyCap::named("Alt"));
+            caps.push(KeyCap::named(if mac { "⌥" } else { "Alt" }));
         }
         if self.shift {
-            caps.push(KeyCap::named(key_label("ShiftLeft")));
+            caps.push(KeyCap::named(if mac { "⇧".into() } else { key_label("ShiftLeft") }));
         }
         let mut cap = KeyCap::named(self.input.label());
         cap.mouse = matches!(self.input, Input::Mouse(_));
@@ -912,6 +949,46 @@ pub struct Mods {
     pub alt: bool,
 }
 
+/// Menu chords labeled with the Mac Control key (`use_mac_ctrl="true"`
+/// on a `control|…` shortcut in menu_viewer.xml). macOS reserves the
+/// Command form (Hide, Minimize, cycling windows, and the same list).
+/// The flag is a label: both keys still run the shortcut when the event
+/// arrives (LLMenuItemGL::handleAcceleratorKey keeps only MASK_NORMALKEYS).
+/// Matched by the chord, so a rebind keeps the label of the keys it uses.
+pub fn uses_mac_control(binding: &Binding) -> bool {
+    let Input::Key(key) = &binding.input else {
+        return false;
+    };
+    if !binding.ctrl {
+        return false;
+    }
+    matches!(
+        (key.as_str(), binding.alt, binding.shift),
+        ("KeyH", false, false) // Nearby Chat, labeled ⌃H. Command+H stays Hide.
+        | ("KeyT", false, false) // Conversations
+        | ("KeyM", false, false) // World Map; Command+M minimizes
+        | ("KeyT", true, false) // Highlight Transparent
+        | ("KeyT", true, true) // include Rigged Transparent
+        | ("Backquote", false, false) // Snapshot to Disk; Command+` cycles windows
+        | ("KeyQ", true, false) // Show Developer Menu
+        | ("Digit3", false, true) // Texture Console
+        | ("Digit4", false, true) // Debug Console
+        | ("Digit9", false, true) // Fast Timers
+        | ("Backquote", false, true) // Region Debug Console
+    )
+}
+
+/// Shortcut text for a fixed menu chord (`"KeyG"`, not the letter alone).
+pub fn chord_label(key: &str, ctrl: bool, alt: bool, shift: bool) -> String {
+    Binding {
+        input: Input::Key(key.to_string()),
+        ctrl,
+        alt,
+        shift,
+    }
+    .label()
+}
+
 /// Editing history takes priority over held movement and camera bindings:
 /// LLViewerInput::scanKey (indra/newview/llviewerinput.cpp), LLEditUndo /
 /// LLEditRedo (indra/newview/llviewermenu.cpp). Text and media keep their
@@ -1424,14 +1501,42 @@ mod tests {
             shift: false,
             alt: true,
         };
-        let caps = binding.caps();
+        let caps = binding.caps_on(false);
         assert_eq!(caps.len(), 3);
         assert_eq!((caps[0].label.as_str(), caps[1].label.as_str()), ("Ctrl", "Alt"));
         assert!(caps[0].icon.is_none() && caps[1].icon.is_none());
         assert_eq!(caps[2].icon.as_deref(), Some("square-arrow-up-filled"));
         assert!(caps.iter().all(|cap| !cap.mouse));
-        let middle = Binding::plain(Input::Mouse("Middle".into())).caps();
+        let mac = binding.caps_on(true);
+        assert_eq!((mac[0].label.as_str(), mac[1].label.as_str()), ("⌘", "⌥"));
+        let middle = Binding::plain(Input::Mouse("Middle".into())).caps_on(false);
         assert!(middle.len() == 1 && middle[0].mouse && middle[0].icon.is_none());
+    }
+
+    #[test]
+    fn mac_shortcuts_label_command_and_the_legacy_control_chords() {
+        let chord = |key, alt, shift| Binding {
+            input: Input::key(key),
+            ctrl: true,
+            alt,
+            shift,
+        };
+        let world = chord(KeyCode::KeyM, false, false);
+        let minimap = chord(KeyCode::KeyM, false, true);
+        let close = chord(KeyCode::KeyW, false, false);
+        let photo = chord(KeyCode::Backquote, false, false);
+        let transparent = chord(KeyCode::KeyT, true, false);
+        let conversations = chord(KeyCode::KeyT, false, false);
+        assert_eq!(world.label_on(false), "Ctrl+M");
+        assert_eq!(world.label_on(true), "⌃M");
+        assert_eq!(minimap.label_on(true), "⌘⇧M");
+        assert_eq!(close.label_on(true), "⌘W");
+        assert_eq!(photo.label_on(true), "⌃`");
+        assert_eq!(transparent.label_on(true), "⌃⌥T");
+        assert_eq!(conversations.label_on(true), "⌃T");
+        assert_eq!(chord(KeyCode::Minus, false, false).label_on(true), "⌘ -");
+        assert!(!uses_mac_control(&minimap));
+        assert!(uses_mac_control(&world));
     }
 
     #[test]
