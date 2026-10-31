@@ -889,7 +889,7 @@ impl App {
             crate::world::appearance::Action::Save(Some(_)) | crate::world::appearance::Action::SaveIn(..)
         );
         let attachments = crate::world::appearance::attachments_for_action(&self.world.inventory, self.world.agent_id, &action);
-        match crate::world::appearance::plan(&self.world.inventory, action, &self.world.worn_attachment_points()) {
+        match crate::world::appearance::plan(&self.world.inventory, action, &self.world.outfit_attachment_points()) {
             Ok((change, sync)) => {
                 let request = uuid::Uuid::new_v4();
                 self.appearance_ui.pending = Some((request, sync));
@@ -916,7 +916,7 @@ impl App {
     /// outfits and their missing link targets (`AppearanceUi::reload`):
     /// "still loading" lasts until they arrive, not for the session.
     fn reload_outfit(&mut self) {
-        let worn = self.world.worn_attachment_items();
+        let worn = self.world.outfit_attachment_items();
         for command in self.appearance_ui.reload(&mut self.world.inventory, self.world.agent_id, &worn) {
             self.send(command);
         }

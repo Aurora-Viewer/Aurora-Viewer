@@ -113,6 +113,12 @@ links through AIS, without replacing the outfit or reattaching anything. A
 simulator-confirmed detach during link creation removes the late link after
 confirmation; failed readback reloads the COF before retrying. Transient avatar
 absence during teleport preserves links. Temporary attachments are excluded.
+`world/temp_attachments.rs` supplies inventory-only attachment IDs and points
+for outfit preparation, planning, restoration and COF synchronization. Temporary
+task IDs never become missing inventory records or outfit detach requests;
+the complete worn lists remain available for attachment counts, explicit
+temporary detaches and RLVa locks. Unresolved ordinary items still require
+their inventory metadata before an outfit rewrite.
 Manual removal recovers our worn roots through `ObjectDetach` when an item or
 the COF remains unavailable, following `LLSelectMgr::sendDetach`. Healthy outfit
 mutations retain their existing path. Recovery preserves RLVa point/source locks
