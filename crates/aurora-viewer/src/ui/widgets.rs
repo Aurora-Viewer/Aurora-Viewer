@@ -19,6 +19,7 @@ mod field_centering_tests;
 mod movement_tests;
 pub(crate) use cascade::Group as CascadeGroup;
 pub mod color;
+mod copy_on_click;
 pub mod demo;
 #[cfg(test)]
 pub(crate) mod elide_tests;
@@ -34,6 +35,7 @@ mod unread;
 mod volume;
 mod workspace;
 pub use color::color_button;
+pub use copy_on_click::copy_on_click;
 pub(crate) use modal_keys::{default_button, enter_pressed};
 pub use pills::{
     clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide,
