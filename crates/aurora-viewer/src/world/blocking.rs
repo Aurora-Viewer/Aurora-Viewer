@@ -77,6 +77,15 @@ impl World {
         self.mutes.text_muted(&c.source_id, &c.from_name) || (!c.owner_id.is_nil() && self.mutes.text_muted(&c.owner_id, ""))
     }
 
+    /// A resident whose nearby chat is hidden (`chat_blocked`) is not named
+    /// in the chat's "is typing" line either (#1395): their words never
+    /// show, so the line would only point at them. The Legacy Viewer has no
+    /// such line; the signs on the avatar (the "..." bubble, the name tag,
+    /// the radar's badge) stay as there.
+    pub fn nearby_typing_hidden(&self, avatar: &Uuid) -> bool {
+        self.mutes.text_muted(avatar, &self.legacy_name(avatar).unwrap_or_default())
+    }
+
     /// Script dialogs, permission requests and URLs from a blocked object
     /// or owner (LLScriptFloater, process_script_question, process_load_url).
     pub(super) fn object_blocked(&self, object: &Uuid, name: &str) -> bool {
@@ -297,5 +306,31 @@ mod tests {
         w.unblock(jane, "Jane Doe", flag::PARTICLES);
         assert!(!w.particles_blocked(&jane));
         assert!(w.mutes.text_muted(&jane, "") && w.voice_blocked(&jane));
+    }
+
+    #[test]
+    fn blocked_chat_leaves_the_nearby_typing_line() {
+        let mut w = World::new(Arc::new(AvatarLibrary::load()));
+        w.agent_id = Uuid::from_u128(99);
+        w.mutes.reset(w.agent_id);
+        let jane = Uuid::from_u128(1);
+        assert!(!w.nearby_typing_hidden(&jane));
+        // her voice alone blocked: her chat shows, and so does her typing
+        w.block_flags(jane, "Jane Doe", MuteType::Agent, flag::VOICE_CHAT).expect("blocked");
+        assert!(!w.nearby_typing_hidden(&jane));
+        // her text chat blocked too: no "Jane is typing"
+        w.block_flags(jane, "Jane Doe", MuteType::Agent, flag::TEXT_CHAT).expect("blocked");
+        assert!(w.nearby_typing_hidden(&jane));
+        w.unblock(jane, "Jane Doe", flag::ALL);
+        assert!(!w.nearby_typing_hidden(&jane));
+        // blocked in full
+        w.block(jane, "Jane Doe", MuteType::Agent).expect("blocked");
+        assert!(w.nearby_typing_hidden(&jane));
+        // an old block by name only, matched through her known name
+        let bob = Uuid::from_u128(2);
+        w.block(Uuid::nil(), "Bob Smith", MuteType::ByName).expect("blocked");
+        assert!(!w.nearby_typing_hidden(&bob));
+        w.social.names.insert(bob, "Bob Smith".into());
+        assert!(w.nearby_typing_hidden(&bob));
     }
 }

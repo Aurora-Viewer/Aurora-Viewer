@@ -14181,13 +14181,14 @@ impl App {
                     volume,
                 });
                 // who hears the nearby chat, and who of them types (the
-                // radar's avatars in chat range, `World::is_typing_nearby`)
+                // radar's avatars in chat range, `World::is_typing_nearby`;
+                // never one whose chat is blocked, #1395)
                 self.chat_ui.nearby_count = 0;
                 self.chat_ui.nearby_typing.clear();
                 for e in self.radar.entries() {
                     if !e.left_behind && e.range.is_some_and(|d| d <= crate::world::radar::CHAT_RANGE) {
                         self.chat_ui.nearby_count += 1;
-                        if e.typing {
+                        if e.typing && !self.world.nearby_typing_hidden(&e.id) {
                             self.chat_ui.nearby_typing.push(e.id);
                         }
                     }
