@@ -334,6 +334,7 @@ impl super::Scene {
     }
 
     pub fn update_portal_clipping(&mut self, renderer: &mut Renderer, world: &World) {
+        let now = std::time::Instant::now();
         static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let enabled = *ENABLED.get_or_init(|| std::env::var("AURORA_PORTAL_CLIP").as_deref() != Ok("0"));
         if !enabled || (world.portals.entries.is_empty() && world.portals.arrivals.is_empty() && !world.portals.awaiting_floor) {
@@ -349,6 +350,7 @@ impl super::Scene {
                     key: clipping::Key(entry.owner, entry.portal.id, entry.portal.region),
                     center: Vec3::from(entry.portal.center),
                     normal: Vec3::new(entry.portal.yaw.cos(), entry.portal.yaw.sin(), 0.0),
+                    local_ready: entry.allowed(world) && (world.portals.departure == Some(entry.portal.id) || entry.ready_to_cross(now)),
                 })
                 .collect();
             let mut avatars = Vec::new();
@@ -370,6 +372,8 @@ impl super::Scene {
                     owners.insert(index, avatars.len());
                     avatars.push(clipping::Avatar {
                         id: object.full_id,
+                        own: object.full_id == world.agent_id,
+                        in_transit: world.portals.departure.is_some(),
                         index,
                         root,
                         forward: rotation * Vec3::X,

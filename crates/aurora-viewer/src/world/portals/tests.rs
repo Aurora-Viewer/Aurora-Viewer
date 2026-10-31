@@ -334,6 +334,58 @@ fn portal_teleport_start_preserves_invitations_but_arrival_cannot_be_a_crossing(
 }
 
 #[test]
+fn the_same_source_accepts_repeated_local_trips_despite_late_arrival_status() {
+    use aurora_net::NetEvent;
+    for side in [-1.0, 1.0] {
+        let (mut world, mut state) = fixture();
+        let now = Instant::now();
+        world.agent.position = point(2.0 * side);
+        let source = portal();
+        assert!(state.create(source.clone(), world.agent.position, now, 1000));
+        for trip in 0..4 {
+            let at = now + Duration::from_secs(trip * 3);
+            for (step, x) in [1.5, 0.6, 0.1, -0.2].into_iter().enumerate() {
+                world.agent.position = point(x * side);
+                let crossing = state.update(&world, Vec3::NEG_X * side, at + Duration::from_millis(step as u64 * 50));
+                assert_eq!(crossing.is_some(), step == 3, "trip {trip} from side {side}");
+            }
+            world.begin_teleport(false);
+            state.update(&world, Vec3::NEG_X * side, at + Duration::from_millis(200));
+            world.apply_received(NetEvent::TeleportLocal { flying: false }, at + Duration::from_millis(250));
+            world.apply_received(
+                NetEvent::AgentMovementComplete {
+                    handle: 256,
+                    position: point(6.0 * side),
+                    look_at: Vec3::NEG_X * side,
+                },
+                at + Duration::from_millis(250),
+            );
+            world.apply_received(NetEvent::TeleportStarted, at + Duration::from_millis(400));
+            world.apply_received(
+                NetEvent::TeleportProgress {
+                    message: "arriving".into(),
+                },
+                at + Duration::from_millis(500),
+            );
+            assert!(!world.teleporting, "late local status must not lock the gate");
+            assert!(state.update(&world, Vec3::NEG_X * side, at + Duration::from_millis(600)).is_none());
+            assert!(state.entries[0].ready_to_cross(at + Duration::from_millis(600)));
+            // Run back to the same opening, without recreating the invitation.
+            for (step, x) in [4.0, 2.0].into_iter().enumerate() {
+                world.agent.position = point(x * side);
+                assert!(
+                    state
+                        .update(&world, Vec3::NEG_X * side, at + Duration::from_millis(800 + step as u64 * 200))
+                        .is_none()
+                );
+            }
+        }
+        assert_eq!(state.entries.len(), 1);
+        assert_eq!(state.own().unwrap().portal.id, source.id);
+    }
+}
+
+#[test]
 fn portal_pushes_corrections_standing_inside_and_walking_around_do_not_teleport() {
     let p = portal();
     let now = Instant::now();

@@ -12,10 +12,13 @@ pub struct Aperture {
     pub key: Key,
     pub center: Vec3,
     pub normal: Vec3,
+    pub local_ready: bool,
 }
 
 pub struct Avatar {
     pub id: Uuid,
+    pub own: bool,
+    pub in_transit: bool,
     pub index: usize,
     pub root: Vec3,
     pub forward: Vec3,
@@ -139,6 +142,12 @@ impl Clipping {
                 .get(&avatar.id)
                 .filter(|(p, serial)| *serial == avatar.placement_serial && p.distance(avatar.root) <= 3.0)
                 .map(|(p, _)| *p);
+            // Our root crossed but no teleport was accepted: restore the
+            // body rather than latching an invisible completed traveler.
+            // Remote viewers do not know the other resident's local guards.
+            let eligible = |portal: &&Aperture| {
+                !avatar.own || (portal.local_ready && (avatar.in_transit || !from.is_some_and(|p| portal.crossed(p, avatar.root))))
+            };
             let old = from
                 .and_then(|_| self.crossings.get(&avatar.id))
                 .copied()
@@ -147,12 +156,14 @@ impl Clipping {
                 portal.inside(avatar.root)
                     && (avatar.bounds.iter().any(|b| b.touches(portal)) || from.is_some_and(|p| portal.crossed(p, avatar.root)))
             };
-            let selected = old.and_then(|c| portals.iter().find(|p| p.key == c.key)).or_else(|| {
-                portals.iter().filter(contact).min_by(|a, b| {
-                    let distance = |p: &Aperture| (avatar.root - p.center).dot(p.normal).abs();
-                    distance(a).total_cmp(&distance(b))
-                })
-            });
+            let selected = old
+                .and_then(|c| portals.iter().filter(eligible).find(|p| p.key == c.key))
+                .or_else(|| {
+                    portals.iter().filter(eligible).filter(contact).min_by(|a, b| {
+                        let distance = |p: &Aperture| (avatar.root - p.center).dot(p.normal).abs();
+                        distance(a).total_cmp(&distance(b))
+                    })
+                });
             let Some(portal) = selected else { continue };
             let side = old.filter(|c| c.key == portal.key).map_or_else(
                 || {
@@ -229,11 +240,14 @@ mod tests {
             key: Key(Uuid::from_u128(1), Uuid::from_u128(2), 256),
             center: Vec3::ZERO,
             normal: Vec3::X,
+            local_ready: true,
         }
     }
     fn avatar(root: Vec3, half: Vec3) -> Avatar {
         Avatar {
             id: Uuid::from_u128(3),
+            own: false,
+            in_transit: false,
             index: 7,
             root,
             forward: Vec3::NEG_X,
@@ -243,6 +257,71 @@ mod tests {
     }
     fn body(root: Vec3) -> Avatar {
         avatar(root, Vec3::new(0.2, 0.3, 1.1))
+    }
+
+    #[test]
+    fn an_unavailable_local_crossing_restores_the_mesh_and_never_leaves_it_hidden() {
+        let mut state = Clipping::default();
+        let own = |x| Avatar {
+            own: true,
+            ..body(Vec3::X * x)
+        };
+        let mut p = portal();
+        assert!(state.update(&[p], &[own(0.3)]).contains_key(&7));
+        p = portal();
+        p.local_ready = false;
+        assert!(
+            state.update(&[p], &[own(-0.4)]).is_empty(),
+            "refused/involuntary crossing restores all parts"
+        );
+        p = portal();
+        p.local_ready = false;
+        assert!(state.update(&[p], &[own(-1.5)]).is_empty());
+        p = portal();
+        assert!(
+            state.update(&[p], &[own(-0.3)]).contains_key(&7),
+            "a deliberate retry dissolves normally"
+        );
+        assert!(
+            state.update(
+                &[portal()],
+                &[Avatar {
+                    in_transit: true,
+                    ..own(0.4)
+                }]
+            )[&7]
+                .is_hidden(),
+            "accepted transit keeps full disappearance"
+        );
+        p = portal();
+        p.local_ready = false;
+        assert!(
+            state.update(&[p], &[own(0.5)]).is_empty(),
+            "failure restores a completed traveler too"
+        );
+        p = portal();
+        p.local_ready = false;
+        assert!(
+            state.update(&[p], &[body(Vec3::X * 0.3)]).contains_key(&7),
+            "observers retain mesh contact without knowing remote grants"
+        );
+    }
+
+    #[test]
+    fn a_local_root_crossing_without_accepted_teleport_never_latches_full_disappearance() {
+        let mut state = Clipping::default();
+        for x in [0.3, -0.4, -0.8, -1.2] {
+            let visible = state.update(
+                &[portal()],
+                &[Avatar {
+                    own: true,
+                    ..body(Vec3::X * x)
+                }],
+            );
+            if x < 0.0 {
+                assert!(visible.is_empty(), "no accepted transition at {x}");
+            }
+        }
     }
 
     #[test]

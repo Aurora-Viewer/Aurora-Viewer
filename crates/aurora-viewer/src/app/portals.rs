@@ -154,11 +154,16 @@ impl App {
             let look_at = Vec3::new(portal.yaw.cos(), portal.yaw.sin(), 0.0);
             self.teleport_to_location_looking(portal.destination, Vec3::from(portal.position), look_at, Some(journey));
         }
+        self.world.portals.departure = self
+            .portal_journey
+            .as_ref()
+            .filter(|journey| self.world.teleporting && !journey.arrived)
+            .map(|journey| journey.source.id);
         self.update_landmark_portal();
         self.exchange_portal_demo();
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_PORTALS")
-            && self.arrival_portal_demo(&mode)
+            && (self.arrival_portal_demo(&mode) || self.repeat_portal_demo(&mode))
         {
             return;
         }

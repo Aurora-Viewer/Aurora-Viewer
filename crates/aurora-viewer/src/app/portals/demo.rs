@@ -19,6 +19,71 @@ fn drop_mode() -> Option<&'static str> {
 }
 
 impl App {
+    pub(in crate::app) fn repeat_portal_demo(&mut self, mode: &str) -> bool {
+        if !mode.starts_with("repeat-local") {
+            return false;
+        }
+        if !self.portal_ui.demo_seeded && self.frame_count >= 420 {
+            self.portal_ui.demo_seeded = true;
+            self.portal_ui.open = false;
+            self.panels.chat = false;
+            self.panels.people = false;
+            self.panels.inventory = false;
+            self.panels.appearance = false;
+            self.settings.reduce_motion = false;
+            self.always_run = true;
+            let position = self.world.agent.position;
+            let ahead = self.world.agent.forward();
+            let portal = Portal {
+                id: uuid::Uuid::new_v4(),
+                region: self.world.main_region.unwrap_or(256),
+                center: (position + ahead * if mode.ends_with("blocked") { 0.1 } else { 4.0 }).to_array(),
+                yaw: self.world.agent.yaw,
+                destination: self.world.region_name(),
+                // Land before the same opening. Holding run must repeatedly
+                // use this single invitation, including after delayed status.
+                position: position.to_array(),
+                access: Access::Everyone,
+                expires: unix_time() + LIFETIME,
+            };
+            self.world.portals.create(portal, position, Instant::now(), unix_time());
+        }
+        if mode.ends_with("late")
+            && self.world.portals.arrivals.contains_key(&self.world.agent_id)
+            && self.frame_count.is_multiple_of(30)
+            && self
+                .move_complete_at
+                .is_some_and(|at| (0.1..1.5).contains(&at.elapsed().as_secs_f32()))
+        {
+            self.world.apply(NetEvent::TeleportStarted);
+            self.world.apply(NetEvent::TeleportProgress {
+                message: "arriving".into(),
+            });
+            log::info!(
+                "portal repeat late status: frame {}, teleporting {}",
+                self.frame_count,
+                self.world.teleporting
+            );
+        }
+        if self.frame_count >= 600 && self.frame_count.is_multiple_of(120) {
+            let clipped = self
+                .world
+                .objects
+                .index_of_uuid(&self.world.agent_id)
+                .is_some_and(|i| self.scene.portals.planes.contains_key(&i));
+            log::info!(
+                "portal repeat lifecycle: frame {}, teleporting {}, entries {}, arrivals {}, clipped {}, position {:?}",
+                self.frame_count,
+                self.world.teleporting,
+                self.world.portals.entries.len(),
+                self.world.portals.arrivals.len(),
+                clipped,
+                self.world.agent.position
+            );
+        }
+        true
+    }
+
     pub(in crate::app) fn arrival_portal_demo(&mut self, mode: &str) -> bool {
         if !mode.starts_with("arrival-") {
             return false;
@@ -185,6 +250,21 @@ impl App {
     }
 
     pub(in crate::app) fn portal_demo_input(&mut self, raw: &mut egui::RawInput) {
+        if self.demo && std::env::var("AURORA_DEMO_PORTALS").is_ok_and(|mode| mode.starts_with("repeat-local")) {
+            raw.focused = true;
+            raw.events.retain(|event| !matches!(event, egui::Event::WindowFocused(false)));
+            if self.frame_count == 420 {
+                self.demo_release_keyboard();
+            }
+            let forward = Input::key(KeyCode::ArrowUp);
+            if self.frame_count == 600 {
+                self.down.insert(forward.clone());
+            }
+            if self.frame_count == 1500 {
+                self.down.remove(&forward);
+            }
+            return;
+        }
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_PORTALS")
             && mode.starts_with("private-")

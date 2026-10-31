@@ -553,6 +553,7 @@ the actual region/session change. Traversal is disarmed during the transition;
 the arrival segment cannot trigger a portal. This lets the creator's still-local
 bridge finish authenticating visitors while departure is in progress.
 Both creators and observers can approach a newly placed portal from 25 cm away; observers retain the 600 ms appearance delay. A portal placed directly on the root still requires leaving that small clearance and deliberately crossing back. Consumed crossings and large position corrections retain the 1 m retry clearance. One-way arrival effects have no crossing gate.
+After TeleportLocal, idle start messages are absorbed for a two-second settling window; progress can only describe an active transition. This handles the late-status ordering documented by Legacy Viewer's process_teleport_local (SVC-5290) without leaving portal gates disarmed. A fresh explicit request clears the guard immediately, and confirmed local/remote server teleports are always honored.
 `app/portals.rs::Journey` retains one expiring arrival intent across the ordinary teleport boundary, installed before dispatch so immediate local arrivals are recognized. It never creates a return invitation. After AgentMovementComplete, triangle/terrain support is sampled beneath the landing point; a missing terrain patch gets up to one second to arrive. Support must lie at most 2 m below that point. Otherwise arrival remains ordinary, with no portal effect.
 
 `world/portals/arrival.rs` presents a finite, one-way horizontal aperture above supported arrivals. An authenticated `Arrival` message names only region-local landing geometry, body height and a short timeline; its subject comes from the sending bridge, and it contains no return destination or access grant. Arrival effects live separately from invitations and never enter the crossing-gate path. Legacy return announcements are ignored. Replays cannot restart the same drop; completed effects expire without needing a close message.
@@ -589,6 +590,7 @@ uses the actual drawn system/morphed geometry, joint palettes and rigid anchors
 to build posed boxes, only for nearby candidates or active travelers. Their
 true normal extent determines when the whole mesh has passed; body height is
 not mistaken for crossing depth as it was with culling spheres.
+For our own avatar, the source must also be authorized and ready (or have an accepted teleport in progress). Crossing the root without an accepted teleport restores our mesh rather than latching full disappearance. Observed residents retain independent visual contact because their local permissions and guards are unknown.
 
 While engaged, all body, skinned and rigid world-attachment faces share one
 45 cm dissolution front. The front applies to the traveling mesh as a whole,

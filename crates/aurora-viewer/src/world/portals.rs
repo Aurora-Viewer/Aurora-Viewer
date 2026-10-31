@@ -94,6 +94,10 @@ impl Entry {
     pub fn waiting_for_clearance(&self) -> bool {
         !self.gate.armed
     }
+
+    pub fn ready_to_cross(&self, now: Instant) -> bool {
+        self.gate.armed && now >= self.gate.ready_at
+    }
 }
 
 struct Gate {
@@ -195,6 +199,9 @@ struct Retry {
 
 #[derive(Default)]
 pub struct State {
+    /// Only the source of an accepted portal journey may keep us dissolved
+    /// during transit; an unrelated teleport status is not that acceptance.
+    pub departure: Option<Uuid>,
     pub arrivals: HashMap<Uuid, arrival::Effect>,
     pub reduced_motion: bool,
     pub awaiting_floor: bool,

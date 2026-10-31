@@ -205,6 +205,21 @@ created; walking or jumping beneath the arrival cannot teleport anyone.
 The camera stays behind the avatar; mouselook remains first person. Ordinary
 teleports retain their own reset preference.
 
+`AURORA_DEMO_PORTALS=repeat-local|repeat-local-late|repeat-local-blocked`
+holds Forward from frames 600 to 1500 toward our own source. The first two modes
+land before the same opening, so the unchanged invitation must accept at least
+three successive local trips. `repeat-local-late` injects delayed start/progress
+after each arrival: lifecycle logs must remain out of transit and later trips
+must still occur. `repeat-local-blocked` places the opening 10 cm ahead, without
+initial clearance: walking through must not teleport or leave our mesh hidden.
+Capture 630, 690, 840, 1050, 1320, 1560 and 1800. At 1800 there must be one
+source, no active arrival, no transit and no completed hidden traveler. A stop
+within the source's contact band can retain partial dissolution; an unarmed
+crossing must leave the body completely visible. Compare
+with a human two-client grid test: use one same-region portal, run back to that
+same source several times without recreating it, and verify every deliberate
+crossing teleports and observers see full restoration after each arrival.
+
 `AURORA_DEMO_PORTALS=arrival-drop|arrival-platform|arrival-sky|arrival-static`
 observes another resident's authenticated one-way arrival from frame 660.
 Use `AURORA_DEMO_POS=100,100`, a 60 FPS cap and captures 660, 680, 700, 710,

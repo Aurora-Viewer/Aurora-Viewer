@@ -117,7 +117,7 @@ use glam::Vec3;
 use objects::{ObjKey, Object, ObjectStore};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use terrain::Heightmap;
 use uuid::Uuid;
 
@@ -373,6 +373,9 @@ pub struct World {
     pub object_im_filter: object_im_filter::Settings,
     pub anti_spam: anti_spam::Registry,
     pub teleporting: bool,
+    /// Absorb delayed start/progress after TeleportLocal without keeping the
+    /// agent in transit. A fresh user request or confirmed remote TP clears it.
+    local_teleport_at: Option<Instant>,
     /// Only a teleport to another region needs a loading screen. Unknown
     /// destinations wait for TeleportFinish to identify the destination.
     pub tp_show_progress: bool,
@@ -700,6 +703,7 @@ impl World {
             demo_outfit_region: false,
             avatar_lib,
             teleporting: false,
+            local_teleport_at: None,
             tp_show_progress: false,
             tp_progress: 0.0,
             tp_status: String::new(),
@@ -1029,6 +1033,7 @@ impl World {
     /// track local teleports without showing progress. Intentional difference
     /// requested for Aurora: local teleports are also silent.
     pub fn begin_teleport(&mut self, show_progress: bool) {
+        self.local_teleport_at = None;
         self.cancel_friend_join_flight();
         self.cancel_friend_join();
         self.map.cancel_avatar_teleport();
@@ -2102,6 +2107,7 @@ impl World {
         }
         match ev {
             NetEvent::LoggedIn(l) => {
+                self.local_teleport_at = None;
                 self.agent_id = l.agent_id;
                 self.anti_spam.reset();
                 // a new session: no script holds a control yet
@@ -2667,7 +2673,9 @@ impl World {
             }
             NetEvent::TeleportProgress { message } => {
                 if !self.teleporting {
-                    self.tp_show_progress = false;
+                    // Progress describes an active transition; it cannot
+                    // reopen one whose arrival was already applied.
+                    return None;
                 }
                 // LL teleport_strings.xml "progress" keys
                 let text = match message.as_str() {
@@ -2687,6 +2695,7 @@ impl World {
                 None
             }
             NetEvent::TeleportFinished { handle, flying } => {
+                self.local_teleport_at = None;
                 self.teleporting = true;
                 let remote = Some(handle) != self.main_region;
                 // TeleportStart has no destination. Unlike Firestorm's
@@ -2706,6 +2715,7 @@ impl World {
                 Some(NetEvent::TeleportFinished { handle, flying })
             }
             NetEvent::TeleportLocal { flying } => {
+                self.local_teleport_at = Some(self.received.unwrap_or_else(Instant::now));
                 if !self.teleporting {
                     self.cancel_friend_join_flight();
                     self.cancel_friend_join();
@@ -2723,6 +2733,17 @@ impl World {
                 None
             }
             NetEvent::TeleportStarted => {
+                // process_teleport_local/process_teleport_start,
+                // indra/newview/llviewermessage.cpp (SVC-5290): status may
+                // trail the local arrival. Use the network timeline's 2 s
+                // settling window, without delaying movement or another TP.
+                if !self.teleporting
+                    && self
+                        .local_teleport_at
+                        .is_some_and(|at| self.received.unwrap_or_else(Instant::now).saturating_duration_since(at) < Duration::from_secs(2))
+                {
+                    return None;
+                }
                 if !self.teleporting {
                     self.cancel_friend_join_flight();
                     self.cancel_friend_join();
@@ -2741,6 +2762,7 @@ impl World {
                 None
             }
             NetEvent::TeleportFailed { reason } => {
+                self.local_teleport_at = None;
                 self.cancel_friend_join_flight();
                 self.cancel_friend_join();
                 self.tp_history.failed();
@@ -5953,8 +5975,82 @@ mod motion_tests {
         world.apply(NetEvent::TeleportProgress {
             message: "arriving".into(),
         });
+        assert!(!world.teleporting, "late status cannot block the next portal crossing");
         assert!(!world.tp_show_progress);
         assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
+    }
+
+    #[test]
+    fn local_arrival_status_guard_never_blocks_a_fresh_request_or_a_confirmed_server_teleport() {
+        for next in [0, 1, 2] {
+            let (mut world, handle) = teleport_fixture();
+            let now = Instant::now();
+            world.apply_received(NetEvent::TeleportLocal { flying: false }, now);
+            world.apply_received(
+                NetEvent::AgentMovementComplete {
+                    handle,
+                    position: Vec3::splat(30.0),
+                    look_at: Vec3::X,
+                },
+                now,
+            );
+            let at = now + Duration::from_millis(500);
+            world.apply_received(NetEvent::TeleportStarted, at);
+            world.apply_received(
+                NetEvent::TeleportProgress {
+                    message: "arriving".into(),
+                },
+                at,
+            );
+            assert!(!world.teleporting);
+            match next {
+                0 => {
+                    world.begin_teleport(false);
+                    world.apply_received(NetEvent::TeleportStarted, at);
+                    world.apply_received(
+                        NetEvent::TeleportProgress {
+                            message: "requesting".into(),
+                        },
+                        at,
+                    );
+                    assert!(world.teleporting && !world.tp_show_progress);
+                }
+                1 => {
+                    world.apply_received(NetEvent::TeleportLocal { flying: true }, at);
+                    assert!(world.teleporting && world.agent.flying);
+                }
+                _ => {
+                    world.apply_received(
+                        NetEvent::TeleportFinished {
+                            handle: handle + (256_u64 << 32),
+                            flying: false,
+                        },
+                        at,
+                    );
+                    assert!(world.teleporting && world.tp_show_progress);
+                }
+            }
+        }
+        let (mut world, _) = teleport_fixture();
+        let now = Instant::now();
+        world.local_teleport_at = Some(now);
+        world.apply_received(NetEvent::TeleportStarted, now + Duration::from_secs(3));
+        assert!(world.teleporting, "later unsolicited starts remain valid");
+    }
+
+    #[test]
+    fn progress_without_an_active_teleport_cannot_start_one() {
+        let (mut world, _) = teleport_fixture();
+        world.apply(NetEvent::TeleportProgress {
+            message: "arriving".into(),
+        });
+        assert!(!world.teleporting);
+        world.begin_teleport(true);
+        world.apply(NetEvent::TeleportProgress {
+            message: "contacting".into(),
+        });
+        assert!(world.teleporting && world.tp_show_progress);
+        assert!(world.tp_progress >= 0.15);
     }
 
     #[test]
