@@ -769,12 +769,23 @@ fn shadow_normal(m: Material) -> vec3<f32> {
     return m.geo_n;
 }
 
+// One alpha rule for the material and its early rejection: an emissive
+// mask's texture alpha controls unlit color, while face alpha is coverage.
+fn material_alpha(rec: DrawRecord, texture_alpha: f32) -> f32 {
+    return select(texture_alpha * rec.base_color.a, rec.base_color.a, (rec.flags.x & FLAG_EMISSIVE_MASK) != 0u);
+}
+
 fn eval_material(in: VsOut, front: bool) -> Material {
+    return eval_material_sampled(in, front, sample_tex(records[in.record].tex.x, in.uv));
+}
+
+// Reuse the base sample after the blended pass has rejected empty texels.
+fn eval_material_sampled(in: VsOut, front: bool, base_s: vec4<f32>) -> Material {
     portal_clip(records[in.record], in.world_pos);
     rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
     var m: Material;
-    let base_s = sample_tex(rec.tex.x, in.uv);
+    let alpha = material_alpha(rec, base_s.a);
     // each map with its own transform (legacy and PBR materials)
     let nrm_s = sample_tex(rec.tex.y, in.uv_n);
     let mr_s = sample_tex(rec.tex.z, in.uv_s);
@@ -784,10 +795,10 @@ fn eval_material(in: VsOut, front: bool) -> Material {
         n = -n;
     }
     if ((rec.flags.x & FLAG_PBR) != 0u) {
-        m.color = vec4<f32>(srgb_to_linear(base_s.rgb), base_s.a) * rec.base_color;
+        m.color = vec4<f32>(srgb_to_linear(base_s.rgb) * rec.base_color.rgb, alpha);
     } else {
         // SL multiplies texture and face color in sRGB, then linearizes
-        m.color = vec4<f32>(srgb_to_linear(base_s.rgb * rec.base_color.rgb), base_s.a * rec.base_color.a);
+        m.color = vec4<f32>(srgb_to_linear(base_s.rgb * rec.base_color.rgb), alpha);
     }
     m.geo_n = n;
     m.n = perturb_normal(n, in.world_pos, in.uv_t, in.tangent, in.tangent_sign, front, nrm_s.xyz);
@@ -837,7 +848,6 @@ fn eval_material(in: VsOut, front: bool) -> Material {
         // shows its own color instead of the lit one (materialF.glsl
         // getEmissive, mixed in softenLightF.glsl), not an added light
         m.unlit = base_s.a;
-        m.color.a = rec.base_color.a;
     }
     return m;
 }
@@ -1383,6 +1393,24 @@ fn mask_color(rec: DrawRecord, c: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(c.rgb, a);
 }
 
+// Demo-only comparison: evaluate the reference path in this same fragment,
+// before either candidate discard can hide a differing decision.
+override ALPHA_DECISION_CHECK: bool = false;
+fn alpha_mask_mismatch(rec: DrawRecord, reference: f32, candidate: f32) -> bool {
+    let cutoff = rec.params.w;
+    if (cutoff <= 0.0) { return false; }
+    if (!ALPHA_TO_COVERAGE) { return (reference < cutoff) != (candidate < cutoff); }
+    let a = clamp((reference - cutoff) / max(fwidth(reference), 1e-4) + 0.5, 0.0, 1.0);
+    let b = clamp((candidate - cutoff) / max(fwidth(candidate), 1e-4) + 0.5, 0.0, 1.0);
+    return abs(a - b) > 1e-5;
+}
+fn alpha_blend_mismatch(rec: DrawRecord, reference: f32, candidate: f32, raw_alpha: f32, fade: f32) -> bool {
+    if (BLEND_SPLIT != 0u && ((BLEND_SPLIT == 1u) != (raw_alpha >= 0.5))) { return false; }
+    let early = BLEND_EARLY_DISCARD && ((reference < 0.004) != (candidate < 0.004));
+    let mask = (rec.flags.x & FLAG_ALPHA_MASK) != 0u && ((reference < rec.params.w) != (candidate < rec.params.w));
+    return early || mask || ((reference * fade < 0.004) != (candidate * fade < 0.004));
+}
+
 @fragment
 fn fs_opaque(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let c = shade(in, front);
@@ -1392,7 +1420,12 @@ fn fs_opaque(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4
 @fragment
 fn fs_mask(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
-    return mask_color(rec, shade(in, front).color);
+    let m = eval_material(in, front);
+    if (ALPHA_DECISION_CHECK && alpha_mask_mismatch(rec, shade(in, front).color.a, m.color.a)) {
+        return vec4<f32>(1.0, 0.0, 1.0, 1.0);
+    }
+    let alpha = mask_color(rec, m.color).a;
+    return vec4<f32>(shade_material(in, m).color.rgb, alpha);
 }
 
 struct GOut {
@@ -1413,9 +1446,14 @@ fn fs_opaque_g(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
 @fragment
 fn fs_mask_g(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
     let rec = records[in.record];
-    let s = shade(in, front);
+    let m = eval_material(in, front);
+    if (ALPHA_DECISION_CHECK && alpha_mask_mismatch(rec, shade(in, front).color.a, m.color.a)) {
+        return GOut(vec4<f32>(1.0, 0.0, 1.0, 1.0), vec4<f32>(0.5, 0.5, 1.0, 0.0));
+    }
+    let alpha = mask_color(rec, m.color).a;
+    let s = shade_material(in, m);
     var o: GOut;
-    o.color = mask_color(rec, s.color);
+    o.color = vec4<f32>(s.color.rgb, alpha);
     o.gbuf = gbuffer(s);
     return o;
 }
@@ -1467,23 +1505,34 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
     // fainter ones, by the alpha of fs_depth_contact (the occlusion's depth
     // holds the same ones); tested before the material, which the other
     // pass's texels then never evaluate
+    let rec = records[in.record];
+    let base_s = sample_tex(rec.tex.x, in.uv);
+    let raw_alpha = base_s.a * rec.base_color.a;
+    let alpha = material_alpha(rec, base_s.a);
+    if (ALPHA_DECISION_CHECK) {
+        let reference = eval_material(in, front);
+        if (alpha_blend_mismatch(rec, reference.color.a, alpha, raw_alpha, rez_alpha(rec, in))) {
+            return vec4<f32>(1.0, 0.0, 1.0, 1.0);
+        }
+    }
     if (BLEND_SPLIT != 0u) {
-        let rec = records[in.record];
-        let half = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a >= 0.5;
+        let half = raw_alpha >= 0.5;
         if ((BLEND_SPLIT == 1u) != half) {
             discard;
         }
     }
-    let m = eval_material(in, front);
-    if (BLEND_EARLY_DISCARD && m.color.a < 0.004) {
+    // Alpha needs only the base map; reject before the normal, ORM and
+    // emissive maps, their derivatives and the lighting. Emissive masks
+    // use face alpha while their texture alpha controls unlit color.
+    if (BLEND_EARLY_DISCARD && alpha < 0.004) {
         discard;
     }
     // Blended and alpha-tested: the hair, eyelashes and skirt of a system
     // avatar (LLDrawPoolAvatar::beginPostDeferredPass, minimum alpha).
-    let rec = records[in.record];
-    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && m.color.a < rec.params.w) {
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && alpha < rec.params.w) {
         discard;
     }
+    let m = eval_material_sampled(in, front, base_s);
     var c = shade_material(in, m).color;
     c.a = c.a * rez_alpha(rec, in);
     if (c.a < 0.004) {

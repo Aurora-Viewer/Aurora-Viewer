@@ -7106,7 +7106,7 @@ pub fn lights_events(n: u32) -> Vec<NetEvent> {
 /// texel between 0.25 and 0.75 (a knit), and under it a red layer (a body
 /// add-on), attached first on the same point so that it is drawn after the
 /// dress (#1300).
-/// AURORA_DEMO_SOFT_MASK=1: a skin-tone disc on the groin whose texture is
+/// AURORA_DEMO_SOFT_MASK=1|visible: a skin-tone disc on the groin whose texture is
 /// classified as Mask (mostly binary alpha, short soft fringe). Without the
 /// rigged auto-Mask skip it would be punched out; with it, the soft fringe
 /// stays visible (Physics Cock Max / #1492 class of attachments).
@@ -7132,7 +7132,7 @@ pub fn hair_demo() -> Option<HairDemo> {
     let layered = cards > 0 && cards_args.contains(&"layered");
     let outer_first = layered && cards_args.contains(&"outer");
     let sheer = std::env::var("AURORA_DEMO_SHEER").is_ok_and(|v| v.trim() == "1");
-    let soft_mask = std::env::var("AURORA_DEMO_SOFT_MASK").is_ok_and(|v| v.trim() == "1");
+    let soft_mask = std::env::var("AURORA_DEMO_SOFT_MASK").is_ok_and(|v| matches!(v.trim(), "1" | "visible"));
     let demo = match std::env::var("AURORA_DEMO_HAIR").ok() {
         Some(v) => hair_demo_from(&v),
         None if cards > 0 || sheer || soft_mask => HairDemo {

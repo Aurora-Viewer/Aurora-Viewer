@@ -3069,7 +3069,23 @@ impl Backend {
             unclipped_depth: false,
         };
         let g = |fs: &'static str, fs_g: &'static str| if ssr { fs_g } else { fs };
-        let pipe = |d: PipeDesc| make_pipeline(device, &module, &scene_layout, d);
+        let alpha_check = std::env::var_os("AURORA_DEMO").is_some() && std::env::var("AURORA_ALPHA_CHECK").as_deref() == Ok("1");
+        if alpha_check {
+            log::info!("alpha decision comparison: magenta marks a reference/candidate mismatch");
+        }
+        let pipe = |d: PipeDesc| {
+            let mut constants = d.constants.to_vec();
+            constants.push(("ALPHA_DECISION_CHECK", f64::from(alpha_check)));
+            make_pipeline(
+                device,
+                &module,
+                &scene_layout,
+                PipeDesc {
+                    constants: &constants,
+                    ..d
+                },
+            )
+        };
         let hud_constants = [("HUD_SRGB_TARGET", if surface_format.is_srgb() { 1.0 } else { 0.0 })];
         let hud_desc = |label, blend, depth_write| PipeDesc {
             format: Some(surface_format),
