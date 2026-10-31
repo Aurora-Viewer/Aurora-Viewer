@@ -7455,7 +7455,7 @@ impl Backend {
                 motion,
                 &self.targets.depth_ss,
                 Mat4::from_cols_array_2d(&main.motion_reproj),
-                (self.config.width, self.config.height),
+                world_size,
                 scene_target,
             );
             calls.set(calls.get() + 1);
