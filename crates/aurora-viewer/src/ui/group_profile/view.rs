@@ -320,7 +320,14 @@ pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, env: &super::Env, tab: &
     } else {
         v.name.clone()
     };
-    who_ui.add(egui::Label::new(egui::RichText::new(&shown).font(name_font).color(p.ink)).truncate());
+    let name = who_ui.add(
+        egui::Label::new(egui::RichText::new(&shown).font(name_font).color(p.ink))
+            .truncate()
+            .sense(Sense::click()),
+    );
+    if !v.name.is_empty() {
+        crate::ui::widgets::copy_on_click(&who_ui, p, name, &v.name);
+    }
     who_ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         let small = |t: String| egui::RichText::new(t).size(12.5).color(p.muted);
