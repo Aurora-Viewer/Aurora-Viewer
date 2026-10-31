@@ -550,7 +550,7 @@ impl App {
             let size = job.size;
             let tiles = self.photo_tiles(renderer, size);
             log::warn!(
-                "photo: part {} of {} ({} x {}) came back blank, the GPU reset under it: drawn again in {} part(s)",
+                "photo: part {} of {} ({} x {}) came back black (a GPU reset, or a black part): drawn again in {} part(s)",
                 part.0,
                 part.1,
                 pass.draw.width,
