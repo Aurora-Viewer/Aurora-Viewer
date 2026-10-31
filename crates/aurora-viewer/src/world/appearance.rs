@@ -1388,12 +1388,6 @@ pub fn seed_duplicate_response(inv: &mut Inventory, agent: Uuid) {
 }
 
 pub(super) fn demo_replace(inv: &mut Inventory, agent: Uuid, id: Uuid, links: &[OutfitLink]) {
-    let old = inv.folders.get(&id).map(|f| f.items.clone()).unwrap_or_default();
-    for id in old {
-        if inv.items.get(&id).is_some_and(|it| matches!(it.asset_type, 24 | 25)) {
-            inv.items.remove(&id);
-        }
-    }
     let items: Vec<_> = links
         .iter()
         .map(|l| InvItem {

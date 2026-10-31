@@ -1,5 +1,11 @@
 # Aurora Viewer architecture
 
+`world/inventory.rs::Inventory::apply` reconciles accepted folder readbacks
+with the item records used by inventory views. Obsolete item/folder links are
+removed once per response batch, including records no longer in the child lists;
+older snapshots, originals and links in other folders are preserved (#1515).
+Outfit demos use this same reconciliation instead of removing links themselves.
+
 `imports/folders.rs` owns editable relative destinations for bulk uploads.
 `folders/roots.rs` applies the optional source wrapper in mirror, type and flat
 layouts. Include source folder defaults on and is persisted with import settings;

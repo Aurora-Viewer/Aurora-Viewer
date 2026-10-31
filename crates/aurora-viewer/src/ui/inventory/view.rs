@@ -1188,6 +1188,82 @@ mod tests {
             ..Default::default()
         }
     }
+
+    #[test]
+    fn outfit_readback_replaces_visible_links_across_repeated_attach_detach_cycles() {
+        use crate::world::appearance;
+        use aurora_net::inventory::FolderContents;
+
+        let (mut inv, _) = fixture();
+        let agent = id(99);
+        appearance::seed_demo(&mut inv, agent);
+        let cof = appearance::cof(&inv).expect("COF");
+        let target = id(717);
+        let saved = inv.folders[&id(704)].items.clone();
+        // An older viewer has already lost these links from the folder's
+        // child list, while the visible inventory still indexes their parent.
+        let old = inv.folders[&cof]
+            .items
+            .iter()
+            .find_map(|id| inv.items.get(id).filter(|it| it.asset_id == target))
+            .expect("worn attachment link")
+            .clone();
+        for _ in 0..2 {
+            let ghost = InvItem {
+                id: Uuid::new_v4(),
+                ..old.clone()
+            };
+            inv.items.insert(ghost.id, ghost);
+        }
+        let mut view = ViewCache::default();
+        for worn in [false, true, false, true, false, true] {
+            let action = if worn {
+                appearance::Action::Add(target)
+            } else {
+                appearance::Action::Remove(target)
+            };
+            let (change, _) = appearance::plan(&inv, action, &HashMap::new()).expect("outfit action");
+            // Real AIS readback replaces link UUIDs. Do not use demo_replace,
+            // which used to delete the old records before applying the reply.
+            let items = change
+                .links
+                .iter()
+                .map(|link| InvItem {
+                    id: Uuid::new_v4(),
+                    parent: cof,
+                    name: link.name.clone(),
+                    desc: link.desc.clone(),
+                    asset_type: if link.folder { 25 } else { 24 },
+                    inv_type: link.inv_type,
+                    asset_id: link.target,
+                    owner: agent,
+                    ..Default::default()
+                })
+                .collect();
+            inv.apply(vec![FolderContents {
+                folder_id: cof,
+                owner_id: agent,
+                version: inv.folders[&cof].info.version + 1,
+                folders: Vec::new(),
+                items,
+            }]);
+            view.prepare(&inv, Sort::default());
+            let rows: Vec<_> = view.children_iter(cof, true, inv.lib_root).collect();
+            assert_eq!(
+                rows.len(),
+                inv.folders[&cof].items.len(),
+                "the tree must reflect the current readback"
+            );
+            assert_eq!(
+                rows.iter().filter(|id| inv.items[*id].asset_id == target).count(),
+                usize::from(worn)
+            );
+            assert!(inv.items.contains_key(&target), "keep the inventory original");
+            assert_eq!(inv.folders[&id(704)].items, saved, "keep the saved outfit");
+            assert!(saved.iter().all(|id| inv.items.contains_key(id)));
+        }
+    }
+
     fn fixture() -> (Inventory, Facts) {
         let mut inv = Inventory {
             root: id(1),
