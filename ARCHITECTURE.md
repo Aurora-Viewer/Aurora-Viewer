@@ -1007,6 +1007,10 @@ mode. It appends a point name or creates/reuses a folded point folder, waits
 for metadata confirmation, bounds retries and preserves later manual renames.
 Disabling cancels its work; already-sent inventory replies still update the
 ordinary inventory model without restarting the naming workflow.
+`rlva/wear_locks.rs` snapshots what the locks leave of wearing (add, replace)
+and taking off, by item, point, layer and folder, for the inventory menus
+and buttons (`Facts::rlva`), which see the inventory but not the world; its
+per-folder lock sets are cached while the lock inputs stay equal.
 `rlva/offers.rs` keeps native acceptance separate from shared-gift filing.
 UDP and HTTP inventory deliveries retain their transaction after applying
 their folder headers. Only the matching accepted gift may create its path,

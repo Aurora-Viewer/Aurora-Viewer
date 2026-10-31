@@ -1849,3 +1849,130 @@ fn rlva_watchdog_checks_run_again_only_after_a_change() {
     command(&mut world.rlva, collar_item, "@detachallthis=y");
     assert!(tick(&mut world).is_empty(), "a removed rule is checked at once");
 }
+
+/// RlvAttachmentLocks::canAttach / RlvWearableLocks::canWear and the folder
+/// locks of LLAppearanceMgr::getCanAddToCOF (rlvlocks.h, llappearancemgr.cpp):
+/// what the wear menus grey out.
+#[test]
+fn rlva_wear_locks_follow_the_legacy_wear_masks() {
+    use super::wear_locks::Wear;
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::inventory::{InvFolder, InvItem};
+    let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let root = Uuid::from_u128(30);
+    let cof = Uuid::from_u128(31);
+    let clothes = Uuid::from_u128(32);
+    w.inventory.root = root;
+    for (id, parent, kind, name) in [
+        (root, Uuid::nil(), 8, "Inventory"),
+        (cof, root, 46, "Current Outfit"),
+        (clothes, root, -1, "Clothes"),
+    ] {
+        w.inventory.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent,
+                    name: name.into(),
+                    type_default: kind,
+                    ..Default::default()
+                },
+                items: vec![],
+                children: vec![],
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+    }
+    // (id, asset type, flags, name): worn shirt and shape, then a new shirt,
+    // jacket, shape, an object naming the chest, and one naming no point.
+    let items = [
+        (40, 5, 4, "Old shirt"),
+        (41, 13, 0, "Old shape"),
+        (42, 5, 4, "New shirt"),
+        (43, 5, 8, "Jacket"),
+        (44, 13, 0, "New shape"),
+        (45, 6, 0, "Collar (chest)"),
+        (46, 6, 0, "Bracelet"),
+    ];
+    for (n, (id, asset_type, flags, name)) in items.into_iter().enumerate() {
+        let id = Uuid::from_u128(id);
+        w.inventory.items.insert(
+            id,
+            InvItem {
+                id,
+                parent: clothes,
+                name: name.into(),
+                asset_type,
+                flags,
+                owner_mask: 0x4000,
+                ..Default::default()
+            },
+        );
+        w.inventory.folders.get_mut(&clothes).expect("clothes").items.push(id);
+        if n < 2 {
+            let link = Uuid::from_u128(id.as_u128() + 100);
+            w.inventory.items.insert(
+                link,
+                InvItem {
+                    id: link,
+                    parent: cof,
+                    asset_id: id,
+                    asset_type: 24,
+                    ..Default::default()
+                },
+            );
+            w.inventory.folders.get_mut(&cof).expect("cof").items.push(link);
+        }
+    }
+    let id = |n: u128| Uuid::from_u128(n);
+    let all = Wear { add: true, replace: true };
+    let locked = Wear {
+        add: false,
+        replace: false,
+    };
+
+    let locks = w.rlva_wear_locks();
+    assert_eq!(locks.wear(&w.inventory, id(42), 0), all, "RLVa off allows everything");
+    w.rlva.configure(true);
+    let locks = w.rlva_wear_locks();
+    assert!(
+        locks.can_remove(id(40)) && locks.folder_allows(clothes, true),
+        "no lock, no greying"
+    );
+
+    command(
+        &mut w.rlva,
+        A,
+        "@remoutfit:shirt=n,remoutfit:shape=n,addoutfit:jacket=n,addattach:chest=n",
+    );
+    let locks = w.rlva_wear_locks();
+    assert!(!locks.can_remove(id(40)) && !locks.can_remove(id(41)));
+    assert_eq!(
+        locks.wear(&w.inventory, id(42), 0),
+        Wear { add: true, replace: false },
+        "a shirt stacks beside the locked one"
+    );
+    assert_eq!(locks.wear(&w.inventory, id(43), 0), locked, "@addoutfit:jacket");
+    assert_eq!(
+        locks.wear(&w.inventory, id(44), 0),
+        locked,
+        "a body part cannot be added beside the locked one"
+    );
+    assert_eq!(locks.wear(&w.inventory, id(45), 0), locked, "the item names the locked chest");
+    assert_eq!(locks.wear(&w.inventory, id(46), 0), all, "no point named: it attaches where it can");
+    assert_eq!(locks.wear(&w.inventory, id(46), 1), locked, "Attach To the chest");
+    assert_eq!(locks.wear(&w.inventory, id(46), 2), all);
+    assert!(locks.folder_allows(clothes, true) && locks.folder_allows(clothes, false));
+
+    command(&mut w.rlva, A, "@clear");
+    command(&mut w.rlva, A, "@unsharedwear=n");
+    let locks = w.rlva_wear_locks();
+    assert!(!locks.folder_allows(clothes, true), "outside #RLV nothing can be worn");
+    assert!(locks.folder_allows(clothes, false));
+    assert_eq!(locks.wear(&w.inventory, id(42), 0), locked);
+    assert!(locks.can_remove(id(40)));
+    w.rlva.configure(false);
+    assert_eq!(w.rlva_wear_locks().wear(&w.inventory, id(42), 0), all);
+}

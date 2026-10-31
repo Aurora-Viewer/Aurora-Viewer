@@ -40,6 +40,9 @@ mod temporary;
 mod version;
 mod wardrobe;
 pub mod watchdog;
+mod wear_locks;
+
+pub use wear_locks::WearLocks;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Param {
@@ -454,6 +457,7 @@ pub struct Rlva {
     pub visuals: effects::Visuals,
     pub watchdog: watchdog::Watchdog,
     pub(crate) locked_folders: inventory::LockedFoldersCache,
+    pub(crate) wear_folders: wear_locks::FolderSetsCache,
     pub recovery: Vec<NetCommand>,
     pub environment: Option<(Uuid, super::eep::SkyFrame)>,
     pub environment_water: Option<super::eep::WaterFrame>,

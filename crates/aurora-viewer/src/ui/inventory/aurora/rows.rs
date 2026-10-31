@@ -263,9 +263,10 @@ fn show_quick(
         match q {
             Quick::Add | Quick::Wear(_) => {
                 let clicked = child
-                    .add_enabled_ui(st.pending.is_none() && !facts.appearance_busy, |ui| {
-                        widgets::action_button(ui, p, "", quick_label(*q), widgets::ActionKind::Flat, rect.size()).clicked()
-                    })
+                    .add_enabled_ui(
+                        st.pending.is_none() && !facts.appearance_busy && facts.rlva_allows(inv, id, *q == Quick::Add),
+                        |ui| widgets::action_button(ui, p, "", quick_label(*q), widgets::ActionKind::Flat, rect.size()).clicked(),
+                    )
                     .inner;
                 if clicked {
                     st.select(ui, id, false);
