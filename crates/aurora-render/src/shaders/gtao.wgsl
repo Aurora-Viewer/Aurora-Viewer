@@ -299,16 +299,19 @@ fn oct_decode(e_in: vec2<f32>) -> vec3<f32> {
     return normalize(n);
 }
 
-// The surface normals (view space) at occlusion pixel `px`, whose point is
-// `centre`, in this order: the one the occlusion is computed around, and
-// the flat triangle's, XeGTAO_CalculateNormal from the depths around it
-// (`z`: left, right, top, bottom) turned towards the camera. With
-// `misc.w`, the first is the mesh's smooth normal, from the full-resolution
-// pixel the depth of `prefilter_depth0` came from, as XeGTAO takes the
-// normals of a G-buffer when there is one; it stays as it is (near a
-// silhouette it may face slightly away, and the slices clamp its angle).
-// Without, both are the triangle's, as before.
-fn surface_normals(px: vec2<i32>, uv: vec2<f32>, pixel: vec2<f32>, centre: vec3<f32>, edges: vec4<f32>, z: vec4<f32>) -> mat2x3<f32> {
+// The surface normal (view space) the occlusion of pixel `px`, whose point
+// is `centre`, is computed around. With `misc.w`, the mesh's smooth normal,
+// from the full-resolution pixel the depth of `prefilter_depth0` came from,
+// as XeGTAO takes the normals of a G-buffer when there is one; it stays as
+// it is (near a silhouette it may face slightly away, and the slices clamp
+// its angle). Without, the flat triangle's, XeGTAO_CalculateNormal from the
+// depths around it (`z`: left, right, top, bottom) turned towards the camera.
+fn surface_normal(px: vec2<i32>, uv: vec2<f32>, pixel: vec2<f32>, centre: vec3<f32>, edges: vec4<f32>, z: vec4<f32>) -> vec3<f32> {
+    if (g.misc.w > 0.5) {
+        let full = vec2<i32>(textureDimensions(normal_tex));
+        let src = min(px * i32(g.misc.y), full - vec2<i32>(1));
+        return normalize(g.normal_view * oct_decode(textureLoad(normal_tex, src, 0).xy));
+    }
     var n = calculate_normal(
         edges,
         centre,
@@ -320,32 +323,30 @@ fn surface_normals(px: vec2<i32>, uv: vec2<f32>, pixel: vec2<f32>, centre: vec3<
     if (dot(n, -centre) < 0.0) {
         n = -n;
     }
-    if (g.misc.w > 0.5) {
-        let full = vec2<i32>(textureDimensions(normal_tex));
-        let src = min(px * i32(g.misc.y), full - vec2<i32>(1));
-        return mat2x3<f32>(normalize(g.normal_view * oct_decode(textureLoad(normal_tex, src, 0).xy)), n);
-    }
-    return mat2x3<f32>(n, n);
+    return n;
 }
 
 // Under the smooth normal of a low-poly mesh, the flat triangle rises above
-// the smooth tangent plane on one side, and its own samples occluded it
-// there (a ring along the silhouette of round prims, a band at the avatar's
-// neck); the neighbouring triangles of a concave fold rise above it by the
-// angle of their crease, and drew the mesh's edges as lines. How much a
-// sample in direction `dir` (unit, from the pixel's point) counts as an
-// occluder: nothing on the triangle's plane (`flat_n`) or under it, fully
-// from FACET_MARGIN above it (the sine of 30°, beyond the creases of the
-// usual low-poly prims and bodies), smoothly between. Its height is still
-// measured from the smooth plane, the same on every triangle: lowering the
-// horizons by the angle between the two planes (#1037) did that per
-// triangle, and the occlusion of real occluders changed from one triangle
-// to the next (#993). What it leaves out is the band within 30° of the
-// surface, about 7 % of a slice's cosine-weighted visibility per side.
-const FACET_MARGIN: f32 = 0.5;
+// the smooth tangent plane on one side, by up to the angle between the two,
+// and its own samples occluded it there (a ring along the silhouette of
+// round prims, a band at the avatar's neck); across a concave crease the
+// neighbouring triangle rises by about half the crease angle, and drew the
+// mesh's edges as lines. How much a sample in direction `dir` (unit, from
+// the pixel's point) counts as an occluder: nothing within SURFACE_BIAS_LO
+// of the smooth tangent plane (the sine of 20°, beyond the facets and
+// creases of the usual low-poly prims and bodies), fully from
+// SURFACE_BIAS_HI (the sine of 44°), smoothly between. Measured from the
+// smooth normal `n`, which does not jump from one triangle to the next, so
+// neither does the occlusion: measured from the flat triangle's plane, as
+// #1556 did, an occluder in that band (a chin, the chest between the front
+// legs) counted more on one triangle than on the next, and showed the
+// facets again in concave folds (#993). What it gives up is the occlusion
+// of the shallowest folds, slightly lighter than before.
+const SURFACE_BIAS_LO: f32 = 0.34;
+const SURFACE_BIAS_HI: f32 = 0.7;
 
-fn above_facet(dir: vec3<f32>, flat_n: vec3<f32>) -> f32 {
-    return smoothstep(0.0, FACET_MARGIN, dot(dir, flat_n));
+fn above_surface(dir: vec3<f32>, n: vec3<f32>) -> f32 {
+    return smoothstep(SURFACE_BIAS_LO, SURFACE_BIAS_HI, dot(dir, n));
 }
 
 // XeGTAO_FastACos
@@ -420,8 +421,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // buffer's imprecision (XeGTAO's value for 32-bit depths)
     let z = zc * 0.99999;
     let centre = view_position(uv, z);
-    let normals = surface_normals(px, uv, pixel, centre, edges, vec4<f32>(zl, zr, zt, zb));
-    let n = normals[0];
+    let n = surface_normal(px, uv, pixel, centre, edges, vec4<f32>(zl, zr, zt, zb));
     let view_vec = normalize(-centre);
 
     let effect_radius = g.radius.x;
@@ -504,9 +504,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             var weight0 = saturate(falloff_base0 * falloff_mul + falloff_add);
             var weight1 = saturate(falloff_base1 * falloff_mul + falloff_add);
             if (g.misc.w > 0.5) {
-                // (the mesh normal: the triangle's own samples left out)
-                weight0 *= above_facet(horizon_vec0, normals[1]);
-                weight1 *= above_facet(horizon_vec1, normals[1]);
+                // (the mesh normal: the facets' own samples left out)
+                weight0 *= above_surface(horizon_vec0, n);
+                weight1 *= above_surface(horizon_vec1, n);
             }
             var shc0 = dot(horizon_vec0, view_vec);
             var shc1 = dot(horizon_vec1, view_vec);
@@ -615,8 +615,7 @@ fn main_bitmask(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let z = zc * 0.99999;
     let centre = view_position(uv, z);
-    let normals = surface_normals(px, uv, pixel, centre, edges, vec4<f32>(zl, zr, zt, zb));
-    let n = normals[0];
+    let n = surface_normal(px, uv, pixel, centre, edges, vec4<f32>(zl, zr, zt, zb));
     let view_vec = normalize(-centre);
 
     let thickness = g.il.x;
@@ -670,11 +669,11 @@ fn main_bitmask(@builtin(global_invocation_id) id: vec3<u32>) {
                     continue;
                 }
                 let dir = normalize(front - centre);
-                // the triangle's own samples left out, as in `main`: they
+                // the facets' own samples left out, as in `main`: they
                 // would light it with its own colour
                 var facet = 1.0;
                 if (g.misc.w > 0.5) {
-                    facet = above_facet(dir, normals[1]);
+                    facet = above_surface(dir, n);
                     if (facet <= 0.0) {
                         continue;
                     }

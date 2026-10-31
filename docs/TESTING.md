@@ -8708,10 +8708,11 @@ What the inventory must show with these scenarios:
   smooth tangent plane on one side, and its own samples occluded it there
   (a ring along the silhouette of the torus, a band at the avatar's neck),
   and the neighbours across a concave crease drew the mesh's edges as
-  lines: each sample occludes only as much as it stands above the
-  triangle's own plane (`above_facet`: nothing on it, fully from 30°
-  above it), its height still measured from the smooth plane, so the
-  occlusion does not change from one triangle to the next. `depth` goes
+  lines: a sample occludes nothing within 20° of the smooth tangent plane
+  and fully from 44° above it (`above_surface`), measured from the smooth
+  normal, so the occlusion does not change from one triangle to the next
+  (measured from the triangle's own plane, real occluders in that band
+  still showed the facets in concave folds: a chin, a chest). `depth` goes
   back to the depth's normal (the prepass then draws the depth alone, the
   image as before), `alt` every other second. The Legacy method does not
   change. To compare, `AURORA_DEMO_DEBUG=ao` with `AURORA_AO=gtao:2`: the
