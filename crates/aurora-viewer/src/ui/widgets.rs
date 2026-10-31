@@ -521,7 +521,8 @@ impl<'a> Floater<'a> {
                     bottom: if minimized && !compact { 4 } else { 10 },
                 }
             });
-        // Ctrl+W closes it as its cross does, when it is the frontmost
+        // Ctrl+W closes it as its cross does, when it is the frontmost.
+        // Ctrl+Shift+W closes every window.
         let mut close = super::close_key::take(ctx, egui::Id::unique(self.id));
         super::close_key::shown(ctx, egui::Id::unique(self.id));
         // the toolbar button, a menu entry or a shortcut asked to expand it
@@ -1264,6 +1265,37 @@ pub fn floater_above(ctx: &egui::Context, id: &str, other: &str) -> bool {
         let place = |want: egui::Id| m.layer_ids().filter(|l| m.areas().is_visible(l)).position(|l| l.id == want);
         place(id) > place(other)
     })
+}
+
+/// The floater `id` is the front window (LLFloater::isFrontmost): the topmost
+/// visible layer that is not the background.
+pub fn floater_is_front(ctx: &egui::Context, id: &str) -> bool {
+    let want = egui::Id::unique(id);
+    ctx.memory(|m| {
+        m.layer_ids()
+            .filter(|layer| layer.order != egui::Order::Background && m.areas().is_visible(layer))
+            .last()
+            .is_some_and(|layer| layer.id == want)
+    })
+}
+
+/// The keyboard is inside the floater `id` (LLFloater::hasFocus).
+pub fn floater_holds_keyboard(ctx: &egui::Context, id: &str) -> bool {
+    let want = egui::Id::unique(id);
+    let Some(focus) = ctx.memory(|m| m.focused()) else {
+        return false;
+    };
+    ctx.read_response(focus).is_some_and(|response| response.layer_id.id == want)
+}
+
+/// Bring the floater `id` to the front, expanding it when it is minimized
+/// (LLFloater::setVisibleAndFrontmost).
+pub fn bring_floater_front(ctx: &egui::Context, id: &str) {
+    if floater_minimized(ctx, id) {
+        expand_floater(ctx, id);
+    } else {
+        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
+    }
 }
 
 /// Is the floater `id` reduced to its title bar?

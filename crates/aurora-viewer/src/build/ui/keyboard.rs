@@ -170,14 +170,26 @@ mod tests {
                 .map(|(key, mask)| keys::shortcut(key, mask))
                 .collect()
         };
-        assert_eq!(taken(false), ["Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5", "Ctrl+B"]);
+        let ctrl = |key: &str| format!("{}{key}", keys::shortcut_prefix(1));
+        assert_eq!(taken(false), [ctrl("1"), ctrl("2"), ctrl("3"), ctrl("4"), ctrl("5"), ctrl("B")]);
         let mut building = taken(true);
         building.sort();
         let shift = aurora_i18n::tr!("keybinds-shift-2");
         let mut expected: Vec<String> = [
-            "Ctrl+,", "Ctrl+.", "Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5", "Ctrl+B", "Ctrl+D", "Ctrl+L", "Ctrl+Y", "Ctrl+Z", "G",
+            ctrl(","),
+            ctrl("."),
+            ctrl("1"),
+            ctrl("2"),
+            ctrl("3"),
+            ctrl("4"),
+            ctrl("5"),
+            ctrl("B"),
+            ctrl("D"),
+            ctrl("L"),
+            ctrl("Y"),
+            ctrl("Z"),
+            "G".into(),
         ]
-        .map(String::from)
         .into_iter()
         .chain([format!("{shift}G"), format!("{shift}X"), keys::label(0x86), keys::label(0x88)])
         .collect();

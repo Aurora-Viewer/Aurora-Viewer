@@ -26,6 +26,19 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-10-31 — Aurora 0.8.4: copy anything, build in a crowd
+Click a name in a profile to copy it, and select the text of a greyed-out field to copy it too: a no-modify object's name, a parcel's media address. Outfits copy their item names and creator credits. In a busy sandbox, the build tools can select only your own objects, or only the ones you may move, and the editor has a Legacy layout. Ctrl+Shift+H takes you home.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.4)
+
+## 2026-10-31 — Light for photos, LiveMesh for Blender 3
+A light button above the viewfinder's shutter opens personal lighting, and the sky, water and day cycle can change for the photo only, or stay after it. LiveMesh syncs textures in Blender 3.x colour spaces, and accessories rigged to an Avastar body dev kit sit where an upload puts them.
+
+## 2026-10-31 — Inventory, Mac and Linux
+Items you receive can be accepted automatically, with a receipt. Inventory folders get their own controls and a separate search row, and Legacy Viewer contact sets can be imported. On the Mac, Command works as Control and shortcuts read ⌘ ⌥ ⇧. Ctrl+H opens nearby chat and Ctrl+Shift+W closes every window. On Linux, secondlife:// links open in the running viewer.
+
+## 2026-10-31 — Steadier
+A graphics card reset closes the viewer cleanly, photos no longer freeze it when video memory runs short, and texture memory stays in check in busy places. No more takeoff in a no-fly parcel, and the parcel you left no longer lends its rules after a teleport. Worn animesh stand up straight. Thanks to Gaalrauch, Marakiinfinity, circuskid, Aznlilly, DarlCat, voidel and seilimited-ship-it.
+
 ## 2026-10-29 — Aurora 0.8.3 runs natively on the Mac
 Aurora now runs natively on Apple Silicon Macs, drawn through Metal: every release carries a macOS application to drag into Applications. Web pages and video in the world work there too: the first time they are needed, the viewer downloads its media plugins by itself. The install guide is in docs/MACOS.md.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.3)

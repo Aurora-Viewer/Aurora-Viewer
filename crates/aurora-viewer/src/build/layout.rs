@@ -24,6 +24,10 @@ pub enum Item {
     Highlight,
     #[serde(rename = "probes")]
     Probes,
+    #[serde(rename = "ownedOnly")]
+    OwnedOnly,
+    #[serde(rename = "movableOnly")]
+    MovableOnly,
     #[serde(rename = "landGroup")]
     LandGroup,
     #[serde(rename = "followEdit")]
@@ -52,7 +56,7 @@ pub enum Item {
     Land,
 }
 
-pub const ITEMS: [Item; 22] = [
+pub const ITEMS: [Item; 24] = [
     Item::Manipulators,
     Item::Face,
     Item::StretchTextures,
@@ -62,6 +66,8 @@ pub const ITEMS: [Item; 22] = [
     Item::Snap,
     Item::Highlight,
     Item::Probes,
+    Item::OwnedOnly,
+    Item::MovableOnly,
     Item::LandGroup,
     Item::FollowEdit,
     Item::Actions,
@@ -103,7 +109,7 @@ impl Item {
             Panel::Navigation
         } else if matches!(
             self,
-            Self::Snap | Self::Highlight | Self::Probes | Self::LandGroup | Self::FollowEdit
+            Self::Snap | Self::Highlight | Self::Probes | Self::OwnedOnly | Self::MovableOnly | Self::LandGroup | Self::FollowEdit
         ) {
             Panel::Settings
         } else {
@@ -132,9 +138,18 @@ impl Layout {
     pub fn normalize(&mut self) {
         let mut seen = HashSet::new();
         self.order.retain(|item| seen.insert(*item));
-        for item in ITEMS {
+        for (i, item) in ITEMS.into_iter().enumerate() {
             if seen.insert(item) {
-                self.order.push(item);
+                // an item added in a later version goes right after its
+                // predecessor in ITEMS (new selection filters under the
+                // reflection probes), not at the end of a saved layout
+                let after = i
+                    .checked_sub(1)
+                    .and_then(|prev| self.order.iter().position(|key| *key == ITEMS[prev]));
+                match after {
+                    Some(at) => self.order.insert(at + 1, item),
+                    None => self.order.push(item),
+                }
             }
             let panel = self.locations.entry(item).or_insert(item.default_panel());
             if !item.accepts(*panel) {
@@ -178,6 +193,11 @@ pub struct Options {
     pub snap: bool,
     pub highlight: bool,
     pub probes: bool,
+    /// Absent from notecards exported before these options existed.
+    #[serde(default)]
+    pub owned_only: bool,
+    #[serde(default)]
+    pub movable_only: bool,
     pub land_group: bool,
     pub follow_edit: bool,
 }
@@ -219,6 +239,8 @@ impl Profile {
                 snap: s.snap,
                 highlight: s.show_highlight,
                 probes: s.select_probes,
+                owned_only: s.select_owned_only,
+                movable_only: s.select_movable_only,
                 land_group: s.rez_under_land_group,
                 follow_edit: s.follow_edit_object,
             },
@@ -286,6 +308,8 @@ impl Profile {
         s.snap = self.options.snap;
         s.show_highlight = self.options.highlight;
         s.select_probes = self.options.probes;
+        s.select_owned_only = self.options.owned_only;
+        s.select_movable_only = self.options.movable_only;
         s.rez_under_land_group = self.options.land_group;
         s.follow_edit_object = self.options.follow_edit;
         s.grid_resolution = self.ruler.grid_unit;

@@ -254,6 +254,9 @@ are planned or in progress: they are not in the viewer yet.
   to the focus, while the background keeps its blur.
 - **Pose without leaving the shot**: your HUDs answer clicks in the
   viewfinder, and its Poser button poses the avatar over the shot.
+- **Light the shot**: a light button above the shutter opens personal
+  lighting, and the sky, water and day cycle can change for the photo only,
+  or stay after it.
 - **Freeze the world**: every avatar, animation and moving thing holds still
   while your camera stays free, to line up the perfect angle on a pose.
 - **Camera presets**: save a whole shot by name and bring it back in one
@@ -284,7 +287,9 @@ are planned or in progress: they are not in the viewer yet.
   HUD and detach. The Blender plug-in ships with the viewer and installs
   itself, with an SL / Bento starter rig, rigging tools and an import with
   its LODs prepared ([details](docs/BLENDER_LIVE.md)). Preview an animation
-  on a saved local model, to see Bento tails and wings move.
+  on a saved local model, to see Bento tails and wings move. Textures in
+  Blender 3.x colour spaces sync, and accessories rigged to an Avastar body
+  dev kit sit where an upload puts them.
 - **A poser for photos**: pose yourself, your own animesh, or nearby avatars
   who agree to it, joint by joint: body, face, hands, other bones and
   physics, with a Left / Right / Mirror side choice, a finger grid and
@@ -299,7 +304,9 @@ are planned or in progress: they are not in the viewer yet.
   of the prim you are about to create, outlines that stay visible while you
   move transparent objects, edit handles you can make bigger, and parcel
   boundary shortcuts in the terrain menus. Default permissions (Inventory ›
-  New) apply to everything you create or import.
+  New) apply to everything you create or import. In a busy sandbox, select
+  only your own objects, or only the ones you may move; prefer the classic
+  editor? Its Legacy layout is one switch away.
 - **Area search**: find the objects rezzed around you from World › Area
   search or a toolbar button. Search their name, description, owner,
   creator, group or UUID as you type, keep to the current parcel or reach
@@ -419,7 +426,12 @@ are planned or in progress: they are not in the viewer yet.
 - **Ready for your keyboard**: movement keys adapt to the keyboard layout on
   first launch (WASD or ZQSD), and letter shortcuts use the key that carries
   their letter (M is M on AZERTY too). Search Preferences › Shortcuts by
-  action, category or key.
+  action, category or key. On the Mac, Command works as Control and
+  shortcuts read ⌘ ⌥ ⇧, as macOS users expect.
+- **Copy what you need**: click a name in a profile to copy it, select and
+  copy the text of a greyed-out field (a no-modify object's name, a
+  parcel's media address), and copy an outfit's item names and creator
+  credits.
 - **Made for every eye**: an Accessibility page gathers the settings that
   help (interface scale, text size up to twice the normal size, reduce
   motion, sounds…), with a button on the login screen. A high-contrast palette, the OpenDyslexic font, and

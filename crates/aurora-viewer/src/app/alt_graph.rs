@@ -68,7 +68,7 @@ impl App {
     pub(super) fn key_mods(&self, ke: &KeyEvent) -> Mods {
         keyboard_mods(
             Mods {
-                ctrl: self.ctrl,
+                ctrl: crate::keybinds::control_down(self.ctrl, self.command, false),
                 shift: self.shift,
                 alt: self.alt,
             },

@@ -3,6 +3,10 @@
 //! LLFloater::closeFrontmostFloater and LLFloaterView::
 //! getFrontmostClosableFloater, indra/llui/llfloater.cpp, originally LGPL
 //! 2.1): the window on top, minimized or not, wherever the keyboard is.
+//! Ctrl+Shift+W closes every one of them, as File › Close All Windows
+//! (LLFileCloseAllWindows, LLFloaterView::closeAllChildren; menu_viewer.xml
+//! `shortcut="control|shift|W"`). On macOS Command is the same keyboard
+//! mask as Control.
 //!
 //! The menu's accelerator goes before the focused field there; egui's text
 //! fields take Ctrl+W to erase a word, so the key is taken at the start of
@@ -10,20 +14,26 @@
 //! when a window is there to close. Every `widgets::Floater` declares itself
 //! while it is drawn ([`shown`]) and closes as its cross would when the key
 //! is for it ([`take`]). The Conversations window asks first, to close its
-//! conversation shown instead (LLMultiFloater::closeDockedFloater).
+//! conversation shown instead (LLMultiFloater::closeDockedFloater); Close
+//! All still closes that window. The mini-map has no title bar, so it is
+//! not in the frontmost list ([`shown_extra`]) and only Close All takes it.
 
 use crate::keybinds::{Input, Mods};
 use egui::{Id, Order};
 use std::collections::HashSet;
 use winit::keyboard::{Key as NativeKey, KeyCode};
 
-/// Reserve Ctrl+W before native movement/gestures, including repeats. egui
-/// still receives the event and decides what closes (or edits a word with
-/// no window). LLViewerInput::scanKey (indra/newview/llviewerinput.cpp)
-/// likewise leaves menu accelerators out of held controls. Drop an earlier
-/// hold too, so releasing Ctrl before W cannot resume movement.
+/// Reserve Close Window and Close All Windows before native movement and
+/// gestures, including repeats. `mods.ctrl` is the keyboard mask: Control,
+/// and Command on macOS ([`crate::keybinds::control_down`]; both set
+/// MASK_CONTROL in LLKeyboardMacOSX::currentMask). Shift is Close All;
+/// Alt is Close Window Group and stays free. egui still receives the event
+/// and decides what closes (or edits a word when nothing is open).
+/// LLViewerInput::scanKey (indra/newview/llviewerinput.cpp) likewise
+/// leaves menu accelerators out of held controls. Drop an earlier hold
+/// too, so releasing the modifier before W cannot resume movement.
 pub fn take_native_key(key: &NativeKey, code: KeyCode, mods: Mods, down: &mut HashSet<Input>) -> bool {
-    if mods.ctrl && !mods.alt && !mods.shift && crate::keybinds::native_shortcut_key(key, code) == Some(egui::Key::W) {
+    if mods.ctrl && !mods.alt && crate::keybinds::native_shortcut_key(key, code) == Some(egui::Key::W) {
         down.remove(&Input::key(code));
         true
     } else {
@@ -31,59 +41,92 @@ pub fn take_native_key(key: &NativeKey, code: KeyCode, mods: Mods, down: &mut Ha
     }
 }
 
-/// The windows drawn on the last frame, and the one Ctrl+W closes this
-/// frame.
+/// The windows drawn on the last frame, the one Ctrl+W closes this frame,
+/// and whether Ctrl+Shift+W closes every window drawn then.
 #[derive(Clone, Default)]
 struct State {
     shown: Vec<(Id, u64)>,
+    /// Windows outside the frontmost list (the mini-map). Close All only.
+    extra: Vec<(Id, u64)>,
     target: Option<(Id, u64)>,
+    all: bool,
 }
 
 fn state_id() -> Id {
     Id::unique("close_key_state")
 }
 
-/// The window `id` is drawn this frame: Ctrl+W can close it on the next.
+/// The window `id` is drawn this frame: Ctrl+W can close it on the next,
+/// and Ctrl+Shift+W closes it with the others.
 pub fn shown(ctx: &egui::Context, id: Id) {
+    note(ctx, id, false);
+}
+
+/// A window drawn this frame that Ctrl+W does not pick as frontmost.
+/// Ctrl+Shift+W still closes it (the mini-map).
+pub fn shown_extra(ctx: &egui::Context, id: Id) {
+    note(ctx, id, true);
+}
+
+fn note(ctx: &egui::Context, id: Id, extra: bool) {
     let frame = ctx.cumulative_frame_nr();
     ctx.data_mut(|d| {
         let state = d.get_temp_mut_or_default::<State>(state_id());
-        state.shown.retain(|(other, at)| *other != id && at + 1 >= frame);
-        state.shown.push((id, frame));
+        let list = if extra { &mut state.extra } else { &mut state.shown };
+        list.retain(|(other, at)| *other != id && at + 1 >= frame);
+        list.push((id, frame));
     });
 }
 
-/// At the start of the interface's frame: Ctrl+W alone goes to the frontmost
-/// window drawn on the last frame, and the key is taken. Nothing with a
-/// dialog open (the menu entry is disabled while an alert shows), nor
-/// without a window: a field keeps the key then.
+fn listed(list: &[(Id, u64)], id: Id, frame: u64) -> bool {
+    list.iter().any(|(other, at)| *other == id && at + 1 >= frame)
+}
+
+/// At the start of the interface's frame: Ctrl+Shift+W closes every window
+/// drawn on the last frame, and Ctrl+W alone goes to the frontmost. The key
+/// is taken. Nothing with a dialog open (the menu entry is disabled while
+/// an alert shows), nor without a window: a field keeps the key then.
 pub fn begin(ctx: &egui::Context) {
     let frame = ctx.cumulative_frame_nr();
     let mut state = ctx.data(|d| d.get_temp::<State>(state_id())).unwrap_or_default();
     state.shown.retain(|(_, at)| at + 1 >= frame);
+    state.extra.retain(|(_, at)| at + 1 >= frame);
     state.target = None;
-    // held down, it closes one window, not one per repeat
-    if pressed_alone(ctx, egui::Key::W, egui::Modifiers::COMMAND) && ctx.memory(|m| m.top_modal_layer()).is_none() {
-        // back to front
-        let front = ctx.memory(|m| {
-            m.layer_ids()
-                // a window's own layer: Middle, or Foreground over the
-                // photo viewfinder (the poser)
-                .filter_map(|layer| {
-                    state
-                        .shown
-                        .iter()
-                        .find(|(id, _)| layer.id == *id && layer.order != Order::Background)
-                })
-                .map(|(id, _)| *id)
-                .last()
-        });
-        if let Some(id) = front {
-            ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::W));
-            state.target = Some((id, frame));
+    state.all = false;
+    // held down, it closes once, not on each repeat
+    if ctx.memory(|m| m.top_modal_layer()).is_none() {
+        let shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+        if pressed_alone(ctx, egui::Key::W, shift) && (!state.shown.is_empty() || !state.extra.is_empty()) {
+            ctx.input_mut(|i| i.consume_key(shift, egui::Key::W));
+            state.all = true;
+        } else if pressed_alone(ctx, egui::Key::W, egui::Modifiers::COMMAND) {
+            // back to front
+            let front = ctx.memory(|m| {
+                m.layer_ids()
+                    // a window's own layer: Middle, or Foreground over the
+                    // photo viewfinder (the poser)
+                    .filter_map(|layer| {
+                        state
+                            .shown
+                            .iter()
+                            .find(|(id, _)| layer.id == *id && layer.order != Order::Background)
+                    })
+                    .map(|(id, _)| *id)
+                    .last()
+            });
+            if let Some(id) = front {
+                ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::W));
+                state.target = Some((id, frame));
+            }
         }
     }
     ctx.data_mut(|d| d.insert_temp(state_id(), state));
+}
+
+/// Ctrl+Shift+W is closing every window this frame. Conversations uses it
+/// to close the window instead of the one conversation Ctrl+W closes.
+pub fn closes_every_window(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<State>(state_id()).is_some_and(|state| state.all))
 }
 
 /// `key` was pressed this frame with exactly `modifiers` (Ctrl+Shift+W is
@@ -96,11 +139,15 @@ fn pressed_alone(ctx: &egui::Context, key: egui::Key, modifiers: egui::Modifiers
     })
 }
 
-/// Ctrl+W asks the window `id` to close on this frame; true once.
+/// Ctrl+W asks the window `id` to close on this frame, once. Ctrl+Shift+W
+/// asks every window drawn on the last frame; each of them hears it.
 pub fn take(ctx: &egui::Context, id: Id) -> bool {
     let frame = ctx.cumulative_frame_nr();
     ctx.data_mut(|d| {
         let state = d.get_temp_mut_or_default::<State>(state_id());
+        if state.all {
+            return listed(&state.shown, id, frame) || listed(&state.extra, id, frame);
+        }
         let mine = state.target == Some((id, frame));
         if mine {
             state.target = None;
@@ -122,11 +169,14 @@ mod tests {
             ctrl: true,
             ..Default::default()
         };
-        for (code, letter) in [
-            (KeyCode::KeyW, "w"),
-            (KeyCode::KeyZ, "w"), // AZERTY
-            (KeyCode::KeyW, "W"),
-            (KeyCode::KeyW, "ц"), // egui's non-Latin fallback
+        let shifted = Mods { shift: true, ..ctrl };
+        for (mods, code, letter) in [
+            (ctrl, KeyCode::KeyW, "w"),
+            (ctrl, KeyCode::KeyZ, "w"), // AZERTY
+            (ctrl, KeyCode::KeyW, "W"),
+            (ctrl, KeyCode::KeyW, "ц"), // egui's non-Latin fallback
+            (shifted, KeyCode::KeyW, "w"),
+            (shifted, KeyCode::KeyZ, "w"), // AZERTY Close All
         ] {
             let input = Input::key(code);
             let other = Input::key(KeyCode::ArrowDown);
@@ -139,14 +189,15 @@ mod tests {
             // The same press/repeat path also cancels a pre-existing hold.
             let mut down = HashSet::from([input.clone(), other.clone()]);
             for _ in 0..3 {
-                assert!(take_native_key(&key, code, ctrl, &mut down));
+                assert!(take_native_key(&key, code, mods, &mut down));
                 assert_eq!(down, HashSet::from([other.clone()]));
-                for mods in [ctrl, Mods::default()] {
+                for mods in [ctrl, shifted, Mods::default()] {
                     for action in actions {
                         assert!(!bindings.held(action, &down, mods), "{letter}: {action:?}");
                     }
                 }
             }
+            assert!(!bindings.held(Action::Forward, &down, Mods::default()));
             let _ = bindings.update_held_input(&mut down, &input, false, Mods::default());
             assert!(!bindings.held(Action::Forward, &down, Mods::default()));
             let _ = bindings.update_held_input(&mut down, &input, true, Mods::default());
@@ -166,8 +217,8 @@ mod tests {
                 "w",
                 Mods {
                     ctrl: true,
+                    alt: true,
                     shift: true,
-                    alt: false,
                 },
             ),
             (
@@ -192,6 +243,14 @@ mod tests {
                     ..Default::default()
                 },
             ), // AZERTY Ctrl+Z
+            (
+                "z",
+                Mods {
+                    ctrl: true,
+                    shift: true,
+                    alt: false,
+                },
+            ), // Ctrl+Shift+Z, including AZERTY's physical W key
         ] {
             let mut down = HashSet::from([input.clone()]);
             assert!(!take_native_key(
@@ -274,12 +333,65 @@ mod tests {
     #[test]
     fn other_keys_close_nothing() {
         for (event, w) in [
-            (key(egui::Key::W, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT), true),
             (key(egui::Key::W, egui::Modifiers::ALT), true),
             (key(egui::Key::Q, egui::Modifiers::COMMAND), false),
+            (
+                key(
+                    egui::Key::W,
+                    egui::Modifiers::COMMAND | egui::Modifiers::ALT | egui::Modifiers::SHIFT,
+                ),
+                true,
+            ),
         ] {
             assert_eq!(press(false, true, vec![event]), (Vec::new(), w));
         }
+    }
+
+    #[test]
+    fn ctrl_shift_w_closes_every_window_before_a_field_reads_it() {
+        let chord = || vec![key(egui::Key::W, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT)];
+        assert_eq!(press(false, true, chord()), (vec!["left", "right"], false));
+        assert_eq!(press(true, true, chord()), (vec!["left", "right"], false));
+        // no window: the field keeps the chord
+        assert_eq!(press(false, false, chord()), (Vec::new(), true));
+    }
+
+    #[test]
+    fn ctrl_shift_w_closes_a_window_ctrl_w_does_not_pick() {
+        let mut frames = Frames::new();
+        let map = Id::unique("map");
+        let mut closed = false;
+        let frame = |frames: &mut Frames, events: Vec<egui::Event>, closed: &mut bool| {
+            frames.run(events, |ui| {
+                let ctx = ui.ctx().clone();
+                begin(&ctx);
+                if take(&ctx, map) {
+                    *closed = true;
+                }
+                shown_extra(&ctx, map);
+            });
+        };
+        frame(&mut frames, Vec::new(), &mut closed);
+        frame(&mut frames, vec![key(egui::Key::W, egui::Modifiers::COMMAND)], &mut closed);
+        assert!(!closed, "Ctrl+W leaves the mini-map");
+        // release W, or the next press is a repeat and does not close again
+        frame(
+            &mut frames,
+            vec![egui::Event::Key {
+                key: egui::Key::W,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            &mut closed,
+        );
+        frame(
+            &mut frames,
+            vec![key(egui::Key::W, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT)],
+            &mut closed,
+        );
+        assert!(closed);
     }
 
     #[test]

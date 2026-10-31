@@ -463,13 +463,24 @@ fn water_control_hints_follow_rebound_secondary_modified_mouse_and_unassigned_ke
         }
         out
     };
+    // Passage is Control plus the jump keys. The cap is "Ctrl" elsewhere and
+    // "⌘" on macOS (LLKeyboard::stringFromAccelerator); either way it is the
+    // same cap the water hints draw.
+    let modifier = |binding: &Binding| binding.caps().into_iter().next().expect("modifier cap").label;
     let mut f = Fixture::new();
     f.click(aurora_i18n::tr!("ao-tab-movement"));
     f.settle();
     let initial = contents(&mut f);
+    let passage = Binding::captured(
+        Input::key(KeyCode::PageUp),
+        Mods {
+            ctrl: true,
+            ..Default::default()
+        },
+    );
     assert!(initial.contains(&Input::key(KeyCode::PageUp).label()));
     assert!(
-        initial.contains(&"Ctrl".to_owned()),
+        initial.contains(&modifier(&passage)),
         "passage modifiers use the same keycaps as water gestures"
     );
     let first = Binding::captured(
@@ -486,6 +497,8 @@ fn water_control_hints_follow_rebound_secondary_modified_mouse_and_unassigned_ke
             ..Default::default()
         },
     );
+    let ctrl_cap = modifier(&first);
+    let alt_cap = modifier(&mouse);
     f.keys.set(KeyAction::Up, 0, Some(first));
     f.keys.set(KeyAction::Up, 1, Some(mouse.clone()));
     f.keys.set(
@@ -496,13 +509,7 @@ fn water_control_hints_follow_rebound_secondary_modified_mouse_and_unassigned_ke
     f.keys.set(KeyAction::Down, 1, None);
     f.settle();
     let shown = contents(&mut f);
-    for key in [
-        "F10".to_owned(),
-        "F11".to_owned(),
-        mouse.input.label(),
-        "Ctrl".to_owned(),
-        "Alt".to_owned(),
-    ] {
+    for key in ["F10".to_owned(), "F11".to_owned(), mouse.input.label(), ctrl_cap, alt_cap] {
         assert!(shown.contains(&key), "live keycap {key} is visible");
     }
     assert!(!shown.contains(&Input::key(KeyCode::PageUp).label()));

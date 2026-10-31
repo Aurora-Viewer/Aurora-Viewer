@@ -15,6 +15,10 @@ const TRUSTED: &[&str] = &[
     "secondlife.com",
     "lindenlab.com",
     "tilia-inc.com",
+    // CasperTech (CasperVend, CasperLet), a Linden Lab company since 2022
+    "casperdns.com",
+    "casperpanel.com",
+    "casperlet.com",
     "secondlifegrid.net",
     "secondlife.io",
     "secondlife-status.statuspage.io",
@@ -109,6 +113,7 @@ const THROWAWAY_HOSTING: &[&str] = &[
     "glitch.me",
     "repl.co",
     "workers.dev",
+    "herokuapp.com",
 ];
 
 /// Names a fake site borrows to look official (compared without dots and
@@ -305,6 +310,9 @@ mod tests {
             "http://community.secondlife.com/forums",
             "https://marketplace.secondlife.com:443/p/x",
             "https://WWW.LindenLab.com",
+            "https://www.casperdns.com/",
+            "https://www.casperpanel.com/",
+            "https://casperlet.com/",
             "https://aurora-viewer.org",
             "https://www.aurora-viewer.org/downloads",
             "https://github.com/Aurora-Viewer/Aurora-Viewer/pulls",
@@ -366,6 +374,7 @@ mod tests {
             "https://bit.ly/abc",
             "https://linktr.ee/x",
             "https://abc.ngrok-free.app/login",
+            "https://sl-login-demo.herokuapp.com/",
             "http://192.168.1.10/login",
             "http://[2001:db8::1]/x",
             "https://xn--secndlife-x9a.com",

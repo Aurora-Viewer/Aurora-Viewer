@@ -710,3 +710,131 @@ fn distance_limits_follow_their_switches_and_stay_in_range() {
     let old: BuildSettings = serde_json::from_str("{}").unwrap();
     assert!(!old.limit_select_distance && old.limit_drag_distance);
 }
+
+/// Gives `idx`'s root the update flags `flags`.
+fn set_root_flags(world: &mut World, idx: usize, flags: u32) {
+    let root = root_of(world, idx);
+    world.objects.get_mut(root).unwrap().update_flags = flags;
+}
+
+#[test]
+fn select_only_my_objects_filters_clicks_lists_and_wheel_but_not_the_menu() {
+    use crate::ui::context::flags::{OBJECT_MOVE, OBJECT_YOU_OWNER};
+    let (mut world, mut tool, mut settings) = fixture();
+    let mine = object(&world, 99610);
+    let theirs = object(&world, 99614);
+    set_root_flags(&mut world, mine, OBJECT_YOU_OWNER | OBJECT_MOVE);
+    set_root_flags(&mut world, theirs, OBJECT_MOVE);
+    let id = |world: &World, idx: usize| world.objects.get(root_of(world, idx)).unwrap().key.local_id;
+    let (mine_id, theirs_id) = (id(&world, mine), id(&world, theirs));
+    let click = |tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, idx: usize, shift: bool| {
+        let mods = Mods { shift, ..Mods::default() };
+        tool.mouse_down(world, s, None, Some(idx), None, (0.0, 0.0), mods);
+        tool.mouse_up(world, s);
+    };
+    // off by default: anything editable is selected
+    assert!(!settings.select_owned_only);
+    click(&mut tool, &mut world, &mut settings, theirs, false);
+    assert_eq!(selected(&tool), [theirs_id]);
+    settings.select_owned_only = true;
+    // a click on someone else's object selects nothing and drops the rest
+    click(&mut tool, &mut world, &mut settings, theirs, false);
+    assert!(tool.selection.is_empty());
+    click(&mut tool, &mut world, &mut settings, mine, false);
+    assert_eq!(selected(&tool), [mine_id]);
+    click(&mut tool, &mut world, &mut settings, theirs, true);
+    assert_eq!(selected(&tool), [mine_id], "Shift does not add it either");
+    tool.select_many(&mut world, &settings, &[theirs, mine]);
+    assert_eq!(selected(&tool), [mine_id], "Area Search keeps only our own");
+    tool.deselect_all(&world);
+    tool.cycle_under_cursor(&mut world, &settings, &[theirs, mine], -1);
+    assert_eq!(selected(&tool), [mine_id], "the wheel skips what may not be selected");
+    // the right-click menu's temporary selection ignores the filter (temp_select)
+    assert!(tool.select_for_menu(&mut world, &settings, theirs));
+    assert_eq!(selected(&tool), [theirs_id]);
+}
+
+#[test]
+fn select_only_my_objects_filters_rectangles() {
+    use crate::ui::context::flags::{OBJECT_MOVE, OBJECT_YOU_OWNER};
+    let (mut world, mut tool, mut settings) = fixture();
+    let mine = object(&world, 99614);
+    let position = world.objects.get(mine).unwrap().position;
+    let eye = position - Vec3::X * 10.0;
+    let view = glam::camera::rh::view::look_at_mat4(eye, position, Vec3::Z);
+    let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.0, 0.1);
+    tool.cam = geom::Cam::new(eye, position, projection * view, 1.0, 800.0, 800.0, 1.0);
+    world.agent.position = eye;
+    let all: Vec<usize> = world.objects.iter().map(|(i, _)| i).collect();
+    for idx in all {
+        set_root_flags(&mut world, idx, OBJECT_MOVE);
+    }
+    set_root_flags(&mut world, mine, OBJECT_YOU_OWNER | OBJECT_MOVE);
+    tool.rect_select(&mut world, &settings, (0.0, 0.0), (800.0, 800.0), false);
+    assert!(tool.selection.len() > 1, "without the filter the rectangle takes several objects");
+    tool.deselect_all(&world);
+    settings.select_owned_only = true;
+    tool.rect_select(&mut world, &settings, (0.0, 0.0), (800.0, 800.0), false);
+    let root = world.objects.get(root_of(&world, mine)).unwrap().key;
+    assert_eq!(tool.selection, [root]);
+}
+
+#[test]
+fn select_only_movable_objects_follows_root_rights_and_permanent_objects() {
+    use crate::ui::context::flags::{AFFECTS_NAVMESH, OBJECT_MOVE, OBJECT_YOU_OWNER};
+    let (mut world, _, mut settings) = seated_fixture(false);
+    let root = world.objects.iter().find(|(_, o)| o.key.local_id == 950).unwrap().0;
+    let child = world.objects.index_of_uuid(&Uuid::from_u128(951)).unwrap();
+    world.objects.get_mut(child).unwrap().update_flags = 0;
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_YOU_OWNER;
+    assert!(passes_select_filters(&world, &settings, child), "no filter on");
+    settings.select_owned_only = true;
+    assert!(passes_select_filters(&world, &settings, child), "a part follows its root's owner");
+    settings.select_owned_only = false;
+    settings.select_movable_only = true;
+    assert!(!passes_select_filters(&world, &settings, child));
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE;
+    assert!(passes_select_filters(&world, &settings, child));
+    // a permanent (pathfinding) object only moves in the agent's region
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE | AFFECTS_NAVMESH;
+    world.main_region = Some(world.objects.get(root).unwrap().key.region);
+    assert!(passes_select_filters(&world, &settings, root));
+    world.main_region = None;
+    assert!(!passes_select_filters(&world, &settings, root));
+}
+
+#[test]
+fn selection_filters_persist_and_sit_under_the_reflection_probes() {
+    use layout::{Item, Layout, Panel};
+    let mut settings = BuildSettings::default();
+    assert!(!settings.select_owned_only && !settings.select_movable_only);
+    settings.select_owned_only = true;
+    settings.select_movable_only = true;
+    let restored: BuildSettings = serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
+    assert!(restored.select_owned_only && restored.select_movable_only);
+    let old: BuildSettings = serde_json::from_str("{}").unwrap();
+    assert!(!old.select_owned_only && !old.select_movable_only);
+    // a layout saved before the filters existed gets them right under the probes
+    let mut saved = Layout::default();
+    saved.order.retain(|item| !matches!(item, Item::OwnedOnly | Item::MovableOnly));
+    saved.locations.remove(&Item::OwnedOnly);
+    saved.locations.remove(&Item::MovableOnly);
+    saved.place(Item::Probes, Panel::Settings, Some(Item::FollowEdit), true);
+    saved.normalize();
+    let panel = saved.in_panel(Panel::Settings);
+    let probes = panel.iter().position(|item| *item == Item::Probes).unwrap();
+    assert_eq!(panel[probes + 1..probes + 3], [Item::OwnedOnly, Item::MovableOnly]);
+    assert_eq!(
+        Layout::default().in_panel(Panel::Settings)[..5],
+        [Item::Snap, Item::Highlight, Item::Probes, Item::OwnedOnly, Item::MovableOnly]
+    );
+    // notecards exported before them still load, with the filters off
+    let (_, tool, _) = fixture();
+    let mut profile = serde_json::to_value(layout::Profile::capture(&tool, &settings)).unwrap();
+    let options = profile["options"].as_object_mut().unwrap();
+    assert_eq!(options["ownedOnly"], true);
+    options.remove("ownedOnly");
+    options.remove("movableOnly");
+    let read = layout::Profile::read(&profile.to_string()).unwrap();
+    assert!(!read.options.owned_only && !read.options.movable_only);
+}

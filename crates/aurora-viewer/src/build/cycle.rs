@@ -52,7 +52,7 @@ impl BuildTool {
         let units: Vec<_> = hits
             .iter()
             .copied()
-            .filter(|&idx| root.is_none_or(|root| root_of(world, idx) == root))
+            .filter(|&idx| root.is_none_or(|root| root_of(world, idx) == root) && passes_select_filters(world, s, idx))
             .filter_map(|idx| Self::unit_of(world, idx, s.edit_linked).map(|key| (idx, key)))
             .filter(|(_, key)| seen.insert(*key))
             .collect();
