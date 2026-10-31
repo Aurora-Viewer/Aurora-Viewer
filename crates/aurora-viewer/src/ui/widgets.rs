@@ -521,7 +521,8 @@ impl<'a> Floater<'a> {
                     bottom: if minimized && !compact { 4 } else { 10 },
                 }
             });
-        // Ctrl+W closes it as its cross does, when it is the frontmost
+        // Ctrl+W closes it as its cross does, when it is the frontmost.
+        // Ctrl+Shift+W closes every window.
         let mut close = super::close_key::take(ctx, egui::Id::unique(self.id));
         super::close_key::shown(ctx, egui::Id::unique(self.id));
         // the toolbar button, a menu entry or a shortcut asked to expand it

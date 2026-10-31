@@ -18342,8 +18342,11 @@ impl ApplicationHandler for App {
                         }
                         return;
                     }
-                    // egui received Ctrl+W above; reserve its physical key
-                    // before gestures or movement can keep it held.
+                    // egui received Close Window above (Ctrl+W and
+                    // Command+W) or Close All Windows (Ctrl+Shift+W and
+                    // Command+Shift+W). Both keys are mods.ctrl. Reserve
+                    // the physical key before gestures or movement can
+                    // keep it held.
                     if pressed && ui::close_key::take_native_key(&ke.logical_key, code, mods, &mut self.down) {
                         self.check_temp_run();
                         return;
