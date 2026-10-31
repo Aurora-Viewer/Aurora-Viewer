@@ -3402,8 +3402,21 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_ENV_EDITOR=<mode>` | Sky, water and day cycle editors |
 | `AURORA_DEMO_ENV_KEYS=u\|y\|n\|x\|j` | World › Environment shortcut pressed (Ctrl+Shift + the letter) |
 | `AURORA_DEMO_DOF=<f>:<m>[:debug]` | Depth of field at this aperture and focus distance |
+| `AURORA_DEMO_AA_SWITCH=<frame>:<mode>[,…]` | Anti-aliasing changed at these frames, as Preferences would |
 
 ### Details
+
+- **`AURORA_DEMO_AA_SWITCH=<frame>:<mode>[,<frame>:<mode>…]`**: the
+  anti-aliasing changes at each frame given (modes of `AURORA_AA`). A change
+  of MSAA samples, or of SSR, compiles the scene's pipelines on a worker
+  thread (#1746, #1722): the log gives `compiling the pipelines for <n>
+  sample(s)` then `pipelines for <n> sample(s) ready in … ms`, and with
+  `AURORA_PROFILE=1` the `perf summary` of that second shows no long frame
+  (on an RTX 5070: `max=16.68`, against a 146 to 155 ms frame when they were
+  compiled on the render thread). The frames keep the previous samples until
+  the set is ready; `AURORA_CAPTURE` waits for it. For example
+  `AURORA_AA=3`, `AURORA_DEMO_AA_SWITCH=700:4,1000:2,1300:3` and captures at
+  650, 900, 1200 and 1500 (MSAA 4x, 8x, 2x, 4x).
 
 - **`AURORA_DEMO_PARCEL_VISIBILITY=off|always|listed|except|except-listed|same-owner|same-group|group-owned-current|always-visible|lists|crossings`**:
   four parcels split the plaza at x/y 128 m. The northern parcels share an owner;
@@ -8172,8 +8185,9 @@ What the inventory must show with these scenarios:
   or People › Nearby onto the conversation) join it at once, and our
   message "<names> was / were invited to the conversation." follows in it
   (`conference-invite` adds Orion by itself once the conference is connected).
-- **`AURORA_DEMO_STAFF`**: the members of the Aurora team (`world/staff.rs`)
-  are marked everywhere Aurora shows a resident: on the name plate, green
+- **`AURORA_DEMO_STAFF`**: the members of the Aurora team (`world/staff.rs`;
+  hidden on the grid for now, `TEAM_MARKS_SHOWN`, while the demo still
+  shows them) are marked everywhere Aurora shows a resident: on the name plate, green
   to violet curtains of light rise from behind the top edge, the border's
   colours flow around it over a soft halo, and the full and compact plates
   carry the "Aurora Viewer" tag over their top left edge (the far pill keeps
@@ -9687,6 +9701,12 @@ thread.
     also counted in `g_effects`;
   - `g_contact`: the sun's contact shadows alone (`AURORA_CONTACT_SHADOWS`),
     also counted in `g_effects`;
+  - `g_planar`, `g_probe`, `g_copy`, `g_ssr`: the rest of `g_effects`,
+    after the occlusion and the contact shadows: the planar reflections
+    (water, mirrors; the refracted water light is counted with them), the
+    reflection probe face with its filtering, the copy of the scene for
+    refraction and SSR (the cut-out pass and the submerged water particles
+    are counted with it), and SSR;
   - `g_bloom`: the bloom levels alone (`AURORA_BLOOM`, 0 while off), also
     counted in `g_post`;
   - the draws and draw commands, the objects synced / rebuilt (`synced`,

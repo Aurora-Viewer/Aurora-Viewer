@@ -1201,23 +1201,22 @@ fn te_record_base(model: Mat4, f: &TextureFace) -> DrawRecord {
 
 /// Texture animation fields of face `fi` of `o`, if it is animated.
 ///
-/// Face selection as LLVOVolume::animateTextures: the animation's face, or
-/// every face for ALL_SIDES (-1) and out-of-range faces. The animation
-/// combines with the texture entry's transform (`tf`).
+/// Face selection as LLVolumeGeometryManager::rebuildGeom
+/// (indra/newview/llvovolume.cpp): only faces in the TEXTURE_ANIM state use
+/// the animation matrix, and that state goes to every face for ALL_SIDES
+/// (-1), else to the animation's face alone. A face the object does not have
+/// animates nothing, so its other faces stay still. The animation combines
+/// with the texture entry's transform (`tf`).
 fn tex_anim_record(
     o: &Object,
     fi: usize,
-    face_count: usize,
     tf: &TextureFace,
     pbr: bool,
     clock: aurora_render::tex_anim::AnimClock,
 ) -> Option<aurora_render::tex_anim::RecordAnim> {
     use aurora_render::tex_anim::{TexAnimParams, TexXform, record_anim};
     let ta = o.tex_anim?;
-    if let Ok(face) = usize::try_from(ta.face)
-        && face < face_count
-        && face != fi
-    {
+    if !tex_anim_targets(ta.face, fi) {
         return None;
     }
     // At rate 0 Firestorm bakes the first frame into the texture entry
@@ -1240,6 +1239,15 @@ fn tex_anim_record(
         offset: [tf.offset_s, tf.offset_t],
     };
     record_anim(&params, clock.ms(o.tex_anim_clock.start), o.tex_anim_clock.phase, &te)
+}
+
+/// Whether a texture animation set on `anim_face` (-1 = ALL_SIDES) moves
+/// face `fi`: see [`tex_anim_record`].
+fn tex_anim_targets(anim_face: i8, fi: usize) -> bool {
+    match usize::try_from(anim_face) {
+        Ok(face) => face == fi,
+        Err(_) => true,
+    }
 }
 
 impl Scene {
@@ -3720,7 +3728,7 @@ impl Scene {
             // texture animation: written once, evaluated by the vertex shaders
             let pbr = rec.flags[0] & flags::PBR != 0;
             if plant.is_none()
-                && let Some(a) = tex_anim_record(o, fi, geom.faces.len(), &tf, pbr, renderer.anim_clock())
+                && let Some(a) = tex_anim_record(o, fi, &tf, pbr, renderer.anim_clock())
             {
                 rec.flags[0] |= flags::TEX_ANIM;
                 rec.flags[3] = a.packed;
@@ -5677,6 +5685,18 @@ fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
 mod tests {
     use super::*;
     use aurora_net::NetEvent;
+
+    #[test]
+    fn texture_animation_moves_its_face_or_every_face_for_all_sides() {
+        // ALL_SIDES (and any negative face) animates every face.
+        assert!((0..8).all(|fi| tex_anim_targets(-1, fi)));
+        // A face in range animates that face alone.
+        assert!(tex_anim_targets(2, 2));
+        assert!(!tex_anim_targets(2, 0));
+        // A face the object does not have (face 2 on a one-face mesh)
+        // animates nothing: face 0 stays still, as in the Legacy Viewer.
+        assert!((0..1).all(|fi| !tex_anim_targets(2, fi)));
+    }
 
     #[test]
     fn bakes_replace_placeholders_only_on_worn_non_hud_non_animesh_objects() {

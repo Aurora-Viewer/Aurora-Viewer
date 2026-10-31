@@ -4,7 +4,7 @@
 use aurora_net::scripts::MAX_SOURCE;
 use std::{
     fs,
-    io::Read,
+    io::{Read, Write},
     path::Path,
     sync::{
         Arc,
@@ -150,6 +150,26 @@ fn command(text: &str, path: &Path) -> Result<(String, Vec<String>), String> {
     Ok((executable, args))
 }
 
+/// Creates the export folder and writes the script into it, readable by its
+/// owner only: the shared temp folder of Linux and macOS is open to every
+/// account, and a script can hold a key or a private URL. The folder's 0700
+/// is what keeps it private once an editor saves by writing a new file (with
+/// the umask's 0644) and renaming it over ours. Windows' temp folder is
+/// already per user.
+fn write_private(directory: &Path, path: &Path, source: &str) -> std::io::Result<()> {
+    let mut file = fs::OpenOptions::new();
+    file.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+        fs::DirBuilder::new().mode(0o700).create(directory)?;
+        file.mode(0o600);
+    }
+    #[cfg(not(unix))]
+    fs::create_dir(directory)?;
+    file.open(path)?.write_all(source.as_bytes())
+}
+
 pub(super) struct Watch {
     pub changes: mpsc::Receiver<Result<String, String>>,
     stop: Arc<AtomicBool>,
@@ -172,8 +192,7 @@ pub(super) fn external(name: String, source: String, command_line: String, conve
         };
         let started = (|| -> Result<Option<std::time::SystemTime>, String> {
             let (executable, args) = command(&command_line, &path)?;
-            fs::create_dir(&directory).map_err(|e| e.to_string())?;
-            fs::write(&path, &source).map_err(|e| e.to_string())?;
+            write_private(&directory, &path, &source).map_err(|e| e.to_string())?;
             // Capture our write before launching: even an editor that saves
             // immediately must trigger the first reload.
             let stamp = fs::metadata(&path).ok().and_then(|m| m.modified().ok());
@@ -254,6 +273,24 @@ mod tests {
         assert!(read(&path, true).is_err());
         fs::write(&path, vec![b'x'; MAX_SOURCE + 1]).unwrap();
         assert!(read(&path, false).is_err());
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
+    #[test]
+    fn external_export_is_private_and_never_reuses_a_path() {
+        let directory = std::env::temp_dir().join(format!("aurora-script-export-test-{}", uuid::Uuid::new_v4()));
+        let path = directory.join("source.lsl");
+        write_private(&directory, &path, "default {}").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "default {}");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&directory), 0o700);
+            assert_eq!(mode(&path), 0o600);
+        }
+        // A folder already there (planted by another account) is refused.
+        assert!(write_private(&directory, &path, "x").is_err());
         fs::remove_file(path).unwrap();
         fs::remove_dir(directory).unwrap();
     }
