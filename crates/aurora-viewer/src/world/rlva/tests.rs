@@ -563,6 +563,89 @@ fn rlva_outfit_changes_keep_locked_wearables_and_skip_blocked_additions() {
     assert!(w.rlva_allows_command(&cmd, Uuid::nil()));
 }
 
+/// Wearing three attachments, one on a point locked by @addattach: the
+/// outfit write and the rez that follows both leave out the blocked one
+/// only, in strict mode too, instead of RLVa refusing the whole rez.
+#[test]
+fn rlva_multi_wear_leaves_out_only_the_blocked_attachment() {
+    use crate::world::appearance::{Action, attachments_for_action};
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::{
+        inventory::{InvFolder, InvItem},
+        outfits::{OutfitLink, OutfitMutation},
+    };
+    let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    w.rlva.configure(true);
+    let cof = Uuid::from_u128(40);
+    w.inventory.folders.insert(
+        cof,
+        Folder {
+            info: InvFolder {
+                id: cof,
+                type_default: 46,
+                ..Default::default()
+            },
+            items: vec![],
+            children: vec![],
+            state: FetchState::Fetched,
+            library: false,
+        },
+    );
+    // (id, attachment point): spine, skull, left hand.
+    let items = [(41, 9), (42, 2), (43, 5)];
+    for (id, point) in items {
+        w.inventory.items.insert(
+            Uuid::from_u128(id),
+            InvItem {
+                id: Uuid::from_u128(id),
+                asset_type: 6,
+                flags: point,
+                ..Default::default()
+            },
+        );
+    }
+    command(&mut w.rlva, A, "@addattach:spine=n");
+    let ids: Vec<_> = items.iter().map(|(id, _)| Uuid::from_u128(*id)).collect();
+    for replace_unlocked in [true, false] {
+        w.rlva.preferences.replace_unlocked = replace_unlocked;
+        let mut cmd = aurora_net::NetCommand::UpdateOutfit {
+            request: TARGET,
+            change: OutfitMutation {
+                folder: cof,
+                create: None,
+                cof: None,
+                links: ids
+                    .iter()
+                    .map(|id| OutfitLink {
+                        target: *id,
+                        name: String::new(),
+                        desc: String::new(),
+                        folder: false,
+                        inv_type: 18,
+                    })
+                    .collect(),
+            },
+        };
+        let dropped = w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
+        assert_eq!(dropped, [ids[0]]);
+        assert!(w.rlva_allows_command(&cmd, Uuid::nil()));
+        let action = Action::WearItems {
+            items: ids.clone(),
+            replace: true,
+            point: 0,
+        };
+        let mut attachments = attachments_for_action(&w.inventory, TARGET, &action);
+        assert_eq!(attachments.len(), 3);
+        assert!(
+            !w.rlva_allows_command(&aurora_net::NetCommand::RezAttachments(attachments.clone()), Uuid::nil()),
+            "the unfiltered rez is refused as a whole"
+        );
+        attachments.retain(|a| !dropped.contains(&a.item_id));
+        assert_eq!(attachments.iter().map(|a| a.item_id).collect::<Vec<_>>(), ids[1..]);
+        assert!(w.rlva_allows_command(&aurora_net::NetCommand::RezAttachments(attachments), Uuid::nil()));
+    }
+}
+
 fn chat(text: &str) -> ChatMessage {
     ChatMessage {
         from_name: "RLVa test object".to_owned(),

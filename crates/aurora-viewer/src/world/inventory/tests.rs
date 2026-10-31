@@ -328,11 +328,19 @@ fn root_support_folders_stay_in_place_but_can_still_be_deleted() {
         folder(id(9101), id(8001), "#RLV"),
         folder(id(9102), inv.root, "#Firestorm"),
         folder(id(9103), inv.root, "#rlv"),
+        InvFolder {
+            type_default: 48,
+            ..folder(id(9104), inv.root, "My Outfits")
+        },
+        folder(id(9105), inv.root, "Outfit"),
     ]);
+    assert!(move_selection(&inv, &[id(9105)], id(9104), &none, &none).is_ok());
     for pinned_id in [id(9100), id(9102)] {
         assert!(pinned(&inv, pinned_id));
         assert!(!relocatable(&inv, pinned_id, &none));
         assert!(move_selection(&inv, &[pinned_id], id(8001), &none, &none).is_err());
+        assert!(move_selection(&inv, &[pinned_id], id(9104), &none, &none).is_err());
+        assert!(ungroup(&inv, pinned_id, &none, &none).is_err());
         assert!(!paste_allowed(&inv, &[pinned_id], id(8001), true, false, &none, &none));
         assert!(
             move_selection(&inv, &[pinned_id], trash, &none, &none).is_ok(),

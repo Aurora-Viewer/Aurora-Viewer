@@ -1041,26 +1041,27 @@ impl World {
     /// through. A new body part does not displace a locked one of its type.
     /// With RLVaWearReplaceUnlocked off, an attachment replacing a locked one
     /// on its point is left out: RlvAttachmentLockWatchdog::onAttach
-    /// (rlvlocks.cpp) would detach it again.
-    pub fn rlva_prepare_outfit(&self, command: &mut aurora_net::NetCommand, actor: Uuid) {
+    /// (rlvlocks.cpp) would detach it again. Returns the new items left out,
+    /// so that the attachments rezzed after the change leave them out too.
+    pub fn rlva_prepare_outfit(&self, command: &mut aurora_net::NetCommand, actor: Uuid) -> Vec<Uuid> {
         if !self.rlva.enabled() || actor == super::watchdog::ACTOR {
-            return;
+            return Vec::new();
         }
         let aurora_net::NetCommand::UpdateOutfit { change, .. } = command else {
-            return;
+            return Vec::new();
         };
         let Some(cof) = appearance::cof(&self.inventory) else {
-            return;
+            return Vec::new();
         };
         let links = if change.folder == cof {
             &mut change.links
         } else if let Some((id, links)) = &mut change.cof {
             if *id != cof {
-                return;
+                return Vec::new();
             }
             links
         } else {
-            return;
+            return Vec::new();
         };
         let before = appearance::folder_links(&self.inventory, cof);
         let kept: Vec<_> = before
@@ -1079,6 +1080,7 @@ impl World {
                     }
             })
         };
+        let mut dropped = Vec::new();
         links.retain(|link| {
             if link.folder || before.iter().any(|old| old.target == link.target) {
                 return true;
@@ -1087,14 +1089,19 @@ impl World {
                 return true;
             };
             let slot = it.flags & 0xff;
-            self.rlva_can_add(it.id, 0, actor)
+            let wearable = self.rlva_can_add(it.id, 0, actor)
                 && match it.asset_type {
                     13 => !kept_slot(13, slot),
                     6 => self.rlva.preferences.replace_unlocked || slot == 0 || !kept_slot(6, slot),
                     _ => true,
-                }
+                };
+            if !wearable {
+                dropped.push(it.id);
+            }
+            wearable
         });
         links.extend(kept);
+        dropped
     }
 
     pub fn rlva_outfit_allowed(&self, before: &[OutfitLink], after: &[OutfitLink], actor: Uuid) -> bool {

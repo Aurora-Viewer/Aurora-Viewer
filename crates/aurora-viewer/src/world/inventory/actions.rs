@@ -239,7 +239,7 @@ pub fn move_selection(
     // LLFolderBridge::dragCategoryIntoFolder permits saved outfits and their
     // groups inside My Outfits, while ordinary item drops remain forbidden.
     if in_type(inv, to, 48) {
-        if !mutable(inv, to, protected) || ids.iter().any(|id| !movable(inv, *id, protected)) {
+        if !mutable(inv, to, protected) || ids.iter().any(|id| !relocatable(inv, *id, protected)) {
             return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-protected-system-or-worn-item").into());
         }
         return super::super::outfit_folders::move_into(inv, ids, to);
@@ -406,7 +406,7 @@ pub fn group(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>, worn: &Ha
 }
 pub fn ungroup(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Result<Mutation, String> {
     let f = inv.folders.get(&id).ok_or(aurora_i18n::tr!("common-folder-not-found"))?;
-    if f.state != FetchState::Fetched || !movable(inv, id, protected) {
+    if f.state != FetchState::Fetched || !relocatable(inv, id, protected) {
         return Err(aurora_i18n::tr!("world-inventory-actions-load-an-unprotected-folder-before-ungrouping-it").into());
     }
     let ids: Vec<_> = f.children.iter().chain(&f.items).copied().collect();
