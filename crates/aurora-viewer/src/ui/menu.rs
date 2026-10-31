@@ -459,14 +459,15 @@ fn row_lead_sensed(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: b
     // letters 0.6 px off its middle at 1.25
     let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(w, ROW_H.max((text_height + 6.0).ceil())), sense);
     // a filtered row lights up when the arrow keys or the pointer select it,
-    // so that only one row is lit; Enter clicks it
+    // so that only one row is lit; Enter clicks the row it was lit on, never
+    // also the one the pointer reaches in the same frame
     let hot = match keyed {
         Some(k) => {
             let selected = k.selected || (resp.hovered() && ui.input(|i| i.pointer.delta() != Vec2::ZERO) && point_row(k.index));
             if selected && k.scroll {
                 resp.scroll_to_me(None);
             }
-            if selected && k.activate {
+            if k.selected && k.activate {
                 resp.flags.insert(egui::response::Flags::FAKE_PRIMARY_CLICKED);
             }
             selected || open
@@ -1226,6 +1227,8 @@ struct SearchState {
     selected: usize,
     /// Selectable rows drawn on the last frame.
     count: usize,
+    /// The search field, whose focus the keys need.
+    field: Option<Id>,
 }
 
 thread_local! {
@@ -1335,15 +1338,18 @@ pub fn searchable(ui: &mut Ui, p: &Palette, body: impl FnOnce(&mut Ui)) {
     if opened {
         state = SearchState::default();
     }
-    // taken before the field sees them: a one-line field has no use for the
-    // arrows, and Enter would only drop its focus
-    let (down, up, enter) = if query_words(&state.query).is_empty() {
+    // taken before the field sees them, and only while it has the keyboard
+    // (Tab onto its clear button leaves Enter to that button): a one-line
+    // field has no use for the arrows, and Enter, even with nothing found,
+    // would only drop its focus
+    let focused = state.field.is_some_and(|f| ui.memory(|m| m.has_focus(f)));
+    let (down, up, enter) = if !focused || query_words(&state.query).is_empty() {
         (false, false, false)
     } else {
         ui.input_mut(|i| {
             let down = i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
             let up = i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
-            let enter = state.count > 0 && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
+            let enter = i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) && state.count > 0;
             (down, up, enter)
         })
     };
@@ -1353,6 +1359,7 @@ pub fn searchable(ui: &mut Ui, p: &Palette, body: impl FnOnce(&mut Ui)) {
     if opened {
         field.inner.request_focus();
     }
+    state.field = Some(field.inner.id);
     state.selected = if state.query == before {
         step_selection(state.selected, state.count, down, up)
     } else {
