@@ -174,6 +174,12 @@ are planned or in progress: they are not in the viewer yet.
   profiles and switch between them from Preferences or the FPS counter.
 - **HDR, or the older look**: the Legacy Viewer's HDR and Emissive switch,
   on by default, in Preferences › Graphics › Image.
+- **A real night sky**: the 8,920 stars you can see with the naked eye, in
+  their true places and colours, and the Milky Way, turning with the
+  region's day and following today's season. Choose where on Earth you look
+  up from (Paris, Tokyo, Sydney… or your own latitude) and how bright the
+  stars shine, in Preferences or Personal Lighting; the Legacy Viewer's
+  random stars stay one click away.
 
 ### The Second Life you know
 

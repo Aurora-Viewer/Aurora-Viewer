@@ -291,6 +291,9 @@ pub struct StarFrame {
     pub axes: [Vec3; 3],
     /// Strength of the Milky Way (0: none).
     pub milky_way: f32,
+    /// Brightness of the stars (Preferences, "Star brightness"; 1: the
+    /// catalogue's own).
+    pub gain: f32,
 }
 
 impl Default for StarFrame {
@@ -299,19 +302,20 @@ impl Default for StarFrame {
             catalogue: None,
             axes: [Vec3::X, Vec3::Y, Vec3::Z],
             milky_way: 0.0,
+            gain: 1.0,
         }
     }
 }
 
 impl StarFrame {
     /// The three `vec4` of the frame uniforms: the axes, then in w the
-    /// catalogue (-1: none), the Milky Way and 0.
+    /// catalogue (-1: none), the Milky Way and the stars' gain.
     pub fn uniform(&self) -> [[f32; 4]; 3] {
         let cat = self.catalogue.map_or(-1.0, |c| c as f32);
         [
             self.axes[0].extend(cat).to_array(),
             self.axes[1].extend(self.milky_way).to_array(),
-            self.axes[2].extend(0.0).to_array(),
+            self.axes[2].extend(self.gain).to_array(),
         ]
     }
 }
