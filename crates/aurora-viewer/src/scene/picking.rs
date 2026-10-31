@@ -780,8 +780,7 @@ impl Scene {
                     let Some(mask) = self.textures.pick_masks.get(&draw.tex_id) else {
                         return Some(hit);
                     };
-                    mask.hits(self.inventory_uv(world, o, &hit, (&geom, model), ray, now))
-                        .then_some(hit)
+                    mask.hits(self.inventory_uv(world, o, &hit, model, ray, now)).then_some(hit)
                 })
                 .min_by(|a, b| a.t.total_cmp(&b.t));
         }
@@ -966,17 +965,8 @@ impl Scene {
 
     /// Same coordinate conventions as object.wgsl, evaluated only for a hit
     /// with a resident alpha mask. Material clones contain fixed-size fields.
-    fn inventory_uv(
-        &self,
-        world: &World,
-        o: &Object,
-        hit: &pick::FaceHit,
-        geometry: (&GpuGeom, Mat4),
-        ray: (Vec3, Vec3),
-        now: Instant,
-    ) -> Vec2 {
+    fn inventory_uv(&self, world: &World, o: &Object, hit: &pick::FaceHit, model: Mat4, ray: (Vec3, Vec3), now: Instant) -> Vec2 {
         use aurora_render::tex_anim::{AnimClock, TexAnimParams, TexXform, clock_counter, frame_from_counter};
-        let (geom, model) = geometry;
         let tf = super::plants::plant_face(o).unwrap_or_else(|| o.te.as_ref().map(|te| *te.face(hit.face)).unwrap_or_default());
         let mut st = hit.uv;
         if tf.planar() {
@@ -994,7 +984,7 @@ impl Scene {
         let material = o.visual_material(hit.face);
         let pbr = material.is_some();
         let clock = AnimClock::new(o.tex_anim_clock.start);
-        let animated = tex_anim_record(o, hit.face, geom.pick_faces.len(), &tf, pbr, clock);
+        let animated = tex_anim_record(o, hit.face, &tf, pbr, clock);
         if let Some(anim) = animated
             && let Some(ta) = o.tex_anim
         {
@@ -2543,9 +2533,7 @@ pub(super) mod tests {
         let now = Instant::now();
         let model = Mat4::from_translation(world.objects.get(front).unwrap().position);
         let hit = scene.face_hit(&world, front, ray, now, true).unwrap();
-        let geom = scene.geom_ready(&scene.gpu[front].geom.unwrap()).unwrap();
-        let uv =
-            |world: &World, scene: &Scene| scene.inventory_uv(world, world.objects.get(front).unwrap(), &hit, (&geom, model), ray, now);
+        let uv = |world: &World, scene: &Scene| scene.inventory_uv(world, world.objects.get(front).unwrap(), &hit, model, ray, now);
         assert!((uv(&world, &scene) - Vec2::new(0.35, 0.65)).length() < 0.0001);
         Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].media_flags = 2;
         assert!((uv(&world, &scene) - Vec2::splat(0.8)).length() < 0.0001);
