@@ -9538,7 +9538,10 @@ impl App {
             ui::close_key::begin(ui.ctx());
             let t = Instant::now();
             let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
-            actions = self.draw_ui(ui, &projector, &gfx.renderer);
+            // A discarded pass (`request_discard`) is followed by one that
+            // gets no input events: what the first pass clicked must survive
+            // the second, or a click that changed a row's size is lost.
+            actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
             if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
@@ -15631,6 +15634,40 @@ struct UiActions {
     typing: Vec<NetCommand>,
     /// Gestures played from the conversations' field.
     gestures: Vec<uuid::Uuid>,
+}
+
+impl UiActions {
+    /// Adds a later egui pass's actions to the earlier ones'.
+    fn merge(&mut self, later: UiActions) {
+        fn first<T>(a: &mut Option<T>, b: Option<T>) {
+            if a.is_none() {
+                *a = b;
+            }
+        }
+        first(&mut self.exit, later.exit);
+        self.update_quit |= later.update_quit;
+        if !matches!(later.login, LoginAction::None) {
+            self.login = later.login;
+        }
+        first(&mut self.chat, later.chat);
+        if !matches!(later.bar, BarAction::None) {
+            self.bar = later.bar;
+        }
+        self.settings_changed |= later.settings_changed;
+        self.ui_scale_changed |= later.ui_scale_changed;
+        self.font_changed |= later.font_changed;
+        self.cancel_loading |= later.cancel_loading;
+        self.ims.extend(later.ims);
+        self.offer_tp.extend(later.offer_tp);
+        first(&mut self.landmark, later.landmark);
+        first(&mut self.audio, later.audio);
+        first(&mut self.ctx_action, later.ctx_action);
+        first(&mut self.object_confirm, later.object_confirm);
+        first(&mut self.set_display_name, later.set_display_name);
+        self.currency.extend(later.currency);
+        self.typing.extend(later.typing);
+        self.gestures.extend(later.gestures);
+    }
 }
 
 impl ApplicationHandler for App {
