@@ -140,18 +140,17 @@ gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
 
 `AURORA_DEMO_PORTALS=1` opens World > Portals with a fixed aperture four metres
 ahead and its destination, owner and access label. `near` spawns it around our
-avatar: standing inside and moving across it before leaving the 1 m clearance (3.5 m for another resident’s portal)
+avatar: standing inside and moving across it before leaving the 25 cm initial clearance
 must never teleport. `friends` previews a denied friends-only portal from a
 non-friend. Apertures use world depth, so walls hide them and their labels.
-`AURORA_DEMO_PORTALS=return|return-private` shows a personal return 15 cm behind the landed root, at its actual height, with two additional in-memory arrival relays; all three share one aperture, including private redaction on the wire. The paired endpoint is already open, and the arriving mesh starts within its reversible dissolution band.
 Ordinary creation accepts a same-grid place link or region coordinates; one
 portal per creator expires after two minutes. Another Aurora client needs the
-ready 1.37 bridge and scripts enabled to receive regional invitations.
+ready 1.40 bridge and scripts enabled to receive regional invitations.
 Human two-client grid checks: public crossing, friends/non-friends, selected
 group members/non-members, appearing on a stationary or moving avatar,
 leaving and returning, crossing from either side, closing/replacing/expiry,
 late arrival discovery, failed/restricted destinations and teleport cancellation.
-Cross a freshly placed portal without first retreating, then use its arrival return twice. Send several travelers through the same source: destination observers must see one aperture with one unchanged expiry, including late discovery. Private destination observers see a redacted label unless authorized; Friends grants come only from the original creator, while each traveler keeps a personal return. Verify no return is created after a failed, canceled or redirected-to-another-region teleport.
+Cross a freshly placed portal without first retreating. With solid support at most 2 m below arrival, both travelers and updated Aurora observers should see a temporary horizontal opening, the body and worn geometry falling out, then automatic closure. Repeat over a prim platform and with support farther than 2 m below (ordinary arrival without an opening). Walking beneath a closing arrival must never teleport back. Verify failed or canceled teleports never create an arrival effect.
 
 `AURORA_DEMO_PORTALS=drop-friends|drop-public|drop-friends-hover|drop-public-hover|drop-invalid|drop-focus`
 drags an inventory landmark over the world. Hover scenarios retain the cargo;
@@ -190,33 +189,36 @@ reordering visible portals must never replay the opening. The cloud and
 decorative edge must not expand the physical oval or write its contact depth.
 
 `AURORA_DEMO_PORTALS=private-friends-chat-allowed|private-friends-chat-denied|private-friends-keyboard-allowed|private-friends-keyboard-departing-allowed`
-holds the actual Forward arrow from frames 600 to 810 after the private peer
-exchange. Chat modes retain nearby-chat keyboard focus; keyboard mode leaves
-the scene focused. Use `AURORA_DEMO_POS=100,100`; the offline destination is
-the same plaza, so these exercise an immediate local teleport and create the
-real paired exit. Capture frames 690, 693, 696, 700 and 710 around arrival,
-then 840 or 1100 after walking out. The portal must not mask the followed
-avatar from its own camera; its rim/mist remain, and free cameras/observers
-still see the full surface.
-The authorized visitor must teleport in both focus modes; the denied visitor
-must walk through without teleporting. Logs record focus, effective controls,
-authorization, position and return journey. A refused crossing can be retried
-after the ordinary 1 m clearance. Newly placed portals require only 25 cm of
-initial clearance, including another resident's portal; the 600 ms observer
-appearance delay and deliberate plane crossing remain required. A portal
-placed directly on an avatar must not teleport them until they step outside
-the small clearance and cross back. Personal returns retain the 1 m guard.
-`private-friends-near-keyboard-allowed` puts the initial opening just 30 cm
-ahead and holds Forward from frame 600: the authorized visitor must teleport
-directly, without first walking away, and must not bounce back on arrival.
-`private-friends-near-keyboard-camera-allowed` also starts with an opposing
-camera orbit, disables both ordinary camera reset preferences and holds run.
-Capture 610, 630, 710 and 1100: the local arrival must immediately place the
-view behind the avatar, and continued Forward must move away from the return.
-The offline arrival log records camera heading alignment 1 and a negative
-behind offset. Ordinary teleports still respect their reset preference, and
-mouselook stays first person. On the grid, also hold mouse steering while
-running through a same-region portal; the arrival must not turn back into it.
+holds Forward from frames 600 to 810 after the authenticated private peer exchange.
+Granted visitors teleport; denied visitors walk through without teleporting.
+Nearby-chat focus must not block effective movement controls. The ordinary
+1 m retry guard follows a consumed crossing; newly placed portals require only
+25 cm of initial clearance and observers keep their 600 ms appearance delay.
+`private-friends-near-keyboard-allowed` places the source only 30 cm ahead.
+`private-friends-near-keyboard-camera-allowed` also starts with an opposing orbit,
+disables ordinary camera resets and holds run. Both arrive in the same plaza:
+with support within 2 m, a horizontal aperture opens above the landed root,
+the complete body and worn geometry fall through its dissolution front, then
+it closes. Translation pauses for that fall and resumes with the held key.
+Capture 610, 630, 660, 690, 710 and 1100. No return portal or return grant is
+created; walking or jumping beneath the arrival cannot teleport anyone.
+The camera stays behind the avatar; mouselook remains first person. Ordinary
+teleports retain their own reset preference.
+
+`AURORA_DEMO_PORTALS=arrival-drop|arrival-platform|arrival-sky|arrival-static`
+observes another resident's authenticated one-way arrival from frame 660.
+Use `AURORA_DEMO_POS=100,100`, a 60 FPS cap and captures 660, 680, 700, 710,
+720, 740, 760, 780 and 840. The aperture lies horizontally above the body,
+opens before the accelerated fall, closes after emergence and is gone by 840.
+Body, skinned mesh and the rigid hand accessory must move together; no avatar
+pieces or occluding depth remain after completion. Lifecycle logs report zero
+invitations throughout and zero effects at 840. `arrival-platform` adds a solid
+platform 3 m above terrain: support must come from the object, not the terrain.
+`arrival-sky` starts 3.01 m above support and must create no aperture or fall.
+`arrival-static` checks reduced motion without visual drop or input pause.
+The typed arrival message contains only visible landing geometry and a finite
+clock; replay cannot restart it or select another avatar. Test with two Aurora
+viewers on the grid, including a private source and a floor made of prims.
 `keyboard-departing-allowed` starts the creator's teleport when the access
 request arrives, then changes their region after the grant is sent: the
 visitor must still receive the destination and teleport without chat focus.
@@ -267,26 +269,17 @@ the physical crossing opening or the depth-contact mask. The same band and glow
 must work with the ordinary loading rez effect enabled or disabled.
 
 `AURORA_DEMO_PORTALS=slice-local-teleport|slice-local-teleport-reverse|slice-local-teleport-terse` observes
-another avatar enter a source and jump to its paired exit about four metres
+another avatar enter a source and jump to its landing point about four metres
 away at frame 900, through full or terse simulator reports. Capture 899, 900,
 901, 905 and 990: neither body nor attachments may glide across the space
-between the openings, and the arrival must start its own progressive emergence.
+between departure and landing; the temporary horizontal arrival opens and closes.
 The offline log reports a new placement serial and a zero arrival-position gap.
 The reverse view observes departure from the other side of the source.
 Normal walking/running and small simulator corrections must remain smooth.
 On the grid, use two Aurora viewers in the same region: one crosses, the other
 watches departure and arrival, including a private portal without destination
 access. Repeat after placing the portal 30–50 cm ahead; no preliminary retreat
-should be required. Arrival must not immediately teleport the traveler back.
-
-`AURORA_DEMO_PORTALS=slice-exit|slice-exit-reverse|slice-exit-still` shows an
-observed traveler at a paired arrival endpoint. Capture frames 780, 795, 810,
-840, 900 and 990: body, skinned mesh and rigid attachment must restore as they
-move outward from 15 cm off the plane. The paired endpoint is already open.
-The still variant stays partly dissolved until it moves; no reveal timer may
-finish a stationary body's traversal. On the grid, verify both travelers and
-observers, redirected landing heights, a second traveler using the same aperture,
-and no immediate return teleport before leaving and deliberately walking back.
+should be required. The temporary arrival must never offer a return traversal.
 
 `AURORA_TEST_NEUTRAL_POSE=1`: exposes "Neutral pose — local test" in
 Appearance › Hover Height, initially off. Our avatar starts with normal

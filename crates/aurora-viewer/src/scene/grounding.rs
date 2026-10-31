@@ -32,6 +32,9 @@ impl Scene {
 
     pub(super) fn grounding_frame(&self, world: &World, idx: usize, now: Instant) -> Option<Frame> {
         let object = world.objects.get(idx)?;
+        if world.portals.arrivals.get(&object.full_id).is_some_and(|e| !e.finished(now)) {
+            return None;
+        }
         let own = object.full_id == world.agent_id;
         let standing_anchor = own && self.ground_feet_native_stand && world.agent.ground_sit && !world.agent.seated;
         if !self.ground_avatar_feet
@@ -74,6 +77,9 @@ impl Scene {
 
     pub(super) fn legacy_grounding_frame(&self, world: &World, idx: usize, now: Instant) -> Option<Frame> {
         let object = world.objects.get(idx)?;
+        if world.portals.arrivals.get(&object.full_id).is_some_and(|e| !e.finished(now)) {
+            return None;
+        }
         let own = object.full_id == world.agent_id;
         let standing_anchor = own && self.ground_feet_native_stand && world.agent.ground_sit && !world.agent.seated;
         if !object.is_avatar()

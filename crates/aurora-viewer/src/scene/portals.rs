@@ -148,7 +148,7 @@ impl Portals {
                 .iter()
                 .any(|entry| entry.owner == owner && entry.portal.id == id && entry.portal.region == region)
         });
-        if world.portals.visible(world).next().is_some() && self.mesh.is_none() {
+        if (world.portals.visible(world).next().is_some() || !world.portals.arrivals.is_empty()) && self.mesh.is_none() {
             let (vertices, indices) = portal_mesh();
             self.mesh = renderer.upload_mesh(&vertices, &indices);
         }
@@ -159,8 +159,8 @@ impl Portals {
         for entry in world.portals.visible(world) {
             let portal = &entry.portal;
             let center = Vec3::from(portal.center);
-            // A near-plane arrival puts the follow camera behind the exit.
-            // Keep its mist/rim, but let the traveler see their body and path.
+            // Keep the source mist/rim when it lies between the follow
+            // camera and its avatar, without hiding their body and path.
             let normal = Vec3::new(portal.yaw.cos(), portal.yaw.sin(), 0.0);
             let core = !(follow_avatar && blocks_avatar(center, normal, eye, world.agent.position));
             let allowed = entry.allowed(world);
@@ -168,9 +168,7 @@ impl Portals {
                 &mut self.births,
                 (entry.owner, portal.id, portal.region),
                 renderer.anim_clock().ms(std::time::Instant::now()),
-                // A paired endpoint already exists logically: show the exit
-                // immediately so its opening never hides the emerging body.
-                animate && portal.creator.is_none(),
+                animate,
             );
             let rgba = |color: egui::Color32| color.to_srgba_unmultiplied().map(|value| value as f32 / 255.0);
             let accent = |color| rgba(if allowed { color } else { palette.muted });
@@ -214,6 +212,56 @@ impl Portals {
                     bounds: [0.0; 4],
                 },
             ));
+        }
+        let now = std::time::Instant::now();
+        if !world.photo_isolation.applied() {
+            for effect in world.portals.arrivals.values() {
+                let scale = if animate { effect.scale(now) } else { 1.0 };
+                if effect.finished(now) || scale <= 0.001 {
+                    continue;
+                }
+                let center = effect.center();
+                let rgba = |color: egui::Color32| color.to_srgba_unmultiplied().map(|v| v as f32 / 255.0);
+                let record = DrawRecord {
+                    model: Mat4::from_scale_rotation_translation(
+                        Vec3::splat(scale),
+                        Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                        center,
+                    )
+                    .to_cols_array_2d(),
+                    base_color: rgba(palette.violet),
+                    emissive: rgba(palette.teal),
+                    spec_color: rgba(palette.indigo_light),
+                    legacy: rgba(palette.navy),
+                    params: [0.0, if animate { 1.0 } else { 0.0 }, 1.0, 1.0],
+                    flags: [
+                        flags::FULLBRIGHT | flags::ALPHA_BLEND | flags::DOUBLE_SIDED | flags::PORTAL_EFFECT,
+                        0,
+                        effect.event.id.as_u128() as u16 as u32,
+                        renderer.anim_clock().ms(now).wrapping_sub(8000),
+                    ],
+                    ..Default::default()
+                };
+                let slot = if let Some(&slot) = self.records.get(used) {
+                    renderer.records.set_if_changed(slot, record);
+                    slot
+                } else {
+                    let slot = renderer.records.alloc(record);
+                    self.records.push(slot);
+                    slot
+                };
+                used += 1;
+                self.cmds.push((
+                    eye.distance(center),
+                    DrawCmd {
+                        index_count: mesh.index_count,
+                        first_index: mesh.index_offset,
+                        base_vertex: mesh.vertex_offset as i32,
+                        record: slot,
+                        bounds: [0.0; 4],
+                    },
+                ));
+            }
         }
         for slot in self.records.drain(used..) {
             renderer.records.free(slot);
@@ -288,7 +336,7 @@ impl super::Scene {
     pub fn update_portal_clipping(&mut self, renderer: &mut Renderer, world: &World) {
         static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let enabled = *ENABLED.get_or_init(|| std::env::var("AURORA_PORTAL_CLIP").as_deref() != Ok("0"));
-        if !enabled || world.portals.entries.is_empty() {
+        if !enabled || (world.portals.entries.is_empty() && world.portals.arrivals.is_empty() && !world.portals.awaiting_floor) {
             self.portals.clipping.clear();
             self.portals.planes.clear();
         } else {
@@ -296,6 +344,7 @@ impl super::Scene {
                 .portals
                 .entries
                 .iter()
+                .filter(|entry| entry.portal.creator.is_none())
                 .map(|entry| clipping::Aperture {
                     key: clipping::Key(entry.owner, entry.portal.id, entry.portal.region),
                     center: Vec3::from(entry.portal.center),
@@ -308,6 +357,16 @@ impl super::Scene {
                 if let Some(object) = world.objects.get(index)
                     && let Some((root, rotation, false)) = super::Scene::object_transform(world, index, std::time::Instant::now(), 0)
                 {
+                    let physical = super::Scene::object_transform_unshifted(world, index, std::time::Instant::now()).map(|x| x.0);
+                    if world
+                        .portals
+                        .arrivals
+                        .get(&object.full_id)
+                        .is_some_and(|e| physical.is_some_and(|p| e.matches(p)))
+                    {
+                        self.portals.clipping.forget(object.full_id);
+                        continue;
+                    }
                     owners.insert(index, avatars.len());
                     avatars.push(clipping::Avatar {
                         id: object.full_id,
@@ -332,6 +391,25 @@ impl super::Scene {
                 }
             }
             self.portals.planes = self.portals.clipping.update(&portals, &avatars);
+            if world.portals.awaiting_floor
+                && let Some(index) = world.objects.index_of_uuid(&world.agent_id)
+            {
+                self.portals.clipping.forget(world.agent_id);
+                self.portals.planes.insert(index, PortalClip::hidden());
+            }
+            if !world.portals.reduced_motion {
+                let now = std::time::Instant::now();
+                for (index, _) in self.list_index.with(super::list_index::AVATAR) {
+                    if let Some(object) = world.objects.get(index)
+                        && let Some(effect) = world.portals.arrivals.get(&object.full_id)
+                        && let Some((root, _, _)) = super::Scene::object_transform_unshifted(world, index, now)
+                        && effect.matches(root)
+                        && let Some(clip) = effect.clip(now)
+                    {
+                        self.portals.planes.insert(index, clip);
+                    }
+                }
+            }
         }
         if self.portals.planes.is_empty() && self.portals.clipped.is_empty() {
             return;

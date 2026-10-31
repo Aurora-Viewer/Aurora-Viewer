@@ -40,6 +40,16 @@ pub(super) fn fixture() -> (World, State) {
 }
 
 #[test]
+fn legacy_return_announcements_are_neither_shown_nor_traversable() {
+    let (world, mut state) = fixture();
+    let mut p = portal().announcement();
+    p.creator = Some(Uuid::from_u128(2));
+    state.receive(&world, &wire(Uuid::from_u128(3), Message::Open(p)), Instant::now(), 1000);
+    assert!(state.entries.is_empty());
+    assert_eq!(state.visible(&world).count(), 0);
+}
+
+#[test]
 fn observer_portal_placements_snap_full_and_terse_reports_even_without_private_details() {
     use aurora_net::{NetEvent, objects::TerseUpdate};
     for terse in [false, true] {
@@ -199,170 +209,6 @@ fn portal_can_be_entered_immediately_from_nearby_and_after_a_distant_stall() {
         assert!(!gate.sample(&p, point(0.4), true, at));
         assert!(gate.sample(&p, point(-0.4), true, at + Duration::from_millis(100)));
     }
-}
-
-#[test]
-fn a_near_plane_arrival_does_not_bounce_before_leaving_the_return_aperture() {
-    let p = portal().announcement();
-    let now = Instant::now();
-    let mut gate = Gate::arrival(Vec3::from(p.center), point(-0.15), now);
-    assert!(!gate.armed);
-    // A landing correction can straddle the plane before we walk out.
-    for (i, x) in [0.1, -0.3, -1.2, -0.4].into_iter().enumerate() {
-        assert!(!gate.sample(&p, point(x), true, now + Duration::from_millis((i as u64 + 1) * 100)));
-    }
-    assert!(gate.armed);
-    assert!(gate.sample(&p, point(0.2), true, now + Duration::from_millis(500)));
-}
-
-#[test]
-fn portal_return_arrivals_share_one_aperture_and_preserve_the_observers_gate() {
-    let (mut observer, mut state) = fixture();
-    let now = Instant::now();
-    let creator = Uuid::from_u128(20);
-    let mut announcement = portal().announcement();
-    announcement.creator = Some(creator);
-    observer.agent.position = point(0.0);
-    for peer in [2, 3, 4] {
-        state.receive(
-            &observer,
-            &wire(Uuid::from_u128(peer), Message::Open(announcement.clone())),
-            now,
-            1000,
-        );
-    }
-    assert_eq!(state.entries.len(), 1);
-    assert_eq!(state.entries[0].owner, creator);
-    assert_eq!(state.entries[0].relays.len(), 3);
-    assert!(state.entries[0].waiting_for_clearance());
-    state.receive(
-        &observer,
-        &wire(
-            Uuid::from_u128(2),
-            Message::Close {
-                region: 256,
-                id: announcement.id,
-            },
-        ),
-        now,
-        1000,
-    );
-    assert_eq!(state.entries.len(), 1, "one departing relay does not close the shared return");
-    assert!(state.share_return(portal(), creator, observer.agent.position, now, 1000));
-    assert_eq!(state.entries.len(), 1);
-    assert!(
-        state.entries[0].waiting_for_clearance(),
-        "a new arrival does not rearm the observer"
-    );
-    state.receive(&observer, &wire(Uuid::from_u128(5), Message::Discover { region: 256 }), now, 1000);
-    assert!(
-        state
-            .out
-            .iter()
-            .any(|(peer, m)| *peer == Uuid::from_u128(5) && matches!(m, Message::Open(_)))
-    );
-}
-
-#[test]
-fn private_return_preserves_travelers_rights_without_granting_the_relays_friends() {
-    let (mut traveler, mut state) = fixture();
-    let now = Instant::now();
-    let creator = Uuid::from_u128(20);
-    let stranger = Uuid::from_u128(3);
-    traveler.social.form_friendship(stranger);
-    let p = Portal {
-        access: Access::Friends,
-        ..portal()
-    };
-    assert!(state.share_return(p.clone(), creator, traveler.agent.position, now, 1000));
-    assert!(state.entries[0].allowed(&traveler), "the traveler retains a personal return");
-    assert!(state.entries[0].portal.destination.is_none());
-    for peer in [creator, stranger] {
-        state.receive(
-            &traveler,
-            &wire(
-                peer,
-                Message::Request {
-                    region: 256,
-                    id: p.id,
-                    nonce: peer,
-                },
-            ),
-            now,
-            1000,
-        );
-    }
-    state.update(&traveler, Vec3::ZERO, now);
-    let grants: Vec<_> = state
-        .out
-        .iter()
-        .filter_map(|(peer, m)| matches!(m, Message::Details { .. }).then_some(*peer))
-        .collect();
-    assert_eq!(grants, [creator]);
-    assert!(
-        state
-            .out
-            .iter()
-            .all(|(peer, m)| !peer.is_nil() || !matches!(m, Message::Details { .. }))
-    );
-}
-
-#[test]
-fn private_return_details_require_the_original_creator_and_can_arrive_after_other_travelers() {
-    let (mut observer, mut state) = fixture();
-    let now = Instant::now();
-    let creator = Uuid::from_u128(20);
-    let relay = Uuid::from_u128(2);
-    observer.social.form_friendship(creator);
-    let p = Portal {
-        access: Access::Friends,
-        ..portal()
-    };
-    let mut announcement = p.announcement();
-    announcement.creator = Some(creator);
-    state.receive(&observer, &wire(relay, Message::Open(announcement.clone())), now, 1000);
-    assert_eq!(state.entries[0].label_owner(), relay, "a creator claim cannot impersonate its name");
-    state.update(&observer, Vec3::ZERO, now);
-    let nonce = state.fetches[&(relay, p.id)].nonce;
-    state.receive(
-        &observer,
-        &wire(
-            relay,
-            Message::Details {
-                region: 256,
-                id: p.id,
-                nonce,
-                details: p.details(),
-            },
-        ),
-        now,
-        1000,
-    );
-    assert!(
-        state.entries[0].details.is_none(),
-        "a relayed creator claim does not prove friendship"
-    );
-    state.receive(&observer, &wire(creator, Message::Open(announcement)), now, 1000);
-    assert_eq!(state.entries[0].label_owner(), creator);
-    state.update(&observer, Vec3::ZERO, now + Duration::from_millis(250));
-    let nonce = state.fetches[&(creator, p.id)].nonce;
-    state.receive(
-        &observer,
-        &wire(
-            creator,
-            Message::Details {
-                region: 256,
-                id: p.id,
-                nonce,
-                details: p.details(),
-            },
-        ),
-        now,
-        1000,
-    );
-    assert_eq!(state.entries.len(), 1);
-    assert!(state.entries[0].allowed(&observer));
-    assert_eq!(state.entries[0].resolved(), Some(p));
 }
 
 #[test]

@@ -214,10 +214,15 @@ impl PortalClip {
     }
 
     pub fn new(center: Vec3, normal: Vec3) -> Option<Self> {
-        if !center.is_finite() || !normal.is_finite() || normal.z.abs() > 1e-5 {
+        if !center.is_finite() || !normal.is_finite() {
             return None;
         }
         let normal = normal.try_normalize()?;
+        if normal.z.abs() > 1e-5 {
+            return (normal.x.abs() < 1e-5 && normal.y.abs() < 1e-5).then_some(Self {
+                data: center.extend(normal.z.signum() * 4.0).to_array(),
+            });
+        }
         let mut direction = normal.y / (normal.x.abs() + normal.y.abs());
         if normal.x < 0.0 {
             direction = if normal.y < 0.0 { -1.0 } else { 1.0 } * (2.0 - direction.abs());
@@ -232,6 +237,9 @@ impl PortalClip {
             return Vec3::ZERO;
         }
         let code = self.data[3];
+        if code.abs() == 4.0 {
+            return Vec3::Z * code.signum();
+        }
         let y = if code.abs() > 1.0 {
             code.signum() * (2.0 - code.abs())
         } else {
@@ -255,8 +263,13 @@ impl PortalClip {
             return true;
         }
         // Portal-local tangent/height, independent of camera, time and depth.
-        let x = local.dot(Vec3::new(-normal.y, normal.x, 0.0)) * PORTAL_DISSOLVE_CELLS_PER_METER;
-        let y = local.z * PORTAL_DISSOLVE_CELLS_PER_METER;
+        let (x, y) = if normal.z.abs() > 0.5 {
+            (local.x, local.y)
+        } else {
+            (local.dot(Vec3::new(-normal.y, normal.x, 0.0)), local.z)
+        };
+        let x = x * PORTAL_DISSOLVE_CELLS_PER_METER;
+        let y = y * PORTAL_DISSOLVE_CELLS_PER_METER;
         let cell = [x.floor() as i32, y.floor() as i32];
         let smooth = |t: f32| t * t * (3.0 - 2.0 * t);
         let u = smooth(x - x.floor());
@@ -330,7 +343,8 @@ pub struct DrawRecord {
     /// its own in the 4 bits above (0: the frame's), z and w the world
     /// height of the object's bottom and its height (f32 bits).
     pub rez: [u32; 4],
-    /// Traveler dissolution: center.xyz and horizontal entry direction, or
+    /// Traveler dissolution: center.xyz and horizontal entry direction,
+    /// +/-4 for an upward/downward normal, or
     /// PORTAL_HIDDEN after the whole mesh has crossed.
     /// Only active with PORTAL_CLIP; zero is also a valid opening at the origin.
     pub portal_clip: [f32; 4],
@@ -1947,7 +1961,9 @@ mod tests {
         }
         assert_eq!(PortalClip::new(Vec3::NAN, Vec3::X), None);
         assert_eq!(PortalClip::new(Vec3::ZERO, Vec3::ZERO), None);
-        assert_eq!(PortalClip::new(Vec3::ZERO, Vec3::Z), None);
+        assert_eq!(PortalClip::new(Vec3::ZERO, Vec3::new(1.0, 0.0, 1.0)), None);
+        assert_eq!(PortalClip::new(Vec3::ZERO, Vec3::Z).unwrap().normal(), Vec3::Z);
+        assert_eq!(PortalClip::new(Vec3::ZERO, Vec3::NEG_Z).unwrap().normal(), Vec3::NEG_Z);
         assert_eq!(PortalClip::new(Vec3::ZERO, Vec3::X).unwrap().data, [0.0; 4]);
     }
 

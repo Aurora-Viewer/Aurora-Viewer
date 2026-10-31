@@ -6838,6 +6838,16 @@ impl App {
             }
             s.get_or_insert(now).elapsed().as_secs_f32() < NUDGE_TIME
         };
+        if self.world.portals.arrival_hold(self.world.agent_id, self.world.agent.position, now)
+            || (!self.settings.reduce_motion && self.portal_journey.as_ref().is_some_and(|journey| journey.arrival_pending(now)))
+        {
+            i.forward = false;
+            i.back = false;
+            i.strafe_left = false;
+            i.strafe_right = false;
+            i.up = false;
+            i.down = false;
+        }
         i.nudge_fb = since(&mut self.fb_since, i.forward || i.back) && !self.mouse_walks();
         i.nudge_lr = since(&mut self.lr_since, i.strafe_left || i.strafe_right);
         // Native joystick translation uses moveAt/moveLeft, without the

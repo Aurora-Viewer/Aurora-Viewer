@@ -32,14 +32,17 @@ fn portal_dissolve_keeps(clip: vec4<f32>, position: vec3<f32>) -> bool {
     let code = clip.w;
     if (code == PORTAL_HIDDEN) { return false; }
     let y = select(code, sign(code) * (2.0 - abs(code)), abs(code) > 1.0);
-    let normal = normalize(vec2<f32>(1.0 - abs(code), y));
+    var normal = vec3<f32>(normalize(vec2<f32>(1.0 - abs(code), y)), 0.0);
+    if (abs(code) == 4.0) { normal = vec3<f32>(0.0, 0.0, sign(code)); }
     let local = position - clip.xyz;
-    let distance = dot(local.xy, normal);
+    let distance = dot(local, normal);
     if (distance <= 0.0) { return false; }
     if (distance >= PORTAL_DISSOLVE_WIDTH) { return true; }
     // Tangent/height only: advancing through the front cannot change the
     // noise threshold and make already vanished pieces flicker back on.
-    let q = vec2<f32>(dot(local.xy, vec2<f32>(-normal.y, normal.x)), local.z) * PORTAL_DISSOLVE_CELLS_PER_METER;
+    var surface = vec2<f32>(dot(local.xy, vec2<f32>(-normal.y, normal.x)), local.z);
+    if (abs(code) == 4.0) { surface = local.xy; }
+    let q = surface * PORTAL_DISSOLVE_CELLS_PER_METER;
     let cell = vec2<i32>(floor(q));
     let f = fract(q);
     let u = f * f * (vec2<f32>(3.0) - 2.0 * f);

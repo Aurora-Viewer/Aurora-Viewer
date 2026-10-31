@@ -1928,12 +1928,13 @@ const HEAD_HEIGHT: f32 = 0.7;
 /// Our avatar's root, position and seat this frame.
 fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame {
     let agent = &world.agent;
+    let arriving = agent.position + Vec3::Z * world.portals.arrival_offset(world.agent_id, agent.position, now);
     let fallback = AvatarFrame {
-        root: agent.position,
-        position: agent.position,
-        follow_root: agent.position,
+        root: arriving,
+        position: arriving,
+        follow_root: arriving,
         rotation: None,
-        render_root: agent.position,
+        render_root: arriving,
         render_rotation: Quat::from_rotation_z(agent.yaw),
         seat: None,
     };
@@ -1957,7 +1958,7 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
     let shape = world.avatar_shape_dz.get(&id).copied().unwrap_or(0.0);
     let hover = if s.hover_affects_camera { world.appearance_hover(&id) } else { 0.0 };
     let axis = if seat.is_some() { rotation * Vec3::Z } else { Vec3::Z };
-    let position = position + Vec3::Z * world.water_visual_dz(&id);
+    let position = position + Vec3::Z * (world.water_visual_dz(&id) + world.portals.arrival_offset(id, position, now));
     let root = position + axis * (shape + hover);
     AvatarFrame {
         root,
@@ -2629,6 +2630,26 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn arrival_framing_follows_the_fall_without_moving_the_simulator_position() {
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        world.agent_id = Uuid::from_u128(1);
+        world.main_region = Some(256);
+        let mut portals = std::mem::take(&mut world.portals);
+        portals.sync(&world, None, crate::world::portals::unix_time());
+        let now = Instant::now();
+        let physical = world.agent.position;
+        assert!(portals.begin_arrival(physical, physical.z - 0.84, 1.8, now));
+        world.portals = portals;
+        let settings = CameraSettings::default();
+        let first = avatar_frame(&world, &settings, now);
+        assert!(first.root.z > physical.z + 2.0);
+        let last = avatar_frame(&world, &settings, now + std::time::Duration::from_secs(3));
+        assert_eq!(last.root, physical);
+        assert_eq!(world.agent.position, physical);
+        assert!(world.portals.entries.is_empty());
     }
 
     #[test]

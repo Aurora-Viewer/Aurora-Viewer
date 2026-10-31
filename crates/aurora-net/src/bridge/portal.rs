@@ -8,6 +8,53 @@ pub const LIFETIME: u64 = 120;
 pub const CLOCK_SKEW: u64 = 30;
 pub const MAX_WIRE: usize = 640;
 
+/// A short, one-way arrival effect. Identity always comes from the relay,
+/// never from this payload; no destination or return permission is carried.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Arrival {
+    pub id: Uuid,
+    pub region: u64,
+    pub position: [f32; 3],
+    pub floor: f32,
+    pub height: f32,
+    pub starts: u64,
+}
+
+impl Arrival {
+    pub fn valid(&self) -> bool {
+        !self.id.is_nil()
+            && self.region != 0
+            && self.starts > 0
+            && self.position.iter().all(|v| v.is_finite())
+            && (0.0..=8192.0).contains(&self.position[0])
+            && (0.0..=8192.0).contains(&self.position[1])
+            && (0.0..=4096.0).contains(&self.position[2])
+            && self.floor.is_finite()
+            && (0.0..=2.0).contains(&(self.position[2] - self.floor))
+            && self.height.is_finite()
+            && (0.5..=8.0).contains(&self.height)
+    }
+
+    pub fn fall_seconds(&self) -> f32 {
+        (2.0 * self.drop_height() / 9.81).sqrt()
+    }
+    pub fn drop_height(&self) -> f32 {
+        self.height + 1.0
+    }
+    pub fn fall_end(&self) -> f32 {
+        0.25 + self.fall_seconds()
+    }
+    pub fn duration(&self) -> f32 {
+        self.fall_end() + 0.45
+    }
+    pub fn live(&self, now: u64) -> bool {
+        self.valid()
+            && self.starts <= now.saturating_add(2000)
+            && now < self.starts.saturating_add((self.duration() * 1000.0).ceil() as u64)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Access {
     #[default]
@@ -131,6 +178,7 @@ impl Portal {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Message {
+    Arrival(Arrival),
     Open(Announcement),
     Close {
         region: u64,
@@ -155,6 +203,7 @@ pub enum Message {
 impl Message {
     pub fn region(&self) -> u64 {
         match self {
+            Self::Arrival(a) => a.region,
             Self::Open(p) => p.region,
             Self::Close { region, .. } | Self::Discover { region } | Self::Request { region, .. } | Self::Details { region, .. } => *region,
         }
@@ -176,6 +225,7 @@ impl Message {
     fn valid(&self) -> bool {
         self.region() != 0
             && match self {
+                Self::Arrival(a) => a.valid(),
                 Self::Open(p) => p.valid(),
                 Self::Close { id, .. } => !id.is_nil(),
                 Self::Discover { .. } => true,
@@ -190,6 +240,27 @@ impl Message {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_way_arrival_wire_has_no_destination_or_avatar_selector_and_is_time_bounded() {
+        let arrival = Arrival {
+            id: Uuid::from_u128(17),
+            region: 256,
+            position: [10.0, 12.0, 25.0],
+            floor: 24.0,
+            height: 1.8,
+            starts: 1000,
+        };
+        let message = Message::Arrival(arrival.clone());
+        let wire = message.encode().unwrap();
+        assert_eq!(Message::decode(&wire), Some(message));
+        let json = String::from_utf8(STANDARD.decode(&wire).unwrap()).unwrap();
+        assert!(!json.contains("destination"));
+        assert!(!json.contains("owner"));
+        assert!(arrival.live(1000));
+        assert!(!arrival.live(6000));
+        assert!(!Arrival { floor: 22.9, ..arrival }.valid());
+    }
 
     pub fn sample() -> Portal {
         Portal {

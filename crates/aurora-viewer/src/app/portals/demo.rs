@@ -19,6 +19,132 @@ fn drop_mode() -> Option<&'static str> {
 }
 
 impl App {
+    pub(in crate::app) fn arrival_portal_demo(&mut self, mode: &str) -> bool {
+        if !mode.starts_with("arrival-") {
+            return false;
+        }
+        let point = self.world.agent.position + self.world.agent.forward() * 4.0;
+        let terrain = self.world.ground_height(point).unwrap_or(point.z - 0.84);
+        let handle = self.world.main_region.unwrap_or(256);
+        if mode == "arrival-platform" && self.frame_count == 420 {
+            let mut platform = crate::demo::action_avatar(false);
+            platform.full_id = uuid::Uuid::from_u128(77701);
+            platform.local_id = 77701;
+            platform.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+            platform.volume = aurora_prim::VolumeParams::default();
+            platform.parent_id = 0;
+            platform.state = 0;
+            platform.position = point.with_z(terrain + 2.5);
+            platform.scale = Vec3::new(4.0, 4.0, 1.0);
+            platform.rotation = glam::Quat::IDENTITY;
+            platform.update_flags = 0;
+            platform.extra = Default::default();
+            self.world.apply(NetEvent::ObjectUpdates {
+                handle,
+                objects: vec![platform],
+            });
+        }
+        if !self.portal_ui.demo_seeded && self.frame_count >= 660 {
+            self.portal_ui.demo_seeded = true;
+            self.portal_ui.open = false;
+            self.panels.chat = false;
+            self.panels.people = false;
+            self.panels.inventory = false;
+            self.panels.appearance = false;
+            self.settings.reduce_motion = mode == "arrival-static";
+            self.world.portals.reduced_motion = self.settings.reduce_motion;
+            let floor = self.scene.preview_floor(&self.world, point, terrain + 4.0).unwrap_or(terrain);
+            let mut peer = crate::demo::poser::peer();
+            peer.position = point.with_z(floor + if mode == "arrival-sky" { 3.01 } else { 0.84 });
+            peer.velocity = Vec3::ZERO;
+            peer.acceleration = Vec3::ZERO;
+            let (id, local, root, height) = (peer.full_id, peer.local_id, peer.position, peer.scale.z.clamp(0.5, 8.0));
+            self.world.apply(NetEvent::ObjectUpdates {
+                handle,
+                objects: vec![peer],
+            });
+            for (animation, clip) in crate::demo::link::animations() {
+                self.scene.anims.insert(
+                    animation,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(clip, &self.world.avatar_lib.rig)),
+                );
+            }
+            if let Some(NetEvent::Appearance(mut appearance)) =
+                crate::demo::classic_events(&self.world.avatar_lib.shape_params).into_iter().next()
+            {
+                appearance.avatar_id = id;
+                self.world.apply(NetEvent::Appearance(appearance));
+            }
+            self.world.apply(NetEvent::AvatarAnimations {
+                avatar: id,
+                anims: vec![(crate::own_motion::ANIM_STAND, 1)],
+                sources: Vec::new(),
+            });
+            if let Some(gfx) = &mut self.gfx {
+                self.scene.install_demo_animesh(&mut gfx.renderer);
+            }
+            for event in crate::demo::own_rigged_events(local) {
+                self.world.apply(event);
+            }
+            let mut worn = crate::demo::action_avatar(false);
+            worn.full_id = uuid::Uuid::from_u128(0xA077_A11A);
+            worn.local_id = 9728;
+            worn.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+            worn.parent_id = local;
+            worn.state = 0x60;
+            worn.position = Vec3::ZERO;
+            worn.scale = Vec3::new(1.2, 0.12, 0.12);
+            self.world.apply(NetEvent::ObjectUpdates {
+                handle,
+                objects: vec![worn],
+            });
+            let event = aurora_net::bridge::portal::Arrival {
+                id: uuid::Uuid::new_v4(),
+                region: handle,
+                position: root.to_array(),
+                floor,
+                height,
+                starts: crate::world::portals::arrival::unix_millis() + 250,
+            };
+            let opened = event.valid();
+            if let Some(wire) = aurora_net::bridge::portal::Message::Arrival(event).encode() {
+                let mut state = std::mem::take(&mut self.world.portals);
+                state.receive(
+                    &self.world,
+                    &format!("<auroraPortal>{id}|{wire}</auroraPortal>"),
+                    Instant::now(),
+                    unix_time(),
+                );
+                self.world.portals = state;
+            }
+            log::info!("portal arrival demo: mode {mode}, opened {opened}, floor {floor}, terrain {terrain}, root {root:?}");
+        }
+        if self.portal_ui.demo_seeded {
+            let root = self
+                .world
+                .objects
+                .index_of_uuid(&crate::demo::poser::PEER)
+                .and_then(|i| self.world.objects.get(i))
+                .map_or(point, |o| o.position);
+            self.camera.set_view(
+                root + Vec3::new(-4.0, -5.0, 3.0),
+                root + Vec3::Z * 1.1,
+                &mut self.world.agent,
+                &self.settings.camera,
+            );
+            if [700, 740, 840].contains(&self.frame_count) {
+                log::info!(
+                    "portal arrival lifecycle: frame {}, effects {}, entries {}, offset {}",
+                    self.frame_count,
+                    self.world.portals.arrivals.len(),
+                    self.world.portals.entries.len(),
+                    self.world.portals.arrival_offset(crate::demo::poser::PEER, root, Instant::now())
+                );
+            }
+        }
+        true
+    }
+
     pub(in crate::app) fn seed_portal_drop_demo(&mut self) -> bool {
         let Some(mode) = drop_mode().filter(|_| self.demo) else {
             return false;

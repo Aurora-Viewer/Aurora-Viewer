@@ -3,68 +3,44 @@ use crate::world::portals::unix_time;
 use aurora_net::bridge::portal::{Access, LIFETIME, Portal};
 pub(super) mod demo;
 pub(super) mod landmark;
-const EXIT_OFFSET: f32 = 0.15;
-
 pub(super) struct Journey {
-    creator: uuid::Uuid,
     agent: uuid::Uuid,
-    portal: Portal,
     source: Portal,
     arrival_region: String,
     started: Instant,
+    landing: Option<(Vec3, Instant)>,
     pub(super) arrived: bool,
 }
 
 impl Journey {
+    pub(super) fn arrival_pending(&self, now: Instant) -> bool {
+        self.arrived
+            && self
+                .landing
+                .is_none_or(|(_, at)| now.saturating_duration_since(at) < Duration::from_secs(1))
+    }
     pub(super) fn arrives_locally(&self, world: &World) -> bool {
-        self.agent == world.agent_id
-            && Some(self.source.region) == world.main_region
+        Some(self.source.region) == world.main_region
             && self.arrival_region.eq_ignore_ascii_case(&world.region_name())
             && self.valid(world, Instant::now(), unix_time())
     }
-
     fn valid(&self, world: &World, now: Instant, unix: u64) -> bool {
         self.agent == world.agent_id
             && now.saturating_duration_since(self.started) <= Duration::from_secs(30)
-            && self.portal.live(unix)
+            && self.source.live(unix)
             && !world.tp_failed
     }
-
-    fn new(world: &World, creator: uuid::Uuid, source: &Portal, now: Instant) -> Self {
-        let normal = Vec3::new(source.yaw.cos(), source.yaw.sin(), 0.0);
+    fn new(world: &World, _creator: uuid::Uuid, source: &Portal, now: Instant) -> Self {
         Self {
-            creator,
             agent: world.agent_id,
-            portal: Portal {
-                // Paired endpoint IDs alternate on every crossing. Travelers
-                // from one source all derive the same return, also within a sim.
-                id: uuid::Uuid::from_u128(source.id.as_u128() ^ 1),
-                region: source.region,
-                // Emerge in front of the return, facing away from it. Holding
-                // forward through arrival must not immediately send us back.
-                center: (Vec3::from(source.position) - normal * EXIT_OFFSET).to_array(),
-                yaw: (-normal.y).atan2(-normal.x),
-                destination: world.region_name(),
-                position: (Vec3::from(source.center) - normal * EXIT_OFFSET).to_array(),
-                access: source.access,
-                expires: source.expires,
-            },
             source: source.clone(),
             arrival_region: source.destination.clone(),
             started: now,
             arrived: false,
+            landing: None,
         }
     }
-
-    fn place_arrival(&mut self, region: u64, position: Vec3) {
-        self.portal.region = region;
-        let normal = Vec3::new(self.portal.yaw.cos(), self.portal.yaw.sin(), 0.0);
-        // Keep the arriving body in the dissolution band, at the actual
-        // landing height. Walking away restores it on the outward side.
-        self.portal.center = (position + normal * EXIT_OFFSET).to_array();
-    }
 }
-
 impl App {
     pub(super) fn tick_portals(&mut self) {
         let now = Instant::now();
@@ -72,6 +48,7 @@ impl App {
         let endpoint = self.bridge_runtime.query_endpoint();
         let mut state = std::mem::take(&mut self.world.portals);
         state.sync(&self.world, endpoint.as_ref().map(|endpoint| endpoint.token), unix);
+        state.reduced_motion = self.settings.reduce_motion;
         if self
             .portal_journey
             .as_ref()
@@ -86,27 +63,52 @@ impl App {
             && journey.arrival_region.eq_ignore_ascii_case(&self.world.region_name())
             && let Some(region) = self.world.main_region
         {
-            journey.place_arrival(region, self.world.agent.position);
-            if journey.source.region == region {
-                state.share_return(journey.source, journey.creator, self.world.agent.position, now, unix);
-            }
-            // share_return keeps the first shared aperture for later travelers.
-            if self.world.main().is_some_and(|r| {
-                crate::world::portals::fits_region(Vec3::from(journey.portal.center), [r.heightmap.size_x, r.heightmap.size_y])
-            }) {
-                let center = journey.portal.center;
-                let published = state.share_return(journey.portal, journey.creator, self.world.agent.position, now, unix);
+            let (anchor, at) = *journey.landing.get_or_insert((self.world.agent.position, now));
+            let floor = self.scene.preview_floor(&self.world, anchor, anchor.z);
+            let terrain_ready = self.world.main().is_some_and(|r| {
+                anchor.x >= 0.0
+                    && anchor.y >= 0.0
+                    && anchor.x < r.heightmap.size_x as f32
+                    && anchor.y < r.heightmap.size_y as f32
+                    && r.heightmap
+                        .patch_received
+                        .get((anchor.y as u32 / 16 * r.heightmap.patches_x + anchor.x as u32 / 16) as usize)
+                        .copied()
+                        .unwrap_or(false)
+            });
+            // An unreceived terrain patch is initialized to zero, not a
+            // verified floor. A distinct solid-object hit is already usable.
+            let floor = floor.filter(|height| {
+                terrain_ready
+                    || self
+                        .world
+                        .ground_height(anchor)
+                        .is_none_or(|terrain| (height - terrain).abs() > 0.001)
+            });
+            let close = floor.is_some_and(|floor| (0.0..=2.0).contains(&(anchor.z - floor)));
+            if !close && !terrain_ready && now.saturating_duration_since(at) < Duration::from_secs(1) {
+                self.portal_journey = Some(journey);
+            } else {
+                let root = self.world.agent.position;
+                let height = self
+                    .world
+                    .objects
+                    .index_of_uuid(&self.world.agent_id)
+                    .and_then(|i| self.world.objects.get(i))
+                    .map_or(1.7, |o| o.scale.z.clamp(0.5, 8.0));
+                let opened = close && floor.is_some_and(|floor| state.begin_arrival(root, floor, height, now));
+                if opened {
+                    self.world.agent.flying = false;
+                }
                 if self.demo {
-                    log::info!(
-                        "portal demo exit: published {published}, center {center:?}, root {:?}",
-                        self.world.agent.position
-                    );
+                    log::info!("portal demo one-way arrival: region {region}, opened {opened}, floor {floor:?}, root {root:?}");
                 }
             }
         }
         if let Some(group) = state.take_group_refresh() {
             self.world.group_data.request_members(group);
         }
+        state.awaiting_floor = !state.reduced_motion && self.portal_journey.as_ref().is_some_and(|journey| journey.arrived);
         let mut input = self.input;
         if self.camera.free().is_none() && !self.joystick.active {
             self.joystick.motion.apply_avatar(&mut input);
@@ -129,6 +131,14 @@ impl App {
         let crossed = state.update(&self.world, intent, now);
         let command = state.command(endpoint.as_ref(), now);
         self.world.portals = state;
+        let arriving: Vec<_> = self.world.portals.arrivals.keys().copied().collect();
+        for id in arriving {
+            if let Some(index) = self.world.objects.index_of_uuid(&id)
+                && let Some(object) = self.world.objects.get_mut(index)
+            {
+                object.render.needs_records = true;
+            }
+        }
         if std::mem::take(&mut self.world.portals.failed) {
             let message = aurora_i18n::tr!("portal-share-failed");
             self.portal_ui.notice = Some(message.into());
@@ -146,6 +156,12 @@ impl App {
         }
         self.update_landmark_portal();
         self.exchange_portal_demo();
+        if self.demo
+            && let Ok(mode) = std::env::var("AURORA_DEMO_PORTALS")
+            && self.arrival_portal_demo(&mode)
+        {
+            return;
+        }
         if self.seed_portal_drop_demo() {
             return;
         }
@@ -173,8 +189,6 @@ impl App {
                 position + ahead * 0.3
             } else if mode == "near" {
                 position
-            } else if mode.starts_with("return") {
-                position - ahead * EXIT_OFFSET
             } else {
                 position + ahead * 4.0
             };
@@ -182,23 +196,18 @@ impl App {
                 id: uuid::Uuid::new_v4(),
                 region: self.world.main_region.unwrap_or(256),
                 center: center.to_array(),
-                yaw: if mode.starts_with("return") {
-                    (-ahead.y).atan2(-ahead.x)
-                } else {
-                    self.world.agent.yaw
-                },
+                yaw: self.world.agent.yaw,
                 destination: if mode.starts_with("private-") || mode.starts_with("slice-local-teleport") {
                     // The offline teleport stays in the plaza. Keep the real
                     // arrival-region check active so it also creates the exit.
                     self.world.region_name()
-                } else if mode.starts_with("return") {
-                    "Demo origin".into()
                 } else {
                     "Demo destination".into()
                 },
                 position: if mode.starts_with("slice-local-teleport") {
                     let tangent = Vec3::new(-ahead.y, ahead.x, 0.0);
-                    (center + tangent * 3.0 + ahead * 2.65).to_array()
+                    let point = center + tangent * 3.0 + ahead * 2.65;
+                    point.with_z(crate::demo::floor_at(point.x, point.y) + 0.84).to_array()
                 } else if mode.starts_with("private-") {
                     // Land on open terrain, away from the raised plaza's edge.
                     // 0.84 m is the offline simulator's standing root height.
@@ -206,7 +215,7 @@ impl App {
                 } else {
                     [128.0, 128.0, 25.0]
                 },
-                access: if mode == "friends" || mode == "return-private" || mode.starts_with("private-") {
+                access: if mode == "friends" || mode.starts_with("private-") {
                     Access::Friends
                 } else {
                     Access::Everyone
@@ -214,27 +223,7 @@ impl App {
                 expires: unix + LIFETIME,
             };
             let mut state = std::mem::take(&mut self.world.portals);
-            if mode.starts_with("return") || mode.starts_with("slice-exit") {
-                let creator = uuid::Uuid::from_u128(0xA770);
-                self.portal_ui.open = false;
-                self.panels.chat = false;
-                let tangent = Vec3::new(-ahead.y, ahead.x, 0.0);
-                self.camera.set_view(
-                    center + ahead * 7.0 + tangent * 4.0 + Vec3::Z * 2.0,
-                    center,
-                    &mut self.world.agent,
-                    &self.settings.camera,
-                );
-                state.share_return(portal.clone(), creator, position, now, unix);
-                let mut announcement = portal.announcement();
-                announcement.creator = Some(creator);
-                for peer in [0xA771, 0xA772] {
-                    let peer = uuid::Uuid::from_u128(peer);
-                    if let Some(wire) = aurora_net::bridge::portal::Message::Open(announcement.clone()).encode() {
-                        state.receive(&self.world, &format!("<auroraPortal>{peer}|{wire}</auroraPortal>"), now, unix);
-                    }
-                }
-            } else if mode == "friends" || mode.starts_with("private-") {
+            if mode == "friends" || mode.starts_with("private-") {
                 self.portal_ui.open = false;
                 self.portal_ui.destination.clear();
                 let owner = uuid::Uuid::from_u128(0xA770);
@@ -246,11 +235,6 @@ impl App {
                 }
             } else {
                 state.create(portal.clone(), position, now, unix);
-                if mode.starts_with("slice-local-teleport") {
-                    let mut journey = Journey::new(&self.world, self.world.agent_id, &portal, now);
-                    journey.place_arrival(portal.region, Vec3::from(portal.position));
-                    state.share_return(journey.portal, self.world.agent_id, position, now, unix);
-                }
             }
             if mode.starts_with("rift") {
                 self.portal_ui.open = false;
@@ -293,27 +277,20 @@ impl App {
         let normal = Vec3::new(portal.yaw.cos(), portal.yaw.sin(), 0.0);
         let tangent = Vec3::new(-normal.y, normal.x, 0.0);
         let center = Vec3::from(portal.center);
-        let exiting = mode.starts_with("slice-exit");
         let sideways = mode == "slice-sideways";
         let complete_sideways = mode == "slice-complete-sideways";
         let local_teleport = mode.starts_with("slice-local-teleport");
-        // Let the arrival pose and attachments settle at the plane before
-        // walking out. Capture the first exit without a loop-reset teleport.
-        let phase = (self
-            .frame_count
-            .saturating_sub(if exiting || sideways || complete_sideways || local_teleport {
-                780
-            } else {
-                420
-            })
-            % 360) as f32
+        // Let the stationary pose and attachments settle before crossing.
+        let phase = (self.frame_count.saturating_sub(if sideways || complete_sideways || local_teleport {
+            780
+        } else {
+            420
+        }) % 360) as f32
             / 60.0;
         let distance = match mode {
             "slice-local-teleport" | "slice-local-teleport-terse" => 1.2 - phase * 0.9,
             "slice-sideways" => 0.15,
             "slice-complete-sideways" => 0.6 - phase.min(2.0) * 0.8,
-            "slice-exit-still" => -EXIT_OFFSET,
-            "slice-exit" | "slice-exit-reverse" => -EXIT_OFFSET - phase * 0.35,
             "slice-still" | "slice-large" | "slice-wide" | "slice-wide-reverse" => 0.12,
             "slice-profile" | "slice-profile-reverse" => 0.18,
             "slice-turnback" | "slice-turnback-reverse" => 1.2 - phase.min(6.0 - phase) * 0.7,
@@ -344,6 +321,7 @@ impl App {
         let local = peer.local_id;
         let first = self.world.objects.index_of_uuid(&id).is_none();
         let target = peer.position;
+        let height = peer.scale.z.clamp(0.5, 8.0);
         if local_teleport && mode.ends_with("terse") && !first {
             self.world.apply(NetEvent::TerseUpdates {
                 handle,
@@ -375,6 +353,29 @@ impl App {
                 object.placement_serial,
                 self.world.objects.predicted(object, Instant::now()).0.distance(target)
             );
+        }
+        if local_teleport
+            && self.frame_count == 900
+            && let Some(floor) = self.scene.preview_floor(&self.world, target, target.z)
+        {
+            let event = aurora_net::bridge::portal::Arrival {
+                id: uuid::Uuid::new_v4(),
+                region: handle,
+                position: target.to_array(),
+                floor,
+                height,
+                starts: crate::world::portals::arrival::unix_millis() + 250,
+            };
+            if let Some(wire) = aurora_net::bridge::portal::Message::Arrival(event).encode() {
+                let mut state = std::mem::take(&mut self.world.portals);
+                state.receive(
+                    &self.world,
+                    &format!("<auroraPortal>{id}|{wire}</auroraPortal>"),
+                    Instant::now(),
+                    unix_time(),
+                );
+                self.world.portals = state;
+            }
         }
         if first {
             if let Some(gfx) = &mut self.gfx {
@@ -441,7 +442,7 @@ impl App {
         // Keep the automation view deterministic even if startup/movement
         // resets camera focus after the peer's first geometry update.
         let profile = mode.starts_with("slice-profile");
-        let close = mode.starts_with("slice-turnback") || profile || exiting;
+        let close = mode.starts_with("slice-turnback") || profile;
         let across = if profile {
             3.8
         } else if close {
@@ -469,7 +470,7 @@ impl App {
         self.camera.set_view(
             focus
                 + tangent * across
-                + normal * if mode.ends_with("reverse") ^ exiting { -ahead } else { ahead }
+                + normal * if mode.ends_with("reverse") { -ahead } else { ahead }
                 + Vec3::Z * if close { 1.2 } else { 2.2 },
             focus,
             &mut self.world.agent,
@@ -600,6 +601,11 @@ mod tests {
         };
         let mut journey = Journey::new(&world, world.agent_id, &source, Instant::now());
         assert!(journey.arrives_locally(&world));
+        assert!(!journey.arrival_pending(Instant::now()));
+        journey.arrived = true;
+        assert!(journey.arrival_pending(Instant::now()));
+        journey.landing = Some((world.agent.position, Instant::now() - Duration::from_secs(2)));
+        assert!(!journey.arrival_pending(Instant::now()));
         world.main_region = Some(region ^ 256);
         assert!(!journey.arrives_locally(&world));
         world.main_region = Some(region);
@@ -608,84 +614,6 @@ mod tests {
         journey.arrival_region = world.region_name();
         journey.started -= Duration::from_secs(31);
         assert!(!journey.arrives_locally(&world));
-    }
-
-    #[test]
-    fn portal_journey_restores_the_original_endpoint_and_keeps_a_bounded_return_intent() {
-        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-        world.agent_id = uuid::Uuid::from_u128(1);
-        let source = Portal {
-            id: uuid::Uuid::from_u128(7),
-            region: 256,
-            center: [10.0, 10.0, 25.0],
-            yaw: 0.0,
-            destination: "Demo destination".into(),
-            position: [128.0, 128.0, 25.0],
-            access: Access::Friends,
-            expires: 1120,
-        };
-        let now = Instant::now();
-        let mut outward = Journey::new(&world, world.agent_id, &source, now);
-        // Supply the region name normally provided by the region handshake.
-        outward.portal.destination = "Demo source".into();
-        assert!(!outward.arrived, "a teleport request is not an arrival");
-        assert!(outward.valid(&world, now, 1000));
-        assert_ne!(outward.portal.id, source.id, "same-region endpoints remain distinct");
-        assert!(
-            Vec3::from(outward.portal.center).x < source.position[0],
-            "the return is behind the arrival"
-        );
-        assert_eq!(outward.portal.expires, source.expires);
-        assert_eq!(outward.portal.access, source.access);
-        let back = Journey::new(&world, world.agent_id, &outward.portal, now);
-        assert_eq!(back.portal.id, source.id);
-        assert!(Vec3::from(back.portal.center).distance(Vec3::from(source.center)) < 1e-5);
-        assert_eq!(back.portal.position, source.position);
-        assert!(!outward.valid(&world, now + Duration::from_secs(31), 1031));
-        assert!(!outward.valid(&world, now, 1120));
-        world.tp_failed = true;
-        assert!(!outward.valid(&world, now, 1000));
-        world.tp_failed = false;
-        world.agent_id = uuid::Uuid::from_u128(2);
-        assert!(!outward.valid(&world, now, 1000));
-    }
-
-    #[test]
-    fn arrival_uses_the_actual_landing_and_starts_inside_the_dissolution_band() {
-        let world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-        for yaw in [0.0, std::f32::consts::FRAC_PI_2, 2.3] {
-            let source = Portal {
-                id: uuid::Uuid::from_u128(7),
-                region: 256,
-                center: [10.0, 10.0, 25.0],
-                yaw,
-                destination: "Demo destination".into(),
-                position: [128.0, 128.0, 25.0],
-                access: Access::Everyone,
-                expires: 1120,
-            };
-            let actual = Vec3::new(128.4, 128.3, 31.0);
-            let mut journey = Journey::new(&world, uuid::Uuid::from_u128(1), &source, Instant::now());
-            journey.place_arrival(512, actual);
-            let normal = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
-            let across = Vec3::new(-normal.y, normal.x, 0.0);
-            let center = Vec3::from(journey.portal.center);
-            assert_eq!(journey.portal.region, 512);
-            assert!(center.distance(actual - normal * EXIT_OFFSET) < 0.0001);
-            let clip = aurora_render::PortalClip::new(center, normal).unwrap();
-            let coverage = |forward: f32| {
-                (0..256)
-                    .filter(|&i| {
-                        let point =
-                            actual + normal * forward + across * ((i % 16) as f32 - 7.5) * 0.06 + Vec3::Z * ((i / 16) as f32 - 7.5) * 0.06;
-                        clip.keeps_point(point)
-                    })
-                    .count()
-            };
-            assert!((1..256).contains(&coverage(0.0)), "the arrival is partly dissolved");
-            assert_eq!(coverage(-0.6), 0);
-            assert_eq!(coverage(0.6), 256, "walking out fully restores the mesh");
-        }
     }
 
     #[test]

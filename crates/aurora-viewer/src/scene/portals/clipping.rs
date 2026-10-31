@@ -139,17 +139,10 @@ impl Clipping {
                 .get(&avatar.id)
                 .filter(|(p, serial)| *serial == avatar.placement_serial && p.distance(avatar.root) <= 3.0)
                 .map(|(p, _)| *p);
-            let old = from.and_then(|_| self.crossings.get(&avatar.id)).copied().filter(|old| {
-                // A close same-region arrival can be below the jump threshold.
-                (!old.complete && portals.iter().any(|p| p.key == old.key && p.inside(avatar.root)))
-                    || (old.complete
-                        && !portals.iter().any(|p| {
-                            p.key.0 == old.key.0
-                                && p.key.1.as_u128() == (old.key.1.as_u128() ^ 1)
-                                && p.inside(avatar.root)
-                                && avatar.bounds.iter().any(|b| b.touches(p))
-                        }))
-            });
+            let old = from
+                .and_then(|_| self.crossings.get(&avatar.id))
+                .copied()
+                .filter(|old| old.complete || portals.iter().any(|p| p.key == old.key && p.inside(avatar.root)));
             let contact = |portal: &&Aperture| {
                 portal.inside(avatar.root)
                     && (avatar.bounds.iter().any(|b| b.touches(portal)) || from.is_some_and(|p| portal.crossed(p, avatar.root)))
@@ -385,24 +378,6 @@ mod tests {
         let clip = state.update(&[portal()], &[arrived])[&7];
         assert!(!clip.is_hidden());
         assert!(clip.normal().dot(Vec3::NEG_X) > 0.99, "arrival starts on its own side");
-    }
-
-    #[test]
-    fn a_close_paired_arrival_starts_emergence_instead_of_retaining_the_completed_source() {
-        let mut state = Clipping::default();
-        let exit = Aperture {
-            key: Key(Uuid::from_u128(1), Uuid::from_u128(3), 256),
-            center: Vec3::X * -1.5,
-            normal: Vec3::NEG_X,
-        };
-        let portals = [portal(), exit];
-        state.update(&portals, &[body(Vec3::X * 0.3)]);
-        assert!(state.update(&portals, &[body(Vec3::X * -0.4)])[&7].is_hidden());
-        let arrived = state.update(&portals, &[body(Vec3::X * -1.35)])[&7];
-        assert!(!arrived.is_hidden());
-        assert!(arrived.normal().dot(Vec3::X) > 0.99);
-        assert!(arrived.keeps_point(Vec3::X * -0.9));
-        assert!(!arrived.keeps_point(Vec3::X * -1.6));
     }
 
     #[test]

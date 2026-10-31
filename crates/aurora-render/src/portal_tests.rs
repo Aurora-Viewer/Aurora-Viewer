@@ -90,6 +90,24 @@ fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band(
             }
         }
     }
+    for center in [Vec3::ZERO, Vec3::new(140.0, 90.0, 32.0)] {
+        for normal in [Vec3::Z, Vec3::NEG_Z] {
+            let clip = PortalClip::new(center, normal).unwrap();
+            for depth in [-0.1, 0.0, 0.05, 0.15, 0.3, 0.6] {
+                for x in [-0.8, 0.1, 0.9] {
+                    for y in [-0.7, 0.2, 0.85] {
+                        let point = center + normal * depth + Vec3::new(x, y, 0.0);
+                        cases.push(Case {
+                            clip: clip.data,
+                            point: point.extend(1.0).to_array(),
+                            flags: [flags::PORTAL_CLIP, 0, 0, 0],
+                        });
+                        expected.push(clip.keeps_point(point));
+                    }
+                }
+            }
+        }
+    }
     let aperture_cases = cases.clone();
     let aperture_expected = expected.clone();
     for pass in 1..=4 {

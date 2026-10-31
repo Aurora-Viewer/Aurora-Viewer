@@ -2300,6 +2300,7 @@ impl Scene {
             world.avatar_shape_dz.get(&o.full_id).copied().unwrap_or(0.0)
                 + world.appearance_hover(&o.full_id)
                 + world.water_visual_dz(&o.full_id)
+                + world.portals.arrival_offset(o.full_id, p, now)
         } else {
             0.0
         };
