@@ -362,6 +362,9 @@ pub enum Action {
     PushToTalk,
     ToggleMic,
     Conversations,
+    /// Communicate › Nearby Chat (menu_viewer.xml, `shortcut="control|H"`,
+    /// `use_mac_ctrl="true"`, Floater.ToggleOrBringToFront `fs_nearby_chat`).
+    NearbyChat,
     People,
     Inventory,
     Gestures,
@@ -527,6 +530,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
             (
                 aurora_i18n::tr!("common-windows"),
                 vec![
+                    (Action::NearbyChat, aurora_i18n::tr!("common-nearby-chat")),
                     (Action::Conversations, aurora_i18n::tr!("common-conversations")),
                     (Action::People, aurora_i18n::tr!("common-people")),
                     (Action::Inventory, aurora_i18n::tr!("common-inventory")),
@@ -728,6 +732,8 @@ impl KeyBindings {
             (Action::CamPanUp, [kalt(K::ArrowUp, true, true), None]),
             (Action::CamPanDown, [kalt(K::ArrowDown, true, true), None]),
             (Action::Chat, [k(K::Enter), k(K::NumpadEnter)]),
+            // menu_viewer.xml: Nearby Chat, shortcut="control|H" use_mac_ctrl="true"
+            (Action::NearbyChat, [kmod(K::KeyH, true, false), None]),
             // SL default push-to-talk: middle mouse button
             (
                 Action::PushToTalk,
@@ -1563,6 +1569,36 @@ mod tests {
     }
 
     #[test]
+    fn nearby_chat_is_ctrl_h_and_keeps_the_other_h_chords() {
+        let kb = KeyBindings::default();
+        let h = Input::key(KeyCode::KeyH);
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        let alt = Mods {
+            alt: true,
+            ..Default::default()
+        };
+        let alt_shift = Mods {
+            alt: true,
+            shift: true,
+            ..Default::default()
+        };
+        assert_eq!(kb.triggered(&h, ctrl), Some(Action::NearbyChat));
+        assert_eq!(kb.triggered(&h, alt), Some(Action::TeleportHistory));
+        assert_eq!(kb.triggered(&h, alt_shift), Some(Action::ShowHuds));
+        assert_eq!(kb.triggered(&h, Mods::default()), None);
+        assert!(!text_field_keeps(KeyCode::KeyH, ctrl), "Nearby Chat runs while a field is focused");
+        let binding = kb.get(Action::NearbyChat)[0].clone().expect("default binding");
+        assert_eq!(binding.label_on(true), "⌃H");
+        assert_eq!(binding.label_on(false), "Ctrl+H");
+        let mut old = kb;
+        old.map.retain(|(action, _)| *action != Action::NearbyChat);
+        assert_eq!(old.sanitized().triggered(&h, ctrl), Some(Action::NearbyChat));
+    }
+
+    #[test]
     fn mac_shortcuts_label_command_and_the_legacy_control_chords() {
         let chord = |key, alt, shift| Binding {
             input: Input::key(key),
@@ -1948,6 +1984,7 @@ mod tests {
             (Action::Fly, (false, false, false), [K::KeyF; 4]),
             (Action::CameraControls, (true, true, false), [K::KeyC; 4]),
             (Action::AlwaysRun, (true, false, false), [K::KeyR; 4]),
+            (Action::NearbyChat, (true, false, false), [K::KeyH; 4]),
             (Action::Conversations, (true, false, false), [K::KeyT; 4]),
             (Action::Inventory, (true, false, false), [K::KeyI; 4]),
             (Action::IkEdit, (true, false, false), [K::KeyK; 4]),
