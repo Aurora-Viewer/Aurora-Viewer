@@ -789,6 +789,13 @@ impl Renderer {
         self.last_stats.present_mode
     }
 
+    /// The last frame the backend finished was drawn with the settings last
+    /// applied: false while the pipelines for new MSAA samples or SSR compile
+    /// on their worker (#1746), and until the backend has seen them.
+    pub fn settings_applied(&self) -> bool {
+        self.last_stats.settings == Some(self.settings)
+    }
+
     // ------------------------------------------------------------ resources
 
     pub fn upload_mesh(&mut self, vertices: &[Vertex], indices: &[u16]) -> Option<MeshAlloc> {

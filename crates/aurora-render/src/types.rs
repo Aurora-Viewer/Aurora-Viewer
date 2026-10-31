@@ -1427,6 +1427,10 @@ pub struct RenderStats {
     /// Presentation mode the swapchain is configured with (present.rs);
     /// None until the backend has answered a frame.
     pub present_mode: Option<wgpu::PresentMode>,
+    /// The settings the frame was drawn with: the MSAA samples and SSR of
+    /// the previous ones while the pipelines for new ones compile (#1746).
+    /// None until the backend has answered a frame.
+    pub settings: Option<RenderSettings>,
     pub draws: u32,
     pub shadow_draws: u32,
     pub shadow: ShadowStats,

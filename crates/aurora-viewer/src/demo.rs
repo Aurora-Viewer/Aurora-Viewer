@@ -31,6 +31,9 @@ pub mod water;
 
 const HANDLE: u64 = (256000u64 << 32) | 256000;
 
+/// AURORA_DEMO_AA_SWITCH: the anti-aliasing changed at given frames.
+#[path = "demo_aa_switch.rs"]
+pub mod aa_switch;
 /// Help › About Aurora Viewer on one of its tabs (AURORA_DEMO_ABOUT).
 #[path = "demo_about.rs"]
 pub mod about;
