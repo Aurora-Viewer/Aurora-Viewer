@@ -18,6 +18,7 @@
 //! tabs back.
 
 pub mod aurora;
+pub(crate) mod drag;
 pub mod model;
 
 use super::place_details::{self, Ctx};
@@ -587,6 +588,14 @@ impl PlacesUi {
                 self.selected == Some(sel),
                 false,
             );
+            if row.folder.is_none() {
+                drag::source(&r.response, || drag::LandmarkDrag {
+                    item: row.id,
+                    favorite: (self.tab == TAB_FAVORITES).then_some(row.id),
+                    name: row.name.clone(),
+                    thumbnail: None,
+                });
+            }
             if r.response.clicked() || r.response.secondary_clicked() {
                 self.selected = Some(sel);
                 if let Some(it) = world.inventory.items.get(&row.id) {
@@ -1153,7 +1162,12 @@ fn list_row(
     info_button: bool,
 ) -> RowResponse {
     let w = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(w, 20.0), Sense::click());
+    let sense = if folder.is_none() && !info_button {
+        Sense::click_and_drag()
+    } else {
+        Sense::click()
+    };
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(w, 20.0), sense);
     let painter = ui.painter();
     if selected {
         painter.rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.28));

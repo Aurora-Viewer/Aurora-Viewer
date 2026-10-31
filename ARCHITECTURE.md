@@ -540,6 +540,10 @@ announcement/close delivery retries the same immutable action at most twice,
 with one- and two-second backoff. Only exhausted failures remove the
 local aperture. Replacement, expiry and region/session changes retire retries.
 
+`ui/places/drag.rs` shares landmark cargo and a floating icon/thumbnail preview
+between all Favorites access modes and both Places layouts. Favorite reordering
+consumes only releases inside its visible list; scene releases reuse the inventory
+portal path. `ui/portals.rs` includes the actual remaining lifetime in world labels.
 `app/portals/landmark.rs` resolves inventory landmark drops asynchronously through
 the ordinary landmark and map caches, including variable regions. A scene drop
 opens a Friends portal at the selected support; Shift at release makes it public.

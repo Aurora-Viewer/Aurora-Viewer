@@ -83,8 +83,6 @@ pub struct AuroraState {
     new_folder: Option<String>,
     /// A folder of the rail being renamed.
     rename_folder: Option<(Uuid, String)>,
-    /// The favourite dragged in the Favorites list (its item).
-    drag: Option<Uuid>,
     /// The places, and what they were built from.
     catalog: Option<(CatalogKey, Arc<Catalog>)>,
     /// AURORA_DEMO_PLACES=…:open: the first place selected (a narrow row
@@ -670,7 +668,6 @@ impl PlacesUi {
         if self.aurora.source != source {
             self.aurora.source = source;
             self.aurora.selected = None;
-            self.aurora.drag = None;
         }
     }
 
@@ -712,7 +709,7 @@ impl PlacesUi {
         self.here_bar(ui, p, world, footer, true, actions);
     }
 
-    /// The rows of a list, wide or narrow; the favourites can be dragged.
+    /// Landmark rows share scene cargo; unfiltered favorites also reorder.
     fn rows(&mut self, ui: &mut egui::Ui, c: &mut Ctx, lines: &[Line], wide: bool, actions: &mut Vec<PlacesAction>) {
         let p = c.p;
         let world = c.world;
@@ -722,7 +719,7 @@ impl PlacesUi {
             self.empty(ui, p, world);
             return;
         }
-        let draggable = self.aurora.source == Source::Favorites && self.filter.trim().is_empty();
+        let reorder = self.aurora.source == Source::Favorites && self.filter.trim().is_empty();
         let mut rects: Vec<(Rect, Uuid)> = Vec::new();
         for l in lines {
             let (key, place) = match l {
@@ -745,7 +742,15 @@ impl PlacesUi {
                 Some((s, ..)) => world.place_snapshots.snapshot(s, &world.profiles.parcels).unwrap_or_default(),
                 None => place.thumbnail,
             };
-            let out = place_row(ui, p, c, place, selected, snapshot, draggable, wide);
+            let out = place_row(ui, p, c, place, selected, snapshot, place.item.is_some(), wide);
+            if let Some(item) = place.item {
+                super::drag::source(&out.resp, || super::drag::LandmarkDrag {
+                    item,
+                    favorite: place.favorite,
+                    name: place.name.clone(),
+                    thumbnail: texture(c, snapshot).map(egui::TextureHandle::id),
+                });
+            }
             // every row on screen asks for its picture, not only the one
             // previewed (#798)
             if let Some(s) = spot
@@ -753,11 +758,8 @@ impl PlacesUi {
             {
                 self.want_snapshots.push(s);
             }
-            if let Some(fav) = place.favorite.filter(|_| draggable) {
+            if let Some(fav) = place.favorite.filter(|_| reorder) {
                 rects.push((out.resp.rect, fav));
-                if out.resp.drag_started() {
-                    self.aurora.drag = Some(fav);
-                }
             }
             if out.resp.clicked() {
                 if !wide && selected {
@@ -788,8 +790,12 @@ impl PlacesUi {
             }
         }
         // a favourite dropped between two others (LLFavoritesBarCtrl's drop)
-        if let Some(dragged) = self.aurora.drag {
-            let pointer = ui.input(|i| i.pointer.interact_pos());
+        if let Some(dragged) = egui::DragAndDrop::payload::<super::drag::LandmarkDrag>(ui.ctx()).and_then(|cargo| cargo.favorite)
+            && reorder
+        {
+            let pointer = ui
+                .input(|i| i.pointer.interact_pos())
+                .filter(|pos| ui.rect_contains_pointer(ui.clip_rect()) && ui.min_rect().contains(*pos));
             let released = ui.input(|i| i.pointer.any_released());
             if let Some(pos) = pointer {
                 let rank = rects.iter().take_while(|(r, _)| pos.y > r.center().y).count();
@@ -800,10 +806,8 @@ impl PlacesUi {
                 ui.painter().hline(ui.max_rect().x_range(), y, egui::Stroke::new(2.0, p.violet));
                 if released {
                     actions.push(PlacesAction::MoveFavorite(dragged, rank));
+                    egui::DragAndDrop::clear_payload(ui.ctx());
                 }
-            }
-            if released || pointer.is_none() {
-                self.aurora.drag = None;
             }
         }
     }

@@ -29,13 +29,19 @@ impl App {
             self.panels.chat = false;
             self.panels.people = false;
             self.panels.inventory = mode == "drop-focus";
+            self.panels.places = mode.contains("places") || mode.contains("favorites");
+            if self.panels.places {
+                self.places_ui.open_tab(usize::from(!mode.contains("favorites")));
+                ui::widgets::place_floater(&self.egui_ctx, "places", egui::pos2(20.0, 85.0), egui::vec2(420.0, 560.0));
+            }
             if self.panels.inventory {
                 ui::widgets::place_floater(&self.egui_ctx, "inventory", egui::pos2(20.0, 85.0), egui::vec2(460.0, 560.0));
             }
             let (item, asset) = crate::demo::place::landmark_ids(0);
             self.world.inventory.add_items(vec![aurora_net::inventory::InvItem {
                 id: item,
-                parent: self.world.inventory.root,
+                parent: ui::places::system_folder(&self.world.inventory, if mode.contains("favorites") { 23 } else { 3 })
+                    .unwrap_or(self.world.inventory.root),
                 asset_id: if mode == "drop-invalid" {
                     uuid::Uuid::from_u128(0x0A77_0BAD)
                 } else {
@@ -90,7 +96,25 @@ impl App {
             });
         }
         if self.frame_count == 482 {
-            egui::DragAndDrop::set_payload(&self.egui_ctx, ui::inventory::InvDrag(crate::demo::place::landmark_ids(0).0));
+            let item = crate::demo::place::landmark_ids(0).0;
+            if mode.contains("places") || mode.contains("favorites") {
+                egui::DragAndDrop::set_payload(
+                    &self.egui_ctx,
+                    ui::places::drag::LandmarkDrag {
+                        item,
+                        favorite: mode.contains("favorites").then_some(item),
+                        name: self
+                            .world
+                            .inventory
+                            .items
+                            .get(&item)
+                            .map_or_else(String::new, |item| item.name.clone()),
+                        thumbnail: None,
+                    },
+                );
+            } else {
+                egui::DragAndDrop::set_payload(&self.egui_ctx, ui::inventory::InvDrag(item));
+            }
             if mode == "drop-focus" {
                 self.egui_ctx
                     .memory_mut(|memory| memory.request_focus(egui::Id::unique(("inventory_clipboard_focus", self.inventory_ui.ui_id))));

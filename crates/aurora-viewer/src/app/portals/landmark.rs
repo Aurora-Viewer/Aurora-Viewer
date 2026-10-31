@@ -124,9 +124,14 @@ impl App {
 }
 
 pub(in crate::app) fn preview(ctx: &egui::Context, p: &Palette, point: egui::Pos2, shift: bool, ready: bool) {
+    let offset = if egui::DragAndDrop::has_payload_of_type::<ui::places::drag::LandmarkDrag>(ctx) {
+        68.0
+    } else {
+        20.0
+    };
     egui::Area::new(egui::Id::unique("portal_landmark_preview"))
         .order(egui::Order::Tooltip)
-        .fixed_pos(point + egui::vec2(16.0, 20.0))
+        .fixed_pos(point + egui::vec2(16.0, offset))
         .interactable(false)
         .show(ctx, |ui| {
             ui::widgets::overlay(ui, p, egui::Margin::same(8), |ui| {

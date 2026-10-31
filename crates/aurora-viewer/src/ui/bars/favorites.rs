@@ -15,6 +15,7 @@ use crate::settings::FavoritesAccess;
 use crate::theme::Palette;
 use crate::ui::icons::Icons;
 use crate::ui::menu;
+use crate::ui::places::drag::{self, LandmarkDrag as Dragged};
 use egui::{Color32, FontId, Id, Pos2, Rect, Sense, Vec2};
 use glam::DVec3;
 use uuid::Uuid;
@@ -74,9 +75,14 @@ impl From<FavAction> for BarAction {
     }
 }
 
-/// A favourite being dragged to a new place in the list.
-#[derive(Clone, Copy)]
-struct Dragged(Uuid);
+fn drag_source(response: &egui::Response, fav: &Favorite) {
+    drag::source(response, || Dragged {
+        item: fav.item,
+        favorite: Some(fav.item),
+        name: fav.name.clone(),
+        thumbnail: fav.thumbnail,
+    });
+}
 
 fn shown_id() -> Id {
     Id::unique("bars_favorites_shown")
@@ -329,36 +335,12 @@ fn paint_drop(ui: &egui::Ui, p: &Palette, rects: &[Rect], rank: usize, vertical:
     }
 }
 
-/// The favourite being dragged, under the pointer: its thumbnail and name
-/// on the accent (the mockup's `.ghost`).
-fn ghost(ctx: &egui::Context, p: &Palette, icons: &Icons, view: &View) {
-    let Some(dragged) = egui::DragAndDrop::payload::<Dragged>(ctx) else {
-        return;
-    };
-    let (Some(fav), Some(pointer)) = (view.list.iter().find(|f| f.item == dragged.0), ctx.pointer_interact_pos()) else {
-        return;
-    };
-    crate::ui::widgets::drag_ghost(ctx, p, "bars_favorites_ghost", pointer + Vec2::new(-30.0, 10.0), |ui| {
-        let name = ui.painter().layout_no_wrap(fav.name.clone(), semibold(ui, 12.0), p.on_accent);
-        let size = Vec2::new(10.0 + PILL_THUMB + 6.0 + name.size().x + 10.0, 28.0);
-        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-        let radius = ui.visuals().window_corner_radius;
-        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.85));
-        let t = Rect::from_min_size(
-            Pos2::new(rect.left() + 10.0, rect.center().y - PILL_THUMB / 2.0),
-            Vec2::splat(PILL_THUMB),
-        );
-        thumb(ui, p, icons, t, fav, crate::ui::widgets::inner_radius(ui.visuals()));
-        crate::ui::widgets::paint_ink_left(ui.painter(), name, Pos2::new(t.right() + 6.0, rect.center().y), p.on_accent);
-    });
-}
-
 /// While a favourite is dragged over `zone`: the marker, and its new rank
 /// once dropped.
 fn drop_on(ui: &egui::Ui, p: &Palette, zone: Rect, rects: &[(usize, Rect)], vertical: bool) -> Option<FavAction> {
-    let dragged = egui::DragAndDrop::payload::<Dragged>(ui.ctx())?;
+    let dragged = egui::DragAndDrop::payload::<Dragged>(ui.ctx())?.favorite?;
     let pointer = ui.ctx().pointer_interact_pos()?;
-    if !zone.contains(pointer) {
+    if !ui.rect_contains_pointer(zone) {
         return None;
     }
     let only: Vec<Rect> = rects.iter().map(|(_, r)| *r).collect();
@@ -368,7 +350,7 @@ fn drop_on(ui: &egui::Ui, p: &Palette, zone: Rect, rects: &[(usize, Rect)], vert
     let rank = rects.get(local).map_or_else(|| rects.last().map_or(0, |(i, _)| i + 1), |(i, _)| *i);
     if ui.input(|i| i.pointer.any_released()) {
         egui::DragAndDrop::clear_payload(ui.ctx());
-        return Some(FavAction::Move(dragged.0, rank));
+        return Some(FavAction::Move(dragged, rank));
     }
     None
 }
@@ -396,7 +378,7 @@ fn menu_row(
         let edge = Rect::from_min_size(rect.min, Vec2::new(2.0, rect.height()));
         ui.painter().rect_filled(edge, egui::CornerRadius::ZERO, p.violet_light);
     }
-    if egui::DragAndDrop::payload::<Dragged>(ui.ctx()).is_some_and(|d| d.0 == fav.item) {
+    if egui::DragAndDrop::payload::<Dragged>(ui.ctx()).is_some_and(|d| d.item == fav.item) {
         ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.5));
     }
     let cy = rect.center().y;
@@ -464,7 +446,7 @@ fn menu_row(
     ui.painter().galley(Pos2::new(x, cy + 1.0), sub, p.muted);
 
     if resp.drag_started() {
-        resp.dnd_set_drag_payload(Dragged(fav.item));
+        drag_source(&resp, fav);
     }
     fav_menu(&resp, p, fav, out);
     let tip = if fav.region.is_empty() {
@@ -521,7 +503,6 @@ pub fn menu_body(ui: &mut egui::Ui, p: &Palette, icons: &Icons, view: &View, out
                 }
                 demo_target(ui.ctx(), "row", &rects);
             });
-        ghost(ui.ctx(), p, icons, view);
         // the drop is only meaningful on the whole list
         if filter.trim().is_empty()
             && let Some(a) = drop_on(ui, p, shown.inner_rect, &rects, true)
@@ -686,7 +667,7 @@ pub fn row(ctx: &egui::Context, p: &Palette, icons: &Icons, view: &View, under: 
             x = pill.right() + GAP;
             rects.push((i, pill));
             let resp = ui.interact(pill, Id::unique(("bars_favorites_pill", fav.item)), Sense::click_and_drag());
-            let moving = egui::DragAndDrop::payload::<Dragged>(ui.ctx()).is_some_and(|d| d.0 == fav.item);
+            let moving = egui::DragAndDrop::payload::<Dragged>(ui.ctx()).is_some_and(|d| d.item == fav.item);
             let hot = !dragging && resp.hovered();
             slot_face(ui, p, pill, hot, false);
             let alpha = if moving { 0.35 } else { 1.0 };
@@ -697,7 +678,7 @@ pub fn row(ctx: &egui::Context, p: &Palette, icons: &Icons, view: &View, under: 
             let name = faded.painter().layout_no_wrap(fav.name.clone(), FontId::proportional(12.0), p.ink);
             crate::ui::widgets::paint_ink_left(faded.painter(), name, Pos2::new(t.right() + 6.0, cy), p.ink);
             if resp.drag_started() {
-                resp.dnd_set_drag_payload(Dragged(fav.item));
+                drag_source(&resp, fav);
             }
             fav_menu(&resp, p, fav, &mut out);
             let rating = match fav.rating {
@@ -749,7 +730,6 @@ pub fn row(ctx: &egui::Context, p: &Palette, icons: &Icons, view: &View, under: 
         if let Some(a) = drop_on(ui, p, zone, &rects, false) {
             out = Some(a);
         }
-        ghost(ui.ctx(), p, icons, view);
     });
     (rect, out.map(BarAction::from))
 }
@@ -828,7 +808,7 @@ pub fn grid_body(ui: &mut egui::Ui, p: &Palette, icons: &Icons, view: &View, out
                     ui.painter()
                         .galley(Pos2::new(picture.left(), picture.bottom() + 5.0 + nh), region, p.muted);
                     if resp.drag_started() {
-                        resp.dnd_set_drag_payload(Dragged(fav.item));
+                        drag_source(&resp, fav);
                     }
                     fav_menu(&resp, p, fav, out);
                     if resp.on_hover_text(&fav.name).clicked() {
@@ -841,7 +821,6 @@ pub fn grid_body(ui: &mut egui::Ui, p: &Palette, icons: &Icons, view: &View, out
         if let Some(a) = drop_on(ui, p, shown.inner_rect, &rects, false) {
             *out = Some(a);
         }
-        ghost(ui.ctx(), p, icons, view);
     }
     menu::separator(ui, p);
     if menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("ui-bars-open-favorites")) {

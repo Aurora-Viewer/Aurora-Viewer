@@ -209,7 +209,9 @@ impl App {
     pub(super) fn inventory_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Vec<InventoryDrop> {
         self.inventory_drag.cursor = ui::inventory::task_drop::cursor(ctx).or_else(|| ui::inventory::drag::cursor(ctx));
         ui::inventory::drag::badge(ctx, &self.palette);
-        if ui::inventory::drag::carried_count(ctx).is_none() {
+        ui::places::drag::ghost(ctx, &self.palette);
+        let place_drag = egui::DragAndDrop::has_payload_of_type::<ui::places::drag::LandmarkDrag>(ctx);
+        if ui::inventory::drag::carried_count(ctx).is_none() && !place_drag {
             self.inventory_drag.checked = None;
         }
         let give = self.avatar_give_input(ctx, renderer);
@@ -217,7 +219,7 @@ impl App {
         if give.is_some() || !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open {
             return Vec::new();
         }
-        if egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx) {
+        if egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx) || place_drag {
             self.item_drag_input(ctx, renderer).into_iter().collect()
         } else {
             self.selection_drag_input(ctx, renderer)
