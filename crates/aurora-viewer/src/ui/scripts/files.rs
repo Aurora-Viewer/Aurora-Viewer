@@ -157,16 +157,16 @@ fn command(text: &str, path: &Path) -> Result<(String, Vec<String>), String> {
 /// the umask's 0644) and renaming it over ours. Windows' temp folder is
 /// already per user.
 fn write_private(directory: &Path, path: &Path, source: &str) -> std::io::Result<()> {
-    let mut folder = fs::DirBuilder::new();
     let mut file = fs::OpenOptions::new();
     file.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-        folder.mode(0o700);
+        fs::DirBuilder::new().mode(0o700).create(directory)?;
         file.mode(0o600);
     }
-    folder.create(directory)?;
+    #[cfg(not(unix))]
+    fs::create_dir(directory)?;
     file.open(path)?.write_all(source.as_bytes())
 }
 
