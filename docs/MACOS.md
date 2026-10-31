@@ -101,7 +101,8 @@ cargo build --release --locked -p aurora-viewer
 `AURORA_DEMO=1 ./target/release/aurora-viewer` starts the offline demo,
 without the network. To build the application itself as the release does,
 run `pwsh ./scripts/package-macos.ps1 -Exe target/release/aurora-viewer -Out "Aurora Viewer.app"`
-(PowerShell 7: `brew install powershell`).
+(PowerShell 7: `brew install powershell`). The same PowerShell runs the local
+checks: `pwsh -File ./scripts/check.ps1` (formatting, clippy, tests).
 
 ## Signing (for the maintainers)
 
