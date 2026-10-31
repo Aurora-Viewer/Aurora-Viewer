@@ -6356,7 +6356,7 @@ impl App {
         self.script_click_up();
         self.left_down = false;
         self.world_mouse_walk_pending = false;
-        self.build.mouse_up(&mut self.world, &self.settings.build);
+        self.build.mouse_up(&mut self.world, &self.settings.build, Some(&self.scene));
         self.flush_build();
         self.media.on_release(aurora_media::Modifiers {
             control: self.ctrl,

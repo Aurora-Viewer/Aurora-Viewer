@@ -3452,7 +3452,7 @@ mod tests {
             }
             let held_end = Scene::object_transform(&w, idx, Instant::now(), 0).unwrap().0;
             assert!(held_end.distance(held_start) > 2.0);
-            tool.mouse_up(&mut w, &settings);
+            tool.mouse_up(&mut w, &settings, None);
             assert_eq!(tool.manip.camera_pan(&settings, &tool.cam, (1590.0, start.1), f.dt), Vec3::ZERO);
             let stopped = camera.position;
             for _ in 0..30 {

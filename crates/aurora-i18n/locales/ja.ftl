@@ -8233,6 +8233,7 @@ build-compact-highlight = ハイライトを表示
 build-compact-probes = 反射プローブを選択する
 build-compact-owned-only = 自分のオブジェクトだけを選択する
 build-compact-movable-only = 移動できるオブジェクトだけを選択する
+build-compact-surrounding = 囲んで選択する
 build-compact-undo = 元に戻す（Ctrl＋Z）
 build-compact-redo = やり直し（Ctrl＋Y）
 build-compact-duplicate = 複製
