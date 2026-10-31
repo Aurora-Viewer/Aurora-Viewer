@@ -1617,14 +1617,19 @@ mod tests {
         let photo = chord(KeyCode::Backquote, false, false);
         let transparent = chord(KeyCode::KeyT, true, false);
         let conversations = chord(KeyCode::KeyT, false, false);
-        assert_eq!(world.label_on(false), "Ctrl+M");
-        assert_eq!(world.label_on(true), "⌃M");
-        assert_eq!(minimap.label_on(true), "⌘⇧M");
-        assert_eq!(close.label_on(true), "⌘W");
-        assert_eq!(photo.label_on(true), "⌃`");
-        assert_eq!(transparent.label_on(true), "⌃⌥T");
-        assert_eq!(conversations.label_on(true), "⌃T");
-        assert_eq!(chord(KeyCode::Minus, false, false).label_on(true), "⌘ -");
+        // the key itself reads as on this PC's layout (M is "," in AZERTY)
+        let key = |code| Input::key(code).label();
+        let m = key(KeyCode::KeyM);
+        assert_eq!(world.label_on(false), format!("Ctrl+{m}"));
+        assert_eq!(world.label_on(true), format!("⌃{m}"));
+        assert_eq!(minimap.label_on(true), format!("⌘⇧{m}"));
+        assert_eq!(close.label_on(true), format!("⌘{}", key(KeyCode::KeyW)));
+        assert_eq!(photo.label_on(true), format!("⌃{}", key(KeyCode::Backquote)));
+        assert_eq!(transparent.label_on(true), format!("⌃⌥{}", key(KeyCode::KeyT)));
+        assert_eq!(conversations.label_on(true), format!("⌃{}", key(KeyCode::KeyT)));
+        let minus = key(KeyCode::Minus);
+        let gap = if minus.starts_with(['-', '=', '+']) { " " } else { "" };
+        assert_eq!(chord(KeyCode::Minus, false, false).label_on(true), format!("⌘{gap}{minus}"));
         assert!(!uses_mac_control(&minimap));
         assert!(uses_mac_control(&world));
         assert!(!control_down(false, true, true), "Command is not Control for the mouse");
