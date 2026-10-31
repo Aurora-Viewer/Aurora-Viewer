@@ -1527,7 +1527,7 @@ impl App {
     /// bridge, which the Legacy Viewer puts back into every replaced outfit
     /// (FSLSLBridge in LLAppearanceMgr::updateCOF, llappearancemgr.cpp).
     pub(crate) fn outfit_sync_worn(&self) -> std::collections::HashSet<uuid::Uuid> {
-        let mut worn = self.world.worn_attachment_items();
+        let mut worn = self.world.outfit_attachment_items();
         worn.remove(&self.bridge_runtime.item());
         worn
     }
@@ -14710,7 +14710,7 @@ impl App {
                     self.settings.save();
                 }
                 if self.panels.appearance {
-                    let worn = self.world.worn_attachment_items();
+                    let worn = self.world.outfit_attachment_items();
                     for command in self.appearance_ui.prepare(&mut self.world.inventory, self.world.agent_id, &worn) {
                         self.send(command);
                     }
@@ -17196,9 +17196,11 @@ impl ApplicationHandler for App {
                 if many > 0 {
                     crate::world::appearance::seed_demo_many(&mut self.world.inventory, self.world.agent_id, many);
                 }
-                for cmd in
-                    crate::world::appearance::sync_commands(&self.world.inventory, self.world.agent_id, &self.world.worn_attachment_items())
-                {
+                for cmd in crate::world::appearance::sync_commands(
+                    &self.world.inventory,
+                    self.world.agent_id,
+                    &self.world.outfit_attachment_items(),
+                ) {
                     self.send(cmd);
                 }
                 self.panels.appearance = !crate::world::appearance::demo_outfit_mode("closed");
@@ -17724,9 +17726,11 @@ impl ApplicationHandler for App {
                 } else if !configured_view && crate::world::inventory::demo::big().is_none() {
                     self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
                 }
-                for cmd in
-                    crate::world::appearance::sync_commands(&self.world.inventory, self.world.agent_id, &self.world.worn_attachment_items())
-                {
+                for cmd in crate::world::appearance::sync_commands(
+                    &self.world.inventory,
+                    self.world.agent_id,
+                    &self.world.outfit_attachment_items(),
+                ) {
                     self.send(cmd);
                 }
             }
