@@ -1012,8 +1012,10 @@ const MARK_WATER_INTERFACE_END: u32 = 24;
 const MARK_WATER_AIR_BEGIN: u32 = 25;
 const MARK_WATER_AIR_END: u32 = 26;
 /// The effects beyond the occlusion and the contact shadows
-/// (`RenderStats::gpu_effects`): the planar reflections (water, mirror), the
-/// reflection probe face with its filtering, the scene copy, the SSR.
+/// (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
+/// the refracted water light before them; the reflection probe face with its
+/// filtering; the scene copy, with the cut-out pass and the submerged water
+/// particles before it; the SSR.
 const GPU_EFFECT_PARTS: [(u32, u32); 4] = [
     (MARK_CONTACT_END, MARK_WATER_AIR_BEGIN),
     (MARK_WATER_AIR_END, MARK_REFL_END),

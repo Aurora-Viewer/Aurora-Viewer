@@ -1472,7 +1472,9 @@ pub struct RenderStats {
     /// [`GpuElement::Post`] (0 while off).
     pub gpu_bloom: Option<f32>,
     /// GPU time of the rest of [`GpuElement::Effects`] (ms): the planar
-    /// reflections, the reflection probe, the scene copy, the SSR.
+    /// reflections (with the refracted water light), the reflection probe,
+    /// the scene copy (with the cut-out pass and the submerged water
+    /// particles), the SSR.
     pub gpu_effects: Option<[f32; 4]>,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
