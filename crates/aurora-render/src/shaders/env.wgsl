@@ -1326,12 +1326,17 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(camera_underwater()) {
         let fog=water_fog_view(rel,frame.water_normal.w);
         color=color*fog.transmission+fog.color;
+    } else {
+        // The Legacy air haze, enhanced water or not: waterF.glsl has none of
+        // its own, but the water writes depth and doAtmospherics runs after
+        // it (renderGeomPostDeferred: "just before post water alpha"), so
+        // hazeF.glsl blends over the surface, with ONE, SRC_ALPHA:
+        // srgb_to_linear(additive x 2) x sky_hdr_scale + dst x atten.r, on
+        // every sky. Aurora's classic air fog (a mix to a fog colour) made
+        // that colour near white under a hazy, bright classic sky.
+        let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
+        color = color * a.atten.r + max(srgb_to_linear(a.additive * 2.0) * frame.sky_cloud_pd2.w, vec3<f32>(0.0));
     }
-    // No air haze on the surface, enhanced water or not: waterF.glsl leaves
-    // it out ("color = mix(color, additive * water_haze_scale, (1 - atten))"
-    // is commented out) and the water is drawn after the deferred haze.
-    // Under a hazy, bright classic sky the haze colour is near white, and a
-    // distant sea took it whole.
     return vec4<f32>(color, 1.0);
 }
 
