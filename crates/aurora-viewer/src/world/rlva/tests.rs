@@ -1886,7 +1886,8 @@ fn rlva_wear_locks_follow_the_legacy_wear_masks() {
         );
     }
     // (id, asset type, flags, name): worn shirt and shape, then a new shirt,
-    // jacket, shape, an object naming the chest, and one naming no point.
+    // jacket, shape, an object naming the chest, one naming no point and
+    // never worn, and one naming no point last worn on the chest.
     let items = [
         (40, 5, 4, "Old shirt"),
         (41, 13, 0, "Old shape"),
@@ -1895,6 +1896,7 @@ fn rlva_wear_locks_follow_the_legacy_wear_masks() {
         (44, 13, 0, "New shape"),
         (45, 6, 0, "Collar (chest)"),
         (46, 6, 0, "Bracelet"),
+        (47, 6, 1, "Necklace"),
     ];
     for (n, (id, asset_type, flags, name)) in items.into_iter().enumerate() {
         let id = Uuid::from_u128(id);
@@ -1964,6 +1966,12 @@ fn rlva_wear_locks_follow_the_legacy_wear_masks() {
     assert_eq!(locks.wear(&w.inventory, id(46), 0), all, "no point named: it attaches where it can");
     assert_eq!(locks.wear(&w.inventory, id(46), 1), locked, "Attach To the chest");
     assert_eq!(locks.wear(&w.inventory, id(46), 2), all);
+    assert_eq!(
+        locks.wear(&w.inventory, id(47), 0),
+        locked,
+        "Wear goes to the chest it was last worn on"
+    );
+    assert_eq!(locks.wear(&w.inventory, id(47), 2), all, "Attach To another point still works");
     assert!(locks.folder_allows(clothes, true) && locks.folder_allows(clothes, false));
 
     command(&mut w.rlva, A, "@clear");

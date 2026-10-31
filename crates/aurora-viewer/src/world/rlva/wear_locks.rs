@@ -95,11 +95,14 @@ impl WearLocks {
                     return Wear::LOCKED;
                 }
                 // RlvAttachPtLookup::getAttachPoint: the point named by the
-                // item or its folder; none attaches anywhere (RLV_WEAR).
+                // item or its folder. Deliberate difference (human decision
+                // of 2026-10-31): without one, the point it was last worn
+                // on, where Wear sends it, instead of RLV_WEAR; Wear is then
+                // greyed when a locked attachment holds that point.
                 let at = if point != 0 {
                     Some(point)
                 } else {
-                    super::collection::attachment_point(inv, item, self.legacy_naming)
+                    super::collection::attachment_point(inv, item, self.legacy_naming).or(Some((it.flags & 0xff) as u8).filter(|p| *p != 0))
                 };
                 match at {
                     Some(p) if self.closed_points.contains(&p) => Wear::LOCKED,
