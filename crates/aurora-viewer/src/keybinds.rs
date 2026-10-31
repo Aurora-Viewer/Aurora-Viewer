@@ -879,7 +879,9 @@ impl KeyBindings {
 }
 
 /// Keys that take part in an editing chord. The chord itself is
-/// [`text_field_keeps`]: Ctrl+Shift+A is People, not Select All.
+/// [`text_field_keeps`]: Ctrl+Shift+A is People, not Select All. Only the
+/// tests ask for the key alone now.
+#[cfg(test)]
 pub fn is_text_edit_key(code: KeyCode) -> bool {
     let ctrl = Mods {
         ctrl: true,
