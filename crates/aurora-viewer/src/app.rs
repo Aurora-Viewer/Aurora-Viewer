@@ -263,7 +263,9 @@ pub struct App {
     down: HashSet<Input>,
     shift: bool,
     ctrl: bool,
-    /// Command held, on macOS only (aurora_media::Modifiers::command).
+    /// Command held, on macOS only. Keyboard shortcuts treat it as Control
+    /// (LLKeyboardMacOSX::currentMask). Clicks, the wheel and media keep
+    /// it separate (aurora_media::Modifiers::command).
     command: bool,
     screen: Screen,
     login_form: LoginForm,
@@ -870,10 +872,38 @@ fn login_shortcut(screen: &Screen, action: Option<Action>) -> bool {
 
 /// A Ctrl / Alt shortcut of the viewer still works while a text field has
 /// the focus, as the Legacy Viewer's menu accelerators go before the focused
-/// field (LLViewerWindow::handleKey); the field keeps its own editing
-/// shortcuts (copy, paste, undo, words...).
-fn shortcut_while_typing(typing: bool, ctrl: bool, alt: bool, code: KeyCode, bound: bool) -> bool {
-    typing && (ctrl || alt) && !crate::keybinds::is_text_edit_key(code) && bound
+/// field (LLViewerWindow::handleKey). The field keeps the exact editing
+/// chords (Select All is Ctrl/Cmd+A; People is Ctrl/Cmd+Shift+A).
+fn shortcut_while_typing(typing: bool, mods: Mods, code: KeyCode, bound: bool) -> bool {
+    typing && (mods.ctrl || mods.alt) && bound && !crate::keybinds::text_field_keeps(code, mods)
+}
+
+/// The shortcut wins over the focused widget, so egui must not also treat
+/// the key as editing. Find, the script editor and a document save still
+/// own their chords (the checks in the key handler).
+fn shortcut_claims_focus(
+    ctx: &egui::Context,
+    code: KeyCode,
+    logical: &winit::keyboard::Key,
+    mods: Mods,
+    shift: bool,
+    alt: bool,
+    bound: bool,
+) -> bool {
+    if !shortcut_while_typing(true, mods, code, bound) {
+        return false;
+    }
+    let letter = |ch: &str| matches!(logical, winit::keyboard::Key::Character(s) if s.eq_ignore_ascii_case(ch));
+    if mods.ctrl && letter("f") && ui::find_shortcut::window_takes_it(ctx) {
+        return false;
+    }
+    if mods.ctrl && (letter("k") || (letter("s") && !shift && !alt)) && ui::scripts::editor_focused(ctx) {
+        return false;
+    }
+    if mods.ctrl && !shift && !alt && letter("s") && ui::inventory::document_save_focused(ctx) {
+        return false;
+    }
+    true
 }
 
 /// The interface scale, or AURORA_UI_SCALE for this launch (brought into
@@ -2198,10 +2228,24 @@ impl App {
             // the demo backpack comes back with its prims; other outfit
             // objects are invisible placeholders
             if let NetCommand::RezAttachments(items) = &cmd {
+                // the simulator refuses a coalesced object, with its own
+                // English alert (CantAttackMultipleObjOneSpot)
+                let (refused, items): (Vec<_>, Vec<_>) = items.iter().partition(|item| {
+                    self.world
+                        .inventory
+                        .items
+                        .get(&item.item_id)
+                        .is_some_and(crate::world::appearance::coalesced)
+                });
+                for _ in refused {
+                    self.world.apply(NetEvent::Alert {
+                        message: "You can't attach multiple objects to one spot.".into(),
+                    });
+                }
                 self.world.apply(NetEvent::ObjectUpdates {
                     handle: self.world.main_region.unwrap_or_default(),
                     objects: items
-                        .iter()
+                        .into_iter()
                         .flat_map(|item| crate::demo::worn::rez(item).unwrap_or_else(|| vec![crate::demo::outfit_attachment(item)]))
                         .collect(),
                 });
@@ -2849,6 +2893,10 @@ impl App {
                 if self.appearance_ui.pending.is_some_and(|(id, _)| id == request) {
                     self.appearance_ui.pending = None;
                 }
+                return;
+            }
+            if self.imports.folders.owns(request) {
+                self.imports.import_folder_result(request, result, &mut self.world.inventory);
                 return;
             }
             if self.texture_library_result(request, &result) {
@@ -3751,7 +3799,24 @@ impl App {
         }
     }
 
+    /// Shortcut mask for a key. Command counts as Control on macOS
+    /// (LLKeyboardMacOSX::currentMask with for_mouse_event false).
     fn mods(&self) -> Mods {
+        self.binding_mods(false)
+    }
+
+    /// Shortcut mask. `mouse` keeps Command off the Control bit.
+    fn binding_mods(&self, mouse: bool) -> Mods {
+        self.shortcut_mods(Mods {
+            ctrl: crate::keybinds::control_down(self.ctrl, self.command, mouse),
+            shift: self.shift,
+            alt: self.alt,
+        })
+    }
+
+    /// Physical Control, Shift and Alt, with AltGr counted. Command is not
+    /// Control: the HUD gesture bound to the Control key must not follow it.
+    fn physical_mods(&self) -> Mods {
         self.shortcut_mods(Mods {
             ctrl: self.ctrl,
             shift: self.shift,
@@ -3893,7 +3958,7 @@ impl App {
 
     /// A key or a bindable mouse button changed state.
     fn on_input(&mut self, input: Input, pressed: bool) {
-        let mods = self.mods();
+        let mods = self.binding_mods(matches!(input, Input::Mouse(_)));
         let action = self.settings.keybinds.update_held_input(&mut self.down, &input, pressed, mods);
         if let Some(group) = self.run_group(&input) {
             self.walk_tap(group, pressed && action.is_none());
@@ -3956,6 +4021,7 @@ impl App {
             Action::ToggleMic => self.toggle_mic(),
             // the shortcuts of the windows, like their toolbar buttons: a
             // minimized window expands (LLFloaterReg::toggleInstance)
+            Action::NearbyChat => self.chat_ui.toggle_nearby_chat(&self.egui_ctx, &mut self.panels.chat),
             Action::Conversations => ui::widgets::toggle_floater(&self.egui_ctx, "conversations", &mut self.panels.chat),
             Action::People => {
                 ui::widgets::toggle_floater(&self.egui_ctx, "people", &mut self.panels.people);
@@ -3975,6 +4041,10 @@ impl App {
             Action::Minimap => self.panels.minimap = !self.panels.minimap,
             Action::WorldMap => ui::widgets::toggle_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map),
             Action::TeleportHistory => self.toggle_teleport_history(),
+            // World.TeleportHome: the bar's Home, with its confirmation
+            Action::TeleportHome => {
+                self.request_user_teleport(NetCommand::TeleportHome, aurora_i18n::tr!("common-home").into(), false);
+            }
             Action::RegionEstate => ui::widgets::toggle_floater(&self.egui_ctx, ui::region::WINDOW, &mut self.panels.region_estate),
             Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
             Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
@@ -3983,7 +4053,7 @@ impl App {
             Action::ToggleInterface => self.toggle_interface(),
             Action::HoverTips => self.toggle_hover_tips(),
             Action::ShowHuds => self.set_show_huds(!self.settings.show_huds),
-            Action::Import => self.imports.toggle_launcher(&self.egui_ctx),
+            Action::Import => self.imports.toggle_window(&self.egui_ctx),
             Action::Beacons => ui::widgets::toggle_floater(&self.egui_ctx, ui::beacons::WINDOW, &mut self.panels.beacons),
             Action::PropertyLines => {
                 self.settings.world_overlays.property_lines = !self.settings.world_overlays.property_lines;
@@ -5702,7 +5772,9 @@ impl App {
 
     /// End of a shortcut capture (None = cancelled).
     fn finish_capture(&mut self, input: Option<Input>) {
-        let mods = self.mods();
+        // Recording Command stores it as Control, as the Legacy Viewer does
+        // for a key. A mouse button keeps the physical Control key.
+        let mods = self.binding_mods(matches!(input, Some(Input::Mouse(_))));
         let Some(ui::options::Capture::Binding(action, slot)) = self.options_ui.take_capture() else {
             return;
         };
@@ -6473,7 +6545,10 @@ impl App {
     /// the FLY flag changes. No STOP with it: that flag brakes the avatar,
     /// and the fall must keep the flight's momentum, as in Firestorm.
     fn toggle_fly(&mut self) {
-        if !self.world.agent.flying && self.world.rlva.has("fly") {
+        // LLAgent::setFlying: no takeoff where LLAgent::canFly says no (the
+        // parcel's or the region's no-fly, RLVa @fly, seated); a flight
+        // already under way may go on and always land
+        if !self.world.agent.flying && !crate::autopilot::can_takeoff(&self.world) {
             return;
         }
         self.world.cancel_friend_join_flight();
@@ -6578,7 +6653,12 @@ impl App {
     fn chat_bar_passes_key(&self, code: KeyCode) -> bool {
         self.in_world()
             && self.chat_ui.has_focus
-            && crate::keybinds::chat_bar_moves(code, self.ctrl, self.chat_ui.input.is_empty(), self.settings.arrow_keys_always_move)
+            && crate::keybinds::chat_bar_moves(
+                code,
+                crate::keybinds::control_down(self.ctrl, self.command, false),
+                self.chat_ui.input.is_empty(),
+                self.settings.arrow_keys_always_move,
+            )
     }
 
     /// A Windows Alt code typed in a text field (alt_codes.rs): true for one
@@ -6630,7 +6710,7 @@ impl App {
             passed = self
                 .down
                 .iter()
-                .filter(|i| crate::keybinds::chat_bar_held_moves(i, self.ctrl))
+                .filter(|i| crate::keybinds::chat_bar_held_moves(i, crate::keybinds::control_down(self.ctrl, self.command, false)))
                 .cloned()
                 .collect();
             &passed
@@ -6744,12 +6824,14 @@ impl App {
         if i.up {
             self.world.agent.record_jump_input(now);
         }
+        // agent_jump (indra/newview/llviewerinput.cpp) takes off through
+        // LLAgent::setFlying, which refuses where LLAgent::canFly says no
         if automatic_fly_held(&mut self.up_since, i.up, self.settings.automatic_fly, now)
             && self.movement_runtime.native_fly_allowed()
-            && !self.world.rlva.has("fly")
             && !self.world.agent.flying
             && !self.world.agent.seated
             && self.in_world()
+            && crate::autopilot::can_takeoff(&self.world)
         {
             self.world.agent.flying = true;
         }
@@ -7553,6 +7635,11 @@ impl App {
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
+        // the input this frame reads came with the events just handled: its
+        // time to the screen starts here (Performance › latency, pacing.rs)
+        if let Some(g) = &mut self.gfx {
+            g.renderer.mark_input(Instant::now());
+        }
         self.sync_minimized_mute();
         aurora_render::frame_priority::apply();
         self.world.anti_spam.configure(self.settings.anti_spam);
@@ -7727,6 +7814,9 @@ impl App {
         self.world.events_this_frame = 0;
         self.sync_script_debug();
         self.world.received_items.enabled = self.settings.sort_received_items;
+        self.world.inventory_offers.auto_accept = self.settings.auto_accept_inventory;
+        self.world.inventory_offers.auto_accept_chat = self.settings.auto_accept_inventory_chat;
+        self.world.inventory_offers.auto_accept_notify = self.settings.auto_accept_inventory_notify;
         self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
         self.world.payments.open_for_friends = self.settings.payment_opens_conversation;
         self.world.payments.open_when_paying = self.settings.payment_sent_opens_conversation;
@@ -8147,14 +8237,6 @@ impl App {
             if !self.world.agent.flying && self.world.rlva.has("jump") {
                 c.control_flags &= !control::UP_POS;
             }
-            c.control_flags = self.world.agent.immediate_jump_flags(
-                c.control_flags,
-                !self.settings.automatic_fly
-                    && self.movement_runtime.state == crate::movement::State::Ground
-                    && self.movement_runtime.native_fly_allowed()
-                    && self.world.movement_complete
-                    && !self.world.teleporting,
-            );
             if late_camera_frame.is_some() && self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
                 late_controls = Some(c);
             } else {
@@ -8584,7 +8666,14 @@ impl App {
             }
             self.scene.set_wire_selection(&mut self.world, selection_wire);
             self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
-            let selected_faces = self.build.face_selection(&self.world, &self.settings.build);
+            // Use face coverage while highlighting local appearances. Actual
+            // build selection, wire outlines and edits stay untouched; its
+            // ordinary face overlay returns when the mode is switched off.
+            let selected_faces = if self.imports.local_status.revealing() {
+                self.imports.appearance_status(&self.world.objects).faces
+            } else {
+                self.build.face_selection(&self.world, &self.settings.build)
+            };
             self.scene.set_face_selection(&mut self.world, selected_faces);
             if std::mem::take(&mut self.build.ui.reveal_faces) {
                 self.scene.reveal_selected_faces();
@@ -9149,7 +9238,12 @@ impl App {
                 })
                 .collect(),
             rlva_spheres: self.world.rlva_sphere_frames(self.camera.position, Instant::now()),
-            selection_color: egui::Rgba::from(self.palette.violet_light).to_array(),
+            selection_color: egui::Rgba::from(if self.imports.local_status.revealing() {
+                self.palette.warn
+            } else {
+                self.palette.violet_light
+            })
+            .to_array(),
             rez_gradient: {
                 // AURORA_REZ_STYLE=1|2|3: the effect's look (grid, scanlines,
                 // wireframe, the one chosen), to compare them
@@ -9167,7 +9261,11 @@ impl App {
                 g[1][3] = if self.scene.rez.enabled { 1.0 } else { 0.0 };
                 g
             },
-            selection_pulse: self.scene.selection_pulse(Instant::now()),
+            selection_pulse: self
+                .imports
+                .local_status
+                .pulse(Instant::now(), self.settings.reduce_motion)
+                .unwrap_or_else(|| self.scene.selection_pulse(Instant::now())),
             selection_scale: self.egui_ctx.pixels_per_point(),
             view,
             proj,
@@ -9392,6 +9490,7 @@ impl App {
         }
         let ctx = self.egui_ctx.clone();
         if self.demo {
+            self.local_appearance_demo_input(&mut raw);
             self.texture_library_demo_input(&mut raw);
             self.portal_drop_demo_input(&mut raw);
             self.give_demo_input(&mut raw, vp, (w, h));
@@ -9517,6 +9616,10 @@ impl App {
         //     }
         // }
         self.report_abuse_capture(&mut gfx.renderer);
+        // Control is Command for key events on macOS. Leave pointer
+        // modifiers and ModifiersChanged alone (Command-click stays distinct).
+        crate::keybinds::adopt_mac_control_keys(&mut raw.events, cfg!(target_os = "macos"));
+        crate::keybinds::keep_select_all_exact(&mut raw.events);
         self.sound_cues.before(&ctx, &raw);
         self.options_ui
             .prepare_scale_input(&raw, ctx.pixels_per_point(), self.numeric_drag.active());
@@ -9908,18 +10011,14 @@ impl App {
         let target = (cap >= 1.0 && !paced_by_vsync).then(|| Duration::from_secs_f32(1.0 / cap));
         // (while Windows holds the window, this thread is left to its loop:
         // the wait is done between the frames, on another thread)
-        if !crate::window_hold::paces(target)
-            && let Some(target) = target
-        {
-            let spent = self.frame_start.elapsed();
-            if spent < target {
-                let rest = target - spent;
-                if rest > Duration::from_millis(2) {
-                    std::thread::sleep(rest - Duration::from_millis(1));
-                }
-                while self.frame_start.elapsed() < target {
-                    std::hint::spin_loop();
-                }
+        if !crate::window_hold::paces(target) {
+            // frame pacing (aurora-render pacing.rs): when the GPU sets the
+            // pace, the next frame reads its input once the GPU has finished
+            // the frame before this one, instead of waiting behind it with
+            // stale input; then the frame limiter
+            gfx.renderer.wait_for_gpu();
+            if let Some(target) = target {
+                wait_until(self.frame_start + target);
             }
         }
         self.frame_profile.lap(Lap::Limiter);
@@ -11815,7 +11914,7 @@ impl App {
             // FSCommon::report_to_nearby_chat(gAgent.mMOTD)
             BarAction::MessageOfTheDay => self.world.system_message(self.world.motd.clone()),
             BarAction::Import => {
-                self.imports.toggle_launcher(&self.egui_ctx);
+                self.imports.toggle_window(&self.egui_ctx);
                 self.egui_ctx.request_repaint();
             }
             BarAction::BlenderLive => {
@@ -13240,6 +13339,15 @@ impl App {
                         self.ik_editor.show(&ctx, &p, &self.world, projector);
                         self.ik_editor.over_viewfinder = false;
                     }
+                    // Personal Lighting, opened from the light panel, stays
+                    // over it too: the photo's light refined without leaving
+                    if self.panels.personal_lighting {
+                        let screen = ctx.content_rect();
+                        ui::layout::set_work_area(&ctx, screen);
+                        ui::layout::set_move_area(&ctx, screen);
+                        let reset = self.personal_lighting(&ctx, &p, true);
+                        self.env_actions(reset);
+                    }
                     // the exit's question still shows over the photo mode
                     a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
                     return a;
@@ -14155,13 +14263,14 @@ impl App {
                     volume,
                 });
                 // who hears the nearby chat, and who of them types (the
-                // radar's avatars in chat range, `World::is_typing_nearby`)
+                // radar's avatars in chat range, `World::is_typing_nearby`;
+                // never one whose chat is blocked, #1395)
                 self.chat_ui.nearby_count = 0;
                 self.chat_ui.nearby_typing.clear();
                 for e in self.radar.entries() {
                     if !e.left_behind && e.range.is_some_and(|d| d <= crate::world::radar::CHAT_RANGE) {
                         self.chat_ui.nearby_count += 1;
-                        if e.typing {
+                        if e.typing && !self.world.nearby_typing_hidden(&e.id) {
                             self.chat_ui.nearby_typing.push(e.id);
                         }
                     }
@@ -15439,28 +15548,8 @@ impl App {
                     &mut lighting,
                 );
                 self.panels.environment = open;
-                // captureCurrentEnvironment: on opening, and again when another
-                // local change left no fixed sky to edit (onEnvironmentUpdated)
-                if lighting && (!self.lighting_was_open || self.world.eep.personal_sky().is_none()) {
-                    self.world.eep.capture_personal();
-                }
-                self.env_ui.beacons = [self.settings.sun_beacon, self.settings.moon_beacon];
-                let reset = self.env_ui.show_lighting(&ctx, &p, &mut self.world.eep, &mut lighting);
-                if lighting {
-                    self.set_env_beacons(self.env_ui.beacons);
-                }
-                self.lighting_was_open = lighting;
-                self.panels.personal_lighting = lighting;
-                for action in env_actions.into_iter().chain(reset) {
-                    match action {
-                        ui::environment::EnvAction::Pick(kind, asset) => self.world.eep.request_local(asset, kind),
-                        ui::environment::EnvAction::Shared => {
-                            self.world.eep.clear_local();
-                            self.panels.time_of_day = 0;
-                        }
-                        ui::environment::EnvAction::Preset(n) => self.panels.time_of_day = n,
-                    }
-                }
+                let reset = self.personal_lighting(&ctx, &p, lighting);
+                self.env_actions(env_actions.into_iter().chain(reset));
                 self.draw_env_editor(&ctx, &p);
                 self.draw_day_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);
@@ -15474,8 +15563,8 @@ impl App {
                 self.settings.show_inventory = self.panels.inventory;
                 self.settings.show_appearance = self.panels.appearance;
                 self.settings.show_ao = self.panels.ao;
-                // (not the photo's time of day, which is never saved)
-                if self.panels.time_of_day != self.settings.time_of_day && !self.photo_time_held() {
+                // (the photo's time of day is its own layer, never saved)
+                if self.panels.time_of_day != self.settings.time_of_day {
                     self.settings.time_of_day = self.panels.time_of_day;
                 }
                 if let Some(msg) = self.world.alerts.pop_front() {
@@ -15699,7 +15788,7 @@ impl ApplicationHandler for App {
             }
         };
         crate::window_hold::install(&window);
-        // Cmd+Q asks like the close button (mac_quit.rs)
+        // Cmd+Q asks like the close button (mac_quit.rs). Cmd+H stays Hide.
         #[cfg(target_os = "macos")]
         crate::mac_quit::route_quit_to_close();
         let size = window.inner_size();
@@ -16712,10 +16801,29 @@ impl ApplicationHandler for App {
             }
             self.sync_chat_log();
             self.sync_script_debug();
+            self.settings.auto_accept_inventory |= crate::demo::auto_accept_inventory_scene();
+            self.settings.show_accepted_in_inventory |= crate::demo::show_accepted_scene();
+            self.world.inventory_offers.auto_accept = self.settings.auto_accept_inventory;
+            self.world.inventory_offers.auto_accept_chat = self.settings.auto_accept_inventory_chat;
+            self.world.inventory_offers.auto_accept_notify = self.settings.auto_accept_inventory_notify;
+            self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
                 }
+            }
+            if crate::demo::auto_accept_inventory_scene() {
+                log::info!(
+                    "demo inventory auto-accept: pending={}, cards={}, show={}",
+                    self.world
+                        .notifications
+                        .list
+                        .iter()
+                        .filter(|n| n.kind == crate::world::notifications::Kind::Inventory && n.interactive())
+                        .count(),
+                    self.world.inventory_offers.list.len(),
+                    self.settings.show_accepted_in_inventory,
+                );
             }
             if let Ok(mode) = std::env::var("AURORA_DEMO_PARCEL_VISIBILITY") {
                 crate::demo::parcel_visibility::install(&mut self.world, &mut self.settings, &mode);
@@ -17583,8 +17691,17 @@ impl ApplicationHandler for App {
                         }
                         self.inventory_ui.preview = Some(id);
                         self.apply_inventory_action(ui::inventory::InvAction::Preview(id));
-                    } else if view == "animation-open" {
-                        self.inventory_ui.preview = Some(id);
+                    } else if matches!(view.as_str(), "animation-open" | "animation-play-local" | "animation-play-world") {
+                        self.apply_inventory_action(ui::inventory::InvAction::Preview(id));
+                        if view != "animation-open"
+                            && let Some(asset) = self.world.inventory.items.get(&id).map(|item| item.asset_id)
+                        {
+                            self.apply_inventory_action(ui::inventory::InvAction::Animation {
+                                asset,
+                                local: view == "animation-play-local",
+                                start: true,
+                            });
+                        }
                     } else if view.starts_with("image") {
                         self.inventory_ui.thumbnail.open(id);
                         self.inventory_ui.thumbnail.picker_open = view == "image-picker";
@@ -17594,7 +17711,13 @@ impl ApplicationHandler for App {
                         }
                     } else if !matches!(
                         view.as_str(),
-                        "keyboard" | "keyboard-fold" | "aurora-keyboard" | "aurora-keyboard-fold" | "aurora-keyboard-wide"
+                        "keyboard"
+                            | "keyboard-fold"
+                            | "aurora-keyboard"
+                            | "aurora-keyboard-fold"
+                            | "aurora-keyboard-wide"
+                            | "link-icons"
+                            | "aurora-link-icons"
                     ) {
                         self.inventory_ui.demo_menu = Some(id);
                     }
@@ -18066,7 +18189,7 @@ impl ApplicationHandler for App {
                         if matches!(self.settings.keybinds.triggered(&Input::key(code), key_mods),
                             Some(Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault))
                             && (!(self.egui_ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(&self.egui_ctx))
-                                || shortcut_while_typing(true, key_mods.ctrl, key_mods.alt, code, true)))
+                                || shortcut_while_typing(true, key_mods, code, true)))
         ) && self.in_world()
             && self.options_ui.capture.is_none()
             && !self.exit_prompt.open
@@ -18081,10 +18204,30 @@ impl ApplicationHandler for App {
         // Releases still clear any key pressed before AltGr was held.
         let altgr_shortcut = matches!(&event, WindowEvent::KeyboardInput { event: ke, .. }
             if self.altgr_native_key(ke));
+        // People is Command/Ctrl+Shift+A. A focused widget otherwise keeps
+        // the key, and egui selects all on any Command+A.
+        let claim_over_focus = matches!(
+            &event,
+            WindowEvent::KeyboardInput { event: ke, .. }
+                if ke.state == ElementState::Pressed
+                    && !ke.repeat
+                    && !self.exit_prompt.open
+                    && self.options_ui.capture.is_none()
+                    && matches!(ke.physical_key, PhysicalKey::Code(code)
+                        if shortcut_claims_focus(
+                            &self.egui_ctx,
+                            code,
+                            &ke.logical_key,
+                            key_mods,
+                            self.shift,
+                            self.alt,
+                            self.settings.keybinds.triggered(&Input::key(code), key_mods).is_some(),
+                        ))
+        );
         let Some(g) = self.gfx.as_mut() else {
             return;
         };
-        let resp = if chat_pass || lens_shortcut || held_pointer || altgr_shortcut {
+        let resp = if chat_pass || lens_shortcut || held_pointer || altgr_shortcut || claim_over_focus {
             egui_winit::EventResponse {
                 consumed: false,
                 repaint: true,
@@ -18145,6 +18288,7 @@ impl ApplicationHandler for App {
                 self.alt = false;
                 self.alt_graph = false;
                 self.ctrl = false;
+                self.command = false;
                 self.shift = false;
                 self.right_drag = false;
                 self.mic_button_held = false;
@@ -18192,6 +18336,7 @@ impl ApplicationHandler for App {
                     if pressed
                         && !self.shift
                         && !self.ctrl
+                        && !self.command
                         && !self.alt
                         && !self.alt_graph
                         && let winit::keyboard::Key::Character(s) = &ke.logical_key
@@ -18207,8 +18352,11 @@ impl ApplicationHandler for App {
                         }
                         return;
                     }
-                    // egui received Ctrl+W above; reserve its physical key
-                    // before gestures or movement can keep it held.
+                    // egui received Close Window above (Ctrl+W and
+                    // Command+W) or Close All Windows (Ctrl+Shift+W and
+                    // Command+Shift+W). Both keys are mods.ctrl. Reserve
+                    // the physical key before gestures or movement can
+                    // keep it held.
                     if pressed && ui::close_key::take_native_key(&ke.logical_key, code, mods, &mut self.down) {
                         self.check_temp_run();
                         return;
@@ -18348,14 +18496,8 @@ impl ApplicationHandler for App {
                     }
                     // Ctrl / Alt shortcuts of the viewer still work while a text
                     // field has the focus (chat bar, login fields...)
-                    let shortcut = pressed
-                        && shortcut_while_typing(
-                            typing,
-                            mods.ctrl,
-                            mods.alt,
-                            code,
-                            self.settings.keybinds.triggered(&input, mods).is_some(),
-                        );
+                    let shortcut =
+                        pressed && shortcut_while_typing(typing, mods, code, self.settings.keybinds.triggered(&input, mods).is_some());
                     // Ctrl+F belongs to the window with its own find when the
                     // script editor is active, the keyboard is in a conversation, or the
                     // pointer over a conversation with the keyboard nowhere:
@@ -18363,14 +18505,14 @@ impl ApplicationHandler for App {
                     // only runs otherwise. The rule: ui::find_shortcut::owner.
                     // The key is the one egui reads, which the window takes.
                     let find_key = matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("f"));
-                    let find_taken = pressed && self.ctrl && find_key && ui::find_shortcut::window_takes_it(&self.egui_ctx);
+                    let find_taken = pressed && mods.ctrl && find_key && ui::find_shortcut::window_takes_it(&self.egui_ctx);
                     let script_command = pressed
-                        && self.ctrl
+                        && mods.ctrl
                         && matches!(&ke.logical_key, winit::keyboard::Key::Character(c)
                             if c.eq_ignore_ascii_case("k") || (c.eq_ignore_ascii_case("s") && !self.shift && !self.alt))
                         && ui::scripts::editor_focused(&self.egui_ctx);
                     let document_save = pressed
-                        && self.ctrl
+                        && mods.ctrl
                         && !self.shift
                         && !self.alt
                         && matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("s"))
@@ -18499,6 +18641,22 @@ impl ApplicationHandler for App {
     }
 }
 
+/// The frame limiter's and the frame pacing's wait: a sleep to a
+/// millisecond before `until` (the scheduler's grain), then a spin.
+fn wait_until(until: Instant) {
+    let now = Instant::now();
+    if until <= now {
+        return;
+    }
+    let rest = until - now;
+    if rest > Duration::from_millis(2) {
+        std::thread::sleep(rest - Duration::from_millis(1));
+    }
+    while Instant::now() < until {
+        std::hint::spin_loop();
+    }
+}
+
 /// Frames per second the frame limiter holds the loop to (0 = none): the
 /// user cap, the lower background cap while the window is not focused, and
 /// the screen rate outside the world. The login screen draws an empty scene:
@@ -18599,11 +18757,26 @@ mod tests {
         assert_eq!(action, Some(Action::Preferences), "Ctrl+P is the preferences' shortcut");
         assert_eq!(bindings.triggered(&Input::key(KeyCode::KeyP), Mods::default()), None);
         // a field focused: the key still reaches the viewer's shortcuts
-        assert!(shortcut_while_typing(true, true, false, KeyCode::KeyP, action.is_some()));
+        assert!(shortcut_while_typing(true, ctrl, KeyCode::KeyP, action.is_some()));
         // the fields keep their own editing shortcuts (Ctrl+C, Ctrl+V…)
-        assert!(!shortcut_while_typing(true, true, false, KeyCode::KeyV, true));
+        assert!(!shortcut_while_typing(true, ctrl, KeyCode::KeyV, true));
+        // Select All stays in the field; People (Ctrl+Shift+A) does not
+        assert!(!shortcut_while_typing(true, ctrl, KeyCode::KeyA, true));
+        let people = Mods {
+            ctrl: true,
+            shift: true,
+            alt: false,
+        };
+        assert!(shortcut_while_typing(true, people, KeyCode::KeyA, true));
+        // Alt+arrows are camera chords, and Option+arrows move by word:
+        // both stay in the field
+        let alt = Mods {
+            alt: true,
+            ..Default::default()
+        };
+        assert!(!shortcut_while_typing(true, alt, KeyCode::ArrowLeft, true));
         // a plain P while typing is the field's
-        assert!(!shortcut_while_typing(true, false, false, KeyCode::KeyP, false));
+        assert!(!shortcut_while_typing(true, Mods::default(), KeyCode::KeyP, false));
         assert!(login_shortcut(&Screen::Login, action));
         // the other shortcuts wait for the world
         assert!(!login_shortcut(&Screen::Login, Some(Action::Fly)));

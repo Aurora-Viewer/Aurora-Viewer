@@ -265,17 +265,16 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             };
             let mut v = tool.ui.edits.get(field).cloned().unwrap_or_else(|| current.clone());
             row(ui, p, title, if legacy { 100.0 } else { LABEL_W - 30.0 }, |ui| {
-                let r = ui.add_enabled(
-                    modify,
-                    egui::TextEdit::singleline(&mut v)
-                        .desired_width(ui.available_width())
-                        .char_limit(limit)
-                        .hint_text(if count > 1 {
-                            aurora_i18n::tr!("build-ui-general-multiple-selection")
-                        } else {
-                            ""
-                        }),
-                );
+                let hint = if count > 1 {
+                    aurora_i18n::tr!("build-ui-general-multiple-selection")
+                } else {
+                    ""
+                };
+                let width = ui.available_width();
+                // read only without the modify right, still selectable
+                let r = crate::ui::widgets::text_field(ui, modify, &mut v, |b, _| {
+                    egui::TextEdit::singleline(b).desired_width(width).char_limit(limit).hint_text(hint)
+                });
                 if description {
                     r.clone().on_hover_text(aurora_i18n::tr!("build-ui-general-127-bytes-maximum"));
                 } else {

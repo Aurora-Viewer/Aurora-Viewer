@@ -161,7 +161,7 @@ impl BuildTool {
         }
         // An outstanding picker preview must not later revert this commit.
         if self.ui.picker.open || self.ui.texture_edit.is_some() {
-            self.cancel_texture_picker(world, env);
+            self.dismiss_texture_picker();
         }
         let count = self.num_faces(world, idx);
         let selected: Vec<Sel> = faces

@@ -40,6 +40,7 @@ pub(super) fn show(
         p,
         Some(icons),
         PropertyPanel {
+            inventory: Some(inv),
             item: it,
             edit,
             can_edit,
@@ -107,6 +108,7 @@ fn resident_label<'a>(role: Role, id: Uuid, names: &'a HashMap<Uuid, String>) ->
 /// One properties layout for agent inventory and object contents. The caller
 /// supplies access and saves through the appropriate inventory protocol.
 pub(crate) struct PropertyPanel<'a> {
+    pub inventory: Option<&'a Inventory>,
     pub item: &'a aurora_net::inventory::InvItem,
     pub edit: &'a mut PropertyEdit,
     pub can_edit: bool,
@@ -127,6 +129,7 @@ pub(crate) struct PropertyResponse {
 
 pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data: PropertyPanel<'_>) -> PropertyResponse {
     let PropertyPanel {
+        inventory,
         item: it,
         edit,
         can_edit,
@@ -143,21 +146,25 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
         ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
         ui.spacing_mut().interact_size.y = 22.0;
         ui.horizontal(|ui| {
-            let name = item_icon(it.asset_type, it.inv_type, it.flags);
+            let (name, color) = inventory.map_or_else(
+                || {
+                    (
+                        item_icon(it.asset_type, it.inv_type, it.flags),
+                        item_icon_color(it.asset_type, it.inv_type, p),
+                    )
+                },
+                |inv| inventory_item_icon(inv, it, p),
+            );
             if let Some(icons) = icons {
-                item_type_icon(ui, icons, it, p);
+                tree::icon(ui, icons, name, p, Some(color));
             } else if let Some(texture) = crate::ui::icons::global(name) {
-                let color = item_icon_color(it.asset_type, it.inv_type, p);
                 ui.add(egui::Image::new(&texture).fit_to_exact_size(Vec2::splat(16.0)).tint(color));
             } else {
                 ui.add_space(16.0);
             }
-            ui.add_enabled(
-                can_describe,
-                egui::TextEdit::singleline(&mut edit.name)
-                    .char_limit(63)
-                    .desired_width(ui.available_width()),
-            );
+            crate::ui::widgets::text_field(ui, can_describe, &mut edit.name, |b, ui| {
+                egui::TextEdit::singleline(b).char_limit(63).desired_width(ui.available_width())
+            });
         });
         ui.add_space(6.0);
         ui.horizontal_top(|ui| {
@@ -204,13 +211,12 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
             });
         });
         ui.label(aurora_i18n::tr!("common-description"));
-        ui.add_enabled(
-            can_describe,
-            egui::TextEdit::multiline(&mut edit.desc)
+        crate::ui::widgets::text_field(ui, can_describe, &mut edit.desc, |b, ui| {
+            egui::TextEdit::multiline(b)
                 .char_limit(127)
                 .desired_rows(2)
-                .desired_width(ui.available_width()),
-        );
+                .desired_width(ui.available_width())
+        });
         ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-properties-experience")).color(p.muted));
         crate::ui::widgets::divider(ui, p);
         ui.label(aurora_i18n::tr!("ui-inventory-properties-permissions"));

@@ -695,7 +695,14 @@ impl Notifications {
             return (vec![super::group_data::offer_answer(a.from, a.tx, Some(folder))], None);
         }
         let n = self.list.remove(pos);
-        self.outcomes.insert(id, outcome_of(&n, &r));
+        let outcome = outcome_of(&n, &r);
+        // Automatic acceptance can answer in the frame that creates the
+        // offer, before take_departures has seen it. Retain its history
+        // snapshot now, so its outcome is consumed on the next collection.
+        if matches!(&n.data, Data::Inventory { .. }) && !n.transient && !self.seen.iter().any(|(seen, _)| *seen == id) {
+            self.seen.push((id, n.history_entry(outcome)));
+        }
+        self.outcomes.insert(id, outcome);
         let mut out = Vec::new();
         let mut url = None;
         let accept = matches!(r, Response::Accept);

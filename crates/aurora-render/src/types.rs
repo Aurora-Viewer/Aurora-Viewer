@@ -609,6 +609,10 @@ pub struct DrawLists {
 pub const IMPOSTOR_TILE: u32 = 256;
 pub const IMPOSTOR_TILES_PER_ROW: u32 = 8;
 pub const IMPOSTOR_TILES: u32 = IMPOSTOR_TILES_PER_ROW * IMPOSTOR_TILES_PER_ROW;
+/// At most four 32 MiB atlas pages; offscreen pictures are reclaimed first.
+pub const IMPOSTOR_MAX_TILES: u32 = IMPOSTOR_TILES * 4;
+/// A visible avatar waiting for a picture uses a cheap silhouette card.
+pub const IMPOSTOR_PENDING: u32 = 1 << 30;
 /// Impostor pictures taken per frame.
 pub const IMPOSTOR_CAPTURES: usize = 2;
 
@@ -1509,6 +1513,13 @@ pub struct RenderStats {
     pub thread_ms: f32,
     /// Render thread: time it waited for the main thread's packet (ms).
     pub thread_idle_ms: f32,
+    /// From the moment the frame began reading its input to its
+    /// presentation (ms; None when it was not presented). What the GPU
+    /// still has to draw after `present` is not in it.
+    pub input_ms: Option<f32>,
+    /// Main thread: the sleep the frame pacing asks before the next frame
+    /// reads its input (pacing.rs, ms).
+    pub pace_ms: f32,
     /// Bytes of the frame's write journal (writes.rs).
     pub journal_bytes: u64,
 }

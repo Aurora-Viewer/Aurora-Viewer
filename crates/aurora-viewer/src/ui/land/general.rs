@@ -24,10 +24,9 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     crate::ui::widgets::section_header(ui, p, "file-info-filled", aurora_i18n::tr!("workspace-land-identity"));
     row(ui, p, aurora_i18n::tr!("common-name-2"), |ui| {
         s.name.sync(&parcel.name);
-        let r = ui.add_enabled(
-            can_identity,
-            egui::TextEdit::singleline(&mut s.name.text).desired_width(f32::INFINITY),
-        );
+        let r = crate::ui::widgets::text_field(ui, can_identity, &mut s.name.text, |b, _| {
+            egui::TextEdit::singleline(b).desired_width(f32::INFINITY)
+        });
         // validateASCIIPrintableNoPipe, on what is typed (a name set
         // elsewhere keeps its other characters)
         if r.changed() {
@@ -45,7 +44,9 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             None => String::new(),
         };
         let mut id = id;
-        ui.add_enabled(false, egui::TextEdit::singleline(&mut id).desired_width(f32::INFINITY));
+        crate::ui::widgets::text_field(ui, false, &mut id, |b, _| {
+            egui::TextEdit::singleline(b).desired_width(f32::INFINITY)
+        });
     });
     ui.horizontal_top(|ui| {
         super::key(ui, p, aurora_i18n::tr!("common-description"));

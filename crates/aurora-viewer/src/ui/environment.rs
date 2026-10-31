@@ -222,57 +222,7 @@ impl EnvironmentUi {
             let id = ui.make_persistent_id(egui::IdSalt::new(salt));
             egui::Popup::open_id(ui.ctx(), id.with("popup"));
         }
-        let list = self.catalog.list(kind);
-        let second = if kind == SettingsKind::Day {
-            aurora_i18n::tr!("common-nothing")
-        } else {
-            aurora_i18n::tr!("ui-environment-based-on-day-cycle")
-        };
-        let text = match shown {
-            Shown::Shared => aurora_i18n::tr!("ui-environment-shared-environment").to_owned(),
-            Shown::DayBased => second.to_owned(),
-            Shown::Item(id) => self
-                .catalog
-                .name_of(kind, id)
-                .map_or_else(|| aurora_i18n::tr!("ui-environment-inventory-settings").to_owned(), str::to_owned),
-            Shown::Preset(n) => super::bars::time_of_day()
-                .get(n as usize)
-                .copied()
-                .unwrap_or(aurora_i18n::tr!("common-time-of-day"))
-                .to_owned(),
-            Shown::Personal => aurora_i18n::tr!("ui-environment-personal-lighting").to_owned(),
-        };
-        let mut picked = None;
-        egui::ComboBox::from_id_salt(salt)
-            .width(COMBO_W)
-            .height(420.0)
-            .selected_text(RichText::new(text).size(12.0).color(p.ink))
-            .truncate()
-            .show_ui(ui, |ui| {
-                // the two fixed entries show the state; they cannot be picked
-                // (setDefaultPresetsEnabled(false))
-                for (i, label) in [aurora_i18n::tr!("ui-environment-shared-environment"), second]
-                    .into_iter()
-                    .enumerate()
-                {
-                    let on = env_select::shown_index(list, shown) == i && !matches!(shown, Shown::Preset(_) | Shown::Personal);
-                    ui.add_enabled(false, egui::Button::selectable(on, RichText::new(label).size(12.0)));
-                }
-                widgets::divider(ui, p);
-                for c in list {
-                    let on = shown == Shown::Item(c.asset);
-                    if ui.selectable_label(on, RichText::new(&c.name).size(12.0)).clicked() && !on {
-                        picked = Some(c.asset);
-                    }
-                }
-            });
-        if widgets::icon_button(ui, p, "caret-left-filled", aurora_i18n::tr!("common-previous"), !list.is_empty()) {
-            picked = env_select::step(list, env_select::shown_index(list, shown), false);
-        }
-        if widgets::icon_button(ui, p, "caret-right-filled", aurora_i18n::tr!("common-next"), !list.is_empty()) {
-            picked = env_select::step(list, env_select::shown_index(list, shown), true);
-        }
-        picked.map(|id| EnvAction::Pick(kind, id))
+        settings_list(ui, p, &self.catalog, kind, shown, salt, COMBO_W).map(|id| EnvAction::Pick(kind, id))
     }
 
     /// "Personal lighting": edits the local sky at once. Returns
@@ -542,6 +492,75 @@ fn same_sky(a: &SkyFrame, b: &SkyFrame) -> bool {
         && a.glow == b.glow
         && a.star_brightness == b.star_brightness
         && a.moon_rotation == b.moon_rotation
+}
+
+/// One sky, water or day cycle list with its < > arrows (FloaterQuickPrefs'
+/// combos and their Prev / Next buttons), `width` wide: the item picked.
+/// Also the photo's Light section.
+pub fn settings_list(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    catalog: &SettingsCatalog,
+    kind: SettingsKind,
+    shown: Shown,
+    salt: impl std::hash::Hash + std::fmt::Debug,
+    width: f32,
+) -> Option<Uuid> {
+    let list = catalog.list(kind);
+    let second = if kind == SettingsKind::Day {
+        aurora_i18n::tr!("common-nothing")
+    } else {
+        aurora_i18n::tr!("ui-environment-based-on-day-cycle")
+    };
+    let text = match shown {
+        Shown::Shared => aurora_i18n::tr!("ui-environment-shared-environment").to_owned(),
+        Shown::DayBased => second.to_owned(),
+        Shown::Item(id) => catalog
+            .name_of(kind, id)
+            .map_or_else(|| aurora_i18n::tr!("ui-environment-inventory-settings").to_owned(), str::to_owned),
+        Shown::Preset(n) => super::bars::time_of_day()
+            .get(n as usize)
+            .copied()
+            .unwrap_or(aurora_i18n::tr!("common-time-of-day"))
+            .to_owned(),
+        Shown::Personal => aurora_i18n::tr!("ui-environment-personal-lighting").to_owned(),
+    };
+    let mut picked = None;
+    // `width` at most: a long name is cut, never widening its window
+    let size = Vec2::new(width, ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_max_width(width);
+        egui::ComboBox::from_id_salt(salt)
+            .width(width)
+            .height(420.0)
+            .selected_text(RichText::new(text).size(12.0).color(p.ink))
+            .truncate()
+            .show_ui(ui, |ui| {
+                // the two fixed entries show the state; they cannot be picked
+                // (setDefaultPresetsEnabled(false))
+                for (i, label) in [aurora_i18n::tr!("ui-environment-shared-environment"), second]
+                    .into_iter()
+                    .enumerate()
+                {
+                    let on = env_select::shown_index(list, shown) == i && !matches!(shown, Shown::Preset(_) | Shown::Personal);
+                    ui.add_enabled(false, egui::Button::selectable(on, RichText::new(label).size(12.0)));
+                }
+                widgets::divider(ui, p);
+                for c in list {
+                    let on = shown == Shown::Item(c.asset);
+                    if ui.selectable_label(on, RichText::new(&c.name).size(12.0)).clicked() && !on {
+                        picked = Some(c.asset);
+                    }
+                }
+            });
+    });
+    if widgets::icon_button(ui, p, "caret-left-filled", aurora_i18n::tr!("common-previous"), !list.is_empty()) {
+        picked = env_select::step(list, env_select::shown_index(list, shown), false);
+    }
+    if widgets::icon_button(ui, p, "caret-right-filled", aurora_i18n::tr!("common-next"), !list.is_empty()) {
+        picked = env_select::step(list, env_select::shown_index(list, shown), true);
+    }
+    picked
 }
 
 /// Azimuth and elevation (degrees) of a sun or moon rotation

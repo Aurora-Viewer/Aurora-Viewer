@@ -200,7 +200,7 @@ fn picker_rollback_preserves_prior_edits_and_ok_can_save_only_confirmed_inventor
 }
 
 #[test]
-fn reopening_a_picker_restores_its_previous_slot_and_cancel_handles_removed_local_files() {
+fn switching_picker_slots_keeps_applied_choices_and_cancel_handles_removed_local_files() {
     let (mut world, mut state, id) = fixture(14);
     let first = Uuid::new_v4();
     let second = Uuid::new_v4();
@@ -209,9 +209,11 @@ fn reopening_a_picker_restores_its_previous_slot_and_cancel_handles_removed_loca
     assert!(state.set_texture(&world, 26, first));
     state.open_picker(&world, 26);
     assert!(state.preview_picker(&world, second));
-    assert!(state.open_picker(&world, 27), "switching targets cancels the preceding preview");
-    assert_eq!(state.draft.as_ref().expect("draft").edited.textures[&26], first);
+    state.open_picker(&world, 27);
+    assert_eq!(state.picker_slot, Some(27));
+    assert_eq!(state.draft.as_ref().expect("draft").edited.textures[&26], second);
     state.finish_picker(&world, None);
+    assert!(state.set_texture(&world, 26, first));
     state.open_picker(&world, 26);
     assert!(state.preview_picker(&world, second));
     world.local_assets.remove(&first);

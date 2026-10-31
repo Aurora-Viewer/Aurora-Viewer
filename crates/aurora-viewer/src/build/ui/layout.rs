@@ -32,6 +32,8 @@ pub(super) fn title(item: Item) -> &'static str {
         Item::Snap => aurora_i18n::tr!("build-compact-snap"),
         Item::Highlight => aurora_i18n::tr!("build-compact-highlight"),
         Item::Probes => aurora_i18n::tr!("build-compact-probes"),
+        Item::OwnedOnly => aurora_i18n::tr!("build-compact-owned-only"),
+        Item::MovableOnly => aurora_i18n::tr!("build-compact-movable-only"),
         Item::LandGroup => aurora_i18n::tr!("rez-under-land-group"),
         Item::FollowEdit => aurora_i18n::tr!("build-ui-tools-follow-edit-object"),
         Item::General => aurora_i18n::tr!("build-compact-general"),
@@ -234,6 +236,8 @@ pub(super) fn control(
         Item::Snap => s.snap,
         Item::Highlight => s.show_highlight,
         Item::Probes => s.select_probes,
+        Item::OwnedOnly => s.select_owned_only,
+        Item::MovableOnly => s.select_movable_only,
         Item::LandGroup => s.rez_under_land_group,
         Item::FollowEdit => s.follow_edit_object,
         _ => return,
@@ -255,6 +259,8 @@ pub(super) fn control(
                 Item::Snap => s.snap = value,
                 Item::Highlight => s.show_highlight = value,
                 Item::Probes => s.select_probes = value,
+                Item::OwnedOnly => s.select_owned_only = value,
+                Item::MovableOnly => s.select_movable_only = value,
                 Item::LandGroup => s.rez_under_land_group = value,
                 Item::FollowEdit => s.follow_edit_object = value,
                 _ => {}
@@ -380,7 +386,7 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
                         tool.ui.layout.drag = None;
                     }
                     if s.legacy_window {
-                        for item in [Item::LandGroup, Item::FollowEdit] {
+                        for item in [Item::OwnedOnly, Item::MovableOnly, Item::LandGroup, Item::FollowEdit] {
                             control(ui, p, tool, world, s, mods, item);
                         }
                         widgets::divider(ui, p);

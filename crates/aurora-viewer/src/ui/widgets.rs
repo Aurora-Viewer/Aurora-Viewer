@@ -19,6 +19,7 @@ mod field_centering_tests;
 mod movement_tests;
 pub(crate) use cascade::Group as CascadeGroup;
 pub mod color;
+mod copy_on_click;
 pub mod demo;
 #[cfg(test)]
 pub(crate) mod elide_tests;
@@ -30,15 +31,18 @@ mod resize;
 pub(crate) mod scroll_offset;
 #[cfg(test)]
 pub(crate) mod steady_tests;
+mod text_field;
 mod unread;
 mod volume;
 mod workspace;
 pub use color::color_button;
+pub use copy_on_click::copy_on_click;
 pub(crate) use modal_keys::{default_button, enter_pressed};
 pub use pills::{
     clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide,
     search_box,
 };
+pub use text_field::text_field;
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{
@@ -517,7 +521,8 @@ impl<'a> Floater<'a> {
                     bottom: if minimized && !compact { 4 } else { 10 },
                 }
             });
-        // Ctrl+W closes it as its cross does, when it is the frontmost
+        // Ctrl+W closes it as its cross does, when it is the frontmost.
+        // Ctrl+Shift+W closes every window.
         let mut close = super::close_key::take(ctx, egui::Id::unique(self.id));
         super::close_key::shown(ctx, egui::Id::unique(self.id));
         // the toolbar button, a menu entry or a shortcut asked to expand it
@@ -1262,6 +1267,37 @@ pub fn floater_above(ctx: &egui::Context, id: &str, other: &str) -> bool {
     })
 }
 
+/// The floater `id` is the front window (LLFloater::isFrontmost): the topmost
+/// visible layer that is not the background.
+pub fn floater_is_front(ctx: &egui::Context, id: &str) -> bool {
+    let want = egui::Id::unique(id);
+    ctx.memory(|m| {
+        m.layer_ids()
+            .filter(|layer| layer.order != egui::Order::Background && m.areas().is_visible(layer))
+            .last()
+            .is_some_and(|layer| layer.id == want)
+    })
+}
+
+/// The keyboard is inside the floater `id` (LLFloater::hasFocus).
+pub fn floater_holds_keyboard(ctx: &egui::Context, id: &str) -> bool {
+    let want = egui::Id::unique(id);
+    let Some(focus) = ctx.memory(|m| m.focused()) else {
+        return false;
+    };
+    ctx.read_response(focus).is_some_and(|response| response.layer_id.id == want)
+}
+
+/// Bring the floater `id` to the front, expanding it when it is minimized
+/// (LLFloater::setVisibleAndFrontmost).
+pub fn bring_floater_front(ctx: &egui::Context, id: &str) {
+    if floater_minimized(ctx, id) {
+        expand_floater(ctx, id);
+    } else {
+        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
+    }
+}
+
 /// Is the floater `id` reduced to its title bar?
 pub fn floater_minimized(ctx: &egui::Context, id: &str) -> bool {
     ctx.data_mut(|d| d.get_persisted::<bool>(egui::Id::unique((id, "minimized"))))
@@ -1322,14 +1358,6 @@ const EXPAND: &str = "expand";
 /// Title bar button with a Tabler icon (drawn by hand if it is missing).
 fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
     title_button_sized(ui, p, icon, Vec2::splat(16.0))
-}
-
-/// The standard plain close glyph, with a toolbar-sized hit target.
-pub(crate) fn close_button(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
-    let label = aurora_i18n::tr!("common-close");
-    let response = title_button_sized(ui, p, "x", Vec2::new(24.0, 36.0));
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
-    response.on_hover_text(label).on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn title_button_sized(ui: &mut egui::Ui, p: &Palette, icon: &str, size: Vec2) -> egui::Response {
@@ -1940,8 +1968,17 @@ pub fn icon_toggle(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bo
     small_icon_button(ui, p, icon, tip, true, on)
 }
 
+/// Flat icon toggle with a larger glyph and hit target, in logical points.
+pub fn icon_toggle_sized(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool, side: f32) -> bool {
+    sized_icon_button(ui, p, icon, tip, true, on, side)
+}
+
 fn small_icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: bool, on: bool) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(20.0, 20.0), if enabled { Sense::click() } else { Sense::hover() });
+    sized_icon_button(ui, p, icon, tip, enabled, on, 20.0)
+}
+
+fn sized_icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: bool, on: bool, side: f32) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(side), if enabled { Sense::click() } else { Sense::hover() });
     let fill = if on {
         p.violet
     } else if resp.hovered() && enabled {
@@ -1959,7 +1996,7 @@ fn small_icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enab
         Some(t) => {
             ui.painter().image(
                 t.id(),
-                egui::Rect::from_center_size(rect.center(), Vec2::splat(14.0)),
+                egui::Rect::from_center_size(rect.center(), Vec2::splat(side * 0.7)),
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                 col,
             );

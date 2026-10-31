@@ -542,9 +542,204 @@ const ALIASES: &[(&str, &str)] = &[
     ("Inv_Invalid", "help-circle-filled"),
 ];
 
+// Target-type artwork with the human-authored corner shortcut layer.
+const INVENTORY_LINKS: &[(&str, &[u8])] = &[
+    (
+        "Inv_FolderClosed_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/folder-link.svg"),
+    ),
+    (
+        "Inv_FolderOpen_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/folder-open-link.svg"),
+    ),
+    (
+        "Inv_Object_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/box-link.svg"),
+    ),
+    (
+        "Inv_Object_Multi_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/packages-link.svg"),
+    ),
+    (
+        "Inv_Texture_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/photo-link.svg"),
+    ),
+    (
+        "Inv_Notecard_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/file-text-link.svg"),
+    ),
+    (
+        "Inv_Landmark_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/map-pin-link.svg"),
+    ),
+    (
+        "Inv_Clothing_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/shirt-link.svg"),
+    ),
+    (
+        "Inv_BodyShape_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/man-link.svg"),
+    ),
+    (
+        "Inv_Skin_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/fingerprint-link.svg"),
+    ),
+    (
+        "Inv_Hair_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/scissors-link.svg"),
+    ),
+    (
+        "Inv_Eye_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/eye-link.svg"),
+    ),
+    (
+        "Inv_Shirt_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/shirt-link.svg"),
+    ),
+    (
+        "Inv_Pants_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/walk-link.svg"),
+    ),
+    (
+        "Inv_Shoe_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/shoe-link.svg"),
+    ),
+    (
+        "Inv_Socks_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/sock-link.svg"),
+    ),
+    (
+        "Inv_Jacket_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/jacket-link.svg"),
+    ),
+    (
+        "Inv_Gloves_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/hand-stop-link.svg"),
+    ),
+    (
+        "Inv_Undershirt_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/shirt-sport-link.svg"),
+    ),
+    (
+        "Inv_Underpants_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/diaper-link.svg"),
+    ),
+    (
+        "Inv_Skirt_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/woman-link.svg"),
+    ),
+    (
+        "Inv_Alpha_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/layers-subtract-link.svg"),
+    ),
+    (
+        "Inv_Tattoo_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/needle-link.svg"),
+    ),
+    (
+        "Inv_Physics_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/wave-sine-link.svg"),
+    ),
+    (
+        "Inv_Universal_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/layers-union-link.svg"),
+    ),
+    (
+        "Inv_Script_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/code-link.svg"),
+    ),
+    (
+        "Inv_Sound_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/file-music-link.svg"),
+    ),
+    (
+        "Inv_Animation_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/run-link.svg"),
+    ),
+    (
+        "Inv_Gesture_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/hand-move-link.svg"),
+    ),
+    (
+        "Inv_Snapshot_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/camera-link.svg"),
+    ),
+    (
+        "Inv_Mesh_Link",
+        include_bytes!("../../../../assets/tabler-icons/outline/cube-3d-sphere-link.svg"),
+    ),
+    (
+        "Inv_Material_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/droplet-link.svg"),
+    ),
+    (
+        "Inv_Settings_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/sun-link.svg"),
+    ),
+    (
+        "Inv_CallingCard_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/id-link.svg"),
+    ),
+    (
+        "Inv_TrashClosed_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/trash-link.svg"),
+    ),
+    (
+        "Inv_SysClosed_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/folder-link.svg"),
+    ),
+    (
+        "Inv_Invalid_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/help-circle-link.svg"),
+    ),
+];
+
+pub(crate) fn inventory_link_name(base: &str) -> &'static str {
+    match base {
+        "Inv_FolderClosed" => "Inv_FolderClosed_Link",
+        "Inv_FolderOpen" => "Inv_FolderOpen_Link",
+        "Inv_Object" => "Inv_Object_Link",
+        "Inv_Object_Multi" => "Inv_Object_Multi_Link",
+        "Inv_Texture" => "Inv_Texture_Link",
+        "Inv_Notecard" => "Inv_Notecard_Link",
+        "Inv_Landmark" => "Inv_Landmark_Link",
+        "Inv_Clothing" => "Inv_Clothing_Link",
+        "Inv_BodyShape" => "Inv_BodyShape_Link",
+        "Inv_Skin" => "Inv_Skin_Link",
+        "Inv_Hair" => "Inv_Hair_Link",
+        "Inv_Eye" => "Inv_Eye_Link",
+        "Inv_Shirt" => "Inv_Shirt_Link",
+        "Inv_Pants" => "Inv_Pants_Link",
+        "Inv_Shoe" => "Inv_Shoe_Link",
+        "Inv_Socks" => "Inv_Socks_Link",
+        "Inv_Jacket" => "Inv_Jacket_Link",
+        "Inv_Gloves" => "Inv_Gloves_Link",
+        "Inv_Undershirt" => "Inv_Undershirt_Link",
+        "Inv_Underpants" => "Inv_Underpants_Link",
+        "Inv_Skirt" => "Inv_Skirt_Link",
+        "Inv_Alpha" => "Inv_Alpha_Link",
+        "Inv_Tattoo" => "Inv_Tattoo_Link",
+        "Inv_Physics" => "Inv_Physics_Link",
+        "Inv_Universal" => "Inv_Universal_Link",
+        "Inv_Script" => "Inv_Script_Link",
+        "Inv_Sound" => "Inv_Sound_Link",
+        "Inv_Animation" => "Inv_Animation_Link",
+        "Inv_Gesture" => "Inv_Gesture_Link",
+        "Inv_Snapshot" => "Inv_Snapshot_Link",
+        "Inv_Mesh" => "Inv_Mesh_Link",
+        "Inv_Material" => "Inv_Material_Link",
+        "Inv_Settings" => "Inv_Settings_Link",
+        "Inv_CallingCard" => "Inv_CallingCard_Link",
+        "Inv_TrashClosed" => "Inv_TrashClosed_Link",
+        "Inv_SysClosed" => "Inv_SysClosed_Link",
+        "Inv_Invalid" => "Inv_Invalid_Link",
+        _ => "Inv_LinkItem",
+    }
+}
+
 /// Whether `name` is an embedded icon or one of the skin's aliases.
 pub(crate) fn embedded(name: &str) -> bool {
-    OUTLINE.iter().chain(FILLED).any(|(n, _)| *n == name) || ALIASES.iter().any(|(alias, _)| *alias == name)
+    OUTLINE.iter().chain(FILLED).chain(INVENTORY_LINKS).any(|(n, _)| *n == name) || ALIASES.iter().any(|(alias, _)| *alias == name)
 }
 
 /// Raster size of SVG icons (crisp up to ~2x UI scale at 24 px).
@@ -570,6 +765,18 @@ pub struct Icons {
 }
 
 fn rasterize_svg(bytes: &[u8], px: u32) -> Option<egui::ColorImage> {
+    rasterize_mask(bytes, px, false)
+}
+
+fn rasterize_mask(bytes: &[u8], px: u32, shortcut: bool) -> Option<egui::ColorImage> {
+    // A black shortcut outline knocks out the base glyph. Reading the rendered
+    // premultiplied white channel retains that gap and antialiasing in our tinted mask.
+    let source = shortcut.then(|| {
+        String::from_utf8_lossy(bytes)
+            .replace("currentColor", "#ffffff")
+            .replace("#202222", "#000000")
+    });
+    let bytes = source.as_ref().map_or(bytes, |s| s.as_bytes());
     let opt = resvg::usvg::Options::default();
     let tree = resvg::usvg::Tree::from_data(bytes, &opt).ok()?;
     let size = tree.size();
@@ -582,7 +789,7 @@ fn rasterize_svg(bytes: &[u8], px: u32) -> Option<egui::ColorImage> {
         .as_chunks::<4>()
         .0
         .iter()
-        .flat_map(|p| [255, 255, 255, p[3]])
+        .flat_map(|p| [255, 255, 255, if shortcut { p[0] } else { p[3] }])
         .collect();
     Some(egui::ColorImage::from_rgba_unmultiplied([px as usize, px as usize], &rgba))
 }
@@ -634,6 +841,13 @@ impl Icons {
                     map.insert((*name).to_owned(), ctx.load_texture(*name, ci, opts));
                 }
                 None => log::warn!("icon {name}: invalid SVG"),
+            }
+        }
+        for (name, bytes) in INVENTORY_LINKS {
+            if let Some(ci) = rasterize_mask(bytes, RASTER_PX, true) {
+                map.insert((*name).to_owned(), ctx.load_texture(*name, ci, opts));
+            } else {
+                log::warn!("icon {name}: invalid shortcut SVG");
             }
         }
         for (name, bytes) in BRAND_SVGS {
@@ -693,6 +907,21 @@ mod tests {
         for (name, bytes) in OUTLINE.iter().chain(FILLED) {
             let ci = rasterize_svg(bytes, 32).unwrap_or_else(|| panic!("{name} failed"));
             assert!(ci.pixels.iter().any(|p| p.a() > 0), "{name} is empty");
+        }
+    }
+
+    #[test]
+    fn inventory_shortcuts_rasterize_and_keep_the_outline_as_a_gap() {
+        let ctx = egui::Context::default();
+        let icons = Icons::load(&ctx, None);
+        for (name, bytes) in INVENTORY_LINKS {
+            assert!(icons.get(name).is_some(), "missing {name}");
+            let image = rasterize_mask(bytes, 240, true).expect("shortcut SVG");
+            assert!(image.pixels.iter().any(|p| p.a() > 0), "empty {name}");
+            // The template's upright shortcut stem occupies x=0.408..1.888.
+            // Its dark outside edge must stay transparent, not become a solid blob.
+            assert_eq!(image.pixels[230 * 240 + 3].a(), 0, "outline {name}");
+            assert_eq!(image.pixels[230 * 240 + 10].a(), 255, "arrow {name}");
         }
     }
 

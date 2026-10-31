@@ -6,9 +6,7 @@ impl App {
         if !self.wearable_ui.open {
             return true;
         }
-        if self.wearable_ui.finish_picker(&self.world, None) {
-            self.wearable_ui.changed(&mut self.world);
-        }
+        self.wearable_ui.dismiss_picker();
         if self
             .wearable_ui
             .draft

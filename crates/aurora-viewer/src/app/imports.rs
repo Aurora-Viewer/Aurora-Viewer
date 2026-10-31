@@ -9,11 +9,16 @@ const SOUND_PREVIEW: u64 = u64::MAX - 10;
 
 impl App {
     pub(super) fn show_imports(&mut self, ctx: &egui::Context, palette: &Palette) {
-        self.imports.load_preferences = self.settings.imports.clone();
         if self.demo && !self.imports.demo_started {
             self.world.balance = Some(1000);
             self.imports.demo_started = true;
+            self.imports.load_preferences = self.settings.imports.clone();
             crate::imports::demo::start(&mut self.imports, &self.scene.jobs, ctx);
+            if self.imports.demo_mode.starts_with("folders") {
+                self.settings.imports.use_default_folders = false;
+                self.settings.imports.folder_layout = Some(self.imports.folders.layout);
+                self.settings.imports.batch_folder = self.world.inventory.root;
+            }
             if self.imports.demo_mode.starts_with("mesh") {
                 // Offline previews use the existing synthetic idle; normal
                 // operation loads the standard asset through AnimStreamer.
@@ -27,6 +32,8 @@ impl App {
                 self.imports.mesh_permission_account = self.world.agent_id;
             }
         }
+        self.imports
+            .sync_destinations(&self.settings.imports, &self.world, &self.settings.inventory);
         if !self.imports.persistence.started() {
             let persistence_path = if self.demo && !self.imports.demo_mode.is_empty() {
                 std::env::var_os("AURORA_DEMO_IMPORT_REGISTRY").map(std::path::PathBuf::from)
@@ -46,6 +53,9 @@ impl App {
         }
         self.imports.poll_local_registry();
         self.sync_local_picker_bindings();
+        let expired = self.imports.expire_local_appearances(&mut self.world.objects);
+        self.build
+            .forget_expired_local_picker_appearances(&expired, &self.imports.local_appearance_targets);
         self.imports.sound_limit = if self.settings.grid == crate::settings::GridChoice::Custom {
             60
         } else {
@@ -71,11 +81,29 @@ impl App {
         for command in commands {
             self.send(command);
         }
+        if self.demo && self.imports.demo_mode == "folders-lods" && !self.imports.entries.is_empty() {
+            let key = egui::Id::unique("import_demo_lod_family_shown");
+            if !ctx.data(|data| data.get_temp::<bool>(key)).unwrap_or(false) {
+                self.imports.active = self
+                    .imports
+                    .entries
+                    .iter()
+                    .find(|entry| matches!(entry.source, Some(Source::Mesh(_))))
+                    .map(|entry| entry.id);
+                self.imports.tab = crate::imports::ui::Tab::Batch;
+                ctx.data_mut(|data| data.insert_temp(key, true));
+            }
+        }
+        for (id, rights) in self.imports.advance_confirmed(&self.world, &self.settings.inventory) {
+            self.imports
+                .quote_mesh(id, ctx, &self.scene.jobs, &self.world, &self.settings.inventory, rights);
+        }
         if self.demo
-            && self.imports.demo_mode == "bulk-upload"
+            && matches!(self.imports.demo_mode.as_str(), "bulk-upload" | "folders-upload")
             && !self.imports.demo_upload_started
             && self.imports.pending_files.is_none()
             && !self.imports.entries.is_empty()
+            && self.imports.folder_plan_valid(&self.world, &self.settings.inventory)
         {
             let missing_quotes: Vec<_> = self
                 .imports
@@ -112,7 +140,7 @@ impl App {
             if self.imports.total(&prices).is_some() {
                 self.imports.demo_upload_started = true;
                 self.imports
-                    .start(&self.world, &self.settings.inventory, &self.settings.imports, &prices);
+                    .start_confirmed(&self.world, &self.settings.inventory, &self.settings.imports, &prices);
             }
         }
         let local_demo = self.demo
@@ -187,6 +215,42 @@ impl App {
             );
         }
         self.imports.watch_local(&self.scene.jobs, ctx);
+        if self.demo
+            && self.imports.demo_mode == "folders-upload"
+            && self.imports.demo_upload_started
+            && !self.imports.busy()
+            && self.imports.entries.is_empty()
+            && self.frame_count.is_multiple_of(120)
+        {
+            let inventory = &self.world.inventory;
+            let root = inventory
+                .folders
+                .values()
+                .find(|f| f.info.parent == inventory.root && f.info.name == "Creator Pack")
+                .map(|f| f.info.id);
+            let items: Vec<_> = inventory
+                .items
+                .values()
+                .filter(|item| root.is_some_and(|root| crate::world::inventory::actions::under(inventory, item.parent, root)))
+                .collect();
+            let matched = items
+                .iter()
+                .filter(|item| {
+                    inventory.folders.get(&item.parent).is_some_and(|folder| {
+                        matches!(
+                            (item.name.as_str(), folder.info.name.as_str()),
+                            ("Fabric", "Coat" | "Hat") | ("Coat", "Coat") | ("Idle", "Animations") | ("Bell", "Sounds")
+                        )
+                    })
+                })
+                .count();
+            log::info!(
+                "demo folder upload: items={} matched={} spent={}",
+                items.len(),
+                matched,
+                self.imports.spent
+            );
+        }
         for Playback::Audio { entry, clip, duration } in self.imports.playback.drain(..) {
             let editor = self
                 .imports
@@ -295,6 +359,11 @@ impl App {
         for action in actions {
             match action {
                 Action::Files => self.imports.choose_files(&self.scene.jobs, ctx, self.settings.imports.texture()),
+                Action::Folder => self.imports.choose_folder(&self.scene.jobs, ctx, self.settings.imports.texture()),
+                Action::StageLocalUploads => {
+                    self.imports
+                        .stage_local_uploads(&self.world, &self.settings.inventory, &self.settings.imports);
+                }
                 Action::Zoom(id, slot) => {
                     self.imports.preview_zoom = Some((id, slot));
                     ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("import_large_preview")));
@@ -313,7 +382,7 @@ impl App {
                     };
                     let prices = prices.with_fallback(self.world.upload_cost);
                     self.imports
-                        .start(&self.world, &self.settings.inventory, &self.settings.imports, &prices);
+                        .start_confirmed(&self.world, &self.settings.inventory, &self.settings.imports, &prices);
                 }
                 Action::Cancel => self.imports.cancel_remaining(),
                 Action::Preview(id) => {
@@ -561,30 +630,13 @@ impl App {
                     }
                 }
                 Action::MapInventory(id, slot) => {
-                    let asset = self
-                        .imports
-                        .entries
-                        .iter()
-                        .find(|e| e.id == id)
-                        .and_then(|e| match &e.source {
-                            Some(Source::Material { value, .. }) => crate::imports::maps::ids(value)[slot],
-                            _ => None,
-                        })
-                        .unwrap_or_default();
-                    self.imports.map_target = Some((id, slot));
-                    self.imports
-                        .map_picker
-                        .open_with_defaults(aurora_i18n::tr!("import-texture"), asset, None, true);
+                    self.imports.open_map_picker(id, slot);
                 }
             }
         }
         self.save_import_animation_models();
         self.update_import_avatar_preview();
-        if let Some(asset) = self.imports.map_picker.show(ctx, palette, &mut self.world, &self.ui_images)
-            && let Some((id, slot)) = self.imports.map_target.take()
-        {
-            self.imports.select_map(id, slot, asset);
-        }
+        self.imports.show_map_picker(ctx, palette, &mut self.world, &self.ui_images);
         let mut maps: Vec<_> = self.imports.map_picker.wanted_images.drain().collect();
         if let Some(entry) = self.imports.active.and_then(|id| self.imports.entries.iter().find(|e| e.id == id))
             && let Some(Source::Material { value, images }) = &entry.source
@@ -665,6 +717,64 @@ impl App {
             }
         }
         self.imports.save_local_registry(false);
+        self.show_local_appearance_status(ctx, palette);
+    }
+
+    fn show_local_appearance_status(&mut self, ctx: &egui::Context, palette: &Palette) {
+        use crate::imports::ui::local_status::{self, Action};
+        let status = self.imports.appearance_status(&self.world.objects);
+        match local_status::show(ctx, palette, &mut self.imports.local_status, &status) {
+            Some(Action::Library) => {
+                self.imports.open(crate::imports::Choice::Local);
+                ui::widgets::open_floater(ctx, crate::imports::Choice::Local.window_id(), &mut self.imports.open);
+            }
+            Some(Action::Remove) => {
+                self.sync_local_picker_bindings();
+                self.build.forget_local_picker_appearances();
+                self.imports.clear_all_appearance_targets(&mut self.world.objects);
+                self.imports.local_status.reveal = None;
+            }
+            None => {}
+        }
+    }
+
+    pub(super) fn local_appearance_demo_input(&mut self, raw: &mut egui::RawInput) {
+        let Ok(mode) = std::env::var("AURORA_DEMO_LOCAL_APPEARANCES") else {
+            return;
+        };
+        if self.frame_count == 600 {
+            self.imports.open = false;
+            self.panels.people = false;
+            self.panels.inventory = false;
+            self.panels.perf = false;
+            if let Some(index) = self.world.objects.index_of_uuid(&crate::demo::action_id(970))
+                && let Some(focus) = crate::camera::pick_focus_object(&self.world, index, Instant::now())
+            {
+                self.camera
+                    .zoom_to(focus.1.position, Some(focus), &mut self.world.agent, &self.settings.camera);
+            }
+        }
+        let (key, start) = match self.frame_count {
+            650..=651 if !matches!(mode.as_str(), "1" | "reveal") => ("local_appearance_warning_rect", 650),
+            680..=681 if mode == "reveal" => ("local_appearance_reveal_rect", 680),
+            850..=851 if mode == "reveal" => ("local_appearance_reveal_rect", 850),
+            680..=681 if matches!(mode.as_str(), "confirm" | "remove" | "cancel") => ("local_appearance_remove_rect", 680),
+            710..=711 if mode == "remove" => ("local_appearance_confirm_rect", 710),
+            710..=711 if mode == "cancel" => ("local_appearance_cancel_rect", 710),
+            _ => return,
+        };
+        if let Some(rect) = self.egui_ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(key))) {
+            let pos = rect.center();
+            raw.events.extend([
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: self.frame_count == start,
+                    modifiers: Default::default(),
+                },
+            ]);
+        }
     }
 
     fn update_import_avatar_preview(&mut self) {
@@ -940,14 +1050,8 @@ impl App {
     }
 
     pub(super) fn sync_local_picker_bindings(&mut self) {
-        for (object, face, appearance) in self.build.local_appearance_changes.drain(..) {
-            let key = (object, face);
-            if let Some(appearance) = appearance {
-                self.imports.local_appearance_targets.insert(key, appearance);
-            } else {
-                self.imports.local_appearance_targets.remove(&key);
-            }
-        }
+        self.imports
+            .sync_local_appearance_changes(self.build.local_appearance_changes.drain(..));
     }
 
     pub(super) fn demo_asset_upload(&mut self, request: uuid::Uuid, upload: aurora_net::inventory::upload::Request) {

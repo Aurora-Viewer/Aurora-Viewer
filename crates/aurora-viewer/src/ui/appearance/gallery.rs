@@ -5,7 +5,7 @@ use super::{Action, AppearanceUi, model};
 use crate::{
     theme::Palette,
     ui::{menu, texture_picker::TexturePicker, widgets},
-    world::{World, inventory::Inventory},
+    world::{World, inventory::Inventory, names::AvatarNames},
 };
 use aurora_net::outfits::categories::Update;
 use egui::RichText;
@@ -19,6 +19,19 @@ pub(super) struct State {
     confirm: Option<(Uuid, bool)>,
     picker: TexturePicker,
     image_for: Option<Uuid>,
+    copy: Option<OutfitCopy>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CopyItem {
+    name: String,
+    creator: Uuid,
+}
+
+struct OutfitCopy {
+    session: (Uuid, Uuid),
+    items: Vec<CopyItem>,
+    started: f64,
 }
 
 /// What LLOutfitContextMenu::onEnable / onVisible allow on an outfit folder.
@@ -61,6 +74,90 @@ pub(super) fn menu_rules(inv: &Inventory, worn: &HashSet<Uuid>, busy: bool, id: 
         save: ready,
         delete: removable.then_some(ready),
     })
+}
+
+/// One item per line, as LLPanelWearing::copyToClipboard
+/// (indra/newview/llpanelwearing.cpp). Aurora also offers this on saved
+/// outfits (#1379), with the names and creators of their resolved originals.
+fn outfit_list(inv: &Inventory, id: Uuid) -> Option<Vec<CopyItem>> {
+    if !model::complete(inv, id) {
+        return None;
+    }
+    let mut links = model::usable_links(inv, id);
+    links.retain_mut(|link| {
+        let Some(item) = inv
+            .items
+            .get(&link.target)
+            .filter(|it| !link.folder && matches!(it.asset_type, 5 | 6 | 13 | 21))
+        else {
+            return false;
+        };
+        link.name.clone_from(&item.name);
+        true
+    });
+    super::items::sort_links(inv, &mut links, false);
+    (!links.is_empty()).then(|| {
+        links
+            .into_iter()
+            .filter_map(|link| {
+                inv.items.get(&link.target).map(|item| CopyItem {
+                    name: item.name.clone(),
+                    creator: item.creator,
+                })
+            })
+            .collect()
+    })
+}
+
+fn copy_text(items: &[CopyItem], names: &AvatarNames, fallback: bool) -> Option<String> {
+    let mut ready = true;
+    let lines: Vec<_> = items
+        .iter()
+        .map(|item| {
+            let creator = if item.creator.is_nil() {
+                aurora_i18n::tr!("ui-inventory-properties-creator-unknown-multiple").to_owned()
+            } else {
+                names
+                    .complete(&item.creator)
+                    .filter(|name| !name.trim().is_empty())
+                    .unwrap_or_else(|| {
+                        ready = false;
+                        item.creator.to_string()
+                    })
+            };
+            aurora_i18n::tr!(
+                "appearance-outfit-copy-entry",
+                item = item.name.as_str(),
+                creator = creator.as_str()
+            )
+        })
+        .collect();
+    (ready || fallback).then(|| {
+        let plain = items.iter().map(|item| item.name.as_str()).collect::<Vec<_>>().join("\n");
+        format!("{plain}\n\n{}", lines.join("\n"))
+    })
+}
+
+/// Complete a requested copy even after closing Appearance. The snapshot
+/// keeps the clicked outfit stable while the shared name cache resolves its
+/// creators; an unanswered lookup falls back to its UUID after three seconds.
+pub(super) fn finish_copy(ctx: &egui::Context, world: &World, st: &mut AppearanceUi) {
+    let Some(copy) = &st.gallery.copy else { return };
+    if copy.session != (world.agent_id, world.inventory.root) {
+        st.gallery.copy = None;
+        return;
+    }
+    let fallback = ctx.input(|i| i.time) - copy.started >= 3.0;
+    if let Some(text) = copy_text(&copy.items, &world.social.avatar_names, fallback) {
+        ctx.copy_text(text);
+        st.gallery.copy = None;
+    } else {
+        ctx.request_repaint_after(std::time::Duration::from_millis(50));
+    }
+}
+
+pub(super) fn preparing_copy(st: &AppearanceUi) -> bool {
+    st.gallery.copy.is_some()
 }
 
 /// The outfit menu of the gallery tiles and of the list headers; only the
@@ -192,17 +289,38 @@ pub(super) fn context_menu(
         if rules.folder {
             super::folders::move_menu(ui, p, inv, st, &[id], actions);
         }
-        if let Some(enabled) = rules.delete {
-            menu::separator(ui, p);
-            if menu::item_if(
+        menu::separator(ui, p);
+        let list = outfit_list(inv, id);
+        if let Some(items) = &list {
+            for item in items {
+                world.social.avatar_names.want(&item.creator);
+            }
+        }
+        if menu::item_if(
+            ui,
+            p,
+            "clipboard-text-filled",
+            aurora_i18n::tr!("inventory-copy-outfit-list"),
+            list.is_some(),
+        ) && let Some(items) = list
+        {
+            st.gallery.copy = Some(OutfitCopy {
+                session: (world.agent_id, inv.root),
+                items,
+                started: ui.input(|i| i.time),
+            });
+            finish_copy(ui.ctx(), world, st);
+        }
+        if let Some(enabled) = rules.delete
+            && menu::item_if(
                 ui,
                 p,
                 "trash-filled",
                 aurora_i18n::tr!("ui-appearance-gallery-delete-outfit"),
                 enabled,
-            ) {
-                st.gallery.confirm = Some((id, true));
-            }
+            )
+        {
+            st.gallery.confirm = Some((id, true));
         }
         if !new_parts {
             return;
@@ -362,8 +480,8 @@ pub(super) fn dialogs(
             st.gallery.confirm = None;
         }
     }
-    if let Some(image) = st.gallery.picker.show(ctx, p, world, images)
-        && let Some(id) = st.gallery.image_for.take()
+    if let Some(image) = st.gallery.picker.show_live(ctx, p, world, images)
+        && let Some(id) = st.gallery.image_for
     {
         actions.push(Action::Category(id, Update::Thumbnail(image)));
     }
@@ -383,12 +501,24 @@ mod tests {
         world: &mut World,
         st: &mut AppearanceUi,
         events: Vec<Event>,
-    ) -> (Vec<Action>, Vec<egui::epaint::ClippedShape>) {
+    ) -> (Vec<Action>, Vec<egui::epaint::ClippedShape>, Vec<egui::OutputCommand>) {
+        frame_at(ctx, world, st, events, None, true)
+    }
+
+    fn frame_at(
+        ctx: &egui::Context,
+        world: &mut World,
+        st: &mut AppearanceUi,
+        events: Vec<Event>,
+        time: Option<f64>,
+        mut open: bool,
+    ) -> (Vec<Action>, Vec<egui::epaint::ClippedShape>, Vec<egui::OutputCommand>) {
         let mut actions = Vec::new();
         let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 900.0))),
                 events,
+                time,
                 ..Default::default()
             },
             |ui| {
@@ -397,7 +527,7 @@ mod tests {
                     &crate::theme::Theme::default().palette(),
                     world,
                     st,
-                    &mut true,
+                    &mut open,
                     41_748,
                     &HashMap::new(),
                 );
@@ -405,7 +535,7 @@ mod tests {
         );
         // Headless tests do not submit texture uploads to a renderer.
         output.textures_delta.clear();
-        (actions, output.shapes)
+        (actions, output.shapes, output.platform_output.commands)
     }
 
     fn text_position(shape: &Shape, label: &str) -> Option<Pos2> {
@@ -417,27 +547,37 @@ mod tests {
     }
 
     fn click(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, pos: Pos2, button: PointerButton) -> Vec<Action> {
+        click_output(ctx, world, st, pos, button).0
+    }
+
+    fn click_output(
+        ctx: &egui::Context,
+        world: &mut World,
+        st: &mut AppearanceUi,
+        pos: Pos2,
+        button: PointerButton,
+    ) -> (Vec<Action>, Vec<egui::OutputCommand>) {
         let mut actions = Vec::new();
+        let mut commands = Vec::new();
         for pressed in [true, false] {
-            actions.extend(
-                frame(
-                    ctx,
-                    world,
-                    st,
-                    vec![
-                        Event::PointerMoved(pos),
-                        Event::PointerButton {
-                            pos,
-                            button,
-                            pressed,
-                            modifiers: Default::default(),
-                        },
-                    ],
-                )
-                .0,
+            let output = frame(
+                ctx,
+                world,
+                st,
+                vec![
+                    Event::PointerMoved(pos),
+                    Event::PointerButton {
+                        pos,
+                        button,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ],
             );
+            actions.extend(output.0);
+            commands.extend(output.2);
         }
-        actions
+        (actions, commands)
     }
 
     #[test]
@@ -469,6 +609,7 @@ mod tests {
             aurora_i18n::tr!("common-add-to-favorites"),
             aurora_i18n::tr!("ui-appearance-gallery-rename-your-outfit"),
             aurora_i18n::tr!("ui-appearance-gallery-save-to-this-outfit"),
+            aurora_i18n::tr!("inventory-copy-outfit-list"),
             aurora_i18n::tr!("ui-appearance-gallery-delete-outfit"),
             aurora_i18n::tr!("ui-appearance-gallery-new-clothing"),
             aurora_i18n::tr!("ui-appearance-gallery-new-body-part"),
@@ -502,7 +643,7 @@ mod tests {
             for _ in 0..4 {
                 assert!(frame(&ctx, &mut world, &mut st, vec![]).0.is_empty());
             }
-            let (actions, _) = frame(
+            let (actions, _, _) = frame(
                 &ctx,
                 &mut world,
                 &mut st,
@@ -529,6 +670,173 @@ mod tests {
             .map(|l| l.target)
             .collect();
         (inv, worn)
+    }
+
+    #[test]
+    fn outfit_list_copies_resolved_names_and_waits_for_loading_but_skips_broken_links() {
+        let (mut inv, _) = demo_inventory();
+        let id = Uuid::from_u128(704);
+        let original = inv.items.get_mut(&Uuid::from_u128(717)).expect("hair");
+        original.name = "A Cheveux été — 髪".into();
+        original.creator = Uuid::from_u128(9);
+        original.owner_mask = 0; // Copying names does not copy inventory items.
+        inv.items.get_mut(&Uuid::from_u128(718)).expect("earrings").name = "B Earrings Ω".into();
+        inv.items.get_mut(&Uuid::from_u128(723)).expect("spare attachment").name = "C Spare attachment".into();
+        let expected = [710, 711, 712, 713, 716, 715, 714, 717, 718, 723].map(|id| {
+            let item = &inv.items[&Uuid::from_u128(id)];
+            CopyItem {
+                name: item.name.clone(),
+                creator: item.creator,
+            }
+        });
+        assert_eq!(outfit_list(&inv, id).as_deref(), Some(expected.as_slice()));
+        assert_eq!(
+            expected[7].creator,
+            Uuid::from_u128(9),
+            "the original's creator, not the link's owner"
+        );
+        assert_eq!(outfit_list(&inv, Uuid::from_u128(702)), None, "empty outfit");
+        assert_eq!(outfit_list(&inv, Uuid::nil()), None);
+
+        inv.folders.get_mut(&id).expect("outfit").state = crate::world::inventory::FetchState::Fetching;
+        assert_eq!(outfit_list(&inv, id), None, "no partial list");
+        inv.folders.get_mut(&id).expect("outfit").state = crate::world::inventory::FetchState::Fetched;
+        let missing = Uuid::from_u128(723);
+        inv.items.remove(&missing);
+        assert_eq!(outfit_list(&inv, id), None, "an original is still loading");
+        inv.items_missing(vec![missing]);
+        let expected = &expected[..expected.len() - 1];
+        assert_eq!(outfit_list(&inv, id).as_deref(), Some(expected));
+
+        // The COF's saved-outfit folder link is metadata, not an item name.
+        let cof = model::cof(&inv).expect("COF");
+        let items = outfit_list(&inv, cof).expect("worn list");
+        assert_eq!(items.len(), 12);
+        assert!(!items.iter().any(|item| item.name == inv.folders[&Uuid::from_u128(705)].info.name));
+    }
+
+    #[test]
+    fn outfit_creator_names_resolve_before_copy_even_when_appearance_is_closed() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        let creator = Uuid::from_u128(11);
+        let items = || {
+            vec![
+                CopyItem {
+                    name: "Cheveux été — 髪".into(),
+                    creator,
+                },
+                CopyItem {
+                    name: "Mixed object".into(),
+                    creator: Uuid::nil(),
+                },
+            ]
+        };
+        let mut st = AppearanceUi::default();
+        st.gallery.copy = Some(OutfitCopy {
+            session: (world.agent_id, world.inventory.root),
+            items: items(),
+            started: 1.0,
+        });
+        let first = frame_at(&ctx, &mut world, &mut st, vec![], Some(1.0), false);
+        assert!(!first.2.iter().any(|cmd| matches!(cmd, egui::OutputCommand::CopyText(_))));
+        assert!(preparing_copy(&st));
+        assert_eq!(world.social.avatar_names.take_asks(), vec![creator]);
+        world.social.avatar_names.on_legacy(creator, "Nova", "Maker");
+        let resolved = frame_at(&ctx, &mut world, &mut st, vec![], Some(2.0), false);
+        let expected = format!(
+            "Cheveux été — 髪\nMixed object\n\nCheveux été — 髪 - Nova Maker\nMixed object - {}",
+            aurora_i18n::tr!("ui-inventory-properties-creator-unknown-multiple")
+        );
+        assert!(
+            resolved
+                .2
+                .iter()
+                .any(|cmd| matches!(cmd, egui::OutputCommand::CopyText(text) if *text == expected))
+        );
+        assert!(!preparing_copy(&st));
+
+        world.social.avatar_names = AvatarNames::default();
+        st.gallery.copy = Some(OutfitCopy {
+            session: (world.agent_id, world.inventory.root),
+            items: items(),
+            started: 2.0,
+        });
+        assert!(frame_at(&ctx, &mut world, &mut st, vec![], Some(3.0), false).2.is_empty());
+        let expired = frame_at(&ctx, &mut world, &mut st, vec![], Some(5.1), false);
+        let expected = copy_text(&items(), &world.social.avatar_names, true).expect("UUID fallback");
+        assert!(expected.contains(&creator.to_string()));
+        assert!(
+            expired
+                .2
+                .iter()
+                .any(|cmd| matches!(cmd, egui::OutputCommand::CopyText(text) if *text == expected))
+        );
+        assert!(!preparing_copy(&st));
+
+        st.gallery.copy = Some(OutfitCopy {
+            session: (world.agent_id, world.inventory.root),
+            items: items(),
+            started: 6.0,
+        });
+        world.agent_id = Uuid::from_u128(2);
+        assert!(frame_at(&ctx, &mut world, &mut st, vec![], Some(7.0), false).2.is_empty());
+        assert!(!preparing_copy(&st), "a previous session never changes the clipboard");
+    }
+
+    #[test]
+    fn outfit_list_clipboard_action_works_in_both_views_before_delete_and_on_the_current_outfit() {
+        for tab in [0, 1] {
+            for id in [704, 705, 702] {
+                let ctx = egui::Context::default();
+                crate::theme::Theme::default().apply(&ctx, 1.0);
+                let _icons = crate::ui::icons::Icons::load(&ctx, None);
+                let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+                model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+                world.social.avatar_names.on_legacy(Uuid::from_u128(1), "Demo", "Creator");
+                let mut st = AppearanceUi::default();
+                st.open(tab, false);
+                let id = Uuid::from_u128(id);
+                let label = world.inventory.folders[&id].info.name.clone();
+                st.search.clone_from(&label); // Keep the clicked tile inside the viewport.
+                for _ in 0..4 {
+                    frame(&ctx, &mut world, &mut st, vec![]);
+                }
+                let shapes = frame(&ctx, &mut world, &mut st, vec![]).1;
+                let mut pos = shapes.iter().rev().find_map(|s| text_position(&s.shape, &label)).expect("outfit");
+                if tab == 0 {
+                    pos += egui::vec2(10.0, -50.0);
+                }
+                click(&ctx, &mut world, &mut st, pos, PointerButton::Secondary);
+                assert_eq!(st.outfit_selection.focus, Some(id), "tab {tab}, outfit {id}, click {pos:?}");
+                let mut shapes = Vec::new();
+                for _ in 0..4 {
+                    shapes = frame(&ctx, &mut world, &mut st, vec![]).1;
+                }
+                let position = |label: &str| shapes.iter().find_map(|s| text_position(&s.shape, label));
+                let copy = position(aurora_i18n::tr!("inventory-copy-outfit-list"))
+                    .unwrap_or_else(|| panic!("copy action in tab {tab}, outfit {id}, click {pos:?}"));
+                if let Some(delete) = position(aurora_i18n::tr!("ui-appearance-gallery-delete-outfit")) {
+                    assert!(copy.y < delete.y && delete.y - copy.y < 30.0, "copy immediately precedes delete");
+                } else {
+                    assert_eq!(model::base(&world.inventory), Some(id));
+                }
+                let expected = outfit_list(&world.inventory, id).and_then(|items| copy_text(&items, &world.social.avatar_names, false));
+                let (actions, commands) = click_output(&ctx, &mut world, &mut st, copy, PointerButton::Primary);
+                let copied: Vec<_> = commands
+                    .iter()
+                    .filter_map(|command| match command {
+                        egui::OutputCommand::CopyText(text) => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(copied, expected.as_deref().into_iter().collect::<Vec<_>>());
+                assert!(actions.is_empty(), "copy never wears or edits the outfit");
+                assert!(st.gallery.confirm.is_none());
+            }
+        }
     }
 
     #[test]
@@ -605,6 +913,7 @@ mod tests {
                 aurora_i18n::tr!("common-add-to-favorites"),
                 aurora_i18n::tr!("ui-appearance-gallery-rename-your-outfit"),
                 aurora_i18n::tr!("ui-appearance-gallery-save-to-this-outfit"),
+                aurora_i18n::tr!("inventory-copy-outfit-list"),
             ] {
                 assert!(shown(label), "missing {label}");
             }

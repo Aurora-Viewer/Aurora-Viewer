@@ -352,7 +352,7 @@ pub(super) fn action_row(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, w
         aurora_i18n::tr!("build-compact-duplicate"),
         selected && !tool.attachment_selected(world),
     )
-    .on_hover_text("Ctrl+D")
+    .on_hover_text(crate::keybinds::chord_label("KeyD", true, false, false))
     .clicked()
     {
         tool.duplicate(world, Vec3::new(0.5, 0.5, 0.0), true);

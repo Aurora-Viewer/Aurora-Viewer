@@ -1271,14 +1271,13 @@ impl PlacesUi {
         }
         let editable = place.item.is_some_and(|i| actions::renameable(inv, i, &no_protection()));
         if let Some((_, text)) = self.aurora.note.as_mut() {
-            let r = ui.add_enabled(
-                editable,
-                egui::TextEdit::multiline(text)
+            let r = crate::ui::widgets::text_field(ui, editable, text, |b, _| {
+                egui::TextEdit::multiline(b)
                     .hint_text(aurora_i18n::tr!("ui-places-note-hint"))
                     .char_limit(NOTE_MAX)
                     .desired_rows(2)
-                    .desired_width(width),
-            );
+                    .desired_width(width)
+            });
             // the notes are saved when the field is left
             if r.lost_focus()
                 && text.trim() != place.note.trim()

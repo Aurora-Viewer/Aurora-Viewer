@@ -45,10 +45,9 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     let mut commit: Option<String> = None;
     super::row(ui, p, aurora_i18n::tr!("ui-land-sound-music-url"), |ui| {
         s.music_url.sync(&parcel.music_url);
-        let r = ui.add_enabled(
-            can_media,
-            egui::TextEdit::singleline(&mut s.music_url.text).desired_width(ui.available_width() - 4.0 * 32.0),
-        );
+        let r = crate::ui::widgets::text_field(ui, can_media, &mut s.music_url.text, |b, ui| {
+            egui::TextEdit::singleline(b).desired_width(ui.available_width() - 4.0 * 32.0)
+        });
         if let Some(u) = s.music_url.after(&r) {
             commit = Some(u);
         }
