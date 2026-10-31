@@ -102,6 +102,8 @@ pub struct ObjectFacts {
     /// build tools can select it.
     pub edit: bool,
     pub attachment_item: Option<Uuid>,
+    /// enable_detach: our attachment, not held by an RLVa remove lock.
+    pub detach: bool,
     /// The prim the menu is about (nil in the menus of avatars and land).
     pub id: Uuid,
     /// enable_object_touch: the prim or its parent handles touches.

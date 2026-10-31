@@ -2233,3 +2233,72 @@ fn rlva_wear_on_a_point_held_by_a_locked_attachment_keeps_add() {
         "last worn on the held chest"
     );
 }
+
+#[test]
+fn rlva_drop_and_detach_of_a_worn_object_follow_its_remove_lock_and_rez() {
+    use aurora_net::{AttachRequest, build::BuildCmd, inventory::InvItem};
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    let region = world.main_region.expect("demo region");
+    let (chest, skull) = (Uuid::from_u128(70), Uuid::from_u128(71));
+    for (id, point) in [(chest, 1), (skull, 2)] {
+        world.inventory.items.insert(
+            id,
+            InvItem {
+                id,
+                asset_type: 6,
+                flags: point,
+                owner_mask: 0x4000,
+                ..Default::default()
+            },
+        );
+        world.objects.upsert(
+            region,
+            crate::demo::outfit_attachment(&AttachRequest {
+                item_id: id,
+                owner_id: world.agent_id,
+                point: point as u8,
+                add: true,
+                flags: 1,
+                group_mask: 0,
+                everyone_mask: 0,
+                next_owner_mask: 0,
+                name: String::new(),
+                desc: String::new(),
+            }),
+        );
+    }
+    let key = |item: Uuid| {
+        world
+            .objects
+            .iter()
+            .find(|(_, o)| o.attachment_item_id() == Some(item))
+            .map(|(_, o)| o.key)
+            .expect("worn")
+    };
+    let (chest_key, skull_key) = (key(chest), key(skull));
+    let drop = |world: &crate::world::World, k: crate::world::objects::ObjKey| {
+        let cmd = NetCommand::Build(BuildCmd::DropAttachment {
+            handle: k.region,
+            local_ids: vec![k.local_id],
+        });
+        (
+            world.rlva_can_drop(k.region, &[k.local_id]),
+            world.rlva_allows_command(&cmd, Uuid::nil()),
+        )
+    };
+    assert_eq!(drop(&world, chest_key), (true, true), "no lock yet");
+    command(&mut world.rlva, A, "@remattach:chest=n");
+    // LLAttachmentDrop / enable_detach: the locked one stays, the other goes
+    assert_eq!(drop(&world, chest_key), (false, false));
+    assert!(!world.rlva_can_remove(chest, Uuid::nil()));
+    assert_eq!(drop(&world, skull_key), (true, true));
+    assert!(world.rlva_can_remove(skull, Uuid::nil()));
+    // @rez: nothing can be put in-world, a detach still can
+    command(&mut world.rlva, A, "@rez=n");
+    assert_eq!(drop(&world, skull_key), (false, false));
+    assert!(world.rlva_can_remove(skull, Uuid::nil()));
+}
