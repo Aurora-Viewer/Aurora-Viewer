@@ -174,14 +174,10 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
                     ui.add_enabled_ui(editable, |ui| {
                         ui.horizontal(|ui| {
                             egui::ComboBox::from_id_salt("modifier")
-                                .selected_text(match g.mask {
-                                    1 => "Ctrl",
-                                    4 => aurora_i18n::tr!("keybinds-shift"),
-                                    _ => "---",
-                                })
+                                .selected_text(keys::modifier_name(g.mask))
                                 .show_ui(ui, |ui| {
-                                    for (mask, name) in [(0, "---"), (4, aurora_i18n::tr!("keybinds-shift")), (1, "Ctrl")] {
-                                        ui.selectable_value(&mut g.mask, mask, name);
+                                    for mask in [0u32, 4, 1] {
+                                        ui.selectable_value(&mut g.mask, mask, keys::modifier_name(mask));
                                     }
                                 });
                             egui::ComboBox::from_id_salt("key")

@@ -559,7 +559,11 @@ fn the_search_finds_settings_on_their_pages() {
     assert!(found.hits(Page::Graphics) >= 3, "the shadows' rows: {:?}", found.hits);
     // a command by its name, a shortcut by its key
     assert!(counts(&mut s, "gtp").hits(Page::Commands) >= 1);
-    assert!(counts(&mut s, "Ctrl+I").hits(Page::Shortcuts) >= 1);
+    let inventory = s.keybinds.get(crate::keybinds::Action::Inventory)[0]
+        .as_ref()
+        .expect("inventory shortcut")
+        .label();
+    assert!(counts(&mut s, &inventory).hits(Page::Shortcuts) >= 1);
     assert!(counts(&mut s, "anti-spam").hits(Page::Protections) >= 8);
     assert!(counts(&mut s, "RLVa").hits(Page::Rlva) >= 1);
     assert!(counts(&mut s, "").hits.is_empty());
