@@ -9392,6 +9392,10 @@ thread.
     also counted in `g_effects`;
   - `g_contact`: the sun's contact shadows alone (`AURORA_CONTACT_SHADOWS`),
     also counted in `g_effects`;
+  - `g_planar`, `g_probe`, `g_copy`, `g_ssr`: the rest of `g_effects`,
+    after the occlusion and the contact shadows: the planar reflections
+    (water, mirrors), the reflection probe face with its filtering, the
+    copy of the scene for refraction and SSR, and SSR;
   - `g_bloom`: the bloom levels alone (`AURORA_BLOOM`, 0 while off), also
     counted in `g_post`;
   - the draws and draw commands, the objects synced / rebuilt (`synced`,
