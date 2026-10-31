@@ -748,7 +748,8 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             "conversations",
             &mut panels.chat,
         );
-        if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), "Ctrl+G") {
+        let gestures = crate::keybinds::chord_label("KeyG", true, false, false);
+        if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), &gestures) {
             super::widgets::toggle_floater(ui.ctx(), "gestures", &mut panels.gestures);
         }
         for (tab, icon, label) in [
@@ -798,7 +799,8 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::item(ui, p, "door-enter", aurora_i18n::tr!("portal-title")) {
             *action = BarAction::Portals;
         }
-        if menu::item_keys(ui, p, "history", aurora_i18n::tr!("common-teleport-history"), "Alt+H") {
+        let history = crate::keybinds::chord_label("KeyH", false, true, false);
+        if menu::item_keys(ui, p, "history", aurora_i18n::tr!("common-teleport-history"), &history) {
             *action = BarAction::TeleportHistory;
         }
         flip_window(
@@ -822,7 +824,8 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         ) {
             panels.about_land = !panels.about_land;
         }
-        if menu::item_keys(ui, p, "building-castle", aurora_i18n::tr!("region-title"), "Alt+R") {
+        let region = crate::keybinds::chord_label("KeyR", false, true, false);
+        if menu::item_keys(ui, p, "building-castle", aurora_i18n::tr!("region-title"), &region) {
             super::widgets::toggle_floater(ui.ctx(), super::region::WINDOW, &mut panels.region_estate);
         }
         // menu_viewer.xml: Set Home to Here, after Region Details
@@ -830,7 +833,8 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             *action = BarAction::SetHome;
         }
         // menu_viewer.xml: Search (Ctrl+F)
-        if menu::item_keys(ui, p, "search-filled", aurora_i18n::tr!("search-title"), "Ctrl+F") {
+        let search = crate::keybinds::chord_label("KeyF", true, false, false);
+        if menu::item_keys(ui, p, "search-filled", aurora_i18n::tr!("search-title"), &search) {
             super::widgets::toggle_floater(ui.ctx(), super::search::WINDOW, &mut panels.search);
         }
         flip_window(
@@ -1061,7 +1065,8 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         );
         menu::separator(ui, p);
         // Firestorm's View › Camera Controls and Movement Controls
-        if menu::item_keys(ui, p, "video-filled", aurora_i18n::tr!("controls-camera-title"), "Ctrl+Shift+C") {
+        let camera = crate::keybinds::chord_label("KeyC", true, false, true);
+        if menu::item_keys(ui, p, "video-filled", aurora_i18n::tr!("controls-camera-title"), &camera) {
             panels.camera_controls = true;
         }
         if menu::item(ui, p, "walk", aurora_i18n::tr!("controls-movement-title")) {
@@ -1073,7 +1078,8 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::item(ui, p, "camera-filled", aurora_i18n::tr!("ui-bars-reset-camera-esc")) {
             *action = BarAction::ResetCamera;
         }
-        if menu::item_keys(ui, p, "photo-filled", aurora_i18n::tr!("photo-title"), "Ctrl+Shift+S") {
+        let photo = crate::keybinds::chord_label("KeyS", true, false, true);
+        if menu::item_keys(ui, p, "photo-filled", aurora_i18n::tr!("photo-title"), &photo) {
             super::widgets::toggle_floater(ui.ctx(), super::snapshot::WINDOW, &mut panels.snapshot);
         }
     });
@@ -1322,7 +1328,8 @@ fn contents_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, action: &m
         "inventory",
         &mut panels.inventory,
     );
-    if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), "Ctrl+G") {
+    let gestures = crate::keybinds::chord_label("KeyG", true, false, false);
+    if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), &gestures) {
         super::widgets::toggle_floater(ui.ctx(), "gestures", &mut panels.gestures);
     }
     menu::separator(ui, p);

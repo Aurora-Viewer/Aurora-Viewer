@@ -372,13 +372,12 @@ impl Recovery {
         ui.add_space(10.0);
         ui.label(RichText::new(aurora_i18n::tr!("crash-description")).size(12.5).color(p.muted));
         ui.add_space(3.0);
-        ui.add_enabled(
-            !busy,
-            egui::TextEdit::multiline(&mut self.sending.description)
+        crate::ui::widgets::text_field(ui, !busy, &mut self.sending.description, |b, _| {
+            egui::TextEdit::multiline(b)
                 .desired_rows(3)
                 .char_limit(2000)
-                .desired_width(f32::INFINITY),
-        );
+                .desired_width(f32::INFINITY)
+        });
         ui.add_space(6.0);
         ui.add_enabled_ui(!busy, |ui| {
             ui.horizontal_wrapped(|ui| {

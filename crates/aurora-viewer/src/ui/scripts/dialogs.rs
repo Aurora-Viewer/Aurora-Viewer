@@ -170,12 +170,9 @@ impl Search {
         });
         ui.horizontal(|ui| {
             ui.label(aurora_i18n::tr!("script-search-replacement"));
-            ui.add_enabled(
-                editable,
-                egui::TextEdit::singleline(&mut self.replacement)
-                    .id(window.with("replacement"))
-                    .desired_width(220.0),
-            );
+            crate::ui::widgets::text_field(ui, editable, &mut self.replacement, |b, _| {
+                egui::TextEdit::singleline(b).id(window.with("replacement")).desired_width(220.0)
+            });
         });
         ui.horizontal(|ui| {
             crate::ui::widgets::checkbox(ui, p, &mut self.insensitive, aurora_i18n::tr!("script-search-insensitive"));
@@ -236,13 +233,12 @@ impl Search {
         });
         ui.horizontal(|ui| {
             ui.set_min_height(row_height);
-            ui.add_enabled(
-                editable,
-                egui::TextEdit::singleline(&mut self.replacement)
+            crate::ui::widgets::text_field(ui, editable, &mut self.replacement, |b, _| {
+                egui::TextEdit::singleline(b)
                     .id(Id::unique(Self::WINDOW).with("replacement"))
                     .hint_text(aurora_i18n::tr!("script-search-replacement"))
-                    .desired_width(Self::INLINE_FIELD_WIDTH),
-            )
+                    .desired_width(Self::INLINE_FIELD_WIDTH)
+            })
             .on_hover_text(aurora_i18n::tr!("script-search-replacement"));
             if flat_button(ui, p, aurora_i18n::tr!("script-search-find")).clicked() {
                 self.find(&ctx, id, source);

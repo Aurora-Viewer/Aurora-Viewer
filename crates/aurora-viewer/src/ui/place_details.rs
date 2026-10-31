@@ -671,17 +671,15 @@ fn landmark_info(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, item: Uuid, data
     ui.horizontal(|ui| {
         label(ui, p, aurora_i18n::tr!("ui-place-details-title"));
         let mut name = it.as_ref().map(|i| i.name.clone()).unwrap_or_default();
-        ui.add_enabled(false, egui::TextEdit::singleline(&mut name).desired_width(ui.available_width()));
+        crate::ui::widgets::text_field(ui, false, &mut name, |b, ui| {
+            egui::TextEdit::singleline(b).desired_width(ui.available_width())
+        });
     });
     ui.label(RichText::new(aurora_i18n::tr!("ui-place-details-notes")).size(12.0).color(p.ink));
     let mut notes = it.as_ref().map(|i| i.desc.clone()).unwrap_or_default();
-    ui.add_enabled(
-        false,
-        egui::TextEdit::multiline(&mut notes)
-            .desired_width(width)
-            .desired_rows(4)
-            .char_limit(127),
-    );
+    crate::ui::widgets::text_field(ui, false, &mut notes, |b, _| {
+        egui::TextEdit::multiline(b).desired_width(width).desired_rows(4).char_limit(127)
+    });
     ui.add_space(4.0);
     // setCanEdit: an item of our inventory we may modify
     ui.add_enabled_ui(false, |ui| {

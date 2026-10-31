@@ -137,7 +137,9 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             .color(p.muted),
         );
         s.clean_time.sync(&parcel.other_clean_time.to_string());
-        let r = ui.add_enabled(any, egui::TextEdit::singleline(&mut s.clean_time.text).desired_width(46.0));
+        let r = crate::ui::widgets::text_field(ui, any, &mut s.clean_time.text, |b, _| {
+            egui::TextEdit::singleline(b).desired_width(46.0)
+        });
         // validateNonNegativeS32
         s.clean_time.text.retain(|c| c.is_ascii_digit());
         if let Some(t) = s.clean_time.after(&r) {

@@ -20,6 +20,7 @@ pub mod derender;
 pub mod edit_echo;
 pub mod eep;
 pub mod eep_env;
+pub mod eep_photo;
 pub mod env;
 pub mod env_apply;
 pub mod env_day_edit;
@@ -1960,7 +1961,7 @@ impl World {
             .as_ref()
             .is_some_and(|l| l.raw["login-flags"].at(0)["ever_logged_in"].as_str() == "N");
         let inputs = outfit::OutfitInputs {
-            worn: self.worn_attachment_items(),
+            worn: self.outfit_attachment_items(),
             received_cof_version: self.appearance_cof_version(&self.agent_id),
             inventory: &mut self.inventory,
             agent: self.agent_id,
@@ -2153,6 +2154,14 @@ impl World {
                 if self.set_main_region(handle) {
                     // no agent update before the new region completes the move
                     self.movement_complete = false;
+                    // LLViewerParcelMgr::onTeleportFinished: the new region's
+                    // parcel is awaited; the one left must not lend its rules
+                    // (flight, build, the bar's icons) in the meantime. The
+                    // session sends it after this event, never before.
+                    if self.parcel.take().is_some() {
+                        log::info!("agent parcel: cleared, region {handle:x} entered");
+                    }
+                    self.parcel_name.clear();
                 }
                 // back in a region left moments ago: its objects first, its
                 // simulator only sends what changed since
@@ -3193,6 +3202,20 @@ impl World {
                 None
             }
             NetEvent::AgentParcel(info) => {
+                // one line per parcel entered, or when its flight rule changes
+                let fly = info.flags & aurora_net::parcel_flags::ALLOW_FLY != 0;
+                if self
+                    .parcel
+                    .as_ref()
+                    .is_none_or(|p| p.local_id != info.local_id || (p.flags & aurora_net::parcel_flags::ALLOW_FLY != 0) != fly)
+                {
+                    log::info!(
+                        "agent parcel: local id {} in region {:x}, flight {}",
+                        info.local_id,
+                        self.main_region.unwrap_or(0),
+                        if fly { "allowed" } else { "forbidden" }
+                    );
+                }
                 self.parcel_name = info.name.clone();
                 if !info.is_group_owned {
                     self.social.want_name(info.owner_id);
@@ -3909,9 +3932,12 @@ impl World {
                     },
                 );
             }
-            d::TASK_INVENTORY_OFFERED => self.on_task_inventory_offer(im, &from),
+            d::TASK_INVENTORY_OFFERED => {
+                if self.on_task_inventory_offer(im, &from) {
+                    return true;
+                }
+            }
             d::INVENTORY_OFFERED => {
-                self.ui_sounds.push(UiSound::InventoryOffer);
                 let asset_type = im.binary_bucket.first().map(|b| *b as i8).unwrap_or(-1);
                 // A resident's offer is in our inventory before we answer:
                 // prefetch it (inventory_offer_handler, llimprocessing.cpp),
@@ -3946,10 +3972,12 @@ impl World {
                         task_offer: None,
                     },
                 );
-                self.on_inventory_offer_card(im, &from, asset_type, entry);
-                if !self.rlva_inventory_offer(im, entry) {
-                    self.received_items.offer(im, entry);
+                n.link_name(entry, from.clone(), notifications::NameTarget::Avatar(im.from_agent_id));
+                if self.receive_inventory_offer(im, entry) {
+                    return true;
                 }
+                self.ui_sounds.push(UiSound::InventoryOffer);
+                self.on_inventory_offer_card(im, &from, asset_type, entry);
             }
             // FSShowJoinedGroupInvitations (FIRE-20385): an invitation to a
             // group we are already in is dropped unless asked for

@@ -1868,7 +1868,7 @@ fn fs_particle(in: PartOut) -> @location(0) vec4<f32> {
 // their picture, refreshed now and then (LLVOAvatar impostors). The pictures
 // live in an atlas of square tiles.
 
-@group(3) @binding(4) var impostor_atlas: texture_2d<f32>;
+@group(3) @binding(4) var impostor_atlas: texture_2d_array<f32>;
 @group(3) @binding(5) var impostor_sampler: sampler;
 
 override impostor_tiles_per_row: f32 = 8.0;
@@ -1884,6 +1884,7 @@ struct SpriteIn {
 // High bit of a card's tile: its picture is all fullbright (the silhouette
 // of an avatar over the complexity limit).
 const IMPOSTOR_FULLBRIGHT: u32 = 0x80000000u;
+const IMPOSTOR_PENDING: u32 = 0x40000000u;
 
 struct SpriteOut {
     @builtin(position) clip: vec4<f32>,
@@ -1891,6 +1892,7 @@ struct SpriteOut {
     @location(1) world_pos: vec3<f32>,
     @location(2) normal: vec3<f32>,
     @location(3) @interpolate(flat) fullbright: u32,
+    @location(4) @interpolate(flat) tile: u32,
 };
 
 @vertex
@@ -1902,7 +1904,7 @@ fn vs_impostor(in: SpriteIn) -> SpriteOut {
     let c = corners[in.vid % 6u];
     let p = in.center + in.right * c.x + in.up * c.y;
     let per = u32(impostor_tiles_per_row);
-    let tile = in.tile & ~IMPOSTOR_FULLBRIGHT;
+    let tile = (in.tile & ~(IMPOSTOR_FULLBRIGHT | IMPOSTOR_PENDING)) % (per * per);
     let origin = vec2<f32>(f32(tile % per), f32(tile / per));
     var out: SpriteOut;
     out.clip = frame.view_proj * vec4<f32>(p, 1.0);
@@ -1910,11 +1912,26 @@ fn vs_impostor(in: SpriteIn) -> SpriteOut {
     out.world_pos = p;
     out.normal = normalize(cross(in.right, in.up));
     out.fullbright = in.tile & IMPOSTOR_FULLBRIGHT;
+    out.tile = in.tile;
     return out;
 }
 
+// Bounded capture work and memory must never make a resident disappear.
+// A neutral silhouette card costs no skeleton or attachment draws while waiting.
+fn impostor_sample(in: SpriteOut) -> vec4<f32> {
+    if ((in.tile & IMPOSTOR_PENDING) != 0u) {
+        let p = fract(in.uv * impostor_tiles_per_row) * 2.0 - 1.0;
+        let head = length((p - vec2<f32>(0.0, -0.48)) / vec2<f32>(0.14, 0.16));
+        let body = length((p - vec2<f32>(0.0, 0.10)) / vec2<f32>(0.23, 0.45));
+        return vec4<f32>(vec3<f32>(0.35), select(0.0, 1.0, min(head, body) < 1.0));
+    }
+    let per = u32(impostor_tiles_per_row);
+    let layer = i32((in.tile & ~IMPOSTOR_FULLBRIGHT) / (per * per));
+    return textureSampleLevel(impostor_atlas, impostor_sampler, in.uv, layer, 0.0);
+}
+
 fn impostor_color(in: SpriteOut) -> vec4<f32> {
-    let t = textureSample(impostor_atlas, impostor_sampler, in.uv);
+    let t = impostor_sample(in);
     if (t.a < 0.5) {
         discard;
     }
@@ -1936,7 +1953,7 @@ fn impostor_color(in: SpriteOut) -> vec4<f32> {
 // The card's depth alone (contact shadows): where its picture is covered.
 @fragment
 fn fs_impostor_depth(in: SpriteOut) {
-    if (textureSample(impostor_atlas, impostor_sampler, in.uv).a < 0.5) {
+    if (impostor_sample(in).a < 0.5) {
         discard;
     }
 }

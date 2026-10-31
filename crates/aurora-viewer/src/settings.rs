@@ -970,6 +970,13 @@ pub struct Settings {
     /// Marketplace delivery (Aurora only, the Legacy Viewer just marks the
     /// inbox new; #752). On by default: nothing else tells about a gift.
     pub notify_deliveries: bool,
+    /// AutoAcceptNewInventory: accept new resident/object inventory offers
+    /// without a prompt. Off by default; give-to-RLVa offers still ask.
+    pub auto_accept_inventory: bool,
+    /// FSLogAutoAcceptInventoryToChat / FSShowAutoAcceptInventoryInNotifications:
+    /// independent receipt feedback, both on by default as in the Legacy Viewer.
+    pub auto_accept_inventory_chat: bool,
+    pub auto_accept_inventory_notify: bool,
     /// Preferences › Inventory › Received items: keeping an offer opens the
     /// inventory on what it gave (ShowInInventory, off by default as in the
     /// Legacy Viewer).
@@ -1835,6 +1842,9 @@ impl Default for Settings {
             sort_received_items: false,
             received_items_since: 0,
             notify_deliveries: true,
+            auto_accept_inventory: false,
+            auto_accept_inventory_chat: true,
+            auto_accept_inventory_notify: true,
             show_accepted_in_inventory: false,
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
@@ -2717,6 +2727,10 @@ pub struct MapSettings {
     pub mini_collision: bool,
     /// MiniMapAutoCenter.
     pub mini_auto_center: bool,
+    /// The mini-map window can neither be moved nor resized, and a plain
+    /// drag pans the map (not in the Legacy Viewer, where only Shift + drag
+    /// pans).
+    pub mini_locked: bool,
     /// FSNetMapDoubleClickAction: 0 nothing, 1 world map, 2 teleport.
     pub mini_double_click: u8,
     /// MapScale: world map pixels per region.
@@ -2755,6 +2769,7 @@ impl Default for MapSettings {
             mini_for_sale: false,
             mini_collision: true,
             mini_auto_center: true,
+            mini_locked: false,
             mini_double_click: 2,
             world_scale: 128.0,
             world_people: true,
@@ -2832,6 +2847,36 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn auto_accept_inventory_defaults_off_and_preserves_saved_choices() {
+        assert!(!super::Settings::default().auto_accept_inventory);
+        let old: super::Settings = serde_json::from_str("{}").expect("older preferences");
+        assert!(!old.auto_accept_inventory);
+        assert!(old.auto_accept_inventory_chat && old.auto_accept_inventory_notify);
+        for enabled in [false, true] {
+            for chat in [false, true] {
+                for notify in [false, true] {
+                    let settings = super::Settings {
+                        auto_accept_inventory: enabled,
+                        auto_accept_inventory_chat: chat,
+                        auto_accept_inventory_notify: notify,
+                        ..Default::default()
+                    };
+                    let bytes = serde_json::to_vec(&settings).expect("saved preferences");
+                    let loaded: super::Settings = serde_json::from_slice(&bytes).expect("restored preferences");
+                    assert_eq!(
+                        (
+                            loaded.auto_accept_inventory,
+                            loaded.auto_accept_inventory_chat,
+                            loaded.auto_accept_inventory_notify
+                        ),
+                        (enabled, chat, notify)
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn render_scale_defaults_native_and_survives_profile_round_trip() {
         let mut settings = Settings::default();

@@ -270,6 +270,7 @@ pub struct LandUi {
     texture: TexturePicker,
     /// Which texture the picker is choosing: true = snapshot, false = media.
     texture_snapshot: bool,
+    texture_context: Option<(u64, RegionHandle, i32)>,
     /// Object owners list: selected row, sort column and order.
     owner_sel: Option<Uuid>,
     owner_sort: Option<(usize, bool)>,
@@ -613,7 +614,19 @@ impl LandUi {
                 None => {}
             }
         }
-        if let Some(asset) = self.texture.show(ctx, p, world, images) {
+        let texture_context = view
+            .parcel
+            .as_ref()
+            .map(|parcel| (self.texture.generation, view.handle, parcel.local_id));
+        if self
+            .texture_context
+            .is_some_and(|before| before.0 == self.texture.generation && Some(before) != texture_context)
+        {
+            // A previous parcel's Cancel baseline must never reach a new parcel.
+            self.texture.open = false;
+        }
+        self.texture_context = texture_context.filter(|_| self.texture.open);
+        if let Some(asset) = self.texture.show_live(ctx, p, world, images) {
             if self.texture_snapshot {
                 world.land.update(|u| u.snapshot_id = asset);
             } else {

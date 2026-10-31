@@ -193,6 +193,20 @@ fn contents_ctrl_shift_and_context_selection_follow_the_visible_order() {
 }
 
 #[test]
+fn legacy_contents_delete_targets_items_in_every_tool_mode_with_visible_tabs() {
+    for mode in [Tool::Edit, Tool::Focus, Tool::Grab, Tool::Create] {
+        let (mut inspector, _, ids) = fixture();
+        inspector.settings.legacy_window = true;
+        inspector.tool.set_tool(mode);
+        resize_inspector(&mut inspector, vec2(400.0, 820.0));
+        click(&mut inspector, 0, egui::Modifiers::NONE);
+        key(&mut inspector, egui::Key::Delete, egui::Modifiers::NONE);
+        assert_eq!(removed(&inspector), [ids[0]], "Tool: {mode:?}");
+        assert_no_object_delete(&inspector);
+    }
+}
+
+#[test]
 fn contents_delete_removes_only_selected_items_and_repeated_keys_never_delete_the_object() {
     let (mut inspector, object, ids) = fixture();
     click(&mut inspector, 0, egui::Modifiers::NONE);

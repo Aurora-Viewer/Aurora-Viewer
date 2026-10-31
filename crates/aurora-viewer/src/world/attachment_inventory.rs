@@ -2,7 +2,7 @@
 //! LLVOAvatarSelf::attachObject and LLAttachmentsMgr::linkRecentlyArrivedAttachments
 //! (indra/newview/llvoavatarself.cpp, llattachmentsmgr.cpp, LGPL 2.1).
 
-use super::{World, appearance, inventory::FetchState, temp_attachments::is_temp_attachment};
+use super::{World, appearance, inventory::FetchState};
 use aurora_net::{
     NetCommand,
     inventory::operations::{Mutation, Operation, Reply},
@@ -82,7 +82,10 @@ impl World {
             appearance::Action::RemoveItems(items) => (items, true),
             other => return (Vec::new(), Some(other)),
         };
-        let incomplete = self.worn_attachment_items().iter().any(|id| !self.inventory.items.contains_key(id))
+        let incomplete = self
+            .outfit_attachment_items()
+            .iter()
+            .any(|id| !self.inventory.items.contains_key(id))
             || appearance::cof(&self.inventory).is_none_or(|cof| !appearance::complete(&self.inventory, cof));
         let mut commands = Vec::new();
         let mut remaining = Vec::new();
@@ -118,13 +121,10 @@ impl World {
             return Vec::new();
         }
         let worn: HashSet<_> = self
-            .worn_attachment_items()
+            .outfit_attachment_points()
             .into_iter()
-            .filter(|item| {
-                self.worn_attachment(item)
-                    .and_then(|i| self.objects.get(i))
-                    .is_some_and(|o| o.attachment_point() != 0 && !is_temp_attachment(o.full_id, Some(*item)))
-            })
+            .filter(|(_, point)| *point != 0)
+            .map(|(item, _)| item)
             .collect();
         self.attachment_inventory
             .fetched
@@ -462,6 +462,134 @@ mod tests {
             &world.update_attachment_inventory(now, true)[..],
             [NetCommand::EditInventory { .. }]
         ));
+    }
+
+    fn add_temporary(world: &mut World, ordinary: &ObjectUpdate) -> ObjectUpdate {
+        let mut temporary = ordinary.clone();
+        temporary.local_id += 1000;
+        temporary.full_id = Uuid::from_u128(90_100);
+        temporary.name_values = format!("AttachItemID STRING RW SV {}", temporary.full_id);
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![temporary.clone()],
+        });
+        temporary
+    }
+
+    #[test]
+    fn temporary_attachments_do_not_block_add_remove_or_save_outfits() {
+        let (mut world, object, item) = fixture();
+        world.inventory.add_items(vec![item.clone()]);
+        let temporary = add_temporary(&mut world, &object);
+        assert_eq!(world.worn_attachment_items().len(), 2, "temporary objects still count as attached");
+        assert!(world.worn_attachment_points().contains_key(&temporary.full_id));
+        assert_eq!(world.temp_attachments().len(), 1);
+        let worn = world.outfit_attachment_items();
+        assert!(appearance::prepare(&mut world.inventory, world.agent_id, &worn).is_empty());
+        let points = world.outfit_attachment_points();
+        for action in [
+            appearance::Action::Add(Uuid::from_u128(723)),
+            appearance::Action::WearItem {
+                item: Uuid::from_u128(723),
+                point: 5,
+                replace: false,
+            },
+            appearance::Action::Remove(item.id),
+            appearance::Action::Remove(Uuid::from_u128(715)),
+            appearance::Action::Save(Some("Temporary attachment regression".to_owned())),
+        ] {
+            assert!(
+                appearance::plan(&world.inventory, action.clone(), &world.worn_attachment_points()).is_err(),
+                "the raw temporary task ID reproduces #1663: {action:?}"
+            );
+            let (change, _) = appearance::plan(&world.inventory, action, &points).expect("temporary object must not block the outfit");
+            assert!(change.links.iter().all(|link| link.target != temporary.full_id));
+            assert!(
+                change
+                    .cof
+                    .iter()
+                    .flat_map(|(_, links)| links)
+                    .all(|link| link.target != temporary.full_id)
+            );
+            let mut inventory = super::super::inventory::Inventory {
+                root: world.inventory.root,
+                owner: world.agent_id,
+                items: world.inventory.items.clone(),
+                folders: world.inventory.folders.clone(),
+                ..Default::default()
+            };
+            appearance::demo_mutate(&mut inventory, world.agent_id, &change).expect("acknowledged outfit change");
+            let sync = appearance::sync_plan(&inventory, world.agent_id, &worn);
+            assert!(sync.unknown.is_empty());
+            for command in sync.commands {
+                if let NetCommand::DetachAttachments(items) = command {
+                    assert!(!items.contains(&temporary.full_id), "outfit sync must leave temporary objects worn");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn temporary_attachments_do_not_hide_real_items_still_loading() {
+        let (mut world, object, item) = fixture();
+        let temporary = add_temporary(&mut world, &object);
+        assert!(world.outfit_attachment_points().contains_key(&item.id));
+        assert!(!world.outfit_attachment_points().contains_key(&temporary.full_id));
+        assert!(
+            appearance::plan(
+                &world.inventory,
+                appearance::Action::Add(Uuid::from_u128(723)),
+                &world.outfit_attachment_points()
+            )
+            .is_err(),
+            "an unresolved ordinary attachment must still protect the outfit"
+        );
+        let worn = world.outfit_attachment_items();
+        assert!(matches!(&appearance::prepare(&mut world.inventory, world.agent_id, &worn)[..],
+            [NetCommand::FetchItems { items, .. }] if items == &[item.id]));
+        assert!(matches!(&world.update_attachment_inventory(Instant::now(), true)[..],
+            [NetCommand::FetchAttachmentItems { items }] if items == &[item.id]));
+    }
+
+    #[test]
+    fn temporary_attachments_preserve_healthy_removals_explicit_detach_and_rlva_locks() {
+        let (mut world, object, item) = fixture();
+        world.inventory.add_items(vec![item.clone()]);
+        let temporary = add_temporary(&mut world, &object);
+        let (commands, remaining) = world.recover_attachment_removal(appearance::Action::Remove(item.id), true);
+        assert!(commands.is_empty(), "a temporary object is not a missing inventory record");
+        assert!(matches!(remaining, Some(appearance::Action::Remove(id)) if id == item.id));
+        let (commands, remaining) = world.recover_attachment_removal(appearance::Action::Remove(temporary.full_id), true);
+        assert!(remaining.is_none());
+        assert!(matches!(&commands[..], [NetCommand::DetachObject { local_id, .. }] if *local_id == temporary.local_id));
+        world.rlva_configure(true);
+        restriction(&mut world, temporary.full_id, "@detach=n");
+        assert!(!world.rlva_can_remove(temporary.full_id, Uuid::nil()));
+        assert!(!world.rlva_allows_command(&commands[0], Uuid::nil()));
+        assert!(world.rlva_can_remove(item.id, Uuid::nil()));
+    }
+
+    #[test]
+    fn temporary_attachment_marker_with_a_known_inventory_item_stays_usable_in_demo() {
+        let (mut world, mut object, mut item) = fixture();
+        item.id = object.full_id;
+        world.inventory.add_items(vec![item.clone()]);
+        object.name_values = format!("AttachItemID STRING RW SV {}", item.id);
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![object.clone()],
+        });
+        assert_eq!(world.outfit_attachment_items(), HashSet::from([item.id]));
+        assert_eq!(world.outfit_attachment_points().get(&item.id), Some(&object.attachment_point()));
+        assert!(world.temp_attachments().is_empty());
+        assert!(
+            appearance::plan(
+                &world.inventory,
+                appearance::Action::Add(Uuid::from_u128(723)),
+                &world.outfit_attachment_points()
+            )
+            .is_ok()
+        );
     }
 
     #[test]

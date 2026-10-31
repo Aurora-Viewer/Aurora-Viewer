@@ -206,32 +206,69 @@ impl Binding {
     }
 
     pub fn label(&self) -> String {
+        self.label_on(cfg!(target_os = "macos"))
+    }
+
+    /// Shortcut text for one platform. `mac` follows
+    /// LLKeyboard::stringFromAccelerator (indra/llwindow/llkeyboard.cpp):
+    /// ⌘, or ⌃ when the chord is `use_mac_ctrl` in menu_viewer.xml, then ⌥
+    /// and ⇧, with no "+". Other platforms keep "Ctrl+", "Alt+" and "Shift+".
+    pub fn label_on(&self, mac: bool) -> String {
         let mut s = String::new();
+        if !mac {
+            if self.ctrl {
+                s.push_str("Ctrl+");
+            }
+            if self.alt {
+                s.push_str("Alt+");
+            }
+            if self.shift {
+                s.push_str(aurora_i18n::tr!("keybinds-shift-2"));
+            }
+            s.push_str(&self.input.label());
+            return s;
+        }
         if self.ctrl {
-            s.push_str("Ctrl+");
+            s.push_str(if uses_mac_control(self) { "⌃" } else { "⌘" });
         }
         if self.alt {
-            s.push_str("Alt+");
+            s.push('⌥');
         }
         if self.shift {
-            s.push_str(aurora_i18n::tr!("keybinds-shift-2"));
+            s.push('⇧');
         }
-        s.push_str(&self.input.label());
+        let key = self.input.label();
+        // A leading "-" / "=" / "+" would glue to the modifier symbols.
+        if (self.ctrl || self.alt || self.shift) && key.starts_with(['-', '=', '+']) {
+            s.push(' ');
+        }
+        s.push_str(&key);
         s
     }
 
     /// The keys to hold, modifiers first, for the keycaps of the shortcuts
     /// list.
     pub fn caps(&self) -> Vec<KeyCap> {
+        self.caps_on(cfg!(target_os = "macos"))
+    }
+
+    pub fn caps_on(&self, mac: bool) -> Vec<KeyCap> {
         let mut caps = Vec::new();
         if self.ctrl {
-            caps.push(KeyCap::named(key_label("ControlLeft")));
+            let name = if !mac {
+                key_label("ControlLeft")
+            } else if uses_mac_control(self) {
+                "⌃".into()
+            } else {
+                "⌘".into()
+            };
+            caps.push(KeyCap::named(name));
         }
         if self.alt {
-            caps.push(KeyCap::named("Alt"));
+            caps.push(KeyCap::named(if mac { "⌥" } else { "Alt" }));
         }
         if self.shift {
-            caps.push(KeyCap::named(key_label("ShiftLeft")));
+            caps.push(KeyCap::named(if mac { "⇧".into() } else { key_label("ShiftLeft") }));
         }
         let mut cap = KeyCap::named(self.input.label());
         cap.mouse = matches!(self.input, Input::Mouse(_));
@@ -325,6 +362,9 @@ pub enum Action {
     PushToTalk,
     ToggleMic,
     Conversations,
+    /// Communicate › Nearby Chat (menu_viewer.xml, `shortcut="control|H"`,
+    /// `use_mac_ctrl="true"`, Floater.ToggleOrBringToFront `fs_nearby_chat`).
+    NearbyChat,
     People,
     Inventory,
     Gestures,
@@ -332,6 +372,8 @@ pub enum Action {
     WorldMap,
     /// World › Teleport history (Firestorm Alt+H).
     TeleportHistory,
+    /// World › Teleport Home (the Legacy Viewer's Ctrl+Shift+H).
+    TeleportHome,
     /// World › Region / Estate (Firestorm's "Region Details", Alt+R).
     RegionEstate,
     /// The compact texture/material library (Ctrl+Space).
@@ -488,6 +530,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
             (
                 aurora_i18n::tr!("common-windows"),
                 vec![
+                    (Action::NearbyChat, aurora_i18n::tr!("common-nearby-chat")),
                     (Action::Conversations, aurora_i18n::tr!("common-conversations")),
                     (Action::People, aurora_i18n::tr!("common-people")),
                     (Action::Inventory, aurora_i18n::tr!("common-inventory")),
@@ -497,6 +540,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Minimap, aurora_i18n::tr!("common-mini-map")),
                     (Action::WorldMap, aurora_i18n::tr!("common-world-map")),
                     (Action::TeleportHistory, aurora_i18n::tr!("common-teleport-history")),
+                    (Action::TeleportHome, aurora_i18n::tr!("keybinds-teleport-home")),
                     (Action::RegionEstate, aurora_i18n::tr!("region-title")),
                     (Action::Search, aurora_i18n::tr!("search-title")),
                     (Action::Performance, aurora_i18n::tr!("common-performance")),
@@ -688,6 +732,8 @@ impl KeyBindings {
             (Action::CamPanUp, [kalt(K::ArrowUp, true, true), None]),
             (Action::CamPanDown, [kalt(K::ArrowDown, true, true), None]),
             (Action::Chat, [k(K::Enter), k(K::NumpadEnter)]),
+            // menu_viewer.xml: Nearby Chat, shortcut="control|H" use_mac_ctrl="true"
+            (Action::NearbyChat, [kmod(K::KeyH, true, false), None]),
             // SL default push-to-talk: middle mouse button
             (
                 Action::PushToTalk,
@@ -702,6 +748,8 @@ impl KeyBindings {
             (Action::Gestures, [kmod(K::KeyG, true, false), None]),
             (Action::Minimap, [kmod(K::KeyM, true, true), None]),
             (Action::WorldMap, [kmod(K::KeyM, true, false), None]),
+            // World.TeleportHome, shortcut="control|shift|H" (menu_viewer.xml)
+            (Action::TeleportHome, [kmod(K::KeyH, true, true), None]),
             (
                 Action::TeleportHistory,
                 [
@@ -830,31 +878,40 @@ impl KeyBindings {
     }
 }
 
-/// Keys a focused text field uses with Ctrl (select all, copy, cut, paste,
-/// undo / redo, word moves and deletes): a viewer shortcut on them never
-/// fires while typing. Physical keys, so both the QWERTY and the AZERTY
-/// places of A and Z count.
+/// Keys that take part in an editing chord. The chord itself is
+/// [`text_field_keeps`]: Ctrl+Shift+A is People, not Select All. Only the
+/// tests ask for the key alone now.
+#[cfg(test)]
 pub fn is_text_edit_key(code: KeyCode) -> bool {
+    let ctrl = Mods {
+        ctrl: true,
+        ..Mods::default()
+    };
+    let shifted = Mods { shift: true, ..ctrl };
+    text_field_keeps(code, ctrl) || text_field_keeps(code, shifted)
+}
+
+/// Chords a focused text field keeps. Menu accelerators match the mask
+/// exactly and run before the field (LLViewerWindow::handleKey,
+/// LLMenuItemGL::handleAcceleratorKey): Select All is `control|A`
+/// (menu_edit.xml) and People is `control|shift|A` (menu_viewer.xml).
+/// Physical keys, so the AZERTY places of A and Z count too. egui's cursor
+/// selects all on any Command+A, Shift included; that is not this chord.
+/// Arrows, Home, End, Backspace and Delete stay in the field with any
+/// modifier: Option+Left / Right moves by word on macOS, and the camera
+/// chords on Alt+arrows must not take them.
+pub fn text_field_keeps(code: KeyCode, mods: Mods) -> bool {
+    if !mods.ctrl && !mods.alt {
+        return false;
+    }
     use KeyCode as K;
-    matches!(
-        code,
-        K::KeyA
-            | K::KeyQ
-            | K::KeyC
-            | K::KeyV
-            | K::KeyX
-            | K::KeyZ
-            | K::KeyW
-            | K::KeyY
-            | K::ArrowLeft
-            | K::ArrowRight
-            | K::ArrowUp
-            | K::ArrowDown
-            | K::Home
-            | K::End
-            | K::Backspace
-            | K::Delete
-    )
+    match code {
+        K::KeyA | K::KeyQ | K::KeyC | K::KeyX | K::KeyV | K::KeyY => mods.ctrl && !mods.alt && !mods.shift,
+        // Undo, and redo on Ctrl+Shift+Z. AZERTY's Z is the physical W key.
+        K::KeyZ | K::KeyW => mods.ctrl && !mods.alt,
+        K::ArrowLeft | K::ArrowRight | K::ArrowUp | K::ArrowDown | K::Home | K::End | K::Backspace | K::Delete => true,
+        _ => false,
+    }
 }
 
 /// Keys the chat bar hands to the avatar instead of its text: the arrows,
@@ -905,6 +962,91 @@ pub struct Mods {
     pub ctrl: bool,
     pub shift: bool,
     pub alt: bool,
+}
+
+/// Control as a shortcut mask. LLKeyboardMacOSX::currentMask
+/// (indra/llwindow/llkeyboardmacosx.cpp): the Control key always counts,
+/// and Command counts too, except on a mouse event. `command` is false
+/// off macOS. The physical Control key stays distinct for clicks, the
+/// wheel and the HUD gesture bound to that key.
+pub fn control_down(control: bool, command: bool, mouse: bool) -> bool {
+    control || (command && !mouse)
+}
+
+/// Menu chords labeled with the Mac Control key (`use_mac_ctrl="true"`
+/// on a `control|…` shortcut in menu_viewer.xml). macOS reserves the
+/// Command form (Hide, Minimize, cycling windows, and the same list).
+/// The flag is a label: both keys still run the shortcut when the event
+/// arrives (LLMenuItemGL::handleAcceleratorKey keeps only MASK_NORMALKEYS).
+/// Matched by the chord, so a rebind keeps the label of the keys it uses.
+pub fn uses_mac_control(binding: &Binding) -> bool {
+    let Input::Key(key) = &binding.input else {
+        return false;
+    };
+    if !binding.ctrl {
+        return false;
+    }
+    matches!(
+        (key.as_str(), binding.alt, binding.shift),
+        ("KeyH", false, false) // Nearby Chat, labeled ⌃H. Command+H stays Hide.
+        | ("KeyT", false, false) // Conversations
+        | ("KeyM", false, false) // World Map; Command+M minimizes
+        | ("KeyT", true, false) // Highlight Transparent
+        | ("KeyT", true, true) // include Rigged Transparent
+        | ("Backquote", false, false) // Snapshot to Disk; Command+` cycles windows
+        | ("KeyQ", true, false) // Show Developer Menu
+        | ("Digit3", false, true) // Texture Console
+        | ("Digit4", false, true) // Debug Console
+        | ("Digit9", false, true) // Fast Timers
+        | ("Backquote", false, true) // Region Debug Console
+    )
+}
+
+/// Shortcut text for a fixed menu chord (`"KeyG"`, not the letter alone).
+pub fn chord_label(key: &str, ctrl: bool, alt: bool, shift: bool) -> String {
+    Binding {
+        input: Input::Key(key.to_string()),
+        ctrl,
+        alt,
+        shift,
+    }
+    .label()
+}
+
+/// On macOS, a Control key event is also Command, so text editing and
+/// Close Window follow LLKeyboardMacOSX::currentMask for keys. Pointer
+/// events and `ModifiersChanged` stay as reported: Command-click is not
+/// Control-click.
+pub fn adopt_mac_control_keys(events: &mut [egui::Event], mac: bool) {
+    if !mac {
+        return;
+    }
+    for event in events {
+        if let egui::Event::Key { modifiers, .. } = event
+            && modifiers.ctrl
+        {
+            modifiers.command = true;
+        }
+    }
+}
+
+/// Select All is Command/Ctrl+A with no Shift. egui's cursor treats every
+/// Command+A as select all (`CCursorRange::on_key_press`), which would
+/// swallow People (Command+Shift+A) inside a text field.
+pub fn keep_select_all_exact(events: &mut [egui::Event]) {
+    for event in events {
+        if let egui::Event::Key {
+            key: egui::Key::A,
+            modifiers,
+            ..
+        } = event
+            && modifiers.command
+            && modifiers.shift
+        {
+            modifiers.command = false;
+            modifiers.mac_cmd = false;
+        }
+    }
 }
 
 /// Editing history takes priority over held movement and camera bindings:
@@ -1419,14 +1561,120 @@ mod tests {
             shift: false,
             alt: true,
         };
-        let caps = binding.caps();
+        let caps = binding.caps_on(false);
         assert_eq!(caps.len(), 3);
         assert_eq!((caps[0].label.as_str(), caps[1].label.as_str()), ("Ctrl", "Alt"));
         assert!(caps[0].icon.is_none() && caps[1].icon.is_none());
         assert_eq!(caps[2].icon.as_deref(), Some("square-arrow-up-filled"));
         assert!(caps.iter().all(|cap| !cap.mouse));
-        let middle = Binding::plain(Input::Mouse("Middle".into())).caps();
+        let mac = binding.caps_on(true);
+        assert_eq!((mac[0].label.as_str(), mac[1].label.as_str()), ("⌘", "⌥"));
+        let middle = Binding::plain(Input::Mouse("Middle".into())).caps_on(false);
         assert!(middle.len() == 1 && middle[0].mouse && middle[0].icon.is_none());
+    }
+
+    #[test]
+    fn nearby_chat_is_ctrl_h_and_keeps_the_other_h_chords() {
+        let kb = KeyBindings::default();
+        let h = Input::key(KeyCode::KeyH);
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        let alt = Mods {
+            alt: true,
+            ..Default::default()
+        };
+        let alt_shift = Mods {
+            alt: true,
+            shift: true,
+            ..Default::default()
+        };
+        assert_eq!(kb.triggered(&h, ctrl), Some(Action::NearbyChat));
+        assert_eq!(kb.triggered(&h, alt), Some(Action::TeleportHistory));
+        assert_eq!(kb.triggered(&h, alt_shift), Some(Action::ShowHuds));
+        assert_eq!(kb.triggered(&h, Mods::default()), None);
+        assert!(!text_field_keeps(KeyCode::KeyH, ctrl), "Nearby Chat runs while a field is focused");
+        let binding = kb.get(Action::NearbyChat)[0].clone().expect("default binding");
+        assert_eq!(binding.label_on(true), "⌃H");
+        assert_eq!(binding.label_on(false), "Ctrl+H");
+        let mut old = kb;
+        old.map.retain(|(action, _)| *action != Action::NearbyChat);
+        assert_eq!(old.sanitized().triggered(&h, ctrl), Some(Action::NearbyChat));
+    }
+
+    #[test]
+    fn mac_shortcuts_label_command_and_the_legacy_control_chords() {
+        let chord = |key, alt, shift| Binding {
+            input: Input::key(key),
+            ctrl: true,
+            alt,
+            shift,
+        };
+        let world = chord(KeyCode::KeyM, false, false);
+        let minimap = chord(KeyCode::KeyM, false, true);
+        let close = chord(KeyCode::KeyW, false, false);
+        let photo = chord(KeyCode::Backquote, false, false);
+        let transparent = chord(KeyCode::KeyT, true, false);
+        let conversations = chord(KeyCode::KeyT, false, false);
+        // the key itself reads as on this PC's layout (M is "," in AZERTY)
+        let key = |code| Input::key(code).label();
+        let m = key(KeyCode::KeyM);
+        assert_eq!(world.label_on(false), format!("Ctrl+{m}"));
+        assert_eq!(world.label_on(true), format!("⌃{m}"));
+        assert_eq!(minimap.label_on(true), format!("⌘⇧{m}"));
+        assert_eq!(close.label_on(true), format!("⌘{}", key(KeyCode::KeyW)));
+        assert_eq!(photo.label_on(true), format!("⌃{}", key(KeyCode::Backquote)));
+        assert_eq!(transparent.label_on(true), format!("⌃⌥{}", key(KeyCode::KeyT)));
+        assert_eq!(conversations.label_on(true), format!("⌃{}", key(KeyCode::KeyT)));
+        let minus = key(KeyCode::Minus);
+        let gap = if minus.starts_with(['-', '=', '+']) { " " } else { "" };
+        assert_eq!(chord(KeyCode::Minus, false, false).label_on(true), format!("⌘{gap}{minus}"));
+        assert!(!uses_mac_control(&minimap));
+        assert!(uses_mac_control(&world));
+        assert!(!control_down(false, true, true), "Command is not Control for the mouse");
+        assert!(control_down(false, true, false));
+        assert!(control_down(true, false, true));
+        assert!(!control_down(false, false, false));
+        let mut events = [
+            egui::Event::Key {
+                key: egui::Key::C,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::CTRL,
+            },
+            egui::Event::Key {
+                key: egui::Key::W,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+            },
+            egui::Event::ModifiersChanged(egui::Modifiers::CTRL),
+        ];
+        adopt_mac_control_keys(&mut events, false);
+        assert!(matches!(events[0], egui::Event::Key { modifiers, .. } if !modifiers.command));
+        adopt_mac_control_keys(&mut events, true);
+        assert!(matches!(events[0], egui::Event::Key { modifiers, .. } if modifiers.command && modifiers.ctrl));
+        assert!(matches!(
+            events[1],
+            egui::Event::Key { modifiers, .. } if modifiers.command && modifiers.shift && !modifiers.matches_exact(egui::Modifiers::COMMAND)
+        ));
+        assert!(matches!(events[2], egui::Event::ModifiersChanged(m) if m == egui::Modifiers::CTRL));
+        events[0] = egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+        };
+        adopt_mac_control_keys(&mut events, true);
+        keep_select_all_exact(&mut events);
+        assert!(matches!(
+            events[0],
+            egui::Event::Key { modifiers, .. } if !modifiers.command && modifiers.shift && modifiers.ctrl
+        ));
     }
 
     #[test]
@@ -1550,6 +1798,32 @@ mod tests {
         for code in [KeyCode::KeyC, KeyCode::KeyV, KeyCode::KeyZ, KeyCode::KeyQ, KeyCode::ArrowLeft] {
             assert!(is_text_edit_key(code), "{code:?}");
         }
+        let ctrl = Mods {
+            ctrl: true,
+            ..Mods::default()
+        };
+        let shifted = Mods { shift: true, ..ctrl };
+        assert!(text_field_keeps(KeyCode::KeyA, ctrl), "Select All");
+        assert!(!text_field_keeps(KeyCode::KeyA, shifted), "People is Ctrl+Shift+A");
+        assert!(!text_field_keeps(KeyCode::KeyQ, shifted), "the same chord on AZERTY");
+        assert!(!text_field_keeps(KeyCode::KeyY, shifted), "Ctrl+Shift+Y is not redo");
+        assert!(text_field_keeps(KeyCode::KeyZ, shifted));
+        let alt = Mods {
+            alt: true,
+            ..Mods::default()
+        };
+        assert!(text_field_keeps(KeyCode::ArrowLeft, alt), "Option+Left stays in the field");
+        assert!(
+            text_field_keeps(
+                KeyCode::ArrowUp,
+                Mods {
+                    ctrl: true,
+                    alt: true,
+                    shift: true,
+                }
+            ),
+            "Ctrl+Alt+Shift+Up stays in the field"
+        );
     }
 
     /// LLViewerWindow::handleKey: the chat bar hands the arrows, Page Up /
@@ -1736,11 +2010,13 @@ mod tests {
             (Action::Fly, (false, false, false), [K::KeyF; 4]),
             (Action::CameraControls, (true, true, false), [K::KeyC; 4]),
             (Action::AlwaysRun, (true, false, false), [K::KeyR; 4]),
+            (Action::NearbyChat, (true, false, false), [K::KeyH; 4]),
             (Action::Conversations, (true, false, false), [K::KeyT; 4]),
             (Action::Inventory, (true, false, false), [K::KeyI; 4]),
             (Action::IkEdit, (true, false, false), [K::KeyK; 4]),
             (Action::Gestures, (true, false, false), [K::KeyG; 4]),
             (Action::TeleportHistory, (false, false, true), [K::KeyH; 4]),
+            (Action::TeleportHome, (true, true, false), [K::KeyH; 4]),
             (Action::Search, (true, false, false), [K::KeyF; 4]),
             (Action::Performance, (true, true, false), [K::Digit1; 4]),
             (Action::Preferences, (true, false, false), [K::KeyP; 4]),

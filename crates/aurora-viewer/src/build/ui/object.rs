@@ -310,6 +310,9 @@ fn vec_block(
     enabled: bool,
     mixed: [bool; 3],
 ) -> (Edit, Option<Vec3>, bool) {
+    if super::legacy::active(ui) {
+        return legacy_vec_block(ui, p, tool, which, title, v, increment, range, decimals, enabled, mixed);
+    }
     let mut e = Edit::default();
     let mut paste = None;
     let mut copy = false;
@@ -435,6 +438,92 @@ fn vec_block(
     ui.add_space(3.0);
     ui.spacing_mut().item_spacing.y = spacing;
     (e, paste, copy)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn legacy_vec_block(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tool: &mut BuildTool,
+    which: usize,
+    title: &str,
+    values: &mut [f32; 3],
+    increment: f32,
+    ranges: [std::ops::RangeInclusive<f32>; 3],
+    decimals: usize,
+    enabled: bool,
+    mixed: [bool; 3],
+) -> (Edit, Option<Vec3>, bool) {
+    let mut edit = Edit::default();
+    let mut paste = None;
+    let mut copy = false;
+    let caption = match which {
+        0 => aurora_i18n::tr!("build-ui-object-position-meters"),
+        1 => aurora_i18n::tr!("build-ui-object-size-meters"),
+        _ => aurora_i18n::tr!("build-ui-object-rotation-degrees"),
+    };
+    super::common::label(ui, p, caption);
+    ui.add_enabled_ui(enabled, |ui| {
+        for (axis, (value, range)) in values.iter_mut().zip(ranges).enumerate() {
+            let row = ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                ui.add_sized(
+                    [11.0, 20.0],
+                    egui::Label::new(
+                        RichText::new(["X", "Y", "Z"][axis])
+                            .size(11.0)
+                            .color(crate::build::draw::axis_color(p, axis)),
+                    ),
+                );
+                let width = (ui.available_width() - 23.0).max(45.0);
+                edit = edit.or(super::common::spin_with_min_decimals(
+                    ui,
+                    value,
+                    increment,
+                    range,
+                    decimals,
+                    width,
+                    mixed[axis],
+                    if which == 2 { 1 } else { 3 },
+                ));
+                let (label, hint, active) = match axis {
+                    0 => (
+                        aurora_i18n::tr!("build-legacy-vector-copy"),
+                        aurora_i18n::tr!("build-ui-object-copy", n = title),
+                        true,
+                    ),
+                    1 => (
+                        aurora_i18n::tr!("build-legacy-vector-paste"),
+                        aurora_i18n::tr!("build-ui-object-paste", n = title),
+                        tool.ui.vec_clipboard[which].is_some(),
+                    ),
+                    _ => (
+                        aurora_i18n::tr!("build-legacy-vector-system"),
+                        aurora_i18n::tr!("build-compact-paste-system").to_owned(),
+                        true,
+                    ),
+                };
+                if ui
+                    .add_enabled(active, egui::Button::new(label).min_size(egui::vec2(20.0, 20.0)))
+                    .on_hover_text(hint)
+                    .clicked()
+                {
+                    match axis {
+                        0 => copy = true,
+                        1 => paste = tool.ui.vec_clipboard[which],
+                        _ => tool.ui.requests.push(Request::PasteVector(which)),
+                    }
+                }
+            });
+            #[cfg(test)]
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(egui::Id::unique(("legacy-vector-row", which, axis)), row.response.rect));
+            #[cfg(not(test))]
+            let _ = row;
+        }
+    });
+    ui.add_space(5.0);
+    (edit, paste, copy)
 }
 
 pub fn show_transform(
@@ -634,12 +723,20 @@ pub fn show_shape(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     let editable = tool.can_modify(world, idx);
     let single = tool.sel_prims(world).len() == 1 || tool.roots(world).len() == 1;
     let mut chosen_type = None;
+    let legacy = super::legacy::active(ui);
     ui.horizontal(|ui| {
         let items: Vec<(&str, usize)> = types().iter().enumerate().map(|(i, t)| (t.0, i)).collect();
         if volume.is_mesh() {
             label(ui, p, aurora_i18n::tr!("build-ui-object-mesh"));
         } else {
-            chosen_type = combo(ui, "prim_type", Some(ui_from_volume(&volume).ty), &items, 128.0, editable && single);
+            chosen_type = combo(
+                ui,
+                "prim_type",
+                Some(ui_from_volume(&volume).ty),
+                &items,
+                if legacy { (ui.available_width() - 42.0).max(70.0) } else { 128.0 },
+                editable && single,
+            );
         }
         super::compact::actions(ui, |ui| {
             let mesh = volume.is_mesh();
@@ -735,6 +832,22 @@ fn shape_pair(
     decimals: usize,
 ) -> Edit {
     let mut edit = Edit::default();
+    if super::legacy::active(ui) {
+        super::common::label(ui, p, title);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            let width = ((ui.available_width() - 32.0) * 0.5).max(40.0);
+            for ((value, axis), range) in values.into_iter().zip(axes).zip(ranges) {
+                ui.add_sized(
+                    [12.0, 20.0],
+                    egui::Label::new(RichText::new(axis.chars().next().unwrap_or(' ').to_string()).size(11.0)),
+                )
+                .on_hover_text(axis);
+                edit = edit.or(spin(ui, value, increment, range, decimals, width, false));
+            }
+        });
+        return edit;
+    }
     ui.horizontal(|ui| {
         let label_width = (ui.available_width() - 182.0).max(70.0);
         ui.allocate_ui_with_layout(
@@ -765,6 +878,10 @@ fn shape_scalar(
     range: std::ops::RangeInclusive<f32>,
     decimals: usize,
 ) -> Edit {
+    if super::legacy::active(ui) {
+        super::common::label(ui, p, title);
+        return spin(ui, value, increment, range, decimals, ui.available_width().max(50.0), false);
+    }
     let width = (ui.available_width() - 63.0).max(70.0);
     row(ui, p, title, width, |ui| spin(ui, value, increment, range, decimals, 58.0, false))
 }
@@ -787,6 +904,7 @@ fn shape_column(
         return;
     }
     let ui_now = ui_from_volume(volume);
+    let legacy = super::legacy::active(ui);
     let mut u = ui_now;
     let mut e = Edit {
         changed: chosen_type.is_some(),
@@ -821,8 +939,7 @@ fn shape_column(
                 0.0..=95.0,
                 1,
             ));
-            let width = (ui.available_width() - 125.0).max(70.0);
-            row(ui, p, aurora_i18n::tr!("build-ui-object-hollow-shape"), width, |ui| {
+            let mut hollow_shape = |ui: &mut egui::Ui| {
                 if let Some(h) = combo(ui, "hole_type", Some(u.hole), &holes(), 120.0, u.hollow > 0.0) {
                     u.hole = h;
                     e = e.or(Edit {
@@ -830,16 +947,25 @@ fn shape_column(
                         commit: true,
                     });
                 }
-            });
-            e = e.or(shape_scalar(
-                ui,
-                p,
-                aurora_i18n::tr!("build-ui-object-bias"),
-                &mut u.skew,
-                0.05,
-                -0.95..=0.95,
-                2,
-            ));
+            };
+            if legacy {
+                super::common::label(ui, p, aurora_i18n::tr!("build-ui-object-hollow-shape"));
+                hollow_shape(ui);
+            } else {
+                let width = (ui.available_width() - 125.0).max(70.0);
+                row(ui, p, aurora_i18n::tr!("build-ui-object-hollow-shape"), width, hollow_shape);
+            }
+            if !legacy || matches!(ty, 4..=6) {
+                e = e.or(shape_scalar(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("build-ui-object-bias"),
+                    &mut u.skew,
+                    0.05,
+                    -0.95..=0.95,
+                    2,
+                ));
+            }
             let (tw, ti) = if circular_basic(ty) { (360.0, 18.0) } else { (180.0, 9.0) };
             e = e.or(shape_pair(
                 ui,
@@ -912,24 +1038,26 @@ fn shape_column(
                     3,
                 ));
             }
-            e = e.or(shape_scalar(
-                ui,
-                p,
-                aurora_i18n::tr!("build-ui-object-radius"),
-                &mut u.radius,
-                0.05,
-                -1.0..=1.0,
-                3,
-            ));
-            e = e.or(shape_scalar(
-                ui,
-                p,
-                aurora_i18n::tr!("build-ui-object-revolutions"),
-                &mut u.revolutions,
-                0.1,
-                1.0..=4.0,
-                2,
-            ));
+            if !legacy || matches!(ty, 4..=6) {
+                e = e.or(shape_scalar(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("build-ui-object-radius"),
+                    &mut u.radius,
+                    0.05,
+                    -1.0..=1.0,
+                    3,
+                ));
+                e = e.or(shape_scalar(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("build-ui-object-revolutions"),
+                    &mut u.revolutions,
+                    0.1,
+                    1.0..=4.0,
+                    2,
+                ));
+            }
         });
     }
     if e.changed && u != ui_now {

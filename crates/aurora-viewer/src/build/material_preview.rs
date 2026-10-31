@@ -10,7 +10,11 @@ use std::collections::HashSet;
 
 impl BuildTool {
     pub(super) fn update_material_preview(&mut self, world: &mut World, settings: &BuildSettings) {
-        let active = self.open && self.tool == Tool::Edit && settings.expanded && self.tab == 3 && !self.replacement_active();
+        let active = self.open
+            && (self.tool == Tool::Edit || (settings.legacy_window && self.tool != Tool::Land))
+            && settings.expanded
+            && self.tab == 3
+            && !self.replacement_active();
         if !active {
             self.material_preview_selection.clear();
             self.material_preview_mode = None;
@@ -79,6 +83,21 @@ mod tests {
 
     fn tick(tool: &mut BuildTool, world: &mut World, settings: &BuildSettings) {
         tool.update(world, settings, (0.0, 0.0), true, Mods::default());
+    }
+
+    #[test]
+    fn legacy_material_tabs_keep_previewing_when_another_tool_shares_the_tabs() {
+        let (mut world, mut tool, mut settings, [root, _, _]) = fixture();
+        settings.legacy_window = true;
+        for mode in [Tool::Edit, Tool::Focus, Tool::Grab, Tool::Create] {
+            tool.set_tool(mode);
+            for tab in [0, 1] {
+                tool.ui.tex_tab = tab;
+                tool.update_material_preview(&mut world, &settings);
+                assert_eq!(world.objects.get(root).unwrap().visual_material(0).is_none(), tab == 0);
+            }
+        }
+        assert!(tool.out.is_empty(), "Changing preview mode never edits simulator materials");
     }
 
     #[test]

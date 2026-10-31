@@ -73,6 +73,8 @@ pub const MAX_ATTACHMENT_DIST: f32 = 3.5;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct BuildSettings {
+    /// Legacy Viewer tool strip and tabs instead of the Aurora workspace.
+    pub legacy_window: bool,
     /// Personal compact inspector arrangement, independent of edited objects.
     pub layout: layout::Layout,
     pub transform_expanded: bool,
@@ -123,6 +125,11 @@ pub struct BuildSettings {
     /// SelectReflectionProbes: off at each start (settings.xml, Persist=0).
     #[serde(skip)]
     pub select_probes: bool,
+    /// SelectOwnedOnly: clicks, rectangles and Area Search select only the
+    /// objects we own (`passes_select_filters`).
+    pub select_owned_only: bool,
+    /// SelectMovableOnly: the same for the objects we may move.
+    pub select_movable_only: bool,
     /// FSBuildToolDecimalPrecision: decimals of the Object tab numbers.
     pub decimal_precision: u8,
     /// CreateToolCopySelection / CopyCenters / CopyRotates.
@@ -211,6 +218,25 @@ pub fn can_transform(world: &World, idx: usize, linked: bool, mode: EditMode) ->
         return false;
     };
     root.update_flags & OBJECT_MOVE != 0 && (!(linked || mode == EditMode::Stretch) || root.update_flags & OBJECT_MODIFY != 0)
+}
+
+/// SelectOwnedOnly / SelectMovableOnly in LLSelectMgr::canSelectObject
+/// (indra/newview/llselectmgr.cpp, originally LGPL 2.1). permYouOwner and
+/// permMove read the root's flags; a permanent (pathfinding) object only
+/// counts as movable in the agent's region (isPermanentEnforced). The
+/// right-click menu's temporary selection skips this check, as
+/// LLToolSelect::handleObjectSelection does with temp_select.
+pub fn passes_select_filters(world: &World, s: &BuildSettings, idx: usize) -> bool {
+    use crate::ui::context::flags::{AFFECTS_NAVMESH, OBJECT_MOVE, OBJECT_YOU_OWNER};
+    if !s.select_owned_only && !s.select_movable_only {
+        return true;
+    }
+    let Some(root) = world.objects.get(root_of(world, idx)) else {
+        return false;
+    };
+    let flags = root.update_flags;
+    let permanent_enforced = flags & AFFECTS_NAVMESH != 0 && world.main_region != Some(root.key.region);
+    !(s.select_owned_only && flags & OBJECT_YOU_OWNER == 0) && !(s.select_movable_only && (flags & OBJECT_MOVE == 0 || permanent_enforced))
 }
 
 /// LLSelectMgr::highlightObjectAndFamily for the objects of ForceObjectSelect:
@@ -412,6 +438,7 @@ mod hud_tests {
 impl Default for BuildSettings {
     fn default() -> Self {
         BuildSettings {
+            legacy_window: false,
             layout: layout::Layout::default(),
             transform_expanded: true,
             color_picker: crate::ui::color_picker::Preferences::default(),
@@ -437,6 +464,8 @@ impl Default for BuildSettings {
             land_brush_force: 1.0,
             actual_root: false,
             select_probes: false,
+            select_owned_only: false,
+            select_movable_only: false,
             decimal_precision: 5,
             copy_selection: false,
             copy_centers: true,
@@ -1049,7 +1078,7 @@ impl BuildTool {
         let mut seen = std::collections::HashSet::new();
         let units: Vec<ObjKey> = idxs
             .iter()
-            .filter(|&&i| Some(select_type(world, i)) == kind)
+            .filter(|&&i| Some(select_type(world, i)) == kind && passes_select_filters(world, s, i))
             .filter_map(|&i| Self::unit_of(world, i, s.edit_linked))
             .filter(|u| seen.insert(*u))
             .collect();
@@ -1558,6 +1587,7 @@ impl BuildTool {
                 && x <= x1
                 && y >= y0
                 && y <= y1
+                && passes_select_filters(world, s, idx)
                 && let Some(u) = Self::unit_of(world, idx, s.edit_linked)
             {
                 units.push(u);
@@ -1690,6 +1720,8 @@ impl BuildTool {
             let (at, rot, _) = Scene::object_transform(world, idx, now, 0)?;
             Some((o.key, crate::world::lookat::local_offset(point, at, rot)))
         });
+        // what a click may select; Create still places on any surface
+        let pick = target.filter(|&idx| passes_select_filters(world, s, idx));
         match self.tool {
             Tool::Focus => false,
             Tool::Grab => {
@@ -1705,14 +1737,14 @@ impl BuildTool {
                 match mode {
                     EditMode::Face => {
                         let face = surface.and_then(|s| u8::try_from(s.face).ok());
-                        self.face_click(world, target, face, mods.shift);
+                        self.face_click(world, pick, face, mods.shift);
                         true
                     }
                     EditMode::Align => {
                         if !self.align_apply(world) {
                             // QToolAlign::pickCallback: whole linksets
                             s.edit_linked = false;
-                            self.click_select(world, s, target, mods.shift);
+                            self.click_select(world, s, pick, mods.shift);
                         }
                         true
                     }
@@ -1726,7 +1758,7 @@ impl BuildTool {
                         // not on a handle: select, or drag a selection rectangle
                         // (LLToolCompTranslate -> LLToolSelectRect)
                         let extend = mods.shift || mods.ctrl;
-                        self.click_select(world, s, target, extend);
+                        self.click_select(world, s, pick, extend);
                         self.rect = Some((cursor, cursor, extend));
                         true
                     }
@@ -1735,7 +1767,7 @@ impl BuildTool {
             Tool::Create => {
                 if mods.shift || mods.ctrl {
                     // Shift / Ctrl click selects instead (LLToolCompCreate)
-                    self.click_select(world, s, target, true);
+                    self.click_select(world, s, pick, true);
                     return true;
                 }
                 if s.copy_selection {

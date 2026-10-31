@@ -1069,11 +1069,24 @@ impl Session<'_> {
         }
         if self.main != Some(sim) || info.sequence_id < 0 {
             // other regions, hover requests
+            if info.sequence_id >= 0 {
+                log::info!(
+                    "agent parcel notification from region {:x} ignored: not the agent's region (local id {})",
+                    self.handle_of(sim),
+                    info.local_id
+                );
+            }
             return;
         }
         // LLViewerParcelMgr::processParcelProperties accepts sequence zero
         // unconditionally, otherwise only a newer agent-parcel notification.
         if info.sequence_id != 0 && self.agent_parcel.as_ref().is_some_and(|p| info.sequence_id <= p.sequence_id) {
+            log::info!(
+                "agent parcel notification ignored: sequence {} after {} (local id {})",
+                info.sequence_id,
+                self.agent_parcel.as_ref().map_or(0, |p| p.sequence_id),
+                info.local_id
+            );
             return;
         }
         self.publish_agent_parcel(Arc::new(info));

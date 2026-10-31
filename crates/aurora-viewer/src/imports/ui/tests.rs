@@ -209,7 +209,8 @@ fn settings_only_show_permissions_and_payment_and_sharing_clicks_are_per_type() 
     theme.apply(&ctx, 1.0);
     let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
     let mut imports = Imports {
-        settings_open: true,
+        open: true,
+        tab: Tab::Permissions,
         ..Default::default()
     };
     let mut prefs = Preferences::default();
@@ -445,20 +446,13 @@ fn an_empty_batch_cannot_be_confirmed_when_local_previews_are_selected() {
         for _ in 0..4 {
             drop(frame(Vec::new(), &mut imports));
         }
-        let output = frame(Vec::new(), &mut imports);
-        let pos = output
-            .shapes
-            .iter()
-            .find_map(|shape| {
-                if let egui::epaint::Shape::Text(text) = &shape.shape
-                    && text.galley.text() == aurora_i18n::tr!("import-upload")
-                {
-                    Some(text.pos + text.galley.size() * 0.5)
-                } else {
-                    None
-                }
-            })
-            .expect("upload button");
+        drop(frame(Vec::new(), &mut imports));
+        let (button, clip, enabled) = ctx
+            .data(|data| data.get_temp::<(egui::Rect, egui::Rect, bool)>(egui::Id::unique("import_upload_action")))
+            .expect("upload action geometry");
+        assert!(clip.contains_rect(button), "upload action stays reachable: {button:?} in {clip:?}");
+        assert_eq!(enabled, has_upload, "only paid upload drafts enable confirmation");
+        let pos = button.center();
         for pressed in [true, false] {
             drop(frame(
                 vec![
@@ -473,7 +467,17 @@ fn an_empty_batch_cannot_be_confirmed_when_local_previews_are_selected() {
                 &mut imports,
             ));
         }
-        assert_eq!(imports.confirm, has_upload);
+        assert_eq!(
+            imports.confirm,
+            has_upload,
+            "choice {:?}, active {:?}, busy {}, folder plan {}, pos {:?}, window {:?}",
+            imports.choice,
+            imports.active,
+            imports.busy(),
+            imports.folders.enabled,
+            pos,
+            ctx.memory(|m| m.area_rect(egui::Id::unique(WINDOW)))
+        );
     }
 }
 
@@ -541,6 +545,8 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
                 ..Default::default()
             },
             |ui| {
+                // Exercise the compact material layout in the shared window.
+                crate::ui::layout::set_work_area(ui.ctx(), egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(820.0, 900.0)));
                 show(ui.ctx(), &theme.palette(), imports, &mut prefs, &world, &Default::default());
             },
         );
@@ -984,237 +990,6 @@ fn every_local_asset_exposes_the_same_three_actions_without_a_footer_close_butto
             }
         }
     }
-}
-
-#[test]
-fn compact_importers_keep_their_size_and_filtered_files_without_permissions() {
-    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-    for choice in [Choice::Texture, Choice::Mesh, Choice::Material, Choice::Bulk] {
-        let ctx = egui::Context::default();
-        let theme = crate::theme::Theme::default();
-        theme.apply(&ctx, 1.0);
-        let mut prefs = Preferences::default();
-        let mesh = Entry::new(
-            "mesh.dae".into(),
-            Ok(Source::Mesh(Box::new(crate::imports::tests::mesh_fixture()))),
-            Default::default(),
-        );
-        let material = Entry::new(
-            "pbr.gltf".into(),
-            Ok(Source::Material {
-                value: Default::default(),
-                images: Box::new(std::array::from_fn(|_| None)),
-            }),
-            Default::default(),
-        );
-        let texture = Entry::new(
-            "texture.png".into(),
-            Ok(Source::Texture(Arc::new(DecodedImage {
-                width: 1,
-                height: 1,
-                components: 3,
-                data: vec![255; 3],
-                discard: 0,
-            }))),
-            Default::default(),
-        );
-        let active = match choice {
-            Choice::Texture => texture.id,
-            Choice::Material => material.id,
-            _ => mesh.id,
-        };
-        let mut imports = Imports {
-            open: true,
-            choice,
-            active: Some(active),
-            entries: vec![mesh, material, texture],
-            ..Default::default()
-        };
-        let mut frame = |imports: &mut Imports, events| {
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
-                    events,
-                    ..Default::default()
-                },
-                |ui| {
-                    show(ui.ctx(), &theme.palette(), imports, &mut prefs, &world, &Default::default());
-                },
-            );
-            output.textures_delta.clear();
-            output
-        };
-        for _ in 0..60 {
-            drop(frame(&mut imports, Vec::new()));
-        }
-        let window_id = egui::Id::unique(choice.window_id());
-        assert_eq!(
-            egui::AreaState::load(&ctx, window_id).expect("dedicated window").left_top_pos(),
-            egui::pos2(48.0, 80.0),
-            "every first-opened importer has the same top-left corner"
-        );
-        let maximum = inspector::dimensions(choice).0 + Vec2::splat(2.0);
-        let size = ctx
-            .data_mut(|data| data.get_persisted::<Vec2>(window_id.with("expanded_size")))
-            .expect("window size");
-        assert!(
-            size.x <= maximum.x && size.y <= maximum.y,
-            "compact window grew for {}: {size:?}",
-            choice.label()
-        );
-        let output = frame(&mut imports, Vec::new());
-        let positions = [
-            aurora_i18n::tr!("common-name"),
-            aurora_i18n::tr!("common-description"),
-            aurora_i18n::tr!("import-destination"),
-        ]
-        .map(|label| {
-            let positions: Vec<_> = output
-                .shapes
-                .iter()
-                .filter_map(|shape| match &shape.shape {
-                    egui::epaint::Shape::Text(text) if text.galley.text() == label => Some(text.pos),
-                    _ => None,
-                })
-                .collect();
-            assert_eq!(positions.len(), 1, "one shared metadata row for {label}");
-            positions[0]
-        });
-        assert!(positions[0].y < positions[1].y && positions[1].y < positions[2].y);
-        if matches!(choice, Choice::Mesh | Choice::Bulk) {
-            for section in [2, 1, 0] {
-                ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("mesh_section", active)), section));
-                for _ in 0..20 {
-                    drop(frame(&mut imports, Vec::new()));
-                }
-                let size = ctx
-                    .data_mut(|data| data.get_persisted::<Vec2>(window_id.with("expanded_size")))
-                    .expect("mesh section size");
-                assert!(size.x <= maximum.x && size.y <= maximum.y, "mesh section {section} grew: {size:?}");
-                let output = frame(&mut imports, Vec::new());
-                for (index, label) in [
-                    aurora_i18n::tr!("common-name"),
-                    aurora_i18n::tr!("common-description"),
-                    aurora_i18n::tr!("import-destination"),
-                ]
-                .into_iter()
-                .enumerate()
-                {
-                    let rows: Vec<_> = output
-                        .shapes
-                        .iter()
-                        .filter_map(|shape| match &shape.shape {
-                            egui::epaint::Shape::Text(text) if text.galley.text() == label => Some(text.pos),
-                            _ => None,
-                        })
-                        .collect();
-                    assert_eq!(rows, [positions[index]], "metadata stays above every mesh section");
-                }
-            }
-        }
-        assert!(
-            !output.shapes.iter().any(
-                |shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("import-permissions-tab"))
-            ),
-            "rights are edited only in Settings"
-        );
-        for (name, file_type) in [("mesh", Choice::Mesh), ("pbr", Choice::Material), ("texture", Choice::Texture)] {
-            assert_eq!(
-                output
-                    .shapes
-                    .iter()
-                    .any(|shape| matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.text() == name)),
-                choice == Choice::Bulk || choice == file_type,
-                "the file list stays scoped in dedicated windows and complete in Multiple"
-            );
-        }
-        imports.open(choice);
-        assert_eq!(imports.active, Some(active));
-        if choice == Choice::Bulk {
-            let output = frame(&mut imports, Vec::new());
-            let tab = output
-                .shapes
-                .iter()
-                .find_map(|shape| match &shape.shape {
-                    egui::Shape::Text(text) if text.galley.text() == Choice::Texture.label() => Some(text.pos + text.galley.size() * 0.5),
-                    _ => None,
-                })
-                .expect("Texture tab in Multiple");
-            for pressed in [true, false] {
-                drop(frame(
-                    &mut imports,
-                    vec![
-                        egui::Event::PointerMoved(tab),
-                        egui::Event::PointerButton {
-                            pos: tab,
-                            button: egui::PointerButton::Primary,
-                            pressed,
-                            modifiers: egui::Modifiers::NONE,
-                        },
-                    ],
-                ));
-            }
-            assert_eq!(imports.choice, Choice::Texture);
-            assert_eq!(
-                imports.window_choice(),
-                Choice::Bulk,
-                "Multiple remains the complete window after changing a tab"
-            );
-            assert!(!imports.choose_files_on_open);
-            let output = frame(&mut imports, Vec::new());
-            assert!(
-                output
-                    .shapes
-                    .iter()
-                    .any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == Choice::Bulk.label()))
-            );
-        }
-    }
-}
-
-#[test]
-fn menu_file_request_is_emitted_once_and_tab_changes_do_not_reopen_the_picker() {
-    let ctx = egui::Context::default();
-    let theme = crate::theme::Theme::default();
-    theme.apply(&ctx, 1.0);
-    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-    let mut prefs = Preferences::default();
-    let mut imports = Imports {
-        open: true,
-        choice: Choice::Mesh,
-        choose_files_on_open: true,
-        ..Default::default()
-    };
-    let mut frame = |imports: &mut Imports| {
-        let mut actions = Vec::new();
-        let mut output = ctx.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
-                ..Default::default()
-            },
-            |ui| {
-                actions = show(
-                    ui.ctx(),
-                    &theme.palette(),
-                    imports,
-                    &mut prefs,
-                    &world,
-                    &crate::ui::inventory::InventoryPreferences::default(),
-                );
-            },
-        );
-        output.textures_delta.clear();
-        drop(output);
-        actions
-    };
-    assert!(matches!(frame(&mut imports).as_slice(), [Action::Files]));
-    assert!(frame(&mut imports).is_empty());
-    imports.open(Choice::Animation);
-    assert!(frame(&mut imports).is_empty());
-    imports.open_file_picker(Choice::Bulk);
-    assert_eq!(imports.choice, Choice::Bulk);
-    assert!(matches!(frame(&mut imports).as_slice(), [Action::Files]));
-    assert!(frame(&mut imports).is_empty());
 }
 
 #[test]

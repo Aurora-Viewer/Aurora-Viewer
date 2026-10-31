@@ -20,6 +20,7 @@ pub(crate) mod general;
 mod item_properties;
 mod keyboard;
 mod layout;
+mod legacy;
 mod notecards;
 pub use notecards::{loaded as layout_notecard_loaded, saved as layout_notecard_saved};
 mod mesh;
@@ -78,6 +79,7 @@ pub enum Request {
     /// "p" of the Object tab: read the system clipboard for this vector
     /// (0 position, 1 size, 2 rotation) and call BuildTool::paste_vector.
     PasteVector(usize),
+    CopyKeys,
     Script {
         object: Uuid,
         item: Uuid,
@@ -144,6 +146,8 @@ pub enum Confirm {
 /// State of the floater kept between frames.
 #[derive(Default)]
 pub struct FloaterState {
+    /// Active presentation, mirrored before input routing (not a preference).
+    legacy_window: bool,
     pub layout: layout::State,
     pub notecards: notecards::State,
     mesh_inspection: mesh::Inspection,
@@ -213,6 +217,7 @@ pub(crate) const INSPECTOR_ID: &str = "build_tools_inspector_c3";
 /// Build shortcuts (menu_viewer.xml): Ctrl+B, Ctrl+1..5, delete, duplicate,
 /// link, edit linked parts, grid, undo...
 pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings) {
+    tool.ui.legacy_window = s.legacy_window;
     if tool.ui.layout.organizing || tool.ui.notecards.open.is_some() {
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             if tool.ui.notecards.open.is_some() {
@@ -281,7 +286,7 @@ pub fn show(
 ) -> bool {
     contents_selection::finish_if_hidden_or_blurred(ctx, tool, world);
     if !tool.open {
-        tool.cancel_texture_picker(world, env);
+        tool.dismiss_texture_picker();
         tool.cancel_color_picker(world);
         tool.commit_color_edit();
         tool.ui.layout.open = false;
@@ -322,7 +327,8 @@ pub fn show(
             Vec2::new(344.0, 500.0),
         );
     }
-    workspace::prepare(ctx, env.demo);
+    workspace::prepare(ctx, env.demo, s);
+    tool.ui.legacy_window = s.legacy_window;
     let preview = egui::Id::unique((INSPECTOR_ID, "compact-preview"));
     if env.demo && !ctx.data(|d| d.get_temp::<bool>(preview).unwrap_or(false)) {
         ctx.data_mut(|d| d.insert_temp(preview, true));
@@ -336,10 +342,14 @@ pub fn show(
         .unwrap_or(workspace::DEFAULT_SIZE)
         .x;
     s.layout.normalize();
-    if matches!(tool.tab, 0 | 1) {
+    if s.legacy_window && tool.tab == 1 {
+        tool.tab = 5;
+    }
+    if !s.legacy_window && matches!(tool.tab, 0 | 1) {
         tool.tab = 6;
     }
-    if tool.tool == Tool::Edit
+    if !s.legacy_window
+        && tool.tool == Tool::Edit
         && !s
             .layout
             .in_panel(crate::build::layout::Panel::Navigation)
@@ -357,30 +367,50 @@ pub fn show(
     tool.ui.layout.zones.clear();
     let mut open = true;
     let mut toggle_sections = false;
+    let mut legacy_toggle_sections = false;
     let mut copy_uuid = false;
     let mut toggle_settings = false;
-    let (title_icon, title) = compact::window_heading(tool);
-    let mut floater = Floater::new(INSPECTOR_ID, title, egui::pos2(screen.left() + 12.0, 40.0), workspace::DEFAULT_SIZE)
+    if s.legacy_window {
+        tool.ui.layout.organizing = false;
+        tool.ui.layout.drag = None;
+        tool.ui.notecards.open = None;
+    }
+    let (title_icon, title) = if s.legacy_window {
+        ("tools", aurora_i18n::tr!("build-compact-title"))
+    } else {
+        compact::window_heading(tool)
+    };
+    let default_size = if s.legacy_window {
+        legacy::DEFAULT_SIZE
+    } else {
+        workspace::DEFAULT_SIZE
+    };
+    let mut floater = Floater::new(INSPECTOR_ID, title, egui::pos2(screen.left() + 12.0, 40.0), default_size)
         .help(aurora_i18n::tr!("build-compact-help"))
-        .framed_header(title_icon)
-        .action(
+        .steady_size()
+        .silent();
+    if !s.legacy_window {
+        floater = floater.framed_header(title_icon).action(
             if s.expanded { "caret-up-filled" } else { "caret-down-filled" },
             aurora_i18n::tr!("build-compact-collapse"),
             &mut toggle_sections,
-        )
-        .steady_size()
-        .silent();
-    floater.header_status = compact::object_status(tool, world, p);
-    floater.header_status_action = Some((
-        "clipboard-text-filled",
-        aurora_i18n::tr!("build-compact-uuid"),
-        aurora_i18n::tr!("build-ui-general-copy-object-keys-shift-all-parts"),
-        &mut copy_uuid,
-    ));
-    if !matches!(tool.tool, Tool::Edit | Tool::Create) {
+        );
+        floater.header_status = compact::object_status(tool, world, p);
+        floater.header_status_action = Some((
+            "clipboard-text-filled",
+            aurora_i18n::tr!("build-compact-uuid"),
+            aurora_i18n::tr!("build-ui-general-copy-object-keys-shift-all-parts"),
+            &mut copy_uuid,
+        ));
+    }
+    if !s.legacy_window && !matches!(tool.tool, Tool::Edit | Tool::Create) {
         floater = floater.action("settings-filled", aurora_i18n::tr!("build-layout-settings"), &mut toggle_settings);
     }
-    floater.min_size = compact::minimum_size(tool, s);
+    floater.min_size = if s.legacy_window {
+        legacy::MIN_SIZE
+    } else {
+        compact::minimum_size(tool, s)
+    };
     if !s.expanded {
         floater.default_size.x = ctx
             .data(|d| d.get_temp::<Vec2>(egui::Id::unique(INSPECTOR_ID).with("sections_expanded_size")))
@@ -389,8 +419,13 @@ pub fn show(
     }
     floater.show(ctx, p, &mut open, |ui| {
         common::typography(ui);
-        compact::body(ui, p, tool, world, s, mods, env);
+        if s.legacy_window {
+            legacy_toggle_sections = legacy::body(ui, p, tool, world, s, mods, env);
+        } else {
+            compact::body(ui, p, tool, world, s, mods, env);
+        }
     });
+    toggle_sections |= legacy_toggle_sections;
     if copy_uuid && !tool.selection.is_empty() {
         ctx.copy_text(tool.copy_keys(world, s, mods.shift));
     }
@@ -438,7 +473,7 @@ pub fn show(
     color::finish_gesture(ctx, tool);
     if !open {
         contents_selection::finish_rename(tool, world);
-        tool.cancel_texture_picker(world, env);
+        tool.dismiss_texture_picker();
         tool.close(world, s);
     }
     *s != before || *env.property_lines != property_lines_before

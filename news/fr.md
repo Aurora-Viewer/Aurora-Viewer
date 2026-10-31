@@ -26,6 +26,19 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-10-31 — Aurora 0.8.4 : tout copier, construire dans la foule
+Cliquez sur un nom dans un profil pour le copier, et sélectionnez le texte d'un champ grisé pour le copier aussi : le nom d'un objet non modifiable, l'adresse média d'une parcelle. Les tenues copient les noms de leurs articles et les crédits des créateurs. Dans une sandbox bondée, les outils de construction peuvent ne sélectionner que vos objets, ou ceux que vous pouvez déplacer, et l'éditeur a une disposition Legacy. Ctrl+Maj+H vous ramène chez vous.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.4)
+
+## 2026-10-31 — De la lumière pour les photos, LiveMesh pour Blender 3
+Un bouton lumière au-dessus du déclencheur du viseur ouvre l'éclairage personnel, et le ciel, l'eau et le cycle du jour peuvent changer pour la photo seulement, ou rester après. LiveMesh synchronise les textures dans les espaces colorimétriques de Blender 3.x, et les accessoires riggés sur un kit de développement Avastar se placent comme après un upload.
+
+## 2026-10-31 — Inventaire, Mac et Linux
+Les objets reçus peuvent être acceptés automatiquement, avec un accusé de réception. Les dossiers de l'inventaire ont leurs propres commandes et une ligne de recherche à part, et les groupes de contacts du Legacy Viewer s'importent. Sur Mac, Commande fait office de Contrôle et les raccourcis s'affichent ⌘ ⌥ ⇧. Ctrl+H ouvre le chat local et Ctrl+Maj+W ferme toutes les fenêtres. Sous Linux, les liens secondlife:// s'ouvrent dans le viewer déjà lancé.
+
+## 2026-10-31 — Plus stable
+Une réinitialisation de la carte graphique ferme le viewer proprement, les photos ne le figent plus quand la mémoire vidéo manque, et la mémoire des textures reste sous contrôle dans les lieux bondés. Plus de décollage dans une parcelle interdite au vol, et la parcelle quittée ne prête plus ses règles après une téléportation. Les animesh portés tiennent droit. Merci à Gaalrauch, Marakiinfinity, circuskid, Aznlilly, DarlCat, voidel et seilimited-ship-it.
+
 ## 2026-10-29 — Aurora 0.8.3 tourne nativement sur Mac
 Aurora tourne désormais nativement sur les Mac Apple Silicon, avec un rendu Metal : chaque release contient une application macOS à glisser dans Applications. Les pages web et les vidéos du monde y fonctionnent aussi : la première fois qu'il en a besoin, le viewer télécharge lui-même ses plugins média. Le guide d'installation est dans docs/MACOS.md.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.3)

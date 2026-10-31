@@ -186,6 +186,8 @@ pub(crate) fn property_dialogs(ctx: &egui::Context, p: &Palette, tool: &mut Buil
 }
 
 pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, permissions: bool) {
+    let legacy = super::legacy::active(ui);
+    let identity_width = if legacy { 90.0 } else { LABEL_W };
     // the roots, or the selected prims when no root is (LLPanelPermissions::refresh)
     let mut targets: Vec<usize> = tool
         .sel_prims(world)
@@ -262,18 +264,17 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 String::new()
             };
             let mut v = tool.ui.edits.get(field).cloned().unwrap_or_else(|| current.clone());
-            row(ui, p, title, LABEL_W - 30.0, |ui| {
-                let r = ui.add_enabled(
-                    modify,
-                    egui::TextEdit::singleline(&mut v)
-                        .desired_width(ui.available_width())
-                        .char_limit(limit)
-                        .hint_text(if count > 1 {
-                            aurora_i18n::tr!("build-ui-general-multiple-selection")
-                        } else {
-                            ""
-                        }),
-                );
+            row(ui, p, title, if legacy { 100.0 } else { LABEL_W - 30.0 }, |ui| {
+                let hint = if count > 1 {
+                    aurora_i18n::tr!("build-ui-general-multiple-selection")
+                } else {
+                    ""
+                };
+                let width = ui.available_width();
+                // read only without the modify right, still selectable
+                let r = crate::ui::widgets::text_field(ui, modify, &mut v, |b, _| {
+                    egui::TextEdit::singleline(b).desired_width(width).char_limit(limit).hint_text(hint)
+                });
                 if description {
                     r.clone().on_hover_text(aurora_i18n::tr!("build-ui-general-127-bytes-maximum"));
                 } else {
@@ -301,7 +302,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 world.social.want_name(id);
             }
         }
-        row(ui, p, aurora_i18n::tr!("common-creator-2"), LABEL_W, |ui| {
+        row(ui, p, aurora_i18n::tr!("common-creator-2"), identity_width, |ui| {
             if !same(&|x| x.creator_id) {
                 text(ui, p, aurora_i18n::tr!("status-multiple"));
             } else if first.creator_id.is_nil() {
@@ -310,7 +311,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 tool.ui.requests.push(Request::Profile(first.creator_id));
             }
         });
-        row(ui, p, aurora_i18n::tr!("common-owner-2"), LABEL_W, |ui| {
+        row(ui, p, aurora_i18n::tr!("common-owner-2"), identity_width, |ui| {
             if !owners_identical {
                 text(ui, p, aurora_i18n::tr!("status-multiple"));
             } else if group_owned {
@@ -322,7 +323,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 tool.ui.requests.push(Request::Profile(first.owner_id));
             }
         });
-        row(ui, p, aurora_i18n::tr!("build-ui-general-previous-owner"), LABEL_W, |ui| {
+        row(ui, p, aurora_i18n::tr!("build-ui-general-previous-owner"), identity_width, |ui| {
             if !same(&|x| x.last_owner_id) || first.last_owner_id.is_nil() {
                 return;
             }
@@ -334,7 +335,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 tool.ui.requests.push(Request::Profile(first.last_owner_id));
             }
         });
-        row(ui, p, aurora_i18n::tr!("common-group-2"), LABEL_W, |ui| {
+        row(ui, p, aurora_i18n::tr!("common-group-2"), identity_width, |ui| {
             if same(&|x| x.group_id) && !first.group_id.is_nil() {
                 let name = group_name(world, first.group_id);
                 if name_link(ui, p, &name) {
@@ -358,7 +359,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
 
         // ---- share with group, deed
         ui.horizontal(|ui| {
-            ui.add_space(LABEL_W);
+            ui.add_space(identity_width);
             if let Some(v) = check(ui, p, share, share_tentative, aurora_i18n::tr!("common-share"), can_manipulate) {
                 tool.set_perm(world, perm_field::GROUP, v, share_bits);
             }
@@ -375,17 +376,19 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             }
         });
 
-        small(
-            ui,
-            p,
-            if modify {
-                aurora_i18n::tr!("build-ui-general-you-can-edit-this-object")
-            } else {
-                aurora_i18n::tr!("build-ui-general-you-cannot-edit-this-object")
-            },
-        );
-        ownership_permissions(ui, p, tool, world, &props, can_manipulate, can_sell);
-        crate::ui::widgets::divider(ui, p);
+        if !legacy {
+            small(
+                ui,
+                p,
+                if modify {
+                    aurora_i18n::tr!("build-ui-general-you-can-edit-this-object")
+                } else {
+                    aurora_i18n::tr!("build-ui-general-you-cannot-edit-this-object")
+                },
+            );
+            ownership_permissions(ui, p, tool, world, &props, can_manipulate, can_sell);
+            crate::ui::widgets::divider(ui, p);
+        }
 
         // ---- click action
         let prims = tool.sel_prims(world);
@@ -495,6 +498,9 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
 
         // ---- key, search
         ui.horizontal(|ui| {
+            if legacy && ui.button(aurora_i18n::tr!("build-legacy-copy-keys")).clicked() {
+                tool.ui.requests.push(Request::CopyKeys);
+            }
             let roots = tool.roots(world);
             let (search, search_mixed) = super::common::same(
                 roots
@@ -512,6 +518,18 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 tool.set_include_in_search(world, v);
             }
         });
+        if legacy {
+            small(
+                ui,
+                p,
+                if modify {
+                    aurora_i18n::tr!("build-ui-general-you-can-edit-this-object")
+                } else {
+                    aurora_i18n::tr!("build-ui-general-you-cannot-edit-this-object")
+                },
+            );
+            ownership_permissions(ui, p, tool, world, &props, can_manipulate, can_sell);
+        }
     }
     if permissions {
         // ---- modify info (text modify info 1..6)

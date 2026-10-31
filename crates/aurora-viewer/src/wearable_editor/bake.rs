@@ -540,6 +540,58 @@ mod tests {
     }
 
     #[test]
+    fn every_editable_texture_slot_changes_its_real_bake_including_skin_clothes_and_alpha() {
+        let defs = definitions().expect("definitions");
+        let red = Uuid::from_u128(1378001);
+        let blue = Uuid::from_u128(1378002);
+        for kind in (1..=14).chain([16]) {
+            let (world, state, _) = crate::wearable_editor::tests::fixture(kind);
+            let mut value = state.draft.expect("draft").edited;
+            for texture in value.textures.values_mut() {
+                *texture = IMG_DEFAULT_AVATAR;
+            }
+            let weights = world.avatar_lib.shape_params.edited_weights(&[], &defs.owned(&value));
+            for &slot in super::super::slots(kind) {
+                let te = super::super::slot_bake(slot).expect("bake slot");
+                let region = defs.regions.iter().find(|region| region.te == te).expect("region");
+                let images = HashMap::from([
+                    (red, solid(if kind == 13 { [0; 4] } else { [255, 0, 0, 255] })),
+                    (blue, solid([0, 0, 255, 255])),
+                ]);
+                let mut first = value.clone();
+                first.textures.insert(slot, red);
+                let mut second = value.clone();
+                second.textures.insert(slot, blue);
+                let before = compose(
+                    defs,
+                    region,
+                    16,
+                    &[Worn {
+                        value: first,
+                        weights: weights.clone(),
+                    }],
+                    &weights,
+                    &images,
+                )
+                .expect("first image");
+                let after = compose(
+                    defs,
+                    region,
+                    16,
+                    &[Worn {
+                        value: second,
+                        weights: weights.clone(),
+                    }],
+                    &weights,
+                    &images,
+                )
+                .expect("second image");
+                assert_ne!(before, after, "kind {kind}, slot {slot} must visibly change the composite");
+            }
+        }
+    }
+
+    #[test]
     fn composite_preserves_layer_order_tint_and_visibility_without_touching_assets() {
         let defs = definitions().expect("definitions");
         let region = defs.regions.iter().find(|region| region.te == 42).expect("aux1 region");

@@ -315,10 +315,13 @@ impl App {
             other => {
                 self.open_env_editor_snapshot(SettingsKind::Sky);
                 self.env_editor.set_tab(match other {
-                    "clouds" => 1,
+                    "clouds" | "clouds-picker" => 1,
                     "sun" | "beacons" => 2,
                     _ => 0,
                 });
+                if other == "clouds-picker" {
+                    self.env_editor.demo_cloud_picker();
+                }
                 // beacons: both beacons shown (off again once the editor closes)
                 if other == "beacons" {
                     self.env_beacons_frame();

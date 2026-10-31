@@ -494,8 +494,8 @@ fn mesh_controls(
                 .truncate()
                 .selected_text(labels[(draft.options.physics_source + 1).clamp(0, 9) as usize])
                 .show_ui(ui, |ui| {
-                    for (i, label) in labels.into_iter().enumerate() {
-                        selection(ui, &mut draft.options.physics_source, i as i32 - 1, label);
+                    for source in [5, -1, 0, 1, 2, 3, 4, 6, 7, 8] {
+                        selection(ui, &mut draft.options.physics_source, source, labels[(source + 1) as usize]);
                     }
                 });
             if draft.options.physics_source == 5 {

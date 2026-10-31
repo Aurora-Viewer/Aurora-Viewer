@@ -167,7 +167,9 @@ impl App {
 
     pub(super) fn hud_drag_requested(&self) -> bool {
         // Build tools own their modifiers, including Ctrl for rotation.
-        !self.build.open && self.settings.keybinds.held(Action::HudDrag, &self.down, self.mods())
+        // The gesture's Control key is the physical key. Command is a
+        // shortcut modifier on macOS and must not start the drag.
+        !self.build.open && self.settings.keybinds.held(Action::HudDrag, &self.down, self.physical_mods())
     }
 
     fn demo_hud_drag_binding(&self) -> Option<crate::keybinds::Binding> {

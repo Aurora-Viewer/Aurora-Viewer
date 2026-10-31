@@ -650,33 +650,50 @@ fn who_it_is(
         // a staff member's tag after the name, cut before it
         let staff = mark.map_or(0.0, |mark| crate::ui::staff::Tag::new(ui, p, mark, tag).size().x + 8.0);
         let max = (ui.available_width() - if w.editing { 30.0 } else { 0.0 } - staff).max(40.0);
-        ui.add(widgets::elided_label(
-            ui,
-            RichText::new(&name)
-                .font(semibold(ui, size))
-                .color(crate::ui::colors::resident_name(world, &id, p.ink)),
-            max,
-        ));
+        let shown = ui.add(
+            widgets::elided_label(
+                ui,
+                RichText::new(&name)
+                    .font(semibold(ui, size))
+                    .color(crate::ui::colors::resident_name(world, &id, p.ink)),
+                max,
+            )
+            .sense(Sense::click()),
+        );
+        widgets::copy_on_click(ui, p, shown, &name);
         crate::ui::staff::after_name(ui, p, mark, tag);
         if w.editing && widgets::icon_button(ui, p, "pencil-filled", aurora_i18n::tr!("common-set-display-name"), true) {
             env.actions.push(ProfileAction::DisplayName);
         }
     });
-    let mut sub = names_line(world, &id, &name);
+    let mut names = names_line(world, &id, &name);
+    let mut age = None;
     if compact {
         // the username alone, then the age (the mock-up's "orion.exemple · 19 ans")
-        sub.retain(|s| !s.contains(' '));
-        if let Some(age) = profile.and_then(|pr| age_only(pr, f.own)) {
-            sub.push(age);
-        }
+        names.retain(|s| !s.contains(' '));
+        age = profile.and_then(|pr| age_only(pr, f.own));
     }
-    if !sub.is_empty() {
-        let max = ui.available_width();
-        ui.add(widgets::elided_label(
-            ui,
-            RichText::new(sub.join(" · ")).size(12.5).color(p.muted),
-            max,
-        ));
+    if !names.is_empty() || age.is_some() {
+        // each name copies on its own click; the age is only read
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let small = |t: &str| RichText::new(t).size(12.5).color(p.muted);
+            for (i, n) in names.iter().enumerate() {
+                if i > 0 {
+                    ui.label(small(" · "));
+                }
+                let max = ui.available_width().max(20.0);
+                let r = ui.add(widgets::elided_label(ui, small(n), max).sense(Sense::click()));
+                widgets::copy_on_click(ui, p, r, n);
+            }
+            if let Some(age) = &age {
+                if !names.is_empty() {
+                    ui.label(small(" · "));
+                }
+                let max = ui.available_width().max(20.0);
+                ui.add(widgets::elided_label(ui, small(age), max));
+            }
+        });
     }
     ui.add_space(if compact { 4.0 } else { 6.0 });
     ui.spacing_mut().item_spacing.y = 4.0;

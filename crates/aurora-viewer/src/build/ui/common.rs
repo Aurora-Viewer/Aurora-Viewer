@@ -60,10 +60,23 @@ pub fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
 /// A label of fixed width then the content (Firestorm's two-column rows).
 pub fn row<R>(ui: &mut egui::Ui, p: &Palette, name: &str, width: f32, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.horizontal(|ui| {
-        ui.allocate_ui_with_layout(Vec2::new(width, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            ui.set_min_width(width);
-            label(ui, p, name)
-        });
+        if super::legacy::active(ui) {
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 20.0), egui::Sense::hover());
+            let mut caption = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(rect)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            );
+            caption.set_clip_rect(ui.clip_rect().intersect(rect));
+            caption
+                .add(egui::Label::new(RichText::new(name).size(BODY).color(p.muted)).truncate())
+                .on_hover_text(name);
+        } else {
+            ui.allocate_ui_with_layout(Vec2::new(width, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.set_min_width(width);
+                label(ui, p, name)
+            });
+        }
         body(ui)
     })
     .inner
@@ -121,21 +134,25 @@ pub fn spin_with_min_decimals(
             1.0
         };
     let before = *v;
+    // LLSpinCtrl::setValue displays server values (including megaprims)
+    // unchanged; LLPanelObject::sendScale bounds only deliberate edits.
     let mut dv = egui::DragValue::new(v)
         .speed(speed)
         .update_while_editing(false)
         .range(range.clone())
+        .clamp_existing_to_range(false)
         .custom_parser(aurora_i18n::parse_number)
         .max_decimals(decimals)
         .min_decimals(min_decimals.min(decimals));
     if tentative {
         dv = dv.custom_formatter(|_, _| "—".into());
     }
+    let height = if super::legacy::active(ui) { 20.0 } else { 26.0 };
     let (r, step) = ui
         .horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            let r = ui.add_sized([(width - 13.0).max(16.0), 26.0], dv);
-            let step = crate::ui::widgets::step_buttons(ui, 26.0);
+            let r = ui.add_sized([(width - 13.0).max(16.0), height], dv);
+            let step = crate::ui::widgets::step_buttons(ui, height);
             (r, step)
         })
         .inner;
@@ -166,18 +183,19 @@ pub fn spin_with_min_decimals(
 /// Integer spinner.
 pub fn spin_i(ui: &mut egui::Ui, v: &mut i32, range: std::ops::RangeInclusive<i32>, width: f32) -> Edit {
     let before = *v;
+    let height = if super::legacy::active(ui) { 20.0 } else { 26.0 };
     let (r, step) = ui
         .horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             let r = ui.add_sized(
-                [(width - 13.0).max(16.0), 26.0],
+                [(width - 13.0).max(16.0), height],
                 egui::DragValue::new(&mut *v)
                     .update_while_editing(false)
                     .custom_parser(aurora_i18n::parse_number)
                     .speed(0.25)
                     .range(range.clone()),
             );
-            (r, crate::ui::widgets::step_buttons(ui, 26.0))
+            (r, crate::ui::widgets::step_buttons(ui, height))
         })
         .inner;
     if step != 0 {
@@ -396,6 +414,63 @@ pub fn same<T: PartialEq + Copy>(mut it: impl Iterator<Item = T>) -> (Option<T>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn megaprim_spinner_displays_existing_size_but_clamps_typed_edits() {
+        for (typed, expected) in [("32", 32.0), ("128", 64.0), ("0", 0.01)] {
+            let ctx = egui::Context::default();
+            let mut value = 128.125;
+            let mut point = egui::Pos2::ZERO;
+            let mut show = |events: Vec<egui::Event>| {
+                let mut edit = Edit::default();
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(200.0, 100.0))),
+                        events,
+                        focused: true,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        point = ui.cursor().min + egui::vec2(25.0, 13.0);
+                        edit = spin(ui, &mut value, 0.01, 0.01..=64.0, 3, 90.0, false);
+                    },
+                );
+                output.textures_delta.clear();
+                (value, edit, point)
+            };
+            let (_, _, point) = show(vec![]);
+            for _ in 0..3 {
+                let (value, edit, _) = show(vec![]);
+                assert_eq!(value, 128.125);
+                assert_eq!(edit, Edit::default());
+            }
+            show(vec![egui::Event::PointerMoved(point)]);
+            for pressed in [true, false] {
+                show(vec![egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                }]);
+            }
+            assert!(ctx.memory(|m| m.focused()).is_some());
+            let (value, edit, _) = show(vec![egui::Event::Text(typed.into())]);
+            assert_eq!(value, 128.125, "Typing must remain a draft");
+            assert_eq!(edit, Edit::default());
+            let (value, edit, _) = show(vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }]);
+            assert_eq!(value, expected);
+            assert!(edit.changed && edit.commit);
+            let (value, edit, _) = show(vec![]);
+            assert_eq!(value, expected);
+            assert_eq!(edit, Edit::default(), "An edit must commit only once");
+        }
+    }
 
     #[test]
     fn increment_buttons_commit_clamp_and_inherit_disabled_state() {
