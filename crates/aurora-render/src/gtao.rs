@@ -74,6 +74,12 @@ const TEMPORAL_MIN_WEIGHT: f32 = 0.03;
 const TEMPORAL_DEPTH_MIN_WEIGHT: f32 = 0.1;
 const TEMPORAL_MOVING_WEIGHT: f32 = 0.1;
 const TEMPORAL_CLIP: f32 = 1.25;
+/// Where the point moved on its own (its motion parts from the camera's): the
+/// current frame's least weight (about five frames) and the clip's half width.
+/// Its occlusion can change because it moved (a hem lifting off the ground
+/// keeps the ground's), and GTAO's wide grain leaves the usual clip loose.
+const TEMPORAL_OWN_WEIGHT: f32 = 0.2;
+const TEMPORAL_OWN_CLIP: f32 = 0.6;
 /// Times more slices on a frame that accumulates without a history.
 const NO_HISTORY_SLICES: u32 = 4;
 /// Frames the noise goes through before it repeats (XeGTAO's 64).
@@ -404,6 +410,8 @@ struct GtaoU {
     temporal: [f32; 4],
     /// A mat3x3 (columns padded to four).
     normal_view: [[f32; 4]; 3],
+    /// Least weight and clip where the point moved on its own.
+    own: [f32; 4],
 }
 
 /// The constants of a frame drawn with `proj` into targets of `size`;
@@ -447,6 +455,7 @@ fn uniforms(
             let m = normal_view(view);
             [m.x_axis.extend(0.0), m.y_axis.extend(0.0), m.z_axis.extend(0.0)].map(|c| c.to_array())
         }),
+        own: [TEMPORAL_OWN_WEIGHT, TEMPORAL_OWN_CLIP, 0.0, 0.0],
     }
 }
 
@@ -1090,6 +1099,8 @@ mod tests {
         // the long history only where the prepass writes the motion
         assert_eq!(on.temporal[2], TEMPORAL_MIN_WEIGHT);
         assert_eq!(off.temporal[2], TEMPORAL_DEPTH_MIN_WEIGHT);
+        // a point that moved on its own keeps a shorter, tighter history
+        assert_eq!(on.own[..2], [TEMPORAL_OWN_WEIGHT, TEMPORAL_OWN_CLIP]);
     }
 
     /// The history targets take turns while frames follow each other; a

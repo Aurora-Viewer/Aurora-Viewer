@@ -99,6 +99,9 @@ struct GtaoParams {
     temporal: vec4<f32>,
     // world directions to this view space, for the mesh normals
     normal_view: mat3x3<f32>,
+    // where the point moved on its own: the current frame's least weight,
+    // the clip's half width in standard deviations
+    own: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> g: GtaoParams;
@@ -729,6 +732,8 @@ fn history_meta(q: vec2<i32>) -> vec2<f32> {
 // neighbourhood, so an occlusion that moved with an avatar or an object
 // without motion (the depth's normals) does not trail behind it. The current frame weighs 1 / (frames + 1),
 // never less than `g.temporal.z`: a new pixel converges in a few frames.
+// Where the point moved on its own (`g.own`) the history is shorter and its
+// clip tighter: its occlusion may have changed because it moved.
 @compute @workgroup_size(8, 8)
 fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = target_size();
@@ -758,6 +763,7 @@ fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
 
     var count = 0.0;
     var moved = 0.0;
+    var own_w = 0.0;
     var hist = cur;
     let isize = vec2<i32>(size);
     let uv = (vec2<f32>(px) + vec2<f32>(0.5)) / size;
@@ -788,6 +794,7 @@ fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
         // the point moved on its own when its motion parts from the camera's
         // by more than half a pixel
         let own = length((prev_uv - cam_uv) * size) > 0.5;
+        own_w = select(0.0, g.own.x, own);
         let pp = prev_uv * size - vec2<f32>(0.5);
         let base = vec2<i32>(floor(pp));
         let f = pp - floor(pp);
@@ -835,7 +842,7 @@ fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
             count = m.y;
         }
         if (weight > 1e-3) {
-            let gamma = g.temporal.w;
+            let gamma = select(g.temporal.w, g.own.y, own);
             hist = clamp(sum / weight, m1 - gamma * sigma, m1 + gamma * sigma);
         } else {
             count = 0.0;
@@ -843,7 +850,7 @@ fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     // (a shorter history where the point moves: the long one lags behind
     // the camera, and the motion hides the grain it quiets)
-    let alpha = max(1.0 / (count + 1.0), mix(g.temporal.z, g.il.w, moved));
+    let alpha = max(max(1.0 / (count + 1.0), mix(g.temporal.z, g.il.w, moved)), own_w);
     textureStore(hist_out, px, mix(hist, cur, alpha));
     let frames = min(count + 1.0, 255.0);
     textureStore(meta_out, px, vec4<u32>(pack2x16float(vec2<f32>(min(zc, 60000.0), frames)), 0u, 0u, 0u));
