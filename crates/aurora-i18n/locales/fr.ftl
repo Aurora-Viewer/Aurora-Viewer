@@ -12216,6 +12216,7 @@ portal-private = Portail privé
 portal-drop-friends = Ouvrir un portail pour toi et tes amis · Maintenir Maj pour le rendre public
 portal-drop-public = Ouvrir un portail public · Relâcher Maj pour le réserver aux amis
 portal-landmark-unavailable = Impossible de trouver la destination de ce landmark. Aucun portail n’a été ouvert.
+portal-place-unavailable = Impossible de trouver la destination de ce lieu. Aucun portail n’a été ouvert.
 portal-destination = Destination
 portal-destination-hint = Collez un lien de lieu ou Région/x/y/z
 portal-access = Qui peut utiliser ce portail ?

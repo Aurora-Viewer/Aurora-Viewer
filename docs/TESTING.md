@@ -163,6 +163,20 @@ retain their normal behavior.
 `drop-focus` keeps the inventory open with keyboard focus during the drag;
 after release it stays open and logs that keyboard focus returned to the scene.
 
+`drop-places|drop-places-hover|drop-favorites|drop-favorites-public|drop-favorites-hover`
+uses the shared Places/Favorites landmark cargo with Places open. Hover modes
+show the floating place icon/name and access hint; released modes create a portal
+with its live remaining lifetime above the aperture. Pointer regressions cover
+starting drags in all three Favorites access modes and both Places layouts,
+including wide and filtered lists, without reordering on a world release.
+
+`drop-history|drop-history-public|drop-history-hover` uses an actual arrival
+snapshot without creating or requiring a landmark. Check its portal destination,
+Friends/Shift-public access, and the unchanged left alignment of Landmarks and
+History rows; reorder grips remain in Favorites only. Pointer regressions also
+cover both History layouts, wide/filtered views and a visit near an owned landmark
+whose exact arrival differs from the landmark's saved point.
+
 `AURORA_DEMO_PORTALS=private-friends-allowed|private-friends-denied|private-group-allowed|private-group-denied`
 exchanges real v2 codec messages between two offline peer states. Everyone sees
 the aperture; denied observers see only the creator and private/access labels.
@@ -7429,7 +7443,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken`**
 — opens Appearance with four synthetic outfits:
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
@@ -7476,6 +7490,14 @@ for them (`5 to look up`), as a cold inventory cache.
   menu has New folder, Save as has **Save in**. In the default window:
   `AURORA_DEMO_POINTER="106,411,r"` (Club Black, list) opens the outfit
   menu, `"89,386,r"` the Club folder's, capture at frame 380;
+- `folders-many` / `folders-many-outfits`: the same gallery/list with 320
+  extra nested destination groups. Open **Move to folder**, scroll to
+  **Wardrobe 079 / Style 319**, and move an outfit there. The submenu stays
+  inside the viewport and **New folder** stays below the scrolling list.
+  Repeat at a small window height or enlarged interface scale. In Inventory,
+  drag a saved outfit or a group into another My Outfits group or back to
+  My Outfits; protected folders, cycles, excessive depth and loose item drops
+  must remain refused.
 - `outfits`: the list of outfits; `worn`: the worn items. A right click on
   an outfit's header opens the outfit menu: `AURORA_DEMO_POINTER="82,372,r"`
   (Neurolab) or `"90,397,r"` (the worn outfit) in the default window, capture

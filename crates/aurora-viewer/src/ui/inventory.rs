@@ -384,13 +384,15 @@ pub(crate) struct WorldDrag {
 /// Read before egui's end-pass clears released cargo. A dragging widget keeps
 /// wants-pointer set even over the world; only the destination area counts.
 pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
-    let cargo = egui::DragAndDrop::payload::<InvDrag>(ctx)?;
+    let item = egui::DragAndDrop::payload::<InvDrag>(ctx)
+        .map(|cargo| cargo.0)
+        .or_else(|| egui::DragAndDrop::payload::<super::places::drag::PlaceDrag>(ctx).and_then(|cargo| cargo.target.item()))?;
     if ctx.is_pointer_over_egui() {
         return None;
     }
     ctx.input(|i| {
         Some(WorldDrag {
-            item: cargo.0,
+            item,
             position: i.pointer.interact_pos()?,
             released: i.pointer.button_released(egui::PointerButton::Primary),
             ctrl: i.modifiers.ctrl,
@@ -1113,9 +1115,13 @@ fn folder_row(
     });
 }
 
-/// Personal folders can move within inventory or to Marketplace listings.
+/// Personal folders and saved outfits use the shared move validation on drop.
 fn folder_draggable(inv: &Inventory, id: Uuid, prefs: &InventoryPreferences) -> bool {
-    rules::movable(inv, id, &prefs.protected) && inv.folders.get(&id).is_some_and(|f| f.info.type_default == -1)
+    rules::movable(inv, id, &prefs.protected)
+        && inv
+            .folders
+            .get(&id)
+            .is_some_and(|f| f.info.type_default == -1 || crate::world::outfit_folders::in_my_outfits(inv, id))
 }
 
 /// What a folder's row does, whichever window draws it: drag and drop (onto

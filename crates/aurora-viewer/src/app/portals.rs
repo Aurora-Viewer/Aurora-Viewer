@@ -130,7 +130,7 @@ impl App {
                 self.portal_journey = Some(journey);
             }
         }
-        self.update_landmark_portal();
+        self.update_place_portal();
         self.exchange_portal_demo();
         if self.seed_portal_drop_demo() {
             return;

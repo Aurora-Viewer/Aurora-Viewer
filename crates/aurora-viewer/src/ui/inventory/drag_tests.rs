@@ -336,6 +336,40 @@ fn inventory_drag_moves_no_copy_items_and_links_without_copying_or_resolving_the
 }
 
 #[test]
+fn inventory_drag_moves_saved_outfits_into_my_outfits_groups() {
+    let mut f = Fixture::new();
+    f.inv.created_folders(
+        [
+            (700, 1, "My Outfits", 48),
+            (740, 700, "Wardrobe", -1),
+            (744, 700, "Saved outfit", 47),
+        ]
+        .map(|(n, parent, name, kind)| aurora_net::inventory::InvFolder {
+            id: id(n),
+            parent: id(parent),
+            name: name.into(),
+            type_default: kind,
+            ..Default::default()
+        })
+        .to_vec(),
+    );
+    for folder in f.inv.folders.values_mut() {
+        folder.state = FetchState::Fetched;
+    }
+    f.state.reveal_path.insert(id(700));
+    f.settle();
+    f.start(744);
+    assert_eq!(
+        egui::DragAndDrop::payload::<FolderDrag>(&f.ctx).expect("outfit folder cargo").0,
+        id(744)
+    );
+    let to = f.row(740);
+    assert_ne!(f.hover(to), egui::CursorIcon::NotAllowed);
+    f.button(to, false, false);
+    assert_eq!(f.moved(), vec![(id(744), id(740))]);
+}
+
+#[test]
 fn inventory_drag_normalizes_selected_folders_and_children_and_rejects_descendant_targets() {
     let mut f = Fixture::new();
     f.click(10, false);
