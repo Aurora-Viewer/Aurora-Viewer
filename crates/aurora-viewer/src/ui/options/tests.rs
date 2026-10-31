@@ -408,6 +408,9 @@ fn a_page_reset_leaves_the_other_pages_alone() {
     s.lookat.head_yaw = 10.0;
     s.username = "kept".into();
     s.inventory.sort.by_date = false;
+    s.auto_accept_inventory = true;
+    s.auto_accept_inventory_chat = false;
+    s.auto_accept_inventory_notify = false;
     s.inventory.received_sort.folders_by_name = true;
     reset_page_settings(Page::Graphics, &mut s);
     let d = Settings::default();
@@ -439,6 +442,8 @@ fn a_page_reset_leaves_the_other_pages_alone() {
     assert_eq!(s.plate_ctrl_click, d.plate_ctrl_click);
     assert_eq!(s.lookat.head_yaw, d.lookat.head_yaw);
     reset_page_settings(Page::Inventory, &mut s);
+    assert!(!s.auto_accept_inventory);
+    assert!(s.auto_accept_inventory_chat && s.auto_accept_inventory_notify);
     assert_eq!(s.inventory.sort, d.inventory.sort);
     assert_eq!(s.inventory.received_sort, d.inventory.received_sort);
     reset_page_settings(Page::Layout, &mut s);
@@ -554,7 +559,11 @@ fn the_search_finds_settings_on_their_pages() {
     assert!(found.hits(Page::Graphics) >= 3, "the shadows' rows: {:?}", found.hits);
     // a command by its name, a shortcut by its key
     assert!(counts(&mut s, "gtp").hits(Page::Commands) >= 1);
-    assert!(counts(&mut s, "Ctrl+I").hits(Page::Shortcuts) >= 1);
+    let inventory = s.keybinds.get(crate::keybinds::Action::Inventory)[0]
+        .as_ref()
+        .expect("inventory shortcut")
+        .label();
+    assert!(counts(&mut s, &inventory).hits(Page::Shortcuts) >= 1);
     assert!(counts(&mut s, "anti-spam").hits(Page::Protections) >= 8);
     assert!(counts(&mut s, "RLVa").hits(Page::Rlva) >= 1);
     assert!(counts(&mut s, "").hits.is_empty());

@@ -133,6 +133,10 @@ pub mod land;
 pub mod link;
 #[path = "demo_missing_texture.rs"]
 pub mod missing_texture;
+/// The real or the Legacy Viewer's night sky, the camera on the stars
+/// (AURORA_DEMO_NIGHT_SKY).
+#[path = "demo_night_sky.rs"]
+pub mod night_sky;
 /// The notification center's mockup scenario, in either style
 /// (AURORA_DEMO_NOTIFS).
 #[path = "demo_notifs.rs"]
@@ -2565,6 +2569,16 @@ pub const DEMO_TASK_GIFT: Uuid = Uuid::from_u128(0x0FFE_0000_0000_0000_0000_0000
 /// the option on, the offer kept at frame 700.
 pub fn show_accepted_scene() -> bool {
     std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| mode.starts_with("offer") && mode.ends_with("-show"))
+}
+
+/// Accept the synthetic resident/object offer on arrival, without a click.
+pub fn auto_accept_inventory_scene() -> bool {
+    std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| {
+        matches!(
+            mode.as_str(),
+            "offer-auto" | "offer-auto-show" | "offer-object-auto" | "offer-object-auto-show"
+        )
+    })
 }
 
 /// The simulator's answer to keeping `DEMO_TASK_OFFER`: the gift added to
@@ -5288,6 +5302,14 @@ pub fn events() -> Vec<NetEvent> {
             }),
         });
     }
+    // A large existing platform exercises opening Edit without a size change.
+    if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|spec| spec.starts_with("megaprim,"))
+        && let Some(object) = objs.iter_mut().find(|object| object.local_id == 118)
+    {
+        object.scale = Vec3::new(128.125, 96.25, 0.5);
+        object.position = Vec3::new(cx, cy, g(cx, cy) - 0.5);
+        object.rotation = Quat::IDENTITY;
+    }
     ev.push(NetEvent::ObjectUpdates {
         handle: HANDLE,
         objects: objs,
@@ -5541,10 +5563,15 @@ pub fn events() -> Vec<NetEvent> {
         }
     }
     let dialog = std::env::var("AURORA_DEMO_DIALOG").ok().filter(|mode| !mode.is_empty());
-    let inventory_offer = std::env::var("AURORA_DEMO_INVENTORY")
-        .is_ok_and(|mode| matches!(mode.as_str(), "offer" | "offer-reject" | "offer-show"))
-        || offer_card_scene().is_some();
-    if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| mode == "offer-object-show") {
+    let inventory_offer = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| {
+        matches!(
+            mode.as_str(),
+            "offer" | "offer-reject" | "offer-show" | "offer-auto" | "offer-auto-show"
+        )
+    }) || offer_card_scene().is_some();
+    if std::env::var("AURORA_DEMO_INVENTORY")
+        .is_ok_and(|mode| matches!(mode.as_str(), "offer-object-show" | "offer-object-auto" | "offer-object-auto-show"))
+    {
         ev.push(NetEvent::InstantMessage(aurora_net::InstantMessage {
             from_agent_id: DEMO_GIVER,
             from_name: aurora_i18n::tr!("demo-gift-dispenser").into(),

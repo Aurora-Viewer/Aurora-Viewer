@@ -4,7 +4,7 @@
 
 # Aurora Viewer
 
-**A modern Second Life viewer, written from scratch in Rust.**<br>
+**A modern Second Life viewer, written in Rust.**<br>
 A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 [![Download](docs/readme/button-download.svg)](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/latest)&nbsp;
@@ -18,6 +18,8 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-4F46E5)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-5EEAD4?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-070B1F)](#build)
+
+<sub>This software is not provided or supported by Linden Lab, the makers of Second Life.</sub>
 
 [Why Aurora](#why-aurora) · [Creator tools](#creator-tools) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing)
 
@@ -75,10 +77,12 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 </details>
 
 
-Aurora Viewer is a Second Life client built from scratch in Rust, with a
-modern GPU renderer (wgpu on Vulkan) and a clean, flat interface. It follows
-the behaviour of the Legacy Viewer — same protocol,
-same rules, same defaults — while rethinking the user interface.
+Aurora Viewer is a Second Life client written in Rust, with a modern GPU
+renderer (wgpu on Vulkan) and a clean, flat interface. It is a new codebase,
+not a fork: many of its parts are Rust ports of code from the Second Life
+viewer and the Legacy Viewer, credited file by file ([NOTICE.md](NOTICE.md)). It follows the
+behaviour of the Legacy Viewer — same protocol, same rules, same defaults —
+while rethinking the user interface.
 
 > **Status:** early development (0.x). Usable for exploring, chatting and
 > testing. Some implemented features still await live-grid validation — see
@@ -170,6 +174,12 @@ are planned or in progress: they are not in the viewer yet.
   profiles and switch between them from Preferences or the FPS counter.
 - **HDR, or the older look**: the Legacy Viewer's HDR and Emissive switch,
   on by default, in Preferences › Graphics › Image.
+- **A real night sky**: the 8,920 stars you can see with the naked eye, in
+  their true places and colours, and the Milky Way, turning with the
+  region's day and following today's season. Choose where on Earth you look
+  up from (Paris, Tokyo, Sydney… or your own latitude) and how bright the
+  stars shine, in Preferences or Personal Lighting; the Legacy Viewer's
+  random stars stay one click away.
 
 ### The Second Life you know
 
@@ -250,6 +260,9 @@ are planned or in progress: they are not in the viewer yet.
   to the focus, while the background keeps its blur.
 - **Pose without leaving the shot**: your HUDs answer clicks in the
   viewfinder, and its Poser button poses the avatar over the shot.
+- **Light the shot**: a light button above the shutter opens personal
+  lighting, and the sky, water and day cycle can change for the photo only,
+  or stay after it.
 - **Freeze the world**: every avatar, animation and moving thing holds still
   while your camera stays free, to line up the perfect angle on a pose.
 - **Camera presets**: save a whole shot by name and bring it back in one
@@ -280,7 +293,9 @@ are planned or in progress: they are not in the viewer yet.
   HUD and detach. The Blender plug-in ships with the viewer and installs
   itself, with an SL / Bento starter rig, rigging tools and an import with
   its LODs prepared ([details](docs/BLENDER_LIVE.md)). Preview an animation
-  on a saved local model, to see Bento tails and wings move.
+  on a saved local model, to see Bento tails and wings move. Textures in
+  Blender 3.x colour spaces sync, and accessories rigged to an Avastar body
+  dev kit sit where an upload puts them.
 - **A poser for photos**: pose yourself, your own animesh, or nearby avatars
   who agree to it, joint by joint: body, face, hands, other bones and
   physics, with a Left / Right / Mirror side choice, a finger grid and
@@ -295,7 +310,9 @@ are planned or in progress: they are not in the viewer yet.
   of the prim you are about to create, outlines that stay visible while you
   move transparent objects, edit handles you can make bigger, and parcel
   boundary shortcuts in the terrain menus. Default permissions (Inventory ›
-  New) apply to everything you create or import.
+  New) apply to everything you create or import. In a busy sandbox, select
+  only your own objects, or only the ones you may move; prefer the classic
+  editor? Its Legacy layout is one switch away.
 - **Area search**: find the objects rezzed around you from World › Area
   search or a toolbar button. Search their name, description, owner,
   creator, group or UUID as you type, keep to the current parcel or reach
@@ -415,7 +432,12 @@ are planned or in progress: they are not in the viewer yet.
 - **Ready for your keyboard**: movement keys adapt to the keyboard layout on
   first launch (WASD or ZQSD), and letter shortcuts use the key that carries
   their letter (M is M on AZERTY too). Search Preferences › Shortcuts by
-  action, category or key.
+  action, category or key. On the Mac, Command works as Control and
+  shortcuts read ⌘ ⌥ ⇧, as macOS users expect.
+- **Copy what you need**: click a name in a profile to copy it, select and
+  copy the text of a greyed-out field (a no-modify object's name, a
+  parcel's media address), and copy an outfit's item names and creator
+  credits.
 - **Made for every eye**: an Accessibility page gathers the settings that
   help (interface scale, text size up to twice the normal size, reduce
   motion, sounds…), with a button on the login screen. A high-contrast palette, the OpenDyslexic font, and
@@ -471,7 +493,9 @@ are planned or in progress: they are not in the viewer yet.
 
 ### Open
 
-- **Free software (GPLv3)**, written from scratch: it is not a fork.
+- **Free software (GPLv3)**, a new codebase in Rust, not a fork; the parts
+  ported from the Second Life viewer and the Legacy Viewer are credited in
+  [NOTICE.md](NOTICE.md).
 - **Windows, Linux and macOS**: every release has a Linux build
   ([install guide](docs/LINUX.md)), with its sound through PulseAudio or
   PipeWire and the desktop's notifications, and a macOS application for
@@ -875,8 +899,9 @@ files never leave the machine and are never attached to a bug report.
 
 **What it is**
 
-- A Second Life viewer written from scratch in Rust; it is not a fork of
-  an existing viewer's codebase.
+- A Second Life viewer written in Rust; it is not a fork of an existing
+  viewer's codebase, but many parts are Rust ports of the Second Life viewer
+  and the Legacy Viewer, credited file by file in [NOTICE.md](NOTICE.md).
 - It speaks the same protocol as the Legacy Viewer (same messages, capabilities,
   request rates and defaults), so the servers see a well-behaved, familiar
   client.
@@ -1008,9 +1033,11 @@ exe before publishing; the local build also writes it to `version.txt`.
   (the saved choice stays); in the world it opens the place's details; a
   command runs once in the world. When a viewer already runs (same demo
   mode and `--title`), the link goes to it and the new process stops.
-  Preferences › Language and updates › "Open SLURL and Hypergrid links in Aurora"
-  registers all three schemes for the current Windows user. Manage saved grids
-  from the login grid menu or Preferences › Network and cache › Manage grids.
+  Preferences › Language and updates › "Open SLURL and Hypergrid links in
+  Aurora" registers all three schemes for the current user (the registry on
+  Windows, a desktop entry and `mimeapps.list` on Linux, see
+  [docs/LINUX.md](docs/LINUX.md#second-life-links)). Manage saved grids from
+  the login grid menu or Preferences › Network and cache › Manage grids.
 - `--login`: the account follows the usual "remember" choices; a single
   user name is written `<name> Resident`. `--grid` alone selects the grid of
   a new account's form.

@@ -105,7 +105,7 @@ pub fn metadata_thumbnail(id: Uuid) -> Llsd {
 
 /// LLInventoryObject::correctInventoryName (llinventory.cpp): inventory
 /// names are ASCII bytes, without pipes, trimmed and limited to 63 bytes.
-fn folder_name(name: &str) -> String {
+pub fn folder_name(name: &str) -> String {
     let ascii: String = name
         .bytes()
         .map(|b| {

@@ -33,6 +33,7 @@ use crate::ui_frame::EguiFrame;
 use crate::upload::FrameUploads;
 use crate::writes::GpuWrites;
 use glam::Vec3;
+use std::time::Instant;
 
 /// Capture of the presented image asked with a frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,6 +123,9 @@ pub(crate) struct FramePacket {
     /// Count the luminance histogram of this frame shown at that exposure
     /// (the photo viewfinder; answered a few frames later).
     pub histogram: Option<f32>,
+    /// When the frame began reading its input (`Renderer::mark_input`):
+    /// the time to its presentation is the latency the frame pacing cuts.
+    pub input_at: Option<Instant>,
 }
 
 pub(crate) struct FrameResult {

@@ -760,8 +760,12 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             return Err(aurora_i18n::tr!("world-appearance-this-action-does-not-change-the-current-outfit").into());
         }
     }
+    if change.folder == cof {
+        drop_coalesced(inv, &mut change.links);
+    }
     normalize_layers(inv, &mut change.links);
     if let Some((_, links)) = &mut change.cof {
+        drop_coalesced(inv, links);
         normalize_layers(inv, links);
     }
     if change.create.is_none()
@@ -846,6 +850,22 @@ pub fn category_plan(
         parent: inv.folders.get(&id).map(|f| f.info.parent).unwrap_or_default(),
         update,
     })
+}
+
+/// A coalesced object (II_FLAGS_OBJECT_HAS_MULTIPLE_ITEMS): the simulator
+/// refuses to attach it ("You can't attach multiple objects to one spot").
+pub fn coalesced(it: &InvItem) -> bool {
+    it.asset_type == 6 && it.flags & crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS != 0
+}
+
+/// The Current Outfit never links a coalesced object. The Legacy Viewer links
+/// an object only once it arrives worn (LLAppearanceMgr::wearItemsOnAvatar
+/// sends rez_attachment alone, registerAttachment links), so a refused one
+/// leaves nothing behind; here the COF is written first, and a link left to a
+/// coalesced object would be asked for again at every outfit sync and login,
+/// and count toward the 38 attachments (#1668). A rewrite drops such links.
+fn drop_coalesced(inv: &Inventory, links: &mut Vec<OutfitLink>) {
+    links.retain(|l| l.folder || !inv.items.get(&l.target).is_some_and(coalesced));
 }
 
 fn normalize_layers(inv: &Inventory, links: &mut [OutfitLink]) {
@@ -977,11 +997,21 @@ pub fn sync_commands(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<
 }
 
 /// Explicit attachment requests retain the chosen point and replace/add mode.
-/// They are sent only after the COF update has been acknowledged.
+/// They are sent only after the COF update has been acknowledged. "Add" of a
+/// coalesced object is asked here too: the COF does not link it, so the sync
+/// would not ask for it, and the simulator's refusal is shown once, as the
+/// Legacy Viewer's rez_attachment does.
 pub fn attachments_for_action(inv: &Inventory, agent: Uuid, action: &Action) -> Vec<AttachRequest> {
     let (items, point, replace) = match action {
         Action::WearItem { item, point, replace } => (std::slice::from_ref(item), *point, *replace),
         Action::WearItems { items, point, replace } => (items.as_slice(), *point, *replace),
+        Action::Add(item)
+            if super::inventory::actions::original(inv, *item)
+                .and_then(|id| inv.items.get(&id))
+                .is_some_and(coalesced) =>
+        {
+            (std::slice::from_ref(item), 0, false)
+        }
         _ => return Vec::new(),
     };
     let mut seen = HashSet::new();
@@ -1358,12 +1388,6 @@ pub fn seed_duplicate_response(inv: &mut Inventory, agent: Uuid) {
 }
 
 pub(super) fn demo_replace(inv: &mut Inventory, agent: Uuid, id: Uuid, links: &[OutfitLink]) {
-    let old = inv.folders.get(&id).map(|f| f.items.clone()).unwrap_or_default();
-    for id in old {
-        if inv.items.get(&id).is_some_and(|it| matches!(it.asset_type, 24 | 25)) {
-            inv.items.remove(&id);
-        }
-    }
     let items: Vec<_> = links
         .iter()
         .map(|l| InvItem {
@@ -2115,6 +2139,53 @@ mod tests {
         assert!(!folder_links(&inv, folder).iter().any(|l| l.target == item));
         assert!(inv.items.contains_key(&item), "original retained");
         assert_eq!(folder_links(&inv, cof(&inv).expect("COF")), current);
+    }
+
+    #[test]
+    fn a_coalesced_object_is_asked_once_and_never_linked_in_the_cof() {
+        let mut inv = fixture();
+        let agent = Uuid::from_u128(1);
+        let (item, linked) = (Uuid::from_u128(723), Uuid::from_u128(717));
+        inv.items.get_mut(&item).expect("object").flags |= crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS;
+        let action = Action::Add(item);
+        let (change, _) = plan(&inv, action.clone(), &HashMap::new()).expect("add");
+        assert!(!change.links.iter().any(|l| l.target == item), "not linked");
+        assert!(change.links.iter().any(|l| l.target == linked), "the outfit stays");
+        // the request still leaves once, for the simulator's refusal
+        let asked = attachments_for_action(&inv, agent, &action);
+        assert_eq!(
+            asked.iter().map(|a| (a.item_id, a.point, a.add)).collect::<Vec<_>>(),
+            [(item, 0, true)]
+        );
+        // an ordinary Add is still asked by the COF sync alone
+        assert!(attachments_for_action(&inv, agent, &Action::Add(linked)).is_empty());
+        demo_mutate(&mut inv, agent, &change).expect("mutation");
+        let asks_for = |inv: &Inventory, id: Uuid| {
+            sync_commands(inv, agent, &HashSet::new())
+                .iter()
+                .any(|c| matches!(c, NetCommand::RezAttachments(items) if items.iter().any(|a| a.item_id == id)))
+        };
+        assert!(!asks_for(&inv, item));
+        assert!(asks_for(&inv, linked));
+    }
+
+    #[test]
+    fn a_link_left_to_a_coalesced_object_is_not_worn_again_and_is_dropped() {
+        let mut inv = fixture();
+        let agent = Uuid::from_u128(1);
+        let stale = Uuid::from_u128(717);
+        let cof = cof(&inv).expect("COF");
+        assert!(folder_links(&inv, cof).iter().any(|l| l.target == stale));
+        inv.items.get_mut(&stale).expect("object").flags |= crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS;
+        assert!(!super::super::outfit::cof_objects(&inv, cof).contains(&stale), "not re-requested");
+        assert!(
+            !sync_commands(&inv, agent, &HashSet::new())
+                .iter()
+                .any(|c| matches!(c, NetCommand::RezAttachments(items) if items.iter().any(|a| a.item_id == stale)))
+        );
+        // the next COF rewrite drops the link, freeing its attachment slot
+        let (change, _) = plan(&inv, Action::Add(Uuid::from_u128(723)), &HashMap::new()).expect("add");
+        assert!(!change.links.iter().any(|l| l.target == stale));
     }
 
     #[test]

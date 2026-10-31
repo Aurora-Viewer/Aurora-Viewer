@@ -94,13 +94,15 @@ impl App {
         if self.camera.free().is_none() && !self.joystick.active {
             self.joystick.motion.apply_avatar(&mut input);
         }
+        // update_move_input already filters text-owned keys. Nearby chat can
+        // retain focus while passing arrows to the avatar (LLViewerWindow::handleKey,
+        // indra/newview/llviewerwindow.cpp); UI focus must not veto those controls.
         let voluntary = self.focused
             && !self.world.teleporting
             && !self.world.frozen
             && !self.world.agent.seated
             && !self.world.agent.ground_sit
-            && self.autopilot.is_none()
-            && !self.egui_ctx.egui_wants_keyboard_input();
+            && self.autopilot.is_none();
         let vertical = self.world.agent.flying || self.world.agent.position.z < self.world.main_water_height();
         let intent = if voluntary {
             movement_intent(&input, self.world.agent.yaw, vertical)
@@ -128,7 +130,7 @@ impl App {
                 self.portal_journey = Some(journey);
             }
         }
-        self.update_landmark_portal();
+        self.update_place_portal();
         self.exchange_portal_demo();
         if self.seed_portal_drop_demo() {
             return;

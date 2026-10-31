@@ -73,10 +73,7 @@ impl App {
                     .and_then(|(idx, _)| Scene::object_transform(&self.world, idx, Instant::now(), 0))
                     .and_then(|(pos, _, _)| self.build.cam.project_px(pos + Vec3::Z * 0.4))
             } else if mode.starts_with("photo-hud") {
-                self.scene
-                    .lists
-                    .hud_view
-                    .map(|view| (view.width * 0.5 - 0.18 * view.height, view.height * 0.5 - 0.028 * view.height))
+                self.scene.lists.hud_view.map(|view| view.pixel(Vec3::new(0.0, 0.18, 0.028)).into())
             } else if mode == "ground" {
                 // the plaza's floor, below the avatar
                 self.gfx.as_ref().map(|g| {

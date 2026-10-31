@@ -170,6 +170,14 @@ coordinates for an Avastar rig, choose **Automatic (Avastar / SL)** and click
 **Update now**. Existing scenes and skeletons are never rotated automatically.
 See [Avastar's coordinate conventions](https://avalab.org/avastar/300/reference/usermanual/advanced/foreign-rigs/).
 
+Some Avastar rigs, body dev kits in particular, bind their meshes in a rest
+pose other than SL's T-pose (arms lowered into an A-pose). Avastar keeps that
+bind pose on the rig, and LiveMesh and **Import / LOD** undo it the way
+Avastar's own Collada export does, so accessories rigged to the kit sit where
+they do after a normal upload. A bone without its own bind data follows its
+parent's. If the rest pose was edited after binding, the stale bind data is
+ignored and the bones' rest positions are used as they are.
+
 **Automatic updates** sends changed geometry, weights, UVs, materials and list
 membership at most once per configured interval (**0.1–3,600 seconds**). Idle
 scenes send no repeated snapshots, including unchanged texture-paint content.
@@ -607,7 +615,8 @@ ignored, as in Blender. Alpha is opaque or blended.
 Use the mesh's active UV map, flat Image Texture nodes, Repeat extension and
 Linear interpolation. A Point Mapping node supports translation, scale and Z
 rotation. Metallic and roughness maps must share the same UV transform. Image
-color spaces are sRGB, Linear Rec.709/Linear or Non-Color. Each source image is
+color spaces are sRGB, Linear Rec.709/Linear or Non-Color/Raw (Blender 3.x
+names included); float images are read in any space. Each source image is
 limited to 16 megapixels and downsampled to at most 1024 pixels on its longest
 edge. At most 16 images and 16 MiB of RGBA pixels travel in one snapshot.
 Unchanged images reuse GPU slots; old materials/images remain until their last
@@ -616,8 +625,10 @@ on the socket worker too; a temporary staging shortage retries automatically.
 
 Bake procedural shaders, material groups and advanced Principled effects
 (coat, transmission, subsurface, sheen) to compatible images first. SL's PBR
-model does not represent every Blender shader input. The plug-in reports
-unsupported connected inputs and keeps the last valid preview. Reload an
+model does not represent every Blender shader input. When a material cannot be
+captured, the live preview keeps syncing the mesh in the material's viewport
+display color and the object's warning icon gives the reason; **Import / LOD**
+still rejects the material until it is fixed. Reload an
 externally edited image in Blender; **Update now** also refreshes image caches.
 
 ## Rig and coordinate conventions

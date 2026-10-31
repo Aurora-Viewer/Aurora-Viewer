@@ -986,6 +986,58 @@ pub struct PreviewSource {
 }
 pub type PreviewRevision = (usize, Option<u8>, Option<(u32, u32)>, bool);
 impl PreviewSource {
+    /// Appearance editing can use resident pixels immediately and improve
+    /// them as finer levels arrive; export still requires the original data.
+    pub fn bake_ready(&self, id: Uuid) -> bool {
+        self.local.is_some()
+            || self.decoded.is_some()
+            || self.procedural
+            || is_builtin_transparent(&id)
+            || id == aurora_prim::te::BLANK_TEXTURE
+    }
+
+    pub fn bake_revision(&self) -> PreviewRevision {
+        let mut revision = self.revision();
+        if self.local.is_none() {
+            // Download packets do not change pixels until a new resident level
+            // is ready. Invalidating for every packet would starve the worker.
+            revision.0 = 0;
+        }
+        revision
+    }
+
+    pub fn bake_image(self, id: Uuid) -> Option<Arc<aurora_render::preview::Image>> {
+        if is_builtin_transparent(&id) || id == aurora_prim::te::BLANK_TEXTURE {
+            return Some(Arc::new(aurora_render::preview::Image {
+                size: [1, 1],
+                rgba: if is_builtin_transparent(&id) { vec![0; 4] } else { vec![255; 4] }.into(),
+            }));
+        }
+        let blocks = self.blocks.clone();
+        let discard = self.decoded.unwrap_or(0);
+        self.inspector_image(id).or_else(|| {
+            // A texture loaded from BC7 can be fully visible without any JPEG
+            // bytes in memory or on disk. Decode its resident cache level on
+            // the worker, preserving its resolution instead of the UI thumbnail.
+            let texture_cache::Transcoded::Bc7(cached) = texture_cache::read(&blocks, discard)? else {
+                return None;
+            };
+            let (width, height, blocks) = cached.levels.first()?;
+            let mut rgba = aurora_render::bc7::decode_level(blocks, *width, *height)?;
+            if !cached.alpha_channel || cached.alpha == AlphaKind::Opaque {
+                // Opaque BC7 encoders may quantize alpha to 254: the world
+                // ignores that channel, and a layer composite must do so too.
+                for pixel in rgba.as_chunks_mut::<4>().0 {
+                    pixel[3] = 255;
+                }
+            }
+            Some(Arc::new(aurora_render::preview::Image {
+                size: [*width, *height],
+                rgba: rgba.into(),
+            }))
+        })
+    }
+
     /// Inspector pixels at the resident resolution, decoded on a worker.
     /// Exports must wait for discard 0 instead of using the small BC7 preview.
     pub fn inspector_image(self, id: Uuid) -> Option<Arc<aurora_render::preview::Image>> {
@@ -3184,6 +3236,62 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wearable_bakes_use_resident_bc7_pixels_without_jpeg_and_upgrade_progressively() {
+        let id = Uuid::new_v4();
+        let path = std::env::temp_dir().join(format!("aurora-bake-{id}.bc7"));
+        let mips = aurora_render::build_mips(512, 512, [25, 100, 200, 255].repeat(512 * 512), 16);
+        let blocks = aurora_render::bc7::encode_chain(&mips, false).expect("compressible image");
+        let meta = texture_cache::Meta {
+            info: aurora_assets::J2kInfo {
+                width: 512,
+                height: 512,
+                components: 4,
+                levels: 10,
+            },
+            discard: 0,
+            alpha: AlphaKind::Opaque,
+            alpha_channel: false,
+        };
+        std::fs::write(&path, texture_cache::encode(&meta, None, &blocks).expect("cache")).expect("write cache");
+        let source = |decoded, bytes| PreviewSource {
+            local: None,
+            bytes: Arc::new(vec![0; bytes]),
+            jpeg: path.with_extension("j2k"),
+            blocks: path.clone(),
+            decoded,
+            size: Some((512, 512)),
+            procedural: false,
+        };
+        assert!(
+            source(Some(1), 0).bake_ready(id),
+            "coarse resident maps must not block all wearables"
+        );
+        let image = source(Some(1), 0).bake_image(id).expect("resident BC7 bake source");
+        assert_eq!(image.size, [256, 256]);
+        assert_eq!(image.rgba[3], 255);
+        let image = source(Some(0), 0).bake_image(id).expect("full resident BC7 source");
+        assert_eq!(
+            image.size,
+            [512, 512],
+            "bakes retain full source resolution above the UI thumbnail limit"
+        );
+        assert_ne!(source(Some(0), 0).bake_revision(), source(Some(1), 0).bake_revision());
+        assert_eq!(
+            source(Some(1), 0).bake_revision(),
+            source(Some(1), 500).bake_revision(),
+            "packets do not restart an unchanged bake"
+        );
+        let transparent = aurora_prim::te::TRANSPARENT_TEXTURE;
+        assert!(source(None, 0).bake_ready(transparent));
+        assert_eq!(
+            source(None, 0).bake_image(transparent).expect("built-in transparent").rgba.as_ref(),
+            &[0; 4]
+        );
+        assert!(!source(None, 0).bake_ready(id));
+        std::fs::remove_file(path).expect("remove own cache fixture");
+    }
 
     #[test]
     fn local_pixels_are_shared_refreshed_and_released_without_a_download() {

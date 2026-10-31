@@ -43,6 +43,8 @@ pub struct SnapshotUi {
     pub postcard: PostcardForm,
     /// The quick light, for the photo only (never saved).
     pub light: crate::snapshot::light::PhotoLight,
+    /// Scroll the panel to the Light section on the next frame (demo).
+    pub reveal_light: bool,
     /// The free camera's switch and flight (never saved).
     pub free: crate::camera::free::FreeSettings,
     /// The looks editor's state (`ui::looks_editor`).
@@ -97,6 +99,20 @@ pub struct ProfileView {
     pub size: (u32, u32),
 }
 
+/// The environment under the photo's light, for its Light section.
+pub struct EnvView<'a> {
+    /// The sky, water and day cycle lists (the environment window's).
+    pub catalog: &'a crate::world::env_select::SettingsCatalog,
+    /// What the user's own environment shows in each list.
+    pub own: crate::world::eep_env::LocalView,
+    /// The sun shown: azimuth and elevation (degrees).
+    pub sun: (f32, f32),
+    /// RLVa holds the environment (@setenv): nothing to change.
+    pub locked: bool,
+    /// An item the photo picked is still loading.
+    pub loading: bool,
+}
+
 /// A photo for the inventory: the texture it becomes and its price.
 pub struct InventoryView {
     pub texture: (u32, u32),
@@ -135,8 +151,11 @@ pub struct View<'a> {
     /// HDR and Emissive is on: without it no exposure applies, the row is
     /// greyed.
     pub hdr: bool,
+    pub env: EnvView<'a>,
     /// The key that brings the free camera back (Escape by default).
     pub back_key: Option<crate::keybinds::Binding>,
+    /// The photo quality is lowered to stay within the video memory.
+    pub quality_reduced: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -159,6 +178,8 @@ pub enum Action {
     ShowProfile,
     /// Open the personal lighting window.
     PersonalLighting,
+    /// "Keep this light": the photo's environment becomes the user's.
+    KeepLight,
     /// Open the Controls window (it drives the free camera).
     Controls,
     /// The upload's price was confirmed (true) or not.
@@ -286,6 +307,17 @@ impl SnapshotUi {
         self.actions(ui, p, view, out);
         changed(s, &before, out);
         if (self.light != light_before || self.freeze != freeze) && !out.contains(&Action::Changed) {
+            out.push(Action::Changed);
+        }
+    }
+
+    /// The viewfinder's light panel: the Light section alone, the dock's
+    /// shortcut to the drawer's section of the same name.
+    pub fn light_only(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Vec<Action>) {
+        ui.spacing_mut().item_spacing.y = 6.0;
+        let before = self.light;
+        light_rows(ui, p, &mut self.light, view.exposure, view.hdr, &view.env, out);
+        if self.light != before && !out.contains(&Action::Changed) {
             out.push(Action::Changed);
         }
     }
@@ -531,6 +563,11 @@ impl SnapshotUi {
             (None, Some(inv), None) => texture_sizes(ui, p, s, inv),
             (None, None, None) => resolutions(ui, p, s, view),
         }
+        // the photo quality lowered for the video memory (the switch is
+        // further down, often out of sight): with how the photo is drawn
+        if view.quality_reduced && s.quality {
+            ui.add(egui::Label::new(RichText::new(aurora_i18n::tr!("photo-quality-reduced")).size(11.5).color(p.warn)).wrap());
+        }
 
         section(ui, p, "send-filled", aurora_i18n::tr!("photo-section-destination"));
         let mut dest = match self.destination {
@@ -689,8 +726,12 @@ impl SnapshotUi {
         section(ui, p, "focus-centered", aurora_i18n::tr!("photo-section-dof"));
         dof_rows(ui, p, &mut s.dof);
 
+        let light = ui.cursor();
         section(ui, p, "sun-filled", aurora_i18n::tr!("photo-section-light"));
-        light_rows(ui, p, &mut self.light, view.exposure, view.hdr, out);
+        light_rows(ui, p, &mut self.light, view.exposure, view.hdr, &view.env, out);
+        if std::mem::take(&mut self.reveal_light) {
+            ui.scroll_to_rect(light.with_max_y(ui.cursor().top()), Some(egui::Align::Center));
+        }
 
         let filter = ui.cursor();
         section(ui, p, "color-filter", aurora_i18n::tr!("photo-looks"));
@@ -998,27 +1039,24 @@ fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
     });
 }
 
-/// The window's quick light (Phototools' Quick Environments, Pause Clouds,
-/// Attached Lights and Exposure), for the photo only: the window gives the
-/// user's own back when it closes.
-fn light_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::PhotoLight, exposure: f32, hdr: bool, out: &mut Vec<Action>) {
+/// The window's quick light (Phototools' Quick Environments, the sky, water
+/// and day cycle lists of its Env tab, Pause Clouds, Attached Lights and
+/// Exposure, and the sun of "Personal lighting"), for the photo only: the
+/// window gives the user's own back when it closes, unless "Keep this
+/// light".
+fn light_rows(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    l: &mut crate::snapshot::light::PhotoLight,
+    exposure: f32,
+    hdr: bool,
+    env: &EnvView,
+    out: &mut Vec<Action>,
+) {
     use crate::snapshot::light::EXPOSURE;
-    ui.label(RichText::new(aurora_i18n::tr!("photo-light-time")).color(p.ink));
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
-        let times = [
-            (None, aurora_i18n::tr!("photo-light-time-current")),
-            (Some(1), aurora_i18n::tr!("ui-environment-sunrise")),
-            (Some(2), aurora_i18n::tr!("common-midday")),
-            (Some(3), aurora_i18n::tr!("ui-environment-lie-down")),
-            (Some(4), aurora_i18n::tr!("common-midnight")),
-        ];
-        for (time, label) in times {
-            if chip(ui, p, label, None, l.time == time, true).clicked() {
-                l.time = time;
-            }
-        }
-    });
+    ui.add_enabled_ui(!env.locked, |ui| env_rows(ui, p, l, env))
+        .response
+        .on_disabled_hover_text(aurora_i18n::tr!("rlva-blocked"));
     row(ui, p, aurora_i18n::tr!("photo-light-exposure"), None, |ui| {
         // (no exposure without HDR: LLPipeline::gammaCorrect)
         ui.add_enabled_ui(hdr, |ui| {
@@ -1067,8 +1105,122 @@ fn light_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::Ph
             widgets::switch(ui, p, &mut l.attached_lights);
         },
     );
-    if widgets::flat_button(ui, p, aurora_i18n::tr!("common-personal-lighting")).clicked() {
-        out.push(Action::PersonalLighting);
+    ui.horizontal(|ui| {
+        let keep = !l.env.is_empty() && !env.loading && !env.locked;
+        if ui
+            .add_enabled_ui(keep, |ui| widgets::flat_button(ui, p, aurora_i18n::tr!("photo-light-keep")))
+            .inner
+            .on_hover_text(aurora_i18n::tr!("photo-light-keep-tip"))
+            .on_disabled_hover_text(aurora_i18n::tr!("photo-light-keep-tip"))
+            .clicked()
+        {
+            out.push(Action::KeepLight);
+        }
+        if widgets::flat_button(ui, p, aurora_i18n::tr!("common-personal-lighting")).clicked() {
+            out.push(Action::PersonalLighting);
+        }
+    });
+}
+
+/// Width of a list's label in the Light section.
+const ENV_LABEL_W: f32 = 86.0;
+
+/// The photo's time of day, sky, water, day cycle and sun over the
+/// environment shown (`world::eep_photo`); each row's restore button gives
+/// the user's own back.
+fn env_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::PhotoLight, env: &EnvView) {
+    use crate::world::env_select::SettingsKind;
+    ui.label(RichText::new(aurora_i18n::tr!("photo-light-time")).color(p.ink));
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+        let times = [
+            (None, aurora_i18n::tr!("photo-light-time-current")),
+            (Some(1), aurora_i18n::tr!("ui-environment-sunrise")),
+            (Some(2), aurora_i18n::tr!("common-midday")),
+            (Some(3), aurora_i18n::tr!("ui-environment-lie-down")),
+            (Some(4), aurora_i18n::tr!("common-midnight")),
+        ];
+        for (time, label) in times {
+            if chip(ui, p, label, None, l.env.time == time, true).clicked() {
+                l.env.set_time(time);
+            }
+        }
+    });
+    ui.add_space(2.0);
+    let shown = l.env.shown(env.own);
+    let lists = [
+        (
+            SettingsKind::Sky,
+            aurora_i18n::tr!("photo-light-sky"),
+            aurora_i18n::tr!("ui-environment-sky-settings"),
+            shown.sky,
+        ),
+        (
+            SettingsKind::Water,
+            aurora_i18n::tr!("common-water"),
+            aurora_i18n::tr!("ui-environment-water-settings"),
+            shown.water,
+        ),
+        (
+            SettingsKind::Day,
+            aurora_i18n::tr!("photo-light-day"),
+            aurora_i18n::tr!("ui-environment-day-cycle-settings"),
+            shown.day,
+        ),
+    ];
+    for (kind, label, tip, shown) in lists {
+        ui.horizontal(|ui| {
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(ENV_LABEL_W, 20.0), Sense::hover());
+            ui.painter().text(
+                rect.left_center(),
+                egui::Align2::LEFT_CENTER,
+                label,
+                egui::FontId::proportional(12.5),
+                p.ink,
+            );
+            resp.on_hover_text(tip);
+            // the two arrows and the restore button after the list
+            let gap = ui.spacing().item_spacing.x;
+            let width = (ui.available_width() - 3.0 * (20.0 + gap) - 12.0).max(60.0);
+            if let Some(id) = super::environment::settings_list(ui, p, env.catalog, kind, shown, ("photo_env_list", kind as u8), width) {
+                l.env.pick(kind, Some(id));
+            }
+            let own = l.env.of(kind).is_some() || (kind == SettingsKind::Sky && l.env.time.is_some());
+            if widgets::icon_button(ui, p, "restore", aurora_i18n::tr!("photo-light-own"), own) {
+                if kind == SettingsKind::Sky {
+                    l.env.set_time(None);
+                }
+                l.env.pick(kind, None);
+            }
+        });
+    }
+    // the sun: LLFloaterEnvironmentAdjust's azimuth and elevation, over any sky
+    let (mut az, mut el) = l.env.sun.map_or(env.sun, super::environment::azimuth_elevation);
+    let mut moved = false;
+    for (label, value, range) in [
+        (aurora_i18n::tr!("photo-light-sun-azimuth"), &mut az, 0.0..=359.99),
+        (aurora_i18n::tr!("photo-light-sun-elevation"), &mut el, -90.0..=90.0),
+    ] {
+        let reset = range.start() < &0.0;
+        row(ui, p, label, None, |ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.spacing_mut().slider_width = (ui.available_width() - 100.0).max(40.0);
+                // (shown, the sky's sun must not turn into a fixed one)
+                let slider = egui::Slider::new(value, range)
+                    .fixed_decimals(0)
+                    .suffix("°")
+                    .clamping(egui::SliderClamping::Edits)
+                    .custom_parser(aurora_i18n::parse_number);
+                moved |= ui.add(slider).changed();
+                // one restore button for the sun, on its second row
+                if reset && widgets::icon_button(ui, p, "restore", aurora_i18n::tr!("photo-light-sun-reset"), l.env.sun.is_some()) {
+                    l.env.sun = None;
+                }
+            });
+        });
+    }
+    if moved {
+        l.env.sun = Some(super::environment::rotation_from(az, el));
     }
 }
 
@@ -1520,14 +1672,24 @@ mod tests {
             assert!(!changed, "opening the window changed the focal length");
             assert_eq!(fov, start);
         }
-        // the sky's exposure (1.234 shown 1.23) is not taken over either
+        // the sky's exposure (1.234 shown 1.23) and its sun (shown in whole
+        // degrees) are not taken over either
         let mut light = crate::snapshot::light::PhotoLight::default();
+        let catalog = crate::world::env_select::SettingsCatalog::default();
+        let env = EnvView {
+            catalog: &catalog,
+            own: crate::world::eep_env::LocalView::SHARED,
+            sun: (123.456, 21.7),
+            locked: false,
+            loading: false,
+        };
         for _ in 0..2 {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                light_rows(ui, &p, &mut light, 1.234, true, &mut Vec::new())
+                light_rows(ui, &p, &mut light, 1.234, true, &env, &mut Vec::new())
             });
             output.textures_delta.clear();
         }
         assert_eq!(light.exposure, None);
+        assert!(light.env.is_empty(), "showing the Light section picked {:?}", light.env);
     }
 }

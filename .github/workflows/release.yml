@@ -100,7 +100,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $v = $env:TAG
-          $ghArgs = @($v, $env:ZIP, "$($env:ZIP).sha256", $env:SYMBOLS, "$($env:SYMBOLS).sha256", 'aurora-update-policy.json', '--title', "Aurora Viewer $v", '--generate-notes', '--verify-tag')
+          # The header (Linden Lab disclaimer, support, privacy: Third-Party
+          # Viewer Policy §1.c) comes before the generated notes.
+          $ghArgs = @($v, $env:ZIP, "$($env:ZIP).sha256", $env:SYMBOLS, "$($env:SYMBOLS).sha256", 'aurora-update-policy.json', '--title', "Aurora Viewer $v", '--notes-file', '.github/release-notes-header.md', '--generate-notes', '--verify-tag')
           if ($v -match '-') { $ghArgs += '--prerelease' }   # v0.3.0-beta.1
           gh release create @ghArgs
       - name: Dry-run symbols

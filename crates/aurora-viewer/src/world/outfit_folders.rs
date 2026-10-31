@@ -432,6 +432,35 @@ pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
     }
 }
 
+/// A wardrobe with 320 destination groups for the long Move to folder menu.
+pub fn seed_demo_many(inv: &mut Inventory) {
+    let Some(my) = my_outfits(inv) else { return };
+    let Some(template) = inv.folders.get(&Uuid::from_u128(743)).cloned() else {
+        return;
+    };
+    for index in 0..320u128 {
+        let id = Uuid::from_u128(1_485_000 + index);
+        let parent = if index.is_multiple_of(4) {
+            my
+        } else {
+            Uuid::from_u128(1_485_000 + index / 4 * 4)
+        };
+        let mut folder = template.clone();
+        folder.info.id = id;
+        folder.info.parent = parent;
+        folder.info.name = if index.is_multiple_of(4) {
+            format!("Wardrobe {:03}", index / 4)
+        } else {
+            format!("Style {index:03}")
+        };
+        inv.folders.insert(id, folder);
+        if let Some(folder) = inv.folders.get_mut(&parent) {
+            folder.children.push(id);
+        }
+    }
+    inv.generation = inv.generation.wrapping_add(1);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,6 +478,54 @@ mod tests {
 
     fn rows(entries: &[Entry]) -> Vec<(u128, usize, bool, usize)> {
         entries.iter().map(|e| (e.id.as_u128(), e.depth, e.group, e.outfits)).collect()
+    }
+
+    #[test]
+    fn inventory_outfit_moves_keep_group_rules_and_protection() {
+        let inv = demo();
+        let empty = std::collections::HashSet::new();
+        let my = my_outfits(&inv).expect("My Outfits");
+        for (ids, to) in [
+            (vec![id(744), id(745)], id(742)),
+            (vec![id(747)], my),
+            (vec![id(740), id(744)], id(742)),
+        ] {
+            let change = actions::move_selection(&inv, &ids, to, &empty, &empty).expect("valid wardrobe move");
+            assert!(change.move_only());
+        }
+        for (ids, to) in [
+            (vec![id(744)], id(747)),          // an outfit cannot receive another outfit
+            (vec![id(741)], id(742)),          // its own descendant
+            (vec![id(710)], id(742)),          // a loose item
+            (vec![id(744), id(710)], id(742)), // the whole mixed batch is refused
+            (vec![id(701)], my),               // Current Outfit is protected
+        ] {
+            assert!(actions::move_selection(&inv, &ids, to, &empty, &empty).is_err());
+        }
+        for protected in [id(740), id(744), id(742), id(741), my] {
+            assert!(actions::move_selection(&inv, &[id(744)], id(742), &std::collections::HashSet::from([protected]), &empty).is_err());
+        }
+        let current = base(&inv).expect("current saved outfit");
+        let trash = system_folder(&inv, 14).expect("Trash");
+        assert!(actions::move_selection(&inv, &[current], trash, &empty, &empty).is_err());
+        assert!(actions::move_selection(&inv, &[id(744)], trash, &empty, &empty).is_ok());
+        // Four group levels are allowed; an existing subtree cannot make five.
+        let mut inv = inv;
+        let mut folder = inv.folders[&id(743)].clone();
+        folder.info.id = id(748);
+        folder.info.parent = id(742);
+        inv.folders.get_mut(&id(742)).expect("Night").children.push(id(748));
+        inv.folders.insert(id(748), folder.clone());
+        folder.info.id = id(749);
+        folder.info.parent = id(748);
+        inv.folders.get_mut(&id(748)).expect("third level").children.push(id(749));
+        inv.folders.insert(id(749), folder);
+        assert!(actions::move_selection(&inv, &[id(740)], id(749), &empty, &empty).is_err());
+        assert!(actions::move_selection(&inv, &[id(744)], id(749), &empty, &empty).is_ok());
+        let mut current_folder = inv.folders[&current].info.clone();
+        current_folder.parent = id(740);
+        inv.server_updated(vec![current_folder], Vec::new());
+        assert!(actions::move_selection(&inv, &[id(740)], trash, &empty, &empty).is_err());
     }
 
     #[test]

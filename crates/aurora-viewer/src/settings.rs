@@ -526,6 +526,16 @@ pub struct Settings {
     /// Keep the local environment from one session to the next (Firestorm
     /// EnvironmentPersistAcrossLogin, on).
     pub env_persist: bool,
+    /// Which stars the night sky shows: the real sky over Paris (Aurora's
+    /// default) or the Legacy Viewer's random stars (world/night_sky.rs).
+    pub night_sky: crate::world::night_sky::NightSky,
+    /// Where on Earth the real sky is seen from (Paris by default).
+    pub night_sky_place: crate::world::night_sky::SkyPlace,
+    /// Its latitude (degrees north): the preset's, or the one typed for
+    /// Custom.
+    pub night_sky_latitude: f32,
+    /// Brightness of the real stars, 0.5 to 4 times the catalogue's.
+    pub night_sky_gain: f32,
     pub exposure: f32,
     /// Contrast adaptive sharpening (Firestorm RenderCASSharpness, 0.4).
     pub sharpen: f32,
@@ -967,6 +977,13 @@ pub struct Settings {
     /// Marketplace delivery (Aurora only, the Legacy Viewer just marks the
     /// inbox new; #752). On by default: nothing else tells about a gift.
     pub notify_deliveries: bool,
+    /// AutoAcceptNewInventory: accept new resident/object inventory offers
+    /// without a prompt. Off by default; give-to-RLVa offers still ask.
+    pub auto_accept_inventory: bool,
+    /// FSLogAutoAcceptInventoryToChat / FSShowAutoAcceptInventoryInNotifications:
+    /// independent receipt feedback, both on by default as in the Legacy Viewer.
+    pub auto_accept_inventory_chat: bool,
+    pub auto_accept_inventory_notify: bool,
     /// Preferences › Inventory › Received items: keeping an offer opens the
     /// inventory on what it gave (ShowInInventory, off by default as in the
     /// Legacy Viewer).
@@ -1660,6 +1677,10 @@ impl Default for Settings {
             time_of_day: 0,
             env_manual_transition: 0.0,
             env_persist: true,
+            night_sky: Default::default(),
+            night_sky_place: Default::default(),
+            night_sky_latitude: crate::world::night_sky::LATITUDE as f32,
+            night_sky_gain: crate::world::night_sky::DEFAULT_GAIN,
             exposure: 1.0,
             sharpen: 0.4,
             glow: true,
@@ -1831,6 +1852,9 @@ impl Default for Settings {
             sort_received_items: false,
             received_items_since: 0,
             notify_deliveries: true,
+            auto_accept_inventory: false,
+            auto_accept_inventory_chat: true,
+            auto_accept_inventory_notify: true,
             show_accepted_in_inventory: false,
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
@@ -2199,6 +2223,23 @@ impl Settings {
         s
     }
 
+    /// The night sky's place and latitude agree (a preset gives its own
+    /// latitude, Custom keeps the one typed), within range; the stars'
+    /// brightness within 0.5 to 4.
+    pub(crate) fn sync_night_sky(&mut self) {
+        use crate::world::night_sky::{DEFAULT_GAIN, GAIN_RANGE, LATITUDE};
+        self.night_sky_latitude = match self.night_sky_place.latitude() {
+            Some(latitude) => latitude,
+            None if self.night_sky_latitude.is_finite() => self.night_sky_latitude.clamp(-90.0, 90.0),
+            None => LATITUDE as f32,
+        };
+        self.night_sky_gain = if self.night_sky_gain.is_finite() {
+            self.night_sky_gain.clamp(*GAIN_RANGE.start(), *GAIN_RANGE.end())
+        } else {
+            DEFAULT_GAIN
+        };
+    }
+
     pub(crate) fn sanitized(mut self) -> Settings {
         if self
             .graphics_saved_active
@@ -2219,6 +2260,7 @@ impl Settings {
         if self.audio.ui.play.remove("Snapshot") == Some(false) {
             self.snapshot.sound = false;
         }
+        self.sync_night_sky();
         if self.settings_version < 2 {
             // new defaults: 96 m draw distance, LOD factor 2
             self.draw_distance = 96.0;
@@ -2626,7 +2668,12 @@ impl Settings {
 
     /// (resolution, distance) for the shadow quality step.
     pub fn shadow_params(&self) -> (u32, f32) {
-        match self.shadow_quality {
+        Self::shadow_params_of(self.shadow_quality)
+    }
+
+    /// (resolution, distance) of a shadow quality step.
+    pub fn shadow_params_of(quality: u8) -> (u32, f32) {
+        match quality {
             0 => (0, 0.0),
             1 => (1024, 48.0),
             2 => (2048, 96.0),
@@ -2833,6 +2880,36 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn auto_accept_inventory_defaults_off_and_preserves_saved_choices() {
+        assert!(!super::Settings::default().auto_accept_inventory);
+        let old: super::Settings = serde_json::from_str("{}").expect("older preferences");
+        assert!(!old.auto_accept_inventory);
+        assert!(old.auto_accept_inventory_chat && old.auto_accept_inventory_notify);
+        for enabled in [false, true] {
+            for chat in [false, true] {
+                for notify in [false, true] {
+                    let settings = super::Settings {
+                        auto_accept_inventory: enabled,
+                        auto_accept_inventory_chat: chat,
+                        auto_accept_inventory_notify: notify,
+                        ..Default::default()
+                    };
+                    let bytes = serde_json::to_vec(&settings).expect("saved preferences");
+                    let loaded: super::Settings = serde_json::from_slice(&bytes).expect("restored preferences");
+                    assert_eq!(
+                        (
+                            loaded.auto_accept_inventory,
+                            loaded.auto_accept_inventory_chat,
+                            loaded.auto_accept_inventory_notify
+                        ),
+                        (enabled, chat, notify)
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn render_scale_defaults_native_and_survives_profile_round_trip() {
         let mut settings = Settings::default();

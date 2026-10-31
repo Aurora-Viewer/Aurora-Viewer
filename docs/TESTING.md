@@ -163,6 +163,28 @@ retain their normal behavior.
 `drop-focus` keeps the inventory open with keyboard focus during the drag;
 after release it stays open and logs that keyboard focus returned to the scene.
 
+`drop-places|drop-places-hover|drop-favorites|drop-favorites-public|drop-favorites-hover`
+uses the shared Places/Favorites landmark cargo with Places open. Hover modes
+show the floating place icon/name and access hint; released modes create a portal
+with its live remaining lifetime above the aperture. Pointer regressions cover
+starting drags in all three Favorites access modes and both Places layouts,
+including wide and filtered lists, without reordering on a world release.
+
+`drop-history|drop-history-public|drop-history-hover` uses an actual arrival
+snapshot without creating or requiring a landmark. Check its portal destination,
+Friends/Shift-public access, and the unchanged left alignment of Landmarks and
+History rows; reorder grips remain in Favorites only. Pointer regressions also
+cover both History layouts, wide/filtered views and a visit near an owned landmark
+whose exact arrival differs from the landmark's saved point.
+
+`drop-search|drop-search-public|drop-search-hover` opens Search on Places and
+drags a directory parcel without creating a landmark. Check the floating place
+preview, Friends/Shift-public access and portal destination. Pointer regressions
+start actual drags in both Search layouts (Places and Land) and All's Places
+section even before ParcelInfoReply arrives; people and groups remain ordinary
+rows. Resolver tests cover delayed parcel/map replies, immutable arrivals,
+variable regions, invalid coordinates and cancellation guards.
+
 `AURORA_DEMO_PORTALS=private-friends-allowed|private-friends-denied|private-group-allowed|private-group-denied`
 exchanges real v2 codec messages between two offline peer states. Everyone sees
 the aperture; denied observers see only the creator and private/access labels.
@@ -171,6 +193,20 @@ server-shaped members response. On the grid, also verify late arrivals, lost
 requests, revocation before a queued reply, close/expiry and bridge 1.37 upgrade.
 Both creation announcements and discovery replies must omit private destinations;
 inspect wire-level tests, not just labels. Old portal-v1 traffic is not accepted.
+
+`AURORA_DEMO_PORTALS=private-friends-chat-allowed|private-friends-chat-denied|private-friends-keyboard-allowed|private-friends-keyboard-departing-allowed`
+holds the actual Forward arrow from frames 600 to 810 after the private peer
+exchange. Chat modes retain nearby-chat keyboard focus; keyboard mode leaves
+the scene focused. Use `AURORA_DEMO_POS=100,100` and capture frame 1100
+for the completed arrival (frame 840 can still show the teleport transition).
+The authorized visitor must teleport in both focus modes; the denied visitor
+must walk through without teleporting. Logs record focus, effective controls,
+authorization, position and return journey. A refused crossing can be retried
+after the ordinary 1 m clearance; the initial 3.5 m anti-drop clearance still
+applies when another resident's portal appears nearby.
+`keyboard-departing-allowed` starts the creator's teleport when the access
+request arrives, then changes their region after the grant is sent: the
+visitor must still receive the destination and teleport without chat focus.
 
 `AURORA_DEMO_PORTALS=slice-walk|slice-run|slice-fly|slice-still|slice-large|slice-reverse|slice-wide|slice-wide-reverse`
 adds an observed avatar with continuous locomotion animation, a skinned mesh
@@ -300,7 +336,7 @@ the background still applies outside screenshots.
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
 | `AURORA_CAPTURE_LAYOUT=1` | The screenshot reloads the saved layout (`ui_layout.ron`) |
-| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory, posted to the profile or sent by e-mail |
+| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory, posted to the profile or sent by e-mail, the photo quality on a card short of video memory |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 | `AURORA_DEMO_FREEZE_WORLD=1` | With `AURORA_DEMO_SNAPSHOT=viewfinder-frozen`: a prop derezzed and particles started while the world is frozen |
@@ -337,7 +373,7 @@ their edge). A layout is only written by a normal exit, for example
 viewfinder at frame 600 (whatever Preferences › Aurora › Photo window
 says), with the depth of field on at f/1.8 in AF-S on the Avatar area;
 words joined by `-` add to it: `essential` or `hidden` the display level,
-`menu`, `help` or `drawer` a panel open, `mf` or `afc` the focus mode
+`menu`, `help`, `drawer` or `light` (the dock's light panel) a panel open, `mf` or `afc` the focus mode
 (`mf` focused by hand at 3.3 m, the sharp edges outlined by the focus
 peaking), `point` the Point area, `sharp` the aperture ring on All sharp (the
 window's depth of field off), `prefsdof` Preferences › Graphics › Depth of
@@ -440,9 +476,38 @@ settings keep the user's own values (`draw_distance` unchanged in
 `photo quality: details loaded in … ms` and is drawn at twice its size
 (`photo: reduced to …`); `save-quality:<W>x<H>…` takes such a photo like
 `save`.
+`quality-tight[:<MB>[:<MB later>]]` opens it the same on a card short of
+video memory: the photo quality reads the driver's budget as what the
+viewer held when it came on plus `<MB>` (900 by default), then plus
+`<MB later>` from `AURORA_DEMO_SNAPSHOT_FRAME`. It lowers itself to fit,
+with a tenth of the budget (at least 512 MB) kept free and more as the
+textures are pressed: the MSAA first (8x, 4x, 2x, then the user's own
+anti-aliasing), then the draw distance (384, 256, 128 m, then the
+user's), then the shadows, then everything else, never below the user's
+own settings (`snapshot::quality::plan`), and the textures in view are no
+longer forced to full resolution. The panel shows "Quality reduced: video
+memory almost full" under the Resolution section (the viewfinder says it
+once at the top), and the log gives `photo quality: on (…, lowered for the video
+memory)` then `photo quality: step <k> of <n> for the video memory, about
+<x> MB beyond the user's settings (…)`. What the driver counts grows
+by more than the estimate when the render targets are rebuilt (the free
+room of the allocator's blocks), so the first step often settles one or
+two lower (the default: step 3 of 7, then 5). The window stays open and the
+memory is read again every second: `quality-tight:2000:100` starts with
+the whole boost and lowers it at frame 700 (`photo quality: lowered`),
+`quality-tight:100:3000` starts lowered and climbs back one step every
+five seconds (`photo quality: raised`), the line gone at step 0. With
+enough room (`quality-tight:5000`) nothing changes from `quality`.
 `light` opens the window with its quick light set: sunset, exposure 1.6,
-the clouds still and the worn lights off (the log gives `photo light: time
-of day 3`); the saved `time_of_day` and `exposure` stay the user's.
+the clouds still and the worn lights off (the log gives `photo light:
+PhotoChoice { … time: Some(3) … }`); the saved `time_of_day` and
+`exposure` stay the user's.
+`windlight` opens the window on its Light section with the library's
+"Coastal Sunset" sky, "Murky Water" and the sun turned low in the east
+(azimuth 80°, elevation 12°), for the photo only: the lists show them, the
+environment window keeps the user's own. `windlight-keep` then presses
+"Keep this light" (frame 900, the log gives `photo light kept as the local
+environment`) and closes the window (960): the scene keeps that light.
 `classic` shows Firestorm's floater instead of the panel for this run
 (Preferences › Aurora › Photo window, not saved): a floating window in the
 middle, Refresh and the controls on the left, the preview on the right.
@@ -1885,6 +1950,10 @@ report an editable object; sale and permission controls remain disabled.
 Denied rights leave the object movable but its surfaces/properties read-only.
 The variant `mode,object:<local id>[,part,dx,dy]` selects an object of the
 demo without fixed click coordinates.
+`megaprim,object:118` makes the selected object a 128.125 × 96.25 × 0.5 m
+platform below the plaza. With `AURORA_DEMO_BUILD_TAB=object`, verify that
+opening Edit retains these dimensions in both construction presentations.
+Moving or rotating must retain its size; deliberate size edits keep the normal limits.
 
 **Seated object editing:** combine `AURORA_DEMO_CAMERA=sit`,
 `AURORA_DEMO_WORN=1` and `AURORA_DEMO_BUILD=linked-click-ready,object:950` (whole seat) or
@@ -2445,6 +2514,15 @@ access to a grid.
   Detach sends ObjectDetach and the demo simulator kills the object. The
   log writes `demo temporary attachments` with the one found. Capture at
   frame 720.
+- `temporary-outfit`: the same temporary object stays worn while ordinary
+  outfit actions add an inventory attachment (frame 720), remove it (900),
+  remove a jacket (1080), and put the jacket back (1260). At frames 840,
+  1020, 1200 and 1380, `demo temporary outfit` logs one temporary object,
+  no pending mutation or error, and attachment/clothing states of
+  `true/true`, `false/true`, `false/false`, `false/true`. Capture frame 1440;
+  Appearance > Worn must still show the temporary object. This exercises
+  the production outfit plan, acknowledged COF update and simulator commands
+  offline, without fetching the temporary task UUID as an inventory item.
 - `temporary-detach` / `temporary-drop`: the backpack becomes a temporary
   attachment at frame 600, with a nil AttachItemID; its linked prim starts
   a dance. At frame 900 the simulator kills the root or unparents it,
@@ -3313,6 +3391,8 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
 | `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>[,<probe ambiance>]]]\|midday` | EEP sky with this gamma, classic unless it has a probe ambiance; or the library Midday |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
+| `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
+| `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>]` | Where the real sky is seen from, and its stars' brightness |
 | `AURORA_DEMO_OCCLUSION=1` | Wall with hidden objects (occlusion test) |
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | EEP environment of the region and the parcel |
@@ -3514,6 +3594,27 @@ both open states and the selection count. Capture at frame 620.
   sends Second Life's own, `rainbow_id` and `halo_id`); the shape, the place
   and the colors' order are those of skyF.glsl. Capture in `AURORA_AA=3` and
   `AURORA_AA=6`.
+- **`AURORA_DEMO_NIGHT_SKY=real|legacy[:<azimuth>,<elevation>]`**: sets
+  Preferences › Graphics › Environment › Night sky for this launch (in
+  memory), the demo's midnight (unless `AURORA_DEMO_TOD` is also given) and
+  the camera above the avatar looking towards `azimuth` (degrees from north
+  towards east) and `elevation` (degrees up), north 35° up by default
+  (`demo_night_sky.rs`). `real`: the stars over Paris with their colours and
+  the Milky Way; `real:0,48.86` puts the Pole Star exactly at the centre of
+  the image, with Cassiopeia and the Milky Way above it on autumn nights.
+  `legacy`: the Legacy Viewer's random white and pale green stars, no Milky
+  Way. With `AURORA_DEMO_TOD=2` (noon) the real sky's stars must vanish in
+  the bright sky; with `AURORA_DEMO_TOD=3` (sunset) only the brighter ones
+  show. Capture with `AURORA_DEMO_SNAPSHOT=save:1600x900:png:<folder>` for an
+  image without the interface.
+- **`AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>]`**: the real sky seen
+  from `latitude` (degrees north, negative in the south; Preferences ›
+  Graphics › Environment › "Sky seen from" set to Custom) and, if given,
+  "Star brightness" (0.5 to 4, 2 by default), for this launch. With
+  `AURORA_DEMO_NIGHT_SKY=real:180,45` and `-33.87` (Sydney), the Southern
+  Cross stands in the south and the Pole Star is under the horizon; with
+  `real` and `48.86,1`, `48.86,2`, `48.86,4` the same sky at three
+  brightnesses.
 - **`AURORA_DEMO_DEBUG`**: comma-separated list among `bounds`,
   `culling`, `lights`, `probes`, `skeletons`, `alpha`, `alpha_rigged`, `wire`, `complexity`,
   `glow`, `glow_view`, `freeze`, `lod`, `shadows`, `ao`, `check_lights`,
@@ -3554,7 +3655,7 @@ both open states and the selection count. Capture at frame 620.
   found and the time of day after it; capture after the sky's transition
   (`AURORA_CAPTURE_FRAMES=620`). `j` with `AURORA_DEMO_TOD=2` must bring
   back the region's sky (time of day 0).
-- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|beacons|water|item|item-save|day|day-play|day-edit|day-notrans|parcel|region|custom|custom-follow`**: sky,
+- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|clouds-picker|sun|beacons|water|item|item-save|day|day-play|day-edit|day-notrans|parcel|region|custom|custom-follow`**: sky,
   water and day cycle editors (`app/env_editor.rs`, `app/env_day_editor.rs`).
   `day`: the day cycle editor opens on the user's "my day cycle" (frame
   400: midnight, the purple sky at 25 %, noon, sunset), the ground track and
@@ -3567,6 +3668,8 @@ both open states and the selection count. Capture at frame 620.
   snapshot of the shown sky (`sky`, `clouds` and `sun` pick the tab) or
   water (`water`), or on the user's "my purple sky" item once its folder
   has loaded (`item`: the sky turns purple at once, Save is enabled).
+  `clouds-picker` opens the cloud texture picker too: choose successive textures
+  or presets without OK to see the sky update; Cancel restores its opening map.
   `item-save` also raises its brightness and saves over the item (frame
   900), then saves it as "my purple sky, brighter" (1100): both saves
   are logged (`environment settings saved`) and the second item shows in
@@ -3681,6 +3784,18 @@ both open states and the selection count. Capture at frame 620.
   `AURORA_DEMO_CROWD=52,100`, `AURORA_DEMO_HAIR=3` and `AURORA_SYNC_CHECK=1`,
   the `impostor pictures` line must count no stale picture, centre or anchor
   (`AURORA_IMPOSTOR_POSES`).
+- **Crowded avatar impostor capacity (#1579)**: Use `AURORA_DEMO_CROWD=120`, `AURORA_DEMO_ANIMESH=1` and
+  `AURORA_DEMO_IMPOSTOR_FLIP=3`. Keep Fully rendered avatars at 16. Turn the
+  camera through the crowd and back: visible avatars must retain a picture, or a
+  neutral silhouette while awaiting their first capture, never disappear for lack
+  of a tile. Offscreen avatars must not reserve slots needed on screen. Repeat
+  with `AURORA_CPU_CULL=1`, and with Occlusion on and off. A silhouette may remain
+  when more than 256 impostors are simultaneously visible (the 128 MiB atlas
+  budget); increasing the full-avatar limit is not required. Capture a steady
+  view and a view immediately after turning. Compare normal and flipped full
+  rendering for attachment visibility. Human grid validation: repeat the failing
+  busy-area camera motion at 16 fully rendered avatars, then at 100.
+
 - **`AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]`**: our
   avatar and each avatar of `AURORA_DEMO_CROWD` wear `layers` rigged
   meshes (8 by default, 32 at most), each a shell around the head and
@@ -4330,11 +4445,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_WEARABLE=<type>[:mode]` | Skin, hair, eyes and system clothing editors |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
-| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
+| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|channel\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, commands to worn scripts, completion, the chat bar's list of gestures and menu access |
-| `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
+| `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the empty Batch / Permissions tab |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
+| `AURORA_DEMO_LOCAL_APPEARANCES=1\|menu\|reveal\|confirm\|remove\|cancel` | Applied-local-appearance warning, highlight toggle and confirmed removal |
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
@@ -4547,27 +4663,51 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   without passes, `own`: the avatar's; both show a notice saying why instead
   of the question. Capture at frame 620. `AURORA_DEMO_RCLICK="x,y"` on the
   ground shows the entry in the menu.
-- **`AURORA_DEMO_IMPORTS=launcher|settings`** opens the compact horizontal
-  import chooser or its saved-defaults window, without loading fixtures or
-  opening a disk dialog. The configurable Import shortcut (Ctrl+U by default)
-  toggles the chooser; a type button opens the filtered picker when its list
-  is empty, otherwise the existing inspector. Clicking the displayed type
-  closes its inspector. The icon bar stays open. Check that another type can be clicked while
-  an inspector is displayed, even when a narrow viewport causes overlap.
-  Build › Import performs the same toggle; Contents has no Import entry.
-  The glass variant has eight independent frosted buttons with clear gaps,
-  no group background, and a plain close cross at the right. A fresh profile opens
-  the strip centered below the top bars, retaining its top-midpoint offset
-  while the viewer is resized. Move it, close/reopen and restart: personalized
-  placement must take priority over this default.
-  The Settings icon toggles the permissions/payment window, closing it on the
-  second click even if its title bar was minimized.
-- **`AURORA_DEMO_IMPORTS=inspectors`** opens the chooser with fixtures already
-  loaded for every type, including local previews. A type button therefore
-  opens its inspector directly without a disk dialog, as in the normal viewer.
-  Check each dedicated window and its filtered file list, then Multiple's
-  complete tabs. Permissions belong only to Settings. First-opened windows
-  have the same top-left position; moved windows retain their placement.
+- **`AURORA_DEMO_IMPORTS=launcher|settings`** opens the empty unified import
+  window or its Permissions tab. Ctrl+U and Build > Import open the same
+  window directly, without a separate type strip or an automatic disk dialog.
+- **`AURORA_DEMO_IMPORTS=unified`** loads a mixed queue with a mesh first,
+  followed by a texture, sound, BVH animation and material. The first row is
+  selected automatically. Click each queue row: the right inspector follows
+  the selection in Files, below the destination options. The right pane has
+  Files / Folder preview / Permissions tabs; switch among them without losing the active
+  file or mesh section. Folder preview shows the resulting inventory hierarchy
+  with optional path edits; Permissions contains the per-type rights and payment
+  preference, without opening another window. Mesh preview,
+  LOD, avatar and physics controls retain their established structure.
+  Toggle the type icons: they change visibility, preserving upload checkboxes.
+  Use default folders starts checked and remembers the last choice. Uncheck it,
+  choose an inventory root and mirror/type/single-folder routing. These options
+  are shared by Files and Folder preview; switching tabs must never change
+  destinations. With single-folder routing, imported files and their mesh/material textures
+  share the source wrapper when included, or the chosen destination when omitted. Recheck defaults to restore per-type targets;
+  uncheck again to restore edited paths. Price and import actions stay pinned at
+  the bottom of Files and Folder preview and are absent from Permissions.
+  The larger type icons wrap in a narrow column. Each queue row aligns its
+  checkbox, type icon and filename on one line, without a repeated type label or
+  Ready subtitle; hover retains its path/status, and non-ready rows retain their
+  progress/error indicator. The trash icon beside the queue count removes all files
+  in the current upload/local mode, including hidden and unchecked rows; local
+  previews stay when clearing uploads. It is disabled while loading or busy.
+  Neither upload nor local queues expose sort/reverse controls.
+  Check Add files, Add folder, insertion order through filter changes, removal and
+  return to the mesh without losing its section/options. Local previews use
+  the eye toggle in this same window; the Permissions tab retains the rights settings.
+  In local mode, check several files (including a hidden type) and choose Add to
+  upload (count). Only checked, ready local files are copied; the view switches to
+  Files on the first upload draft and reveals its selected types. Original local
+  previews stay applied and available through the eye toggle. Material edits and
+  individual materials from the same glTF, mesh LOD/physics options, names and
+  descriptions survive. A material using a local texture must upload its pixels as
+  a dependency, even when that texture is unchecked; server texture references
+  stay existing assets. Upload drafts have fresh IDs and independent mesh fee/job
+  state; staging sends nothing and spends nothing. The ordinary destination,
+  quote and paid confirmation flow follows. No selection, loading and busy states
+  disable the action; exceeding queue/input budgets creates no partial batch.
+  Empty the queue and complete an upload with its payment receipt visible:
+  the window keeps its size, and the controls below the queue stay reachable.
+- **`AURORA_DEMO_IMPORTS=inspectors`** loads every type, including local
+  previews, in the same window. Queue selection replaces the former type tabs.
 - **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|mesh-avatar|mesh-avatar-rigged|mesh-journal|permissions|animation|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
   writes files specific to this launch into `.scratch/import-demo/<uuid>/`
   then opens the chosen flow: RGBA image, PBR material, Collada cube,
@@ -4582,16 +4722,58 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   through `AURORA_DEMO_IMPORT_FILE`, check that toggling it changes the
   upload size between 1024 × 512 and 2048 × 1024 and updates the fee. Only
   the final power-of-two dimensions are shown, as in `LLFloaterImagePreview`.
-  Each type has a dedicated window with the file list at the left and only
-  its relevant metadata, preview and controls at the right. There
-  are no other type tabs in these windows. Sound uses a shorter window.
-  `bulk` is labelled Multiple and retains every type tab and the existing
-  mixed import flow. Switching its tabs keeps the
-  same window and never reopens the picker.
+  Every scenario uses the same window and queue. Clicking a row in the left queue opens Files, including the already active
+  item from Folder preview or Permissions; checkbox/filter changes retain the tab. Files shows its
+  asset inspector; Folder preview shows that file's destination and can edit its path.
+  The left column’s **Add folder** action scans supported
+  files recursively on a worker. The selected source folder is retained in
+  the editable inventory preview; unsupported files, empty directories and
+  links/reparse points are skipped. Existing batch limits remain 256 source
+  files per selection, 512 drafts and 1 GiB of retained non-mesh data; scans
+  also stop explicitly beyond 100,000 entries or 64 directory levels.
+  **`AURORA_DEMO_IMPORTS=folders|folders-lods|folders-type|folders-flat|folders-upload`** supplies a
+  nested Creator Pack with equal Fabric names in Coat and Hat, a mesh, an
+  animation and a sound. Recognized configured LOD/physics companions are
+  attached to the mesh and omitted from the queue and preview; invalid or
+  unmatched files stay visible. `folders-lods` selects the mesh in Files;
+  `folders-type` starts grouped by asset type inside Creator Pack, retaining
+  the imported folder's name as in mirror mode. Different imported root names keep
+  their own type folders; individually added files group directly by type.
+  `folders-flat` places all imported contents directly inside Creator Pack.
+  Adding a folder keeps the currently selected tab. Under Destination, Include
+  source folder defaults on and remembers its last checkbox state across restarts.
+  Toggle it in Files and Folder preview for all three layouts; off removes only
+  the source wrapper. Rename it beside the checkbox and apply: the inventory plan
+  changes, the PC directory does not, and manual inner paths survive. For multiple
+  source names, select which wrapper to rename; loose files have no wrapper.
+  `folders-upload` exercises
+  confirmation, folder acknowledgements, mesh requoting and the existing paid
+  queue entirely offline. The other modes never create or upload
+  automatically. Check mirror/type/single-destination arrangements, selection
+  in the left queue, and selecting a folder then editing its whole
+  relative path. Folder preview has no sorting or All/None controls and no
+  per-file checkboxes. Each file row shows its destination beside its name,
+  with a relative-path field and Apply action; defaults show real inventory
+  paths while editing is locked. Test equal names with independent unfinished
+  edits, invalid paths, an empty path targeting the chosen root, and busy-state
+  locking. Applying one row must not select it for upload or change another row.
+  The former active-file editor below the list is removed. Empty relative
+  paths target the common destination directly. The preview includes actual
+  inventory ancestors above proposed children; per-type default mode shows
+  each real target. Calculate mesh fees, then confirm upload: missing folders
+  are created automatically using ordinary inventory-name normalization, parent
+  first. No folder is created during inspection or fee calculation. After the
+  acknowledgements, meshes refresh their quotes against actual destinations;
+  a higher price stops before paid transfer and requires a new confirmation.
+  Cancellation keeps acknowledged folders and stops subsequent creations;
+  failures do not start uploads. On the grid (human only), verify nested inventory
+  destinations, material/mesh texture destinations, protected folders and
+  failure/cancel/retry before confirming the paid operation.
   `material-cube` / `material-aurora` select the additional preview shapes.
-  `material-maps` shows four unframed rows in one column below a compact preview,
-  95.2-point square thumbnails (1.7× the previous size) preserving original proportions, left-aligned titles
-  and texture names, right-aligned commands and common parameter rows.
+  `material-maps` shows its four map editors beside the preview in a 2 × 2 grid;
+  a narrow detail pane uses unframed rows below a compact preview, with
+  95.2-point thumbnails preserving original proportions. Check the left-aligned
+  titles and texture names, right-aligned commands and common parameter rows.
   Metallic / Roughness use only numeric fields; Normal appears only in
   its row title. The narrower vertical inspector uses a 176 × 176 canvas;
   `material-loading` keeps that same canvas
@@ -4620,23 +4802,31 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   (`_01`–`_03`), the short tail and a three-asset price. Split length is limited
   to the grid's asset maximum; long WAV sources enable splitting on load.
   `animation` shows aligned settings beside its preview, with loop units
-  labelled and easing fields aligned. The batch includes a mesh and needs its quote
-  before confirmation. Ctrl+U toggles the compact chooser; the file picker
-  opens after clicking a type. Rebind it in Preferences › Shortcuts.
+  labelled and easing fields aligned. A mixed queue containing meshes needs their
+  quotes before confirmation. Ctrl+U toggles the unified import window; the file picker
+  opens only after Add files. Rebind it in Preferences › Shortcuts.
   The quote and the uploads stay entirely inside the demo server.
-  `destination` opens the folder choice with the "Textures" filter;
-  typing another name must filter without changing the destination or
-  closing the list. Choosing a result closes the list and applies that folder.
-  Each type has its own default size, with narrower file lists for Material
-  and Animation and closer checkbox / name spacing. Name, Description and
-  Destination use the same three rows above every asset panel, including
-  meshes; Upload no longer repeats them. Preview and LOD cards are side
+  In `destination`, uncheck Use default folders to open the inventory destination
+  tree, with the current path expanded. Toggle a parent caret: only its children fold/unfold; the selected
+  destination and popup stay unchanged. Search for a nested folder: its ancestors
+  remain visible, and duplicate names keep their own paths/UUIDs. Typing must
+  not change the destination or close the popup. Choosing a name applies that
+  folder and closes the popup. Trash, protected/library/outfit/inbox subtrees
+  remain unavailable. Check that inventory renames, protection changes and sort
+  preferences refresh the tree. In Folder preview, folding the result must
+  preserve upload selection and relative paths.
+  All types retain one window geometry and share the visible queue.
+  Destination options stay above the content in Files and Folder preview.
+  Mesh metadata and tabs keep their existing layout. Preview and LOD cards are side
   by side, with gesture hints directly under the preview and compact tools.
   High is shown by default; clicking anywhere within a LOD card selects
   its preview, including its fields and counters. File / Browse share
   a row, generated criteria / targets are below; results and retained
   percentage are right-aligned, and triangles are spelled out.
   `mesh-normals` shows 105° without a stray character or clipping.
+  In `mesh-physics`, open the collision-source list: File is first, followed by
+  the other existing sources. The current choice and the initial convex-only
+  default stay unchanged; File exposes Browse for a local physics mesh.
   `bulk-mesh-denied` simulates a connected account without mesh upload
   rights, with a mesh and a texture selected. The footer reports the
   mesh refusal; deselecting the mesh allows the texture upload.
@@ -4681,6 +4871,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   follow the same demo object: active GPU texture/material, then restoration
   or detection of the supporting prim. They require `AURORA_DEMO_ACTIONS=1`.
   The traces also check that the server data received no local UUID.
+  Add `AURORA_DEMO_LOCAL_APPEARANCES=1|menu|reveal|confirm|remove|cancel`
+  to `local-material-applied` (or `local-texture-applied`) to hide the import,
+  People and Inventory windows and focus the preview object at frame 600,
+  then exercise the warning through real pointer events.
+  Capture frame 670 for the menu, 700 for the highlight/confirmation and 740
+  for removal/cancellation. The warning has a direct highlight toggle;
+  `reveal` switches it on at frame 680 and off at frame 850 without opening
+  the menu. Capture frames 700/800 while pulsing and 950 after switching off.
+  Highlight stays enabled until switched off and respects Reduce motion.
   `local` loads texture, material and mesh together through the same filter.
   `AURORA_DEMO_IMPORT_REGISTRY=<test file>` enables the persistence of the
   import scenarios to this isolated file. First launch `local-texture-applied`,
@@ -4690,6 +4889,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   the saved links must restore the GPU application. Without this
   variable, the synthetic scenarios do not fill the persistent library
   of the demo profile. The synthetic sources stay in `.scratch`.
+  Texture/material applications expire seven days after their last application,
+  independently per object/face. Reconnects, autosaves and source reloads do not
+  extend this deadline. Older registries receive seven days on first migration.
+  For an isolated expiry check, close the first process, set its saved
+  `appearance_expirations` deadlines to a past Unix timestamp, then run
+  `local-restored`: the source library stays, the warning disappears and the
+  original server appearance returns. A future deadline must restore normally;
+  a deadline reached while running must remove the application too. Never edit
+  the normal account's registry for this test. Local mesh bindings are unchanged.
   `animation-own` puts the preview at 0.75 s, paused, also on the demo
   avatar. The slider and the pose must stay fixed until Resume.
   `animation-custom` loads a local rigged Bento tail and its looping animation,
@@ -4796,6 +5004,12 @@ failure. Grid validation and any paid upload are performed by the human.
   the windows. The build window keeps its width across its six sections,
   including Shape for the advanced settings; long lists scroll in the body,
   the actions stay visible. Modal confirmations keep the blurred background.
+- **`AURORA_DEMO_INVENTORY=link-icons|aurora-link-icons`**: adds original/link pairs
+  for demo item types and all seventeen wearable subtypes, plus a folder link and
+  a broken link. Expand the context-test folder and scroll through it: valid links
+  keep their target's type icon and tint with the shortcut arrow at the lower left;
+  the broken link keeps the generic link icon. Compare the Legacy and Aurora layouts.
+
 - **`AURORA_DEMO_INVENTORY=hover-photo|hover-photo-object|aurora-hover-photo|aurora-hover-photo-object`**:
   hover the synthetic texture or an object with a saved picture after frame 600.
   Capture after frame 700. Both layouts must show the image without selecting
@@ -4942,6 +5156,22 @@ failure. Grid validation and any paid upload are performed by the human.
   whose gift the demo then adds to Objects. Inventory opens on the kept
   item, selected, its folder expanded and the filters cleared. Capture at
   frame 900.
+- **`AURORA_DEMO_INVENTORY=offer-auto|offer-object-auto|offer-auto-show|offer-object-auto-show`**:
+  turn on automatic acceptance for this run. The resident's lantern or the
+  scripted dispenser's object is accepted on arrival, with no pending card,
+  conversation or acceptance buttons. The two receipt-feedback settings are
+  on by default: a private nearby-chat system line, an informational inventory
+  notification and one InventoryOffer sound. Disable either independently;
+  disabling both makes acceptance silent. The `-show` variants also turn on "Show
+  accepted items in the inventory" and open Inventory on the delivered item.
+  Capture at frame 620 for the notification, 900 for the delivered selection;
+  with `RUST_LOG=info`, the log reports zero pending
+  offers and cards.
+  `AURORA_DEMO_OPTIONS=inventory:auto-accept` reveals the preference and opens
+  its sub-options. Without an auto-accept scenario or a saved choice it remains
+  off, with both sub-options checked and disabled. Test all four combinations
+  of `auto_accept_inventory_chat` / `auto_accept_inventory_notify` in the
+  isolated profile; closing a receipt must never send another acceptance.
 - **`AURORA_DEMO_NOTIFS=object|object-own|object-group|object-history|legacy-object`**: one object inventory offer at frame 700, with the source name, owner and item. `object` shows Accept, Discard and Mute Owner; `object-own` omits owner blocking for our own object; `object-group` uses a group owner; `object-history` refuses the gift and opens History at frame 850, retaining the clickable owner; `legacy-object` exercises the same gift in Legacy toasts. Capture at frame 900 in English and French. Identity names are underlined links to their native profiles; clicking a name keeps the offer pending.
 - **`AURORA_DEMO_NOTIFS=group-notice|legacy-group-notice|group-notice-saved`**: two group notices at frame 700. Aurora Builders (no insignia: the group glyph) from Tess Touch without an attachment, then Northern Wolves (its insignia beside the title) from Orion with a "Texture kit" object attached. Each card is titled "group : subject", its text starts with "Sent by" and the sender, both names are links; the attachment row shows its icon, name and kind with "Save to inventory" beside it, or under it when a long translation leaves the name no room. `legacy-group-notice` shows them in the Legacy toasts; `group-notice-saved` saves the attachment at frame 850: the card stays out with a greyed "Saved". Capture at frame 760 (900 for `group-notice-saved`) in English and French.
 - **`AURORA_DEMO_NOTIFS=1|dnd|list|history|legacy|legacy-history`**: the notification
@@ -7111,12 +7341,22 @@ and Save As stay disabled until inventory textures replace the local maps.
 its image with a mouse click at frame 700 without confirming: the avatar and
 swatch must change while the picker remains open. `tattoo:picker-cancel`
 clicks Cancel at frame 1000; `tattoo:picker-close` clicks the title-bar close;
-capture at 850 and 1200 to check restoration of the preceding image and the
-crossed empty slots. Ordinary picker clicks preview immediately too; OK keeps
-the choice, Cancel and the title-bar close button restore the original slot.
+capture at 850 and 1200: Cancel restores the preceding image, while closing
+keeps the selected image on the avatar and the swatch. These picker modes
+also accept `skin`, `hair`, `eyes`, every clothing type, `alpha` and `universal`.
+Ordinary inventory picker clicks preview immediately too; OK confirms the
+choice, the title-bar close keeps applied choices and explicit Cancel restores
+the original slot. Closing the editor then asks Save/Discard/Cancel for the
+unsaved draft; keeping the picker choice does not save the wearable asset.
+Leaving an editor idle with parameter groups open must not change its weights
+or restart its bake generation: fractional slider percentages are formatted
+without rounding the stored asset until a real edit. Test skin and clothing
+texture choices with their parameter groups still open.
 The local preview composites the avatar definition's original masks and
 worn layers on workers and uploads a complete generation through GPU staging.
-It uses 2048-pixel bakes (512 for eyes), or 1024 on a low-memory staging pool;
+It uses resident source pixels immediately, including BC7-only cached textures,
+and rebakes when finer source levels arrive. Unrelated worn assets do not block
+an edited region. It uses 2048-pixel bakes (512 for eyes), or 1024 on a low-memory staging pool;
 saving still requests the server's normal bake. Capture `skin:preview`,
 `shirt:preview`, `tattoo:preview` and `alpha:preview` after frame 900; cancellation
 restores the pinned server textures. `AURORA_DEMO_INVENTORY=aurora-menu-folder-uuid`
@@ -7242,11 +7482,26 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken`**
 — opens Appearance with four synthetic outfits:
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
   choice, save to the chosen outfit and move to the Trash);
+  in both `gallery` and `outfits`, right-click a single outfit and choose
+  **Copy outfit list to clipboard**, immediately before **Delete outfit**.
+  Paste into a text field or notecard: first the item names alone, one per line;
+  then, after one blank line, the same items as `item name - creator`, in the
+  same order. The separator is a simple ASCII hyphen in every language, without
+  headings or a Creator label. Both lists include body parts, clothing,
+  attachments and gestures.
+  Copy remains available on the worn outfit, where Delete is hidden; it is
+  disabled while the outfit loads or when it has no usable items. Broken
+  links and folder links are skipped. Creators come from the original item,
+  not its outfit link. Missing names are requested through the avatar name cache;
+  a short Preparing outfit list status shows while they resolve. After three
+  seconds, an unanswered creator lookup uses its UUID; an item with no creator
+  reports unknown / multiple. Closing Appearance still completes the copy;
+  changing sessions cancels it. Inventory menus have no such action.
 - `gallery-fit` / `gallery-fill`: local portrait, landscape and square preview
   cards. Fit shows the whole image; Fill uses a centred crop without stretching.
   The discs stay round, the images stay inside their frames and the names and
@@ -7274,6 +7529,14 @@ for them (`5 to look up`), as a cold inventory cache.
   menu has New folder, Save as has **Save in**. In the default window:
   `AURORA_DEMO_POINTER="106,411,r"` (Club Black, list) opens the outfit
   menu, `"89,386,r"` the Club folder's, capture at frame 380;
+- `folders-many` / `folders-many-outfits`: the same gallery/list with 320
+  extra nested destination groups. Open **Move to folder**, scroll to
+  **Wardrobe 079 / Style 319**, and move an outfit there. The submenu stays
+  inside the viewport and **New folder** stays below the scrolling list.
+  Repeat at a small window height or enlarged interface scale. In Inventory,
+  drag a saved outfit or a group into another My Outfits group or back to
+  My Outfits; protected folders, cycles, excessive depth and loose item drops
+  must remain refused.
 - `outfits`: the list of outfits; `worn`: the worn items. A right click on
   an outfit's header opens the outfit menu: `AURORA_DEMO_POINTER="82,372,r"`
   (Neurolab) or `"90,397,r"` (the worn outfit) in the default window, capture
@@ -7615,6 +7878,12 @@ offline; the files and snapshots uploaded in demo stay offline.
   update costs one frame of about 6 ms.
 - `animation-open`, `animation-properties`, `image`, `image-photo`,
   `image-picker`: the five reference panels.
+- `animation-play-local`, `animation-play-world`: open an animation through
+  the ordinary inventory action, then start local or public playback. Exactly
+  one animation preview must remain, with Stop in the selected mode and the
+  other mode disabled. Stop and replay must keep that same window (#1445).
+  `animation-open` uses the same opening path without starting playback, for
+  checking both buttons manually. Capture around frame 700.
 - `note-open`, `note-new`, `note-readonly`: editor of an existing note,
   empty note without an asset or note that cannot be modified. Edit the text
   then Save (or Ctrl+S); closing and reopening keeps the text during the
@@ -8225,6 +8494,7 @@ What the inventory must show with these scenarios:
 | `AURORA_TEXTURE_BC7=0` | Textures never compressed to BC7 |
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 without its disk cache |
 | `AURORA_RENDER_THREAD=0` | Frames drawn on the main thread |
+| `AURORA_FRAME_PACING=0` | No frame pacing: the input waits in the frame queue when the GPU sets the pace, as before |
 | `AURORA_FRAME_PRIORITY=normal` or `alt` | The frame's threads at normal priority, or both priorities alternately |
 | `AURORA_ALLOCATOR=system` | The system's memory allocator instead of mimalloc, as before |
 | `AURORA_EYE_RELATIVE=0` | Vertices of the objects and the terrain computed in region coordinates |
@@ -8540,10 +8810,11 @@ What the inventory must show with these scenarios:
   smooth tangent plane on one side, and its own samples occluded it there
   (a ring along the silhouette of the torus, a band at the avatar's neck),
   and the neighbours across a concave crease drew the mesh's edges as
-  lines: each sample occludes only as much as it stands above the
-  triangle's own plane (`above_facet`: nothing on it, fully from 30°
-  above it), its height still measured from the smooth plane, so the
-  occlusion does not change from one triangle to the next. `depth` goes
+  lines: a sample occludes nothing within 20° of the smooth tangent plane
+  and fully from 44° above it (`above_surface`), measured from the smooth
+  normal, so the occlusion does not change from one triangle to the next
+  (measured from the triangle's own plane, real occluders in that band
+  still showed the facets in concave folds: a chin, a chest). `depth` goes
   back to the depth's normal (the prepass then draws the depth alone, the
   image as before), `alt` every other second. The Legacy method does not
   change. To compare, `AURORA_DEMO_DEBUG=ao` with `AURORA_AO=gtao:2`: the
@@ -8996,6 +9267,16 @@ What the inventory must show with these scenarios:
   and moves on to the next frame; with `0`, the same packet is executed in
   place. `thread=on|off` in the `perf summary` line, and a log line at
   startup (`renderer: frames drawn by…`).
+- **`AURORA_FRAME_PACING=0`**: turns off the frame pacing, to compare.
+  By default, once it has handed frame N over, the main thread waits, at
+  the place of the frame limiter and before the next frame reads its
+  input, until the GPU has finished frame N−1: when the GPU (or vsync)
+  sets the pace, the next frame reads its input while the GPU draws frame
+  N, at the same frame rate. Without it, the input of a frame waits three
+  or four frames for the screen (windows dragged behind the cursor, a slow
+  camera, #1484). `pace` (that wait) and `input` (input to presentation)
+  in the `perf summary` line; with `0`, `pace` stays at 0
+  (`aurora-render/src/pacing.rs`).
 - **`AURORA_FRAME_PRIORITY=normal|alt`**: by default the threads a frame
   waits for (the main thread, the render thread, the pool workers that
   help the main thread in the frame's parallel loops and the texture page
@@ -9303,7 +9584,13 @@ thread.
     the end of presentation, swapchain wait included (0 with
     `thread=off`);
   - `rt_idle` (render thread): the time spent waiting for the main thread's
-    packet.
+    packet;
+  - `pace` (main thread, in `limiter`): the frame pacing's wait for the
+    GPU to finish the frame before, before the next frame reads its input
+    (0 when the GPU is not the limit, or with `AURORA_FRAME_PACING=0`);
+  - `input`: from the start of the frame, where it reads its input, to its
+    presentation (the latency the pacing cuts; what the GPU still draws
+    after `present` is not in it).
 
   A frame costs roughly the longer of the main thread's work (`frame` minus
   `wait_render` and `limiter`) and of `rt_frame`. `rt_idle` above 0 with

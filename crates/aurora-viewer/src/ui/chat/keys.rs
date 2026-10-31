@@ -15,6 +15,8 @@
 //! conversation shown next is the one below the closed one, or above it at
 //! the end of the list (LLTabContainer::removeTabPanel): pressed again, it
 //! closes the conversations one after the other, then the window.
+//! Ctrl+Shift+W closes the window with the others (Close All Windows),
+//! not one conversation.
 
 use super::{ChatUi, ConvAction};
 use crate::world::World;
@@ -58,7 +60,8 @@ pub(super) fn handle(ctx: &egui::Context, st: &mut ChatUi, order: &[Tab], action
     let current = (!st.contacts).then_some(st.selected);
     let window = egui::Id::unique(WINDOW);
     // the cross of the window otherwise (`widgets::Floater`)
-    if let Some(Some(closed)) = current
+    if !crate::ui::close_key::closes_every_window(ctx)
+        && let Some(Some(closed)) = current
         && !crate::ui::widgets::floater_minimized(ctx, WINDOW)
         && crate::ui::close_key::take(ctx, window)
     {

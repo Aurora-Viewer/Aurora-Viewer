@@ -221,12 +221,25 @@ pub fn move_selection(
     protected: &HashSet<Uuid>,
     worn: &HashSet<Uuid>,
 ) -> Result<Mutation, String> {
+    // LLFolderBridge::dragCategoryIntoFolder permits saved outfits and their
+    // groups inside My Outfits, while ordinary item drops remain forbidden.
+    if in_type(inv, to, 48) {
+        if !mutable(inv, to, protected) || ids.iter().any(|id| !movable(inv, *id, protected)) {
+            return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-protected-system-or-worn-item").into());
+        }
+        return super::super::outfit_folders::move_into(inv, ids, to);
+    }
     if !destination(inv, to, protected) && Some(to) != system(inv, 14) {
         return Err(aurora_i18n::tr!("world-inventory-actions-this-folder-cannot-receive-the-selection").into());
     }
     let mut change = Mutation::default();
     let to_trash = Some(to) == system(inv, 14);
-    let holds_worn = if to_trash { worn_ancestors(inv, worn) } else { HashSet::new() };
+    let mut holds_worn = if to_trash { worn_ancestors(inv, worn) } else { HashSet::new() };
+    if to_trash && let Some(current) = super::super::appearance::base(inv) {
+        // Saved outfits contain links; the worn originals' ancestry alone
+        // does not protect the current outfit or its containing groups.
+        holds_worn.extend(ancestors(inv, current));
+    }
     for id in roots(inv, ids) {
         if !movable(inv, id, protected) || holds_worn.contains(&id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-protected-system-or-worn-item").into());

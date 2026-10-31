@@ -66,6 +66,30 @@ impl App {
         }
     }
 
+    /// Where the HUDs are laid out, in window pixels (`None`: the whole
+    /// window). The Legacy Viewer draws the world and its HUDs in the world
+    /// view rectangle, the window less its toolbars, navigation and status
+    /// bars, and takes the whole window in mouselook or with the interface
+    /// hidden (LLViewerWindow::draw and updateWorldViewRect,
+    /// indra/newview/llviewerwindow.cpp, originally LGPL 2.1). Aurora keeps
+    /// the world under its glass bars, but lays the HUDs out in the room the
+    /// bars leave (`Interface::last_room`): the same size as in the Legacy
+    /// Viewer, and their corners clear of the bars. A photo frame takes the
+    /// whole window, like the photo.
+    pub(super) fn hud_area(&self) -> Option<[f32; 4]> {
+        if self.camera.mouselook()
+            || self.interface.hidden
+            || self.snapshots.capturing.is_some()
+            || self.photo_full_frame()
+            || !matches!(self.screen, Screen::World)
+        {
+            return None;
+        }
+        let (room, _) = self.interface.last_room?;
+        let ppp = self.egui_ctx.pixels_per_point();
+        Some([room.left() * ppp, room.top() * ppp, room.right() * ppp, room.bottom() * ppp])
+    }
+
     pub(super) fn keep_scaled_huds_accessible(&mut self, view: HudView) {
         if self.hud_drag.is_some() || self.build.manip.dragging() {
             return;
@@ -94,7 +118,7 @@ impl App {
             let delta = accessible_delta(rect, [view.width, view.height]);
             self.world.hud_scales.clamped(id);
             if delta != [0.0, 0.0] {
-                let px = view.height * view.zoom;
+                let px = view.unit();
                 self.world.hud_scales.set_offset(
                     id,
                     self.world.hud_scales.offset(id) + Vec3::new(0.0, -delta[0] / px, -delta[1] / px),
@@ -167,7 +191,9 @@ impl App {
 
     pub(super) fn hud_drag_requested(&self) -> bool {
         // Build tools own their modifiers, including Ctrl for rotation.
-        !self.build.open && self.settings.keybinds.held(Action::HudDrag, &self.down, self.mods())
+        // The gesture's Control key is the physical key. Command is a
+        // shortcut modifier on macOS and must not start the drag.
+        !self.build.open && self.settings.keybinds.held(Action::HudDrag, &self.down, self.physical_mods())
     }
 
     fn demo_hud_drag_binding(&self) -> Option<crate::keybinds::Binding> {
@@ -240,10 +266,7 @@ impl App {
             && let Some(idx) = child
             && let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
         {
-            self.cursor_pos = (
-                view.width * 0.5 - pos.y * view.height * view.zoom,
-                view.height * 0.5 - pos.z * view.height * view.zoom,
-            );
+            self.cursor_pos = view.pixel(pos).into();
             self.demo_hud_drag_key(true);
             if mode == "drag-lock-camera" {
                 self.alt = true;
@@ -291,10 +314,7 @@ impl App {
                 && let Some(view) = self.scene.lists.hud_view
                 && let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
             {
-                self.cursor_pos = (
-                    view.width * 0.5 - pos.y * view.height * view.zoom,
-                    view.height * 0.5 - pos.z * view.height * view.zoom,
-                );
+                self.cursor_pos = view.pixel(pos).into();
                 self.open_context_menu();
             }
         }
@@ -336,10 +356,7 @@ impl App {
             if let Some(view) = self.scene.lists.hud_view
                 && let Some((pos, _, _)) = Scene::object_transform(&self.world, root, Instant::now(), 0)
             {
-                self.cursor_pos = (
-                    view.width * 0.5 - pos.y * view.height * view.zoom,
-                    view.height * 0.5 - pos.z * view.height * view.zoom,
-                );
+                self.cursor_pos = view.pixel(pos).into();
                 self.demo_hud_drag_key(true);
                 let position = self.world.objects.get(root).map(|o| o.position);
                 let scale = self.world.hud_scale(root);
@@ -415,10 +432,7 @@ impl App {
             {
                 o.update_flags = 0;
             }
-            self.cursor_pos = (
-                view.width * 0.5 - pos.y * view.height * view.zoom,
-                view.height * 0.5 - pos.z * view.height * view.zoom,
-            );
+            self.cursor_pos = view.pixel(pos).into();
             self.demo_hud_drag_key(true);
             let before = self.camera.position;
             let handled = self.on_hud_scroll(5.0);
@@ -645,7 +659,7 @@ mod tests {
     fn editing_view_wheel_reveals_offscreen_huds_and_preserves_local_sizes() {
         let view_zoom = hud_view_zoom(1.0, -5.0);
         let view = HudView::new([1600, 900], view_zoom, -1.0, 1.0);
-        let screen_x = view.width * 0.5 - 1.2 * view.height * view.zoom;
+        let screen_x = view.pixel(Vec3::Y * 1.2)[0];
         assert!((0.0..view.width).contains(&screen_x));
         assert!((hud_view_zoom(view_zoom, 5.0) - 1.0).abs() < 1e-5);
         assert_eq!(hud_view_zoom(view_zoom, f32::NAN), view_zoom);

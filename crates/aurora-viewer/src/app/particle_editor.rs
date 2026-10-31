@@ -106,7 +106,7 @@ impl App {
             self.particle_editor.picking = false;
         }
         let action = self.particle_editor.show(ctx, p, &self.ui_images);
-        if let Some(texture) = self.particle_editor.picker.show(ctx, p, &mut self.world, &self.ui_images) {
+        if let Some(texture) = self.particle_editor.picker.show_live(ctx, p, &mut self.world, &self.ui_images) {
             self.particle_editor.params.texture = texture;
         }
         match action {

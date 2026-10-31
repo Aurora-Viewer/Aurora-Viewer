@@ -282,7 +282,7 @@ impl GroupCreateUi {
         world: &mut World,
         images: &HashMap<Uuid, egui::TextureHandle>,
     ) -> std::collections::HashSet<Uuid> {
-        if let Some(texture) = self.texture.show(ctx, p, world, images) {
+        if let Some(texture) = self.texture.show_live(ctx, p, world, images) {
             self.draft.info.insignia = texture;
         }
         std::mem::take(&mut self.texture.wanted_images)

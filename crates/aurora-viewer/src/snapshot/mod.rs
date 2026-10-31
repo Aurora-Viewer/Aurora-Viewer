@@ -431,6 +431,18 @@ pub const TILE_GUARD: u32 = 128;
 /// halos stepped at the seams.
 const TILE_ALIGN: u32 = 64;
 
+/// The most pixels a photo pass may draw: half of the video memory left
+/// under the driver's budget (`free_bytes`), at `per_pixel` bytes each, but
+/// never fewer than the window's frame (LLViewerWindow::rawSnapshot falls
+/// back to tiles of the window's size). A card already over its budget, its
+/// textures under pressure in a busy region, left nothing free: the photo
+/// was drawn in tiles of 32 pixels, thousands of frames with the world held
+/// still, and the viewer looked frozen for minutes.
+pub fn pass_pixels(free_bytes: u64, per_pixel: u64, window: (u32, u32)) -> u64 {
+    let window = u64::from(window.0) * u64::from(window.1);
+    (free_bytes / per_pixel.max(1)).max(window)
+}
+
 /// How a photo of `size` is drawn: one pass when the card holds it (a side
 /// within `max_side`, the pixels within `max_pixels`, the memory its render
 /// targets take), otherwise the fewest equal tiles that fit with their guard

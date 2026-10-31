@@ -359,14 +359,14 @@ pub(in super::super) fn item(
         .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_row_columns", id)), cols));
     let icon_center = Pos2::new(rect.left() + 4.0 + ICON / 2.0, rect.center().y);
     let name_left = icon_center.x + ICON / 2.0 + 8.0;
-    let tint = item_icon_color(it.asset_type, it.inv_type, p);
+    let (icon_name, tint) = inventory_item_icon(inv, it, p);
     // Renaming: the field in place of the name.
     let name_rect = Rect::from_x_y_ranges(name_left..=cols.name_end, rect.y_range().shrink(2.0));
     let mut field = ui.new_child(egui::UiBuilder::new().max_rect(name_rect).id_salt(("inventory_rename_row", id)));
     field.set_clip_rect(Rect::from_x_y_ranges(name_rect.x_range(), rect.y_range()).intersect(ui.clip_rect()));
     if rename_row(&mut field, p, inv, id, st, prefs, actions) {
         background(ui, p, full, selected);
-        paint_icon(ui, icons, item_icon(it.asset_type, it.inv_type, it.flags), icon_center, tint);
+        paint_icon(ui, icons, icon_name, icon_center, tint);
         ui.advance_cursor_after_rect(rect);
         return;
     }
@@ -375,7 +375,7 @@ pub(in super::super) fn item(
     #[cfg(test)]
     tests::record(ui, id, rect);
     background(ui, p, full, selected);
-    paint_icon(ui, icons, item_icon(it.asset_type, it.inv_type, it.flags), icon_center, tint);
+    paint_icon(ui, icons, icon_name, icon_center, tint);
     let permissions = Permissions::inventory(inv, id);
     let hovered = ui.rect_contains_pointer(full) && ui.ctx().dragged_id().is_none();
     let quick = if hovered {
