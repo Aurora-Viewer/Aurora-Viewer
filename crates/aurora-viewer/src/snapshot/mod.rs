@@ -458,6 +458,13 @@ pub fn blank(rgba: &[u8]) -> bool {
 /// estimate (`GpuCost`), which scales a frame of the window to the photo.
 pub const PASS_GPU_MS: f32 = 500.0;
 
+/// The GPU time of a photo that shows the interface or the HUDs (ms):
+/// they are drawn in a single pass only (the window places them on its own
+/// screen), so such a photo is split only past three times
+/// [`PASS_GPU_MS`], still within the driver's limit, the estimate erring
+/// slow.
+pub const OVERLAY_PASS_GPU_MS: f32 = 1500.0;
+
 /// The pixels of a pass when the GPU time is not measured (no timestamp
 /// queries): 4K, which the slowest GPU measured draws in 1.1 s.
 pub const UNTIMED_PASS_PIXELS: u64 = 3840 * 2160;
@@ -481,7 +488,7 @@ pub struct GpuCost {
     /// Nanoseconds a pixel.
     ns: Option<f32>,
     /// The pixels of a pass the GPU failed to draw, divided by 4: never
-    /// more in one pass for the rest of the session.
+    /// more in one pass for the rest of the photo.
     ceiling: Option<u64>,
 }
 
@@ -496,8 +503,17 @@ impl GpuCost {
         }
     }
 
-    /// A pass of `pixels` came back blank (the GPU was reset under it):
-    /// false when it cannot be split further than the `window`'s frame.
+    /// A new photo: the passes of the one before that came back blank
+    /// bound it no more (a dark scene, a look's black bars, read back as
+    /// black as a pass the driver ended).
+    pub fn new_photo(&mut self) {
+        self.ceiling = None;
+    }
+
+    /// A pass of `pixels` came back blank (the GPU may have been reset
+    /// under it): false when it cannot be split further than the
+    /// `window`'s frame, which is drawn every frame: the black is the
+    /// photo's.
     pub fn failed(&mut self, pixels: u64, window: (u32, u32)) -> bool {
         let window = u64::from(window.0) * u64::from(window.1);
         if pixels <= window.max(u64::from(MIN_SIDE) * u64::from(MIN_SIDE)) {
@@ -508,13 +524,15 @@ impl GpuCost {
         true
     }
 
-    /// The most pixels one pass may draw within [`PASS_GPU_MS`], never
-    /// fewer than the `window`'s frame, which is drawn every frame.
-    pub fn pass_pixels(&self, window: (u32, u32)) -> u64 {
+    /// The most pixels one pass may draw within `ms` ([`PASS_GPU_MS`] or
+    /// [`OVERLAY_PASS_GPU_MS`]), never fewer than the `window`'s frame,
+    /// which is drawn every frame. Unmeasured: [`UNTIMED_PASS_PIXELS`]
+    /// whatever `ms`, the slowest GPU's limit.
+    pub fn pass_pixels(&self, window: (u32, u32), ms: f32) -> u64 {
         let window = u64::from(window.0) * u64::from(window.1);
-        let timed = self.ns.map_or(UNTIMED_PASS_PIXELS, |ns| {
-            (f64::from(PASS_GPU_MS) * 1e6 / f64::from(ns.max(1e-3))) as u64
-        });
+        let timed = self
+            .ns
+            .map_or(UNTIMED_PASS_PIXELS, |ns| (f64::from(ms) * 1e6 / f64::from(ns.max(1e-3))) as u64);
         timed.min(self.ceiling.unwrap_or(u64::MAX)).max(window)
     }
 }
