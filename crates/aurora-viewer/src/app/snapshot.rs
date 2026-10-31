@@ -94,6 +94,8 @@ struct Job {
     next: usize,
     /// The current tile's frame is asked.
     asked: bool,
+    /// Frames the current tile waited for the render thread (said once).
+    waited: u32,
     pixels: Vec<u8>,
     interface: bool,
     huds: bool,
@@ -461,11 +463,20 @@ impl App {
         s.capturing = None;
         let job = s.job.as_mut()?;
         if job.asked {
-            // the frame asked never came back (the render thread is gone)
-            log::warn!("photo: the frame of part {} was not drawn", job.next + 1);
-            s.job = None;
-            s.message = Some((aurora_i18n::tr!("photo-draw-failed").to_owned(), true));
-            return None;
+            if renderer.failed() || renderer.device_lost() {
+                // the frame asked never came back (the render thread is gone)
+                log::warn!("photo: the frame of part {} was not drawn", job.next + 1);
+                s.job = None;
+                s.message = Some((aurora_i18n::tr!("photo-draw-failed").to_owned(), true));
+                return None;
+            }
+            // the GPU still had the frame before (the photo quality just
+            // switched on, a part that took long): no frame was built and the
+            // part is still asked, so this frame carries it again
+            if job.waited == 0 {
+                log::info!("photo: part {} waits for the render thread", job.next + 1);
+            }
+            job.waited += 1;
         }
         let tile = job.tiles[job.next].draw;
         let single = job.tiles.len() == 1;
@@ -510,6 +521,10 @@ impl App {
             return;
         };
         job.asked = false;
+        if job.waited > 0 {
+            log::info!("photo: part {} drawn after {} frame(s) of waiting", job.next + 1, job.waited);
+            job.waited = 0;
+        }
         let pass = job.tiles[job.next];
         let Some((_, _, pixels)) = answer.filter(|(w, h, _)| (*w, *h) == (pass.draw.width, pass.draw.height)) else {
             log::warn!("photo: part {} of {} not drawn", job.next + 1, job.tiles.len());
@@ -873,6 +888,7 @@ impl App {
             tiles,
             next: 0,
             asked: false,
+            waited: 0,
             pixels: Vec::new(),
             interface,
             huds: s.huds,
