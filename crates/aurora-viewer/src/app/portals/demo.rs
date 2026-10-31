@@ -58,7 +58,15 @@ impl App {
         true
     }
 
-    pub(in crate::app) fn portal_drop_demo_input(&mut self, raw: &mut egui::RawInput) {
+    pub(in crate::app) fn portal_demo_input(&mut self, raw: &mut egui::RawInput) {
+        if self.demo
+            && let Ok(mode) = std::env::var("AURORA_DEMO_PORTALS")
+            && mode.starts_with("private-")
+            && (mode.contains("-chat-") || mode.contains("-keyboard-"))
+        {
+            self.portal_keyboard_demo_input(raw, mode.contains("-chat-"));
+            return;
+        }
         let Some(mode) = drop_mode() else { return };
         if !(480..=560).contains(&self.frame_count) {
             return;
@@ -87,6 +95,39 @@ impl App {
                 self.egui_ctx
                     .memory_mut(|memory| memory.request_focus(egui::Id::unique(("inventory_clipboard_focus", self.inventory_ui.ui_id))));
             }
+        }
+    }
+
+    fn portal_keyboard_demo_input(&mut self, raw: &mut egui::RawInput, chat: bool) {
+        raw.focused = true;
+        raw.events.retain(|event| !matches!(event, egui::Event::WindowFocused(false)));
+        if self.frame_count == 420 {
+            self.panels.chat = false;
+            self.chat_ui.input.clear();
+            if chat {
+                self.chat_ui.focus_request = true;
+            } else {
+                self.demo_release_keyboard();
+            }
+        }
+        let forward = Input::key(KeyCode::ArrowUp);
+        if self.frame_count == 600 {
+            self.down.insert(forward.clone());
+        }
+        if self.frame_count == 810 {
+            self.down.remove(&forward);
+        }
+        if (600..=840).contains(&self.frame_count) && self.frame_count.is_multiple_of(60) {
+            log::info!(
+                "portal keyboard demo: frame {}, chat {}, keyboard focus {}, forward {}, position {:?}, authorized {}, journey {}",
+                self.frame_count,
+                self.chat_ui.has_focus,
+                self.egui_ctx.egui_wants_keyboard_input(),
+                self.input.forward,
+                self.world.agent.position,
+                self.world.portals.entries.iter().any(|entry| entry.allowed(&self.world)),
+                self.portal_journey.is_some()
+            );
         }
     }
 
@@ -161,6 +202,7 @@ impl App {
         let Some(peer) = &mut self.portal_demo_peer else { return };
         let peer = peer.as_mut();
         let now = Instant::now();
+        let departing = std::env::var("AURORA_DEMO_PORTALS").is_ok_and(|mode| mode.contains("-departing-"));
         peer.state.sync(&peer.world, None, unix_time());
         if let Some(NetCommand::BridgeQuery {
             request,
@@ -172,6 +214,10 @@ impl App {
             if (target.is_nil() || target == peer.world.agent_id)
                 && let Some(wire) = message.encode()
             {
+                if departing && matches!(&message, aurora_net::bridge::portal::Message::Request { .. }) {
+                    peer.world.teleporting = true;
+                    peer.state.sync(&peer.world, None, unix_time());
+                }
                 peer.state.receive(
                     &peer.world,
                     &format!("<auroraPortal>{}|{wire}</auroraPortal>", self.world.agent_id),
@@ -199,6 +245,9 @@ impl App {
                     unix_time(),
                 );
                 self.world.portals = state;
+                if departing && matches!(&message, aurora_net::bridge::portal::Message::Details { .. }) {
+                    peer.world.main_region = Some(512);
+                }
             }
         }
     }

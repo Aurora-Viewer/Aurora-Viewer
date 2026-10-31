@@ -784,7 +784,7 @@ impl World {
             return true;
         }
         if appearance::cof(&self.inventory).is_none_or(|cof| !appearance::complete(&self.inventory, cof)) {
-            let worn = self.worn_attachment_items();
+            let worn = self.outfit_attachment_items();
             self.rlva.out.extend(appearance::prepare(&mut self.inventory, self.agent_id, &worn));
             return false;
         }

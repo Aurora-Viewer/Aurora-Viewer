@@ -496,6 +496,8 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "aurora-keyboard-wide" => 8100,
         "animation"
         | "animation-open"
+        | "animation-play-local"
+        | "animation-play-world"
         | "animation-properties"
         | "image"
         | "image-photo"

@@ -1527,7 +1527,7 @@ impl App {
     /// bridge, which the Legacy Viewer puts back into every replaced outfit
     /// (FSLSLBridge in LLAppearanceMgr::updateCOF, llappearancemgr.cpp).
     pub(crate) fn outfit_sync_worn(&self) -> std::collections::HashSet<uuid::Uuid> {
-        let mut worn = self.world.worn_attachment_items();
+        let mut worn = self.world.outfit_attachment_items();
         worn.remove(&self.bridge_runtime.item());
         worn
     }
@@ -9492,7 +9492,7 @@ impl App {
         if self.demo {
             self.local_appearance_demo_input(&mut raw);
             self.texture_library_demo_input(&mut raw);
-            self.portal_drop_demo_input(&mut raw);
+            self.portal_demo_input(&mut raw);
             self.give_demo_input(&mut raw, vp, (w, h));
             self.contents_drop_demo_input(&mut raw, vp, (w, h));
             if self.frame_count == 420
@@ -14710,7 +14710,7 @@ impl App {
                     self.settings.save();
                 }
                 if self.panels.appearance {
-                    let worn = self.world.worn_attachment_items();
+                    let worn = self.world.outfit_attachment_items();
                     for command in self.appearance_ui.prepare(&mut self.world.inventory, self.world.agent_id, &worn) {
                         self.send(command);
                     }
@@ -17196,9 +17196,11 @@ impl ApplicationHandler for App {
                 if many > 0 {
                     crate::world::appearance::seed_demo_many(&mut self.world.inventory, self.world.agent_id, many);
                 }
-                for cmd in
-                    crate::world::appearance::sync_commands(&self.world.inventory, self.world.agent_id, &self.world.worn_attachment_items())
-                {
+                for cmd in crate::world::appearance::sync_commands(
+                    &self.world.inventory,
+                    self.world.agent_id,
+                    &self.world.outfit_attachment_items(),
+                ) {
                     self.send(cmd);
                 }
                 self.panels.appearance = !crate::world::appearance::demo_outfit_mode("closed");
@@ -17691,8 +17693,17 @@ impl ApplicationHandler for App {
                         }
                         self.inventory_ui.preview = Some(id);
                         self.apply_inventory_action(ui::inventory::InvAction::Preview(id));
-                    } else if view == "animation-open" {
-                        self.inventory_ui.preview = Some(id);
+                    } else if matches!(view.as_str(), "animation-open" | "animation-play-local" | "animation-play-world") {
+                        self.apply_inventory_action(ui::inventory::InvAction::Preview(id));
+                        if view != "animation-open"
+                            && let Some(asset) = self.world.inventory.items.get(&id).map(|item| item.asset_id)
+                        {
+                            self.apply_inventory_action(ui::inventory::InvAction::Animation {
+                                asset,
+                                local: view == "animation-play-local",
+                                start: true,
+                            });
+                        }
                     } else if view.starts_with("image") {
                         self.inventory_ui.thumbnail.open(id);
                         self.inventory_ui.thumbnail.picker_open = view == "image-picker";
@@ -17715,9 +17726,11 @@ impl ApplicationHandler for App {
                 } else if !configured_view && crate::world::inventory::demo::big().is_none() {
                     self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
                 }
-                for cmd in
-                    crate::world::appearance::sync_commands(&self.world.inventory, self.world.agent_id, &self.world.worn_attachment_items())
-                {
+                for cmd in crate::world::appearance::sync_commands(
+                    &self.world.inventory,
+                    self.world.agent_id,
+                    &self.world.outfit_attachment_items(),
+                ) {
                     self.send(cmd);
                 }
             }

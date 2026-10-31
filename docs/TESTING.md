@@ -184,6 +184,20 @@ no growth or moving turbulence. Refreshing an invitation, relaying it or
 reordering visible portals must never replay the opening. The cloud and
 decorative edge must not expand the physical oval or write its contact depth.
 
+`AURORA_DEMO_PORTALS=private-friends-chat-allowed|private-friends-chat-denied|private-friends-keyboard-allowed|private-friends-keyboard-departing-allowed`
+holds the actual Forward arrow from frames 600 to 810 after the private peer
+exchange. Chat modes retain nearby-chat keyboard focus; keyboard mode leaves
+the scene focused. Use `AURORA_DEMO_POS=100,100` and capture frame 1100
+for the completed arrival (frame 840 can still show the teleport transition).
+The authorized visitor must teleport in both focus modes; the denied visitor
+must walk through without teleporting. Logs record focus, effective controls,
+authorization, position and return journey. A refused crossing can be retried
+after the ordinary 1 m clearance; the initial 3.5 m anti-drop clearance still
+applies when another resident's portal appears nearby.
+`keyboard-departing-allowed` starts the creator's teleport when the access
+request arrives, then changes their region after the grant is sent: the
+visitor must still receive the destination and teleport without chat focus.
+
 `AURORA_DEMO_PORTALS=slice-walk|slice-run|slice-fly|slice-still|slice-large|slice-reverse|slice-wide|slice-wide-reverse|slice-turnback|slice-turnback-reverse|slice-profile|slice-profile-reverse`
 adds an observed avatar with continuous locomotion animation, a skinned mesh
 and a long rigid hand attachment. The camera observes the portal obliquely
@@ -2480,6 +2494,15 @@ access to a grid.
   Detach sends ObjectDetach and the demo simulator kills the object. The
   log writes `demo temporary attachments` with the one found. Capture at
   frame 720.
+- `temporary-outfit`: the same temporary object stays worn while ordinary
+  outfit actions add an inventory attachment (frame 720), remove it (900),
+  remove a jacket (1080), and put the jacket back (1260). At frames 840,
+  1020, 1200 and 1380, `demo temporary outfit` logs one temporary object,
+  no pending mutation or error, and attachment/clothing states of
+  `true/true`, `false/true`, `false/false`, `false/true`. Capture frame 1440;
+  Appearance > Worn must still show the temporary object. This exercises
+  the production outfit plan, acknowledged COF update and simulator commands
+  offline, without fetching the temporary task UUID as an inventory item.
 - `temporary-detach` / `temporary-drop`: the backpack becomes a temporary
   attachment at frame 600, with a nil AttachItemID; its linked prim starts
   a dance. At frame 900 the simulator kills the root or unparents it,
@@ -4379,7 +4402,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_WEARABLE=<type>[:mode]` | Skin, hair, eyes and system clothing editors |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
-| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
+| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|channel\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, commands to worn scripts, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the empty Batch / Permissions tab |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
@@ -7804,6 +7827,12 @@ offline; the files and snapshots uploaded in demo stay offline.
   update costs one frame of about 6 ms.
 - `animation-open`, `animation-properties`, `image`, `image-photo`,
   `image-picker`: the five reference panels.
+- `animation-play-local`, `animation-play-world`: open an animation through
+  the ordinary inventory action, then start local or public playback. Exactly
+  one animation preview must remain, with Stop in the selected mode and the
+  other mode disabled. Stop and replay must keep that same window (#1445).
+  `animation-open` uses the same opening path without starting playback, for
+  checking both buttons manually. Capture around frame 700.
 - `note-open`, `note-new`, `note-readonly`: editor of an existing note,
   empty note without an asset or note that cannot be modified. Edit the text
   then Save (or Ctrl+S); closing and reopening keeps the text during the

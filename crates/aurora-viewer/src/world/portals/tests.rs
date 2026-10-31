@@ -259,6 +259,54 @@ fn portal_dropped_on_someone_requires_leaving_then_a_voluntary_plane_crossing() 
 }
 
 #[test]
+fn portal_observer_uses_the_wide_clearance_only_before_its_first_approach() {
+    let p = portal().announcement();
+    let now = Instant::now();
+    for nearby in [false, true] {
+        let mut gate = Gate::observer(Vec3::from(p.center), point(if nearby { 0.0 } else { 4.0 }), now);
+        let later = now + Duration::from_millis(700);
+        if nearby {
+            for x in [0.5, 2.0, 3.0] {
+                assert!(!gate.sample(&p, point(x), true, later));
+                assert!(!gate.armed, "initial anti-drop clearance remains mandatory");
+            }
+            assert!(!gate.sample(&p, point(3.5), true, later));
+        }
+        assert!(gate.armed);
+        assert!(!gate.sample(&p, point(1.0), true, later));
+        assert!(!gate.sample(&p, point(-0.5), false, later));
+        assert!(!gate.armed, "a refused crossing is consumed");
+        assert!(!gate.sample(&p, point(-0.5), true, later));
+        assert!(!gate.armed, "standing inside does not cause a delayed teleport");
+        assert!(!gate.sample(&p, point(-1.2), true, later));
+        assert!(gate.armed, "a deliberate retry needs only the ordinary clearance");
+        assert!(gate.sample(&p, point(0.5), true, later));
+    }
+}
+
+#[test]
+fn portal_teleport_start_preserves_invitations_but_arrival_cannot_be_a_crossing() {
+    let (mut world, mut state) = fixture();
+    let owner = Uuid::from_u128(2);
+    let now = Instant::now();
+    let p = portal();
+    state.receive(&world, &wire(owner, Message::Open(p.announcement())), now, 1000);
+    world.agent.position = point(1.0);
+    assert!(state.update(&world, Vec3::NEG_X, now + Duration::from_millis(700)).is_none());
+    world.teleporting = true;
+    state.sync(&world, None, 1000);
+    assert_eq!(state.entries.len(), 1, "the source bridge can still serve grants");
+    assert!(state.update(&world, Vec3::NEG_X, now + Duration::from_millis(800)).is_none());
+    world.teleporting = false;
+    world.agent.position = point(-0.5);
+    assert!(state.update(&world, Vec3::NEG_X, now + Duration::from_millis(900)).is_none());
+    world.agent.position = point(-1.2);
+    assert!(state.update(&world, Vec3::NEG_X, now + Duration::from_millis(1000)).is_none());
+    world.agent.position = point(0.5);
+    assert_eq!(state.update(&world, Vec3::X, now + Duration::from_millis(1100)), Some((owner, p)));
+}
+
+#[test]
 fn portal_pushes_corrections_standing_inside_and_walking_around_do_not_teleport() {
     let p = portal();
     let now = Instant::now();

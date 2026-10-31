@@ -91,6 +91,94 @@ fn private_destinations_are_never_announced_and_only_authenticated_friends_recei
 }
 
 #[test]
+fn private_portal_can_finish_granting_access_while_its_creator_starts_teleporting() {
+    let (mut creator, mut server) = fixture();
+    let (mut observer, mut client) = fixture();
+    observer.agent_id = Uuid::from_u128(2);
+    creator.social.form_friendship(observer.agent_id);
+    observer.social.form_friendship(creator.agent_id);
+    client.sync(&observer, None, 1000);
+    let p = Portal {
+        access: Access::Friends,
+        ..portal()
+    };
+    let now = Instant::now();
+    assert!(server.create(p.clone(), creator.agent.position, now, 1000));
+    receive(&mut client, &observer, creator.agent_id, Message::Open(p.announcement()), now);
+    let ask = request(&mut client, &observer, now);
+
+    // The creator has requested a teleport, but their bridge is still in
+    // the source region and can finish the visitor's permission exchange.
+    creator.teleporting = true;
+    server.sync(&creator, None, 1000);
+    receive(&mut server, &creator, observer.agent_id, ask, now);
+    server.update(&creator, Vec3::ZERO, now);
+    let grant = server
+        .out
+        .iter()
+        .find_map(|(_, m)| matches!(m, Message::Details { .. }).then(|| m.clone()))
+        .expect("starting a teleport must not discard the pending invitation");
+    receive(&mut client, &observer, creator.agent_id, grant, now);
+    assert!(client.entries[0].allowed(&observer));
+
+    creator.main_region = Some(512);
+    server.sync(&creator, None, 1000);
+    assert!(
+        server.entries.is_empty() && server.out.is_empty(),
+        "actual departure retires source state"
+    );
+    observer.agent.position = point(1.0);
+    assert!(client.update(&observer, Vec3::NEG_X, now + Duration::from_millis(700)).is_none());
+    observer.agent.position = point(-0.5);
+    assert_eq!(
+        client.update(&observer, Vec3::NEG_X, now + Duration::from_millis(800)),
+        Some((creator.agent_id, p))
+    );
+}
+
+#[test]
+fn private_portal_grant_after_a_refused_crossing_allows_a_nearby_retry() {
+    let (mut creator, mut server) = fixture();
+    let (mut observer, mut client) = fixture();
+    observer.agent_id = Uuid::from_u128(2);
+    creator.social.form_friendship(observer.agent_id);
+    observer.social.form_friendship(creator.agent_id);
+    client.sync(&observer, None, 1000);
+    let p = Portal {
+        access: Access::Friends,
+        ..portal()
+    };
+    let now = Instant::now();
+    assert!(server.create(p.clone(), creator.agent.position, now, 1000));
+    receive(&mut client, &observer, creator.agent_id, Message::Open(p.announcement()), now);
+    let ask = request(&mut client, &observer, now);
+    observer.agent.position = point(1.0);
+    assert!(client.update(&observer, Vec3::NEG_X, now + Duration::from_millis(700)).is_none());
+    observer.agent.position = point(-0.5);
+    assert!(client.update(&observer, Vec3::NEG_X, now + Duration::from_millis(800)).is_none());
+    assert!(client.entries[0].waiting_for_clearance());
+
+    // The creator's permission response arrives after the visitor passed.
+    receive(&mut server, &creator, observer.agent_id, ask, now);
+    server.update(&creator, Vec3::ZERO, now);
+    let grant = server
+        .out
+        .iter()
+        .find_map(|(_, m)| matches!(m, Message::Details { .. }).then(|| m.clone()))
+        .unwrap();
+    receive(&mut client, &observer, creator.agent_id, grant, now + Duration::from_millis(900));
+    assert!(client.entries[0].allowed(&observer));
+    assert!(client.update(&observer, Vec3::ZERO, now + Duration::from_millis(900)).is_none());
+    observer.agent.position = point(-1.2);
+    assert!(client.update(&observer, Vec3::NEG_X, now + Duration::from_millis(1000)).is_none());
+    observer.agent.position = point(0.5);
+    assert_eq!(
+        client.update(&observer, Vec3::X, now + Duration::from_millis(1100)),
+        Some((creator.agent_id, p))
+    );
+}
+
+#[test]
 fn unanswered_private_requests_have_one_retry_and_closed_expired_or_replaced_portals_reject_late_details() {
     let (world, mut client) = fixture();
     let owner = Uuid::from_u128(2);

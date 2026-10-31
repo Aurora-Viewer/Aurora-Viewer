@@ -3,6 +3,7 @@
 use super::*;
 use crate::ui::context::CtxAction;
 use crate::world::objects::ObjKey;
+use uuid::Uuid;
 
 impl App {
     pub(super) fn demo_worn_steps(&mut self) {
@@ -16,8 +17,11 @@ impl App {
             self.demo_temporary_detach_steps(mode == "temporary-detach");
             return;
         }
-        if mode == "temporary" {
+        if matches!(mode.as_str(), "temporary" | "temporary-outfit") {
             self.demo_temporary_steps();
+            if mode == "temporary-outfit" {
+                self.demo_temporary_outfit_steps();
+            }
             return;
         }
         let freeze = mode == "freeze";
@@ -102,6 +106,38 @@ impl App {
         self.panels.appearance = true;
         self.appearance_ui.open(2, false);
         log::info!("demo temporary attachments: {:?}", self.world.temp_attachments());
+    }
+
+    /// Exercise #1663 through the ordinary appearance/AIS/simulator path:
+    /// add and remove an inventory attachment, then remove and add clothing,
+    /// while the experience's temporary object remains on the avatar.
+    fn demo_temporary_outfit_steps(&mut self) {
+        use crate::world::appearance::{self, Action};
+        let attachment = Uuid::from_u128(723);
+        let clothing = Uuid::from_u128(715);
+        let action = match self.frame_count {
+            720 => Some(Action::Add(attachment)),
+            900 => Some(Action::Remove(attachment)),
+            1080 => Some(Action::Remove(clothing)),
+            1260 => Some(Action::Add(clothing)),
+            _ => None,
+        };
+        if let Some(action) = action {
+            self.apply_appearance_action(action);
+        }
+        if matches!(self.frame_count, 840 | 1020 | 1200 | 1380) {
+            log::info!(
+                "demo temporary outfit: frame={} temporary={} attachment={} clothing={} pending={} message={:?}",
+                self.frame_count,
+                self.world.temp_attachments().len(),
+                self.world.worn_attachment_items().contains(&attachment),
+                appearance::worn_clothing(&self.world.inventory)
+                    .iter()
+                    .any(|(id, _)| *id == clothing),
+                self.appearance_ui.pending.is_some(),
+                self.appearance_ui.message
+            );
+        }
     }
 
     fn demo_temporary_detach_steps(&mut self, killed: bool) {
