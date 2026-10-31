@@ -11,18 +11,18 @@ query($o: String!, $r: String!) {
     defaultBranchRef { target { ... on Commit { statusCheckRollup { state } } } }
     open: pullRequests(states: OPEN, first: 30, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {
-        number title url isDraft additions deletions
+        number title url isDraft additions deletions reviewDecision
         author { login }
         mergeQueueEntry { position state enqueuedAt }
         autoMergeRequest { enabledAt }
-        commits(last: 1) { nodes { commit { statusCheckRollup {
+        commits(last: 1) { nodes { commit { committedDate statusCheckRollup {
           state
           contexts(first: 20) { nodes {
             ... on CheckRun { name status conclusion startedAt }
             ... on StatusContext { context state }
           } }
         } } } }
-        comments(last: 10) { nodes { body } }
+        comments(last: 10) { nodes { body createdAt } }
       }
     }
     merged: pullRequests(states: MERGED, first: 5, orderBy: {field: UPDATED_AT, direction: DESC}) {
@@ -175,6 +175,20 @@ function Get-PrRows {
             'Done' { 'REVIEWED', 'muted' }
             default { 'REVIEW PENDING', 'violet_light' }
         }
+        # waiting on its author: a draft, a red CI, or changes asked for since
+        # its last commit (a GitHub review requesting changes, or a comment
+        # opening with "## Maintainer review" or "## Changes requested" that
+        # the agent's later "## Review" ✅ has not answered). A new commit
+        # brings it back among the PRs to review.
+        $lastCommit = $p.commits.nodes[0].commit.committedDate
+        $lastWord = $p.comments.nodes | Where-Object { $_.body -match '^\s*## (Review|Relecture|Maintainer review|Changes requested)' } | Select-Object -Last 1
+        $asked = $lastWord -and $lastWord.body -match '^\s*## (Maintainer review|Changes requested)' -and $lastWord.body -notmatch 'Verdict ?: ✅' -and
+            (-not $lastCommit -or [datetime]$lastWord.createdAt -gt [datetime]$lastCommit)
+        $waiting = if ($p.mergeQueueEntry -or $p.autoMergeRequest) { '' }
+            elseif ($p.isDraft) { 'DRAFT' }
+            elseif ($ciState -eq 'Fail') { 'CI FAIL' }
+            elseif ($asked -or $p.reviewDecision -eq 'CHANGES_REQUESTED') { 'CHANGES ASKED' }
+            else { '' }
         # one colour for the whole PR (the square before its number), worst first
         $status = if ($p.isDraft) { 'muted_dim' }
             elseif ($ciState -eq 'Fail' -or $queueState -eq 'Blocked' -or $reviewState -eq 'Fail') { 'danger' }
@@ -189,6 +203,7 @@ function Get-PrRows {
             CiState = $ciState; Ci = $ci; CiColor = $ciColor; CiRunning = $ciState -eq 'Run'; CiSince = $since
             QueueState = $queueState; Queue = $queue; QueueColor = $queueColor; QueueSince = $queueSince; QueuePosition = $position
             ReviewState = $reviewState; Verdict = $verdict; VerdictColor = $verdictColor; Status = $status
+            Waiting = $waiting
         }
     }
 }
@@ -206,7 +221,8 @@ function Get-PrSummary {
     $rows = @(Get-PrRows)
     if (-not $rows) { return , @('PR: none open', 'muted') }
     $counts = @(
-        @($rows.Count, 'open', 'violet_light'),
+        @(@($rows | Where-Object { -not $_.Waiting -and -not $_.QueueState }).Count, 'to review', 'violet_light'),
+        @(@($rows | Where-Object Waiting).Count, 'waiting', 'muted'),
         @(@($rows | Where-Object CiRunning).Count, 'CI', 'amber'),
         @(@($rows | Where-Object { $_.QueueState -in 'Queued', 'Blocked' }).Count, 'queued', 'teal'),
         @(@($rows | Where-Object { $_.Status -eq 'success' }).Count, 'ready', 'success'),
@@ -317,7 +333,8 @@ function Get-PanelRows {
     $rows = @(Get-PrRows)
     foreach ($r in $rows) { $r | Add-Member -NotePropertyName InQueue -NotePropertyValue ([bool]$r.QueueState) -Force }
     $position = { if ($_.QueueState -eq 'Auto') { 1000 } else { $_.QueuePosition } }
-    @($rows | Where-Object InQueue | Sort-Object $position) + @($rows | Where-Object { -not $_.InQueue })
+    @($rows | Where-Object InQueue | Sort-Object $position) + @($rows | Where-Object { -not $_.InQueue -and -not $_.Waiting }) +
+        @($rows | Where-Object { -not $_.InQueue -and $_.Waiting })
 }
 
 function Show-PrPanel {
@@ -412,7 +429,8 @@ function Show-PrPanel {
             $diffW = $addL + $delL + 3
             $diff = { param($Add, $Del) @((("+$Add").PadLeft($addL) + ' '), 'success'), @((("-$Del").PadRight($delL) + '  '), 'danger') }
             $queued = @(for ($i = 0; $i -lt $rows.Count; $i++) { if ($rows[$i].InQueue) { $i } })
-            $open = @(for ($i = 0; $i -lt $rows.Count; $i++) { if (-not $rows[$i].InQueue) { $i } })
+            $open = @(for ($i = 0; $i -lt $rows.Count; $i++) { if (-not $rows[$i].InQueue -and -not $rows[$i].Waiting) { $i } })
+            $waiting = @(for ($i = 0; $i -lt $rows.Count; $i++) { if (-not $rows[$i].InQueue -and $rows[$i].Waiting) { $i } })
             # lists of indexes: test their .Count, @(0) alone is false
 
             if (-not $rows) {
@@ -434,7 +452,7 @@ function Show-PrPanel {
             }
             if ($open.Count) {
                 if ($queued.Count) { & $line @(, @('', 'muted')) }
-                & $heading 'OPEN PRs' $open.Count
+                & $heading 'READY TO REVIEW / MERGE' $open.Count
                 foreach ($i in $open) {
                     $c = $cells[$i]; $r = $c.Row
                     $start = @(@(" $StatusMark ", $r.Status), @(("#$($r.Number)").PadRight(6), 'violet_light'))
@@ -446,6 +464,25 @@ function Show-PrPanel {
                         $titleW = [Math]::Max(20, $w - 9 - $authorW - $diffW - $ciW - $verdictW)
                         & $line ($start + @(@((Format-Cell $r.Title $titleW), 'ink'), @((Format-Cell $c.Author $authorW), 'muted_dim')) + (& $diff $r.Additions $r.Deletions) +
                             (& $tag $c.Ci $r.CiColor $ciW) + (& $tag $r.Verdict $r.VerdictColor)) $i
+                    }
+                }
+            }
+            # waiting on their author: dimmed, with why instead of CI and review
+            if ($waiting.Count) {
+                if ($queued.Count -or $open.Count) { & $line @(, @('', 'muted')) }
+                & $heading 'WAITING ON THE AUTHOR' $waiting.Count
+                $whyW = 2 + (& $fit ($waiting | ForEach-Object { $rows[$_].Waiting }) 6 16)
+                foreach ($i in $waiting) {
+                    $c = $cells[$i]; $r = $c.Row
+                    $whyColor = switch ($r.Waiting) { 'CI FAIL' { 'danger' } 'CHANGES ASKED' { 'warn' } default { 'muted_dim' } }
+                    $start = @(@(" $StatusMark ", $whyColor), @(("#$($r.Number)").PadRight(6), 'muted'))
+                    if ($compact) {
+                        & $line ($start + @(, @((Format-Cell $r.Title ($w - 9)), 'muted'))) $i
+                        & $line (@(, @('         ', 'muted')) + (& $diff $r.Additions $r.Deletions) + (& $tag $r.Waiting $whyColor) + @(, @("  $($r.Author)", 'muted_dim')))
+                    } else {
+                        $titleW = [Math]::Max(20, $w - 9 - $authorW - $diffW - $whyW)
+                        & $line ($start + @(@((Format-Cell $r.Title $titleW), 'muted'), @((Format-Cell $r.Author $authorW), 'muted_dim')) + (& $diff $r.Additions $r.Deletions) +
+                            (& $tag $r.Waiting $whyColor)) $i
                     }
                 }
             }
@@ -472,7 +509,7 @@ function Show-PrPanel {
                 for ($j = 0; $j -lt $body.Count; $j++) { if ($body[$j].Pr -eq $sel) { $at = $j; break } }
                 # the selected PR, its second line (compact), and the heading
                 # of its section when it comes first
-                $firstOfSection = $sel -eq $(if ($rows[$sel].InQueue) { $queued[0] } else { $open[0] })
+                $firstOfSection = $sel -eq $(if ($rows[$sel].InQueue) { $queued[0] } elseif ($rows[$sel].Waiting) { $waiting[0] } else { $open[0] })
                 $top = if ($firstOfSection -and $at -gt 0) { $at - 1 } else { $at }
                 $bottom = if ($compact) { $at + 1 } else { $at }
                 if ($top -lt $first) { $first = $top }
