@@ -1009,6 +1009,26 @@ impl Camera {
         self.snap();
     }
 
+    /// Portal exits need their new heading before held movement reads the
+    /// camera, not only when updateCamera runs later in the arrival frame.
+    pub fn on_portal_arrival(&mut self, agent: &AgentState, s: &CameraSettings) {
+        self.on_teleport_arrival(s);
+        self.orbit_yaw = 0.0;
+        let forward = agent.forward();
+        let head = agent.position + Vec3::Z * HEAD_HEIGHT;
+        if self.mouselook() {
+            self.position = head;
+            self.target = head + agent.body_rotation() * Quat::from_rotation_y(agent.pitch) * Vec3::X;
+        } else {
+            let distance = (s.camera_offset() * self.zoom_fraction * s.offset_scale)
+                .length()
+                .max(MIN_CAMERA_DISTANCE);
+            self.target = head;
+            self.position = head - forward * distance;
+        }
+        self.virtual_position = self.position;
+    }
+
     /// AvatarSitResponse: the seat's camera and forced mouselook.
     pub fn on_sit_response(&mut self, object: Uuid, eye: Vec3, at: Vec3, force_mouselook: bool) {
         if eye.distance_squared(at) > SIT_CAMERA_THRESHOLD_SQUARED {
@@ -2568,6 +2588,47 @@ mod tests {
         cam.update(&mut w, &s, &frame(1.0 / 60.0));
         assert!(cam.position.distance(w.agent.position) < 10.0);
         assert!(cam.target.distance(w.agent.position) < 3.0);
+    }
+
+    #[test]
+    fn local_portal_arrival_aligns_held_movement_before_the_next_camera_frame() {
+        for (reset, movement_reset) in [(false, false), (false, true), (true, false), (true, true)] {
+            for mouselook in [false, true] {
+                for steering in [false, true] {
+                    let s = CameraSettings {
+                        reset_on_teleport: reset,
+                        reset_on_movement: movement_reset,
+                        ..Default::default()
+                    };
+                    let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+                    let mut cam = Camera::default();
+                    settle(&mut cam, &mut w, &s);
+                    if mouselook {
+                        cam.toggle_mouselook(&mut w.agent, &s);
+                    }
+                    cam.orbit_yaw = PI;
+                    // Even a sub-metre local hop can reverse the exit heading.
+                    w.agent.position += Vec3::X * 0.8;
+                    w.agent.set_look_at(Vec3::NEG_X);
+                    let outward = w.agent.forward();
+                    cam.on_portal_arrival(&w.agent, &s);
+                    assert!(cam.forward().with_z(0.0).normalize().dot(outward) > 0.999);
+                    assert_eq!(cam.orbit_yaw, 0.0);
+                    assert_eq!(cam.mouselook(), mouselook);
+                    if !mouselook {
+                        assert!((cam.position - w.agent.position).dot(outward) < 0.0);
+                    }
+                    // The next held run/steering input arrives before updateCamera.
+                    for _ in 0..12 {
+                        cam.reset_view(&mut w.agent, &s, true, false, true, steering);
+                        assert!(w.agent.forward().dot(outward) > 0.999, "movement turned back into the return");
+                        w.agent.position += outward * (6.0 / 60.0);
+                        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+                        assert!(cam.forward().with_z(0.0).normalize().dot(outward) > 0.999);
+                    }
+                }
+            }
+        }
     }
 
     #[test]

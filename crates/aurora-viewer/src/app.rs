@@ -3378,6 +3378,10 @@ impl App {
             }
             NetEvent::AgentMovementComplete { .. } => {
                 self.scene.portals.arrived(self.world.agent_id);
+                let local_portal = self
+                    .portal_journey
+                    .as_ref()
+                    .is_some_and(|journey| journey.arrives_locally(&self.world));
                 if let Some(journey) = &mut self.portal_journey {
                     journey.arrived = true;
                 }
@@ -3396,7 +3400,22 @@ impl App {
                 self.tp_checks = vec![10.0, 3.0];
                 // (a border crossing leaves the camera where it is)
                 if !self.world.arrived_by_crossing {
-                    self.camera.on_teleport_arrival(&self.settings.camera);
+                    if local_portal {
+                        self.camera.on_portal_arrival(&self.world.agent, &self.settings.camera);
+                        if self.demo {
+                            log::info!(
+                                "portal demo camera: heading alignment {}, behind {}",
+                                self.camera
+                                    .forward()
+                                    .with_z(0.0)
+                                    .normalize_or_zero()
+                                    .dot(self.world.agent.forward()),
+                                (self.camera.position - self.world.agent.position).dot(self.world.agent.forward())
+                            );
+                        }
+                    } else {
+                        self.camera.on_teleport_arrival(&self.settings.camera);
+                    }
                 }
                 self.scene.textures.mark_arrival();
                 self.loading_stage = aurora_i18n::tr!("app-loading-scene").into();

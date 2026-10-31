@@ -109,6 +109,14 @@ impl App {
             } else {
                 self.demo_release_keyboard();
             }
+            if std::env::var("AURORA_DEMO_PORTALS").is_ok_and(|mode| mode.contains("-camera-")) {
+                // Keep an opposing orbit through approach, with both ordinary
+                // reset preferences off. Arrival alone must put it behind us.
+                self.settings.camera.reset_on_teleport = false;
+                self.settings.camera.reset_on_movement = false;
+                self.camera.demo_orbit(std::f32::consts::PI, 0.0, None, &self.settings.camera);
+                self.always_run = true;
+            }
         }
         let forward = Input::key(KeyCode::ArrowUp);
         if self.frame_count == 600 {

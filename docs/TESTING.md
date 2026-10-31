@@ -209,6 +209,14 @@ the small clearance and cross back. Personal returns retain the 1 m guard.
 `private-friends-near-keyboard-allowed` puts the initial opening just 30 cm
 ahead and holds Forward from frame 600: the authorized visitor must teleport
 directly, without first walking away, and must not bounce back on arrival.
+`private-friends-near-keyboard-camera-allowed` also starts with an opposing
+camera orbit, disables both ordinary camera reset preferences and holds run.
+Capture 610, 630, 710 and 1100: the local arrival must immediately place the
+view behind the avatar, and continued Forward must move away from the return.
+The offline arrival log records camera heading alignment 1 and a negative
+behind offset. Ordinary teleports still respect their reset preference, and
+mouselook stays first person. On the grid, also hold mouse steering while
+running through a same-region portal; the arrival must not turn back into it.
 `keyboard-departing-allowed` starts the creator's teleport when the access
 request arrives, then changes their region after the grant is sent: the
 visitor must still receive the destination and teleport without chat focus.

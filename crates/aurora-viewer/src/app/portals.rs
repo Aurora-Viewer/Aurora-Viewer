@@ -16,6 +16,13 @@ pub(super) struct Journey {
 }
 
 impl Journey {
+    pub(super) fn arrives_locally(&self, world: &World) -> bool {
+        self.agent == world.agent_id
+            && Some(self.source.region) == world.main_region
+            && self.arrival_region.eq_ignore_ascii_case(&world.region_name())
+            && self.valid(world, Instant::now(), unix_time())
+    }
+
     fn valid(&self, world: &World, now: Instant, unix: u64) -> bool {
         self.agent == world.agent_id
             && now.saturating_duration_since(self.started) <= Duration::from_secs(30)
@@ -573,6 +580,35 @@ fn movement_intent(input: &MoveInput, yaw: f32, vertical: bool) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_live_same_region_portal_journey_requests_the_arrival_camera() {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let region = world.main_region.unwrap();
+        let source = Portal {
+            id: uuid::Uuid::from_u128(7),
+            region,
+            center: [10.0, 10.0, 25.0],
+            yaw: 0.0,
+            destination: world.region_name(),
+            position: [128.0, 128.0, 25.0],
+            access: Access::Everyone,
+            expires: unix_time() + LIFETIME,
+        };
+        let mut journey = Journey::new(&world, world.agent_id, &source, Instant::now());
+        assert!(journey.arrives_locally(&world));
+        world.main_region = Some(region ^ 256);
+        assert!(!journey.arrives_locally(&world));
+        world.main_region = Some(region);
+        journey.arrival_region = "Other destination".into();
+        assert!(!journey.arrives_locally(&world));
+        journey.arrival_region = world.region_name();
+        journey.started -= Duration::from_secs(31);
+        assert!(!journey.arrives_locally(&world));
+    }
 
     #[test]
     fn portal_journey_restores_the_original_endpoint_and_keeps_a_bounded_return_intent() {
