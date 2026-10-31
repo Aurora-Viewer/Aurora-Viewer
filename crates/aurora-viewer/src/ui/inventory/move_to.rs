@@ -85,7 +85,7 @@ impl MoveTo {
 }
 
 fn destinations(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>) -> Vec<Destination> {
-    if ids.is_empty() || ids.iter().any(|id| !rules::movable(inv, *id, protected)) {
+    if ids.is_empty() || ids.iter().any(|id| !rules::relocatable(inv, *id, protected)) {
         return Vec::new();
     }
     let roots = rules::roots(inv, ids);

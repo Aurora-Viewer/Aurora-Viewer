@@ -435,21 +435,31 @@ fn rlva_attachment_replacement_preserves_locked_cof_links_but_explicit_removal_i
             }],
         },
     };
-    assert!(!w.rlva_allows_command(&cmd, Uuid::nil()));
-    w.rlva.preferences.replace_unlocked = false;
-    w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
+    let targets = |cmd: &aurora_net::NetCommand| {
+        let aurora_net::NetCommand::UpdateOutfit { change, .. } = cmd else {
+            unreachable!()
+        };
+        change.links.iter().map(|l| l.target).collect::<Vec<_>>()
+    };
+    let unprepared = cmd.clone();
     assert!(
         !w.rlva_allows_command(&cmd, Uuid::nil()),
-        "strict replacement cannot discard the locked predecessor"
+        "the raw change would take off the locked item"
     );
+    w.rlva.preferences.replace_unlocked = false;
+    w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
+    assert_eq!(
+        targets(&cmd),
+        [old],
+        "strict replacement keeps the locked item and leaves the new one out"
+    );
+    assert!(w.rlva_allows_command(&cmd, Uuid::nil()));
     w.rlva.preferences.replace_unlocked = true;
+    let mut cmd = unprepared;
     w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
     assert!(w.rlva_allows_command(&cmd, Uuid::nil()));
     w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
-    let aurora_net::NetCommand::UpdateOutfit { change, .. } = &cmd else {
-        unreachable!()
-    };
-    assert_eq!(change.links.len(), 2, "preparation is idempotent");
+    assert_eq!(targets(&cmd), [new, old], "preparation is idempotent");
     assert!(!w.rlva_can_remove(old, Uuid::nil()));
     assert!(!w.rlva_can_remove(old, watchdog::ACTOR));
     assert!(!w.rlva_can_add(new, 5, watchdog::ACTOR));
@@ -458,11 +468,98 @@ fn rlva_attachment_replacement_preserves_locked_cof_links_but_explicit_removal_i
     };
     change.links.clear();
     w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
-    assert!(
-        !w.rlva_allows_command(&cmd, Uuid::nil()),
-        "explicit removal remains subject to locks"
-    );
+    assert_eq!(targets(&cmd), [old], "taking everything off still leaves the locked item on");
+    assert!(w.rlva_allows_command(&cmd, Uuid::nil()));
     w.rlva.configure(false);
+    assert!(w.rlva_allows_command(&cmd, Uuid::nil()));
+}
+
+/// LLAppearanceMgr::updateCOF (llappearancemgr.cpp): replacing or taking
+/// off an outfit under clothing and body-part locks keeps the locked layers
+/// and blocked additions out, and changes everything else.
+#[test]
+fn rlva_outfit_changes_keep_locked_wearables_and_skip_blocked_additions() {
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::{
+        inventory::{InvFolder, InvItem},
+        outfits::{OutfitLink, OutfitMutation},
+    };
+    let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    w.rlva.configure(true);
+    let cof = Uuid::from_u128(20);
+    // (id, asset type, wearable type): shirt, shape, pants, new shape,
+    // new jacket, new socks, new attachment.
+    let items = [(21, 5, 4), (22, 13, 0), (23, 5, 5), (24, 13, 0), (25, 5, 8), (26, 5, 7), (27, 6, 9)];
+    let link = |id: u128| OutfitLink {
+        target: Uuid::from_u128(id),
+        name: String::new(),
+        desc: String::new(),
+        folder: false,
+        inv_type: 0,
+    };
+    w.inventory.folders.insert(
+        cof,
+        Folder {
+            info: InvFolder {
+                id: cof,
+                type_default: 46,
+                ..Default::default()
+            },
+            items: vec![],
+            children: vec![],
+            state: FetchState::Fetched,
+            library: false,
+        },
+    );
+    for (n, (id, asset_type, flags)) in items.into_iter().enumerate() {
+        w.inventory.items.insert(
+            Uuid::from_u128(id),
+            InvItem {
+                id: Uuid::from_u128(id),
+                asset_type,
+                flags,
+                ..Default::default()
+            },
+        );
+        if n < 3 {
+            let cof_link = Uuid::from_u128(id + 100);
+            w.inventory.items.insert(
+                cof_link,
+                InvItem {
+                    id: cof_link,
+                    parent: cof,
+                    asset_id: Uuid::from_u128(id),
+                    asset_type: 24,
+                    ..Default::default()
+                },
+            );
+            w.inventory.folders.get_mut(&cof).expect("cof").items.push(cof_link);
+        }
+    }
+    command(&mut w.rlva, A, "@remoutfit:shirt=n");
+    command(&mut w.rlva, A, "@remoutfit:shape=n");
+    command(&mut w.rlva, A, "@addoutfit:socks=n");
+    let mut cmd = aurora_net::NetCommand::UpdateOutfit {
+        request: TARGET,
+        change: OutfitMutation {
+            folder: cof,
+            create: None,
+            cof: None,
+            links: vec![link(24), link(25), link(26), link(27)],
+        },
+    };
+    assert!(!w.rlva_allows_command(&cmd, Uuid::nil()));
+    w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
+    let aurora_net::NetCommand::UpdateOutfit { change, .. } = &cmd else {
+        unreachable!()
+    };
+    let mut kept: Vec<_> = change.links.iter().map(|l| l.target.as_u128()).collect();
+    kept.sort_unstable();
+    assert_eq!(
+        kept,
+        [21, 22, 25, 27],
+        "locked shirt and shape stay, unlocked pants go, the new shape and the socks are left out"
+    );
     assert!(w.rlva_allows_command(&cmd, Uuid::nil()));
 }
 

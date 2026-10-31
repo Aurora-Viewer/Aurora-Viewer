@@ -1034,11 +1034,16 @@ impl World {
             .any(|(_, option)| option.is_empty() || layer(option) == Some(kind))
     }
 
-    /// RlvAttachmentLocks::canAttach and RLVaWearReplaceUnlocked (default true):
-    /// replacement keeps locked attachments and removes unlocked predecessors.
-    /// Clothing and explicit removal still use the ordinary lock checks.
+    /// LLAppearanceMgr::updateCOF and removeItemsFromAvatar with RLVa
+    /// (llappearancemgr.cpp): a lock never refuses an outfit change as a
+    /// whole. Locked worn items (attachments, clothing, body parts) stay in
+    /// the COF, new items that cannot be worn are left out, the rest goes
+    /// through. A new body part does not displace a locked one of its type.
+    /// With RLVaWearReplaceUnlocked off, an attachment replacing a locked one
+    /// on its point is left out: RlvAttachmentLockWatchdog::onAttach
+    /// (rlvlocks.cpp) would detach it again.
     pub fn rlva_prepare_outfit(&self, command: &mut aurora_net::NetCommand, actor: Uuid) {
-        if !self.rlva.enabled() || !self.rlva.preferences.replace_unlocked || actor == super::watchdog::ACTOR {
+        if !self.rlva.enabled() || actor == super::watchdog::ACTOR {
             return;
         }
         let aurora_net::NetCommand::UpdateOutfit { change, .. } = command else {
@@ -1057,24 +1062,39 @@ impl World {
         } else {
             return;
         };
-        // Only a transaction adding an attachment is a replacement. Removing
-        // an outfit must fail when it contains an attachment locked in place.
         let before = appearance::folder_links(&self.inventory, cof);
-        if !links.iter().any(|link| {
-            !before.iter().any(|old| old.target == link.target)
-                && self.inventory.items.get(&link.target).is_some_and(|it| it.asset_type == 6)
-        }) {
-            return;
-        }
-        for old in before {
-            if !old.folder
-                && !links.iter().any(|link| link.target == old.target)
-                && self.inventory.items.get(&old.target).is_some_and(|it| it.asset_type == 6)
-                && !self.rlva_can_remove(old.target, actor)
-            {
-                links.push(old);
+        let kept: Vec<_> = before
+            .iter()
+            .filter(|old| !old.folder && !links.iter().any(|link| link.target == old.target) && !self.rlva_can_remove(old.target, actor))
+            .cloned()
+            .collect();
+        let worn = self.worn_attachment_points();
+        let kept_slot = |kind: i32, slot: u32| {
+            kept.iter().filter_map(|old| self.inventory.items.get(&old.target)).any(|old| {
+                old.asset_type == kind
+                    && if kind == 6 {
+                        worn.get(&old.id).map_or(old.flags & 0xff, |p| u32::from(*p)) == slot
+                    } else {
+                        old.flags & 0xff == slot
+                    }
+            })
+        };
+        links.retain(|link| {
+            if link.folder || before.iter().any(|old| old.target == link.target) {
+                return true;
             }
-        }
+            let Some(it) = self.inventory.items.get(&link.target) else {
+                return true;
+            };
+            let slot = it.flags & 0xff;
+            self.rlva_can_add(it.id, 0, actor)
+                && match it.asset_type {
+                    13 => !kept_slot(13, slot),
+                    6 => self.rlva.preferences.replace_unlocked || slot == 0 || !kept_slot(6, slot),
+                    _ => true,
+                }
+        });
+        links.extend(kept);
     }
 
     pub fn rlva_outfit_allowed(&self, before: &[OutfitLink], after: &[OutfitLink], actor: Uuid) -> bool {

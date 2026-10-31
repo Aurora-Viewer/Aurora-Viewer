@@ -1115,7 +1115,7 @@ fn folder_row(
 
 /// Personal folders can move within inventory or to Marketplace listings.
 fn folder_draggable(inv: &Inventory, id: Uuid, prefs: &InventoryPreferences) -> bool {
-    rules::movable(inv, id, &prefs.protected) && inv.folders.get(&id).is_some_and(|f| f.info.type_default == -1)
+    rules::relocatable(inv, id, &prefs.protected) && inv.folders.get(&id).is_some_and(|f| f.info.type_default == -1)
 }
 
 /// What a folder's row does, whichever window draws it: drag and drop (onto

@@ -337,7 +337,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
     let single = ids.len() == 1;
     let ready = st.pending.is_none();
     let writable = rules::mutable(inv, id, &prefs.protected);
-    let movable = ids.iter().all(|id| rules::movable(inv, *id, &prefs.protected));
+    let movable = ids.iter().all(|id| rules::relocatable(inv, *id, &prefs.protected));
     let worn = target.is_some_and(|id| facts.worn.contains(&id));
     let trash = rules::in_type(inv, id, 14);
     let linked = item.is_some_and(|it| matches!(it.asset_type, 24 | 25));
