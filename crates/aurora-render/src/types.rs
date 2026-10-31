@@ -1436,6 +1436,9 @@ pub struct RenderStats {
     pub index_used: u64,
     pub records: u32,
     pub gpu_ms: Option<f32>,
+    /// The world pixels of the frame `gpu_ms` measures (a photo frame's are
+    /// the photo's).
+    pub gpu_pixels: u64,
     /// CPU time the main thread spent on the frame's rendering (ms): the
     /// whole encoding when the renderer runs on it, only the frame packet
     /// with a render thread.
