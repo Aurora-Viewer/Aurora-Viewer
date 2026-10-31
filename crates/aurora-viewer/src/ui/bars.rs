@@ -10,6 +10,7 @@ pub mod dock;
 pub mod favorites;
 mod graphics;
 pub mod islands;
+mod location_suggest;
 mod place;
 pub mod side;
 pub(crate) mod sizing;
@@ -84,6 +85,15 @@ pub enum BarAction {
     VoicePrefs,
     /// Location typed or pasted in the navigation bar (SLURL, Region/x/y/z...).
     TeleportTo(String),
+    /// A landmark chosen in the location field's suggestions, by its asset.
+    TeleportLandmark(uuid::Uuid),
+    /// A place of the teleport history chosen in the location field's
+    /// suggestions (teleportViaLocation: the history does not move).
+    TeleportPlace {
+        region: String,
+        handle: aurora_net::RegionHandle,
+        position: glam::Vec3,
+    },
     /// Communicate > Online status changed.
     SetStatus(crate::world::status::StatusModes),
     /// Open the chat preferences (automatic responses).
@@ -182,6 +192,8 @@ pub struct StatusInfo<'a> {
     pub tp_forward: Option<String>,
     /// Every place of the session, for the arrows' list.
     pub tp_session: crate::world::tphistory::Session<'a>,
+    /// The landmarks the location field suggests by name.
+    pub landmarks: std::sync::Arc<[crate::world::landmarks::Named]>,
     pub maturity: &'a str,
     pub position: glam::Vec3,
     pub fps: f32,
@@ -1578,8 +1590,9 @@ fn voice_light(ui: &mut egui::Ui, p: &Palette, icons: &Icons, light: crate::voic
 /// Region (x, y, z)"; a click turns it into the SLURL of the position,
 /// selected and ready to copy; typing or pasting a place then Enter
 /// teleports there; Escape or a click elsewhere restores the location.
-fn location_field(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, loc: &str, slurl: &str, w: f32) -> Option<BarAction> {
+fn location_field(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, loc: &str, w: f32) -> Option<BarAction> {
     let id = egui::Id::unique("nav_location_edit");
+    let slurl = st.slurl.as_str();
     let Some(text) = panels.nav_edit.as_mut() else {
         // exactly the text width (truncated when too long): the maturity badge
         // stays right after the location
@@ -1606,7 +1619,30 @@ fn location_field(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, loc: &str
             panels.nav_edit = Some(slurl.to_owned());
             panels.nav_edit_new = true;
         }
+        // AURORA_DEMO_BARS=legacy,locations: a place being typed
+        if demo::get().locations && ui.ctx().cumulative_frame_nr() == location_suggest::DEMO_FRAME {
+            panels.nav_edit = Some(location_suggest::DEMO_TYPED.to_owned());
+            panels.nav_edit_new = true;
+        }
         return None;
+    };
+    // the landmarks and places the typed text names: none for the SLURL
+    // the field opens with, nor with the location hidden
+    let (list_id, chosen_key) = (id.with("suggestions"), id.with("chosen"));
+    let suggest = |text: &str| {
+        if st.location_hidden || text == slurl {
+            Vec::new()
+        } else {
+            location_suggest::suggestions(&st.landmarks, st.tp_session.items, text)
+        }
+    };
+    let mut list = suggest(text);
+    let mut chosen = ui.ctx().data(|d| d.get_temp::<usize>(chosen_key)).unwrap_or(0);
+    // the arrows and Enter go to the list before the field takes them
+    let mut take = if !panels.nav_edit_new && ui.memory(|m| m.has_focus(id)) {
+        location_suggest::keys(ui, list.len(), &mut chosen)
+    } else {
+        None
     };
     let resp = ui.add(
         egui::TextEdit::singleline(text)
@@ -1634,6 +1670,26 @@ fn location_field(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, loc: &str
         ui.ctx().request_repaint();
         return None;
     }
+    if resp.changed() {
+        list = suggest(text);
+        chosen = location_suggest::pick(&list, text).unwrap_or(0);
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(chosen_key, chosen));
+    if !list.is_empty()
+        && let Some(i) = location_suggest::list_area(ui, p, list_id, resp.rect, &list, chosen)
+    {
+        take = Some(i);
+    }
+    if let Some(s) = take.and_then(|i| list.get(i)) {
+        panels.nav_edit = None;
+        ui.memory_mut(|m| m.surrender_focus(id));
+        return Some(s.action());
+    }
+    // a press on the list takes the field's focus: the list stays until
+    // the click lands on a row
+    let on_list = !list.is_empty()
+        && ui.ctx().pointer_interact_pos().and_then(|pos| ui.ctx().layer_id_at(pos))
+            == Some(egui::LayerId::new(egui::Order::Foreground, list_id));
     let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
     let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
     if enter {
@@ -1642,7 +1698,7 @@ fn location_field(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, loc: &str
         if !typed.trim().is_empty() {
             return Some(BarAction::TeleportTo(typed));
         }
-    } else if escape || !resp.has_focus() {
+    } else if escape || (!resp.has_focus() && !on_list) {
         // Escape or a click elsewhere: back to the location as it was
         panels.nav_edit = None;
         ui.memory_mut(|m| m.surrender_focus(id));
@@ -1899,7 +1955,7 @@ pub fn top_bars(
                                 };
                                 let w = (ui.available_width() - 24.0 - STAR_W - icons_w).max(40.0);
                                 ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
-                                    if let Some(a) = location_field(ui, p, panels, &loc, &st.slurl, w) {
+                                    if let Some(a) = location_field(ui, p, panels, st, &loc, w) {
                                         action = a;
                                     }
                                 });

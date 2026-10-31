@@ -559,7 +559,33 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
     ui.add_space(6.0);
     // a destination: SLURL, Region/x/y/z or a region's name, then Enter
     let dest_id = Id::unique("bars_place_destination");
+    let (field_key, chosen_key) = (dest_id.with("field"), dest_id.with("chosen"));
     let mut text = ui.ctx().data_mut(|d| d.get_temp::<String>(dest_id)).unwrap_or_default();
+    let mut chosen = ui.ctx().data(|d| d.get_temp::<usize>(chosen_key)).unwrap_or(0);
+    // the landmarks and places the text names (hidden with the location)
+    let suggest = |text: &str| {
+        if st.location_hidden {
+            Vec::new()
+        } else {
+            super::location_suggest::suggestions(&st.landmarks, st.tp_session.items, text)
+        }
+    };
+    let mut list = suggest(&text);
+    if super::demo::get().locations && ui.ctx().cumulative_frame_nr() == super::location_suggest::DEMO_FRAME {
+        text = super::location_suggest::DEMO_TYPED.to_owned();
+        list = suggest(&text);
+        chosen = super::location_suggest::pick(&list, &text).unwrap_or(0);
+    }
+    // the arrows and Enter go to the list before the field takes them
+    let had_focus = ui
+        .ctx()
+        .data(|d| d.get_temp::<Id>(field_key))
+        .is_some_and(|id| ui.memory(|m| m.has_focus(id)));
+    let mut take = if had_focus {
+        super::location_suggest::keys(ui, list.len(), &mut chosen)
+    } else {
+        None
+    };
     let dest = &mut text;
     let field = ui
         .horizontal(|ui| {
@@ -584,13 +610,32 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
             ui.ctx().data_mut(|d| d.insert_temp(focused_id, true));
         }
     }
-    if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+    if field.changed() {
+        list = suggest(dest);
+        chosen = super::location_suggest::pick(&list, dest).unwrap_or(0);
+    }
+    // what the text names, under the field; Enter or a click takes a row
+    if !list.is_empty() {
+        ui.add_space(4.0);
+        if let Some(i) = super::location_suggest::rows(ui, p, &list, chosen) {
+            take = Some(i);
+        }
+    }
+    if let Some(s) = take.and_then(|i| list.get(i)) {
+        action = Some(s.action());
+        dest.clear();
+        chosen = 0;
+    } else if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
         let typed = std::mem::take(dest);
         if !typed.trim().is_empty() {
             action = Some(BarAction::TeleportTo(typed));
         }
     }
-    ui.ctx().data_mut(|d| d.insert_temp(dest_id, text));
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(dest_id, text);
+        d.insert_temp(chosen_key, chosen);
+        d.insert_temp(field_key, field.id);
+    });
     // the rights, in words
     menu::heading(ui, p, aurora_i18n::tr!("ui-bars-parcel-rights"));
     for it in &st.parcel_icons {

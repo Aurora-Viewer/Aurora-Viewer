@@ -6729,7 +6729,13 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   300), `tplist` (four earlier places put in the session's history before
   the arrival, the back arrow's list of them open at frame 300: the
   newest at the top with its arrival time, the place we are in lit; with
-  `legacy`, under the full-width bar's arrow), `netgraph` (Firestorm's traffic indicator shown before the audio
+  `legacy`, under the full-width bar's arrow), `locations` (the place
+  menu opened at frame 300, "Aur" typed in its destination field at frame
+  320: the landmarks whose name holds it, whatever the case, and the
+  history's places whose title holds it as typed, in dictionary order, the
+  first one lit for Enter; with `legacy`, typed in the location field, the
+  list under it; `tplist,locations`, in that order, for history places to
+  match), `netgraph` (Firestorm's traffic indicator shown before the audio
   controls), `sysperf` / `sysnet` (Performance opened from the island at
   frame 300, by its frame rate / its network: the full view 8 px under the
   island, its left and right edges on the island's, down to the work
