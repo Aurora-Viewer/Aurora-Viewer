@@ -337,8 +337,13 @@ function Write-PanelLine([object[]]$Segments, [int]$Width, [switch]$Selected) {
         $text = [string]$s[0]
         if ($used + $text.Length -gt $Width) { $text = $text.Substring(0, [Math]::Max(0, $Width - $used)) }
         if ($text) {
+            # a segment's third item is a link: Ctrl + click opens it in
+            # Windows Terminal (OSC 8); the escapes take no column
+            $link = if ($Vt -and $s.Count -gt 2 -and $s[2]) { [string]$s[2] }
+            if ($link) { Write-Host "$Esc]8;;$link$Esc\" -NoNewline }
             if ($Selected) { Write-Color $text $s[1] -Background raised -NoNewline }
             else { Write-Color $text $s[1] -NoNewline }
+            if ($link) { Write-Host "$Esc]8;;$Esc\" -NoNewline }
         }
         $used += $text.Length
     }
@@ -467,7 +472,7 @@ function Show-PrPanel {
                 & $heading 'MERGE QUEUE' $queued.Count
                 foreach ($i in $queued) {
                     $c = $cells[$i]; $r = $c.Row
-                    $start = @(@(" $StatusMark ", $r.Status), @(("#$($r.Number)").PadRight(6), 'violet_light'))
+                    $start = @(@(" $StatusMark ", $r.Status), @(("#$($r.Number)").PadRight(6), 'violet_light', $r.Url))
                     if ($compact) {
                         & $line ($start + @(, @((Format-Cell $r.Title ($w - 9)), 'ink'))) $i
                         & $line (@(, @('         ', 'muted')) + (& $diff $r.Additions $r.Deletions) + (& $tag "$($c.Queue)  " $r.QueueColor) + @(, @($c.Author, 'muted_dim')))
@@ -482,7 +487,7 @@ function Show-PrPanel {
                 & $heading 'READY TO REVIEW / MERGE' $open.Count
                 foreach ($i in $open) {
                     $c = $cells[$i]; $r = $c.Row
-                    $start = @(@(" $StatusMark ", $r.Status), @(("#$($r.Number)").PadRight(6), 'violet_light'))
+                    $start = @(@(" $StatusMark ", $r.Status), @(("#$($r.Number)").PadRight(6), 'violet_light', $r.Url))
                     if ($compact) {
                         $titleW = [Math]::Max(10, $w - 9 - $ciW)
                         & $line ($start + @(, @((Format-Cell $r.Title $titleW), 'ink')) + (& $tag $c.Ci $r.CiColor)) $i
@@ -502,7 +507,7 @@ function Show-PrPanel {
                 foreach ($i in $waiting) {
                     $c = $cells[$i]; $r = $c.Row
                     $whyColor = switch ($r.Waiting) { 'CI FAIL' { 'danger' } 'CHANGES ASKED' { 'warn' } default { 'muted_dim' } }
-                    $start = @(@(" $StatusMark ", $whyColor), @(("#$($r.Number)").PadRight(6), 'muted'))
+                    $start = @(@(" $StatusMark ", $whyColor), @(("#$($r.Number)").PadRight(6), 'muted', $r.Url))
                     if ($compact) {
                         & $line ($start + @(, @((Format-Cell $r.Title ($w - 9)), 'muted'))) $i
                         & $line (@(, @('         ', 'muted')) + (& $diff $r.Additions $r.Deletions) + (& $tag $r.Waiting $whyColor) + @(, @("  $($r.Author)", 'muted_dim')))
@@ -520,7 +525,7 @@ function Show-PrPanel {
                 for ($j = 0; $j -lt $merged.Count; $j++) {
                     $m = $merged[$j]
                     $titleW = [Math]::Max(10, $w - 9 - $mergedAuthorW - $diffW - $whenW)
-                    & $line (@(@(" $StatusMark ", 'teal'), @(("#$($m.number)").PadRight(6), 'teal'), @((Format-Cell $m.title $titleW), 'muted'),
+                    & $line (@(@(" $StatusMark ", 'teal'), @(("#$($m.number)").PadRight(6), 'teal', $m.url), @((Format-Cell $m.title $titleW), 'muted'),
                         @((Format-Cell $m.author.login $mergedAuthorW), 'muted_dim')) + (& $diff $m.additions $m.deletions) + @(, @($whens[$j].PadLeft($whenW - 1), 'muted_dim')))
                 }
             }
@@ -556,7 +561,7 @@ function Show-PrPanel {
             # what the square before a PR number says
             Write-PanelLine @(@(" $StatusMark", 'danger'), @(' FAIL  ', 'muted_dim'), @($StatusMark, 'amber'), @(' CI RUN  ', 'muted_dim'), @($StatusMark, 'teal'), @(' QUEUE  ', 'muted_dim'),
                 @($StatusMark, 'warn'), @(' REVIEW WARN  ', 'muted_dim'), @($StatusMark, 'success'), @(' READY  ', 'muted_dim'), @($StatusMark, 'violet_light'), @(' REVIEW PENDING  ', 'muted_dim'), @($StatusMark, 'muted_dim'), @(' DRAFT', 'muted_dim')) $w
-            Write-PanelLine @(, @(' ↑↓ choose · Enter open · R refresh · Esc back', 'muted_dim')) $w
+            Write-PanelLine @(, @(' ↑↓ choose · Enter open · Ctrl + click a #number · R refresh · Esc back', 'muted_dim')) $w
             # erase what a longer previous frame left below
             if ($Interactive -and $Vt) { Write-Host "$Esc[J" -NoNewline }
             else { for ($i = $script:PanelRow; $i -lt $lastHeight; $i++) { Write-PanelLine @(@('', 'muted')) $w } }
