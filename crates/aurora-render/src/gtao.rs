@@ -586,10 +586,11 @@ const RESULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const META_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 /// The indirect light while it is blurred, and its result.
 const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// The mesh normals of the depth prepass (octahedral, two halves: the
+/// The mesh normals of the depth prepass (xy, octahedral, halves: the
 /// G-buffer's eight bits per channel would show steps in a smooth
-/// occlusion).
-pub(crate) const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+/// occlusion), and the motion of each pixel (zw, `screen_motion` in
+/// common.wgsl).
+pub(crate) const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 impl Gtao {
     pub(crate) fn new(device: &wgpu::Device) -> Self {

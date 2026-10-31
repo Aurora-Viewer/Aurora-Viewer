@@ -140,6 +140,12 @@ struct FrameU {
     contact: [f32; 4],
     /// x: common.wgsl FEATURE_* bits, the same in every pass.
     features: [u32; 4],
+    /// The motion vectors' projections, without the TAA jitter (main view
+    /// only): this frame's and the last frame's of a position relative to
+    /// `eye`, and this frame's clip space to the last frame's.
+    motion_vp: [[f32; 4]; 4],
+    motion_prev_vp: [[f32; 4]; 4],
+    motion_reproj: [[f32; 4]; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -1461,6 +1467,8 @@ pub(crate) struct Backend {
     /// The photo's look, made the first time one is on.
     looks: Option<crate::looks::Looks>,
     rlva_spheres: Option<crate::rlva::Spheres>,
+    /// The motion vectors' view (AURORA_DEBUG_MOTION).
+    motion_debug: Option<crate::motion_debug::MotionDebug>,
     rlva_overlays: Option<crate::rlva::overlay::Overlays>,
     rlva_resolution_divisor: u32,
     rlva_scaled: Option<crate::rlva::resolution::Scaled>,
@@ -1500,6 +1508,9 @@ pub(crate) struct Backend {
     settings: RenderSettings,
     taa: Option<Taa>,
     prev_view_proj: Option<Mat4>,
+    /// The last frame's projection and view, without the jitter, for the
+    /// motion vectors.
+    prev_motion_view: Option<(Mat4, Mat4)>,
     frame_index: u64,
     /// Texture animation clock (tex_anim.rs) and its value for this frame.
     anim_clock: crate::tex_anim::AnimClock,
@@ -2587,6 +2598,27 @@ impl Backend {
                     },
                     count: None,
                 },
+                // the last frame's palettes and model matrices
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let shadow_layout = shadow_layout(&device);
@@ -2794,6 +2826,7 @@ impl Backend {
         let occlusion = crate::occlusion::Occlusion::new(&device);
         let cull = GpuCull::new(&device);
         let motion_history = crate::motion_history::MotionHistory::new(&device);
+        let motion_debug = crate::motion_debug::asked().then(|| crate::motion_debug::MotionDebug::new(&device, config.format));
         let impostors = Impostors::new(&device, &frame_layout, &records_layout, &tex_layout, msaa_samples, settings.ssr);
         let particle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("particles"),
@@ -2860,6 +2893,7 @@ impl Backend {
             dof: None,
             looks: None,
             rlva_spheres: None,
+            motion_debug,
             rlva_overlays: None,
             rlva_resolution_divisor: 1,
             rlva_scaled: None,
@@ -2887,6 +2921,7 @@ impl Backend {
             settings,
             taa: None,
             prev_view_proj: None,
+            prev_motion_view: None,
             frame_index: 0,
             anim_clock,
             anim_now: [0; 4],
@@ -2937,6 +2972,14 @@ impl Backend {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: scene.skin_binds.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: scene.prev_palettes.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: scene.prev_models.as_entire_binding(),
                 },
             ],
         })
@@ -3473,8 +3516,13 @@ impl Backend {
         let pre_normal = [
             pre_n("prepass normals", "vs_depth_normal", "fs_depth_normal", Some(wgpu::Face::Back)),
             pre_n("prepass normals 2s", "vs_depth_normal", "fs_depth_normal", None),
-            pre_n("prepass mask normals", "vs_main", "fs_depth_mask_normal", Some(wgpu::Face::Back)),
-            pre_n("prepass mask normals 2s", "vs_main", "fs_depth_mask_normal", None),
+            pre_n(
+                "prepass mask normals",
+                "vs_depth_mask_normal",
+                "fs_depth_mask_normal",
+                Some(wgpu::Face::Back),
+            ),
+            pre_n("prepass mask normals 2s", "vs_depth_mask_normal", "fs_depth_mask_normal", None),
         ];
         let pre_terrain_normal = pre_n(
             "terrain depth normals",
@@ -3485,13 +3533,13 @@ impl Backend {
         let pre_normal_portal = [
             pre_n(
                 "prepass portal normals",
-                "vs_main",
+                "vs_depth_mask_normal",
                 "fs_depth_portal_normal",
                 Some(wgpu::Face::Back),
             ),
-            pre_n("prepass portal normals 2s", "vs_main", "fs_depth_portal_normal", None),
+            pre_n("prepass portal normals 2s", "vs_depth_mask_normal", "fs_depth_portal_normal", None),
         ];
-        let pre_contact_normal = pre_n("prepass contact normals", "vs_main", "fs_depth_contact_normal", None);
+        let pre_contact_normal = pre_n("prepass contact normals", "vs_depth_mask_normal", "fs_depth_contact_normal", None);
         let pre_msaa = (samples > 1).then(|| {
             let msaa = |label: &'static str, cull: Option<wgpu::Face>, clipped: bool| {
                 pipe(PipeDesc {
@@ -5160,6 +5208,16 @@ impl Backend {
         self.gtao_normals_now = self.targets.gtao_shown && gtao_mesh_normals_now();
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.cam_up[3] = camera_water_level;
+        {
+            // after the scene moved as a whole, the last frame's camera is
+            // in the old coordinates: the frame counts as still
+            let (prev_proj, prev_view) = self.prev_motion_view.filter(|_| !self.motion_cut).unwrap_or((f.proj, f.view));
+            let eye = Vec3::from_slice(&main.eye[..3]);
+            main.motion_vp = eye_view_proj(f.proj, f.view, eye, false).to_cols_array_2d();
+            main.motion_prev_vp = eye_view_proj(prev_proj, prev_view, eye, false).to_cols_array_2d();
+            let prev_vp = (prev_proj * prev_view).as_dmat4();
+            main.motion_reproj = (prev_vp * unjittered_vp.as_dmat4().inverse()).as_mat4().to_cols_array_2d();
+        }
         if let Some((view, proj)) = air_view {
             main.water_air_vp = air_vp.to_cols_array_2d();
             main.water_air_inv_vp = air_vp.inverse().to_cols_array_2d();
@@ -7257,6 +7315,7 @@ impl Backend {
             }
         }
         self.prev_view_proj = Some(unjittered_vp);
+        self.prev_motion_view = Some((f.proj, f.view));
         self.last_inv_vp = unjittered_vp.inverse();
 
         // ---- automatic exposure, from the resolved scene and the glow of
@@ -7385,6 +7444,21 @@ impl Backend {
                 let passes = looks.encode(&self.device, &self.queue, &mut encoder, look, scene_target, Some(depth));
                 calls.set(calls.get() + passes);
             }
+        }
+
+        if let Some(debug) = &self.motion_debug {
+            let motion = self.targets.gtao.as_ref().filter(|_| self.gtao_normals_now).map(|g| &g.normals);
+            debug.encode(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                motion,
+                &self.targets.depth_ss,
+                Mat4::from_cols_array_2d(&main.motion_reproj),
+                (self.config.width, self.config.height),
+                scene_target,
+            );
+            calls.set(calls.get() + 1);
         }
 
         if rg.select_faces.1 > 0

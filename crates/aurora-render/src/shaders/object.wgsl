@@ -221,6 +221,46 @@ fn placed_model(rec: DrawRecord, in: VsIn, eye: vec3<f32>) -> mat4x4<f32> {
     return from_eye(rec.model, eye);
 }
 
+// placed_model as the last frame drew it (motion_history.rs): its
+// palettes and the record's matrix of then.
+fn prev_joint_matrix(rec: DrawRecord, j: u32) -> mat4x4<f32> {
+    let b = skin_binds[rec.flags.z + j];
+    return prev_palettes[rec.flags.y + b.joint.x] * b.inverse_bind;
+}
+
+fn prev_skin_matrix(rec: DrawRecord, j: vec4<u32>, w: vec4<f32>) -> mat4x4<f32> {
+    let ws = max(w.x + w.y + w.z + w.w, 1e-4);
+    var m = prev_joint_matrix(rec, j.x) * w.x;
+    if (w.y > 0.0) { m += prev_joint_matrix(rec, j.y) * w.y; }
+    if (w.z > 0.0) { m += prev_joint_matrix(rec, j.z) * w.z; }
+    if (w.w > 0.0) { m += prev_joint_matrix(rec, j.w) * w.w; }
+    return m * (1.0 / ws);
+}
+
+fn prev_placed_model(rec: DrawRecord, in: VsIn, eye: vec3<f32>) -> mat4x4<f32> {
+    let model = prev_models[in.instance];
+    if ((rec.flags.x & FLAG_SKINNED) != 0u) {
+        let skin = prev_skin_matrix(rec, in.joints, in.weights);
+        if ((rec.flags.x & FLAG_ANCHORED) != 0u) {
+            return from_eye(prev_palettes[rec.flags.y + SKELETON_ANCHOR], eye) * skin;
+        }
+        return from_eye(model, eye) * skin;
+    }
+    if ((rec.flags.x & FLAG_ANCHORED) != 0u) {
+        return from_eye(prev_palettes[rec.flags.y], eye) * model;
+    }
+    return from_eye(model, eye);
+}
+
+// The clip positions of a vertex for its motion, without the TAA jitter:
+// this frame's (`ep`, placed relative to the eye) and the last frame's,
+// placed as it was then. Its live morphs (lip_delta) count as they are now:
+// their motion is left out.
+fn motion_clips(rec: DrawRecord, in: VsIn, ep: vec4<f32>) -> mat2x4<f32> {
+    let prev = prev_placed_model(rec, in, frame.eye.xyz) * vec4<f32>(vertex_position(rec, in), 1.0);
+    return mat2x4<f32>(frame.motion_vp * ep, frame.motion_prev_vp * prev);
+}
+
 // World matrix of a vertex.
 fn skinned_model(rec: DrawRecord, in: VsIn) -> mat4x4<f32> {
     return placed_model(rec, in, vec3<f32>(0.0));
@@ -637,10 +677,12 @@ fn fs_depth_mask(in: VsOut) {
 // the position of vs_depth and the vertices' smooth normal, the shading's
 // without its normal map. A normal taken from the depth is the flat
 // triangle's, and showed the facets of low-poly meshes in the occlusion
-// (#993).
+// (#993). The same target takes the motion of each pixel (screen_motion).
 struct DepthNormalOut {
     @invariant @builtin(position) clip: vec4<f32>,
     @location(0) normal: vec3<f32>,
+    @location(1) motion_cur: vec4<f32>,
+    @location(2) motion_prev: vec4<f32>,
 };
 
 @vertex
@@ -651,39 +693,71 @@ fn vs_depth_normal(in: VsIn) -> DepthNormalOut {
     var out: DepthNormalOut;
     out.clip = frame.eye_view_proj * ep;
     out.normal = cofactor(model) * vertex_normal(rec, in);
+    let motion = motion_clips(rec, in, ep);
+    out.motion_cur = motion[0];
+    out.motion_prev = motion[1];
+    return out;
+}
+
+// What the masked, portal-clipped and contact faces of that prepass need:
+// vs_depth_normal's, with the diffuse coordinates and the region position.
+struct DepthMaskOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) record: u32,
+    @location(4) motion_cur: vec4<f32>,
+    @location(5) motion_prev: vec4<f32>,
+};
+
+@vertex
+fn vs_depth_mask_normal(in: VsIn) -> DepthMaskOut {
+    let rec = records[in.instance];
+    let model = eye_model(rec, in);
+    let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
+    var out: DepthMaskOut;
+    out.clip = frame.eye_view_proj * ep;
+    out.world_pos = ep.xyz + frame.eye.xyz;
+    out.normal = cofactor(model) * vertex_normal(rec, in);
+    out.uv = diffuse_uv(face_st(in, rec), rec, frame.anim_clock.zw);
+    out.record = in.instance;
+    let motion = motion_clips(rec, in, ep);
+    out.motion_cur = motion[0];
+    out.motion_prev = motion[1];
     return out;
 }
 
 // The world normal facing the side drawn (eval_material), octahedral as in
-// the G-buffer.
-fn depth_normal(n: vec3<f32>, front: bool) -> vec4<f32> {
+// the G-buffer, then the pixel's motion.
+fn depth_normal(n: vec3<f32>, front: bool, motion_cur: vec4<f32>, motion_prev: vec4<f32>) -> vec4<f32> {
     let m = normalize(select(-n, n, front));
-    return vec4<f32>(oct_encode(m), 0.0, 0.0);
+    return vec4<f32>(oct_encode(m), screen_motion(motion_cur, motion_prev));
 }
 
 @fragment
 fn fs_depth_normal(in: DepthNormalOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return depth_normal(in.normal, front);
+    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev);
 }
 
 // Only selected while an avatar intersects a portal. The ordinary normal
 // prepass keeps its compact vertex output without a record/position fetch.
 @fragment
-fn fs_depth_portal_normal(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+fn fs_depth_portal_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     portal_clip(records[in.record], in.world_pos);
-    return depth_normal(in.normal, front);
+    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev);
 }
 
 // fs_depth_mask with the normal.
 @fragment
-fn fs_depth_mask_normal(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+fn fs_depth_mask_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
     let a = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
     if (a < rec.params.w) {
         discard;
     }
-    return depth_normal(in.normal, front);
+    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev);
 }
 
 // Alpha from which fs_depth_contact writes depth: half covered; 1/255 for
@@ -694,30 +768,30 @@ override DEPTH_CONTACT_ALPHA: f32 = 0.5;
 // Depth of the blended faces opaque enough to cast contact shadows (half
 // covered, as the impostor pictures keep them), drawn over a copy of the
 // prepass (contact_shadows.rs).
-fn depth_contact(in: VsOut) {
-    let rec = records[in.record];
+fn depth_contact(record: u32, uv: vec2<f32>, world_pos: vec3<f32>) {
+    let rec = records[record];
     if ((rec.flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         // Its solid core occludes through the same opening; the decorative
         // quad corners/corona must never add a rectangular occluder.
-        if (length((in.uv * 2.0 - vec2<f32>(1.0)) * PORTAL_SURFACE_SCALE) > 1.0) { discard; }
+        if (length((uv * 2.0 - vec2<f32>(1.0)) * PORTAL_SURFACE_SCALE) > 1.0) { discard; }
         return;
     }
-    portal_clip(rec, in.world_pos);
-    if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < DEPTH_CONTACT_ALPHA) {
+    portal_clip(rec, world_pos);
+    if (sample_tex(rec.tex.x, uv).a * rec.base_color.a < DEPTH_CONTACT_ALPHA) {
         discard;
     }
 }
 
 @fragment
 fn fs_depth_contact(in: VsOut) {
-    depth_contact(in);
+    depth_contact(in.record, in.uv, in.world_pos);
 }
 
 // fs_depth_contact with the normal, into the occlusion's depth.
 @fragment
-fn fs_depth_contact_normal(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    depth_contact(in);
-    return depth_normal(in.normal, front);
+fn fs_depth_contact_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    depth_contact(in.record, in.uv, in.world_pos);
+    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev);
 }
 
 // Depth of the rigged blended faces nearly opaque, before any of their

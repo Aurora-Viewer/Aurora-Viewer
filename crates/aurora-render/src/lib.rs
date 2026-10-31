@@ -29,6 +29,7 @@ mod label_depth;
 pub mod light_tiles;
 pub mod looks;
 pub mod main_thread;
+mod motion_debug;
 mod motion_history;
 mod occlusion;
 mod packet;
@@ -982,6 +983,8 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
         assert_eq!(prepass, scene);
         // the prepass that draws GTAO's mesh normals as well (#993)
         assert_eq!(position_steps(src, "vs_depth_normal"), scene);
+        // and its masked, portal-clipped and contact faces
+        assert_eq!(position_steps(src, "vs_depth_mask_normal"), scene);
     }
 
     /// Equal operations give equal depths only if the compiler may not
@@ -994,6 +997,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
         for (src, name) in [
             (object, "DepthOut"),
             (object, "DepthNormalOut"),
+            (object, "DepthMaskOut"),
             (object, "VsOut"),
             (env, "TerrainOut"),
             (env, "TerrainPbrOut"),
