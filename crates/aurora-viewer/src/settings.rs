@@ -1332,7 +1332,7 @@ pub(crate) const TONEMAP_MIX: f32 = 0.7;
 /// an S32 of seconds).
 pub(crate) const GROUP_SNOOZE_MAX_MINUTES: u32 = i32::MAX as u32 / 60;
 
-const SETTINGS_VERSION: u32 = 29;
+const SETTINGS_VERSION: u32 = 30;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -2448,6 +2448,12 @@ impl Settings {
             // new default: no simulator version notice (every earlier file
             // wrote the former default, on)
             self.sim_version_alert = false;
+        }
+        if self.settings_version < 30 {
+            // LimitSelectDistance is on again, like the Legacy Viewer: off,
+            // a rectangle drawn from a skybox took the ground's objects far
+            // below. Every earlier file wrote the former default, off
+            self.build.limit_select_distance = true;
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -3888,6 +3894,22 @@ mod tests {
             ..Settings::default()
         };
         assert!(on.sanitized().sim_version_alert);
+    }
+
+    #[test]
+    fn the_select_distance_limit_is_on_by_default_and_for_earlier_files() {
+        assert!(Settings::default().sanitized().build.limit_select_distance);
+        // a file that wrote the former default, off
+        let mut old = Settings {
+            settings_version: 29,
+            ..Settings::default()
+        };
+        old.build.limit_select_distance = false;
+        assert!(old.sanitized().build.limit_select_distance);
+        // switched off after the migration: kept
+        let mut off = Settings::default();
+        off.build.limit_select_distance = false;
+        assert!(!off.sanitized().build.limit_select_distance);
     }
 
     #[test]

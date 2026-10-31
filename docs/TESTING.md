@@ -430,7 +430,9 @@ tile is drawn with a guard band of 128 pixels on the sides it shares with
 another, its edges on multiples of 64, then cropped, so a forced side gives
 more tiles than the photo divided by it: 15 tiles of 640 x 600 for
 3200 x 1800 with `AURORA_DEMO_SNAPSHOT_TILE=1024`. The bloom widens the band
-to 346 pixels and the depth of field to its largest blur and 66 pixels, at
+to 346 pixels, the depth of field to its largest blur and 66 pixels, and the
+contact shadows to their rays and 3 pixels (60 pixels times the photo's
+height over the viewfinder's, at most 480), at
 most a quarter of the forced side: with `AURORA_BLOOM=1`, compare a
 7680 x 4320 photo in one pass with the same in 6 tiles
 (`AURORA_DEMO_SNAPSHOT_TILE=4096`). The glow keeps its halo in every tile
