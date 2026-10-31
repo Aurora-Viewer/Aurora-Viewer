@@ -1223,14 +1223,15 @@ when unfocused") is ignored during a screenshot.
   with the Legacy aim (the hover and free-look timeouts of the attention
   table, as in the Legacy Viewer).
 - **`AURORA_DEMO_KEYBOARD=system|wasd|zqsd|qwertz|fallback`**: fresh default
-  values of the movement keys and of the letter shortcuts with the Windows
-  layout, a simulated US QWERTY / French AZERTY / German QWERTZ, or a failed
-  detection (US QWERTY places); combine with `AURORA_DEMO_OPTIONS=8` to
-  examine the shortcuts. With `zqsd`, Mouselook shows M, World map Ctrl+M
-  and Snapshot to disk Ctrl+Ù (the AZERTY keys they are bound to); with
-  `qwertz`, Snapshot to disk shows Ctrl+Ö. Saved bindings keep their keys,
-  except the one-time move of the former US QWERTY defaults (settings
-  version 12).
+  values of the movement keys and of the letter shortcuts with the system's
+  layout (Windows, or the XKB keymap of the Wayland compositor or the X
+  server on Linux), a simulated US QWERTY / French AZERTY / German QWERTZ,
+  or a failed detection (US QWERTY places); combine with
+  `AURORA_DEMO_OPTIONS=8` to examine the shortcuts. With `zqsd`, Mouselook
+  shows M, World map Ctrl+M and Snapshot to disk Ctrl+Ù (the AZERTY keys
+  they are bound to); with `qwertz`, Snapshot to disk shows Ctrl+Ö. Saved
+  bindings keep their keys, except the one-time move of the former US QWERTY
+  defaults (settings version 12).
 - **`AURORA_DEMO_CHATCMD="calc 2+2;rolld 2 20"`**: lines typed in the chat
   bar at frame 240, separated by `;` (chat bar commands: `calc`, `rolld`,
   `gtp`…).

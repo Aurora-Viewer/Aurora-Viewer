@@ -283,6 +283,7 @@ const GROUPS: &[(&str, RowId)] = &[
     ("aurora-web-profile", RowId::Services),
     ("aurora-cache", RowId::CacheUpkeep),
     ("aurora-web-cache", RowId::CacheUpkeep),
+    ("aurora-web-misplaced", RowId::CacheUpkeep),
     ("aurora-monitor", RowId::UiMonitor),
     ("aurora-probe", RowId::UiMonitor),
     ("aurora-fonts", RowId::Interface),
