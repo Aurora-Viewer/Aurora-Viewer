@@ -1254,7 +1254,10 @@ impl App {
         self.photo_free_camera();
         if let Some(t) = self.snapshots.detail_wait {
             let pending = self.scene.textures.pending_in_view();
-            if pending == 0 || t.elapsed() >= snapshot::quality::DETAIL_WAIT || self.settings.photo_held.is_none() {
+            let off = self.settings.photo_held.is_none();
+            // (no time limit for the pipelines: without them the photo
+            // would not have the quality's MSAA)
+            if off || ((pending == 0 || t.elapsed() >= snapshot::quality::DETAIL_WAIT) && renderer.settings_applied()) {
                 log::info!(
                     "photo quality: details loaded in {} ms ({pending} textures left)",
                     t.elapsed().as_millis()
@@ -1442,13 +1445,18 @@ impl App {
                 self.snapshots.quiet = false;
                 // the photo quality waits for the textures in view to load
                 // at full resolution (photo_update takes it then, or after
-                // quality::DETAIL_WAIT)
+                // quality::DETAIL_WAIT), and for its MSAA, whose pipelines
+                // compile on a worker (#1746)
                 if self.settings.photo_held.is_some()
                     && !std::mem::take(&mut self.snapshots.detail_ready)
-                    && self.scene.textures.pending_in_view() > 0
+                    && (self.scene.textures.pending_in_view() > 0 || !renderer.settings_applied())
                 {
                     if self.snapshots.detail_wait.is_none() && !self.photo_busy() {
-                        log::info!("photo quality: waiting for {} textures", self.scene.textures.pending_in_view());
+                        log::info!(
+                            "photo quality: waiting for {} textures{}",
+                            self.scene.textures.pending_in_view(),
+                            if renderer.settings_applied() { "" } else { " and the pipelines" }
+                        );
                         self.snapshots.detail_wait = Some(Instant::now());
                     }
                     return;
