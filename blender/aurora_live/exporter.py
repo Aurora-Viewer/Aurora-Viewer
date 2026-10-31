@@ -137,6 +137,31 @@ def _column_major(matrix):
     return [float(matrix[row][column]) for column in range(4) for row in range(4)]
 
 
+def bind_rotation(armature, bone, bone_transform):
+    """Rotation of the joint in Avastar's bind pose, or identity.
+
+    Avastar rigs can bind meshes in a rest pose that is not SL's T-pose (body
+    dev kits lower the arms into an A-pose). Each rotated bone keeps that pose
+    in `bind_mat` (SL axes, column-major); its DAE export un-rotates vertices
+    by it, so LiveMesh must too (#1455). A bone without one keeps its nearest
+    ancestor's. Bind data whose origin is no longer the bone head (rest pose
+    edited since, other coordinate convention) is ignored.
+    """
+    if not armature.get("has_bind_data"):
+        return Matrix.Identity(4)
+    while bone is not None and "bind_mat" not in bone.keys():
+        bone = bone.parent
+    if bone is None:
+        return Matrix.Identity(4)
+    values = [float(value) for value in bone["bind_mat"]]
+    if len(values) != 16 or not all(math.isfinite(value) for value in values):
+        return Matrix.Identity(4)
+    bind = Matrix([values[i:i + 4] for i in range(0, 16, 4)]).transposed()
+    if (bind.translation - bone_transform @ bone.head_local).length > 0.001:
+        return Matrix.Identity(4)
+    return bind.to_quaternion().to_matrix().to_4x4()
+
+
 def armature_for(source):
     # A prop parented to a bone is rigid. find_armature() alone also returns
     # that parent even though no armature modifier deforms the mesh.
@@ -288,7 +313,8 @@ def _mesh(source, supported, forward, rest_axes, capture, include_slots=False, p
                 # Aurora applies the wearer's current shape and animation.
                 inverse_bind.append(_column_major(shaped @ Matrix.Translation(Vector(reference) - heads[name])))
             else:
-                inverse_bind.append(_column_major(axes @ Matrix.Translation(-heads[name])))
+                rotation = bind_rotation(armature, source_bone, bone_transform)
+                inverse_bind.append(_column_major(axes @ rotation.transposed() @ Matrix.Translation(-heads[name])))
         positions = np.empty(len(captured.vertices) * 3, dtype=np.float32)
         captured.vertices.foreach_get("co", positions)
         positions = np.einsum("ij,kj->ki", np.array(transform.to_3x3()), positions.reshape((-1, 3))) + np.array(transform.translation)

@@ -170,6 +170,14 @@ coordinates for an Avastar rig, choose **Automatic (Avastar / SL)** and click
 **Update now**. Existing scenes and skeletons are never rotated automatically.
 See [Avastar's coordinate conventions](https://avalab.org/avastar/300/reference/usermanual/advanced/foreign-rigs/).
 
+Some Avastar rigs, body dev kits in particular, bind their meshes in a rest
+pose other than SL's T-pose (arms lowered into an A-pose). Avastar keeps that
+bind pose on the rig, and LiveMesh and **Import / LOD** undo it the way
+Avastar's own Collada export does, so accessories rigged to the kit sit where
+they do after a normal upload. A bone without its own bind data follows its
+parent's. If the rest pose was edited after binding, the stale bind data is
+ignored and the bones' rest positions are used as they are.
+
 **Automatic updates** sends changed geometry, weights, UVs, materials and list
 membership at most once per configured interval (**0.1–3,600 seconds**). Idle
 scenes send no repeated snapshots, including unchanged texture-paint content.

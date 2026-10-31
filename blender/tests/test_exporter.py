@@ -448,6 +448,42 @@ class ExporterTests(unittest.TestCase):
         self.assertEqual(inverse[:4], [0.5,0,0,0])
         self.assertEqual(inverse[12:], [0,0,-2,1])
 
+    def test_avastar_bind_pose_rotation_is_undone_like_its_dae_export(self):
+        # Body dev kits bind the arms in an A-pose; Avastar keeps it in bind_mat (#1455).
+        from mathutils import Matrix
+        bpy.context.view_layer.objects.active = self.rig
+        bpy.ops.object.mode_set(mode="EDIT")
+        self.rig.data.edit_bones["mChest"].parent = self.rig.data.edit_bones["mPelvis"]
+        bpy.ops.object.mode_set(mode="OBJECT")
+        self.mesh.vertex_groups.new(name="mChest").add([1], 1.0, "REPLACE")
+        self.mesh.vertex_groups["mPelvis"].remove([1])
+        rotation = Matrix.Rotation(0.7853981633974483, 4, "X")
+        bind = Matrix.Translation((0, 0, 1)) @ rotation
+        pelvis = self.rig.data.bones["mPelvis"]
+        pelvis["bind_mat"] = [bind[row][column] for column in range(4) for row in range(4)]
+
+        def inverses():
+            value = exporter.snapshot([self.mesh], {"mPelvis", "mChest"}, 1)["meshes"][0]
+            return {name: Matrix([m[i:i + 4] for i in range(0, 16, 4)]).transposed()
+                    for name, m in zip(value["joints"], value["inverse_bind"])}
+
+        def assert_matrix(actual, expected):
+            for row in range(4):
+                for column in range(4):
+                    self.assertAlmostEqual(actual[row][column], expected[row][column], places=5)
+
+        self.rig["has_bind_data"] = False
+        assert_matrix(inverses()["mPelvis"], Matrix.Translation((0, 0, -1)))
+        self.rig["has_bind_data"] = True
+        binds = inverses()
+        assert_matrix(binds["mPelvis"], rotation.transposed() @ Matrix.Translation((0, 0, -1)))
+        # A bone without bind data keeps its parent's bind rotation.
+        assert_matrix(binds["mChest"], rotation.transposed() @ Matrix.Translation((-0.2, 0, -1)))
+        # Stale bind data (rest pose edited since) is ignored.
+        stale = Matrix.Translation((0, 0, 1.5)) @ rotation
+        pelvis["bind_mat"] = [stale[row][column] for column in range(4) for row in range(4)]
+        assert_matrix(inverses()["mPelvis"], Matrix.Translation((0, 0, -1)))
+
     def test_live_handler_captures_edits_and_deletions_without_export_loop(self):
         captures = []
         aurora_live._client = SimpleNamespace(state=lambda: ("Connected", {"mPelvis"}), rest_axes=lambda: {}, take_shape=lambda ready=True, pose=False: None, take_import=lambda ready=True: None,
