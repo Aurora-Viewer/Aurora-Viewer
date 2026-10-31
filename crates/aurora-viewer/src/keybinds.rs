@@ -332,6 +332,8 @@ pub enum Action {
     WorldMap,
     /// World › Teleport history (Firestorm Alt+H).
     TeleportHistory,
+    /// World › Teleport Home (the Legacy Viewer's Ctrl+Shift+H).
+    TeleportHome,
     /// World › Region / Estate (Firestorm's "Region Details", Alt+R).
     RegionEstate,
     /// The compact texture/material library (Ctrl+Space).
@@ -497,6 +499,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Minimap, aurora_i18n::tr!("common-mini-map")),
                     (Action::WorldMap, aurora_i18n::tr!("common-world-map")),
                     (Action::TeleportHistory, aurora_i18n::tr!("common-teleport-history")),
+                    (Action::TeleportHome, aurora_i18n::tr!("keybinds-teleport-home")),
                     (Action::RegionEstate, aurora_i18n::tr!("region-title")),
                     (Action::Search, aurora_i18n::tr!("search-title")),
                     (Action::Performance, aurora_i18n::tr!("common-performance")),
@@ -702,6 +705,8 @@ impl KeyBindings {
             (Action::Gestures, [kmod(K::KeyG, true, false), None]),
             (Action::Minimap, [kmod(K::KeyM, true, true), None]),
             (Action::WorldMap, [kmod(K::KeyM, true, false), None]),
+            // World.TeleportHome, shortcut="control|shift|H" (menu_viewer.xml)
+            (Action::TeleportHome, [kmod(K::KeyH, true, true), None]),
             (
                 Action::TeleportHistory,
                 [
@@ -1741,6 +1746,7 @@ mod tests {
             (Action::IkEdit, (true, false, false), [K::KeyK; 4]),
             (Action::Gestures, (true, false, false), [K::KeyG; 4]),
             (Action::TeleportHistory, (false, false, true), [K::KeyH; 4]),
+            (Action::TeleportHome, (true, true, false), [K::KeyH; 4]),
             (Action::Search, (true, false, false), [K::KeyF; 4]),
             (Action::Performance, (true, true, false), [K::Digit1; 4]),
             (Action::Preferences, (true, false, false), [K::KeyP; 4]),
