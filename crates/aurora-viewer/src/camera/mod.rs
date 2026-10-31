@@ -11,6 +11,7 @@
 //! held on the avatar); Firestorm turns the agent frame instead. Moving or
 //! Escape folds it back the way resetView does for an alt-orbited camera.
 
+mod arrival;
 pub mod demo;
 mod focus;
 pub(crate) mod follow;
@@ -1468,7 +1469,7 @@ impl Camera {
         self.draw_distance = f.draw_distance;
         self.unconstrained = s.disable_constraints;
         self.own = world.agent_id;
-        self.avatar = avatar_frame(world, s, f.now);
+        self.avatar = avatar_frame(world, s, f.now, self.mouselook() || world.scripted_camera.active().is_some());
         self.sync_seat(&mut world.agent, s);
         if let Some(flycam) = self.flycam {
             self.position = flycam.position;
@@ -1497,7 +1498,7 @@ impl Camera {
                     // never smooth a follow simulation from the old region.
                     let eye = self
                         .sit_camera_point(world, f.now, true)
-                        .unwrap_or_else(|| self.third_person_camera(&world.agent, s, f));
+                        .unwrap_or_else(|| self.third_person_camera(world, s, f));
                     let at = self
                         .sit_camera_point(world, f.now, false)
                         .unwrap_or(self.avatar.position + self.frame_rotation(&world.agent) * s.focus_offset());
@@ -1522,7 +1523,7 @@ impl Camera {
 
         let mut camera_target = self.calc_camera_target(world, s, f);
         self.virtual_position = camera_target;
-        let focus_target = self.calc_focus_target(world, s, f.now, camera_target);
+        let focus_target = self.calc_focus_target(world, s, f, camera_target);
         // field of view correction: the camera backs off, the view narrows
         // An edited object's growing extents must not move a frozen camera.
         if f.edit_tracking != Some(false) || offset_changed {
@@ -1717,7 +1718,7 @@ impl Camera {
             CameraMode::Follow if self.focus_on_avatar => self.follow.eye,
             CameraMode::ThirdPerson if self.focus_on_avatar => match self.sit_camera_point(world, f.now, true) {
                 Some(p) => p,
-                None => self.third_person_camera(agent, s, f),
+                None => self.third_person_camera(world, s, f),
             },
             CameraMode::ThirdPerson | CameraMode::Follow => self.focus_target + self.focus_offset,
         };
@@ -1745,13 +1746,19 @@ impl Camera {
     /// Behind the avatar: the camera offset, kept in front of the plane the
     /// simulator found between the head and the camera, lagging behind in
     /// the air.
-    fn third_person_camera(&mut self, agent: &AgentState, s: &CameraSettings, f: &FrameInput) -> Vec3 {
+    fn third_person_camera(&mut self, world: &World, s: &CameraSettings, f: &FrameInput) -> Vec3 {
+        let agent = &world.agent;
         let dt = self.dt;
         let frame = self.frame_rotation(agent);
         // mThirdPersonHeadOffset: none when seated
         let head_offset = if self.avatar.seat.is_some() { Vec3::ZERO } else { Vec3::Z };
-        let base = self.avatar.root + head_offset;
-        let offset = frame * (s.camera_offset() * self.zoom_fraction * s.offset_scale);
+        let mut base = self.avatar.root + head_offset;
+        let mut offset = frame * (s.camera_offset() * self.zoom_fraction * s.offset_scale);
+        let reveal = self.arrival_framing(world, s, f);
+        if let Some(view) = &reveal {
+            base = base.lerp(view.focus, view.weight);
+            offset = offset.lerp(view.offset, view.weight);
+        }
         let dir = offset.normalize_or_zero();
         let mut distance = offset.length();
         if !s.disable_constraints && self.collide_plane != Vec4::ZERO && self.avatar.seat.is_none() {
@@ -1802,13 +1809,27 @@ impl Camera {
         } else {
             self.lag = self.lag.lerp_monotonic(Vec3::ZERO, interpolant(0.15, dt));
         }
-        camera - self.lag
+        camera - self.lag * reveal.map_or(1.0, |view| 1.0 - view.weight)
+    }
+
+    fn arrival_framing(&self, world: &World, s: &CameraSettings, f: &FrameInput) -> Option<arrival::Framing> {
+        if !self.third_person() || !self.focus_on_avatar || self.avatar.seat.is_some() {
+            return None;
+        }
+        arrival::framing(
+            world,
+            self.avatar.root,
+            self.frame_rotation(&world.agent) * Vec3::X,
+            f.now,
+            self.zoomed_fov(s, f.aspect),
+            f.aspect,
+        )
     }
 
     /// LLAgentCamera::calcFocusPositionTargetGlobal.
-    fn calc_focus_target(&self, world: &World, s: &CameraSettings, now: Instant, camera_target: Vec3) -> Vec3 {
+    fn calc_focus_target(&self, world: &World, s: &CameraSettings, f: &FrameInput, camera_target: Vec3) -> Vec3 {
         let agent = &world.agent;
-        match self.mode {
+        let focus = match self.mode {
             CameraMode::Follow if self.focus_on_avatar => self.follow.at,
             CameraMode::Mouselook => {
                 let (y, p) = (agent.yaw, agent.pitch);
@@ -1817,11 +1838,13 @@ impl Camera {
                 camera_target + Vec3::new(y.cos() * p.cos(), y.sin() * p.cos(), p.sin())
             }
             CameraMode::ThirdPerson | CameraMode::Follow if !self.focus_on_avatar => self.focus_target,
-            CameraMode::ThirdPerson | CameraMode::Follow => match self.sit_camera_point(world, now, false) {
+            CameraMode::ThirdPerson | CameraMode::Follow => match self.sit_camera_point(world, f.now, false) {
                 Some(p) => p,
                 None => self.avatar.position + self.frame_rotation(agent) * s.focus_offset(),
             },
-        }
+        };
+        self.arrival_framing(world, s, f)
+            .map_or(focus, |view| focus.lerp(view.focus, view.weight))
     }
 
     /// LLAgentCamera::calcCameraFOVZoomFactor: closer to an object than its
@@ -1926,15 +1949,16 @@ impl Camera {
 const HEAD_HEIGHT: f32 = 0.7;
 
 /// Our avatar's root, position and seat this frame.
-fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame {
+fn avatar_frame(world: &World, s: &CameraSettings, now: Instant, track_arrival: bool) -> AvatarFrame {
     let agent = &world.agent;
-    let arriving = agent.position + Vec3::Z * world.portals.arrival_offset(world.agent_id, agent.position, now);
+    let drop = world.portals.arrival_offset(world.agent_id, agent.position, now);
+    let arriving = agent.position + Vec3::Z * if track_arrival { drop } else { 0.0 };
     let fallback = AvatarFrame {
         root: arriving,
         position: arriving,
         follow_root: arriving,
         rotation: None,
-        render_root: arriving,
+        render_root: agent.position + Vec3::Z * drop,
         render_rotation: Quat::from_rotation_z(agent.yaw),
         seat: None,
     };
@@ -1958,14 +1982,16 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
     let shape = world.avatar_shape_dz.get(&id).copied().unwrap_or(0.0);
     let hover = if s.hover_affects_camera { world.appearance_hover(&id) } else { 0.0 };
     let axis = if seat.is_some() { rotation * Vec3::Z } else { Vec3::Z };
-    let position = position + Vec3::Z * (world.water_visual_dz(&id) + world.portals.arrival_offset(id, position, now));
+    let drop = world.portals.arrival_offset(id, position, now);
+    let physical = position + Vec3::Z * world.water_visual_dz(&id);
+    let position = physical + Vec3::Z * if track_arrival { drop } else { 0.0 };
     let root = position + axis * (shape + hover);
     AvatarFrame {
         root,
         position,
         follow_root: root,
         rotation: seat.map(|_| rotation),
-        render_root: position + axis * (shape + world.appearance_hover(&id)),
+        render_root: physical + Vec3::Z * drop + axis * (shape + world.appearance_hover(&id)),
         render_rotation: rotation,
         seat,
     }
@@ -2069,11 +2095,11 @@ mod tests {
         world.movement_complete = true;
         let now = Instant::now();
         let settings = CameraSettings::default();
-        let before = avatar_frame(&world, &settings, now);
+        let before = avatar_frame(&world, &settings, now, false);
         for i in 0..60 {
             world.water_float.update(1, world.agent.position, i as f32 / 60.0, 0.2, false);
         }
-        let after = avatar_frame(&world, &settings, now);
+        let after = avatar_frame(&world, &settings, now, false);
         let shift = Vec3::Z * world.water_float.offset();
         assert!(after.root.abs_diff_eq(before.root + shift, 1e-5));
         assert!(after.position.abs_diff_eq(before.position + shift, 1e-5));
@@ -2148,15 +2174,15 @@ mod tests {
             let mut world = hover_world(seated);
             let now = Instant::now();
             let mut settings = CameraSettings::default();
-            let baseline = avatar_frame(&world, &settings, now);
+            let baseline = avatar_frame(&world, &settings, now, false);
             let agent = world.agent.position;
             let axis = baseline.rotation.map_or(Vec3::Z, |r| r * Vec3::Z);
             for height in [-3.0, -0.25, 0.4, 3.0, 0.0] {
                 world.hover_height.preview(height);
-                let fixed = avatar_frame(&world, &settings, now);
+                let fixed = avatar_frame(&world, &settings, now, false);
                 assert_eq!(fixed.root, baseline.root);
                 settings.hover_affects_camera = true;
-                let following = avatar_frame(&world, &settings, now);
+                let following = avatar_frame(&world, &settings, now, false);
                 assert!(following.root.abs_diff_eq(baseline.root + axis * height, 1e-5));
                 assert_eq!(following.follow_root, following.root);
                 assert_eq!(following.position, baseline.position);
@@ -2633,7 +2659,7 @@ mod tests {
     }
 
     #[test]
-    fn arrival_framing_follows_the_fall_without_moving_the_simulator_position() {
+    fn arrival_framing_separates_the_grounded_camera_from_the_falling_rendered_body() {
         let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
         world.agent_id = Uuid::from_u128(1);
         world.main_region = Some(256);
@@ -2644,9 +2670,12 @@ mod tests {
         assert!(portals.begin_arrival(physical, physical.z - 0.84, 1.8, now));
         world.portals = portals;
         let settings = CameraSettings::default();
-        let first = avatar_frame(&world, &settings, now);
-        assert!(first.root.z > physical.z + 2.0);
-        let last = avatar_frame(&world, &settings, now + std::time::Duration::from_secs(3));
+        let first = avatar_frame(&world, &settings, now, false);
+        assert_eq!(first.root, physical);
+        assert!(first.render_root.z > physical.z + 2.0);
+        let eyes = avatar_frame(&world, &settings, now, true);
+        assert_eq!(eyes.root, first.render_root);
+        let last = avatar_frame(&world, &settings, now + std::time::Duration::from_secs(3), false);
         assert_eq!(last.root, physical);
         assert_eq!(world.agent.position, physical);
         assert!(world.portals.entries.is_empty());
@@ -2805,7 +2834,7 @@ mod tests {
         camera.change_to_mouselook(&mut world.agent, &settings, false);
         let mut input = frame(1.0 / 60.0);
         input.eye_offset = Some(Vec3::new(0.15, 0.0, 0.3));
-        let at = avatar_frame(&world, &settings, input.now).position;
+        let at = avatar_frame(&world, &settings, input.now, true).position;
         let floor = at.z + 2.0;
         world
             .regions

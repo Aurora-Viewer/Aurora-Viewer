@@ -88,7 +88,9 @@ impl App {
         if !mode.starts_with("arrival-") {
             return false;
         }
-        let point = self.world.agent.position + self.world.agent.forward() * 4.0;
+        let own = mode.starts_with("arrival-own");
+        let actor = if own { self.world.agent_id } else { crate::demo::poser::PEER };
+        let point = self.world.agent.position + self.world.agent.forward() * if own { 0.0 } else { 4.0 };
         let terrain = self.world.ground_height(point).unwrap_or(point.z - 0.84);
         let handle = self.world.main_region.unwrap_or(256);
         if mode == "arrival-platform" && self.frame_count == 420 {
@@ -116,10 +118,16 @@ impl App {
             self.panels.people = false;
             self.panels.inventory = false;
             self.panels.appearance = false;
-            self.settings.reduce_motion = mode == "arrival-static";
+            self.settings.reduce_motion = mode.ends_with("static");
             self.world.portals.reduced_motion = self.settings.reduce_motion;
             let floor = self.scene.preview_floor(&self.world, point, terrain + 4.0).unwrap_or(terrain);
             let mut peer = crate::demo::poser::peer();
+            if own {
+                peer.full_id = actor;
+                if let Some(object) = self.world.objects.index_of_uuid(&actor).and_then(|i| self.world.objects.get(i)) {
+                    peer.local_id = object.key.local_id;
+                }
+            }
             peer.position = point.with_z(floor + if mode == "arrival-sky" { 3.01 } else { 0.84 });
             peer.velocity = Vec3::ZERO;
             peer.acceleration = Vec3::ZERO;
@@ -163,24 +171,32 @@ impl App {
                 handle,
                 objects: vec![worn],
             });
-            let event = aurora_net::bridge::portal::Arrival {
-                id: uuid::Uuid::new_v4(),
-                region: handle,
-                position: root.to_array(),
-                floor,
-                height,
-                starts: crate::world::portals::arrival::unix_millis() + 250,
+            let mut state = std::mem::take(&mut self.world.portals);
+            let opened = if own {
+                state.begin_arrival(root, floor, height, Instant::now())
+            } else {
+                let event = aurora_net::bridge::portal::Arrival {
+                    id: uuid::Uuid::new_v4(),
+                    region: handle,
+                    position: root.to_array(),
+                    floor,
+                    height,
+                    starts: crate::world::portals::arrival::unix_millis() + 250,
+                };
+                let opened = event.valid();
+                if let Some(wire) = aurora_net::bridge::portal::Message::Arrival(event).encode() {
+                    state.receive(
+                        &self.world,
+                        &format!("<auroraPortal>{id}|{wire}</auroraPortal>"),
+                        Instant::now(),
+                        unix_time(),
+                    );
+                }
+                opened
             };
-            let opened = event.valid();
-            if let Some(wire) = aurora_net::bridge::portal::Message::Arrival(event).encode() {
-                let mut state = std::mem::take(&mut self.world.portals);
-                state.receive(
-                    &self.world,
-                    &format!("<auroraPortal>{id}|{wire}</auroraPortal>"),
-                    Instant::now(),
-                    unix_time(),
-                );
-                self.world.portals = state;
+            self.world.portals = state;
+            if own {
+                self.camera.on_portal_arrival(&self.world.agent, &self.settings.camera);
             }
             log::info!("portal arrival demo: mode {mode}, opened {opened}, floor {floor}, terrain {terrain}, root {root:?}");
         }
@@ -188,22 +204,39 @@ impl App {
             let root = self
                 .world
                 .objects
-                .index_of_uuid(&crate::demo::poser::PEER)
+                .index_of_uuid(&actor)
                 .and_then(|i| self.world.objects.get(i))
                 .map_or(point, |o| o.position);
-            self.camera.set_view(
-                root + Vec3::new(-4.0, -5.0, 3.0),
-                root + Vec3::Z * 1.1,
-                &mut self.world.agent,
-                &self.settings.camera,
-            );
+            if !own {
+                self.camera.set_view(
+                    root + Vec3::new(-4.0, -5.0, 3.0),
+                    root + Vec3::Z * 1.1,
+                    &mut self.world.agent,
+                    &self.settings.camera,
+                );
+            }
             if [700, 740, 840].contains(&self.frame_count) {
                 log::info!(
                     "portal arrival lifecycle: frame {}, effects {}, entries {}, offset {}",
                     self.frame_count,
                     self.world.portals.arrivals.len(),
                     self.world.portals.entries.len(),
-                    self.world.portals.arrival_offset(crate::demo::poser::PEER, root, Instant::now())
+                    self.world.portals.arrival_offset(actor, root, Instant::now())
+                );
+            }
+            if own && [700, 710, 720, 730, 740].contains(&self.frame_count) {
+                let below = self
+                    .world
+                    .portals
+                    .arrivals
+                    .get(&actor)
+                    .is_some_and(|effect| self.camera.position.z < effect.center().z - 0.6);
+                log::info!(
+                    "portal own reveal: frame {}, below {}, camera {:?}, root {:?}",
+                    self.frame_count,
+                    below,
+                    self.camera.position,
+                    self.world.agent.position
                 );
             }
         }

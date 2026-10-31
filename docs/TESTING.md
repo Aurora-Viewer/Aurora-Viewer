@@ -231,6 +231,16 @@ invitations throughout and zero effects at 840. `arrival-platform` adds a solid
 platform 3 m above terrain: support must come from the object, not the terrain.
 `arrival-sky` starts 3.01 m above support and must create no aperture or fall.
 `arrival-static` checks reduced motion without visual drop or input pause.
+`arrival-own` shows the same emergence on our own avatar, including skinned
+and rigid attachments, through the normal third-person camera. Capture 660,
+680, 700, 710, 720, 730, 740, 760, 780 and 840: the eye stays beneath the
+cloud, feet emerge first, then legs and torso recompose, and normal framing
+returns after closure. Repeat with a portrait window. `arrival-own-static`
+checks the traveler's reduced-motion path. Both report zero invitations and
+complete effect cleanup at 840; `portal own reveal` logs the camera's relation
+to the cloud during emergence. First-person and manually controlled cameras
+must retain their selected mode. Also repeat a real nearby teleport using
+`repeat-local-late` to verify the reveal does not disrupt repeated crossings.
 The typed arrival message contains only visible landing geometry and a finite
 clock; replay cannot restart it or select another avatar. Test with two Aurora
 viewers on the grid, including a private source and a floor made of prims.
