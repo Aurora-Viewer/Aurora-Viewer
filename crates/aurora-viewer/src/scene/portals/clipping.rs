@@ -176,6 +176,33 @@ mod tests {
     }
 
     #[test]
+    fn arrivals_restore_fragments_as_the_body_moves_out_of_the_aperture() {
+        for side in [-1.0, 1.0] {
+            let mut clipping = Clipping::default();
+            let mut counts = Vec::new();
+            for distance in [0.15, 0.3, 0.6, 1.0] {
+                let root = Vec3::X * side * distance;
+                let mut body = avatar(root, vec![(root, 1.0)]);
+                body.forward = Vec3::X * side;
+                let plane = clipping.update(&[portal()], &[body])[&7];
+                counts.push(
+                    (0..256)
+                        .filter(|&i| {
+                            visible(
+                                plane,
+                                root + Vec3::Y * ((i % 16) as f32 * 0.06) + Vec3::Z * ((i / 16) as f32 * 0.06),
+                            )
+                        })
+                        .count(),
+                );
+            }
+            assert!((1..256).contains(&counts[0]));
+            assert!(counts.windows(2).all(|pair| pair[0] <= pair[1]));
+            assert_eq!(counts[3], 256);
+        }
+    }
+
+    #[test]
     fn unrelated_avatars_outside_the_aperture_and_malformed_bounds_are_not_cut() {
         let mut clipping = Clipping::default();
         for root in [Vec3::new(0.0, 10.0, 0.0), Vec3::new(0.0, 0.0, 10.0)] {

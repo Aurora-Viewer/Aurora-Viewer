@@ -508,17 +508,25 @@ rim supplies 15 cm bounds for translucent wisps; opacity fades at the silhouette
 without solid-material lighting or Fresnel highlights. A broad noisy corona
 softens the aperture edge instead of outlining a continuous tube.
 An oblate cloud volume grows from a dark seed, then a crooked vertical fissure
-widens over 1.52 seconds. Only the opening clock runs at 2.5x speed; ordinary
+widens from 0.56 to 0.88 seconds after creation; the cloud settles by 1.04 seconds.
+The initial swelling and vertical stretch retain their timing. Only the opening clock runs at 2.5x speed; ordinary
 turbulence and reversible body dissolution retain their own progress.
 GPU deformation and spatial noise keep the rim and
-vortex turbulent after opening. Eight ray samples integrate a shared 3D density
-field inside the cloud bounds, with soft extinction and a view-aligned tear mask.
+vortex turbulent after opening. Twelve ray samples integrate dark mist and
+emissive eddies in the cloud volume. Warped depth centers place soft energy
+in front of and behind the aperture, without lighting a solid tube. Only the
+  dark mist follows the projected tear mask; luminous curls retain their real depth.
+  When an aperture intersects the segment from the follow camera to its avatar,
+  its core yields in color, glow and contact depth; mist/rim energy stays visible.
+  Free cameras and observers keep the full surface.
 Deformation is confined to blended portal outputs: opaque geometry retains its
 common prepass placement and shadow vertices acquire no frame-clock bindings.
 A renderer-clock origin and a stable phase seed
 are retained per creator/portal/region identity; record reorder, announcements
 and frame updates cannot restart the opening. Closed identities release their clocks.
 Reduced motion immediately shows the settled tear with frozen turbulence.
+Paired endpoint announcements start settled while their turbulence still animates,
+so endpoint creation never conceals the arriving mesh's emergence.
 Four receding core layers shift with viewing direction to give the vortex depth.
 Only the currently revealed physical aperture writes contact depth; the decorative cloud,
 rim and corona cannot enlarge it. No texture or
@@ -545,7 +553,7 @@ the actual region/session change. Traversal is disarmed during the transition;
 the arrival segment cannot trigger a portal. This lets the creator's still-local
 bridge finish authenticating visitors while departure is in progress.
 Locally created portals and personal returns use a 1 m clearance without startup suppression; other observers retain the initial 3.5 m anti-drop guard and 600 ms appearance delay.
-`app/portals.rs::Journey` carries a single, expiring return intent across the ordinary teleport boundary. Only AgentMovementComplete enables publication; failure, logout, expiry and a different arrival region discard it. Portals request arrival facing away from the return aperture four metres behind the avatar, so held forward movement cannot bounce the traveler back. The return derives a paired UUID from the source (reversing twice restores it), preserving the creator and expiry. Each regional entry merges bounded authenticated relay identities, preserving its first geometry and crossing gate; discovery includes locally shared returns. A traveler retains a local return grant. Friends grants require the original creator to be present; a relay never substitutes its own friends. Group relays verify a fresh complete server roster. Restricted announcements remain redacted.
+`app/portals.rs::Journey` carries a single, expiring return intent across the ordinary teleport boundary. It is installed after policy checks and the ordinary teleport reset, before dispatch, so even an immediate local AgentMovementComplete can confirm it. Only AgentMovementComplete enables publication; failure, logout, expiry and a different arrival region discard it. The return aperture is placed 15 cm behind the actual landed root, including simulator-adjusted height, so the body and worn geometry emerge through the ordinary reversible band. Arrivals face outward; the unarmed clearance gate prevents held input or landing corrections from bouncing them back. Returning to the source also targets its contact band. The first shared aperture retains its geometry for later travelers. The return derives a paired UUID from the source (reversing twice restores it), preserving the creator and expiry. Each regional entry merges bounded authenticated relay identities, preserving its first geometry and crossing gate; discovery includes locally shared returns. A traveler retains a local return grant. Friends grants require the original creator to be present; a relay never substitutes its own friends. Group relays verify a fresh complete server roster. Restricted announcements remain redacted.
 HTTP-in renewal within the same region preserves invitations and clearance gates.
 The query endpoint is invalidated on region changes or a dead-URL response;
 announcement/close delivery retries the same immutable action at most twice,

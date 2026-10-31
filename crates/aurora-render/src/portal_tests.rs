@@ -148,8 +148,10 @@ fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band(
     for (elapsed, x, visible) in [
         (0, 0.0, false),
         (160, 0.0, false),
+        (560, 0.5, false),
         (720, 0.0, true),
-        (720, 0.5, false),
+        (720, 0.8, false),
+        (900, 0.8, true),
         (1040, 0.2, true),
         (1800, 0.8, true),
     ] {
@@ -160,6 +162,13 @@ fn portal_dissolution_on_gpu_matches_picking_and_depth_through_the_contact_band(
         });
         expected.push(visible);
     }
+    // A core hidden for the follow camera must not leave contact depth behind.
+    cases.push(Case {
+        clip: [0.0; 4],
+        point: [0.0; 4],
+        flags: [flags::PORTAL_EFFECT, 3, 0, 0],
+    });
+    expected.push(false);
     let width = 64;
     let height = (cases.len() as u32).div_ceil(width);
     cases.resize((width * height) as usize, cases[0]);
@@ -250,7 +259,16 @@ fn portal_surface(rec:DrawRecord,uv:vec2<f32>,p:vec3<f32>,n:vec3<f32>,aa:f32)->P
             flags: case.flags,
             base_color: [1.0; 4],
             tex: [case.flags[2], 0, 0, 0],
-            params: [0.5; 4],
+            params: [
+                0.5,
+                0.5,
+                0.5,
+                if case.flags[0] & flags::PORTAL_EFFECT != 0 {
+                    case.point[3]
+                } else {
+                    0.5
+                },
+            ],
             ..Default::default()
         })
         .map(|mut record| {

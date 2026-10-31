@@ -85,7 +85,7 @@ fn portal_time(rec: DrawRecord) -> f32 {
 }
 
 fn portal_opening_size(age: f32) -> vec2<f32> {
-    return vec2<f32>(mix(0.007, 1.0, smoothstep(1.4, 3.8, age)), smoothstep(0.65, 1.75, age));
+    return vec2<f32>(mix(0.007, 1.0, smoothstep(1.4, 2.2, age)), smoothstep(0.65, 1.75, age));
 }
 
 // A jagged vertical fissure stretches first, then pulls sideways. Its
@@ -149,35 +149,46 @@ fn portal_surface(rec: DrawRecord, uv: vec2<f32>, position: vec3<f32>, normal: v
         if (discriminant <= 0.0) { return PortalSurface(vec3<f32>(0.0), 0.0, 0.0); }
         let near = max(0.0, (-b - sqrt(discriminant)) / a);
         let far = (-b + sqrt(discriminant)) / a;
-        let step = max(0.0, far - near) / 8.0;
-        var opacity = 0.0;
-        var billow = 0.0;
-        // Integrate an actual 3D density field, with a soft extinction edge.
-        // Both camera sides see the same storm rather than a transparent shell.
-        for (var i = 0u; i < 8u; i += 1u) {
-            let sample = eye + ray * (near + (f32(i) + 0.5) * step);
-            let curl = portal_noise(sample.xy * 3.1 + vec2<f32>(time * 0.12)) * 0.4
-                + portal_noise(sample.yz * 4.7 - vec2<f32>(time * 0.09)) * 0.35
-                + portal_noise(sample.zx * 8.3 + vec2<f32>(time * 0.17, -time * 0.13)) * 0.25;
-            let edge = length(sample / size) + (curl - 0.5) * 0.24;
-            let density = (1.0 - smoothstep(0.4, 1.0, edge)) * smoothstep(0.23, 0.7, curl);
-            let weight = (1.0 - exp(-density * step * 7.0)) * (1.0 - opacity);
-            billow += weight * curl;
-            opacity += weight;
-        }
-        // Cut along the ray's intersection with the portal plane, so the
-        // fissure and its light remain aligned through the cloud's depth.
+        let step = max(0.0, far - near) / 12.0;
         var at = p;
         if (abs(ray.y) > 0.0001) { at = eye - ray * (eye.y / ray.y); }
         let q = at.xz / vec2<f32>(PORTAL_HALF_WIDTH, -PORTAL_HALF_HEIGHT);
         let opening = portal_opening(q, age, time, aa);
         let tear = abs(portal_tear_distance(q, age, time));
-        let lightning = exp(-tear * 7.0) * smoothstep(0.7, 1.2, age)
-            * (0.4 + 0.6 * pow(0.5 + 0.5 * sin(q.y * 26.0 + time * 3.0 + billow * 7.0), 4.0));
-        let color = navy * (0.05 + billow * 0.15) + indigo * (0.006 + billow * 0.018)
-            + mix(violet, teal, billow) * lightning * 0.28 * energy;
-        let alpha = opacity * (1.0 - opening) * smoothstep(0.0, 0.18, age) * mix(1.0, 0.55, smoothstep(2.8, 4.2, age));
-        return PortalSurface(color, alpha, lightning * alpha * 0.035 * energy);
+        let mist_visibility = (1.0 - opening) * mix(1.0, 0.55, smoothstep(1.9, 2.6, age));
+        let aperture = max(portal_opening_size(age), vec2<f32>(0.04));
+        let reveal = smoothstep(1.3, 2.2, age);
+        var opacity = 0.0;
+        var radiance = vec3<f32>(0.0);
+        var glow = 0.0;
+        // Cloud and luminous eddies occupy the same volume. The energy
+        // curls in front of and behind the aperture instead of lying on it.
+        for (var i = 0u; i < 12u; i += 1u) {
+            let sample = eye + ray * (near + (f32(i) + 0.5) * step);
+            let curl = portal_noise(sample.xy * 3.1 + vec2<f32>(time * 0.12)) * 0.4
+                + portal_noise(sample.yz * 4.7 - vec2<f32>(time * 0.09)) * 0.35
+                + portal_noise(sample.zx * 8.3 + vec2<f32>(time * 0.17, -time * 0.13)) * 0.25;
+            let radius = length(sample / size);
+            let edge = radius + (curl - 0.5) * 0.24;
+            let mist = (1.0 - smoothstep(0.4, 1.0, edge)) * smoothstep(0.23, 0.7, curl) * mist_visibility;
+            let ring = sample.xz / (vec2<f32>(PORTAL_HALF_WIDTH, -PORTAL_HALF_HEIGHT) * aperture);
+            let angle = atan2(ring.y, ring.x);
+            let bend = sin(angle * 3.0 - time * 0.65) * 0.22 + cos(angle * 7.0 + time * 0.4) * 0.08;
+            let radial = (length(ring) - 1.035 - sin(angle * 9.0 + time * 0.5) * 0.025) / (0.08 + curl * 0.07 + step * 0.15);
+            let depth = (sample.y - bend) / (0.16 + curl * 0.08 + step * 0.1);
+            let strands = smoothstep(0.2, 0.75, curl) * (0.35 + 0.65 * pow(0.5 + 0.5 * sin(angle * 5.0 + sample.y * 10.0 - time), 3.0));
+            let light = exp(-radial * radial - depth * depth) * strands * (1.0 - smoothstep(0.85, 1.0, radius)) * reveal * 0.75;
+            let density = mist + light;
+            let weight = (1.0 - exp(-density * step * 8.0)) * (1.0 - opacity);
+            let accent = mix(violet, teal, 0.5 + 0.5 * sin(angle * 2.0 + sample.y * 5.0 - time * 0.3));
+            let lightning = exp(-tear * 7.0) * smoothstep(0.7, 1.2, age);
+            let dark = navy * (0.05 + curl * 0.08) + indigo * 0.012 + accent * lightning * 0.12 * energy;
+            radiance += weight * (dark * mist + accent * light * 0.28 * energy) / max(density, 0.0001);
+            glow += weight * light / max(density, 0.0001) * 0.012 * energy;
+            opacity += weight;
+        }
+        let fade = smoothstep(0.0, 0.18, age);
+        return PortalSurface(radiance / max(opacity, 0.0001), opacity * fade, glow * fade);
     }
     if (uv.x >= 1.5) {
         let angle = (uv.x - 2.0) * 6.2831853;
@@ -196,6 +207,9 @@ fn portal_surface(rec: DrawRecord, uv: vec2<f32>, position: vec3<f32>, normal: v
         let color = accent * (0.08 + stream * 0.18) * energy;
         return PortalSurface(color, alpha, (0.02 + stream * 0.04) * alpha * energy);
     }
+    // The follow camera can sit behind the arrival aperture. Only its core
+    // yields to that view; observers, free cameras and volumetric edges remain.
+    if (rec.params.w < 0.5) { return PortalSurface(vec3<f32>(0.0), 0.0, 0.0); }
     let q = (uv * 2.0 - vec2<f32>(1.0)) * PORTAL_SURFACE_SCALE;
     let r = length(q);
     let angle = atan2(q.y, q.x);
@@ -244,7 +258,7 @@ fn portal_surface(rec: DrawRecord, uv: vec2<f32>, position: vec3<f32>, normal: v
     let rim_color = mix(violet, teal, 0.5 + 0.5 * sin(angle * 2.0 - time * 0.6));
     let coverage = 1.0 - smoothstep(1.0 - aa, 1.035 + cloud * 0.04 + aa, r);
     let opening = portal_opening(q, age, time, aa);
-    let edge_width = mix(0.018, 0.06, smoothstep(1.4, 3.8, age));
+    let edge_width = mix(0.018, 0.06, smoothstep(1.4, 2.2, age));
     let torn_edge = exp(-pow(portal_tear_distance(q, age, time) / edge_width, 2.0)) * smoothstep(0.7, 1.0, age);
     let cracks = pow(0.5 + 0.5 * sin(angle * 9.0 + cloud * 12.0 - time * 1.7), 40.0) * smoothstep(0.45, 0.95, r);
     let color = mix(indigo * 0.12, core, coverage)
@@ -888,7 +902,7 @@ fn depth_contact(in: VsOut) {
         // Its solid core occludes through the same opening; the decorative
         // quad corners/corona must never add a rectangular occluder.
         let q = (in.uv * 2.0 - vec2<f32>(1.0)) * PORTAL_SURFACE_SCALE;
-        if (in.uv.x >= 1.5 || length(q) > 1.0 || portal_opening(q, portal_age(rec), portal_time(rec), 0.001) < DEPTH_CONTACT_ALPHA) { discard; }
+        if (rec.params.w < 0.5 || in.uv.x >= 1.5 || length(q) > 1.0 || portal_opening(q, portal_age(rec), portal_time(rec), 0.001) < DEPTH_CONTACT_ALPHA) { discard; }
         return;
     }
     portal_clip(rec, in.world_pos);

@@ -91,6 +91,22 @@ fn object_plane(gpu: &super::ObjGpu, index: usize, planes: &HashMap<usize, Porta
     gpu.avatar(index).and_then(|owner| planes.get(&owner)).copied()
 }
 
+fn blocks_avatar(center: Vec3, normal: Vec3, eye: Vec3, avatar: Vec3) -> bool {
+    let from = eye - center;
+    let ray = avatar - eye;
+    let along = ray.dot(normal);
+    if along.abs() < 0.0001 {
+        return false;
+    }
+    let t = -from.dot(normal) / along;
+    if !(0.0..=1.0).contains(&t) {
+        return false;
+    }
+    let at = from + ray * t;
+    let tangent = Vec3::new(-normal.y, normal.x, 0.0);
+    (at.dot(tangent) / WIDTH).powi(2) + (at.z / HEIGHT).powi(2) <= 1.0
+}
+
 #[derive(Default)]
 pub struct Portals {
     pub planes: HashMap<usize, PortalClip>,
@@ -119,7 +135,7 @@ impl Portals {
         self.cmds.clear();
     }
 
-    pub fn update(&mut self, renderer: &mut Renderer, world: &World, eye: Vec3, palette: &Palette, _time: f32, animate: bool) {
+    pub fn update(&mut self, renderer: &mut Renderer, world: &World, eye: Vec3, palette: &Palette, follow_avatar: bool, animate: bool) {
         self.cmds.clear();
         self.births.retain(|&(owner, id, region), _| {
             world
@@ -139,12 +155,18 @@ impl Portals {
         for entry in world.portals.visible(world) {
             let portal = &entry.portal;
             let center = Vec3::from(portal.center);
+            // A near-plane arrival puts the follow camera behind the exit.
+            // Keep its mist/rim, but let the traveler see their body and path.
+            let normal = Vec3::new(portal.yaw.cos(), portal.yaw.sin(), 0.0);
+            let core = !(follow_avatar && blocks_avatar(center, normal, eye, world.agent.position));
             let allowed = entry.allowed(world);
             let birth = opening_birth(
                 &mut self.births,
                 (entry.owner, portal.id, portal.region),
                 renderer.anim_clock().ms(std::time::Instant::now()),
-                animate,
+                // A paired endpoint already exists logically: show the exit
+                // immediately so its opening never hides the emerging body.
+                animate && portal.creator.is_none(),
             );
             let rgba = |color: egui::Color32| color.to_srgba_unmultiplied().map(|value| value as f32 / 255.0);
             let accent = |color| rgba(if allowed { color } else { palette.muted });
@@ -155,7 +177,12 @@ impl Portals {
                 emissive: accent(palette.teal),
                 spec_color: accent(palette.indigo_light),
                 legacy: rgba(palette.navy),
-                params: [0.0, if animate { 1.0 } else { 0.0 }, if allowed { 1.0 } else { 0.35 }, 0.5],
+                params: [
+                    0.0,
+                    if animate { 1.0 } else { 0.0 },
+                    if allowed { 1.0 } else { 0.35 },
+                    if core { 1.0 } else { 0.0 },
+                ],
                 flags: [
                     flags::FULLBRIGHT | flags::ALPHA_BLEND | flags::DOUBLE_SIDED | flags::PORTAL_EFFECT,
                     0,
@@ -267,6 +294,25 @@ impl super::Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn only_an_aperture_on_the_camera_to_avatar_segment_blocks_the_follow_view() {
+        for yaw in [0.0, std::f32::consts::FRAC_PI_2, 2.3] {
+            let normal = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
+            let tangent = Vec3::new(-normal.y, normal.x, 0.0);
+            let center = Vec3::new(128.0, 90.0, 31.0);
+            for side in [-1.0, 1.0] {
+                let eye = center + normal * (side * 3.0) + Vec3::Z;
+                let avatar = center - normal * (side * 0.15);
+                assert!(blocks_avatar(center, normal, eye, avatar));
+                assert!(!blocks_avatar(center, normal, eye, center + normal * side));
+                assert!(!blocks_avatar(center, normal, eye, center + normal * (side * 4.0)));
+                assert!(!blocks_avatar(center, normal, eye + tangent * 3.0, avatar + tangent * 3.0));
+                assert!(!blocks_avatar(center, normal, eye + Vec3::Z * 3.0, avatar + Vec3::Z * 3.0));
+                assert!(!blocks_avatar(center, normal, avatar, avatar + Vec3::Z));
+            }
+        }
+    }
+
     #[test]
     fn portal_opening_survives_reordering_motion_changes_and_clock_wrap() {
         use uuid::Uuid;

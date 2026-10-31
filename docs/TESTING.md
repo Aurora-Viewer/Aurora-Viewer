@@ -143,7 +143,7 @@ ahead and its destination, owner and access label. `near` spawns it around our
 avatar: standing inside and moving across it before leaving the 1 m clearance (3.5 m for another resident’s portal)
 must never teleport. `friends` previews a denied friends-only portal from a
 non-friend. Apertures use world depth, so walls hide them and their labels.
-`AURORA_DEMO_PORTALS=return|return-private` shows a personal arrival return four metres behind the avatar, with a side view of the aperture with two additional in-memory arrival relays; all three share one aperture, including private redaction on the wire.
+`AURORA_DEMO_PORTALS=return|return-private` shows a personal return 15 cm behind the landed root, at its actual height, with two additional in-memory arrival relays; all three share one aperture, including private redaction on the wire. The paired endpoint is already open, and the arriving mesh starts within its reversible dissolution band.
 Ordinary creation accepts a same-grid place link or region coordinates; one
 portal per creator expires after two minutes. Another Aurora client needs the
 ready 1.37 bridge and scripts enabled to receive regional invitations.
@@ -174,13 +174,16 @@ inspect wire-level tests, not just labels. Old portal-v1 traffic is not accepted
 
 `AURORA_DEMO_PORTALS=rift|rift-reverse|rift-profile|rift-static` creates a portal
 at frame 660, after the loading fade, and frames it without the creation window.
-Use `AURORA_DEMO_POS=100,100`, a 60 FPS cap and captures at 665, 675, 690, 705,
-720, 750, 780 and 900. The opening completes about 1.5 seconds after spawning
-(around frame 752). A dark cloud must swell before a crooked
+Use `AURORA_DEMO_POS=100,100`, a 60 FPS cap and captures at 665, 675, 690, 700,
+705, 715, 725 and 780. Keep the initial cloud/stretch timing; the sideways
+opening must take about 0.32 seconds (0.56–0.88 seconds after spawning), with
+the cloud settled by 1.04 seconds. A dark cloud must swell before a crooked
 vertical fissure stretches and splits sideways into the vortex. Its rim must
 look diffuse and translucent, with soft wisps instead of a solid rounded tube.
 Clouds and currents remain irregular after opening. `rift-reverse` observes the other
 side; `rift-profile` shows cloud depth and rim deformation at a grazing angle.
+Emissive curls must project in front of and behind the opening from this view,
+with translucent volume rather than only a bright line on the plane.
 `rift-static` enables reduced motion: show the settled tear immediately, with
 no growth or moving turbulence. Refreshing an invitation, relaying it or
 reordering visible portals must never replay the opening. The cloud and
@@ -189,8 +192,12 @@ decorative edge must not expand the physical oval or write its contact depth.
 `AURORA_DEMO_PORTALS=private-friends-chat-allowed|private-friends-chat-denied|private-friends-keyboard-allowed|private-friends-keyboard-departing-allowed`
 holds the actual Forward arrow from frames 600 to 810 after the private peer
 exchange. Chat modes retain nearby-chat keyboard focus; keyboard mode leaves
-the scene focused. Use `AURORA_DEMO_POS=100,100` and capture frame 1100
-for the completed arrival (frame 840 can still show the teleport transition).
+the scene focused. Use `AURORA_DEMO_POS=100,100`; the offline destination is
+the same plaza, so these exercise an immediate local teleport and create the
+real paired exit. Capture frames 690, 693, 696, 700 and 710 around arrival,
+then 840 or 1100 after walking out. The portal must not mask the followed
+avatar from its own camera; its rim/mist remain, and free cameras/observers
+still see the full surface.
 The authorized visitor must teleport in both focus modes; the denied visitor
 must walk through without teleporting. Logs record focus, effective controls,
 authorization, position and return journey. A refused crossing can be retried
@@ -232,6 +239,15 @@ cloud and rim wisps must retain depth from both sides without a continuous opaqu
 tube; the layered core shifts in perspective. Verify the rim never enlarges
 the physical crossing opening or the depth-contact mask. The same band and glow
 must work with the ordinary loading rez effect enabled or disabled.
+
+`AURORA_DEMO_PORTALS=slice-exit|slice-exit-reverse|slice-exit-still` shows an
+observed traveler at a paired arrival endpoint. Capture frames 780, 795, 810,
+840, 900 and 990: body, skinned mesh and rigid attachment must restore as they
+move outward from 15 cm off the plane. The paired endpoint is already open.
+The still variant stays partly dissolved until it moves; no reveal timer may
+finish a stationary body's traversal. On the grid, verify both travelers and
+observers, redirected landing heights, a second traveler using the same aperture,
+and no immediate return teleport before leaving and deliberately walking back.
 
 `AURORA_TEST_NEUTRAL_POSE=1`: exposes "Neutral pose — local test" in
 Appearance › Hover Height, initially off. Our avatar starts with normal

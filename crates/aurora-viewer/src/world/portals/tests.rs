@@ -56,6 +56,20 @@ fn portal_can_be_entered_immediately_from_nearby_and_after_a_distant_stall() {
 }
 
 #[test]
+fn a_near_plane_arrival_does_not_bounce_before_leaving_the_return_aperture() {
+    let p = portal().announcement();
+    let now = Instant::now();
+    let mut gate = Gate::new(Vec3::from(p.center), point(-0.15), now);
+    assert!(!gate.armed);
+    // A landing correction can straddle the plane before we walk out.
+    for (i, x) in [0.1, -0.3, -1.2, -0.4].into_iter().enumerate() {
+        assert!(!gate.sample(&p, point(x), true, now + Duration::from_millis((i as u64 + 1) * 100)));
+    }
+    assert!(gate.armed);
+    assert!(gate.sample(&p, point(0.2), true, now + Duration::from_millis(500)));
+}
+
+#[test]
 fn portal_return_arrivals_share_one_aperture_and_preserve_the_observers_gate() {
     let (mut observer, mut state) = fixture();
     let now = Instant::now();

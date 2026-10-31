@@ -5497,10 +5497,10 @@ impl App {
     }
 
     fn teleport_to_location(&mut self, region: String, pos: Vec3) {
-        self.teleport_to_location_looking(region, pos, Vec3::X);
+        self.teleport_to_location_looking(region, pos, Vec3::X, None);
     }
 
-    fn teleport_to_location_looking(&mut self, region: String, pos: Vec3, look_at: Vec3) {
+    fn teleport_to_location_looking(&mut self, region: String, pos: Vec3, look_at: Vec3, journey: Option<portals::Journey>) {
         let Some(region) = self.grid_region(&region) else {
             return;
         };
@@ -5527,6 +5527,9 @@ impl App {
             return;
         }
         self.begin_teleport(format!("{} ({:.0}, {:.0}, {:.0})", region, pos.x, pos.y, pos.z), !local);
+        // Policy checks and the ordinary teleport reset run first. Install
+        // the intent before dispatch, including a synchronous local arrival.
+        self.portal_journey = journey;
         if local {
             self.send(command);
         } else if self.demo {
@@ -8841,7 +8844,7 @@ impl App {
                 &self.world,
                 self.camera.position,
                 &self.palette,
-                world_clock(),
+                self.camera.free().is_none() && self.camera.focus_point().is_none(),
                 !self.settings.reduce_motion,
             );
             self.frame_profile.lap(Lap::Extras);
