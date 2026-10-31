@@ -63,9 +63,9 @@ const BENT_BLUR: u32 = 3;
 /// Blur passes of the indirect light beyond the occlusion's.
 const INDIRECT_EXTRA_BLUR: u32 = 4;
 /// The accumulation: the current frame's least weight (the history then
-/// holds about ten frames), and the half width of the neighbourhood the
+/// holds about thirty frames), and the half width of the neighbourhood the
 /// history is clipped to, in standard deviations.
-const TEMPORAL_MIN_WEIGHT: f32 = 0.1;
+const TEMPORAL_MIN_WEIGHT: f32 = 0.03;
 const TEMPORAL_CLIP: f32 = 1.25;
 /// Times more slices on a frame that accumulates without a history.
 const NO_HISTORY_SLICES: u32 = 4;
