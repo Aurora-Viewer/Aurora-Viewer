@@ -389,6 +389,7 @@ import-preview-aurora = Aurora 3D
 import-no-map = Aucune
 keybinds-import-files = Ouvrir la fenêtre d’import
 keybinds-hide-interface = Masquer / afficher l'interface
+keybinds-teleport-home = Se téléporter au domicile
 keybinds-show-huds = Afficher / masquer les HUDs
 import-preview-tools = Outils de visualisation
 import-local-mesh-instance = Modèle à appliquer
