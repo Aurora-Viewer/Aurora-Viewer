@@ -526,6 +526,9 @@ pub struct Settings {
     /// Keep the local environment from one session to the next (Firestorm
     /// EnvironmentPersistAcrossLogin, on).
     pub env_persist: bool,
+    /// Which stars the night sky shows: the real sky over Paris (Aurora's
+    /// default) or the Legacy Viewer's random stars (world/night_sky.rs).
+    pub night_sky: crate::world::night_sky::NightSky,
     pub exposure: f32,
     /// Contrast adaptive sharpening (Firestorm RenderCASSharpness, 0.4).
     pub sharpen: f32,
@@ -1667,6 +1670,7 @@ impl Default for Settings {
             time_of_day: 0,
             env_manual_transition: 0.0,
             env_persist: true,
+            night_sky: Default::default(),
             exposure: 1.0,
             sharpen: 0.4,
             glow: true,

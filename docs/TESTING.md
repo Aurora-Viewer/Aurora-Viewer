@@ -3361,6 +3361,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
 | `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>[,<probe ambiance>]]]\|midday` | EEP sky with this gamma, classic unless it has a probe ambiance; or the library Midday |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
+| `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
 | `AURORA_DEMO_OCCLUSION=1` | Wall with hidden objects (occlusion test) |
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | EEP environment of the region and the parcel |
@@ -3562,6 +3563,19 @@ both open states and the selection count. Capture at frame 620.
   sends Second Life's own, `rainbow_id` and `halo_id`); the shape, the place
   and the colors' order are those of skyF.glsl. Capture in `AURORA_AA=3` and
   `AURORA_AA=6`.
+- **`AURORA_DEMO_NIGHT_SKY=real|legacy[:<azimuth>,<elevation>]`**: sets
+  Preferences › Graphics › Environment › Night sky for this launch (in
+  memory), the demo's midnight (unless `AURORA_DEMO_TOD` is also given) and
+  the camera above the avatar looking towards `azimuth` (degrees from north
+  towards east) and `elevation` (degrees up), north 35° up by default
+  (`demo_night_sky.rs`). `real`: the stars over Paris with their colours and
+  the Milky Way; `real:0,48.86` puts the Pole Star exactly at the centre of
+  the image, with Cassiopeia and the Milky Way above it on autumn nights.
+  `legacy`: the Legacy Viewer's random white and pale green stars, no Milky
+  Way. With `AURORA_DEMO_TOD=2` (noon) the real sky's stars must vanish in
+  the bright sky; with `AURORA_DEMO_TOD=3` (sunset) only the brighter ones
+  show. Capture with `AURORA_DEMO_SNAPSHOT=save:1600x900:png:<folder>` for an
+  image without the interface.
 - **`AURORA_DEMO_DEBUG`**: comma-separated list among `bounds`,
   `culling`, `lights`, `probes`, `skeletons`, `alpha`, `alpha_rigged`, `wire`, `complexity`,
   `glow`, `glow_view`, `freeze`, `lod`, `shadows`, `ao`, `check_lights`,

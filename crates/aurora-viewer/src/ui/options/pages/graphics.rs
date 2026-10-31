@@ -46,6 +46,19 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     .changed()
                 },
             );
+            // the stars' sky (world/night_sky.rs)
+            {
+                use crate::world::night_sky::NightSky;
+                cx.choice(
+                    tr!("ui-options-night-sky"),
+                    tr!("ui-options-night-sky-help"),
+                    &field!(night_sky),
+                    &[
+                        (NightSky::Real, tr!("ui-options-night-sky-real"), false),
+                        (NightSky::Legacy, tr!("ui-options-night-sky-legacy"), false),
+                    ],
+                );
+            }
             cx.toggle(
                 tr!("ui-options-keep-environment"),
                 tr!("ui-options-restore-the-local-environment-selected-sky-water-and-day"),

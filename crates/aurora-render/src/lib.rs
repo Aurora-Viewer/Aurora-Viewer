@@ -46,6 +46,7 @@ pub mod shadow_cull;
 mod shadow_merge;
 #[cfg(test)]
 mod specular_aa;
+pub mod stars;
 #[cfg(test)]
 mod terrain_tests;
 #[cfg(test)]

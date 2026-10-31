@@ -264,6 +264,8 @@ impl Environment {
             ice_level: if sun_up || moon_up { sky.ice_level } else { 0.0 },
             rainbow_texture: 0,
             halo_texture: 0,
+            // set by the caller from the preferences (world/night_sky.rs)
+            stars: Default::default(),
         };
         let water_params = WaterParams {
             fog_color: water.fog_color,

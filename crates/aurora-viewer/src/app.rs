@@ -9154,6 +9154,12 @@ impl App {
         env.water.normal_texture = slots[3];
         env.sky.rainbow_texture = slots[4];
         env.sky.halo_texture = slots[5];
+        env.sky.stars = crate::world::night_sky::star_frame(
+            self.settings.night_sky,
+            env.sky.sun_dir,
+            crate::world::night_sky::unix_days_now(),
+            self.start.elapsed().as_secs_f64(),
+        );
         t_part = self.scene.parts.lap(Part::ParamsEnv, t_part);
         let mirror = if in_world && self.settings.mirrors > 0 {
             self.scene.find_mirror(&self.world, &cull, Instant::now())
@@ -16192,6 +16198,11 @@ impl ApplicationHandler for App {
                     ui::perf::set_full(&self.egui_ctx, v != "compact");
                 }
             }
+            // AURORA_DEMO_NIGHT_SKY: the chosen stars, at midnight
+            if let Some((mode, _)) = crate::demo::night_sky::scenario() {
+                self.settings.night_sky = mode;
+                self.panels.time_of_day = 4;
+            }
             if let Some(t) = std::env::var("AURORA_DEMO_TOD").ok().and_then(|v| v.parse::<u8>().ok()) {
                 self.panels.time_of_day = t.min(crate::world::env::TIME_OF_DAY_PRESETS);
             }
@@ -17107,6 +17118,15 @@ impl ApplicationHandler for App {
                 for ev in crate::demo::selection_cycle_events() {
                     self.world.apply(ev);
                 }
+            }
+            // AURORA_DEMO_NIGHT_SKY: from behind the avatar, up at the sky
+            if let Some((_, dir)) = crate::demo::night_sky::scenario()
+                && std::env::var_os("AURORA_DEMO_CAM").is_none()
+            {
+                // above the avatar's head, a little behind it
+                let eye = self.world.agent.position + Vec3::new(0.0, 0.0, 2.5) - Vec3::new(dir.x, dir.y, 0.0) * 3.0;
+                self.camera
+                    .set_view(eye, eye + dir * 30.0, &mut self.world.agent, &self.settings.camera);
             }
             // AURORA_DEMO_SKY_OPTICS: from behind the avatar, up at the eastern sky
             if let Some(dir) = crate::demo::sky::view_direction()

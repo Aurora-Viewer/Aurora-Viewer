@@ -133,6 +133,10 @@ pub mod land;
 pub mod link;
 #[path = "demo_missing_texture.rs"]
 pub mod missing_texture;
+/// The real or the Legacy Viewer's night sky, the camera on the stars
+/// (AURORA_DEMO_NIGHT_SKY).
+#[path = "demo_night_sky.rs"]
+pub mod night_sky;
 /// The notification center's mockup scenario, in either style
 /// (AURORA_DEMO_NOTIFS).
 #[path = "demo_notifs.rs"]
