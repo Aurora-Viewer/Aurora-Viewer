@@ -1095,6 +1095,15 @@ fn water_underside(surface:vec3<f32>,level:f32,incident:vec3<f32>,normal:vec3<f3
     return mix(transmitted,reflected,reflectance)*fog.transmission+fog.color;
 }
 
+// A unit vector, or straight up when `v` has no length: a normal scale of
+// 0 (a valid EEP value) leaves the waves flat, and normalize(0) gives NaN,
+// which turned the whole surface white or black.
+fn water_unit(v: vec3<f32>) -> vec3<f32> {
+    let l = length(v);
+    if (!(l > 1e-6)) { return vec3<f32>(0.0, 0.0, 1.0); }
+    return v / l;
+}
+
 fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(water_excluded(in.world_pos)){discard;}
     if(water_fx_on(1u) || water_fx_on(16u)) {
@@ -1137,7 +1146,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         let micro=water_micro(in.world_pos.xy,frame.camera_pos.w,water_fx.counts.w,footprint);
         let detail=clamp(length(frame.water_normal.xy)*0.35,0.5,1.5);
         n=normalize(vec3<f32>((n.xy*0.18-micro.xy*detail)*furrow,1.0)+water_fx_normal(in.world_pos.xy,in.level,wake.xy));
-    } else { n=normalize(n+water_fx_normal(in.world_pos.xy,in.level,wake.xy)); }
+    } else { n=water_unit(n+water_fx_normal(in.world_pos.xy,in.level,wake.xy)); }
 
     // Below water, transmit the world through the moving Snell window and
     // reflect the submerged scene at grazing angles. The sky itself is unchanged.
@@ -1154,7 +1163,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     var df3 = max(vec3<f32>(0.0), vec3<f32>(
         dot(view_vec, wave1), dot(view_vec, (wave2 + wave3) * 0.5), dot(view_vec, wave3)) * fs + vec3<f32>(fo));
     df3 *= df3;
-    let df2 = max(vec2<f32>(0.0), vec2<f32>(df3.x + df3.y + df3.z, dot(view_vec, normalize(wavef)) * fs + fo));
+    let df2 = max(vec2<f32>(0.0), vec2<f32>(df3.x + df3.y + df3.z, dot(view_vec, water_unit(wavef)) * fs + fo));
 
     // refraction of the scene behind the surface
     let dmod = sqrt(dist);
@@ -1201,7 +1210,11 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     var radiance = sky_color(vec3<f32>(r.x, r.y, abs(r.z)));
     if (probes_on()) {
         // without a planar reflection the water reflects its probes
-        let s = sample_probes_water(in.world_pos, in.clip.xy, vec3<f32>(r.x, r.y, abs(r.z)), 0.0);
+        // as blurred as the EEP asks (doProbeSample: lod = (1 - gloss) x
+        // max lod, gloss = 1 - blur_multiplier): a sharp sun disc and haze
+        // at lod 0 whitened the surface
+        let lod = clamp(frame.water_params.w, 0.0, 1.0) * probe_max_lod();
+        let s = sample_probes_water(in.world_pos, in.clip.xy, vec3<f32>(r.x, r.y, abs(r.z)), lod);
         if (s.w > 0.0) {
             radiance = s.rgb;
         }
@@ -1284,6 +1297,10 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         }
         color=mix(color,max(foam_light,vec3<f32>(0.0)),foam*0.9);
     }
+    // waterF.glsl: frag_color = min(vec4(1), max(color, vec4(0))). The
+    // surface never goes past white before the exposure, and a value that is
+    // not a number does not spread through the bloom.
+    color = clamp(select(color, vec3<f32>(0.0), color != color), vec3<f32>(0.0), vec3<f32>(1.0));
     // The upper face is viewed through air. Opaque source water fog was
     // removed above; do not add another fictitious submerged interval here.
     if(camera_underwater()) {

@@ -121,6 +121,31 @@ pub struct WaterFrame {
     pub normal_map: Uuid,
 }
 
+impl WaterFrame {
+    /// The ranges LLSettingsWater::validationList clamps a water setting to
+    /// (llsettingswater.cpp; verifyFloatRange / verifyVectorMinMax clamp,
+    /// they do not reject). Values out of them (a fresnel offset above 1, a
+    /// fog colour above 1) turned the water white; a value that is not a
+    /// number becomes the bottom of its range.
+    pub fn validated(self) -> WaterFrame {
+        let f = |v: f32, lo: f32, hi: f32| if v.is_nan() { lo } else { v.clamp(lo, hi) };
+        let v3 = |v: Vec3, lo: f32, hi: f32| Vec3::new(f(v.x, lo, hi), f(v.y, lo, hi), f(v.z, lo, hi));
+        let v2 = |v: Vec2, lo: f32, hi: f32| Vec2::new(f(v.x, lo, hi), f(v.y, lo, hi));
+        WaterFrame {
+            fog_color: v3(self.fog_color, 0.0, 1.0),
+            fog_density: f(self.fog_density, 0.001, 100.0),
+            underwater_fog_mod: f(self.underwater_fog_mod, 0.0, 20.0),
+            fresnel_scale: f(self.fresnel_scale, 0.0, 1.0),
+            fresnel_offset: f(self.fresnel_offset, 0.0, 1.0),
+            blur_multiplier: f(self.blur_multiplier, -0.5, 0.5),
+            normal_scale: v3(self.normal_scale, 0.0, 10.0),
+            wave1: v2(self.wave1, -20.0, 20.0),
+            wave2: v2(self.wave2, -20.0, 20.0),
+            normal_map: self.normal_map,
+        }
+    }
+}
+
 impl Default for WaterFrame {
     /// LLSettingsWater::defaults().
     fn default() -> Self {
@@ -288,7 +313,7 @@ fn water_frame(w: &Llsd) -> Option<WaterFrame> {
     if !w.is_map() || !type_is(w, "water") {
         return None;
     }
-    Some(WaterFrame {
+    let frame = WaterFrame {
         fog_color: vec3(&w["water_fog_color"]).unwrap_or(d.fog_color),
         fog_density: real(w, "water_fog_density", d.fog_density),
         underwater_fog_mod: real(w, "underwater_fog_mod", d.underwater_fog_mod),
@@ -299,7 +324,8 @@ fn water_frame(w: &Llsd) -> Option<WaterFrame> {
         wave1: vec2(&w["wave1_direction"]).unwrap_or(d.wave1),
         wave2: vec2(&w["wave2_direction"]).unwrap_or(d.wave2),
         normal_map: uuid(w, "normal_map", d.normal_map),
-    })
+    };
+    Some(frame.validated())
 }
 
 /// Distance from `begin` to `end` going forward around the day
@@ -701,6 +727,31 @@ impl WaterFrame {
 mod tests {
     use super::*;
     use aurora_llsd::llsd_map;
+
+    #[test]
+    fn water_values_are_clamped_to_the_legacy_ranges() {
+        let arr = |v: &[f64]| Llsd::Array(v.iter().map(|x| Llsd::Real(*x)).collect());
+        let w = llsd_map! {
+            "type" => "water",
+            "fresnel_offset" => 1.8,
+            "fresnel_scale" => -0.5,
+            "blur_multiplier" => 2.0,
+            "water_fog_density" => 0.0,
+            "underwater_fog_mod" => 50.0,
+            "water_fog_color" => arr(&[1.6, -0.2, 0.5, 1.0]),
+            "normal_scale" => arr(&[0.0, 12.0, 2.0]),
+            "wave1_direction" => arr(&[30.0, -25.0]),
+        };
+        let f = water_frame(&w).expect("water");
+        assert_eq!((f.fresnel_offset, f.fresnel_scale, f.blur_multiplier), (1.0, 0.0, 0.5));
+        assert_eq!((f.fog_density, f.underwater_fog_mod), (0.001, 20.0));
+        assert_eq!(f.fog_color, Vec3::new(1.0, 0.0, 0.5));
+        assert_eq!(f.normal_scale, Vec3::new(0.0, 10.0, 2.0));
+        assert_eq!(f.wave1, Vec2::new(20.0, -20.0));
+        // values in range stay as they are
+        let d = WaterFrame::default().validated();
+        assert_eq!((d.fresnel_offset, d.fog_density), (WaterFrame::default().fresnel_offset, 2.0));
+    }
 
     #[test]
     fn sky_and_water_round_trip_through_llsd() {
