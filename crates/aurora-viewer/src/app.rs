@@ -263,7 +263,9 @@ pub struct App {
     down: HashSet<Input>,
     shift: bool,
     ctrl: bool,
-    /// Command held, on macOS only (aurora_media::Modifiers::command).
+    /// Command held, on macOS only. Keyboard shortcuts treat it as Control
+    /// (LLKeyboardMacOSX::currentMask). Clicks, the wheel and media keep
+    /// it separate (aurora_media::Modifiers::command).
     command: bool,
     screen: Screen,
     login_form: LoginForm,
@@ -3769,7 +3771,24 @@ impl App {
         }
     }
 
+    /// Shortcut mask for a key. Command counts as Control on macOS
+    /// (LLKeyboardMacOSX::currentMask with for_mouse_event false).
     fn mods(&self) -> Mods {
+        self.binding_mods(false)
+    }
+
+    /// Shortcut mask. `mouse` keeps Command off the Control bit.
+    fn binding_mods(&self, mouse: bool) -> Mods {
+        self.shortcut_mods(Mods {
+            ctrl: crate::keybinds::control_down(self.ctrl, self.command, mouse),
+            shift: self.shift,
+            alt: self.alt,
+        })
+    }
+
+    /// Physical Control, Shift and Alt, with AltGr counted. Command is not
+    /// Control: the HUD gesture bound to the Control key must not follow it.
+    fn physical_mods(&self) -> Mods {
         self.shortcut_mods(Mods {
             ctrl: self.ctrl,
             shift: self.shift,
@@ -3911,7 +3930,7 @@ impl App {
 
     /// A key or a bindable mouse button changed state.
     fn on_input(&mut self, input: Input, pressed: bool) {
-        let mods = self.mods();
+        let mods = self.binding_mods(matches!(input, Input::Mouse(_)));
         let action = self.settings.keybinds.update_held_input(&mut self.down, &input, pressed, mods);
         if let Some(group) = self.run_group(&input) {
             self.walk_tap(group, pressed && action.is_none());
@@ -5724,7 +5743,9 @@ impl App {
 
     /// End of a shortcut capture (None = cancelled).
     fn finish_capture(&mut self, input: Option<Input>) {
-        let mods = self.mods();
+        // Recording Command stores it as Control, as the Legacy Viewer does
+        // for a key. A mouse button keeps the physical Control key.
+        let mods = self.binding_mods(matches!(input, Some(Input::Mouse(_))));
         let Some(ui::options::Capture::Binding(action, slot)) = self.options_ui.take_capture() else {
             return;
         };
@@ -6603,7 +6624,12 @@ impl App {
     fn chat_bar_passes_key(&self, code: KeyCode) -> bool {
         self.in_world()
             && self.chat_ui.has_focus
-            && crate::keybinds::chat_bar_moves(code, self.ctrl, self.chat_ui.input.is_empty(), self.settings.arrow_keys_always_move)
+            && crate::keybinds::chat_bar_moves(
+                code,
+                crate::keybinds::control_down(self.ctrl, self.command, false),
+                self.chat_ui.input.is_empty(),
+                self.settings.arrow_keys_always_move,
+            )
     }
 
     /// A Windows Alt code typed in a text field (alt_codes.rs): true for one
@@ -6655,7 +6681,7 @@ impl App {
             passed = self
                 .down
                 .iter()
-                .filter(|i| crate::keybinds::chat_bar_held_moves(i, self.ctrl))
+                .filter(|i| crate::keybinds::chat_bar_held_moves(i, crate::keybinds::control_down(self.ctrl, self.command, false)))
                 .cloned()
                 .collect();
             &passed
@@ -9561,6 +9587,9 @@ impl App {
         //     }
         // }
         self.report_abuse_capture(&mut gfx.renderer);
+        // Control is Command for key events on macOS. Leave pointer
+        // modifiers and ModifiersChanged alone (Command-click stays distinct).
+        crate::keybinds::adopt_mac_control_keys(&mut raw.events, cfg!(target_os = "macos"));
         self.sound_cues.before(&ctx, &raw);
         self.options_ui
             .prepare_scale_input(&raw, ctx.pixels_per_point(), self.numeric_drag.active());
@@ -18200,6 +18229,7 @@ impl ApplicationHandler for App {
                 self.alt = false;
                 self.alt_graph = false;
                 self.ctrl = false;
+                self.command = false;
                 self.shift = false;
                 self.right_drag = false;
                 self.mic_button_held = false;
@@ -18247,6 +18277,7 @@ impl ApplicationHandler for App {
                     if pressed
                         && !self.shift
                         && !self.ctrl
+                        && !self.command
                         && !self.alt
                         && !self.alt_graph
                         && let winit::keyboard::Key::Character(s) = &ke.logical_key
@@ -18418,14 +18449,14 @@ impl ApplicationHandler for App {
                     // only runs otherwise. The rule: ui::find_shortcut::owner.
                     // The key is the one egui reads, which the window takes.
                     let find_key = matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("f"));
-                    let find_taken = pressed && self.ctrl && find_key && ui::find_shortcut::window_takes_it(&self.egui_ctx);
+                    let find_taken = pressed && mods.ctrl && find_key && ui::find_shortcut::window_takes_it(&self.egui_ctx);
                     let script_command = pressed
-                        && self.ctrl
+                        && mods.ctrl
                         && matches!(&ke.logical_key, winit::keyboard::Key::Character(c)
                             if c.eq_ignore_ascii_case("k") || (c.eq_ignore_ascii_case("s") && !self.shift && !self.alt))
                         && ui::scripts::editor_focused(&self.egui_ctx);
                     let document_save = pressed
-                        && self.ctrl
+                        && mods.ctrl
                         && !self.shift
                         && !self.alt
                         && matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("s"))

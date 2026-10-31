@@ -949,6 +949,15 @@ pub struct Mods {
     pub alt: bool,
 }
 
+/// Control as a shortcut mask. LLKeyboardMacOSX::currentMask
+/// (indra/llwindow/llkeyboardmacosx.cpp): the Control key always counts,
+/// and Command counts too, except on a mouse event. `command` is false
+/// off macOS. The physical Control key stays distinct for clicks, the
+/// wheel and the HUD gesture bound to that key.
+pub fn control_down(control: bool, command: bool, mouse: bool) -> bool {
+    control || (command && !mouse)
+}
+
 /// Menu chords labeled with the Mac Control key (`use_mac_ctrl="true"`
 /// on a `control|…` shortcut in menu_viewer.xml). macOS reserves the
 /// Command form (Hide, Minimize, cycling windows, and the same list).
@@ -987,6 +996,23 @@ pub fn chord_label(key: &str, ctrl: bool, alt: bool, shift: bool) -> String {
         shift,
     }
     .label()
+}
+
+/// On macOS, a Control key event is also Command, so text editing and
+/// Close Window follow LLKeyboardMacOSX::currentMask for keys. Pointer
+/// events and `ModifiersChanged` stay as reported: Command-click is not
+/// Control-click.
+pub fn adopt_mac_control_keys(events: &mut [egui::Event], mac: bool) {
+    if !mac {
+        return;
+    }
+    for event in events {
+        if let egui::Event::Key { modifiers, .. } = event
+            && modifiers.ctrl
+        {
+            modifiers.command = true;
+        }
+    }
 }
 
 /// Editing history takes priority over held movement and camera bindings:
@@ -1537,6 +1563,36 @@ mod tests {
         assert_eq!(chord(KeyCode::Minus, false, false).label_on(true), "⌘ -");
         assert!(!uses_mac_control(&minimap));
         assert!(uses_mac_control(&world));
+        assert!(!control_down(false, true, true), "Command is not Control for the mouse");
+        assert!(control_down(false, true, false));
+        assert!(control_down(true, false, true));
+        assert!(!control_down(false, false, false));
+        let mut events = [
+            egui::Event::Key {
+                key: egui::Key::C,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::CTRL,
+            },
+            egui::Event::Key {
+                key: egui::Key::W,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+            },
+            egui::Event::ModifiersChanged(egui::Modifiers::CTRL),
+        ];
+        adopt_mac_control_keys(&mut events, false);
+        assert!(matches!(events[0], egui::Event::Key { modifiers, .. } if !modifiers.command));
+        adopt_mac_control_keys(&mut events, true);
+        assert!(matches!(events[0], egui::Event::Key { modifiers, .. } if modifiers.command && modifiers.ctrl));
+        assert!(matches!(
+            events[1],
+            egui::Event::Key { modifiers, .. } if modifiers.command && modifiers.shift && !modifiers.matches_exact(egui::Modifiers::COMMAND)
+        ));
+        assert!(matches!(events[2], egui::Event::ModifiersChanged(m) if m == egui::Modifiers::CTRL));
     }
 
     #[test]
