@@ -1031,6 +1031,7 @@ mod tests {
             match aurora_i18n::language() {
                 "fr" => "sam. 18 juin 2022 11:19:10",
                 "ja" => "2022年6月18日（土）11:19:10",
+                "pt-BR" => "sáb 18 jun 2022 11:19:10",
                 _ => "Sat 18 Jun 2022 11:19:10",
             }
         );
@@ -1040,6 +1041,7 @@ mod tests {
             match aurora_i18n::language() {
                 "fr" => "mer. juin 05 21:18:48 2024",
                 "ja" => "2024年6月05日（水）21:18:48",
+                "pt-BR" => "qua, 05 de jun de 2024, 21:18:48",
                 _ => "Wed Jun 05 21:18:48 2024",
             }
         );
@@ -1080,14 +1082,21 @@ mod tests {
 
     #[test]
     fn money_groups_thousands() {
-        assert_eq!(money(88000), if aurora_i18n::language() == "fr" { "88\u{a0}000" } else { "88,000" });
+        assert_eq!(
+            money(88000),
+            match aurora_i18n::language() {
+                "fr" => "88\u{a0}000",
+                "pt-BR" => "88.000",
+                _ => "88,000",
+            }
+        );
         assert_eq!(money(500), "500");
         assert_eq!(
             money(1_234_567),
-            if aurora_i18n::language() == "fr" {
-                "1\u{a0}234\u{a0}567"
-            } else {
-                "1,234,567"
+            match aurora_i18n::language() {
+                "fr" => "1\u{a0}234\u{a0}567",
+                "pt-BR" => "1.234.567",
+                _ => "1,234,567",
             }
         );
     }

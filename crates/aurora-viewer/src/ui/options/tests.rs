@@ -836,7 +836,12 @@ fn parcel_visibility_lists_show_full_names_and_regions_with_separate_remove_cont
         let shapes = frames.shapes(events, |ui| {
             ui.set_width(view.0);
             ui.spacing_mut().item_spacing.y = 0.0;
-            let mut cx = Cx::new(ui, p, s, &d, st, &mut r, view.1, "parc");
+            let query = match aurora_i18n::language() {
+                "pt-BR" => "lote",
+                "ja" => "区画",
+                _ => "parc",
+            };
+            let mut cx = Cx::new(ui, p, s, &d, st, &mut r, view.1, query);
             run_page(&mut cx, Page::Graphics, Some(6));
             changed |= cx.changed;
         });
