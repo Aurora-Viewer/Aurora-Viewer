@@ -172,6 +172,20 @@ requests, revocation before a queued reply, close/expiry and bridge 1.37 upgrade
 Both creation announcements and discovery replies must omit private destinations;
 inspect wire-level tests, not just labels. Old portal-v1 traffic is not accepted.
 
+`AURORA_DEMO_PORTALS=private-friends-chat-allowed|private-friends-chat-denied|private-friends-keyboard-allowed|private-friends-keyboard-departing-allowed`
+holds the actual Forward arrow from frames 600 to 810 after the private peer
+exchange. Chat modes retain nearby-chat keyboard focus; keyboard mode leaves
+the scene focused. Use `AURORA_DEMO_POS=100,100` and capture frame 1100
+for the completed arrival (frame 840 can still show the teleport transition).
+The authorized visitor must teleport in both focus modes; the denied visitor
+must walk through without teleporting. Logs record focus, effective controls,
+authorization, position and return journey. A refused crossing can be retried
+after the ordinary 1 m clearance; the initial 3.5 m anti-drop clearance still
+applies when another resident's portal appears nearby.
+`keyboard-departing-allowed` starts the creator's teleport when the access
+request arrives, then changes their region after the grant is sent: the
+visitor must still receive the destination and teleport without chat focus.
+
 `AURORA_DEMO_PORTALS=slice-walk|slice-run|slice-fly|slice-still|slice-large|slice-reverse|slice-wide|slice-wide-reverse`
 adds an observed avatar with continuous locomotion animation, a skinned mesh
 and a long rigid hand attachment. The camera observes the portal obliquely

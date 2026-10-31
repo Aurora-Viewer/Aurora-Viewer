@@ -9492,7 +9492,7 @@ impl App {
         if self.demo {
             self.local_appearance_demo_input(&mut raw);
             self.texture_library_demo_input(&mut raw);
-            self.portal_drop_demo_input(&mut raw);
+            self.portal_demo_input(&mut raw);
             self.give_demo_input(&mut raw, vp, (w, h));
             self.contents_drop_demo_input(&mut raw, vp, (w, h));
             if self.frame_count == 420
