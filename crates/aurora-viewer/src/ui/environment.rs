@@ -453,7 +453,14 @@ fn night_sky_rows(ui: &mut egui::Ui, p: &Palette, night: &mut NightSkyPick) {
     // a preset's latitude is shown, greyed; Custom sets its own
     let custom = night.place == SkyPlace::Custom;
     ui.add_enabled_ui(custom, |ui| {
-        night.changed |= slider(ui, p, aurora_i18n::tr!("ui-options-night-sky-latitude"), &mut night.latitude, -90.0..=90.0).changed();
+        night.changed |= slider(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-night-sky-latitude"),
+            &mut night.latitude,
+            -90.0..=90.0,
+        )
+        .changed();
     });
 }
 

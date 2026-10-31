@@ -260,7 +260,11 @@ mod tests {
         assert!(winter.y < 0.0, "Orion is in the south: {winter}");
         assert!(summer.z < 0.0, "summer {summer}");
         // Vega (RA 18h37m, Dec +38.8°) the other way round
-        let vega = region(&star_frame(NightSky::Real, PARIS, DEFAULT_GAIN, MIDNIGHT, SUMMER, 0.0), 18.62, 38.78);
+        let vega = region(
+            &star_frame(NightSky::Real, PARIS, DEFAULT_GAIN, MIDNIGHT, SUMMER, 0.0),
+            18.62,
+            38.78,
+        );
         assert!(vega.z > 0.7, "{vega}");
     }
 
@@ -276,7 +280,14 @@ mod tests {
 
     #[test]
     fn the_rotation_keeps_directions_unit_and_right_handed() {
-        let f = star_frame(NightSky::Real, PARIS, DEFAULT_GAIN, Vec3::new(0.2, 0.4, -0.9).normalize(), SUMMER, 0.0);
+        let f = star_frame(
+            NightSky::Real,
+            PARIS,
+            DEFAULT_GAIN,
+            Vec3::new(0.2, 0.4, -0.9).normalize(),
+            SUMMER,
+            0.0,
+        );
         let [x, y, z] = f.axes;
         assert!((x.length() - 1.0).abs() < 1e-5 && (y.length() - 1.0).abs() < 1e-5);
         assert!(x.dot(y).abs() < 1e-5 && x.cross(y).distance(z) < 1e-5);

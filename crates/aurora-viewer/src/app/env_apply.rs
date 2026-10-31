@@ -182,13 +182,12 @@ impl App {
             self.world.eep.capture_personal();
         }
         self.env_ui.beacons = [self.settings.sun_beacon, self.settings.moon_beacon];
-        self.env_ui.night = (self.settings.night_sky == crate::world::night_sky::NightSky::Real).then(|| {
-            crate::ui::environment::NightSkyPick {
+        self.env_ui.night =
+            (self.settings.night_sky == crate::world::night_sky::NightSky::Real).then_some(crate::ui::environment::NightSkyPick {
                 place: self.settings.night_sky_place,
                 latitude: self.settings.night_sky_latitude,
                 changed: false,
-            }
-        });
+            });
         let reset = self.env_ui.show_lighting(ctx, p, &mut self.world.eep, &mut open);
         if open {
             self.set_env_beacons(self.env_ui.beacons);
