@@ -28,6 +28,10 @@ const ANIM_AGENT_SNAPSHOT: Uuid = Uuid::from_u128(0xeae8905b_271a_99e2_4c0e_3110
 const PREVIEW_SIDE: u32 = 720;
 /// The preview follows the camera once it has been still this long.
 const SETTLE: Duration = Duration::from_millis(250);
+/// How long a part of a photo waits for a render thread still busy with
+/// the frame before (a pipeline made for the photo quality, a slow part)
+/// before the photo is given up: far past any frame, short of forever.
+const PHOTO_WAIT: Duration = Duration::from_secs(30);
 /// Bytes of video memory a pixel of a photo takes while it is drawn (its
 /// render targets and readback), besides those per MSAA sample. Measured on
 /// 2026-10-14 (demo, full-resolution reflections): about 54 bytes with MSAA
@@ -94,8 +98,10 @@ struct Job {
     next: usize,
     /// The current tile's frame is asked.
     asked: bool,
-    /// Frames the current tile waited for the render thread (said once).
+    /// Frames the current tile waited for the render thread (said once),
+    /// since when.
     waited: u32,
+    waiting: Option<Instant>,
     pixels: Vec<u8>,
     interface: bool,
     huds: bool,
@@ -473,6 +479,20 @@ impl App {
             // the GPU still had the frame before (the photo quality just
             // switched on, a part that took long): no frame was built and the
             // part is still asked, so this frame carries it again
+            let since = *job.waiting.get_or_insert_with(Instant::now);
+            if since.elapsed() > PHOTO_WAIT {
+                // a GPU that never finishes, though not lost: the photo
+                // is given up, not drawn later for nobody
+                log::warn!(
+                    "photo: part {} waited {:?} for the render thread: given up",
+                    job.next + 1,
+                    PHOTO_WAIT
+                );
+                renderer.drop_snapshot();
+                s.job = None;
+                s.message = Some((aurora_i18n::tr!("photo-draw-failed").to_owned(), true));
+                return None;
+            }
             if job.waited == 0 {
                 log::info!("photo: part {} waits for the render thread", job.next + 1);
             }
@@ -525,6 +545,7 @@ impl App {
             log::info!("photo: part {} drawn after {} frame(s) of waiting", job.next + 1, job.waited);
             job.waited = 0;
         }
+        job.waiting = None;
         let pass = job.tiles[job.next];
         let Some((_, _, pixels)) = answer.filter(|(w, h, _)| (*w, *h) == (pass.draw.width, pass.draw.height)) else {
             log::warn!("photo: part {} of {} not drawn", job.next + 1, job.tiles.len());
@@ -889,6 +910,7 @@ impl App {
             next: 0,
             asked: false,
             waited: 0,
+            waiting: None,
             pixels: Vec::new(),
             interface,
             huds: s.huds,
