@@ -176,7 +176,7 @@ mod wayland {
 mod x11 {
     use std::ptr;
 
-    use x11rb::xcb_ffi::XCBConnection;
+    use x11rb::xcb_ffi::{XCBConnection, load_libxcb};
     use xkbcommon_dl::x11::{self as xkb_x11, xkb_x11_setup_xkb_extension_flags::XKB_X11_SETUP_XKB_EXTENSION_NO_FLAGS};
 
     use super::{Context, Keymap, xkb};
@@ -184,6 +184,9 @@ mod x11 {
     /// The X server's keymap and its active layout.
     pub(super) fn keymap(context: &Context) -> Option<(Keymap, u32)> {
         let lib = xkb_x11::xkbcommon_x11_option()?;
+        // libxcb is loaded on first use, and a failed lazy load panics:
+        // load it here, where its absence only means no layout.
+        load_libxcb().ok()?;
         let (connection, _) = XCBConnection::connect(None).ok()?;
         let raw = connection.get_raw_xcb_connection();
         // SAFETY: `raw` is the live XCB connection owned by `connection`,
