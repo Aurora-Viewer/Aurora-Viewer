@@ -994,6 +994,9 @@ pub struct Scene {
     pub landmark_results: Vec<aurora_net::FetchResult>,
     palette_slots: FastMap<Uuid, u32>,
     palette_free: Vec<u32>,
+    /// Palette slots handed out since the last upload: their first pose is
+    /// also their previous one (`Renderer::seed_palette_slots`).
+    palette_fresh: Vec<usize>,
     palette_count: u32,
     palettes: Vec<[[f32; 4]; 4]>,
     pub live_morphs: live_morphs::LiveMorphs,
@@ -1526,6 +1529,7 @@ impl Scene {
             object_signals: Default::default(),
             palette_slots: Default::default(),
             palette_free: Vec::new(),
+            palette_fresh: Vec::new(),
             palette_count: lips.slots,
             palettes: lips.matrices.clone(),
             live_morphs: lips,
@@ -2076,6 +2080,7 @@ impl Scene {
         self.palette_slots.clear();
         self.motions.clear();
         self.palette_free.clear();
+        self.palette_fresh.clear();
         self.palette_count = self.live_morphs.slots;
         self.live_morphs.uploaded = false;
     }
@@ -2546,6 +2551,7 @@ impl Scene {
                 }
             }
             self.last_origin = origin;
+            renderer.cut_motion_history();
             for (idx, o) in world.objects.slots.iter_mut().enumerate() {
                 if let Some(o) = o {
                     o.render.needs_records = true;
@@ -3491,6 +3497,7 @@ impl Scene {
             self.palette_count - 1
         });
         self.palette_slots.insert(owner, slot);
+        self.palette_fresh.push(slot as usize);
         slot * anim::PALETTE_JOINTS as u32
     }
 

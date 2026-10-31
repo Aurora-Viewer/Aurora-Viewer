@@ -606,7 +606,9 @@ fn fs_terrain_depth(in: TerrainPbrOut) {
 @fragment
 fn fs_terrain_depth_normal(in: TerrainPbrOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     terrain_depth_mask(in);
-    return depth_normal(in.normal, front);
+    // the terrain stays put: the camera's motion alone
+    let ep = vec4<f32>(in.world_pos - frame.eye.xyz, 1.0);
+    return depth_normal(in.normal, front, frame.motion_vp * ep, frame.motion_prev_vp * ep);
 }
 
 // Picking gives the region metres as the surface coordinates of a hit (the
