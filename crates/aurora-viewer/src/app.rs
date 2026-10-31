@@ -8590,20 +8590,23 @@ impl App {
             );
             self.frame_profile.lap(Lap::Complexity);
             let hud_size = gfx.window.inner_size();
-            self.world.hud_aspect = match self.snapshots.capturing {
+            self.world.hud_area = self.hud_area();
+            self.world.hud_aspect = match (self.snapshots.capturing, self.world.hud_area) {
                 // the HUD laid out for the photo's proportions
-                Some(spec) => spec.width as f32 / spec.height.max(1) as f32,
-                None => hud_size.width as f32 / hud_size.height.max(1) as f32,
+                (Some(spec), _) => spec.width as f32 / spec.height.max(1) as f32,
+                (None, Some([left, top, right, bottom])) => (right - left) / (bottom - top).max(1.0),
+                (None, None) => hud_size.width as f32 / hud_size.height.max(1) as f32,
             };
             if self.build.hud_selected(&self.world) && !self.huds_shown() {
                 self.build.deselect_all(&self.world);
             }
             self.build.sync_hud_zoom(&mut self.world);
             self.refresh_local_huds();
-            let drag_view =
-                self.scene.lists.hud_view.map(|view| {
-                    aurora_render::HudView::new([hud_size.width, hud_size.height], self.world.hud_zoom, view.min_x, view.max_x)
-                });
+            let drag_view = self
+                .scene
+                .lists
+                .hud_view
+                .map(|view| self.world.hud_view([hud_size.width, hud_size.height], view.min_x, view.max_x));
             self.update_hud_drag(drag_view);
             if let Some(view) = drag_view {
                 self.keep_scaled_huds_accessible(view);
@@ -10614,7 +10617,7 @@ impl App {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
             {
-                self.cursor_pos = (view.width * 0.5 - 0.18 * view.height, view.height * 0.5 - 0.028 * view.height);
+                self.cursor_pos = view.pixel(Vec3::new(0.0, 0.18, 0.028)).into();
                 self.on_left_press();
             } else if self.frame_count == 800 {
                 self.cursor_pos.0 += 12.0;
@@ -10633,10 +10636,7 @@ impl App {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
             {
-                self.cursor_pos = (
-                    view.width * 0.5 - 0.18 * view.height * view.zoom,
-                    view.height * 0.5 - 0.028 * view.height * view.zoom,
-                );
+                self.cursor_pos = view.pixel(Vec3::new(0.0, 0.18, 0.028)).into();
                 self.open_context_menu();
             } else if mode != "menu" {
                 if self.frame_count == 760 {
@@ -18174,30 +18174,30 @@ impl ApplicationHandler for App {
         if self.alt_code_key(&event) {
             return;
         }
+        // the key a press counts as for the shortcuts: the keypad with
+        // NumLock off is its arrows, Home and Page keys (keybinds.rs)
+        let bound_key = match &event {
+            WindowEvent::KeyboardInput { event: ke, .. } if ke.state == ElementState::Pressed => match ke.physical_key {
+                PhysicalKey::Code(code) => Some(crate::keybinds::binding_code(code, &ke.logical_key)),
+                PhysicalKey::Unidentified(_) => None,
+            },
+            _ => None,
+        };
         // a movement key the chat bar hands to the avatar never reaches its
         // text (LLViewerWindow::handleKey returns before the focused field)
-        let chat_pass = matches!(
-            &event,
-            WindowEvent::KeyboardInput { event: ke, .. }
-                if ke.state == ElementState::Pressed
-                    && matches!(ke.physical_key, PhysicalKey::Code(code) if self.chat_bar_passes_key(code))
-        );
+        let chat_pass = matches!(bound_key, Some(code) if self.chat_bar_passes_key(code));
         // Keep a lens shortcut out of egui: Ctrl+0 otherwise also resets
         // the interface scale at the end of the frame.
         let key_mods = match &event {
             WindowEvent::KeyboardInput { event: ke, .. } => self.key_mods(ke),
             _ => self.mods(),
         };
-        let lens_shortcut = matches!(
-            &event,
-            WindowEvent::KeyboardInput { event: ke, .. }
-                if ke.state == ElementState::Pressed
-                    && matches!(ke.physical_key, PhysicalKey::Code(code)
-                        if matches!(self.settings.keybinds.triggered(&Input::key(code), key_mods),
-                            Some(Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault))
-                            && (!(self.egui_ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(&self.egui_ctx))
-                                || shortcut_while_typing(true, key_mods, code, true)))
-        ) && self.in_world()
+        let lens_shortcut = matches!(bound_key, Some(code)
+            if matches!(self.settings.keybinds.triggered(&Input::key(code), key_mods),
+                Some(Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault))
+                && (!(self.egui_ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(&self.egui_ctx))
+                    || shortcut_while_typing(true, key_mods, code, true)))
+            && self.in_world()
             && self.options_ui.capture.is_none()
             && !self.exit_prompt.open
             && self.profile_ui.focused_web().is_none()
@@ -18220,7 +18220,7 @@ impl ApplicationHandler for App {
                     && !ke.repeat
                     && !self.exit_prompt.open
                     && self.options_ui.capture.is_none()
-                    && matches!(ke.physical_key, PhysicalKey::Code(code)
+                    && matches!(bound_key, Some(code)
                         if shortcut_claims_focus(
                             &self.egui_ctx,
                             code,
@@ -18313,15 +18313,24 @@ impl ApplicationHandler for App {
                 self.track_alt_graph(ke);
                 // Clear held controls before a dialog, capture or web/media
                 // page can return early after receiving the native release.
+                // A keypad key held as an arrow (NumLock off) releases the
+                // arrow, and its own code too in case NumLock moved meanwhile.
                 if ke.state == ElementState::Released
                     && let PhysicalKey::Code(code) = ke.physical_key
                 {
                     self.on_input(Input::key(code), false);
+                    let bound = crate::keybinds::binding_code(code, &ke.logical_key);
+                    if bound != code {
+                        self.on_input(Input::key(bound), false);
+                    }
                 }
                 if self.exit_prompt.open {
                     return;
                 }
                 if let PhysicalKey::Code(code) = ke.physical_key {
+                    // the keypad with NumLock off counts as its arrows, Home
+                    // and Page keys, as in the Legacy Viewer (keybinds.rs)
+                    let code = crate::keybinds::binding_code(code, &ke.logical_key);
                     let pressed = ke.state == ElementState::Pressed;
                     let mods = self.key_mods(ke);
                     let altgr_text = self.altgr_text_input(ke);
