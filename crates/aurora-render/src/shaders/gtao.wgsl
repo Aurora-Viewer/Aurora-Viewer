@@ -46,10 +46,10 @@
 //    `temporal` then accumulates it over the frames, as XeGTAO expects of
 //    the TAA it runs under: the noise (a Hilbert curve driving the R2
 //    sequence) moves every frame (SpatioTemporalNoise), and each pixel blends
-//    with the history where its point was in the previous frame, refused
-//    where the depth there does not match (a surface uncovered) and clipped
-//    to its 3 x 3 neighbourhood (moving avatars and objects: the history
-//    follows the camera only);
+//    with the history where its point was in the previous frame (the
+//    prepass's motion with the mesh normals, else the camera's alone),
+//    refused where the depth there does not match (a surface uncovered) and
+//    clipped to its 3 x 3 neighbourhood;
 // 4. `denoise` (then `denoise_final`): XeGTAO's edge-aware 3 x 3 blur. Without
 //    the accumulation (`AURORA_GTAO_TEMPORAL=0`) the noise stays the same
 //    every frame, so the result does not flicker, and the blur alone removes
@@ -719,15 +719,15 @@ fn history_meta(q: vec2<i32>) -> vec2<f32> {
 }
 
 // One pixel of `main`'s result (`ao_in`) blended with the history where its
-// point was in the previous frame (`g.reproj`, the camera's motion: there
-// are no motion vectors), into `hist_out`, which the blur then reads and
+// point was in the previous frame (the prepass's motion in `normal_tex` with
+// the mesh normals, else `g.reproj`, the camera's alone), into `hist_out`, which the blur then reads and
 // the next frame takes as its history. The four history texels around the
 // point count by their bilinear weight, each only where its depth is the
 // point's (an uncovered surface starts again from the current frame), else
 // the pixel's own texel if its depth is the same (what the camera follows); the
 // history is clipped to the mean and deviation of the current 3 x 3
 // neighbourhood, so an occlusion that moved with an avatar or an object
-// does not trail behind it. The current frame weighs 1 / (frames + 1),
+// without motion (the depth's normals) does not trail behind it. The current frame weighs 1 / (frames + 1),
 // never less than `g.temporal.z`: a new pixel converges in a few frames.
 @compute @workgroup_size(8, 8)
 fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -764,7 +764,15 @@ fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
     let clip = g.reproj * vec4<f32>(view_position(uv, zc), 1.0);
     if (g.temporal.y < 0.5 && clip.w > 1e-4) {
         let ndc = clip.xy / clip.w;
-        let pp = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * size - vec2<f32>(0.5);
+        var prev_uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+        // with the mesh normals, the prepass wrote where each point was on
+        // screen, avatars and objects that moved included (zw, in uv)
+        if (g.misc.w > 0.5) {
+            let full = vec2<i32>(textureDimensions(normal_tex));
+            let src = min(px * i32(g.misc.y), full - vec2<i32>(1));
+            prev_uv = uv - textureLoad(normal_tex, src, 0).zw;
+        }
+        let pp = prev_uv * size - vec2<f32>(0.5);
         let base = vec2<i32>(floor(pp));
         let f = pp - floor(pp);
         moved = smoothstep(0.25, 1.0, length(pp - vec2<f32>(px)));
@@ -774,7 +782,13 @@ fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
         // little more for the depths' precision
         let gx = min(abs(depth0(px + vec2<i32>(-1, 0)) - zc), abs(depth0(px + vec2<i32>(1, 0)) - zc));
         let gy = min(abs(depth0(px + vec2<i32>(0, -1)) - zc), abs(depth0(px + vec2<i32>(0, 1)) - zc));
-        let tolerance = 0.01 * clip.w + 1.5 * (gx + gy);
+        // (the point's previous depth is the camera's estimate for what
+        // stood still, its depth now for what moved with the camera, and in
+        // between for most of what moved: either end and the span between
+        // match)
+        let slope = 1.5 * (gx + gy);
+        let z_lo = min(clip.w, zc);
+        let z_hi = max(clip.w, zc);
         var weight = 0.0;
         var sum = vec4<f32>(0.0);
         for (var k = 0; k < 4; k++) {
@@ -785,7 +799,7 @@ fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
             }
             let m = history_meta(q);
             let h = textureLoad(hist_in, q, 0);
-            if (m.y < 0.5 || abs(m.x - clip.w) > tolerance || any(h != h)) {
+            if (m.y < 0.5 || m.x < z_lo - 0.01 * z_lo - slope || m.x > z_hi + 0.01 * z_hi + slope || any(h != h)) {
                 continue;
             }
             let bw = select(1.0 - f.x, f.x, o.x == 1) * select(1.0 - f.y, f.y, o.y == 1);
@@ -798,7 +812,7 @@ fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
         // same pixel, when the camera's motion found nothing
         let m = history_meta(px);
         let h = textureLoad(hist_in, px, 0);
-        if (weight <= 1e-3 && m.y >= 0.5 && abs(m.x - zc) <= 0.01 * zc + 1.5 * (gx + gy) && all(h == h)) {
+        if (weight <= 1e-3 && m.y >= 0.5 && abs(m.x - zc) <= 0.01 * zc + slope && all(h == h)) {
             weight = 1.0;
             sum = h;
             count = m.y;

@@ -647,6 +647,7 @@ impl Gtao {
                     uniform_entry(),
                     texture_entry(4, UNFILTERED),
                     texture_entry(7, UNFILTERED),
+                    texture_entry(11, UNFILTERED),
                     texture_entry(15, UNFILTERED),
                     texture_entry(16, wgpu::TextureSampleType::Uint),
                     storage_entry(17, AO_FORMAT),
@@ -816,6 +817,7 @@ impl Gtao {
                 &[
                     (4, &all_mips),
                     (7, &ao),
+                    (11, &normals),
                     (15, &hist[1 - i]),
                     (16, &meta[1 - i]),
                     (17, &hist[i]),
