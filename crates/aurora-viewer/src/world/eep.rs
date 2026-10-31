@@ -107,7 +107,7 @@ impl Default for SkyFrame {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WaterFrame {
     pub fog_color: Vec3,
     pub fog_density: f32,
@@ -325,7 +325,11 @@ fn water_frame(w: &Llsd) -> Option<WaterFrame> {
         wave2: vec2(&w["wave2_direction"]).unwrap_or(d.wave2),
         normal_map: uuid(w, "normal_map", d.normal_map),
     };
-    Some(frame.validated())
+    let valid = frame.validated();
+    if valid != frame {
+        log::info!("water values out of the Legacy ranges, clamped: {frame:?}");
+    }
+    Some(valid)
 }
 
 /// Distance from `begin` to `end` going forward around the day

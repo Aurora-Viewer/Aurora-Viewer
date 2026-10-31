@@ -3046,6 +3046,22 @@ impl World {
                                 s.haze_density
                             );
                         }
+                        // the region's water (in the Legacy ranges; the
+                        // values it sent out of them are logged on reading):
+                        // what a report of odd water needs
+                        if let Some(w) = d.water.first().map(|k| &k.1) {
+                            log::info!(
+                                "water: fog {:?} density {} underwater mod {} fresnel scale {} offset {} blur {} normal scale {:?} normal map {}",
+                                w.fog_color,
+                                w.fog_density,
+                                w.underwater_fog_mod,
+                                w.fresnel_scale,
+                                w.fresnel_offset,
+                                w.blur_multiplier,
+                                w.normal_scale,
+                                w.normal_map
+                            );
+                        }
                     }
                     None => log::info!(
                         "environment of parcel {parcel_id} (requested {requested}) has no valid day cycle ({})",
