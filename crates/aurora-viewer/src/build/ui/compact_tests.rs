@@ -741,6 +741,54 @@ fn shared_editing_enables_general_edits_without_sale_or_permission_authority() {
 }
 
 #[test]
+fn megaprim_edit_keeps_server_dimensions_until_a_size_edit() {
+    for legacy in [false, true] {
+        for modifiable in [true, false] {
+            let mut inspector = Inspector::new();
+            inspector.settings.legacy_window = legacy;
+            inspector.tool.tab = 5;
+            let idx = inspector.world.objects.index_of(&inspector.tool.selection[0]).unwrap();
+            let original = Vec3::new(128.125, 256.25, 1.5);
+            let object = inspector.world.objects.get_mut(idx).unwrap();
+            object.scale = original;
+            if !modifiable {
+                object.update_flags &= !crate::ui::context::flags::OBJECT_MODIFY;
+            }
+            inspector.tool.out.clear();
+            for _ in 0..6 {
+                inspector.show(vec![]);
+                assert_eq!(
+                    inspector.world.objects.get(idx).unwrap().scale,
+                    original,
+                    "Opening Edit changed the megaprim (legacy={legacy}, modifiable={modifiable})"
+                );
+                assert!(!inspector.tool.out.iter().any(|command| matches!(
+                    command,
+                    aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Transform { .. })
+                )));
+            }
+            if modifiable {
+                // Moving or rotating a megaprim must not submit its size either.
+                inspector.tool.set_transform(
+                    &mut inspector.world,
+                    &inspector.settings,
+                    Some(Vec3::new(42.0, 43.0, 44.0)),
+                    None,
+                    Some(glam::Quat::from_rotation_z(0.5)),
+                    true,
+                );
+                assert_eq!(inspector.world.objects.get(idx).unwrap().scale, original);
+                assert!(matches!(
+                    inspector.tool.out.last(),
+                    Some(aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Transform { updates, .. }))
+                        if updates.len() == 1 && updates[0].scale.is_none()
+                ));
+            }
+        }
+    }
+}
+
+#[test]
 fn transform_actions_leave_the_three_vectors_visible_at_the_top() {
     let (mut world, mut tool, mut settings) = fixture();
     let p = crate::theme::Theme::default().palette();

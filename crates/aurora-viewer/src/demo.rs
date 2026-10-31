@@ -5298,6 +5298,14 @@ pub fn events() -> Vec<NetEvent> {
             }),
         });
     }
+    // A large existing platform exercises opening Edit without a size change.
+    if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|spec| spec.starts_with("megaprim,"))
+        && let Some(object) = objs.iter_mut().find(|object| object.local_id == 118)
+    {
+        object.scale = Vec3::new(128.125, 96.25, 0.5);
+        object.position = Vec3::new(cx, cy, g(cx, cy) - 0.5);
+        object.rotation = Quat::IDENTITY;
+    }
     ev.push(NetEvent::ObjectUpdates {
         handle: HANDLE,
         objects: objs,

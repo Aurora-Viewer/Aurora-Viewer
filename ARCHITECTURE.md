@@ -2802,6 +2802,8 @@ Floating-point spinners in `build/ui/common.rs` retain the active drag value
 until release, so panels that submit only committed edits do not reset it each
 frame. Drafts are used only while their original widget is dragging or releasing;
 numeric transform previews still report their final commit on release.
+Existing server values outside a spinner's editing range remain unchanged on
+display (including megaprim sizes); only deliberate edits apply its bounds.
 Typed float/integer build values commit on Enter or focus loss, with Escape
 canceling the draft; text-only changes never submit unchanged object values.
 The texture panel retains a submitted Blinn-Phong material until the simulator's
