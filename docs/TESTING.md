@@ -9330,11 +9330,14 @@ What the inventory must show with these scenarios:
   Preferences › Chat › Chat text size) of this launch, never saved, on its
   own or with `AURORA_TEXT_SIZE` to show that each size leaves the other
   alone: the messages, names and times of the Conversations window (every
-  style), the chat lines over the world, the invitation, offer and payment
-  cards and the chat fields follow it; the tabs, the sidebar, the buttons
-  and the rest of the interface keep the interface's text size. What to
-  look for: no name or time over its message, the field of the chat bar
-  growing with its text, the cards' buttons under their text.
+  style), the chat lines over the world, the chat bubbles above the heads
+  (`AURORA_DEMO_TAGS=voice` with `AURORA_DEMO_CHAT_BUBBLES=1`), the
+  invitation, offer and payment cards and the text typed in the chat
+  fields (`AURORA_DEMO_CHAT_INPUT=1`) follow it; the fields' placeholders,
+  the tabs, the sidebar, the buttons and the rest of the interface keep
+  the interface's text size. What to look for: no name or time over its
+  message, the fields growing with their text, the cards' buttons under
+  their text.
 - **`AURORA_PRESENT_MODE=immediate|mailbox|fifo|fifo-relaxed`**: replaces
   the present mode chosen from vertical sync
   (`aurora-render/src/present.rs`: without sync `Mailbox`, otherwise

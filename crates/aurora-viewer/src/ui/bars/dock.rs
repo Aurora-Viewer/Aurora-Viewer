@@ -336,9 +336,10 @@ fn chat_island(
         Pos2::new(field.left() + FIELD_PAD, field.top()),
         Pos2::new(smile.left() - 6.0, field.bottom()),
     );
-    // at the chat's text size (Preferences › Chat)
+    // what is typed at the chat's text size (Preferences › Chat), the
+    // placeholder at the interface's like the bar around it
     let size = crate::ui::fonts::chat_size(ui.ctx(), 12.5);
-    let hint = RichText::new(aurora_i18n::tr!("common-nearby-chat")).size(size);
+    let hint = RichText::new(aurora_i18n::tr!("common-nearby-chat")).size(12.5);
     let centre = crate::ui::widgets::field_text_margin(ui.ctx(), &egui::FontId::proportional(size));
     let mut child = ui.new_child(
         egui::UiBuilder::new()

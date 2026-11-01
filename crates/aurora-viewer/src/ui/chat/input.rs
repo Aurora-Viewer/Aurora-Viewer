@@ -55,6 +55,12 @@ pub(crate) fn height(ctx: &Context, field: Id, minimum: f32) -> f32 {
         .max(minimum)
 }
 
+/// A field's placeholder at the interface's text size: only what is typed
+/// takes the chat's (`show`). Built from the field's parent `ui`.
+pub(super) fn hint(ui: &Ui, text: impl Into<String>) -> egui::RichText {
+    egui::RichText::new(text).size(egui::TextStyle::Body.resolve(ui.style()).size)
+}
+
 /// A wrapping editor with at most four visible rows. Its full galley feeds
 /// selection/completion while its response and painting stay in the viewport.
 /// Call `prepare` before the field's completion/history handlers.
