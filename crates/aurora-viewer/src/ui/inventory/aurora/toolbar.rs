@@ -1008,7 +1008,7 @@ mod tests {
                 }
                 let order = prefs.sort_for(tab);
                 assert!(!order.by_date);
-                assert_eq!(order.folders_by_name, tab == RECEIVED_TAB);
+                assert_eq!(order.folders_by_name, tab != 0);
                 assert!(!order.system_first);
                 assert_eq!(sort_text(&prefs, tab), aurora_i18n::tr!("inventory-sort-name"));
             }

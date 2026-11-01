@@ -329,7 +329,10 @@ impl Default for InventoryPreferences {
             protected: HashSet::new(),
             upload_folders: [Uuid::nil(); 5],
             sort: Sort::default(),
-            recent_sort: Sort::default(),
+            recent_sort: Sort {
+                folders_by_name: false,
+                ..Sort::default()
+            },
             received_sort: Sort {
                 folders_by_name: false,
                 ..Sort::default()
@@ -1800,7 +1803,13 @@ mod tests {
             serde_json::from_str(r#"{"protected":["00000000-0000-0000-0000-000000000002"]}"#).expect("old preferences");
         assert!(prefs.protected.contains(&id(2)));
         assert_eq!(prefs.sort, Sort::default());
-        assert_eq!(prefs.recent_sort, Sort::default());
+        assert_eq!(
+            prefs.recent_sort,
+            Sort {
+                folders_by_name: false,
+                ..Sort::default()
+            }
+        );
         assert!(prefs.received_sort.by_date);
         assert!(!prefs.received_sort.folders_by_name);
         assert!(prefs.received_sort.system_first);
@@ -1858,7 +1867,13 @@ mod tests {
     fn recent_sort_is_independent_and_survives_reload() {
         let mut prefs: InventoryPreferences =
             serde_json::from_str(r#"{"sort":{"by_date":false,"folders_by_name":false,"system_first":false}}"#).expect("old preferences");
-        assert_eq!(prefs.recent_sort, Sort::default());
+        assert_eq!(
+            prefs.recent_sort,
+            Sort {
+                folders_by_name: false,
+                ..Sort::default()
+            }
+        );
         let main = prefs.sort;
         let received = prefs.received_sort;
         *prefs.sort_for_mut(2) = Sort {
