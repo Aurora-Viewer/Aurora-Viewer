@@ -8394,6 +8394,9 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             ..Default::default()
         },
     ));
+    if bom_rezzed::pbr() {
+        list.push((bom_rezzed::MATERIAL, bom_rezzed::material()));
+    }
     list
 }
 
