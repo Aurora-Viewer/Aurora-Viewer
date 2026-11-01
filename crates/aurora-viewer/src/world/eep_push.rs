@@ -2,8 +2,8 @@
 //! controller sets while the agent has allowed the experience.
 //!
 //! Port of LLEnvironment::handleEnvironmentPush and LLEnvironment::DayInjection
-//! (newview/llenvironment.cpp, Second Life viewer / Firestorm, originally LGPL
-//! 2.1). `PushFullEnvironment` names a settings asset: a day replaces the
+//! (indra/newview/llenvironment.cpp, originally LGPL 2.1).
+//! `PushFullEnvironment` names a settings asset: a day replaces the
 //! shared day (setInjectedDay), a sky or a water replaces that half
 //! (setInjectedSky / setInjectedWater). `PushPartialEnvironment` overrides
 //! single keys of the sky and the water (injectSkySettings /
