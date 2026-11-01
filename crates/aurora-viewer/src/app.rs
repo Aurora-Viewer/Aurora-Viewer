@@ -7736,6 +7736,13 @@ impl App {
         {
             self.send(cmd);
         }
+        // AURORA_DEMO_APPEARANCE=take-off-folder: the inventory's Remove from
+        // current outfit on an ordinary folder (#1849)
+        if self.demo && self.frame_count == 600 && std::env::var("AURORA_DEMO_APPEARANCE").as_deref() == Ok("take-off-folder") {
+            self.apply_appearance_action(crate::world::appearance::Action::RemoveOutfit(
+                crate::world::appearance::DEMO_TAKE_OFF_FOLDER,
+            ));
+        }
         // AURORA_DEMO_SIM_CONSOLE=open: the console and two commands
         if self.demo && self.frame_count == 600 && crate::demo::sim_extras::console_open() {
             self.panels.sim_console = true;
@@ -17590,6 +17597,9 @@ impl ApplicationHandler for App {
                 if view == "broken" {
                     crate::world::appearance::seed_demo_broken(&mut self.world.inventory, self.world.agent_id);
                 }
+                if view == "take-off-folder" {
+                    crate::world::appearance::seed_demo_take_off(&mut self.world.inventory, self.world.agent_id);
+                }
                 if matches!(view.as_str(), "gallery-fit" | "gallery-fill") {
                     ui::appearance::demo_previews(&self.egui_ctx, &mut self.world.inventory, &mut self.ui_images);
                     self.settings.appearance_fill_previews = view == "gallery-fill";
@@ -17610,7 +17620,7 @@ impl ApplicationHandler for App {
                 self.appearance_ui.open(
                     match view.as_str() {
                         "outfits" | "multi-outfits" | "folders-outfits" | "folders-many-outfits" | "wearables-outfits" | "broken" => 1,
-                        "worn" | "multi-worn" | "save" | "wearables" => 2,
+                        "worn" | "multi-worn" | "save" | "wearables" | "take-off-folder" => 2,
                         _ => 0,
                     },
                     matches!(view.as_str(), "edit" | "wearables-edit") || view.starts_with("layers"),
