@@ -9151,7 +9151,11 @@ impl App {
             self.world.cloud_scroll.x.rem_euclid(1024.0),
             self.world.cloud_scroll.y.rem_euclid(1024.0),
         );
-        let mut env = Environment::from_eep(&sky_frame, &water_frame, self.world.cloud_scroll, self.settings.draw_distance);
+        let mut env = Environment::from_eep(&sky_frame, &water_frame, self.world.cloud_scroll, self.settings.draw_distance)
+            .with_colored_ambient(
+                &sky_frame,
+                crate::world::env::colored_ambient_now(self.settings.legacy_colored_ambient),
+            );
         if let Some(sun) = self.demo.then(crate::demo::sun_override).flatten() {
             env.sun_dir = sun;
         }

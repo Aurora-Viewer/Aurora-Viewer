@@ -96,6 +96,32 @@ pub fn midday_sun() -> Vec3 {
     Vec3::new(0.35, 0.25, 0.9).normalize()
 }
 
+/// The sky ambient lightened by the cloud shadow (calculateLightSettings
+/// tmpAmbient).
+fn sky_tmp_ambient(sky: &SkyFrame) -> Vec3 {
+    sky.ambient + (Vec3::ONE - sky.ambient) * sky.cloud_shadow * 0.5
+}
+
+/// Whether the colored sky ambient is on, the setting being `on`.
+/// AURORA_COLORED_AMBIENT forces it for a launch: `0` off, `1` on, `alt` one
+/// second each, for an A/B on a still scene.
+pub fn colored_ambient_now(on: bool) -> bool {
+    static MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let mode = MODE.get_or_init(|| std::env::var("AURORA_COLORED_AMBIENT").ok().map(|v| v.trim().to_owned()));
+    let secs = START.get_or_init(Instant::now).elapsed().as_secs();
+    colored_ambient(mode.as_deref(), on, secs)
+}
+
+fn colored_ambient(mode: Option<&str>, on: bool, secs: u64) -> bool {
+    match mode {
+        Some("0") => false,
+        Some("1") => true,
+        Some("alt") => secs.is_multiple_of(2),
+        _ => on,
+    }
+}
+
 /// Whether a sky of this reflection probe ambiance is tone mapped: a classic
 /// sky (ambiance 0) is not, whatever the tone mapper chosen (no_post in
 /// LLPipeline::tonemap). Preferences grey the tone mapper choice then.
@@ -120,6 +146,21 @@ impl Environment {
     /// cloud offset (LLEnvironment::mCloudScrollDelta).
     pub fn from_eep(sky: &SkyFrame, water: &WaterFrame, cloud_scroll: glam::Vec2, draw_distance: f32) -> Environment {
         Self::build(sky, water, cloud_scroll, draw_distance)
+    }
+
+    /// The experimental colored sky ambient (Settings::legacy_colored_ambient):
+    /// viewers before the Legacy Viewer's PBR rework lit with the sky's
+    /// ambient colour x RenderSkyAmbientScale 0.7, made linear, where it now
+    /// lights with the grey luminance of a softened ambient. The HDR skies
+    /// take it in their hemisphere colours here; the shaders do the classic
+    /// and linear ones (SkyParams::colored_ambient).
+    pub fn with_colored_ambient(mut self, sky: &SkyFrame, on: bool) -> Environment {
+        self.sky.colored_ambient = on;
+        if on && tone_mapped(sky.probe_ambiance) {
+            let amblit = srgb_to_linear(sky_tmp_ambient(sky).max(Vec3::ZERO) * 0.7);
+            (self.zenith, self.horizon, self.ground) = (amblit, amblit, amblit);
+        }
+        self
     }
 
     fn build(sky: &SkyFrame, water: &WaterFrame, scroll: glam::Vec2, draw_distance: f32) -> Environment {
@@ -152,7 +193,7 @@ impl Environment {
         }
         let lighty = lighty.max(limit);
         let sun_diffuse = sky.sunlight * exp3(-light_atten * lighty) * transmittance;
-        let tmp_ambient = sky.ambient + (Vec3::ONE - sky.ambient) * sky.cloud_shadow * 0.5;
+        let tmp_ambient = sky_tmp_ambient(sky);
         let moon_brightness = if moon_up { sky.moon_brightness } else { 0.001 };
         let moon_diffuse = sky.sunlight * exp3(-light_atten * lighty) * transmittance * moon_brightness;
 
@@ -247,6 +288,7 @@ impl Environment {
             hdr_scale,
             classic: sky.can_auto_adjust,
             no_post: !tone_mapped(sky.probe_ambiance),
+            colored_ambient: false,
             sun_dir: sun,
             moon_dir: moon,
             sun_scale: sky.sun_scale,
@@ -477,5 +519,31 @@ mod tests {
         let dim = Vec3::new(0.7342, 0.7815, 0.8999);
         assert_eq!(normalized_light(dim), dim);
         assert_eq!(normalized_light(Vec3::new(-0.5, 0.2, 0.3)), Vec3::new(0.0, 0.2, 0.3));
+    }
+
+    #[test]
+    fn colored_ambient_follows_the_setting_unless_forced_and_lights_hdr_skies_in_color() {
+        assert!(!colored_ambient(None, false, 0));
+        assert!(colored_ambient(None, true, 1));
+        assert!(!colored_ambient(Some("0"), true, 0));
+        assert!(colored_ambient(Some("1"), false, 1));
+        assert!(colored_ambient(Some("alt"), false, 4));
+        assert!(!colored_ambient(Some("alt"), true, 5));
+        // a warm HDR sky: the ambient x 0.7 made linear, its tint kept
+        let sky = SkyFrame {
+            probe_ambiance: 1.0,
+            ambient: Vec3::new(0.9, 0.6, 0.5),
+            cloud_shadow: 0.0,
+            ..SkyFrame::with_sun(midday_sun())
+        };
+        let grey = Environment::from_eep(&sky, &WaterFrame::default(), glam::Vec2::ZERO, 96.0);
+        let colored = grey.with_colored_ambient(&sky, true);
+        let expected = srgb_to_linear(Vec3::new(0.9, 0.6, 0.5) * 0.7);
+        assert!((colored.zenith - expected).length() < 1e-5, "{:?}", colored.zenith);
+        assert!(colored.sky.colored_ambient);
+        assert!(colored.zenith.x > colored.zenith.z && grey.zenith.x == grey.zenith.z);
+        // off: unchanged
+        let off = grey.with_colored_ambient(&sky, false);
+        assert_eq!(off.zenith, grey.zenith);
     }
 }

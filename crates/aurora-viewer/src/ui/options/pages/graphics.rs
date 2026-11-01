@@ -660,6 +660,11 @@ fn reflections_and_water(cx: &mut Cx) {
                 .changed()
             },
         );
+        cx.experimental().toggle(
+            tr!("ui-options-legacy-colored-ambient"),
+            tr!("ui-options-legacy-colored-ambient-help"),
+            &field!(legacy_colored_ambient),
+        );
     });
     // Aurora's own water effects, experimental and off by default
     cx.group(tr!("ui-options-aurora-water"), |cx| {
