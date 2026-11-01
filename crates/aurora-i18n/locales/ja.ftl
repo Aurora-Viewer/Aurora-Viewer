@@ -257,6 +257,11 @@ login-accounts-remove = アカウントを削除
 login-accounts-confirm = これは{ $name }にのみ影響します。よろしいですか？
 
 import-title = アセットのインポート
+import-entry-point = インポートの表示方法
+import-entry-point-help = インポートのショートカット（既定はCtrl+U）と「ビルド > インポート」で開く画面を選びます。クイックインポートバーからアップロードウィンドウも開けます。
+import-entry-window = アップロードウィンドウ
+import-launcher-folder = フォルダー
+import-icon-bar = クイックインポートバー
 import-type-title = インポート‐{ $type }
 import-open-inventory = インベントリに表示
 import-lod-high = 高
@@ -479,7 +484,8 @@ import-total = 合計費用：L$ { $cost }
 import-upload = インポート
 import-cancel-remaining = 残りをキャンセル
 import-confirm-title = インポートの確認
-import-confirm-price = これらのインポートにはL$ { $cost }かかります。共有テクスチャは1回だけアップロードされます。
+import-confirm-price = これらのインポートにはL$ { $cost }かかります。
+import-confirm-shared-textures = 共有テクスチャは1回だけアップロードされます。
 import-price-unavailable = 価格を取得できません。アップロードの前にログインしてください。
 import-insufficient-balance = このインポートには残高が足りません。
 import-invalid-request = ファイル名、フォルダ、設定を確認してください。
@@ -12750,6 +12756,9 @@ import-use-default-folders = 既定のフォルダーを使用
 import-folders-auto-create = アップロードを確定すると、必要な保存先フォルダーが作成されます。
 
 import-include-source-folder = 元のフォルダーを含める
+import-create-folder = フォルダーを作成
+import-create-folder-help = 直接追加したファイルを、選択した保存先の下にある新しいフォルダーにまとめます。フォルダーはインポートの確認後に作成されます。
+import-folder-name = フォルダー名
 import-source-folder-name-help = { $source } のインベントリ内のフォルダー名。コンピューター上のフォルダーは変更されません。
 
 import-local-stage-upload = アップロードに追加（{ $count }）

@@ -257,6 +257,11 @@ login-accounts-remove = Remove account
 login-accounts-confirm = This affects only { $name }. Confirm?
 
 import-title = Import assets
+import-entry-point = Open imports with
+import-entry-point-help = Choose what the Import shortcut (Ctrl+U by default) and Build > Import open. The quick import bar also opens the full upload window.
+import-entry-window = Upload window
+import-launcher-folder = Folder
+import-icon-bar = Quick import bar
 import-type-title = Import — { $type }
 import-open-inventory = Show in inventory
 import-lod-high = High
@@ -479,7 +484,8 @@ import-total = Total cost: L${ $cost }
 import-upload = Import
 import-cancel-remaining = Cancel remaining
 import-confirm-title = Confirm import
-import-confirm-price = These imports will cost L${ $cost }. Shared textures will only be uploaded once.
+import-confirm-price = These imports will cost L${ $cost }.
+import-confirm-shared-textures = Shared textures will only be uploaded once.
 import-price-unavailable = Price unavailable; log in before uploading.
 import-insufficient-balance = Your balance is insufficient for this import.
 import-invalid-request = Check the file name, folder and settings.
@@ -12767,6 +12773,9 @@ import-use-default-folders = Use default folders
 import-folders-auto-create = Missing destination folders will be created after you confirm the upload.
 
 import-include-source-folder = Include source folder
+import-create-folder = Create folder
+import-create-folder-help = Put files added directly into a new folder under the selected destination. The folder is created after confirming the import.
+import-folder-name = Folder name
 import-source-folder-name-help = Name of the inventory folder for { $source }. The folder on your computer is unchanged.
 
 import-local-stage-upload = Add to upload ({ $count })

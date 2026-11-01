@@ -3,6 +3,7 @@
 use super::*;
 
 pub(super) struct Confirmed {
+    choice: Choice,
     permissions: Preferences,
     prices: Prices,
     maximum: i32,
@@ -32,7 +33,7 @@ impl Imports {
         if self
             .entries
             .iter()
-            .filter(|entry| !entry.local && entry.selected && matches!(entry.status, Status::Ready))
+            .filter(|entry| self.choice.accepts(entry) && entry.selected && matches!(entry.status, Status::Ready))
             .any(|entry| {
                 entry.name.trim().is_empty()
                     || entry.name.len() > 63
@@ -55,7 +56,7 @@ impl Imports {
         let meshes = self
             .entries
             .iter()
-            .filter(|entry| !entry.local && entry.selected && matches!(entry.status, Status::Ready))
+            .filter(|entry| self.choice.accepts(entry) && entry.selected && matches!(entry.status, Status::Ready))
             .filter_map(|entry| match &entry.source {
                 Some(Source::Mesh(draft)) => draft.quote.as_ref().map(|quote| (entry.id, quote.cost)),
                 _ => None,
@@ -66,6 +67,7 @@ impl Imports {
             self.confirm = false;
             self.message.clear();
             self.pending_confirmed = Some(Confirmed {
+                choice: self.choice,
                 permissions: permissions.clone(),
                 prices: prices.clone(),
                 maximum,
@@ -81,9 +83,18 @@ impl Imports {
         world: &crate::world::World,
         inventory: &crate::ui::inventory::InventoryPreferences,
     ) -> Vec<(Uuid, Permissions)> {
-        let Some(mut confirmed) = self.pending_confirmed.take() else {
+        let Some(confirmed) = self.pending_confirmed.take() else {
             return Vec::new();
         };
+        self.with_choice(confirmed.choice, |imports| imports.advance_for(confirmed, world, inventory))
+    }
+
+    fn advance_for(
+        &mut self,
+        mut confirmed: Confirmed,
+        world: &crate::world::World,
+        inventory: &crate::ui::inventory::InventoryPreferences,
+    ) -> Vec<(Uuid, Permissions)> {
         if self.folders.busy() {
             self.pending_confirmed = Some(confirmed);
             return Vec::new();
@@ -99,7 +110,7 @@ impl Imports {
         for entry in self
             .entries
             .iter()
-            .filter(|entry| !entry.local && entry.selected && matches!(entry.status, Status::Ready))
+            .filter(|entry| self.choice.accepts(entry) && entry.selected && matches!(entry.status, Status::Ready))
         {
             let Some(Source::Mesh(draft)) = &entry.source else { continue };
             if let Some(quote) = &draft.quote {

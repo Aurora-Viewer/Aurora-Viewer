@@ -4463,7 +4463,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|channel\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, commands to worn scripts, completion, the chat bar's list of gestures and menu access |
-| `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the empty Batch / Permissions tab |
+| `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the quick import bar; `type-*` opens independent type windows |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
 | `AURORA_DEMO_LOCAL_APPEARANCES=1\|menu\|reveal\|confirm\|remove\|cancel` | Applied-local-appearance warning, highlight toggle and confirmed removal |
@@ -4680,8 +4680,25 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   of the question. Capture at frame 620. `AURORA_DEMO_RCLICK="x,y"` on the
   ground shows the entry in the menu.
 - **`AURORA_DEMO_IMPORTS=launcher|settings`** opens the empty unified import
-  window or its Permissions tab. Ctrl+U and Build > Import open the same
-  window directly, without a separate type strip or an automatic disk dialog.
+  window or its Permissions tab. Ctrl+U and Build > Import follow the saved
+  Preferences > Inventory > Open imports with choice (Upload window by default).
+- **`AURORA_DEMO_IMPORTS=icon-bar`** opens the movable quick import bar without
+  a disk dialog. The Aurora glass surface groups flat action buttons and
+  a grip for moving the bar; the open inspector or Permissions is accented.
+  Texture, sound, animation, material and mesh each open their own window,
+  reusing existing drafts or requesting the corresponding file filter if empty.
+  Local previews have a separate window; Folder opens the unified uploader
+  and immediately asks for a directory. Each type window retains its own
+  selection, tab and geometry, with fees and confirmation limited to that type.
+  The uploader's Quick import bar switch changes
+  the same saved entry-point preference and shows or hides the strip at once.
+  The preference is at the bottom of Inventory, after Received items.
+  Closing a window leaves the shared drafts intact.
+- **`AURORA_DEMO_IMPORTS=type-texture|type-sound|type-animation|type-material|type-mesh|type-local`**
+  loads that type's synthetic draft into its dedicated window with the bar visible.
+  **`type-windows`** loads a mixed queue and places texture and sound windows
+  side by side (1600×1000). Check independent selections, titles, tab switches,
+  close/reopen, type-filtered Add files, and confirmation while another window is open.
 - **`AURORA_DEMO_IMPORTS=unified`** loads a mixed queue with a mesh first,
   followed by a texture, sound, BVH animation and material. The first row is
   selected automatically. Click each queue row: the right inspector follows
@@ -4722,6 +4739,21 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   disable the action; exceeding queue/input budgets creates no partial batch.
   Empty the queue and complete an upload with its payment receipt visible:
   the window keeps its size, and the controls below the queue stay reachable.
+- **`AURORA_DEMO_IMPORTS=loose-folder|loose-folder-preview|type-sound-folder`**
+  shows files added without a disk folder, grouped under a named Release folder.
+  Uncheck Use default folders, toggle Create folder and enter a name. The name
+  updates the destination immediately, with no Apply button; clearing it or
+  entering an invalid name blocks upload until corrected.
+  There is no Include source folder control for loose files. Check Files and
+  Folder preview, and the dedicated sound window: changing the name or disabling
+  grouping retains manual inner paths and never changes disk paths. An enabled
+  unnamed folder blocks uploads. Folder creation starts only after confirmation,
+  and uploads wait for acknowledged inventory UUIDs. Selected disk directories
+  keep their own Include source folder option, including in mixed queues.
+- **`AURORA_DEMO_IMPORTS=sound-confirm|material-confirm`** opens the confirmation
+  over a sound or a material that reuses one image in multiple maps. Only the
+  material shows the shared-texture note. The note follows selected files and
+  effective texture encoding, not merely the presence of a texture or material.
 - **`AURORA_DEMO_IMPORTS=inspectors`** loads every type, including local
   previews, in the same window. Queue selection replaces the former type tabs.
 - **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|mesh-avatar|mesh-avatar-rigged|mesh-journal|permissions|animation|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
@@ -4819,8 +4851,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   to the grid's asset maximum; long WAV sources enable splitting on load.
   `animation` shows aligned settings beside its preview, with loop units
   labelled and easing fields aligned. A mixed queue containing meshes needs their
-  quotes before confirmation. Ctrl+U toggles the unified import window; the file picker
-  opens only after Add files. Rebind it in Preferences › Shortcuts.
+  quotes before confirmation. Ctrl+U toggles the saved entry point (the unified
+  window by default, or the quick import bar). Add files requests a file picker;
+  an empty type icon requests its filtered picker and Folder requests a directory.
+  Rebind the shortcut in Preferences › Shortcuts.
   The quote and the uploads stay entirely inside the demo server.
   In `destination`, uncheck Use default folders to open the inventory destination
   tree, with the current path expanded. Toggle a parent caret: only its children fold/unfold; the selected

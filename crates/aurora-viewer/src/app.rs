@@ -4075,7 +4075,7 @@ impl App {
             Action::ToggleInterface => self.toggle_interface(),
             Action::HoverTips => self.toggle_hover_tips(),
             Action::ShowHuds => self.set_show_huds(!self.settings.show_huds),
-            Action::Import => self.imports.toggle_window(&self.egui_ctx),
+            Action::Import => self.imports.toggle_import(&self.egui_ctx, &self.settings.imports),
             Action::Beacons => ui::widgets::toggle_floater(&self.egui_ctx, ui::beacons::WINDOW, &mut self.panels.beacons),
             Action::PropertyLines => {
                 self.settings.world_overlays.property_lines = !self.settings.world_overlays.property_lines;
@@ -11957,7 +11957,7 @@ impl App {
             // FSCommon::report_to_nearby_chat(gAgent.mMOTD)
             BarAction::MessageOfTheDay => self.world.system_message(self.world.motd.clone()),
             BarAction::Import => {
-                self.imports.toggle_window(&self.egui_ctx);
+                self.imports.toggle_import(&self.egui_ctx, &self.settings.imports);
                 self.egui_ctx.request_repaint();
             }
             BarAction::BlenderLive => {
