@@ -2084,7 +2084,8 @@ trackpad deltas. Hint visibility and height units are saved
 in Settings. The main scene continues to use its normal shape/morph streaming.
 
 `aurora-net/session/wearable_save.rs` checks shape ownership and Modify/Copy,
-uploads the wearable through the existing AssetUpload/Xfer path, preserves item
+uploads the wearable through the existing AssetUpload/Xfer path with its inventory
+asset type (bodypart 13 or clothing 5), preserves item
 permissions for Save As through CopyInventoryItem, patches only the transaction
 `hash_id` through AIS and reads the resulting asset back before acknowledging
 success. Non-modifiable shapes can be copied only unchanged. Requests and replies
