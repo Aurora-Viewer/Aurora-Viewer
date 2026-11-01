@@ -846,6 +846,40 @@ mod tests {
     }
 
     #[test]
+    fn received_delete_key_in_both_layouts_and_classic_trash_button_submit_confirmed_moves() {
+        for (classic, button) in [(false, false), (true, false), (true, true)] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            let trash = h.add_trash();
+            crate::world::inventory::demo::seed_received(&mut h.world.inventory, h.world.agent_id);
+            let received_item = id(8_300_002);
+            h.st.show_notified(&h.world.inventory, received_item);
+            h.st.expand_all = Some(true);
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            h.select(received_item, false);
+            let actions = if button {
+                h.click(h.trash_button(h.st.ui_id).center(), Default::default())
+            } else {
+                h.frame(vec![delete_key(Default::default())])
+            };
+            assert!(actions.is_empty(), "confirmation must precede the move");
+            assert!(matches!(&h.st.dialog, Some(EditDialog::Delete(ids, false)) if *ids == vec![received_item]));
+            h.frame(Vec::new());
+            let actions = h.click(h.text(aurora_i18n::tr!("common-delete")).center(), Default::default());
+            let [InvAction::Edit(change)] = &actions[..] else {
+                panic!("confirmed Received deletion must submit one mutation (classic={classic}, button={button})")
+            };
+            assert!(change.move_only());
+            assert_eq!(change.operations.len(), 1);
+            rules::demo_mutate(&mut h.world.inventory, h.world.agent_id, change.clone()).expect("delete received item");
+            assert_eq!(h.world.inventory.items[&received_item].parent, trash);
+            assert_eq!(h.world.inventory.folders[&id(8_300_001)].info.parent, id(8_300_000));
+        }
+    }
+
+    #[test]
     fn delete_key_confirms_and_moves_selected_folder_with_its_contents_and_no_copy_item() {
         let mut h = Harness::new();
         let trash = h.add_trash();

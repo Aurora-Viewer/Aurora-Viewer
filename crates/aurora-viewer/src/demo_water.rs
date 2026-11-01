@@ -280,6 +280,28 @@ pub fn update(
             ));
         }
     }
+    if mode.contains("alpha") {
+        // #1678: blended (semi-transparent) boxes under the water, across its
+        // surface and above it. The one under it and the lower half of the
+        // crossing one must be refracted and fogged by the water, not drawn
+        // crisp over it; the upper half and the one above stay as they were.
+        for (id, x, z, height, color) in [
+            (99530, 52.0, 18.0, 2.0, [0.1, 0.9, 0.2, 0.6]),
+            (99531, 55.0, 20.0, 4.0, [0.95, 0.85, 0.1, 0.6]),
+            (99532, 58.0, 22.5, 1.5, [0.9, 0.1, 0.8, 0.6]),
+        ] {
+            objects.push(super::prim(
+                id,
+                Vec3::new(x, 127.0, z),
+                Quat::IDENTITY,
+                Vec3::new(1.5, 0.3, height),
+                box_shape,
+                super::te(color, 0, false, 0.0),
+                Default::default(),
+                "",
+            ));
+        }
+    }
     for (id, pos) in [
         // Shin-deep wading: feet cross the surface during the fixture's gait.
         (

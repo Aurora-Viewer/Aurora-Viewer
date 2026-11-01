@@ -15,11 +15,7 @@ fn check(ui: &mut egui::Ui, p: &Palette, label: &str, value: &mut bool) -> bool 
 
 pub(super) fn preferences_for_tab(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences, tab: usize) -> bool {
     let mut changed = false;
-    let sort = if tab == super::RECEIVED_TAB {
-        &mut prefs.received_sort
-    } else {
-        &mut prefs.sort
-    };
+    let sort = prefs.sort_for_mut(tab);
     ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-controls-display-order")).color(p.muted));
     ui.horizontal(|ui| {
         changed |= ui

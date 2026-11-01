@@ -500,10 +500,22 @@ impl PluginPaths {
     /// then Aurora's media plugins pack. The plugins of another program are
     /// only used when the user names its folder: an installed Firestorm or
     /// Second Life viewer is not looked for.
+    ///
+    /// A relative folder is made absolute against the viewer's current folder
+    /// first: SLPlugin is started in `plugin_dir`, so a relative launcher
+    /// (Unix), `LD_LIBRARY_PATH` (Linux) or plugin file and folder sent in
+    /// `load_plugin` would then be looked for from there and never found.
+    /// `std::path::absolute`, not `canonicalize`, so that Windows paths keep
+    /// no `\\?\` prefix and links stay as the user chose them. A folder that
+    /// cannot be made absolute (current folder deleted) is skipped.
     pub fn discover(explicit: Option<&Path>, pack: Option<&Path>) -> Option<PluginPaths> {
         let own = std::env::current_exe().ok();
         let own = own.as_deref().and_then(Path::parent);
-        [explicit, own, pack].into_iter().flatten().find_map(PluginPaths::in_dir)
+        [explicit, own, pack]
+            .into_iter()
+            .flatten()
+            .filter_map(|dir| std::path::absolute(dir).ok())
+            .find_map(|dir| PluginPaths::in_dir(&dir))
     }
 }
 
@@ -614,5 +626,22 @@ mod tests {
         assert_eq!(found.plugin_dir, legacy_contents.join("Frameworks"));
         assert!(PluginPaths::bundle_in(&root).is_none(), "nothing directly in the root");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // (macOS looks for SLPlugin.app instead)
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_relative_folder_gives_an_absolute_launcher_and_plugin_dir() {
+        // relative to the test's current folder, as a folder typed in the
+        // preferences is relative to the viewer's
+        let rel = PathBuf::from(format!("aurora-media-relative-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&rel);
+        folder(Path::new("."), rel.to_str().expect("ascii name"), false);
+        let found = PluginPaths::discover(Some(&rel), None).expect("relative folder");
+        let abs = std::env::current_dir().expect("current folder").join(&rel);
+        std::fs::remove_dir_all(&rel).expect("cleanup");
+        assert!(found.launcher.is_absolute(), "{}", found.launcher.display());
+        assert_eq!(found.launcher, abs.join(LAUNCHERS[0]));
+        assert_eq!(found.plugin_dir, abs.join("llplugin"));
     }
 }

@@ -25,6 +25,7 @@ use egui::{Color32, RichText, Vec2};
 
 #[derive(Default)]
 pub enum BarAction {
+    ToggleVr,
     IkEdit,
     Poser,
     /// Build › Edit particles (Object.EditParticles).
@@ -2045,6 +2046,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "marketplacelistings" => return BarAction::MarketplaceListings,
         "stop_animations" => return BarAction::StopAnimations,
         "resync_animations" => return BarAction::ResyncAnimations,
+        "vr_view" => return BarAction::ToggleVr,
         "immersive" => return BarAction::ToggleImmersive,
         _ => {}
     }
@@ -2772,6 +2774,10 @@ pub(crate) fn toolbar_row(
             toolbar.movement_active
         } else if b.command == "water_walk" {
             toolbar.water_walk_active
+        } else if b.command == "vr_view" {
+            ui.ctx()
+                .data(|data| data.get_temp::<bool>(egui::Id::unique("vr-active")))
+                .unwrap_or(false)
         } else {
             command_active(&b.command, panels, row.flying, row.seated, row.mouselook)
         };

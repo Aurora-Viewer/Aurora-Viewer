@@ -12,6 +12,8 @@
 //! * One-shot sounds ([`SoundClip`]) for UI / sound effects.
 //! * The ambient wind noise ([`AudioEngine::set_wind`]), synthesised on the
 //!   Ambient channel.
+//! * The reverb of the surroundings ([`AudioEngine::set_reverb`]): one
+//!   shared bus the world sounds feed.
 //! * Device selection ([`output_devices`], [`input_devices`],
 //!   [`AudioEngine::set_output_device`]) and microphone capture
 //!   ([`MicCapture`]: 48 kHz mono, input gain, level meter) for voice.
@@ -27,12 +29,14 @@
 mod capture;
 mod decode;
 mod devices;
+mod hrtf;
 mod http;
 mod icy;
 mod mixer;
 mod output;
 mod processing;
 mod resample;
+mod reverb;
 mod stream;
 mod wind;
 
@@ -47,6 +51,7 @@ pub use devices::{input_devices, output_devices};
 pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE};
 pub use output::OutputInfo;
 pub use processing::{EchoReference, MicProcessing};
+pub use reverb::ReverbParams;
 pub use stream::StreamStatus;
 pub use wind::WindTarget;
 
@@ -233,9 +238,50 @@ impl AudioEngine {
             .try_send(Command::PlayWorld(WorldVoice::new(id, ch, clip.samples.clone(), looped, gain)));
     }
 
-    /// New (left, right) gains of a world sound (ramped over one buffer).
+    /// Like [`AudioEngine::play_world`], rendered binaurally (3D sound for
+    /// headphones): `gain` is the distance gain, `direction` the source's
+    /// direction in the listener's frame (x to the right, y ahead, z up),
+    /// updated by [`AudioEngine::world_binaural`].
+    pub fn play_world_binaural(&self, id: u64, ch: Channel, clip: &SoundClip, looped: bool, gain: f32, direction: [f32; 3]) {
+        let voice = WorldVoice::new_binaural(id, ch, clip.samples.clone(), looped, gain, direction);
+        let _ = self.inner.cmd_tx.try_send(Command::PlayWorld(voice));
+    }
+
+    /// New (left, right) gains of a world sound (ramped over one buffer); a
+    /// sound rendered binaurally crossfades back to the panning.
     pub fn world_gain(&self, id: u64, gain: (f32, f32)) {
         let _ = self.inner.cmd_tx.try_send(Command::WorldGain(id, gain));
+    }
+
+    /// New distance gain and direction of a world sound, rendered
+    /// binaurally through the head-related filters of that direction (3D
+    /// sound for headphones): the filters crossfade and the delays glide to
+    /// it; a panned sound crossfades to the binaural rendering.
+    pub fn world_binaural(&self, id: u64, gain: f32, direction: [f32; 3]) {
+        let _ = self.inner.cmd_tx.try_send(Command::WorldBinaural(id, gain, direction));
+    }
+
+    /// How much a world sound is muffled by what stands between it and the
+    /// listener: 0 clear, 0.5 behind one wall, 1 behind two or more. The
+    /// low-pass and the gain cut glide to the new value; a sound that has
+    /// not played yet takes it at once.
+    pub fn world_occlusion(&self, id: u64, amount: f32) {
+        let _ = self.inner.cmd_tx.try_send(Command::WorldOcclusion(id, amount));
+    }
+
+    /// How much more of a world sound goes to the reverb of the surroundings
+    /// than its distance gain (a farther sound sends relatively more; 0, the
+    /// value of a new sound, keeps it dry). Glides over a buffer; a sound
+    /// that has not played yet takes it at once.
+    pub fn world_reverb_send(&self, id: u64, factor: f32) {
+        let _ = self.inner.cmd_tx.try_send(Command::WorldReverbSend(id, factor));
+    }
+
+    /// The reverb of the surroundings on with these parameters (they glide
+    /// there), or off (`None`: its output fades out, then the mix is the dry
+    /// one, bit for bit).
+    pub fn set_reverb(&self, params: Option<ReverbParams>) {
+        let _ = self.inner.cmd_tx.try_send(Command::Reverb(params));
     }
 
     /// Fades a world sound out and removes it.
