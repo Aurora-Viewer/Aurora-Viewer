@@ -1,7 +1,8 @@
 //! Files and folders handed to the system's programs: the file manager,
-//! the photo viewer. The launcher (`xdg-open`, `open`, `explorer`) is
-//! waited for on a short thread of its own: a child nobody waits for stays
-//! a zombie process on Unix until the viewer exits, one per click.
+//! the photo viewer, the external script editor. The program (`xdg-open`,
+//! `open`, `explorer`, the editor) is waited for on a thread of its own: a
+//! child nobody waits for stays a zombie process on Unix until the viewer
+//! exits, one per click.
 
 use std::path::Path;
 use std::process::Command;
