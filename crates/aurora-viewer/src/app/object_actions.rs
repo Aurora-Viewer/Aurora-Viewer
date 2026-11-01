@@ -286,10 +286,11 @@ impl App {
         let cursor = self.cursor_pos;
         let Some(h) = self.interactions.held.as_mut() else { return };
         if h.drawn.is_none() && h.asked.elapsed() >= ASK_EVERY && h.last.elapsed() + ASK_LEAD >= ASK_EVERY {
-            h.drawn = Some((
-                renderer.request_drawn(cursor.0, cursor.1, aurora_render::DrawnMode::Interaction),
-                cursor,
-            ));
+            // the press's own pick rule (DrawnMode::Left, which skips fully
+            // transparent texels of world Blend faces): the hover reads the
+            // surface with the press's pick settings (LLToolGrabBase::
+            // handleHoverNonPhysical, `LLPickInfo pick = mGrabPick`)
+            h.drawn = Some((renderer.request_drawn(cursor.0, cursor.1, aurora_render::DrawnMode::Left), cursor));
             h.asked = Instant::now();
         }
     }
