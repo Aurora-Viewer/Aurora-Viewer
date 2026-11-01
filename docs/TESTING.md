@@ -3579,11 +3579,16 @@ both open states and the selection count. Capture at frame 620.
   axes); a missing or unreadable value keeps the default (0.5, 0.3999,
   0.04, 2, fog 0.0156 / 0.149 / 0.2509). Values beyond the Legacy Viewer's
   ranges are clamped to them like LLSettingsWater's validation. With
-  `AURORA_DEMO_SKY=1.6,0.8,1.2 AURORA_DEMO_WATER_EEP=1.8,0,0,0,1.6,1.6,1.6`
-  (fresnel offset above 1, a flat surface, a sharp reflection, a fog
-  colour above 1) the water must stay a bright but readable mirror of the
-  sky, never a flat white sheet; compare the Legacy Viewer with the same
-  values in Personal Lighting.
+  `AURORA_DEMO_SKY=1.6,37,1.2 AURORA_DEMO_WATER_EEP=0.5,0,0,0,0.101,0.211,0.196`
+  and `AURORA_DEMO_WATER=off:shore` (a hazy classic sky; a normal scale of
+  0, a fresnel scale of 0 and no blur, as the reported region has) the sea
+  is dark and hazed toward the horizon, without any reflection, as in the
+  Legacy Viewer (its reflection normal is normalize(0) there), never a
+  white sheet; with `medium:shore` it keeps its waves and foam, not white
+  either. `AURORA_DEMO_WATER_EEP=1.8,0,0,2,1.6,1.6,1.6` (fresnel offset and
+  fog colour above 1) shows the Legacy clamps: a readable water, not a
+  flat milky sheet. Compare the Legacy Viewer with the same values in
+  Personal Lighting.
 - **`AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>]]`**: classic EEP sky (without
   reflection probe ambiance) with this sky gamma and a sun colour
   above 1: legacy gamma and object light normalised like
