@@ -1607,14 +1607,18 @@ fn blend_color(in: VsOut, front: bool) -> vec4<f32> {
 
 // ---- order-independent transparency: capture (oit.rs, oit.wgsl)
 //
-// Each blended fragment in front of the opaque scene is appended to its
-// pixel's list instead of being blended: premultiplied colour (rg and b as
-// halves), alpha (8 bits), the MSAA samples it covers (8 bits), its depth and
-// the next node. oit.wgsl sorts and composites the lists. Once the node pool
-// is full, the fragment is dropped: the classify then skips the composite and
-// the frame's blended faces are drawn again exactly as without OIT
-// (renderer.rs `rigged_in_order`, then the others in order), so a crowded
-// frame is the image it had before OIT: no holes, no reversed order.
+// Each blended fragment in front of the opaque scene is stored instead of
+// being blended: premultiplied colour (rg and b as halves), alpha (8 bits),
+// the MSAA samples it covers (8 bits) and its depth. A pixel's first
+// `slots` fragments go to its slots of a texture array (layer k holding
+// every pixel's slot k: neighbours write and read side by side, and these
+// fragments leave the pool's counter alone); the others are appended to its
+// linked list in the node pool, with the next node. oit.wgsl sorts and
+// composites them. Once the node pool is full, the fragment is dropped: the
+// classify then skips the composite and the frame's blended faces are drawn
+// again exactly as without OIT (renderer.rs `rigged_in_order`, then the
+// others in order), so a crowded frame is the image it had before OIT: no
+// holes, no reversed order.
 struct OitParams {
     node_cap: u32,
     width: u32,
@@ -1624,12 +1628,20 @@ struct OitParams {
     tiles_x: u32,
     tiles: u32,
     draws: u32,
+    slots: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 };
-// heads[0] counts the nodes; heads[1 + y * width + x] is the pixel's first
-// node plus one (0: empty)
+// heads[0] counts the pool's nodes; pixel p = y * width + x: heads[1 + 2p]
+// counts its fragments, heads[2 + 2p] is the first node of its list plus
+// one (0: none)
 @group(3) @binding(20) var<storage, read_write> oit_heads: array<atomic<u32>>;
 @group(3) @binding(21) var<storage, read_write> oit_nodes: array<vec4<u32>>;
 @group(3) @binding(22) var<uniform> oit_params: OitParams;
+// the slots: written by the capture, read by fs_glow_oit
+@group(3) @binding(23) var oit_slots_w: texture_storage_2d_array<rgba32uint, write>;
+@group(3) @binding(24) var oit_slots_r: texture_2d_array<u32>;
 
 // The depth test runs before the shader where the GPU allows forcing it
 // (oit.rs `object_source` turns the marker below into
@@ -1649,20 +1661,23 @@ fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_m
         discard;
     }
     let c = blend_color(in, front);
+    let a8 = u32(round(clamp(c.a, 0.0, 1.0) * 255.0));
+    let b16 = pack2x16float(vec2<f32>(clamp(c.b, 0.0, 65504.0), 0.0)) & 0xffffu;
+    let rg = pack2x16float(clamp(c.rg, vec2<f32>(0.0), vec2<f32>(65504.0)));
+    let rest = b16 | (a8 << 16u) | ((coverage & 0xffu) << 24u);
+    let pixel = 1u + 2u * (px.y * oit_params.width + px.x);
+    let slot = atomicAdd(&oit_heads[pixel], 1u);
+    if (slot < oit_params.slots) {
+        textureStore(oit_slots_w, px, slot, vec4<u32>(rg, rest, bitcast<u32>(in.clip.z), 0u));
+        return vec4<f32>(0.0);
+    }
     // (still counted past the end: the classify sees the overflow)
     let idx = atomicAdd(&oit_heads[0], 1u);
     if (idx >= oit_params.node_cap) {
         return vec4<f32>(0.0);
     }
-    let prev = atomicExchange(&oit_heads[1u + px.y * oit_params.width + px.x], idx + 1u);
-    let a8 = u32(round(clamp(c.a, 0.0, 1.0) * 255.0));
-    let b16 = pack2x16float(vec2<f32>(clamp(c.b, 0.0, 65504.0), 0.0)) & 0xffffu;
-    oit_nodes[idx] = vec4<u32>(
-        pack2x16float(clamp(c.rg, vec2<f32>(0.0), vec2<f32>(65504.0))),
-        b16 | (a8 << 16u) | ((coverage & 0xffu) << 24u),
-        bitcast<u32>(in.clip.z),
-        prev,
-    );
+    let prev = atomicExchange(&oit_heads[pixel + 1u], idx + 1u);
+    oit_nodes[idx] = vec4<u32>(rg, rest, bitcast<u32>(in.clip.z), prev);
     return vec4<f32>(0.0);
 }
 
@@ -1688,16 +1703,28 @@ fn fs_glow_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_ma
     let g = glow_amount(in, front);
     let px = vec2<u32>(in.clip.xy);
     var through = 1.0;
-    var idx = atomicLoad(&oit_heads[1u + px.y * oit_params.width + px.x]);
+    let pixel = 1u + 2u * (px.y * oit_params.width + px.x);
+    let in_slots = min(atomicLoad(&oit_heads[pixel]), oit_params.slots);
+    var k = 0u;
+    var idx = atomicLoad(&oit_heads[pixel + 1u]);
     var steps = 0u;
     loop {
-        // (bounded by the pool, as oit.wgsl: never cuts a valid list)
-        if (idx == 0u || steps >= oit_params.node_cap || through <= 0.0) {
+        if (through <= 0.0) {
             break;
         }
-        let n = oit_nodes[idx - 1u];
-        idx = n.w;
-        steps += 1u;
+        var n: vec4<u32>;
+        if (k < in_slots) {
+            n = textureLoad(oit_slots_r, px, k, 0);
+            k += 1u;
+        } else {
+            // (bounded by the pool, as oit.wgsl: never cuts a valid list)
+            if (idx == 0u || steps >= oit_params.node_cap) {
+                break;
+            }
+            n = oit_nodes[idx - 1u];
+            idx = n.w;
+            steps += 1u;
+        }
         // nearer (reverse-Z) and over one of this fragment's samples
         if (bitcast<f32>(n.z) > in.clip.z && ((n.y >> 24u) & mask) != 0u) {
             through *= 1.0 - f32((n.y >> 16u) & 0xffu) / 255.0;

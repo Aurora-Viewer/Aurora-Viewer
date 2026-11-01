@@ -1,7 +1,9 @@
 // Order-independent transparency: resolve (oit.rs).
 //
-// fs_blend_oit (object.wgsl) appended each blended fragment to its pixel's
-// list. Here, in three steps:
+// fs_blend_oit (object.wgsl) stored each blended fragment: a pixel's first
+// `slots` layers in its slots of a texture array (layer k: every pixel's
+// slot k, so a tile's pixels read their layers side by side), the others
+// appended to its linked list in the node pool. Here, in three steps:
 //
 // 1. cs_classify (compute, one 8 x 8 tile per workgroup): each pixel sorts
 //    its list once and stores the composite in `out_color`; a pixel where
@@ -46,7 +48,14 @@ struct OitParams {
     // (oit.rs `prepare`; not u32::MAX, which a driver multiplies by the
     // draw stride and loses the device)
     draws: u32,
+    // layers per pixel in the slot array
+    slots: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 };
+// heads[0] counts the pool's nodes; pixel p: heads[1 + 2p] its layers,
+// heads[2 + 2p] the first node of its list plus one (0: none)
 @group(0) @binding(0) var<storage, read> heads: array<u32>;
 @group(0) @binding(1) var<storage, read> nodes: array<vec4<u32>>;
 @group(0) @binding(2) var<uniform> params: OitParams;
@@ -66,10 +75,14 @@ struct OitParams {
 @group(0) @binding(8) var<storage, read> tiles_r: array<u32>;
 // single-sample only: the scene depth (the replay's depth copy)
 @group(0) @binding(11) var depth_ss: texture_depth_2d;
+// the slot array (same node layout, `w` unused)
+@group(0) @binding(10) var slots_r: texture_2d_array<u32>;
 
 const TILE: u32 = 8u;
 // `out_color` alpha of an edge pixel
 const EDGE: f32 = -1.0;
+// a sorted layer held in a slot (the rest of the id: the slot), not a node
+const SLOT: u32 = 0x80000000u;
 
 struct Resolved {
     // 0 nothing in front, 1 `color`, 2 an edge (the samples disagree),
@@ -78,6 +91,14 @@ struct Resolved {
     color: vec4<f32>,
 };
 
+// A layer by its id: slot `id & !SLOT` of the pixel, or node `id`.
+fn layer(px: vec2<u32>, id: u32) -> vec4<u32> {
+    if ((id & SLOT) != 0u) {
+        return textureLoad(slots_r, px, id & ~SLOT, 0);
+    }
+    return nodes[id];
+}
+
 fn node_color(n: vec4<u32>) -> vec4<f32> {
     let rg = unpack2x16float(n.x);
     let b = unpack2x16float(n.y & 0xffffu).x;
@@ -85,11 +106,12 @@ fn node_color(n: vec4<u32>) -> vec4<f32> {
 }
 
 // <resolve_N>
-// The list from `first`: `full`, the samples a layer must cover; a layer at
-// or behind `dmin` is hidden everywhere, one in front of `dmax` nowhere
-// (reverse-Z). Per sample (fs_edge): `full` that sample's bit and
-// dmin = dmax its depth. Without MSAA: 1 and -1, every layer kept.
-fn resolve___N__(first: u32, full: u32, dmin: f32, dmax: f32, keep: u32) -> Resolved {
+// The layers of pixel `px`: `count` stored, the slots' then the list from
+// `first`. `full`, the samples a layer must cover; a layer at or behind
+// `dmin` is hidden everywhere, one in front of `dmax` nowhere (reverse-Z).
+// Per sample (fs_edge): `full` that sample's bit and dmin = dmax its depth.
+// Without MSAA: 1 and -1, every layer kept.
+fn resolve___N__(px: vec2<u32>, count: u32, first: u32, full: u32, dmin: f32, dmax: f32, keep: u32) -> Resolved {
     // the kept layers' nodes and depths only (two words each), the colours
     // read again once sorted: the arrays stay in registers
     var ids: array<u32, __N__>;
@@ -98,18 +120,28 @@ fn resolve___N__(first: u32, full: u32, dmin: f32, dmax: f32, keep: u32) -> Reso
     var tail_sum = vec3<f32>(0.0);
     var tail_a = 0.0;
     var tail_trans = 1.0;
+    let in_slots = min(count, params.slots);
+    var k = 0u;
     var idx = first;
     var steps = 0u;
     loop {
-        // (a list holds at most every node of the pool: the bound only
-        // guards against a broken one, never cuts a valid list)
-        if (idx == 0u || steps >= params.node_cap) {
-            break;
+        var n: vec4<u32>;
+        var id: u32;
+        if (k < in_slots) {
+            n = textureLoad(slots_r, px, k, 0);
+            id = SLOT | k;
+            k += 1u;
+        } else {
+            // (a list holds at most every node of the pool: the bound
+            // only guards against a broken one, never cuts a valid list)
+            if (idx == 0u || steps >= params.node_cap) {
+                break;
+            }
+            id = idx - 1u;
+            n = nodes[id];
+            idx = n.w;
+            steps += 1u;
         }
-        let id = idx - 1u;
-        let n = nodes[id];
-        idx = n.w;
-        steps += 1u;
         let m = (n.y >> 24u) & full;
         let z = bitcast<f32>(n.z);
         if (m == 0u || z <= dmin) {
@@ -160,7 +192,7 @@ fn resolve___N__(first: u32, full: u32, dmin: f32, dmax: f32, keep: u32) -> Reso
         accum = tail_sum / tail_a * cov;
     }
     for (var i = 0u; i < cnt; i += 1u) {
-        let c = node_color(nodes[ids[i]]);
+        let c = node_color(layer(px, ids[i]));
         accum = c.rgb + accum * (1.0 - c.a);
         cov = c.a + cov * (1.0 - c.a);
     }
@@ -168,17 +200,20 @@ fn resolve___N__(first: u32, full: u32, dmin: f32, dmax: f32, keep: u32) -> Reso
 }
 // </resolve_N>
 
-fn resolve_list(first: u32, full: u32, dmin: f32, dmax: f32) -> Resolved {
+fn resolve_list(px: vec2<u32>, full: u32, dmin: f32, dmax: f32) -> Resolved {
     let keep = min(params.max_layers, 24u);
-    let r = resolve_8(first, full, dmin, dmax, keep);
+    let p = pixel(px);
+    let r = resolve_8(px, p.x, p.y, full, dmin, dmax, keep);
     if (r.status == 3u) {
-        return resolve_24(first, full, dmin, dmax, keep);
+        return resolve_24(px, p.x, p.y, full, dmin, dmax, keep);
     }
     return r;
 }
 
-fn head(px: vec2<u32>) -> u32 {
-    return heads[1u + px.y * params.width + px.x];
+// The pixel's layer count and the first node of its list plus one.
+fn pixel(px: vec2<u32>) -> vec2<u32> {
+    let p = 1u + 2u * (px.y * params.width + px.x);
+    return vec2<u32>(heads[p], heads[p + 1u]);
 }
 
 fn overflowed() -> bool {
@@ -206,10 +241,9 @@ var<workgroup> tile_flags: atomic<u32>;
 fn classify(px: vec2<u32>, full: u32, dmin: f32, dmax: f32) -> u32 {
     var flag = 0u;
     var out = vec4<f32>(0.0);
-    let first = head(px);
     // (overflowed: nothing composited, the faces are replayed in order)
-    if (first != 0u && !overflowed()) {
-        let r = resolve_list(first, full, dmin, dmax);
+    if (pixel(px).x != 0u && !overflowed()) {
+        let r = resolve_list(px, full, dmin, dmax);
         if (r.status == 1u) {
             out = r.color;
             flag = 1u;
@@ -267,7 +301,7 @@ fn cs_classify_ms(@builtin(global_invocation_id) g: vec3<u32>, @builtin(local_in
         // samples, or behind all, is the same for each
         var dmin = 2.0;
         var dmax = -1.0;
-        if (head(g.xy) != 0u && !overflowed()) {
+        if (pixel(g.xy).x != 0u && !overflowed()) {
             for (var s = 0u; s < params.samples; s += 1u) {
                 let d = textureLoad(depth_ms, vec2<i32>(g.xy), i32(s));
                 dmin = min(dmin, d);
@@ -317,7 +351,7 @@ fn fs_edge(@builtin(position) p: vec4<f32>, @builtin(sample_index) s: u32) -> @l
         discard;
     }
     let opaque = textureLoad(depth_ms, vec2<i32>(px), i32(s));
-    let r = resolve_list(head(px), 1u << s, opaque, opaque);
+    let r = resolve_list(px, 1u << s, opaque, opaque);
     if (r.status != 1u) {
         discard;
     }

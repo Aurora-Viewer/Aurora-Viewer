@@ -1,11 +1,15 @@
-//! Order-independent transparency: per-pixel linked lists.
+//! Order-independent transparency: a slot array plus per-pixel linked lists.
 //!
 //! Blended faces are drawn back to front object by object, so two objects
 //! that cross or interleave (hair over a dress, glass in glass, nested
 //! particles of a build) show the wrong one in front wherever their order
 //! flips inside a pixel. With this on, the scene's blended faces are drawn
-//! once into a pool of nodes (`fs_blend_oit`, object.wgsl): each fragment in
-//! front of the opaque scene becomes a node of its pixel's list. A compute
+//! once (`fs_blend_oit`, object.wgsl): each pixel's first `slots` fragments
+//! in front of the opaque scene go to slot k of a texture array (layer k
+//! holds every pixel's slot k, so neighbours write side by side and these
+//! fragments never touch the pool's shared counter); the following ones
+//! become nodes of the pixel's linked list in the pool, so the result stays
+//! exact. A compute
 //! pass (oit.wgsl) then sorts each pixel's layers once and lists the screen
 //! tiles that hold some; two indirect draws composite those tiles over the
 //! scene, the MSAA edge pixels sample by sample.
@@ -30,6 +34,10 @@ pub const DEFAULT_SORTED_LAYERS: u32 = 24;
 pub const MAX_SORTED_LAYERS: u32 = 24;
 /// The node pool never takes more video memory than this.
 pub const MAX_POOL_BYTES: u64 = 512 << 20;
+/// A slot (a texel of the array) has the size of a node.
+const SLOT_BYTES: u64 = 16;
+/// Slots per pixel at most: past that the array costs more than it saves.
+const MAX_SLOTS: u32 = 8;
 /// A node: premultiplied colour, alpha and coverage, depth, next.
 const NODE_BYTES: u64 = 16;
 /// Side of the resolve's screen tiles (oit.wgsl `TILE`, its workgroups).
@@ -40,7 +48,7 @@ const TILE: u32 = 8;
 /// the nodes.
 const CAPTURE_STORAGE_BUFFERS: u32 = 7;
 
-/// oit.wgsl `OitParams` (object.wgsl reads its first four words).
+/// oit.wgsl `OitParams` (object.wgsl declares the same words).
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, PartialEq, Debug)]
 struct Params {
@@ -53,6 +61,9 @@ struct Params {
     tiles: u32,
     /// blended faces this frame (oit.wgsl `draws`)
     draws: u32,
+    /// fragments per pixel kept in the slot array (the rest go to the list)
+    slots: u32,
+    _pad: [u32; 3],
 }
 
 /// Byte offsets in [`Oit::flags`]: the draw count of the in-order replay
@@ -71,6 +82,7 @@ const DEPTH_COPY_ARGS: u64 = 8;
 pub(crate) fn supported(device: &wgpu::Device) -> bool {
     !cfg!(target_os = "macos")
         && device.limits().max_storage_buffers_per_shader_stage >= CAPTURE_STORAGE_BUFFERS
+        && device.limits().max_storage_textures_per_shader_stage >= 1
         && device.features().contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT)
 }
 
@@ -113,24 +125,57 @@ pub(crate) fn resolve_source() -> String {
     format!("{}{}{}", &src[..start], sorts, &src[end..])
 }
 
-/// Nodes the pool holds for a `width` × `height` screen: `nodes_per_pixel`
-/// per pixel, within `MAX_POOL_BYTES` and the device's buffer limits.
-pub fn node_capacity(width: u32, height: u32, nodes_per_pixel: u32, max_binding: u64) -> u32 {
-    let wanted =
-        u64::from(width.max(1)) * u64::from(height.max(1)) * u64::from(nodes_per_pixel.clamp(MIN_NODES_PER_PIXEL, MAX_NODES_PER_PIXEL));
-    let bytes = (wanted * NODE_BYTES).min(MAX_POOL_BYTES).min(max_binding);
-    u32::try_from(bytes / NODE_BYTES).unwrap_or(u32::MAX)
+/// How a pixel budget (`nodes_per_pixel`, the "Layers kept per pixel"
+/// setting) is split between the slot array and the node pool.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Plan {
+    /// slot-array layers (fragments per pixel stored without the pool)
+    pub slots: u32,
+    /// nodes in the pool
+    pub node_cap: u32,
+}
+
+/// Splits the budget: half of the per-pixel count goes to the slots (1 to
+/// [`MAX_SLOTS`]), the rest stays in the pool on average. The slots are
+/// reduced first when they alone would take more than half of
+/// `MAX_POOL_BYTES` (4K screens) and by the device's layer limit; the pool
+/// gets what is left of the budget within `max_binding`. `None` when no slot
+/// fits or the screen exceeds `max_dim`.
+pub fn plan(width: u32, height: u32, nodes_per_pixel: u32, max_binding: u64, max_layers: u32, max_dim: u32) -> Option<Plan> {
+    if width > max_dim || height > max_dim {
+        return None;
+    }
+    let pixels = u64::from(width.max(1)) * u64::from(height.max(1));
+    let per_pixel = nodes_per_pixel.clamp(MIN_NODES_PER_PIXEL, MAX_NODES_PER_PIXEL);
+    let by_budget = u32::try_from((MAX_POOL_BYTES / 2) / (pixels * SLOT_BYTES)).unwrap_or(u32::MAX);
+    let slots = (per_pixel / 2).clamp(1, MAX_SLOTS).min(by_budget).min(max_layers);
+    if slots == 0 {
+        return None;
+    }
+    let slot_bytes = pixels * SLOT_BYTES * u64::from(slots);
+    let wanted = pixels * u64::from(per_pixel - slots);
+    let bytes = (wanted * NODE_BYTES)
+        .min(MAX_POOL_BYTES.saturating_sub(slot_bytes))
+        .min(max_binding);
+    let node_cap = u32::try_from(bytes / NODE_BYTES).unwrap_or(u32::MAX);
+    Some(Plan { slots, node_cap })
 }
 
 struct Pool {
     width: u32,
     height: u32,
     node_cap: u32,
+    slots: u32,
     nodes_per_pixel: u32,
     tiles_x: u32,
     tiles: u32,
-    /// heads[0] counts the nodes, then one head per pixel (0: empty)
+    /// heads[0] counts the nodes; pixel p: heads[1 + 2p] counts its
+    /// fragments, heads[2 + 2p] is its list's head + 1 (0: none)
     heads: wgpu::Buffer,
+    /// the first `slots` fragments of each pixel (layer k: slot k of all)
+    slots_view: wgpu::TextureView,
+    /// keeps the slot array alive
+    _slots_tex: wgpu::Texture,
     nodes: wgpu::Buffer,
     /// each pixel's composite (an edge pixel's alpha: -1)
     color: wgpu::TextureView,
@@ -140,6 +185,7 @@ struct Pool {
     /// the draw counts at REPLAY_FLAG and COMPOSITED_FLAG, set by the classify
     flags: wgpu::Buffer,
     capture: wgpu::BindGroup,
+    glow: wgpu::BindGroup,
     /// the classify's and the draws' groups, and the MSAA depth they read
     groups: Option<(wgpu::BindGroup, wgpu::BindGroup)>,
     groups_depth: Option<wgpu::TextureView>,
@@ -168,6 +214,7 @@ impl Resolve {
 #[derive(Clone)]
 pub(crate) struct Shared {
     capture_layout: wgpu::BindGroupLayout,
+    glow_layout: wgpu::BindGroupLayout,
     /// the classify's and the draws', single-sample then MSAA
     classify_layouts: [wgpu::BindGroupLayout; 2],
     draw_layouts: [wgpu::BindGroupLayout; 2],
@@ -177,9 +224,14 @@ pub(crate) struct Shared {
 }
 
 impl Shared {
-    /// The capture's (and `fs_glow_oit`'s) group 3 layout.
+    /// The capture's group 3 layout (the slot array written).
     pub fn capture_layout(&self) -> &wgpu::BindGroupLayout {
         &self.capture_layout
+    }
+
+    /// `fs_glow_oit`'s group 3 layout (the slot array read).
+    pub fn glow_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.glow_layout
     }
 }
 
@@ -209,6 +261,15 @@ fn buffer(ty: wgpu::BufferBindingType) -> wgpu::BindingType {
     }
 }
 
+/// The slot array read as a sampled texture (loads only).
+fn slots_texture() -> wgpu::BindingType {
+    wgpu::BindingType::Texture {
+        sample_type: wgpu::TextureSampleType::Uint,
+        view_dimension: wgpu::TextureViewDimension::D2Array,
+        multisampled: false,
+    }
+}
+
 fn bind(binding: u32, resource: wgpu::BindingResource<'_>) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry { binding, resource }
 }
@@ -235,6 +296,8 @@ fn resolve_layout(device: &wgpu::Device, classify: bool, ms: bool) -> wgpu::Bind
             },
         ));
     }
+    // the slot array (oit.wgsl `slots_r`)
+    entries.push(entry(10, stage, slots_texture()));
     if classify {
         let rw = buffer(wgpu::BufferBindingType::Storage { read_only: false });
         entries.push(entry(
@@ -398,14 +461,35 @@ impl Oit {
             return None;
         }
         use wgpu::BufferBindingType as B;
-        // group 3 of the capture (object.wgsl bindings 20..22)
+        // group 3 of the capture (object.wgsl bindings 20..23) and of the
+        // glow (20..22 and 24): a write-only storage texture cannot be read,
+        // so the slot array has a layout entry for each use
+        let frag = wgpu::ShaderStages::FRAGMENT;
+        let common = [
+            entry(20, frag, buffer(B::Storage { read_only: false })),
+            entry(21, frag, buffer(B::Storage { read_only: false })),
+            entry(22, frag, buffer(B::Uniform)),
+        ];
         let capture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("oit capture"),
             entries: &[
-                entry(20, wgpu::ShaderStages::FRAGMENT, buffer(B::Storage { read_only: false })),
-                entry(21, wgpu::ShaderStages::FRAGMENT, buffer(B::Storage { read_only: false })),
-                entry(22, wgpu::ShaderStages::FRAGMENT, buffer(B::Uniform)),
+                common[0],
+                common[1],
+                common[2],
+                entry(
+                    23,
+                    frag,
+                    wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba32Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                    },
+                ),
             ],
+        });
+        let glow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("oit glow"),
+            entries: &[common[0], common[1], common[2], entry(24, frag, slots_texture())],
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("oit resolve"),
@@ -420,6 +504,7 @@ impl Oit {
         Some(Oit {
             shared: Shared {
                 capture_layout,
+                glow_layout,
                 classify_layouts: [resolve_layout(device, true, false), resolve_layout(device, true, true)],
                 draw_layouts: [resolve_layout(device, false, false), resolve_layout(device, false, true)],
                 module,
@@ -503,6 +588,8 @@ impl Oit {
             tiles_x: pool.tiles_x,
             tiles: pool.tiles,
             draws: draws.max(1),
+            slots: pool.slots,
+            _pad: [0; 3],
         };
         if self.last_params != Some(params) {
             queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
@@ -518,8 +605,19 @@ impl Oit {
     /// The pool's buffers and texture, or why one could not be made: every
     /// allocation checked (`gpu_alloc`), the pool installed only whole.
     fn make_pool(&self, device: &wgpu::Device, width: u32, height: u32, nodes_per_pixel: u32, max_binding: u64) -> Result<Pool, String> {
-        let node_cap = node_capacity(width, height, nodes_per_pixel, max_binding);
-        let heads_bytes = (1 + u64::from(width) * u64::from(height)) * 4;
+        let limits = device.limits();
+        let Some(Plan { slots, node_cap }) = plan(
+            width,
+            height,
+            nodes_per_pixel,
+            max_binding,
+            limits.max_texture_array_layers,
+            limits.max_texture_dimension_2d,
+        ) else {
+            return Err("larger than the device's textures".to_owned());
+        };
+        // two words per pixel: its fragment count and its list's head
+        let heads_bytes = (1 + 2 * u64::from(width) * u64::from(height)) * 4;
         if node_cap == 0 || heads_bytes > max_binding {
             return Err("larger than the device's storage buffers".to_owned());
         }
@@ -562,8 +660,33 @@ impl Oit {
             &Default::default(),
             u64::from(width) * u64::from(height) * 8,
         )?;
+        let slots_bytes = u64::from(width) * u64::from(height) * u64::from(slots) * SLOT_BYTES;
+        let (slots_tex, slots_view) = crate::gpu_alloc::try_texture(
+            device,
+            &wgpu::TextureDescriptor {
+                label: Some("oit slots"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: slots,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba32Uint,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            // an array view even for one layer (the default would be plain 2D)
+            &wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            },
+            slots_bytes,
+        )?;
         log::info!(
-            "oit: {node_cap} nodes ({} MB) for {width}x{height}, {nodes_per_pixel} per pixel",
+            "oit: {slots} slots ({} MB) + {node_cap} nodes ({} MB) for {width}x{height}, {nodes_per_pixel} per pixel",
+            slots_bytes >> 20,
             (u64::from(node_cap) * NODE_BYTES) >> 20
         );
         let capture = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -573,22 +696,37 @@ impl Oit {
                 bind(20, heads.as_entire_binding()),
                 bind(21, nodes.as_entire_binding()),
                 bind(22, self.params.as_entire_binding()),
+                bind(23, wgpu::BindingResource::TextureView(&slots_view)),
+            ],
+        });
+        let glow = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("oit glow"),
+            layout: &self.shared.glow_layout,
+            entries: &[
+                bind(20, heads.as_entire_binding()),
+                bind(21, nodes.as_entire_binding()),
+                bind(22, self.params.as_entire_binding()),
+                bind(24, wgpu::BindingResource::TextureView(&slots_view)),
             ],
         });
         Ok(Pool {
             width,
             height,
             node_cap,
+            slots,
             nodes_per_pixel,
             tiles_x,
             tiles,
             heads,
+            slots_view,
+            _slots_tex: slots_tex,
             nodes,
             color,
             args,
             tile_list,
             flags,
             capture,
+            glow,
             groups: None,
             groups_depth: None,
         })
@@ -607,6 +745,7 @@ impl Oit {
             bind(1, pool.nodes.as_entire_binding()),
             bind(2, self.params.as_entire_binding()),
         ];
+        classify.push(bind(10, wgpu::BindingResource::TextureView(&pool.slots_view)));
         let mut draws = classify.clone();
         if let Some(depth) = depth_msaa {
             classify.push(bind(3, wgpu::BindingResource::TextureView(depth)));
@@ -637,6 +776,11 @@ impl Oit {
     /// The capture's group 3, once [`Oit::prepare`] made the pool.
     pub fn capture_group(&self) -> Option<&wgpu::BindGroup> {
         self.pool.as_ref().map(|p| &p.capture)
+    }
+
+    /// The glow's group 3 (the same lists, the slot array read).
+    pub fn glow_group(&self) -> Option<&wgpu::BindGroup> {
+        self.pool.as_ref().map(|p| &p.glow)
     }
 
     /// Empties the lists (before the capture).
@@ -719,17 +863,53 @@ impl Oit {
 mod tests {
     use super::*;
 
+    const BIG: u64 = u64::MAX;
+
+    fn total(p: Plan, w: u32, h: u32) -> u64 {
+        u64::from(w) * u64::from(h) * u64::from(p.slots) * SLOT_BYTES + u64::from(p.node_cap) * NODE_BYTES
+    }
+
     #[test]
-    fn the_pool_follows_the_screen_and_stays_within_its_budget() {
-        // 1080p, 8 per pixel: 16.6 M nodes would be 253 MB
-        assert_eq!(node_capacity(1920, 1080, 8, u64::MAX), 1920 * 1080 * 8);
-        // 4K at 8 per pixel would be 1 GB: capped to 512 MB
-        assert_eq!(u64::from(node_capacity(3840, 2160, 8, u64::MAX)) * NODE_BYTES, MAX_POOL_BYTES);
-        // a device binding limit below the budget wins
-        assert_eq!(node_capacity(1920, 1080, 8, 128 << 20), (128 << 20) / 16);
-        // the per-pixel count is kept in its range
-        assert_eq!(node_capacity(100, 100, 0, u64::MAX), 100 * 100 * MIN_NODES_PER_PIXEL);
-        assert_eq!(node_capacity(100, 100, 1000, u64::MAX), 100 * 100 * MAX_NODES_PER_PIXEL);
+    fn the_budget_splits_between_slots_and_pool() {
+        // 1080p, 8 per pixel: 4 slots and 4 nodes per pixel
+        let p = plan(1920, 1080, 8, BIG, 2048, 16384).unwrap();
+        assert_eq!(p.slots, 4);
+        assert_eq!(p.node_cap, 1920 * 1080 * 4);
+        // the default at 1600x900 stays near the former 175 MB
+        let p = plan(1600, 900, 8, BIG, 2048, 16384).unwrap();
+        assert!(total(p, 1600, 900) <= (190 << 20));
+    }
+
+    #[test]
+    fn a_4k_screen_reduces_the_slots_and_stays_within_the_budget() {
+        let p = plan(3840, 2160, 8, BIG, 2048, 16384).unwrap();
+        assert_eq!(p.slots, 2, "4 slots would be 531 MB");
+        assert!(total(p, 3840, 2160) <= MAX_POOL_BYTES);
+        let p = plan(3840, 2160, 32, BIG, 2048, 16384).unwrap();
+        assert!(p.slots >= 1 && total(p, 3840, 2160) <= MAX_POOL_BYTES);
+    }
+
+    #[test]
+    fn the_slot_count_stays_in_its_bounds() {
+        assert_eq!(plan(100, 100, 2, BIG, 2048, 16384).unwrap().slots, 1);
+        assert_eq!(plan(100, 100, 0, BIG, 2048, 16384).unwrap().slots, 1);
+        assert_eq!(plan(100, 100, 32, BIG, 2048, 16384).unwrap().slots, MAX_SLOTS);
+        assert_eq!(plan(100, 100, 1000, BIG, 2048, 16384).unwrap().slots, MAX_SLOTS);
+        // the device's layer limit
+        assert_eq!(plan(100, 100, 32, BIG, 3, 16384).unwrap().slots, 3);
+        // the smallest budget keeps one node per pixel in the pool
+        assert_eq!(plan(100, 100, 2, BIG, 2048, 16384).unwrap().node_cap, 100 * 100);
+    }
+
+    #[test]
+    fn the_device_limits_are_respected() {
+        // a binding limit below the pool wins
+        let p = plan(1920, 1080, 8, 64 << 20, 2048, 16384).unwrap();
+        assert_eq!(p.node_cap, (64 << 20) / 16);
+        // a screen larger than the textures: no plan
+        assert_eq!(plan(5000, 100, 8, BIG, 2048, 4096), None);
+        // no layer allowed
+        assert_eq!(plan(100, 100, 8, BIG, 0, 16384), None);
     }
 
     #[test]

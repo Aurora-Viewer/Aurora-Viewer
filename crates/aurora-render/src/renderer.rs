@@ -3502,6 +3502,14 @@ impl Backend {
                 immediate_size: 0,
             })
         });
+        // the glow reads the slot array the capture wrote (own group 3 layout)
+        let glow_oit_layout = oit.map(|oit| {
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("scene oit glow"),
+                bind_group_layouts: &[Some(frame_layout), Some(records_layout), Some(tex_layout), Some(oit.glow_layout())],
+                immediate_size: 0,
+            })
+        });
         let blend_oit = oit_layout.as_ref().map(|layout| {
             make_pipeline(
                 device,
@@ -3577,7 +3585,7 @@ impl Backend {
         // the blended faces drawn after the water: their glow clipped to the
         // camera's side like their colour (`blend_pipe`, WATER_CLIP 1)
         let glow_water = pipe(glow_desc("glow above water", &[("WATER_CLIP", 1.0)]));
-        let glow_oit = oit_layout.as_ref().map(|layout| {
+        let glow_oit = glow_oit_layout.as_ref().map(|layout| {
             make_pipeline(
                 device,
                 &module,
@@ -7981,13 +7989,14 @@ impl Backend {
                 }
             }
         };
-        if let (true, Some(oit), Some(capture), Some(resolve), Some(flags), Some(oit_group)) = (
+        if let (true, Some(oit), Some(capture), Some(resolve), Some(flags), Some(oit_group), Some(glow_group)) = (
             oit_on,
             &self.oit,
             &self.pipelines.blend_oit,
             &self.pipelines.oit_resolve,
             self.oit.as_ref().and_then(|o| o.flags()),
             self.oit.as_ref().and_then(|o| o.capture_group()),
+            self.oit.as_ref().and_then(|o| o.glow_group()),
         ) {
             // the lists: every blended face once (dropped past the pool's
             // end: the frame is then replayed in order below)
@@ -8040,7 +8049,7 @@ impl Backend {
             // like their colour (`fs_glow_oit`; none when the faces were
             // replayed with their glow)
             if let (true, Some(glow_oit)) = (glow_on && glow_skip & 8 == 0, &self.pipelines.glow_oit) {
-                pass.set_bind_group(3, oit_group, &[]);
+                pass.set_bind_group(3, glow_group, &[]);
                 for i in 0..bn {
                     if lists.blend_glow.get(i as usize).copied().unwrap_or(false) {
                         draw_g(&mut pass, glow_oit, (b0 + u64::from(i) * stride, 1), composited);
