@@ -1149,15 +1149,17 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         let detail=clamp(length(frame.water_normal.xy)*0.35,0.5,1.5);
         n=normalize(vec3<f32>((n.xy*0.18-micro.xy*detail)*furrow,1.0)+water_fx_normal(in.world_pos.xy,in.level,wake.xy));
     } else { n=water_unit(n+water_fx_normal(in.world_pos.xy,in.level,wake.xy)); }
-    // waterF.glsl (enhanced water off): the reflection follows the waves
-    // scaled by the EEP normal scale (wave_ibl), the sun glint the unscaled
-    // waves flattened with distance. With a normal scale of 0, wave_ibl is
-    // normalize(0), NaN on the GPU: the probe lookup gives nothing and the
-    // final max(color, 0) leaves the water without any reflection, only its
-    // refraction and fog. Regions made for it rely on that (a flat, dark
-    // blue sea), so the reflection is dropped the same way.
-    // no enhanced effect at all (the master switch off gives no flag; bit
-    // 1 alone is only its Waves option)
+    // waterF.glsl: the reflection follows the waves scaled by the EEP normal
+    // scale (wave_ibl), the sun glint the unscaled waves flattened with
+    // distance (enhanced water off). With a normal scale of 0, wave_ibl is
+    // normalize(0), NaN on the GPU, and what follows depends on the driver:
+    // NaN through mix/max, or a probe lookup giving 0. We take the latter:
+    // the water keeps its refraction and fog and loses its reflection,
+    // which is what the reported region shows in the Legacy Viewer (a flat,
+    // dark sea) and what its creator chose. That rule holds with enhanced
+    // water on too: its own normals would otherwise mirror the sky.
+    // legacy_water: no enhanced effect at all (the master switch off gives
+    // no flag; bit 1 alone is only its Waves option)
     let legacy_water = water_fx.counts.z == 0u;
     var wave_ibl = wavef * frame.water_normal.xyz;
     wave_ibl.z *= 2.0;
@@ -1249,7 +1251,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         radiance = mix(radiance, hit.rgb, hit.a);
     }
     if (!water_fx_on(512u)) { radiance *= df2.y; }
-    if (legacy_water && !legacy_reflects) { radiance = vec3<f32>(0.0); }
+    if (!legacy_reflects) { radiance = vec3<f32>(0.0); }
 
     // sun glint (punctual light, roughness = blur multiplier)
     let l = normalize(frame.sun_dir.xyz);
@@ -1334,12 +1336,12 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         // The Legacy air haze, enhanced water or not: waterF.glsl has none of
         // its own, but the water writes depth and doAtmospherics runs after
         // it (renderGeomPostDeferred: "just before post water alpha"), so
-        // hazeF.glsl blends over the surface, with ONE, SRC_ALPHA:
-        // srgb_to_linear(additive x 2) x sky_hdr_scale + dst x atten.r, on
-        // every sky. Aurora's classic air fog (a mix to a fog colour) made
-        // that colour near white under a hazy, bright classic sky.
-        let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
-        color = color * a.atten.r + max(srgb_to_linear(a.additive * 2.0) * frame.sky_cloud_pd2.w, vec3<f32>(0.0));
+        // hazeF.glsl blends over the surface, on every sky. Aurora's classic
+        // air fog (a mix to a fog colour) made that colour near white under
+        // a hazy, bright classic sky. Through ll_haze, as the terrain and the
+        // objects beside it, so the shoreline is hazed alike (hazeF.glsl's
+        // blend uses atten.r, ll_haze the whole atten: TASKS.md).
+        color = ll_haze(color, ll_atmos(in.world_pos - frame.camera_pos.xyz));
     }
     return vec4<f32>(color, 1.0);
 }

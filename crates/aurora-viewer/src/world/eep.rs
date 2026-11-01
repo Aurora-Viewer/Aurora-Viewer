@@ -332,7 +332,7 @@ fn water_frame_as_sent(w: &Llsd) -> Option<WaterFrame> {
     if !w.is_map() || !type_is(w, "water") {
         return None;
     }
-    let frame = WaterFrame {
+    Some(WaterFrame {
         fog_color: vec3(&w["water_fog_color"]).unwrap_or(d.fog_color),
         fog_density: real(w, "water_fog_density", d.fog_density),
         underwater_fog_mod: real(w, "underwater_fog_mod", d.underwater_fog_mod),
@@ -343,8 +343,7 @@ fn water_frame_as_sent(w: &Llsd) -> Option<WaterFrame> {
         wave1: vec2(&w["wave1_direction"]).unwrap_or(d.wave1),
         wave2: vec2(&w["wave2_direction"]).unwrap_or(d.wave2),
         normal_map: uuid(w, "normal_map", d.normal_map),
-    };
-    Some(frame)
+    })
 }
 
 /// Distance from `begin` to `end` going forward around the day
