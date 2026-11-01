@@ -9651,6 +9651,11 @@ impl App {
             raw.events.extend(crate::demo::conv_button::input_events(&ctx, self.frame_count));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::appearance::demo_events(self.frame_count));
+            raw.events.extend(self.appearance_ui.demo_clipboard_events(
+                &ctx,
+                self.frame_count,
+                self.inventory_ui.clipboard.first().copied(),
+            ));
             raw.events.extend(ui::appearance::layer_demo_events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::resize_events(&ctx, self.frame_count));
@@ -15072,6 +15077,9 @@ impl App {
                 ) {
                     self.apply_appearance_action(action);
                 }
+                if let Some(request) = self.appearance_ui.take_clipboard() {
+                    self.appearance_clipboard(&ctx, request);
+                }
                 if self.settings.appearance_fill_previews != self.appearance_ui.fill_previews {
                     self.settings.appearance_fill_previews = self.appearance_ui.fill_previews;
                     self.settings.save();
@@ -17624,10 +17632,10 @@ impl ApplicationHandler for App {
                 if view == "duplicates" {
                     crate::world::appearance::seed_duplicate_response(&mut self.world.inventory, self.world.agent_id);
                 }
-                if matches!(view.as_str(), "menu" | "duplicates" | "broken" | "multi-items") {
+                if matches!(view.as_str(), "menu" | "duplicates" | "broken" | "multi-items" | "clipboard") {
                     self.appearance_ui.open_outfit(uuid::Uuid::from_u128(704));
                 }
-                if matches!(view.as_str(), "multi-items" | "multi-worn") {
+                if matches!(view.as_str(), "multi-items" | "multi-worn" | "clipboard") {
                     self.appearance_ui.demo_item_selection(&self.world.inventory, view == "multi-worn");
                 }
                 if view == "wearables-outfits" {

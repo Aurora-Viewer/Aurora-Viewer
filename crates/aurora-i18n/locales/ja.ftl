@@ -7179,6 +7179,8 @@ world-inventory-demo-item = { "アイテム" }{ $n }
 ui-appearance-attached-items = 装着中のアイテム
 ui-appearance-temporary-items = 一時的な装着物（{ $count }個）
 ui-appearance-items-to-wear = 着用するアイテム
+ui-appearance-clipboard-cannot-take = この選択はコピーも切り取りもできません。
+ui-appearance-clipboard-select-an-outfit = 貼り付け先のアウトフィットを選択してください。
 ui-environment-elevation = 標高
 ui-env-editor-edit-sky = 空を編集
 ui-env-editor-edit-water = 水面を編集
@@ -12597,6 +12599,9 @@ ui-appearance-folders-save-in = 保存先
 world-outfit-folders-cannot-move-here = このフォルダには移動できません。
 world-outfit-folders-already-there = すでにこのフォルダにあります。
 world-outfit-folders-too-deep = アウトフィットのフォルダは4階層までです。
+world-outfit-paste-cannot-be-used-in-outfits = アウトフィットに入れられないアイテムがあります。
+world-outfit-paste-already-in-outfit = すでにこのアウトフィットにあります。
+world-outfit-paste-already-worn = すでに着用しています。
 
 ## Build › Edit particles (particle editor)
 particle-editor-title = パーティクルエディタ

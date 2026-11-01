@@ -80,6 +80,89 @@ pub(super) fn store(ctx: &egui::Context, st: &mut InventoryUi, ids: Vec<Uuid>, c
     st.cut = cut;
 }
 
+/// Ctrl+C / Ctrl+X: `ids` go on the clipboard when they may be copied, or
+/// all moved for a cut; `false` leaves the clipboard as it was.
+pub(crate) fn offer(
+    ctx: &egui::Context,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    ids: Vec<Uuid>,
+    cut: bool,
+    protected: &HashSet<Uuid>,
+) -> bool {
+    let allowed = if cut {
+        !ids.is_empty() && ids.iter().all(|id| rules::relocatable(inv, *id, protected))
+    } else {
+        copy_allowed(inv, &ids)
+    };
+    if allowed {
+        store(ctx, st, ids, cut);
+    }
+    allowed
+}
+
+/// Ctrl+V pastes only while the system clipboard still holds the marker
+/// `store` left: another application or a text field may have replaced it,
+/// and must not paste an old inventory selection.
+pub(crate) fn holds_marker(st: &InventoryUi, text: &str) -> bool {
+    st.clipboard.first().is_some_and(|id| text.trim() == id.to_string())
+}
+
+/// Ctrl+C, Ctrl+X or Ctrl+V in Appearance, on this same clipboard. A paste
+/// with an outfit selected takes items into that outfit, and folders beside
+/// it, in its group (or into the group, when a group is selected).
+pub fn appearance_request(
+    ctx: &egui::Context,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    request: crate::ui::appearance::ClipboardRequest,
+) -> Vec<InvAction> {
+    use crate::ui::appearance::{ClipboardRequest, PasteTo};
+    use crate::world::outfit_folders;
+    let mut actions = Vec::new();
+    match request {
+        ClipboardRequest::Store { ids, cut } => {
+            if !offer(ctx, inv, st, ids, cut, &prefs.protected) {
+                st.message = aurora_i18n::tr!("ui-appearance-clipboard-cannot-take").into();
+            }
+        }
+        ClipboardRequest::Paste { to, text } => {
+            if !holds_marker(st, &text) {
+                return actions;
+            }
+            let folders = st.clipboard.iter().all(|id| inv.folders.contains_key(id));
+            let to = match to {
+                PasteTo::Worn => crate::world::appearance::cof(inv),
+                PasteTo::Outfit(Some(id)) if outfit_folders::container(inv, id) => Some(id),
+                PasteTo::Outfit(Some(id)) if folders => rules::parent(inv, id).filter(|parent| outfit_folders::container(inv, *parent)),
+                PasteTo::Outfit(Some(id)) => Some(id),
+                PasteTo::Outfit(None) if folders => outfit_folders::my_outfits(inv),
+                PasteTo::Outfit(None) => {
+                    st.message = aurora_i18n::tr!("ui-appearance-clipboard-select-an-outfit").into();
+                    None
+                }
+            };
+            if let Some(to) = to {
+                paste(inv, to, false, st, prefs, facts, &mut actions);
+            }
+        }
+    }
+    actions
+}
+
+/// Whether Paste (not as link) into `to` would go through: the outfit rules
+/// for the outfit folders, the inventory's elsewhere.
+pub(super) fn paste_allowed(inv: &Inventory, st: &InventoryUi, to: Uuid, prefs: &InventoryPreferences, facts: &Facts) -> bool {
+    match crate::world::outfit_paste::plan(inv, &st.clipboard, to, st.cut, &prefs.protected) {
+        Ok(crate::world::outfit_paste::Paste::Inventory) => {
+            rules::paste_allowed(inv, &st.clipboard, to, st.cut, false, &prefs.protected, &facts.worn)
+        }
+        plan => plan.is_ok(),
+    }
+}
+
 pub(super) fn paste(
     inv: &Inventory,
     to: Uuid,
@@ -97,6 +180,33 @@ pub(super) fn paste(
             copy: !cut,
         });
         return;
+    }
+    if !links {
+        match crate::world::outfit_paste::plan(inv, &st.clipboard, to, cut, &prefs.protected) {
+            Ok(crate::world::outfit_paste::Paste::Inventory) => {}
+            Ok(crate::world::outfit_paste::Paste::Edit(change)) => {
+                st.consume_clipboard = cut;
+                st.message.clear();
+                actions.push(InvAction::Edit(change));
+                return;
+            }
+            // dropToOutfit into the Current Outfit wears, and leaves the
+            // clipboard as it was.
+            Ok(crate::world::outfit_paste::Paste::Wear(items)) => {
+                st.message.clear();
+                actions.push(InvAction::Appearance(crate::world::appearance::Action::WearItems {
+                    items,
+                    replace: true,
+                    point: 0,
+                }));
+                return;
+            }
+            Err(reason) => {
+                st.consume_clipboard = false;
+                st.message = reason;
+                return;
+            }
+        }
     }
     match rules::paste(inv, &st.clipboard, to, cut, links, &prefs.protected, &facts.worn) {
         Ok(change) => {
@@ -148,22 +258,12 @@ pub(super) fn shortcuts(
         }
         match event {
             egui::Event::Copy | egui::Event::Cut => {
-                let cut = matches!(event, egui::Event::Cut);
                 let mut ids: Vec<_> = st.selection.iter().copied().collect();
                 ids.sort();
-                let allowed = if cut {
-                    !ids.is_empty() && ids.iter().all(|id| rules::relocatable(inv, *id, &prefs.protected))
-                } else {
-                    copy_allowed(inv, &ids)
-                };
-                if allowed {
-                    store(ui.ctx(), st, ids, cut);
-                }
+                offer(ui.ctx(), inv, st, ids, matches!(event, egui::Event::Cut), &prefs.protected);
             }
             egui::Event::Paste(text) => {
-                // Another application or text field can replace OS clipboard
-                // text. Its contents must not paste an old inventory selection.
-                if st.clipboard.first().is_none_or(|id| text.trim() != id.to_string()) {
+                if !holds_marker(st, &text) {
                     continue;
                 }
                 let to = st.selected.filter(|id| st.selection.contains(id)).map_or(root, |id| {
@@ -173,7 +273,7 @@ pub(super) fn shortcuts(
                         rules::parent(inv, id).unwrap_or(root)
                     }
                 });
-                if rules::paste_allowed(inv, &st.clipboard, to, st.cut, false, &prefs.protected, &facts.worn) {
+                if paste_allowed(inv, st, to, prefs, facts) {
                     paste(inv, to, false, st, prefs, facts, actions);
                 }
             }
@@ -1029,6 +1129,44 @@ mod tests {
             assert!(!h.st.consume_clipboard);
         }
         assert_eq!(h.world.inventory.items[&id(8100)].parent, id(8000));
+    }
+
+    /// The inventory refused every paste under My Outfits. It now follows
+    /// the outfit rules: an outfit links what is pasted, the Current Outfit
+    /// wears it and leaves the clipboard as it was.
+    #[test]
+    fn paste_into_an_outfit_links_and_into_the_current_outfit_wears() {
+        use aurora_net::inventory::operations::Operation;
+        let mut inv = Inventory::default();
+        crate::world::appearance::seed_demo(&mut inv, id(1));
+        let (outfit, cof, spare_shirt) = (id(703), id(701), id(722));
+        let prefs = InventoryPreferences::default();
+        let facts = Facts::default();
+        let mut st = InventoryUi {
+            clipboard: vec![spare_shirt],
+            ..Default::default()
+        };
+        assert!(paste_allowed(&inv, &st, outfit, &prefs, &facts));
+        let mut actions = Vec::new();
+        paste(&inv, outfit, false, &mut st, &prefs, &facts, &mut actions);
+        assert!(
+            matches!(&actions[..], [InvAction::Edit(change)]
+                if matches!(&change.operations[..], [Operation::Links { parent, links }] if *parent == outfit && links[0].target == spare_shirt)),
+            "an outfit links what is pasted"
+        );
+        st.cut = true;
+        actions.clear();
+        assert!(paste_allowed(&inv, &st, cof, &prefs, &facts));
+        paste(&inv, cof, false, &mut st, &prefs, &facts, &mut actions);
+        assert!(
+            matches!(&actions[..], [InvAction::Appearance(crate::world::appearance::Action::WearItems { items, replace: true, point: 0 })]
+                if *items == vec![spare_shirt]),
+            "the Current Outfit wears what is pasted"
+        );
+        assert!(!st.consume_clipboard, "wearing keeps what was cut");
+        // Worn already: nothing to paste, the menu entry stays off.
+        st.clipboard = vec![id(710)];
+        assert!(!paste_allowed(&inv, &st, cof, &prefs, &facts));
     }
 
     #[test]

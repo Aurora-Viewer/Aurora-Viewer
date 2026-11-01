@@ -399,8 +399,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         ready && movable,
         Command::Copy(ids.clone(), true),
     );
-    let paste =
-        ready && single && to.is_some_and(|to| rules::paste_allowed(inv, &st.clipboard, to, st.cut, false, &prefs.protected, &facts.worn));
+    let paste = ready && single && to.is_some_and(|to| clipboard::paste_allowed(inv, st, to, prefs, facts));
     c.add(
         "paste",
         "top",
