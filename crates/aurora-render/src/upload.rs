@@ -666,7 +666,7 @@ pub struct FrameUploads {
 
 impl FrameUploads {
     /// Another view shares the submitted scene and uploads no assets a second time.
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     pub(crate) fn empty_sibling(&self) -> Self {
         Self {
             encoder: None,

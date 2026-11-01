@@ -213,7 +213,7 @@ fn toolbar_migration_uses_the_first_connected_accounts_layout_not_another_accoun
     let common = restored.toolbar.as_ref().expect("migrated toolbar");
     assert_eq!(
         common.buttons(&layout()).iter().map(|b| b.command.as_str()).collect::<Vec<_>>(),
-        if cfg!(any(target_os = "linux", target_os = "windows")) {
+        if cfg!(any(target_os = "linux", target_os = "windows", target_os = "macos")) {
             vec!["inventory", "vr_view"]
         } else {
             vec!["inventory"]
@@ -849,7 +849,7 @@ fn toolbar_drop_anywhere_on_the_window_removes_the_button() {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 #[test]
 fn vr_toolbar_migration_preserves_customization_and_manual_removal() {
     let mut settings = ToolbarSettings {

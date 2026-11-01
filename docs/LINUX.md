@@ -162,101 +162,10 @@ Rust from [rustup.rs](https://rustup.rs).
 See [Reporting bugs](BUG_REPORTING.md), and say that you are on Linux, with
 your distribution and graphics card.
 
-## Experimental VR scene viewing (Linux/OpenXR)
+## Experimental VR scene viewing
 
-This is **viewing only**, anchored at the desktop camera's position when VR starts.
-Place the camera where you want to look from **before** entering VR. Its horizontal
-heading is preserved and its pitch/roll are leveled to the horizon. Head rotation
-and small physical movements provide stereo head tracking around that anchor;
-they do not move the avatar or provide locomotion around the world.
-
-### Requirements and headset compatibility
-
-- Linux desktop viewer with a Vulkan 1.3 driver/GPU that meets Aurora's existing
-  renderer feature and bindless resource requirements.
-- A native OpenXR loader (`libopenxr_loader.so.1`; install your distribution's
-  OpenXR loader package) and a configured, running Linux OpenXR runtime.
-- Runtime support for `XR_KHR_vulkan_enable2`, a head-mounted display with
-  `PRIMARY_STEREO` (two views), `LOCAL` and `VIEW` reference spaces, opaque
-  composition, and the viewer's selected RGBA8/BGRA8 output format. Eye swapchains
-  must support color attachment, sampling and transfer-source usage.
-- The runtime and headset must be available **before launching Aurora**. With
-  WiVRn, start its server/dashboard and connect the headset first; verify its
-  active OpenXR runtime registration. Then launch Aurora normally. No special
-  demo variable is needed for normal use.
-
-**Validated:** Meta Quest 3 through WiVRn 26.9 on Linux with an NVIDIA RTX 3090.
-Offline demo and human-operated live-grid viewing have been tested, including
-repeated entry/exit, horizon alignment, head tracking and the desktop mirror.
-
-**Not a promise that every OpenXR headset works.** The implementation uses the
-OpenXR API rather than a Quest-specific API, so another Linux runtime/headset
-meeting these requirements is a candidate for testing. Other headsets, GPUs,
-Monado/SteamVR runtime configurations and multi-GPU systems remain unvalidated.
-OpenXR branding alone does not establish compatible graphics bindings, formats
-or runtime behavior. macOS, standalone Android builds, OpenVR-only
-applications/runtimes and passthrough/AR are outside this iteration.
-See the [OpenXR Vulkan binding specification](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrGetVulkanGraphicsRequirements2KHR.html)
-and [WiVRn project](https://github.com/WiVRn/WiVRn) for runtime information.
-
-Windows uses the same experimental Vulkan/OpenXR code path, but Windows headset
-validation is pending. See [Windows VR setup and validation](VR_WINDOWS.md).
-
-### Entering and leaving VR
-
-Click the headset button in the bottom toolbar. Press **Esc**, with the Aurora
-window focused, to return to the original desktop camera and interface. Re-enter
-with the toolbar button without restarting the viewer while the runtime remains
-available. A desktop-only instruction reminds you how to exit.
-
-### Deliberate limits of this first iteration
-
-- **No VR interface or usable interaction controls:** no menus, chat, inventory,
-  building/editing, object interaction, movement controls, controllers, hands or
-  VR shortcuts. Exit VR to interact with the viewer or change camera placement.
-  Esc is the supported keyboard action while VR is engaged.
-- **The viewpoint stays anchored where the desktop camera was placed.** Head
-  tracking permits looking around and physical leaning; there is no VR travel,
-  camera repositioning, avatar movement or controller teleportation.
-- Headset output has no viewer interface, nameplates, chat overlays, worn HUDs,
-  selection outlines or editing overlays. Desktop output is a left-eye mirror
-  with the exit instruction, not a second interactive desktop viewport.
-- Starting Aurora before the runtime/headset is ready can leave VR unavailable
-  for that process. Connecting later and recovering from a runtime restart or
-  headset disconnect are unfinished; a viewer restart may be needed. Repeatable
-  normal enter/exit does not imply disconnect/reconnection support.
-- Each eye is capped at 1600 pixels in each dimension. Two eye backends maintain
-  independent depth, visibility and temporal history; this uses additional GPU
-  time and memory. Multiview rendering and comprehensive stereo-effects testing
-  are follow-up work. No minimum frame rate or measured overhead is claimed.
-- Esc is not a global shortcut: refocus Aurora if another application owns the
-  keyboard. Do not rely on a headset controller to leave VR.
-
-### Dependencies and footprint
-
-The only new direct Rust dependency is Linux/Windows-only `openxr 0.22.0` (MIT/Apache-2.0).
-It adds `openxr-sys 0.14.0` (MIT/Apache-2.0) and `libloading 0.9.0` (ISC); the
-existing `libloading 0.8.9` remains for other dependencies. These licenses are
-compatible with this repository. The loader is dynamically loaded: the system
-OpenXR loader and runtime are installed separately, not bundled in Aurora.
-
-No VR framework/engine, WiVRn, SteamVR, OpenVR compatibility layer, OBS, video
-encoder or headset client is added to the application. Existing wgpu/Vulkan and
-egui infrastructure is reused. The `xr_spike` example is development-only and is
-not part of the viewer executable. Dependency count does not measure rendering
-cost: stereo rendering, per-eye resources and capture/encoding have real cost;
-a controlled binary-size/GPU-memory/frame-time comparison is still pending.
-
-### Recording VR
-
-Record the desktop mirror with OBS Studio using **Window Capture (PipeWire)**
-on Wayland (or the corresponding window source on X11), selecting the Aurora
-window. Use a hardware encoder such as NVIDIA NVENC H.264 when available.
-The mirror reuses an eye image and adds a fullscreen GPU pass, rather than
-rendering another scene or reading the image back to the CPU. It is capped at
-30 FPS and letterboxed to preserve the eye's aspect ratio. Capture and video
-encoding have additional overhead; start with 30 FPS recording.
-
-The desktop exit instruction appears in recordings. The mirror records
-application-rendered frames before headset streaming/compositor processing, so
-streaming-only defects may not appear. OBS is optional and installed separately.
+See the cross-platform [VR setup and limitations](VR.md) guide. Linux uses the
+native Vulkan/OpenXR path; start WiVRn and connect the headset before launching
+Aurora. Quest 3 / WiVRn 26.9 / RTX 3090 is the human-validated configuration.
+The guide covers toolbar entry, Esc restoration, recording, dependencies and
+viewing-only limitations, plus Windows and experimental macOS setup.

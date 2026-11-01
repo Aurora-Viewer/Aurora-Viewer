@@ -37,7 +37,7 @@ impl Control {
             _ => VrState::Unavailable,
         }
     }
-    #[cfg(any(target_os = "linux", target_os = "windows", test))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos", test))]
     pub fn wanted(&self) -> bool {
         self.wanted.load(Ordering::Acquire)
     }
@@ -58,14 +58,14 @@ impl Control {
         );
         true
     }
-    #[cfg(any(target_os = "linux", target_os = "windows", test))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos", test))]
     pub fn started(&self) {
         self.state.store(
             if self.wanted() { VrState::Active } else { VrState::Stopping } as u8,
             Ordering::Release,
         );
     }
-    #[cfg(any(target_os = "linux", target_os = "windows", test))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos", test))]
     pub fn finish(&self, failed: bool) {
         self.wanted.store(false, Ordering::Release);
         self.state

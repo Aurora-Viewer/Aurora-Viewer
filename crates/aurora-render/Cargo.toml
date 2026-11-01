@@ -30,7 +30,8 @@ ash = "0.38"
 # Metal under wgpu: memory budget and size of the device (vram.rs); the
 # version and the feature wgpu-hal uses
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLDevice"] }
+objc2 = "0.6.5"
+objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLDevice", "MTLCommandQueue", "MTLTexture", "MTLPixelFormat"] }
 
 [target.'cfg(windows)'.dependencies]
 # CPU time of a thread, for the profile (thread_cpu.rs)
@@ -40,8 +41,8 @@ windows-sys = { version = "0.61.2", features = ["Win32_System_Threading", "Win32
 # CPU time of a thread, for the profile (thread_cpu.rs); already in the tree
 libc = "0.2.190"
 
-# Shared native Vulkan/OpenXR path; dynamically loads the platform loader.
-[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+# Shared native OpenXR path (Vulkan on Linux/Windows, Metal on macOS); dynamically loads the platform loader.
+[target.'cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))'.dependencies]
 openxr = "0.22"
 
 [dev-dependencies]

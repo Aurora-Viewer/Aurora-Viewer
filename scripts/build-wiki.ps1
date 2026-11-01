@@ -28,6 +28,7 @@ $pages = @(
     @{ Section = $null; Page = 'Home'; Title = 'Home'; Source = 'README.md' }
     @{ Section = 'For testers'; Page = 'Reporting-bugs'; Title = 'Reporting bugs'; Source = 'docs/BUG_REPORTING.md' }
     @{ Section = 'For testers'; Page = 'Installing-on-Linux'; Title = 'Installing on Linux'; Source = 'docs/LINUX.md' }
+    @{ Section = 'For testers'; Page = 'VR'; Title = 'Experimental VR scene viewing'; Source = 'docs/VR.md' }
     @{ Section = 'For testers'; Page = 'Windows-VR'; Title = 'Experimental Windows VR'; Source = 'docs/VR_WINDOWS.md' }
     @{ Section = 'For testers'; Page = 'Installing-on-macOS'; Title = 'Installing on macOS'; Source = 'docs/MACOS.md' }
     @{ Section = 'For testers'; Page = 'Updates'; Title = 'Updates'; Source = 'docs/UPDATES.md' }
