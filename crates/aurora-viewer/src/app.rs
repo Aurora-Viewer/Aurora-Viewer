@@ -257,8 +257,15 @@ pub struct App {
     /// Throttle of the "sky frame" log line.
     sky_log: crate::world::env::SkyLog,
     camera: Camera,
-    vr_camera: Option<Camera>,
+    /// The desktop camera, and our avatar's yaw and pitch, before VR: put
+    /// back when VR ends (the first-person entry turns the avatar to the
+    /// view, as mouselook does).
+    vr_camera: Option<(Camera, f32, f32)>,
     vr_toggle: bool,
+    /// Frames left before a first-person VR entry asks for the headset: the
+    /// session anchors on the view of the frame it starts in, so the eye
+    /// view must have been drawn first.
+    vr_start_in: u8,
     input: MoveInput,
     joystick: joystick::State,
     /// Keys and bindable mouse buttons held down.
@@ -1153,6 +1160,7 @@ impl App {
             camera: Camera::default(),
             vr_camera: None,
             vr_toggle: false,
+            vr_start_in: 0,
             input: MoveInput::default(),
             joystick: Default::default(),
             down: HashSet::new(),
@@ -3611,6 +3619,10 @@ impl App {
 
     /// Mouse motion: mouselook, camera drags (steering, Alt), right drag orbit.
     fn camera_mouse_delta(&mut self, dx: f32, dy: f32) {
+        // in VR the head turns the view; the mouse must not turn the avatar
+        if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged()) {
+            return;
+        }
         if self.clicks.waiting() {
             // behind the click that will say what this motion drags
             self.clicks.hold(click_pick::Held::Motion(dx, dy));
@@ -7783,7 +7795,15 @@ impl App {
             self.session_heartbeat(now);
         }
         self.mouselook_alt_cursor();
-        if !self.exit_prompt.open && self.camera.mouselook() && self.focused && !self.cursor_hold.held() && !self.alt_cursor.free() {
+        // (not under a first-person VR entry, mouselook only underneath:
+        // the cursor would stay hidden after VR ends)
+        if !self.exit_prompt.open
+            && self.camera.mouselook()
+            && self.vr_camera.is_none()
+            && self.focused
+            && !self.cursor_hold.held()
+            && !self.alt_cursor.free()
+        {
             self.set_mouselook_grab(true);
         }
         // a photo drawn in several frames: from its second part on, the
@@ -8446,9 +8466,12 @@ impl App {
             gfx.renderer.apply_settings(self.settings.render_settings());
         }
         if !gfx.renderer.vr_engaged()
-            && let Some(camera) = self.vr_camera.take()
+            && self.vr_start_in == 0
+            && let Some((camera, yaw, pitch)) = self.vr_camera.take()
         {
             self.camera = camera;
+            self.world.agent.yaw = yaw;
+            self.world.agent.pitch = pitch;
             gfx.renderer.cut_motion_history();
         }
         let mut view = self.camera.view();
@@ -9965,11 +9988,43 @@ impl App {
             self.net.set_bandwidth(bandwidth_kbps(&self.settings));
         }
         self.handle_actions(actions, event_loop);
+        if self.vr_start_in > 0 {
+            self.vr_start_in -= 1;
+            self.vr_toggle |= self.vr_start_in == 0;
+        }
         if std::mem::take(&mut self.vr_toggle) {
             let engaged = gfx.renderer.vr_engaged();
-            if gfx.renderer.set_vr_enabled(!engaged) {
+            // the headset anchors on the view of the frame VR starts in: from
+            // the avatar's eyes by default (mouselook, its head hidden),
+            // which first has to be drawn; the desktop camera's place
+            // otherwise
+            if !engaged
+                && self.vr_camera.is_none()
+                && self.settings.camera.vr_view == crate::camera::VrView::FirstPerson
+                && self.settings.camera.enable_mouselook
+            {
+                self.vr_camera = Some((self.camera.clone(), self.world.agent.yaw, self.world.agent.pitch));
+                self.camera.change_to_mouselook(&mut self.world.agent, &self.settings.camera, false);
+                // straight to the eyes, without the position smoothing; one
+                // more frame for the render thread's packet in flight
+                self.camera.snap();
+                self.vr_start_in = 3;
+            } else if gfx.renderer.set_vr_enabled(!engaged) {
                 if !engaged {
-                    self.vr_camera = Some(self.camera.clone());
+                    let (c, head) = (self.camera.position, self.world.agent.position);
+                    log::info!(
+                        "VR requested: camera {:?} at {:.2} {:.2} {:.2}, avatar at {:.2} {:.2} {:.2}",
+                        self.camera.mode,
+                        c.x,
+                        c.y,
+                        c.z,
+                        head.x,
+                        head.y,
+                        head.z
+                    );
+                    if self.vr_camera.is_none() {
+                        self.vr_camera = Some((self.camera.clone(), self.world.agent.yaw, self.world.agent.pitch));
+                    }
                     self.down.clear();
                     self.drop_clicks();
                     self.on_left_release();
@@ -14195,7 +14250,8 @@ impl App {
                     self.settings.debug.probes.then(|| self.probes.debug_list()),
                     &self.lod_infos,
                 );
-                if ctx.data(|data| data.get_temp::<bool>(egui::Id::unique("vr-active")).unwrap_or(false)) {
+                let vr_active = ctx.data(|data| data.get_temp::<bool>(egui::Id::unique("vr-active")).unwrap_or(false));
+                if vr_active {
                     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("vr-exit-hint")));
                     aurora_render::vr_hint_marker(&painter, true);
                     let text = aurora_i18n::tr!("app-vr-leave", key = aurora_i18n::tr!("keybinds-esc").to_string());
@@ -14212,7 +14268,9 @@ impl App {
                     painter.text(at, egui::Align2::CENTER_BOTTOM, &text, font, p.ink.gamma_multiply(0.6));
                     aurora_render::vr_hint_marker(&painter, false);
                 }
-                if self.camera.mouselook() {
+                // (a first-person VR entry is mouselook underneath: its
+                // crosshair and instructions stay off the desktop mirror)
+                if self.camera.mouselook() && !vr_active {
                     let c = ctx.content_rect().center();
                     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("xhair")));
                     // LLToolGun::draw: in the middle of the world view; the

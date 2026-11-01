@@ -5,6 +5,15 @@ use openxr as xr;
 use wgpu::hal;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const VIEWS: xr::ViewConfigurationType = xr::ViewConfigurationType::PRIMARY_STEREO;
+/// Frames in a row the head must hold within `SETTLE_STEP` (metres per
+/// frame) before the view is anchored on it (`Session::begin`).
+const SETTLE_FRAMES: u32 = 8;
+const SETTLE_STEP: f32 = 0.05;
+/// After anchoring, a head move over `JUMP` metres in one frame during
+/// `WATCH` anchors again: no one moves that fast, a runtime fixing its pose
+/// does.
+const JUMP: f32 = 0.4;
+const WATCH: std::time::Duration = std::time::Duration::from_secs(2);
 
 pub(crate) struct Eyes {
     pub cameras: [EyeView; 2],
@@ -22,6 +31,12 @@ pub(crate) struct Session {
     pub height: u32,
     running: bool,
     anchor: Option<Anchor>,
+    /// Tracked head positions seen in a row, still within `SETTLE_STEP` of
+    /// each other, before anchoring; then, for `WATCH`, the last one and
+    /// when the anchor was taken (a jump means the pose it used was a
+    /// placeholder).
+    settle: (u32, Option<glam::Vec3>),
+    anchored: Option<(std::time::Instant, glam::Vec3)>,
     frame: Option<(xr::Time, Vec<xr::View>)>,
     started: Option<std::time::Instant>,
     requested_stop: bool,
@@ -44,7 +59,7 @@ impl Session {
                     queue_family_index: h.queue_family_index(),
                     queue_index: h.queue_index(),
                 },
-            )?
+            ).map_err(|e| format!("xrCreateSession: {e}"))?
         };
         let format_raw = match format {
             wgpu::TextureFormat::Bgra8Unorm => vk::Format::B8G8R8A8_UNORM,
@@ -147,6 +162,8 @@ impl Session {
             height,
             running: false,
             anchor: None,
+            settle: (0, None),
+            anchored: None,
             frame: None,
             started: None,
             requested_stop: false,
@@ -162,6 +179,12 @@ impl Session {
         let mut event_buffer = xr::EventDataBuffer::new();
         while let Some(event) = instance.poll_event(&mut event_buffer)? {
             if let xr::Event::SessionStateChanged(e) = event {
+                // a session dropped while being set up leaves its own events
+                // in the instance's queue; its READY would begin this one a
+                // second time (XR_ERROR_SESSION_RUNNING)
+                if e.session() != self.session.as_raw() {
+                    continue;
+                }
                 log::info!("XR world session: {:?}", e.state());
                 match e.state() {
                     xr::SessionState::READY => {
@@ -176,6 +199,18 @@ impl Session {
                     xr::SessionState::EXITING | xr::SessionState::LOSS_PENDING => return Err("XR session finished".into()),
                     _ => {}
                 }
+            } else if let xr::Event::ReferenceSpaceChangePending(e) = event
+                && e.session() == self.session.as_raw()
+                && e.reference_space_type() == xr::ReferenceSpaceType::LOCAL
+            {
+                // the runtime recentred the space the head is located in
+                // (Virtual Desktop does it once at the start of its first
+                // session): anchor again, or the old origin's height stays
+                // between the eyes and the avatar's
+                log::info!("XR world: the runtime recentred the local space, anchoring again");
+                self.anchor = None;
+                self.settle = (0, None);
+                self.anchored = None;
             }
         }
         if !self.running {
@@ -199,17 +234,65 @@ impl Session {
                 .end(frame.predicted_display_time, xr::EnvironmentBlendMode::OPAQUE, &[])?;
             return Ok(None);
         }
+        // Virtual Desktop's first frames can report a tracked head at a
+        // placeholder place (0, -1.64, 0 on 2026-11-01), then the real one:
+        // anchored on the placeholder, the view floated above the avatar.
+        // The head must hold still for a few frames before anchoring, and a
+        // jump soon after anchors again.
+        if let Some((at, last)) = self.anchored {
+            if at.elapsed() < WATCH {
+                let head = self.head.locate(&self.local, frame.predicted_display_time)?;
+                let p = head.pose.position;
+                let now = glam::Vec3::new(p.x, p.y, p.z);
+                if now.distance(last) > JUMP {
+                    log::info!("XR world: the head jumped {:.2} m after anchoring, anchoring again", now.distance(last));
+                    self.anchor = None;
+                    self.settle = (0, None);
+                    self.anchored = None;
+                } else {
+                    self.anchored = Some((at, now));
+                }
+            } else {
+                self.anchored = None;
+            }
+        }
         if self.anchor.is_none() {
             let head = self.head.locate(&self.local, frame.predicted_display_time)?;
-            if !head
-                .location_flags
-                .contains(xr::SpaceLocationFlags::POSITION_VALID | xr::SpaceLocationFlags::ORIENTATION_VALID)
-            {
+            // tracked, not only valid: a first session's pose can be a
+            // runtime's placeholder until the headset reports itself
+            if !head.location_flags.contains(
+                xr::SpaceLocationFlags::POSITION_VALID
+                    | xr::SpaceLocationFlags::ORIENTATION_VALID
+                    | xr::SpaceLocationFlags::POSITION_TRACKED
+                    | xr::SpaceLocationFlags::ORIENTATION_TRACKED,
+            ) {
+                self.settle = (0, None);
                 self.stream
                     .end(frame.predicted_display_time, xr::EnvironmentBlendMode::OPAQUE, &[])?;
                 return Ok(None);
             }
+            let p = head.pose.position;
+            let now = glam::Vec3::new(p.x, p.y, p.z);
+            let still = self.settle.1.is_some_and(|last| now.distance(last) <= SETTLE_STEP);
+            self.settle = (if still { self.settle.0 + 1 } else { 0 }, Some(now));
+            if self.settle.0 < SETTLE_FRAMES {
+                self.stream
+                    .end(frame.predicted_display_time, xr::EnvironmentBlendMode::OPAQUE, &[])?;
+                return Ok(None);
+            }
+            self.anchored = Some((std::time::Instant::now(), now));
             self.anchor = Anchor::new(desktop_view, pose(head.pose));
+            let at = desktop_view.inverse().w_axis.truncate();
+            let h = head.pose.position;
+            log::info!(
+                "XR world anchored at the desktop view {:.2} {:.2} {:.2}, head at {:.2} {:.2} {:.2} in the local space",
+                at.x,
+                at.y,
+                at.z,
+                h.x,
+                h.y,
+                h.z
+            );
         }
         let anchor = self.anchor.ok_or("Invalid desktop anchor")?;
         let camera = |i: usize| -> Result<EyeView> {

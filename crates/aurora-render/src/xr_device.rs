@@ -19,8 +19,9 @@ impl Graphics {
         (self.xr.clone(), self.system)
     }
     pub fn new(flags: wgpu::InstanceFlags) -> Result<Self> {
-        // SAFETY: The installed OpenXR loader is loaded through openxr's checked entry API.
-        let entry = unsafe { xr::Entry::load(&())? };
+        // The Khronos loader is linked in (the `static` feature): it finds the
+        // runtime the system has active, with nothing installed beside the exe.
+        let entry = xr::Entry::linked(&())?;
         let available = entry.enumerate_extensions()?;
         if !available.khr_vulkan_enable2 {
             return Err("XR_KHR_vulkan_enable2 unavailable".into());

@@ -23,8 +23,9 @@ mod native {
     const VIEW: xr::ViewConfigurationType = xr::ViewConfigurationType::PRIMARY_STEREO;
 
     pub fn run() -> Result<()> {
-        // SAFETY: The installed OpenXR loader is loaded through openxr's checked entry API.
-        let entry = unsafe { xr::Entry::load(&())? };
+        // The Khronos loader is linked in (the `static` feature): it finds the
+        // runtime the system has active, with nothing installed beside the exe.
+        let entry = xr::Entry::linked(&())?;
         let available = entry.enumerate_extensions()?;
         if !available.khr_vulkan_enable2 {
             return Err("XR_KHR_vulkan_enable2 unavailable".into());
@@ -337,6 +338,10 @@ mod native {
         loop {
             while let Some(e) = xr.poll_event(&mut event)? {
                 if let xr::Event::SessionStateChanged(e) = e {
+                    // events of the previous cycle's session are not this one's
+                    if e.session() != session.as_raw() {
+                        continue;
+                    }
                     println!("Session {:?}", e.state());
                     match e.state() {
                         xr::SessionState::READY => {

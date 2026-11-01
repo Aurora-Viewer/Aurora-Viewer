@@ -42,7 +42,9 @@ libc = "0.2.190"
 
 # Shared native Vulkan/OpenXR path; dynamically loads the platform loader.
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
-openxr = "0.22"
+# `static`: the Khronos loader is built in (cmake), so the viewer needs no
+# openxr_loader beside it; only the runtime is the user's.
+openxr = { version = "0.22", default-features = false, features = ["static"] }
 
 [dev-dependencies]
 naga = { version = "30", features = ["wgsl-in"] }

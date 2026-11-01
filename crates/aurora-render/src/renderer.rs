@@ -39,6 +39,12 @@ use std::time::{Duration, Instant};
 
 pub const CASCADES: usize = 3;
 const MAX_LIGHTS: usize = 64;
+/// Tries at setting up the XR session for one VR request, and the wait
+/// between them (`render_xr`).
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+const XR_RETRIES: u8 = 3;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+const XR_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(750);
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const GBUF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
@@ -1435,6 +1441,10 @@ pub(crate) struct Backend {
     xr_world: Option<Box<XrWorld>>,
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     xr_finished: bool,
+    /// Failed session set-ups of the current VR request, and when the next
+    /// try may start (`XR_RETRIES`).
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    xr_retry: (u8, Option<std::time::Instant>),
     /// The window's size while a photo frame draws at its own size in
     /// `config` (`Capture::Snapshot`); put back by `result`.
     snapshot_window: Option<(u32, u32)>,
@@ -3028,6 +3038,8 @@ impl Backend {
             xr_world: None,
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             xr_finished: false,
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            xr_retry: (0, None),
             snapshot_window: None,
             surface_srgb,
             egui,
@@ -5237,6 +5249,9 @@ impl Backend {
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn render_xr(&mut self, mut packet: FramePacket) -> Result<FrameResult, Box<FramePacket>> {
         if self.xr_world.is_none() {
+            if self.xr_retry.1.is_some_and(|at| std::time::Instant::now() < at) {
+                return Err(Box::new(packet));
+            }
             let Some(seed) = self.xr_seed.as_ref() else {
                 return Err(Box::new(packet));
             };
@@ -5266,10 +5281,20 @@ impl Backend {
             match created {
                 Ok(world) => {
                     self.xr_world = Some(Box::new(world));
+                    self.xr_retry = (0, None);
                     log::info!("XR world: independent eye renderers initialized");
+                }
+                // a runtime may refuse the first session while it wakes up
+                // (Virtual Desktop's on Windows, 2026-11-01): try again a
+                // little later before telling the user VR failed
+                Err(e) if self.xr_retry.0 + 1 < XR_RETRIES => {
+                    self.xr_retry = (self.xr_retry.0 + 1, Some(std::time::Instant::now() + XR_RETRY_DELAY));
+                    log::warn!("XR world initialization failed, try {} of {XR_RETRIES}: {e}", self.xr_retry.0);
+                    return Err(Box::new(packet));
                 }
                 Err(e) => {
                     log::error!("XR world initialization failed: {e}");
+                    self.xr_retry = (0, None);
                     self.vr.finish(true);
                     return Err(Box::new(packet));
                 }
@@ -5389,6 +5414,11 @@ impl Backend {
         if !self.xr_finished && self.xr_seed.is_some() && packet.index >= 600 && std::env::var_os("AURORA_DEMO_XR_WORLD").is_some() {
             self.xr_finished = true;
             self.vr.request(true);
+        }
+        // a new VR request starts its tries afresh
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        if !self.vr.wanted() && self.xr_world.is_none() {
+            self.xr_retry = (0, None);
         }
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         let packet = if self.xr_seed.is_some() && (self.vr.wanted() || self.xr_world.is_some()) {

@@ -12766,5 +12766,10 @@ import-local-stage-upload-help = 非表示を含むチェック済みファイ�
 
 vr-view = VR表示
 vr-unavailable = VRを利用できません。OpenXRランタイムとヘッドセットの接続を確認してください。
+ui-options-camera-vr = VR
+ui-options-camera-vr-view = ヘッドセットの視点
+ui-options-camera-vr-view-help = VRに入ったときの視点の位置です。アバターの目の位置か、カメラがあった位置から始まります。
+ui-options-camera-vr-view-first-person = 一人称
+ui-options-camera-vr-view-desktop-camera = カメラの位置
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります

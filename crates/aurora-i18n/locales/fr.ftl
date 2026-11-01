@@ -12779,5 +12779,10 @@ import-local-stage-upload-help = Conserver les aperçus locaux et préparer l’
 
 vr-view = Vue VR
 vr-unavailable = La VR est indisponible. Vérifiez que le runtime OpenXR et le casque sont connectés.
+ui-options-camera-vr = VR
+ui-options-camera-vr-view = Vue du casque
+ui-options-camera-vr-view-help = Où commence la vue quand vous passez en VR : dans les yeux de votre avatar, ou là où était la caméra.
+ui-options-camera-vr-view-first-person = Première personne
+ui-options-camera-vr-view-desktop-camera = Position de la caméra
 
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau

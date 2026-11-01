@@ -12783,5 +12783,10 @@ import-local-stage-upload-help = Keep the local previews and prepare uploads of 
 
 vr-view = VR view
 vr-unavailable = VR is unavailable. Check that an OpenXR runtime and headset are connected.
+ui-options-camera-vr = VR
+ui-options-camera-vr-view = Headset view
+ui-options-camera-vr-view-help = Where the view starts when you enter VR: at your avatar's eyes, or where the camera was.
+ui-options-camera-vr-view-first-person = First person
+ui-options-camera-vr-view-desktop-camera = Camera position
 
 app-vr-leave = Press { $key } to return to desktop mode
