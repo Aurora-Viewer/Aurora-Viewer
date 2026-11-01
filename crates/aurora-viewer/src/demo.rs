@@ -210,6 +210,10 @@ pub mod sky;
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
 pub mod social_menu;
+/// Sounds circling the listener and rising above it, for the 3D sound for
+/// headphones (AURORA_DEMO_SOUND_HRTF).
+#[path = "demo_sound_hrtf.rs"]
+pub mod sound_hrtf;
 /// Sounds behind a wall and in a box (AURORA_DEMO_SOUND_OCCLUSION).
 #[path = "demo_sound_occlusion.rs"]
 pub mod sound_occlusion;

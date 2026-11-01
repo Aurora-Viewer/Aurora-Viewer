@@ -206,6 +206,13 @@ fn volumes(cx: &mut Cx) {
             tr!("ui-options-sound-occlusion-help"),
             &field!(audio.sound_occlusion),
         );
+        // Aurora's own (aurora-audio/src/hrtf.rs): off pans the sounds
+        // between the ears, as in the Legacy Viewer
+        cx.toggle(
+            tr!("ui-options-sound-hrtf"),
+            tr!("ui-options-sound-hrtf-help"),
+            &field!(audio.sound_hrtf),
+        );
         // Legacy Viewer › Sound & Media (MuteWhenMinimized)
         cx.toggle(
             tr!("ui-options-mute-when-minimized"),

@@ -8211,6 +8211,8 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_SOUND=1`, `hud` or `parcel-open\|parcel-local\|parcel-source` | World/HUD chime or parcel sound isolation; interface and media sounds audible |
 | `AURORA_DEMO_SOUND_OCCLUSION=1` | Three looping sounds: in the open, behind a wall, shut in a box; each one's occlusion in the log |
 | `AURORA_SOUND_OCCLUSION=0` or `1` | "Muffle sounds behind walls" forced off or on for this launch, without saving it |
+| `AURORA_DEMO_SOUND_HRTF=1`, `circle` or `updown` | A sound circling the listener and one rising above it and falling, for the 3D sound for headphones |
+| `AURORA_SOUND_HRTF=0` or `1` | "3D sound for headphones (HRTF)" forced off or on for this launch, without saving it |
 | `AURORA_DEMO_MINIMIZED_MUTE=1\|off` | Force mute when minimized on or off for an offline run |
 | `AURORA_DEMO_SOUND_EXPLORER=1\|all\|blacklist\|blacklist-ignored\|avatar-menu\|avatar-menu-mixed\|avatar-menu-pie` | Sound Explorer, separate blacklist categories, ignored objects or avatar sound-category switches |
 | `AURORA_DEMO_ANIMATION_EXPLORER=1\|blacklist` | Animation explorer with a stand-in preview, or a blacklisted animation |
@@ -8585,6 +8587,27 @@ What the inventory must show with these scenarios:
 - **`AURORA_SOUND_OCCLUSION=0|1`**: overrides Preferences › Sound, "Muffle
   sounds behind walls", for this launch (demo or grid), without saving it:
   the same build measured with and without the occlusion.
+- **`AURORA_DEMO_SOUND_HRTF=1|circle|updown`**: listen with headphones. Our
+  avatar starts on the open slope west of the plaza (the occlusion
+  scenario's spot: run the two one at a time) and two looping sources move
+  around the camera, 4 m away, each a lit cube with a label: "Circling
+  sound" (violet, brushed noise bursts on a soft tone) turns around the
+  listener level with the ears, clockwise from ahead (ahead, right, behind,
+  left) in 16 s; "Rising and falling sound" (orange, bright clicks on a
+  bell) swings ahead from 40 degrees below (above the ground at most) to 80
+  degrees above and back in 10 s. `circle` or `updown` plays one alone,
+  clearer for a first listen; `1` both. The circle starts from, and the
+  swing faces, the direction the camera looks at the start (east-north-east);
+  both follow the camera when it moves.
+  With Preferences › Sound, "3D sound for headphones (HRTF)" on, the
+  circling sound is heard passing behind the head (duller, out of the head)
+  and not only swinging between the ears, and the swinging one is heard
+  rising and falling; turning the camera moves both around the head without
+  clicks or a zipper sound. Off, both are only panned between left and
+  right, as before (the Legacy Viewer's rendering). Sounds play without
+  `AURORA_DEMO_SOUND`.
+- **`AURORA_SOUND_HRTF=0|1`**: overrides Preferences › Sound, "3D sound for
+  headphones (HRTF)", for this launch (demo or grid), without saving it.
 - **`AURORA_DEMO_WIND=<x>,<y>[,fly]`**: the demo region gets a uniform wind
   of x, y m/s (default `3,2`; LLWind::getVelocity doubles it, as on the
   grid), and with `fly` our avatar arrives flying. The wind noise plays on
