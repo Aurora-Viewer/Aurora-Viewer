@@ -32,7 +32,7 @@ pub const COMMANDS: &[Command] = commands![
     "speak", "Command_Speak_Icon", "ui-skin-speak", true;
     "move", "Command_Move_Icon", "controls-movement-title", true;
     "view", "video-filled", "controls-camera-title", true;
-    "vr_view", "device-vision-pro-filled", "vr-view", cfg!(target_os = "linux");
+    "vr_view", "device-vision-pro-filled", "vr-view", cfg!(any(target_os = "linux", target_os = "windows"));
     "mouselook", "Command_View_Icon", "common-mouselook-m", true;
     "people", "Command_People_Icon", "common-people", true;
     "friends", "Command_People_Icon", "common-friends", true;

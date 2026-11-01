@@ -40,10 +40,13 @@ jobs:
         run: |
           ./.github/drop-extra-targets.ps1
           rustup update stable --no-self-update
+          rustup component add clippy
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: windows-vr-test
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Windows Clippy (warnings are errors)
+        run: cargo clippy --profile ci --locked --workspace --all-targets -- -D warnings
       - name: Build viewer and OpenXR interoperability sample
         run: cargo build --profile ci --locked --workspace --bin aurora-viewer --example xr_spike
       - name: Shared VR logic tests
