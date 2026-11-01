@@ -3334,19 +3334,10 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             anims: vec![(IDLE_ANIM, 1)],
         }],
         aurora_net::NetCommand::RequestObjectProperties { object, .. } if (970..=982).any(|id| action_id(id) == *object) => {
-            let mode = std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default();
             vec![NetEvent::ObjectProperties(vec![aurora_net::build::ObjectProps {
                 object_id: *object,
                 owner_id: DEMO_NOVA,
-                sale_type: if *object == action_id(971) {
-                    match mode.as_str() {
-                        "buy-original" => 1,
-                        "buy-contents" | "buy-empty" => 3,
-                        _ => 2,
-                    }
-                } else {
-                    0
-                },
+                sale_type: action_sale_type(*object),
                 next_owner_mask: aurora_net::build::perm::TRANSFER,
                 // Nova may sell copies (for_sale_selection, the hover tips)
                 owner_mask: aurora_net::build::perm::TRANSFER | aurora_net::build::perm::COPY | aurora_net::build::perm::MODIFY,
@@ -3565,6 +3556,20 @@ pub fn stand_from_prim(seat: Vec3, size: Vec3) -> Vec<NetEvent> {
         handle: HANDLE,
         objects: vec![avatar],
     }]
+}
+
+/// The sale type of an AURORA_DEMO_ACTIONS cube (the for-sale cube only),
+/// the same in the hover / purchase reply and in the selection's
+/// properties (`build/demo_sim.rs`), which the right-click menu reads.
+pub fn action_sale_type(object: Uuid) -> u8 {
+    if object != action_id(971) {
+        return 0;
+    }
+    match std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default().as_str() {
+        "buy-original" => 1,
+        "buy-contents" | "buy-empty" => 3,
+        _ => 2,
+    }
 }
 
 pub fn action_mode_id(mode: &str) -> u32 {
