@@ -5030,7 +5030,11 @@ impl App {
             right: fwd.cross(Vec3::Z).normalize_or(Vec3::X),
             underwater: self.camera.position.z < self.world.main_water_height(),
         };
-        sounds.update(engine, &self.world, &listener, Instant::now());
+        let now = Instant::now();
+        sounds.update(engine, &self.world, &listener, now);
+        // what stands between each sound and the listener (Aurora's own)
+        let occlusion = crate::scene::sound_occlusion::forced().unwrap_or(self.settings.audio.sound_occlusion);
+        self.scene.update_sound_occlusion(&self.world, engine, listener.pos, occlusion, now);
     }
 
     /// StreamTitleDisplay::checkMetadata (streamtitledisplay.cpp): the title
@@ -5456,6 +5460,9 @@ impl App {
         self.settings.save();
         // the last lines of the conversations reach their files
         self.world.chat_log.flush(Duration::from_secs(2));
+        // and the settings theirs (written by the save thread), before a
+        // restarted viewer reads them
+        Settings::wait_saved(Duration::from_secs(5));
         if self.restart_into_vr {
             restart_with_vr();
         }
@@ -9213,7 +9220,11 @@ impl App {
             self.world.cloud_scroll.x.rem_euclid(1024.0),
             self.world.cloud_scroll.y.rem_euclid(1024.0),
         );
-        let mut env = Environment::from_eep(&sky_frame, &water_frame, self.world.cloud_scroll, self.settings.draw_distance);
+        let mut env = Environment::from_eep(&sky_frame, &water_frame, self.world.cloud_scroll, self.settings.draw_distance)
+            .with_colored_ambient(
+                &sky_frame,
+                crate::world::env::colored_ambient_now(self.settings.colored_sky_ambient),
+            );
         if let Some(sun) = self.demo.then(crate::demo::sun_override).flatten() {
             env.sun_dir = sun;
         }
@@ -18348,6 +18359,19 @@ impl ApplicationHandler for App {
                     _ => crate::demo::sound_events(id),
                 };
                 for ev in events {
+                    if let Some(e) = self.world.apply(ev) {
+                        self.on_app_event(e);
+                    }
+                }
+            }
+            // AURORA_DEMO_SOUND_OCCLUSION=1: three looping sources, in the
+            // open, behind a wall and shut in a box
+            if crate::demo::sound_occlusion::active() {
+                self.world.agent.get_off(crate::demo::sound_occlusion::start());
+                for (id, clip) in crate::demo::sound_occlusion::sounds() {
+                    self.scene.sounds.insert(id, clip);
+                }
+                for ev in crate::demo::sound_occlusion::events() {
                     if let Some(e) = self.world.apply(ev) {
                         self.on_app_event(e);
                     }
