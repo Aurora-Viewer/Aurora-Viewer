@@ -197,8 +197,11 @@ impl ExperiencesUi {
             .skip(self.page * size)
             .take(size)
             .collect();
-        let footer = 110.0;
-        let list_height = (ui.available_height() - footer).clamp(60.0, 600.0);
+        // The footer's height as laid out on the previous frame: reserving a
+        // guess either grows the window each frame or leaves a gap.
+        let footer_id = ui.make_persistent_id("xp_log_footer");
+        let footer: f32 = ui.data(|d| d.get_temp(footer_id)).unwrap_or(70.0);
+        let list_height = (ui.available_height() - footer - ui.spacing().item_spacing.y).max(60.0);
         let mut open_profile = None;
         egui::ScrollArea::vertical()
             .id_salt("experiences_log")
@@ -249,6 +252,7 @@ impl ExperiencesUi {
                     ui.add_space(3.0);
                 }
             });
+        let footer_top = ui.cursor().min.y;
         let entry = self.selected.and_then(|i| world.experiences.log.events.get(i).cloned());
         ui.horizontal(|ui| {
             if widgets::flat_button(ui, p, "‹").clicked() && self.page > 0 {
@@ -295,6 +299,8 @@ impl ExperiencesUi {
                 log.save();
             }
         });
+        let measured = ui.min_rect().bottom() - footer_top;
+        ui.data_mut(|d| d.insert_temp(footer_id, measured));
         if let Some(id) = open_profile {
             world.experiences.open_profile(id);
         }

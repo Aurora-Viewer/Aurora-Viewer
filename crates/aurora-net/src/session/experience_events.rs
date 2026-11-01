@@ -85,10 +85,15 @@ fn log_event(agent: Uuid, expected: Uuid, invoice: Uuid, parameters: &[&[u8]]) -
 impl Session<'_> {
     pub(super) fn on_experience_generic(&self, agent: Uuid, method: &[u8], invoice: Uuid, parameters: &[&[u8]]) {
         let method = field_str(method);
-        if method == "ExperienceEvent"
-            && let Some(event) = log_event(agent, self.agent_id(), invoice, parameters)
-        {
-            emit(self.sh, NetEvent::ExperienceLog(event));
+        if method == "ExperienceEvent" {
+            match log_event(agent, self.agent_id(), invoice, parameters) {
+                Some(event) => emit(self.sh, NetEvent::ExperienceLog(event)),
+                None => log::warn!(
+                    "ExperienceEvent not logged: agent {agent} (ours {}), invoice {invoice}, {} parameter(s)",
+                    self.agent_id(),
+                    parameters.len()
+                ),
+            }
         }
         let event = match method.as_str() {
             "ExperienceEvent" => attachment(agent, self.agent_id(), invoice, parameters),
