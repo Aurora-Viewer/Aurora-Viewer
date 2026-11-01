@@ -1592,6 +1592,21 @@ struct OpenedDevice {
     max_textures: u32,
 }
 
+/// The blocks of video memory wgpu's allocator carves resources out of
+/// (its `Performance` hint: 128 to 256 MB). Anything larger gets a block of
+/// its own, given back to the driver the moment it is destroyed; a smaller
+/// one only once its whole block is empty. With 16 MB blocks every render
+/// target of a 4K window (16 to 64 MB each) has its own: when they shrink
+/// (a window behind past its budget pauses its 3D drawing, #1808; a resize)
+/// the driver gets their memory back at once. Demo crowd at 3840 x 2054:
+/// the driver counted 2,585 MB for 1,772 MB of resources, 2,250 MB with
+/// 16 MB blocks, and 2,640 MB against 1,385 MB once the 3D drawing paused;
+/// the render thread's resource writes took 0.04 ms more a frame. Texture
+/// pages have memory of their own (dedicated.rs), so the cost of a new
+/// block under the allocator's lock, which ruled out 64 MB blocks for them,
+/// no longer falls on the pages.
+const MEMORY_BLOCK: u64 = 16 << 20;
+
 /// Open `adapter` with the features the renderer needs and the optional
 /// ones it has; an error when it lacks a needed one or the device fails.
 fn open_device(
@@ -1673,7 +1688,9 @@ fn open_device(
         required_features: features,
         required_limits: alim.clone(),
         experimental_features: wgpu::ExperimentalFeatures::disabled(),
-        memory_hints: wgpu::MemoryHints::Performance,
+        memory_hints: wgpu::MemoryHints::Manual {
+            suballocated_device_memory_block_size: MEMORY_BLOCK..MEMORY_BLOCK,
+        },
         trace: wgpu::Trace::Off,
     };
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
