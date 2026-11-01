@@ -3019,7 +3019,7 @@ and Create > Copy selection, including Shift-drag duplication in the move
 manipulator.
 The demo simulator retains the group supplied by each creation request for
 its property replies.
-`RezScript` (new/dropped scripts and bridge installation) and `DeRezObject`
+`RezScript` for user-created/dropped scripts and `DeRezObject`
 (Delete, Take and Take Copy, including separate items) instead send the
 current active group directly, independent of the parcel rez preference.
 The script inventory item keeps its own permission group unchanged.
