@@ -1369,6 +1369,10 @@ impl Bridge {
                                 handle: root.key.region,
                                 local_id: root.key.local_id,
                                 enabled: false,
+                                // Keep internal script installation in the private, agent-owned
+                                // bridge independent of the user's active group. This deliberately
+                                // differs from LLViewerObject::saveScript (indra/newview/
+                                // llviewerobject.cpp), which sends the active group.
                                 group_id: Uuid::nil(),
                                 item: Box::new(TaskItem {
                                     parent_id: *object,
