@@ -2081,6 +2081,13 @@ Transaction windows, with the same variable:
 
 - `pay-layout`, `pay-hidden`, `pay-large`: four four-digit amounts, free
   field and hidden buttons, maximum amount.
+- `pay-vendor`, `pay-vendor-short` (#1869): a vendor with one L$ 180 price
+  and no free amount, like CasperVend. The price button pays at once (no
+  Pay button below it); `-short` starts with L$ 100: the button stays
+  enabled and opens Buy L$ for the missing L$ 80, the window staying open.
+- `buy-touch-menu` (#1869): the for-sale cube keeps the Touch click action
+  and Buy is chosen from its menu; add `-confirm` to press Buy at frame 320
+  (the log shows `demo purchase confirmed: … prim=971, price=10`).
 - `buy-original`, `buy` (copy), `buy-contents`: purchase of an original, of
   a copy or of the contents, list of the included items and permissions of
   the next owner.

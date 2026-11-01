@@ -6058,6 +6058,9 @@ impl App {
             if mode.starts_with("pay-menu") || mode.starts_with("pay-linked-menu") {
                 self.on_ctx_action(ui::context::CtxAction::Pay(crate::demo::action_id(id)));
                 log::info!("demo menu payment: prim={id}, dialog={}", self.interactions.dialog.is_some());
+            } else if mode.starts_with("buy-touch-menu") {
+                self.on_ctx_action(ui::context::CtxAction::Buy(crate::demo::action_id(id)));
+                log::info!("demo menu purchase: prim={id}, dialog={}", self.interactions.dialog.is_some());
             } else if mode.ends_with("-build") {
                 self.build.open_build(crate::build::Tool::Edit);
                 self.click(click_pick::Click::Build);
@@ -6086,11 +6089,15 @@ impl App {
                 .interactions
                 .confirm(&self.world, (id == 972 || mode.starts_with("pay-linked-menu")).then_some(10))
         {
-            if let NetCommand::PayObject { object, .. } = &cmd {
-                log::info!(
+            match &cmd {
+                NetCommand::PayObject { object, .. } => log::info!(
                     "demo payment confirmed: clicked={id}, object={object}, dialog={}",
                     self.interactions.dialog.is_some()
-                );
+                ),
+                NetCommand::BuyObject { local_id, price, .. } => {
+                    log::info!("demo purchase confirmed: clicked={id}, prim={local_id}, price={price}")
+                }
+                _ => {}
             }
             self.send(cmd);
         }
@@ -12139,10 +12146,15 @@ impl App {
         if let Some(act) = a.ctx_action {
             self.on_ctx_action(act);
         }
-        if let Some(amount) = a.object_confirm
-            && let Some(cmd) = self.interactions.confirm(&self.world, amount)
-        {
-            self.send(cmd);
+        if let Some(amount) = a.object_confirm {
+            if let Some(cmd) = self.interactions.confirm(&self.world, amount) {
+                self.send(cmd);
+            } else if let Some(missing) = self.interactions.take_shortfall() {
+                // give_money: LLFloaterBuyCurrency::buyCurrency for the missing L$
+                log::info!("object payment or purchase short of L$ {missing}: Buy L$ opened");
+                self.open_buy_currency();
+                self.buy_currency_ui.set_amount(missing);
+            }
         }
         if let Some((old, new)) = a.set_display_name {
             self.send(NetCommand::SetDisplayName { old, new });
