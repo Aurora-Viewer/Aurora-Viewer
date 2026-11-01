@@ -2987,7 +2987,8 @@ at 0.5, so they cast shadows and are picked through their cut-out.
 
 `World::group_for_rez` shares the agent-parcel membership / active-group
 fallback rule between inventory rezzing, the Create tool, `rezplat`, Ctrl+D
-and Create > Copy selection.
+and Create > Copy selection, including Shift-drag duplication in the move
+manipulator.
 The demo simulator retains the group supplied by each creation request for
 its property replies.
 
