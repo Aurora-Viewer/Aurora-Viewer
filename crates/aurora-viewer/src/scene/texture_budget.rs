@@ -96,6 +96,18 @@ pub fn lowering_goal(used: u64, live: u64, target: u64) -> u64 {
     (used.saturating_sub(goal) as f64 * live as f64 / used.max(1) as f64) as u64
 }
 
+/// Bytes the pages would hold one step below ([`Reading::below`]): the
+/// textures' bytes there (`bytes_below`, each between the level it would be
+/// lowered to and the one it would load) with the free room the pages have
+/// now. From step 1 too: its lowering takes the largest textures under the
+/// level step 0 loads, so they load again there. Counted as nothing taken
+/// back, as it was, the step down came as soon as the pages were under
+/// 90 % of the target, and the pressure went 0 -> 1 -> 0 every 5 to 20 s on
+/// the grid with a steady budget, 45 to 900 textures lowered each time.
+pub fn below_estimate(bytes_below: u64, used: u64, live: u64) -> u64 {
+    (bytes_below as f64 * (used as f64 / live.max(1) as f64)) as u64
+}
+
 /// AURORA_TEXTURE_BUDGET_MB: the texture memory target forced to this many
 /// megabytes, whatever the setting and the driver say (tests of the budget
 /// on any machine).
@@ -363,5 +375,25 @@ mod tests {
         assert_eq!(p.update(t0 + s(35), reading(800, true, 800)), 1);
         assert_eq!(p.update(t0 + s(38), reading(800, true, 800)), 0);
         assert_eq!(p.update(t0 + s(60), reading(800, true, 800)), 0);
+    }
+
+    #[test]
+    fn step_one_waits_while_the_textures_would_load_back_over_the_target() {
+        // run D on the grid, scaled to a target of 1000: step 1 brought the
+        // pages to 869 (under the 900 a step down waits for), but the
+        // textures lowered there want 1000 again at step 0
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut p = Pressure::new(t0);
+        assert_eq!(p.update(t0, reading(1007, true, 1007)), 1);
+        let below = below_estimate(1000, 869, 869);
+        assert_eq!(below, 1000);
+        for t in [6, 20, 60] {
+            assert_eq!(p.update(t0 + s(t), reading(869, true, below)), 1, "at {t} s");
+        }
+        // the scene shrinks (the camera turned away): it fits one step down
+        assert_eq!(p.update(t0 + s(70), reading(800, true, below_estimate(850, 800, 800))), 0);
+        // the free room of the pages counts as it is now
+        assert_eq!(below_estimate(850, 1000, 800), 1062);
     }
 }

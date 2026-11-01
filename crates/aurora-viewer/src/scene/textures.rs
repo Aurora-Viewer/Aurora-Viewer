@@ -2892,14 +2892,9 @@ impl TextureStreamer {
         let video = renderer.video_memory.read(&renderer.device);
         let target = texture_budget::forced_target().unwrap_or_else(|| texture_budget::texture_target(setting, used, video));
         let before = self.pressure.step();
-        // one step below, the pages would hold the textures' bytes with
-        // the free room they have now (none taken back from step 1: only
-        // what loads from then on changes)
-        let below = if before > 1 {
-            (self.bytes_below as f64 * (used as f64 / live.max(1) as f64)) as u64
-        } else {
-            used
-        };
+        // what the pages would hold one step below, from step 1 too
+        // (texture_budget::below_estimate)
+        let below = texture_budget::below_estimate(self.bytes_below, used, live);
         let step = self.pressure.update(
             now,
             texture_budget::Reading {
