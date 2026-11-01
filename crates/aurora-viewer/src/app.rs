@@ -650,6 +650,8 @@ pub struct App {
     minimized_mute: audio_mute::MinimizedMute,
     /// When the crash report's state was last noted (app/crash_state.rs).
     crash_state_at: Option<Instant>,
+    /// Swapchain recreations of the last seconds, for the same state.
+    crash_swapchain: crash_state::SwapchainRecent,
     /// The graphics card stopped finishing frames (app/gpu_stall.rs).
     gpu_stall: gpu_stall::GpuStall,
     /// The Down key's latch (FSCrouchToggle).
@@ -1387,6 +1389,7 @@ impl App {
             stream_title_said: None,
             minimized_mute: audio_mute::MinimizedMute::default(),
             crash_state_at: None,
+            crash_swapchain: Default::default(),
             gpu_stall: Default::default(),
             crouch_toggle: Default::default(),
             music_parcel_url: String::new(),
