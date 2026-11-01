@@ -1942,6 +1942,11 @@ No real L$ and no connection to a grid.
   Its shadow must not prevent Buy (971) from receiving the click:
   `dialog=true`, including with shadows disabled. The CPU fallback must
   reject that back face just as the GPU does.
+  Back-facing surfaces must also be ignored by hover, menus, build selection,
+  placement and media, regardless of their texture or alpha mode. On the grid,
+  repeat with a cutout cube in front of a scripted box and replace its unseen
+  exit faces with Blank: they must not intercept the interaction. Explicitly
+  double-sided PBR faces remain targets on both visible sides.
   `mask-zero` uses the zero-alpha texture in Mask mode:
   the click must reach Buy (971), with `dialog=true` and no panel in the GPU
   response. Capture after frame 620.

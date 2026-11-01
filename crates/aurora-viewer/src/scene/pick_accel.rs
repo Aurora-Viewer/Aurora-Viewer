@@ -143,8 +143,8 @@ impl Accel {
 
     /// The distance of the nearest triangle the ray `o + t d` (object
     /// space) meets nearer than `best`, or `best`: what testing every
-    /// triangle of `indices` in turn gives (`pick::ray_faces`, two-sided).
-    pub fn nearest(&self, positions: &[[f32; 3]], indices: &[u16], o: Vec3, d: Vec3, mut best: f32) -> f32 {
+    /// triangle of `indices` in turn gives, with the same back-face policy.
+    pub fn nearest(&self, positions: &[[f32; 3]], indices: &[u16], o: Vec3, d: Vec3, two_sided: bool, mut best: f32) -> f32 {
         // The triangle test accepts a ray that passes a hair outside a
         // triangle, by rounding: up to about 1e-6 of the distances it
         // handles. The boxes are widened by a hundred times that, so that a
@@ -192,7 +192,7 @@ impl Accel {
                 let (Some(p0), Some(p1), Some(p2)) = (p(t[0]), p(t[1]), p(t[2])) else {
                     continue;
                 };
-                if let Some(hit) = ray_triangle(o, d, p0, p1, p2, true)
+                if let Some(hit) = ray_triangle(o, d, p0, p1, p2, two_sided)
                     && hit.t > 0.0
                     && hit.t < best
                 {
@@ -295,7 +295,7 @@ impl PickAccel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media::pick::{FaceTris, ray_faces};
+    use crate::media::pick::{FaceTris, ray_faces_with_sidedness};
     use glam::Mat4;
 
     struct Rng(u64);
@@ -312,14 +312,14 @@ mod tests {
     }
 
     /// Every triangle in turn, as the full search does.
-    fn brute(positions: &[[f32; 3]], indices: &[u16], o: Vec3, d: Vec3) -> Option<f32> {
+    fn brute(positions: &[[f32; 3]], indices: &[u16], o: Vec3, d: Vec3, two_sided: bool) -> Option<f32> {
         let face = FaceTris {
             face: 0,
             positions,
             uvs: &[],
             indices,
         };
-        ray_faces(std::iter::once(face), Mat4::IDENTITY, o, d).map(|h| h.t)
+        ray_faces_with_sidedness(std::iter::once(face), Mat4::IDENTITY, o, d, |_| two_sided).map(|h| h.t)
     }
 
     fn check(positions: &[[f32; 3]], indices: &[u16], rng: &mut Rng, rays: usize, far: f32) -> usize {
@@ -333,19 +333,20 @@ mod tests {
             if rng.unit() < 0.1 {
                 d = Vec3::AXES[(rng.unit() * 2.99) as usize] * if rng.unit() < 0.5 { 1.0 } else { -1.0 };
             }
-            let expected = brute(positions, indices, o, d);
-            let got = accel.nearest(positions, indices, o, d, f32::INFINITY);
-            assert_eq!(
-                (got < f32::INFINITY).then_some(got).map(f32::to_bits),
-                expected.map(f32::to_bits),
-                "ray {o} {d}: {got} for {expected:?}"
-            );
-            // a hit not nearer than the best so far is left out, as the
-            // test of every triangle does from one face to the next
-            if let Some(t) = expected {
-                hits += 1;
-                assert_eq!(accel.nearest(positions, indices, o, d, t), t);
-                assert_eq!(accel.nearest(positions, indices, o, d, t * 0.5), t * 0.5);
+            for two_sided in [false, true] {
+                let expected = brute(positions, indices, o, d, two_sided);
+                let got = accel.nearest(positions, indices, o, d, two_sided, f32::INFINITY);
+                assert_eq!(
+                    (got < f32::INFINITY).then_some(got).map(f32::to_bits),
+                    expected.map(f32::to_bits),
+                    "ray {o} {d}, two_sided={two_sided}: {got} for {expected:?}"
+                );
+                // A hit beyond the current nearest distance cannot replace it.
+                if let Some(t) = expected {
+                    hits += 1;
+                    assert_eq!(accel.nearest(positions, indices, o, d, two_sided, t), t);
+                    assert_eq!(accel.nearest(positions, indices, o, d, two_sided, t * 0.5), t * 0.5);
+                }
             }
         }
         hits
@@ -399,8 +400,13 @@ mod tests {
         let accel = Accel::build(&positions, &indices);
         for i in 0..=N {
             let o = Vec3::new(i as f32 / N as f32 - 0.5, 0.1, 3.0);
-            let got = accel.nearest(&positions, &indices, o, -Vec3::Z, f32::INFINITY);
-            assert_eq!(Some(got).filter(|t| *t < f32::INFINITY), brute(&positions, &indices, o, -Vec3::Z));
+            for two_sided in [false, true] {
+                let got = accel.nearest(&positions, &indices, o, -Vec3::Z, two_sided, f32::INFINITY);
+                assert_eq!(
+                    Some(got).filter(|t| *t < f32::INFINITY),
+                    brute(&positions, &indices, o, -Vec3::Z, two_sided)
+                );
+            }
         }
     }
 
@@ -443,12 +449,20 @@ mod tests {
     #[test]
     fn empty_and_small_faces() {
         let accel = Accel::build(&[], &[]);
-        assert_eq!(accel.nearest(&[], &[], Vec3::ZERO, Vec3::X, 5.0), 5.0);
+        assert_eq!(accel.nearest(&[], &[], Vec3::ZERO, Vec3::X, false, 5.0), 5.0);
         let positions = [[1.0, -1.0, -1.0], [1.0, 1.0, -1.0], [1.0, 0.0, 1.0]];
         let accel = Accel::build(&positions, &[0, 1, 2]);
-        assert_eq!(accel.nearest(&positions, &[0, 1, 2], Vec3::ZERO, Vec3::X, f32::INFINITY), 1.0);
+        assert_eq!(accel.nearest(&positions, &[0, 1, 2], Vec3::ZERO, Vec3::X, true, f32::INFINITY), 1.0);
         assert_eq!(
-            accel.nearest(&positions, &[0, 1, 2], Vec3::ZERO, -Vec3::X, f32::INFINITY),
+            accel.nearest(&positions, &[0, 1, 2], Vec3::ZERO, Vec3::X, false, f32::INFINITY),
+            f32::INFINITY
+        );
+        assert_eq!(
+            accel.nearest(&positions, &[0, 1, 2], Vec3::X * 2.0, -Vec3::X, false, f32::INFINITY),
+            1.0
+        );
+        assert_eq!(
+            accel.nearest(&positions, &[0, 1, 2], Vec3::ZERO, -Vec3::X, true, f32::INFINITY),
             f32::INFINITY
         );
     }
