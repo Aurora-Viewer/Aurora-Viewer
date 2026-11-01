@@ -674,7 +674,17 @@ impl SoundManager {
                 let Some(t) = self.triggered.get(key.as_u128() as usize) else {
                     continue;
                 };
-                (t.sound, t.gain, false, t.playing, if t.source.is_nil() { t.follow.unwrap_or_default() } else { t.source })
+                (
+                    t.sound,
+                    t.gain,
+                    false,
+                    t.playing,
+                    if t.source.is_nil() {
+                        t.follow.unwrap_or_default()
+                    } else {
+                        t.source
+                    },
+                )
             };
             let audible = within_radius && voices < MAX_VOICES;
             let g = if audible { Self::gains(l, pos, gain) } else { (0.0, 0.0) };
@@ -690,7 +700,11 @@ impl SoundManager {
                     }
                     voices += 1;
                     if !at_listener {
-                        self.audible.push(Audible { voice: p.voice, pos, emitter });
+                        self.audible.push(Audible {
+                            voice: p.voice,
+                            pos,
+                            emitter,
+                        });
                     }
                     if (p.gain.0 - g.0).abs() > 0.004 || (p.gain.1 - g.1).abs() > 0.004 {
                         if let Some(e) = engine {

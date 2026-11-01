@@ -189,9 +189,10 @@ impl SoundOcclusion {
             } else if sent.is_none() {
                 self.sent.insert(a.voice, prev);
             }
-            let due = self.logged.get(&a.voice).is_none_or(|(logged, at)| {
-                (a.amount - logged).abs() >= LOG_STEP && now.saturating_duration_since(*at) >= LOG_EVERY
-            });
+            let due = self
+                .logged
+                .get(&a.voice)
+                .is_none_or(|(logged, at)| (a.amount - logged).abs() >= LOG_STEP && now.saturating_duration_since(*at) >= LOG_EVERY);
             if due {
                 let level = if self.verbose { log::Level::Info } else { log::Level::Debug };
                 log::log!(
@@ -434,7 +435,10 @@ fn measure(request: &Request) -> Vec<Answer> {
         .enumerate()
         .map(|(k, s)| {
             let bit = 1u64 << k;
-            let layers: u32 = s.to.iter().map(|to| ray_layers(&request.blockers, bit, s.from, *to, s.terrain)).sum();
+            let layers: u32 =
+                s.to.iter()
+                    .map(|to| ray_layers(&request.blockers, bit, s.from, *to, s.terrain))
+                    .sum();
             let layers = layers as f32 / RAYS as f32;
             Answer {
                 voice: s.voice,
@@ -523,7 +527,11 @@ mod tests {
     /// A sound at `at` played by `emitter`, heard from the origin of the
     /// two objects' row (x = 0): its amount.
     fn amount(world: &World, scene: &Scene, at: Vec3, emitter: Uuid) -> f32 {
-        let audible = [Audible { voice: 1, pos: at, emitter }];
+        let audible = [Audible {
+            voice: 1,
+            pos: at,
+            emitter,
+        }];
         let mut candidates = Vec::new();
         let request = scene.occlusion_request(world, Vec3::new(0.0, 0.0, 50.0), &audible, Instant::now(), &mut candidates);
         measure(&request)[0].amount
@@ -575,13 +583,7 @@ mod tests {
     fn a_source_shut_in_a_box_is_muffled() {
         let (mut world, mut scene, front, back) = indexed();
         // the far object becomes a closed 2 m cube around (7, 0, 50)
-        let quad = |corners: [[f32; 3]; 4]| {
-            Some(PickFace::new(
-                corners.to_vec(),
-                vec![[0.0, 0.0]; 4],
-                vec![0, 1, 2, 0, 2, 3],
-            ))
-        };
+        let quad = |corners: [[f32; 3]; 4]| Some(PickFace::new(corners.to_vec(), vec![[0.0, 0.0]; 4], vec![0, 1, 2, 0, 2, 3]));
         let (l, h) = (-0.5, 0.5);
         let cube = GpuGeom {
             faces: Vec::new(),

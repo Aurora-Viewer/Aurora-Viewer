@@ -477,7 +477,11 @@ impl WorldVoice {
         // and gain ramped from the start value to the end value
         let from = self.occlusion;
         let diff = self.occlusion_target - from;
-        let tau = if self.first_glide { OCCLUSION_FIRST_SECS } else { OCCLUSION_SMOOTHING_SECS };
+        let tau = if self.first_glide {
+            OCCLUSION_FIRST_SECS
+        } else {
+            OCCLUSION_SMOOTHING_SECS
+        };
         let to = if diff.abs() < 1.0e-4 {
             self.first_glide = false;
             self.occlusion_target
