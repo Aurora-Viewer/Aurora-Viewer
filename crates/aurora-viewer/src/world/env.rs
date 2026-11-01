@@ -539,11 +539,29 @@ mod tests {
         let grey = Environment::from_eep(&sky, &WaterFrame::default(), glam::Vec2::ZERO, 96.0);
         let colored = grey.with_colored_ambient(&sky, true);
         let expected = srgb_to_linear(Vec3::new(0.9, 0.6, 0.5) * 0.7);
-        assert!((colored.zenith - expected).length() < 1e-5, "{:?}", colored.zenith);
+        for c in [colored.zenith, colored.horizon, colored.ground] {
+            assert!((c - expected).length() < 1e-5, "{c:?}");
+        }
         assert!(colored.sky.colored_ambient);
         assert!(colored.zenith.x > colored.zenith.z && grey.zenith.x == grey.zenith.z);
         // off: unchanged
         let off = grey.with_colored_ambient(&sky, false);
         assert_eq!(off.zenith, grey.zenith);
+        // classic and linear skies: the shaders take it, the hemisphere
+        // colours (their IBL fallback, the water) stay as they are
+        for (can_auto_adjust, probe_ambiance) in [(true, 0.0), (false, 0.0)] {
+            let sky = SkyFrame {
+                can_auto_adjust,
+                probe_ambiance,
+                ..sky
+            };
+            let plain = Environment::from_eep(&sky, &WaterFrame::default(), glam::Vec2::ZERO, 96.0);
+            let colored = plain.with_colored_ambient(&sky, true);
+            assert!(colored.sky.colored_ambient);
+            assert_eq!(
+                (colored.zenith, colored.horizon, colored.ground),
+                (plain.zenith, plain.horizon, plain.ground)
+            );
+        }
     }
 }
