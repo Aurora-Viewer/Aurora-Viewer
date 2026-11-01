@@ -655,6 +655,9 @@ impl Notifications {
         // information read, an offer left unanswered ignored
         self.seen = self
             .listed()
+            // llDialog is a temporary in-world menu, not a notification
+            // the resident needs to search after answering it.
+            .filter(|n| !matches!(n.data, Data::Dialog { .. }))
             .map(|n| {
                 let mut e = n.history_entry(if n.interactive() { Outcome::Ignored } else { Outcome::Read });
                 if let Data::Inventory { object, .. } = n.data
@@ -952,6 +955,28 @@ mod tests {
             matches!(&cmds[..], [NetCommand::ScriptDialogReply { channel: -42, index: 1, label, .. }] if label == aurora_i18n::tr!("common-no"))
         );
         assert!(n.list.is_empty());
+    }
+
+    #[test]
+    fn script_menus_stay_in_todo_but_do_not_enter_history() {
+        let mut n = Notifications::default();
+        n.push(
+            Kind::Script,
+            "Menu",
+            "Choose a seat",
+            Data::Dialog {
+                sender: ([127, 0, 0, 1], 13000).into(),
+                object: Uuid::new_v4(),
+                object_name: "Seat menu".into(),
+                own_object: false,
+                channel: -42,
+                buttons: vec!["Sit".into()],
+            },
+        );
+        assert_eq!(n.listed().count(), 1);
+        assert!(n.take_departures().is_empty());
+        n.list.clear();
+        assert!(n.take_departures().is_empty());
     }
 
     #[test]

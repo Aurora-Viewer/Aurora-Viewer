@@ -3852,6 +3852,7 @@ ui-notifications-history = Historique
 ui-notifications-nothing-to-do = Rien à traiter · tout est dans l'Historique
 ui-notifications-search-history = Rechercher dans l'historique…
 ui-notifications-history-empty = Rien dans l'historique
+ui-notifications-clear-history = Effacer l'historique
 ui-notifications-outcome-answered = Répondu
 ui-notifications-outcome-declined = Refusée
 ui-notifications-outcome-kept = Gardé

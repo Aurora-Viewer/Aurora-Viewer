@@ -3849,6 +3849,7 @@ ui-notifications-history = 履歴
 ui-notifications-nothing-to-do = 対応待ちはありません・すべて履歴にあります
 ui-notifications-search-history = 履歴を検索…
 ui-notifications-history-empty = 履歴は空です
+ui-notifications-clear-history = 履歴を消去
 ui-notifications-outcome-answered = 回答済み
 ui-notifications-outcome-declined = 辞退済み
 ui-notifications-outcome-kept = 保持

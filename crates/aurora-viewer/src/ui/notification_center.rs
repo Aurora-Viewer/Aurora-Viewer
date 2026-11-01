@@ -696,11 +696,23 @@ pub(super) fn history_list(
     asks: &mut Vec<Ask>,
     privacy: &crate::world::rlva::privacy::TextFilter,
 ) {
-    ui.add(
-        egui::TextEdit::singleline(query)
-            .hint_text(aurora_i18n::tr!("ui-notifications-search-history"))
-            .desired_width(f32::INFINITY),
-    );
+    ui.horizontal(|ui| {
+        let search_width = (ui.available_width() - 88.0).max(60.0);
+        ui.add(
+            egui::TextEdit::singleline(query)
+                .hint_text(aurora_i18n::tr!("ui-notifications-search-history"))
+                .desired_width(search_width),
+        );
+        if ui
+            .add_enabled(
+                !hist.is_empty(),
+                egui::Button::new(aurora_i18n::tr!("ui-notifications-clear-history")).frame(false),
+            )
+            .clicked()
+        {
+            hist.clear();
+        }
+    });
     ui.add_space(4.0);
     let query = query.trim().to_lowercase();
     let found: Vec<(usize, Entry)> = history::search(hist, "")
