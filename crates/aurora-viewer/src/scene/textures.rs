@@ -1916,8 +1916,9 @@ impl TextureStreamer {
         let step = self.pressure.step();
         // (the 3D drawing paused behind: nothing is drawn, every texture
         // down to its last level at once rather than as its size on screen
-        // decays, texture_budget::Background::paused)
-        let dropped = if self.background.paused() {
+        // decays, the avatars' bakes too, texture_budget::Background::paused)
+        let paused = self.background.paused();
+        let dropped = if paused {
             (PAUSED_DROPPED, PAUSED_DROPPED)
         } else {
             texture_budget::dropped(step)
@@ -1972,12 +1973,14 @@ impl TextureStreamer {
                 // (there it would be lowered to `keep`, or loaded up to `want`)
                 bytes_below += bytes_at(e, e.decoded.map_or(want_below, |d| d.clamp(keep_below, want_below)));
                 // (bakes and interface images are left alone, as Firestorm's
-                // boosted textures; unused ones are evicted instead)
+                // boosted textures; unused ones are evicted instead. Paused
+                // behind, the bakes go too: in a crowd they were the 1 GB of
+                // pages the window still held, and nothing is drawn)
                 if let Some(d) = e.decoded
                     && keep > d
                     && e.refs > 0
                     && !e.decoding
-                    && e.source == TexSource::Asset
+                    && (e.source == TexSource::Asset || (paused && matches!(e.source, TexSource::Bake { .. })))
                     && !ui_wanted.contains(id)
                 {
                     reductions.push((*id, keep, bytes_at(e, d)));
