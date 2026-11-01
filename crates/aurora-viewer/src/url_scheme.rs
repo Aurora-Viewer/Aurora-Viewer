@@ -741,7 +741,10 @@ mod xdg_tests {
         let key = "x-scheme-handler/secondlife";
         let earlier = value(LIST, "Default Applications", key);
         let on = ours_first(earlier);
-        assert_eq!(on, "aurora-viewer-slurl.desktop;firestorm.desktop;");
+        assert_eq!(
+            on,
+            format!("aurora-viewer-slurl.desktop;{}", earlier.expect("the fixture's default"))
+        );
         assert_eq!(without_ours(Some(&on)).as_deref(), earlier);
         // registered twice, or already in the list: listed once, first
         assert_eq!(ours_first(Some(&on)), on);
