@@ -99,7 +99,7 @@ fn destinations(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>) -> Vec
     inv.folders
         .par_iter()
         .filter_map(|(&id, _)| {
-            if !rules::move_destination(inv, id, protected) || roots.iter().all(|source| rules::parent(inv, *source) == Some(id)) {
+            if !rules::move_destination(inv, id) || roots.iter().all(|source| rules::parent(inv, *source) == Some(id)) {
                 return None;
             }
             let mut parts = Vec::new();
@@ -356,7 +356,7 @@ mod tests {
                 let rows = destinations(&inv, &selection, &protected);
                 for &to in inv.folders.keys() {
                     let expected = rules::under(&inv, to, inv.root)
-                        && rules::move_destination(&inv, to, &protected)
+                        && rules::move_destination(&inv, to)
                         && rules::move_selection(&inv, &selection, to, &protected, &HashSet::new())
                             .is_ok_and(|change| !change.operations.is_empty());
                     assert_eq!(

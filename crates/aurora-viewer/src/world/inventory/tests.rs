@@ -301,12 +301,12 @@ fn clipboard_refuses_no_copy_but_allows_a_link_without_changing_the_original() {
 }
 
 #[test]
-fn protected_system_and_worn_elements_cannot_be_deleted() {
+fn protected_system_worn_and_unknown_elements_cannot_be_deleted() {
     let inv = fixture();
     let trash = system(&inv, 14).expect("trash");
     assert!(!movable(&inv, id(99999), &HashSet::new()));
     assert!(move_selection(&inv, &[inv.root], trash, &HashSet::new(), &HashSet::new()).is_err());
-    assert!(move_selection(&inv, &[id(8100)], trash, &HashSet::from([id(8000)]), &HashSet::new()).is_ok());
+    assert!(move_selection(&inv, &[id(8100)], trash, &HashSet::from([id(8000)]), &HashSet::new()).is_err());
     assert!(move_selection(&inv, &[id(8000)], trash, &HashSet::new(), &HashSet::from([id(8100)])).is_err());
     assert!(!destination(&inv, id(701), &HashSet::new()));
 }
@@ -318,17 +318,71 @@ fn protected_folder_cannot_move_but_its_contents_can_move_in_and_out() {
     let protected = HashSet::from([locked]);
     let trash = system(&inv, 14).expect("trash");
 
-    assert!(!movable(&inv, locked, &protected));
-    assert!(!renameable(&inv, locked, &protected));
-    assert!(!destination(&inv, locked, &protected));
-    assert!(move_destination(&inv, locked, &protected));
-    assert!(move_selection(&inv, &[locked], inv.root, &protected, &HashSet::new()).is_err());
-    assert!(move_selection(&inv, &[locked], trash, &protected, &HashSet::new()).is_err());
+    let (sub, item) = (id(8001), id(8100));
+    let none = HashSet::new();
 
-    assert!(move_selection(&inv, &[id(8100)], inv.root, &protected, &HashSet::new()).is_ok());
-    assert!(move_selection(&inv, &[id(8100)], locked, &protected, &HashSet::new()).is_ok());
-    assert!(move_selection(&inv, &[id(8100)], id(8001), &protected, &HashSet::new()).is_err());
-    assert!(move_selection(&inv, &[id(8100)], trash, &protected, &HashSet::new()).is_ok());
+    // the folder itself: held in place, not renamed, not deleted
+    assert!(!movable(&inv, locked, &protected));
+    assert!(!move_relocatable(&inv, locked, &protected));
+    assert!(!renameable(&inv, locked, &protected));
+    assert!(!removable(&inv, locked, &protected));
+    assert!(!destination(&inv, locked, &protected));
+    assert!(move_destination(&inv, locked));
+    assert!(move_selection(&inv, &[locked], inv.root, &protected, &none).is_err());
+    assert!(move_selection(&inv, &[locked], trash, &protected, &none).is_err());
+
+    // its contents, a subfolder's included, move out and in
+    for entry in [item, sub] {
+        assert!(move_relocatable(&inv, entry, &protected), "{entry}");
+        assert!(move_selection(&inv, &[entry], inv.root, &protected, &none).is_ok(), "{entry}");
+    }
+    assert!(move_selection(&inv, &[item], locked, &protected, &none).is_ok());
+    assert!(move_destination(&inv, sub));
+    assert!(move_selection(&inv, &[item], sub, &protected, &none).is_ok());
+
+    // rule B (#1728): nothing under a locked folder goes to the Trash, by a
+    // drag as by Delete (`removable`)
+    for entry in [item, sub] {
+        assert!(!removable(&inv, entry, &protected), "{entry}");
+        assert!(move_selection(&inv, &[entry], trash, &protected, &none).is_err(), "{entry}");
+        assert!(!paste_allowed(&inv, &[entry], trash, true, false, &protected, &none), "{entry}");
+    }
+}
+
+#[test]
+fn cut_and_paste_move_a_locked_folders_contents_out_and_in() {
+    use aurora_net::inventory::operations::Operation;
+    let mut inv = fixture();
+    let (locked, sub, inside) = (id(8000), id(8001), id(8100));
+    let protected = HashSet::from([locked]);
+    let none = HashSet::new();
+    let outside = id(8900);
+    inv.add_items(vec![InvItem {
+        id: outside,
+        parent: inv.root,
+        asset_type: 6,
+        owner_mask: COPY | MODIFY | TRANSFER,
+        ..Default::default()
+    }]);
+    let moves = |ops: &[Operation], what: Uuid, to: Uuid| matches!(ops, [Operation::Patch { id, body, .. }] if *id == what && body["parent_id"].as_uuid() == to);
+
+    // Cut in the locked folder, Paste elsewhere
+    assert!(paste_allowed(&inv, &[inside], inv.root, true, false, &protected, &none));
+    let change = paste(&inv, &[inside], inv.root, true, false, &protected, &none).expect("cut out");
+    assert!(moves(&change.operations, inside, inv.root));
+
+    // Cut elsewhere, Paste into the locked folder and into its subfolder
+    for to in [locked, sub] {
+        assert!(paste_allowed(&inv, &[outside], to, true, false, &protected, &none), "{to}");
+        let change = paste(&inv, &[outside], to, true, false, &protected, &none).expect("cut in");
+        assert!(moves(&change.operations, outside, to), "{to}");
+        // a copy may come in too
+        assert!(paste_allowed(&inv, &[outside], to, false, false, &protected, &none), "{to}");
+    }
+
+    // the locked folder itself still cannot be cut away
+    assert!(!paste_allowed(&inv, &[locked], inv.root, true, false, &protected, &none));
+    assert!(paste(&inv, &[locked], inv.root, true, false, &protected, &none).is_err());
 }
 
 #[test]
