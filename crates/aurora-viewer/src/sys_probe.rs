@@ -971,6 +971,7 @@ pub mod proc_text {
         "aurora-hud-scales",
         "aurora-local-previews",
         "aurora-photo-save",
+        "aurora-open-wait",
         "aurora-geometry-needs",
         "aurora-hover-height",
     ];

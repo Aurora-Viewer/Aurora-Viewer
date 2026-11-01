@@ -196,10 +196,7 @@ pub(super) fn external(name: String, source: String, command_line: String, conve
             // Capture our write before launching: even an editor that saves
             // immediately must trigger the first reload.
             let stamp = fs::metadata(&path).ok().and_then(|m| m.modified().ok());
-            std::process::Command::new(executable)
-                .args(args)
-                .spawn()
-                .map_err(|e| e.to_string())?;
+            crate::open_path::spawn(std::process::Command::new(executable).args(args)).map_err(|e| e.to_string())?;
             Ok(stamp)
         })();
         let mut stamp = match started {

@@ -68,6 +68,7 @@ mod media;
 mod movement;
 mod net_adapters;
 mod net_profile;
+mod open_path;
 mod overlay_hooks;
 mod own_motion;
 mod physics_editor;

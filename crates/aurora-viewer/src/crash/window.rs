@@ -595,14 +595,7 @@ impl Recovery {
 }
 
 fn open_folder(dir: &Path) -> std::io::Result<()> {
-    let program = if cfg!(windows) {
-        "explorer"
-    } else if cfg!(target_os = "macos") {
-        "open"
-    } else {
-        "xdg-open"
-    };
-    std::process::Command::new(program).arg(dir).spawn().map(|_| ())
+    crate::open_path::open(dir)
 }
 
 impl ApplicationHandler for Recovery {
