@@ -1259,7 +1259,6 @@ pub fn demo_outfit_count() -> usize {
         .unwrap_or(0)
 }
 
-/// A mode of `AURORA_DEMO_OUTFITS` (`closed`, `scroll`, `locate`).
 /// `AURORA_DEMO_APPEARANCE=take-off-folder` (#1849): an ordinary folder,
 /// not a saved outfit, as a demo or a delivery worn from Recent. It holds
 /// the worn jacket and pants originals and, in a subfolder, a link to the
@@ -1267,6 +1266,7 @@ pub fn demo_outfit_count() -> usize {
 /// current outfit does.
 pub const DEMO_TAKE_OFF_FOLDER: Uuid = Uuid::from_u128(0x1849_0001);
 
+/// Seeds the [`DEMO_TAKE_OFF_FOLDER`] folder and its subfolder.
 pub fn seed_demo_take_off(inv: &mut Inventory, agent: Uuid) {
     use super::inventory::Folder;
     let sub = Uuid::from_u128(0x1849_0002);
@@ -1311,6 +1311,7 @@ pub fn seed_demo_take_off(inv: &mut Inventory, agent: Uuid) {
     demo_replace(inv, agent, sub, &hair);
 }
 
+/// A mode of `AURORA_DEMO_OUTFITS` (`closed`, `scroll`, `locate`).
 pub fn demo_outfit_mode(mode: &str) -> bool {
     std::env::var("AURORA_DEMO_OUTFITS").is_ok_and(|v| v.split(',').skip(1).any(|m| m.trim() == mode))
 }
