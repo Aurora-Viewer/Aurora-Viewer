@@ -3,6 +3,13 @@
 use super::*;
 use crate::interaction::{self, Action, Contents, Held, Target};
 
+/// A held touch on a surface the GPU alone poses asks for the drawn faces
+/// once per `ASK_EVERY`, `ASK_LEAD` before the next update falls due:
+/// about two frames at 60 Hz, so the answer usually lands as the update
+/// falls due, and the surface sent is at most that old.
+const ASK_LEAD: Duration = Duration::from_millis(34);
+const ASK_EVERY: Duration = Duration::from_millis(100);
+
 impl App {
     pub(super) fn activate_object_action(&mut self, target: Target, idx: usize, point: Vec3, ray: Option<(Vec3, Vec3)>) {
         self.activate_object_action_at(target, idx, point, ray, None);
@@ -109,7 +116,9 @@ impl App {
                     surface,
                     shown: shown.is_some(),
                     drawn: None,
-                    asked: now,
+                    // one lead before the press, so the first request
+                    // leaves in time for the first update
+                    asked: now.checked_sub(ASK_LEAD).unwrap_or(now),
                     latest: (surface, self.cursor_pos),
                     cursor: self.cursor_pos,
                     last: now,
@@ -274,13 +283,9 @@ impl App {
     /// to three frames later) is there when it can be sent. Each request is
     /// one more pass over the visible geometry.
     fn ask_shown_surface(&mut self, renderer: &mut Renderer) {
-        // about two frames at 60 Hz: the answer usually lands as the update
-        // falls due, and the surface sent is at most that old
-        const LEAD: Duration = Duration::from_millis(34);
-        const EVERY: Duration = Duration::from_millis(100);
         let cursor = self.cursor_pos;
         let Some(h) = self.interactions.held.as_mut() else { return };
-        if h.drawn.is_none() && h.asked.elapsed() >= EVERY && h.last.elapsed() + LEAD >= EVERY {
+        if h.drawn.is_none() && h.asked.elapsed() >= ASK_EVERY && h.last.elapsed() + ASK_LEAD >= ASK_EVERY {
             h.drawn = Some((
                 renderer.request_drawn(cursor.0, cursor.1, aurora_render::DrawnMode::Interaction),
                 cursor,
