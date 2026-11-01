@@ -1,5 +1,10 @@
 # Aurora Viewer architecture
 
+Texture imports and material maps share the PNG channel normalization in
+`aurora-assets/src/import_texture.rs`: expand luminance to RGB, retain alpha
+and reduce 16-bit samples to their high byte, following
+`LLPngWrapper::normalizeImage` (#1527). Preview and upload use those same pixels.
+
 Chat volume formatting (#1323) is shared by the Conversations renderers and
 nearby-chat cards/lines: `ui/chat.rs::message_emphasis` and `message_color`,
 with `ui/fonts.rs::TextEmphasis` carried through emoji runs, links and search

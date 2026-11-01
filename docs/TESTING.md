@@ -4784,6 +4784,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   then opens the chosen flow: RGBA image, PBR material, Collada cube,
   BVH / `.anim` animations and synthetic WAV sound. Check the settings, the
   previews, the camera, the permissions, the selection and the confirmation.
+  With `texture` and `AURORA_DEMO_IMPORT_FILE`, also check grayscale and
+  grayscale/alpha PNGs, and 16-bit grayscale, RGB and RGBA exports: all must
+  show a preview without a channel error. Luminance is repeated in RGB,
+  alpha is retained, and 16-bit channels use their high byte, following
+  `LLPngWrapper::normalizeImage`. Ordinary 8-bit RGB/RGBA files and material
+  maps must still load with the same colours and transparency.
   The texture inspector shows "Limit size to 1024 × 1024" only when the
   unrestricted power-of-two width or height would exceed 1024. It is off by
   default (2048 maximum). Each explicit change is saved; newly added textures
