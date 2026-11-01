@@ -69,6 +69,7 @@ impl PushLayer {
     }
 
     /// Experiences that pushed something, or wait for their asset.
+    #[cfg(test)]
     pub fn experiences(&self) -> Vec<Uuid> {
         let mut out: Vec<Uuid> = self
             .day

@@ -502,7 +502,8 @@ impl EnvSelector {
     }
 
     /// Experiences with something pushed or waiting (the ExperienceQuery of
-    /// the parcel check).
+    /// the parcel check, still to come, will need it).
+    #[cfg(test)]
     pub fn pushing_experiences(&self) -> Vec<Uuid> {
         self.push.experiences()
     }
