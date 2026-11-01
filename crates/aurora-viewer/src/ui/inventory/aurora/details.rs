@@ -104,6 +104,7 @@ fn can_add(inv: &Inventory, id: Uuid, facts: &Facts, st: &InventoryUi) -> bool {
             && !rules::in_type(inv, it.id, 14)
             && !facts.appearance_busy
             && st.pending.is_none()
+            && facts.rlva_allows(inv, it.id, true)
     })
 }
 
@@ -361,7 +362,8 @@ pub(super) fn strip(
         ui.spacing_mut().item_spacing.x = 6.0;
         if let Some(main) = Main::of(inv, id, facts) {
             let (icon, label) = main.label();
-            let enabled = st.pending.is_none() && !(matches!(main, Main::Wear | Main::TakeOff) && facts.appearance_busy);
+            let enabled = st.pending.is_none()
+                && !(matches!(main, Main::Wear | Main::TakeOff) && (facts.appearance_busy || !facts.rlva_allows(inv, id, false)));
             if widgets::action_button_if(ui, p, icon, label, widgets::ActionKind::Primary, Vec2::new(0.0, BUTTON), enabled).clicked() {
                 main.run(inv, id, st, prefs, facts, actions);
             }

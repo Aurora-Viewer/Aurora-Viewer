@@ -295,13 +295,22 @@ hidden Windows consoles and the restart on isolated temporary scripts.
 | Reset the repository | Start again from a fresh clone of the `main` of GitHub: the tool first lists everything that would be lost (uncommitted changes, commits never pushed, stashes, agents' tasks with their changes, ignored files such as a `.env`), refuses if a build or a viewer is running, and does nothing unless you type `RESET`. It then deletes the tasks of `work\` and `RELEASE\`, puts the repository back on `origin/main` (untracked files and builds erased, local branches and stashes deleted), then repairs the environment. Your git identity, your GitHub login and the Legacy Viewer sources are kept |
 
 **Live PRs.** As long as the tools are open, the bottom banner sums up the
-PRs ("PR: 3 open · 1 CI · 1 queued · 1 red"), and a **Windows notification**
+PRs ("PR: 3 to review · 2 waiting · 1 CI · 1 queued · 1 red", then the
+downloads of the latest stable release's Windows zip, "↓ 1 274 v0.8.4"), and a **Windows notification**
 reports a merged PR, a CI that turns red, a PR that left the merge queue, a
 new PR, or `main` breaking. The **PR tracking** panel (or the "Aurora PR"
-shortcut) has three sections: the **merge queue** (position and duration),
-the **open PRs** (CI with its running duration, verdict of the agent's
-review) and the **recently merged** ones (how long ago: "04 min"), with for
-each PR its author and its added and deleted lines (**+120** in green,
+shortcut) shows the same download count in its header, with how many since
+it opened ("(+12)"), and has four sections: the **merge queue** (position and duration),
+the PRs **ready to review / merge** (CI with its running duration, verdict of
+the agent's review), the PRs **waiting on the author** (dimmed, with why:
+`■ DRAFT`, `■ CI FAIL`, or `■ CHANGES ASKED` when a GitHub review requests
+changes or a comment opening with `## Maintainer review` or `## Changes
+requested` came after the last commit; a new commit brings the PR back to
+review) and the **recently merged** ones (how long ago: "04 min"). A PR with
+the `on-hold` label (put on hold at a human's request, AGENTS.md section 9)
+is left out of the panel, the banner and the notifications until the label
+is removed, unless it is in the merge queue. Each section shows, for
+each PR, its author and its added and deleted lines (**+120** in green,
 **-8** in red). Each state is a tag preceded by a square of its colour:
 `■ CI OK` (green), `■ CI FAIL clippy` (red), `■ CI RUN 4:00` (amber),
 `■ QUEUE #1 TESTS`, `■ AUTO-MERGE`, `■ REVIEW OK`, `■ REVIEW WARN` (to

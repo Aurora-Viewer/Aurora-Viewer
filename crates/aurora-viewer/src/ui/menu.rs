@@ -11,7 +11,8 @@
 //!
 //! A menu wrapped in [`searchable`] (the wolf menu) starts with a search
 //! field: while it holds a query, every row checks itself against it, and
-//! the sub-menus list their matching entries in place, under their path.
+//! the sub-menus list their matching entries in place, under their path;
+//! the arrow keys select among them and Enter clicks the selected one.
 
 use crate::theme::Palette;
 use egui::{Color32, FontId, Id, LayerId, Popup, PopupAnchor, PopupCloseBehavior, PopupKind, Sense, Stroke, Ui, Vec2};
@@ -427,6 +428,7 @@ fn row_lead_sensed(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: b
     if !filter_row(ui, p, label) {
         return hidden(ui);
     }
+    let keyed = if enabled && sense.senses_click() { keyboard_row() } else { None };
     let font = FontId::proportional(12.5);
     let ink = if enabled { p.ink } else { p.muted_dim };
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
@@ -455,8 +457,23 @@ fn row_lead_sensed(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: b
     // a whole number of points: a font with a tall line (OpenDyslexic)
     // makes the row taller than ROW_H, and a fractional height left its
     // letters 0.6 px off its middle at 1.25
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, ROW_H.max((text_height + 6.0).ceil())), sense);
-    let hot = enabled && (resp.hovered() || open);
+    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(w, ROW_H.max((text_height + 6.0).ceil())), sense);
+    // a filtered row lights up when the arrow keys or the pointer select it,
+    // so that only one row is lit; Enter clicks the row it was lit on, never
+    // also the one the pointer reaches in the same frame
+    let hot = match keyed {
+        Some(k) => {
+            let selected = k.selected || (resp.hovered() && ui.input(|i| i.pointer.delta() != Vec2::ZERO) && point_row(k.index));
+            if selected && k.scroll {
+                resp.scroll_to_me(None);
+            }
+            if k.selected && k.activate {
+                resp.flags.insert(egui::response::Flags::FAKE_PRIMARY_CLICKED);
+            }
+            selected || open
+        }
+        None => enabled && (resp.hovered() || open),
+    };
     track(ui, hot && resp.hovered());
     if !ui.is_rect_visible(rect) {
         return resp;
@@ -1141,13 +1158,77 @@ fn heading_line(ui: &mut Ui, p: &Palette, text: &str) {
 
 /// The query of the [`searchable`] menu being drawn, and where its rows
 /// stand: the sub-menus they are in, the path whose entries were drawn
-/// last, the paths whose heading was drawn, the entries shown.
+/// last, the paths whose heading was drawn, the entries shown; then the
+/// keyboard selection: the rows that can be selected so far, the selected
+/// one, the one the pointer moved onto, and whether Enter clicks it or the
+/// arrows moved it this frame.
 struct Filter {
     words: Vec<String>,
     path: Vec<String>,
     shown: Option<Vec<String>>,
     headed: Vec<Vec<String>>,
     matches: usize,
+    selectable: usize,
+    selected: usize,
+    pointed: Option<usize>,
+    activate: bool,
+    scroll: bool,
+}
+
+/// A filtered row that the arrow keys can select.
+#[derive(Clone, Copy)]
+struct KeyRow {
+    index: usize,
+    selected: bool,
+    activate: bool,
+    scroll: bool,
+}
+
+/// The next selectable row of the filtered menu, `None` when not filtering.
+fn keyboard_row() -> Option<KeyRow> {
+    FILTER.with_borrow_mut(|f| {
+        let f = f.as_mut()?;
+        let index = f.selectable;
+        f.selectable += 1;
+        Some(KeyRow {
+            index,
+            selected: index == f.selected,
+            activate: f.activate,
+            scroll: f.scroll,
+        })
+    })
+}
+
+/// The pointer moved onto the row `index`: it becomes the selected one.
+fn point_row(index: usize) -> bool {
+    FILTER.with_borrow_mut(|f| f.as_mut().map(|f| f.pointed = Some(index)));
+    true
+}
+
+/// The selection after the arrow keys, over `count` rows, wrapping around
+/// at both ends.
+fn step_selection(selected: usize, count: usize, down: bool, up: bool) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    let selected = selected.min(count - 1);
+    match (down, up) {
+        (true, false) => (selected + 1) % count,
+        (false, true) => (selected + count - 1) % count,
+        _ => selected,
+    }
+}
+
+/// What a [`searchable`] menu keeps between frames.
+#[derive(Clone, Default)]
+struct SearchState {
+    query: String,
+    frame: u64,
+    selected: usize,
+    /// Selectable rows drawn on the last frame.
+    count: usize,
+    /// The search field, whose focus the keys need.
+    field: Option<Id>,
 }
 
 thread_local! {
@@ -1246,27 +1327,52 @@ fn hidden(ui: &mut Ui) -> egui::Response {
 /// entries, those of the sub-menus listed in place under their path ("Me ›
 /// Avatar health"); a long list scrolls under the field. The field takes the keyboard when the menu opens and starts
 /// empty each time; a click in it leaves a menu that closes on any click
-/// open. Aurora's own: the Legacy Viewer's menus have no search.
+/// open. While it filters, the first entry found is selected, the up and
+/// down arrows move the selection (wrapping around) and Enter clicks it.
+/// Aurora's own: the Legacy Viewer's menus have no search.
 pub fn searchable(ui: &mut Ui, p: &Palette, body: impl FnOnce(&mut Ui)) {
     let id = ui.layer_id().id.with("aurora_menu_search");
     let frame = ui.ctx().cumulative_frame_nr();
-    let (mut query, last) = ui.data(|d| d.get_temp::<(String, u64)>(id)).unwrap_or_default();
-    let opened = last + 1 < frame;
+    let mut state = ui.data(|d| d.get_temp::<SearchState>(id)).unwrap_or_default();
+    let opened = state.frame + 1 < frame;
     if opened {
-        query.clear();
+        state = SearchState::default();
     }
+    // taken before the field sees them, and only while it has the keyboard
+    // (Tab onto its clear button leaves Enter to that button): a one-line
+    // field has no use for the arrows, and Enter, even with nothing found,
+    // would only drop its focus
+    let focused = state.field.is_some_and(|f| ui.memory(|m| m.has_focus(f)));
+    let (down, up, enter) = if !focused || query_words(&state.query).is_empty() {
+        (false, false, false)
+    } else {
+        ui.input_mut(|i| {
+            let down = i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
+            let up = i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
+            let enter = i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) && state.count > 0;
+            (down, up, enter)
+        })
+    };
+    let before = state.query.clone();
     let w = if ui.is_sizing_pass() { MIN_W } else { ui.available_width() };
-    let field = ui.horizontal(|ui| super::widgets::clearable_search_box(ui, p, &mut query, aurora_i18n::tr!("common-search"), w));
+    let field = ui.horizontal(|ui| super::widgets::clearable_search_box(ui, p, &mut state.query, aurora_i18n::tr!("common-search"), w));
     if opened {
         field.inner.request_focus();
     }
+    state.field = Some(field.inner.id);
+    state.selected = if state.query == before {
+        step_selection(state.selected, state.count, down, up)
+    } else {
+        0
+    };
+    state.frame = frame;
     let (key, rect) = (keep_open_id(ui.layer_id()), field.response.rect);
     ui.ctx().data_mut(|d| {
         d.insert_temp(key, (frame, rect));
-        d.insert_temp(id, (query.clone(), frame));
+        d.insert_temp(id, state.clone());
     });
     ui.add_space(4.0);
-    let words = query_words(&query);
+    let words = query_words(&state.query);
     if words.is_empty() {
         body(ui);
         return;
@@ -1277,6 +1383,11 @@ pub fn searchable(ui: &mut Ui, p: &Palette, body: impl FnOnce(&mut Ui)) {
         shown: None,
         headed: Vec::new(),
         matches: 0,
+        selectable: 0,
+        selected: state.selected,
+        pointed: None,
+        activate: enter,
+        scroll: down || up,
     }));
     // a broad query lists more entries than the window holds: they scroll
     // and the field stays in place (the popup, sized on the last frame,
@@ -1286,9 +1397,15 @@ pub fn searchable(ui: &mut Ui, p: &Palette, body: impl FnOnce(&mut Ui)) {
         .max_height(room)
         .min_scrolled_height(room)
         .show(ui, body);
-    let found = FILTER.take().is_some_and(|f| f.matches > 0);
+    let filter = FILTER.take();
+    let found = filter.as_ref().is_some_and(|f| f.matches > 0);
+    if let Some(f) = filter {
+        state.count = f.selectable;
+        state.selected = f.pointed.unwrap_or(state.selected);
+        ui.ctx().data_mut(|d| d.insert_temp(id, state.clone()));
+    }
     if !found {
-        let text = aurora_i18n::tr!("ui-bars-menu-no-match", query = query.trim().to_string());
+        let text = aurora_i18n::tr!("ui-bars-menu-no-match", query = state.query.trim().to_string());
         info(ui, p, "search-filled", &text);
     }
 }
@@ -1342,6 +1459,17 @@ mod tests {
         assert!(!entry_matches(&words("world map"), &world, "Search"));
         assert!(entry_matches(&words("  mini   map "), &world, "Mini-map"));
         assert!(!entry_matches(&words("teleport home"), &[], "Go Home"));
+    }
+
+    #[test]
+    fn search_arrows_wrap_around_the_entries_found() {
+        assert_eq!(step_selection(0, 3, true, false), 1);
+        assert_eq!(step_selection(2, 3, true, false), 0);
+        assert_eq!(step_selection(0, 3, false, true), 2);
+        assert_eq!(step_selection(1, 3, false, false), 1);
+        // fewer entries since the last frame: back onto the last one
+        assert_eq!(step_selection(5, 3, false, false), 2);
+        assert_eq!(step_selection(4, 0, true, false), 0);
     }
 
     #[test]

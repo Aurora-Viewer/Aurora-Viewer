@@ -46,6 +46,21 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     .changed()
                 },
             );
+            // the stars' sky (world/night_sky.rs)
+            {
+                use crate::world::night_sky::NightSky;
+                cx.unfolded().choice(
+                    tr!("ui-options-night-sky"),
+                    tr!("ui-options-night-sky-help"),
+                    &field!(night_sky),
+                    &[
+                        (NightSky::Real, tr!("ui-options-night-sky-real"), false),
+                        (NightSky::Legacy, tr!("ui-options-night-sky-legacy"), false),
+                    ],
+                );
+                let legacy = cx.s.night_sky != NightSky::Real;
+                cx.subs(legacy, night_sky_rows);
+            }
             cx.toggle(
                 tr!("ui-options-keep-environment"),
                 tr!("ui-options-restore-the-local-environment-selected-sky-water-and-day"),
@@ -74,6 +89,43 @@ pub fn page(cx: &mut Cx, tab: usize) {
 /// The GPU the viewer draws with (#894): automatic (discrete first) or one
 /// by name; the renderer opens it at startup, so the choice applies at the
 /// next start. `AURORA_GPU` overrides it.
+/// The real sky's rows (world/night_sky.rs): where it is seen from, its
+/// latitude (set by a preset, typed for Custom; moving it makes the place
+/// Custom) and the stars' brightness.
+fn night_sky_rows(cx: &mut Cx) {
+    use crate::world::night_sky::{GAIN_RANGE, SkyPlace};
+    let places: Vec<(SkyPlace, &str)> = SkyPlace::ALL.iter().map(|p| (*p, p.label())).collect();
+    if cx.combo(
+        aurora_i18n::tr!("ui-options-night-sky-place"),
+        aurora_i18n::tr!("ui-options-night-sky-place-help"),
+        &field!(night_sky_place),
+        &places,
+    ) {
+        cx.s.sync_night_sky();
+    }
+    cx.greyed(cx.s.night_sky_place != SkyPlace::Custom);
+    if cx.slider(
+        aurora_i18n::tr!("ui-options-night-sky-latitude"),
+        aurora_i18n::tr!("ui-options-night-sky-latitude-help"),
+        &field!(night_sky_latitude),
+        -90.0..=90.0,
+        "°",
+    ) {
+        cx.s.night_sky_place = SkyPlace::Custom;
+        cx.s.sync_night_sky();
+    }
+    cx.greyed(false);
+    if cx.slider(
+        aurora_i18n::tr!("ui-options-night-sky-brightness"),
+        aurora_i18n::tr!("ui-options-night-sky-brightness-help"),
+        &field!(night_sky_gain),
+        GAIN_RANGE,
+        "×",
+    ) {
+        cx.s.sync_night_sky();
+    }
+}
+
 fn graphics_card(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-graphics-card"), |cx| {

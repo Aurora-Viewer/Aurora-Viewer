@@ -731,6 +731,8 @@ pub struct App {
     outfit_restore_demo: Option<crate::demo::outfit_restore::OutfitRestoreDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
+    /// AURORA_DEMO_AA_SWITCH: the anti-aliasing changes still to come.
+    aa_switch_demo: Vec<(u64, u8)>,
     /// AURORA_DEMO_SCULPT_MISSING: a sculpt whose map is missing.
     sculpt_missing_demo: Option<crate::demo::sculpt::MissingMapDemo>,
     /// AURORA_DEMO_TEXTURE_MISSING: boxes whose texture is missing.
@@ -762,6 +764,9 @@ pub struct App {
     env_scan: bool,
     /// "Personal lighting" was open last frame (captures on opening).
     lighting_was_open: bool,
+    /// Personal Lighting changed the night sky's place: saved once the
+    /// mouse button is up.
+    night_sky_unsaved: bool,
     /// Sky and water editors (LLFloaterFixedEnvironment).
     env_editor: ui::env_editor::EnvEditorUi,
     /// A Windlight preset being read for "Import" (bytes and preset name).
@@ -1428,6 +1433,11 @@ impl App {
             arrival_demo: None,
             outfit_restore_demo: None,
             tex_refresh_demo: None,
+            aa_switch_demo: if std::env::var_os("AURORA_DEMO").is_some() {
+                crate::demo::aa_switch::from_env()
+            } else {
+                Vec::new()
+            },
             sculpt_missing_demo: None,
             texture_missing_demo: None,
             experience_demo: None,
@@ -1443,6 +1453,7 @@ impl App {
             env_ui: Default::default(),
             env_scan: false,
             lighting_was_open: false,
+            night_sky_unsaved: false,
             env_editor: Default::default(),
             env_import: None,
             day_editor: Default::default(),
@@ -3255,6 +3266,13 @@ impl App {
                 } else {
                     crate::world::hover_height::HoverHeight::load(
                         crate::settings::account_dir(&l.agent_id).join(crate::world::hover_height::FILE),
+                    )
+                };
+                self.world.rlva.last_points = if self.demo {
+                    Default::default()
+                } else {
+                    crate::world::rlva::last_points::LastPoints::load(
+                        crate::settings::account_dir(&l.agent_id).join(crate::world::rlva::last_points::FILE),
                     )
                 };
                 self.world.favorites = if self.demo {
@@ -6356,7 +6374,7 @@ impl App {
         self.script_click_up();
         self.left_down = false;
         self.world_mouse_walk_pending = false;
-        self.build.mouse_up(&mut self.world, &self.settings.build);
+        self.build.mouse_up(&mut self.world, &self.settings.build, Some(&self.scene));
         self.flush_build();
         self.media.on_release(aurora_media::Modifiers {
             control: self.ctrl,
@@ -8075,6 +8093,7 @@ impl App {
         let window_aspect = w as f32 / h.max(1) as f32;
         let aspect = photo.as_ref().map_or(window_aspect, |f| f.aspect);
         let photo_tile = photo.as_ref().map_or(glam::Mat4::IDENTITY, |f| f.tile);
+        let photo_scale = photo.as_ref().map_or(1.0, |f| f.scale);
         let lod_height = photo.as_ref().map_or(h, |f| f.height);
         let frame_proj = |camera: &crate::camera::Camera| match &photo {
             Some(f) => photo_tile * camera.photo_proj(f.aspect, window_aspect),
@@ -8413,6 +8432,11 @@ impl App {
         {
             gfx.renderer.apply_settings(self.settings.render_settings());
         }
+        if let Some(mode) = crate::demo::aa_switch::due(&mut self.aa_switch_demo, self.frame_count) {
+            log::info!("demo: anti-aliasing {mode} at frame {}", self.frame_count);
+            self.settings.antialiasing = mode;
+            gfx.renderer.apply_settings(self.settings.render_settings());
+        }
         let mut view = self.camera.view();
         let mut proj = frame_proj(&self.camera);
         let mut vp = proj * view;
@@ -8590,20 +8614,23 @@ impl App {
             );
             self.frame_profile.lap(Lap::Complexity);
             let hud_size = gfx.window.inner_size();
-            self.world.hud_aspect = match self.snapshots.capturing {
+            self.world.hud_area = self.hud_area();
+            self.world.hud_aspect = match (self.snapshots.capturing, self.world.hud_area) {
                 // the HUD laid out for the photo's proportions
-                Some(spec) => spec.width as f32 / spec.height.max(1) as f32,
-                None => hud_size.width as f32 / hud_size.height.max(1) as f32,
+                (Some(spec), _) => spec.width as f32 / spec.height.max(1) as f32,
+                (None, Some([left, top, right, bottom])) => (right - left) / (bottom - top).max(1.0),
+                (None, None) => hud_size.width as f32 / hud_size.height.max(1) as f32,
             };
             if self.build.hud_selected(&self.world) && !self.huds_shown() {
                 self.build.deselect_all(&self.world);
             }
             self.build.sync_hud_zoom(&mut self.world);
             self.refresh_local_huds();
-            let drag_view =
-                self.scene.lists.hud_view.map(|view| {
-                    aurora_render::HudView::new([hud_size.width, hud_size.height], self.world.hud_zoom, view.min_x, view.max_x)
-                });
+            let drag_view = self
+                .scene
+                .lists
+                .hud_view
+                .map(|view| self.world.hud_view([hud_size.width, hud_size.height], view.min_x, view.max_x));
             self.update_hud_drag(drag_view);
             if let Some(view) = drag_view {
                 self.keep_scaled_huds_accessible(view);
@@ -9151,6 +9178,14 @@ impl App {
         env.water.normal_texture = slots[3];
         env.sky.rainbow_texture = slots[4];
         env.sky.halo_texture = slots[5];
+        env.sky.stars = crate::world::night_sky::star_frame(
+            self.settings.night_sky,
+            self.settings.night_sky_latitude,
+            self.settings.night_sky_gain,
+            env.sky.sun_dir,
+            crate::world::night_sky::unix_days_now(),
+            self.start.elapsed().as_secs_f64(),
+        );
         t_part = self.scene.parts.lap(Part::ParamsEnv, t_part);
         let mirror = if in_world && self.settings.mirrors > 0 {
             self.scene.find_mirror(&self.world, &cull, Instant::now())
@@ -9270,6 +9305,7 @@ impl App {
             view,
             proj,
             photo_tile,
+            photo_scale,
             camera_pos: self.camera.position,
             near: self.camera.near,
             far: self.settings.draw_distance,
@@ -9492,7 +9528,7 @@ impl App {
         if self.demo {
             self.local_appearance_demo_input(&mut raw);
             self.texture_library_demo_input(&mut raw);
-            self.portal_drop_demo_input(&mut raw);
+            self.portal_demo_input(&mut raw);
             self.give_demo_input(&mut raw, vp, (w, h));
             self.contents_drop_demo_input(&mut raw, vp, (w, h));
             if self.frame_count == 420
@@ -9641,7 +9677,10 @@ impl App {
             ui::close_key::begin(ui.ctx());
             let t = Instant::now();
             let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
-            actions = self.draw_ui(ui, &projector, &gfx.renderer);
+            // A discarded pass (`request_discard`) is followed by one that
+            // gets no input events: what the first pass clicked must survive
+            // the second, or a click that changed a row's size is lost.
+            actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
             if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
@@ -9956,6 +9995,7 @@ impl App {
         // capture is waited for, its pixels are read in the tail below.
         let lists = if self.in_world() { &self.scene.lists } else { &self.empty_lists };
         let stats = gfx.renderer.render(fp, lists, Some(egui_frame));
+        self.photo_gpu_time(&stats);
         self.photo_drawn(&mut gfx.renderer);
         self.last_render = stats;
         if stats.presented && !gfx.shown {
@@ -10502,6 +10542,8 @@ impl App {
                 && files.iter().any(|(at, _)| *at <= self.frame_count)
                 && self.inventory_images.capturing.is_none()
                 && !self.scene_capture_pending
+                // (with the MSAA and SSR asked, once their pipelines compiled)
+                && gfx.renderer.settings_applied()
             {
                 gfx.renderer.capture_request = true;
                 self.inventory_images.auto_capture_pending = true;
@@ -10614,7 +10656,7 @@ impl App {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
             {
-                self.cursor_pos = (view.width * 0.5 - 0.18 * view.height, view.height * 0.5 - 0.028 * view.height);
+                self.cursor_pos = view.pixel(Vec3::new(0.0, 0.18, 0.028)).into();
                 self.on_left_press();
             } else if self.frame_count == 800 {
                 self.cursor_pos.0 += 12.0;
@@ -10633,10 +10675,7 @@ impl App {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
             {
-                self.cursor_pos = (
-                    view.width * 0.5 - 0.18 * view.height * view.zoom,
-                    view.height * 0.5 - 0.028 * view.height * view.zoom,
-                );
+                self.cursor_pos = view.pixel(Vec3::new(0.0, 0.18, 0.028)).into();
                 self.open_context_menu();
             } else if mode != "menu" {
                 if self.frame_count == 760 {
@@ -11976,6 +12015,31 @@ impl App {
                 self.teleport_history(dest);
             }
             BarAction::TeleportTo(text) => self.teleport_to_text(&text),
+            // the location field's suggestions (LLNavigationBar::onLocationSelection):
+            // a landmark as the favourites go to one, a place of the history
+            // by its position, the history left where it is
+            BarAction::TeleportLandmark(asset) => {
+                self.request_user_teleport(
+                    NetCommand::TeleportLandmark(asset),
+                    aurora_i18n::tr!("common-landmark").into(),
+                    false,
+                );
+            }
+            BarAction::TeleportPlace { region, handle, position } => {
+                self.world.system_notice(
+                    aurora_i18n::tr!("app-teleporting-to-2", value0 = region.clone()),
+                    crate::world::notice_topics::Topic::Teleport,
+                );
+                self.request_user_teleport(
+                    NetCommand::TeleportTo {
+                        handle,
+                        position,
+                        look_at: Vec3::X,
+                    },
+                    region,
+                    Some(handle) != self.world.main_region,
+                );
+            }
             BarAction::SetStatus(m) => {
                 self.world.set_away(m.away);
                 self.auto_away = false;
@@ -13480,6 +13544,7 @@ impl App {
                 let favorites_shown = ui::bars::favorites::take_shown(&ctx);
                 let here = parcel_landmark.as_ref().is_some_and(|lm| lm.favorite);
                 let favorites = self.favorites_view(favorites_shown, here);
+                let location_landmarks = self.world.landmarks.named(&self.world.inventory);
                 let (classic_bars, islands) = self.bars_look();
                 self.poser_consent_ui(&ctx, &p);
                 let own_name = self.world.own_name();
@@ -13562,6 +13627,7 @@ impl App {
                     tp_back: self.world.tp_history.previous().map(|e| e.region.clone()),
                     tp_forward: self.world.tp_history.next().map(|e| e.region.clone()),
                     tp_session: self.world.tp_history.session(),
+                    landmarks: location_landmarks,
                     status: self.world.status.modes(),
                     local_env: self.world.eep.has_local(),
                     env_keys: self.env_keys(),
@@ -15722,6 +15788,40 @@ struct UiActions {
     gestures: Vec<uuid::Uuid>,
 }
 
+impl UiActions {
+    /// Adds a later egui pass's actions to the earlier ones'.
+    fn merge(&mut self, later: UiActions) {
+        fn first<T>(a: &mut Option<T>, b: Option<T>) {
+            if a.is_none() {
+                *a = b;
+            }
+        }
+        first(&mut self.exit, later.exit);
+        self.update_quit |= later.update_quit;
+        if !matches!(later.login, LoginAction::None) {
+            self.login = later.login;
+        }
+        first(&mut self.chat, later.chat);
+        if !matches!(later.bar, BarAction::None) {
+            self.bar = later.bar;
+        }
+        self.settings_changed |= later.settings_changed;
+        self.ui_scale_changed |= later.ui_scale_changed;
+        self.font_changed |= later.font_changed;
+        self.cancel_loading |= later.cancel_loading;
+        self.ims.extend(later.ims);
+        self.offer_tp.extend(later.offer_tp);
+        first(&mut self.landmark, later.landmark);
+        first(&mut self.audio, later.audio);
+        first(&mut self.ctx_action, later.ctx_action);
+        first(&mut self.object_confirm, later.object_confirm);
+        first(&mut self.set_display_name, later.set_display_name);
+        self.currency.extend(later.currency);
+        self.typing.extend(later.typing);
+        self.gestures.extend(later.gestures);
+    }
+}
+
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gfx.is_some() {
@@ -16191,6 +16291,19 @@ impl ApplicationHandler for App {
                 } else {
                     ui::perf::set_full(&self.egui_ctx, v != "compact");
                 }
+            }
+            // AURORA_DEMO_NIGHT_SKY: the chosen stars, at midnight
+            if let Some((mode, _)) = crate::demo::night_sky::scenario() {
+                self.settings.night_sky = mode;
+                self.panels.time_of_day = 4;
+            }
+            if let Some((latitude, gain)) = crate::demo::night_sky::place() {
+                self.settings.night_sky_place = crate::world::night_sky::SkyPlace::Custom;
+                self.settings.night_sky_latitude = latitude;
+                if let Some(gain) = gain {
+                    self.settings.night_sky_gain = gain;
+                }
+                self.settings.sync_night_sky();
             }
             if let Some(t) = std::env::var("AURORA_DEMO_TOD").ok().and_then(|v| v.parse::<u8>().ok()) {
                 self.panels.time_of_day = t.min(crate::world::env::TIME_OF_DAY_PRESETS);
@@ -17108,6 +17221,15 @@ impl ApplicationHandler for App {
                     self.world.apply(ev);
                 }
             }
+            // AURORA_DEMO_NIGHT_SKY: from behind the avatar, up at the sky
+            if let Some((_, dir)) = crate::demo::night_sky::scenario()
+                && std::env::var_os("AURORA_DEMO_CAM").is_none()
+            {
+                // above the avatar's head, a little behind it
+                let eye = self.world.agent.position + Vec3::new(0.0, 0.0, 2.5) - Vec3::new(dir.x, dir.y, 0.0) * 3.0;
+                self.camera
+                    .set_view(eye, eye + dir * 30.0, &mut self.world.agent, &self.settings.camera);
+            }
             // AURORA_DEMO_SKY_OPTICS: from behind the avatar, up at the eastern sky
             if let Some(dir) = crate::demo::sky::view_direction()
                 && std::env::var_os("AURORA_DEMO_CAM").is_none()
@@ -17178,6 +17300,9 @@ impl ApplicationHandler for App {
                 crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
                 if view.starts_with("folders") {
                     crate::world::outfit_folders::seed_demo(&mut self.world.inventory, self.world.agent_id);
+                    if view.starts_with("folders-many") {
+                        crate::world::outfit_folders::seed_demo_many(&mut self.world.inventory);
+                    }
                 }
                 if view.starts_with("layers") {
                     crate::world::appearance::seed_demo_layers(&mut self.world.inventory, self.world.agent_id);
@@ -17207,7 +17332,7 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
                 self.appearance_ui.open(
                     match view.as_str() {
-                        "outfits" | "multi-outfits" | "folders-outfits" | "wearables-outfits" | "broken" => 1,
+                        "outfits" | "multi-outfits" | "folders-outfits" | "folders-many-outfits" | "wearables-outfits" | "broken" => 1,
                         "worn" | "save" | "wearables" => 2,
                         _ => 0,
                     },
@@ -18171,30 +18296,30 @@ impl ApplicationHandler for App {
         if self.alt_code_key(&event) {
             return;
         }
+        // the key a press counts as for the shortcuts: the keypad with
+        // NumLock off is its arrows, Home and Page keys (keybinds.rs)
+        let bound_key = match &event {
+            WindowEvent::KeyboardInput { event: ke, .. } if ke.state == ElementState::Pressed => match ke.physical_key {
+                PhysicalKey::Code(code) => Some(crate::keybinds::binding_code(code, &ke.logical_key)),
+                PhysicalKey::Unidentified(_) => None,
+            },
+            _ => None,
+        };
         // a movement key the chat bar hands to the avatar never reaches its
         // text (LLViewerWindow::handleKey returns before the focused field)
-        let chat_pass = matches!(
-            &event,
-            WindowEvent::KeyboardInput { event: ke, .. }
-                if ke.state == ElementState::Pressed
-                    && matches!(ke.physical_key, PhysicalKey::Code(code) if self.chat_bar_passes_key(code))
-        );
+        let chat_pass = matches!(bound_key, Some(code) if self.chat_bar_passes_key(code));
         // Keep a lens shortcut out of egui: Ctrl+0 otherwise also resets
         // the interface scale at the end of the frame.
         let key_mods = match &event {
             WindowEvent::KeyboardInput { event: ke, .. } => self.key_mods(ke),
             _ => self.mods(),
         };
-        let lens_shortcut = matches!(
-            &event,
-            WindowEvent::KeyboardInput { event: ke, .. }
-                if ke.state == ElementState::Pressed
-                    && matches!(ke.physical_key, PhysicalKey::Code(code)
-                        if matches!(self.settings.keybinds.triggered(&Input::key(code), key_mods),
-                            Some(Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault))
-                            && (!(self.egui_ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(&self.egui_ctx))
-                                || shortcut_while_typing(true, key_mods, code, true)))
-        ) && self.in_world()
+        let lens_shortcut = matches!(bound_key, Some(code)
+            if matches!(self.settings.keybinds.triggered(&Input::key(code), key_mods),
+                Some(Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault))
+                && (!(self.egui_ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(&self.egui_ctx))
+                    || shortcut_while_typing(true, key_mods, code, true)))
+            && self.in_world()
             && self.options_ui.capture.is_none()
             && !self.exit_prompt.open
             && self.profile_ui.focused_web().is_none()
@@ -18217,7 +18342,7 @@ impl ApplicationHandler for App {
                     && !ke.repeat
                     && !self.exit_prompt.open
                     && self.options_ui.capture.is_none()
-                    && matches!(ke.physical_key, PhysicalKey::Code(code)
+                    && matches!(bound_key, Some(code)
                         if shortcut_claims_focus(
                             &self.egui_ctx,
                             code,
@@ -18310,15 +18435,24 @@ impl ApplicationHandler for App {
                 self.track_alt_graph(ke);
                 // Clear held controls before a dialog, capture or web/media
                 // page can return early after receiving the native release.
+                // A keypad key held as an arrow (NumLock off) releases the
+                // arrow, and its own code too in case NumLock moved meanwhile.
                 if ke.state == ElementState::Released
                     && let PhysicalKey::Code(code) = ke.physical_key
                 {
                     self.on_input(Input::key(code), false);
+                    let bound = crate::keybinds::binding_code(code, &ke.logical_key);
+                    if bound != code {
+                        self.on_input(Input::key(bound), false);
+                    }
                 }
                 if self.exit_prompt.open {
                     return;
                 }
                 if let PhysicalKey::Code(code) = ke.physical_key {
+                    // the keypad with NumLock off counts as its arrows, Home
+                    // and Page keys, as in the Legacy Viewer (keybinds.rs)
+                    let code = crate::keybinds::binding_code(code, &ke.logical_key);
                     let pressed = ke.state == ElementState::Pressed;
                     let mods = self.key_mods(ke);
                     let altgr_text = self.altgr_text_input(ke);
@@ -18723,7 +18857,7 @@ fn capture_files(path: &std::path::Path, frames: &str) -> Vec<(u64, std::path::P
 
 #[cfg(test)]
 mod tests {
-    use super::{RightGesture, capture_files, frame_cap};
+    use super::{RightGesture, UiActions, capture_files, frame_cap};
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
 
@@ -18909,5 +19043,33 @@ mod tests {
             capture_files(Path::new("c/a.png"), "2560, 2500"),
             vec![(2500, PathBuf::from("c/a-2500.png")), (2560, PathBuf::from("c/a-2560.png"))]
         );
+    }
+
+    #[test]
+    fn ui_actions_of_a_discarded_pass_survive_the_next_one() {
+        let a = uuid::Uuid::from_u128(1);
+        let b = uuid::Uuid::from_u128(2);
+        // the first pass took the click, the second got no input
+        let mut actions = UiActions {
+            settings_changed: true,
+            landmark: Some(a),
+            gestures: vec![a],
+            ..Default::default()
+        };
+        actions.merge(UiActions::default());
+        assert!(actions.settings_changed);
+        assert_eq!(actions.landmark, Some(a));
+        assert_eq!(actions.gestures, vec![a]);
+        // a second pass that acts too keeps the first one-off action and adds
+        // to the lists
+        actions.merge(UiActions {
+            landmark: Some(b),
+            gestures: vec![b],
+            font_changed: true,
+            ..Default::default()
+        });
+        assert_eq!(actions.landmark, Some(a));
+        assert_eq!(actions.gestures, vec![a, b]);
+        assert!(actions.settings_changed && actions.font_changed);
     }
 }

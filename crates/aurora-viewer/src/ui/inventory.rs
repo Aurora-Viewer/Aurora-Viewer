@@ -219,6 +219,8 @@ pub struct Facts {
     pub pictures: std::collections::HashMap<Uuid, egui::TextureHandle>,
     pub online: HashSet<Uuid>,
     pub parcel_environment: bool,
+    /// What RLVa locks leave of wearing and taking off, for the menus.
+    pub rlva: crate::world::rlva::WearLocks,
 }
 
 impl Facts {
@@ -285,7 +287,22 @@ impl Facts {
                             .is_some_and(|region| region.caps.contains_key("ExtEnvironment")),
                     )
                 }),
+            rlva: world.rlva_wear_locks(),
         }
+    }
+
+    /// RLVa: whether the wear button of `id` does something a lock allows:
+    /// taking it off when worn, else adding it (`add`) or wearing it in
+    /// place of what is worn in its slot.
+    pub fn rlva_allows(&self, inv: &Inventory, id: Uuid, add: bool) -> bool {
+        let Some(item) = rules::original(inv, id) else {
+            return true;
+        };
+        if self.worn.contains(&item) {
+            return self.rlva.can_remove(item);
+        }
+        let wear = self.rlva.wear(inv, item, 0);
+        if add { wear.add } else { wear.replace }
     }
 
     fn worn_label(&self, inv: &Inventory, id: Uuid) -> Option<&str> {
@@ -384,13 +401,15 @@ pub(crate) struct WorldDrag {
 /// Read before egui's end-pass clears released cargo. A dragging widget keeps
 /// wants-pointer set even over the world; only the destination area counts.
 pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
-    let cargo = egui::DragAndDrop::payload::<InvDrag>(ctx)?;
+    let item = egui::DragAndDrop::payload::<InvDrag>(ctx)
+        .map(|cargo| cargo.0)
+        .or_else(|| egui::DragAndDrop::payload::<super::places::drag::PlaceDrag>(ctx).and_then(|cargo| cargo.target.item()))?;
     if ctx.is_pointer_over_egui() {
         return None;
     }
     ctx.input(|i| {
         Some(WorldDrag {
-            item: cargo.0,
+            item,
             position: i.pointer.interact_pos()?,
             released: i.pointer.button_released(egui::PointerButton::Primary),
             ctrl: i.modifiers.ctrl,
@@ -1113,9 +1132,13 @@ fn folder_row(
     });
 }
 
-/// Personal folders can move within inventory or to Marketplace listings.
+/// Personal folders and saved outfits use the shared move validation on drop.
 fn folder_draggable(inv: &Inventory, id: Uuid, prefs: &InventoryPreferences) -> bool {
-    rules::movable(inv, id, &prefs.protected) && inv.folders.get(&id).is_some_and(|f| f.info.type_default == -1)
+    rules::relocatable(inv, id, &prefs.protected)
+        && inv
+            .folders
+            .get(&id)
+            .is_some_and(|f| f.info.type_default == -1 || crate::world::outfit_folders::in_my_outfits(inv, id))
 }
 
 /// What a folder's row does, whichever window draws it: drag and drop (onto

@@ -526,6 +526,16 @@ pub struct Settings {
     /// Keep the local environment from one session to the next (Firestorm
     /// EnvironmentPersistAcrossLogin, on).
     pub env_persist: bool,
+    /// Which stars the night sky shows: the real sky over Paris (Aurora's
+    /// default) or the Legacy Viewer's random stars (world/night_sky.rs).
+    pub night_sky: crate::world::night_sky::NightSky,
+    /// Where on Earth the real sky is seen from (Paris by default).
+    pub night_sky_place: crate::world::night_sky::SkyPlace,
+    /// Its latitude (degrees north): the preset's, or the one typed for
+    /// Custom.
+    pub night_sky_latitude: f32,
+    /// Brightness of the real stars, 0.5 to 4 times the catalogue's.
+    pub night_sky_gain: f32,
     pub exposure: f32,
     /// Contrast adaptive sharpening (Firestorm RenderCASSharpness, 0.4).
     pub sharpen: f32,
@@ -1322,7 +1332,7 @@ pub(crate) const TONEMAP_MIX: f32 = 0.7;
 /// an S32 of seconds).
 pub(crate) const GROUP_SNOOZE_MAX_MINUTES: u32 = i32::MAX as u32 / 60;
 
-const SETTINGS_VERSION: u32 = 29;
+const SETTINGS_VERSION: u32 = 30;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1667,6 +1677,10 @@ impl Default for Settings {
             time_of_day: 0,
             env_manual_transition: 0.0,
             env_persist: true,
+            night_sky: Default::default(),
+            night_sky_place: Default::default(),
+            night_sky_latitude: crate::world::night_sky::LATITUDE as f32,
+            night_sky_gain: crate::world::night_sky::DEFAULT_GAIN,
             exposure: 1.0,
             sharpen: 0.4,
             glow: true,
@@ -2209,6 +2223,23 @@ impl Settings {
         s
     }
 
+    /// The night sky's place and latitude agree (a preset gives its own
+    /// latitude, Custom keeps the one typed), within range; the stars'
+    /// brightness within 0.5 to 4.
+    pub(crate) fn sync_night_sky(&mut self) {
+        use crate::world::night_sky::{DEFAULT_GAIN, GAIN_RANGE, LATITUDE};
+        self.night_sky_latitude = match self.night_sky_place.latitude() {
+            Some(latitude) => latitude,
+            None if self.night_sky_latitude.is_finite() => self.night_sky_latitude.clamp(-90.0, 90.0),
+            None => LATITUDE as f32,
+        };
+        self.night_sky_gain = if self.night_sky_gain.is_finite() {
+            self.night_sky_gain.clamp(*GAIN_RANGE.start(), *GAIN_RANGE.end())
+        } else {
+            DEFAULT_GAIN
+        };
+    }
+
     pub(crate) fn sanitized(mut self) -> Settings {
         if self
             .graphics_saved_active
@@ -2229,6 +2260,7 @@ impl Settings {
         if self.audio.ui.play.remove("Snapshot") == Some(false) {
             self.snapshot.sound = false;
         }
+        self.sync_night_sky();
         if self.settings_version < 2 {
             // new defaults: 96 m draw distance, LOD factor 2
             self.draw_distance = 96.0;
@@ -2416,6 +2448,12 @@ impl Settings {
             // new default: no simulator version notice (every earlier file
             // wrote the former default, on)
             self.sim_version_alert = false;
+        }
+        if self.settings_version < 30 {
+            // LimitSelectDistance is on again, like the Legacy Viewer: off,
+            // a rectangle drawn from a skybox took the ground's objects far
+            // below. Every earlier file wrote the former default, off
+            self.build.limit_select_distance = true;
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -2636,7 +2674,12 @@ impl Settings {
 
     /// (resolution, distance) for the shadow quality step.
     pub fn shadow_params(&self) -> (u32, f32) {
-        match self.shadow_quality {
+        Self::shadow_params_of(self.shadow_quality)
+    }
+
+    /// (resolution, distance) of a shadow quality step.
+    pub fn shadow_params_of(quality: u8) -> (u32, f32) {
+        match quality {
             0 => (0, 0.0),
             1 => (1024, 48.0),
             2 => (2048, 96.0),
@@ -3851,6 +3894,22 @@ mod tests {
             ..Settings::default()
         };
         assert!(on.sanitized().sim_version_alert);
+    }
+
+    #[test]
+    fn the_select_distance_limit_is_on_by_default_and_for_earlier_files() {
+        assert!(Settings::default().sanitized().build.limit_select_distance);
+        // a file that wrote the former default, off
+        let mut old = Settings {
+            settings_version: 29,
+            ..Settings::default()
+        };
+        old.build.limit_select_distance = false;
+        assert!(old.sanitized().build.limit_select_distance);
+        // switched off after the migration: kept
+        let mut off = Settings::default();
+        off.build.limit_select_distance = false;
+        assert!(!off.sanitized().build.limit_select_distance);
     }
 
     #[test]

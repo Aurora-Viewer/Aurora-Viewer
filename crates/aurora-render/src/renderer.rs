@@ -118,6 +118,12 @@ struct FrameU {
     sky_obj_light: [f32; 4],
     sky_optics: [f32; 4],
     sky_optics_tex: [u32; 4],
+    /// Night sky (stars.rs `StarFrame::uniform`).
+    sky_stars: [[f32; 4]; 3],
+    /// The pass's target size for the stars' footprint (width, height,
+    /// 1/w, 1/h; 0: `screen`), for the reflections that keep the main
+    /// view's `screen` but draw smaller.
+    sky_star_pass: [f32; 4],
     anim_clock: [u32; 4],
     selection_color: [f32; 4],
     rez_gradient: [[f32; 4]; 3],
@@ -874,6 +880,11 @@ struct GpuTimer {
     next: usize,
     period_ns: f32,
     last_ms: Option<f32>,
+    /// The world pixels of the frame `last_ms` measures (a photo frame's are
+    /// the photo's): the cost of a pixel, which plans the photo's tiles.
+    last_pixels: u64,
+    /// The world pixels of each readback slot's frame.
+    slot_pixels: [std::cell::Cell<u64>; 3],
     /// Marks between and inside passes are written
     /// (TIMESTAMP_QUERY_INSIDE_ENCODERS + TIMESTAMP_QUERY_INSIDE_PASSES).
     marks: bool,
@@ -890,6 +901,9 @@ struct GpuTimer {
     last_contact: Option<f32>,
     /// Last time of the bloom levels (ms).
     last_bloom: Option<f32>,
+    /// Last times of the rest of the effects (ms), in [`GPU_EFFECT_PARTS`]
+    /// order.
+    last_effects: Option<[f32; 4]>,
     /// AURORA_MSAA_PREPASS=alt: the variant each readback slot's frame was
     /// drawn with, and the frames measured since the variant last changed.
     slot_prepass: [std::cell::Cell<bool>; 3],
@@ -1014,6 +1028,17 @@ const MARK_CONTACT_END: u32 = 23;
 const MARK_WATER_INTERFACE_END: u32 = 24;
 const MARK_WATER_AIR_BEGIN: u32 = 25;
 const MARK_WATER_AIR_END: u32 = 26;
+/// The effects beyond the occlusion and the contact shadows
+/// (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
+/// the refracted water light before them; the reflection probe face with its
+/// filtering; the scene copy, with the cut-out pass and the submerged water
+/// particles before it; the SSR.
+const GPU_EFFECT_PARTS: [(u32, u32); 4] = [
+    (MARK_CONTACT_END, MARK_WATER_AIR_BEGIN),
+    (MARK_WATER_AIR_END, MARK_REFL_END),
+    (MARK_SCENE_A_END, MARK_COPY_END),
+    (MARK_COPY_END, MARK_SSR_END),
+];
 /// GPU time ranges `(from, to)` of each kind of element, in
 /// [`GpuElement::ALL`] order; together they cover the whole frame.
 const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
@@ -1081,6 +1106,8 @@ impl GpuTimer {
             next: 0,
             period_ns: queue.get_timestamp_period(),
             last_ms: None,
+            last_pixels: 0,
+            slot_pixels: Default::default(),
             marks: device
                 .features()
                 .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
@@ -1090,6 +1117,7 @@ impl GpuTimer {
             last_ssao: None,
             last_contact: None,
             last_bloom: None,
+            last_effects: None,
             slot_prepass: Default::default(),
             compare: PrepassCompare::default(),
         }
@@ -1107,6 +1135,7 @@ impl GpuTimer {
                     };
                     if ts[1] > ts[0] {
                         self.last_ms = Some(ms(0, 1));
+                        self.last_pixels = self.slot_pixels[slot].get();
                         if self.marks {
                             let mut e = [0.0; GpuElement::ALL.len()];
                             for (t, ranges) in e.iter_mut().zip(GPU_ELEMENTS) {
@@ -1119,6 +1148,7 @@ impl GpuTimer {
                             self.last_ssao = Some(ms(MARK_DEPTH_END, MARK_SSAO_END));
                             self.last_contact = Some(ms(MARK_SSAO_END, MARK_CONTACT_END));
                             self.last_bloom = Some(ms(MARK_BLOOM_BEGIN, MARK_BLOOM_END));
+                            self.last_effects = Some(GPU_EFFECT_PARTS.map(|(a, b)| ms(a, b)));
                             if msaa_prepass() == MsaaPrepass::Alternate {
                                 let mut times = [0.0; COMPARE_KEYS.len()];
                                 times[0] = ms(0, 1);
@@ -1419,6 +1449,8 @@ pub(crate) struct Backend {
     ssao: Ssao,
     gtao: crate::gtao::Gtao,
     water_effects: crate::water_effects::WaterGpu,
+    /// The night sky's stars (stars.rs), made once.
+    stars: wgpu::Buffer,
     contact: crate::contact_shadows::ContactShadows,
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
@@ -1506,6 +1538,8 @@ pub(crate) struct Backend {
     /// Two threads that finish command encoders beside this one.
     finishers: Helpers<wgpu::CommandEncoder, wgpu::CommandBuffer>,
     msaa_samples: u32,
+    /// The pipelines being compiled for other samples or SSR, if any.
+    pipeline_build: Option<PipelineBuild>,
     vsync: bool,
     /// Presentation modes of the surface, read when it was created.
     present_modes: Vec<wgpu::PresentMode>,
@@ -2029,6 +2063,27 @@ struct Impostors {
     sprite_depth: wgpu::RenderPipeline,
 }
 
+/// The impostors' capture (opaque, blended) and card (colour, depth alone)
+/// pipelines.
+type ImpostorPipelines = (
+    wgpu::RenderPipeline,
+    wgpu::RenderPipeline,
+    wgpu::RenderPipeline,
+    wgpu::RenderPipeline,
+);
+
+/// The pipelines that depend on the MSAA samples and SSR, compiled on a
+/// worker thread when one of them changes (#1722, #1746). Built on the render
+/// thread, the whole set stopped the frames for as long as the driver took:
+/// 9 s on amdvlk, 36 s on an Intel Arc, reported as a GPU stall. The frames keep their samples and SSR meanwhile, and take the
+/// new ones with their targets on the frame the set arrives.
+struct PipelineBuild {
+    samples: u32,
+    ssr: bool,
+    started: std::time::Instant,
+    done: std::sync::mpsc::Receiver<(Pipelines, ImpostorPipelines)>,
+}
+
 impl Impostors {
     fn new(
         device: &wgpu::Device,
@@ -2194,17 +2249,8 @@ impl Impostors {
         old
     }
 
-    fn rebuild_pipelines(
-        &mut self,
-        device: &wgpu::Device,
-        frame_layout: &wgpu::BindGroupLayout,
-        records_layout: &wgpu::BindGroupLayout,
-        tex_layout: &wgpu::BindGroupLayout,
-        samples: u32,
-        ssr: bool,
-    ) {
-        (self.capture_opaque, self.capture_blend, self.sprite, self.sprite_depth) =
-            Self::make_pipelines(device, &self.layout, frame_layout, records_layout, tex_layout, samples, ssr);
+    fn set_pipelines(&mut self, p: ImpostorPipelines) {
+        (self.capture_opaque, self.capture_blend, self.sprite, self.sprite_depth) = p;
     }
 
     fn make_pipelines(
@@ -2215,12 +2261,7 @@ impl Impostors {
         tex_layout: &wgpu::BindGroupLayout,
         samples: u32,
         ssr: bool,
-    ) -> (
-        wgpu::RenderPipeline,
-        wgpu::RenderPipeline,
-        wgpu::RenderPipeline,
-        wgpu::RenderPipeline,
-    ) {
+    ) -> ImpostorPipelines {
         let src = format!(
             "{}\n{}\n{}",
             crate::common_shader_source(),
@@ -2642,6 +2683,17 @@ impl Backend {
                 float_tex(13),
                 // GTAO's screen-space indirect light (gtao.rs)
                 float_tex(14),
+                // the night sky's stars (stars.rs)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 24,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let records_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -2880,6 +2932,14 @@ impl Backend {
         exposure.bind(&device, &targets.color, &targets.depth_ss, &glow.views[1]);
         let mut histogram = crate::histogram::Histogram::new(&device);
         histogram.bind(&device, &targets.color);
+        let stars = wgpu::util::DeviceExt::create_buffer_init(
+            &device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("night sky stars"),
+                contents: &crate::stars::buffer_contents(),
+                usage: wgpu::BufferUsages::STORAGE,
+            },
+        );
         let groups = Self::make_frame_groups(
             &device,
             &frame_layout,
@@ -2892,6 +2952,7 @@ impl Backend {
             &targets,
             &probes,
             &water_effects,
+            &stars,
         );
         let indirect = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("indirect"),
@@ -2940,6 +3001,7 @@ impl Backend {
             ssao,
             gtao,
             water_effects,
+            stars,
             contact,
             contact_now: false,
             gtao_normals_now: false,
@@ -2996,6 +3058,7 @@ impl Backend {
             timer,
             finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
             msaa_samples,
+            pipeline_build: None,
             vsync,
             present_modes,
             settings,
@@ -4070,6 +4133,7 @@ impl Backend {
         t: &Targets,
         probes: &crate::probes::Probes,
         water_effects: &crate::water_effects::WaterGpu,
+        stars: &wgpu::Buffer,
     ) -> FrameGroups {
         let mk = |label: &str,
                   buffer: &wgpu::Buffer,
@@ -4089,6 +4153,10 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 23,
                         resource: wgpu::BindingResource::TextureView(if sample_mask { &t.water_mask } else { &dummies.white }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 24,
+                        resource: stars.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -4402,6 +4470,7 @@ impl Backend {
                 &self.targets,
                 &self.probes,
                 &self.water_effects,
+                &self.stars,
             );
         }
     }
@@ -4420,6 +4489,7 @@ impl Backend {
             &self.targets,
             &self.probes,
             &self.water_effects,
+            &self.stars,
         );
         self.gbuf_group = self.targets.gbuf.as_ref().map(|g| {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -4540,7 +4610,110 @@ impl Backend {
             AntiAliasing::Msaa(n) => self.msaa_supported.iter().copied().filter(|&m| m <= n).max().unwrap_or(1),
             _ => 1,
         };
-        let pipelines_dirty = samples != self.msaa_samples || s.ssr != self.settings.ssr;
+        if (samples, s.ssr) == (self.msaa_samples, self.settings.ssr) {
+            // (a set still compiling for other samples is no longer wanted)
+            self.pipeline_build = None;
+            self.apply_settings_with(s, None);
+            return;
+        }
+        if self.pipeline_build.as_ref().is_none_or(|b| (b.samples, b.ssr) != (samples, s.ssr)) {
+            log::info!(
+                "compiling the pipelines for {samples} sample(s), SSR {}",
+                if s.ssr { "on" } else { "off" }
+            );
+            self.pipeline_build = Some(self.start_pipeline_build(samples, s.ssr));
+        }
+        let Some(build) = &self.pipeline_build else {
+            return;
+        };
+        match build.done.try_recv() {
+            Ok((scene, impostors)) => {
+                log::info!(
+                    "pipelines for {samples} sample(s) ready in {} ms",
+                    build.started.elapsed().as_millis()
+                );
+                self.pipeline_build = None;
+                self.apply_settings_with(s, Some((samples, scene, impostors)));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                // the other settings now, the samples and SSR with their
+                // pipelines
+                let now = RenderSettings {
+                    aa: self.settings.aa,
+                    ssr: self.settings.ssr,
+                    ..s
+                };
+                if now != self.settings {
+                    self.apply_settings_with(now, None);
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                log::error!("the pipeline worker stopped: compiling them on the render thread");
+                self.pipeline_build = None;
+                let scene = Self::make_pipelines(
+                    &self.device,
+                    &self.frame_layout,
+                    &self.records_layout,
+                    &self.tex_layout,
+                    &self.shadow_layout,
+                    [&self.post_layout, &self.bloom.post_layout],
+                    &self.gbuf_layout,
+                    samples,
+                    self.config.format,
+                    s.ssr,
+                );
+                let impostors = Impostors::make_pipelines(
+                    &self.device,
+                    &self.impostors.layout,
+                    &self.frame_layout,
+                    &self.records_layout,
+                    &self.tex_layout,
+                    samples,
+                    s.ssr,
+                );
+                self.apply_settings_with(s, Some((samples, scene, impostors)));
+            }
+        }
+    }
+
+    /// Compile the pipelines for `samples` and `ssr` on a worker thread.
+    fn start_pipeline_build(&self, samples: u32, ssr: bool) -> PipelineBuild {
+        let (tx, done) = std::sync::mpsc::sync_channel(1);
+        let device = self.device.clone();
+        let layouts = [
+            self.frame_layout.clone(),
+            self.records_layout.clone(),
+            self.tex_layout.clone(),
+            self.shadow_layout.clone(),
+            self.post_layout.clone(),
+            self.bloom.post_layout.clone(),
+            self.gbuf_layout.clone(),
+            self.impostors.layout.clone(),
+        ];
+        let format = self.config.format;
+        let spawned = std::thread::Builder::new().name("aurora-pipelines".into()).spawn(move || {
+            let [frame, records, tex, shadow, post, bloom, gbuf, impostor] = &layouts;
+            let scene = Self::make_pipelines(&device, frame, records, tex, shadow, [post, bloom], gbuf, samples, format, ssr);
+            let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, ssr);
+            // (refused when other settings came meanwhile: the set is dropped)
+            let _ = tx.send((scene, impostors));
+        });
+        if let Err(e) = spawned {
+            // the receiver reports the worker gone: compiled on this thread
+            log::error!("cannot start the pipeline worker: {e}");
+        }
+        PipelineBuild {
+            samples,
+            ssr,
+            started: std::time::Instant::now(),
+            done,
+        }
+    }
+
+    /// `apply_settings` once the pipelines for `s` are known: `rebuilt` the
+    /// set compiled for other samples or SSR, `None` when they stay.
+    fn apply_settings_with(&mut self, s: RenderSettings, rebuilt: Option<(u32, Pipelines, ImpostorPipelines)>) {
+        let pipelines_dirty = rebuilt.is_some();
         let targets_dirty = pipelines_dirty
             || s.render_scale_percent != self.settings.render_scale_percent
             || (s.aa == AntiAliasing::Smaa) != (self.settings.aa == AntiAliasing::Smaa)
@@ -4552,28 +4725,10 @@ impl Backend {
             || crate::water_optics::scale(s.water_effects) != crate::water_optics::scale(self.settings.water_effects)
             || s.mirror_scale != self.settings.mirror_scale;
         let taa_was = self.taa.is_some();
-        self.msaa_samples = samples;
-        if pipelines_dirty {
-            self.pipelines = Self::make_pipelines(
-                &self.device,
-                &self.frame_layout,
-                &self.records_layout,
-                &self.tex_layout,
-                &self.shadow_layout,
-                [&self.post_layout, &self.bloom.post_layout],
-                &self.gbuf_layout,
-                samples,
-                self.config.format,
-                s.ssr,
-            );
-            self.impostors.rebuild_pipelines(
-                &self.device,
-                &self.frame_layout,
-                &self.records_layout,
-                &self.tex_layout,
-                samples,
-                s.ssr,
-            );
+        if let Some((samples, scene, impostors)) = rebuilt {
+            self.msaa_samples = samples;
+            self.pipelines = scene;
+            self.impostors.set_pipelines(impostors);
         }
         let slots = s.probe_slots.clamp(1, crate::probes::MAX_PROBES as u32);
         let probes_dirty = slots != self.probes.slots;
@@ -4922,6 +5077,8 @@ impl Backend {
         u.sky_obj_light = s.object_sunlight.extend(0.0).to_array();
         u.sky_optics = [s.moisture_level, s.droplet_radius, s.ice_level, 0.0];
         u.sky_optics_tex = [s.rainbow_texture, s.halo_texture, 0, 0];
+        u.sky_stars = s.stars.uniform();
+        u.sky_star_pass = [0.0; 4];
         // (common.wgsl FEATURE_NO_EMISSIVE)
         u.features[0] = if self.settings.hdr { 0 } else { 1 };
         for (i, m) in cascades.iter().enumerate() {
@@ -5081,6 +5238,7 @@ impl Backend {
         if settings != self.settings {
             self.apply_settings(settings);
         }
+        stats.settings = Some(self.settings);
         let snapshot = match wanted {
             Some(Capture::Snapshot(s)) if s.width > 0 && s.height > 0 => Some(s),
             _ => None,
@@ -5523,14 +5681,23 @@ impl Backend {
         };
         let mut water_vp = Mat4::IDENTITY;
         let mut mirror_vp = Mat4::IDENTITY;
+        // the reflections' own pixel size, for the stars' footprint
+        let star_pass = |t: &Option<ReflTarget>| {
+            t.as_ref().map_or([0.0; 4], |t| {
+                let (w, h) = (t.width.max(1) as f32, t.height.max(1) as f32);
+                [w, h, 1.0 / w, 1.0 / h]
+            })
+        };
         if do_water_refl {
-            let u = refl_frame(self, Vec3::Z, -f.water_height, 0.05);
+            let mut u = refl_frame(self, Vec3::Z, -f.water_height, 0.05);
+            u.sky_star_pass = star_pass(&self.targets.water_refl);
             water_vp = Mat4::from_cols_array_2d(&u.view_proj);
             self.queue.write_buffer(&self.refl_buffers[0], 0, bytemuck::bytes_of(&u));
         }
         if let Some(m) = &mirror {
             let n = m.normal.normalize_or(Vec3::Z);
-            let u = refl_frame(self, n, -n.dot(m.point), 0.01);
+            let mut u = refl_frame(self, n, -n.dot(m.point), 0.01);
+            u.sky_star_pass = star_pass(&self.targets.mirror);
             mirror_vp = Mat4::from_cols_array_2d(&u.view_proj);
             self.queue.write_buffer(&self.refl_buffers[1], 0, bytemuck::bytes_of(&u));
         }
@@ -5699,8 +5866,10 @@ impl Backend {
             // with (jittered under TAA)
             let light = crate::contact_shadows::light_projection(fu.proj * fu.view, f.sun_dir);
             // an infinite reversed projection keeps its near plane there
-            // (centred or not: tiled photos)
-            self.contact.write(&self.queue, t, light, fu.proj.w_axis.z);
+            // (centred or not: tiled photos); a photo larger than the
+            // viewfinder marches as much further
+            self.contact
+                .write(&self.device, &self.queue, t, light, fu.proj.w_axis.z, f.photo_scale);
         }
         if let (true, Some(t)) = (self.targets.gtao_shown, &mut self.targets.gtao) {
             let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
@@ -6094,6 +6263,9 @@ impl Backend {
         }
 
         let timer_slot = self.timer.as_mut().and_then(|t| t.slot());
+        if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
+            t.slot_pixels[slot].set(u64::from(world_size.0) * u64::from(world_size.1));
+        }
         let mut first_pass = true;
         let mut take_first = || {
             let first = first_pass && timer_slot.is_some();
@@ -7944,12 +8116,14 @@ impl Backend {
         }
 
         stats.gpu_ms = self.timer.as_ref().and_then(|t| t.last_ms);
+        stats.gpu_pixels = self.timer.as_ref().map_or(0, |t| t.last_pixels);
         stats.gpu_elements = self.timer.as_ref().and_then(|t| t.last_elements);
         stats.shadow.gpu_ms = self.timer.as_ref().and_then(|t| t.last_shadow_parts);
         stats.gpu_depth = self.timer.as_ref().and_then(|t| t.last_depth);
         stats.gpu_ssao = self.timer.as_ref().and_then(|t| t.last_ssao);
         stats.gpu_contact = self.timer.as_ref().and_then(|t| t.last_contact);
         stats.gpu_bloom = self.timer.as_ref().and_then(|t| t.last_bloom);
+        stats.gpu_effects = self.timer.as_ref().and_then(|t| t.last_effects);
         if profile_frames && let Some(e) = stats.gpu_elements {
             let mut out = String::new();
             for (el, ms) in GpuElement::ALL.iter().zip(e) {
@@ -8015,8 +8189,10 @@ impl Backend {
     /// Done here, on the thread that submits and presents: the wait holds
     /// the device's locks.
     pub fn finish_frames_before(&self, frame: u64, timeout: Duration) {
-        // (the wait runs the callbacks of `on_submitted_work_done` too)
-        if !self.gpu_frames.enabled || self.lost.get() {
+        // (the wait runs the callbacks of `on_submitted_work_done` too).
+        // Not while the GPU is not the limit (pacing.rs `Gate`): this
+        // thread takes the next frame at once, as without the pacing
+        if !self.gpu_frames.active() || self.lost.get() {
             return;
         }
         let Some(last) = frame.checked_sub(1) else {

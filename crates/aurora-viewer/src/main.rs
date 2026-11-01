@@ -209,6 +209,21 @@ fn run_viewer() -> anyhow::Result<()> {
     let _ = std::thread::Builder::new()
         .name("aurora-web-profile".into())
         .spawn(move || media::private_profile::sweep(&private_profiles));
+    // the browser profiles of the earlier runs: set aside before the first
+    // browser starts, deleted in the background (cef_cache.rs)
+    let browser_cache = media::browser_cache(&settings::cache_dir());
+    media::cef_cache::set_aside(&browser_cache);
+    let _ = std::thread::Builder::new()
+        .name("aurora-web-cache".into())
+        .spawn(move || media::cef_cache::purge(&browser_cache));
+    // the browser profiles of the earlier builds, kept in the wrong folder
+    #[cfg(unix)]
+    {
+        let cache = settings::cache_dir();
+        let _ = std::thread::Builder::new()
+            .name("aurora-web-misplaced".into())
+            .spawn(move || media::remove_misplaced_cache(&cache));
+    }
     let mut app = app::App::new()?;
     let result = event_loop.run_app(app.as_mut());
     // the browsers stop with the app; their private profiles are removed

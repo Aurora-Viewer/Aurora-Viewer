@@ -244,8 +244,14 @@ impl App {
         if wearer == Some(w.agent_id) {
             let item = f.attachment_item.map(|id| linked_item(w, id));
             f.favorite = item.and_then(|id| w.inventory.items.get(&id)).map(|it| it.favorite);
+            // enable_detach and LLAttachmentDrop: an RLVa remove lock on the
+            // root greys both, and @rez Drop too (the click is refused the same way)
+            let root = w.objects.get(linkset_root(w, idx)).map(|o| o.key);
+            f.detach = f.attachment_item.is_some_and(|id| w.rlva_can_remove(id, uuid::Uuid::nil()));
             // Attachment.EnableDrop: the item is in our inventory and we may build here
-            f.drop = item.is_some_and(|id| w.inventory.items.contains_key(&id)) && self.agent_can_build();
+            f.drop = item.is_some_and(|id| w.inventory.items.contains_key(&id))
+                && self.agent_can_build()
+                && root.is_some_and(|k| w.rlva_can_drop(k.region, &[k.local_id]));
         }
         f.animesh = wearer
             .is_none()

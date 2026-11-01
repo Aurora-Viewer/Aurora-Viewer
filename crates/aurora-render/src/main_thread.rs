@@ -213,6 +213,10 @@ pub struct Renderer {
     gpu_waited: Duration,
     /// When the frame being built began reading its input.
     input_at: Option<Instant>,
+    /// The same for the pacing's gate (`input_at` leaves with the packet),
+    /// and the gate: whether the GPU alone sets the pace (pacing.rs).
+    frame_began: Option<Instant>,
+    pace_gate: crate::pacing::Gate,
     spare: Vec<Spent>,
     failed: bool,
     /// The render thread has held a frame past [`STALL_AFTER`]: frames are
@@ -234,6 +238,12 @@ pub struct Renderer {
     /// The answer to the last photo: its image (width, height, RGBA8), or
     /// None when it could not be drawn.
     pub snapshot: Option<Option<(u32, u32, Vec<u8>)>>,
+    /// The photo asked left with a frame the GPU had not finished within
+    /// `CAPTURE_WAIT`: its answer comes with a later frame, which does not
+    /// draw it again (a second answer would be taken for the next part).
+    snapshot_sent: bool,
+    /// That photo was given up (`drop_snapshot`): its answer is not kept.
+    snapshot_dropped: bool,
     /// Count the luminance histogram of the next frame shown at that
     /// exposure (asked each frame the photo viewfinder shows it).
     pub histogram_request: Option<f32>,
@@ -426,9 +436,9 @@ impl Renderer {
         );
         let anim_clock = crate::tex_anim::AnimClock::new(Instant::now());
         let video_memory = crate::vram::VideoMemoryProbe::new(adapter.clone());
-        let gpu_frames = Arc::new(crate::pacing::GpuFrames::new(crate::pacing::wanted(
-            std::env::var("AURORA_FRAME_PACING").ok().as_deref(),
-        )));
+        let pacing = std::env::var("AURORA_FRAME_PACING").ok();
+        let gpu_frames = Arc::new(crate::pacing::GpuFrames::new(crate::pacing::wanted(pacing.as_deref())));
+        let pace_gate = crate::pacing::Gate::new(crate::pacing::always(pacing.as_deref()));
         let backend = Backend::new(BackendInit {
             gpu_frames: gpu_frames.clone(),
             device: device.clone(),
@@ -508,6 +518,8 @@ impl Renderer {
             gpu_frames,
             gpu_waited: Duration::ZERO,
             input_at: None,
+            frame_began: None,
+            pace_gate,
             spare: Vec::new(),
             failed: false,
             stalled: false,
@@ -517,6 +529,8 @@ impl Renderer {
             captured: None,
             snapshot_request: None,
             snapshot: None,
+            snapshot_sent: false,
+            snapshot_dropped: false,
             histogram_request: None,
             histogram: None,
             lost,
@@ -833,6 +847,13 @@ impl Renderer {
         }
     }
 
+    /// Give up the photo asked: not drawn, or its answer not kept when its
+    /// frame is still on the GPU.
+    pub fn drop_snapshot(&mut self) {
+        self.snapshot_request = None;
+        self.snapshot_dropped = self.snapshot_sent;
+    }
+
     /// Apply quality settings: pipelines and targets are rebuilt by the
     /// backend with the next frame, only when needed.
     pub fn apply_settings(&mut self, s: RenderSettings) {
@@ -854,6 +875,13 @@ impl Renderer {
     /// reported it with the last frame it finished (None before the first).
     pub fn present_mode(&self) -> Option<wgpu::PresentMode> {
         self.last_stats.present_mode
+    }
+
+    /// The last frame the backend finished was drawn with the settings last
+    /// applied: false while the pipelines for new MSAA samples or SSR compile
+    /// on their worker (#1746), and until the backend has seen them.
+    pub fn settings_applied(&self) -> bool {
+        self.last_stats.settings == Some(self.settings)
     }
 
     // ------------------------------------------------------------ resources
@@ -972,8 +1000,13 @@ impl Renderer {
             self.drawn_answers.drain(..self.drawn_answers.len() - KEPT);
         }
         self.cull.last = r.cull;
-        if r.snapshot {
+        if r.snapshot && std::mem::take(&mut self.snapshot_dropped) {
+            // the answer of a photo given up: a photo asked since is drawn
+            // with the next frame
+            self.snapshot_sent = false;
+        } else if r.snapshot {
             self.snapshot_request = None;
+            self.snapshot_sent = false;
             self.snapshot = Some(r.captured);
         } else if let Some(c) = r.captured {
             self.captured = Some(c);
@@ -1023,6 +1056,8 @@ impl Renderer {
             if self.snapshot_request.take().is_some() {
                 self.snapshot = Some(None);
             }
+            self.snapshot_sent = false;
+            self.snapshot_dropped = false;
             return RenderStats {
                 render_thread: self.host.threaded(),
                 ..Default::default()
@@ -1083,8 +1118,10 @@ impl Renderer {
         let mut spent = self.spare.pop().unwrap_or_default();
         std::mem::swap(&mut self.writes, &mut spent.writes);
         spent.lists.copy_from(lists);
-        // a photo first: the other captures wait for the next frame
+        // a photo first: the other captures wait for the next frame (and
+        // for the answer of a photo still on the GPU)
         let capture = match self.snapshot_request {
+            Some(_) if self.snapshot_sent => None,
             Some(s) => Some(crate::packet::Capture::Snapshot(s)),
             None => capture_for(self.capture_scene, self.capture_request, self.can_capture),
         };
@@ -1125,7 +1162,9 @@ impl Renderer {
             Host::Thread { owner, .. } => {
                 match owner.submit(Job::Frame(Box::new(packet))) {
                     Ok(s) => {
-                        waited = s.waited;
+                        // (added to the wait before the packet: replaced,
+                        // the back-pressure counted as the packet's work)
+                        waited += s.waited;
                         if let Some(Done::Frame(r)) = s.previous {
                             results[0] = Some(r);
                         }
@@ -1143,7 +1182,11 @@ impl Renderer {
                             }
                             results[1] = Some(r);
                         }
-                        Ok(_) => {}
+                        Ok(_) => {
+                            if matches!(capture, Some(crate::packet::Capture::Snapshot(_))) {
+                                self.snapshot_sent = true;
+                            }
+                        }
                         Err(_) => gone = true,
                     }
                     waited += t.elapsed();
@@ -1160,7 +1203,8 @@ impl Renderer {
         // ---- statistics: the stores' side is this frame's, the backend's
         // side that of the last frame it finished (counted once)
         let main = stats;
-        if std::mem::take(&mut self.fresh) {
+        let fresh = std::mem::take(&mut self.fresh);
+        if fresh {
             stats = self.last_stats;
         } else {
             // no result since the last call (first frame, frame after a
@@ -1168,6 +1212,7 @@ impl Renderer {
             // counted twice
             stats = RenderStats {
                 gpu_ms: self.last_stats.gpu_ms,
+                gpu_pixels: self.last_stats.gpu_pixels,
                 gpu_elements: self.last_stats.gpu_elements,
                 shadow: ShadowStats {
                     gpu_ms: self.last_stats.shadow.gpu_ms,
@@ -1177,6 +1222,7 @@ impl Renderer {
                 gpu_ssao: self.last_stats.gpu_ssao,
                 gpu_contact: self.last_stats.gpu_contact,
                 gpu_bloom: self.last_stats.gpu_bloom,
+                gpu_effects: self.last_stats.gpu_effects,
                 occluded: self.last_stats.occluded,
                 visible_objects: self.last_stats.visible_objects,
                 gpu_cull: self.last_stats.gpu_cull,
@@ -1211,6 +1257,16 @@ impl Renderer {
             stats.cpu_encode_ms += stats.packet_ms;
         }
         stats.pace_ms = ms(self.gpu_waited);
+        // the pacing's gate (pacing.rs): this frame's main-thread time, from
+        // its input to the hand-over, without the back-pressure; the render
+        // thread's and the GPU's of the last frame finished, the swapchain
+        // wait left out (the GPU's pace, not work)
+        if fresh && let Some(began) = self.frame_began.take() {
+            let main = ms(began.elapsed().saturating_sub(waited));
+            let render = stats.thread_ms - stats.cpu_phases[0];
+            let on = self.pace_gate.update(main, render, stats.gpu_ms);
+            self.gpu_frames.set_active(on);
+        }
         stats
     }
 
@@ -1218,6 +1274,7 @@ impl Renderer {
     /// the viewer's frame): its time to the screen is measured from here.
     pub fn mark_input(&mut self, at: Instant) {
         self.input_at = Some(at);
+        self.frame_began = Some(at);
     }
 
     /// Once a frame is handed over, before the next one reads its input:
@@ -1226,7 +1283,7 @@ impl Renderer {
     /// limit, or with AURORA_FRAME_PACING=0).
     pub fn wait_for_gpu(&mut self) -> Duration {
         self.gpu_waited = Duration::ZERO;
-        if !self.gpu_frames.enabled || self.failed || self.stalled || self.lost.get() {
+        if !self.gpu_frames.active() || self.failed || self.stalled || self.lost.get() {
             return Duration::ZERO;
         }
         // the frame handed over last, and the one before it
@@ -1460,6 +1517,18 @@ fn open_device(adapter: &wgpu::Adapter) -> Result<OpenedDevice, RenderError> {
         features |= wgpu::Features::INDIRECT_FIRST_INSTANCE;
     } else {
         return Err(RenderError::Device("INDIRECT_FIRST_INSTANCE unsupported".into()));
+    }
+    // The fragment stage of the world passes reads five storage buffers
+    // (the frame group's 9, 16 and 24, the night sky's stars in stars.rs;
+    // the records; the texture pages), one more than wgpu's downlevel
+    // minimum. Drivers with descriptor indexing give far more: say so here
+    // rather than fail when the pipelines are made.
+    const FRAGMENT_STORAGE_BUFFERS: u32 = 5;
+    if alim.max_storage_buffers_per_shader_stage < FRAGMENT_STORAGE_BUFFERS {
+        return Err(RenderError::Device(format!(
+            "the GPU driver allows {} storage buffers per shader stage, {FRAGMENT_STORAGE_BUFFERS} are needed",
+            alim.max_storage_buffers_per_shader_stage
+        )));
     }
     let timestamps = afeat.contains(wgpu::Features::TIMESTAMP_QUERY);
     if timestamps {

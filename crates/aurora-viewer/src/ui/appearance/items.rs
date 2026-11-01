@@ -87,18 +87,22 @@ pub(super) fn context_menu(
         let worn = worn_items(world).contains(&it.id);
         let wearable = matches!(it.asset_type, 5 | 6 | 13);
         let editable = matches!(it.asset_type, 5 | 13);
+        // RLVa greys what a lock forbids, as LLWearableItemsList::ContextMenu
+        // does with ERlvWearMask (llwearableitemslist.cpp).
+        let locks = world.rlva_wear_locks();
         if worn && editable && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit")) {
             crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::EditWorn(it.id));
         }
         if !worn && wearable {
-            if menu::item(ui, p, "shirt-filled", aurora_i18n::tr!("common-wear")) {
+            let wear = locks.wear(&world.inventory, it.id, 0);
+            if menu::item_if(ui, p, "shirt-filled", aurora_i18n::tr!("common-wear"), wear.replace) {
                 actions.push(Action::WearItem {
                     item: it.id,
                     replace: true,
                     point: 0,
                 });
             }
-            if it.asset_type != 13 && menu::item(ui, p, "plus", aurora_i18n::tr!("common-add")) {
+            if it.asset_type != 13 && menu::item_if(ui, p, "plus", aurora_i18n::tr!("common-add"), wear.add) {
                 actions.push(Action::WearItem {
                     item: it.id,
                     replace: false,
@@ -106,8 +110,8 @@ pub(super) fn context_menu(
                 });
             }
             if it.asset_type == 6 {
-                attach_menu(ui, p, world, it.id, false, actions);
-                attach_menu(ui, p, world, it.id, true, actions);
+                attach_menu(ui, p, world, &locks, it.id, false, actions);
+                attach_menu(ui, p, world, &locks, it.id, true, actions);
             }
         }
         // "touch" / "edit" of a worn object (updateItemsVisibility); editing
@@ -124,7 +128,7 @@ pub(super) fn context_menu(
         }
         if worn
             && it.asset_type != 13
-            && menu::item(
+            && menu::item_if(
                 ui,
                 p,
                 "circle-x-filled",
@@ -133,6 +137,7 @@ pub(super) fn context_menu(
                 } else {
                     aurora_i18n::tr!("ui-appearance-items-remove")
                 },
+                locks.can_remove(it.id),
             )
         {
             actions.push(Action::Remove(it.id));
@@ -169,7 +174,15 @@ pub(super) fn context_menu(
     });
 }
 
-fn attach_menu(ui: &mut egui::Ui, p: &Palette, world: &World, item: Uuid, hud: bool, actions: &mut Vec<Action>) {
+fn attach_menu(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    locks: &crate::world::rlva::WearLocks,
+    item: Uuid,
+    hud: bool,
+    actions: &mut Vec<Action>,
+) {
     let mut points: Vec<_> = world.avatar_lib.attach_points.iter().filter(|(_, ap)| ap.hud == hud).collect();
     points.sort_by_cached_key(|(id, _)| {
         world
@@ -200,7 +213,8 @@ fn attach_menu(ui: &mut egui::Ui, p: &Palette, world: &World, item: Uuid, hud: b
                         .unwrap_or(aurora_i18n::tr!("common-attachment"));
                     let name = point_name(name);
                     let label = if hud { name.to_owned() } else { format!("{name} ({id})") };
-                    if menu::item(ui, p, if hud { "device-desktop-filled" } else { "man-filled" }, &label) {
+                    let open = locks.wear(&world.inventory, item, *id).add;
+                    if menu::item_if(ui, p, if hud { "device-desktop-filled" } else { "man-filled" }, &label, open) {
                         // Firestorm's Attach To always adds, even on an occupied point.
                         actions.push(Action::WearItem {
                             item,

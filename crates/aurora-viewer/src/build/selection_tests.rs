@@ -252,7 +252,7 @@ fn reflection_probe_selection_toggle_controls_rectangles_and_resets_at_startup()
     for enabled in [false, true, false] {
         settings.select_probes = enabled;
         tool.deselect_all(&world);
-        tool.rect_select(&mut world, &settings, (0.0, 0.0), (800.0, 800.0), false);
+        tool.rect_select(&mut world, &settings, None, (0.0, 0.0), (800.0, 800.0), false);
         assert_eq!(selected(&tool).contains(&99614), enabled);
         assert!(!tool.selection.is_empty(), "Ordinary objects remain selectable");
     }
@@ -312,6 +312,85 @@ fn confirmed_link_reconciles_selection_colors_and_packet_order() {
     let root = object(&world, 99871);
     assert_eq!(family(&world, root), vec![root, object(&world, 99870)]);
     assert_eq!(tool.highlighted(&world), highlighted);
+}
+
+/// Three free prims of ours, linked through the demo simulator with
+/// `99882` as root; the tool keeps the linkset selected.
+fn linked_three(world: &mut World, tool: &mut BuildTool, settings: &BuildSettings, sim: &mut demo_sim::DemoSim) -> Vec<u32> {
+    let handle = world.objects.get(object(world, 99610)).unwrap().key.region;
+    let ids = [99880, 99881, 99882];
+    let mut updates = Vec::new();
+    for local_id in ids {
+        let mut update = crate::demo::action_avatar(false);
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        update.local_id = local_id;
+        update.full_id = crate::demo::action_id(local_id);
+        update.parent_id = 0;
+        update.owner_id = world.agent_id;
+        updates.push(update);
+    }
+    world.apply(NetEvent::ObjectUpdates { handle, objects: updates });
+    for (i, id) in ids.iter().enumerate() {
+        let idx = object(world, *id);
+        tool.click_select(world, settings, Some(idx), i > 0);
+    }
+    tool.link(world);
+    run_sim(world, tool, sim);
+    tool.advance_link(world, Instant::now());
+    tool.prune(world, settings, Instant::now());
+    assert_eq!(selected(tool), [99882]);
+    assert_eq!(family(world, object(world, 99882)).len(), 3);
+    ids.to_vec()
+}
+
+fn run_sim(world: &mut World, tool: &mut BuildTool, sim: &mut demo_sim::DemoSim) {
+    for command in std::mem::take(&mut tool.out) {
+        if let NetCommand::Build(command) = command {
+            for event in sim.reply(world, &command) {
+                world.apply(event);
+            }
+        }
+    }
+}
+
+#[test]
+fn unlink_keeps_every_former_prim_selected() {
+    let (mut world, mut tool, settings) = fixture();
+    let mut sim = demo_sim::DemoSim::default();
+    linked_three(&mut world, &mut tool, &settings, &mut sim);
+    tool.unlink(&mut world);
+    // nothing changes before the simulator answers
+    tool.prune(&world, &settings, Instant::now());
+    assert_eq!(selected(&tool), [99882]);
+    run_sim(&mut world, &mut tool, &mut sim);
+    tool.prune(&world, &settings, Instant::now());
+    // LLSelectMgr::sendDelink: each prim stays selected as its own object,
+    // the former root first
+    let mut ids = selected(&tool);
+    assert_eq!(ids[0], 99882);
+    ids.sort_unstable();
+    assert_eq!(ids, [99880, 99881, 99882]);
+    assert!(tool.highlighted(&world).iter().all(|(_, root)| *root));
+    assert_eq!(tool.highlighted(&world).len(), 3);
+    assert!(tool.pending_unlink.is_none());
+    // and once more: the selection stays as it is
+    tool.prune(&world, &settings, Instant::now());
+    assert_eq!(tool.selection.len(), 3);
+}
+
+#[test]
+fn unlink_leaves_a_selection_changed_before_the_reply_alone() {
+    let (mut world, mut tool, settings) = fixture();
+    let mut sim = demo_sim::DemoSim::default();
+    linked_three(&mut world, &mut tool, &settings, &mut sim);
+    tool.unlink(&mut world);
+    let delink = std::mem::take(&mut tool.out);
+    tool.deselect_all(&world);
+    tool.out = delink;
+    run_sim(&mut world, &mut tool, &mut sim);
+    tool.prune(&world, &settings, Instant::now());
+    assert!(tool.selection.is_empty());
+    assert!(tool.pending_unlink.is_none());
 }
 
 #[test]
@@ -679,7 +758,8 @@ fn far_selection_stays_unless_the_select_distance_is_limited() {
     assert_eq!(key.len(), 1);
     let home = world.agent.position;
     world.agent.position = home + Vec3::X * (MAX_SELECT_DISTANCE + 50.0);
-    // LimitSelectDistance is off by default: nothing is deselected
+    // LimitSelectDistance off: nothing is deselected
+    settings.limit_select_distance = false;
     tool.prune(&world, &settings, Instant::now());
     assert_eq!(tool.selection, key);
     // on, LLSelectMgr::updateSelectionCenter deselects past MaxSelectDistance
@@ -696,10 +776,11 @@ fn far_selection_stays_unless_the_select_distance_is_limited() {
 #[test]
 fn distance_limits_follow_their_switches_and_stay_in_range() {
     let mut s = BuildSettings::default();
-    assert_eq!(s.select_limit(), None);
-    assert_eq!(s.drag_limit(), Some(MAX_DRAG_DISTANCE));
-    s.limit_select_distance = true;
     assert_eq!(s.select_limit(), Some(MAX_SELECT_DISTANCE));
+    assert_eq!(s.drag_limit(), Some(MAX_DRAG_DISTANCE));
+    s.limit_select_distance = false;
+    assert_eq!(s.select_limit(), None);
+    s.limit_select_distance = true;
     s.max_select_distance = 5000.0;
     assert_eq!(s.select_limit(), Some(1024.0));
     s.max_select_distance = f32::NAN;
@@ -708,7 +789,7 @@ fn distance_limits_follow_their_switches_and_stay_in_range() {
     assert_eq!(s.drag_limit(), None);
     // older settings files read the new fields' defaults
     let old: BuildSettings = serde_json::from_str("{}").unwrap();
-    assert!(!old.limit_select_distance && old.limit_drag_distance);
+    assert!(old.limit_select_distance && old.limit_drag_distance);
 }
 
 /// Gives `idx`'s root the update flags `flags`.
@@ -730,7 +811,7 @@ fn select_only_my_objects_filters_clicks_lists_and_wheel_but_not_the_menu() {
     let click = |tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, idx: usize, shift: bool| {
         let mods = Mods { shift, ..Mods::default() };
         tool.mouse_down(world, s, None, Some(idx), None, (0.0, 0.0), mods);
-        tool.mouse_up(world, s);
+        tool.mouse_up(world, s, None);
     };
     // off by default: anything editable is selected
     assert!(!settings.select_owned_only);
@@ -770,11 +851,11 @@ fn select_only_my_objects_filters_rectangles() {
         set_root_flags(&mut world, idx, OBJECT_MOVE);
     }
     set_root_flags(&mut world, mine, OBJECT_YOU_OWNER | OBJECT_MOVE);
-    tool.rect_select(&mut world, &settings, (0.0, 0.0), (800.0, 800.0), false);
+    tool.rect_select(&mut world, &settings, None, (0.0, 0.0), (800.0, 800.0), false);
     assert!(tool.selection.len() > 1, "without the filter the rectangle takes several objects");
     tool.deselect_all(&world);
     settings.select_owned_only = true;
-    tool.rect_select(&mut world, &settings, (0.0, 0.0), (800.0, 800.0), false);
+    tool.rect_select(&mut world, &settings, None, (0.0, 0.0), (800.0, 800.0), false);
     let root = world.objects.get(root_of(&world, mine)).unwrap().key;
     assert_eq!(tool.selection, [root]);
 }
@@ -837,4 +918,94 @@ fn selection_filters_persist_and_sit_under_the_reflection_probes() {
     options.remove("movableOnly");
     let read = layout::Profile::read(&profile.to_string()).unwrap();
     assert!(!read.options.owned_only && !read.options.movable_only);
+}
+
+/// A camera 10 m in front of `target`, on an 800 × 800 viewport.
+fn camera_on(target: Vec3) -> geom::Cam {
+    let eye = target - Vec3::X * 10.0;
+    let view = glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Z);
+    let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.0, 0.1);
+    geom::Cam::new(eye, target, projection * view, 1.0, 800.0, 800.0, 1.0)
+}
+
+#[test]
+fn rectangle_cover_of_a_box_and_its_vertices() {
+    use geom::RectCover;
+    let cam = camera_on(Vec3::ZERO);
+    let model = glam::Mat4::IDENTITY;
+    let (min, max) = (Vec3::splat(-0.5), Vec3::splat(0.5));
+    let rect = |x0: f32, y0: f32, x1: f32, y1: f32| egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1));
+    assert_eq!(cam.box_in_rect(model, min, max, rect(0.0, 0.0, 800.0, 800.0)), RectCover::Inside);
+    assert_eq!(cam.box_in_rect(model, min, max, rect(0.0, 0.0, 100.0, 100.0)), RectCover::Outside);
+    assert_eq!(cam.box_in_rect(model, min, max, rect(0.0, 0.0, 400.0, 400.0)), RectCover::Across);
+    // a rectangle inside the box's footprint touches it without a corner in it
+    assert_eq!(
+        cam.box_in_rect(model, min, max, rect(395.0, 395.0, 405.0, 405.0)),
+        RectCover::Across
+    );
+    let behind = glam::Mat4::from_translation(-Vec3::X * 20.0);
+    assert_eq!(cam.box_in_rect(behind, min, max, rect(0.0, 0.0, 800.0, 800.0)), RectCover::Outside);
+    // areVertsVisible: all of them with Select by surrounding, one without
+    assert!(geom::verts_in_rect([true, true], true));
+    assert!(!geom::verts_in_rect([true, false], true));
+    assert!(geom::verts_in_rect([false, true], false));
+    assert!(!geom::verts_in_rect([false, false], false));
+}
+
+#[test]
+fn select_by_surrounding_takes_only_what_the_rectangle_surrounds() {
+    let (mut world, mut tool, mut settings) = fixture();
+    assert!(settings.select_surrounding, "on by default, as RectangleSelectInclusive");
+    let target = object(&world, 99614);
+    let now = Instant::now();
+    let (position, rot, _) = Scene::object_transform(&world, target, now, 0).unwrap();
+    tool.cam = camera_on(position);
+    world.agent.position = tool.cam.eye;
+    // the prim's footprint on screen
+    let model = glam::Mat4::from_scale_rotation_translation(world.visual_scale_at(target, now), rot, position);
+    let mut footprint = egui::Rect::NOTHING;
+    for i in 0..8 {
+        let corner = Vec3::new([-0.5, 0.5][i & 1], [-0.5, 0.5][(i >> 1) & 1], [-0.5, 0.5][(i >> 2) & 1]);
+        let (x, y) = tool.cam.project_px(model.transform_point3(corner)).unwrap();
+        footprint.extend_with(egui::pos2(x, y));
+    }
+    let around = footprint.expand(2.0);
+    let half = egui::Rect::from_min_max(around.min, footprint.center());
+    for (surround, rect, taken) in [
+        (true, around, true),
+        (true, half, false),
+        (false, around, true),
+        (false, half, true),
+    ] {
+        settings.select_surrounding = surround;
+        tool.deselect_all(&world);
+        tool.rect_select(
+            &mut world,
+            &settings,
+            None,
+            (rect.min.x, rect.min.y),
+            (rect.max.x, rect.max.y),
+            false,
+        );
+        let root = world.objects.get(root_of(&world, target)).unwrap().key;
+        assert_eq!(tool.selection.contains(&root), taken, "surround {surround}, rect {rect:?}");
+    }
+}
+
+#[test]
+fn select_by_surrounding_is_saved_and_on_when_a_profile_lacks_it() {
+    let settings = BuildSettings {
+        select_surrounding: false,
+        ..BuildSettings::default()
+    };
+    let restored: BuildSettings = serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
+    assert!(!restored.select_surrounding, "persisted, as RectangleSelectInclusive");
+    let restored: BuildSettings = serde_json::from_str("{}").unwrap();
+    assert!(restored.select_surrounding);
+    let tool = BuildTool::default();
+    let mut text = serde_json::to_value(layout::Profile::capture(&tool, &settings)).unwrap();
+    assert_eq!(text["options"]["surrounding"], false);
+    text["options"].as_object_mut().unwrap().remove("surrounding");
+    let profile = layout::Profile::read(&text.to_string()).unwrap();
+    assert!(profile.options.surrounding, "a notecard from before the option keeps the default");
 }

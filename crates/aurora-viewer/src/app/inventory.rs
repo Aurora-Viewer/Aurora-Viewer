@@ -891,7 +891,10 @@ impl App {
                 self.appearance_ui.attachments = attachments;
                 self.appearance_ui.message.clear();
                 let mut command = NetCommand::UpdateOutfit { request, change };
-                self.world.rlva_prepare_outfit(&mut command, actor);
+                // An attachment the outfit write left out must not reach the
+                // rez that follows: RLVa would refuse it as a whole.
+                let dropped = self.world.rlva_prepare_outfit(&mut command, actor);
+                self.appearance_ui.attachments.retain(|a| !dropped.contains(&a.item_id));
                 if !self.world.rlva_allows_command(&command, actor) {
                     self.appearance_ui.pending = None;
                     self.appearance_ui.attachments.clear();

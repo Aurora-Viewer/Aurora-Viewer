@@ -111,6 +111,8 @@ pub struct Landmarks {
     /// Bumped whenever an asset or a region handle arrives (cached lookups
     /// such as "a landmark already points here" rebuild).
     pub version: u64,
+    /// [`named`] for the inventory generation it was built from.
+    named: Option<(u64, std::sync::Arc<[Named]>)>,
 }
 
 /// LLViewerParcelMgr::inAgentParcel: is the global position `pos` on the
@@ -130,6 +132,18 @@ pub fn in_parcel(bitmap: &[u8], origin: (u32, u32), pos: DVec3) -> bool {
 }
 
 impl Landmarks {
+    /// [`named`], walked again only when the inventory changed.
+    pub fn named(&mut self, inv: &Inventory) -> std::sync::Arc<[Named]> {
+        match &self.named {
+            Some((generation, list)) if *generation == inv.generation => list.clone(),
+            _ => {
+                let list: std::sync::Arc<[Named]> = named(inv).into();
+                self.named = Some((inv.generation, list.clone()));
+                list
+            }
+        }
+    }
+
     /// Resolve inventory destination actions asynchronously, including assets
     /// that have never been opened. Never use the inventory label as a region.
     pub fn request_action(&mut self, asset: Uuid, action: Action, now: Instant) {
@@ -349,6 +363,62 @@ pub fn unfetched_folders(inv: &Inventory) -> Vec<Uuid> {
             stack.extend(folder.children.iter().copied());
             if folder.state == crate::world::inventory::FetchState::Unknown {
                 out.push(id);
+            }
+        }
+    }
+    out
+}
+
+/// A landmark the navigation bar can suggest by its name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Named {
+    pub name: String,
+    /// `name` in lower case, the form it is matched in.
+    pub lower: String,
+    pub asset: Uuid,
+}
+
+/// The landmarks of the Favorites tree, then of the Landmarks tree
+/// (subfolders included, as fetch_landmarks / collectDescendentsIf), one
+/// per lower-case name, the first one found winning (LLFetchLandmarksByName's
+/// check_duplicate, lllandmarkactions.cpp). Unlike the Legacy Viewer, a
+/// landmark whose asset is not loaded yet is listed too: it skips them only
+/// because it reads the asset to list them, and TeleportLandmarkRequest
+/// needs nothing but the asset id.
+pub fn named(inv: &Inventory) -> Vec<Named> {
+    let mut out = Vec::new();
+    let mut names = HashSet::new();
+    let mut seen = HashSet::new();
+    for kind in [FOLDER_FAVORITES, FOLDER_LANDMARKS] {
+        let Some(root) = crate::world::appearance::system_folder(inv, kind) else {
+            continue;
+        };
+        let mut stack = vec![root];
+        while let Some(id) = stack.pop() {
+            let Some(folder) = inv.folders.get(&id).filter(|_| seen.insert(id)) else {
+                continue;
+            };
+            // reversed: the walk goes down the subfolders in their order
+            stack.extend(folder.children.iter().rev().copied());
+            // a link stands for its original: its name, type and asset
+            // (LLViewerInventoryItem::getName / getType / getAssetUUID)
+            let originals = folder
+                .items
+                .iter()
+                .filter_map(|i| crate::world::inventory::actions::original(inv, *i))
+                .filter_map(|i| inv.items.get(&i));
+            for it in originals {
+                if it.asset_type != ASSET_LANDMARK || it.asset_id.is_nil() {
+                    continue;
+                }
+                let lower = it.name.to_lowercase();
+                if names.insert(lower.clone()) {
+                    out.push(Named {
+                        name: it.name.clone(),
+                        lower,
+                        asset: it.asset_id,
+                    });
+                }
             }
         }
     }
@@ -586,6 +656,79 @@ mod tests {
         }
         assert_eq!(l.find(&inv, same_metre), Some(Uuid::from_u128(100)));
         assert_eq!(l.find(&inv, |g| g.round() == (here + DVec3::X).round()), None, "one metre away");
+    }
+
+    #[test]
+    fn named_lists_favorites_then_landmarks_once_per_lower_case_name() {
+        use aurora_net::inventory::{FolderContents, InvFolder, InvItem};
+        let folder = |id: u128, parent: u128, t: i32| InvFolder {
+            id: Uuid::from_u128(id),
+            parent: Uuid::from_u128(parent),
+            name: format!("f{id}"),
+            type_default: t,
+            version: 1,
+            ..Default::default()
+        };
+        let landmark = |id: u128, parent: u128, name: &str| InvItem {
+            id: Uuid::from_u128(id),
+            parent: Uuid::from_u128(parent),
+            name: name.into(),
+            asset_id: Uuid::from_u128(id + 1000),
+            asset_type: 3,
+            inv_type: 3,
+            ..Default::default()
+        };
+        let contents = |f: InvFolder, folders: Vec<InvFolder>, items: Vec<InvItem>| FolderContents {
+            folder_id: f.id,
+            owner_id: Uuid::nil(),
+            version: 2,
+            folders,
+            items,
+        };
+        let mut inv = Inventory::default();
+        let (root, favs, lms, trips, notes) = (
+            folder(1, 0, 8),
+            folder(10, 1, 23),
+            folder(20, 1, 3),
+            folder(21, 20, -1),
+            folder(30, 1, 7),
+        );
+        inv.apply(vec![contents(root, vec![lms.clone(), favs.clone(), notes.clone()], Vec::new())]);
+        inv.apply(vec![contents(favs, Vec::new(), vec![landmark(100, 10, "Chonk Landing")])]);
+        inv.apply(vec![contents(
+            lms,
+            vec![trips.clone()],
+            vec![landmark(200, 20, "chonk landing"), landmark(201, 20, "Beach")],
+        )]);
+        let mut no_asset = landmark(210, 21, "Broken");
+        no_asset.asset_id = Uuid::nil();
+        // a link to a landmark kept elsewhere stands for it
+        let link = InvItem {
+            id: Uuid::from_u128(212),
+            parent: Uuid::from_u128(21),
+            name: "link name".into(),
+            asset_id: Uuid::from_u128(300),
+            asset_type: 24,
+            inv_type: 3,
+            ..Default::default()
+        };
+        inv.apply(vec![contents(
+            trips,
+            Vec::new(),
+            vec![landmark(211, 21, "KB Store"), no_asset, link],
+        )]);
+        inv.apply(vec![contents(notes, Vec::new(), vec![landmark(300, 30, "Elsewhere")])]);
+        let names: Vec<(String, Uuid)> = named(&inv).into_iter().map(|n| (n.name, n.asset)).collect();
+        assert_eq!(
+            names,
+            vec![
+                ("Chonk Landing".into(), Uuid::from_u128(1100)),
+                ("Beach".into(), Uuid::from_u128(1201)),
+                ("KB Store".into(), Uuid::from_u128(1211)),
+                ("Elsewhere".into(), Uuid::from_u128(1300)),
+            ],
+            "the Favorites copy wins; subfolders and links count; other folders and assetless items do not"
+        );
     }
 
     #[test]
