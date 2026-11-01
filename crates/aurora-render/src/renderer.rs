@@ -7426,6 +7426,8 @@ impl Backend {
                 }
                 draw(&mut pass, capture, (b0, bn));
             }
+            // sorted once per pixel, the tiles to composite listed
+            oit.classify(&mut encoder);
             // composited over the scene; then the rigged faces' depth from
             // 1/255, as they leave it when drawn in order (`RiggedBlendDepth::
             // Write`, LLDrawPoolAlpha::forwardRender(true)), for what follows

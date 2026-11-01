@@ -5,9 +5,10 @@
 //! particles of a build) show the wrong one in front wherever their order
 //! flips inside a pixel. With this on, the scene's blended faces are drawn
 //! once into a pool of nodes (`fs_blend_oit`, object.wgsl): each fragment in
-//! front of the opaque scene becomes a node of its pixel's list. A
-//! full-screen pass (oit.wgsl) then sorts each pixel's layers, each MSAA
-//! sample on its own, and composites them over the scene.
+//! front of the opaque scene becomes a node of its pixel's list. A compute
+//! pass (oit.wgsl) then sorts each pixel's layers once and lists the screen
+//! tiles that hold some; two indirect draws composite those tiles over the
+//! scene, the MSAA edge pixels sample by sample.
 //!
 //! A new Aurora feature: the Legacy Viewer sorts its alpha by object
 //! (LLDrawPoolAlpha). What does not fit changes nothing: when the pool is
@@ -21,20 +22,22 @@ use bytemuck::{Pod, Zeroable};
 pub const DEFAULT_NODES_PER_PIXEL: u32 = 8;
 pub const MIN_NODES_PER_PIXEL: u32 = 2;
 pub const MAX_NODES_PER_PIXEL: u32 = 32;
-/// Layers sorted exactly in one pixel (the shader's arrays hold
-/// `MAX_SORTED_LAYERS`, oit.wgsl `MAX_LAYERS`).
+/// Layers sorted exactly in one pixel (oit.wgsl sorts up to 24: `resolve_24`).
 pub const DEFAULT_SORTED_LAYERS: u32 = 24;
 pub const MAX_SORTED_LAYERS: u32 = 24;
 /// The node pool never takes more video memory than this.
 pub const MAX_POOL_BYTES: u64 = 512 << 20;
 /// A node: premultiplied colour, alpha and coverage, depth, next.
 const NODE_BYTES: u64 = 16;
+/// Side of the resolve's screen tiles (oit.wgsl `TILE`, its workgroups).
+const TILE: u32 = 8;
 
 /// Storage buffers the capture's fragment stage reads: the five of every
 /// blended face (main_thread.rs `FRAGMENT_STORAGE_BUFFERS`), the heads and
 /// the nodes.
 const CAPTURE_STORAGE_BUFFERS: u32 = 7;
 
+/// oit.wgsl `OitParams` (object.wgsl reads its first four words).
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, PartialEq, Debug)]
 struct Params {
@@ -42,6 +45,10 @@ struct Params {
     width: u32,
     height: u32,
     max_layers: u32,
+    samples: u32,
+    tiles_x: u32,
+    tiles: u32,
+    _pad: u32,
 }
 
 /// Whether this device can capture: storage written from fragment shaders,
@@ -78,6 +85,18 @@ pub(crate) fn early_depth(device: &wgpu::Device) -> bool {
     device.features().contains(wgpu::Features::SHADER_EARLY_DEPTH_TEST)
 }
 
+/// oit.wgsl with its sort generated for 8 and 24 layers: two array sizes
+/// that stay in registers, a pixel taking the larger only when it needs it.
+pub(crate) fn resolve_source() -> String {
+    let src = include_str!("shaders/oit.wgsl").replace("\r\n", "\n");
+    let (Some(start), Some(end)) = (src.find("// <resolve_N>"), src.find("// </resolve_N>")) else {
+        return src;
+    };
+    let template = &src[start..end];
+    let sorts: String = ["8", "24"].iter().map(|n| template.replace("__N__", n)).collect();
+    format!("{}{}{}", &src[..start], sorts, &src[end..])
+}
+
 /// Nodes the pool holds for a `width` × `height` screen: `nodes_per_pixel`
 /// per pixel, within `MAX_POOL_BYTES` and the device's buffer limits.
 pub fn node_capacity(width: u32, height: u32, nodes_per_pixel: u32, max_binding: u64) -> u32 {
@@ -92,23 +111,38 @@ struct Pool {
     height: u32,
     node_cap: u32,
     nodes_per_pixel: u32,
+    tiles_x: u32,
+    tiles: u32,
     /// heads[0] counts the nodes, then one head per pixel (0: empty)
     heads: wgpu::Buffer,
     nodes: wgpu::Buffer,
+    /// each pixel's composite (an edge pixel's alpha: -1)
+    color: wgpu::Texture,
+    /// two DrawIndirectArgs (plain tiles, edge tiles), then the tile lists
+    args: wgpu::Buffer,
+    tile_list: wgpu::Buffer,
     capture: wgpu::BindGroup,
-    /// the resolve's group, and the MSAA depth it reads
-    resolve: wgpu::BindGroup,
-    resolve_depth: Option<wgpu::TextureView>,
+    /// the classify's and the draws' groups, and the MSAA depth they read
+    groups: Option<(wgpu::BindGroup, wgpu::BindGroup)>,
+    groups_depth: Option<wgpu::TextureView>,
+}
+
+/// The resolve's pipelines for one sample count.
+struct Resolve {
+    samples: u32,
+    classify: wgpu::ComputePipeline,
+    composite: wgpu::RenderPipeline,
+    /// per sample, over the edge tiles (MSAA only)
+    edge: Option<wgpu::RenderPipeline>,
 }
 
 pub(crate) struct Oit {
     capture_layout: wgpu::BindGroupLayout,
-    /// single-sample, then MSAA (with the scene depth)
-    resolve_layouts: [wgpu::BindGroupLayout; 2],
-    resolve_pipeline_layouts: [wgpu::PipelineLayout; 2],
+    /// the classify's and the draws', single-sample then MSAA
+    classify_layouts: [wgpu::BindGroupLayout; 2],
+    draw_layouts: [wgpu::BindGroupLayout; 2],
     module: wgpu::ShaderModule,
-    /// the resolve for one sample count
-    resolve: Option<(u32, wgpu::RenderPipeline)>,
+    resolve: Option<Resolve>,
     params: wgpu::Buffer,
     last_params: Option<Params>,
     pool: Option<Pool>,
@@ -116,30 +150,83 @@ pub(crate) struct Oit {
     depth_format: wgpu::TextureFormat,
 }
 
-fn storage(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
+fn entry(binding: u32, visibility: wgpu::ShaderStages, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only },
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
+        visibility,
+        ty,
         count: None,
     }
 }
 
-fn uniform(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
+fn buffer(ty: wgpu::BufferBindingType) -> wgpu::BindingType {
+    wgpu::BindingType::Buffer {
+        ty,
+        has_dynamic_offset: false,
+        min_binding_size: None,
     }
+}
+
+fn bind(binding: u32, resource: wgpu::BindingResource<'_>) -> wgpu::BindGroupEntry<'_> {
+    wgpu::BindGroupEntry { binding, resource }
+}
+
+/// The resolve's group layout (oit.wgsl bindings): `classify` the compute
+/// step's, otherwise the draws'; `ms` with the scene's MSAA depth.
+fn resolve_layout(device: &wgpu::Device, classify: bool, ms: bool) -> wgpu::BindGroupLayout {
+    use wgpu::ShaderStages as S;
+    let read = buffer(wgpu::BufferBindingType::Storage { read_only: true });
+    let stage = if classify { S::COMPUTE } else { S::FRAGMENT };
+    let mut entries = vec![
+        entry(0, stage, read),
+        entry(1, stage, read),
+        entry(2, S::VERTEX_FRAGMENT | S::COMPUTE, buffer(wgpu::BufferBindingType::Uniform)),
+    ];
+    if ms {
+        entries.push(entry(
+            3,
+            stage,
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Depth,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: true,
+            },
+        ));
+    }
+    if classify {
+        let rw = buffer(wgpu::BufferBindingType::Storage { read_only: false });
+        entries.push(entry(
+            4,
+            S::COMPUTE,
+            wgpu::BindingType::StorageTexture {
+                access: wgpu::StorageTextureAccess::WriteOnly,
+                format: wgpu::TextureFormat::Rgba16Float,
+                view_dimension: wgpu::TextureViewDimension::D2,
+            },
+        ));
+        entries.push(entry(5, S::COMPUTE, rw));
+        entries.push(entry(6, S::COMPUTE, rw));
+    } else {
+        entries.push(entry(
+            7,
+            S::FRAGMENT,
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+        ));
+        entries.push(entry(8, S::VERTEX, read));
+    }
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(match (classify, ms) {
+            (true, false) => "oit classify",
+            (true, true) => "oit classify msaa",
+            (false, false) => "oit composite",
+            (false, true) => "oit composite msaa",
+        }),
+        entries: &entries,
+    })
 }
 
 impl Oit {
@@ -148,44 +235,19 @@ impl Oit {
         if !supported(device) {
             return None;
         }
+        use wgpu::BufferBindingType as B;
         // group 3 of the capture (object.wgsl bindings 20..22)
         let capture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("oit capture"),
-            entries: &[storage(20, false), storage(21, false), uniform(22)],
-        });
-        let resolve_ss = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("oit resolve"),
-            entries: &[storage(0, true), storage(1, true), uniform(2)],
-        });
-        let resolve_ms = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("oit resolve msaa"),
             entries: &[
-                storage(0, true),
-                storage(1, true),
-                uniform(2),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: true,
-                    },
-                    count: None,
-                },
+                entry(20, wgpu::ShaderStages::FRAGMENT, buffer(B::Storage { read_only: false })),
+                entry(21, wgpu::ShaderStages::FRAGMENT, buffer(B::Storage { read_only: false })),
+                entry(22, wgpu::ShaderStages::FRAGMENT, buffer(B::Uniform)),
             ],
         });
-        let pl = |label, layout: &wgpu::BindGroupLayout| {
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some(label),
-                bind_group_layouts: &[Some(layout)],
-                immediate_size: 0,
-            })
-        };
-        let resolve_pipeline_layouts = [pl("oit resolve", &resolve_ss), pl("oit resolve msaa", &resolve_ms)];
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("oit resolve"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/oit.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(resolve_source().into()),
         });
         let params = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("oit parameters"),
@@ -195,8 +257,8 @@ impl Oit {
         });
         Some(Oit {
             capture_layout,
-            resolve_layouts: [resolve_ss, resolve_ms],
-            resolve_pipeline_layouts,
+            classify_layouts: [resolve_layout(device, true, false), resolve_layout(device, true, true)],
+            draw_layouts: [resolve_layout(device, false, false), resolve_layout(device, false, true)],
             module,
             resolve: None,
             params,
@@ -212,56 +274,80 @@ impl Oit {
         &self.capture_layout
     }
 
-    fn resolve_pipeline(&self, device: &wgpu::Device, samples: u32) -> wgpu::RenderPipeline {
+    fn make_resolve(&self, device: &wgpu::Device, samples: u32) -> Resolve {
         let ms = samples > 1;
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(if ms { "oit resolve msaa" } else { "oit resolve" }),
-            layout: Some(&self.resolve_pipeline_layouts[usize::from(ms)]),
-            vertex: wgpu::VertexState {
-                module: &self.module,
-                entry_point: Some("vs_full"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &self.module,
-                entry_point: Some(if ms { "fs_resolve_ms" } else { "fs_resolve" }),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: self.hdr_format,
-                    // premultiplied over the scene; the glow in the scene
-                    // alpha dimmed by the coverage (LLDrawPoolAlpha)
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        alpha: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::Zero,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: Default::default(),
-            // the scene depth stays attached, read only
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: self.depth_format,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: samples,
-                ..Default::default()
-            },
-            multiview_mask: None,
+        let pl = |label, layout: &wgpu::BindGroupLayout| {
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts: &[Some(layout)],
+                immediate_size: 0,
+            })
+        };
+        let classify = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("oit classify"),
+            layout: Some(&pl("oit classify", &self.classify_layouts[usize::from(ms)])),
+            module: &self.module,
+            entry_point: Some(if ms { "cs_classify_ms" } else { "cs_classify" }),
+            compilation_options: Default::default(),
             cache: None,
-        })
+        });
+        let draw_layout = pl("oit composite", &self.draw_layouts[usize::from(ms)]);
+        let draw = |label, fs| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&draw_layout),
+                vertex: wgpu::VertexState {
+                    module: &self.module,
+                    entry_point: Some("vs_tile"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &self.module,
+                    entry_point: Some(fs),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: self.hdr_format,
+                        // premultiplied over the scene; the glow in the scene
+                        // alpha dimmed by the coverage (LLDrawPoolAlpha)
+                        blend: Some(wgpu::BlendState {
+                            color: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::One,
+                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                            alpha: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::Zero,
+                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                        }),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: Default::default(),
+                // the scene depth stays attached, read only
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: self.depth_format,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Always),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: samples,
+                    ..Default::default()
+                },
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        Resolve {
+            samples,
+            classify,
+            composite: draw("oit composite", "fs_composite"),
+            edge: ms.then(|| draw("oit composite msaa edges", "fs_edge")),
+        }
     }
 
     /// Makes the pool and the resolve ready for this frame. `depth_msaa`:
@@ -279,8 +365,8 @@ impl Oit {
         max_layers: u32,
         depth_msaa: Option<&wgpu::TextureView>,
     ) -> bool {
-        if self.resolve.as_ref().is_none_or(|(n, _)| *n != samples) {
-            self.resolve = Some((samples, self.resolve_pipeline(device, samples)));
+        if self.resolve.as_ref().is_none_or(|r| r.samples != samples) {
+            self.resolve = Some(self.make_resolve(device, samples));
         }
         let limits = device.limits();
         let max_binding = limits.max_storage_buffer_binding_size.min(limits.max_buffer_size);
@@ -291,66 +377,19 @@ impl Oit {
             .is_none_or(|p| p.width != width || p.height != height || p.nodes_per_pixel != nodes_per_pixel);
         if stale {
             self.pool = None;
-            let node_cap = node_capacity(width, height, nodes_per_pixel, max_binding);
-            let heads_bytes = (1 + u64::from(width) * u64::from(height)) * 4;
-            if node_cap == 0 || heads_bytes > max_binding {
-                return false;
+            match self.make_pool(device, width, height, nodes_per_pixel, max_binding) {
+                Some(pool) => self.pool = Some(pool),
+                None => return false,
             }
-            let heads = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("oit heads"),
-                size: heads_bytes,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let nodes = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("oit nodes"),
-                size: u64::from(node_cap) * NODE_BYTES,
-                usage: wgpu::BufferUsages::STORAGE,
-                mapped_at_creation: false,
-            });
-            log::info!(
-                "oit: {node_cap} nodes ({} MB) for {width}x{height}, {nodes_per_pixel} per pixel",
-                (u64::from(node_cap) * NODE_BYTES) >> 20
-            );
-            let capture = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("oit capture"),
-                layout: &self.capture_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 20,
-                        resource: heads.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 21,
-                        resource: nodes.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 22,
-                        resource: self.params.as_entire_binding(),
-                    },
-                ],
-            });
-            let resolve = self.resolve_group(device, &heads, &nodes, depth_msaa);
-            self.pool = Some(Pool {
-                width,
-                height,
-                node_cap,
-                nodes_per_pixel,
-                heads,
-                nodes,
-                capture,
-                resolve,
-                resolve_depth: depth_msaa.cloned(),
-            });
         }
         let Some(pool) = &self.pool else {
             return false;
         };
-        if pool.resolve_depth.as_ref() != depth_msaa {
-            let resolve = self.resolve_group(device, &pool.heads, &pool.nodes, depth_msaa);
+        if pool.groups.is_none() || pool.groups_depth.as_ref() != depth_msaa {
+            let groups = self.make_groups(device, pool, depth_msaa);
             if let Some(pool) = &mut self.pool {
-                pool.resolve = resolve;
-                pool.resolve_depth = depth_msaa.cloned();
+                pool.groups = Some(groups);
+                pool.groups_depth = depth_msaa.cloned();
             }
         }
         let Some(pool) = &self.pool else {
@@ -361,51 +400,127 @@ impl Oit {
             width,
             height,
             max_layers: max_layers.clamp(1, MAX_SORTED_LAYERS),
+            samples,
+            tiles_x: pool.tiles_x,
+            tiles: pool.tiles,
+            _pad: 0,
         };
         if self.last_params != Some(params) {
             queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
             self.last_params = Some(params);
         }
+        // no tile listed yet: 6 vertices and no instance each; the edge
+        // tiles' list starts at `tiles` (their first_instance)
+        let args: [u32; 8] = [6, 0, 0, 0, 6, 0, 0, pool.tiles];
+        queue.write_buffer(&pool.args, 0, bytemuck::cast_slice(&args));
         true
+    }
+
+    fn make_pool(&self, device: &wgpu::Device, width: u32, height: u32, nodes_per_pixel: u32, max_binding: u64) -> Option<Pool> {
+        let node_cap = node_capacity(width, height, nodes_per_pixel, max_binding);
+        let heads_bytes = (1 + u64::from(width) * u64::from(height)) * 4;
+        if node_cap == 0 || heads_bytes > max_binding {
+            return None;
+        }
+        let (tiles_x, tiles_y) = (width.div_ceil(TILE), height.div_ceil(TILE));
+        let tiles = tiles_x * tiles_y;
+        let buffer = |label, size, usage| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size,
+                usage,
+                mapped_at_creation: false,
+            })
+        };
+        use wgpu::BufferUsages as U;
+        let heads = buffer("oit heads", heads_bytes, U::STORAGE | U::COPY_DST);
+        let nodes = buffer("oit nodes", u64::from(node_cap) * NODE_BYTES, U::STORAGE);
+        let args = buffer("oit tile draws", 32, U::STORAGE | U::INDIRECT | U::COPY_DST);
+        let tile_list = buffer("oit tiles", u64::from(tiles) * 2 * 4, U::STORAGE);
+        let color = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("oit composite"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        log::info!(
+            "oit: {node_cap} nodes ({} MB) for {width}x{height}, {nodes_per_pixel} per pixel",
+            (u64::from(node_cap) * NODE_BYTES) >> 20
+        );
+        let capture = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("oit capture"),
+            layout: &self.capture_layout,
+            entries: &[
+                bind(20, heads.as_entire_binding()),
+                bind(21, nodes.as_entire_binding()),
+                bind(22, self.params.as_entire_binding()),
+            ],
+        });
+        Some(Pool {
+            width,
+            height,
+            node_cap,
+            nodes_per_pixel,
+            tiles_x,
+            tiles,
+            heads,
+            nodes,
+            color,
+            args,
+            tile_list,
+            capture,
+            groups: None,
+            groups_depth: None,
+        })
+    }
+
+    fn make_groups(
+        &self,
+        device: &wgpu::Device,
+        pool: &Pool,
+        depth_msaa: Option<&wgpu::TextureView>,
+    ) -> (wgpu::BindGroup, wgpu::BindGroup) {
+        let ms = usize::from(depth_msaa.is_some());
+        let view = pool.color.create_view(&Default::default());
+        let mut classify = vec![
+            bind(0, pool.heads.as_entire_binding()),
+            bind(1, pool.nodes.as_entire_binding()),
+            bind(2, self.params.as_entire_binding()),
+        ];
+        let mut draws = classify.clone();
+        if let Some(depth) = depth_msaa {
+            classify.push(bind(3, wgpu::BindingResource::TextureView(depth)));
+            draws.push(bind(3, wgpu::BindingResource::TextureView(depth)));
+        }
+        classify.push(bind(4, wgpu::BindingResource::TextureView(&view)));
+        classify.push(bind(5, pool.args.as_entire_binding()));
+        classify.push(bind(6, pool.tile_list.as_entire_binding()));
+        draws.push(bind(7, wgpu::BindingResource::TextureView(&view)));
+        draws.push(bind(8, pool.tile_list.as_entire_binding()));
+        let group = |label, layout, entries: &[wgpu::BindGroupEntry<'_>]| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(label),
+                layout,
+                entries,
+            })
+        };
+        (
+            group("oit classify", &self.classify_layouts[ms], &classify),
+            group("oit composite", &self.draw_layouts[ms], &draws),
+        )
     }
 
     /// The capture's group 3, once [`Oit::prepare`] made the pool.
     pub fn capture_group(&self) -> Option<&wgpu::BindGroup> {
         self.pool.as_ref().map(|p| &p.capture)
-    }
-
-    fn resolve_group(
-        &self,
-        device: &wgpu::Device,
-        heads: &wgpu::Buffer,
-        nodes: &wgpu::Buffer,
-        depth_msaa: Option<&wgpu::TextureView>,
-    ) -> wgpu::BindGroup {
-        let mut entries = vec![
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: heads.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: nodes.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: self.params.as_entire_binding(),
-            },
-        ];
-        if let Some(depth) = depth_msaa {
-            entries.push(wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::TextureView(depth),
-            });
-        }
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("oit resolve"),
-            layout: &self.resolve_layouts[usize::from(depth_msaa.is_some())],
-            entries: &entries,
-        })
     }
 
     /// Empties the lists (before the capture).
@@ -415,13 +530,35 @@ impl Oit {
         }
     }
 
-    /// Composites the lists over the scene (after the capture, in a pass
-    /// with the scene colour and its depth read only).
+    /// Sorts the lists and lists the tiles to composite (after the capture).
+    pub fn classify(&self, encoder: &mut wgpu::CommandEncoder) {
+        if let (Some(r), Some(pool)) = (&self.resolve, &self.pool)
+            && let Some((group, _)) = &pool.groups
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("oit classify"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&r.classify);
+            pass.set_bind_group(0, group, &[]);
+            pass.dispatch_workgroups(pool.tiles_x, pool.tiles / pool.tiles_x, 1);
+        }
+    }
+
+    /// Composites the listed tiles over the scene (after [`Oit::classify`],
+    /// in a pass with the scene colour and its depth read only): once per
+    /// pixel, then the MSAA edge pixels sample by sample.
     pub fn resolve(&self, pass: &mut wgpu::RenderPass) {
-        if let (Some((_, pipe)), Some(pool)) = (&self.resolve, &self.pool) {
-            pass.set_pipeline(pipe);
-            pass.set_bind_group(0, &pool.resolve, &[]);
-            pass.draw(0..3, 0..1);
+        if let (Some(r), Some(pool)) = (&self.resolve, &self.pool)
+            && let Some((_, group)) = &pool.groups
+        {
+            pass.set_bind_group(0, group, &[]);
+            pass.set_pipeline(&r.composite);
+            pass.draw_indirect(&pool.args, 0);
+            if let Some(edge) = &r.edge {
+                pass.set_pipeline(edge);
+                pass.draw_indirect(&pool.args, 16);
+            }
         }
     }
 }
@@ -445,11 +582,16 @@ mod tests {
 
     #[test]
     fn the_shaders_are_valid() {
-        let src = include_str!("shaders/oit.wgsl");
-        let module = naga::front::wgsl::parse_str(src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
+        let src = resolve_source();
+        assert!(
+            src.contains("fn resolve_8(") && src.contains("fn resolve_24("),
+            "both sorts generated"
+        );
+        assert!(!src.contains("__N__"));
+        let module = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&src)));
         let mut v = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all());
         if let Err(e) = v.validate(&module) {
-            panic!("{}", e.emit_to_string(src));
+            panic!("{}", e.emit_to_string(&src));
         }
     }
 }
