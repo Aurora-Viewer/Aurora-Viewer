@@ -27,6 +27,7 @@
 mod capture;
 mod decode;
 mod devices;
+mod hrtf;
 mod http;
 mod icy;
 mod mixer;
@@ -233,9 +234,35 @@ impl AudioEngine {
             .try_send(Command::PlayWorld(WorldVoice::new(id, ch, clip.samples.clone(), looped, gain)));
     }
 
-    /// New (left, right) gains of a world sound (ramped over one buffer).
+    /// Like [`AudioEngine::play_world`], rendered binaurally (3D sound for
+    /// headphones): `gain` is the distance gain, `direction` the source's
+    /// direction in the listener's frame (x to the right, y ahead, z up),
+    /// updated by [`AudioEngine::world_binaural`].
+    pub fn play_world_binaural(&self, id: u64, ch: Channel, clip: &SoundClip, looped: bool, gain: f32, direction: [f32; 3]) {
+        let voice = WorldVoice::new_binaural(id, ch, clip.samples.clone(), looped, gain, direction);
+        let _ = self.inner.cmd_tx.try_send(Command::PlayWorld(voice));
+    }
+
+    /// New (left, right) gains of a world sound (ramped over one buffer); a
+    /// sound rendered binaurally crossfades back to the panning.
     pub fn world_gain(&self, id: u64, gain: (f32, f32)) {
         let _ = self.inner.cmd_tx.try_send(Command::WorldGain(id, gain));
+    }
+
+    /// New distance gain and direction of a world sound, rendered
+    /// binaurally through the head-related filters of that direction (3D
+    /// sound for headphones): the filters crossfade and the delays glide to
+    /// it; a panned sound crossfades to the binaural rendering.
+    pub fn world_binaural(&self, id: u64, gain: f32, direction: [f32; 3]) {
+        let _ = self.inner.cmd_tx.try_send(Command::WorldBinaural(id, gain, direction));
+    }
+
+    /// How much a world sound is muffled by what stands between it and the
+    /// listener: 0 clear, 0.5 behind one wall, 1 behind two or more. The
+    /// low-pass and the gain cut glide to the new value; a sound that has
+    /// not played yet takes it at once.
+    pub fn world_occlusion(&self, id: u64, amount: f32) {
+        let _ = self.inner.cmd_tx.try_send(Command::WorldOcclusion(id, amount));
     }
 
     /// Fades a world sound out and removes it.

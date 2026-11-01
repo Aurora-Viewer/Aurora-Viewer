@@ -1487,6 +1487,8 @@ both keep the camera, while only the scripted attachment receives a touch.
 capture frames 690 and 780 to compare. `camera-zero` puts a zero-alpha Blend texture before the Buy cube;
 `camera-te` uses an invisible scripted TE face. Alt-focus must reach the cube
 behind both; `camera-glass` instead reaches the translucent solid pane.
+`camera-faint` uses texture alpha 1/255: it must still take the focus, since
+only alpha-zero texels pass through world Blend objects (#1574).
 `camera-mask` uses a fully transparent Mask texel and also reaches the cube.
 Add `-ctrl` to any `camera-*` mode to press Ctrl + Alt together. Repeat with
 `AURORA_DEMO_DEBUG=alpha`: all four modes must focus the highlighted panel
@@ -1938,12 +1940,24 @@ No real L$ and no connection to a grid.
   click, for manual testing (near x=138, y=126).
 - `blend-zero`, `blend-faint`, `blend-half`, `blend-solid`: non-actionable
   panel before a Buy object, with texture alpha 0, 1/255, 128/255 or 255/255.
-  Left click must reach panel 976 and leave `dialog=false`. The GPU response
-  `demo drawn pick` must include it in `blend` for the first three modes,
-  even at zero alpha. `mask-zero` uses the zero-alpha texture in Mask mode:
+  `blend-zero` must pass the left click to Buy (971), with `dialog=true`;
+  the other three must reach panel 976 and leave `dialog=false`. The GPU
+  response must omit the zero-alpha panel but retain the faint/half panels.
+  `blend-zero-menu` must still target panel 976 with the right click.
+  `blend-backface` replaces it with a cube whose transparent entry face
+  reveals Buy while the opaque exit face is invisible from this camera.
+  Its shadow must not prevent Buy (971) from receiving the click:
+  `dialog=true`, including with shadows disabled. The CPU fallback must
+  reject that back face just as the GPU does.
+  Back-facing surfaces must also be ignored by hover, menus, build selection,
+  placement and media, regardless of their texture or alpha mode. On the grid,
+  repeat with a cutout cube in front of a scripted box and replace its unseen
+  exit faces with Blank: they must not intercept the interaction. Explicitly
+  double-sided PBR faces remain targets on both visible sides.
+  `mask-zero` uses the zero-alpha texture in Mask mode:
   the click must reach Buy (971), with `dialog=true` and no panel in the GPU
   response. Capture after frame 620.
-- Add `-ready` to the five Blend / Mask modes above to test hover without
+- Add `-ready` to the Blend / Mask modes above to test hover without
   an automatic click. At frame 650, `demo cursor hover` must report
   `prim=Some(976), action=None` before Blend at every opacity, and
   `prim=Some(971), action=Some(Buy)` through the Mask hole. Enable
@@ -3639,7 +3653,8 @@ both open states and the selection count. Capture at frame 620.
   `AURORA_DEMO_CROWD=40` and `AURORA_MAX_AVATARS=4`, the impostors must
   be veiled like the avatars drawn in full next to them
   (`AURORA_MAX_AVATARS=60` to compare). `ambient`: ambient light of the
-  sky (0.25 by default, more than 1 in the brightest skies); with
+  sky (0.25 by default, more than 1 in the brightest skies), a grey
+  level or a colour as `r:g:b` (`0.9:0.6:0.5`, a warm sky); with
   `AURORA_DEMO_SKY=1.62,0.8,1.1` and `AURORA_DEMO_PBR_OVERRIDE=1`, the surround
   of each bump of the slabs must be darkened by ambient occlusion, and no
   longer be once ambient occlusion is turned off in the settings.
@@ -8215,6 +8230,10 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_STREAM_TITLE=[window\|history\|text][,stop]` | Stream title window with changing titles and their history |
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1`, `hud` or `parcel-open\|parcel-local\|parcel-source` | World/HUD chime or parcel sound isolation; interface and media sounds audible |
+| `AURORA_DEMO_SOUND_OCCLUSION=1` | Three looping sounds: in the open, behind a wall, shut in a box; each one's occlusion in the log |
+| `AURORA_SOUND_OCCLUSION=0` or `1` | "Muffle sounds behind walls" forced off or on for this launch, without saving it |
+| `AURORA_DEMO_SOUND_HRTF=1`, `circle` or `updown` | A sound circling the listener and one rising above it and falling, for the 3D sound for headphones |
+| `AURORA_SOUND_HRTF=0` or `1` | "3D sound for headphones (HRTF)" forced off or on for this launch, without saving it |
 | `AURORA_DEMO_MINIMIZED_MUTE=1\|off` | Force mute when minimized on or off for an offline run |
 | `AURORA_DEMO_SOUND_EXPLORER=1\|all\|blacklist\|blacklist-ignored\|avatar-menu\|avatar-menu-mixed\|avatar-menu-pie` | Sound Explorer, separate blacklist categories, ignored objects or avatar sound-category switches |
 | `AURORA_DEMO_ANIMATION_EXPLORER=1\|blacklist` | Animation explorer with a stand-in preview, or a blacklisted animation |
@@ -8571,6 +8590,45 @@ What the inventory must show with these scenarios:
   The cube, other world audio settings and interface sounds remain usable.
   Live crossings, changing either parcel's restriction and a real rain
   emitter still need human grid validation.
+- **`AURORA_DEMO_SOUND_OCCLUSION=1`**: our avatar starts on an open slope
+  west of the plaza (108, 150), three looping sources ahead of it, each
+  with its own pitch, lit, and a label: on the left one in
+  the open, straight ahead one behind a light grey wall, on the right one shut in
+  a closed grey box. From the start the middle and right ones are dull and
+  quieter (low-pass and gain cut), the left one clear; walk past the end of
+  the wall and the middle one opens up over a tenth of a second, without a
+  click; the box stays muffled from every side. Preferences › Sound, "Muffle
+  sounds behind walls" off: all three clear at once. The log gives each
+  sound's amount when it changes (`sound occlusion: voice <n> <amount>
+  (<layers> layers) from <object>`; 0 clear, 0.5 one layer, 1 two or more),
+  at info level in this scenario (debug otherwise); with `AURORA_PROFILE=1`,
+  a `sound occlusion summary` line every ten seconds gives the measures'
+  cost on the main thread and in their job. Sounds play without
+  `AURORA_DEMO_SOUND`.
+- **`AURORA_SOUND_OCCLUSION=0|1`**: overrides Preferences › Sound, "Muffle
+  sounds behind walls", for this launch (demo or grid), without saving it:
+  the same build measured with and without the occlusion.
+- **`AURORA_DEMO_SOUND_HRTF=1|circle|updown`**: listen with headphones. Our
+  avatar starts on the open slope west of the plaza (the occlusion
+  scenario's spot: run the two one at a time) and two looping sources move
+  around the camera, 4 m away, each a lit cube with a label: "Circling
+  sound" (violet, brushed noise bursts on a soft tone) turns around the
+  listener level with the ears, clockwise from ahead (ahead, right, behind,
+  left) in 16 s; "Rising and falling sound" (orange, bright clicks on a
+  bell) swings ahead from 40 degrees below (above the ground at most) to 80
+  degrees above and back in 10 s. `circle` or `updown` plays one alone,
+  clearer for a first listen; `1` both. The circle starts from, and the
+  swing faces, the direction the camera looks at the start (east-north-east);
+  both follow the camera when it moves.
+  With Preferences › Sound, "3D sound for headphones (HRTF)" on, the
+  circling sound is heard passing behind the head (duller, out of the head)
+  and not only swinging between the ears, and the swinging one is heard
+  rising and falling; turning the camera moves both around the head without
+  clicks or a zipper sound. Off, both are only panned between left and
+  right, as before (the Legacy Viewer's rendering). Sounds play without
+  `AURORA_DEMO_SOUND`.
+- **`AURORA_SOUND_HRTF=0|1`**: overrides Preferences › Sound, "3D sound for
+  headphones (HRTF)", for this launch (demo or grid), without saving it.
 - **`AURORA_DEMO_WIND=<x>,<y>[,fly]`**: the demo region gets a uniform wind
   of x, y m/s (default `3,2`; LLWind::getVelocity doubles it, as on the
   grid), and with `fly` our avatar arrives flying. The wind noise plays on
@@ -8676,6 +8734,7 @@ What the inventory must show with these scenarios:
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
+| `AURORA_COLORED_AMBIENT=0`, `1` or `alt` | Sky ambient softened, grey under linear and HDR skies (Legacy Viewer), coloured at full strength like the first PBR release, or one second in two |
 | `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (default); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
@@ -8859,6 +8918,22 @@ What the inventory must show with these scenarios:
     all get their texture (capture after frame 1500 with
     `AURORA_DEMO_POS="160,126"`), `textures=` of `perf summary` never
     exceeds 6095 and the log has no `texture table full` line.
+
+- **`AURORA_COLORED_AMBIENT=0|1|alt`**: overrides Preferences › Graphics ›
+  Sky and environment › Colored sky ambient for this launch (`alt`: on
+  one second, off the next). `1` lights with the sky's ambient colour x
+  0.7, made linear, as the first PBR release did (atmosphericsFuncs.glsl
+  `calcAtmosphericVarsLinear` and settings.xml `RenderSkyAmbientScale`,
+  tag `Second_Life_Release#843866d-DRTVWR-559`). `0` is the Legacy
+  Viewer's softened ambient (pow 0.9, x 0.57): it keeps its colour under
+  a classic sky, and only its grey luminance under a linear or HDR one.
+  Look at a shaded floor or wall under a tinted ambient:
+  `AURORA_DEMO_SKY=1,0.8,0.9:0.6:0.5,0.3` (HDR): with `1` it takes the
+  warm tint instead of grey. Under the classic
+  `AURORA_DEMO_SKY=1,0.8,0.9:0.6:0.5` only the curve changes: the same
+  tint, a little brighter. At a probe ambiance of 1 and above the probes
+  replace the sky ambient (in that release too), so outdoors little
+  changes there.
 
 - **`AURORA_SPECULAR_AA=0|1|alt`**: overrides Preferences › Graphics ›
   Specular anti-aliasing for this launch (`alt`: on one second, off the

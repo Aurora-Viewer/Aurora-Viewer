@@ -63,9 +63,14 @@ fn transformed_box(m: Mat4, min: Vec3, max: Vec3) -> (Vec3, Vec3) {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum FacePick {
     Surface,
+    /// Collision/support geometry, independent of the rendered side.
+    Geometry,
     Inventory,
     Blend,
     HudMove,
+    /// Left button: only world Blend faces test exact nonzero texels.
+    Left,
+    LeftBlend,
 }
 
 impl PickFace {
@@ -153,9 +158,10 @@ impl Scene {
             let ray = (frame.position + offset, -Vec3::Z);
             candidates.clear();
             self.pick.ray_candidates(ray, &mut candidates);
-            if candidates.iter().any(|&idx| {
-                self.movement_solid(world, idx) && self.face_hit(world, idx, ray, now, true).is_some_and(|hit| hit.t <= distance)
-            }) {
+            if candidates
+                .iter()
+                .any(|&idx| self.movement_solid(world, idx) && self.geometry_hit(world, idx, ray, now).is_some_and(|hit| hit.t <= distance))
+            {
                 return false;
             }
         }
@@ -174,7 +180,7 @@ impl Scene {
         candidates.iter().any(|&idx| {
             self.movement_solid(world, idx)
                 && self
-                    .face_hit(world, idx, ray, now, true)
+                    .geometry_hit(world, idx, ray, now)
                     .is_some_and(|hit| hit.normal.z > 0.7 && (height * 0.35..=height * 0.6 + 0.12).contains(&hit.t))
         })
     }
@@ -198,9 +204,9 @@ impl Scene {
             let ray = (from, delta / distance);
             candidates.clear();
             self.pick.ray_candidates(ray, &mut candidates);
-            !candidates.iter().any(|&idx| {
-                self.movement_solid(world, idx) && self.face_hit(world, idx, ray, now, true).is_some_and(|hit| hit.t <= distance)
-            })
+            !candidates
+                .iter()
+                .any(|&idx| self.movement_solid(world, idx) && self.geometry_hit(world, idx, ray, now).is_some_and(|hit| hit.t <= distance))
         };
         let up = if frame.on_ground { 4.5 } else { frame.velocity.z };
         let mut previous = frame.position;
@@ -227,7 +233,7 @@ impl Scene {
             self.movement_solid(world, idx)
                 && self.gpu.get(idx).is_some_and(|g| ray_may_hit(g, ray))
                 && self
-                    .face_hit(world, idx, ray, now, true)
+                    .geometry_hit(world, idx, ray, now)
                     .is_some_and(|h| h.t < 1.4 && h.normal.z.abs() < 0.55)
         })
     }
@@ -243,7 +249,7 @@ impl Scene {
                 if !self.movement_solid(world, idx) {
                     return None;
                 }
-                let hit = self.face_hit(world, idx, (origin, direction), now, true)?;
+                let hit = self.geometry_hit(world, idx, (origin, direction), now)?;
                 (hit.t <= 1.4 && hit.normal.z.abs() < 0.55).then_some(hit.t)
             })
             .min_by(f32::total_cmp)?;
@@ -256,7 +262,7 @@ impl Scene {
                 .par_iter()
                 .filter_map(|&idx| {
                     self.movement_solid(world, idx)
-                        .then(|| self.face_hit(world, idx, ray, now, true))
+                        .then(|| self.geometry_hit(world, idx, ray, now))
                         .flatten()
                 })
                 .filter(|hit| hit.t <= 4.0 && hit.normal.z > 0.7)
@@ -272,10 +278,7 @@ impl Scene {
             candidates.clear();
             self.pick.ray_candidates(head_ray, &mut candidates);
             let blocked = candidates.par_iter().any(|&idx| {
-                self.movement_solid(world, idx)
-                    && self
-                        .face_hit(world, idx, head_ray, now, true)
-                        .is_some_and(|hit| hit.t < height + 0.4)
+                self.movement_solid(world, idx) && self.geometry_hit(world, idx, head_ray, now).is_some_and(|hit| hit.t < height + 0.4)
             });
             let occupied = self.gpu.iter().enumerate().any(|(idx, gpu)| {
                 gpu.is_avatar
@@ -303,7 +306,7 @@ impl Scene {
                 if !self.movement_solid(world, idx) {
                     return None;
                 }
-                let hit = self.face_hit(world, idx, ray, now, true)?;
+                let hit = self.geometry_hit(world, idx, ray, now)?;
                 // Allow activation before the avatar is pressed against it.
                 (hit.t <= 3.0).then_some((hit.t, idx))
             })
@@ -377,13 +380,39 @@ impl Scene {
         select_probes: bool,
         far: f32,
     ) -> (Option<Vec3>, Option<usize>) {
+        self.selection_pick_mode(world, ray, depth, build, select_probes, far, FacePick::Surface)
+    }
+
+    pub fn left_selection_pick(
+        &self,
+        world: &World,
+        ray: Option<(Vec3, Vec3)>,
+        depth: Option<Vec3>,
+        build: bool,
+        select_probes: bool,
+        far: f32,
+    ) -> (Option<Vec3>, Option<usize>) {
+        self.selection_pick_mode(world, ray, depth, build, select_probes, far, FacePick::Left)
+    }
+
+    #[allow(clippy::too_many_arguments)] // Selection inputs plus the button's alpha policy.
+    fn selection_pick_mode(
+        &self,
+        world: &World,
+        ray: Option<(Vec3, Vec3)>,
+        depth: Option<Vec3>,
+        build: bool,
+        select_probes: bool,
+        far: f32,
+        mode: FacePick,
+    ) -> (Option<Vec3>, Option<usize>) {
         let now = Instant::now();
         let mut candidates = Vec::new();
         if let Some(ray) = ray {
             self.pick.ray_candidates(ray, &mut candidates);
         }
         let point = if !build && ray.is_some_and(|r| self.ignored_before(world, r, depth, far, now, Some(&candidates))) {
-            ray.and_then(|r| self.point_behind_ignored(world, r, far, now, Some(&candidates)))
+            ray.and_then(|r| self.point_behind_ignored_mode(world, r, far, now, Some(&candidates), mode))
         } else {
             depth
         };
@@ -402,7 +431,7 @@ impl Scene {
                 {
                     return None;
                 }
-                let hit = self.face_hit(world, idx, ray, now, true)?;
+                let hit = self.face_hit_mode(world, idx, ray, now, true, mode)?;
                 (hit.t.is_finite() && hit.t <= limit).then_some((hit.t, idx))
             });
             let hit = nearest_hit(hits, |h| *h);
@@ -458,6 +487,29 @@ impl Scene {
     /// occluded prims. Reuses hover's bounds index and the rendered triangles;
     /// the wheel never waits for a GPU depth readback.
     pub fn edit_ray_hits(&self, world: &World, ray: (Vec3, Vec3), hud: bool, select_probes: bool, select_limit: Option<f32>) -> Vec<usize> {
+        self.edit_ray_hits_mode(world, ray, hud, select_probes, select_limit, FacePick::Surface)
+    }
+
+    pub fn left_edit_ray_hits(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        hud: bool,
+        select_probes: bool,
+        select_limit: Option<f32>,
+    ) -> Vec<usize> {
+        self.edit_ray_hits_mode(world, ray, hud, select_probes, select_limit, FacePick::Left)
+    }
+
+    fn edit_ray_hits_mode(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        hud: bool,
+        select_probes: bool,
+        select_limit: Option<f32>,
+        mode: FacePick,
+    ) -> Vec<usize> {
         let mut candidates = Vec::new();
         if hud {
             let own = world.objects.index_of_uuid(&world.agent_id);
@@ -481,7 +533,7 @@ impl Scene {
             {
                 return None;
             }
-            let hit = self.face_hit(world, idx, ray, now, true)?;
+            let hit = self.face_hit_mode(world, idx, ray, now, true, mode)?;
             if !hit.t.is_finite() || (!hud && select_limit.is_some_and(|max| (ray.0 + ray.1 * hit.t).distance(world.agent.position) > max))
             {
                 return None;
@@ -637,7 +689,7 @@ impl Scene {
 
     /// The model matrix of the geometry `g` draws for object `o`
     /// (`plants::geometry_model`, then `unbind_of`).
-    fn drawn_model(&self, g: &ObjGpu, o: &Object, scale: Vec3, key: Option<GeomKey>, pos: Vec3, rot: Quat) -> Mat4 {
+    pub(super) fn drawn_model(&self, g: &ObjGpu, o: &Object, scale: Vec3, key: Option<GeomKey>, pos: Vec3, rot: Quat) -> Mat4 {
         let model = super::plants::geometry_model(scale, o, key, pos, rot);
         self.unbind_of(g).map_or(model, |unbind| model * unbind)
     }
@@ -665,12 +717,16 @@ impl Scene {
         self.face_hit_in(world, idx, ray, now, include_hidden, mode, None)
     }
 
+    fn geometry_hit(&self, world: &World, idx: usize, ray: (Vec3, Vec3), now: Instant) -> Option<pick::FaceHit> {
+        self.face_hit_mode(world, idx, ray, now, true, FacePick::Geometry)
+    }
+
     /// `face_hit` against the full-detail geometry held for foot placement
     /// (`foot_support`) once it is built, the drawn one until then.
     pub(super) fn support_hit(&self, world: &World, idx: usize, ray: (Vec3, Vec3), now: Instant) -> Option<pick::FaceHit> {
         let id = world.objects.get(idx)?.full_id;
         let held = self.foot_support.key(idx, id).filter(|key| self.geom_ready(key).is_some());
-        self.face_hit_in(world, idx, ray, now, true, FacePick::Surface, held)
+        self.face_hit_in(world, idx, ray, now, true, FacePick::Geometry, held)
     }
 
     /// `face_hit_mode` against `geometry` (another detail level of the
@@ -721,7 +777,9 @@ impl Scene {
                     return None;
                 }
             }
-            if mode == FacePick::Blend && !self.blend_face(world, o, g, face) {
+            if matches!(mode, FacePick::Blend | FacePick::LeftBlend)
+                && !self.blend_face_mode(world, o, g, face, mode == FacePick::LeftBlend)
+            {
                 return None;
             }
             let hidden = o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004);
@@ -740,16 +798,38 @@ impl Scene {
                 indices: &f.indices,
             })
         });
+        if matches!(mode, FacePick::Left | FacePick::LeftBlend) && !g.hud && g.owner_avatar.is_none() {
+            // LLVolume::lineSegmentIntersect rejects back faces. After a
+            // texture hole, an invisible exit face must not reclaim the
+            // click from the surface the GPU actually drew (#1574).
+            return pick::ray_faces_filtered(
+                faces,
+                model,
+                ray.0,
+                ray.1,
+                |face| self.face_double_sided(world, o, face),
+                |hit| {
+                    if !self.blend_face_mode(world, o, g, hit.face, true) {
+                        return true;
+                    }
+                    let texture = g
+                        .faces
+                        .iter()
+                        .find(|draw| usize::from(draw.te_index) == hit.face)
+                        .map_or_else(|| o.visual_texture_face(hit.face).texture, |draw| draw.tex_id);
+                    self.textures
+                        .pick_masks
+                        .get(&texture)
+                        .is_none_or(|mask| mask.hits_nonzero(self.inventory_uv(world, o, hit, model, ray, now)))
+                },
+            );
+        }
         if mode == FacePick::Inventory || (g.hud && !include_hidden) {
             return faces
                 .filter_map(|face| {
-                    let hit = if g.hud {
-                        pick::ray_faces_with_sidedness(std::iter::once(face), model, ray.0, ray.1, |face| {
-                            self.hud_double_sided(world, o, face)
-                        })?
-                    } else {
-                        pick::ray_faces(std::iter::once(face), model, ray.0, ray.1)?
-                    };
+                    let hit = pick::ray_faces_with_sidedness(std::iter::once(face), model, ray.0, ray.1, |face| {
+                        self.face_double_sided(world, o, face)
+                    })?;
                     let tf = o.te.as_ref().map(|te| *te.face(hit.face)).unwrap_or_default();
                     // LLToolPie::handleMouseDown prioritizes transparent
                     // attachments. Left clicks own the whole HUD triangle in
@@ -784,15 +864,15 @@ impl Scene {
                 })
                 .min_by(|a, b| a.t.total_cmp(&b.t));
         }
-        if !g.hud {
+        // LLVolume::lineSegmentIntersect rejects back-facing triangles.
+        // Collisions still use both sides; interactions follow what is drawn.
+        if mode == FacePick::Geometry {
             return pick::ray_faces(faces, model, ray.0, ray.1);
         }
-        // LLVolume::lineSegmentIntersect rejects back-facing triangles.
-        // Explicit double-sided materials remain interactive on both sides.
-        pick::ray_faces_with_sidedness(faces, model, ray.0, ray.1, |face| self.hud_double_sided(world, o, face))
+        pick::ray_faces_with_sidedness(faces, model, ray.0, ray.1, |face| self.face_double_sided(world, o, face))
     }
 
-    fn hud_double_sided(&self, world: &World, o: &Object, face: usize) -> bool {
+    pub(crate) fn face_double_sided(&self, world: &World, o: &Object, face: usize) -> bool {
         let Some(id) = o.visual_material(face) else {
             return false;
         };
@@ -812,6 +892,12 @@ impl Scene {
     /// displayed cutout. Draw records already hold the resolved modes;
     /// omitted TE faces need the material and its override read directly.
     fn blend_face(&self, world: &World, o: &Object, g: &ObjGpu, face: usize) -> bool {
+        self.blend_face_mode(world, o, g, face, false)
+    }
+
+    /// With no material, the build UI's alpha-channel default is Blend,
+    /// even when binary texture pixels are rendered as an automatic mask.
+    fn blend_face_mode(&self, world: &World, o: &Object, g: &ObjGpu, face: usize, left: bool) -> bool {
         if let Some(draw) = g.faces.iter().find(|draw| usize::from(draw.te_index) == face) {
             if let Some(mode) = draw.pbr_alpha {
                 return mode == 1;
@@ -825,7 +911,9 @@ impl Scene {
                 .get(draw.base_slot as usize)
                 .copied()
                 .unwrap_or_default();
-            return draw.te_alpha < 0.999 || alpha == AlphaKind::Blend;
+            return draw.te_alpha < 0.999
+                || alpha == AlphaKind::Blend
+                || (left && !g.hud && g.owner_avatar.is_none() && alpha == AlphaKind::Mask);
         }
         if let Some(id) = o.visual_material(face) {
             let mut material = self.materials.peek(&id).map(|m| (*m).clone()).unwrap_or_default();
@@ -848,6 +936,10 @@ impl Scene {
     /// Includes faces omitted from the draw records because their TE alpha
     /// is zero, so the hover index can keep their material class as well.
     pub(super) fn has_blend_face(&self, world: &World, idx: usize) -> bool {
+        self.has_blend_face_mode(world, idx, false)
+    }
+
+    fn has_blend_face_mode(&self, world: &World, idx: usize, left: bool) -> bool {
         let (Some(o), Some(g)) = (world.objects.get(idx), self.gpu.get(idx)) else {
             return false;
         };
@@ -856,9 +948,11 @@ impl Scene {
                 .pick_faces
                 .iter()
                 .enumerate()
-                .any(|(face, geometry)| geometry.is_some() && self.blend_face(world, o, g, face));
+                .any(|(face, geometry)| geometry.is_some() && self.blend_face_mode(world, o, g, face, left));
         }
-        g.faces.iter().any(|draw| self.blend_face(world, o, g, usize::from(draw.te_index)))
+        g.faces
+            .iter()
+            .any(|draw| self.blend_face_mode(world, o, g, usize::from(draw.te_index), left))
     }
 
     /// The distance at which the ray meets the triangles of an object
@@ -929,6 +1023,7 @@ impl Scene {
                 continue;
             }
             let Some(f) = f else { continue };
+            let two_sided = mode == FacePick::Geometry || self.face_double_sided(world, o, face);
             let accel = if large && f.indices.len() >= pick_accel::MIN_TRIANGLES * 3 {
                 f.accel.get_or_ask(|| {
                     let geom = geom.clone();
@@ -943,7 +1038,7 @@ impl Scene {
             };
             if let Some(accel) = accel {
                 counts.hierarchies.fetch_add(1, Relaxed);
-                best = accel.nearest(&f.positions, &f.indices, origin, dir, best);
+                best = accel.nearest(&f.positions, &f.indices, origin, dir, two_sided, best);
                 continue;
             }
             counts.triangles.fetch_add(f.indices.len() as u64 / 3, Relaxed);
@@ -952,7 +1047,7 @@ impl Scene {
                 let (Some(p0), Some(p1), Some(p2)) = (p(tri[0]), p(tri[1]), p(tri[2])) else {
                     continue;
                 };
-                if let Some(hit) = pick::ray_triangle(origin, dir, p0, p1, p2, true)
+                if let Some(hit) = pick::ray_triangle(origin, dir, p0, p1, p2, two_sided)
                     && hit.t > 0.0
                     && hit.t < best
                 {
@@ -1041,8 +1136,16 @@ impl Scene {
     }
 
     pub fn touch_surface(&self, world: &World, idx: usize, ray: (Vec3, Vec3)) -> Option<TouchSurface> {
+        self.touch_surface_mode(world, idx, ray, FacePick::Surface)
+    }
+
+    pub fn left_touch_surface(&self, world: &World, idx: usize, ray: (Vec3, Vec3)) -> Option<TouchSurface> {
+        self.touch_surface_mode(world, idx, ray, FacePick::Left)
+    }
+
+    fn touch_surface_mode(&self, world: &World, idx: usize, ray: (Vec3, Vec3), mode: FacePick) -> Option<TouchSurface> {
         let o = world.objects.get(idx)?;
-        let hit = self.face_hit(world, idx, ray, Instant::now(), true)?;
+        let hit = self.face_hit_mode(world, idx, ray, Instant::now(), true, mode)?;
         let tf = o.te.as_ref().map(|t| *t.face(hit.face)).unwrap_or_default();
         let uv = pick::te_transform(hit.uv, [tf.scale_s, tf.scale_t], [tf.offset_s, tf.offset_t], tf.rotation);
         let mut position = ray.0 + ray.1 * hit.t;
@@ -1128,6 +1231,18 @@ impl Scene {
         now: Instant,
         among: Option<&[usize]>,
     ) -> Option<Vec3> {
+        self.point_behind_ignored_mode(world, ray, far, now, among, FacePick::Surface)
+    }
+
+    fn point_behind_ignored_mode(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        far: f32,
+        now: Instant,
+        among: Option<&[usize]>,
+        mode: FacePick,
+    ) -> Option<Vec3> {
         let mut nearest = far;
         let mut found = false;
         for (idx, g) in self.pick_objects(among) {
@@ -1145,6 +1260,8 @@ impl Scene {
                     g.center - Vec3::new(0.35, 0.35, 1.0),
                     g.center + Vec3::new(0.35, 0.35, 1.0),
                 )
+            } else if mode == FacePick::Left {
+                self.face_hit_mode(world, idx, ray, now, false, mode).map(|h| h.t)
             } else {
                 self.hit_distance(world, idx, ray, now, false, among)
             };
@@ -1228,7 +1345,7 @@ impl Scene {
                     g.center + Vec3::new(0.35, 0.35, 1.0),
                 )
             } else if ray_may_hit(g, ray) {
-                self.hit_distance(world, idx, ray, now, clicker, None)
+                self.face_hit_mode(world, idx, ray, now, clicker, FacePick::Left).map(|h| h.t)
             } else {
                 None
             };
@@ -1263,6 +1380,20 @@ impl Scene {
         far: f32,
         among: Option<&[usize]>,
     ) -> Option<Vec3> {
+        self.transparent_action_point_mode(world, ray, depth, include_hidden, far, among, FacePick::Surface)
+    }
+
+    #[allow(clippy::too_many_arguments)] // Existing search inputs plus the gesture's alpha policy.
+    fn transparent_action_point_mode(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        depth: Option<Vec3>,
+        include_hidden: bool,
+        far: f32,
+        among: Option<&[usize]>,
+        mode: FacePick,
+    ) -> Option<Vec3> {
         let mut nearest = depth.map_or(far, |p| (p - ray.0).dot(ray.1));
         let mut found = false;
         let props = HashMap::new();
@@ -1284,7 +1415,13 @@ impl Scene {
             {
                 continue;
             }
-            if let Some(t) = self.hit_distance(world, idx, ray, Instant::now(), include_hidden, among)
+            let t = if mode == FacePick::Left {
+                self.face_hit_mode(world, idx, ray, Instant::now(), include_hidden, mode)
+                    .map(|h| h.t)
+            } else {
+                self.hit_distance(world, idx, ray, Instant::now(), include_hidden, among)
+            };
+            if let Some(t) = t
                 && t < nearest
             {
                 nearest = t;
@@ -1344,25 +1481,27 @@ impl Scene {
                     .get(idx)
                     .is_some_and(|g| !g.hud && ray_may_hit(g, ray) && !self.see_through_face(g, true))
                 && self
-                    .face_distance(world, idx, ray, now, false, FacePick::Surface)
+                    .face_distance(world, idx, ray, now, false, FacePick::Geometry)
                     .is_some_and(|t| t < len - 0.05)
         })
     }
 
     pub fn action_point(&self, world: &World, ray: Option<(Vec3, Vec3)>, depth: Option<Vec3>, build: bool, far: f32) -> Option<Vec3> {
-        let point = self.interaction_point(world, ray, depth, build, far);
         if build {
-            return point;
+            return depth;
         }
         let ray = ray?;
-        let point = self.transparent_action_point(world, ray, point, true, far, None);
-        // User-requested priority: Blend geometry always stops a left press,
-        // even at zero texel alpha and with no action. Firestorm's competing
-        // visible/actionable pick must not send the click to an object behind.
-        // Mask surfaces continue to use the existing depth/action search.
+        let point = if self.ignored_before(world, ray, depth, far, Instant::now(), None) {
+            self.point_behind_ignored_mode(world, ray, far, Instant::now(), None, FacePick::Left)
+        } else {
+            depth
+        };
+        let point = self.transparent_action_point_mode(world, ray, point, true, far, None, FacePick::Left);
+        // Unlike HUDs and worn clickers, world Blend faces let alpha-zero
+        // texels through (#1574). Hover keeps its existing geometric policy.
         let mut candidates = Vec::new();
         self.pick.ray_candidates(ray, &mut candidates);
-        self.blend_hit(world, ray, point, far, Some(&candidates))
+        self.blend_hit_mode(world, ray, point, far, Some(&candidates), FacePick::LeftBlend)
             .map(|(t, _)| ray.0 + ray.1 * t)
             .or(point)
     }
@@ -1381,6 +1520,18 @@ impl Scene {
         far: f32,
         among: Option<&[usize]>,
     ) -> Option<(f32, usize)> {
+        self.blend_hit_mode(world, ray, point, far, among, FacePick::Blend)
+    }
+
+    fn blend_hit_mode(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        point: Option<Vec3>,
+        far: f32,
+        among: Option<&[usize]>,
+        mode: FacePick,
+    ) -> Option<(f32, usize)> {
         let limit = point.map_or(far, |p| (p - ray.0).dot(ray.1)).min(far);
         let now = Instant::now();
         let hit = |idx: usize| {
@@ -1398,10 +1549,12 @@ impl Scene {
             }
             // Skip the transform and box test for entirely non-Blend
             // objects, including the many opaque hover candidates.
-            if !self.has_blend_face(world, idx) {
+            if !self.has_blend_face_mode(world, idx, mode == FacePick::LeftBlend) {
                 return None;
             }
-            let t = if among.is_some() && !self.hover.legacy() {
+            let t = if mode == FacePick::LeftBlend {
+                self.face_hit_mode(world, idx, ray, now, true, mode)?.t
+            } else if among.is_some() && !self.hover.legacy() {
                 self.face_distance(world, idx, ray, now, true, FacePick::Blend)?
             } else {
                 self.face_hit_mode(world, idx, ray, now, true, FacePick::Blend)?.t
@@ -2289,6 +2442,7 @@ pub(super) mod tests {
                 let (idx, _, ray) = scene.hud_pick(&world, cursor, false).unwrap();
                 assert_eq!(idx, front, "material {pbr:?}/{legacy:?}, alpha {alpha}, texel {texel_alpha}");
                 let touch = scene.touch_surface(&world, idx, ray).unwrap();
+                assert_eq!(scene.left_touch_surface(&world, idx, ray), Some(touch));
                 assert_eq!(touch.face, 0);
                 assert!(touch.st.abs_diff_eq(Vec3::new(0.5, 0.5, 0.0), 1e-5));
                 assert_eq!(scene.hover_hud(&world, cursor), Some(front));
@@ -2824,7 +2978,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn blend_press_and_hover_block_an_actionable_object_for_every_opacity() {
+    fn world_blend_zero_texels_pass_left_clicks_while_hover_keeps_its_policy() {
         let (mut world, mut scene, front, back) = scene_with_two_objects();
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::NONE;
         world.objects.get_mut(front).unwrap().update_flags = 0;
@@ -2854,8 +3008,8 @@ pub(super) mod tests {
                     f.color[3] = alpha;
                 }
                 scene.pick.changed(front);
-                assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(front_point));
-                assert_eq!(scene.action_point(&world, Some(ray), None, false, 100.0), Some(front_point));
+                assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(depth));
+                assert_eq!(scene.action_point(&world, Some(ray), None, false, 100.0), Some(depth));
                 assert_eq!(scene.interaction_at_ray(&world, front_point, ray, true), Some(front));
                 assert!(crate::interaction::target(&world, front, &HashMap::new()).is_none());
                 let hovered = scene.hover_pick(&world, Some(ray), Some(depth), 100.0);
@@ -2893,6 +3047,317 @@ pub(super) mod tests {
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::IGNORE;
         scene.pick.changed(front);
         assert_eq!(scene.hover_object(&world, Some(ray), Some(depth), 100.0), Some(back));
+    }
+
+    #[test]
+    fn world_blend_left_clicks_test_exact_texels_but_right_clicks_and_worn_prims_do_not() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let texture = Uuid::from_u128(8891);
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let front_point = Vec3::new(2.5, 0.0, 50.0);
+        let depth = Vec3::new(6.5, 0.0, 50.0);
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        world.objects.get_mut(back).unwrap().click_action = crate::interaction::code::BUY;
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        scene.textures.alpha_by_slot = vec![AlphaKind::Blend];
+        scene.gpu[front].faces[0].tex_id = texture;
+        for (pbr, legacy, texture_alpha) in [
+            (None, None, AlphaKind::Blend),
+            (None, None, AlphaKind::Mask),
+            (Some(1), None, AlphaKind::Mask),
+            (None, Some(legacy_mat::alpha_mode::BLEND), AlphaKind::Mask),
+        ] {
+            scene.textures.alpha_by_slot[0] = texture_alpha;
+            scene.gpu[front].faces[0].pbr_alpha = pbr;
+            scene.gpu[front].faces[0].legacy_alpha = legacy;
+            for texel_alpha in [0, 1, 32, 127, 255] {
+                scene.textures.pick_masks.insert(
+                    texture,
+                    super::super::textures::PickMask::from_rgba(1, 1, &[255, 255, 255, texel_alpha]).unwrap(),
+                );
+                let expected = if texel_alpha == 0 { depth } else { front_point };
+                assert_eq!(scene.point_behind_rigged(&world, ray, 0.0, 100.0, None), Some(expected));
+                assert_eq!(scene.left_touch_surface(&world, front, ray).is_some(), texel_alpha > 0);
+                assert!(scene.touch_surface(&world, front, ray).is_some());
+                for action in [
+                    crate::interaction::code::NONE,
+                    crate::interaction::code::TOUCH,
+                    crate::interaction::code::DISABLED,
+                ] {
+                    let o = world.objects.get_mut(front).unwrap();
+                    o.click_action = action;
+                    o.update_flags = crate::ui::context::flags::HANDLE_TOUCH | crate::build::edits::FLAGS_PHANTOM;
+                    assert_eq!(
+                        scene.action_point(&world, Some(ray), Some(depth), false, 100.0),
+                        Some(expected),
+                        "mode {pbr:?}/{legacy:?}, texel {texel_alpha}, action {action}"
+                    );
+                }
+                assert_eq!(
+                    scene.selection_pick(&world, Some(ray), Some(depth), false, false, 100.0),
+                    (Some(front_point), Some(front))
+                );
+                let target = if texel_alpha == 0 { back } else { front };
+                assert_eq!(
+                    scene.left_selection_pick(&world, Some(ray), Some(depth), true, false, 100.0),
+                    (Some(expected), Some(target))
+                );
+                // Worn prims retain their existing Blend/Mask policy.
+                scene.gpu[front].owner_avatar = Some(own);
+                let worn_point = if pbr.is_none() && legacy.is_none() && texture_alpha == AlphaKind::Mask {
+                    depth
+                } else {
+                    front_point
+                };
+                assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(worn_point));
+                assert!(scene.left_touch_surface(&world, front, ray).is_some());
+                scene.gpu[front].owner_avatar = None;
+            }
+        }
+        // Resident texture coordinates, not mesh ST: offset the sampled zero
+        // texel onto its opaque neighbour within the old mask's same 2x2 block.
+        scene.gpu[front].faces[0].legacy_alpha = Some(legacy_mat::alpha_mode::BLEND);
+        let mut rgba = vec![255; 4 * 4 * 4];
+        rgba[(4 + 2) * 4 + 3] = 0;
+        scene
+            .textures
+            .pick_masks
+            .insert(texture, super::super::textures::PickMask::from_rgba(4, 4, &rgba).unwrap());
+        assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(depth));
+        Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].offset_s = 0.25;
+        assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(front_point));
+        // Unknown texture pixels remain pickable during streaming.
+        scene.textures.pick_masks.remove(&texture);
+        assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(front_point));
+        // The default Blend mode on the library's transparent texture must
+        // not catch the exit face of a plaque whose top has a texture hole.
+        scene.gpu[front].faces[0].legacy_alpha = None;
+        scene.gpu[front].faces[0].tex_id = aurora_prim::te::TRANSPARENT_TEXTURE;
+        assert_eq!(
+            scene.left_selection_pick(&world, Some(ray), Some(depth), true, false, 100.0),
+            (Some(depth), Some(back))
+        );
+        assert_eq!(
+            scene.selection_pick(&world, Some(ray), Some(depth), true, false, 100.0),
+            (Some(front_point), Some(front))
+        );
+    }
+
+    #[test]
+    fn world_back_faces_are_ignored_by_clicks_hover_selection_and_placement() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        world.objects.get_mut(front).unwrap().rotation = Quat::from_rotation_z(std::f32::consts::PI);
+        world.objects.get_mut(front).unwrap().update_flags |= crate::ui::context::flags::HANDLE_TOUCH;
+        for idx in [front, back] {
+            let g = &mut scene.gpu[idx];
+            g.center = world.objects.get(idx).unwrap().position;
+            g.radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(g));
+        }
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let depth = Vec3::new(6.5, 0.0, 50.0);
+        let now = Instant::now();
+        let mut candidates = Vec::new();
+        for mode in [
+            legacy_mat::alpha_mode::NONE,
+            legacy_mat::alpha_mode::BLEND,
+            legacy_mat::alpha_mode::MASK,
+        ] {
+            let draw = &mut scene.gpu[front].faces[0];
+            draw.legacy_alpha = Some(mode);
+            draw.pass = match mode {
+                legacy_mat::alpha_mode::BLEND => Pass::Blend,
+                legacy_mat::alpha_mode::MASK => Pass::Mask,
+                _ => Pass::Opaque,
+            };
+            scene.pick.changed(front);
+            assert!(scene.touch_surface(&world, front, ray).is_none());
+            assert!(scene.left_touch_surface(&world, front, ray).is_none());
+            assert_eq!(
+                scene.selection_pick(&world, Some(ray), Some(depth), true, false, 100.0),
+                (Some(depth), Some(back))
+            );
+            assert_eq!(
+                scene.left_selection_pick(&world, Some(ray), Some(depth), true, false, 100.0),
+                (Some(depth), Some(back))
+            );
+            assert_eq!(scene.edit_ray_hits(&world, ray, false, false, None), [back]);
+            assert_eq!(scene.left_edit_ray_hits(&world, ray, false, false, None), [back]);
+            assert_eq!(
+                scene.inventory_surface(&world, ray, 100.0, &mut candidates),
+                Some((depth, Some(back)))
+            );
+            assert_eq!(
+                scene.color_at_ray(&world, ray, false, 100.0).unwrap().0,
+                world.objects.get(back).unwrap().full_id
+            );
+            assert_eq!(scene.hover_pick(&world, Some(ray), Some(depth), 100.0), (Some(depth), Some(back)));
+            assert_eq!(scene.interaction_point(&world, Some(ray), Some(depth), false, 100.0), Some(depth));
+            assert_eq!(scene.interaction_at_ray(&world, Vec3::new(3.5, 0.0, 50.0), ray, true), None);
+            // Physics still detects the same geometry from either side.
+            assert!(scene.geometry_hit(&world, front, ray, now).is_some());
+        }
+        // Worn prims use the same facing rule, with their alpha policy preserved.
+        scene.gpu[front].owner_avatar = world.objects.index_of_uuid(&world.agent_id);
+        assert!(scene.touch_surface(&world, front, ray).is_none());
+        assert!(scene.left_touch_surface(&world, front, ray).is_none());
+        scene.gpu[front].owner_avatar = None;
+
+        // The accelerated hover path must reject the same back face.
+        let source = scene.geom_ready(&scene.gpu[front].geom.unwrap()).unwrap();
+        let face = source.pick_faces[0].as_ref().unwrap();
+        let face = PickFace::new(
+            face.positions.clone(),
+            face.uvs.clone(),
+            face.indices.repeat(pick_accel::MIN_TRIANGLES),
+        );
+        face.accel.build(&face.positions, &face.indices);
+        let mesh = GeomKey::Mesh {
+            id: Uuid::from_u128(8895),
+            lod: 0,
+        };
+        let geometry = GpuGeom {
+            faces: source.faces.clone(),
+            min: source.min,
+            max: source.max,
+            joint_bounds: Vec::new(),
+            pick_faces: vec![Some(face)],
+        };
+        scene.geoms.insert(
+            mesh,
+            GeomEntry {
+                refs: 1,
+                zero_since: 0,
+                state: GeomState::Ready(Arc::new(geometry)),
+            },
+        );
+        scene.gpu[front].geom = Some(mesh);
+        assert!(scene.face_distance(&world, front, ray, now, true, FacePick::Surface).is_none());
+        scene.gpu[front].faces[0].legacy_alpha = Some(legacy_mat::alpha_mode::BLEND);
+        assert!(scene.blend_hit(&world, ray, Some(depth), 100.0, Some(&[front])).is_none());
+
+        let material = Uuid::from_u128(8894);
+        world.objects.get_mut(front).unwrap().extra.render_materials = vec![(0, material)];
+        scene.materials.insert(
+            material,
+            aurora_assets::PbrMaterial {
+                double_sided: true,
+                alpha_mode: aurora_assets::AlphaMode::Blend,
+                ..Default::default()
+            },
+        );
+        scene.gpu[front].faces[0].pbr_alpha = Some(1);
+        scene.pick.changed(front);
+        assert!(scene.touch_surface(&world, front, ray).is_some());
+        assert_eq!(scene.hover_pick(&world, Some(ray), Some(depth), 100.0).1, Some(front));
+    }
+
+    #[test]
+    fn world_blend_left_clicks_ignore_the_exit_faces_of_a_transparent_cube() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let mesh = aurora_prim::generate_volume(&aurora_prim::params::VolumeParams::default(), aurora_prim::volume::DETAIL_SCALES[3]);
+        assert_eq!(mesh.faces.len(), 6);
+        let template = scene.gpu[front].faces[0];
+        let hole = Uuid::from_u128(8892);
+        scene
+            .textures
+            .pick_masks
+            .insert(hole, super::super::textures::PickMask::from_rgba(1, 1, &[0; 4]).unwrap());
+        scene.textures.alpha_by_slot = vec![AlphaKind::Blend];
+        let mut geometry = GpuGeom {
+            faces: Vec::new(),
+            min: -Vec3::splat(0.5),
+            max: Vec3::splat(0.5),
+            joint_bounds: Vec::new(),
+            pick_faces: Vec::new(),
+        };
+        scene.gpu[front].faces.clear();
+        for (face, mesh) in mesh.faces.into_iter().enumerate() {
+            let allocation = aurora_render::MeshAlloc {
+                vertex_offset: 0,
+                vertex_count: mesh.positions.len() as u32,
+                index_offset: face as u32 * 100,
+                index_count: mesh.indices.len() as u32,
+            };
+            let mut draw = template;
+            draw.te_index = face as u8;
+            draw.cmd.first_index = allocation.index_offset;
+            draw.cmd.index_count = allocation.index_count;
+            draw.legacy_alpha = Some(legacy_mat::alpha_mode::BLEND);
+            // The entry face has a texture hole; the exit face is solid.
+            draw.tex_id = if mesh.normals[0][0] < -0.9 { hole } else { Uuid::nil() };
+            scene.gpu[front].faces.push(draw);
+            geometry.faces.push(Some(allocation));
+            geometry
+                .pick_faces
+                .push(Some(PickFace::new(mesh.positions, mesh.uvs, mesh.indices)));
+        }
+        let key = GeomKey::Prim { hash: 8892, lod: 3 };
+        scene.geoms.insert(
+            key,
+            GeomEntry {
+                refs: 1,
+                zero_since: 0,
+                state: GeomState::Ready(Arc::new(geometry)),
+            },
+        );
+        scene.gpu[front].geom = Some(key);
+        world.objects.get_mut(front).unwrap().update_flags = 0;
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::NONE;
+        world.objects.get_mut(back).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        for idx in [front, back] {
+            let g = &mut scene.gpu[idx];
+            g.center = world.objects.get(idx).unwrap().position;
+            g.radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(g));
+        }
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let depth = Vec3::new(6.5, 0.0, 50.0);
+        assert!(
+            scene.left_touch_surface(&world, front, ray).is_none(),
+            "invisible exit face must not catch a touch"
+        );
+        assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(depth));
+        assert_eq!(scene.action_point(&world, Some(ray), None, false, 100.0), Some(depth));
+        assert_eq!(
+            scene.left_selection_pick(&world, Some(ray), Some(depth), true, false, 100.0),
+            (Some(depth), Some(back))
+        );
+
+        // An explicitly double-sided PBR cube really displays the exit face.
+        let material = Uuid::from_u128(8893);
+        scene.materials.insert(
+            material,
+            aurora_assets::PbrMaterial {
+                alpha_mode: aurora_assets::AlphaMode::Blend,
+                double_sided: true,
+                ..Default::default()
+            },
+        );
+        world.objects.get_mut(front).unwrap().extra.render_materials = (0..6).map(|face| (face, material)).collect();
+        let exit = scene.left_touch_surface(&world, front, ray).unwrap().position;
+        assert!(exit.distance(Vec3::new(3.5, 0.0, 50.0)) < 1e-5);
+        let object = world.objects.get(front).unwrap();
+        world.gltf_overrides.insert(
+            object.key,
+            (0..6)
+                .map(|face| {
+                    (
+                        face,
+                        aurora_assets::material::PbrOverride {
+                            double_sided: Some(false),
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect::<Vec<_>>()
+                .into(),
+        );
+        assert!(scene.left_touch_surface(&world, front, ray).is_none());
     }
 
     #[test]
@@ -3144,7 +3609,7 @@ pub(super) mod tests {
                         pick_faces: vec![Some(PickFace::new(
                             vec![[2.0, -0.5, -0.5], [2.0, 0.5, -0.5], [2.0, 0.5, 0.5], [2.0, -0.5, 0.5]],
                             vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
-                            vec![0, 1, 2, 0, 2, 3],
+                            vec![0, 2, 1, 0, 3, 2],
                         ))],
                     })),
                 },
