@@ -120,6 +120,7 @@ struct Case {{clip:vec4<f32>,point:vec4<f32>,flags:vec4<u32>}};
 @group(0) @binding(1) var<storage,read> records:array<DrawRecord>;
 fn sample_tex(i:u32,uv:vec2<f32>)->vec4<f32>{{return vec4<f32>(1.0);}}
 fn depth_normal(n:vec3<f32>,front:bool)->vec4<f32>{{return vec4<f32>(1.0);}}
+fn water_clip(p:vec3<f32>){{}}
 {cut}
 {normal_passes}
 @vertex fn vs(@builtin(vertex_index) i:u32)->@builtin(position) vec4<f32>{{

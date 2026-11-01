@@ -532,6 +532,11 @@ pub struct DrawLists {
     pub water_ground: crate::WaterGround,
     /// Sorted back to front, the first `blend_depth` apart (below).
     pub blend: Vec<DrawCmd>,
+    /// The blended faces under the water while the camera is above it, back
+    /// to front, the rigged first: drawn before the water and the scene copy
+    /// it refracts, writing depth, without glow (POOL_ALPHA_PRE_WATER). A
+    /// face crossing the surface is in both lists, clipped to each side.
+    pub blend_under_water: Vec<DrawCmd>,
     /// The first `blend_depth` entries of `blend` are rigged faces (worn
     /// rigged meshes, animesh): drawn before the other blended faces and
     /// writing depth, so that a layer in front (mesh hair) hides what is
@@ -718,6 +723,7 @@ impl DrawLists {
         self.water.clear();
         self.water_exclusion.clear();
         self.blend.clear();
+        self.blend_under_water.clear();
         self.blend_depth = 0;
         self.blend_depth_mode = RiggedBlendDepth::default();
         self.blend_depth_runs.clear();

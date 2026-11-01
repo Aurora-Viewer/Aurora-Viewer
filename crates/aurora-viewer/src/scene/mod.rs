@@ -4371,6 +4371,9 @@ impl Scene {
         let selection_faces = &self.selection_faces;
         let photo_marks = &self.photo_marks;
         let give_marks = &self.give_marks.1;
+        // the water's plane while the camera is above it: the blended
+        // faces under it are drawn before the water (blend_order::water_sides)
+        let under_water_plane = self.water.height.filter(|h| view.eye.z >= *h);
         struct Local {
             water_exclusion: Vec<DrawCmd>,
             opaque: Vec<DrawCmd>,
@@ -4378,6 +4381,8 @@ impl Scene {
             mask: Vec<DrawCmd>,
             mask2: Vec<DrawCmd>,
             blend: Vec<blend_order::BlendEntry>,
+            /// Blended faces under the water, drawn before it.
+            blend_under: Vec<blend_order::BlendEntry>,
             glow: Vec<DrawCmd>,
             glow_alpha: Vec<DrawCmd>,
             /// Draws of the avatars pictured for their impostor: (capture slot, draw, blended).
@@ -4402,6 +4407,7 @@ impl Scene {
             mask: Vec::new(),
             mask2: Vec::new(),
             blend: Vec::new(),
+            blend_under: Vec::new(),
             glow: Vec::new(),
             glow_alpha: Vec::new(),
             impostor: Vec::new(),
@@ -4596,15 +4602,24 @@ impl Scene {
                     continue;
                 }
                 match pass {
-                    Pass::Blend => l.blend.push(blend_order::BlendEntry {
-                        distance: blend_d,
-                        cmd,
-                        glow: f.glow,
-                        rigged: g.rigged,
-                        object: idx as u32,
-                        face: f.te_index,
-                        rig,
-                    }),
+                    Pass::Blend => {
+                        let entry = blend_order::BlendEntry {
+                            distance: blend_d,
+                            cmd,
+                            glow: f.glow,
+                            rigged: g.rigged,
+                            object: idx as u32,
+                            face: f.te_index,
+                            rig,
+                        };
+                        let (after, before) = blend_order::water_sides(sc.z, sr, under_water_plane);
+                        if before {
+                            l.blend_under.push(entry);
+                        }
+                        if after {
+                            l.blend.push(entry);
+                        }
+                    }
                     _ if !full => {}
                     Pass::Opaque => l.opaque.push(cmd),
                     Pass::OpaqueTwoSided => l.opaque2.push(cmd),
@@ -4623,6 +4638,7 @@ impl Scene {
             a.mask.append(&mut b.mask);
             a.mask2.append(&mut b.mask2);
             a.blend.append(&mut b.blend);
+            a.blend_under.append(&mut b.blend_under);
             a.glow.append(&mut b.glow);
             a.glow_alpha.append(&mut b.glow_alpha);
             a.impostor.append(&mut b.impostor);
@@ -4672,6 +4688,12 @@ impl Scene {
         };
         runs(&self.blend_tmp, self.lists.blend_depth, &mut self.lists.blend_depth_runs);
         self.lists.blend.extend(self.blend_tmp.iter().map(|e| e.cmd));
+        // under the water: back to front, the rigged first
+        // (LLDrawPoolAlpha::renderPostDeferred: forwardRender(true), then
+        // forwardRender()), all writing depth and without glow
+        let mut under = result.blend_under;
+        blend_order::sort(&mut under, true);
+        self.lists.blend_under_water.extend(under.iter().map(|e| e.cmd));
         self.lists.blend_glow.extend(self.blend_tmp.iter().map(|e| e.glow));
         self.lists.shadow_casters.extend(result.casters);
         self.lists.reflection = result.refl;

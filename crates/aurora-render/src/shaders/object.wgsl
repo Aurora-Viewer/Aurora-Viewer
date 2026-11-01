@@ -691,6 +691,25 @@ fn fs_depth_mask_normal(in: VsOut, @builtin(front_facing) front: bool) -> @locat
 // Viewer's MINIMUM_ALPHA.
 override DEPTH_CONTACT_ALPHA: f32 = 0.5;
 
+// The blended faces' side of the water (waterClip, deferredUtil.glsl): 1
+// keeps the camera's side (drawn after the water), 2 the other side (drawn
+// before it, POOL_ALPHA_PRE_WATER); 0, every other use, keeps all. A face
+// crossing the surface is drawn in both lists, each half here. Only while
+// the camera is above the water, as the lists are split
+// (blend_order::water_sides); under it nothing is clipped, as before.
+override WATER_CLIP: u32 = 0u;
+
+fn water_clip(world_pos: vec3<f32>) {
+    let h = frame.cam_up.w;
+    if (WATER_CLIP == 0u || frame.camera_pos.z < h) {
+        return;
+    }
+    let above = world_pos.z >= h;
+    if ((WATER_CLIP == 1u) != above) {
+        discard;
+    }
+}
+
 // Depth of the blended faces opaque enough to cast contact shadows (half
 // covered, as the impostor pictures keep them), drawn over a copy of the
 // prepass (contact_shadows.rs).
@@ -703,6 +722,7 @@ fn depth_contact(in: VsOut) {
         return;
     }
     portal_clip(rec, in.world_pos);
+    water_clip(in.world_pos);
     if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < DEPTH_CONTACT_ALPHA) {
         discard;
     }
@@ -728,6 +748,7 @@ fn fs_depth_contact_normal(in: VsOut, @builtin(front_facing) front: bool) -> @lo
 fn fs_depth_opaque(in: VsOut) {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
+    water_clip(in.world_pos);
     if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < 0.95) {
         discard;
     }
@@ -1457,6 +1478,7 @@ override BLEND_SPLIT: u32 = 0u;
 @fragment
 fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
+    water_clip(in.world_pos);
     if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         let surface = portal_surface(records[in.record], in.uv, portal_aa);
         if (surface.alpha < 0.004) { discard; }
