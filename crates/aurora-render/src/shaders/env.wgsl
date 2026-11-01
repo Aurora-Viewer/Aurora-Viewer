@@ -1106,6 +1106,25 @@ fn water_unit(v: vec3<f32>) -> vec3<f32> {
     return v / l;
 }
 
+// pbrPunctual (deferredUtil.glsl) for the water: metallic 1, so no diffuse;
+// returns clamp(nl x specContrib, 0, 10), before the light, shadow and haze.
+fn legacy_water_punctual(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32, specular: vec3<f32>) -> vec3<f32> {
+    let perceptual = max(roughness, 8.0 / 255.0);
+    let a = perceptual * perceptual;
+    let reflectance90 = clamp(max(max(specular.r, specular.g), specular.b) * 25.0, 0.0, 1.0);
+    let h = normalize(l + v);
+    let nl = clamp(dot(n, l), 0.001, 1.0);
+    let nv = clamp(abs(dot(n, v)), 0.001, 1.0);
+    let nh = clamp(dot(n, h), 0.0, 1.0);
+    let vh = clamp(dot(v, h), 0.0, 1.0);
+    let f = specular + (vec3<f32>(reflectance90) - specular) * pow(1.0 - vh, 5.0);
+    let a2 = a * a;
+    let g = 2.0 * nl / (nl + sqrt(a2 + (1.0 - a2) * nl * nl)) * (2.0 * nv / (nv + sqrt(a2 + (1.0 - a2) * nv * nv)));
+    let dd = (nh * a2 - nh) * nh + 1.0;
+    let d = a2 / (PI * dd * dd);
+    return clamp(nl * (f * g * d / (4.0 * nl * nv)), vec3<f32>(0.0), vec3<f32>(10.0));
+}
+
 fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(water_excluded(in.world_pos)){discard;}
     if(water_fx_on(1u) || water_fx_on(16u)) {
@@ -1270,21 +1289,30 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(water_fx_on(1u)){rough=clamp(rough*0.65+footprint*0.06,0.035,0.25);}
     rough=mix(rough,0.055,smoothstep(0.004,0.045,-wake.z)*0.65);
     let gn = select(n, legacy_glint_n, legacy_water);
-    let nh = max(dot(gn, h), 0.0);
-    let nl = max(dot(gn, l), 0.0);
-    let spec = d_ggx(nh, rough * rough) * v_smith(max(dot(gn, vv), 1e-3), nl, rough * rough) * nl;
     let shadow = shadow_factor(in.world_pos, vec3<f32>(0.0, 0.0, 1.0), dist);
-    // a sky with a probe ambiance: waterF.glsl's sunlit_linear (env.rs keeps
-    // it x 3 for the surfaces)
-    let sun_light = select(frame.sun_color.rgb, frame.sun_color.rgb / 3.0, frame.sky_ll.x < 0.5);
-    let punctual = clamp(spec * sun_light * shadow, vec3<f32>(0.0), vec3<f32>(10.0));
+    // waterF.glsl: punctual = clamp(nl x (diffPunc + specPunc), 0, 10) x
+    // sunlit_linear x shadow x atten, metallic 1 (no diffuse), roughness the
+    // blur multiplier, F0 the `specular` uniform (LLDrawPoolWater: the
+    // light's colour normalized, x (1.5 + 6 x its horizontal part squared),
+    // made linear). The sun colour used to multiply the highlight before the
+    // clamp: its faint tail became a second, larger sun beside the reflected
+    // one (the Legacy Viewer shows one).
+    let light_rgb = frame.sky_obj_light.rgb;
+    let light_hue = select(vec3<f32>(0.0), light_rgb / max(length(light_rgb), 1e-6), dot(light_rgb, light_rgb) > 0.0);
+    let spec_color = srgb_to_linear(light_hue * (1.5 + 6.0 * dot(l.xy, l.xy)));
+    let perceptual = select(rough, frame.water_params.w, legacy_water);
+    let atm = ll_atmos(in.world_pos - frame.camera_pos.xyz);
+    // calcAtmosphericVarsLinear: sunlit made linear only on a sky with a
+    // probe ambiance, then x sky_sunlight_scale (1.5)
+    let sunlit_linear = select(srgb_to_linear(atm.sunlit), atm.sunlit, frame.sky_ll.x > 0.5) * 1.5;
+    let punctual = legacy_water_punctual(gn, vv, l, perceptual, spec_color) * sunlit_linear * shadow * atm.atten;
 
     var reflectance = min(1.0,df2.x);
     var glint = punctual;
     if (water_fx_on(512u)) {
+        // (the glint has its own fresnel, F of pbrPunctual)
         let cos_i = clamp(dot(n,vv),0.0,1.0);
         reflectance = 0.02037+0.97963*pow(1.0-cos_i,5.0);
-        glint *= 0.02037+0.97963*pow(1.0-max(dot(vv,h),0.0),5.0);
     }
     var color = mix(fb, radiance, reflectance) + glint;
     color = mix(fb, color, min(1.0, fade * 60.0));
