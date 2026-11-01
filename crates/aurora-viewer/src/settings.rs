@@ -1244,6 +1244,14 @@ pub struct Settings {
     pub display_name_notices: bool,
     /// Screen-space reflections.
     pub ssr: bool,
+    /// Order-independent transparency (aurora-render oit.rs): blended faces
+    /// sorted per pixel rather than per object. An Aurora addition, on by
+    /// default; GPUs that cannot keep the per-object order.
+    pub oit: bool,
+    /// Its pool: blended fragments per screen pixel on average.
+    pub oit_nodes_per_pixel: u32,
+    /// Layers sorted exactly in one pixel; farther ones are averaged.
+    pub oit_max_layers: u32,
     /// Anisotropic filtering: 1 (off), 2, 4, 8, 16.
     pub anisotropy: u16,
     /// Disk cache size (MB) for textures, meshes, animations, objects and inventory.
@@ -1975,6 +1983,9 @@ impl Default for Settings {
             display_name_notices: true,
             mirrors: 1,
             ssr: false,
+            oit: true,
+            oit_nodes_per_pixel: aurora_render::oit::DEFAULT_NODES_PER_PIXEL,
+            oit_max_layers: aurora_render::oit::DEFAULT_SORTED_LAYERS,
             anisotropy: 8,
             cache_size_mb: 20480,
             cache_location: String::new(),
@@ -2775,6 +2786,11 @@ impl Settings {
             ssr: self.ssr,
             anisotropy: self.anisotropy,
             occlusion: self.occlusion_culling,
+            oit: self.oit,
+            oit_nodes_per_pixel: self
+                .oit_nodes_per_pixel
+                .clamp(aurora_render::oit::MIN_NODES_PER_PIXEL, aurora_render::oit::MAX_NODES_PER_PIXEL),
+            oit_max_layers: self.oit_max_layers.clamp(1, aurora_render::oit::MAX_SORTED_LAYERS),
         }
     }
 

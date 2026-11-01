@@ -1823,6 +1823,7 @@ mod tests {
             max_texture_size: 0,
             adapters: Vec::new(),
             notice: None,
+            oit: true,
         };
         let input = egui::RawInput {
             screen_rect: Some(screen),

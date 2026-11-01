@@ -71,6 +71,8 @@ pub struct GpuInfo {
     /// Why the dedicated GPU may not be the one drawing (shown under that
     /// choice too).
     pub notice: Option<crate::adapter_choice::Notice>,
+    /// Blended faces can be sorted per pixel (oit.rs `supported`).
+    pub oit: bool,
 }
 
 /// The part of a range of skin bindings to send that is in a list of `len`.
@@ -432,6 +434,7 @@ impl Renderer {
             max_texture_size: alim.max_texture_dimension_2d,
             adapters,
             notice,
+            oit: crate::oit::supported(&device),
         };
 
         // ---- the scene's stores; what they write at creation is replayed
@@ -1662,6 +1665,11 @@ fn open_device(
     // RGBA8 for the streamed textures; without it they stay RGBA8
     if afeat.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
         features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
+    }
+    // order-independent transparency (oit.rs): the capture's depth test
+    // before its shader
+    if afeat.contains(wgpu::Features::SHADER_EARLY_DEPTH_TEST) {
+        features |= wgpu::Features::SHADER_EARLY_DEPTH_TEST;
     }
     // GPU draw lists (gpu_cull.rs): draw counts written by the GPU
     if afeat.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT) {
