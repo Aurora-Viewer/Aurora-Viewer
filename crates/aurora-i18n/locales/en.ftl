@@ -12780,3 +12780,8 @@ import-source-folder-name-help = Name of the inventory folder for { $source }. T
 
 import-local-stage-upload = Add to upload ({ $count })
 import-local-stage-upload-help = Keep the local previews and prepare uploads of the checked files, including hidden files. Upload fees are confirmed separately.
+
+vr-view = VR view
+vr-unavailable = VR is unavailable. Check that an OpenXR runtime and headset are connected.
+
+app-vr-leave = Press { $key } to return to desktop mode

@@ -141,6 +141,9 @@ pub struct Renderer {
     /// Where the backend runs. First field: dropped first, so the render
     /// thread has left before the scene's stores go.
     host: Host,
+    vr: Arc<crate::vr_control::Control>,
+    #[cfg(target_os = "linux")]
+    _xr_graphics: Option<crate::xr_device::Graphics>,
     pub device: wgpu::Device,
     pub info: GpuInfo,
     pub geometry: GeometryArena,
@@ -185,6 +188,7 @@ pub struct Renderer {
     msaa_supported: Vec<u32>,
     /// The surface can be read back (captures).
     can_capture: bool,
+    output_format: wgpu::TextureFormat,
     /// Texture animation clock (tex_anim.rs), shared with the backend.
     anim_clock: crate::tex_anim::AnimClock,
     /// Inverse view-projection of the last frame built (cursor rays).
@@ -276,6 +280,22 @@ impl Renderer {
             };
             desc
         };
+        #[cfg(target_os = "linux")]
+        let xr_graphics = match crate::xr_device::Graphics::new(desc().flags) {
+            Ok(graphics) => Some(graphics),
+            Err(e) => {
+                log::info!("OpenXR initialization unavailable: {e}");
+                if std::env::var_os("AURORA_DEMO_XR_DEVICE").is_some() || std::env::var_os("AURORA_DEMO_XR_WORLD").is_some() {
+                    return Err(RenderError::Device(e.to_string()));
+                }
+                None
+            }
+        };
+        #[cfg(target_os = "linux")]
+        let mut instance = xr_graphics
+            .as_ref()
+            .map_or_else(|| wgpu::Instance::new(desc()), |g| g.instance.clone());
+        #[cfg(not(target_os = "linux"))]
         let mut instance = wgpu::Instance::new(desc());
         // ---- the GPU: every adapter listed, then tried in our order
         // (adapter_choice.rs), the next one if one fails to open
@@ -328,7 +348,11 @@ impl Renderer {
         let mut opened = None;
         let mut failure = RenderError::NoAdapter("no native GPU adapter can present to the window".into());
         for (n, &i) in plan.order.iter().enumerate() {
-            match open_device(&adapters[i]) {
+            #[cfg(target_os = "linux")]
+            let opened_device = open_device(&adapters[i], xr_graphics.as_ref());
+            #[cfg(not(target_os = "linux"))]
+            let opened_device = open_device(&adapters[i]);
+            match opened_device {
                 Ok(o) => {
                     let why = match (n, plan.reason) {
                         (0, crate::adapter_choice::Reason::Wanted) => "the one asked for (AURORA_GPU or Preferences › Graphics)",
@@ -439,11 +463,20 @@ impl Renderer {
         let pacing = std::env::var("AURORA_FRAME_PACING").ok();
         let gpu_frames = Arc::new(crate::pacing::GpuFrames::new(crate::pacing::wanted(pacing.as_deref())));
         let pace_gate = crate::pacing::Gate::new(crate::pacing::always(pacing.as_deref()));
+        #[cfg(target_os = "linux")]
+        let vr = Arc::new(crate::vr_control::Control::new(xr_graphics.is_some()));
+        #[cfg(not(target_os = "linux"))]
+        let vr = Arc::new(crate::vr_control::Control::new(false));
         let backend = Backend::new(BackendInit {
+            vr: vr.clone(),
             gpu_frames: gpu_frames.clone(),
             device: device.clone(),
             queue,
-            surface,
+            surface: Arc::new(surface),
+            external: false,
+            output_format: None,
+            #[cfg(target_os = "linux")]
+            xr: xr_graphics.as_ref().map(|g| g.binding()),
             adapter,
             width,
             height,
@@ -467,6 +500,7 @@ impl Renderer {
         })?;
         let msaa_supported = backend.msaa_supported().to_vec();
         let can_capture = backend.can_capture();
+        let output_format = backend.output_format();
         let host = Host::new(backend, thread_wanted(std::env::var("AURORA_RENDER_THREAD").ok().as_deref()));
         log::info!(
             "renderer: {}",
@@ -478,6 +512,9 @@ impl Renderer {
         );
         Ok(Renderer {
             host,
+            vr,
+            #[cfg(target_os = "linux")]
+            _xr_graphics: xr_graphics,
             device,
             info,
             geometry,
@@ -502,6 +539,7 @@ impl Renderer {
             settings: RenderSettings::default(),
             msaa_supported,
             can_capture,
+            output_format,
             anim_clock,
             last_inv_vp: Mat4::IDENTITY,
             last_view: Mat4::IDENTITY,
@@ -1041,7 +1079,61 @@ impl Renderer {
     /// returns at once, with the statistics of that frame before; without,
     /// the frame is drawn here. A frame that carries a capture is waited
     /// for: `captured` holds it when this returns.
+    pub fn vr_state(&self) -> crate::VrState {
+        self.vr.state()
+    }
+    pub fn vr_engaged(&self) -> bool {
+        self.vr.state().engaged()
+    }
+    pub fn set_vr_enabled(&self, on: bool) -> bool {
+        self.vr.request(on)
+    }
+
     pub fn render(&mut self, params: FrameParams, lists: &DrawLists, ui: Option<crate::EguiFrame>) -> RenderStats {
+        self.render_output(params, lists, ui, None)
+    }
+
+    /// Draw a frame into a caller-owned texture instead of presenting the window.
+    /// The target must belong to this renderer's device and match its output size
+    /// and format. The texture stays alive until the render worker has submitted
+    /// the frame; this call alone is not a GPU completion or OpenXR release fence.
+    /// No egui shapes are drawn. World draw lists, including HUDs, are supplied
+    /// by the caller. Each independent view needs its own rendering history;
+    /// alternating eyes through this renderer would mix temporal state.
+    pub fn render_to_texture(&mut self, params: FrameParams, lists: &DrawLists, texture: wgpu::Texture) -> RenderStats {
+        self.render_output(params, lists, None, Some(texture))
+    }
+
+    /// Offline integration check of the complete world pass into an owned
+    /// texture. Used only on a requested demo capture, not every frame.
+    pub fn render_world_texture_capture(&mut self, params: FrameParams, lists: &DrawLists) -> RenderStats {
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("world output integration capture"),
+            size: wgpu::Extent3d {
+                width: self.size.0,
+                height: self.size.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.output_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let mut world = DrawLists::default();
+        world.copy_from(lists);
+        world.strip_viewer_overlays();
+        self.render_to_texture(params, &world, texture)
+    }
+
+    fn render_output(
+        &mut self,
+        params: FrameParams,
+        lists: &DrawLists,
+        ui: Option<crate::EguiFrame>,
+        output: Option<wgpu::Texture>,
+    ) -> RenderStats {
         let t0 = Instant::now();
         let mut ui = ui;
         if self.demo_lost == Some(self.frames) && !self.lost.get() {
@@ -1129,6 +1221,7 @@ impl Renderer {
         self.last_view = params.view;
         let index = self.frames;
         let packet = FramePacket {
+            output,
             index,
             writes: spent.writes,
             uploads,
@@ -1501,7 +1594,10 @@ struct OpenedDevice {
 
 /// Open `adapter` with the features the renderer needs and the optional
 /// ones it has; an error when it lacks a needed one or the device fails.
-fn open_device(adapter: &wgpu::Adapter) -> Result<OpenedDevice, RenderError> {
+fn open_device(
+    adapter: &wgpu::Adapter,
+    #[cfg(target_os = "linux")] xr: Option<&crate::xr_device::Graphics>,
+) -> Result<OpenedDevice, RenderError> {
     let afeat = adapter.features();
     let alim = adapter.limits();
     let bindless_feats =
@@ -1572,15 +1668,24 @@ fn open_device(adapter: &wgpu::Adapter) -> Result<OpenedDevice, RenderError> {
         features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;
     }
     let max_textures = texture_page_limit(&alim);
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+    let descriptor = wgpu::DeviceDescriptor {
         label: Some("aurora"),
         required_features: features,
         required_limits: alim.clone(),
         experimental_features: wgpu::ExperimentalFeatures::disabled(),
         memory_hints: wgpu::MemoryHints::Performance,
         trace: wgpu::Trace::Off,
-    }))
-    .map_err(|e| RenderError::Device(e.to_string()))?;
+    };
+    #[cfg(target_os = "linux")]
+    let (device, queue) = if let Some(xr) = xr {
+        let graphics = xr.open(adapter, &descriptor).map_err(|e| RenderError::Device(e.to_string()))?;
+        log::info!("OpenXR-compatible viewer graphics device: {}", adapter.get_info().name);
+        graphics
+    } else {
+        pollster::block_on(adapter.request_device(&descriptor)).map_err(|e| RenderError::Device(e.to_string()))?
+    };
+    #[cfg(not(target_os = "linux"))]
+    let (device, queue) = pollster::block_on(adapter.request_device(&descriptor)).map_err(|e| RenderError::Device(e.to_string()))?;
     Ok(OpenedDevice {
         device,
         queue,

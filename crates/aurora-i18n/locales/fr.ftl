@@ -12776,3 +12776,8 @@ import-source-folder-name-help = Nom du dossier d’inventaire pour { $source }.
 
 import-local-stage-upload = Ajouter à l’upload ({ $count })
 import-local-stage-upload-help = Conserver les aperçus locaux et préparer l’upload des fichiers cochés, y compris les fichiers masqués. Les frais seront confirmés séparément.
+
+vr-view = Vue VR
+vr-unavailable = La VR est indisponible. Vérifiez que le runtime OpenXR et le casque sont connectés.
+
+app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau

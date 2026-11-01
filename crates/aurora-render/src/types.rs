@@ -648,6 +648,25 @@ pub struct ImpostorSprite {
 }
 
 impl DrawLists {
+    /// Remove viewer dressing while retaining geometry, particles and required vision restrictions.
+    pub(crate) fn strip_viewer_overlays(&mut self) {
+        self.hud_view = None;
+        self.hud_opaque.clear();
+        self.hud_blend.clear();
+        self.hud_debug_red.clear();
+        self.hud_debug_blue.clear();
+        self.creation_preview.clear();
+        self.physics_shapes.clear();
+        self.debug_red.clear();
+        self.debug_blue.clear();
+        self.debug_green.clear();
+        self.debug_yellow.clear();
+        self.land_overlay.clear();
+        self.select_root.clear();
+        self.select_child.clear();
+        self.select_faces.clear();
+        self.hud_select_faces.clear();
+    }
     /// Make `self` a copy of `src`, keeping the memory `self` already has:
     /// the lists of a frame packet, filled again every frame.
     pub fn copy_from(&mut self, src: &DrawLists) {

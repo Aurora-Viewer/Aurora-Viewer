@@ -12763,3 +12763,8 @@ import-source-folder-name-help = { $source } のインベントリ内のフォ�
 
 import-local-stage-upload = アップロードに追加（{ $count }）
 import-local-stage-upload-help = 非表示を含むチェック済みファイルのアップロードを準備し、ローカルプレビューは保持します。料金は別途確認します。
+
+vr-view = VR表示
+vr-unavailable = VRを利用できません。OpenXRランタイムとヘッドセットの接続を確認してください。
+
+app-vr-leave = { $key } キーでデスクトップモードに戻ります

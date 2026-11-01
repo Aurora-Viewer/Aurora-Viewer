@@ -1339,6 +1339,45 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
       ├──► aurora-audio, aurora-voice, aurora-media
 ```
 
+### Experimental VR render output
+
+`stereo_view.rs` holds runtime-independent camera anchoring and asymmetric
+infinite reverse-Z eye projection math. `xr_device.rs` is the Linux experimental
+Vulkan-enable2 bootstrap for the viewer's full graphics feature set, enabled only
+by the explicit offline demo scenario documented in TESTING.md.
+
+The Linux `aurora-render` example `xr_spike` proves OpenXR-created Vulkan
+instance/device import into wgpu and runtime-owned eye swapchain import. It
+renders a synthetic stereo scene and recreates the XR session without replacing
+the graphics device. The separate viewer demo integration uses `xr_frame.rs`
+for session state, predicted poses, swapchain acquisition and projection-layer
+submission on the render thread. `Backend` holds two independently initialized
+eye backends through owning pointers; they share scene GPU buffers, textures and
+the frame's uploads while owning their depth, visibility, exposure and temporal
+resources. Eye backends retain the desktop surface through shared ownership but
+never acquire or configure it. Runtime images are returned to attachment layout
+before release. `vr_mirror.rs` samples an already rendered left-eye image into the desktop
+surface at up to 30 FPS, preserving aspect ratio and returning the runtime image
+to attachment layout before release. Bind groups are cached per eye image; no
+CPU readback or third world-rendering pass is used. Desktop presentation is
+restored when VR ends.
+
+`Renderer::render_to_texture` hands a caller-owned output texture through
+`FramePacket` to the rendering thread. The backend validates its size, format,
+layer count, sample count and required usages before encoding the existing world
+passes. The usual `render` method retains desktop swapchain acquisition. External
+output is not presented and has no egui frame; the caller remains responsible for
+its draw lists and GPU synchronization. Independent eyes must have independent
+persistent rendering histories; this API does not make one renderer safe to
+alternate between eyes. `vr_control.rs` holds atomic start/stop requests and observable state, keeping
+session ownership on the render worker. The toolbar toggles requests and native
+Escape handling takes priority over UI; the desktop camera is restored afterward.
+The initial anchor preserves camera position and horizontal heading while removing
+desktop pitch/roll. Only headset yaw is recentered: entry pitch/roll remain
+gravity-aligned so a headset resting tilted cannot introduce a persistent horizon
+offset when worn. Late runtime attachment and production disconnect recovery
+remain in progress.
+
 ## `aurora-viewer` in detail
 
 Inventory local-file thumbnails prepare whole-image square scaling

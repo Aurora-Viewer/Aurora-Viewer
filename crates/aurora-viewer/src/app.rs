@@ -257,6 +257,8 @@ pub struct App {
     /// Throttle of the "sky frame" log line.
     sky_log: crate::world::env::SkyLog,
     camera: Camera,
+    vr_camera: Option<Camera>,
+    vr_toggle: bool,
     input: MoveInput,
     joystick: joystick::State,
     /// Keys and bindable mouse buttons held down.
@@ -1149,6 +1151,8 @@ impl App {
             probes: Default::default(),
             sky_log: Default::default(),
             camera: Camera::default(),
+            vr_camera: None,
+            vr_toggle: false,
             input: MoveInput::default(),
             joystick: Default::default(),
             down: HashSet::new(),
@@ -8441,6 +8445,12 @@ impl App {
             self.settings.antialiasing = mode;
             gfx.renderer.apply_settings(self.settings.render_settings());
         }
+        if !gfx.renderer.vr_engaged()
+            && let Some(camera) = self.vr_camera.take()
+        {
+            self.camera = camera;
+            gfx.renderer.cut_motion_history();
+        }
         let mut view = self.camera.view();
         let mut proj = frame_proj(&self.camera);
         let mut vp = proj * view;
@@ -8450,6 +8460,11 @@ impl App {
             aspect,
             camera_fast,
         );
+        // The experimental XR worker can look in any direction after these
+        // CPU lists are prepared; per-eye GPU culling still uses the real frusta.
+        if gfx.renderer.vr_engaged() || (self.demo && std::env::var_os("AURORA_DEMO_XR_WORLD").is_some()) {
+            cull.planes = [glam::Vec4::W; 6];
+        }
         // debug: frozen culling view (move around to see what it drops)
         if self.settings.debug.freeze_culling {
             cull = *self.frozen_cull.get_or_insert(cull);
@@ -8747,6 +8762,9 @@ impl App {
                 );
                 if self.settings.debug.freeze_culling {
                     cull = *self.frozen_cull.get_or_insert(cull);
+                }
+                if gfx.renderer.vr_engaged() || (self.demo && std::env::var_os("AURORA_DEMO_XR_WORLD").is_some()) {
+                    cull.planes = [glam::Vec4::W; 6];
                 }
                 self.scene.fov_y = self.camera.fov_y;
                 self.build.cam = crate::build::geom::Cam::new(
@@ -9947,6 +9965,22 @@ impl App {
             self.net.set_bandwidth(bandwidth_kbps(&self.settings));
         }
         self.handle_actions(actions, event_loop);
+        if std::mem::take(&mut self.vr_toggle) {
+            let engaged = gfx.renderer.vr_engaged();
+            if gfx.renderer.set_vr_enabled(!engaged) {
+                if !engaged {
+                    self.vr_camera = Some(self.camera.clone());
+                    self.down.clear();
+                    self.drop_clicks();
+                    self.on_left_release();
+                    self.release_cursor(true);
+                }
+            } else {
+                self.world
+                    .system_notice(aurora_i18n::tr!("vr-unavailable"), crate::world::notice_topics::Topic::Warning);
+            }
+        }
+
         for r in std::mem::take(&mut self.build.ui.requests) {
             self.on_build_request(r);
         }
@@ -9998,7 +10032,11 @@ impl App {
         // returned are those of the frame before; a frame that carries a
         // capture is waited for, its pixels are read in the tail below.
         let lists = if self.in_world() { &self.scene.lists } else { &self.empty_lists };
-        let stats = gfx.renderer.render(fp, lists, Some(egui_frame));
+        let stats = if self.demo && gfx.renderer.capture_request && std::env::var_os("AURORA_DEMO_RENDER_TEXTURE").is_some() {
+            gfx.renderer.render_world_texture_capture(fp, lists)
+        } else {
+            gfx.renderer.render(fp, lists, Some(egui_frame))
+        };
         self.photo_gpu_time(&stats);
         self.photo_drawn(&mut gfx.renderer);
         self.last_render = stats;
@@ -12119,6 +12157,7 @@ impl App {
             BarAction::Favorite(f) => self.favorite_action(f),
             BarAction::ToggleInterface => self.toggle_interface(),
             BarAction::HideInterface => self.interface.set_hidden(&self.egui_ctx, true),
+            BarAction::ToggleVr => self.vr_toggle = true,
             BarAction::ToggleImmersive => self.toggle_immersive(),
             BarAction::ImmersiveHuds(visible) => self.set_immersive_huds(visible),
             BarAction::HoverTips(menu) => {
@@ -13261,6 +13300,8 @@ impl App {
     }
 
     fn draw_ui(&mut self, ui: &mut egui::Ui, projector: &ui::hud::Projector, renderer: &Renderer) -> UiActions {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::unique("vr-active"), renderer.vr_engaged()));
         self.world.refresh_rlva_privacy();
         self.notif_ui.privacy = self.world.rlva_privacy.clone();
         let mut a = UiActions::default();
@@ -14154,6 +14195,23 @@ impl App {
                     self.settings.debug.probes.then(|| self.probes.debug_list()),
                     &self.lod_infos,
                 );
+                if ctx.data(|data| data.get_temp::<bool>(egui::Id::unique("vr-active")).unwrap_or(false)) {
+                    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("vr-exit-hint")));
+                    aurora_render::vr_hint_marker(&painter, true);
+                    let text = aurora_i18n::tr!("app-vr-leave", key = aurora_i18n::tr!("keybinds-esc").to_string());
+                    let at = egui::pos2(ctx.content_rect().center().x, ctx.content_rect().bottom() - 16.0);
+                    let font = egui::FontId::proportional(18.0);
+                    // Match the desktop mouselook instructions; this layer is excluded from both eyes.
+                    painter.text(
+                        at + egui::vec2(1.0, 1.0),
+                        egui::Align2::CENTER_BOTTOM,
+                        &text,
+                        font.clone(),
+                        p.navy.gamma_multiply(0.6),
+                    );
+                    painter.text(at, egui::Align2::CENTER_BOTTOM, &text, font, p.ink.gamma_multiply(0.6));
+                    aurora_render::vr_hint_marker(&painter, false);
+                }
                 if self.camera.mouselook() {
                     let c = ctx.content_rect().center();
                     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("xhair")));
@@ -18302,6 +18360,20 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // VR exit owns Escape before egui, pickers, chat or camera shortcuts.
+        if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged())
+            && let WindowEvent::KeyboardInput { event: key, .. } = &event
+        {
+            if key.state == ElementState::Pressed
+                && key.physical_key == PhysicalKey::Code(KeyCode::Escape)
+                && let Some(gfx) = &self.gfx
+            {
+                gfx.renderer.set_vr_enabled(false);
+                gfx.window.request_redraw();
+            }
+            return;
+        }
+
         // the digits of a Windows Alt code typed in a text field are kept
         // from it (alt_codes.rs); the character comes at Alt's release
         if self.alt_code_key(&event) {

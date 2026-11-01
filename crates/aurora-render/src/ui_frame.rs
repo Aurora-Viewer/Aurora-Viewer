@@ -54,6 +54,24 @@ pub(crate) fn paint_jobs(primitives: &[ClippedPrimitive], uploaded: bool) -> Cow
     Cow::Owned(callbacks.cloned().collect())
 }
 
+/// Marks desktop-only VR instructions. Both markers must use the same painter.
+struct VrHintMarker(bool);
+
+pub fn vr_hint_marker(painter: &egui::Painter, begin: bool) {
+    painter.add(egui::Shape::Callback(egui::PaintCallback {
+        rect: egui::Rect::NOTHING,
+        callback: std::sync::Arc::new(VrHintMarker(begin)),
+    }));
+}
+
+fn hint_marker(shape: &ClippedShape) -> Option<bool> {
+    if let egui::Shape::Callback(callback) = &shape.shape {
+        callback.callback.downcast_ref::<VrHintMarker>().map(|marker| marker.0)
+    } else {
+        None
+    }
+}
+
 /// The interface of a frame as egui left it: shapes still to tessellate
 /// and texture changes.
 pub struct EguiFrame {
@@ -74,11 +92,25 @@ pub(crate) struct UiFrame {
 }
 
 impl EguiFrame {
+    /// Discard all interface shapes except the explicitly marked desktop hint.
+    pub(crate) fn retain_vr_hint(&mut self) {
+        let mut inside = false;
+        self.shapes.retain(|shape| {
+            if let Some(begin) = hint_marker(shape) {
+                inside = begin;
+                false
+            } else {
+                inside
+            }
+        });
+    }
+
     /// Same result as `egui::Context::tessellate` on the frame's shapes.
     pub(crate) fn tessellate(self) -> UiFrame {
         let EguiFrame {
             shapes, mut tessellator, ..
         } = self;
+        let shapes: Vec<_> = shapes.into_iter().filter(|shape| hint_marker(shape).is_none()).collect();
         let shape_count = shapes.len();
         let primitives = tessellator.tessellate_shapes(shapes);
         let vertices = primitives.iter().map(|p| match &p.primitive {
@@ -141,6 +173,39 @@ impl EguiHandOver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vr_mirror_keeps_only_marked_hint_shapes() {
+        let ctx = egui::Context::default();
+        let out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let painter = ui.painter();
+            painter.text(
+                egui::pos2(20.0, 20.0),
+                egui::Align2::LEFT_TOP,
+                "Hidden interface",
+                egui::FontId::default(),
+                egui::Color32::WHITE,
+            );
+            vr_hint_marker(painter, true);
+            painter.text(
+                egui::pos2(20.0, 50.0),
+                egui::Align2::LEFT_TOP,
+                "Esc to desktop",
+                egui::FontId::default(),
+                egui::Color32::WHITE,
+            );
+            vr_hint_marker(painter, false);
+            painter.circle_filled(egui::pos2(50.0, 50.0), 4.0, egui::Color32::WHITE);
+        });
+        let mut frame = EguiHandOver::default().frame(&ctx, out.shapes, out.textures_delta, out.pixels_per_point);
+        frame.retain_vr_hint();
+        assert_eq!(frame.shapes.len(), 1);
+        let egui::Shape::Text(text) = &frame.shapes[0].shape else {
+            panic!("only hint text retained")
+        };
+        assert_eq!(text.galley.job.text, "Esc to desktop");
+        assert!(frame.tessellate().vertices > 0);
+    }
 
     /// A pass with what the interface draws: text, rounded and stroked
     /// rectangles, circles small enough for the atlas discs and larger

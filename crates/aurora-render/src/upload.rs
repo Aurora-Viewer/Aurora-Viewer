@@ -665,6 +665,15 @@ pub struct FrameUploads {
 }
 
 impl FrameUploads {
+    /// Another view shares the submitted scene and uploads no assets a second time.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn empty_sibling(&self) -> Self {
+        Self {
+            encoder: None,
+            recycle: Vec::new(),
+            returned: self.returned.clone(),
+        }
+    }
     /// The recorded copies: first command buffer of the frame's submit.
     pub fn take_commands(&mut self) -> Option<wgpu::CommandBuffer> {
         self.encoder.take().map(|e| e.finish())
