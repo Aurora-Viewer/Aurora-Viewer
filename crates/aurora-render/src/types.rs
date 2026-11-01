@@ -553,6 +553,10 @@ pub struct DrawLists {
     /// Per `blend` entry: the face has glow (drawn into the glow right
     /// after it, as LLDrawPoolAlpha's emissives).
     pub blend_glow: Vec<bool>,
+    /// Per `blend` entry: select the unculled twin only for double-sided faces.
+    pub blend_double_sided: Vec<bool>,
+    /// Per `blend_under_water` entry: the same sidedness rule before water.
+    pub blend_under_double_sided: Vec<bool>,
     pub shadow_casters: Vec<ShadowCaster>,
     /// Terrain chunks casting shadows: drawn depth only like the opaque
     /// casters, else with the terrain's own alpha test (`fs_shadow_terrain`),
@@ -695,6 +699,8 @@ impl DrawLists {
         self.blend.clone_from(&src.blend);
         self.blend_under_water.clone_from(&src.blend_under_water);
         self.blend_glow.clone_from(&src.blend_glow);
+        self.blend_double_sided.clone_from(&src.blend_double_sided);
+        self.blend_under_double_sided.clone_from(&src.blend_under_double_sided);
         self.blend_depth = src.blend_depth;
         self.blend_depth_mode = src.blend_depth_mode;
         self.blend_depth_runs.clone_from(&src.blend_depth_runs);
@@ -759,6 +765,8 @@ impl DrawLists {
         self.water_ground = Default::default();
         self.glow.clear();
         self.blend_glow.clear();
+        self.blend_double_sided.clear();
+        self.blend_under_double_sided.clear();
         self.glow_alpha.clear();
         self.debug_red.clear();
         self.debug_blue.clear();
@@ -1771,7 +1779,9 @@ mod tests {
         scene.physics_shapes.push(cmd(26));
         scene.blend.extend([cmd(7), cmd(8), cmd(9)]);
         scene.blend_under_water.push(cmd(29));
+        scene.blend_under_double_sided.push(true);
         scene.blend_glow.extend([false, true, false]);
+        scene.blend_double_sided.extend([true, false, true]);
         scene.blend_depth = 1;
         scene.glow.push(cmd(4));
         scene.select_root.push(cmd(5));
@@ -1820,7 +1830,9 @@ mod tests {
         assert_eq!(packet.physics_shapes[0].record, 26);
         assert_eq!(packet.blend.iter().map(|c| c.record).collect::<Vec<_>>(), [7, 8, 9]);
         assert_eq!(packet.blend_under_water.iter().map(|c| c.record).collect::<Vec<_>>(), [29]);
+        assert_eq!(packet.blend_under_double_sided, [true]);
         assert_eq!(packet.blend_glow, [false, true, false]);
+        assert_eq!(packet.blend_double_sided, [true, false, true]);
         assert_eq!(packet.blend_depth, 1);
         assert_eq!((packet.terrain.len(), packet.glow.len(), packet.select_root.len()), (1, 1, 1));
         assert_eq!(packet.terrain_mask[0].record, 27);
@@ -1839,6 +1851,7 @@ mod tests {
         assert_eq!(packet.blend.len(), 3);
         assert!(scene.hud_view.is_none());
         assert!(scene.blend_under_water.is_empty());
+        assert!(scene.blend_under_double_sided.is_empty());
         assert!(scene.hud_opaque.is_empty());
         assert!(scene.hud_debug_red.is_empty());
         assert!(scene.creation_preview.is_empty());
