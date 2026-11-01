@@ -6,6 +6,8 @@ desktop camera restoration and the desktop mirror. **Windows runtime/headset
 validation is pending.** A successful build is not proof of working headset output.
 The validated configuration remains Quest 3 / WiVRn 26.9 / RTX 3090 on Linux.
 
+For shared controls, limits and other platforms, see [VR setup](VR.md).
+
 ## Requirements
 
 - Windows x64 and a GPU/driver supporting Vulkan 1.3 and Aurora's normal rendering

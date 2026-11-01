@@ -1,9 +1,15 @@
-//! OpenXR frame ownership for the Linux/Windows world-rendering experiment.
+//! Shared OpenXR frame ownership; native Vulkan or Metal image import.
 use crate::stereo_view::{Anchor, EyeView, Fov, Pose};
+#[cfg(not(target_os = "macos"))]
 use ash::vk::{self, Handle};
 use openxr as xr;
+#[cfg(not(target_os = "macos"))]
 use wgpu::hal;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+#[cfg(target_os = "macos")]
+type GraphicsApi = crate::xr_device::Metal;
+#[cfg(not(target_os = "macos"))]
+type GraphicsApi = xr::Vulkan;
 const VIEWS: xr::ViewConfigurationType = xr::ViewConfigurationType::PRIMARY_STEREO;
 /// Frames in a row the head must hold within `SETTLE_STEP` (metres per
 /// frame) before the view is anchored on it (`Session::begin`).
@@ -20,12 +26,12 @@ pub(crate) struct Eyes {
     pub textures: [wgpu::Texture; 2],
 }
 pub(crate) struct Session {
-    session: xr::Session<xr::Vulkan>,
+    session: xr::Session<GraphicsApi>,
     waiter: xr::FrameWaiter,
-    stream: xr::FrameStream<xr::Vulkan>,
+    stream: xr::FrameStream<GraphicsApi>,
     local: xr::Space,
     head: xr::Space,
-    swaps: Vec<xr::Swapchain<xr::Vulkan>>,
+    swaps: Vec<xr::Swapchain<GraphicsApi>>,
     images: Vec<Vec<wgpu::Texture>>,
     pub width: u32,
     pub height: u32,
@@ -42,35 +48,52 @@ pub(crate) struct Session {
     requested_stop: bool,
     stop_wanted: bool,
     device: wgpu::Device,
+    #[cfg(target_os = "macos")]
+    _queue: wgpu::Queue,
 }
 impl Session {
-    pub fn new(instance: &xr::Instance, system: xr::SystemId, device: &wgpu::Device, format: wgpu::TextureFormat) -> Result<Self> {
-        // SAFETY: Borrow live Vulkan handles; session retains the device for its full lifetime.
-        let h = unsafe { device.as_hal::<hal::api::Vulkan>() }.ok_or("Not a Vulkan device")?;
-        let vi = h.shared_instance().raw_instance();
-        // SAFETY: The handles and queue are from this runtime-compatible device.
-        let (session, waiter, stream) = unsafe {
-            instance
-                .create_session::<xr::Vulkan>(
-                    system,
-                    &xr::vulkan::SessionCreateInfo {
-                        instance: vi.handle().as_raw() as _,
-                        physical_device: h.raw_physical_device().as_raw() as _,
-                        device: h.raw_device().handle().as_raw() as _,
-                        queue_family_index: h.queue_family_index(),
-                        queue_index: h.queue_index(),
-                    },
-                )
-                .map_err(|e| format!("xrCreateSession: {e}"))?
+    pub fn new(
+        instance: &xr::Instance,
+        system: xr::SystemId,
+        device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+    ) -> Result<Self> {
+        #[cfg(not(target_os = "macos"))]
+        let (session, waiter, stream, format_raw) = {
+            // SAFETY: Borrow live Vulkan handles; session retains the device for its full lifetime.
+            let h = unsafe { device.as_hal::<hal::api::Vulkan>() }.ok_or("Not a Vulkan device")?;
+            let vi = h.shared_instance().raw_instance();
+            // SAFETY: The handles and queue are from this runtime-compatible device.
+            let (session, waiter, stream) = unsafe {
+                instance
+                    .create_session::<xr::Vulkan>(
+                        system,
+                        &xr::vulkan::SessionCreateInfo {
+                            instance: vi.handle().as_raw() as _,
+                            physical_device: h.raw_physical_device().as_raw() as _,
+                            device: h.raw_device().handle().as_raw() as _,
+                            queue_family_index: h.queue_family_index(),
+                            queue_index: h.queue_index(),
+                        },
+                    )
+                    .map_err(|e| format!("xrCreateSession: {e}"))?
+            };
+            let format_raw = match format {
+                wgpu::TextureFormat::Bgra8Unorm => vk::Format::B8G8R8A8_UNORM,
+                wgpu::TextureFormat::Rgba8Unorm => vk::Format::R8G8B8A8_UNORM,
+                wgpu::TextureFormat::Bgra8UnormSrgb => vk::Format::B8G8R8A8_SRGB,
+                wgpu::TextureFormat::Rgba8UnormSrgb => vk::Format::R8G8B8A8_SRGB,
+                _ => return Err("Unsupported eye output format".into()),
+            };
+            (session, waiter, stream, format_raw.as_raw() as u32)
         };
-        let format_raw = match format {
-            wgpu::TextureFormat::Bgra8Unorm => vk::Format::B8G8R8A8_UNORM,
-            wgpu::TextureFormat::Rgba8Unorm => vk::Format::R8G8B8A8_UNORM,
-            wgpu::TextureFormat::Bgra8UnormSrgb => vk::Format::B8G8R8A8_SRGB,
-            wgpu::TextureFormat::Rgba8UnormSrgb => vk::Format::R8G8B8A8_SRGB,
-            _ => return Err("Unsupported eye output format".into()),
+        #[cfg(target_os = "macos")]
+        let (session, waiter, stream, format_raw) = {
+            let (session, waiter, stream) = crate::xr_device::create_session(instance, system, _queue)?;
+            (session, waiter, stream, crate::xr_device::image_format(format)?)
         };
-        if !session.enumerate_swapchain_formats()?.contains(&(format_raw.as_raw() as u32)) {
+        if !session.enumerate_swapchain_formats()?.contains(&format_raw) {
             return Err("Runtime does not support the viewer output format".into());
         }
         let views = instance.enumerate_view_configuration_views(system, VIEWS)?;
@@ -99,7 +122,7 @@ impl Session {
                 usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT
                     | xr::SwapchainUsageFlags::TRANSFER_SRC
                     | xr::SwapchainUsageFlags::SAMPLED,
-                format: format_raw.as_raw() as _,
+                format: format_raw,
                 sample_count: 1,
                 width,
                 height,
@@ -123,35 +146,42 @@ impl Session {
             };
             let mut imported = Vec::new();
             for image in swap.enumerate_images()? {
-                let hd = hal::TextureDescriptor {
-                    label: desc.label,
-                    size: desc.size,
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: desc.dimension,
-                    format,
-                    usage: wgpu::TextureUses::COLOR_TARGET | wgpu::TextureUses::COPY_SRC | wgpu::TextureUses::RESOURCE,
-                    memory_flags: hal::MemoryFlags::empty(),
-                    view_formats: vec![],
-                };
-                // SAFETY: This runtime-owned image belongs to the bound device and matches hd.
-                // External memory and no-op destruction retain ownership in OpenXR. The
-                // imported wrappers are destroyed before the swapchains in Drop below.
-                let raw = unsafe {
-                    h.texture_from_raw(
-                        vk::Image::from_raw(image),
-                        &hd,
-                        Some(Box::new(|| {})),
-                        hal::vulkan::TextureMemory::External,
-                    )
-                };
-                // SAFETY: Raw image and descriptor agree; initial content may be discarded.
-                imported.push(unsafe { device.create_texture_from_hal::<hal::api::Vulkan>(raw, &desc, wgpu::TextureUses::UNINITIALIZED) });
+                #[cfg(not(target_os = "macos"))]
+                {
+                    // SAFETY: The session retains the live compatible Vulkan device.
+                    let h = unsafe { device.as_hal::<hal::api::Vulkan>() }.ok_or("Not Vulkan")?;
+                    let hd = hal::TextureDescriptor {
+                        label: desc.label,
+                        size: desc.size,
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: desc.dimension,
+                        format,
+                        usage: wgpu::TextureUses::COLOR_TARGET | wgpu::TextureUses::COPY_SRC | wgpu::TextureUses::RESOURCE,
+                        memory_flags: hal::MemoryFlags::empty(),
+                        view_formats: vec![],
+                    };
+                    // SAFETY: This runtime-owned image belongs to the bound device and matches hd.
+                    // External memory and no-op destruction retain ownership in OpenXR. The
+                    // imported wrappers are destroyed before the swapchains in Drop below.
+                    let raw = unsafe {
+                        h.texture_from_raw(
+                            vk::Image::from_raw(image),
+                            &hd,
+                            Some(Box::new(|| {})),
+                            hal::vulkan::TextureMemory::External,
+                        )
+                    };
+                    // SAFETY: Raw image and descriptor agree; initial content may be discarded.
+                    imported
+                        .push(unsafe { device.create_texture_from_hal::<hal::api::Vulkan>(raw, &desc, wgpu::TextureUses::UNINITIALIZED) });
+                }
+                #[cfg(target_os = "macos")]
+                imported.push(crate::xr_device::import_texture(device, image, &desc)?);
             }
             swaps.push(swap);
             images.push(imported);
         }
-        drop(h);
         Ok(Self {
             session,
             waiter,
@@ -171,6 +201,8 @@ impl Session {
             requested_stop: false,
             stop_wanted: false,
             device: device.clone(),
+            #[cfg(target_os = "macos")]
+            _queue: _queue.clone(),
         })
     }
     pub fn request_stop(&mut self) {

@@ -41,9 +41,9 @@ pub const CASCADES: usize = 3;
 const MAX_LIGHTS: usize = 64;
 /// Tries at setting up the XR session for one VR request, and the wait
 /// between them (`render_xr`).
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 const XR_RETRIES: u8 = 3;
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 const XR_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(750);
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const GBUF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -1433,17 +1433,17 @@ pub(crate) struct Backend {
     surface: std::mem::ManuallyDrop<Arc<wgpu::Surface<'static>>>,
     config: wgpu::SurfaceConfiguration,
     external: bool,
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     vr: Arc<crate::vr_control::Control>,
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     xr_seed: Option<Box<BackendInit>>,
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     xr_world: Option<Box<XrWorld>>,
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     xr_finished: bool,
     /// Failed session set-ups of the current VR request, and when the next
     /// try may start (`XR_RETRIES`).
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     xr_retry: (u8, Option<std::time::Instant>),
     /// The window's size while a photo frame draws at its own size in
     /// `config` (`Capture::Snapshot`); put back by `result`.
@@ -1605,7 +1605,7 @@ impl Drop for Backend {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 struct XrWorld {
     backends: [Backend; 2],
     mirror: crate::vr_mirror::Mirror,
@@ -1622,7 +1622,7 @@ pub(crate) struct BackendInit {
     pub external: bool,
     pub vr: Arc<crate::vr_control::Control>,
     pub output_format: Option<wgpu::TextureFormat>,
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     pub xr: Option<(openxr::Instance, openxr::SystemId)>,
     pub adapter: wgpu::Adapter,
     pub width: u32,
@@ -2538,19 +2538,19 @@ struct Ranges {
 impl Backend {
     /// Surface configuration, pipelines, targets and per-frame buffers.
     pub fn new(init: BackendInit) -> Result<Backend, RenderError> {
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         let xr_seed = init.xr.as_ref().map(|_| Box::new(init.clone()));
         let BackendInit {
             device,
             queue,
             surface,
             external,
-            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             vr,
-            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+            #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
                 vr: _,
             output_format,
-            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
                 xr: _,
             adapter,
             width,
@@ -3030,15 +3030,15 @@ impl Backend {
             surface: std::mem::ManuallyDrop::new(surface),
             config,
             external,
-            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             vr,
-            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             xr_seed,
-            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             xr_world: None,
-            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             xr_finished: false,
-            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             xr_retry: (0, None),
             snapshot_window: None,
             surface_srgb,
@@ -5246,7 +5246,7 @@ impl Backend {
     }
 
     /// Render one frame from its packet.
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     fn render_xr(&mut self, mut packet: FramePacket) -> Result<FrameResult, Box<FramePacket>> {
         if self.xr_world.is_none() {
             if self.xr_retry.1.is_some_and(|at| std::time::Instant::now() < at) {
@@ -5259,7 +5259,7 @@ impl Backend {
                 return Err(Box::new(packet));
             };
             let created = (|| -> Result<XrWorld, Box<dyn std::error::Error>> {
-                let session = crate::xr_frame::Session::new(runtime, *system, &self.device, self.config.format)?;
+                let session = crate::xr_frame::Session::new(runtime, *system, &self.device, &self.queue, self.config.format)?;
                 let mut init = (**seed).clone();
                 init.external = true;
                 init.xr = None;
@@ -5404,23 +5404,23 @@ impl Backend {
     }
 
     pub fn render(&mut self, packet: FramePacket) -> FrameResult {
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         if self.xr_world.is_none() && !self.vr.wanted() && self.vr.state() == crate::VrState::Stopping {
             self.vr.finish(false);
             self.motion_cut = true;
         }
 
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         if !self.xr_finished && self.xr_seed.is_some() && packet.index >= 600 && std::env::var_os("AURORA_DEMO_XR_WORLD").is_some() {
             self.xr_finished = true;
             self.vr.request(true);
         }
         // a new VR request starts its tries afresh
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         if !self.vr.wanted() && self.xr_world.is_none() {
             self.xr_retry = (0, None);
         }
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         let packet = if self.xr_seed.is_some() && (self.vr.wanted() || self.xr_world.is_some()) {
             match self.render_xr(packet) {
                 Ok(result) => return result,

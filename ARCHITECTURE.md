@@ -1350,12 +1350,21 @@ platform loader (`libopenxr_loader.so.1` or `openxr_loader.dll`); no runtime is
 bundled. Explicit offline demo scenarios fail on unavailable initialization so
 that a successful desktop fallback cannot be mistaken for an XR test.
 
+Native macOS VR uses `xr_metal.rs`, selected as the `xr_device` module on macOS,
+with the existing Metal wgpu backend. Its private `openxr::Graphics` adapter wraps
+`XR_KHR_metal_enable`: runtime Metal-device identity, the exact wgpu command queue,
+Metal pixel formats and retained `MTLTexture` imports. `xr_frame.rs` shares the
+session/frame/eye lifecycle across Vulkan and Metal. The queue is retained through
+session teardown. Loader/runtime failure leaves desktop startup available.
+Candidate Mac runtimes, source evidence and unverified gates are in `docs/VR.md`;
+no macOS headset result is claimed.
+
 The Linux/Windows `aurora-render` example `xr_spike` exercises OpenXR-created Vulkan
 instance/device import into wgpu and runtime-owned eye swapchain import. It
 renders a synthetic stereo scene and recreates the XR session without replacing
 the graphics device. Windows runtime/headset validation is pending;
-`docs/VR_WINDOWS.md` and the Windows VR test-build workflow provide setup and
-maintainer test artifacts. Viewer integration uses `xr_frame.rs`
+`docs/VR.md` provides cross-platform setup and validation status; Windows
+uses the existing CI after removal of the redundant dedicated workflow. Viewer integration uses `xr_frame.rs`
 for session state, predicted poses, swapchain acquisition and projection-layer
 submission on the render thread. `Backend` holds two independently initialized
 eye backends through owning pointers; they share scene GPU buffers, textures and

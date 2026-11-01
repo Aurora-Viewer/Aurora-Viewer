@@ -53,7 +53,7 @@ impl Default for Layout {
                 tb("Command_Speak_Icon", "speak", aurora_i18n::tr!("ui-skin-speak")),
                 tb("Command_Move_Icon", "move", aurora_i18n::tr!("controls-movement-title")),
                 tb("video-filled", "view", aurora_i18n::tr!("controls-camera-title")),
-                #[cfg(any(target_os = "linux", target_os = "windows"))]
+                #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
                 tb("device-vision-pro-filled", "vr_view", aurora_i18n::tr!("vr-view")),
                 tb("Command_View_Icon", "mouselook", aurora_i18n::tr!("common-mouselook-m")),
                 tb("Command_People_Icon", "people", aurora_i18n::tr!("common-people")),
