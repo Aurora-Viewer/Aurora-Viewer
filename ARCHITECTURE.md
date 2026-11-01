@@ -1,5 +1,10 @@
 # Aurora Viewer architecture
 
+Texture imports and material maps share the PNG channel normalization in
+`aurora-assets/src/import_texture.rs`: expand luminance to RGB, retain alpha
+and reduce 16-bit samples to their high byte, following
+`LLPngWrapper::normalizeImage` (#1527). Preview and upload use those same pixels.
+
 Chat volume formatting (#1323) is shared by the Conversations renderers and
 nearby-chat cards/lines: `ui/chat.rs::message_emphasis` and `message_color`,
 with `ui/fonts.rs::TextEmphasis` carried through emoji runs, links and search
@@ -1339,6 +1344,60 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
       ├──► aurora-audio, aurora-voice, aurora-media
 ```
 
+### Experimental VR render output
+
+`stereo_view.rs` holds runtime-independent camera anchoring and asymmetric
+infinite reverse-Z eye projection math. `xr_device.rs` is the Linux/Windows experimental
+Vulkan-enable2 bootstrap for the viewer's full graphics feature set. Linux and
+Windows try it at startup and fall back to ordinary desktop device creation when
+loader/runtime discovery is unavailable. The OpenXR crate dynamically loads the
+platform loader (`libopenxr_loader.so.1` or `openxr_loader.dll`); no runtime is
+bundled. Explicit offline demo scenarios fail on unavailable initialization so
+that a successful desktop fallback cannot be mistaken for an XR test.
+
+Native macOS VR uses `xr_metal.rs`, selected as the `xr_device` module on macOS,
+with the existing Metal wgpu backend. Its private `openxr::Graphics` adapter wraps
+`XR_KHR_metal_enable`: runtime Metal-device identity, the exact wgpu command queue,
+Metal pixel formats and retained `MTLTexture` imports. `xr_frame.rs` shares the
+session/frame/eye lifecycle across Vulkan and Metal. The queue is retained through
+session teardown. Loader/runtime failure leaves desktop startup available.
+Candidate Mac runtimes, source evidence and unverified gates are in `docs/VR.md`;
+no macOS headset result is claimed.
+
+The Linux/Windows `aurora-render` example `xr_spike` exercises OpenXR-created Vulkan
+instance/device import into wgpu and runtime-owned eye swapchain import. It
+renders a synthetic stereo scene and recreates the XR session without replacing
+the graphics device. Windows runtime/headset validation is pending;
+`docs/VR.md` provides cross-platform setup and validation status; Windows
+uses the existing CI after removal of the redundant dedicated workflow. Viewer integration uses `xr_frame.rs`
+for session state, predicted poses, swapchain acquisition and projection-layer
+submission on the render thread. `Backend` holds two independently initialized
+eye backends through owning pointers; they share scene GPU buffers, textures and
+the frame's uploads while owning their depth, visibility, exposure and temporal
+resources. Eye backends retain the desktop surface through shared ownership but
+never acquire or configure it. Runtime images are returned to attachment layout
+before release. `vr_mirror.rs` samples an already rendered left-eye image into the desktop
+surface at up to 30 FPS, preserving aspect ratio and returning the runtime image
+to attachment layout before release. Bind groups are cached per eye image; no
+CPU readback or third world-rendering pass is used. Desktop presentation is
+restored when VR ends.
+
+`Renderer::render_to_texture` hands a caller-owned output texture through
+`FramePacket` to the rendering thread. The backend validates its size, format,
+layer count, sample count and required usages before encoding the existing world
+passes. The usual `render` method retains desktop swapchain acquisition. External
+output is not presented and has no egui frame; the caller remains responsible for
+its draw lists and GPU synchronization. Independent eyes must have independent
+persistent rendering histories; this API does not make one renderer safe to
+alternate between eyes. `vr_control.rs` holds atomic start/stop requests and observable state, keeping
+session ownership on the render worker. The toolbar toggles requests and native
+Escape handling takes priority over UI; the desktop camera is restored afterward.
+The initial anchor preserves camera position and horizontal heading while removing
+desktop pitch/roll. Only headset yaw is recentered: entry pitch/roll remain
+gravity-aligned so a headset resting tilted cannot introduce a persistent horizon
+offset when worn. Late runtime attachment and production disconnect recovery
+remain in progress.
+
 ## `aurora-viewer` in detail
 
 Inventory local-file thumbnails prepare whole-image square scaling
@@ -2084,7 +2143,8 @@ trackpad deltas. Hint visibility and height units are saved
 in Settings. The main scene continues to use its normal shape/morph streaming.
 
 `aurora-net/session/wearable_save.rs` checks shape ownership and Modify/Copy,
-uploads the wearable through the existing AssetUpload/Xfer path, preserves item
+uploads the wearable through the existing AssetUpload/Xfer path with its inventory
+asset type (bodypart 13 or clothing 5), preserves item
 permissions for Save As through CopyInventoryItem, patches only the transaction
 `hash_id` through AIS and reads the resulting asset back before acknowledging
 success. Non-modifiable shapes can be copied only unchanged. Requests and replies
@@ -2105,7 +2165,7 @@ footer and dialogs); `app/physics_editor.rs` opens it from the worn layer's
 menus, keeps one appearance editor open at a time and provides
 `AURORA_DEMO_PHYSICS_EDIT`.
 
-Account login: `login_accounts.rs` keeps the per-grid catalogue, each account's start location, remember preferences and last-place image reference without secrets, and merges changes under an OS file lock. `credentials.rs` stores password hashes and MFA authorizations in separate OS credential entries per grid/user; MFA expires after 30 days and is saved only when requested. `atomic_file.rs` publishes complete files through a unique temporary per write. `login_wait.rs` keeps, per account, the last session this PC saw (its id, its last sign of life every 15 s, its end) in `last_sessions.json`, under an OS file lock: a login to an account whose session ended a moment ago, or was never seen ending (a crash), waits on the login screen with a countdown before it is sent (#956), and the login server is told of a session that did not end cleanly (`last_exec_event`, `last_exec_session_id`, as the Legacy Viewer's exec marker); a "presence" refusal is tried again after a minute. `app/relogin.rs` drives it from the login screen and the session's events. `machine_id.rs` computes the login's `mac` and `id0` once at startup, on its own thread, the way the official viewer does (llHashedUniqueID / LLMachineID: the folded motherboard UUID or Windows serial read through WMI, else the network adapter; generateSerialNumber: the C: volume serial, or the longest /dev/disk/by-uuid name on Linux; on macOS the platform serial number read through IOKit, folded for `mac` and hashed for `id0`, else the first Ethernet address), and only their md5 hashes leave it. `ui/login/carousel.rs` presents account cards with their own grid/start selectors, keyboard selection and the separate Add button. `ui/login/credentials_form.rs` shares the full first-account/Add form and the compact password/MFA prompt for existing profiles; registration happens after successful login. `ui/login/manager.rs` provides searchable portrait rows, saved account ordering and account-scoped credential removal, with confirmation keyed by identity. `ui/login/manager_drag.rs` tracks row gestures, insertion targets, a floating identity preview, Escape cancellation and edge scrolling; order changes happen once on release. Reordering moves identities in the latest lock-protected catalogue without replacing profile metadata or touching credentials. Login dialogs use `widgets::Modal::login_surface`: the existing GPU modal backdrop blurs the sky and lower account cards, with the login cards’ lighter tint inside the theme’s frame. Ordinary world modals retain their scene-glass markers; opaque skins skip the login blur. The floating drag preview shares `aurora_bg::frosted_pane` with login cards. `ui/login/derez.rs` prepares fragments on a background worker and batches them by GPU texture. `login_places.rs` resizes scene captures off the frame thread, publishes unique images atomically and loads bounded thumbnails; metadata updates only the matching grid/user/agent. Portraits and scene images (at most 512 pixels wide) live in each account's own folder. Place capture piggybacks on the existing scene capture at logout/quit, without interface overlays or a recurring readback.
+Account login: `login_accounts.rs` keeps the per-grid catalogue, each account's start location, remember preferences and last-place image reference without secrets, and merges changes under an OS file lock. `credentials.rs` stores password hashes and MFA authorizations in separate OS credential entries per grid/user; MFA expires after 30 days and is saved only when requested. `atomic_file.rs` publishes complete files through a unique temporary per write; the user's files (`write`) are flushed to the disk before the rename, so a hard reset of the PC leaves the old or the new file, never an empty one (#1809). `login_wait.rs` keeps, per account, the last session this PC saw (its id, its last sign of life every 15 s, its end) in `last_sessions.json`, under an OS file lock: a login to an account whose session ended a moment ago, or was never seen ending (a crash), waits on the login screen with a countdown before it is sent (#956), and the login server is told of a session that did not end cleanly (`last_exec_event`, `last_exec_session_id`, as the Legacy Viewer's exec marker); a "presence" refusal is tried again after a minute. `app/relogin.rs` drives it from the login screen and the session's events. `machine_id.rs` computes the login's `mac` and `id0` once at startup, on its own thread, the way the official viewer does (llHashedUniqueID / LLMachineID: the folded motherboard UUID or Windows serial read through WMI, else the network adapter; generateSerialNumber: the C: volume serial, or the longest /dev/disk/by-uuid name on Linux; on macOS the platform serial number read through IOKit, folded for `mac` and hashed for `id0`, else the first Ethernet address), and only their md5 hashes leave it. `ui/login/carousel.rs` presents account cards with their own grid/start selectors, keyboard selection and the separate Add button. `ui/login/credentials_form.rs` shares the full first-account/Add form and the compact password/MFA prompt for existing profiles; registration happens after successful login. `ui/login/manager.rs` provides searchable portrait rows, saved account ordering and account-scoped credential removal, with confirmation keyed by identity. `ui/login/manager_drag.rs` tracks row gestures, insertion targets, a floating identity preview, Escape cancellation and edge scrolling; order changes happen once on release. Reordering moves identities in the latest lock-protected catalogue without replacing profile metadata or touching credentials. Login dialogs use `widgets::Modal::login_surface`: the existing GPU modal backdrop blurs the sky and lower account cards, with the login cards’ lighter tint inside the theme’s frame. Ordinary world modals retain their scene-glass markers; opaque skins skip the login blur. The floating drag preview shares `aurora_bg::frosted_pane` with login cards. `ui/login/derez.rs` prepares fragments on a background worker and batches them by GPU texture. `login_places.rs` resizes scene captures off the frame thread, publishes unique images atomically and loads bounded thumbnails; metadata updates only the matching grid/user/agent. Portraits and scene images (at most 512 pixels wide) live in each account's own folder. Place capture piggybacks on the existing scene capture at logout/quit, without interface overlays or a recurring readback.
 
 `ui/login/layout.rs` caps central cards at three and large-window growth at 22%, reserving neighbour previews and the right information column. `ui/login/chrome.rs` shares the version/news panels, compact information dialog and community/version footer between the account and legacy login screens; it also draws the top left column of warning cards (`driver_notice::column`): `ui/login/safe_graphics_notice.rs`, the safe graphics offered after the GPU stopped answering and the way back from them (`app/safe_graphics.rs`), then `ui/login/driver_notice.rs`, the out of date graphics driver card (`gpu_driver.rs` decides, `app/driver_check.rs` runs the check when the renderer starts and logs it).
 
@@ -2255,6 +2315,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `scene/list_index.rs` | What the draw lists look for in each object slot every frame (avatar, transparent or glowing faces, drawn object, worn HUD): one byte per slot, written where the GPU's object table is written (after the sync of an object, when its faces are reclassified for alpha, when its slot is freed), so as not to walk the `ObjGpu` of every slot ever used; `AURORA_LIST_INDEX=0|check` |
 | `scene/hover.rs` | Cached object and surface point under the cursor: compact sphere index maintained by sync, candidates near the ray or displayed depth, reused while the question and nearby scene stay unchanged, refreshed at least every 100 ms; never a click cache. Foreground Blend triangles block hover without an action and at zero alpha, retaining large-face hierarchies; Mask holes remain pass-through. The cached point bounds media hover. Always-tested objects (avatars and rigged meshes in crowds) have classes computed after arrival / change to exclude irrelevant steps. AURORA_HOVER_CHECK compares the full reference search; AURORA_HOVER_LEGACY compares the index / hierarchy strategy; hover summary provides profiling. |
 | `scene/pick_accel.rs` | Triangle bounding-volume hierarchy for a picking face: the same ray distance as exhaustive triangle tests, built by a background job when a large mesh / sculpt face is first queried. Hover and the shared Blend query use ready hierarchies; other click surface tests remain exhaustive. |
+| `scene/sound_occlusion.rs` | World sounds muffled by what stands between them and the listener (Aurora's own, Preferences › Sound, on): ten times a second, three rays per playing world sound from the camera to the source and beside it; the main thread gathers the objects near the rays from the pick index (`PickIndex::segment_candidates`), their transforms and shared geometry, and the terrain under the rays; a background job counts the drawn triangles crossed (large faces through their hierarchies, `Accel::crossings`) into layers, ignoring avatars, worn and rigged objects, plants and the emitting linkset; the amount goes to the mixer's per-voice low-pass and gain cut (`AudioEngine::world_occlusion`). `AURORA_DEMO_SOUND_OCCLUSION` |
 | `media/` | Media of prims and parcels (objects with media kept up to date by the change stream of the `ObjectStore`, with no pass over all the objects), OpenID cookie of the grid's web pages (`openid.rs`), private browser profile deleted after use for the Web tab of "Search" (`private_profile.rs`: its own folder under `cache\web-private`, usage lock, deletion when the browser stops, on exit and at the next startup), shared browser cache emptied at every start (`cef_cache.rs`: the plugin's `cache/cef/cef_cache/<pid>` profiles of the earlier runs renamed `_old` before the first browser, then deleted in the background), download of Aurora's media plugins pack when no plugins are found, with retries (`pack.rs`), the media filter (`filter.rs`: the account's allow / deny list of sites, `medialist.xml`, and the questions; checked before a parcel media, a prim media or the parcel music reaches a site) |
 | `demo_tex_refresh.rs` | `AURORA_DEMO_TEXREFRESH` scenario: a panel whose texture file in the disk cache is stale, the right one on the local asset server (`demo_asset_server.rs`); "Refresh textures" (or `auto`) downloads it again |
 | `demo_aa_switch.rs` | `AURORA_DEMO_AA_SWITCH`: the anti-aliasing changed at given frames, to watch the pipelines for new MSAA samples compile on their worker without a long frame |
@@ -2275,7 +2336,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `demo_toasts.rs` | `AURORA_DEMO_TOASTS` scenario: a friend offline then online, two IMs from one resident, a group IM, then the bell list or a click on the IM card (window closed or minimized) |
 | `demo_chatlog.rs` | `AURORA_DEMO_CHATLOG` scenario: history files of the demo account (in its own folder), conversation with history, search, History window on a long file, IMs received offline, long conversation to measure the view |
 | `demo.rs`, `demo_land.rs`, `demo_region.rs`, `demo_place.rs`, `demo_eep.rs`, `demo_env.rs`, `demo_sky.rs`, `demo_stream.rs`, `demo_arrival.rs`, `demo_turn.rs`, `demo_asset_server.rs`, `demo_glyphs.rs`, `demo_tags.rs`, `demo_deform.rs`, `demo_link.rs`, `demo_tangents.rs`, `demo_rez.rs` | Demo mode: a local scene that simulates a server (and its replies to "About Land", to the place profiles, landmarks and history of "Places" and to ExtEnvironment, a library of environments for the picker; `demo_sky.rs`: a rainbow or a 22° halo, with stand-in textures); `demo_stream.rs`: objects and textures that arrive in waves (test of the streaming hitches, AURORA_DEMO_STREAM), `demo_turn.rs`: fast camera turns, again and again (AURORA_DEMO_TURN), and `demo_asset_server.rs`, the local HTTP server its `net=` option downloads the textures from, at the round trip of a distant grid; `demo_arrival.rs`: an arrival in a busy region, objects, meshes and animated avatars all around, every asset downloaded from that server, with the times the loading shows what is in front (AURORA_DEMO_ARRIVAL); `demo_glyphs.rs`: residents whose title, name and message use the extended characters of display names (AURORA_DEMO_GLYPHS); `demo_deform.rs`: an avatar left deformed by a finished pose, to reset (AURORA_DEMO_DEFORM); `demo_link.rs`: our avatar moved by a stand-in simulator through a simulated link (AURORA_DEMO_LINK: ping, jitter, a vehicle to sit on, optional native flight speed/inertia); `demo_tangents.rs`: a low-poly ball with a normal map baked through its own MikkTSpace tangents (AURORA_DEMO_BUMP=sphere); `demo_rez.rs`: objects and an avatar appearing and leaving in front of the camera, for the rez effect (AURORA_DEMO_REZ_EFFECT) |
-| `settings.rs`, `keybinds.rs`, `keybinds/layout.rs`, `keybinds/layout/linux.rs`, `theme.rs` | Saved settings, shortcuts, keyboard layout (Windows; on Linux the XKB keymap of the Wayland compositor or the X server, `layout/linux.rs`) and default movement keys, palette; one-shot viewer commands stay out of held controls, while `build/ui/keyboard.rs` shares the build accelerator table between native keyboard ownership and egui dispatch, including logical letters, per-event modifiers and text/web/media history priority |
+| `settings.rs`, `settings/saver.rs`, `keybinds.rs`, `keybinds/layout.rs`, `keybinds/layout/linux.rs`, `theme.rs` | Saved settings (written off the frame thread by `saver.rs`, in order, waited for at exit), shortcuts, keyboard layout (Windows; on Linux the XKB keymap of the Wayland compositor or the X server, `layout/linux.rs`) and default movement keys, palette; one-shot viewer commands stay out of held controls, while `build/ui/keyboard.rs` shares the build accelerator table between native keyboard ownership and egui dispatch, including logical letters, per-event modifiers and text/web/media history priority |
 | `tolerant.rs` | Forward-compatible reading of saved files (settings, account catalogue, HUD sizes, skin): a value this build does not understand costs that value only; a newer build's `settings.json` is written back with what this build does not know; `<name>.newer-backup.json` keeps a repaired file |
 | `gpu_driver.rs` | Is the graphics driver recent enough: NVIDIA's version against a written minimum, any vendor's install date (Windows registry) against 24 months; offline, a driver it cannot read is never old; the vendors' download pages |
 | `graphics_presets.rs` | The five graphics levels of Preferences › Graphics (the quality settings each one writes, from the Legacy Viewer's featuretable; the level whose settings match, or none: "Custom") |
@@ -2329,7 +2390,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `world/inventory/actions.rs`, `world/inventory/wearable.rs`, `world/inventory/demo.rs`, `world/inventory/preview.rs`, `world/inventory/tests.rs`, `world/inventory/background.rs` | Permission rules, moves / copies / links and offers, preparation of the Marketplace listings, default clothing assets and synthetic scenario; v3 inventory cache with full permissions and AIS favorite metadata; the whole inventory fetched in the background from login on (port of LLInventoryModelBackgroundFetch: batched recursive AIS reads, at most 19 in flight) |
 | `aurora-net/src/inventory/operations.rs`, `aurora-net/src/inventory/thumbnail.rs`, `aurora-net/src/session/inventory_upload.rs` | AIS mutations with read-back, remapping of the UUIDs assigned by the server, UDP creations / copies and acknowledgements with expiry, saving of the documents through capabilities; AssetUpload / Xfer upload of clothing before the item is created; free thumbnails through InventoryThumbnailUpload, JPEG2000 POST then AIS and read-back |
 | `aurora-assets/src/j2k/encode.rs` | Memory-bounded OpenJPEG encoder, square RGB / RGBA thumbnails of 64 to 256 pixels and alpha preserved |
-| `logging.rs`, `cache.rs`, `credentials.rs` | Logs (the capture of the lines one thread logs, and in memory the last warnings and the recent output of the diagnostics, for the Dev Toolbox), disk cache, remembered password (OS vault) |
+| `logging.rs`, `cache.rs`, `credentials.rs` | Logs (flushed to the disk once per second, so a frozen and reset PC keeps them; the capture of the lines one thread logs, and in memory the last warnings and the recent output of the diagnostics, for the Dev Toolbox), disk cache, remembered password (OS vault) |
 | `open_path.rs` | Files and folders handed to the system's file manager or viewer (`xdg-open`, `open`, `explorer`), the launcher waited for on a short thread so that none stays a zombie process |
 | `dev_toolbox/`, `ui/dev_toolbox.rs` | The Dev Toolbox (Advanced › Dev Toolbox, Ctrl+Alt+D; the former Preferences › Debug page): every tool with its stable identifier (J2, L1, R3…), kind, icon and group, the layout the user arranges and its saved form (new tools join their group, removed ones stay out), the anonymisation of what is copied ("Avatar 1", "Me") and the header of a copy (`dev_toolbox/`); the window: target bar, groups dragged in Customize, "Send a diagnostic", the last warnings (`ui/dev_toolbox.rs`). The agents' guide is docs/DEV_TOOLBOX.md; `AURORA_DEMO_TOOLBOX` |
 | `cache_location.rs`, `app/folders.rs` | The cache and transcript folders chosen in the preferences (CacheLocation, InstantMessageLogPath): `cache_location.rs` reads the cache's choice from the settings file at startup, before anything uses the cache, and removes the previous cache when the folder changed (only the viewer's own folders); `app/folders.rs` runs the folder dialog off the frame, and moves the account's transcripts at once through `chat_log` |
@@ -2425,6 +2486,10 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 linked HUD prims, following `LLAudioSourceVO::update`. They share the Sfx
 channel and normal attached-sound lifecycle; HUD coordinates never enter
 world panning or attenuation. Triggered sounds retain their world positions.
+World voices also carry an occlusion amount (`AudioEngine::world_occlusion`,
+from `scene/sound_occlusion.rs`): the mixer runs their mono signal through
+two one-pole low-passes and a gain cut that glide to it, with neither
+allocation nor lock in the audio callback.
 
 `aurora-audio/src/processing.rs` owns Sonora/WebRTC AEC3, AGC2, noise suppression
 and high-pass processing. Device callbacks only queue microphone samples and
@@ -2665,6 +2730,15 @@ click fades out in 0.7 s. "Show selection again" restarts this tint without
 changing the objects. `scene/selection_demo.rs` provides the offline mesh
 with separate curved islands of the `faces-complex` scenario, next to a
 closed torus primitive.
+
+PBR BOM maps retain their canonical UUIDs in assets and face overrides.
+`scene/shown_bakes.rs` resolves all four rendered channels per wearer, including
+last-good-bake retention and appearance-service sources. Effective PBR maps
+also feed `Scene::bom_mask`; material arrivals invalidate that visibility mask.
+Editing windows retain the coloured `BAKED_*` reference images in texture
+pickers, map swatches and material previews, for both PBR and Blinn-Phong.
+Only the scene substitutes the avatar's current bakes, following the requested
+editing behaviour rather than the Legacy Viewer's resolved picker preview.
 
 `ui/texture_picker/tree.rs` shares the search cache and the virtual tree of
 `ui/inventory/view.rs`. The folders load in bounded batches; the expanded
@@ -3020,6 +3094,10 @@ and Create > Copy selection, including Shift-drag duplication in the move
 manipulator.
 The demo simulator retains the group supplied by each creation request for
 its property replies.
+`RezScript` (new/dropped scripts and bridge installation) and `DeRezObject`
+(Delete, Take and Take Copy, including separate items) instead send the
+current active group directly, independent of the parcel rez preference.
+The script inventory item keeps its own permission group unchanged.
 
 Rezzing from the inventory goes through `ui/inventory.rs` (payload and release before the end of the egui pass), `app/inventory_drag.rs` (rules, group, preparation of the commands and local consumption of the non-copyable items), `Scene::inventory_surface` (triangles among the candidates of the index, terrain, without a GPU wait) and `aurora-net/src/inventory/rez.rs` (reliable `RezObject` message in the targeted region). Transparent pixels are tested with a mask of one bit per 2×2 block, prepared by the decoding tasks; invisible and rigged surfaces are discarded. The cursor keeps the result for 100 ms at most when the ray does not move; the release always recomputes the surface. Over an object, what goes into its contents (Ctrl for an object, without it for the other items, and a selection or a folder of several entries) is decided by `build/contents_drop.rs`, all the entries accepted or none, and sent with `UpdateTaskInventory` / `RezScript`; the Contents tab uses the same rules. The demo uses a synthetic cube as the reply to the rez. `app/contents_drop_demo.rs` drives `AURORA_DEMO_CONTENTS_DROP`.
 

@@ -53,6 +53,78 @@ fn item(inv: &mut Inventory, me: Uuid, parent: Uuid) {
     }
 }
 
+fn received() -> Inventory {
+    let mut inv = Inventory {
+        root: id(ROOT),
+        ..Default::default()
+    };
+    folder(&mut inv, id(ROOT), Uuid::nil(), 8);
+    folder(&mut inv, id(TRASH), id(ROOT), 14);
+    folder(&mut inv, id(10), id(ROOT), 50);
+    folder(&mut inv, id(20), id(10), -1);
+    folder(&mut inv, id(21), id(20), -1);
+    item(&mut inv, id(30), id(21));
+    item(&mut inv, id(31), id(10));
+    inv.items.get_mut(&id(30)).expect("received item").owner_mask = 0;
+    inv
+}
+
+#[test]
+fn received_deliveries_can_be_deleted_without_unlocking_other_edits() {
+    let mut inv = received();
+    let prefs = InventoryPreferences::default();
+    let facts = Facts::default();
+    let selected = [id(20), id(30), id(31)];
+    let mut st = InventoryUi {
+        selection: selected.into(),
+        ..Default::default()
+    };
+    for target in [id(20), id(21), id(30), id(31)] {
+        assert!(delete::allowed(&inv, &[target], &prefs, &facts), "received {target}");
+        assert!(!rules::mutable(&inv, target, &prefs.protected), "other edits retain their rules");
+        let menu = context_catalog::build(&inv, target, &st, &prefs, &facts);
+        assert!(menu.entries.iter().any(|entry| entry.id == "delete" && entry.enabled));
+    }
+    delete::request(&inv, &mut st, &prefs, &facts);
+    assert!(matches!(&st.dialog, Some(EditDialog::Delete(ids, false)) if ids.len() == 3));
+    let change = rules::move_selection(&inv, &selected, id(TRASH), &prefs.protected, &facts.worn).expect("trash received deliveries");
+    assert!(change.move_only());
+    assert_eq!(change.operations.len(), 2, "the selected child stays in its purchase folder");
+    assert!(change.refresh.contains(&id(10)) && change.refresh.contains(&id(TRASH)));
+    rules::demo_mutate(&mut inv, id(99), change).expect("apply deletion");
+    assert_eq!(inv.folders[&id(20)].info.parent, id(TRASH));
+    assert_eq!(inv.folders[&id(21)].info.parent, id(20));
+    assert_eq!(inv.items[&id(30)].parent, id(21));
+    assert_eq!(inv.items[&id(31)].parent, id(TRASH));
+    assert_eq!(inv.folders[&id(10)].info.parent, id(ROOT));
+}
+
+#[test]
+fn received_deletion_preserves_system_worn_library_and_locked_folder_protections() {
+    let mut inv = received();
+    let mut prefs = InventoryPreferences::default();
+    let mut facts = Facts::default();
+    for target in [id(ROOT), id(TRASH), id(10), id(999)] {
+        assert!(!delete::allowed(&inv, &[target], &prefs, &facts));
+        assert!(rules::move_selection(&inv, &[target], id(TRASH), &prefs.protected, &facts.worn).is_err());
+    }
+    facts.worn.insert(id(30));
+    for target in [id(20), id(21), id(30)] {
+        assert!(!delete::allowed(&inv, &[target, id(31)], &prefs, &facts));
+        assert!(rules::move_selection(&inv, &[target], id(TRASH), &prefs.protected, &facts.worn).is_err());
+    }
+    facts.worn.clear();
+    for protected in [id(10), id(20), id(21)] {
+        prefs.protected = HashSet::from([protected]);
+        assert!(!delete::allowed(&inv, &[id(30)], &prefs, &facts));
+        assert!(rules::move_selection(&inv, &[id(30)], id(TRASH), &prefs.protected, &facts.worn).is_err());
+    }
+    prefs.protected.clear();
+    inv.folders.get_mut(&id(21)).expect("library folder").library = true;
+    assert!(!delete::allowed(&inv, &[id(30)], &prefs, &facts));
+    assert!(rules::move_selection(&inv, &[id(30)], id(TRASH), &prefs.protected, &facts.worn).is_err());
+}
+
 /// `folders` personal folders ten wide (four or five deep), two items in
 /// each, and `selected` items in one folder three levels down; 60 worn items.
 fn large(folders: u128, selected: u128) -> (Inventory, Vec<Uuid>, Facts) {

@@ -2,9 +2,23 @@
 //! previous run is kept as `aurora.previous.log`), so a session can be
 //! shared after a test even when the viewer was started without a console.
 //! Capability URLs are secrets for the session: their id is masked.
+//!
+//! The lines reach the system as they are logged, and the disk once per
+//! second (`start_flusher`): a PC that freezes and is reset keeps the log up
+//! to the second before. Left to the system, ext4 brought the whole log
+//! back empty after a reset in the first half minute of a session (#1809).
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
+/// Time between two flushes of the log files to the disk.
+const FLUSH_PERIOD: Duration = Duration::from_secs(1);
+
+/// Records written to the log files, for the flusher to know there is
+/// something to flush.
+static RECORDS: AtomicU64 = AtomicU64::new(0);
 
 pub fn logs_dir() -> PathBuf {
     if let Some(test) = aurora_updater::test_environment() {
@@ -212,6 +226,7 @@ impl Write for Tee {
             let _ = f.write_all(text.as_bytes());
             crate::disk_io::written(crate::disk_io::Origin::Logs, text.len());
         }
+        RECORDS.fetch_add(1, Ordering::Relaxed);
         Ok(buf.len())
     }
 
@@ -226,12 +241,45 @@ impl Write for Tee {
     }
 }
 
+/// Flush `files` (handles of the log files) to the disk once per
+/// `FLUSH_PERIOD` when lines were logged since the last time, off the
+/// threads that log: a flush waits for the disk.
+fn start_flusher(files: Vec<std::fs::File>) {
+    if files.is_empty() {
+        return;
+    }
+    let spawned = std::thread::Builder::new().name("aurora-log-flush".into()).spawn(move || {
+        let mut flushed = 0;
+        loop {
+            std::thread::sleep(FLUSH_PERIOD);
+            let records = RECORDS.load(Ordering::Relaxed);
+            if records != flushed {
+                flushed = records;
+                for file in &files {
+                    let _ = file.sync_data();
+                }
+            }
+        }
+    });
+    if let Err(e) = spawned {
+        eprintln!("log files not flushed to the disk: {e}");
+    }
+}
+
 pub fn init() {
     let dir = logs_dir();
     let _ = std::fs::create_dir_all(&dir);
     let path = log_path();
     let _ = std::fs::rename(&path, dir.join(format!("{}.previous.log", log_stem())));
     let file = std::fs::File::create(&path).ok();
+    let session_file = crate::crash::session_log();
+    start_flusher(
+        [&file, &session_file]
+            .into_iter()
+            .flatten()
+            .filter_map(|f| f.try_clone().ok())
+            .collect(),
+    );
     // `pulseaudio` off: the PulseAudio client logs `ERROR Reactor error:
     // Client disconnected` each time cpal closes a stream (every output or
     // capture device switch). Real stream failures reach aurora-audio through
@@ -241,10 +289,7 @@ pub fn init() {
             .default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,reqwest=warn,symphonia=warn,pulseaudio=off,zbus=warn"),
     )
     .format_timestamp_millis()
-    .target(env_logger::Target::Pipe(Box::new(Tee {
-        file,
-        session_file: crate::crash::session_log(),
-    })))
+    .target(env_logger::Target::Pipe(Box::new(Tee { file, session_file })))
     .init();
     std::panic::set_hook(Box::new(|info| {
         let bt = std::backtrace::Backtrace::force_capture();

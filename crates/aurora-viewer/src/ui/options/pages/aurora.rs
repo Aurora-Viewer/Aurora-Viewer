@@ -18,7 +18,8 @@ pub enum Look {
     Legacy,
 }
 
-/// Every choice of the page set to one look, and Aurora's water with it;
+/// Every choice of the page set to one look (the colored sky ambient
+/// included), and Aurora's water with it;
 /// the avatar plates' own settings and the filing of received items are
 /// left as they are.
 pub fn set_all(s: &mut Settings, look: Look) {
@@ -57,6 +58,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.predict_own_motion = aurora;
     s.water_effects.enabled = aurora;
     s.synchronize_animations = aurora;
+    s.colored_sky_ambient = aurora;
 }
 
 /// The aurora gradient at `t` (0 at its start, 1 at its end): the brand's
@@ -334,6 +336,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-aurora-hover-tips-legacy"),
                     &field!(classic_hover_tips),
                 );
+                // also in Graphics › Sky and environment, the same setting
+                cx.wide().experimental().choice(
+                    tr!("ui-options-colored-sky-ambient"),
+                    tr!("ui-options-colored-sky-ambient-help"),
+                    &field!(colored_sky_ambient),
+                    &[(true, aurora, true), (false, tr!("ui-options-aurora-classic"), false)],
+                );
             });
             cx.group(tr!("common-interface"), |cx| {
                 cx.wide().choice(
@@ -423,6 +432,16 @@ mod tests {
         settings.sort_received_items = true;
         set_all(&mut settings, Look::Legacy);
         assert!(settings.sort_received_items);
+    }
+
+    #[test]
+    fn the_two_buttons_set_the_colored_sky_ambient_too() {
+        let mut s = Settings::default();
+        assert!(!s.colored_sky_ambient, "off by default");
+        set_all(&mut s, Look::Aurora);
+        assert!(s.colored_sky_ambient);
+        set_all(&mut s, Look::Legacy);
+        assert!(!s.colored_sky_ambient);
     }
 
     #[test]
