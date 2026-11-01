@@ -129,6 +129,14 @@ impl App {
     }
 
     pub(super) fn release_object_hold(&mut self) {
+        // outside the frame (mouse up, menus) the renderer is ours: forget
+        // a drawn-face request still on its way; in the frame,
+        // update_object_hold forgets it before calling this
+        if let Some((ticket, _)) = self.interactions.held.as_mut().and_then(|h| h.drawn.take())
+            && let Some(gfx) = self.gfx.as_mut()
+        {
+            gfx.renderer.forget_drawn(ticket);
+        }
         if let Some(h) = self.interactions.held.take()
             && self
                 .world
@@ -261,12 +269,18 @@ impl App {
     /// intersects that object alone), so a script reading
     /// llDetectedTouchST / UV / Pos sees the touch move, and a still cursor sees the
     /// object move under it. On a surface the GPU alone poses, that is the
-    /// faces drawn under the cursor, one request at a time: asked again
-    /// when the cursor moved since the last one, and every 100 ms.
+    /// faces drawn under the cursor, asked at the pace of the updates: once
+    /// per 100 ms, when the next update is nearly due, so the answer (one
+    /// to three frames later) is there when it can be sent. Each request is
+    /// one more pass over the visible geometry.
     fn ask_shown_surface(&mut self, renderer: &mut Renderer) {
+        // about two frames at 60 Hz: the answer usually lands as the update
+        // falls due, and the surface sent is at most that old
+        const LEAD: Duration = Duration::from_millis(34);
+        const EVERY: Duration = Duration::from_millis(100);
         let cursor = self.cursor_pos;
         let Some(h) = self.interactions.held.as_mut() else { return };
-        if h.drawn.is_none() && (h.latest.1 != cursor || h.asked.elapsed() >= Duration::from_millis(100)) {
+        if h.drawn.is_none() && h.asked.elapsed() >= EVERY && h.last.elapsed() + LEAD >= EVERY {
             h.drawn = Some((
                 renderer.request_drawn(cursor.0, cursor.1, aurora_render::DrawnMode::Interaction),
                 cursor,

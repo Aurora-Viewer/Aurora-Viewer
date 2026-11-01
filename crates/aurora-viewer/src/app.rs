@@ -4309,8 +4309,8 @@ impl App {
             );
         }
         // the click acts on the rigged mesh or worn object it lands on, as on
-        // any object: also one we wear, like the scripted attachments
-        // Firestorm lets us touch (its rigged ones are out of the left
+        // any object: also one we wear, like the scripted attachments the
+        // Legacy Viewer lets us touch (its rigged ones are out of the left
         // click's reach); one without an action is not designated, the
         // click went on behind
         if !alt
