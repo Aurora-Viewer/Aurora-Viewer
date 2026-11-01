@@ -770,11 +770,15 @@ override DEPTH_CONTACT_ALPHA: f32 = 0.5;
 // before it, POOL_ALPHA_PRE_WATER); 0, every other use, keeps all. A face
 // crossing the surface is drawn in both lists, each half here. Only while
 // the camera is above the water, as the lists are split
-// (blend_order::water_sides); under it nothing is clipped, as before.
+// (blend_order::water_sides); under it nothing is clipped, as before. The
+// flat region water height (`frame.params.y`, main_water_height), the one
+// the lists are split at, as LLDrawPoolAlpha uses getWaterHeight for both;
+// not enhanced water's displaced level at the camera (`cam_up.w`), or a
+// face within the waves would lose a slice, or be drawn twice unclipped.
 override WATER_CLIP: u32 = 0u;
 
 fn water_clip(world_pos: vec3<f32>) {
-    let h = frame.cam_up.w;
+    let h = frame.params.y;
     if (WATER_CLIP == 0u || frame.camera_pos.z < h) {
         return;
     }
@@ -1552,13 +1556,17 @@ override BLEND_SPLIT: u32 = 0u;
 @fragment
 fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
-    water_clip(in.world_pos);
     if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         let surface = portal_surface(records[in.record], in.uv, portal_aa);
         if (surface.alpha < 0.004) { discard; }
         let color = apply_fog(surface.color * frame.sky_cloud_pd2.w, in.world_pos);
         return vec4<f32>(color * surface.alpha, surface.alpha);
     }
+    // (not the portal surfaces above: they are not split by the water, and
+    // stay drawn whole after it, as before. The ban lines are clipped to the
+    // camera's side: the Legacy Viewer draws them after the scene, behind
+    // the water's depth)
+    water_clip(in.world_pos);
     // RiggedBlendDepth::Split: the texels at least half covered, then the
     // fainter ones, by the alpha of fs_depth_contact (the occlusion's depth
     // holds the same ones); tested before the material, which the other
@@ -1607,6 +1615,7 @@ fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
+    water_clip(in.world_pos);
     if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) {
         discard;
     }

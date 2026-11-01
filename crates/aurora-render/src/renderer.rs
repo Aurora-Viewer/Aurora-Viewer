@@ -810,6 +810,8 @@ struct Pipelines {
     water_particles: wgpu::RenderPipeline,
     water_particles_under: wgpu::RenderPipeline,
     glow: wgpu::RenderPipeline,
+    /// `glow` clipped to the camera's side of the water (blended faces).
+    glow_water: wgpu::RenderPipeline,
     glow_max: wgpu::RenderPipeline,
     glow_suppress: wgpu::RenderPipeline,
     /// Debug "Show transparency": red and blue translucent faces.
@@ -3431,7 +3433,7 @@ impl Backend {
         });
         // LLDrawPoolGlow: glow faces again, adding texture alpha x glow to
         // the scene alpha only (depth tested, pulled toward the camera)
-        let glow = pipe(PipeDesc {
+        let glow_desc = |label: &'static str, constants: &'static [(&'static str, f64)]| PipeDesc {
             cull: None,
             blend: Some(wgpu::BlendState {
                 color: wgpu::BlendComponent {
@@ -3451,8 +3453,13 @@ impl Backend {
             // the polygon offset LL needs, which let layered clothes 1-2 mm
             // under the visible one add their glow too
             depth_compare: wgpu::CompareFunction::GreaterEqual,
-            ..base("glow", "vs_main", "fs_glow")
-        });
+            constants,
+            ..base(label, "vs_main", "fs_glow")
+        };
+        let glow = pipe(glow_desc("glow", &[]));
+        // the blended faces drawn after the water: their glow clipped to the
+        // camera's side like their colour (`blend_pipe`, WATER_CLIP 1)
+        let glow_water = pipe(glow_desc("glow above water", &[("WATER_CLIP", 1.0)]));
         // opaque glowing faces: mesh bodies stack coplanar layers that all pass
         // the depth test; keep the strongest glow instead of their sum
         let glow_max = pipe(PipeDesc {
@@ -3660,9 +3667,10 @@ impl Backend {
         // the depth of the blended faces under the water, from 1/255, into
         // the single-sampled scene depth the water samples for its
         // refraction and fog (with MSAA the scene pass writes another)
+        // (culled as their colour pass: a face seen from behind, which draws
+        // no colour, must not give the water a depth either)
         let blend_under_depth_ss = pipe(PipeDesc {
             fs: Some("fs_depth_contact"),
-            cull: None,
             samples: 1,
             format: None,
             depth_compare: wgpu::CompareFunction::Greater,
@@ -3889,6 +3897,7 @@ impl Backend {
             water_particles,
             water_particles_under,
             glow,
+            glow_water,
             glow_max,
             glow_suppress,
             debug_red,
@@ -6222,7 +6231,12 @@ impl Backend {
         stats.shadow_draws = cpu_casters.iter().sum();
         stats.shadow.draws = cpu_casters;
         stats.shadow.cpu_draws = cpu_casters;
-        stats.blend_triangles = lists.blend.iter().map(|c| c.index_count as u64 / 3).sum();
+        stats.blend_triangles = lists
+            .blend
+            .iter()
+            .chain(&lists.blend_under_water)
+            .map(|c| c.index_count as u64 / 3)
+            .sum();
         stats.lights = f.lights.len().min(MAX_LIGHTS) as u32;
         stats.probes = if f.probes.enabled { f.probes.probes.len() as u32 } else { 0 };
         stats.blend_early_discard = match BlendDiscard::from_env() {
@@ -6640,7 +6654,9 @@ impl Backend {
         // whose faces are blended though they look opaque then take the
         // occlusion like the opaque faces beside them, instead of what lies
         // behind them (#556) or none (#882: one half of a head darker)
-        let (_, n_blend) = rg.blend;
+        // (with those under the water, drawn before it: unclipped here, a
+        // face in both lists writes the same depth twice)
+        let n_blend = rg.blend.1 + rg.blend_under.1;
         let blend_in_ao_depth = self.blend_ao_depth && n_blend > 0 && self.targets.ao_depth.is_some();
         if let Some((tex, view)) = &self.targets.ao_depth {
             encoder.copy_texture_to_texture(
@@ -6671,6 +6687,7 @@ impl Backend {
                     &self.pipelines.pre_contact
                 };
                 draw(&mut pass, pipe, rg.blend);
+                draw(&mut pass, pipe, rg.blend_under);
             }
         }
         // ---- SSAO
@@ -6739,6 +6756,7 @@ impl Backend {
                 bind_mesh(&mut pass, &self.groups.a);
                 if !blend_in_ao_depth {
                     draw(&mut pass, &self.pipelines.pre_contact, rg.blend);
+                    draw(&mut pass, &self.pipelines.pre_contact, rg.blend_under);
                 }
                 if n_sprites > 0 {
                     pass.set_pipeline(&self.impostors.sprite_depth);
@@ -7322,7 +7340,7 @@ impl Backend {
                     continue;
                 }
                 draw(pass, pipe, (b0 + start as u64 * stride, i + 1 - start));
-                draw(pass, &self.pipelines.glow, (b0 + i as u64 * stride, 1));
+                draw(pass, &self.pipelines.glow_water, (b0 + i as u64 * stride, 1));
                 start = i + 1;
             }
             draw(pass, pipe, (b0 + start as u64 * stride, to - start));
@@ -7359,6 +7377,7 @@ impl Backend {
                     rg.mask,
                     rg.mask_2s,
                     rg.blend,
+                    rg.blend_under,
                 ] {
                     draw(pass, wire, r);
                 }
@@ -7537,6 +7556,8 @@ impl Backend {
                 ],
                 &[
                     (blend_pick, rg.blend, None),
+                    // under the water too: found by a click from above
+                    (blend_pick, rg.blend_under, None),
                     // LLViewerWindow::pickAsync / pickImmediate: debug alpha
                     // makes transparent surfaces pickable. Reuse the actual
                     // overlay lists, including hidden faces and only the
