@@ -83,17 +83,24 @@ impl ExperiencesUi {
             Vec2::new(520.0, 400.0),
         )
         .show(ctx, p, open, |ui| {
-            let labels = [
-                (aurora_i18n::tr!("ui-experiences-search"), true),
-                (aurora_i18n::tr!("ui-experiences-allowed"), true),
-                (aurora_i18n::tr!("ui-experiences-blocked"), true),
-                (aurora_i18n::tr!("ui-experiences-admin"), true),
-                (aurora_i18n::tr!("ui-experiences-contributor"), true),
-                (aurora_i18n::tr!("ui-experiences-owned"), true),
-                (aurora_i18n::tr!("ui-experiences-log"), true),
+            let names = [
+                aurora_i18n::tr!("ui-experiences-allowed"),
+                aurora_i18n::tr!("ui-experiences-blocked"),
+                aurora_i18n::tr!("ui-experiences-admin"),
+                aurora_i18n::tr!("ui-experiences-contributor"),
+                aurora_i18n::tr!("ui-experiences-owned"),
             ];
+            let mut titles = vec![aurora_i18n::tr!("ui-experiences-search").to_owned()];
+            for (kind, name) in TABS.iter().zip(names) {
+                titles.push(match world.experiences.lists.get(kind) {
+                    Some(Some(ids)) if !ids.is_empty() => format!("{name} ({})", ids.len()),
+                    _ => name.to_owned(),
+                });
+            }
+            titles.push(aurora_i18n::tr!("ui-experiences-log").to_owned());
+            let labels: Vec<(&str, bool)> = titles.iter().map(|t| (t.as_str(), true)).collect();
             widgets::tabs(ui, p, &mut self.tab, &labels);
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             match self.tab {
                 SEARCH_TAB => return self.search(ui, p, world),
                 LOG_TAB => return self.log(ui, p, world),
@@ -105,9 +112,9 @@ impl ExperiencesUi {
                 .id_salt("experiences_list")
                 .auto_shrink([false, false])
                 .show(ui, |ui| match world.experiences.lists.get(&kind).cloned() {
-                    None => muted(ui, p, aurora_i18n::tr!("ui-experiences-loading")),
-                    Some(None) => muted(ui, p, aurora_i18n::tr!("ui-experiences-unavailable")),
-                    Some(Some(ids)) if ids.is_empty() => muted(ui, p, aurora_i18n::tr!("ui-experiences-none")),
+                    None => empty(ui, p, "flask-filled", aurora_i18n::tr!("ui-experiences-loading")),
+                    Some(None) => empty(ui, p, "flask-filled", aurora_i18n::tr!("ui-experiences-unavailable")),
+                    Some(Some(ids)) if ids.is_empty() => empty(ui, p, "flask-filled", aurora_i18n::tr!("ui-experiences-none")),
                     Some(Some(ids)) => {
                         for id in sorted(&ids, &world.experiences) {
                             if row(ui, p, world, id) {
@@ -161,12 +168,17 @@ impl ExperiencesUi {
             .id_salt("experiences_search")
             .auto_shrink([false, false])
             .show(ui, |ui| match found {
-                None => muted(ui, p, aurora_i18n::tr!("ui-experiences-searching")),
-                Some(None) => muted(ui, p, aurora_i18n::tr!("ui-experiences-unavailable")),
+                None => empty(ui, p, "search-filled", aurora_i18n::tr!("ui-experiences-searching")),
+                Some(None) => empty(ui, p, "search-filled", aurora_i18n::tr!("ui-experiences-unavailable")),
                 Some(Some(list)) => {
                     let list = filter_found(list, self.max_rating);
                     if list.is_empty() {
-                        muted(ui, p, &aurora_i18n::tr!("ui-experiences-search-none", query = searched));
+                        empty(
+                            ui,
+                            p,
+                            "search-filled",
+                            &aurora_i18n::tr!("ui-experiences-search-none", query = searched),
+                        );
                     }
                     for e in list {
                         if found_row(ui, p, &e) {
@@ -209,7 +221,7 @@ impl ExperiencesUi {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 if page.is_empty() {
-                    muted(ui, p, aurora_i18n::tr!("ui-experiences-log-none"));
+                    empty(ui, p, "history", aurora_i18n::tr!("ui-experiences-log-none"));
                 }
                 for (index, entry) in &page {
                     world.experiences.want(entry.experience);
@@ -219,25 +231,31 @@ impl ExperiencesUi {
                     let frame = egui::Frame::new()
                         .fill(fill)
                         .corner_radius(ui.visuals().window_corner_radius)
-                        .inner_margin(egui::Margin::same(6))
+                        .inner_margin(egui::Margin::same(8))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
-                                let count = if entry.count > 1 {
-                                    format!(" ×{}", entry.count)
-                                } else {
-                                    String::new()
-                                };
-                                ui.label(RichText::new(format!("{} {}", entry.day, entry.time)).size(11.5).color(p.muted));
-                                ui.label(
-                                    RichText::new(format!("{}{count}", experience_log::permission_short(entry.permission)))
-                                        .size(12.5)
-                                        .color(p.ink),
-                                );
+                                tile(ui, p, permission_icon(entry.permission));
+                                ui.vertical(|ui| {
+                                    let count = if entry.count > 1 {
+                                        format!(" ×{}", entry.count)
+                                    } else {
+                                        String::new()
+                                    };
+                                    ui.label(
+                                        RichText::new(format!("{}{count}", experience_log::permission_short(entry.permission)))
+                                            .size(13.0)
+                                            .strong()
+                                            .color(p.ink),
+                                    );
+                                    ui.label(RichText::new(format!("{name} · {}", entry.object_name)).size(11.5).color(p.muted));
+                                });
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                                    ui.label(RichText::new(format!("{} {}", entry.day, entry.time)).size(11.5).color(p.muted));
+                                });
                             });
-                            ui.label(RichText::new(name).size(12.5).strong().color(p.ink));
-                            ui.label(RichText::new(&entry.object_name).size(11.5).color(p.muted));
                         });
+                    hover_tint(ui, p, frame.response.rect, selected);
                     let click = ui.interact(
                         frame.response.rect,
                         ui.make_persistent_id(("xp_log_row", index)),
@@ -253,6 +271,7 @@ impl ExperiencesUi {
                 }
             });
         let footer_top = ui.cursor().min.y;
+        widgets::divider(ui, p);
         let entry = self.selected.and_then(|i| world.experiences.log.events.get(i).cloned());
         ui.horizontal(|ui| {
             if widgets::flat_button(ui, p, "‹").clicked() && self.page > 0 {
@@ -315,32 +334,10 @@ fn filter_found(mut list: Vec<aurora_net::land::FoundExperience>, max_rating: u8
     list
 }
 
-/// One experience found: name, rating and scope, and "Profile". True when
-/// Profile was clicked.
+/// One experience found: name and rating; the card opens the profile. True
+/// when it was clicked.
 fn found_row(ui: &mut egui::Ui, p: &Palette, e: &aurora_net::land::FoundExperience) -> bool {
-    let mut open = false;
-    egui::Frame::new()
-        .fill(p.bar)
-        .corner_radius(ui.visuals().window_corner_radius)
-        .inner_margin(egui::Margin::same(8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(e.name.trim()).size(13.0).strong().color(p.ink));
-                    ui.label(
-                        RichText::new(crate::world::worldmap::access_label(e.maturity))
-                            .size(11.5)
-                            .color(p.muted),
-                    );
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    open = widgets::flat_button(ui, p, aurora_i18n::tr!("ui-group-experiences-profile")).clicked();
-                });
-            });
-        });
-    ui.add_space(4.0);
-    open
+    card(ui, p, ("xp_found", e.id), e.name.trim(), e.maturity, None)
 }
 
 fn muted(ui: &mut egui::Ui, p: &Palette, text: &str) {
@@ -363,39 +360,107 @@ fn sorted(ids: &[Uuid], xp: &Experiences) -> Vec<Uuid> {
     keyed.into_iter().map(|(_, id)| id).collect()
 }
 
-/// One experience: its name, rating and scope, and "Profile". True when
-/// Profile was clicked.
+/// One experience: its name, rating and scope; the card opens the profile.
+/// True when it was clicked.
 fn row(ui: &mut egui::Ui, p: &Palette, world: &mut World, id: Uuid) -> bool {
     world.experiences.want(id);
-    let mut open = false;
-    egui::Frame::new()
+    let name = label(&world.experiences, id);
+    match world.experiences.details.get(&id).filter(|d| !d.invalid()) {
+        Some(d) => {
+            let scope = if d.grid_wide() {
+                aurora_i18n::tr!("ui-group-experiences-grid")
+            } else {
+                aurora_i18n::tr!("ui-group-experiences-land")
+            };
+            card(ui, p, ("xp_row", id), &name, d.maturity, Some(scope))
+        }
+        None => card(ui, p, ("xp_row", id), &name, 0, None),
+    }
+}
+
+/// A clickable card: an icon tile, the name, the rating badge (when known)
+/// and the scope, and a chevron. True when clicked.
+fn card(ui: &mut egui::Ui, p: &Palette, id: (&str, Uuid), name: &str, maturity: u8, scope: Option<&str>) -> bool {
+    let frame = egui::Frame::new()
         .fill(p.bar)
         .corner_radius(ui.visuals().window_corner_radius)
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
+                tile(ui, p, "flask-filled");
                 ui.vertical(|ui| {
-                    ui.label(RichText::new(label(&world.experiences, id)).size(13.0).strong().color(p.ink));
-                    if let Some(d) = world.experiences.details.get(&id).filter(|d| !d.invalid()) {
-                        let scope = if d.grid_wide() {
-                            aurora_i18n::tr!("ui-group-experiences-grid")
-                        } else {
-                            aurora_i18n::tr!("ui-group-experiences-land")
-                        };
-                        let rating = crate::world::worldmap::access_label(d.maturity);
-                        ui.label(RichText::new(format!("{rating} · {scope}")).size(11.5).color(p.muted));
-                    }
+                    ui.label(RichText::new(name).size(13.0).strong().color(p.ink));
+                    ui.horizontal(|ui| {
+                        if maturity != 0 {
+                            widgets::maturity_badge_of(ui, p, maturity, 14.0);
+                        }
+                        if let Some(scope) = scope {
+                            ui.label(RichText::new(scope).size(11.5).color(p.muted));
+                        }
+                    });
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::flat_button(ui, p, aurora_i18n::tr!("ui-group-experiences-profile")).clicked() {
-                        open = true;
-                    }
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::hover());
+                    paint_icon(ui, "chevron-right", rect, p.muted);
                 });
             });
         });
+    let rect = frame.response.rect;
+    let click = ui.interact(rect, ui.make_persistent_id(id), egui::Sense::click());
+    hover_tint(ui, p, rect, false);
     ui.add_space(4.0);
-    open
+    click.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
+/// A rounded square holding an icon, the leading mark of a row.
+fn tile(ui: &mut egui::Ui, p: &Palette, icon: &str) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(34.0), egui::Sense::hover());
+    ui.painter()
+        .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.violet.gamma_multiply(0.22));
+    paint_icon(ui, icon, rect.shrink(8.0), p.violet);
+}
+
+fn paint_icon(ui: &egui::Ui, icon: &str, rect: egui::Rect, tint: egui::Color32) {
+    if let Some(t) = super::icons::global(icon) {
+        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        ui.painter().image(t.id(), rect, uv, tint);
+    }
+}
+
+/// A light wash over a row the pointer is on.
+fn hover_tint(ui: &egui::Ui, p: &Palette, rect: egui::Rect, selected: bool) {
+    if !selected && ui.rect_contains_pointer(rect) {
+        ui.painter()
+            .rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.12));
+    }
+}
+
+/// What a list says when it has nothing to show: a large icon and a line.
+fn empty(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &str) {
+    ui.vertical_centered(|ui| {
+        ui.add_space(36.0);
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(40.0), egui::Sense::hover());
+        paint_icon(ui, icon, rect, p.muted.gamma_multiply(0.6));
+        ui.add_space(6.0);
+        muted(ui, p, text);
+    });
+}
+
+/// The icon of an event, by the permission it records.
+fn permission_icon(permission: i32) -> &'static str {
+    match permission {
+        1 => "hand-move",
+        3 => "run",
+        4 => "paperclip",
+        9 => "video-filled",
+        10 => "camera-filled",
+        11 => "door-enter",
+        12 => "shield-filled",
+        16 => "armchair",
+        17 => "sunset-2-filled",
+        _ => "help-circle-filled",
+    }
 }
 
 #[cfg(test)]
