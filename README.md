@@ -111,6 +111,41 @@ while rethinking the user interface.
   </tr>
 </table>
 
+### New in 0.8.5 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>Immersive sound <img src="docs/readme/pill-experimental.svg" alt="Experimental" height="18" align="absmiddle"></h3>
+      World sounds go dull and quiet behind a wall or inside a closed box,
+      pass behind your head with headphones (HRTF), and ring like the place
+      you stand in: dry in the open air, a long soft tail in a large hall.
+      Three switches in Preferences › Sound.
+    </td>
+    <td width="50%" valign="top">
+      <h3>VR headset viewing <img src="docs/readme/pill-experimental.svg" alt="Experimental" height="18" align="absmiddle"></h3>
+      Put on an OpenXR headset, click the headset button and look around the
+      world in stereo, from your avatar's eyes or where the camera stands.
+      Viewing only for now; Esc brings the desktop back
+      (<a href="docs/VR.md">setup and limits</a>).
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h3>A start without the wait</h3>
+      Aurora keeps its own cache of compiled graphics pipelines: a start no
+      longer sits for twenty seconds on a black window when the graphics
+      driver has emptied its shader cache.
+    </td>
+    <td valign="top">
+      <h3>Smoother where it was heavy</h3>
+      Ambient occlusion at about a third of its cost on 4K screens, sharp
+      textures that hold after a teleport, and a viewer window behind that
+      gives its video memory back to the one in front.
+    </td>
+  </tr>
+</table>
+
 Items marked <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle">
 are planned or in progress: they are not in the viewer yet.
 
@@ -151,6 +186,18 @@ are planned or in progress: they are not in the viewer yet.
   in Preferences, from the login screen on.
 - **Fast with a huge wardrobe**: the Appearance window stays smooth with
   thousands of outfits.
+- **Quick starts, every time**: Aurora keeps the graphics pipelines it
+  compiled, so a start no longer depends on the driver's own shader cache
+  still holding them.
+- **Light on a 4K screen**: on large scenes, ambient occlusion is computed
+  at half resolution and brought back along the depth, for the same image
+  at about a third of the cost.
+- **Sharp after a teleport**: in a busy region, texture memory comes down
+  once and holds, instead of blurring and sharpening again every few
+  seconds.
+- **Two viewers on one card**: a window in the background gives its video
+  memory back, and pauses its 3D drawing when the card is full, so the one
+  in front keeps its frame rate.
 - <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **AMD FSR upscaling** and its native anti-aliasing, on every brand of
   graphics card.
 
@@ -221,6 +268,12 @@ are planned or in progress: they are not in the viewer yet.
   folder, or wear them straight away, replacing your outfit or adding to it.
 - **Sound Explorer**: find which object plays a sound, preview it, stop it or
   block it.
+- **Experiences that set the scene**: an experience you allow can change
+  your sky and water, as its creator meant; Forget or Block puts the shared
+  environment back, and so does leaving the region.
+- **Shopping in one click**: a vendor sells on a click on its price, a short
+  balance opens Buy L$ instead of greying the button, and Buy works from the
+  menu of any object for sale.
 - **Run your land**: a complete Region / Estate window (people and bans,
   interventions, scripts and physics with Top scripts / Top colliders,
   environment, experiences, covenant, telehub and terrain), in the Aurora
@@ -312,7 +365,10 @@ are planned or in progress: they are not in the viewer yet.
   boundary shortcuts in the terrain menus. Default permissions (Inventory ›
   New) apply to everything you create or import. In a busy sandbox, select
   only your own objects, or only the ones you may move; prefer the classic
-  editor? Its Legacy layout is one switch away.
+  editor? Its Legacy layout is one switch away. A selection rectangle takes
+  only what it wholly surrounds (one switch to take all it touches), objects
+  rez and copy with your active group, BOM textures go in all four PBR maps,
+  and grayscale or 16-bit PNG textures upload as they are.
 - **Area search**: find the objects rezzed around you from World › Area
   search or a toolbar button. Search their name, description, owner,
   creator, group or UUID as you type, keep to the current parcel or reach
@@ -329,7 +385,8 @@ are planned or in progress: they are not in the viewer yet.
 ### An interface made for today
 
 - **Flat, calm and readable**: glass island bars, a notification center with
-  history, the Inter font throughout and a redesigned performance window.
+  history you can clear (finished script menus no longer pile up in it), the
+  Inter font throughout and a redesigned performance window.
 - **In English, French and Japanese (日本語)**: the whole interface follows
   your system language or your choice, applied at once. Japanese uses Second
   Life's official Japanese terms (インベントリ, 区画, フレンド…), Japanese
@@ -410,6 +467,9 @@ are planned or in progress: they are not in the viewer yet.
   your outfits in folders right from Appearance, in the list and the
   gallery. Drag your tattoo, alpha or universal layers into the order you
   want, and see (and remove) what a script attached to you for a while.
+  Pick several items in an outfit or in Worn with Ctrl- and Shift-click and
+  wear, add or take them off at once; Remove from current outfit works on
+  any folder, a demo or a delivery as well as a saved outfit.
 - **One search for everything**: type once and residents, places, events,
   groups and classifieds come back together, with type chips, filters on
   one line and the details beside the results.
@@ -433,7 +493,9 @@ are planned or in progress: they are not in the viewer yet.
   first launch (WASD or ZQSD), and letter shortcuts use the key that carries
   their letter (M is M on AZERTY too). Search Preferences › Shortcuts by
   action, category or key. On the Mac, Command works as Control and
-  shortcuts read ⌘ ⌥ ⇧, as macOS users expect.
+  shortcuts read ⌘ ⌥ ⇧, as macOS users expect. A gamepad's buttons,
+  triggers and sticks are assigned by simply pressing them, and the flycam
+  gets its own zoom controls.
 - **Copy what you need**: click a name in a profile to copy it, select and
   copy the text of a greyed-out field (a no-modify object's name, a
   parcel's media address), and copy an outfit's item names and creator
@@ -458,8 +520,19 @@ are planned or in progress: they are not in the viewer yet.
 
 ### Only in Aurora
 
-- **Portals to walk through**: open a portal to a place, or drop a landmark
-  into the world, and walk, run or fly through it to teleport. Other Aurora
+- <img src="docs/readme/pill-experimental.svg" alt="Experimental" height="18" align="absmiddle"> **Immersive sound**: world sounds muffled behind walls, hills
+  and inside closed boxes, heard in front, behind, above or below with
+  headphones (HRTF), and given the reverb of the place around you, changing
+  as you walk through a door. Each part has its own switch in Preferences ›
+  Sound; HRTF and reverb are off by default.
+- <img src="docs/readme/pill-experimental.svg" alt="Experimental" height="18" align="absmiddle"> **VR headset viewing**: look around the world in stereo with an
+  OpenXR headset, tested on Windows and Linux (the macOS path awaits its
+  first headset), from your avatar's
+  eyes or the desktop camera. Viewing only: exit with Esc to chat, build or
+  move ([setup and limits](docs/VR.md)).
+- **Portals to walk through**: open a portal to a place, drop a landmark
+  into the world, or drag a place there from Favorites, Places, the teleport
+  history or search results, and walk, run or fly through it to teleport. Other Aurora
   users see it too: your friends by default, everyone if you choose, and a
   portal that appears on someone never pulls them in.
 - **Just your parcel, if you like**: hide what stands outside the current
@@ -498,7 +571,9 @@ are planned or in progress: they are not in the viewer yet.
   [NOTICE.md](NOTICE.md).
 - **Windows, Linux and macOS**: every release has a Linux build
   ([install guide](docs/LINUX.md)), with its sound through PulseAudio or
-  PipeWire and the desktop's notifications, and a macOS application for
+  PipeWire, the desktop's notifications, the keyboard layout read from the
+  desktop, the resource monitor and web pages from a Legacy Viewer install's
+  plugins, and a macOS application for
   Apple Silicon, drawn through Metal, with web pages and video in the world
   ([install guide](docs/MACOS.md)).
 
@@ -534,7 +609,8 @@ The texture memory budget is set automatically from the detected VRAM.
   occlusion, sun contact shadows, specular anti-aliasing, reflection probes,
   water, glow, particles, rainbows, 22° halos and depth of field;
   screen-space indirect light, GPU occlusion and enhanced water effects (all
-  experimental), graphics presets and per-section resets.
+  experimental), graphics presets and per-section resets; headset viewing
+  through OpenXR (experimental, view only).
 - **Avatars** — skeleton and Bento animations blended like the Legacy Viewer,
   server bakes, rigged mesh, complexity limits, impostors and look-at;
   a shape editor with textured mesh previews, skin, hair, eyes, tattoo,
@@ -554,7 +630,9 @@ The texture memory budget is set automatically from the detected VRAM.
   consenting nearby avatars, with a pose library, BVH export and animation
   import; an [IK workbench](docs/IK_EDIT.md) with shared contact profiles.
 - **World** — prims, sculpts, mesh with LOD, classic and PBR terrain, EEP environment,
-  sky, water and day-cycle editors, world sounds, parcel music and media
+  sky, water and day-cycle editors, experience environments, world sounds
+  with occlusion, headphone HRTF and room reverb (experimental), parcel
+  music and media
   on prims, with Aurora's downloadable media plugins pack; an area search
   for the objects rezzed around you, with filters and sortable results;
   a Sound Explorer with local previews, source camera and sound blocking;
@@ -639,7 +717,8 @@ Voice is WebRTC only; Vivox is not supported.
 - Compression for the textures that fast BC7 encoding would harm (they
   stay uncompressed and are decoded at each visit).
 - The water effects out of their experimental stage.
-- Maybe a VR mode with controller support.
+- Immersive sound out of its experimental stage.
+- VR beyond viewing: controllers, menus and moving around in the headset.
 
 The detailed list of what is done, in progress and to do is in
 [TASKS.md](TASKS.md).
