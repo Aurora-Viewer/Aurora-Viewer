@@ -9,12 +9,6 @@
 use super::World;
 use uuid::Uuid;
 
-/// Whether the real team's marks are drawn. Off until the team decides
-/// whether they should exist (human decision, 2026-10-31): residents found
-/// them out of place next to everyone else's plate. The demo scenario
-/// (`AURORA_DEMO_STAFF`) still shows them, so the code stays tested.
-const TEAM_MARKS_SHOWN: bool = false;
-
 /// The team's avatar keys.
 const TEAM: &[Uuid] = &[
     uuid::uuid!("348d7782-8438-4480-b482-608ca731b3a8"),
@@ -22,6 +16,7 @@ const TEAM: &[Uuid] = &[
     uuid::uuid!("322be05d-8851-4eaf-b4f2-a3347ebde023"),
     uuid::uuid!("2401c1a6-0dde-4daf-b60f-420473687744"),
     uuid::uuid!("d94d9882-b0bb-400b-9299-e51e021e921e"),
+    uuid::uuid!("64043ec6-40a2-44f2-8b50-d88c82b00548"),
 ];
 
 /// Whose staff a resident is.
@@ -35,12 +30,7 @@ pub enum Mark {
 
 /// Whether `id` is a member of the Aurora team.
 pub fn is_staff(id: &Uuid) -> bool {
-    !id.is_nil() && (in_team(id, TEAM_MARKS_SHOWN) || crate::demo::staff::is_staff(id))
-}
-
-/// Whether `id` is in the shipped team list, while its marks are `shown`.
-fn in_team(id: &Uuid, shown: bool) -> bool {
-    shown && TEAM.contains(id)
+    !id.is_nil() && (TEAM.contains(id) || crate::demo::staff::is_staff(id))
 }
 
 /// The mark of `id`, if any: the Aurora team by key; Linden Lab by the
@@ -80,18 +70,12 @@ mod tests {
     }
 
     #[test]
-    fn the_team_is_known_by_key() {
+    fn the_team_is_marked_by_key() {
+        assert!(TEAM.iter().all(is_staff));
         for (i, id) in TEAM.iter().enumerate() {
             assert!(!TEAM[i + 1..].contains(id), "{id} twice");
-            assert!(in_team(id, true));
-        }
-    }
-
-    #[test]
-    fn the_team_marks_are_hidden_for_now() {
-        for id in TEAM {
-            assert!(!is_staff(id));
-            assert_eq!(mark_named(id, "Nova Example"), None);
+            // whatever their name says
+            assert_eq!(mark_named(id, "Someone Linden"), Some(Mark::Aurora));
         }
     }
 

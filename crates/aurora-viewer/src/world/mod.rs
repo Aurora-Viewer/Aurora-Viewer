@@ -4528,6 +4528,13 @@ impl World {
             // FIRE-2731 (on_avatar_name_cache_notify)
             self.ui_sounds
                 .push(if online { UiSound::FriendOnline } else { UiSound::FriendOffline });
+            // the line of an open conversation with them, so a message is not
+            // written to someone who just left
+            // (LLIMModel::proccessOnlineOfflineNotification, llimview.cpp):
+            // never opens one
+            if self.social.has_session(&id) {
+                self.session_system(id, n.clone());
+            }
             // the toast of LLNotificationTipHandler (ChatOnlineNotification),
             // never during login, in do not disturb nor for a blocked resident
             if self.notifications.toasts.presence && self.notifications.started && !self.status.dnd && !self.mutes.is_muted_id(&id) {

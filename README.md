@@ -469,8 +469,8 @@ are planned or in progress: they are not in the viewer yet.
 - **Immersive mode**: the whole interface hidden but the chat, for photos,
   events or simply enjoying the world; faint buttons bring back the name
   tags, hide your HUDs too, or leave the mode.
-- **Linden Lab marks**: their name tags, lists, chat lines and profiles
-  show who works at Linden Lab.
+- **Aurora team and Linden Lab marks**: their name tags, lists, chat lines
+  and profiles show who works on Aurora and who works at Linden Lab.
 - **Link safety check**: web links in chat and profiles are marked trusted,
   unknown or dangerous, judged locally with nothing sent anywhere.
 - **Parcel permissions at a glance**: the icons show everything, green for
@@ -605,8 +605,8 @@ The texture memory budget is set automatically from the detected VRAM.
 - **Interface** — in English, French and Japanese; flat Aurora theme, Inter font, Tabler icons, glass island bars,
   customizable bottom and side toolbars, classic layout options, Aurora
   search and Places windows, mini-map, world map, preferences and debug
-  overlays; an immersive mode that keeps only the chat; Linden Lab
-  marks; double-click walk / run / teleport and content-rating controls
+  overlays; an immersive mode that keeps only the chat; Aurora team and
+  Linden Lab marks; double-click walk / run / teleport and content-rating controls
   for places and teleport offers; an Accessibility page, a high-contrast
   palette, custom interface colours, text up to twice the size and the
   OpenDyslexic font.
@@ -1012,6 +1012,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 |---|---|
 | `--title <text>` | Names the window "Aurora Viewer <version> - <text> (Dev)" and its log file |
 | `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
+| `--vr` | Enters VR once the world shows, with a headset connected (Windows and Linux) |
 | `--language <code>` | Forces the language of this instance (`en`, `fr`, `ja`, or another language added to the catalogues), without changing the saved choice |
 | `--grid <name>` | Selects the login grid: `agni`, `aditi`, a saved grid name/nickname or a login URI (`--loginuri <uri>` too) |
 | `--login <first> <last> <password>` | Logs in with this account as soon as the login screen opens |
@@ -1023,6 +1024,8 @@ exe before publishing; the local build also writes it to `version.txt`.
   file is `aurora-<text>.log` (`aurora-demo-<text>.log` in demo mode).
 - `--fps-limit`: applies an extra limit to this process, including captures
   and online sessions; a lower user preference remains effective.
+- `--vr`: what the VR button's "Restart in VR" passes when the headset was
+  connected after the viewer started (VR is set up at startup).
 - `--language`: also accepts `--language=fr`. An unavailable language falls
   back to English; the argument is meant for demos and screenshots.
 - `<slurl>`: `secondlife://Region/x/y/z`, `hop://grid:port/Region/x/y/z`,
@@ -1145,3 +1148,5 @@ from the Second Life viewer and Firestorm (originally LGPL 2.1); see
 
 Aurora Viewer is not affiliated with Linden Lab or the Firestorm project.
 Second Life® is a trademark of Linden Research, Inc.
+
+Experimental headset viewing: [cross-platform VR setup and limitations](docs/VR.md).

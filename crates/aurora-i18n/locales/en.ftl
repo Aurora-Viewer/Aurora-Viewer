@@ -1399,6 +1399,8 @@ build-land-cancel-edit = Cancel edit
 ui-options-anti-aliasing = Anti-aliasing
 ui-options-specular-aa = Specular anti-aliasing
 ui-options-specular-aa-help = Calms the shimmering of small bright highlights (fine relief, metal, glossy hair) when the camera moves, by widening a highlight where the surface turns faster than a pixel can show. Almost free
+ui-options-colored-sky-ambient = Colored sky ambient
+ui-options-colored-sky-ambient-help = Lights with the sky's ambient color at full strength, as the first PBR viewers did, instead of a softened ambient that linear and HDR skies turn grey: warm or tinted skies color the interiors again. Classic skies keep their color either way and only get a little brighter. Differs from the Legacy Viewer
 ui-profile-preview-with-links = Preview with links
 build-land-flatten = Flatten
 common-appearance = Appearance
@@ -1907,6 +1909,11 @@ build-ui-floaters-total-capacity = Total capacity
 build-ui-object-square = Square
 common-map = Map
 demo-welcome-card = Welcome card
+demo-sound-occlusion-open = Open sound
+demo-sound-occlusion-wall = Behind the wall
+demo-sound-occlusion-box = In the box
+demo-sound-hrtf-circle = Circling sound
+demo-sound-hrtf-updown = Rising and falling sound
 common-world-map = World map
 ui-options-integrated-graphics = Integrated graphics
 ui-contacts-map = Map...
@@ -5318,6 +5325,10 @@ ui-options-collision-sounds = Collision sounds
 ui-options-interface-sounds = Interface sounds
 ui-options-gesture-sounds = Gesture sounds
 ui-options-sounds-played-by-other-avatars-gestures = Sounds played by other avatars' gestures
+ui-options-sound-occlusion = Muffle sounds behind walls
+ui-options-sound-occlusion-help = World sounds heard through a wall, an object or a hill are duller and quieter, as a sound in another room. Off: every sound is heard unobstructed, as in the Legacy Viewer
+ui-options-sound-hrtf = 3D sound for headphones (HRTF)
+ui-options-sound-hrtf-help = World sounds are heard where they are: in front, behind, above or below you, not only to the left or the right. Use headphones: on speakers it sounds wrong. Off: sounds are panned between left and right, as in the Legacy Viewer
 ui-inventory-dialogs-ease-out-s = { "Ease out: " }{ $value0 }s
 ui-options-audio-output = Audio output
 ui-options-commands-output-to-a-channel = Output to a channel
@@ -7395,7 +7406,7 @@ hud-move-locked = Lock quick movement
 hud-local-scale-reset = Reset to 100%
 hud-local-scale-forget = Forget saved size
 hud-local-scale-help = Hold the HUD key: left drag to move, wheel to resize, Shift for finer steps. Size is saved on this PC by name and creator, for this account. While editing a HUD, the wheel without this key zooms the view of all HUDs.
-cli-help = { "Aurora Viewer\u000A\u000AUsage: aurora-viewer [--title <text>] [--fps-limit <fps>] [--language <code>] [--grid <name>]\u000A                     [--login <first> <last> <password>] [--version] [<slurl>]\u000A\u000A  --title <text>   Name this window (\"Aurora Viewer <version> - <text>\") and its log\u000A                   file (aurora-<text>.log, aurora-demo-<text>.log in demo mode)\u000A  --fps-limit <fps>  Cap this process at 1..500 FPS without saving preferences\u000A  --language <code>  Override this process's UI language (" }{ $languages }{ ")\u000A  --grid <name>    Start on agni, aditi, a saved grid name or a login URI (also --loginuri <uri>)\u000A  --login <first> <last> <password>  Log in with this account at once\u000A  <slurl>, --url <slurl>  Start at this place; nothing after it is read. A viewer\u000A                   already running receives it instead\u000A  -V, --version   Show the compiled viewer version without starting it\u000A  -h, --help       Show this help\u000A\u000ATest switches are environment variables (AURORA_DEMO=1, AURORA_CAPTURE=...):\u000Asee README.md." }
+cli-help = { "Aurora Viewer\u000A\u000AUsage: aurora-viewer [--title <text>] [--fps-limit <fps>] [--vr] [--language <code>] [--grid <name>]\u000A                     [--login <first> <last> <password>] [--version] [<slurl>]\u000A\u000A  --title <text>   Name this window (\"Aurora Viewer <version> - <text>\") and its log\u000A                   file (aurora-<text>.log, aurora-demo-<text>.log in demo mode)\u000A  --fps-limit <fps>  Cap this process at 1..500 FPS without saving preferences\u000A  --language <code>  Override this process's UI language (" }{ $languages }{ ")\u000A  --grid <name>    Start on agni, aditi, a saved grid name or a login URI (also --loginuri <uri>)\u000A  --login <first> <last> <password>  Log in with this account at once\u000A  <slurl>, --url <slurl>  Start at this place; nothing after it is read. A viewer\u000A                   already running receives it instead\u000A  --vr             Enter VR once the world shows (headset connected)\u000A  -V, --version   Show the compiled viewer version without starting it\u000A  -h, --help       Show this help\u000A\u000ATest switches are environment variables (AURORA_DEMO=1, AURORA_CAPTURE=...):\u000Asee README.md." }
 demo-media-page = { "data:text/html;charset=utf-8,<html><body style='margin:0;height:100vh;background:linear-gradient(135deg,%232a1f4a,%230f6d6d);color:white;font:56px sans-serif;text-align:center'><h1 style='margin:40px 0 10px'>Aurora media</h1><p id='t' style='font-size:90px;margin:10px'>--</p><button onclick=\"document.body.style.background='%237a3b9c';this.textContent='Clicked!'\" style='font-size:48px;padding:10px 40px'>Click</button><br><input placeholder='Type here' style='font-size:44px;margin-top:30px;width:70%'><script>setInterval(function(){document.getElementById('t').textContent=new Date().toLocaleTimeString()},250)</script></body></html>" }
 
 # Secondary labels and status messages
@@ -12780,3 +12791,16 @@ import-source-folder-name-help = Name of the inventory folder for { $source }. T
 
 import-local-stage-upload = Add to upload ({ $count })
 import-local-stage-upload-help = Keep the local previews and prepare uploads of the checked files, including hidden files. Upload fees are confirmed separately.
+
+vr-view = VR view
+vr-unavailable = VR is unavailable. Check that an OpenXR runtime and headset are connected.
+vr-restart-title = Headset connected
+vr-restart-body = Your headset was connected after Aurora started. Aurora sets up VR when it starts: restart it to use VR. It will enter VR on its own once you are back in the world.
+vr-restart-confirm = Restart in VR
+ui-options-camera-vr = VR
+ui-options-camera-vr-view = Headset view
+ui-options-camera-vr-view-help = Where the view starts when you enter VR: at your avatar's eyes, or where the camera was.
+ui-options-camera-vr-view-first-person = First person
+ui-options-camera-vr-view-desktop-camera = Camera position
+
+app-vr-leave = Press { $key } to return to desktop mode

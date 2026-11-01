@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 pub mod area_search;
 pub mod backup;
 mod hover_height;
+mod saver;
 pub mod stream_list;
 
 /// How the Conversations window looks (Preferences › Aurora): Aurora's
@@ -1140,6 +1141,14 @@ pub struct Settings {
     /// pixel, so they stop shimmering as the camera moves. An Aurora
     /// improvement, on by default.
     pub specular_aa: bool,
+    /// The sky ambient keeps its colour at full strength (x 0.7), as the
+    /// first PBR release lit it (tag Second_Life_Release#843866d-DRTVWR-559),
+    /// instead of a softened ambient (pow 0.9, x 0.57) turned grey under
+    /// linear and HDR skies (Environment::with_colored_ambient): warm or
+    /// tinted skies colour the interiors again. Classic skies keep their
+    /// colour either way and only take the 0.7 curve, a little brighter. An
+    /// experimental setting, off by default.
+    pub colored_sky_ambient: bool,
     /// 0 Khronos PBR Neutral, 1 ACES (RenderTonemapType: ACES by default,
     /// like the Legacy Viewer)
     pub tonemapper: u8,
@@ -1542,6 +1551,13 @@ pub struct AudioSettings {
     pub collision_sounds: bool,
     /// Sounds of other avatars' gestures (EnableGestureSounds, on).
     pub gesture_sounds: bool,
+    /// World sounds muffled behind walls and objects (Aurora's own, on;
+    /// off: heard unobstructed, as in the Legacy Viewer).
+    pub sound_occlusion: bool,
+    /// World sounds rendered binaurally, for headphones (Aurora's own,
+    /// off: on speakers it sounds wrong; off pans them, as in the Legacy
+    /// Viewer).
+    pub sound_hrtf: bool,
     /// Interface sounds (IM, money, teleport, windows, menus, typing...;
     /// Firestorm's PlayModeUISnd* defaults).
     pub ui_sounds: bool,
@@ -1591,6 +1607,8 @@ impl Default for AudioSettings {
             mic_gain: 1.0,
             collision_sounds: true,
             gesture_sounds: true,
+            sound_occlusion: true,
+            sound_hrtf: false,
             ui_sounds: true,
             ui: Default::default(),
             saved_streams: Vec::new(),
@@ -1913,6 +1931,7 @@ impl Default for Settings {
             antialiasing: 6,
             render_scale_percent: 100,
             specular_aa: true,
+            colored_sky_ambient: false,
             tonemapper: 1,
             tonemap_mix: TONEMAP_MIX,
             hdr_emissive: true,
@@ -2574,6 +2593,9 @@ impl Settings {
             self.toolbar = Some(self.legacy_toolbars.remove(&account).unwrap_or_default());
             changed = true;
         }
+        if let Some(toolbar) = &mut self.toolbar {
+            changed |= toolbar.migrate_vr_button();
+        }
         if !self.legacy_toolbars.is_empty() {
             self.legacy_toolbars.clear();
             changed = true;
@@ -2609,13 +2631,28 @@ impl Settings {
         };
     }
 
+    /// The settings as they are now, written by the save thread
+    /// (settings/saver.rs): the frame thread does not wait for the disk.
     pub fn save(&self) {
-        let dir = config_dir();
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            log::warn!("cannot create config dir: {e}");
-            return;
+        let copy = self.to_saved();
+        let path = Self::path();
+        saver::get().queue(Box::new(move || {
+            if let Some(dir) = path.parent()
+                && let Err(e) = std::fs::create_dir_all(dir)
+            {
+                log::warn!("cannot create config dir: {e}");
+                return;
+            }
+            copy.write_saved(&path);
+        }));
+    }
+
+    /// Until the saves asked for are written, `timeout` at most: before
+    /// the viewer ends.
+    pub fn wait_saved(timeout: std::time::Duration) {
+        if !saver::get().wait(timeout) {
+            log::warn!("settings: the last save was not written within {timeout:?}");
         }
-        self.save_to(&Self::path());
     }
 
     /// What is written to the file: the user's own graphics values while
@@ -2634,15 +2671,20 @@ impl Settings {
         copy
     }
 
+    #[cfg(test)]
     fn save_to(&self, path: &Path) {
-        let copy = self.to_saved();
+        self.to_saved().write_saved(path);
+    }
+
+    /// Write `self`, a copy from `to_saved`, as the file at `path`.
+    fn write_saved(&self, path: &Path) {
         // Over a newer build's file, write ours over theirs: what this build
         // does not know, and what it could not read and left unchanged, stay.
-        let bytes = match &copy.newer_file {
-            Some(newer) => serde_json::to_value(&copy)
+        let bytes = match &self.newer_file {
+            Some(newer) => serde_json::to_value(self)
                 .map(|ours| crate::tolerant::merge_over_newer(&newer.theirs, ours, &newer.loaded, &newer.kept))
                 .and_then(|merged| serde_json::to_vec_pretty(&merged)),
-            None => serde_json::to_vec_pretty(&copy),
+            None => serde_json::to_vec_pretty(self),
         };
         match bytes {
             Ok(b) => {

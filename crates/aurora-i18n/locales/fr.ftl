@@ -1402,6 +1402,8 @@ build-land-cancel-edit = Annuler modification
 ui-options-anti-aliasing = Anticrénelage
 ui-options-specular-aa = Anticrénelage des reflets
 ui-options-specular-aa-help = Calme le scintillement des petits reflets brillants (relief fin, métal, cheveux brillants) quand la caméra bouge, en élargissant un reflet là où la surface tourne plus vite qu’un pixel ne peut le montrer. Presque gratuit
+ui-options-colored-sky-ambient = Ambiance du ciel colorée
+ui-options-colored-sky-ambient-help = Éclaire avec la couleur ambiante du ciel à pleine intensité, comme les premiers viewers PBR, au lieu d’une ambiance adoucie que les ciels linéaires et HDR rendent grise : les ciels chauds ou teintés colorent à nouveau les intérieurs. Les ciels classiques gardent leur couleur dans les deux cas et deviennent seulement un peu plus clairs. Diffère du Legacy Viewer
 ui-profile-preview-with-links = Aperçu avec les liens
 build-land-flatten = Aplatir
 common-appearance = Apparence
@@ -1910,6 +1912,11 @@ build-ui-floaters-total-capacity = Capacité totale
 build-ui-object-square = Carré
 common-map = Carte
 demo-welcome-card = Carte de bienvenue
+demo-sound-occlusion-open = Son à découvert
+demo-sound-occlusion-wall = Derrière le mur
+demo-sound-occlusion-box = Dans la boîte
+demo-sound-hrtf-circle = Son qui tourne
+demo-sound-hrtf-updown = Son qui monte et descend
 common-world-map = Carte du monde
 ui-options-integrated-graphics = Carte graphique intégrée
 ui-contacts-map = Carte...
@@ -5323,6 +5330,10 @@ ui-options-collision-sounds = Sons de collision
 ui-options-interface-sounds = Sons de l'interface
 ui-options-gesture-sounds = Sons des gestes
 ui-options-sounds-played-by-other-avatars-gestures = Sons joués par les gestes des autres avatars
+ui-options-sound-occlusion = Étouffer les sons derrière les murs
+ui-options-sound-occlusion-help = Les sons du monde entendus à travers un mur, un objet ou une colline sont plus sourds et plus faibles, comme un son dans une autre pièce. Désactivé : chaque son est entendu sans obstacle, comme dans le Legacy Viewer
+ui-options-sound-hrtf = Son 3D pour casque (HRTF)
+ui-options-sound-hrtf-help = Les sons du monde sont entendus là où ils sont : devant, derrière, au-dessus ou en dessous de vous, et pas seulement à gauche ou à droite. Utilisez un casque : sur des haut-parleurs, le rendu est faux. Désactivé : les sons sont répartis entre la gauche et la droite, comme dans le Legacy Viewer
 ui-inventory-dialogs-ease-out-s = { "Sortie : " }{ $value0 }s
 ui-options-audio-output = Sortie audio
 ui-options-commands-output-to-a-channel = Sortie sur un canal
@@ -7397,7 +7408,7 @@ hud-move-locked = Verrouiller le déplacement rapide
 hud-local-scale-reset = Revenir à 100 %
 hud-local-scale-forget = Oublier le réglage mémorisé
 hud-local-scale-help = Maintenez la touche des HUDs : clic gauche pour déplacer, molette pour changer la taille, Maj pour affiner. La taille est mémorisée sur ce PC par nom et créateur, pour ce compte. En édition d’un HUD, la molette sans cette touche zoome la vue de tous les HUDs.
-cli-help = { "Aurora Viewer\u000A\u000AUsage : aurora-viewer [--title <texte>] [--fps-limit <fps>] [--language <code>] [--grid <nom>]\u000A                      [--login <prénom> <nom> <mot de passe>] [--version] [<slurl>]\u000A\u000A  --title <texte>  Nomme cette fenêtre et son journal (aurora-<texte>.log,\u000A                  aurora-demo-<texte>.log en démo)\u000A  --fps-limit <fps>  Limite cette instance à 1..500 FPS sans enregistrer le réglage\u000A  --language <code>  Force la langue de cette instance (" }{ $languages }{ ")\u000A  --grid <nom>    Démarre sur agni, aditi, une grille enregistrée ou une adresse de connexion (aussi --loginuri <uri>)\u000A  --login <prénom> <nom> <mot de passe>  Se connecte tout de suite avec ce compte\u000A  <slurl>, --url <slurl>  Démarre à ce lieu ; rien n'est lu après. Un viewer déjà\u000A                  ouvert le reçoit à la place\u000A  -V, --version   Affiche la version compilée puis quitte\u000A  -h, --help      Affiche cette aide\u000A\u000ALes scénarios de test utilisent des variables (AURORA_DEMO=1, AURORA_CAPTURE=...) :\u000Avoir README.md." }
+cli-help = { "Aurora Viewer\u000A\u000AUsage : aurora-viewer [--title <texte>] [--fps-limit <fps>] [--vr] [--language <code>] [--grid <nom>]\u000A                      [--login <prénom> <nom> <mot de passe>] [--version] [<slurl>]\u000A\u000A  --title <texte>  Nomme cette fenêtre et son journal (aurora-<texte>.log,\u000A                  aurora-demo-<texte>.log en démo)\u000A  --fps-limit <fps>  Limite cette instance à 1..500 FPS sans enregistrer le réglage\u000A  --language <code>  Force la langue de cette instance (" }{ $languages }{ ")\u000A  --grid <nom>    Démarre sur agni, aditi, une grille enregistrée ou une adresse de connexion (aussi --loginuri <uri>)\u000A  --login <prénom> <nom> <mot de passe>  Se connecte tout de suite avec ce compte\u000A  <slurl>, --url <slurl>  Démarre à ce lieu ; rien n'est lu après. Un viewer déjà\u000A                  ouvert le reçoit à la place\u000A  --vr             Passer en VR dès que le monde s'affiche (casque connecté)\u000A  -V, --version   Affiche la version compilée puis quitte\u000A  -h, --help      Affiche cette aide\u000A\u000ALes scénarios de test utilisent des variables (AURORA_DEMO=1, AURORA_CAPTURE=...) :\u000Avoir README.md." }
 demo-media-page = { "data:text/html;charset=utf-8,<html><body style='margin:0;height:100vh;background:linear-gradient(135deg,%232a1f4a,%230f6d6d);color:white;font:56px sans-serif;text-align:center'><h1 style='margin:40px 0 10px'>Aurora media</h1><p id='t' style='font-size:90px;margin:10px'>--</p><button onclick=\"document.body.style.background='%237a3b9c';this.textContent='Cliqu%C3%A9 !'\" style='font-size:48px;padding:10px 40px'>Cliquer</button><br><input placeholder='Taper ici' style='font-size:44px;margin-top:30px;width:70%'><script>setInterval(function(){document.getElementById('t').textContent=new Date().toLocaleTimeString()},250)</script></body></html>" }
 
 # Secondary labels and status messages
@@ -12776,3 +12787,16 @@ import-source-folder-name-help = Nom du dossier d’inventaire pour { $source }.
 
 import-local-stage-upload = Ajouter à l’upload ({ $count })
 import-local-stage-upload-help = Conserver les aperçus locaux et préparer l’upload des fichiers cochés, y compris les fichiers masqués. Les frais seront confirmés séparément.
+
+vr-view = Vue VR
+vr-unavailable = La VR est indisponible. Vérifiez que le runtime OpenXR et le casque sont connectés.
+vr-restart-title = Casque connecté
+vr-restart-body = Votre casque a été connecté après le démarrage d'Aurora. Aurora prépare la VR à son démarrage : redémarrez-le pour utiliser la VR. Il passera en VR tout seul une fois de retour dans le monde.
+vr-restart-confirm = Redémarrer en VR
+ui-options-camera-vr = VR
+ui-options-camera-vr-view = Vue du casque
+ui-options-camera-vr-view-help = Où commence la vue quand vous passez en VR : dans les yeux de votre avatar, ou là où était la caméra.
+ui-options-camera-vr-view-first-person = Première personne
+ui-options-camera-vr-view-desktop-camera = Position de la caméra
+
+app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
