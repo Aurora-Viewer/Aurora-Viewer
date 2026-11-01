@@ -6,6 +6,20 @@ with `ui/fonts.rs::TextEmphasis` carried through emoji runs, links and search
 highlights. `ChatKind::volume` includes object messages. `ui/chat/volume_tests.rs`
 checks the painted text across all renderers.
 
+`imports/ui/launcher.rs` supplies the optional movable quick import bar.
+One shared Aurora glass overlay groups flat native action buttons and a drag
+grip; the visible inspector or Permissions receives the accent state.
+Preferences > Inventory persists `imports.icon_bar` (off by default) for
+the shared Import shortcut/menu entry point. `imports/windows.rs` owns independent
+type windows (open state, selection, tab, filters and destination picker), over
+the shared drafts and asynchronous workers. Each type scopes its queue, prices,
+confirmation and delayed folder/mesh work; its geometry uses a separate Floater ID.
+The queue's switch edits the same saved preference
+and shows or hides the strip immediately. The Inventory preferences put this
+choice after Received items; the strip's Folder icon opens the unified queue
+and immediately requests the native directory picker. Confirmation uses a shared
+modal above all import windows.
+
 `world/inventory.rs::Inventory::apply` reconciles accepted folder readbacks
 with the item records used by inventory views. Obsolete item/folder links are
 removed once per response batch, including records no longer in the child lists;
@@ -16,10 +30,18 @@ Outfit demos use this same reconciliation instead of removing links themselves.
 `folders/roots.rs` applies the optional source wrapper in mirror, type and flat
 layouts. Include source folder defaults on and is persisted with import settings;
 per-source names stay with the current queue. Wrapper edits retain manual inner
-paths and invalidate affected mesh offers. Loose file selections are never wrapped.
+paths and invalidate affected mesh offers. Loose files have no automatic source wrapper.
 `ui/source_root.rs` shares the checkbox and name editor below Destination in
 Files and Folder preview. Folder admission retains the current tab; explicit
 left-queue file clicks open Files, including clicks on the already active item.
+Loose files instead offer Create folder and a name updated as typed in both the unified
+and type windows. `SourceRoots::loose` wraps only drafts without a disk source
+folder, preserves inner edits, and uses the same confirmed folder creation and
+acknowledged UUIDs. Empty or invalid names block uploads without retaining an old
+destination behind the displayed text; choosing default folders
+ignores this grouping. The confirmation's shared-texture note is separate from
+the price and appears only when selected material dependencies reuse an upload
+key (including a previously acknowledged upload).
 `imports/stage.rs` snapshots checked local previews into fresh upload drafts,
 retaining decoded sources and user edits without disk reads or image rescans.
 It preserves local identities/attachments, isolates mesh job controls and fee

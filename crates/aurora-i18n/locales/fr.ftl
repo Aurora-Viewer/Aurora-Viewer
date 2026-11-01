@@ -257,6 +257,11 @@ login-accounts-remove = Retirer le compte
 login-accounts-confirm = Cette action concerne uniquement { $name }. Confirmer ?
 
 import-title = Importer des assets
+import-entry-point = Ouvrir les imports avec
+import-entry-point-help = Choisir ce qu’ouvrent le raccourci Importer (Ctrl+U par défaut) et Construire > Importer. La barre d’import rapide donne aussi accès à la fenêtre d’upload complète.
+import-entry-window = Fenêtre d’upload
+import-launcher-folder = Dossier
+import-icon-bar = Barre d’import rapide
 import-type-title = Importer — { $type }
 import-open-inventory = Voir dans l’inventaire
 import-lod-high = Haut
@@ -479,7 +484,8 @@ import-total = Coût total : { $cost } L$
 import-upload = Importer
 import-cancel-remaining = Annuler les suivants
 import-confirm-title = Confirmer l’import
-import-confirm-price = Ces imports coûteront { $cost } L$. Les textures partagées ne seront chargées qu’une fois.
+import-confirm-price = Ces imports coûteront { $cost } L$.
+import-confirm-shared-textures = Les textures partagées ne seront chargées qu’une fois.
 import-price-unavailable = Tarif indisponible ; connectez-vous avant l’import.
 import-insufficient-balance = Le solde ne permet pas cet import.
 import-invalid-request = Vérifiez le nom, le dossier et les paramètres du fichier.
@@ -12763,6 +12769,9 @@ import-use-default-folders = Utiliser les dossiers par défaut
 import-folders-auto-create = Les dossiers de destination manquants seront créés après confirmation de l’import.
 
 import-include-source-folder = Inclure le dossier source
+import-create-folder = Créer un dossier
+import-create-folder-help = Placer les fichiers ajoutés directement dans un nouveau dossier sous la destination choisie. Le dossier sera créé après confirmation de l’import.
+import-folder-name = Nom du dossier
 import-source-folder-name-help = Nom du dossier d’inventaire pour { $source }. Le dossier sur votre ordinateur reste inchangé.
 
 import-local-stage-upload = Ajouter à l’upload ({ $count })
