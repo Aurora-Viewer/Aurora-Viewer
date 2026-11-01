@@ -4413,7 +4413,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>` | The region goes silent (the unsteady-connection pill and its count), or the link is lost (login screen offering to go back to the same place) |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
-| `AURORA_DEMO_CHAT_LINES=1\|legacy` | Nearby chat lines above the chat bar: cards by sender, or the one-line look |
+| `AURORA_DEMO_CHAT_LINES=1\|legacy\|volumes` | Nearby chat lines above the chat bar: cards by sender, or the one-line look |
 | `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact |
 | `AURORA_DEMO_TYPING=1` | We type in the nearby chat from our arrival on: typing animation, dots on our plate |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
@@ -6277,7 +6277,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   is disabled; only enter synthetic values for this test.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
-- **`AURORA_DEMO_CHAT_LINES=1|legacy`**: nearby chat said at the arrival,
+- **`AURORA_DEMO_CHAT_LINES=1|legacy|volumes`**: nearby chat said at the arrival,
   shown above the chat bar with the Conversations window closed: two lines
   of one resident, an emote, an object's line, a long line with a link, a
   shout (only the 6 most recent lines show, as always). `1`: Aurora's cards
@@ -6287,6 +6287,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Viewer's one-line look for the session (nothing saved). Check them over a
   dark and a bright world (`AURORA_DEMO_SKY=2,4,2`): readable on both, the
   name, the picture and the links clickable, the world clickable around.
+  `volumes` shows the same normal, whispered and shouted messages from us
+  and an object in both the cards and Conversations, visible together to
+  compare their colours, whisper italics and shout weight. These demo cards
+  remain visible for an hour without changing the saved timeout.
+
 - **`AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy|lines[:on][:im][:imlines]`**
   (#475, #741): nearby chat said at the arrival, two residents among a
   greeter, a tip jar, our HUD's owner-say, a door's emote and a vendor's

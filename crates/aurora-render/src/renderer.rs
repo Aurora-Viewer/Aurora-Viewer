@@ -2555,7 +2555,7 @@ impl Backend {
             alpha_mode: caps.alpha_modes.first().copied().unwrap_or(wgpu::CompositeAlphaMode::Auto),
             view_formats: vec![],
         };
-        surface.configure(&device, &config);
+        crate::present::configure(&surface, &device, &config);
 
         // ---- layouts
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -4594,7 +4594,7 @@ impl Backend {
         }
         self.config.width = width;
         self.config.height = height;
-        self.surface.configure(&self.device, &self.config);
+        crate::present::configure(&self.surface, &self.device, &self.config);
         self.rebuild_targets();
     }
 
@@ -4915,7 +4915,7 @@ impl Backend {
             return;
         }
         self.config.present_mode = mode;
-        self.surface.configure(&self.device, &self.config);
+        crate::present::configure(&self.surface, &self.device, &self.config);
     }
 
     // ---------------------------------------------------------------- frame
@@ -5317,7 +5317,7 @@ impl Backend {
             match self.surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Some(FrameTarget::Surface(t)),
                 wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                    self.surface.configure(&self.device, &self.config);
+                    crate::present::configure(&self.surface, &self.device, &self.config);
                     None
                 }
                 _ => None,

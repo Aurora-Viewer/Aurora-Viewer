@@ -307,6 +307,44 @@ pub fn semibold_format(family: &egui::FontFamily, size: f32, color: egui::Color3
     format
 }
 
+/// Emphasis shared by plain text, emoji runs and laid-out chat cards.
+/// `RichText::strong` changes the colour only; weight needs our font face
+/// and the variable-font axis, as in `semibold_format`.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct TextEmphasis {
+    pub italics: bool,
+    pub strong: bool,
+}
+
+impl From<bool> for TextEmphasis {
+    fn from(italics: bool) -> Self {
+        Self { italics, strong: false }
+    }
+}
+
+impl TextEmphasis {
+    pub fn rich_text(self, ctx: &egui::Context, text: impl Into<String>, size: f32, color: egui::Color32) -> egui::RichText {
+        let mut text = egui::RichText::new(text).size(size).color(color);
+        if self.strong {
+            text = text.family(semibold(ctx)).variation(b"wght", 600.0);
+        }
+        if self.italics {
+            text = text.italics();
+        }
+        text
+    }
+
+    pub fn format(self, ctx: &egui::Context, size: f32, color: egui::Color32) -> egui::TextFormat {
+        let mut format = if self.strong {
+            semibold_format(&semibold(ctx), size, color)
+        } else {
+            egui::TextFormat::simple(egui::FontId::proportional(size), color)
+        };
+        format.italics = self.italics;
+        format
+    }
+}
+
 /// Does `semibold_format` draw heavier than the regular text? Yes with an
 /// embedded font or a variable system font; a static system font draws its
 /// semi-bold texts with its regular face.

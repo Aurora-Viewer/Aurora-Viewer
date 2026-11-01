@@ -650,6 +650,8 @@ pub struct App {
     minimized_mute: audio_mute::MinimizedMute,
     /// When the crash report's state was last noted (app/crash_state.rs).
     crash_state_at: Option<Instant>,
+    /// Swapchain recreations of the last seconds, for the same state.
+    crash_swapchain: crash_state::SwapchainRecent,
     /// The graphics card stopped finishing frames (app/gpu_stall.rs).
     gpu_stall: gpu_stall::GpuStall,
     /// The Down key's latch (FSCrouchToggle).
@@ -1387,6 +1389,7 @@ impl App {
             stream_title_said: None,
             minimized_mute: audio_mute::MinimizedMute::default(),
             crash_state_at: None,
+            crash_swapchain: Default::default(),
             gpu_stall: Default::default(),
             crouch_toggle: Default::default(),
             music_parcel_url: String::new(),
@@ -14175,7 +14178,9 @@ impl App {
                         painter.text(at, egui::Align2::CENTER_BOTTOM, &text, font, p.ink.gamma_multiply(0.6));
                     }
                 }
-                if self.skin.layout.chat_toasts && !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)) {
+                if self.skin.layout.chat_toasts
+                    && (crate::demo::chat_volume_comparison() || !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)))
+                {
                     // FSBubblesHideConsoleAndToasts: the residents' lines are
                     // in their bubbles
                     let residents = !(self.chat_bubbles() && self.settings.chat_bubbles_hide_console);
@@ -14187,7 +14192,11 @@ impl App {
                         &mut self.chat_ui.wanted_names,
                         &mut self.chat_ui.wanted_pics,
                         bottom_top,
-                        self.settings.chat_toast_seconds,
+                        if crate::demo::chat_volume_comparison() {
+                            3600.0
+                        } else {
+                            self.settings.chat_toast_seconds
+                        },
                         self.settings.chat_timestamps,
                         !classic_bars,
                         // AURORA_DEMO_CHAT_LINES=legacy: the one-line look
