@@ -7,6 +7,7 @@ pub struct AxisCapture {
     device: String,
     initial: [f32; AXES],
     peaks: [f32; AXES],
+    directions: [f32; AXES],
     axis_count: usize,
     started: Option<Instant>,
 }
@@ -17,8 +18,26 @@ impl AxisCapture {
             device: device.id.clone(),
             initial: device.axes,
             peaks: [0.0; AXES],
+            directions: [0.0; AXES],
             axis_count: device.axis_count.min(AXES),
             started: None,
+        }
+    }
+
+    pub fn button(&self, axis: i8) -> Option<i8> {
+        let &direction = self.directions.get(usize::try_from(axis).ok()?)?;
+        (direction.abs() > 0.5).then_some(super::BUTTONS as i8 + axis * 2 + i8::from(direction < 0.0))
+    }
+
+    pub fn rebase(&mut self, axis: usize, value: f32) {
+        if axis >= self.axis_count || !value.is_finite() {
+            return;
+        }
+        self.initial[axis] = value.clamp(-1.0, 1.0);
+        self.peaks[axis] = 0.0;
+        self.directions[axis] = 0.0;
+        if self.peaks.iter().all(|peak| *peak < 0.25) {
+            self.started = None;
         }
     }
 
@@ -39,7 +58,10 @@ impl AxisCapture {
             let (value, initial) = (device.axes[n], self.initial[n]);
             if value.is_finite() && initial.is_finite() {
                 let delta = (value.clamp(-1.0, 1.0) - initial.clamp(-1.0, 1.0)).abs();
-                *peak = peak.max(delta);
+                if delta > *peak {
+                    *peak = delta;
+                    self.directions[n] = value.clamp(-1.0, 1.0);
+                }
                 moving = moving.max(delta);
             }
         }
@@ -65,6 +87,7 @@ impl AxisCapture {
         }
         if released {
             self.peaks.fill(0.0);
+            self.directions.fill(0.0);
             self.started = None;
         }
         Ok(None)

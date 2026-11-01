@@ -50,7 +50,7 @@ impl Flycam {
             let blend = if feather == 0.0 { 1.0 } else { (dt * feather).min(1.0) };
             self.rotation = self.rotation.slerp(leveled.rotation, blend);
         }
-        if settings.direct_zoom {
+        if settings.absolute_zoom() {
             if settings.mapping[6] >= 0 && settings.flycam.gain[6] != 0.0 {
                 self.fov = self.reference_fov + a[6];
             }

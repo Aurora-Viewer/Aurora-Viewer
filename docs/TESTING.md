@@ -331,7 +331,7 @@ the background still applies outside screenshots.
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_JOYSTICK=preferences\|axes\|avatar\|flycam\|roll\|rearm\|axis-capture\|zoom` | Synthetic joystick input, its preferences or an independent six-axis camera flight |
+| `AURORA_DEMO_JOYSTICK=preferences\|axes\|avatar\|flycam\|roll\|rearm\|axis-capture\|zoom\|zoom-buttons\|zoom-triggers\|zoom-hold` | Synthetic joystick input, its preferences or an independent six-axis camera flight |
 | `AURORA_CAPTURE=<file.png>` | Saves a screenshot of the frame |
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
@@ -384,6 +384,19 @@ view, narrower relative zoom, edited lens, absolute deflection and restored
 reference. Logs at the following frames record the rendered field of view;
 keep the run beyond frame 921 to include every probe. The camera position
 must remain fixed while the projection changes.
+`zoom-buttons` and `zoom-triggers` enter flycam with two physical buttons
+(8/9) or two analog triggers (axes 6/7) assigned to zoom. Frames 650–689
+zoom in, 720–759 zoom out, and 780–809 hold both controls to stop zoom.
+Capture `640,700,770,820,860`: initial lens, narrower lens, restored lens,
+both-controls cancellation and retained lens. `zoom-hold` assigns trigger
+6 as modifier and shares axis 5 with camera yaw. Frames 650–689 zoom in,
+720–759 zoom out; 760–789 release the modifier while keeping the axis
+deflected, which must not rotate the camera. Frames 790–809 centre it;
+810–849 resume ordinary yaw. Capture `640,700,770,780,840,880`: fixed-pose
+zoom in/out, safe modifier release, then resumed yaw. Logs at frames 641,
+701, 771, 791, 831 and 861 report the lens and yaw/zoom inputs.
+Combine any of these with `AURORA_DEMO_OPTIONS=controls/1:joystick-zoom`
+to show its normal preferences group, scrolled to the zoom mode selector.
 The avatar must stay put in the two camera scenarios. Compare the photo
 free camera (`AURORA_DEMO_CONTROLS=free`) and normal camera controls as well.
 Hardware validation: select the real device, enable input, apply Gamepad or
@@ -413,7 +426,22 @@ separate for Avatar and Camera and preserves the gain magnitude; previous
 negative gains appear inverted, and the choice persists even with zero gain.
 Axis rows use aligned assignment, Avatar and Camera columns across the
 page; check wrapping at narrow window sizes and larger interface scales.
-Roll and Zoom label the unused Avatar column as Camera only.
+Roll labels the unused Avatar column as Camera only. Zoom has its own group
+with direct-axis, two-buttons and hold-plus-axis choices; its axis row has
+only assignment and Camera tuning. Only the chosen mode's controls appear
+on the page, while all remain searchable and resettable.
+Assign the two zoom controls and the modifier by pressing a physical button
+or trigger. Trigger/axis directions display as Axis N (+/−), not fabricated
+physical button numbers. Controls held before capture must be released
+before a fresh press is learned. Two-controls mode must zoom both ways,
+stop when released or when both controls are held, and work without an
+axis assignment or Camera gain. Hold-plus-axis mode must keep the lens
+after release, consume the shared camera axis while held, and wait for
+that axis to centre before ordinary movement resumes. A trigger used as
+a zoom button or modifier must not also drive its old camera mapping.
+Repeat after focus loss, a device change and stale input: held controls
+must not restart zoom until released and pressed again. Old direct-axis
+profiles retain their mode and absolute/relative choice.
 Windows trigger zoom: assign a trigger, let it return to rest, enter flycam
 and press it. Its native pressure range must stay 0–1 (released at zero),
 so relative zoom starts without crossing a midpoint and stops on release

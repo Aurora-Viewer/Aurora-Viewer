@@ -181,7 +181,10 @@ impl App {
         }
         if !self.joystick.demo_started {
             self.joystick.demo_started = true;
-            if matches!(mode.as_str(), "rearm" | "axis-capture" | "zoom") {
+            if matches!(
+                mode.as_str(),
+                "rearm" | "axis-capture" | "zoom" | "zoom-buttons" | "zoom-triggers" | "zoom-hold"
+            ) {
                 self.settings.joystick = Default::default();
             }
             self.settings.joystick.enabled = true;
@@ -198,6 +201,21 @@ impl App {
                 self.settings.camera.fov = crate::camera::DEFAULT_FOV;
                 self.settings.joystick.mapping[6] = 6;
                 self.settings.joystick.flycam.gain[6] = 1.0;
+            }
+            if matches!(mode.as_str(), "zoom-buttons" | "zoom-triggers" | "zoom-hold") {
+                self.settings.camera.fov = crate::camera::DEFAULT_FOV;
+                self.settings.joystick.flycam.feather = 0.0;
+                if mode == "zoom-hold" {
+                    self.settings.joystick.zoom_mode = crate::joystick::ZoomMode::HoldAxis;
+                    self.settings.joystick.zoom_hold_button = 44;
+                    self.settings.joystick.mapping[6] = 5;
+                    self.settings.joystick.flycam.gain[6] = 0.6;
+                } else {
+                    self.settings.joystick.zoom_mode = crate::joystick::ZoomMode::Buttons;
+                    self.settings.joystick.zoom_in_button = if mode == "zoom-triggers" { 44 } else { 8 };
+                    self.settings.joystick.zoom_out_button = if mode == "zoom-triggers" { 46 } else { 9 };
+                    self.settings.joystick.zoom_speed = 0.6;
+                }
             }
             self.joystick.snapshot.devices = vec![crate::joystick::Device::new(
                 "demo-joystick".into(),
@@ -255,6 +273,42 @@ impl App {
                 );
             }
         }
+        if matches!(mode.as_str(), "zoom-buttons" | "zoom-triggers" | "zoom-hold") {
+            d.axes = [0.0; crate::joystick::AXES];
+            if mode == "zoom-hold" {
+                if (650..760).contains(&self.frame_count) {
+                    d.axes[6] = 0.9;
+                }
+                if (650..690).contains(&self.frame_count) || (810..850).contains(&self.frame_count) {
+                    d.axes[5] = 0.8;
+                }
+                if (720..790).contains(&self.frame_count) {
+                    d.axes[5] = -0.8;
+                }
+            } else {
+                let inside = (650..690).contains(&self.frame_count) || (780..810).contains(&self.frame_count);
+                let outside = (720..760).contains(&self.frame_count) || (780..810).contains(&self.frame_count);
+                if mode == "zoom-triggers" {
+                    d.axes[6] = f32::from(u8::from(inside));
+                    d.axes[7] = f32::from(u8::from(outside));
+                } else {
+                    d.buttons = (u32::from(inside) << 8) | (u32::from(outside) << 9);
+                    d.presses[8] = u64::from(self.frame_count >= 650) + u64::from(self.frame_count >= 780);
+                    d.presses[9] = u64::from(self.frame_count >= 720) + u64::from(self.frame_count >= 780);
+                }
+            }
+            if matches!(self.frame_count, 641 | 701 | 771 | 791 | 831 | 861) {
+                log::info!(
+                    "joystick zoom mode: mode={} frame={} flycam={} fov={:.4} yaw={:.4} zoom={:.4}",
+                    mode,
+                    self.frame_count,
+                    self.joystick.active,
+                    self.camera.fov_y,
+                    self.joystick.motion.axes[5],
+                    self.joystick.motion.axes[6]
+                );
+            }
+        }
         if mode == "rearm" {
             // A relative zoom axis that never centres must not prevent
             // flycam entry/exit or movement on the other axes.
@@ -278,7 +332,12 @@ impl App {
         }
         self.joystick.snapshot.devices = vec![d];
         self.joystick.snapshot.updated = Some(Instant::now());
-        if self.frame_count == 630 && matches!(mode.as_str(), "flycam" | "roll" | "zoom") {
+        if self.frame_count == 630
+            && matches!(
+                mode.as_str(),
+                "flycam" | "roll" | "zoom" | "zoom-buttons" | "zoom-triggers" | "zoom-hold"
+            )
+        {
             self.toggle_joystick_flycam();
         }
     }

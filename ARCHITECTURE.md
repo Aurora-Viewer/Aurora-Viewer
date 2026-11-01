@@ -2761,6 +2761,19 @@ The Windows backend preserves the driver's 0–1 pressure range for known
 gamepad trigger codes; centred sticks and generic raw axis ranges retain
 their existing normalization. Released triggers can arm relative zoom and
 stop it without crossing a fictitious centre position.
+`ZoomMode` preserves direct-axis profiles and adds two held zoom controls
+or a held modifier plus a bidirectional axis. Zoom assignments encode
+physical buttons as 0–31 and native axis directions as 32–47; the latter
+have separate edge/release arming and use an axis threshold of ±0.5.
+`ZoomCapture` combines native press counters with dominant-axis capture,
+ignoring controls already held when listening begins. While adjusting,
+shared camera channels and analog modifier/button sources are consumed;
+the shared stick must centre before its ordinary camera action resumes.
+Both added modes integrate and retain the lens on release, independent of
+the old absolute-axis flag. Button zoom has its own positive speed and
+stops immediately. The preferences keep these controls together in a zoom
+group; `Cx::conditional` hides inactive branches on their page while
+retaining their search, modified-view and reset declarations.
 
 `build/task_inventory.rs` centralises the permissions and the destinations of
 the transfer of an object's contents to the personal inventory;
