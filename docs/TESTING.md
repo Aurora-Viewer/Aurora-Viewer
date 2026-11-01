@@ -335,6 +335,10 @@ the background still applies outside screenshots.
 | `AURORA_CAPTURE=<file.png>` | Saves a screenshot of the frame |
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
+| `AURORA_DEMO_RENDER_TEXTURE=1` | Captures the demo world through a caller-owned render target |
+| `AURORA_DEMO_XR_DEVICE=1` | Uses OpenXR-compatible Vulkan initialization for the Linux demo |
+| `AURORA_OPENXR_LOADER=<path>` | Explicit macOS OpenXR loader dylib for runtime tests |
+| `AURORA_DEMO_XR_WORLD=1` | Sends the native demo world to OpenXR for a short stereo test |
 | `AURORA_CAPTURE_LAYOUT=1` | The screenshot reloads the saved layout (`ui_layout.ron`) |
 | `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory, posted to the profile or sent by e-mail, the photo quality on a card short of video memory |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
@@ -344,6 +348,13 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora or a LUT), the chosen one's strength and settings, the before / after line, the filter panel |
 | `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic\|free\|free-compact` | The Controls window open on a tab, Firestorm's two windows, or driving the photo window's free camera |
 | `AURORA_DEMO_CAMERA_PRESETS=save\|apply\|object\|pick[-…]` | The viewfinder's camera presets: saved on the avatar, a place and an object, applied, or the object chosen in the scene |
+
+`AURORA_DEMO_RENDER_TEXTURE`: with demo mode and `AURORA_CAPTURE`, the capture
+frame draws the full world into a caller-owned GPU texture instead of acquiring
+the desktop swapchain. The saved image must show the scene without egui,
+nameplates, worn HUDs, selection or debug overlays. Other frames follow the
+normal desktop path. This checks the output boundary for VR; it does not connect
+to OpenXR or provide stereo views.
 
 `AURORA_DEMO_JOYSTICK`: at frame 600, injects a synthetic eight-axis
 controller through the production input path, without connecting a device
@@ -1267,7 +1278,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SCULPT_ZERO=1` | Subtype-zero sculpt classification beside torus and sphere controls |
 | `AURORA_DEMO_SCULPT_MISSING=1\|late` | A sculpt whose map is missing: the sphere placeholder, then its torus with `late` |
 | `AURORA_DEMO_TEXTURE_MISSING=1` | Boxes whose texture is missing: the Legacy Viewer's grey, never the rez grid for ever |
-| `AURORA_DEMO_BOM_REZZED=1` | A box of bake-on-mesh placeholders on the ground: the placeholder textures, never white |
+| `AURORA_DEMO_BOM_REZZED=1\|pbr` | Ground BOM placeholders, or PBR BOM maps on a ground box and an attachment |
 | `AURORA_DEMO_OBJECT_MENU=<mode>` | Object actions, scene menu customization/notecards, object profile and pathfinding readers |
 
 **Beacon details.** `AURORA_DEMO_BEACONS=1` adds seven labelled sources, including an invisible scripted cube. `lines`, `highlights` and `off` isolate the two render modes; `hidden-particles` keeps the source marker while hiding emitted particles. `parcels` frames the terrain boundaries and ownership colours. `owned` opens My land with an offline parcel and group contributions. Check each source switch, Scripted versus Touch, width, both master switches off, and closing/reopening the floater without losing the active filters. The grid check compares real sound/particle/media sources, linked children, attachments, neighbouring parcels and the personal holdings list with the Legacy Viewer.
@@ -1418,10 +1429,21 @@ the fix they stayed the grid for as long as they were in view. Capture with
 `AURORA_DEMO_BOM_REZZED=1` places a box ahead of the start view (x=135,
 y=129.5) whose faces carry the bake-on-mesh placeholders of the head, the upper
 body and the lower body, like a BOM body part rezzed out. The demo stands in
-for the grid's placeholder textures with diagonal stripes: orange (head), teal
+for the grid's placeholder textures with labelled diagonal stripes: orange (head), teal
 (upper body) and violet (lower body). Not worn, the box shows them, as the
 Legacy Viewer does; before the fix its faces were white. On the grid the
 placeholders are the real "baked" channel textures.
+
+`AURORA_DEMO_BOM_REZZED=pbr` adds a material with BOM in all four channels,
+on the ground box and a chest attachment (`81141`). Both demo avatars supply
+skin, normal, ORM and emissive bakes. Use
+`AURORA_DEMO_BUILD=pbr-bom,object:81141,0` to frame the attachment and open
+its map picker; the final number selects colour (0), normal (1), ORM (2) or
+emissive (3). The picker, swatches and material sphere show the coloured
+`BAKED_*` reference images while the worn object uses the avatar's bakes.
+`AURORA_DEMO_BUILD=bp-bom,object:81141` shows the same reference-image preview
+for a Blinn-Phong diffuse map. The ground box keeps the placeholders.
+Check both `AURORA_DEMO_BUILD_STYLE=aurora` and `legacy`.
 
 `AURORA_DEMO_PROJECTOR=1`, `AURORA_DEMO_BUILD=move,object:9712` and
 `AURORA_DEMO_BUILD_TAB=features:light-picker` select a light and open its
@@ -4785,6 +4807,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   then opens the chosen flow: RGBA image, PBR material, Collada cube,
   BVH / `.anim` animations and synthetic WAV sound. Check the settings, the
   previews, the camera, the permissions, the selection and the confirmation.
+  With `texture` and `AURORA_DEMO_IMPORT_FILE`, also check grayscale and
+  grayscale/alpha PNGs, and 16-bit grayscale, RGB and RGBA exports: all must
+  show a preview without a channel error. Luminance is repeated in RGB,
+  alpha is retained, and 16-bit channels use their high byte, following
+  `LLPngWrapper::normalizeImage`. Ordinary 8-bit RGB/RGBA files and material
+  maps must still load with the same colours and transparency.
   The texture inspector shows "Limit size to 1024 × 1024" only when the
   unrestricted power-of-two width or height would exceed 1024. It is off by
   default (2048 maximum). Each explicit change is saved; newly added textures
@@ -10825,3 +10853,32 @@ Check ordinary `AURORA_DEMO_INVENTORY=1` and the existing attachment regressions
 alongside it. Online validation is done by the human: check returned objects,
 startup orphan retrieval and ordinary script attachments remaining in Objects or
 their original folder. No credentials or grid actions are automated.
+
+`AURORA_DEMO_XR_DEVICE`: Linux/Windows/macOS offline demo only. With the active OpenXR runtime running and the headset connected, initializes the actual viewer graphics device through OpenXR Vulkan-enable2, requesting Aurora's normal bindless and rendering features. Desktop output remains on the window; combine with `AURORA_DEMO_RENDER_TEXTURE=1` and a capture to validate the full world-rendering output. This does not start an XR session or send the world to the headset. Runtime initialization errors fail this explicit experiment rather than silently testing another device.
+
+`AURORA_DEMO_XR_WORLD`: Linux/Windows/macOS offline experiment only, with an OpenXR runtime running and
+the headset connected. Implies the compatible XR device path. After frame 600,
+creates independent eye renderers and sends the actual demo scene to the headset
+for 15 seconds, then returns to desktop rendering. Eye dimensions are capped at
+1600 pixels per axis for bring-up. Geometry, textures and asset uploads are
+shared; eye depth, visibility, exposure and temporal state are independent. CPU
+frustum rejection is disabled in this scenario so turning away from the desktop
+camera does not discard those lists; per-eye GPU culling remains active. The
+desktop mirror follows the left eye at up to 30 FPS during headset rendering. Manual VR entry uses the bottom-toolbar headset button and Escape exits. This
+automatic scenario retains its timed stop for regression testing. Late runtime attachment and production disconnect recovery remain pending. Run with a distinct test title; omit capture
+exit while visually inspecting the headset.
+
+VR horizon regression: start with the desktop camera pitched down and the
+headset resting tilted, then wear it and look physically level. The view must
+face the horizon; looking up/down and rolling the head must still work. Escape
+restores the original desktop pitch. Verify the desktop mirror follows the eye
+without stretching, exposes no viewer UI, and returns to the normal interface on
+exit. Repeat after resizing the desktop window. The mirror is capped at 30 FPS
+and does not render a separate spectator camera.
+
+`AURORA_OPENXR_LOADER`: macOS only. Optional absolute path to the installed
+Khronos `libopenxr_loader.dylib`; otherwise standard dynamic-loader discovery is
+used. The loader and headset runtime are installed separately. Runtime selection
+is still performed by OpenXR (`XR_RUNTIME_JSON` may select a development manifest).
+This is also accepted during normal viewer startup; no loader is downloaded or
+bundled. See [VR setup](VR.md) for platform requirements and validation status.
