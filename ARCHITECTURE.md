@@ -1307,6 +1307,7 @@ aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Vie
 ├─ aurora-tools.cmd             development tools (double-click): scripts/tools
 ├─ assets/
 │  ├─ branding/                 logos (colour, white, black, violet, teal, on navy), SVG + PNG, aurora.ico
+│  ├─ hrtf/                     head-related filters of the 3D sound for headphones (MIT KEMAR; `scripts/generate-hrtf.py`, built into the exe)
 │  ├─ models/                   self-contained Aurora 3D GLB for material previews
 │  ├─ stars/                    night sky star table (HYG database, CC BY-SA 4.0; `scripts/generate-star-catalog.py`)
 │  ├─ tabler-icons/             full Tabler library (SVG: outline, filled)
@@ -2506,6 +2507,21 @@ World voices also carry an occlusion amount (`AudioEngine::world_occlusion`,
 from `scene/sound_occlusion.rs`): the mixer runs their mono signal through
 two one-pole low-passes and a gain cut that glide to it, with neither
 allocation nor lock in the audio callback.
+With the 3D sound for headphones (Preferences › Sound, Aurora's own, off),
+`scene/sounds.rs` places a world sound by its distance gain and its direction
+in the camera's frame (`AudioEngine::play_world_binaural` / `world_binaural`)
+instead of the two panned gains; HUD sounds and sounds at the camera stay
+panned. `aurora-audio/src/hrtf.rs` renders those voices binaurally after the
+occlusion filter: the MIT KEMAR measurements of `assets/hrtf/kemar.bin`
+(368 directions mirrored to 710, 64-tap minimum-phase filters at 48 kHz and
+the interaural delay), the four nearest blended for a direction, a
+fractional delay line and a FIR per ear, by blocks of 64 frames; a new
+direction crossfades over 64 frames and the delays glide, and a voice moving
+between panned and binaural crossfades over 256 frames. The voices' states
+are preallocated by the mixer (one per voice it holds): the callback neither
+allocates nor locks. About 0.5 ms per 10 ms buffer for 30 moving sounds.
+`demo_sound_hrtf.rs` (`AURORA_DEMO_SOUND_HRTF`) moves two sources around the
+camera.
 
 `aurora-audio/src/processing.rs` owns Sonora/WebRTC AEC3, AGC2, noise suppression
 and high-pass processing. Device callbacks only queue microphone samples and
