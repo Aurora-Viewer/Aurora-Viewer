@@ -71,12 +71,12 @@ pub mod water_effects;
 mod water_optics;
 mod water_wake;
 pub use vr_control::VrState;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 mod vr_mirror;
 pub mod writes;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 mod xr_device;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 mod xr_frame;
 pub use water_effects::{WaterEffects, WaterEvent, WaterGround};
 

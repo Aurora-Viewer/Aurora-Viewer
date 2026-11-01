@@ -337,7 +337,7 @@ the background still applies outside screenshots.
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
 | `AURORA_DEMO_RENDER_TEXTURE=1` | Captures the demo world through a caller-owned render target |
 | `AURORA_DEMO_XR_DEVICE=1` | Uses OpenXR-compatible Vulkan initialization for the Linux demo |
-| `AURORA_DEMO_XR_WORLD=1` | Sends the Linux demo world to OpenXR for a short stereo test |
+| `AURORA_DEMO_XR_WORLD=1` | Sends the Linux/Windows demo world to OpenXR for a short stereo test |
 | `AURORA_CAPTURE_LAYOUT=1` | The screenshot reloads the saved layout (`ui_layout.ron`) |
 | `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory, posted to the profile or sent by e-mail, the photo quality on a card short of video memory |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
@@ -10795,9 +10795,9 @@ alongside it. Online validation is done by the human: check returned objects,
 startup orphan retrieval and ordinary script attachments remaining in Objects or
 their original folder. No credentials or grid actions are automated.
 
-`AURORA_DEMO_XR_DEVICE`: Linux offline demo only. With WiVRn running and the headset connected, initializes the actual viewer graphics device through OpenXR Vulkan-enable2, requesting Aurora's normal bindless and rendering features. Desktop output remains on the window; combine with `AURORA_DEMO_RENDER_TEXTURE=1` and a capture to validate the full world-rendering output. This does not start an XR session or send the world to the headset. Runtime initialization errors fail this explicit experiment rather than silently testing another device.
+`AURORA_DEMO_XR_DEVICE`: Linux/Windows offline demo only. With the active OpenXR runtime running and the headset connected, initializes the actual viewer graphics device through OpenXR Vulkan-enable2, requesting Aurora's normal bindless and rendering features. Desktop output remains on the window; combine with `AURORA_DEMO_RENDER_TEXTURE=1` and a capture to validate the full world-rendering output. This does not start an XR session or send the world to the headset. Runtime initialization errors fail this explicit experiment rather than silently testing another device.
 
-`AURORA_DEMO_XR_WORLD`: Linux offline experiment only, with WiVRn running and
+`AURORA_DEMO_XR_WORLD`: Linux/Windows offline experiment only, with an OpenXR runtime running and
 the headset connected. Implies the compatible XR device path. After frame 600,
 creates independent eye renderers and sends the actual demo scene to the headset
 for 15 seconds, then returns to desktop rendering. Eye dimensions are capped at

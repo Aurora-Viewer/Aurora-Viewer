@@ -141,7 +141,7 @@ impl ToolbarSettings {
             return false;
         }
         self.vr_button_migrated = true;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         if !self.left.iter().chain(&self.right).any(|b| b.command == "vr_view")
             && let Some(buttons) = &mut self.buttons
             && !buttons.is_empty()

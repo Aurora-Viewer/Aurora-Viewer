@@ -1342,14 +1342,20 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 ### Experimental VR render output
 
 `stereo_view.rs` holds runtime-independent camera anchoring and asymmetric
-infinite reverse-Z eye projection math. `xr_device.rs` is the Linux experimental
-Vulkan-enable2 bootstrap for the viewer's full graphics feature set, enabled only
-by the explicit offline demo scenario documented in TESTING.md.
+infinite reverse-Z eye projection math. `xr_device.rs` is the Linux/Windows experimental
+Vulkan-enable2 bootstrap for the viewer's full graphics feature set. Linux and
+Windows try it at startup and fall back to ordinary desktop device creation when
+loader/runtime discovery is unavailable. The OpenXR crate dynamically loads the
+platform loader (`libopenxr_loader.so.1` or `openxr_loader.dll`); no runtime is
+bundled. Explicit offline demo scenarios fail on unavailable initialization so
+that a successful desktop fallback cannot be mistaken for an XR test.
 
-The Linux `aurora-render` example `xr_spike` proves OpenXR-created Vulkan
+The Linux/Windows `aurora-render` example `xr_spike` exercises OpenXR-created Vulkan
 instance/device import into wgpu and runtime-owned eye swapchain import. It
 renders a synthetic stereo scene and recreates the XR session without replacing
-the graphics device. The separate viewer demo integration uses `xr_frame.rs`
+the graphics device. Windows runtime/headset validation is pending;
+`docs/VR_WINDOWS.md` and the Windows VR test-build workflow provide setup and
+maintainer test artifacts. Viewer integration uses `xr_frame.rs`
 for session state, predicted poses, swapchain acquisition and projection-layer
 submission on the render thread. `Backend` holds two independently initialized
 eye backends through owning pointers; they share scene GPU buffers, textures and

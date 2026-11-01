@@ -1,17 +1,17 @@
-//! Linux-only interoperability experiment; no viewer or grid connection.
+//! Linux/Windows interoperability experiment; no viewer or grid connection.
 //! Vulkan bootstrap follows openxrs/examples/vulkan.rs (MIT/Apache-2.0).
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 fn main() {
-    eprintln!("This experiment requires Linux Vulkan/OpenXR.");
+    eprintln!("This experiment requires Linux or Windows Vulkan/OpenXR.");
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    linux::run()
+    native::run()
 }
 
-#[cfg(target_os = "linux")]
-mod linux {
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod native {
     use ash::{vk, vk::Handle};
     use openxr as xr;
     use std::{

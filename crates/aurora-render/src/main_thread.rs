@@ -142,7 +142,7 @@ pub struct Renderer {
     /// thread has left before the scene's stores go.
     host: Host,
     vr: Arc<crate::vr_control::Control>,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     _xr_graphics: Option<crate::xr_device::Graphics>,
     pub device: wgpu::Device,
     pub info: GpuInfo,
@@ -280,7 +280,7 @@ impl Renderer {
             };
             desc
         };
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         let xr_graphics = match crate::xr_device::Graphics::new(desc().flags) {
             Ok(graphics) => Some(graphics),
             Err(e) => {
@@ -291,11 +291,11 @@ impl Renderer {
                 None
             }
         };
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         let mut instance = xr_graphics
             .as_ref()
             .map_or_else(|| wgpu::Instance::new(desc()), |g| g.instance.clone());
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         let mut instance = wgpu::Instance::new(desc());
         // ---- the GPU: every adapter listed, then tried in our order
         // (adapter_choice.rs), the next one if one fails to open
@@ -348,9 +348,9 @@ impl Renderer {
         let mut opened = None;
         let mut failure = RenderError::NoAdapter("no native GPU adapter can present to the window".into());
         for (n, &i) in plan.order.iter().enumerate() {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             let opened_device = open_device(&adapters[i], xr_graphics.as_ref());
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
             let opened_device = open_device(&adapters[i]);
             match opened_device {
                 Ok(o) => {
@@ -463,9 +463,9 @@ impl Renderer {
         let pacing = std::env::var("AURORA_FRAME_PACING").ok();
         let gpu_frames = Arc::new(crate::pacing::GpuFrames::new(crate::pacing::wanted(pacing.as_deref())));
         let pace_gate = crate::pacing::Gate::new(crate::pacing::always(pacing.as_deref()));
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         let vr = Arc::new(crate::vr_control::Control::new(xr_graphics.is_some()));
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         let vr = Arc::new(crate::vr_control::Control::new(false));
         let backend = Backend::new(BackendInit {
             vr: vr.clone(),
@@ -475,7 +475,7 @@ impl Renderer {
             surface: Arc::new(surface),
             external: false,
             output_format: None,
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             xr: xr_graphics.as_ref().map(|g| g.binding()),
             adapter,
             width,
@@ -513,7 +513,7 @@ impl Renderer {
         Ok(Renderer {
             host,
             vr,
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             _xr_graphics: xr_graphics,
             device,
             info,
@@ -1596,7 +1596,7 @@ struct OpenedDevice {
 /// ones it has; an error when it lacks a needed one or the device fails.
 fn open_device(
     adapter: &wgpu::Adapter,
-    #[cfg(target_os = "linux")] xr: Option<&crate::xr_device::Graphics>,
+    #[cfg(any(target_os = "linux", target_os = "windows"))] xr: Option<&crate::xr_device::Graphics>,
 ) -> Result<OpenedDevice, RenderError> {
     let afeat = adapter.features();
     let alim = adapter.limits();
@@ -1676,7 +1676,7 @@ fn open_device(
         memory_hints: wgpu::MemoryHints::Performance,
         trace: wgpu::Trace::Off,
     };
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let (device, queue) = if let Some(xr) = xr {
         let graphics = xr.open(adapter, &descriptor).map_err(|e| RenderError::Device(e.to_string()))?;
         log::info!("OpenXR-compatible viewer graphics device: {}", adapter.get_info().name);
@@ -1684,7 +1684,7 @@ fn open_device(
     } else {
         pollster::block_on(adapter.request_device(&descriptor)).map_err(|e| RenderError::Device(e.to_string()))?
     };
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     let (device, queue) = pollster::block_on(adapter.request_device(&descriptor)).map_err(|e| RenderError::Device(e.to_string()))?;
     Ok(OpenedDevice {
         device,

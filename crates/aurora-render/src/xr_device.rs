@@ -1,4 +1,4 @@
-//! OpenXR-compatible Vulkan bootstrap for the Linux viewer experiment.
+//! OpenXR-compatible Vulkan bootstrap for the Linux/Windows viewer experiment.
 //! Instance/device creation follows openxrs/examples/vulkan.rs (MIT/Apache-2.0).
 //! HAL owns the imported graphics handles; ash clones only borrow their dispatch tables.
 use ash::{vk, vk::Handle};

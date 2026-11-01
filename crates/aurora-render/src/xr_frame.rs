@@ -1,4 +1,4 @@
-//! OpenXR frame ownership for the Linux world-rendering experiment.
+//! OpenXR frame ownership for the Linux/Windows world-rendering experiment.
 use crate::stereo_view::{Anchor, EyeView, Fov, Pose};
 use ash::vk::{self, Handle};
 use openxr as xr;

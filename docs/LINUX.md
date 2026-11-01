@@ -194,10 +194,13 @@ OpenXR API rather than a Quest-specific API, so another Linux runtime/headset
 meeting these requirements is a candidate for testing. Other headsets, GPUs,
 Monado/SteamVR runtime configurations and multi-GPU systems remain unvalidated.
 OpenXR branding alone does not establish compatible graphics bindings, formats
-or runtime behavior. Windows, macOS, standalone Android builds, OpenVR-only
+or runtime behavior. macOS, standalone Android builds, OpenVR-only
 applications/runtimes and passthrough/AR are outside this iteration.
 See the [OpenXR Vulkan binding specification](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrGetVulkanGraphicsRequirements2KHR.html)
 and [WiVRn project](https://github.com/WiVRn/WiVRn) for runtime information.
+
+Windows uses the same experimental Vulkan/OpenXR code path, but Windows headset
+validation is pending. See [Windows VR setup and validation](VR_WINDOWS.md).
 
 ### Entering and leaving VR
 
@@ -231,7 +234,7 @@ available. A desktop-only instruction reminds you how to exit.
 
 ### Dependencies and footprint
 
-The only new direct Rust dependency is Linux-only `openxr 0.22.0` (MIT/Apache-2.0).
+The only new direct Rust dependency is Linux/Windows-only `openxr 0.22.0` (MIT/Apache-2.0).
 It adds `openxr-sys 0.14.0` (MIT/Apache-2.0) and `libloading 0.9.0` (ISC); the
 existing `libloading 0.8.9` remains for other dependencies. These licenses are
 compatible with this repository. The loader is dynamically loaded: the system
