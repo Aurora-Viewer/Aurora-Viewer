@@ -2102,18 +2102,50 @@ struct LLAtmos {
 
 // calcAtmosphericVars: `rel` = point minus camera (world, z up).
 fn ll_atmos(rel_in: vec3<f32>) -> LLAtmos {
+    return ll_atmos_core(rel_in, vec3<f32>(0.0, 0.0, 1.0), frame.sky_light.xyz, frame.sun_dir.xyz);
+}
+
+// calcAtmosphericVars as hazeF.glsl runs it over a surface: the point in
+// eye space (rebuilt from the depth), `lightnorm` in world GL axes
+// (LLEnvironment::toLightNorm: x north, y up, z east) and `light_dir` in eye
+// space. The haze glow's first factor thus mixes eye and world axes: its
+// hotspot is not along the sun for rays down to the water, where the
+// world-space ll_atmos put a second sun on the sea (the Legacy Viewer shows
+// none). `rel_world` = point minus camera (world, z up).
+fn ll_atmos_eye(rel_world: vec3<f32>) -> LLAtmos {
+    let forward = normalize((frame.inv_view_proj_rot * vec4<f32>(0.0, 0.0, 0.5, 1.0)).xyz);
+    let up = normalize(frame.cam_up.xyz - forward * dot(frame.cam_up.xyz, forward));
+    let right = cross(forward, up);
+    let ln = frame.sky_light.xyz;
+    return ll_atmos_core(
+        ll_eye_axes(rel_world, right, up, forward),
+        vec3<f32>(0.0, 1.0, 0.0),
+        vec3<f32>(ln.y, ln.z, ln.x),
+        ll_eye_axes(frame.sun_dir.xyz, right, up, forward),
+    );
+}
+
+// A world vector in eye axes (x right, y up, z backward).
+fn ll_eye_axes(v: vec3<f32>, right: vec3<f32>, up: vec3<f32>, forward: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(dot(v, right), dot(v, up), -dot(v, forward));
+}
+
+// The body of calcAtmosphericVars: `rel_in` the point in the frame of
+// `up_axis` (the altitude limit and the direction's nudge), `glow_norm` and
+// `glow_light` the two vectors of the haze glow.
+fn ll_atmos_core(rel_in: vec3<f32>, up_axis: vec3<f32>, glow_norm: vec3<f32>, glow_light: vec3<f32>) -> LLAtmos {
     var rel_pos = rel_in;
     let max_y = frame.sky_glow.w;
-    if (abs(rel_pos.z) > max_y) {
-        rel_pos *= max_y / abs(rel_pos.z);
+    let rel_up = dot(rel_pos, up_axis);
+    if (abs(rel_up) > max_y) {
+        rel_pos *= max_y / abs(rel_up);
     }
-    let rel_pos_norm = normalize(rel_pos + vec3<f32>(0.0, 0.0, 1e-6));
+    let rel_pos_norm = normalize(rel_pos + up_axis * 1e-6);
     let rel_pos_len = length(rel_pos);
     let blue_density = frame.sky_blue_density.rgb;
     let haze_density = frame.sky_blue_density.w;
     let density_multiplier = frame.sky_ambient.w;
     let lightnorm = frame.sky_light.xyz;
-    let light_dir = frame.sun_dir.xyz;
     // sunlight_color / moonlight_color as LLPipeline::bindDeferredShader sets
     // them: normalized, and the moon without skyV's 0.7
     var sunlight = frame.sky_obj_light.rgb;
@@ -2125,8 +2157,8 @@ fn ll_atmos(rel_in: vec3<f32>) -> LLAtmos {
     sunlight *= exp(-light_atten * (1.0 / max(1e-6, lightnorm.z)));
     let density_dist = rel_pos_len * density_multiplier;
     let atten = exp(-combined * density_dist * frame.sky_ll.y);
-    var haze_glow = dot(rel_pos_norm, lightnorm);
-    haze_glow *= max(0.0, dot(light_dir, rel_pos_norm));
+    var haze_glow = dot(rel_pos_norm, glow_norm);
+    haze_glow *= max(0.0, dot(glow_light, rel_pos_norm));
     haze_glow = max(1.0 - haze_glow, 0.001) * frame.sky_glow.x;
     haze_glow = clamp(pow(haze_glow, frame.sky_glow.z), -100000.0, 100000.0) + 0.25;
     haze_glow *= frame.sky_light.w;

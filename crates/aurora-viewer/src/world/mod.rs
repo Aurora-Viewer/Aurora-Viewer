@@ -3031,6 +3031,9 @@ impl World {
             } => {
                 let answer = eep::EnvAnswer::from_llsd(&environment);
                 let parcel_id = answer.parcel_id;
+                for w in eep::water_out_of_range(&environment) {
+                    log::info!("water values out of the Legacy ranges, clamped: {w:?}");
+                }
                 match answer.day.as_ref().filter(|d| d.is_valid()) {
                     Some(d) => {
                         log::info!(
@@ -3051,6 +3054,22 @@ impl World {
                                 s.blue_horizon,
                                 s.haze_horizon,
                                 s.haze_density
+                            );
+                        }
+                        // the region's water (in the Legacy ranges; the
+                        // values it sent out of them are logged on reading):
+                        // what a report of odd water needs
+                        if let Some(w) = d.water.first().map(|k| &k.1) {
+                            log::info!(
+                                "water: fog {:?} density {} underwater mod {} fresnel scale {} offset {} blur {} normal scale {:?} normal map {}",
+                                w.fog_color,
+                                w.fog_density,
+                                w.underwater_fog_mod,
+                                w.fresnel_scale,
+                                w.fresnel_offset,
+                                w.blur_multiplier,
+                                w.normal_scale,
+                                w.normal_map
                             );
                         }
                     }

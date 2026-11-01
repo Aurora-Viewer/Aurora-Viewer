@@ -3393,6 +3393,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
 | `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>[,<probe ambiance>]]]\|midday` | EEP sky with this gamma, classic unless it has a probe ambiance; or the library Midday |
+| `AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r,g,b>]` | Water of the `AURORA_DEMO_SKY` day with these values, out-of-range ones included |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
 | `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>]` | Where the real sky is seen from, and its stars' brightness |
@@ -3572,6 +3573,28 @@ both open states and the selection count. Capture at frame 620.
   at 0.02 on the other, without adding up. `shell`: the layer also shows its
   other faces; the back one, seen from behind, must add nothing (same values
   as with `1`).
+- **`AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r>,<fog g>,<fog b>]`**:
+  the water of the EEP day `AURORA_DEMO_SKY` gives the region, with these
+  values as a region's asset carries them (the normal scale on its three
+  axes); a missing or unreadable value keeps the default (0.5, 0.3999,
+  0.04, 2, fog 0.0156 / 0.149 / 0.2509). Values beyond the Legacy Viewer's
+  ranges are clamped to them like LLSettingsWater's validation (unit test
+  `water_values_are_clamped_to_the_legacy_ranges`; the image does not show
+  it: a fresnel offset clamped to 1 still mirrors the whole sky, so
+  `AURORA_DEMO_WATER_EEP=1.8,0,0,2,1.6,1.6,1.6` under a white midday sky is
+  a white sheet before and after). The reported region's water: with
+  `AURORA_DEMO_TOD=0 AURORA_DEMO_SKY=1.6,37,1.2
+  AURORA_DEMO_WATER_EEP=0.5,0,0,0,0.101,0.211,0.196` (a hazy midday sky; a
+  normal scale of 0, a fresnel scale of 0 and no blur) and
+  `AURORA_DEMO_WATER=off:shore`, the sea is dark and hazed toward the
+  horizon, without any reflection, as in the Legacy Viewer (its reflection
+  normal is normalize(0) there), never a white sheet; with `medium:shore`
+  (enhanced water) it keeps its waves and foam and has no reflection
+  either: turquoise near the shore, blue toward the horizon, not white.
+  Without these variables (the demo's default sky and water), every sea
+  takes the Legacy haze and reflection: the distant water is darker than
+  before and meets the sky on a sharper line. Compare the Legacy Viewer
+  with the same values in Personal Lighting.
 - **`AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>]]`**: classic EEP sky (without
   reflection probe ambiance) with this sky gamma and a sun colour
   above 1: legacy gamma and object light normalised like
