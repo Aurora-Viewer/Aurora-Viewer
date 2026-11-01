@@ -335,6 +335,10 @@ the background still applies outside screenshots.
 | `AURORA_CAPTURE=<file.png>` | Saves a screenshot of the frame |
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
+| `AURORA_DEMO_RENDER_TEXTURE=1` | Captures the demo world through a caller-owned render target |
+| `AURORA_DEMO_XR_DEVICE=1` | Uses OpenXR-compatible Vulkan initialization for the Linux demo |
+| `AURORA_OPENXR_LOADER=<path>` | Explicit macOS OpenXR loader dylib for runtime tests |
+| `AURORA_DEMO_XR_WORLD=1` | Sends the native demo world to OpenXR for a short stereo test |
 | `AURORA_CAPTURE_LAYOUT=1` | The screenshot reloads the saved layout (`ui_layout.ron`) |
 | `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory, posted to the profile or sent by e-mail, the photo quality on a card short of video memory |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
@@ -344,6 +348,13 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora or a LUT), the chosen one's strength and settings, the before / after line, the filter panel |
 | `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic\|free\|free-compact` | The Controls window open on a tab, Firestorm's two windows, or driving the photo window's free camera |
 | `AURORA_DEMO_CAMERA_PRESETS=save\|apply\|object\|pick[-…]` | The viewfinder's camera presets: saved on the avatar, a place and an object, applied, or the object chosen in the scene |
+
+`AURORA_DEMO_RENDER_TEXTURE`: with demo mode and `AURORA_CAPTURE`, the capture
+frame draws the full world into a caller-owned GPU texture instead of acquiring
+the desktop swapchain. The saved image must show the scene without egui,
+nameplates, worn HUDs, selection or debug overlays. Other frames follow the
+normal desktop path. This checks the output boundary for VR; it does not connect
+to OpenXR or provide stereo views.
 
 `AURORA_DEMO_JOYSTICK`: at frame 600, injects a synthetic eight-axis
 controller through the production input path, without connecting a device
@@ -10824,3 +10835,32 @@ Check ordinary `AURORA_DEMO_INVENTORY=1` and the existing attachment regressions
 alongside it. Online validation is done by the human: check returned objects,
 startup orphan retrieval and ordinary script attachments remaining in Objects or
 their original folder. No credentials or grid actions are automated.
+
+`AURORA_DEMO_XR_DEVICE`: Linux/Windows/macOS offline demo only. With the active OpenXR runtime running and the headset connected, initializes the actual viewer graphics device through OpenXR Vulkan-enable2, requesting Aurora's normal bindless and rendering features. Desktop output remains on the window; combine with `AURORA_DEMO_RENDER_TEXTURE=1` and a capture to validate the full world-rendering output. This does not start an XR session or send the world to the headset. Runtime initialization errors fail this explicit experiment rather than silently testing another device.
+
+`AURORA_DEMO_XR_WORLD`: Linux/Windows/macOS offline experiment only, with an OpenXR runtime running and
+the headset connected. Implies the compatible XR device path. After frame 600,
+creates independent eye renderers and sends the actual demo scene to the headset
+for 15 seconds, then returns to desktop rendering. Eye dimensions are capped at
+1600 pixels per axis for bring-up. Geometry, textures and asset uploads are
+shared; eye depth, visibility, exposure and temporal state are independent. CPU
+frustum rejection is disabled in this scenario so turning away from the desktop
+camera does not discard those lists; per-eye GPU culling remains active. The
+desktop mirror follows the left eye at up to 30 FPS during headset rendering. Manual VR entry uses the bottom-toolbar headset button and Escape exits. This
+automatic scenario retains its timed stop for regression testing. Late runtime attachment and production disconnect recovery remain pending. Run with a distinct test title; omit capture
+exit while visually inspecting the headset.
+
+VR horizon regression: start with the desktop camera pitched down and the
+headset resting tilted, then wear it and look physically level. The view must
+face the horizon; looking up/down and rolling the head must still work. Escape
+restores the original desktop pitch. Verify the desktop mirror follows the eye
+without stretching, exposes no viewer UI, and returns to the normal interface on
+exit. Repeat after resizing the desktop window. The mirror is capped at 30 FPS
+and does not render a separate spectator camera.
+
+`AURORA_OPENXR_LOADER`: macOS only. Optional absolute path to the installed
+Khronos `libopenxr_loader.dylib`; otherwise standard dynamic-loader discovery is
+used. The loader and headset runtime are installed separately. Runtime selection
+is still performed by OpenXR (`XR_RUNTIME_JSON` may select a development manifest).
+This is also accepted during normal viewer startup; no loader is downloaded or
+bundled. See [VR setup](VR.md) for platform requirements and validation status.

@@ -39,6 +39,12 @@ use std::time::{Duration, Instant};
 
 pub const CASCADES: usize = 3;
 const MAX_LIGHTS: usize = 64;
+/// Tries at setting up the XR session for one VR request, and the wait
+/// between them (`render_xr`).
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+const XR_RETRIES: u8 = 3;
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+const XR_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(750);
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const GBUF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
@@ -1430,8 +1436,21 @@ pub(crate) struct Backend {
     device: wgpu::Device,
     queue: wgpu::Queue,
     /// Destroyed by hand in `Drop`, unless the device is lost.
-    surface: std::mem::ManuallyDrop<wgpu::Surface<'static>>,
+    surface: std::mem::ManuallyDrop<Arc<wgpu::Surface<'static>>>,
     config: wgpu::SurfaceConfiguration,
+    external: bool,
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    vr: Arc<crate::vr_control::Control>,
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    xr_seed: Option<Box<BackendInit>>,
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    xr_world: Option<Box<XrWorld>>,
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    xr_finished: bool,
+    /// Failed session set-ups of the current VR request, and when the next
+    /// try may start (`XR_RETRIES`).
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    xr_retry: (u8, Option<std::time::Instant>),
     /// The window's size while a photo frame draws at its own size in
     /// `config` (`Capture::Snapshot`); put back by `result`.
     snapshot_window: Option<(u32, u32)>,
@@ -1592,11 +1611,25 @@ impl Drop for Backend {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+struct XrWorld {
+    backends: [Backend; 2],
+    mirror: crate::vr_mirror::Mirror,
+    session: crate::xr_frame::Session,
+    runtime: openxr::Instance,
+}
+
 /// What the main thread's `Renderer` creates the backend from.
+#[derive(Clone)]
 pub(crate) struct BackendInit {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    pub surface: wgpu::Surface<'static>,
+    pub surface: Arc<wgpu::Surface<'static>>,
+    pub external: bool,
+    pub vr: Arc<crate::vr_control::Control>,
+    pub output_format: Option<wgpu::TextureFormat>,
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    pub xr: Option<(openxr::Instance, openxr::SystemId)>,
     pub adapter: wgpu::Adapter,
     pub width: u32,
     pub height: u32,
@@ -2513,10 +2546,20 @@ struct Ranges {
 impl Backend {
     /// Surface configuration, pipelines, targets and per-frame buffers.
     pub fn new(init: BackendInit) -> Result<Backend, RenderError> {
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        let xr_seed = init.xr.as_ref().map(|_| Box::new(init.clone()));
         let BackendInit {
             device,
             queue,
             surface,
+            external,
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+            vr,
+            #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+                vr: _,
+            output_format,
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+                xr: _,
             adapter,
             width,
             height,
@@ -2531,12 +2574,14 @@ impl Backend {
             gpu_frames,
         } = init;
         let caps = surface.get_capabilities(&adapter);
-        let format = caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| matches!(f, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm))
-            .or_else(|| caps.formats.first().copied())
+        let format = output_format
+            .or_else(|| {
+                caps.formats
+                    .iter()
+                    .copied()
+                    .find(|f| matches!(f, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm))
+                    .or_else(|| caps.formats.first().copied())
+            })
             .ok_or_else(|| RenderError::Surface("no surface formats".into()))?;
         let surface_srgb = format.is_srgb();
         // one rule for the creation and for later vsync switches (present.rs)
@@ -2563,7 +2608,9 @@ impl Backend {
             alpha_mode: caps.alpha_modes.first().copied().unwrap_or(wgpu::CompositeAlphaMode::Auto),
             view_formats: vec![],
         };
-        crate::present::configure(&surface, &device, &config);
+        if !external {
+            crate::present::configure(&surface, &device, &config);
+        }
 
         // ---- layouts
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -2990,6 +3037,17 @@ impl Backend {
             queue,
             surface: std::mem::ManuallyDrop::new(surface),
             config,
+            external,
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+            vr,
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+            xr_seed,
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+            xr_world: None,
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+            xr_finished: false,
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+            xr_retry: (0, None),
             snapshot_window: None,
             surface_srgb,
             egui,
@@ -4610,6 +4668,10 @@ impl Backend {
     }
 
     /// The surface can be copied from (captures).
+    pub fn output_format(&self) -> wgpu::TextureFormat {
+        self.config.format
+    }
+
     pub fn can_capture(&self) -> bool {
         self.config.usage.contains(wgpu::TextureUsages::COPY_SRC)
     }
@@ -4628,7 +4690,9 @@ impl Backend {
         }
         self.config.width = width;
         self.config.height = height;
-        crate::present::configure(&self.surface, &self.device, &self.config);
+        if !self.external {
+            crate::present::configure(&self.surface, &self.device, &self.config);
+        }
         self.rebuild_targets();
     }
 
@@ -4949,7 +5013,9 @@ impl Backend {
             return;
         }
         self.config.present_mode = mode;
-        crate::present::configure(&self.surface, &self.device, &self.config);
+        if !self.external {
+            crate::present::configure(&self.surface, &self.device, &self.config);
+        }
     }
 
     // ---------------------------------------------------------------- frame
@@ -5214,8 +5280,195 @@ impl Backend {
     }
 
     /// Render one frame from its packet.
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    fn render_xr(&mut self, mut packet: FramePacket) -> Result<FrameResult, Box<FramePacket>> {
+        if self.xr_world.is_none() {
+            if self.xr_retry.1.is_some_and(|at| std::time::Instant::now() < at) {
+                return Err(Box::new(packet));
+            }
+            let Some(seed) = self.xr_seed.as_ref() else {
+                return Err(Box::new(packet));
+            };
+            let Some((runtime, system)) = seed.xr.as_ref() else {
+                return Err(Box::new(packet));
+            };
+            let created = (|| -> Result<XrWorld, Box<dyn std::error::Error>> {
+                let session = crate::xr_frame::Session::new(runtime, *system, &self.device, &self.queue, self.config.format)?;
+                let mut init = (**seed).clone();
+                init.external = true;
+                init.xr = None;
+                init.width = session.width;
+                init.height = session.height;
+                init.output_format = Some(self.config.format);
+                init.scene = packet.scene.clone();
+                // Eye backends own independent depth, visibility, exposure and temporal history.
+                // Scene geometry/textures and the frame's write/upload journal stay shared.
+                let left = Backend::new(init.clone())?;
+                let right = Backend::new(init)?;
+                Ok(XrWorld {
+                    backends: [left, right],
+                    mirror: crate::vr_mirror::Mirror::new(&self.device, &self.config, &self.present_modes),
+                    session,
+                    runtime: runtime.clone(),
+                })
+            })();
+            match created {
+                Ok(world) => {
+                    self.xr_world = Some(Box::new(world));
+                    self.xr_retry = (0, None);
+                    log::info!("XR world: independent eye renderers initialized");
+                }
+                // a runtime may refuse the first session while it wakes up
+                // (Virtual Desktop's on Windows, 2026-11-01): try again a
+                // little later before telling the user VR failed
+                Err(e) if self.xr_retry.0 + 1 < XR_RETRIES => {
+                    self.xr_retry = (self.xr_retry.0 + 1, Some(std::time::Instant::now() + XR_RETRY_DELAY));
+                    log::warn!("XR world initialization failed, try {} of {XR_RETRIES}: {e}", self.xr_retry.0);
+                    return Err(Box::new(packet));
+                }
+                Err(e) => {
+                    log::error!("XR world initialization failed: {e}");
+                    self.xr_retry = (0, None);
+                    self.vr.finish(true);
+                    return Err(Box::new(packet));
+                }
+            }
+        }
+        let Some(mut world) = self.xr_world.take() else {
+            return Err(Box::new(packet));
+        };
+        if !self.vr.wanted() {
+            world.session.request_stop();
+        }
+        let eyes = match world.session.begin(&world.runtime, packet.params.view, packet.params.near) {
+            Ok(Some(eyes)) => eyes,
+            Ok(None) => {
+                self.xr_world = Some(world);
+                return Err(Box::new(packet));
+            }
+            Err(e) => {
+                log::info!("XR world ended: {e}");
+                self.vr.finish(false);
+                self.motion_cut = true;
+                crate::present::configure(&self.surface, &self.device, &self.config);
+                return Err(Box::new(packet));
+            }
+        };
+        self.vr.started();
+        // Keep the desktop egui texture atlas current, even though the headset has no UI.
+        let mirror_ui = packet.ui.take().map(|mut ui| {
+            for (id, deltas) in &ui.textures_delta.set {
+                for delta in deltas.iter() {
+                    self.egui.update_texture(&self.device, &self.queue, *id, delta);
+                }
+            }
+            for id in &ui.textures_delta.free {
+                self.egui.free_texture(id);
+            }
+            ui.textures_delta.clear();
+            ui.retain_vr_hint();
+            ui.tessellate()
+        });
+        packet.lists.strip_viewer_overlays();
+        let mut other_lists = DrawLists::default();
+        other_lists.copy_from(&packet.lists);
+        let mut other = FramePacket {
+            output: None,
+            index: packet.index,
+            writes: Default::default(),
+            uploads: packet.uploads.empty_sibling(),
+            scene: packet.scene.clone(),
+            params: packet.params.clone(),
+            lists: other_lists,
+            ui: None,
+            surface: packet.surface,
+            settings: packet.settings,
+            hover: None,
+            picks: Vec::new(),
+            drawn: Vec::new(),
+            capture: None,
+            histogram: None,
+            motion_cut: packet.motion_cut,
+            input_at: None,
+        };
+        let apply = |p: &mut FramePacket, i: usize| {
+            let eye = eyes.cameras[i];
+            p.output = Some(eyes.textures[i].clone());
+            p.params.view = eye.view;
+            p.params.proj = eye.projection;
+            p.params.camera_pos = eye.position;
+            p.params.fov_y = 2.0 * (1.0 / eye.projection.y_axis.y).atan();
+            p.params.photo_tile = Mat4::IDENTITY;
+            p.params.photo_scale = 1.0;
+            p.surface.width = world.session.width;
+            p.surface.height = world.session.height;
+            if let Some(gpu) = &mut p.lists.gpu {
+                gpu.planes = crate::gpu_cull::view_planes(eye.projection * eye.view);
+                gpu.eye = eye.position;
+                gpu.pixel_scale = world.session.height as f32 * eye.projection.y_axis.y;
+            }
+        };
+        let desktop_size = (packet.surface.width, packet.surface.height);
+        apply(&mut packet, 0);
+        apply(&mut other, 1);
+        packet.hover = None;
+        packet.picks.clear();
+        packet.drawn.clear();
+        let mirror_size = desktop_size;
+        let mut first = world.backends[0].render_view(packet);
+        let _second = world.backends[1].render_view(other);
+        first.stats.presented = world.mirror.present(
+            &self.device,
+            &self.queue,
+            &self.surface,
+            &eyes.textures[0],
+            (mirror_size.0, mirror_size.1),
+            &mut self.egui,
+            mirror_ui.as_ref(),
+        );
+        if let Err(e) = world.session.end() {
+            log::error!("XR world submission failed: {e}");
+            self.vr.finish(true);
+            self.motion_cut = true;
+            crate::present::configure(&self.surface, &self.device, &self.config);
+        } else {
+            self.xr_world = Some(world);
+        }
+        Ok(first)
+    }
+
     pub fn render(&mut self, packet: FramePacket) -> FrameResult {
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        if self.xr_world.is_none() && !self.vr.wanted() && self.vr.state() == crate::VrState::Stopping {
+            self.vr.finish(false);
+            self.motion_cut = true;
+        }
+
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        if !self.xr_finished && self.xr_seed.is_some() && packet.index >= 600 && std::env::var_os("AURORA_DEMO_XR_WORLD").is_some() {
+            self.xr_finished = true;
+            self.vr.request(true);
+        }
+        // a new VR request starts its tries afresh
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        if !self.vr.wanted() && self.xr_world.is_none() {
+            self.xr_retry = (0, None);
+        }
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        let packet = if self.xr_seed.is_some() && (self.vr.wanted() || self.xr_world.is_some()) {
+            match self.render_xr(packet) {
+                Ok(result) => return result,
+                Err(packet) => *packet,
+            }
+        } else {
+            packet
+        };
+        self.render_view(packet)
+    }
+
+    fn render_view(&mut self, packet: FramePacket) -> FrameResult {
         let FramePacket {
+            output,
             index,
             mut writes,
             uploads: mut frame_uploads,
@@ -5233,6 +5486,7 @@ impl Backend {
             motion_cut,
             input_at,
         } = packet;
+        let external_output = output.is_some();
         self.motion_cut |= motion_cut;
         let mut stats = RenderStats::default();
         if let Some(t) = &mut self.timer {
@@ -5331,7 +5585,25 @@ impl Backend {
             );
         }
         let t_acquire = Instant::now();
-        let surface_tex = if snapshot.is_some() {
+        let surface_tex = if let Some(texture) = output {
+            // The render pipelines and persistent targets belong to this view's
+            // output configuration. Reject mismatches before recording GPU work.
+            if snapshot.is_some()
+                || texture.width() != self.config.width
+                || texture.height() != self.config.height
+                || texture.depth_or_array_layers() != 1
+                || texture.dimension() != wgpu::TextureDimension::D2
+                || texture.sample_count() != 1
+                || texture.format() != self.config.format
+                || !texture.usage().contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
+                || (wanted.is_some() && !texture.usage().contains(wgpu::TextureUsages::COPY_SRC))
+            {
+                log::error!("render: caller-owned output does not match the view configuration");
+                None
+            } else {
+                Some(FrameTarget::Offscreen(texture))
+            }
+        } else if snapshot.is_some() {
             // a photo is drawn offscreen at its size, never presented
             Some(FrameTarget::Offscreen(self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("snapshot"),
@@ -5351,7 +5623,9 @@ impl Backend {
             match self.surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Some(FrameTarget::Surface(t)),
                 wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                    crate::present::configure(&self.surface, &self.device, &self.config);
+                    if !self.external {
+                        crate::present::configure(&self.surface, &self.device, &self.config);
+                    }
                     None
                 }
                 _ => None,
@@ -8125,7 +8399,23 @@ impl Backend {
             }
         }
         prof.mark("finish");
-        let submission = self.queue.submit(upload_cmds.into_iter().chain(extra_cmds));
+        // External XR images must return in the attachment layout even when
+        // a requested capture temporarily used COPY_SRC. Track this through wgpu.
+        let output_transition = external_output.then(|| {
+            let mut encoder = self.device.create_command_encoder(&Default::default());
+            encoder.transition_resources(
+                std::iter::empty(),
+                std::iter::once(wgpu::TextureTransition {
+                    texture: surface_tex.texture(),
+                    selector: None,
+                    state: wgpu::TextureUses::COLOR_TARGET,
+                }),
+            );
+            encoder.finish()
+        });
+        let submission = self
+            .queue
+            .submit(upload_cmds.into_iter().chain(extra_cmds).chain(output_transition));
         self.gpu_frames.submitted(index, submission);
         if self.gpu_frames.enabled {
             // the news as soon as a poll sees the frame done (the start of
