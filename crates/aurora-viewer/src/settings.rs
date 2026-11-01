@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 pub mod area_search;
 pub mod backup;
 mod hover_height;
+mod saver;
 pub mod stream_list;
 
 /// How the Conversations window looks (Preferences › Aurora): Aurora's
@@ -2625,13 +2626,28 @@ impl Settings {
         };
     }
 
+    /// The settings as they are now, written by the save thread
+    /// (settings/saver.rs): the frame thread does not wait for the disk.
     pub fn save(&self) {
-        let dir = config_dir();
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            log::warn!("cannot create config dir: {e}");
-            return;
+        let copy = self.to_saved();
+        let path = Self::path();
+        saver::get().queue(Box::new(move || {
+            if let Some(dir) = path.parent()
+                && let Err(e) = std::fs::create_dir_all(dir)
+            {
+                log::warn!("cannot create config dir: {e}");
+                return;
+            }
+            copy.write_saved(&path);
+        }));
+    }
+
+    /// Until the saves asked for are written, `timeout` at most: before
+    /// the viewer ends.
+    pub fn wait_saved(timeout: std::time::Duration) {
+        if !saver::get().wait(timeout) {
+            log::warn!("settings: the last save was not written within {timeout:?}");
         }
-        self.save_to(&Self::path());
     }
 
     /// What is written to the file: the user's own graphics values while
@@ -2650,15 +2666,20 @@ impl Settings {
         copy
     }
 
+    #[cfg(test)]
     fn save_to(&self, path: &Path) {
-        let copy = self.to_saved();
+        self.to_saved().write_saved(path);
+    }
+
+    /// Write `self`, a copy from `to_saved`, as the file at `path`.
+    fn write_saved(&self, path: &Path) {
         // Over a newer build's file, write ours over theirs: what this build
         // does not know, and what it could not read and left unchanged, stay.
-        let bytes = match &copy.newer_file {
-            Some(newer) => serde_json::to_value(&copy)
+        let bytes = match &self.newer_file {
+            Some(newer) => serde_json::to_value(self)
                 .map(|ours| crate::tolerant::merge_over_newer(&newer.theirs, ours, &newer.loaded, &newer.kept))
                 .and_then(|merged| serde_json::to_vec_pretty(&merged)),
-            None => serde_json::to_vec_pretty(&copy),
+            None => serde_json::to_vec_pretty(self),
         };
         match bytes {
             Ok(b) => {

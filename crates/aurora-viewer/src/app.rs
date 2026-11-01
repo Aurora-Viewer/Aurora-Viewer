@@ -5460,6 +5460,9 @@ impl App {
         self.settings.save();
         // the last lines of the conversations reach their files
         self.world.chat_log.flush(Duration::from_secs(2));
+        // and the settings theirs (written by the save thread), before a
+        // restarted viewer reads them
+        Settings::wait_saved(Duration::from_secs(5));
         if self.restart_into_vr {
             restart_with_vr();
         }
