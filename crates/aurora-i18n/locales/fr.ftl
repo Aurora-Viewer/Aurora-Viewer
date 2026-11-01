@@ -5404,7 +5404,6 @@ ui-bars-script-library = Bibliothèque de scripts
 ui-bars-message-of-the-day = Message du jour
 ui-bars-wiki = Wiki d'Aurora Viewer
 ui-bars-knowledge-base = Base de connaissances
-ui-bars-sysinfo-button = Bouton d'informations système dans les conversations
 ui-bars-about = À propos d'Aurora Viewer
 cmdline-dice-successes = { "Succès: " }{ $successes }
 build-manip-south = Sud

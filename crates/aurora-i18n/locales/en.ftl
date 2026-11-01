@@ -5399,7 +5399,6 @@ ui-bars-script-library = Script library
 ui-bars-message-of-the-day = Message of the day
 ui-bars-wiki = Aurora Viewer wiki
 ui-bars-knowledge-base = Knowledge base
-ui-bars-sysinfo-button = System information button in conversations
 ui-bars-about = About Aurora Viewer
 cmdline-dice-successes = { "Successes: " }{ $successes }
 build-manip-south = South
