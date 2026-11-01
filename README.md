@@ -469,8 +469,8 @@ are planned or in progress: they are not in the viewer yet.
 - **Immersive mode**: the whole interface hidden but the chat, for photos,
   events or simply enjoying the world; faint buttons bring back the name
   tags, hide your HUDs too, or leave the mode.
-- **Linden Lab marks**: their name tags, lists, chat lines and profiles
-  show who works at Linden Lab.
+- **Aurora team and Linden Lab marks**: their name tags, lists, chat lines
+  and profiles show who works on Aurora and who works at Linden Lab.
 - **Link safety check**: web links in chat and profiles are marked trusted,
   unknown or dangerous, judged locally with nothing sent anywhere.
 - **Parcel permissions at a glance**: the icons show everything, green for
@@ -605,8 +605,8 @@ The texture memory budget is set automatically from the detected VRAM.
 - **Interface** — in English, French and Japanese; flat Aurora theme, Inter font, Tabler icons, glass island bars,
   customizable bottom and side toolbars, classic layout options, Aurora
   search and Places windows, mini-map, world map, preferences and debug
-  overlays; an immersive mode that keeps only the chat; Linden Lab
-  marks; double-click walk / run / teleport and content-rating controls
+  overlays; an immersive mode that keeps only the chat; Aurora team and
+  Linden Lab marks; double-click walk / run / teleport and content-rating controls
   for places and teleport offers; an Accessibility page, a high-contrast
   palette, custom interface colours, text up to twice the size and the
   OpenDyslexic font.

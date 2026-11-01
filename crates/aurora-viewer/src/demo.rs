@@ -210,6 +210,9 @@ pub mod sky;
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
 pub mod social_menu;
+/// Sounds behind a wall and in a box (AURORA_DEMO_SOUND_OCCLUSION).
+#[path = "demo_sound_occlusion.rs"]
+pub mod sound_occlusion;
 #[path = "demo_sound_parcels.rs"]
 pub mod sound_parcels;
 /// The Aurora team's marks on demo residents (AURORA_DEMO_STAFF).
@@ -5519,20 +5522,24 @@ pub fn events() -> Vec<NetEvent> {
     // by default, above 1 in the brightest skies), what only dims the ambient
     // light shows: the ambient occlusion. With a reflection probe ambiance
     // (4th value, above 0) the sky is no longer classic: it is tone mapped.
+    // The ambient is a grey level, or a colour as r:g:b (a warm 0.9:0.6:0.5).
     // AURORA_DEMO_SKY=midday: the library Midday's values instead (World ›
     // Environment), a non-classic sky with dense haze and half the sky clouded
     let sky = std::env::var("AURORA_DEMO_SKY").ok().and_then(|v| {
         if v.trim().eq_ignore_ascii_case("midday") {
             return Some(demo_day(midday_sky()));
         }
-        let mut values = v.split(',').map(|s| s.trim().parse::<f64>().ok());
-        let gamma = values.next()??;
+        let mut fields = v.split(',').map(str::trim);
+        let gamma = fields.next()?.parse::<f64>().ok()?;
+        let haze = fields.next().and_then(|s| s.parse::<f64>().ok());
+        let ambient = fields.next().and_then(demo_ambient);
+        let probe_ambiance = fields.next().and_then(|s| s.parse::<f64>().ok());
         Some(demo_sky(
             Vec3::new(0.55, 0.35, 0.6).normalize(),
             gamma,
-            values.next().flatten(),
-            values.next().flatten(),
-            values.next().flatten(),
+            haze,
+            ambient,
+            probe_ambiance,
         ))
     });
     if let Some(environment) = sky {
@@ -8578,7 +8585,18 @@ pub fn seat_animation() -> aurora_assets::Animation {
 }
 
 /// Day cycle with a single classic sky frame (see AURORA_DEMO_SKY).
-fn demo_sky(sun: Vec3, gamma: f64, haze_distance: Option<f64>, ambient: Option<f64>, probe_ambiance: Option<f64>) -> Llsd {
+/// The ambient of AURORA_DEMO_SKY: a grey level (`0.25`) or a colour
+/// (`0.9:0.6:0.5`).
+fn demo_ambient(s: &str) -> Option<[f64; 3]> {
+    let parts: Vec<f64> = s.split(':').map(|c| c.trim().parse().ok()).collect::<Option<_>>()?;
+    match parts[..] {
+        [a] => Some([a, a, a]),
+        [r, g, b] => Some([r, g, b]),
+        _ => None,
+    }
+}
+
+fn demo_sky(sun: Vec3, gamma: f64, haze_distance: Option<f64>, ambient: Option<[f64; 3]>, probe_ambiance: Option<f64>) -> Llsd {
     use aurora_llsd::llsd_map;
     let q = Quat::from_rotation_arc(Vec3::X, sun);
     let arr = |v: &[f64]| Llsd::Array(v.iter().map(|x| Llsd::Real(*x)).collect());
@@ -8593,7 +8611,7 @@ fn demo_sky(sun: Vec3, gamma: f64, haze_distance: Option<f64>, ambient: Option<f
         haze.insert("distance_multiplier".into(), Llsd::Real(d));
     }
     if let Some(a) = ambient {
-        haze.insert("ambient".into(), arr(&[a, a, a]));
+        haze.insert("ambient".into(), arr(&a));
     }
     if let (false, Llsd::Map(m)) = (haze.is_empty(), &mut sky) {
         m.insert("legacy_haze".into(), Llsd::Map(haze));
@@ -8684,6 +8702,14 @@ fn demo_water_eep(v: &str) -> Llsd {
 #[cfg(test)]
 mod particle_tests {
     use super::*;
+
+    #[test]
+    fn demo_sky_ambient_is_a_grey_level_or_a_colour() {
+        assert_eq!(demo_ambient("0.25"), Some([0.25, 0.25, 0.25]));
+        assert_eq!(demo_ambient("0.9:0.6:0.5"), Some([0.9, 0.6, 0.5]));
+        assert_eq!(demo_ambient("0.9:0.6"), None);
+        assert_eq!(demo_ambient("warm"), None);
+    }
 
     #[test]
     fn particle_wind_demo_emitters_only_differ_by_the_wind_mask() {

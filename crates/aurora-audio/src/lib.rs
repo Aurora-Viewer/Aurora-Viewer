@@ -238,6 +238,14 @@ impl AudioEngine {
         let _ = self.inner.cmd_tx.try_send(Command::WorldGain(id, gain));
     }
 
+    /// How much a world sound is muffled by what stands between it and the
+    /// listener: 0 clear, 0.5 behind one wall, 1 behind two or more. The
+    /// low-pass and the gain cut glide to the new value; a sound that has
+    /// not played yet takes it at once.
+    pub fn world_occlusion(&self, id: u64, amount: f32) {
+        let _ = self.inner.cmd_tx.try_send(Command::WorldOcclusion(id, amount));
+    }
+
     /// Fades a world sound out and removes it.
     pub fn stop_world(&self, id: u64) {
         let _ = self.inner.cmd_tx.try_send(Command::StopWorld(id));

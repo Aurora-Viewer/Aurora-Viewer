@@ -5259,7 +5259,8 @@ impl Backend {
         };
         // z: the PBR materials' occlusion applied (eval_material)
         u.sky_ll = [ll_mode, s.distance_multiplier, if pbr_occlusion_now() { 1.0 } else { 0.0 }, 0.0];
-        u.sky_obj_light = s.object_sunlight.extend(0.0).to_array();
+        // w: colored sky ambient (common.wgsl colored_sky_ambient)
+        u.sky_obj_light = s.object_sunlight.extend(if s.colored_ambient { 1.0 } else { 0.0 }).to_array();
         u.sky_optics = [s.moisture_level, s.droplet_radius, s.ice_level, 0.0];
         u.sky_optics_tex = [s.rainbow_texture, s.halo_texture, 0, 0];
         u.sky_stars = s.stars.uniform();
