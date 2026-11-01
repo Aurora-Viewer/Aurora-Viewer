@@ -210,6 +210,9 @@ pub mod sky;
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
 pub mod social_menu;
+/// Sounds behind a wall and in a box (AURORA_DEMO_SOUND_OCCLUSION).
+#[path = "demo_sound_occlusion.rs"]
+pub mod sound_occlusion;
 #[path = "demo_sound_parcels.rs"]
 pub mod sound_parcels;
 /// The Aurora team's marks on demo residents (AURORA_DEMO_STAFF).
