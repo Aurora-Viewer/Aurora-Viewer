@@ -655,9 +655,9 @@ impl Notifications {
         // information read, an offer left unanswered ignored
         self.seen = self
             .listed()
-            // llDialog is a temporary in-world menu, not a notification
-            // the resident needs to search after answering it.
-            .filter(|n| !matches!(n.data, Data::Dialog { .. }))
+            // llDialog and llTextBox are temporary in-world prompts, not
+            // notifications the resident needs to search after answering them
+            .filter(|n| !script_prompt(&n.data))
             .map(|n| {
                 let mut e = n.history_entry(if n.interactive() { Outcome::Ignored } else { Outcome::Read });
                 if let Data::Inventory { object, .. } = n.data
@@ -705,7 +705,11 @@ impl Notifications {
         if matches!(&n.data, Data::Inventory { .. }) && !n.transient && !self.seen.iter().any(|(seen, _)| *seen == id) {
             self.seen.push((id, n.history_entry(outcome)));
         }
-        self.outcomes.insert(id, outcome);
+        // a script prompt never enters `seen`, so take_departures would
+        // never collect its outcome
+        if !script_prompt(&n.data) {
+            self.outcomes.insert(id, outcome);
+        }
         let mut out = Vec::new();
         let mut url = None;
         let accept = matches!(r, Response::Accept);
@@ -838,6 +842,13 @@ impl Notifications {
             NetCommand::DeclineFriendship { transaction: tx }
         }
     }
+}
+
+/// A script's llDialog menu or llTextBox prompt: it waits in "To do" until
+/// answered, then leaves no trace in the history (#1745; a `ScriptDialog`,
+/// never in the notification well: indra/newview/skins/default/xui/en/notifications.xml).
+fn script_prompt(data: &Data) -> bool {
+    matches!(data, Data::Dialog { .. } | Data::TextBox { .. })
 }
 
 /// What an answer did, for the history.
@@ -977,6 +988,48 @@ mod tests {
         assert!(n.take_departures().is_empty());
         n.list.clear();
         assert!(n.take_departures().is_empty());
+    }
+
+    #[test]
+    fn answered_script_prompts_leave_no_history_nor_outcome() {
+        let mut n = Notifications::default();
+        let sender: std::net::SocketAddr = ([127, 0, 0, 1], 13000).into();
+        let menu = n.push(
+            Kind::Script,
+            "Menu",
+            "Choose a seat",
+            Data::Dialog {
+                sender,
+                object: Uuid::new_v4(),
+                object_name: "Seat menu".into(),
+                own_object: false,
+                channel: -42,
+                buttons: vec!["Sit".into()],
+            },
+        );
+        let text_box = n.push(
+            Kind::Script,
+            "Prompt",
+            "Name your pet",
+            Data::TextBox {
+                sender,
+                object: Uuid::new_v4(),
+                channel: -43,
+            },
+        );
+        assert_eq!(n.listed().count(), 2);
+        assert!(n.take_departures().is_empty());
+        n.list.iter_mut().find(|x| x.id == text_box).expect("text box").text = "Rex".into();
+        let (cmds, _) = n.respond(text_box, Response::SendText, |_| Uuid::nil(), Uuid::nil());
+        assert!(
+            matches!(&cmds[..], [NetCommand::ScriptDialogReply { channel: -43, label, .. }] if label == "Rex"),
+            "{cmds:?}"
+        );
+        let (cmds, _) = n.respond(menu, Response::Button(0), |_| Uuid::nil(), Uuid::nil());
+        assert_eq!(cmds.len(), 1);
+        assert!(n.list.is_empty());
+        assert!(n.take_departures().is_empty());
+        assert!(n.outcomes.is_empty());
     }
 
     #[test]

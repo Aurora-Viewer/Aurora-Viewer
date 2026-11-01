@@ -696,22 +696,30 @@ pub(super) fn history_list(
     asks: &mut Vec<Ask>,
     privacy: &crate::world::rlva::privacy::TextFilter,
 ) {
-    ui.horizontal(|ui| {
-        let search_width = (ui.available_width() - 88.0).max(60.0);
-        ui.add(
-            egui::TextEdit::singleline(query)
-                .hint_text(aurora_i18n::tr!("ui-notifications-search-history"))
-                .desired_width(search_width),
-        );
+    // laid out from the right: the button takes the width of its label in
+    // every language ("Effacer l'historique"), the search field the rest; one
+    // row high, or Align::Center would centre it in the panel's height
+    let row = Vec2::new(ui.available_width(), ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(row, egui::Layout::right_to_left(egui::Align::Center), |ui| {
         if ui
             .add_enabled(
                 !hist.is_empty(),
-                egui::Button::new(aurora_i18n::tr!("ui-notifications-clear-history")).frame(false),
+                egui::Button::new(
+                    RichText::new(aurora_i18n::tr!("ui-notifications-clear-history"))
+                        .size(11.5)
+                        .color(p.muted),
+                )
+                .frame(false),
             )
             .clicked()
         {
             hist.clear();
         }
+        ui.add(
+            egui::TextEdit::singleline(query)
+                .hint_text(aurora_i18n::tr!("ui-notifications-search-history"))
+                .desired_width(ui.available_width()),
+        );
     });
     ui.add_space(4.0);
     let query = query.trim().to_lowercase();
