@@ -560,7 +560,8 @@ mod tests {
     #[test]
     fn the_body_leaves_the_name_to_the_head_except_an_emotes() {
         let ctx = egui::Context::default();
-        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
         let p = crate::theme::Theme::default().palette();
         let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         let job = |l: &ChatLine| {
