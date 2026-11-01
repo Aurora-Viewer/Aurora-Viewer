@@ -14,6 +14,7 @@ use egui::Color32;
 
 use super::{BubbleJob, JobLook, Link, bubble_link, bubble_sender_link, hhmm, line_extras, line_job, thread};
 use crate::theme::Palette;
+use crate::ui::fonts::chat_size;
 use crate::world::{ChatKind, ChatLine, World};
 use aurora_net::ChatType;
 
@@ -218,7 +219,7 @@ fn card<'a>(
             ui.spacing_mut().item_spacing.y = 1.0;
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                let font = egui::FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
+                let font = egui::FontId::new(chat_size(ui.ctx(), 12.5), crate::ui::fonts::semibold(ui.ctx()));
                 let galley = ui
                     .painter()
                     .layout(first.from.clone(), font, name_color(p, first, world), text_w * 0.6);
@@ -232,7 +233,11 @@ fn card<'a>(
                 }
                 tags(ui, p, first);
                 if times {
-                    ui.label(egui::RichText::new(hhmm(first.time)).size(10.5).color(p.muted_dim));
+                    ui.label(
+                        egui::RichText::new(hhmm(first.time))
+                            .size(chat_size(ui.ctx(), 10.5))
+                            .color(p.muted_dim),
+                    );
                 }
             });
             for &line in group {
@@ -261,7 +266,7 @@ fn compact_card<'a>(
     names: &mut Vec<(egui::Rect, &'a ChatLine)>,
 ) {
     use egui::emath::GuiRounding as _;
-    let size = super::object_row::TEXT;
+    let size = chat_size(ui.ctx(), super::object_row::TEXT);
     ui.spacing_mut().item_spacing.y = 1.0;
     for &line in group {
         let fade = alpha(seconds, line, now) / card_alpha.max(0.01);
@@ -377,13 +382,14 @@ fn body(
     fade: f32,
     links: &mut Vec<(egui::Rect, Link, Color32)>,
 ) {
+    let size = chat_size(ui.ctx(), TEXT);
     let BubbleJob {
         job,
         links: line_links,
         badges,
         name,
         ..
-    } = line_job(ui.ctx(), line, p, world, want_names, width, TEXT, false, JobLook::Body);
+    } = line_job(ui.ctx(), line, p, world, want_names, width, size, false, JobLook::Body);
     let base = super::bidi_base(&name, &line.from);
     let visual = ui.ctx().fonts_mut(|f| crate::ui::bidi::layout(f, job, base));
     let galley = visual.galley.clone();
@@ -392,7 +398,7 @@ fn body(
     painter.multiply_opacity(fade);
     painter.galley(rect.min, galley.clone(), p.ink);
     let col = super::message_color(line, p, world).gamma_multiply(fade);
-    line_extras(ui, p, world, &visual, rect.min, TEXT, fade, badges, line_links, col, links);
+    line_extras(ui, p, world, &visual, rect.min, size, fade, badges, line_links, col, links);
 }
 
 #[cfg(test)]

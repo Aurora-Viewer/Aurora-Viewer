@@ -19,6 +19,7 @@
 //! bar with `console.rs`.
 
 use super::{LineEnv, Mark, chat_text_marked, hhmm, history_tone, object_sender, sender_name};
+use crate::ui::fonts::chat_size;
 use crate::world::notice_topics::Topic;
 use crate::world::{ChatKind, ChatLine, World};
 use egui::RichText;
@@ -139,7 +140,11 @@ pub(super) fn caps_middle(painter: &egui::Painter, size: f32, baseline: f32) -> 
 
 /// The time of a compact row, laid out.
 pub(super) fn time_galley(painter: &egui::Painter, p: &crate::theme::Palette, line: &ChatLine) -> std::sync::Arc<egui::Galley> {
-    painter.layout_no_wrap(hhmm(line.time), egui::FontId::proportional(TIME), p.muted_dim)
+    painter.layout_no_wrap(
+        hhmm(line.time),
+        egui::FontId::proportional(chat_size(painter.ctx(), TIME)),
+        p.muted_dim,
+    )
 }
 
 /// One compact row.
@@ -154,9 +159,10 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
     // (a notice has no time, as everywhere)
     let notice = line.kind == ChatKind::System;
     let times = times && !notice;
-    let row_h = ui.fonts_mut(|f| f.row_height(&egui::FontId::proportional(TEXT)));
+    let size = chat_size(ui.ctx(), TEXT);
+    let row_h = ui.fonts_mut(|f| f.row_height(&egui::FontId::proportional(size)));
     // the text's first line stands there: everything beside it too
-    let baseline = top.round_to_pixels(ui.pixels_per_point()) + label_baseline(ui, TEXT);
+    let baseline = top.round_to_pixels(ui.pixels_per_point()) + label_baseline(ui, size);
     let row = ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         let mut x = 0.0;
@@ -173,7 +179,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
         let icon_center = place.icon_center.max(x + GAP + ICON * 0.5);
         let text_left = place.text_left.max(icon_center + ICON * 0.5 + GAP);
         ui.allocate_exact_size(egui::vec2(text_left - x, row_h), egui::Sense::hover());
-        let middle = caps_middle(ui.painter(), TEXT, baseline);
+        let middle = caps_middle(ui.painter(), size, baseline);
         let icon = egui::Rect::from_center_size(egui::pos2(left + icon_center, middle), egui::Vec2::splat(ICON));
         let tint = if script_error(line) { p.danger } else { p.muted_dim };
         super::thread::paint_icon(ui.painter(), self::icon(world, line), icon, tint);
@@ -185,7 +191,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
             let id = ui.scope_id().with(("compact_icon", line.time, line.source));
             let cube = ui.interact(icon.expand(2.0), id, egui::Sense::click()).on_hover_text(&name);
             let color = tone.unwrap_or_else(|| crate::ui::colors::sender_color(line));
-            let font = egui::FontId::new(TEXT, crate::ui::fonts::semibold(ui.ctx()));
+            let font = egui::FontId::new(size, crate::ui::fonts::semibold(ui.ctx()));
             let mut job = egui::text::LayoutJob::single_section(name.clone(), egui::TextFormat::simple(font, color));
             job.wrap = egui::text::TextWrapping {
                 max_width: (ui.available_width() * 0.35).max(60.0),
@@ -231,7 +237,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
                 world,
                 env.want_names,
                 text,
-                TEXT,
+                size,
                 color,
                 super::message_emphasis(line.kind, italics),
                 mark,

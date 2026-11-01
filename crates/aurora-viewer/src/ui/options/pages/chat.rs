@@ -14,6 +14,16 @@ pub fn page(cx: &mut Cx, tab: usize) {
     match tab {
         0 => {
             cx.group(tr!("common-nearby-chat"), |cx| {
+                // ChatFontSize (Chat › Visuals, Medium): the nearby chat's
+                // and the conversations' text on its own, apart from
+                // Appearance › Text size
+                cx.slider(
+                    tr!("ui-options-chat-text-size"),
+                    tr!("ui-options-chat-text-size-hint"),
+                    &field!(chat_font_scale),
+                    crate::settings::FONT_SCALE_MIN..=crate::settings::FONT_SCALE_MAX,
+                    "×",
+                );
                 cx.toggle(tr!("ui-options-show-time"), "", &field!(chat_timestamps));
                 // FSShowChatChannel: the "/0" chip of the field (off, as in
                 // the Legacy Viewer)
