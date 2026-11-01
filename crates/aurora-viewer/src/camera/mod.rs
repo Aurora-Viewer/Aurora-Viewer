@@ -902,6 +902,17 @@ impl Camera {
         self.free.as_mut()
     }
 
+    pub fn start_flycam(&mut self, s: &CameraSettings) {
+        let up = Quat::from_axis_angle(self.forward(), self.roll) * Vec3::Z;
+        self.flycam = Some(crate::joystick::flycam::Flycam::from_view(
+            self.position,
+            self.target,
+            up,
+            self.fov_y,
+        ));
+        self.flycam_lens = Some((s.fov, self.fov_y));
+    }
+
     /// On toggle-off the normal camera takes the exact view back, still
     /// available to Alt-orbit and the camera controls (toggleFlycam).
     pub fn retain_flycam_view(&mut self, agent: &mut AgentState, s: &CameraSettings) {
@@ -1442,6 +1453,9 @@ impl Camera {
             // A subsequent lens edit takes ownership of the value, including
             // when the user later returns to the pre-flight preference.
             self.flycam_lens = Some((s.fov, s.fov));
+            if let Some(flycam) = &mut self.flycam {
+                flycam.set_fov(s.fov);
+            }
         }
         let dt = f.dt.max(0.0);
         self.dt = dt;
@@ -2514,6 +2528,45 @@ mod tests {
         cam.flycam = Some(flight);
         cam.start_free(&mut w.agent, &s);
         assert!(cam.flycam.is_none() && cam.free().is_some());
+    }
+
+    #[test]
+    fn joystick_flycam_accepts_lens_edits_and_uses_them_as_the_absolute_zoom_reference() {
+        let mut s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        cam.start_flycam(&s);
+        let mut tuning = crate::joystick::Settings::default();
+        tuning.mapping[6] = 6;
+        tuning.flycam.gain[6] = 1.0;
+        let flight = cam.flycam.as_mut().expect("flight");
+        flight.step([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.5], &tuning, 0.2);
+        let position = flight.position;
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!((cam.fov_y - (s.fov - 0.1)).abs() < 1e-4);
+        s.fov = 0.9;
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!(
+            (cam.fov_y - 0.9).abs() < 1e-4,
+            "a lens preference edit must reach the active flycam"
+        );
+        assert_eq!(cam.position, position, "a lens edit must keep the flight pose");
+        tuning.direct_zoom = true;
+        for (input, expected) in [(0.2, 1.1), (0.0, 0.9)] {
+            let flight = cam.flycam.as_mut().expect("flight");
+            flight.step([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, input], &tuning, 0.1);
+            cam.update(&mut w, &s, &frame(1.0 / 60.0));
+            assert!((cam.fov_y - expected).abs() < 1e-4, "absolute zoom must use the edited reference");
+        }
+        s.fov = 0.7;
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        cam.flycam.as_mut().expect("flight").step([0.0; 7], &tuning, 0.1);
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!((cam.fov_y - 0.7).abs() < 1e-4, "absolute zoom must retain subsequent lens edits");
+        cam.retain_flycam_view(&mut w.agent, &s);
+        settle(&mut cam, &mut w, &s);
+        assert!((cam.fov_y - 0.7).abs() < 1e-4);
     }
 
     #[test]

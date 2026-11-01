@@ -4065,8 +4065,11 @@ impl App {
                         Action::LensZoomOut => Some(1.2),
                         _ => None,
                     };
-                    self.settings.camera.fov =
-                        crate::camera::zoom_lens(self.settings.camera.fov, factor, aspect, self.world.rlva.camera_fov_limits(aspect));
+                    let current = self.camera.flycam.as_ref().map_or(self.settings.camera.fov, |flight| flight.fov);
+                    self.settings.camera.fov = crate::camera::zoom_lens(current, factor, aspect, self.world.rlva.camera_fov_limits(aspect));
+                    if let Some(flight) = &mut self.camera.flycam {
+                        flight.set_fov(self.settings.camera.fov);
+                    }
                     if !self.demo {
                         self.settings.save();
                     }
@@ -13439,7 +13442,7 @@ impl App {
             self.world.set_maturity_preference(maturity);
         }
         if !open {
-            self.options_ui.capture = None;
+            self.options_ui.cancel_capture();
         }
         if res.clear_cache {
             self.disk_cache.clear();
@@ -18774,6 +18777,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Focused(false) => {
+                self.options_ui.cancel_joystick_capture();
                 self.alt_codes.reset();
                 self.chat_ui.cancel_gesture_key();
                 self.gesture_state.manager.release(None);
@@ -18853,6 +18857,13 @@ impl ApplicationHandler for App {
                         crate::keybinds::learn(code, s);
                     }
                     // shortcut being captured in the preferences
+                    if self.options_ui.joystick_capturing() {
+                        self.down.remove(&Input::key(code));
+                        if pressed && code == KeyCode::Escape {
+                            self.options_ui.cancel_capture();
+                        }
+                        return;
+                    }
                     if self.options_ui.capture.is_some() {
                         if let Some(input) = self.options_ui.capture_key(code, pressed, ke.repeat) {
                             self.finish_capture(input);

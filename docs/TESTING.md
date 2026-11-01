@@ -331,7 +331,7 @@ the background still applies outside screenshots.
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_JOYSTICK=preferences\|axes\|avatar\|flycam\|roll` | Synthetic joystick input, its preferences or an independent six-axis camera flight |
+| `AURORA_DEMO_JOYSTICK=<mode>` | Synthetic joystick input, preferences, lens reset gestures or an independent six-axis camera flight |
 | `AURORA_CAPTURE=<file.png>` | Saves a screenshot of the frame |
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
@@ -362,12 +362,125 @@ or a grid. `preferences` opens Mouse and keyboard › Joystick and 3D mouse;
 `axes` filters the axis mapping rows in preference search; `avatar` walks and turns;
 `flycam` starts at frame 630 and moves after 650;
 `roll` also enables roll and disables auto-level. Capture after frame 900.
+`rearm` keeps a relative zoom axis at -1, enters flycam with a synthetic
+button press at frame 630 and leaves it at 750 while movement is held.
+The other axes centre at 770 and move the avatar again from 800.
+Capture at `700,760,830`: camera flight, stopped movement after leaving,
+then avatar movement. The log records the flycam state and motion axes at
+701, 761 and 831; the zoom channel stays zero throughout. Keep the viewer
+running past frame 831 to include all three log entries.
+`axis-capture` supplies minor axis-0 movement (0.05) alongside strong axis-7
+movement (-0.8) during frames 700–759 and 820–879. Combine it with
+`AURORA_DEMO_OPTIONS=controls/1:search=forward` (English) or
+`controls/1:search=avancer` (French). Click the axis assignment before frame
+700: it must capture axis 7, then re-centre at 760. Invert Avatar before
+820 to see backward movement on the second gesture without changing gain
+magnitude. Capture before, during and after assignment, then after inversion.
+`zoom` enters flycam at frame 630 with a neutral, enabled zoom axis. Frames
+650–709 apply relative zoom, frame 750 edits the lens preference to 0.9 rad,
+frame 800 enables absolute zoom, and frames 820–879 deflect the zoom axis
+before returning to its reference. Capture at `640,720,770,860,920`: initial
+view, narrower relative zoom, edited lens, absolute deflection and restored
+reference. Logs at the following frames record the rendered field of view;
+keep the run beyond frame 921 to include every probe. The camera position
+must remain fixed while the projection changes.
+`zoom-buttons` and `zoom-triggers` enter flycam with two physical buttons
+(8/9) or two analog triggers (axes 6/7) assigned to zoom. Frames 650–689
+zoom in, 720–759 zoom out, and 780–809 hold both controls to reset relative zoom.
+Capture `640,700,770,820,860`: initial lens, narrower lens, restored lens,
+both-controls reset and retained lens. `zoom-hold` assigns trigger
+6 as modifier and shares axis 5 with camera yaw. Frames 650–689 zoom in,
+720–759 zoom out; 760–789 release the modifier while keeping the axis
+deflected, which must not rotate the camera. Frames 790–809 centre it;
+810–849 resume ordinary yaw. Capture `640,700,770,780,840,880`: fixed-pose
+zoom in/out, safe modifier release, then resumed yaw. Logs at frames 641,
+701, 771, 791, 831 and 861 report the lens and yaw/zoom inputs.
+Append `-absolute` to `zoom-buttons`, `zoom-triggers` or `zoom-hold` to
+verify position-based zoom and return to the reference at rest; it must
+not accumulate with hold duration. Trigger zoom uses continuous pressure.
+`reset-zoom`, `reset-zoom-buttons`, `reset-zoom-triggers` and `reset-zoom-hold`
+first zoom in at frames 650–689, then reset relatively: the direct axis or
+modifier gives two impulses at 730–735 and 744–769; two-control modes hold
+both at 744–754, then only one until 769. The reset must hold the reference
+through frame 809; new input at 810–839 must resume zoom. Capture
+`640,700,750,780,850` and inspect the lens/yaw/zoom probes at frames 701,
+741, 751, 781 and 841. Hold mode leaves the shared stick off-centre until
+780 to verify that releasing the modifier cannot replay camera yaw.
+Combine any of these with `AURORA_DEMO_OPTIONS=controls/1:joystick-zoom`
+to show its normal preferences group, scrolled to the zoom mode selector.
 The avatar must stay put in the two camera scenarios. Compare the photo
 free camera (`AURORA_DEMO_CONTROLS=free`) and normal camera controls as well.
 Hardware validation: select the real device, enable input, apply Gamepad or
 SpaceMouse, centre its axes and release its buttons; check the live input,
 walking, sliding, looking, jump held to fly and a press to land. Start and
 stop flycam with its configured button or Alt+Shift+F, and return with Escape.
+Button assignments: click the assigned button (or Assign), then press the
+desired controller button, including stick clicks and buttons beyond 9.
+Already-held buttons must be released and pressed again; a quick tap must
+also record. The press must not move the avatar or toggle flycam. None
+disables an assignment; Cancel, Escape, focus loss, a device change or
+leaving the row keeps its previous assignment. Capture also works with
+joystick control disabled. Zoom selects an analog axis, independently of
+button numbers; it changes only the flycam's field of view. Assigning a
+zoom axis changes a zero Camera gain to 1 (retaining inversion), while a
+previous non-zero gain stays intact. Gain 0 still disables zoom. Absolute
+zoom maps position around the flight's reference field of view; relative
+zoom uses deflection as zoom speed. Lens preference edits and keyboard lens
+zoom must work during flight; the absolute reference follows lens edits.
+Axis assignments: click the assigned axis (or Assign) and move the intended
+stick direction or trigger. Minor sideways movement must not win over the
+main gesture. Detection observes up to 180 ms once movement is significant,
+or finishes on release; a similarly strong diagonal waits until released
+and retried. Resting triggers at -1 and small stick jitter must not assign
+anything. None and cancellation behave like button capture. One Invert
+switch sits beside the axis assignment and None, reversing Avatar and
+Camera together while preserving each mode's gain magnitude and dead zone.
+A previous negative gain in either mode appears as shared inversion;
+unused Avatar gains for Roll/Zoom do not participate. The choice persists
+even with zero gain and remains detectable by modified-settings/reset.
+Avatar and Camera tuning use aligned columns below the assignment;
+check wrapping at narrow window sizes and larger interface scales.
+Roll labels the unused Avatar column as Camera only. Zoom has its own group
+with direct-axis, two-buttons and hold-plus-axis choices; its axis row has
+only the shared assignment/inversion and Camera tuning. Only the chosen
+mode's controls appear on the page, while all remain searchable and resettable.
+Assign the two zoom controls and the modifier by pressing a physical button
+or trigger. Trigger/axis directions display as Axis N (+/−), not fabricated
+physical button numbers. Controls held before capture must be released
+before a fresh press is learned. Two-controls mode must zoom both ways,
+stop when released, and work without an axis assignment or Camera gain.
+With absolute zoom off, pressing both controls together must restore the
+reference field of view. Hold-plus-axis mode must keep the relative lens
+after release, consume the shared camera axis while held, and wait for
+that axis to centre before ordinary movement resumes. A trigger used as
+a zoom button or modifier must not also drive its old camera mapping.
+Repeat after focus loss, a device change and stale input: held controls
+must not restart zoom until released and pressed again. Old direct-axis
+profiles retain their mode and absolute/relative choice.
+Absolute zoom must be selectable in all three modes. Its control value sets
+an offset from the flight's reference field of view; rest returns to that
+reference. Two-buttons mode labels its amount as a range, rather than speed,
+and trigger pressure below the button threshold must still adjust it.
+In relative hold-plus-axis mode, double-press the assigned modifier; in
+direct-axis mode, give two quick impulses with a return to rest between
+them. The first press must release within 250 ms and the second must start
+within 350 ms of the first. Both gestures must restore the reference lens,
+including after a keyboard/preference edit, without moving or rotating the
+camera. A long hold, slow repeats, jitter or a tap before focus/device/mode
+changes must not reset it. After any reset, keep the second control held:
+zoom must stay at the reference until release, then resume on fresh input.
+Absolute mode must never trigger these relative reset gestures.
+Windows trigger zoom: assign a trigger, let it return to rest, enter flycam
+and press it. Its native pressure range must stay 0–1 (released at zero),
+so relative zoom starts without crossing a midpoint and stops on release
+after any configured smoothing. Repeat with Absolute zoom: release returns
+to the reference lens. Check both triggers and confirm the centred sticks
+still move in both directions.
+Repeat the toggle while holding a movement stick, including a quick second
+press. Configure zoom on an axis that rests away from zero: the other axes
+and the flycam button must still work. Direct zoom also accepts a non-zero
+initial position. After a focus change, release each held movement control
+before reusing it; fresh buttons must work even if another axis stays held.
 Check all six axes, inverted gain, zones, smoothing, focus loss, disconnect,
 reconnect and saved settings. On the grid, the human verifies simulator
 controls (including a seated vehicle), loading around the flycam, region

@@ -470,8 +470,30 @@ fn joystick_preferences_reset_device_mapping_buttons_and_both_tunings() {
     s.joystick.rise_button = 12;
     s.joystick.fall_button = 13;
     s.joystick.direct_zoom = true;
+    s.joystick.zoom_mode = crate::joystick::ZoomMode::HoldAxis;
+    s.joystick.zoom_in_button = 8;
+    s.joystick.zoom_out_button = 9;
+    s.joystick.zoom_hold_button = 31;
+    s.joystick.zoom_speed = 2.5;
+    s.joystick.set_axis_inverted(0, true);
+    s.joystick.set_axis_inverted(6, true);
+    assert!(s.joystick.axis_inverted(6), "shared inversion also persists at zero gain");
+    let paths = collected();
+    for path in [
+        "joystick.zoom_mode",
+        "joystick.zoom_in_button",
+        "joystick.zoom_out_button",
+        "joystick.zoom_hold_button",
+        "joystick.zoom_speed",
+    ] {
+        assert!(
+            paths.iter().any(|(page, key)| *page == Page::Controls && key == path),
+            "{path} stays searchable and resettable in every mode"
+        );
+    }
     reset_page_settings(Page::Controls, &mut s);
     assert_eq!(s.joystick, crate::joystick::Settings::default());
+    assert!(!s.joystick.axis_inverted(0) && !s.joystick.axis_inverted(6));
 }
 
 #[test]

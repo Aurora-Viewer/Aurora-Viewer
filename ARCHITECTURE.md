@@ -2750,12 +2750,55 @@ pose. `backend.rs` reads generic joysticks through gilrs-core and SpaceMouse
 HID reports through hidapi on one worker; the frame copies a bounded latest
 snapshot without waiting. `Controller` applies mapping, dead zones, gain,
 button edges, focus/stale-input gating and re-centring after changes.
+Relative channels re-arm independently; absolute zoom needs no centre.
+Mode switches retain button edges while clearing held movement, so an
+off-centre axis cannot block the flycam toggle or the other controls.
 `app/joystick.rs` joins avatar input to the existing simulator controls and
 running state; the independent flycam pose is shown by `camera::Camera`,
 including roll, zoom and region-origin shifts. It is cleared by reset,
 mouselook, teleport and photo free-camera entry. Preferences › Mouse and
 keyboard › Joystick and 3D mouse (`ui/options/pages/joystick.rs`) shares the
 normal search, modified-settings and reset paths.
+Its four button assignments capture native press counters from the selected
+device, including taps released between frames. Capture suspends controller
+actions and cancels when its row, device or application focus goes away.
+Axis assignments use the same capture lifecycle. `joystick/capture.rs`
+observes displacement from the initial sample, selects the dominant axis
+over a short gesture and ignores resting triggers, jitter and ambiguous
+diagonals. One inversion switch beside the axis assignment and None applies
+to Avatar and Camera together, using the existing signed tuning gains.
+A negative legacy gain in either mode reverses both; unused Avatar gains
+for Roll/Zoom do not participate. Sensitivity and dead zones remain separate.
+Axis rows span the preferences width, with Avatar and Camera tuning in
+aligned columns below the assignment, wrapping in narrow windows. Assigning
+a zoom axis enables its zero Camera gain without replacing an existing
+non-zero gain. `Camera::start_flycam` tracks lens preference edits during flight;
+absolute controller zoom uses the flight's editable reference field of view.
+The Windows backend preserves the driver's 0–1 pressure range for known
+gamepad trigger codes; centred sticks and generic raw axis ranges retain
+their existing normalization. Released triggers can arm relative zoom and
+stop it without crossing a fictitious centre position.
+`ZoomMode` preserves direct-axis profiles and adds two held zoom controls
+or a held modifier plus a bidirectional axis. Zoom assignments encode
+physical buttons as 0–31 and native axis directions as 32–47; the latter
+have separate edge/release arming and use an axis threshold of ±0.5.
+`ZoomCapture` combines native press counters with dominant-axis capture,
+ignoring controls already held when listening begins. While adjusting,
+shared camera channels and analog modifier/button sources are consumed;
+the shared stick must centre before its ordinary camera action resumes.
+All three modes share absolute/relative zoom. Absolute input offsets the
+flight's editable reference lens; two-control triggers retain their full
+pressure range and require release before arming after focus loss. In
+relative mode, button zoom uses its own positive speed and stops immediately;
+release retains the lens. `joystick/zoom.rs` recognizes relative reset
+gestures: both controls together, a double modifier press, or two direct-axis
+impulses. The first tap must release within 250 ms and the second must start
+within 350 ms of the first; hysteresis ignores jitter and lifecycle resets
+discard gesture history. Native button counters preserve intervening releases.
+Reset restores only the reference lens, clears smoothing and consumes zoom
+until the controls return to rest. The preferences keep these controls in a zoom
+group; `Cx::conditional` hides inactive branches on their page while
+retaining their search, modified-view and reset declarations.
 
 `build/task_inventory.rs` centralises the permissions and the destinations of
 the transfer of an object's contents to the personal inventory;
