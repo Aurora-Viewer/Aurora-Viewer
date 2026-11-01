@@ -344,7 +344,8 @@ impl Environment {
             concat!(
                 "sky frame: classic {} probe ambiance {} gamma {} sun elevation {:.1} deg, ",
                 "sunlight {:.3?} (objects {:.3?}), ambient {:.3?}, cloud shadow {:.3}, ",
-                "haze {:.3} / {:.3}, density x {:.6}, distance x {:.3}"
+                "haze {:.3} / {:.3}, density x {:.6}, distance x {:.3}, ",
+                "sun texture {} x {:.2}"
             ),
             sky.can_auto_adjust,
             sky.probe_ambiance,
@@ -358,6 +359,8 @@ impl Environment {
             sky.haze_density,
             sky.density_multiplier,
             sky.distance_multiplier,
+            sky.sun_id,
+            sky.sun_scale,
         )
     }
 }
