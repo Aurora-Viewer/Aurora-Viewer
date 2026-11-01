@@ -108,6 +108,17 @@ pub fn listen() -> Option<Receiver<String>> {
 #[cfg(target_os = "linux")]
 pub use bus::listen;
 
+/// Stops receiving links as the viewer closes, so that a later launch
+/// starts a viewer of its own instead of handing its link to this one.
+#[cfg(target_os = "linux")]
+pub use bus::release;
+
+/// Nothing to give back on the other systems. The Windows pipe still takes
+/// a link while the viewer closes: its thread only finds the receiver gone
+/// after reading it (TASKS.md, "later").
+#[cfg(not(target_os = "linux"))]
+pub fn release() {}
+
 #[cfg(not(any(windows, target_os = "linux")))]
 pub fn listen() -> Option<Receiver<String>> {
     None
@@ -194,8 +205,9 @@ mod bus {
     /// Past it, the launch starts a viewer of its own with the link.
     const HAND_OFF_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
-    /// The viewer that receives the links: its connection keeps the name.
-    static OWNER: std::sync::OnceLock<Connection> = std::sync::OnceLock::new();
+    /// The viewer that receives the links: its connection keeps the name
+    /// until `release`.
+    static OWNER: std::sync::Mutex<Option<(Connection, String)>> = std::sync::Mutex::new(None);
 
     /// `org.aurora_viewer.AuroraViewer[.Demo][.T_<title>]`.
     fn bus_name() -> String {
@@ -221,12 +233,17 @@ mod bus {
     #[zbus::interface(name = "org.aurora_viewer.AuroraViewer")]
     impl Links {
         /// A link of a later launch (the Legacy Viewer's method name).
+        /// An error when the viewer no longer reads them (closing): the
+        /// launch then starts a viewer of its own with the link.
         #[zbus(name = "GoSLURL")]
-        fn go_slurl(&self, slurl: String) {
+        fn go_slurl(&self, slurl: String) -> zbus::fdo::Result<()> {
             let url = slurl.trim();
             if !url.is_empty() && url.len() <= MAX_URL {
-                let _ = self.0.send(url.to_owned());
+                self.0
+                    .send(url.to_owned())
+                    .map_err(|_| zbus::fdo::Error::Failed("the viewer is closing".into()))?;
             }
+            Ok(())
         }
     }
 
@@ -234,6 +251,10 @@ mod bus {
     /// none (no owner of the name: this process then starts with it).
     /// Runs before the log is open, so failures go to stderr.
     pub fn hand_off(url: &str) -> bool {
+        hand_off_to(&bus_name(), url)
+    }
+
+    pub(super) fn hand_off_to(name: &str, url: &str) -> bool {
         // an owner that holds the name but does not answer (stopped,
         // frozen, shutting down) must not keep this launch waiting
         let bus = match zbus::blocking::connection::Builder::session().and_then(|b| b.method_timeout(HAND_OFF_TIMEOUT).build()) {
@@ -243,9 +264,8 @@ mod bus {
                 return false;
             }
         };
-        let name = bus_name();
         // no service file names it: without an owner the call fails at once
-        match bus.call_method(Some(name.as_str()), PATH, Some(INTERFACE), "GoSLURL", &(url,)) {
+        match bus.call_method(Some(name), PATH, Some(INTERFACE), "GoSLURL", &(url,)) {
             Ok(_) => true,
             Err(zbus::Error::MethodError(error, ..)) if error.as_str() == "org.freedesktop.DBus.Error.ServiceUnknown" => false,
             Err(e) => {
@@ -259,6 +279,10 @@ mod bus {
     /// and title) does; the object is served before the name is taken, so
     /// a launch that finds the name finds the method too.
     pub fn listen() -> Option<Receiver<String>> {
+        listen_as(bus_name())
+    }
+
+    pub(super) fn listen_as(name: String) -> Option<Receiver<String>> {
         let (tx, rx) = crossbeam_channel::unbounded();
         let bus = match Connection::session() {
             Ok(bus) => bus,
@@ -271,9 +295,9 @@ mod bus {
             log::warn!("startup links: {e}");
             return None;
         }
-        match bus.request_name_with_flags(bus_name(), RequestNameFlags::DoNotQueue.into()) {
+        match bus.request_name_with_flags(name.as_str(), RequestNameFlags::DoNotQueue.into()) {
             Ok(RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner) => {
-                let _ = OWNER.set(bus);
+                *OWNER.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((bus, name));
                 Some(rx)
             }
             Ok(_) => {
@@ -284,6 +308,18 @@ mod bus {
                 log::warn!("startup links: {e}");
                 None
             }
+        }
+    }
+
+    /// Gives the name back before the viewer's slow shutdown (browsers,
+    /// plugins): the bus would only free it once the process exits, and
+    /// meanwhile a launch would hand its link to a viewer that drops it.
+    pub fn release() {
+        let Some((bus, name)) = OWNER.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take() else {
+            return;
+        };
+        if let Err(e) = bus.release_name(name.as_str()) {
+            log::warn!("startup links: name not released ({e})");
         }
     }
 }
@@ -303,5 +339,29 @@ mod tests {
             let name = name_for(false, Some(slug));
             assert!(zbus::names::WellKnownName::try_from(name.as_str()).is_ok(), "{name}");
         }
+    }
+
+    /// A link sent to a viewer that no longer reads them (closing) is
+    /// refused, so the launch opens it itself; once the name is released
+    /// the launch does not even try. Needs a session bus (skipped without).
+    #[test]
+    fn closing_viewer_refuses_links() {
+        use super::bus::{hand_off_to, listen_as, release};
+        if zbus::blocking::Connection::session().is_err() {
+            eprintln!("no session bus: skipped");
+            return;
+        }
+        let name = super::bus::name_for(false, Some(&format!("unit-test-{}", std::process::id())));
+        let url = "secondlife://Test%20Region/128/128/20";
+        let rx = listen_as(name.clone()).expect("owns a name unique to this process");
+        assert!(hand_off_to(&name, url));
+        assert_eq!(rx.try_recv().as_deref(), Ok(url));
+        // the app (and its receiver) dropped, the name still held
+        drop(rx);
+        assert!(!hand_off_to(&name, url));
+        release();
+        assert!(!hand_off_to(&name, url));
+        assert!(listen_as(name).is_some(), "the name is free again");
+        release();
     }
 }
