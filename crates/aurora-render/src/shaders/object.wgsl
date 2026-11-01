@@ -1610,9 +1610,9 @@ fn blend_color(in: VsOut, front: bool) -> vec4<f32> {
 // halves), alpha (8 bits), the MSAA samples it covers (8 bits), its depth and
 // the next node. oit.wgsl sorts and composites the lists. Once the node pool
 // is full, the fragment is dropped: the classify then skips the composite and
-// every blended face is drawn again in the drawing order (renderer.rs, the
-// rigged ones writing their depth as `RiggedBlendDepth::Write`), so a crowded
-// frame shows neither holes nor a reversed order.
+// the frame's blended faces are drawn again exactly as without OIT
+// (renderer.rs `rigged_in_order`, then the others in order), so a crowded
+// frame is the image it had before OIT: no holes, no reversed order.
 struct OitParams {
     node_cap: u32,
     width: u32,
@@ -1639,8 +1639,6 @@ struct OitParams {
 // without MSAA: with it, that one depth would hide a layer that some samples
 // of an edge still show (the resolve then tests each sample).
 override OIT_EARLY_DEPTH: bool = false;
-// oit.wgsl `MAX_WALK`
-const OIT_MAX_WALK: u32 = 4096u;
 
 @fragment /*OIT_EARLY_DEPTH*/
 fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_mask) coverage: u32) -> @location(0) vec4<f32> {
@@ -1691,7 +1689,8 @@ fn fs_glow_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_ma
     var idx = atomicLoad(&oit_heads[1u + px.y * oit_params.width + px.x]);
     var steps = 0u;
     loop {
-        if (idx == 0u || steps >= min(oit_params.node_cap, OIT_MAX_WALK) || through <= 0.0) {
+        // (bounded by the pool, as oit.wgsl: never cuts a valid list)
+        if (idx == 0u || steps >= oit_params.node_cap || through <= 0.0) {
             break;
         }
         let n = oit_nodes[idx - 1u];

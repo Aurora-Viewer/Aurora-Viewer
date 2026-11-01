@@ -13,9 +13,9 @@
 //! A new Aurora feature: the Legacy Viewer sorts its alpha by object
 //! (LLDrawPoolAlpha). What does not fit changes nothing: when the pool is
 //! full, the classify skips the composite and the blended faces are drawn
-//! again in the drawing order, the rigged ones writing their depth as
-//! `RiggedBlendDepth::Write` does (both decided on the GPU: draws
-//! counted by [`Oit::flags`], no wait on the CPU); past `max_layers` layers
+//! again exactly as without OIT, rigged ones by their `RiggedBlendDepth`
+//! mode, its depth copy included (all decided on the GPU: draws counted by
+//! [`Oit::flags`], no wait on the CPU); past `max_layers` layers
 //! in one pixel, the farthest are folded into a weighted average. Off, or
 //! when the pool cannot be allocated, the renderer draws exactly as before.
 
@@ -60,6 +60,9 @@ struct Params {
 /// composite (the reverse).
 pub(crate) const REPLAY_FLAG: u64 = 0;
 pub(crate) const COMPOSITED_FLAG: u64 = 4;
+/// Byte offset in [`Oit::flags`] of the DrawIndirectArgs of the replay's
+/// depth copy (one triangle when the pool overflowed, none otherwise).
+const DEPTH_COPY_ARGS: u64 = 8;
 
 /// Whether this device can capture: storage written from fragment shaders,
 /// with two more storage buffers than the blended faces already read, and
@@ -150,6 +153,9 @@ pub(crate) struct Resolve {
     composite: wgpu::RenderPipeline,
     /// per sample, over the edge tiles (MSAA only)
     edge: Option<wgpu::RenderPipeline>,
+    /// the scene depth into another depth target, when the pool overflowed
+    /// ([`Oit::copy_depth_if_overflowed`])
+    depth_copy: wgpu::RenderPipeline,
 }
 
 impl Resolve {
@@ -254,6 +260,17 @@ fn resolve_layout(device: &wgpu::Device, classify: bool, ms: bool) -> wgpu::Bind
             },
         ));
         entries.push(entry(8, S::VERTEX, read));
+        if !ms {
+            entries.push(entry(
+                11,
+                S::FRAGMENT,
+                wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+            ));
+        }
     }
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some(match (classify, ms) {
@@ -335,11 +352,42 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
             cache: None,
         })
     };
+    let depth_copy = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("oit replay depth copy"),
+        layout: Some(&draw_layout),
+        vertex: wgpu::VertexState {
+            module: &shared.module,
+            entry_point: Some("vs_full"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shared.module,
+            entry_point: Some(if ms { "fs_copy_depth_ms" } else { "fs_copy_depth" }),
+            compilation_options: Default::default(),
+            targets: &[],
+        }),
+        primitive: Default::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: shared.depth_format,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: samples,
+            ..Default::default()
+        },
+        multiview_mask: None,
+        cache: None,
+    });
     Resolve {
         samples,
         classify,
         composite: draw("oit composite", "fs_composite"),
         edge: ms.then(|| draw("oit composite msaa edges", "fs_edge")),
+        depth_copy,
     }
 }
 
@@ -404,6 +452,7 @@ impl Oit {
         nodes_per_pixel: u32,
         max_layers: u32,
         draws: u32,
+        depth_ss: &wgpu::TextureView,
         depth_msaa: Option<&wgpu::TextureView>,
     ) -> bool {
         let limits = device.limits();
@@ -434,11 +483,12 @@ impl Oit {
         let Some(pool) = &self.pool else {
             return false;
         };
-        if pool.groups.is_none() || pool.groups_depth.as_ref() != depth_msaa {
-            let groups = self.make_groups(device, pool, depth_msaa);
+        let depth = depth_msaa.unwrap_or(depth_ss);
+        if pool.groups.is_none() || pool.groups_depth.as_ref() != Some(depth) {
+            let groups = self.make_groups(device, pool, depth_ss, depth_msaa);
             if let Some(pool) = &mut self.pool {
                 pool.groups = Some(groups);
-                pool.groups_depth = depth_msaa.cloned();
+                pool.groups_depth = Some(depth.clone());
             }
         }
         let Some(pool) = &self.pool else {
@@ -492,7 +542,7 @@ impl Oit {
         let nodes = buffer("oit nodes", u64::from(node_cap) * NODE_BYTES, U::STORAGE)?;
         let args = buffer("oit tile draws", 32, U::STORAGE | U::INDIRECT)?;
         let tile_list = buffer("oit tiles", u64::from(tiles) * 2 * 4, U::STORAGE)?;
-        let flags = buffer("oit draw flags", 8, U::STORAGE | U::INDIRECT)?;
+        let flags = buffer("oit draw flags", 24, U::STORAGE | U::INDIRECT)?;
         let (_, color) = crate::gpu_alloc::try_texture(
             device,
             &wgpu::TextureDescriptor {
@@ -548,6 +598,7 @@ impl Oit {
         &self,
         device: &wgpu::Device,
         pool: &Pool,
+        depth_ss: &wgpu::TextureView,
         depth_msaa: Option<&wgpu::TextureView>,
     ) -> (wgpu::BindGroup, wgpu::BindGroup) {
         let ms = usize::from(depth_msaa.is_some());
@@ -567,6 +618,9 @@ impl Oit {
         classify.push(bind(9, pool.flags.as_entire_binding()));
         draws.push(bind(7, wgpu::BindingResource::TextureView(&pool.color)));
         draws.push(bind(8, pool.tile_list.as_entire_binding()));
+        if depth_msaa.is_none() {
+            draws.push(bind(11, wgpu::BindingResource::TextureView(depth_ss)));
+        }
         let group = |label, layout, entries: &[wgpu::BindGroupEntry<'_>]| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(label),
@@ -611,6 +665,35 @@ impl Oit {
             pass.set_pipeline(&r.classify);
             pass.set_bind_group(0, group, &[]);
             pass.dispatch_workgroups(pool.tiles_x, pool.tiles / pool.tiles_x, 1);
+        }
+    }
+
+    /// When the pool overflowed (decided on the GPU by [`Oit::classify`]),
+    /// the scene depth into `target` (same size and samples): the replay of
+    /// the rigged faces' `Layered` and `Layers` modes draws on that copy, as
+    /// they do without OIT after a texture copy. Otherwise nothing is drawn.
+    pub fn copy_depth_if_overflowed(&self, encoder: &mut wgpu::CommandEncoder, r: &Resolve, target: &wgpu::TextureView) {
+        if let Some(pool) = &self.pool
+            && let Some((_, group)) = &pool.groups
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("oit replay depth copy"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: target,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&r.depth_copy);
+            pass.set_bind_group(0, group, &[]);
+            pass.draw_indirect(&pool.flags, DEPTH_COPY_ARGS);
         }
     }
 

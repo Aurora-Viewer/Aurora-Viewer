@@ -58,16 +58,16 @@ struct OitParams {
 @group(0) @binding(5) var<storage, read_write> args: array<atomic<u32>, 8>;
 @group(0) @binding(6) var<storage, read_write> tiles_w: array<u32>;
 // the draw counts of the replay and of the composite's glow (oit.rs
-// REPLAY_FLAG, COMPOSITED_FLAG): all or none
-@group(0) @binding(9) var<storage, read_write> flags: array<u32, 2>;
+// REPLAY_FLAG, COMPOSITED_FLAG): all or none; then the DrawIndirectArgs of
+// the replay's depth copy (DEPTH_COPY_ARGS: one triangle, when overflowed)
+@group(0) @binding(9) var<storage, read_write> flags: array<u32, 6>;
 // the draws only
 @group(0) @binding(7) var resolved: texture_2d<f32>;
 @group(0) @binding(8) var<storage, read> tiles_r: array<u32>;
+// single-sample only: the scene depth (the replay's depth copy)
+@group(0) @binding(11) var depth_ss: texture_depth_2d;
 
 const TILE: u32 = 8u;
-// nodes walked in one list at most (object.wgsl `OIT_MAX_WALK`): far past
-// any real pixel, short enough that a broken list never stalls the GPU
-const MAX_WALK: u32 = 4096u;
 // `out_color` alpha of an edge pixel
 const EDGE: f32 = -1.0;
 
@@ -101,9 +101,9 @@ fn resolve___N__(first: u32, full: u32, dmin: f32, dmax: f32, keep: u32) -> Reso
     var idx = first;
     var steps = 0u;
     loop {
-        // (a list holds at most every node: the bound only guards against
-        // a broken one)
-        if (idx == 0u || steps >= min(params.node_cap, MAX_WALK)) {
+        // (a list holds at most every node of the pool: the bound only
+        // guards against a broken one, never cuts a valid list)
+        if (idx == 0u || steps >= params.node_cap) {
             break;
         }
         let id = idx - 1u;
@@ -191,6 +191,10 @@ fn set_flags(g: vec3<u32>) {
         let over = overflowed();
         flags[0] = select(0u, params.draws, over);
         flags[1] = select(params.draws, 0u, over);
+        flags[2] = 3u;
+        flags[3] = select(0u, 1u, over);
+        flags[4] = 0u;
+        flags[5] = 0u;
     }
 }
 
@@ -318,4 +322,28 @@ fn fs_edge(@builtin(position) p: vec4<f32>, @builtin(sample_index) s: u32) -> @l
         discard;
     }
     return r.color;
+}
+
+// ---- the replay's depth copy (overflow only)
+//
+// The rigged faces' `Layered` and `Layers` modes draw on a copy of the scene
+// depth (renderer.rs, `Targets::blend_layers`). When the pool overflowed the
+// replay needs that copy, and a texture copy cannot wait on the GPU's
+// decision: this full-screen triangle, drawn indirectly (one instance when
+// overflowed, none otherwise), writes it instead.
+
+@vertex
+fn vs_full(@builtin(vertex_index) v: u32) -> @builtin(position) vec4<f32> {
+    let uv = vec2<f32>(f32((v << 1u) & 2u), f32(v & 2u));
+    return vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+}
+
+@fragment
+fn fs_copy_depth(@builtin(position) p: vec4<f32>) -> @builtin(frag_depth) f32 {
+    return textureLoad(depth_ss, vec2<i32>(p.xy), 0);
+}
+
+@fragment
+fn fs_copy_depth_ms(@builtin(position) p: vec4<f32>, @builtin(sample_index) s: u32) -> @builtin(frag_depth) f32 {
+    return textureLoad(depth_ms, vec2<i32>(p.xy), i32(s));
 }

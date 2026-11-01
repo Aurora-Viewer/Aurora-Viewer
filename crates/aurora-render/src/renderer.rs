@@ -7693,6 +7693,7 @@ impl Backend {
             // (the resolve comes with the scene's pipelines, for their samples)
             let resolve_ready = self.pipelines.oit_resolve.as_ref().is_some_and(|r| r.samples() == samples);
             let depth_msaa = self.targets.depth_msaa.as_ref();
+            let depth_ss = &self.targets.depth_ss;
             let (device, queue) = (&self.device, &self.queue);
             resolve_ready
                 && self.oit.as_mut().is_some_and(|o| {
@@ -7704,7 +7705,9 @@ impl Backend {
                         samples,
                         s.oit_nodes_per_pixel,
                         s.oit_max_layers,
-                        bn,
+                        // (the largest range a gated draw asks for)
+                        bn.max(rg.creation_preview.1),
+                        depth_ss,
                         depth_msaa,
                     )
                 })
@@ -7716,40 +7719,36 @@ impl Backend {
             .as_ref()
             .filter(|_| f.blend_late_discard)
             .unwrap_or(&self.pipelines.blend);
-        // blended faces `from..to`, back to front; a glowing one adds its glow
-        // right after itself, so later layers in front dim it (LLDrawPoolAlpha)
-        let blended = |pass: &mut wgpu::RenderPass, pipe: &wgpu::RenderPipeline, from: u32, to: u32| {
-            let mut start = from;
-            for i in from..to {
-                if !(glow_on && glow_skip & 8 == 0 && lists.blend_glow.get(i as usize).copied().unwrap_or(false)) {
-                    continue;
-                }
-                draw(pass, pipe, (b0 + start as u64 * stride, i + 1 - start));
-                draw(pass, &self.pipelines.glow_water, (b0 + i as u64 * stride, 1));
-                start = i + 1;
-            }
-            draw(pass, pipe, (b0 + start as u64 * stride, to - start));
-        };
-        // the same in the drawing order when the OIT pool overflowed (draws
-        // counted by `flags` at oit::REPLAY_FLAG: all of them, else none)
-        let replay = |pass: &mut wgpu::RenderPass, pipe: &wgpu::RenderPipeline, from: u32, to: u32, flags: &wgpu::Buffer| {
-            let draw_if = |pass: &mut wgpu::RenderPass, pipe: &wgpu::RenderPipeline, r: (u64, u32)| {
-                if r.1 > 0 {
+        // A draw of the in-order path, or gated by the OIT flags (`Some((flags,
+        // offset))`, oit::REPLAY_FLAG or COMPOSITED_FLAG): then all of it or
+        // nothing, as the classify decided on the GPU.
+        let draw_g =
+            |pass: &mut wgpu::RenderPass, pipe: &wgpu::RenderPipeline, r: (u64, u32), gate: Option<(&wgpu::Buffer, u64)>| match gate {
+                None => draw(pass, pipe, r),
+                Some((flags, at)) if r.1 > 0 => {
                     calls.set(calls.get() + 1);
                     pass.set_pipeline(pipe);
-                    pass.multi_draw_indexed_indirect_count(&self.indirect, r.0, flags, crate::oit::REPLAY_FLAG, r.1);
+                    pass.multi_draw_indexed_indirect_count(&self.indirect, r.0, flags, at, r.1);
                 }
+                Some(_) => {}
             };
-            let mut start = from;
-            for i in from..to {
-                if !(glow_on && glow_skip & 8 == 0 && lists.blend_glow.get(i as usize).copied().unwrap_or(false)) {
-                    continue;
+        // blended faces `from..to`, back to front; a glowing one adds its glow
+        // right after itself, so later layers in front dim it (LLDrawPoolAlpha)
+        let blended_g =
+            |pass: &mut wgpu::RenderPass, pipe: &wgpu::RenderPipeline, from: u32, to: u32, gate: Option<(&wgpu::Buffer, u64)>| {
+                let mut start = from;
+                for i in from..to {
+                    if !(glow_on && glow_skip & 8 == 0 && lists.blend_glow.get(i as usize).copied().unwrap_or(false)) {
+                        continue;
+                    }
+                    draw_g(pass, pipe, (b0 + start as u64 * stride, i + 1 - start), gate);
+                    draw_g(pass, &self.pipelines.glow_water, (b0 + i as u64 * stride, 1), gate);
+                    start = i + 1;
                 }
-                draw_if(pass, pipe, (b0 + start as u64 * stride, i + 1 - start));
-                draw_if(pass, &self.pipelines.glow_water, (b0 + i as u64 * stride, 1));
-                start = i + 1;
-            }
-            draw_if(pass, pipe, (b0 + start as u64 * stride, to - start));
+                draw_g(pass, pipe, (b0 + start as u64 * stride, to - start), gate);
+            };
+        let blended = |pass: &mut wgpu::RenderPass, pipe: &wgpu::RenderPipeline, from: u32, to: u32| {
+            blended_g(pass, pipe, from, to, None);
         };
         // the other blended faces (not with `oit_on`: composited before),
         // the overlays and the particles
@@ -7840,6 +7839,129 @@ impl Backend {
                 rest(&mut pass);
             }
         }
+        // The rigged blended faces drawn in order, by `RiggedBlendDepth` mode
+        // (each fragment written ahead of the faces drawn after it). `replay`:
+        // the OIT pool's flags, every draw then gated at REPLAY_FLAG (nothing
+        // unless the pool overflowed) and the depth copy drawn on the GPU's
+        // decision too: an overflowed frame is the frame without OIT.
+        let rigged_in_order = |encoder: &mut wgpu::CommandEncoder,
+                               replay: Option<(&crate::oit::Oit, &crate::oit::Resolve, &wgpu::Buffer)>| {
+            let gate = replay.map(|(_, _, flags)| (flags, crate::oit::REPLAY_FLAG));
+            // (the frame group without the scene copy and the depth: the
+            // depth is written here, and fs_blend reads neither)
+            match lists.blend_depth_mode {
+                RiggedBlendDepth::Write => {
+                    let mut pass = begin_scene_b(encoder, &self.targets, "scene b rigged blend", false, true);
+                    bind_mesh(&mut pass, &self.groups.a);
+                    blended_g(&mut pass, &self.pipelines.blend_depth, 0, n_depth, gate);
+                }
+                RiggedBlendDepth::HalfCovered => {
+                    let mut pass = begin_scene_b(encoder, &self.targets, "scene b rigged blend", false, true);
+                    bind_mesh(&mut pass, &self.groups.a);
+                    draw_g(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth), gate);
+                    blended_g(&mut pass, &self.pipelines.blend_depth_color, 0, n_depth, gate);
+                }
+                RiggedBlendDepth::Layered => {
+                    // their colour as the Legacy Viewer draws it, each
+                    // fragment from 1/255 hiding the layers drawn after it
+                    // behind it, on a copy of the depth...
+                    let t = &self.targets;
+                    if let Some((layers_tex, layers)) = &t.blend_layers {
+                        let scene_depth = t.depth_msaa_tex.as_ref().unwrap_or(&t.depth_ss_tex);
+                        match replay {
+                            None => {
+                                encoder.copy_texture_to_texture(scene_depth.as_image_copy(), layers_tex.as_image_copy(), scene_depth.size())
+                            }
+                            Some((oit, resolve, _)) => oit.copy_depth_if_overflowed(encoder, resolve, layers),
+                        }
+                        let mut pass = begin_scene_b_on(encoder, t, "scene b rigged blend", false, true, layers);
+                        bind_mesh(&mut pass, &self.groups.a);
+                        blended_g(&mut pass, &self.pipelines.blend_depth, 0, n_depth, gate);
+                    }
+                    // ...and in the scene depth only where at least half
+                    // covered, for what is drawn after them (#556)
+                    let mut pass = begin_scene_b(encoder, t, "scene b rigged blend depth", false, true);
+                    bind_mesh(&mut pass, &self.groups.a);
+                    draw_g(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth), gate);
+                }
+                RiggedBlendDepth::Split => {
+                    // object by object in their drawing order, what is at
+                    // least half covered, hiding what is drawn after it
+                    // behind it, then the object's fringes (#935); the glow
+                    // once, with the first
+                    let mut pass = begin_scene_b(encoder, &self.targets, "scene b rigged blend", false, true);
+                    bind_mesh(&mut pass, &self.groups.a);
+                    let mut from = 0;
+                    for end in lists.blend_depth_runs.iter().map(|&e| e.min(n_depth)).chain([n_depth]) {
+                        if end <= from {
+                            continue;
+                        }
+                        blended_g(&mut pass, &self.pipelines.blend_depth_solid, from, end, gate);
+                        draw_g(
+                            &mut pass,
+                            &self.pipelines.blend_depth_fringe,
+                            (b0 + from as u64 * stride, end - from),
+                            gate,
+                        );
+                        from = end;
+                    }
+                }
+                RiggedBlendDepth::Layers => {
+                    // object by object as `Split`, on a copy of the depth,
+                    // each object's fringes then hiding behind them what is
+                    // drawn after them (#1300)...
+                    let t = &self.targets;
+                    if let Some((layers_tex, layers)) = &t.blend_layers {
+                        let scene_depth = t.depth_msaa_tex.as_ref().unwrap_or(&t.depth_ss_tex);
+                        match replay {
+                            None => {
+                                encoder.copy_texture_to_texture(scene_depth.as_image_copy(), layers_tex.as_image_copy(), scene_depth.size())
+                            }
+                            Some((oit, resolve, _)) => oit.copy_depth_if_overflowed(encoder, resolve, layers),
+                        }
+                        let mut pass = begin_scene_b_on(encoder, t, "scene b rigged blend", false, true, layers);
+                        bind_mesh(&mut pass, &self.groups.a);
+                        let mut from = 0;
+                        for end in lists.blend_depth_runs.iter().map(|&e| e.min(n_depth)).chain([n_depth]) {
+                            if end <= from {
+                                continue;
+                            }
+                            let run = (b0 + from as u64 * stride, end - from);
+                            blended_g(&mut pass, &self.pipelines.blend_depth_solid, from, end, gate);
+                            draw_g(&mut pass, &self.pipelines.blend_depth_fringe, run, gate);
+                            draw_g(&mut pass, &self.pipelines.blend_depth_fringe_depth, run, gate);
+                            from = end;
+                        }
+                    }
+                    // ...and in the scene depth only where at least half
+                    // covered, for what is drawn after them (#556)
+                    let mut pass = begin_scene_b(encoder, t, "scene b rigged blend depth", false, true);
+                    bind_mesh(&mut pass, &self.groups.a);
+                    draw_g(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth), gate);
+                }
+                RiggedBlendDepth::Runs => {
+                    // their depth where nearly opaque, then run by run
+                    // their colour and their depth where half covered (#935)
+                    let mut pass = begin_scene_b(encoder, &self.targets, "scene b rigged blend", false, true);
+                    bind_mesh(&mut pass, &self.groups.a);
+                    draw_g(&mut pass, &self.pipelines.blend_depth_opaque, (b0, n_depth), gate);
+                    let mut from = 0;
+                    for end in lists.blend_depth_runs.iter().map(|&e| e.min(n_depth)).chain([n_depth]) {
+                        if end <= from {
+                            continue;
+                        }
+                        blended_g(&mut pass, &self.pipelines.blend_depth_color, from, end, gate);
+                        draw_g(
+                            &mut pass,
+                            &self.pipelines.blend_depth_mask,
+                            (b0 + from as u64 * stride, end - from),
+                            gate,
+                        );
+                        from = end;
+                    }
+                }
+            }
+        };
         if let (true, Some(oit), Some(capture), Some(resolve), Some(flags), Some(oit_group)) = (
             oit_on,
             &self.oit,
@@ -7860,157 +7982,56 @@ impl Backend {
             // sorted once per pixel, the tiles to composite listed, the
             // replay's and the glow's draw counts set
             oit.classify(&mut encoder, resolve);
-            // the creation preview (opaque, no depth) under the composite, as
-            // under the blended faces drawn in order; the composite over the
-            // scene, or the faces in order when the pool overflowed
-            let composite = |pass: &mut wgpu::RenderPass, from: u32, to: u32| {
-                bind_mesh(pass, &self.groups.b);
-                draw(pass, &self.pipelines.creation_preview, rg.creation_preview);
-                oit.resolve(pass, resolve);
-                bind_mesh(pass, &self.groups.b);
-                replay(pass, blend_pipe, from, to, flags);
-            };
-            // then the rigged faces' depth from 1/255, as they leave it when
-            // drawn in order (`RiggedBlendDepth::Write`,
-            // LLDrawPoolAlpha::forwardRender(true)), for what follows
+            // Drawn: the composite, or (counted on the GPU, all or nothing)
+            // the frame in the drawing order exactly as without OIT when the
+            // pool overflowed. The creation preview (opaque, no depth) under
+            // the composite, as under the blended faces drawn in order.
+            let composited = Some((flags, crate::oit::COMPOSITED_FLAG));
+            let replayed = Some((flags, crate::oit::REPLAY_FLAG));
             let rigged = n_depth > 0;
             if rigged {
                 {
                     let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b oit resolve", false, false);
-                    composite(&mut pass, 0, 0);
+                    bind_mesh(&mut pass, &self.groups.b);
+                    draw_g(&mut pass, &self.pipelines.creation_preview, rg.creation_preview, composited);
+                    oit.resolve(&mut pass, resolve);
                 }
-                let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend depth", false, true);
-                bind_mesh(&mut pass, &self.groups.a);
-                // (replayed: the rigged ones first, writing their depth, as
-                // `split` draws them with `RiggedBlendDepth::Write`; the
-                // other modes copy the depth, which cannot wait on the GPU's
-                // decision)
-                replay(&mut pass, &self.pipelines.blend_depth, 0, n_depth, flags);
-                draw(&mut pass, &self.pipelines.blend_depth_fringe_depth, (b0, n_depth));
+                // then the rigged faces' depth from 1/255, as they leave it
+                // when drawn in order (`RiggedBlendDepth::Write`,
+                // LLDrawPoolAlpha::forwardRender(true)), for what follows
+                {
+                    let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend depth", false, true);
+                    bind_mesh(&mut pass, &self.groups.a);
+                    draw_g(&mut pass, &self.pipelines.blend_depth_fringe_depth, (b0, n_depth), composited);
+                }
+                rigged_in_order(&mut encoder, Some((oit, resolve, flags)));
             }
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b blend", true, false);
-            if rigged {
+            bind_mesh(&mut pass, &self.groups.b);
+            if !rigged {
+                draw_g(&mut pass, &self.pipelines.creation_preview, rg.creation_preview, composited);
+                oit.resolve(&mut pass, resolve);
                 bind_mesh(&mut pass, &self.groups.b);
-                replay(&mut pass, blend_pipe, n_depth, bn, flags);
-            } else {
-                composite(&mut pass, 0, bn);
             }
+            // (overflowed: what `rest` draws without OIT)
+            draw_g(&mut pass, &self.pipelines.creation_preview, rg.creation_preview, replayed);
+            blended_g(&mut pass, blend_pipe, n_depth, bn, replayed);
             // the glow of the glowing ones, after all of them, each dimmed by
             // the layers in front of it, on the camera's side of the water
-            // like their colour (`fs_glow_oit`; counted at COMPOSITED_FLAG:
-            // none when the replay drew them)
+            // like their colour (`fs_glow_oit`; none when the faces were
+            // replayed with their glow)
             if let (true, Some(glow_oit)) = (glow_on && glow_skip & 8 == 0, &self.pipelines.glow_oit) {
                 pass.set_bind_group(3, oit_group, &[]);
-                pass.set_pipeline(glow_oit);
                 for i in 0..bn {
                     if lists.blend_glow.get(i as usize).copied().unwrap_or(false) {
-                        calls.set(calls.get() + 1);
-                        let at = b0 + u64::from(i) * stride;
-                        pass.multi_draw_indexed_indirect_count(&self.indirect, at, flags, crate::oit::COMPOSITED_FLAG, 1);
+                        draw_g(&mut pass, glow_oit, (b0 + u64::from(i) * stride, 1), composited);
                     }
                 }
             }
             rest(&mut pass);
         }
         if split {
-            // (the frame group without the scene copy and the depth: the
-            // depth is written here, and fs_blend reads neither)
-            match lists.blend_depth_mode {
-                RiggedBlendDepth::Write => {
-                    let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
-                    bind_mesh(&mut pass, &self.groups.a);
-                    blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
-                }
-                RiggedBlendDepth::HalfCovered => {
-                    let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
-                    bind_mesh(&mut pass, &self.groups.a);
-                    draw(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth));
-                    blended(&mut pass, &self.pipelines.blend_depth_color, 0, n_depth);
-                }
-                RiggedBlendDepth::Layered => {
-                    // their colour as the Legacy Viewer draws it, each
-                    // fragment from 1/255 hiding the layers drawn after it
-                    // behind it, on a copy of the depth...
-                    let t = &self.targets;
-                    if let Some((layers_tex, layers)) = &t.blend_layers {
-                        let scene_depth = t.depth_msaa_tex.as_ref().unwrap_or(&t.depth_ss_tex);
-                        encoder.copy_texture_to_texture(scene_depth.as_image_copy(), layers_tex.as_image_copy(), scene_depth.size());
-                        let mut pass = begin_scene_b_on(&mut encoder, t, "scene b rigged blend", false, true, layers);
-                        bind_mesh(&mut pass, &self.groups.a);
-                        blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
-                    }
-                    // ...and in the scene depth only where at least half
-                    // covered, for what is drawn after them (#556)
-                    let mut pass = begin_scene_b(&mut encoder, t, "scene b rigged blend depth", false, true);
-                    bind_mesh(&mut pass, &self.groups.a);
-                    draw(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth));
-                }
-                RiggedBlendDepth::Split => {
-                    // object by object in their drawing order, what is at
-                    // least half covered, hiding what is drawn after it
-                    // behind it, then the object's fringes (#935); the glow
-                    // once, with the first
-                    let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
-                    bind_mesh(&mut pass, &self.groups.a);
-                    let mut from = 0;
-                    for end in lists.blend_depth_runs.iter().map(|&e| e.min(n_depth)).chain([n_depth]) {
-                        if end <= from {
-                            continue;
-                        }
-                        blended(&mut pass, &self.pipelines.blend_depth_solid, from, end);
-                        draw(
-                            &mut pass,
-                            &self.pipelines.blend_depth_fringe,
-                            (b0 + from as u64 * stride, end - from),
-                        );
-                        from = end;
-                    }
-                }
-                RiggedBlendDepth::Layers => {
-                    // object by object as `Split`, on a copy of the depth,
-                    // each object's fringes then hiding behind them what is
-                    // drawn after them (#1300)...
-                    let t = &self.targets;
-                    if let Some((layers_tex, layers)) = &t.blend_layers {
-                        let scene_depth = t.depth_msaa_tex.as_ref().unwrap_or(&t.depth_ss_tex);
-                        encoder.copy_texture_to_texture(scene_depth.as_image_copy(), layers_tex.as_image_copy(), scene_depth.size());
-                        let mut pass = begin_scene_b_on(&mut encoder, t, "scene b rigged blend", false, true, layers);
-                        bind_mesh(&mut pass, &self.groups.a);
-                        let mut from = 0;
-                        for end in lists.blend_depth_runs.iter().map(|&e| e.min(n_depth)).chain([n_depth]) {
-                            if end <= from {
-                                continue;
-                            }
-                            let run = (b0 + from as u64 * stride, end - from);
-                            blended(&mut pass, &self.pipelines.blend_depth_solid, from, end);
-                            draw(&mut pass, &self.pipelines.blend_depth_fringe, run);
-                            draw(&mut pass, &self.pipelines.blend_depth_fringe_depth, run);
-                            from = end;
-                        }
-                    }
-                    // ...and in the scene depth only where at least half
-                    // covered, for what is drawn after them (#556)
-                    let mut pass = begin_scene_b(&mut encoder, t, "scene b rigged blend depth", false, true);
-                    bind_mesh(&mut pass, &self.groups.a);
-                    draw(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth));
-                }
-                RiggedBlendDepth::Runs => {
-                    // their depth where nearly opaque, then run by run
-                    // their colour and their depth where half covered (#935)
-                    let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
-                    bind_mesh(&mut pass, &self.groups.a);
-                    draw(&mut pass, &self.pipelines.blend_depth_opaque, (b0, n_depth));
-                    let mut from = 0;
-                    for end in lists.blend_depth_runs.iter().map(|&e| e.min(n_depth)).chain([n_depth]) {
-                        if end <= from {
-                            continue;
-                        }
-                        blended(&mut pass, &self.pipelines.blend_depth_color, from, end);
-                        draw(&mut pass, &self.pipelines.blend_depth_mask, (b0 + from as u64 * stride, end - from));
-                        from = end;
-                    }
-                }
-            }
+            rigged_in_order(&mut encoder, None);
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b blend", true, false);
             bind_mesh(&mut pass, &self.groups.b);
             rest(&mut pass);
