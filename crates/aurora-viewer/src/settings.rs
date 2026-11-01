@@ -1542,6 +1542,9 @@ pub struct AudioSettings {
     pub collision_sounds: bool,
     /// Sounds of other avatars' gestures (EnableGestureSounds, on).
     pub gesture_sounds: bool,
+    /// World sounds muffled behind walls and objects (Aurora's own, on;
+    /// off: heard unobstructed, as in the Legacy Viewer).
+    pub sound_occlusion: bool,
     /// Interface sounds (IM, money, teleport, windows, menus, typing...;
     /// Firestorm's PlayModeUISnd* defaults).
     pub ui_sounds: bool,
@@ -1591,6 +1594,7 @@ impl Default for AudioSettings {
             mic_gain: 1.0,
             collision_sounds: true,
             gesture_sounds: true,
+            sound_occlusion: true,
             ui_sounds: true,
             ui: Default::default(),
             saved_streams: Vec::new(),

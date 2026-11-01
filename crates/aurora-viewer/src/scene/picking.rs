@@ -637,7 +637,7 @@ impl Scene {
 
     /// The model matrix of the geometry `g` draws for object `o`
     /// (`plants::geometry_model`, then `unbind_of`).
-    fn drawn_model(&self, g: &ObjGpu, o: &Object, scale: Vec3, key: Option<GeomKey>, pos: Vec3, rot: Quat) -> Mat4 {
+    pub(super) fn drawn_model(&self, g: &ObjGpu, o: &Object, scale: Vec3, key: Option<GeomKey>, pos: Vec3, rot: Quat) -> Mat4 {
         let model = super::plants::geometry_model(scale, o, key, pos, rot);
         self.unbind_of(g).map_or(model, |unbind| model * unbind)
     }

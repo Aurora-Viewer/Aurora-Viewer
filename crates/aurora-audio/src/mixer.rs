@@ -354,9 +354,60 @@ impl ClipVoice {
     }
 }
 
+/// Occlusion of a world voice by the time a new value is reached: the
+/// filter and the gain glide there with this time constant, so that walking
+/// past a doorway opens the sound up over about a tenth of a second. The
+/// first value a voice receives before it has played anything applies at
+/// once: a sound starting behind a wall starts muffled. The first value of
+/// a voice already playing, measured once it started, glides there faster.
+const OCCLUSION_SMOOTHING_SECS: f32 = 0.08;
+const OCCLUSION_FIRST_SECS: f32 = 0.015;
+/// Cut-off of the low-pass for one blocking layer (occlusion 0.5) and for
+/// two or more (occlusion 1).
+const OCCLUSION_CUTOFF_ONE: f32 = 1_000.0;
+const OCCLUSION_CUTOFF_FULL: f32 = 600.0;
+/// Where the cut-off starts from: above what the ear hears, so that a slight
+/// occlusion (one ray of three grazing an edge) is a slight dulling.
+const OCCLUSION_CUTOFF_OPEN: f32 = 22_000.0;
+/// Gain cut at occlusion 1 (-6 dB a layer).
+const OCCLUSION_GAIN_DB: f32 = -12.0;
+/// Below this occlusion the filter fades into a plain pass-through.
+const OCCLUSION_FADE_IN: f32 = 0.05;
+/// Filter states this small are zero: no denormals through a long silence.
+const DENORMAL: f32 = 1.0e-20;
+
+/// Low-pass cut-off for an occlusion amount (0 clear, 0.5 one layer, 1 two
+/// or more), interpolated on a log scale.
+pub(crate) fn occlusion_cutoff(amount: f32) -> f32 {
+    let a = amount.clamp(0.0, 1.0);
+    let lerp_log = |from: f32, to: f32, t: f32| (from.ln() + (to.ln() - from.ln()) * t).exp();
+    if a <= 0.5 {
+        lerp_log(OCCLUSION_CUTOFF_OPEN, OCCLUSION_CUTOFF_ONE, a * 2.0)
+    } else {
+        lerp_log(OCCLUSION_CUTOFF_ONE, OCCLUSION_CUTOFF_FULL, (a - 0.5) * 2.0)
+    }
+}
+
+/// Linear gain for an occlusion amount.
+pub(crate) fn occlusion_gain(amount: f32) -> f32 {
+    10f32.powf(OCCLUSION_GAIN_DB * amount.clamp(0.0, 1.0) / 20.0)
+}
+
+/// Coefficient of the one-pole low-pass `y += c (x - y)` for an occlusion
+/// amount: exactly 1 (the input unchanged) at 0.
+pub(crate) fn occlusion_coef(amount: f32, rate: u32) -> f32 {
+    let a = amount.clamp(0.0, 1.0);
+    let c = 1.0 - (-std::f32::consts::TAU * occlusion_cutoff(a) / rate as f32).exp();
+    1.0 - (1.0 - c) * (a / OCCLUSION_FADE_IN).min(1.0)
+}
+
 /// A sound placed in the world: played mono (both channels averaged) with
 /// per-side gains set by the caller (distance and direction), looped or
 /// not, stopped by id. Gain changes ramp over one buffer (no clicks).
+///
+/// Behind walls (the viewer's `sound_occlusion`), the mono signal goes
+/// through two one-pole low-passes in a row (12 dB an octave) and a gain
+/// cut before the panning; both glide to their new values.
 pub(crate) struct WorldVoice {
     pub(crate) id: u64,
     bus: usize,
@@ -368,6 +419,16 @@ pub(crate) struct WorldVoice {
     target: (f32, f32),
     /// Fading out before removal.
     stopping: bool,
+    /// Current and target occlusion (0 clear .. 1).
+    occlusion: f32,
+    occlusion_target: f32,
+    /// States of the two low-passes.
+    lowpass: [f32; 2],
+    /// Nothing mixed yet.
+    fresh: bool,
+    /// No occlusion received yet, then gliding to the first one.
+    unmeasured: bool,
+    first_glide: bool,
 }
 
 impl WorldVoice {
@@ -382,7 +443,24 @@ impl WorldVoice {
             gain: g,
             target: g,
             stopping: false,
+            occlusion: 0.0,
+            occlusion_target: 0.0,
+            lowpass: [0.0; 2],
+            fresh: true,
+            unmeasured: true,
+            first_glide: false,
         }
+    }
+
+    fn set_occlusion(&mut self, amount: f32) {
+        let a = if amount.is_finite() { amount.clamp(0.0, 1.0) } else { 0.0 };
+        self.occlusion_target = a;
+        if self.fresh {
+            self.occlusion = a;
+        } else if self.unmeasured {
+            self.first_glide = true;
+        }
+        self.unmeasured = false;
     }
 
     fn mix_into(&mut self, bus: &mut [f32]) -> bool {
@@ -391,9 +469,28 @@ impl WorldVoice {
         if len == 0 || frames == 0 {
             return !self.stopping && len > 0;
         }
+        self.fresh = false;
         let target = if self.stopping { (0.0, 0.0) } else { self.target };
         let (dl, dr) = ((target.0 - self.gain.0) / frames as f32, (target.1 - self.gain.1) / frames as f32);
         let (mut gl, mut gr) = self.gain;
+        // the occlusion's glide over this buffer, its filter coefficient
+        // and gain ramped from the start value to the end value
+        let from = self.occlusion;
+        let diff = self.occlusion_target - from;
+        let tau = if self.first_glide { OCCLUSION_FIRST_SECS } else { OCCLUSION_SMOOTHING_SECS };
+        let to = if diff.abs() < 1.0e-4 {
+            self.first_glide = false;
+            self.occlusion_target
+        } else {
+            from + diff * (1.0 - (-(frames as f32) / (tau * ENGINE_SAMPLE_RATE as f32)).exp())
+        };
+        self.occlusion = to;
+        let filtered = from > 0.0 || to > 0.0;
+        let (c0, c1) = (occlusion_coef(from, ENGINE_SAMPLE_RATE), occlusion_coef(to, ENGINE_SAMPLE_RATE));
+        let (o0, o1) = (occlusion_gain(from), occlusion_gain(to));
+        let (dc, dg) = ((c1 - c0) / frames as f32, (o1 - o0) / frames as f32);
+        let (mut c, mut og) = (c0, o0);
+        let [mut y1, mut y2] = self.lowpass;
         for f in 0..frames {
             if self.pos + 1 >= len {
                 if !self.looped {
@@ -401,13 +498,31 @@ impl WorldVoice {
                 }
                 self.pos = 0;
             }
-            let m = (self.data[self.pos] + self.data[self.pos + 1]) * 0.5;
+            let mut m = (self.data[self.pos] + self.data[self.pos + 1]) * 0.5;
+            if filtered {
+                c += dc;
+                og += dg;
+                y1 += c * (m - y1);
+                y2 += c * (y1 - y2);
+                if y1.abs() < DENORMAL {
+                    y1 = 0.0;
+                }
+                if y2.abs() < DENORMAL {
+                    y2 = 0.0;
+                }
+                m = y2 * og;
+            } else {
+                // (the states follow the input: filtering resumes without a step)
+                y1 = m;
+                y2 = m;
+            }
             gl += dl;
             gr += dr;
             bus[2 * f] += m * gl;
             bus[2 * f + 1] += m * gr;
             self.pos += 2;
         }
+        self.lowpass = [y1, y2];
         self.gain = target;
         !self.stopping && (self.looped || self.pos + 1 < len)
     }
@@ -419,6 +534,8 @@ pub(crate) enum Command {
     PlayWorld(WorldVoice),
     /// New (left, right) gains of a world voice.
     WorldGain(u64, (f32, f32)),
+    /// New occlusion of a world voice (0 clear .. 1 behind two walls or more).
+    WorldOcclusion(u64, f32),
     /// Fade a world voice out and drop it.
     StopWorld(u64),
 }
@@ -481,6 +598,11 @@ impl Mixer {
                 Ok(Command::WorldGain(id, g)) => {
                     if let Some(w) = self.world.iter_mut().find(|w| w.id == id) {
                         w.target = (sanitize_volume(g.0), sanitize_volume(g.1));
+                    }
+                }
+                Ok(Command::WorldOcclusion(id, amount)) => {
+                    if let Some(w) = self.world.iter_mut().find(|w| w.id == id) {
+                        w.set_occlusion(amount);
                     }
                 }
                 Ok(Command::StopWorld(id)) => {
@@ -580,6 +702,114 @@ mod tests {
             .unwrap();
         m.render(&mut buf);
         assert_eq!(m.source_count(), 0);
+    }
+
+    #[test]
+    fn occlusion_curve_goes_from_clear_to_muffled() {
+        assert_eq!(occlusion_coef(0.0, ENGINE_SAMPLE_RATE), 1.0, "clear: the input unchanged");
+        assert!((occlusion_cutoff(0.5) - 1_000.0).abs() < 1.0);
+        assert!((occlusion_cutoff(1.0) - 600.0).abs() < 1.0);
+        assert!((20.0 * occlusion_gain(0.5).log10() + 6.0).abs() < 0.01, "one layer: -6 dB");
+        assert!((20.0 * occlusion_gain(1.0).log10() + 12.0).abs() < 0.01);
+        let (mut cut, mut coef, mut gain) = (f32::MAX, 1.0, 1.0);
+        for i in 1..=100 {
+            let a = i as f32 / 100.0;
+            let (k, c, g) = (occlusion_cutoff(a), occlusion_coef(a, ENGINE_SAMPLE_RATE), occlusion_gain(a));
+            assert!(k < cut && c < coef && g < gain, "monotonic at {a}");
+            assert!(c > 0.0 && c <= 1.0);
+            (cut, coef, gain) = (k, c, g);
+        }
+        // out of range and garbage stay in range
+        assert_eq!(occlusion_coef(-1.0, ENGINE_SAMPLE_RATE), 1.0);
+        assert_eq!(occlusion_gain(7.0), occlusion_gain(1.0));
+    }
+
+    /// RMS of the left channel of `buf` from frame `from`.
+    fn rms(buf: &[f32], from: usize) -> f32 {
+        let left: Vec<f32> = buf.as_chunks::<2>().0[from..].iter().map(|f| f[0]).collect();
+        (left.iter().map(|v| v * v).sum::<f32>() / left.len() as f32).sqrt()
+    }
+
+    fn occluded_render(data: &Arc<[f32]>, occlusion: Option<f32>) -> Vec<f32> {
+        let (mut m, _p, tx) = mixer();
+        tx.send(Command::PlayWorld(WorldVoice::new(1, Channel::Sfx, data.clone(), true, (1.0, 1.0))))
+            .unwrap();
+        if let Some(a) = occlusion {
+            tx.send(Command::WorldOcclusion(1, a)).unwrap();
+        }
+        let mut buf = vec![0.0; 9_600];
+        m.render(&mut buf);
+        buf
+    }
+
+    #[test]
+    fn occluded_voice_loses_its_highs_and_some_level() {
+        // a tone at the Nyquist frequency and one at 100 Hz
+        let high: Arc<[f32]> = (0..9_600).map(|i| if (i / 2) % 2 == 0 { 0.5 } else { -0.5 }).collect();
+        let low: Arc<[f32]> = (0..96_000)
+            .map(|i| 0.5 * ((i / 2) as f32 * 100.0 * std::f32::consts::TAU / 48_000.0).sin())
+            .collect();
+        let clear = occluded_render(&low, None);
+        assert_eq!(clear, occluded_render(&low, Some(0.0)), "occlusion 0 is the plain path");
+        let open = rms(&clear, 2_400);
+        let muffled = rms(&occluded_render(&low, Some(1.0)), 2_400);
+        // -12 dB, the low tone itself barely filtered
+        assert!((muffled / open - occlusion_gain(1.0)).abs() < 0.02, "{muffled} / {open}");
+        let high_open = rms(&occluded_render(&high, None), 2_400);
+        let high_muffled = rms(&occluded_render(&high, Some(0.5)), 2_400);
+        assert!(high_muffled < high_open * 0.01, "highs gone: {high_muffled} / {high_open}");
+        // the first value of a voice that has not played applies at once
+        let first = occluded_render(&high, Some(1.0));
+        assert!(rms(&first, 0) < high_open * 0.01);
+    }
+
+    #[test]
+    fn occlusion_changes_glide_without_clicks() {
+        let (mut m, _p, tx) = mixer();
+        let data: Arc<[f32]> = vec![0.5f32; 9_600].into();
+        tx.send(Command::PlayWorld(WorldVoice::new(3, Channel::Sfx, data, true, (1.0, 1.0))))
+            .unwrap();
+        let mut buf = vec![0.0; 960];
+        m.render(&mut buf);
+        tx.send(Command::WorldOcclusion(3, 1.0)).unwrap();
+        let mut out = Vec::new();
+        for _ in 0..100 {
+            m.render(&mut buf);
+            out.extend(buf.as_chunks::<2>().0.iter().map(|f| f[0]));
+        }
+        let max_step = out.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+        assert!(max_step < 0.001, "max step {max_step}");
+        assert!(out[0] > 0.45, "glides from where it was: {}", out[0]);
+        let end = *out.last().unwrap();
+        assert!((end - 0.5 * occlusion_gain(1.0)).abs() < 1e-3, "settles: {end}");
+        // and back open, to the exact input
+        tx.send(Command::WorldOcclusion(3, 0.0)).unwrap();
+        for _ in 0..200 {
+            m.render(&mut buf);
+        }
+        assert_eq!(buf[0], 0.5);
+        assert!(m.world[0].occlusion == 0.0);
+    }
+
+    #[test]
+    fn occlusion_filter_never_leaves_denormals_in_silence() {
+        let (mut m, _p, tx) = mixer();
+        // one click, then two seconds of silence, looped
+        let mut pcm = vec![0.0f32; 192_000];
+        pcm[0] = 1.0;
+        pcm[1] = 1.0;
+        tx.send(Command::PlayWorld(WorldVoice::new(4, Channel::Sfx, pcm.into(), true, (1.0, 1.0))))
+            .unwrap();
+        tx.send(Command::WorldOcclusion(4, 1.0)).unwrap();
+        let mut buf = vec![0.0; 48_000];
+        for _ in 0..3 {
+            m.render(&mut buf);
+            for s in m.world[0].lowpass {
+                assert!(s == 0.0 || s.is_normal(), "state {s:e}");
+            }
+            assert!(buf.iter().all(|s| *s == 0.0 || s.is_normal()));
+        }
+        assert_eq!(m.world[0].lowpass, [0.0; 2]);
     }
 
     #[test]

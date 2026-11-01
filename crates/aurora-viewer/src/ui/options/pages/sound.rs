@@ -200,6 +200,12 @@ fn volumes(cx: &mut Cx) {
             tr!("ui-options-sounds-played-by-other-avatars-gestures"),
             &field!(audio.gesture_sounds),
         );
+        // Aurora's own (scene/sound_occlusion.rs): off, as in the Legacy Viewer
+        cx.toggle(
+            tr!("ui-options-sound-occlusion"),
+            tr!("ui-options-sound-occlusion-help"),
+            &field!(audio.sound_occlusion),
+        );
         // Legacy Viewer › Sound & Media (MuteWhenMinimized)
         cx.toggle(
             tr!("ui-options-mute-when-minimized"),

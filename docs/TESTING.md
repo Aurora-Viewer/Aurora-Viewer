@@ -8185,6 +8185,8 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_STREAM_TITLE=[window\|history\|text][,stop]` | Stream title window with changing titles and their history |
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1`, `hud` or `parcel-open\|parcel-local\|parcel-source` | World/HUD chime or parcel sound isolation; interface and media sounds audible |
+| `AURORA_DEMO_SOUND_OCCLUSION=1` | Three looping sounds: in the open, behind a wall, shut in a box; each one's occlusion in the log |
+| `AURORA_SOUND_OCCLUSION=0` or `1` | "Muffle sounds behind walls" forced off or on for this launch, without saving it |
 | `AURORA_DEMO_MINIMIZED_MUTE=1\|off` | Force mute when minimized on or off for an offline run |
 | `AURORA_DEMO_SOUND_EXPLORER=1\|all\|blacklist\|blacklist-ignored\|avatar-menu\|avatar-menu-mixed\|avatar-menu-pie` | Sound Explorer, separate blacklist categories, ignored objects or avatar sound-category switches |
 | `AURORA_DEMO_ANIMATION_EXPLORER=1\|blacklist` | Animation explorer with a stand-in preview, or a blacklisted animation |
@@ -8542,6 +8544,24 @@ What the inventory must show with these scenarios:
   The cube, other world audio settings and interface sounds remain usable.
   Live crossings, changing either parcel's restriction and a real rain
   emitter still need human grid validation.
+- **`AURORA_DEMO_SOUND_OCCLUSION=1`**: our avatar starts on an open slope
+  west of the plaza (108, 150), three looping sources ahead of it, each
+  with its own pitch, lit, and a label: on the left one in
+  the open, straight ahead one behind a light grey wall, on the right one shut in
+  a closed grey box. From the start the middle and right ones are dull and
+  quieter (low-pass and gain cut), the left one clear; walk past the end of
+  the wall and the middle one opens up over a tenth of a second, without a
+  click; the box stays muffled from every side. Preferences › Sound, "Muffle
+  sounds behind walls" off: all three clear at once. The log gives each
+  sound's amount when it changes (`sound occlusion: voice <n> <amount>
+  (<layers> layers) from <object>`; 0 clear, 0.5 one layer, 1 two or more),
+  at info level in this scenario (debug otherwise); with `AURORA_PROFILE=1`,
+  a `sound occlusion summary` line every ten seconds gives the measures'
+  cost on the main thread and in their job. Sounds play without
+  `AURORA_DEMO_SOUND`.
+- **`AURORA_SOUND_OCCLUSION=0|1`**: overrides Preferences › Sound, "Muffle
+  sounds behind walls", for this launch (demo or grid), without saving it:
+  the same build measured with and without the occlusion.
 - **`AURORA_DEMO_WIND=<x>,<y>[,fly]`**: the demo region gets a uniform wind
   of x, y m/s (default `3,2`; LLWind::getVelocity doubles it, as on the
   grid), and with `fly` our avatar arrives flying. The wind noise plays on

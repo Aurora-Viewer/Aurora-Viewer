@@ -167,6 +167,17 @@ pub struct Origin {
     pub owner: Uuid,
 }
 
+/// A world sound playing at a place this frame (not at the listener, as
+/// HUD sounds are), for its occlusion (scene/sound_occlusion.rs).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Audible {
+    pub voice: u64,
+    pub pos: Vec3,
+    /// The object that plays it (an attached sound's object, a triggered
+    /// sound's source), nil when unknown.
+    pub emitter: Uuid,
+}
+
 pub struct SoundManager {
     pub history: history::History,
     previews: HashMap<Uuid, (Instant, Option<Playing>)>,
@@ -184,6 +195,8 @@ pub struct SoundManager {
     next_voice: u64,
     /// Sound cut-off radius of objects (llSetSoundRadius), from their updates.
     radius: HashMap<Uuid, f32>,
+    /// The world sounds playing at a place, from the last update.
+    audible: Vec<Audible>,
 }
 
 impl SoundManager {
@@ -224,6 +237,7 @@ impl SoundManager {
             ui_pending: Vec::new(),
             next_voice: 1,
             radius: HashMap::new(),
+            audible: Vec::new(),
         }
     }
 
@@ -397,6 +411,7 @@ impl SoundManager {
         self.sources.clear();
         self.triggered.clear();
         self.radius.clear();
+        self.audible.clear();
     }
 
     // ------------------------------------------------------------ assets
@@ -568,8 +583,9 @@ impl SoundManager {
             Some((idx, pos, hud))
         };
         let mut gone = Vec::new();
-        // Candidates: (distance, kind, key, audio position, within cut-off).
-        let mut active: Vec<(f32, usize, Uuid, Vec3, bool)> = Vec::new();
+        // Candidates: (distance, kind, key, audio position, within cut-off,
+        // played at the listener).
+        let mut active: Vec<(f32, usize, Uuid, Vec3, bool, bool)> = Vec::new();
         for (id, s) in self.sources.iter_mut() {
             let Some((idx, pos, hud)) = pos_of(id) else {
                 gone.push(*id);
@@ -616,7 +632,7 @@ impl SoundManager {
             // position (getPosGlobal / updateMute, llaudiosourcevo.cpp).
             let within_radius = self.radius.get(id).is_none_or(|radius| origin.distance(l.pos) < *radius);
             let pos = if hud { l.pos } else { pos };
-            active.push((pos.distance(l.pos), 0, *id, pos, within_radius));
+            active.push((pos.distance(l.pos), 0, *id, pos, within_radius, hud));
         }
         for id in gone {
             if let Some(s) = self.sources.remove(&id)
@@ -642,22 +658,23 @@ impl SoundManager {
             false
         });
         for (i, t) in self.triggered.iter().enumerate() {
-            active.push((t.pos.distance(l.pos), 1, Uuid::from_u128(i as u128), t.pos, true));
+            active.push((t.pos.distance(l.pos), 1, Uuid::from_u128(i as u128), t.pos, true, false));
         }
         // the nearest within their cut-off radius play
         active.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut voices = 0usize;
-        for (_, kind, key, pos, within_radius) in active {
-            let (sound, gain, looped, playing) = if kind == 0 {
+        self.audible.clear();
+        for (_, kind, key, pos, within_radius, at_listener) in active {
+            let (sound, gain, looped, playing, emitter) = if kind == 0 {
                 let Some(s) = self.sources.get(&key) else {
                     continue;
                 };
-                (s.sound, s.gain, s.flags & FLAG_LOOP != 0, s.playing)
+                (s.sound, s.gain, s.flags & FLAG_LOOP != 0, s.playing, key)
             } else {
                 let Some(t) = self.triggered.get(key.as_u128() as usize) else {
                     continue;
                 };
-                (t.sound, t.gain, false, t.playing)
+                (t.sound, t.gain, false, t.playing, if t.source.is_nil() { t.follow.unwrap_or_default() } else { t.source })
             };
             let audible = within_radius && voices < MAX_VOICES;
             let g = if audible { Self::gains(l, pos, gain) } else { (0.0, 0.0) };
@@ -672,6 +689,9 @@ impl SoundManager {
                         continue;
                     }
                     voices += 1;
+                    if !at_listener {
+                        self.audible.push(Audible { voice: p.voice, pos, emitter });
+                    }
                     if (p.gain.0 - g.0).abs() > 0.004 || (p.gain.1 - g.1).abs() > 0.004 {
                         if let Some(e) = engine {
                             e.world_gain(p.voice, g);
@@ -692,6 +712,9 @@ impl SoundManager {
                     self.next_voice += 1;
                     if let Some(e) = engine {
                         e.play_world(voice, Channel::Sfx, &clip, looped, g);
+                    }
+                    if !at_listener {
+                        self.audible.push(Audible { voice, pos, emitter });
                     }
                     let p = Playing {
                         voice,
@@ -867,6 +890,12 @@ impl SoundManager {
     pub fn apply_object_sound(&mut self, engine: Option<&AudioEngine>, object: Uuid, sound: AttachedSound) {
         self.set_radius(object, sound.radius);
         self.set_attached(engine, object, sound.id, sound.gain, sound.flags);
+    }
+
+    /// The world sounds playing at a place, nearest first, as the last
+    /// update left them.
+    pub fn audible(&self) -> &[Audible] {
+        &self.audible
     }
 
     /// Playing voices (performance panel).

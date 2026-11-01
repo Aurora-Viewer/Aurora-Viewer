@@ -57,6 +57,7 @@ pub mod shape;
 mod shown_bakes;
 mod skin_binds;
 pub mod sounds;
+pub mod sound_occlusion;
 pub mod still_check;
 mod sync_check;
 mod sync_plan;
@@ -987,6 +988,8 @@ pub struct Scene {
     object_signals: FastMap<Uuid, animesh::Signals>,
     /// World and interface sounds.
     pub sounds: sounds::SoundManager,
+    /// How muffled each world sound is behind walls (sound_occlusion.rs).
+    sound_occlusion: sound_occlusion::SoundOcclusion,
     /// Environment settings assets (the EEP default day).
     pub settings: settings::SettingsStreamer,
     /// Landmark asset fetches done, for `World::landmarks` (the app passes
@@ -1531,6 +1534,7 @@ impl Scene {
             last_origin: None,
             blend_tmp: Vec::new(),
             sounds: sounds::SoundManager::new(cache_dir_anim.clone()),
+            sound_occlusion: Default::default(),
             settings: settings::SettingsStreamer::new(cache_dir_anim.clone()),
             landmark_results: Vec::new(),
             anims,
