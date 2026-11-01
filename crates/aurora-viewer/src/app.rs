@@ -617,6 +617,7 @@ pub struct App {
     pay_ui: ui::pay::PayUi,
     /// "Money tracker" (Me menu): the L$ received and paid.
     money_tracker_ui: ui::money_tracker::MoneyTrackerUi,
+    experiences_ui: ui::experiences::ExperiencesUi,
     /// Buy Land (LLFloaterBuyLand), and the selection it follows.
     buy_land_ui: ui::buy_land::BuyLandUi,
     buy_land_source: buy_land::BuyLandSource,
@@ -1379,6 +1380,7 @@ impl App {
             buy_currency_ui: Default::default(),
             pay_ui: Default::default(),
             money_tracker_ui: Default::default(),
+            experiences_ui: Default::default(),
             buy_land_ui: Default::default(),
             buy_land_source: Default::default(),
             marketplace_ui: Default::default(),
@@ -1558,6 +1560,10 @@ impl App {
                 }
             }
             crate::demo::experience::Reply::Say(text) => self.world.system_message(text),
+            crate::demo::experience::Reply::SayLogged(text, event) => {
+                self.world.apply(event);
+                self.world.system_message(text);
+            }
             crate::demo::experience::Reply::Nothing => {}
         }
     }
@@ -15233,6 +15239,7 @@ impl App {
                 }
                 self.show_pay(&ctx, &p, &mut a);
                 self.show_money_tracker(&ctx, &p, &mut a);
+                self.experiences_ui.show(&ctx, &p, &mut self.world, &mut self.panels.experiences);
                 for action in contents_actions {
                     self.apply_contents_action(action);
                 }

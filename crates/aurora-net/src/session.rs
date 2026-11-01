@@ -1743,6 +1743,7 @@ impl Session<'_> {
             }
             NetCommand::ExperienceInfo(ids) => self.request_experiences(ids),
             NetCommand::GroupExperiences(group) => self.request_group_experiences(group),
+            NetCommand::MyExperiences => self.request_my_experiences(),
             NetCommand::ExperiencePermission { experience, change } => self.experience_permission(experience, change),
             NetCommand::Touch { local_id } => {
                 // a click is a grab immediately followed by a release (LLToolGrab)
@@ -3222,6 +3223,29 @@ impl Session<'_> {
             let ids = crate::experience::fetch_group_experiences(&http, cap.as_deref(), group).await;
             let _ = events.send(NetEvent::GroupExperiences { group, ids });
         });
+    }
+
+    /// LLFloaterExperiences::refreshContents: the lists of every tab, each
+    /// on its own task so that one slow capability does not hold the others.
+    fn request_my_experiences(&self) {
+        use crate::experience::{ExperienceListKind as K, fetch_lists};
+        for caps in [
+            (&[K::Allowed, K::Blocked][..], "GetExperiences"),
+            (&[K::Admin][..], "GetAdminExperiences"),
+            (&[K::Contributor][..], "GetCreatorExperiences"),
+            (&[K::Owned][..], "AgentExperiences"),
+        ] {
+            let (kinds, name) = caps;
+            let cap = self.main_cap(name);
+            let http = self.sh.caps_http.clone();
+            let events = self.sh.events.clone();
+            let kinds = kinds.to_vec();
+            tokio::spawn(async move {
+                for (kind, ids) in fetch_lists(&http, cap.as_deref(), &kinds).await {
+                    let _ = events.send(NetEvent::ExperienceList { kind, ids });
+                }
+            });
+        }
     }
 
     /// LLExperienceCache::get / set / forgetExperiencePermission.

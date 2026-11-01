@@ -4490,7 +4490,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_USERINFO=hidden\|liaison\|opensim\|fail\|savefail` | Preferences › Privacy › Visibility, the account settings the grid keeps |
 | `AURORA_DEMO_SLURLS=1\|offer` | Place links with their region rating badges, one region looked up |
 | `AURORA_DEMO_APPLINKS=1\|actions\|preview\|<command>[:restore]` | URI examples, visible action markers, their previews or a minimize/reopen scenario |
-| `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival |
+| `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival; also fills Me › Experiences |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
@@ -6704,6 +6704,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   environment (PushExpEnvironment, PushPartialEnvironment): over 3 s the sky
   fades to a violet sunset and the water fog turns red. The profile's Forget
   fades it back over 1 s, Block at once (ENV_PUSH, `world/eep_push.rs`).
+  The Me › Experiences window lists them: the club's experience is
+  Administered, the plaza's Contributed, and Allowed or Blocked follows your
+  answers (the tab moves when you Allow, Block or Forget in the profile).
+  Each allowed script that acts (the door's teleport, the greeter) adds an
+  entry to the Events tab; Search finds the demo's experiences by name.
 - **`AURORA_DEMO_LURE=offer|request|god|answers|reject|offer-card|request-card|card-answered|notification-answered|legacy|exceeded|exceeded-continue|blocked`**:
   teleports received from Tess Touch (issue #280, parts B1 and B2). Each
   offer and request opens her conversation (unread) with its card and has
