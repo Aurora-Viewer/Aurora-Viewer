@@ -2665,6 +2665,15 @@ changing the objects. `scene/selection_demo.rs` provides the offline mesh
 with separate curved islands of the `faces-complex` scenario, next to a
 closed torus primitive.
 
+PBR BOM maps retain their canonical UUIDs in assets and face overrides.
+`scene/shown_bakes.rs` resolves all four rendered channels per wearer, including
+last-good-bake retention and appearance-service sources. Effective PBR maps
+also feed `Scene::bom_mask`; material arrivals invalidate that visibility mask.
+Editing windows retain the coloured `BAKED_*` reference images in texture
+pickers, map swatches and material previews, for both PBR and Blinn-Phong.
+Only the scene substitutes the avatar's current bakes, following the requested
+editing behaviour rather than the Legacy Viewer's resolved picker preview.
+
 `ui/texture_picker/tree.rs` shares the search cache and the virtual tree of
 `ui/inventory/view.rs`. The folders load in bounded batches; the expanded
 states of search and of navigation stay separate. `ui/texture_picker.rs`

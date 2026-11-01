@@ -2625,6 +2625,9 @@ impl Scene {
                     .is_some_and(|g| self.mat_changes.stale(&g.material_ids, g.mat_generation, mat_gen))
                 {
                     self.sets.dirty.insert(idx);
+                    if let Some((_, wearer)) = Self::wearer_avatar(world, idx) {
+                        self.bom_stale.insert(wearer);
+                    }
                 }
             }
         }
@@ -3622,23 +3625,22 @@ impl Scene {
                 rec.spec_color = so(te_);
                 rec.legacy = [tn.rotation, tmr.rotation, te_.rotation, 0.0];
                 base_tex = m.base_color_texture.unwrap_or(Uuid::nil());
-                let mut slot_of = |id: Option<Uuid>, default: u32, g: &mut ObjGpu, s: &mut Self| -> u32 {
+                let mut slot_of = |id: Option<Uuid>, default: u32, g: &mut ObjGpu, s: &mut Self| -> (Uuid, u32) {
                     match id {
                         Some(id) if !id.is_nil() => {
+                            let (id, source) = s.face_texture(renderer, world, id, bake_wearer);
+                            if id.is_nil() {
+                                return (id, default);
+                            }
                             g.tex_ids.push(id);
-                            s.textures.acquire(renderer, id, TexSource::Asset)
+                            (id, s.textures.acquire(renderer, id, source))
                         }
-                        _ => default,
+                        _ => (Uuid::nil(), default),
                     }
                 };
-                aux_tex = [
-                    m.normal_texture.unwrap_or_default(),
-                    m.metallic_roughness_texture.unwrap_or_default(),
-                    m.emissive_texture.unwrap_or_default(),
-                ];
-                rec.tex[1] = slot_of(m.normal_texture, aurora_render::textures::FLAT_NORMAL, &mut g, self);
-                rec.tex[2] = slot_of(m.metallic_roughness_texture, aurora_render::textures::WHITE, &mut g, self);
-                rec.tex[3] = slot_of(m.emissive_texture, aurora_render::textures::WHITE, &mut g, self);
+                (aux_tex[0], rec.tex[1]) = slot_of(m.normal_texture, aurora_render::textures::FLAT_NORMAL, &mut g, self);
+                (aux_tex[1], rec.tex[2]) = slot_of(m.metallic_roughness_texture, aurora_render::textures::WHITE, &mut g, self);
+                (aux_tex[2], rec.tex[3]) = slot_of(m.emissive_texture, aurora_render::textures::WHITE, &mut g, self);
                 pbr_alpha = Some(match m.alpha_mode {
                     aurora_assets::AlphaMode::Opaque => 0,
                     aurora_assets::AlphaMode::Blend => 1,
@@ -3699,18 +3701,8 @@ impl Scene {
             }
             // texture (with bake-on-mesh redirection); without a bake wearer
             // the placeholder stays, an ordinary texture asset
-            let mut source = TexSource::Asset;
-            if let Some((bake_te, bake)) = avatar::bake_slot_for(&base_tex)
-                && let Some((aid, a)) = bake_wearer
-            {
-                match self.shown_bake(renderer, world, a, bake_te) {
-                    Some(tid) => {
-                        base_tex = tid;
-                        source = world.bake_source(aid, bake, tid);
-                    }
-                    None => base_tex = Uuid::nil(),
-                }
-            }
+            let (texture, mut source) = self.face_texture(renderer, world, base_tex, bake_wearer);
+            base_tex = texture;
             // media replaces the diffuse texture (LLViewerMediaTexture::switchTexture)
             if let Some(media_tex) = world.media.face_texture(&o.full_id, fi as u8, &base_tex) {
                 base_tex = media_tex;
@@ -3861,17 +3853,44 @@ impl Scene {
     }
 
     /// Bake slots (texture-entry index bits) shown by the avatar's attachments
-    /// and their child prims.
-    pub(crate) fn bom_mask(world: &World, avatar_idx: usize) -> u64 {
+    /// and their child prims. Preserve the texture-entry rule of
+    /// LLVOAvatar::updateMeshVisibility and also count rendered PBR maps so
+    /// a body using only PBR BOM does not overlap the system body.
+    pub(crate) fn bom_mask(&self, world: &World, avatar_idx: usize) -> u64 {
         let Some(av) = world.objects.get(avatar_idx) else {
             return 0;
         };
         let mut mask = 0u64;
         let mut scan = |i: usize| {
-            if let Some(te) = world.objects.get(i).and_then(|o| o.te.as_ref()) {
-                for f in &te.faces {
-                    if let Some((slot, _)) = avatar::bake_slot_for(&f.texture) {
-                        mask |= 1u64 << slot.min(63);
+            if let Some(o) = world.objects.get(i)
+                && let Some(te) = &o.te
+            {
+                for (fi, _) in te.faces.iter().enumerate() {
+                    let mut maps = [Some(o.visual_texture_face(fi).texture), None, None, None, None];
+                    if let Some(mid) = o.visual_material(fi) {
+                        let ov = world
+                            .gltf_overrides
+                            .get(&o.key)
+                            .and_then(|s| s.iter().rev().find(|(face, _)| *face as usize == fi))
+                            .map(|(_, ov)| ov)
+                            .filter(|_| o.local_appearance(fi).is_none());
+                        let status = self
+                            .materials
+                            .peek(&mid)
+                            .map_or(meshes::MaterialStatus::Pending, meshes::MaterialStatus::Loaded);
+                        let m = meshes::render_material(&status, ov);
+                        maps = [
+                            maps[0],
+                            m.base_color_texture,
+                            m.normal_texture,
+                            m.metallic_roughness_texture,
+                            m.emissive_texture,
+                        ];
+                    }
+                    for id in maps.into_iter().flatten() {
+                        if let Some((slot, _)) = avatar::bake_slot_for(&id) {
+                            mask |= 1u64 << slot.min(63);
+                        }
                     }
                 }
             }
@@ -3913,7 +3932,7 @@ impl Scene {
         // BOM_SWEEP_FRAMES in case (each time it walks every prim worn)
         let bom_mask =
             if !self.gpu[idx].is_avatar || self.bom_stale.remove(&idx) || (self.frame as usize + idx).is_multiple_of(BOM_SWEEP_FRAMES) {
-                Self::bom_mask(world, idx)
+                self.bom_mask(world, idx)
             } else {
                 self.gpu[idx].bom_mask
             };
@@ -5757,6 +5776,54 @@ mod tests {
             .map(|(i, _)| i)
             .expect("ground object");
         assert_eq!(Scene::bake_wearer(&w, ground, false), None);
+    }
+
+    #[test]
+    fn pbr_bom_mask_uses_material_maps_and_face_overrides() {
+        let avatars = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(avatars.clone());
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let att = world.objects.iter().find(|(_, o)| o.key.local_id == 9100).map(|(i, _)| i).unwrap();
+        let (_, avatar) = Scene::wearer_avatar(&world, att).unwrap();
+        let asset = Uuid::from_u128(1793);
+        let object = world.objects.get_mut(att).unwrap();
+        object.extra.render_materials = (0..aurora_prim::te::MAX_TES).map(|face| (face as u8, asset)).collect();
+        let mut te = object.te.as_deref().unwrap().clone();
+        for face in &mut te.faces {
+            face.texture = avatar::BAKES[3].2;
+        }
+        object.te = Some(Arc::new(te));
+        let key = object.key;
+        let mut scene = Scene::new(std::env::temp_dir(), avatars);
+        let maps = [avatar::BAKES[0], avatar::BAKES[1], avatar::BAKES[2], avatar::BAKES[8]];
+        scene.materials.insert(
+            asset,
+            aurora_assets::PbrMaterial {
+                base_color_texture: Some(maps[0].2),
+                normal_texture: Some(maps[1].2),
+                metallic_roughness_texture: Some(maps[2].2),
+                emissive_texture: Some(maps[3].2),
+                ..Default::default()
+            },
+        );
+        let legacy_mask = 1u64 << avatar::BAKES[3].0;
+        let expected = maps.iter().fold(legacy_mask, |mask, (slot, _, _)| mask | (1u64 << slot));
+        assert_eq!(scene.bom_mask(&world, avatar), expected);
+        let override_ = aurora_assets::material::PbrOverride {
+            textures: [aurora_assets::material::OVERRIDE_NULL_UUID; 4],
+            ..Default::default()
+        };
+        let faces = world.objects.get(att).unwrap().te.as_ref().unwrap().faces.len();
+        world
+            .gltf_overrides
+            .insert(key, (0..faces).map(|face| (face as u8, override_.clone())).collect());
+        assert_eq!(
+            scene.bom_mask(&world, avatar),
+            legacy_mask,
+            "removed PBR maps preserve the legacy texture-entry visibility"
+        );
     }
 
     #[test]
