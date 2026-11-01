@@ -5044,6 +5044,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   stays in the list, reports a load error and keeps the previous preview.
   `AURORA_DEMO_IMPORT_FILE` replaces the fixtures with an existing file,
   read without modification; choose the mode matching its type.
+  In `folders` modes it can point to an existing directory instead; its GLB/glTF
+  files produce separate mesh and PBR material drafts. Toggle Mesh and Material
+  visibility independently, and use row checkboxes to select what to upload.
+  Add files in the mixed uploader captures its Material/Mesh filters: material
+  only extracts materials, mesh only loads geometry, both extracts both, neither
+  skips GLB/glTF files. Dedicated type windows always use their own type.
 
 
 ### Import inspector layout
