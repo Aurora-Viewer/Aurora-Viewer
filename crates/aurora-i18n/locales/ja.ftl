@@ -7665,6 +7665,7 @@ monitor-priority-normal = 通常
 monitor-priority-above-normal = 通常以上
 monitor-priority-highest = 最高
 monitor-priority-time-critical = リアルタイム
+monitor-priority-nice = nice値 { $value }
 monitor-thread-main = メインループ：イベント、シーン、インターフェース
 monitor-thread-render = 描画スレッド：パスのエンコード、ＧＰＵへの送信
 monitor-thread-render-finish = コマンドバッファの仕上げ
