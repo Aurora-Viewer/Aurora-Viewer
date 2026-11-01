@@ -1375,10 +1375,11 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         // it (renderGeomPostDeferred: "just before post water alpha"), so
         // hazeF.glsl blends over the surface, on every sky. Aurora's classic
         // air fog (a mix to a fog colour) made that colour near white under
-        // a hazy, bright classic sky. Through ll_haze, as the terrain and the
-        // objects beside it, so the shoreline is hazed alike (hazeF.glsl's
-        // blend uses atten.r, ll_haze the whole atten: TASKS.md).
-        color = ll_haze(color, ll_atmos(in.world_pos - frame.camera_pos.xyz));
+        // a hazy, bright classic sky. Through ll_haze, as the objects beside
+        // it (hazeF.glsl's blend uses atten.r, ll_haze the whole atten:
+        // TASKS.md), with calcAtmosphericVars in hazeF's eye space
+        // (ll_atmos_eye): in world space its glow put a second sun on the sea.
+        color = ll_haze(color, ll_atmos_eye(in.world_pos - frame.camera_pos.xyz));
     }
     return vec4<f32>(color, 1.0);
 }
