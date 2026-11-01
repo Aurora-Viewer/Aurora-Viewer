@@ -251,13 +251,14 @@ mod bus {
     /// none (no owner of the name: this process then starts with it).
     /// Runs before the log is open, so failures go to stderr.
     pub fn hand_off(url: &str) -> bool {
-        hand_off_to(&bus_name(), url)
+        hand_off_to(&bus_name(), url, HAND_OFF_TIMEOUT)
     }
 
-    pub(super) fn hand_off_to(name: &str, url: &str) -> bool {
-        // an owner that holds the name but does not answer (stopped,
-        // frozen, shutting down) must not keep this launch waiting
-        let bus = match zbus::blocking::connection::Builder::session().and_then(|b| b.method_timeout(HAND_OFF_TIMEOUT).build()) {
+    /// `timeout`: how long an owner that holds the name may take to answer.
+    /// An owner that does not answer (stopped, frozen, shutting down) must
+    /// not keep a launch waiting; the tests give a loaded CI runner longer.
+    pub(super) fn hand_off_to(name: &str, url: &str, timeout: std::time::Duration) -> bool {
+        let bus = match zbus::blocking::connection::Builder::session().and_then(|b| b.method_timeout(timeout).build()) {
             Ok(bus) => bus,
             Err(e) => {
                 eprintln!("startup links: no session bus ({e})");
@@ -353,14 +354,17 @@ mod tests {
         }
         let name = super::bus::name_for(false, Some(&format!("unit-test-{}", std::process::id())));
         let url = "secondlife://Test%20Region/128/128/20";
+        // the viewer's 5 s are for a frozen owner; this one answers, only
+        // late on a CI runner loaded by the rest of the tests
+        let hand_off = |name: &str| hand_off_to(name, url, std::time::Duration::from_secs(60));
         let rx = listen_as(name.clone()).expect("owns a name unique to this process");
-        assert!(hand_off_to(&name, url));
+        assert!(hand_off(&name));
         assert_eq!(rx.try_recv().as_deref(), Ok(url));
         // the app (and its receiver) dropped, the name still held
         drop(rx);
-        assert!(!hand_off_to(&name, url));
+        assert!(!hand_off(&name));
         release();
-        assert!(!hand_off_to(&name, url));
+        assert!(!hand_off(&name));
         assert!(listen_as(name).is_some(), "the name is free again");
         release();
     }
