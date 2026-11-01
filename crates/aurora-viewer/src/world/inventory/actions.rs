@@ -73,7 +73,11 @@ pub fn movable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
 /// (indra/newview/llinventoryfunctions.cpp): Received contents may go to
 /// Trash; their system inbox itself stays protected, like other system folders.
 pub fn removable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
-    mutable_content(inv, id, protected, None) && inv.folders.get(&id).is_none_or(|f| matches!(f.info.type_default, -1 | 47 | 54))
+    mutable_content(inv, id, protected, None)
+        && inv.folders.get(&id).is_none_or(|f| matches!(f.info.type_default, -1 | 47 | 54))
+        // a folder holding a locked folder, at any depth, would take it to
+        // the Trash with it (#1728); the locked set is small
+        && !protected.iter().any(|&locked| locked != id && ancestors(inv, locked).skip(1).any(|a| a == id))
 }
 /// The viewer support folders the Legacy Viewer keeps in place at the root
 /// (FIRE-28977 in LLFolderBridge::isItemMovable, llinventorybridge.cpp):

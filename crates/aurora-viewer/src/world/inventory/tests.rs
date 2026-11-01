@@ -350,6 +350,23 @@ fn protected_folder_cannot_move_but_its_contents_can_move_in_and_out() {
 }
 
 #[test]
+fn a_folder_holding_a_locked_folder_does_not_go_to_the_trash() {
+    let inv = fixture();
+    let (outer, locked) = (id(8000), id(8001));
+    let protected = HashSet::from([locked]);
+    let none = HashSet::new();
+    let trash = system(&inv, 14).expect("trash");
+    // deleting the parent would take the locked folder with it
+    assert!(!removable(&inv, outer, &protected));
+    assert!(move_selection(&inv, &[outer], trash, &protected, &none).is_err());
+    assert!(!paste_allowed(&inv, &[outer], trash, true, false, &protected, &none));
+    // without the lock below it, the same folder goes to the Trash
+    assert!(removable(&inv, outer, &none));
+    // and it may still move elsewhere, the locked folder with it
+    assert!(move_selection(&inv, &[outer], inv.root, &protected, &none).is_ok());
+}
+
+#[test]
 fn cut_and_paste_move_a_locked_folders_contents_out_and_in() {
     use aurora_net::inventory::operations::Operation;
     let mut inv = fixture();
