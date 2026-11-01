@@ -21,6 +21,7 @@ pub mod edit_echo;
 pub mod eep;
 pub mod eep_env;
 pub mod eep_photo;
+pub mod eep_push;
 pub mod env;
 pub mod env_apply;
 pub mod env_day_edit;
@@ -2901,6 +2902,13 @@ impl World {
             }
             NetEvent::ExperiencePermission { experience, result, .. } => {
                 self.experiences.permission(experience, result);
+                for (experience, transition) in std::mem::take(&mut self.experiences.env_clears) {
+                    self.eep.clear_experience(experience, transition);
+                }
+                None
+            }
+            NetEvent::ExperienceEnvironment { experience, message } => {
+                self.eep.push_experience(experience, &message);
                 None
             }
             NetEvent::GroupExperiences { group, ids } => {
