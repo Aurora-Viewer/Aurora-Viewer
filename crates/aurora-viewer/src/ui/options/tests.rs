@@ -96,7 +96,7 @@ const BEFORE: &[&str] = &[
     "ssr",
     "reflection_probes",
     "probe_count",
-    "legacy_colored_ambient",
+    "colored_sky_ambient",
     "antialiasing",
     "specular_aa",
     "tonemapper",
@@ -378,8 +378,10 @@ fn rlva_settings_live_on_their_own_page() {
 fn a_setting_has_one_page() {
     let paths = collected();
     for (page, path) in &paths {
-        // the push-to-talk keys: Sound and voice and Shortcuts, as before
-        if path == "keybinds" {
+        // the push-to-talk keys: Sound and voice and Shortcuts, as before;
+        // the colored sky ambient: Graphics, and Aurora with the other
+        // differences from the Legacy Viewer
+        if path == "keybinds" || path == "colored_sky_ambient" {
             continue;
         }
         let elsewhere: Vec<_> = paths

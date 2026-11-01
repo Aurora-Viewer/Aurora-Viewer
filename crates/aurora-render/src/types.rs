@@ -1057,10 +1057,10 @@ pub struct SkyParams {
     pub classic: bool,
     /// Reflection probe ambiance is 0: no tone mapping (Firestorm no_post).
     pub no_post: bool,
-    /// The sky ambient keeps its colour at full strength, as viewers before
-    /// the Legacy Viewer's PBR rework lit it (an experimental setting): the
-    /// classic and linear shading paths read it (common.wgsl
-    /// `legacy_colored_ambient`), the HDR one gets it in the hemisphere colours.
+    /// The sky ambient keeps its colour at full strength, as the first PBR
+    /// release lit it (an experimental setting): the classic and linear
+    /// shading paths read it (common.wgsl
+    /// `colored_sky_ambient`), the HDR one gets it in the hemisphere colours.
     pub colored_ambient: bool,
     /// True sun / moon directions (for their discs).
     pub sun_dir: Vec3,

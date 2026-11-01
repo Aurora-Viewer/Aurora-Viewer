@@ -148,9 +148,11 @@ impl Environment {
         Self::build(sky, water, cloud_scroll, draw_distance)
     }
 
-    /// The experimental colored sky ambient (Settings::legacy_colored_ambient):
-    /// viewers before the Legacy Viewer's PBR rework lit with the sky's
-    /// ambient colour x RenderSkyAmbientScale 0.7, made linear, where it now
+    /// The experimental colored sky ambient (Settings::colored_sky_ambient):
+    /// the first PBR release lit with the sky's ambient colour x
+    /// RenderSkyAmbientScale 0.7, made linear (atmosphericsFuncs.glsl
+    /// calcAtmosphericVarsLinear and settings.xml, tag
+    /// Second_Life_Release#843866d-DRTVWR-559), where the Legacy Viewer now
     /// lights with the grey luminance of a softened ambient. The HDR skies
     /// take it in their hemisphere colours here; the shaders do the classic
     /// and linear ones (SkyParams::colored_ambient).

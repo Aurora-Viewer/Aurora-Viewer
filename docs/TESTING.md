@@ -8574,7 +8574,7 @@ What the inventory must show with these scenarios:
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
-| `AURORA_COLORED_AMBIENT=0`, `1` or `alt` | Sky ambient softened, grey under linear and HDR skies (Legacy Viewer), coloured at full strength like older viewers, or one second in two |
+| `AURORA_COLORED_AMBIENT=0`, `1` or `alt` | Sky ambient softened, grey under linear and HDR skies (Legacy Viewer), coloured at full strength like the first PBR release, or one second in two |
 | `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (default); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
@@ -8753,17 +8753,20 @@ What the inventory must show with these scenarios:
     exceeds 6095 and the log has no `texture table full` line.
 
 - **`AURORA_COLORED_AMBIENT=0|1|alt`**: overrides Preferences › Graphics ›
-  Colored sky ambient (older viewers) for this launch (`alt`: on one
-  second, off the next). `1` lights with the sky's ambient colour x 0.7,
-  made linear, as viewers before the Legacy Viewer's PBR rework did.
-  `0` is the Legacy Viewer's softened ambient (pow 0.9, x 0.57): it keeps
-  its colour under a classic sky, and only its grey luminance under a
-  linear or HDR one. Look at a shaded floor or wall under a tinted
-  ambient: `AURORA_DEMO_SKY=1,0.8,0.9:0.6:0.5` (classic) or
-  `AURORA_DEMO_SKY=1,0.8,0.9:0.6:0.5,0.3` (HDR). With `1` it is brighter,
-  and under the HDR sky it takes the warm tint instead of grey. At a
-  probe ambiance of 1 and above the probes replace the sky ambient
-  (as in the older viewers), so outdoors little changes there.
+  Sky and environment › Colored sky ambient for this launch (`alt`: on
+  one second, off the next). `1` lights with the sky's ambient colour x
+  0.7, made linear, as the first PBR release did (atmosphericsFuncs.glsl
+  `calcAtmosphericVarsLinear` and settings.xml `RenderSkyAmbientScale`,
+  tag `Second_Life_Release#843866d-DRTVWR-559`). `0` is the Legacy
+  Viewer's softened ambient (pow 0.9, x 0.57): it keeps its colour under
+  a classic sky, and only its grey luminance under a linear or HDR one.
+  Look at a shaded floor or wall under a tinted ambient:
+  `AURORA_DEMO_SKY=1,0.8,0.9:0.6:0.5,0.3` (HDR): with `1` it takes the
+  warm tint instead of grey. Under the classic
+  `AURORA_DEMO_SKY=1,0.8,0.9:0.6:0.5` only the curve changes: the same
+  tint, a little brighter. At a probe ambiance of 1 and above the probes
+  replace the sky ambient (in that release too), so outdoors little
+  changes there.
 
 - **`AURORA_SPECULAR_AA=0|1|alt`**: overrides Preferences › Graphics ›
   Specular anti-aliasing for this launch (`alt`: on one second, off the

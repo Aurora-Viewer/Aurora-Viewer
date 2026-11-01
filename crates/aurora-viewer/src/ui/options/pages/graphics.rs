@@ -61,6 +61,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 let legacy = cx.s.night_sky != NightSky::Real;
                 cx.subs(legacy, night_sky_rows);
             }
+            // an Aurora difference, also listed in Preferences › Aurora
+            cx.experimental().toggle(
+                tr!("ui-options-colored-sky-ambient"),
+                tr!("ui-options-colored-sky-ambient-help"),
+                &field!(colored_sky_ambient),
+            );
             cx.toggle(
                 tr!("ui-options-keep-environment"),
                 tr!("ui-options-restore-the-local-environment-selected-sky-water-and-day"),
@@ -659,11 +665,6 @@ fn reflections_and_water(cx: &mut Cx) {
                 )
                 .changed()
             },
-        );
-        cx.experimental().toggle(
-            tr!("ui-options-legacy-colored-ambient"),
-            tr!("ui-options-legacy-colored-ambient-help"),
-            &field!(legacy_colored_ambient),
         );
     });
     // Aurora's own water effects, experimental and off by default

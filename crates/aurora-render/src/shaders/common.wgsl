@@ -2116,7 +2116,7 @@ fn ll_atmos(rel_in: vec3<f32>) -> LLAtmos {
     var o: LLAtmos;
     o.sunlit = sunlight;
     o.amblit = pow(max(tmp_ambient, vec3<f32>(0.0)), vec3<f32>(0.9)) * 0.57;
-    if (legacy_colored_ambient()) {
+    if (colored_sky_ambient()) {
         o.amblit = max(tmp_ambient, vec3<f32>(0.0)) * 0.7;
     }
     o.additive = min(additive * (vec3<f32>(1.0) - atten), vec3<f32>(10.0));
@@ -2124,10 +2124,13 @@ fn ll_atmos(rel_in: vec3<f32>) -> LLAtmos {
     return o;
 }
 
-// The experimental colored sky ambient: viewers before the Legacy Viewer's
-// PBR rework lit with the sky's ambient colour x RenderSkyAmbientScale 0.7,
-// neither softened (pow 0.9, x 0.57) nor turned grey in linear mode.
-fn legacy_colored_ambient() -> bool {
+// The experimental colored sky ambient: the first PBR release lit with the
+// sky's ambient colour x RenderSkyAmbientScale 0.7, neither softened (pow
+// 0.9, x 0.57) nor turned grey in linear mode (atmosphericsFuncs.glsl
+// calcAtmosphericVarsLinear, settings.xml, tag
+// Second_Life_Release#843866d-DRTVWR-559). It had no classic branch: a
+// classic sky keeps its colour either way and only takes the 0.7 curve.
+fn colored_sky_ambient() -> bool {
     return frame.sky_obj_light.w > 0.5;
 }
 
@@ -2180,7 +2183,7 @@ fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2
     // linear mode: grey sky ambient, linear sunlight, plain lambert
     let amb_lin = srgb_to_linear(a.amblit * ll_ambient_lighting(n));
     let amb_grey = vec3<f32>(dot(amb_lin, vec3<f32>(0.2126, 0.7152, 0.0722)));
-    let irr = ll_ssao(select(amb_grey, amb_lin, legacy_colored_ambient()), frag);
+    let irr = ll_ssao(select(amb_grey, amb_lin, colored_sky_ambient()), frag);
     return (irr + min(nl_sun, shadow) * srgb_to_linear(a.sunlit) + screen_indirect(frag)) * base;
 }
 
