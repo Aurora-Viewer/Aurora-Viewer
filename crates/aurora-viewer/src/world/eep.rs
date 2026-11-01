@@ -19,6 +19,10 @@ pub const DEFAULT_WATER_NORMAL: Uuid = uuid::uuid!("822ded49-9a6c-f61c-cb89-6df5
 /// Default rainbow and 22° halo textures (LLSettingsSky IMG_RAINBOW, IMG_HALO).
 pub const DEFAULT_RAINBOW_ID: Uuid = uuid::uuid!("11b4c57c-56b3-04ed-1f82-2004363882e4");
 pub const DEFAULT_HALO_ID: Uuid = uuid::uuid!("12149143-f599-91a7-77ac-b52a3c0f59cd");
+/// The sky dome's height and radius (LLSettingsSky::DOME_OFFSET and
+/// DOME_RADIUS). The Legacy Viewer draws with these whatever a sky sets.
+pub const LEGACY_DOME_OFFSET: f32 = 0.96;
+pub const LEGACY_DOME_RADIUS: f32 = 15000.0;
 
 #[derive(Debug, Clone, Copy)]
 pub struct SkyFrame {
@@ -94,8 +98,8 @@ impl Default for SkyFrame {
             moon_brightness: 0.5,
             star_brightness: 250.0,
             gamma: 1.0,
-            dome_offset: 0.96,
-            dome_radius: 15000.0,
+            dome_offset: LEGACY_DOME_OFFSET,
+            dome_radius: LEGACY_DOME_RADIUS,
             probe_ambiance: 0.0,
             can_auto_adjust: true,
             moisture_level: 0.0,
