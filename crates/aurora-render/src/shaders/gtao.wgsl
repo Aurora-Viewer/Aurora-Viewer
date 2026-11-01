@@ -26,7 +26,8 @@
 //   TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 //   SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
-// Four compute steps, all from the single-sample depth prepass:
+// Four compute steps, all from the single-sample depth prepass, and a fifth
+// at half resolution:
 //
 // 1. `prefilter_depth0`: the view depth (metres in front of the camera) at
 //    the resolution the occlusion is computed at (the window's, or half);
@@ -53,7 +54,12 @@
 // 4. `denoise` (then `denoise_final`): XeGTAO's edge-aware 3 x 3 blur. Without
 //    the accumulation (`AURORA_GTAO_TEMPORAL=0`) the noise stays the same
 //    every frame, so the result does not flicker, and the blur alone removes
-//    its pattern, leaving a fine grain in the penumbra.
+//    its pattern, leaving a fine grain in the penumbra;
+// 5. at half resolution (low quality, or a scene of 2560 x 1440 and more),
+//    `upsample` (and `upsample_il` for the light) takes the result to the
+//    scene's size: the four nearest half-resolution texels, weighted
+//    bilinearly and by how close their depth is to the pixel's, so the
+//    occlusion does not cross a silhouette.
 //
 // The result is a visibility (1 = nothing occludes) in `.r` of the last
 // target, sampled where the Legacy occlusion is (screen_ao, common.wgsl),
@@ -124,6 +130,9 @@ struct GtaoParams {
 @group(0) @binding(16) var meta_in: texture_2d<u32>;
 @group(0) @binding(17) var hist_out: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(18) var meta_out: texture_storage_2d<r32uint, write>;
+// The results at the scene's size, from the half-resolution ones (`upsample`).
+@group(0) @binding(19) var up_out: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(20) var up_il_out: texture_storage_2d<rgba16float, write>;
 
 const PI: f32 = 3.1415926535897932;
 const PI_HALF: f32 = 1.5707963267948966;
@@ -944,4 +953,83 @@ fn denoise_final(@builtin(global_invocation_id) id: vec3<u32>) {
     let v = saturate(d.rg * OCCLUSION_TERM_SCALE);
     let b = bent_of(d.ba);
     textureStore(final_out, px, vec4<f32>(v, b.xy * 0.5 + vec2<f32>(0.5)));
+}
+
+// ---- 5: back to the scene's resolution
+
+// How sharply a texel's weight falls with its depth away from the pixel's,
+// relative to the pixel's depth: 2 % keeps about half of it, 10 % almost
+// nothing. Across a silhouette the depths differ by far more; along a
+// surface seen at a grazing angle two pixels apart, by a few percent.
+const UPSAMPLE_DEPTH_FALLOFF: f32 = 30.0;
+
+struct UpsampleTaps {
+    p: array<vec2<i32>, 4>,
+    w: vec4<f32>,
+}
+
+// The four half-resolution texels around full-resolution pixel `px`, and
+// their weights. Texel `i` holds full pixel `2 i` (the top left of its
+// 2 x 2, `prefilter_depth0`), so pixel `2 i + 1` sits halfway to the next.
+// Its depth is level 0 of `depth_mips`, the one the occlusion came from.
+fn upsample_taps(px: vec2<i32>) -> UpsampleTaps {
+    let low = vec2<i32>(textureDimensions(depth_mips, 0));
+    let p = vec2<f32>(px) * 0.5;
+    let base = vec2<i32>(floor(p));
+    let f = p - floor(p);
+    let full = vec2<i32>(textureDimensions(depth_tex));
+    let z = view_depth(textureLoad(depth_tex, min(px, full - vec2<i32>(1)), 0));
+    let offsets = array<vec2<i32>, 4>(vec2<i32>(0, 0), vec2<i32>(1, 0), vec2<i32>(0, 1), vec2<i32>(1, 1));
+    let bilinear = vec4<f32>((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
+    var t: UpsampleTaps;
+    var nearest = 0;
+    var nearest_rel = 1e30;
+    for (var i = 0; i < 4; i++) {
+        let q = clamp(base + offsets[i], vec2<i32>(0), low - vec2<i32>(1));
+        let rel = abs(textureLoad(depth_mips, q, 0).x - z) / max(z, 1e-4);
+        t.p[i] = q;
+        t.w[i] = bilinear[i] * exp(-rel * UPSAMPLE_DEPTH_FALLOFF);
+        if (rel < nearest_rel) {
+            nearest_rel = rel;
+            nearest = i;
+        }
+    }
+    let sum = dot(t.w, vec4<f32>(1.0));
+    if (sum < 1e-4) {
+        // every texel across an edge (a thin object one pixel wide): the
+        // closest in depth alone
+        t.w = vec4<f32>(0.0);
+        t.w[nearest] = 1.0;
+    } else {
+        t.w /= sum;
+    }
+    return t;
+}
+
+@compute @workgroup_size(8, 8)
+fn upsample(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (any(id.xy >= textureDimensions(up_out))) {
+        return;
+    }
+    let px = vec2<i32>(id.xy);
+    let t = upsample_taps(px);
+    var v = vec4<f32>(0.0);
+    for (var i = 0; i < 4; i++) {
+        v += textureLoad(ao_in, t.p[i], 0) * t.w[i];
+    }
+    textureStore(up_out, px, v);
+}
+
+@compute @workgroup_size(8, 8)
+fn upsample_il(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (any(id.xy >= textureDimensions(up_il_out))) {
+        return;
+    }
+    let px = vec2<i32>(id.xy);
+    let t = upsample_taps(px);
+    var v = vec4<f32>(0.0);
+    for (var i = 0; i < 4; i++) {
+        v += textureLoad(il_in, t.p[i], 0) * t.w[i];
+    }
+    textureStore(up_il_out, px, v);
 }

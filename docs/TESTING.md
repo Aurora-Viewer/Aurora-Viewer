@@ -4413,7 +4413,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>` | The region goes silent (the unsteady-connection pill and its count), or the link is lost (login screen offering to go back to the same place) |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
-| `AURORA_DEMO_CHAT_LINES=1\|legacy` | Nearby chat lines above the chat bar: cards by sender, or the one-line look |
+| `AURORA_DEMO_CHAT_LINES=1\|legacy\|volumes` | Nearby chat lines above the chat bar: cards by sender, or the one-line look |
 | `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact |
 | `AURORA_DEMO_TYPING=1` | We type in the nearby chat from our arrival on: typing animation, dots on our plate |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
@@ -6277,7 +6277,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   is disabled; only enter synthetic values for this test.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
-- **`AURORA_DEMO_CHAT_LINES=1|legacy`**: nearby chat said at the arrival,
+- **`AURORA_DEMO_CHAT_LINES=1|legacy|volumes`**: nearby chat said at the arrival,
   shown above the chat bar with the Conversations window closed: two lines
   of one resident, an emote, an object's line, a long line with a link, a
   shout (only the 6 most recent lines show, as always). `1`: Aurora's cards
@@ -6287,6 +6287,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Viewer's one-line look for the session (nothing saved). Check them over a
   dark and a bright world (`AURORA_DEMO_SKY=2,4,2`): readable on both, the
   name, the picture and the links clickable, the world clickable around.
+  `volumes` shows the same normal, whispered and shouted messages from us
+  and an object in both the cards and Conversations, visible together to
+  compare their colours, whisper italics and shout weight. These demo cards
+  remain visible for an hour without changing the saved timeout.
+
 - **`AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy|lines[:on][:im][:imlines]`**
   (#475, #741): nearby chat said at the arrival, two residents among a
   greeter, a tip jar, our HUD's owner-say, a door's emote and a vendor's
@@ -9597,13 +9602,13 @@ thread.
   stays tiny.
 - `off_cpu:`: on the same principle, the steps of both threads that spent
   at least 1 ms **off the processor** in a frame (elapsed time minus the
-  thread's CPU time, Windows only), the longest first. A slow step listed
-  there waited instead of working: a lock (the heap while the background
-  tasks allocate, for example), or a core taken by another thread when the
-  machine is loaded. The steps that hand work to the pool (`sync`, `lists`,
-  `poses`, `r_finish`) wait there for their threads by construction; those
-  that wait by nature (`render`, `limiter`, `r_acquire`, `r_present`) are
-  not listed there.
+  thread's CPU time, Windows and Linux), the longest first. A slow step
+  listed there waited instead of working: a lock (the heap while the
+  background tasks allocate, for example), or a core taken by another
+  thread when the machine is loaded. The steps that hand work to the pool
+  (`sync`, `lists`, `poses`, `r_finish`) wait there for their threads by
+  construction; those that wait by nature (`render`, `limiter`,
+  `r_acquire`, `r_present`) are not listed there.
 - `thread=on|off`, then where the two threads meet:
   - `packet` (main thread, in `render`): the closing of the frame — the
     modified ranges of the scene tables in the frame's write journal, a
@@ -9878,19 +9883,22 @@ tens of thousands of objects), the threads listed by a thread of their own.
   the geometry (render targets, shadow maps, tables); then the textures
   (`texture_mb` their levels, `pages`, `pages_mb` allocated),
   `texture_target_mb` and `pressure` of the texture budget, `geometry_mb`
-  the geometry arena and `geometry_used_mb` what is used of it.
-- `cpu summary` (Windows), written by the `aurora-probe` thread: the
-  process's CPU time as a share of one core and of all the cores,
+  the geometry arena and `geometry_used_mb` what is used of it. On Linux
+  `working_set` is the resident memory (`VmRSS`), `peak` its high-water
+  mark (`VmHWM`) and `private` the anonymous memory, resident or swapped
+  out (`RssAnon` + `VmSwap`).
+- `cpu summary` (Windows and Linux), written by the `aurora-probe` thread:
+  the process's CPU time as a share of one core and of all the cores,
   `machine=` how busy all the cores were (every process: another program
   loading the PC shows there), then each group of threads as a share of
   one core, the busiest first: `main`, `aurora-render`, `aurora-worker`
   (the frame's parallel loops), `aurora-jobs` (decodes, meshes, disk),
   `aurora-net` (the network runtime), `aurora-pages`, `aurora-trash`,
-  audio, voice, `unnamed` (the driver's and the system's threads)…; a
-  pool gives its threads and its busiest one (`aurora-jobs=320%(14t
-  max=31%)`); the groups under 0.1 % of a core are only counted
-  (`quiet_groups=`). `main` near 100 %: the main thread is the limit; a pool near
-  its thread count × 100 %: that pool is; `machine` near 100 %: the PC is.
+  audio, voice, `unnamed` (the driver's and the system's threads)…; a pool
+  gives its threads and its busiest one (`aurora-jobs=320%(14t max=31%)`);
+  the groups under 0.1 % of a core are only counted (`quiet_groups=`).
+  `main` near 100 %: the main thread is the limit; a pool near its thread
+  count × 100 %: that pool is; `machine` near 100 %: the PC is.
 
 ### Teleports and region crossings
 

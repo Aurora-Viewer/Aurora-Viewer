@@ -954,7 +954,11 @@ fn away_and_replies(cx: &mut Cx) {
     }
     cx.group(tr!("ui-options-auto-replies"), |cx| {
         cx.note(tr!("ui-options-enable-these-modes-in-communicate-online-status"));
+        // LLFloaterPreference::refreshEnabledState greys do_not_disturb_response under
+        // RLVa @sendim, and only that response.
+        cx.greyed(cx.st.rlva_sendim_locked);
         text(cx, tr!("ui-options-in-do-not-disturb-mode"), &field!(autoresponse.dnd_text));
+        cx.greyed(false);
         text(
             cx,
             tr!("ui-options-to-everyone-in-auto-reply-mode"),

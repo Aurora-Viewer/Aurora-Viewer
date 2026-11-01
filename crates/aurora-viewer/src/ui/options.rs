@@ -339,6 +339,8 @@ pub struct OptionsUi {
     pub rlva_restrictions: Vec<(uuid::Uuid, String)>,
     pub rlva_camera_preset_locked: bool,
     pub rlva_camera_fov_locked: bool,
+    /// RLVa `@sendim`: the Do Not Disturb response is an IM, its field greyed.
+    pub rlva_sendim_locked: bool,
     pub joystick: crate::joystick::Snapshot,
     pub flycam_active: bool,
     pub anti_spam_blocks: Vec<(crate::world::anti_spam::Queue, uuid::Uuid, String)>,
