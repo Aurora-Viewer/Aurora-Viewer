@@ -807,13 +807,15 @@ fn depth_contact(record: u32, uv: vec2<f32>, world_pos: vec3<f32>) {
 }
 
 @fragment
-fn fs_depth_contact(in: VsOut) {
+fn fs_depth_contact(in: VsOut, @builtin(front_facing) front: bool) {
+    if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
     depth_contact(in.record, in.uv, in.world_pos);
 }
 
 // fs_depth_contact with the normal, into the occlusion's depth.
 @fragment
 fn fs_depth_contact_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
     depth_contact(in.record, in.uv, in.world_pos);
     return depth_normal(in.normal, front, in.motion_cur, in.motion_prev);
 }
@@ -823,8 +825,9 @@ fn fs_depth_contact_normal(in: DepthMaskOut, @builtin(front_facing) front: bool)
 // shows through it by 5 % at most, while a fainter one, a soft strand edge,
 // must not hide the strands drawn after it (#935).
 @fragment
-fn fs_depth_opaque(in: VsOut) {
+fn fs_depth_opaque(in: VsOut, @builtin(front_facing) front: bool) {
     let rec = records[in.record];
+    if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
     portal_clip(rec, in.world_pos);
     water_clip(in.world_pos);
     if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < 0.95) {
@@ -1555,6 +1558,9 @@ override BLEND_SPLIT: u32 = 0u;
 
 @fragment
 fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    // The batch mixes material sidedness: reject single-sided backs before
+    // texture samples, keeping glTF doubleSided backs and their flipped normals.
+    if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
     let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
     if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         let surface = portal_surface(records[in.record], in.uv, portal_aa);

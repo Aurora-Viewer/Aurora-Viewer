@@ -1,5 +1,15 @@
 # Aurora Viewer architecture
 
+Blended material batches retain their sorted order while admitting both triangle
+windings. `fs_blend`, the rigged alpha depth variants and contact-depth passes
+reject single-sided back faces before texture sampling; glTF `DOUBLE_SIDED`
+faces retain both sides and use the existing back-face normal inversion.
+This follows `LLDrawPoolAlpha::renderAlpha` without splitting GPU draw batches
+by material sidedness (#1727). `AURORA_DEMO_PBR_EMISSIVE=sided` isolates both
+sides of single- and double-sided transparent faces.
+`aurora-render/src/blend_tests.rs` rasterizes both windings through the production
+colour and depth fragment cuts to keep their sidedness consistent.
+
 Texture imports and material maps share the PNG channel normalization in
 `aurora-assets/src/import_texture.rs`: expand luminance to RGB, retain alpha
 and reduce 16-bit samples to their high byte, following

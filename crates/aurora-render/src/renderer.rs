@@ -3374,6 +3374,10 @@ impl Backend {
             },
         };
         let blend_discard = BlendDiscard::from_env();
+        let blend_base = |label, fs| PipeDesc {
+            cull: None,
+            ..base(label, "vs_main", fs)
+        };
         // `clip`: the side of the water kept (object.wgsl WATER_CLIP): 1 the
         // camera's, for every blended face drawn after the water
         let blend_pipe = |label: &'static str, early: bool, depth_write: bool, clip: f64| {
@@ -3383,7 +3387,7 @@ impl Backend {
                 depth_write,
                 depth_compare: wgpu::CompareFunction::Greater,
                 constants: &[("BLEND_EARLY_DISCARD", if early { 1.0 } else { 0.0 }), ("WATER_CLIP", clip)],
-                ..base(label, "vs_main", "fs_blend")
+                ..blend_base(label, "fs_blend")
             })
         };
         let blend = blend_pipe("blend", blend_discard != BlendDiscard::Late, false, 1.0);
@@ -3408,7 +3412,7 @@ impl Backend {
             depth_write: true,
             depth_compare: wgpu::CompareFunction::Greater,
             constants: &[("WATER_CLIP", 1.0)],
-            ..base("blend rigged depth", "vs_main", "fs_blend")
+            ..blend_base("blend rigged depth", "fs_blend")
         });
         // `RiggedBlendDepth::Runs`: their depth where nearly opaque
         // (fs_depth_opaque), before any of their colour (#935)
@@ -3419,7 +3423,7 @@ impl Backend {
             depth_write: true,
             depth_compare: wgpu::CompareFunction::Greater,
             constants: &[("WATER_CLIP", 1.0)],
-            ..base("blend rigged opaque depth", "vs_main", "fs_blend")
+            ..blend_base("blend rigged opaque depth", "fs_blend")
         });
         let blend_depth_color = pipe(PipeDesc {
             blend: Some(suppress),
@@ -3427,7 +3431,7 @@ impl Backend {
             depth_write: false,
             depth_compare: wgpu::CompareFunction::GreaterEqual,
             constants: &[("BLEND_EARLY_DISCARD", 1.0), ("WATER_CLIP", 1.0)],
-            ..base("blend rigged colour", "vs_main", "fs_blend")
+            ..blend_base("blend rigged colour", "fs_blend")
         });
         // `RiggedBlendDepth::Split` (#935): first the texels at least half
         // covered, each writing its depth as it is drawn, as the Legacy
@@ -3440,7 +3444,7 @@ impl Backend {
             depth_write: true,
             depth_compare: wgpu::CompareFunction::GreaterEqual,
             constants: &[("BLEND_EARLY_DISCARD", 1.0), ("BLEND_SPLIT", 1.0), ("WATER_CLIP", 1.0)],
-            ..base("blend rigged solid", "vs_main", "fs_blend")
+            ..blend_base("blend rigged solid", "fs_blend")
         });
         let blend_depth_fringe = pipe(PipeDesc {
             blend: Some(suppress),
@@ -3448,7 +3452,7 @@ impl Backend {
             depth_write: false,
             depth_compare: wgpu::CompareFunction::GreaterEqual,
             constants: &[("BLEND_EARLY_DISCARD", 1.0), ("BLEND_SPLIT", 2.0), ("WATER_CLIP", 1.0)],
-            ..base("blend rigged fringe", "vs_main", "fs_blend")
+            ..blend_base("blend rigged fringe", "fs_blend")
         });
         // `RiggedBlendDepth::Layers` (#1300): after an object's fringes,
         // their depth from 1/255 (MINIMUM_ALPHA), so that what is drawn
@@ -3460,7 +3464,7 @@ impl Backend {
             depth_write: true,
             depth_compare: wgpu::CompareFunction::Greater,
             constants: &[("DEPTH_CONTACT_ALPHA", 0.004), ("WATER_CLIP", 1.0)],
-            ..base("blend rigged fringe depth", "vs_main", "fs_blend")
+            ..blend_base("blend rigged fringe depth", "fs_blend")
         });
         let particles = pipe(PipeDesc {
             vb: Vb::Particle,

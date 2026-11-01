@@ -8,6 +8,8 @@
 pub mod adapter_choice;
 pub mod arena;
 pub mod bc7;
+#[cfg(test)]
+mod blend_tests;
 mod bloom;
 mod contact_shadows;
 mod cutout;
