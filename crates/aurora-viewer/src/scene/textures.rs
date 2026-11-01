@@ -114,6 +114,15 @@ const BUDGET_EVERY: Duration = Duration::from_millis(250);
 /// them.
 const REDUCTIONS_PER_SECOND: f32 = 3000.0;
 const REDUCTIONS_PER_FRAME: std::ops::RangeInclusive<usize> = 8..=512;
+/// While the 3D drawing is paused behind (texture_budget::Background): the
+/// size on screen divided by this (ten levels: every texture at its last
+/// one, those of a fixed size, HUDs and the interface, left as they are),
+/// and that many reductions a frame. On the grid the window behind still
+/// held 2 GB of textures 8 s into the pause, their size on screen decaying
+/// by half a pass, while the one in front grew by 4 GB in 10 s and lost
+/// its device (#1808).
+const PAUSED_DROPPED: f32 = 1024.0;
+const PAUSED_REDUCTIONS_PER_FRAME: usize = 8192;
 /// Firestorm asks for MAX_IMAGE_DATA_SIZE (indra/llimage/llimage.h) when it
 /// wants the whole file.
 const MAX_IMAGE_DATA_SIZE: u64 = 4096 * 4096 * 8;
@@ -930,6 +939,11 @@ pub struct TextureStreamer {
     decodes: usize,
     /// Memory pressure step (texture_budget.rs), decided in `maintain`.
     pressure: Pressure,
+    /// The window in the background long enough to give its textures back
+    /// (texture_budget::Background), and its state (`set_window_state`).
+    background: texture_budget::Background,
+    in_front: bool,
+    minimized: bool,
     last_budget: Instant,
     /// Passes of `recompute_wants` since the step last changed.
     passes_at_step: u32,
@@ -1211,6 +1225,9 @@ impl TextureStreamer {
             max_decodes: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(2),
             decodes: 0,
             pressure: Pressure::new(Instant::now()),
+            background: texture_budget::Background::default(),
+            in_front: true,
+            minimized: false,
             last_budget: Instant::now(),
             passes_at_step: 0,
             reductions: Vec::new(),
@@ -1897,7 +1914,15 @@ impl TextureStreamer {
     /// lowered then loaded again as the camera sways).
     pub fn recompute_wants(&mut self) {
         let step = self.pressure.step();
-        let dropped = texture_budget::dropped(step);
+        // (the 3D drawing paused behind: nothing is drawn, every texture
+        // down to its last level at once rather than as its size on screen
+        // decays, the avatars' bakes too, texture_budget::Background::paused)
+        let paused = self.background.paused();
+        let dropped = if paused {
+            (PAUSED_DROPPED, PAUSED_DROPPED)
+        } else {
+            texture_budget::dropped(step)
+        };
         let below = texture_budget::dropped(step.saturating_sub(1));
         // the photo quality: every texture in view at full resolution, while
         // the memory allows it (under pressure the budget decides, as always)
@@ -1948,12 +1973,14 @@ impl TextureStreamer {
                 // (there it would be lowered to `keep`, or loaded up to `want`)
                 bytes_below += bytes_at(e, e.decoded.map_or(want_below, |d| d.clamp(keep_below, want_below)));
                 // (bakes and interface images are left alone, as Firestorm's
-                // boosted textures; unused ones are evicted instead)
+                // boosted textures; unused ones are evicted instead. Paused
+                // behind, the bakes go too: in a crowd they were the 1 GB of
+                // pages the window still held, and nothing is drawn)
                 if let Some(d) = e.decoded
                     && keep > d
                     && e.refs > 0
                     && !e.decoding
-                    && e.source == TexSource::Asset
+                    && (e.source == TexSource::Asset || (paused && matches!(e.source, TexSource::Bake { .. })))
                     && !ui_wanted.contains(id)
                 {
                     reductions.push((*id, keep, bytes_at(e, d)));
@@ -2877,8 +2904,11 @@ impl TextureStreamer {
     /// layer (`TextureTable::shrink`), nothing is decoded. Each is checked
     /// again, the list may be a few frames old.
     fn reduce(&mut self, renderer: &mut Renderer, frame: Duration) {
-        let most =
-            ((frame.as_secs_f32() * REDUCTIONS_PER_SECOND) as usize).clamp(*REDUCTIONS_PER_FRAME.start(), *REDUCTIONS_PER_FRAME.end());
+        let most = if self.background.paused() {
+            PAUSED_REDUCTIONS_PER_FRAME
+        } else {
+            ((frame.as_secs_f32() * REDUCTIONS_PER_SECOND) as usize).clamp(*REDUCTIONS_PER_FRAME.start(), *REDUCTIONS_PER_FRAME.end())
+        };
         let mut done = 0;
         while done < most {
             let Some((id, keep, _)) = self.reductions.pop() else {
@@ -2901,6 +2931,20 @@ impl TextureStreamer {
         }
     }
 
+    /// The window's state, each frame: whether it has the focus, whether it
+    /// is minimised (`press` gives the textures back behind,
+    /// texture_budget::Background).
+    pub fn set_window_state(&mut self, in_front: bool, minimized: bool) {
+        self.in_front = in_front;
+        self.minimized = minimized;
+    }
+
+    /// The window is behind and the viewer was past the driver's budget
+    /// there: the 3D drawing pauses (texture_budget::Background::paused).
+    pub fn drawing_paused(&self) -> bool {
+        self.background.paused()
+    }
+
     /// Memory budget, a few times a second: what the textures may hold now
     /// and the pressure step for what they hold (texture_budget.rs).
     fn press(&mut self, renderer: &mut Renderer, now: Instant, setting: u64) {
@@ -2912,6 +2956,34 @@ impl TextureStreamer {
         let video = renderer.video_memory.read(&renderer.device);
         let target = texture_budget::forced_target().unwrap_or_else(|| texture_budget::texture_target(setting, used, video));
         let before = self.pressure.step();
+        // a window behind for a minute or minimised for a second gives its
+        // textures back, at once while the memory is short, and takes up
+        // again once in front (LLViewerTexture::updateClass,
+        // texture_budget::Background)
+        let crowded = video.is_some_and(|v| v.usage > v.budget);
+        let away = self.background.update(now, self.in_front, self.minimized, crowded);
+        if away && !self.pressure.held() {
+            self.pressure.hold_max(now);
+            let place = if self.minimized { "minimised" } else { "in the background" };
+            if crowded {
+                log::info!(
+                    "texture memory: the window is {place} with the video memory short, freeing up video memory; the 3D drawing pauses until it is in front"
+                );
+            } else {
+                let after = if self.minimized {
+                    texture_budget::MINIMIZED_AFTER
+                } else {
+                    texture_budget::BACKGROUNDED_AFTER
+                };
+                log::info!(
+                    "texture memory: the window was {place} for {} s, freeing up video memory",
+                    after.as_secs()
+                );
+            }
+        } else if !away && self.pressure.held() {
+            self.pressure.release(now);
+            log::info!("texture memory: the window is in front again, textures load as before");
+        }
         // what the pages would hold one step below, from step 1 too
         // (texture_budget::below_estimate)
         let below = texture_budget::below_estimate(self.bytes_below, used, live);
@@ -2924,7 +2996,13 @@ impl TextureStreamer {
                 below,
             },
         );
-        self.to_lower = texture_budget::lowering_goal(used, live, target);
+        // (behind: everything the highest step allows, not only what brings
+        // the pages under the target)
+        self.to_lower = if self.pressure.held() {
+            u64::MAX
+        } else {
+            texture_budget::lowering_goal(used, live, target)
+        };
         if step != before {
             self.passes_at_step = 0;
             renderer.textures.set_eager_compaction(step > 0);

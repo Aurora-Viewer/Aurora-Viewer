@@ -218,6 +218,9 @@ const FLY_TIME: f32 = 0.5;
 /// Radians: a change of the viewing angle below this is not sent in AgentFOV
 /// (an eased FOV zoom creeps toward its target for ever).
 const FOV_SEND_EPSILON: f32 = 1e-3;
+/// RenderResolutionDivisor while the 3D drawing is paused behind (the 3D
+/// targets of a 3840 x 2054 window at 240 x 128; texture_budget::Background).
+const PAUSED_RESOLUTION_DIVISOR: u32 = 16;
 
 /// The wolf logo (window icon, login and loading screens, About, system
 /// notifications), read from the branding folder: one file for the viewer,
@@ -7708,6 +7711,9 @@ impl App {
             g.renderer.mark_input(Instant::now());
         }
         self.sync_minimized_mute();
+        // a window behind gives its textures back (texture_budget::Background)
+        let minimized = self.gfx.as_ref().and_then(|g| g.window.is_minimized()).unwrap_or(false);
+        self.scene.textures.set_window_state(self.focused, minimized);
         aurora_render::frame_priority::apply();
         self.world.anti_spam.configure(self.settings.anti_spam);
         self.update_rlva();
@@ -9364,7 +9370,13 @@ impl App {
             aurora_render::ProbeFrame::default()
         };
         let mut fp = FrameParams {
-            rlva_resolution_divisor: self.world.rlva.resolution_divisor.unwrap_or(1),
+            // (a window behind past the driver's budget pauses its 3D
+            // drawing: its 3D targets shrink, texture_budget::Background)
+            rlva_resolution_divisor: if self.scene.textures.drawing_paused() {
+                PAUSED_RESOLUTION_DIVISOR
+            } else {
+                self.world.rlva.resolution_divisor.unwrap_or(1)
+            },
             rlva_overlays: self
                 .world
                 .rlva_overlay_frames(Instant::now())
@@ -10170,7 +10182,13 @@ impl App {
         // while this thread goes on with the next frame. The statistics
         // returned are those of the frame before; a frame that carries a
         // capture is waited for, its pixels are read in the tail below.
-        let lists = if self.in_world() { &self.scene.lists } else { &self.empty_lists };
+        // (nothing of the scene while the 3D drawing is paused behind,
+        // texture_budget::Background)
+        let lists = if self.in_world() && !self.scene.textures.drawing_paused() {
+            &self.scene.lists
+        } else {
+            &self.empty_lists
+        };
         let stats = if self.demo && gfx.renderer.capture_request && std::env::var_os("AURORA_DEMO_RENDER_TEXTURE").is_some() {
             gfx.renderer.render_world_texture_capture(fp, lists)
         } else {
