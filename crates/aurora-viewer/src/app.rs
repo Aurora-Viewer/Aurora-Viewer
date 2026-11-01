@@ -14175,7 +14175,9 @@ impl App {
                         painter.text(at, egui::Align2::CENTER_BOTTOM, &text, font, p.ink.gamma_multiply(0.6));
                     }
                 }
-                if self.skin.layout.chat_toasts && !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)) {
+                if self.skin.layout.chat_toasts
+                    && (crate::demo::chat_volume_comparison() || !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)))
+                {
                     // FSBubblesHideConsoleAndToasts: the residents' lines are
                     // in their bubbles
                     let residents = !(self.chat_bubbles() && self.settings.chat_bubbles_hide_console);
@@ -14187,7 +14189,11 @@ impl App {
                         &mut self.chat_ui.wanted_names,
                         &mut self.chat_ui.wanted_pics,
                         bottom_top,
-                        self.settings.chat_toast_seconds,
+                        if crate::demo::chat_volume_comparison() {
+                            3600.0
+                        } else {
+                            self.settings.chat_toast_seconds
+                        },
                         self.settings.chat_timestamps,
                         !classic_bars,
                         // AURORA_DEMO_CHAT_LINES=legacy: the one-line look

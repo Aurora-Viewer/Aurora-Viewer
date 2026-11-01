@@ -1,5 +1,11 @@
 # Aurora Viewer architecture
 
+Chat volume formatting (#1323) is shared by the Conversations renderers and
+nearby-chat cards/lines: `ui/chat.rs::message_emphasis` and `message_color`,
+with `ui/fonts.rs::TextEmphasis` carried through emoji runs, links and search
+highlights. `ChatKind::volume` includes object messages. `ui/chat/volume_tests.rs`
+checks the painted text across all renderers.
+
 `world/inventory.rs::Inventory::apply` reconciles accepted folder readbacks
 with the item records used by inventory views. Obsolete item/folder links are
 removed once per response batch, including records no longer in the child lists;
