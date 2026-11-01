@@ -1609,13 +1609,19 @@ fn blend_color(in: VsOut, front: bool) -> vec4<f32> {
 // pixel's list instead of being blended: premultiplied colour (rg and b as
 // halves), alpha (8 bits), the MSAA samples it covers (8 bits), its depth and
 // the next node. oit.wgsl sorts and composites the lists. Once the node pool
-// is full, the fragment is blended as before (in the draw order, back to
-// front), so a crowded scene degrades to the old image, never to holes.
+// is full, the fragment is dropped: the classify then skips the composite and
+// every blended face is drawn again in the drawing order (renderer.rs, the
+// rigged ones writing their depth as `RiggedBlendDepth::Write`), so a crowded
+// frame shows neither holes nor a reversed order.
 struct OitParams {
     node_cap: u32,
     width: u32,
     height: u32,
     max_layers: u32,
+    samples: u32,
+    tiles_x: u32,
+    tiles: u32,
+    draws: u32,
 };
 // heads[0] counts the nodes; heads[1 + y * width + x] is the pixel's first
 // node plus one (0: empty)
@@ -1629,19 +1635,24 @@ struct OitParams {
 // would otherwise make it shade every fragment behind the opaque scene (the
 // strands behind a head) before testing it. With MSAA a fragment runs when
 // one of its samples passes; the resolve tests each sample again. Without
-// it, the shader leaves early itself, against the single-sample prepass.
+// it, the shader leaves early itself against the single-sample prepass, only
+// without MSAA: with it, that one depth would hide a layer that some samples
+// of an edge still show (the resolve then tests each sample).
 override OIT_EARLY_DEPTH: bool = false;
+// oit.wgsl `MAX_WALK`
+const OIT_MAX_WALK: u32 = 4096u;
 
 @fragment /*OIT_EARLY_DEPTH*/
 fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_mask) coverage: u32) -> @location(0) vec4<f32> {
     let px = vec2<u32>(in.clip.xy);
-    if (!OIT_EARLY_DEPTH && in.clip.z <= textureLoad(depth_tex, vec2<i32>(px), 0)) {
+    if (!OIT_EARLY_DEPTH && oit_params.samples <= 1u && in.clip.z <= textureLoad(depth_tex, vec2<i32>(px), 0)) {
         discard;
     }
     let c = blend_color(in, front);
+    // (still counted past the end: the classify sees the overflow)
     let idx = atomicAdd(&oit_heads[0], 1u);
     if (idx >= oit_params.node_cap) {
-        return c;
+        return vec4<f32>(0.0);
     }
     let prev = atomicExchange(&oit_heads[1u + px.y * oit_params.width + px.x], idx + 1u);
     let a8 = u32(round(clamp(c.a, 0.0, 1.0) * 255.0));
@@ -1664,11 +1675,46 @@ fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_m
 // without being dimmed by it.
 @fragment
 fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0, 0.0, 0.0, glow_amount(in, front));
+}
+
+// The glow of a blended face drawn with order-independent transparency, once
+// the lists are composited: dimmed by the layers of its pixel's list in front
+// of it, as the faces drawn after it in the drawing order dim it (each one by
+// its alpha, LLDrawPoolAlpha), so a glowing face behind a nearly opaque pane
+// barely shows. Its own layer, at its depth, is not in front.
+@fragment
+fn fs_glow_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_mask) mask: u32) -> @location(0) vec4<f32> {
+    let g = glow_amount(in, front);
+    let px = vec2<u32>(in.clip.xy);
+    var through = 1.0;
+    var idx = atomicLoad(&oit_heads[1u + px.y * oit_params.width + px.x]);
+    var steps = 0u;
+    loop {
+        if (idx == 0u || steps >= min(oit_params.node_cap, OIT_MAX_WALK) || through <= 0.0) {
+            break;
+        }
+        let n = oit_nodes[idx - 1u];
+        idx = n.w;
+        steps += 1u;
+        // nearer (reverse-Z) and over one of this fragment's samples
+        if (bitcast<f32>(n.z) > in.clip.z && ((n.y >> 24u) & mask) != 0u) {
+            through *= 1.0 - f32((n.y >> 16u) & 0xffu) / 255.0;
+        }
+    }
+    if (g * through <= 0.0) {
+        discard;
+    }
+    return vec4<f32>(0.0, 0.0, 0.0, g * through);
+}
+
+// The glow fs_glow adds (discards a fragment without any).
+fn glow_amount(in: VsOut, front: bool) -> f32 {
     let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
     if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         let surface = portal_surface(records[in.record], in.uv, portal_aa);
         if (surface.glow <= 0.0) { discard; }
-        return vec4<f32>(0.0, 0.0, 0.0, surface.glow);
+        return surface.glow;
     }
     rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
@@ -1692,7 +1738,7 @@ fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     if (a <= 0.0) {
         discard;
     }
-    return vec4<f32>(0.0, 0.0, 0.0, a);
+    return a;
 }
 
 // Debug overlays ("Show transparency", wireframe): one flat

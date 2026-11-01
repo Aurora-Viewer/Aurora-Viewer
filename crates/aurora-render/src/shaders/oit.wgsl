@@ -14,6 +14,11 @@
 // 3. fs_edge (vs_tile over the edge tiles, MSAA only): the edge pixels again,
 //    sample by sample, against each sample's depth.
 //
+// When the pool overflowed (heads[0], the nodes asked for, past node_cap),
+// no tile is listed and `flags` turns the in-order replay of the blended
+// faces on and the composite's glow off (renderer.rs, draws counted by them):
+// the frame is then drawn in the drawing order, as without the lists.
+//
 // Sorting: the first `max_layers` layers of a list (the last drawn: the faces
 // come back to front, so mostly the nearest) back to front; the others
 // folded first as a weighted average whose coverage is exact (the product
@@ -37,7 +42,10 @@ struct OitParams {
     tiles_x: u32,
     // tiles on screen: the edge tiles are listed from here
     tiles: u32,
-    _pad: u32,
+    // blended faces this frame: the draw count meaning "all of them"
+    // (oit.rs `prepare`; not u32::MAX, which a driver multiplies by the
+    // draw stride and loses the device)
+    draws: u32,
 };
 @group(0) @binding(0) var<storage, read> heads: array<u32>;
 @group(0) @binding(1) var<storage, read> nodes: array<vec4<u32>>;
@@ -49,13 +57,17 @@ struct OitParams {
 // two DrawIndirectArgs: the plain tiles, then the edge tiles
 @group(0) @binding(5) var<storage, read_write> args: array<atomic<u32>, 8>;
 @group(0) @binding(6) var<storage, read_write> tiles_w: array<u32>;
+// the draw counts of the replay and of the composite's glow (oit.rs
+// REPLAY_FLAG, COMPOSITED_FLAG): all or none
+@group(0) @binding(9) var<storage, read_write> flags: array<u32, 2>;
 // the draws only
 @group(0) @binding(7) var resolved: texture_2d<f32>;
 @group(0) @binding(8) var<storage, read> tiles_r: array<u32>;
 
 const TILE: u32 = 8u;
-// a guard against a broken list (never reached by a valid one)
-const MAX_TRAVERSAL: u32 = 1024u;
+// nodes walked in one list at most (object.wgsl `OIT_MAX_WALK`): far past
+// any real pixel, short enough that a broken list never stalls the GPU
+const MAX_WALK: u32 = 4096u;
 // `out_color` alpha of an edge pixel
 const EDGE: f32 = -1.0;
 
@@ -89,7 +101,9 @@ fn resolve___N__(first: u32, full: u32, dmin: f32, dmax: f32, keep: u32) -> Reso
     var idx = first;
     var steps = 0u;
     loop {
-        if (idx == 0u || steps >= MAX_TRAVERSAL) {
+        // (a list holds at most every node: the bound only guards against
+        // a broken one)
+        if (idx == 0u || steps >= min(params.node_cap, MAX_WALK)) {
             break;
         }
         let id = idx - 1u;
@@ -167,6 +181,19 @@ fn head(px: vec2<u32>) -> u32 {
     return heads[1u + px.y * params.width + px.x];
 }
 
+fn overflowed() -> bool {
+    return heads[0] > params.node_cap;
+}
+
+// One thread of the dispatch sets the draw counts that follow.
+fn set_flags(g: vec3<u32>) {
+    if (g.x == 0u && g.y == 0u) {
+        let over = overflowed();
+        flags[0] = select(0u, params.draws, over);
+        flags[1] = select(params.draws, 0u, over);
+    }
+}
+
 // ---- 1. classify, sort and list the tiles
 
 var<workgroup> tile_flags: atomic<u32>;
@@ -176,7 +203,8 @@ fn classify(px: vec2<u32>, full: u32, dmin: f32, dmax: f32) -> u32 {
     var flag = 0u;
     var out = vec4<f32>(0.0);
     let first = head(px);
-    if (first != 0u) {
+    // (overflowed: nothing composited, the faces are replayed in order)
+    if (first != 0u && !overflowed()) {
         let r = resolve_list(first, full, dmin, dmax);
         if (r.status == 1u) {
             out = r.color;
@@ -209,6 +237,7 @@ fn list_tile(flag: u32, li: u32, wg: vec2<u32>) {
 
 @compute @workgroup_size(8, 8)
 fn cs_classify(@builtin(global_invocation_id) g: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    set_flags(g);
     if (li == 0u) {
         atomicStore(&tile_flags, 0u);
     }
@@ -223,6 +252,7 @@ fn cs_classify(@builtin(global_invocation_id) g: vec3<u32>, @builtin(local_invoc
 
 @compute @workgroup_size(8, 8)
 fn cs_classify_ms(@builtin(global_invocation_id) g: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wg: vec3<u32>) {
+    set_flags(g);
     if (li == 0u) {
         atomicStore(&tile_flags, 0u);
     }
@@ -233,7 +263,7 @@ fn cs_classify_ms(@builtin(global_invocation_id) g: vec3<u32>, @builtin(local_in
         // samples, or behind all, is the same for each
         var dmin = 2.0;
         var dmax = -1.0;
-        if (head(g.xy) != 0u) {
+        if (head(g.xy) != 0u && !overflowed()) {
             for (var s = 0u; s < params.samples; s += 1u) {
                 let d = textureLoad(depth_ms, vec2<i32>(g.xy), i32(s));
                 dmin = min(dmin, d);
