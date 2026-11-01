@@ -126,6 +126,9 @@ struct Playing {
     /// None for loops.
     length: Option<Duration>,
     gain: (f32, f32),
+    /// Direction last sent in the listener's frame, when rendered
+    /// binaurally (3D sound for headphones); None when panned.
+    direction: Option<Vec3>,
 }
 
 /// Sound of an object (LLAudioSourceVO).
@@ -159,8 +162,67 @@ pub struct Listener {
     pub pos: Vec3,
     /// Camera right axis (stereo panning).
     pub right: Vec3,
+    /// Camera look and up axes (with `right`, the frame of the 3D sound).
+    pub forward: Vec3,
+    pub up: Vec3,
     pub underwater: bool,
+    /// World sounds rendered binaurally, for headphones (Aurora's own,
+    /// Preferences › Sound; off: panned, as in the Legacy Viewer).
+    pub binaural: bool,
 }
+
+impl Listener {
+    /// A listener at `pos` looking along `forward` (any length), the up of
+    /// the world above it.
+    pub fn looking(pos: Vec3, forward: Vec3, underwater: bool, binaural: bool) -> Listener {
+        let forward = forward.normalize_or(Vec3::X);
+        let right = forward.cross(Vec3::Z).normalize_or(Vec3::X);
+        Listener {
+            pos,
+            right,
+            forward,
+            up: right.cross(forward).normalize_or(Vec3::Z),
+            underwater,
+            binaural,
+        }
+    }
+}
+
+/// `AURORA_SOUND_HRTF=0|1`: the 3D sound for headphones forced off or on
+/// for this launch, without saving it.
+pub fn binaural_forced() -> Option<bool> {
+    static FORCED: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+    *FORCED.get_or_init(|| match std::env::var("AURORA_SOUND_HRTF").as_deref() {
+        Ok("0") => Some(false),
+        Ok("1") => Some(true),
+        _ => None,
+    })
+}
+
+/// How a playing world sound is placed for the listener.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Placement {
+    /// (left, right) gains.
+    Panned((f32, f32)),
+    /// Distance gain and direction in the listener's frame (x right, y
+    /// ahead, z up), for the head-related filters.
+    Binaural(f32, Vec3),
+}
+
+impl Placement {
+    /// The gains recorded in `Playing` (the distance gain on both sides
+    /// when binaural).
+    fn gains(self) -> (f32, f32) {
+        match self {
+            Placement::Panned(g) => g,
+            Placement::Binaural(g, _) => (g, g),
+        }
+    }
+}
+
+/// A binaural sound's direction is sent again once it turned by this much
+/// (cos 1 degree): the mixer glides between them.
+const DIRECTION_RESEND_COS: f32 = 0.999_85;
 
 pub struct Origin {
     pub object: Uuid,
@@ -508,22 +570,42 @@ impl SoundManager {
 
     // ------------------------------------------------------------ playback
 
+    /// The distance attenuation at `d` metres (FMOD's inverse rolloff).
+    fn attenuation(l: &Listener, d: f32) -> f32 {
+        let rolloff = if l.underwater { UNDERWATER_ROLLOFF } else { ROLLOFF };
+        if d <= MIN_DISTANCE {
+            1.0
+        } else {
+            MIN_DISTANCE / (MIN_DISTANCE + rolloff * (d - MIN_DISTANCE))
+        }
+    }
+
     /// (left, right) gains of a sound at `pos` for the listener.
     fn gains(l: &Listener, pos: Vec3, gain: f32) -> (f32, f32) {
         let to = pos - l.pos;
         let d = to.length();
-        let rolloff = if l.underwater { UNDERWATER_ROLLOFF } else { ROLLOFF };
-        let att = if d <= MIN_DISTANCE {
-            1.0
-        } else {
-            MIN_DISTANCE / (MIN_DISTANCE + rolloff * (d - MIN_DISTANCE))
-        };
-        let g = gain * att;
+        let g = gain * Self::attenuation(l, d);
         // constant power panning, centered at 0.707 x sqrt 2 = 1 per side
         let pan = if d > 1e-3 { (to / d).dot(l.right).clamp(-1.0, 1.0) } else { 0.0 };
         let a = (pan + 1.0) * std::f32::consts::FRAC_PI_4;
         let s = std::f32::consts::SQRT_2;
         ((a.cos() * s).min(1.0) * g, (a.sin() * s).min(1.0) * g)
+    }
+
+    /// The placement of a sound at `pos`: binaural when the listener wants
+    /// it, except at the listener's head (HUD sounds, a source at the
+    /// camera), which stays centred as panned.
+    fn placement(l: &Listener, pos: Vec3, gain: f32, at_listener: bool) -> Placement {
+        let to = pos - l.pos;
+        if !l.binaural || at_listener || to.length() <= 1e-3 {
+            return Placement::Panned(Self::gains(l, pos, gain));
+        }
+        let d = to.length();
+        let dir = to / d;
+        Placement::Binaural(
+            gain * Self::attenuation(l, d),
+            Vec3::new(dir.dot(l.right), dir.dot(l.forward), dir.dot(l.up)),
+        )
     }
 
     /// Start, place and end the sounds (every frame).
@@ -687,7 +769,11 @@ impl SoundManager {
                 )
             };
             let audible = within_radius && voices < MAX_VOICES;
-            let g = if audible { Self::gains(l, pos, gain) } else { (0.0, 0.0) };
+            let place = if audible {
+                Self::placement(l, pos, gain, at_listener)
+            } else {
+                Placement::Panned((0.0, 0.0))
+            };
             match playing {
                 Some(mut p) => {
                     if !audible && looped {
@@ -706,11 +792,24 @@ impl SoundManager {
                             emitter,
                         });
                     }
-                    if (p.gain.0 - g.0).abs() > 0.004 || (p.gain.1 - g.1).abs() > 0.004 {
+                    let resend = match (place, p.direction) {
+                        (Placement::Panned(g), None) => (p.gain.0 - g.0).abs() > 0.004 || (p.gain.1 - g.1).abs() > 0.004,
+                        (Placement::Binaural(g, d), Some(sent)) => (p.gain.0 - g).abs() > 0.004 || d.dot(sent) < DIRECTION_RESEND_COS,
+                        // switched between panned and binaural
+                        _ => true,
+                    };
+                    if resend {
                         if let Some(e) = engine {
-                            e.world_gain(p.voice, g);
+                            match place {
+                                Placement::Panned(g) => e.world_gain(p.voice, g),
+                                Placement::Binaural(g, d) => e.world_binaural(p.voice, g, d.to_array()),
+                            }
                         }
-                        p.gain = g;
+                        p.gain = place.gains();
+                        p.direction = match place {
+                            Placement::Binaural(_, d) => Some(d),
+                            Placement::Panned(_) => None,
+                        };
                         self.set_playing(kind, key, Some(p), false);
                     }
                 }
@@ -725,7 +824,10 @@ impl SoundManager {
                     let voice = self.next_voice;
                     self.next_voice += 1;
                     if let Some(e) = engine {
-                        e.play_world(voice, Channel::Sfx, &clip, looped, g);
+                        match place {
+                            Placement::Panned(g) => e.play_world(voice, Channel::Sfx, &clip, looped, g),
+                            Placement::Binaural(g, d) => e.play_world_binaural(voice, Channel::Sfx, &clip, looped, g, d.to_array()),
+                        }
                     }
                     if !at_listener {
                         self.audible.push(Audible { voice, pos, emitter });
@@ -734,7 +836,11 @@ impl SoundManager {
                         voice,
                         started: now,
                         length: (!looped).then(|| clip.duration()),
-                        gain: g,
+                        gain: place.gains(),
+                        direction: match place {
+                            Placement::Binaural(_, d) => Some(d),
+                            Placement::Panned(_) => None,
+                        },
                     };
                     self.set_playing(kind, key, Some(p), false);
                 }
@@ -870,6 +976,7 @@ impl SoundManager {
                     started: now,
                     length: Some(c.duration()),
                     gain: (1.0, 1.0),
+                    direction: None,
                 });
             }
             true
@@ -953,7 +1060,10 @@ mod tests {
         let l = Listener {
             pos: Vec3::ZERO,
             right: Vec3::X,
+            forward: Vec3::Y,
+            up: Vec3::Z,
             underwater: false,
+            binaural: false,
         };
         let now = Instant::now();
         sounds.set_attached(None, object, asset, 1.0, FLAG_LOOP);
@@ -995,7 +1105,10 @@ mod tests {
         let l = Listener {
             pos: Vec3::ZERO,
             right: Vec3::X,
+            forward: Vec3::Y,
+            up: Vec3::Z,
             underwater: false,
+            binaural: false,
         };
         let now = Instant::now();
         sounds.insert(asset, SoundClip::from_pcm(&[0.0; 4800], 1, 48_000));
@@ -1053,7 +1166,10 @@ mod tests {
         let listener = Listener {
             pos: Vec3::ZERO,
             right: Vec3::X,
+            forward: Vec3::Y,
+            up: Vec3::Z,
             underwater: false,
+            binaural: false,
         };
         let now = Instant::now();
         sounds.update(None, &world, &listener, now);
@@ -1112,7 +1228,10 @@ mod tests {
         let mut listener = Listener {
             pos: Vec3::new(100.0, 200.0, 300.0),
             right: Vec3::X,
+            forward: Vec3::Y,
+            up: Vec3::Z,
             underwater: false,
+            binaural: false,
         };
         let now = Instant::now();
         sounds.update(None, &world, &listener, now);
@@ -1143,7 +1262,10 @@ mod tests {
         let listener = Listener {
             pos: Vec3::splat(100.0),
             right: Vec3::X,
+            forward: Vec3::Y,
+            up: Vec3::Z,
             underwater: false,
+            binaural: false,
         };
         sounds.set_attached(None, child, first, 0.8, 0);
         let now = Instant::now();
@@ -1201,7 +1323,10 @@ mod tests {
         let mut listener = Listener {
             pos: wearer_pos + Vec3::X * 4.0,
             right: Vec3::X,
+            forward: Vec3::Y,
+            up: Vec3::Z,
             underwater: false,
+            binaural: false,
         };
         sounds.update(None, &world, &listener, now);
         assert_eq!(sounds.voices(), 0, "HUD radius is measured from its wearer, not its audio position");
@@ -1227,7 +1352,10 @@ mod tests {
         let listener = Listener {
             pos: pos + Vec3::X * 4.0,
             right: Vec3::X,
+            forward: Vec3::Y,
+            up: Vec3::Z,
             underwater: false,
+            binaural: false,
         };
         let sound = Uuid::from_u128(1);
         let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-hud-sound-tests"));
@@ -1276,7 +1404,10 @@ mod tests {
         let l = Listener {
             pos: Vec3::ZERO,
             right: Vec3::X,
+            forward: Vec3::Y,
+            up: Vec3::Z,
             underwater: false,
+            binaural: false,
         };
         // in front, near: full volume on both sides
         let (a, b) = SoundManager::gains(&l, Vec3::new(0.0, 0.5, 0.0), 1.0);
@@ -1291,5 +1422,39 @@ mod tests {
         let w = Listener { underwater: true, ..l };
         let (a, _) = SoundManager::gains(&w, Vec3::new(0.0, 11.0, 0.0), 1.0);
         assert!((a - 1.0 / 51.0).abs() < 1e-3, "{a}");
+    }
+
+    #[test]
+    fn binaural_placement_is_the_direction_in_the_listeners_frame() {
+        // looking east (+x) from (10, 0, 0): north (+y) is on the left
+        let off = Listener::looking(Vec3::new(10.0, 0.0, 0.0), Vec3::new(2.0, 0.0, 0.0), false, false);
+        assert_eq!((off.right, off.forward, off.up), (Vec3::new(0.0, -1.0, 0.0), Vec3::X, Vec3::Z));
+        let on = Listener { binaural: true, ..off };
+        let pos = Vec3::new(10.0, 6.0, 8.0);
+        // off: the panning, unchanged
+        assert_eq!(
+            SoundManager::placement(&off, pos, 0.8, false),
+            Placement::Panned(SoundManager::gains(&off, pos, 0.8))
+        );
+        // on: the panning's distance gain, the direction (left, above)
+        let Placement::Binaural(g, d) = SoundManager::placement(&on, pos, 0.8, false) else {
+            panic!("binaural");
+        };
+        assert!((g - 0.8 / 10.0).abs() < 1e-6, "{g}");
+        assert!((d - Vec3::new(-0.6, 0.0, 0.8)).length() < 1e-6, "{d}");
+        // behind, below
+        let Placement::Binaural(_, d) = SoundManager::placement(&on, Vec3::new(7.0, 0.0, -4.0), 1.0, false) else {
+            panic!("binaural");
+        };
+        assert!((d - Vec3::new(0.0, -0.6, -0.8)).length() < 1e-6, "{d}");
+        // HUD sounds and sounds at the head stay centred
+        assert_eq!(
+            SoundManager::placement(&on, pos, 1.0, true),
+            Placement::Panned(SoundManager::gains(&on, pos, 1.0))
+        );
+        assert!(matches!(SoundManager::placement(&on, on.pos, 1.0, false), Placement::Panned(_)));
+        // looking straight up or down still has a frame
+        let up = Listener::looking(Vec3::ZERO, Vec3::Z, false, true);
+        assert!(up.right.is_normalized() && up.forward.is_normalized() && up.up.is_normalized());
     }
 }

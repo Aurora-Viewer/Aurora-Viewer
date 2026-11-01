@@ -5024,12 +5024,14 @@ impl App {
         }
         let engine = self.audio_engine.as_ref();
         let sounds = &mut self.scene.sounds;
-        let fwd = (self.camera.target - self.camera.position).normalize_or(Vec3::X);
-        let listener = crate::scene::sounds::Listener {
-            pos: self.camera.position,
-            right: fwd.cross(Vec3::Z).normalize_or(Vec3::X),
-            underwater: self.camera.position.z < self.world.main_water_height(),
-        };
+        // the 3D sound for headphones (Aurora's own; off: panned)
+        let binaural = crate::scene::sounds::binaural_forced().unwrap_or(self.settings.audio.sound_hrtf);
+        let listener = crate::scene::sounds::Listener::looking(
+            self.camera.position,
+            self.camera.target - self.camera.position,
+            self.camera.position.z < self.world.main_water_height(),
+            binaural,
+        );
         let now = Instant::now();
         sounds.update(engine, &self.world, &listener, now);
         // what stands between each sound and the listener (Aurora's own)
@@ -6141,7 +6143,7 @@ impl App {
                 let Some(picked) = self.click_pick() else {
                     return true;
                 };
-                let (_, target) = self.scene.selection_pick(
+                let (_, target) = self.scene.left_selection_pick(
                     &self.world,
                     picked.ray,
                     picked.depth,
@@ -6214,7 +6216,7 @@ impl App {
             let ray = self.build.cam.ray(x, y);
             let target = self
                 .scene
-                .edit_ray_hits(
+                .left_edit_ray_hits(
                     &self.world,
                     ray,
                     false,
@@ -6229,7 +6231,7 @@ impl App {
                 return false;
             };
             let (hit, target) = if matches!(self.build.tool, crate::build::Tool::Edit | crate::build::Tool::Grab) {
-                self.scene.selection_pick(
+                self.scene.left_selection_pick(
                     &self.world,
                     picked.ray,
                     picked.depth,
@@ -6258,7 +6260,7 @@ impl App {
         };
         // the surface under the cursor: face tool, grab surface info
         let surface = match (self.build.tool, target) {
-            (crate::build::Tool::Edit | crate::build::Tool::Grab, Some(i)) => self.scene.touch_surface(&self.world, i, ray),
+            (crate::build::Tool::Edit | crate::build::Tool::Grab, Some(i)) => self.scene.left_touch_surface(&self.world, i, ray),
             _ => None,
         };
         let used = self.build.mouse_down(
@@ -7940,6 +7942,10 @@ impl App {
             crate::demo::tangents::tick(&mut self.world, &mut self.scene, self.frame_count);
             crate::demo::rigged_prop::tick(&mut self.world, &mut self.scene, self.frame_count);
             if let Some(e) = crate::demo::conference::tick().and_then(|ev| self.world.apply(ev)) {
+                self.on_app_event(e);
+            }
+            // AURORA_DEMO_SOUND_HRTF: the sounds around the listener
+            if let Some(e) = crate::demo::sound_hrtf::tick(self.camera.position).and_then(|ev| self.world.apply(ev)) {
                 self.on_app_event(e);
             }
         }
@@ -18366,6 +18372,20 @@ impl ApplicationHandler for App {
             }
             // AURORA_DEMO_SOUND_OCCLUSION=1: three looping sources, in the
             // open, behind a wall and shut in a box
+            // AURORA_DEMO_SOUND_HRTF=1|circle|updown: a sound circling the
+            // listener and one rising above it and falling (moved by
+            // `demo::sound_hrtf::tick`)
+            if crate::demo::sound_hrtf::active() {
+                self.world.agent.get_off(crate::demo::sound_hrtf::start());
+                for (id, clip) in crate::demo::sound_hrtf::sounds() {
+                    self.scene.sounds.insert(id, clip);
+                }
+                for ev in crate::demo::sound_hrtf::events() {
+                    if let Some(e) = self.world.apply(ev) {
+                        self.on_app_event(e);
+                    }
+                }
+            }
             if crate::demo::sound_occlusion::active() {
                 self.world.agent.get_off(crate::demo::sound_occlusion::start());
                 for (id, clip) in crate::demo::sound_occlusion::sounds() {

@@ -1545,7 +1545,8 @@ mod tests {
             for z in 0..N {
                 let a = y * (N + 1) + z;
                 let b = a + N + 1;
-                indices.extend([a, b, a + 1, a + 1, b, b + 1]);
+                // Face the camera at negative X, as the visible mesh does.
+                indices.extend([a, a + 1, b, a + 1, b + 1, b]);
             }
         }
         assert!(indices.len() >= crate::scene::pick_accel::MIN_TRIANGLES * 3);
