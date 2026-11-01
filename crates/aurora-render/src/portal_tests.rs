@@ -1,5 +1,6 @@
 //! Render the production fragment cut: CPU picking and every surface pass
 //! must agree at the oval's sides/corners, from both entry directions.
+use crate::pipeline_cache::CachedPipelines;
 use crate::{DrawRecord, PORTAL_HALF_HEIGHT, PORTAL_HALF_WIDTH, PortalClip, arena::RecordStore, types::flags};
 use glam::Vec3;
 use wgpu::util::DeviceExt;
@@ -146,7 +147,7 @@ fn water_clip(p:vec3<f32>){{}}
         label: Some("production portal cut"),
         source: wgpu::ShaderSource::Wgsl(source.into()),
     });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
         label: Some("portal aperture regression"),
         layout: None,
         vertex: wgpu::VertexState {

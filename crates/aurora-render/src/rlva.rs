@@ -1,6 +1,7 @@
 //! RLVa sphere post effects (rlveffects.cpp and deferred/rlvF.glsl,
 //! originally LGPL 2.1). Targets and passes exist only while an effect is active.
 use crate::SphereEffect;
+use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 pub(crate) mod overlay;
@@ -74,7 +75,7 @@ impl Spheres {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some("RLVa spheres"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {

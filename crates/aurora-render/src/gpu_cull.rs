@@ -19,6 +19,7 @@
 //! the compute culling and its bins ([`GpuCull`]) are the render thread's,
 //! which gets the tables' buffers and sizes with each frame packet.
 
+use crate::pipeline_cache::CachedPipelines;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -979,7 +980,7 @@ impl GpuCull {
                 bind_group_layouts: &[Some(layout)],
                 immediate_size: 0,
             });
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&pl),
                 module: &module,

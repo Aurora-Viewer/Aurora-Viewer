@@ -1,6 +1,7 @@
 //! Local visual water only. The simulator remains authoritative for motion.
 //! A world-anchored height/velocity/foam field runs on the GPU; no readback.
 
+use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 use glam::Vec2;
 
@@ -294,7 +295,7 @@ impl WaterGpu {
                 include_str!("shaders/water_sim.wgsl"),
             )),
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
             label: Some("water simulation"),
             layout: None,
             module: &module,
@@ -360,7 +361,7 @@ impl WaterGpu {
             dst_factor: wgpu::BlendFactor::One,
             operation: wgpu::BlendOperation::Add,
         };
-        let caustics_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let caustics_pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some("refracted water caustics"),
             layout: None,
             vertex: wgpu::VertexState {
@@ -703,7 +704,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
                 .into(),
             ),
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
             label: None,
             layout: None,
             module: &shader,
@@ -811,7 +812,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
             label: Some("CPU contact / rendered swell agreement"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
             label: None,
             layout: None,
             module: &shader,

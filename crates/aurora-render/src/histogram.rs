@@ -3,6 +3,7 @@
 //! ask for it, and read back without waiting (the counts come a few frames
 //! later, which a histogram does not mind).
 
+use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -81,7 +82,7 @@ impl Histogram {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
             label: Some("histogram"),
             layout: Some(&pipeline_layout),
             module: &module,

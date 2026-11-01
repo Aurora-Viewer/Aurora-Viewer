@@ -1837,6 +1837,7 @@ pub fn preserve_alpha_coverage(mips: &mut [(u32, u32, Vec<u8>)], cutoff: u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline_cache::CachedPipelines;
     use crate::writes::QueueSink;
 
     /// A 64 × 64 grid of one-texel opaque lines every 4 texels (a fence or
@@ -3158,7 +3159,7 @@ mod tests {
             bind_group_layouts: &[Some(&table.layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: None,
             layout: Some(&layout),
             vertex: wgpu::VertexState {

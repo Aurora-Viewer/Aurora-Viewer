@@ -35,6 +35,7 @@ mod occlusion;
 pub mod pacing;
 mod packet;
 mod pick;
+pub mod pipeline_cache;
 #[cfg(test)]
 mod portal_tests;
 pub mod present;
@@ -49,6 +50,7 @@ mod shadow_merge;
 #[cfg(test)]
 mod specular_aa;
 pub mod stars;
+pub mod start_progress;
 pub mod stereo_view;
 #[cfg(test)]
 mod terrain_tests;
@@ -158,6 +160,8 @@ pub(crate) fn common_shader_source() -> std::borrow::Cow<'static, str> {
 
 #[cfg(test)]
 mod shader_tests {
+    use crate::pipeline_cache::CachedPipelines;
+
     #[test]
     fn rlva_sphere_shader_is_valid() {
         validate(include_str!("shaders/rlva.wgsl"));
@@ -335,7 +339,7 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
                 if hardware && features.is_empty() {
                     continue;
                 }
-                let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
                     label: Some("water mesh depth"),
                     layout: None,
                     vertex: wgpu::VertexState {
@@ -471,7 +475,7 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
             1,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         );
-        let interface_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let interface_pipe = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some("production water interface ordering"),
             layout: None,
             vertex: wgpu::VertexState {
@@ -637,7 +641,7 @@ struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32
             immediate_size: 0,
         });
         let make_pipe = |entry: &str| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -862,7 +866,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
             label: Some("water fog boundary regression"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
             label: Some("water fog boundary regression"),
             layout: None,
             module: &shader,

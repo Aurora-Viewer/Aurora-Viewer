@@ -8693,6 +8693,7 @@ What the inventory must show with these scenarios:
 | `AURORA_VULKAN_DRIVERS=keep` | Loads Dozen (Vulkan on Direct3D 12) when installed, which the viewer keeps out |
 | `AURORA_GPU=<number>`, `<name>` or `auto` | The GPU to draw with for this launch, over Preferences › Graphics |
 | `AURORA_GPU_START_FAIL=1` | Start as if no graphics card could draw the window: the message the user gets then |
+| `AURORA_PIPELINE_CACHE=0` | No pipeline cache of Aurora's own: every pipeline compiled by the driver, or taken from its own cache, as before |
 | `AURORA_HOVER_CHECK=1` | Diagnostics of the hover cursor |
 | `AURORA_CLICK_PICK=wait` or `check` | Depth under a click read by waiting for the GPU, or checked |
 | `AURORA_HOVER_LEGACY=1` or `ab` | Search for the object under the cursor as before the classes and the triangle hierarchies |
@@ -8805,6 +8806,17 @@ What the inventory must show with these scenarios:
   report: it is no crash); it now shows a native error box with what to try
   and the log's path, then exits. Automated captures (`AURORA_CAPTURE`) skip
   the box. The same box shows when the window itself cannot be created.
+- **`AURORA_PIPELINE_CACHE=0`**: the renderer makes its pipelines without
+  Aurora's cache (`aurora-render/src/pipeline_cache.rs`), as before: the
+  driver compiles each one, or takes it from its own disk cache when that
+  still holds it. To see a cold start without emptying the driver's cache,
+  point NVIDIA's at an empty folder for one launch:
+  `__GL_SHADER_DISK_CACHE_PATH=<empty folder>` (honoured by the Vulkan
+  driver on Windows, checked 2026-11-01: the folder fills, and the next
+  launch with the same folder is warm). The log says `pipeline cache: … read
+  for <n> pipelines`, `… not used (<reason>)` or `none yet`, then
+  `pipelines at start: <n> made in <ms>` with the three slowest. Its file
+  is `<cache>/pipelines/<wgpu key>.bin` (`cache\demo\pipelines` in demo).
 - **`AURORA_BANDWIDTH_KBPS=<n>`**: the "Maximum bandwidth" of Preferences ›
   Network and cache for this launch, without changing the saved setting,
   from 100 to 10,000. A session first asks its simulator for one and a
