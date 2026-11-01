@@ -1461,7 +1461,8 @@ impl BuildTool {
     }
 
     /// Ctrl+D: copies 0.5 m away, selected (LLSelectMgr::duplicate).
-    pub fn duplicate(&mut self, world: &mut World, offset: Vec3, select_copy: bool) {
+    /// Group selection follows packDuplicateHeader (indra/newview/llselectmgr.cpp).
+    pub fn duplicate(&mut self, world: &mut World, s: &BuildSettings, offset: Vec3, select_copy: bool) {
         if self.attachment_selected(world) {
             return;
         }
@@ -1480,7 +1481,7 @@ impl BuildTool {
                 local_ids: ids,
                 offset,
                 flags,
-                group_id: Uuid::nil(),
+                group_id: world.group_for_rez(s.rez_under_land_group),
             });
         }
     }
@@ -2136,7 +2137,7 @@ impl BuildTool {
             self.send(BuildCmd::DuplicateOnRay {
                 handle,
                 local_ids,
-                group_id: Uuid::nil(),
+                group_id: world.group_for_rez(s.rez_under_land_group),
                 ray_start,
                 ray_end,
                 ray_target,

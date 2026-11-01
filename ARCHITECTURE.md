@@ -2986,7 +2986,8 @@ take their species texture whatever their texture entry says, alpha-tested
 at 0.5, so they cast shadows and are picked through their cut-out.
 
 `World::group_for_rez` shares the agent-parcel membership / active-group
-fallback rule between inventory rezzing, the Create tool and `rezplat`.
+fallback rule between inventory rezzing, the Create tool, `rezplat`, Ctrl+D
+and Create > Copy selection.
 The demo simulator retains the group supplied by each creation request for
 its property replies.
 

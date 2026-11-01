@@ -759,6 +759,77 @@ fn creation_rez_group_reaches_prim_plant_and_demo_properties() {
 }
 
 #[test]
+fn copy_selection_uses_the_current_rez_group_on_land_and_objects() {
+    let (mut world, mut tool, mut settings) = fixture();
+    for event in crate::demo::demo_reply(&NetCommand::RequestGroups) {
+        world.apply(event);
+    }
+    let land = world.groups.groups[0].id;
+    let active = Uuid::from_u128(8800);
+    let nil = Uuid::nil();
+    let source = object(&world, 99610);
+    let source_key = world.objects.get(source).unwrap().key;
+    let target = object(&world, 99614);
+    settings.copy_selection = true;
+    settings.copy_centers = true;
+    settings.copy_rotates = false;
+    for (active, parcel, under_land, expected) in [
+        (active, Some(land), true, land),
+        (active, Some(land), false, active),
+        (active, Some(Uuid::from_u128(8899)), true, active),
+        (active, Some(nil), true, active),
+        (active, None, true, active),
+        (nil, Some(land), true, land),
+        (nil, Some(land), false, nil),
+        (nil, None, true, nil),
+    ] {
+        world.apply(NetEvent::ActiveGroup {
+            id: active,
+            name: "Active group".into(),
+            title: "Builder".into(),
+        });
+        world.parcel = parcel.map(|group_id| {
+            Arc::new(aurora_net::ParcelInfo {
+                group_id,
+                ..Default::default()
+            })
+        });
+        settings.rez_under_land_group = under_land;
+        for target in [None, Some(target)] {
+            tool.click_select(&mut world, &settings, Some(source), false);
+            tool.open_build(Tool::Create);
+            tool.out.clear();
+            let point = world.agent.position + Vec3::X * 5.0;
+            assert!(tool.mouse_down(&mut world, &mut settings, Some(point), target, None, (0.0, 0.0), Mods::default()));
+            let copies: Vec<_> = tool
+                .out
+                .iter()
+                .filter_map(|command| match command {
+                    NetCommand::Build(BuildCmd::DuplicateOnRay {
+                        group_id,
+                        local_ids,
+                        bypass_raycast,
+                        ray_target,
+                        copy_centers,
+                        copy_rotates,
+                        ..
+                    }) => {
+                        assert_eq!(local_ids, &[99610]);
+                        assert_eq!(*bypass_raycast, target.is_none());
+                        assert_eq!(*ray_target, target.map_or(nil, |idx| world.objects.get(idx).unwrap().full_id));
+                        assert!(*copy_centers && !*copy_rotates);
+                        Some(*group_id)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(copies, [expected]);
+            assert_eq!(tool.selection, [source_key], "Copy selection retains the original selection");
+        }
+    }
+}
+
+#[test]
 fn primitive_placement_and_deletion_round_trip_through_the_demo_simulator() {
     let (mut world, mut tool, mut settings) = fixture();
     tool.open_build(Tool::Create);
