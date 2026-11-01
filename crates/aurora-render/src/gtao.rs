@@ -62,11 +62,24 @@ const INDIRECT_RADIUS: f32 = 1.5;
 const BENT_BLUR: u32 = 3;
 /// Blur passes of the indirect light beyond the occlusion's.
 const INDIRECT_EXTRA_BLUR: u32 = 4;
-/// The accumulation: the current frame's least weight (the history then
-/// holds about ten frames), and the half width of the neighbourhood the
-/// history is clipped to, in standard deviations.
-const TEMPORAL_MIN_WEIGHT: f32 = 0.1;
+/// The accumulation: the current frame's least weight with the motion
+/// vectors (the history then holds about thirty frames) and without them
+/// (`AURORA_GTAO_NORMALS=depth`: about ten, as before them, since what
+/// moved on its own would trail), the same where the point moves on screen by
+/// a pixel a frame or more (about ten frames: the long history lagged
+/// behind the camera, and the motion hides the grain it quiets), and the
+/// half width of the neighbourhood the history is clipped to, in standard
+/// deviations.
+const TEMPORAL_MIN_WEIGHT: f32 = 0.03;
+const TEMPORAL_DEPTH_MIN_WEIGHT: f32 = 0.1;
+const TEMPORAL_MOVING_WEIGHT: f32 = 0.1;
 const TEMPORAL_CLIP: f32 = 1.25;
+/// Where the point moved on its own (its motion parts from the camera's): the
+/// current frame's least weight (about five frames) and the clip's half width.
+/// Its occlusion can change because it moved (a hem lifting off the ground
+/// keeps the ground's), and GTAO's wide grain leaves the usual clip loose.
+const TEMPORAL_OWN_WEIGHT: f32 = 0.2;
+const TEMPORAL_OWN_CLIP: f32 = 0.6;
 /// Times more slices on a frame that accumulates without a history.
 const NO_HISTORY_SLICES: u32 = 4;
 /// Frames the noise goes through before it repeats (XeGTAO's 64).
@@ -414,6 +427,8 @@ struct GtaoU {
     temporal: [f32; 4],
     /// A mat3x3 (columns padded to four).
     normal_view: [[f32; 4]; 3],
+    /// Least weight and clip where the point moved on its own.
+    own: [f32; 4],
 }
 
 /// The constants of a frame drawn with `proj` into targets of `size`;
@@ -451,13 +466,20 @@ fn uniforms(
             if normals.is_some() { 1.0 } else { 0.0 },
         ],
         reproj: reproj.to_cols_array_2d(),
-        il: [INDIRECT_THICKNESS, INDIRECT_RADIUS, intensity, 0.0],
-        temporal: [noise, if history { 0.0 } else { 1.0 }, TEMPORAL_MIN_WEIGHT, TEMPORAL_CLIP],
+        il: [INDIRECT_THICKNESS, INDIRECT_RADIUS, intensity, TEMPORAL_MOVING_WEIGHT],
+        temporal: [noise, if history { 0.0 } else { 1.0 }, min_weight(normals.is_some()), TEMPORAL_CLIP],
         normal_view: normals.map_or([[0.0; 4]; 3], |view| {
             let m = normal_view(view);
             [m.x_axis.extend(0.0), m.y_axis.extend(0.0), m.z_axis.extend(0.0)].map(|c| c.to_array())
         }),
+        own: [TEMPORAL_OWN_WEIGHT, TEMPORAL_OWN_CLIP, 0.0, 0.0],
     }
+}
+
+/// The current frame's least weight in the accumulation: the long history
+/// only where the prepass writes the motion (with the mesh normals).
+fn min_weight(motion: bool) -> f32 {
+    if motion { TEMPORAL_MIN_WEIGHT } else { TEMPORAL_DEPTH_MIN_WEIGHT }
 }
 
 /// The rotation from world directions to the view space of the GTAO pass
@@ -608,10 +630,11 @@ const RESULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const META_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 /// The indirect light while it is blurred, and its result.
 const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// The mesh normals of the depth prepass (octahedral, two halves: the
+/// The mesh normals of the depth prepass (xy, octahedral, halves: the
 /// G-buffer's eight bits per channel would show steps in a smooth
-/// occlusion).
-pub(crate) const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+/// occlusion), and the motion of each pixel (zw, `screen_motion` in
+/// common.wgsl).
+pub(crate) const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 impl Gtao {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
@@ -668,6 +691,7 @@ impl Gtao {
                     uniform_entry(),
                     texture_entry(4, UNFILTERED),
                     texture_entry(7, UNFILTERED),
+                    texture_entry(11, UNFILTERED),
                     texture_entry(15, UNFILTERED),
                     texture_entry(16, wgpu::TextureSampleType::Uint),
                     storage_entry(17, AO_FORMAT),
@@ -878,6 +902,7 @@ impl Gtao {
                 &[
                     (4, &all_mips),
                     (7, &ao),
+                    (11, &normals),
                     (15, &hist[1 - i]),
                     (16, &meta[1 - i]),
                     (17, &hist[i]),
@@ -1183,6 +1208,11 @@ mod tests {
         assert!(glam::Mat3::from_cols(col(0), col(1), col(2)).abs_diff_eq(m, 1e-6));
         let off = uniforms(proj, Mat4::IDENTITY, 1.0, (64, 64), quality(2), None, None);
         assert_eq!(off.misc[3], 0.0);
+        // the long history only where the prepass writes the motion
+        assert_eq!(on.temporal[2], TEMPORAL_MIN_WEIGHT);
+        assert_eq!(off.temporal[2], TEMPORAL_DEPTH_MIN_WEIGHT);
+        // a point that moved on its own keeps a shorter, tighter history
+        assert_eq!(on.own[..2], [TEMPORAL_OWN_WEIGHT, TEMPORAL_OWN_CLIP]);
     }
 
     /// The history targets take turns while frames follow each other; a

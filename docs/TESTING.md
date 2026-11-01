@@ -8571,6 +8571,7 @@ What the inventory must show with these scenarios:
 | `AURORA_GTAO_SPECULAR=0` or `alt` | GTAO without its specular occlusion (reflections in creases), as before |
 | `AURORA_GTAO_TEMPORAL=0` or `alt` | GTAO without its accumulation over the frames (fixed noise, finer grain), as before |
 | `AURORA_GTAO_NORMALS=depth` or `alt` | GTAO with the normal rebuilt from the depth (facets on low-poly meshes), as before |
+| `AURORA_DEBUG_MOTION=1` | The screen's motion vectors shown instead of the image |
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
@@ -8858,6 +8859,21 @@ What the inventory must show with these scenarios:
   back, the waist and the skirt of our avatar, and the large sphere behind
   the material panels, where the lines of the mesh's creases showed;
   `AURORA_DEMO_SKY=1,0.8,1.2` for a sky with strong ambient light.
+- **`AURORA_DEBUG_MOTION=1`**: the motion vectors replace the image
+  (`motion_debug.rs`, `shaders/motion_debug.wgsl`): the hue gives the
+  direction a point moved on screen since the last frame (red left, cyan
+  right, violet down), the brightness its length (two thirds of full
+  brightness at about 8 pixels a frame), a dim grey where nothing moves
+  (darker for the sky). The depth prepass writes them beside GTAO's
+  normals (`depth_normal` in object.wgsl, from the last frame's matrices
+  and joint palettes, `motion_history.rs`), so only while GTAO uses the
+  mesh normals; elsewhere, and where nothing was drawn, the camera's
+  motion alone is shown. Lip morphs and other morphs count as still. With
+  `AURORA_DEMO_CAMERA=alt,640,400` capture frame 645 (the orbit: the sky
+  one colour, the terrain shading through black where it crosses the
+  pivot's distance); with `AURORA_DEMO_CAMERA=close,640,500,45` frame 625
+  (the zoom: colours fanning out from the focus, the still objects the
+  colour of the terrain behind them); frame 700 of the first is all grey.
 - **`AURORA_SSIL=1|0|alt`**: Preferences › Graphics › Indirect light
   (GTAO) for this launch, without changing the saved setting; it needs the
   GTAO method. A pass after GTAO's gathers the light on a visibility
