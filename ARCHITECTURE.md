@@ -2736,6 +2736,9 @@ pose. `backend.rs` reads generic joysticks through gilrs-core and SpaceMouse
 HID reports through hidapi on one worker; the frame copies a bounded latest
 snapshot without waiting. `Controller` applies mapping, dead zones, gain,
 button edges, focus/stale-input gating and re-centring after changes.
+Relative channels re-arm independently; absolute zoom needs no centre.
+Mode switches retain button edges while clearing held movement, so an
+off-centre axis cannot block the flycam toggle or the other controls.
 `app/joystick.rs` joins avatar input to the existing simulator controls and
 running state; the independent flycam pose is shown by `camera::Camera`,
 including roll, zoom and region-origin shifts. It is cleared by reset,

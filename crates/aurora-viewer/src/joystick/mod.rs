@@ -194,9 +194,10 @@ pub struct Controller {
     source: String,
     settings: Option<Settings>,
     flycam: bool,
-    armed: bool,
+    armed: [bool; CHANNELS],
+    buttons_armed: u32,
     filtered: [f32; CHANNELS],
-    presses: [u64; BUTTONS],
+    presses: Option<[u64; BUTTONS]>,
 }
 
 fn finite(value: f32, fallback: f32) -> f32 {
@@ -219,9 +220,15 @@ fn mapped(d: &Device, s: &Settings, tune: &Tuning) -> [f32; CHANNELS] {
 }
 
 impl Controller {
-    pub fn reset(&mut self) {
-        self.armed = false;
+    fn reset_motion(&mut self) {
+        self.armed = [false; CHANNELS];
+        self.buttons_armed = 0;
         self.filtered = [0.0; CHANNELS];
+    }
+
+    fn reset(&mut self) {
+        self.reset_motion();
+        self.presses = None;
     }
 
     /// Re-centre after a focus change, device change, tuning change or mode
@@ -234,40 +241,57 @@ impl Controller {
             self.reset();
             return Motion::default();
         };
-        if self.source != d.id || self.settings.as_ref() != Some(s) || self.flycam != flycam {
+        if self.source != d.id || self.settings.as_ref() != Some(s) {
             self.source.clone_from(&d.id);
             self.settings = Some(s.clone());
-            self.flycam = flycam;
             self.reset();
         }
+        if self.flycam != flycam {
+            self.flycam = flycam;
+            // Keep button edges across a mode switch: scanJoystick checks
+            // the flycam toggle independently of moveAvatar/moveFlycam.
+            self.reset_motion();
+        }
         let tune = if flycam { &s.flycam } else { &s.avatar };
-        let target = mapped(d, s, tune);
-        if !self.armed {
-            self.presses = d.presses;
-            self.armed = d.buttons == 0 && target.iter().all(|v| v.abs() < 0.0001);
-            return Motion::default();
+        let mut target = mapped(d, s, tune);
+        if !flycam {
+            // The avatar has neither roll nor lens zoom.
+            target[3] = 0.0;
+            target[6] = 0.0;
+        }
+        // A trigger or an absolute zoom axis may rest away from zero.
+        // Re-centre each relative channel independently, so one such axis
+        // cannot lock the other axes or the button used to leave flycam.
+        for (i, goal) in target.iter_mut().enumerate() {
+            self.armed[i] |= goal.abs() < 0.0001 || (flycam && i == 6 && s.direct_zoom);
+            if !self.armed[i] {
+                *goal = 0.0;
+            }
+        }
+        let mut new_buttons = 0;
+        if let Some(previous) = self.presses.replace(d.presses) {
+            for (n, (&now, before)) in d.presses.iter().zip(previous).enumerate() {
+                if now != before {
+                    new_buttons |= 1 << n;
+                }
+            }
         }
         let pressed = |button: i8| {
             usize::try_from(button)
                 .ok()
                 .filter(|n| *n < BUTTONS)
-                .is_some_and(|n| d.presses[n] != self.presses[n])
+                .is_some_and(|n| new_buttons & (1 << n) != 0)
         };
         let toggle_flycam = s.flycam_enabled && pressed(s.flycam_button);
         let jump_pressed = !flycam && s.avatar_enabled && pressed(s.jump_button);
+        self.buttons_armed |= !d.buttons | new_buttons;
         let held = |button: i8| {
             usize::try_from(button)
                 .ok()
                 .filter(|n| *n < BUTTONS)
-                .is_some_and(|n| d.buttons & (1 << n) != 0)
+                .is_some_and(|n| d.buttons & self.buttons_armed & (1 << n) != 0)
         };
-        let jump = !flycam
-            && s.avatar_enabled
-            && usize::try_from(s.jump_button)
-                .ok()
-                .filter(|n| *n < BUTTONS)
-                .is_some_and(|n| d.buttons & (1 << n) != 0);
-        self.presses = d.presses;
+        let jump = !flycam && s.avatar_enabled && held(s.jump_button);
         if (flycam && !s.flycam_enabled) || (!flycam && !s.avatar_enabled) {
             self.filtered = [0.0; CHANNELS];
             return Motion {
@@ -407,5 +431,128 @@ mod tests {
         assert!(!c.sample(&snap, &chosen, true, false, 0.1).moving());
         snap.updated = Some(Instant::now() - std::time::Duration::from_secs(1));
         assert!(!c.sample(&snap, &s, true, false, 0.1).moving());
+    }
+
+    #[test]
+    fn joystick_flycam_toggle_survives_held_axes_and_rapid_mode_changes() {
+        let (mut snap, s, mut c) = fixture();
+        c.sample(&snap, &s, true, false, 0.1);
+        snap.devices[0].axes[1] = -0.8;
+        snap.devices[0].button(0, true);
+        assert!(c.sample(&snap, &s, true, false, 0.1).toggle_flycam);
+        // The next complete press can arrive before the first flycam frame.
+        snap.devices[0].button(0, false);
+        snap.devices[0].button(0, true);
+        snap.devices[0].button(0, false);
+        let exit = c.sample(&snap, &s, true, true, 0.1);
+        assert!(exit.toggle_flycam);
+        assert!(!exit.moving(), "held movement still waits for its own neutral");
+        assert!(!c.sample(&snap, &s, true, false, 0.1).toggle_flycam);
+        snap.devices[0].button(0, true);
+        assert!(c.sample(&snap, &s, true, false, 0.1).toggle_flycam);
+        assert!(!c.sample(&snap, &s, true, true, 0.1).toggle_flycam, "a held toggle is not replayed");
+        snap.devices[0].axes[1] = 0.0;
+        c.sample(&snap, &s, true, true, 0.1);
+        snap.devices[0].axes[1] = -0.8;
+        assert!(c.sample(&snap, &s, true, true, 0.1).axes[0] > 0.0);
+    }
+
+    #[test]
+    fn joystick_enabling_zoom_cannot_lock_other_axes_or_buttons() {
+        let (mut snap, mut s, mut c) = fixture();
+        c.sample(&snap, &s, true, true, 0.1);
+        // An unsigned trigger is reported as -1 at rest by the raw backend.
+        snap.devices[0].axes[6] = -1.0;
+        s.mapping[6] = 6;
+        s.flycam.gain[6] = 0.5;
+        c.sample(&snap, &s, true, true, 0.1);
+        snap.devices[0].axes[1] = -0.8;
+        snap.devices[0].button(0, true);
+        let m = c.sample(&snap, &s, true, true, 0.1);
+        assert!(m.axes[0] > 0.0);
+        assert_eq!(m.axes[6], 0.0, "relative zoom still needs its own neutral");
+        assert!(m.toggle_flycam);
+        snap.devices[0].axes[6] = 0.0;
+        c.sample(&snap, &s, true, true, 0.1);
+        snap.devices[0].axes[6] = -0.5;
+        let m = c.sample(&snap, &s, true, true, 0.1);
+        let mut cam = flycam::Flycam::from_view(glam::Vec3::ZERO, glam::Vec3::X, glam::Vec3::Z, 1.0);
+        cam.step(m.axes, &s, 0.1);
+        assert!(cam.fov > 1.0, "an armed zoom channel still reaches the lens");
+    }
+
+    #[test]
+    fn joystick_fresh_movement_buttons_work_on_the_first_frame_after_a_mode_switch() {
+        let (mut snap, mut s, mut c) = fixture();
+        s.rise_button = 4;
+        c.sample(&snap, &s, true, false, 0.1);
+        snap.devices[0].button(4, true);
+        assert!(c.sample(&snap, &s, true, true, 0.1).rise);
+        snap.devices[0].button(1, true);
+        let m = c.sample(&snap, &s, true, false, 0.1);
+        assert!(m.jump && m.jump_pressed, "the jump press arrived after the mode switch");
+        assert!(!m.rise, "the rise button was already held in flycam");
+        assert!(c.sample(&snap, &s, true, false, 0.1).jump, "a fresh press can stay held");
+    }
+
+    #[test]
+    fn joystick_absolute_zoom_does_not_require_a_centre_position() {
+        let (mut snap, mut s, mut c) = fixture();
+        s.mapping[6] = 6;
+        s.flycam.gain[6] = 0.5;
+        s.direct_zoom = true;
+        snap.devices[0].axes[6] = 0.8;
+        assert!(c.sample(&snap, &s, true, true, 0.1).axes[6] < 0.0);
+        snap.devices[0].axes[1] = -0.8;
+        snap.devices[0].button(0, true);
+        let m = c.sample(&snap, &s, true, true, 0.1);
+        assert!(m.axes[0] > 0.0 && m.axes[6] < 0.0 && m.toggle_flycam);
+    }
+
+    #[test]
+    fn joystick_avatar_ignores_unused_roll_and_zoom_channels() {
+        let (mut snap, mut s, mut c) = fixture();
+        for n in [3, 6] {
+            s.mapping[n] = 6;
+            s.avatar.gain[n] = 1.0;
+            s.avatar.dead_zone[n] = 0.0;
+        }
+        snap.devices[0].axes[6] = -1.0;
+        c.sample(&snap, &s, true, false, 0.1);
+        snap.devices[0].axes[1] = -0.8;
+        snap.devices[0].button(0, true);
+        let m = c.sample(&snap, &s, true, false, 0.1);
+        assert!(m.axes[0] > 0.0 && m.toggle_flycam);
+        assert_eq!((m.axes[3], m.axes[6]), (0.0, 0.0));
+    }
+
+    #[test]
+    fn joystick_reacquisition_suppresses_old_buttons_without_blocking_new_input() {
+        let (mut snap, mut s, mut c) = fixture();
+        s.rise_button = 4;
+        c.sample(&snap, &s, true, false, 0.1);
+        snap.devices[0].axes[1] = -0.8;
+        snap.devices[0].button(0, true);
+        snap.devices[0].button(1, true);
+        snap.devices[0].button(4, true);
+        c.sample(&snap, &s, false, false, 0.1);
+        let m = c.sample(&snap, &s, true, false, 0.1);
+        assert!(!m.moving() && !m.toggle_flycam && !m.jump_pressed);
+        // A fresh toggle works even while other buttons and an axis stay held.
+        snap.devices[0].button(0, false);
+        snap.devices[0].button(0, true);
+        let m = c.sample(&snap, &s, true, false, 0.1);
+        assert!(m.toggle_flycam && !m.moving() && !m.jump_pressed);
+        snap.devices[0].axes[1] = 0.0;
+        c.sample(&snap, &s, true, false, 0.1);
+        snap.devices[0].axes[1] = -0.8;
+        assert!(c.sample(&snap, &s, true, false, 0.1).axes[0] > 0.0);
+        snap.devices[0].button(1, false);
+        snap.devices[0].button(4, false);
+        c.sample(&snap, &s, true, false, 0.1);
+        snap.devices[0].button(1, true);
+        snap.devices[0].button(4, true);
+        let m = c.sample(&snap, &s, true, false, 0.1);
+        assert!(m.jump && m.jump_pressed && m.rise);
     }
 }

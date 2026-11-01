@@ -331,7 +331,7 @@ the background still applies outside screenshots.
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_JOYSTICK=preferences\|axes\|avatar\|flycam\|roll` | Synthetic joystick input, its preferences or an independent six-axis camera flight |
+| `AURORA_DEMO_JOYSTICK=preferences\|axes\|avatar\|flycam\|roll\|rearm` | Synthetic joystick input, its preferences or an independent six-axis camera flight |
 | `AURORA_CAPTURE=<file.png>` | Saves a screenshot of the frame |
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
@@ -362,12 +362,24 @@ or a grid. `preferences` opens Mouse and keyboard › Joystick and 3D mouse;
 `axes` filters the axis mapping rows in preference search; `avatar` walks and turns;
 `flycam` starts at frame 630 and moves after 650;
 `roll` also enables roll and disables auto-level. Capture after frame 900.
+`rearm` keeps a relative zoom axis at -1, enters flycam with a synthetic
+button press at frame 630 and leaves it at 750 while movement is held.
+The other axes centre at 770 and move the avatar again from 800.
+Capture at `700,760,830`: camera flight, stopped movement after leaving,
+then avatar movement. The log records the flycam state and motion axes at
+701, 761 and 831; the zoom channel stays zero throughout. Keep the viewer
+running past frame 831 to include all three log entries.
 The avatar must stay put in the two camera scenarios. Compare the photo
 free camera (`AURORA_DEMO_CONTROLS=free`) and normal camera controls as well.
 Hardware validation: select the real device, enable input, apply Gamepad or
 SpaceMouse, centre its axes and release its buttons; check the live input,
 walking, sliding, looking, jump held to fly and a press to land. Start and
 stop flycam with its configured button or Alt+Shift+F, and return with Escape.
+Repeat the toggle while holding a movement stick, including a quick second
+press. Configure zoom on an axis that rests away from zero: the other axes
+and the flycam button must still work. Direct zoom also accepts a non-zero
+initial position. After a focus change, release each held movement control
+before reusing it; fresh buttons must work even if another axis stays held.
 Check all six axes, inverted gain, zones, smoothing, focus loss, disconnect,
 reconnect and saved settings. On the grid, the human verifies simulator
 controls (including a seated vehicle), loading around the flycam, region

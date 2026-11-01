@@ -75,7 +75,6 @@ impl App {
             self.camera.retain_flycam_view(&mut self.world.agent, &self.settings.camera);
         }
         self.joystick.active = !self.joystick.active;
-        self.joystick.controller.reset();
         // Off keeps the current point of view until movement or Reset camera,
         // as LLViewerJoystick::toggleFlycam does.
         self.last_input = Instant::now();
@@ -183,11 +182,18 @@ impl App {
         }
         if !self.joystick.demo_started {
             self.joystick.demo_started = true;
+            if mode == "rearm" {
+                self.settings.joystick = Default::default();
+            }
             self.settings.joystick.enabled = true;
             self.settings.joystick.device = "demo-joystick".into();
             if mode == "roll" {
                 self.settings.joystick.auto_level = false;
                 self.settings.joystick.flycam.gain[3] = 1.0;
+            }
+            if mode == "rearm" {
+                self.settings.joystick.mapping[6] = 6;
+                self.settings.joystick.flycam.gain[6] = 0.5;
             }
             self.joystick.snapshot.devices = vec![crate::joystick::Device::new(
                 "demo-joystick".into(),
@@ -211,6 +217,27 @@ impl App {
             d.axes[5] = -0.5;
             if mode == "roll" {
                 d.axes[4] = 0.6;
+            }
+        }
+        if mode == "rearm" {
+            // A relative zoom axis that never centres must not prevent
+            // flycam entry/exit or movement on the other axes.
+            d.axes[6] = -1.0;
+            d.presses[0] = u64::from(self.frame_count >= 630) + u64::from(self.frame_count >= 750);
+            if matches!(self.frame_count, 630 | 750) {
+                d.buttons = 1;
+            }
+            if (770..800).contains(&self.frame_count) {
+                d.axes[1] = 0.0;
+                d.axes[5] = 0.0;
+            }
+            if matches!(self.frame_count, 701 | 761 | 831) {
+                log::info!(
+                    "joystick rearm: frame={} flycam={} axes={:?}",
+                    self.frame_count,
+                    self.joystick.active,
+                    self.joystick.motion.axes
+                );
             }
         }
         self.joystick.snapshot.devices = vec![d];
