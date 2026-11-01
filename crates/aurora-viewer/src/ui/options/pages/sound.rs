@@ -200,22 +200,24 @@ fn volumes(cx: &mut Cx) {
             tr!("ui-options-sounds-played-by-other-avatars-gestures"),
             &field!(audio.gesture_sounds),
         );
+        // The immersive sound (occlusion, 3D sound, reverb): Aurora's own and
+        // experimental, marked as such.
         // Aurora's own (scene/sound_occlusion.rs): off, as in the Legacy Viewer
-        cx.toggle(
+        cx.experimental().toggle(
             tr!("ui-options-sound-occlusion"),
             tr!("ui-options-sound-occlusion-help"),
             &field!(audio.sound_occlusion),
         );
         // Aurora's own (aurora-audio/src/hrtf.rs): off pans the sounds
         // between the ears, as in the Legacy Viewer
-        cx.toggle(
+        cx.experimental().toggle(
             tr!("ui-options-sound-hrtf"),
             tr!("ui-options-sound-hrtf-help"),
             &field!(audio.sound_hrtf),
         );
         // Aurora's own (scene/sound_reverb.rs): off plays every world sound
         // dry, as the Legacy Viewer
-        cx.toggle(
+        cx.experimental().toggle(
             tr!("ui-options-sound-reverb"),
             tr!("ui-options-sound-reverb-help"),
             &field!(audio.sound_reverb),
