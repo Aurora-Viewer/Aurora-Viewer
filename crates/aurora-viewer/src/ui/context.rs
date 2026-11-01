@@ -206,6 +206,8 @@ pub struct Facts {
     /// Our contact sets, for "Add to contact set" (getAllContactSets).
     pub contact_sets: Vec<String>,
     pub friend: bool,
+    /// RLVa `@startim` forbids an IM with this resident (RlvActions::canStartIM).
+    pub im_blocked: bool,
     /// EditLinkedParts.
     pub edit_linked: bool,
     /// ShowPropertyLines, shared with the World menu and terrain editor.
@@ -784,8 +786,11 @@ fn avatar_menu_reporting(
             act(CtxAction::Profile(id));
         }
     };
+    // "can_send_im" of FSNameListAvatarMenu: RLVa @startim greys IM and the
+    // call it would start (LLAvatarActions::startCall refuses it too)
+    let can_im = world.rlva_can_start_im(id);
     let im = |ui: &mut egui::Ui| {
-        if menu::item(ui, p, "message-circle-filled", aurora_i18n::tr!("ui-context-send-im")) {
+        if menu::item_if(ui, p, "message-circle-filled", aurora_i18n::tr!("ui-context-send-im"), can_im) {
             act(CtxAction::Im(id));
         }
     };
@@ -884,7 +889,7 @@ fn avatar_menu_reporting(
                 p,
                 "phone-filled",
                 aurora_i18n::tr!("common-voice-call"),
-                world.calls.voice_enabled,
+                world.calls.voice_enabled && can_im,
             ) {
                 act(CtxAction::Call(id));
             }
@@ -1002,7 +1007,10 @@ pub fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
     if menu::item(ui, p, "link-filled", aurora_i18n::tr!("common-copy-slurl-2")) {
         ui.ctx().copy_text(format!("secondlife:///app/group/{id}/about"));
     }
-    if menu::item(ui, p, "message-circle-filled", aurora_i18n::tr!("common-chat")) {
+    // RLVa @startim with the group (LLGroupActions::startIM / startCall
+    // refuse both): greyed here instead
+    let can_im = world.rlva_can_start_im(id);
+    if menu::item_if(ui, p, "message-circle-filled", aurora_i18n::tr!("common-chat"), can_im) {
         act(CtxAction::GroupChat(id));
     }
     // LLGroupActions::startCall (enabled with voice, isVoiceCallEnabled)
@@ -1011,7 +1019,7 @@ pub fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
         p,
         "phone-filled",
         aurora_i18n::tr!("common-voice-call"),
-        world.calls.voice_enabled,
+        world.calls.voice_enabled && can_im,
     ) {
         act(CtxAction::Call(id));
     }

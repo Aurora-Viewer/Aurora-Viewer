@@ -11910,6 +11910,7 @@ rlva-im-blocked-receive = *** IM blocked by your viewer
 rlva-im-blocked-send = *** IM blocked by sender's viewer
 rlva-im-blocked-receive-remote = The Resident you messaged is currently prevented from reading your instant messages at the moment, please try again later.
 rlva-im-blocked-teleport-remote = The Resident is currently prevented from accepting. Please try again later.
+rlva-blocked-script-dialog = Unable to show script dialog or textbox due to RLVa restrictions.
 rlva-hidden-generic = (Hidden)
 rlva-experience-maturity = Minimum experience rating for controllers
 rlva-experience-maturity-hint = None rejects every experience controller. The default accepts Moderate and Adult experiences.

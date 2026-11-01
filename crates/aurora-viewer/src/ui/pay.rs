@@ -104,6 +104,17 @@ fn parse_amount(text: &str) -> Option<i32> {
     text.trim().parse::<i32>().ok().filter(|v| *v > 0)
 }
 
+/// RLVa `@sendim` (LLFloaterPay::payDirectly): the payment message reaches
+/// the payee like an IM, so it is greyed, and emptied, while we may not send
+/// them one. The payment itself stays possible.
+fn message_allowed(world: &World, payee: &mut Payee) -> bool {
+    let allowed = world.rlva_allows_im("sendim", payee.id);
+    if !allowed {
+        payee.message.clear();
+    }
+    allowed
+}
+
 /// FSConfirmPayments: above the threshold, with the balance to cover it and
 /// someone else to pay (LLFloaterPay::onGive).
 pub fn needs_confirmation(confirm: bool, threshold: i32, amount: i32, balance: Option<i32>, to_self: bool) -> bool {
@@ -351,7 +362,9 @@ impl PayUi {
                 }
             });
             if !payee.group {
-                ui.add(
+                let enabled = message_allowed(world, payee);
+                ui.add_enabled(
+                    enabled,
                     egui::TextEdit::singleline(&mut payee.message)
                         .hint_text(aurora_i18n::tr!("ui-pay-message-hint"))
                         .char_limit(MESSAGE_BYTES)
@@ -544,9 +557,11 @@ impl PayUi {
                 payee.amount.retain(|c| c.is_ascii_digit());
             });
             if !payee.group {
+                let enabled = message_allowed(world, payee);
                 ui.horizontal(|ui| {
                     ui.label(aurora_i18n::tr!("ui-pay-classic-message"));
-                    ui.add(
+                    ui.add_enabled(
+                        enabled,
                         egui::TextEdit::singleline(&mut payee.message)
                             .char_limit(MESSAGE_BYTES)
                             .desired_width(f32::INFINITY),
