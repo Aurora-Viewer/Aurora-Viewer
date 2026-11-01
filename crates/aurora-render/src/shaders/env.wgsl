@@ -1230,15 +1230,24 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
 
     // reflection: planar texture, screen-space rays, or the sky
     var r = reflect(view_vec, normalize(mix(vec3<f32>(0.0, 0.0, 1.0), n, 0.6)));
-    if (legacy_water && legacy_reflects) { r = reflect(view_vec, normalize(wave_ibl)); }
-    var radiance = sky_color(vec3<f32>(r.x, r.y, abs(r.z)));
+    // the direction the sky and the probes are read along: kept above the
+    // horizon for Aurora's softened normal; along wave_ibl's ray as it is,
+    // as doProbeSample reads it. A steep facet then reflects the probe's
+    // lower half, not the sky flipped up, which put a second sun on the
+    // water beside the glint (the Legacy Viewer shows one)
+    var sky_dir = vec3<f32>(r.x, r.y, abs(r.z));
+    if (legacy_water && legacy_reflects) {
+        r = reflect(view_vec, normalize(wave_ibl));
+        sky_dir = r;
+    }
+    var radiance = sky_color(vec3<f32>(sky_dir.x, sky_dir.y, abs(sky_dir.z)));
     if (probes_on()) {
         // without a planar reflection the water reflects its probes
         // as blurred as the EEP asks (doProbeSample: lod = (1 - gloss) x
         // max lod, gloss = 1 - blur_multiplier): a sharp sun disc and haze
         // at lod 0 whitened the surface
         let lod = clamp(frame.water_params.w, 0.0, 1.0) * probe_max_lod();
-        let s = sample_probes_water(in.world_pos, in.clip.xy, vec3<f32>(r.x, r.y, abs(r.z)), lod);
+        let s = sample_probes_water(in.world_pos, in.clip.xy, sky_dir, lod);
         if (s.w > 0.0) {
             radiance = s.rgb;
         }
