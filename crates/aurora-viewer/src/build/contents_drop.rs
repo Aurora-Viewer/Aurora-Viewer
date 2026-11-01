@@ -239,6 +239,8 @@ fn carried<'a>(world: &'a World, ids: &[Uuid], owned: bool, worn: &Worn) -> Resu
 /// The item put into the prim `idx`: scripts with RezScript, running unless
 /// asked otherwise (dropScript), the rest with UpdateTaskInventory
 /// (dropInventory), with their actual permissions, dated at drop time.
+/// RezScript carries the active group separately from the item's group
+/// (LLViewerObject::saveScript, indra/newview/llviewerobject.cpp).
 pub fn item_drop(world: &World, idx: usize, item: &InvItem, running: bool) -> Option<ContentsDrop> {
     let o = world.objects.get(idx)?;
     let mut task = task_inventory::from_inventory(o.full_id, item);
@@ -250,7 +252,7 @@ pub fn item_drop(world: &World, idx: usize, item: &InvItem, running: bool) -> Op
             handle: o.key.region,
             local_id: o.key.local_id,
             enabled: running,
-            group_id: Uuid::nil(),
+            group_id: world.groups.active,
             item: Box::new(task),
         }
     } else {

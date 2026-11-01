@@ -1,5 +1,10 @@
 # Aurora Viewer architecture
 
+Texture imports and material maps share the PNG channel normalization in
+`aurora-assets/src/import_texture.rs`: expand luminance to RGB, retain alpha
+and reduce 16-bit samples to their high byte, following
+`LLPngWrapper::normalizeImage` (#1527). Preview and upload use those same pixels.
+
 Chat volume formatting (#1323) is shared by the Conversations renderers and
 nearby-chat cards/lines: `ui/chat.rs::message_emphasis` and `message_color`,
 with `ui/fonts.rs::TextEmphasis` carried through emoji runs, links and search
@@ -1339,6 +1344,60 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
       ├──► aurora-audio, aurora-voice, aurora-media
 ```
 
+### Experimental VR render output
+
+`stereo_view.rs` holds runtime-independent camera anchoring and asymmetric
+infinite reverse-Z eye projection math. `xr_device.rs` is the Linux/Windows experimental
+Vulkan-enable2 bootstrap for the viewer's full graphics feature set. Linux and
+Windows try it at startup and fall back to ordinary desktop device creation when
+loader/runtime discovery is unavailable. The OpenXR crate dynamically loads the
+platform loader (`libopenxr_loader.so.1` or `openxr_loader.dll`); no runtime is
+bundled. Explicit offline demo scenarios fail on unavailable initialization so
+that a successful desktop fallback cannot be mistaken for an XR test.
+
+Native macOS VR uses `xr_metal.rs`, selected as the `xr_device` module on macOS,
+with the existing Metal wgpu backend. Its private `openxr::Graphics` adapter wraps
+`XR_KHR_metal_enable`: runtime Metal-device identity, the exact wgpu command queue,
+Metal pixel formats and retained `MTLTexture` imports. `xr_frame.rs` shares the
+session/frame/eye lifecycle across Vulkan and Metal. The queue is retained through
+session teardown. Loader/runtime failure leaves desktop startup available.
+Candidate Mac runtimes, source evidence and unverified gates are in `docs/VR.md`;
+no macOS headset result is claimed.
+
+The Linux/Windows `aurora-render` example `xr_spike` exercises OpenXR-created Vulkan
+instance/device import into wgpu and runtime-owned eye swapchain import. It
+renders a synthetic stereo scene and recreates the XR session without replacing
+the graphics device. Windows runtime/headset validation is pending;
+`docs/VR.md` provides cross-platform setup and validation status; Windows
+uses the existing CI after removal of the redundant dedicated workflow. Viewer integration uses `xr_frame.rs`
+for session state, predicted poses, swapchain acquisition and projection-layer
+submission on the render thread. `Backend` holds two independently initialized
+eye backends through owning pointers; they share scene GPU buffers, textures and
+the frame's uploads while owning their depth, visibility, exposure and temporal
+resources. Eye backends retain the desktop surface through shared ownership but
+never acquire or configure it. Runtime images are returned to attachment layout
+before release. `vr_mirror.rs` samples an already rendered left-eye image into the desktop
+surface at up to 30 FPS, preserving aspect ratio and returning the runtime image
+to attachment layout before release. Bind groups are cached per eye image; no
+CPU readback or third world-rendering pass is used. Desktop presentation is
+restored when VR ends.
+
+`Renderer::render_to_texture` hands a caller-owned output texture through
+`FramePacket` to the rendering thread. The backend validates its size, format,
+layer count, sample count and required usages before encoding the existing world
+passes. The usual `render` method retains desktop swapchain acquisition. External
+output is not presented and has no egui frame; the caller remains responsible for
+its draw lists and GPU synchronization. Independent eyes must have independent
+persistent rendering histories; this API does not make one renderer safe to
+alternate between eyes. `vr_control.rs` holds atomic start/stop requests and observable state, keeping
+session ownership on the render worker. The toolbar toggles requests and native
+Escape handling takes priority over UI; the desktop camera is restored afterward.
+The initial anchor preserves camera position and horizontal heading while removing
+desktop pitch/roll. Only headset yaw is recentered: entry pitch/roll remain
+gravity-aligned so a headset resting tilted cannot introduce a persistent horizon
+offset when worn. Late runtime attachment and production disconnect recovery
+remain in progress.
+
 ## `aurora-viewer` in detail
 
 Inventory local-file thumbnails prepare whole-image square scaling
@@ -2084,7 +2143,8 @@ trackpad deltas. Hint visibility and height units are saved
 in Settings. The main scene continues to use its normal shape/morph streaming.
 
 `aurora-net/session/wearable_save.rs` checks shape ownership and Modify/Copy,
-uploads the wearable through the existing AssetUpload/Xfer path, preserves item
+uploads the wearable through the existing AssetUpload/Xfer path with its inventory
+asset type (bodypart 13 or clothing 5), preserves item
 permissions for Save As through CopyInventoryItem, patches only the transaction
 `hash_id` through AIS and reads the resulting asset back before acknowledging
 success. Non-modifiable shapes can be copied only unchanged. Requests and replies
@@ -2665,6 +2725,15 @@ changing the objects. `scene/selection_demo.rs` provides the offline mesh
 with separate curved islands of the `faces-complex` scenario, next to a
 closed torus primitive.
 
+PBR BOM maps retain their canonical UUIDs in assets and face overrides.
+`scene/shown_bakes.rs` resolves all four rendered channels per wearer, including
+last-good-bake retention and appearance-service sources. Effective PBR maps
+also feed `Scene::bom_mask`; material arrivals invalidate that visibility mask.
+Editing windows retain the coloured `BAKED_*` reference images in texture
+pickers, map swatches and material previews, for both PBR and Blinn-Phong.
+Only the scene substitutes the avatar's current bakes, following the requested
+editing behaviour rather than the Legacy Viewer's resolved picker preview.
+
 `ui/texture_picker/tree.rs` shares the search cache and the virtual tree of
 `ui/inventory/view.rs`. The folders load in bounded batches; the expanded
 states of search and of navigation stay separate. `ui/texture_picker.rs`
@@ -3019,6 +3088,10 @@ and Create > Copy selection, including Shift-drag duplication in the move
 manipulator.
 The demo simulator retains the group supplied by each creation request for
 its property replies.
+`RezScript` (new/dropped scripts and bridge installation) and `DeRezObject`
+(Delete, Take and Take Copy, including separate items) instead send the
+current active group directly, independent of the parcel rez preference.
+The script inventory item keeps its own permission group unchanged.
 
 Rezzing from the inventory goes through `ui/inventory.rs` (payload and release before the end of the egui pass), `app/inventory_drag.rs` (rules, group, preparation of the commands and local consumption of the non-copyable items), `Scene::inventory_surface` (triangles among the candidates of the index, terrain, without a GPU wait) and `aurora-net/src/inventory/rez.rs` (reliable `RezObject` message in the targeted region). Transparent pixels are tested with a mask of one bit per 2×2 block, prepared by the decoding tasks; invisible and rigged surfaces are discarded. The cursor keeps the result for 100 ms at most when the ray does not move; the release always recomputes the surface. Over an object, what goes into its contents (Ctrl for an object, without it for the other items, and a selection or a folder of several entries) is decided by `build/contents_drop.rs`, all the entries accepted or none, and sent with `UpdateTaskInventory` / `RezScript`; the Contents tab uses the same rules. The demo uses a synthetic cube as the reply to the rez. `app/contents_drop_demo.rs` drives `AURORA_DEMO_CONTENTS_DROP`.
 

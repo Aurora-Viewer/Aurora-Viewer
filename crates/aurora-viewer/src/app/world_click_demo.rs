@@ -6,6 +6,10 @@ use super::*;
 /// back, facing the default camera).
 const OWN_PRIM: Vec3 = Vec3::ZERO;
 
+/// `worn-own-mesh`: a point of the synthetic chest mesh on our back, inside
+/// our box but off the classic body, where only the mesh is drawn.
+const OWN_MESH: Vec3 = Vec3::new(-0.12, 0.0, 0.0);
+
 /// `worn-other-link`: the child prim, without a script, of a worn linkset
 /// whose root holds the touch script.
 const WORN_CHILD: u32 = 988;
@@ -144,7 +148,13 @@ impl App {
                         let pose = *self.world.avatar_poses.get(&avatar.full_id)?.get(joint)?;
                         let rest = self.world.avatar_lib.attach_points.get(&1)?.skel_position;
                         let (pos, rot, _) = Scene::object_transform(&self.world, wearer, Instant::now(), 0)?;
-                        let offset = if mode == "worn-mesh" { Vec3::new(0.30, 0.0, 0.0) } else { OWN_PRIM };
+                        let offset = if mode == "worn-mesh" {
+                            Vec3::new(0.30, 0.0, 0.0)
+                        } else if mode.starts_with("worn-own-mesh") {
+                            OWN_MESH
+                        } else {
+                            OWN_PRIM
+                        };
                         pos + rot * (pose.transform_point3(rest + offset) - self.world.avatar_lib.pelvis)
                     } else {
                         Scene::object_transform(&self.world, idx, Instant::now(), 0)?.0
@@ -344,7 +354,9 @@ impl App {
                     &self.settings.camera,
                 );
             }
-            let mut events = if mode == "worn-mesh" {
+            // `worn-own-mesh`: the scripted rigged mesh on our own chest
+            let own_mesh = mode.starts_with("worn-own-mesh");
+            let mut events = if mode == "worn-mesh" || own_mesh {
                 if let Some(g) = self.gfx.as_mut() {
                     self.scene.install_demo_animesh(&mut g.renderer);
                 }
@@ -368,7 +380,7 @@ impl App {
                         if mode == "worn-prim" {
                             o.scale = Vec3::splat(0.5);
                         }
-                        if own || mode.starts_with("worn-other") {
+                        if (own && !own_mesh) || mode.starts_with("worn-other") {
                             // on the body, inside the wearer's box
                             o.position = OWN_PRIM;
                             o.scale = Vec3::splat(if inside {
@@ -378,6 +390,13 @@ impl App {
                             } else {
                                 0.6
                             });
+                        }
+                        if own_mesh && let Some(te) = o.texture_entry.as_mut() {
+                            // opaque: the press depth is then the mesh, inside
+                            // our box whatever the pose, not the floor behind
+                            for f in &mut std::sync::Arc::make_mut(te).faces {
+                                f.texture = aurora_prim::te::BLANK_TEXTURE;
+                            }
                         }
                         if hidden && let Some(te) = o.texture_entry.as_mut() {
                             for f in &mut std::sync::Arc::make_mut(te).faces {

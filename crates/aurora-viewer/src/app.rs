@@ -257,6 +257,24 @@ pub struct App {
     /// Throttle of the "sky frame" log line.
     sky_log: crate::world::env::SkyLog,
     camera: Camera,
+    /// The desktop camera, and our avatar's yaw and pitch, before VR: put
+    /// back when VR ends (the first-person entry turns the avatar to the
+    /// view, as mouselook does).
+    vr_camera: Option<(Camera, f32, f32)>,
+    vr_toggle: bool,
+    /// Frames left before a first-person VR entry asks for the headset: the
+    /// session anchors on the view of the frame it starts in, so the eye
+    /// view must have been drawn first.
+    vr_start_in: u8,
+    /// The headset came after startup (VR is set up with the GPU device
+    /// then): the restart dialog is open, its Restart was pressed, and the
+    /// exit under way restarts the viewer with `--vr`.
+    vr_restart_offer: bool,
+    vr_restart: bool,
+    restart_into_vr: bool,
+    /// `--vr`: enter VR once the world has shown for a moment.
+    vr_at_start: bool,
+    vr_world_since: Option<Instant>,
     input: MoveInput,
     joystick: joystick::State,
     /// Keys and bindable mouse buttons held down.
@@ -1149,6 +1167,14 @@ impl App {
             probes: Default::default(),
             sky_log: Default::default(),
             camera: Camera::default(),
+            vr_camera: None,
+            vr_toggle: false,
+            vr_start_in: 0,
+            vr_restart_offer: false,
+            vr_restart: false,
+            restart_into_vr: false,
+            vr_at_start: crate::cli::get().vr,
+            vr_world_since: None,
             input: MoveInput::default(),
             joystick: Default::default(),
             down: HashSet::new(),
@@ -3612,6 +3638,10 @@ impl App {
 
     /// Mouse motion: mouselook, camera drags (steering, Alt), right drag orbit.
     fn camera_mouse_delta(&mut self, dx: f32, dy: f32) {
+        // in VR the head turns the view; the mouse must not turn the avatar
+        if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged()) {
+            return;
+        }
         if self.clicks.waiting() {
             // behind the click that will say what this motion drags
             self.clicks.hold(click_pick::Held::Motion(dx, dy));
@@ -5433,6 +5463,9 @@ impl App {
         self.settings.save();
         // the last lines of the conversations reach their files
         self.world.chat_log.flush(Duration::from_secs(2));
+        if self.restart_into_vr {
+            restart_with_vr();
+        }
         event_loop.exit();
     }
 
@@ -7786,7 +7819,15 @@ impl App {
             self.session_heartbeat(now);
         }
         self.mouselook_alt_cursor();
-        if !self.exit_prompt.open && self.camera.mouselook() && self.focused && !self.cursor_hold.held() && !self.alt_cursor.free() {
+        // (not under a first-person VR entry, mouselook only underneath:
+        // the cursor would stay hidden after VR ends)
+        if !self.exit_prompt.open
+            && self.camera.mouselook()
+            && self.vr_camera.is_none()
+            && self.focused
+            && !self.cursor_hold.held()
+            && !self.alt_cursor.free()
+        {
             self.set_mouselook_grab(true);
         }
         // a photo drawn in several frames: from its second part on, the
@@ -8448,6 +8489,15 @@ impl App {
             self.settings.antialiasing = mode;
             gfx.renderer.apply_settings(self.settings.render_settings());
         }
+        if !gfx.renderer.vr_engaged()
+            && self.vr_start_in == 0
+            && let Some((camera, yaw, pitch)) = self.vr_camera.take()
+        {
+            self.camera = camera;
+            self.world.agent.yaw = yaw;
+            self.world.agent.pitch = pitch;
+            gfx.renderer.cut_motion_history();
+        }
         let mut view = self.camera.view();
         let mut proj = frame_proj(&self.camera);
         let mut vp = proj * view;
@@ -8457,6 +8507,11 @@ impl App {
             aspect,
             camera_fast,
         );
+        // The experimental XR worker can look in any direction after these
+        // CPU lists are prepared; per-eye GPU culling still uses the real frusta.
+        if gfx.renderer.vr_engaged() || (self.demo && std::env::var_os("AURORA_DEMO_XR_WORLD").is_some()) {
+            cull.planes = [glam::Vec4::W; 6];
+        }
         // debug: frozen culling view (move around to see what it drops)
         if self.settings.debug.freeze_culling {
             cull = *self.frozen_cull.get_or_insert(cull);
@@ -8754,6 +8809,9 @@ impl App {
                 );
                 if self.settings.debug.freeze_culling {
                     cull = *self.frozen_cull.get_or_insert(cull);
+                }
+                if gfx.renderer.vr_engaged() || (self.demo && std::env::var_os("AURORA_DEMO_XR_WORLD").is_some()) {
+                    cull.planes = [glam::Vec4::W; 6];
                 }
                 self.scene.fov_y = self.camera.fov_y;
                 self.build.cam = crate::build::geom::Cam::new(
@@ -9967,6 +10025,77 @@ impl App {
             self.net.set_bandwidth(bandwidth_kbps(&self.settings));
         }
         self.handle_actions(actions, event_loop);
+        if self.vr_at_start && self.in_world() {
+            // the scene around has a moment to arrive before the headset
+            let since = *self.vr_world_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= Duration::from_secs(2) {
+                self.vr_at_start = false;
+                self.vr_toggle = true;
+            }
+        }
+        if std::mem::take(&mut self.vr_restart) {
+            self.restart_into_vr = true;
+            self.confirm_exit(ui::exit::Action::Quit);
+        }
+        if self.vr_start_in > 0 {
+            self.vr_start_in -= 1;
+            self.vr_toggle |= self.vr_start_in == 0;
+        }
+        // no VR device at startup: a headset there now needs a restart (the
+        // GPU device is opened through the VR runtime, at startup only)
+        if self.vr_toggle && gfx.renderer.vr_state() == aurora_render::VrState::Unavailable {
+            self.vr_toggle = false;
+            if aurora_render::vr_headset_ready() {
+                self.vr_restart_offer = true;
+            } else {
+                self.world
+                    .system_notice(aurora_i18n::tr!("vr-unavailable"), crate::world::notice_topics::Topic::Warning);
+            }
+        }
+        if std::mem::take(&mut self.vr_toggle) {
+            let engaged = gfx.renderer.vr_engaged();
+            // the headset anchors on the view of the frame VR starts in: from
+            // the avatar's eyes by default (mouselook, its head hidden),
+            // which first has to be drawn; the desktop camera's place
+            // otherwise
+            if !engaged
+                && self.vr_camera.is_none()
+                && self.settings.camera.vr_view == crate::camera::VrView::FirstPerson
+                && self.settings.camera.enable_mouselook
+            {
+                self.vr_camera = Some((self.camera.clone(), self.world.agent.yaw, self.world.agent.pitch));
+                self.camera.change_to_mouselook(&mut self.world.agent, &self.settings.camera, false);
+                // straight to the eyes, without the position smoothing; one
+                // more frame for the render thread's packet in flight
+                self.camera.snap();
+                self.vr_start_in = 3;
+            } else if gfx.renderer.set_vr_enabled(!engaged) {
+                if !engaged {
+                    let (c, head) = (self.camera.position, self.world.agent.position);
+                    log::info!(
+                        "VR requested: camera {:?} at {:.2} {:.2} {:.2}, avatar at {:.2} {:.2} {:.2}",
+                        self.camera.mode,
+                        c.x,
+                        c.y,
+                        c.z,
+                        head.x,
+                        head.y,
+                        head.z
+                    );
+                    if self.vr_camera.is_none() {
+                        self.vr_camera = Some((self.camera.clone(), self.world.agent.yaw, self.world.agent.pitch));
+                    }
+                    self.down.clear();
+                    self.drop_clicks();
+                    self.on_left_release();
+                    self.release_cursor(true);
+                }
+            } else {
+                self.world
+                    .system_notice(aurora_i18n::tr!("vr-unavailable"), crate::world::notice_topics::Topic::Warning);
+            }
+        }
+
         for r in std::mem::take(&mut self.build.ui.requests) {
             self.on_build_request(r);
         }
@@ -10018,7 +10147,11 @@ impl App {
         // returned are those of the frame before; a frame that carries a
         // capture is waited for, its pixels are read in the tail below.
         let lists = if self.in_world() { &self.scene.lists } else { &self.empty_lists };
-        let stats = gfx.renderer.render(fp, lists, Some(egui_frame));
+        let stats = if self.demo && gfx.renderer.capture_request && std::env::var_os("AURORA_DEMO_RENDER_TEXTURE").is_some() {
+            gfx.renderer.render_world_texture_capture(fp, lists)
+        } else {
+            gfx.renderer.render(fp, lists, Some(egui_frame))
+        };
         self.photo_gpu_time(&stats);
         self.photo_drawn(&mut gfx.renderer);
         self.last_render = stats;
@@ -11306,6 +11439,45 @@ impl App {
                             }
                         }
                     }
+                    crate::build::demo::Step::BomPicker(channel) => {
+                        self.world.preview_bakes(std::collections::HashMap::from([
+                            (8, crate::demo::TEX_BAKE_SKIN),
+                            (9, crate::demo::TEX_BUMPS),
+                            (10, crate::demo::TEX_ORM_DISC),
+                            (42, crate::demo::TEX_TILES),
+                        ]));
+                        let m = crate::demo::bom_rezzed::material();
+                        let maps = [
+                            m.base_color_texture,
+                            m.normal_texture,
+                            m.metallic_roughness_texture,
+                            m.emissive_texture,
+                        ];
+                        let current = maps[channel.unwrap_or(0)];
+                        if channel.is_none() {
+                            for idx in self.build.sel_prims(&self.world) {
+                                if let Some(object) = self.world.objects.get_mut(idx) {
+                                    object.extra.render_materials.clear();
+                                    if let Some(te) = &mut object.te {
+                                        for face in &mut std::sync::Arc::make_mut(te).faces {
+                                            face.texture = current.unwrap_or_default();
+                                        }
+                                    }
+                                    object.material_dirty = true;
+                                }
+                            }
+                        }
+                        self.build.ui.tex_tab = usize::from(channel.is_some());
+                        self.build.tab = 3;
+                        self.build.ui.picker.open_with_defaults(
+                            aurora_i18n::tr!("build-ui-texture-choose-texture"),
+                            current.unwrap_or_default(),
+                            None,
+                            true,
+                        );
+                        self.build.ui.pick_target =
+                            Some(channel.map_or(crate::build::ui::PickTarget::Diffuse, crate::build::ui::PickTarget::PbrMap));
+                    }
                     crate::build::demo::Step::TexturePicker(materials, local) => {
                         let current = self
                             .build
@@ -12139,6 +12311,7 @@ impl App {
             BarAction::Favorite(f) => self.favorite_action(f),
             BarAction::ToggleInterface => self.toggle_interface(),
             BarAction::HideInterface => self.interface.set_hidden(&self.egui_ctx, true),
+            BarAction::ToggleVr => self.vr_toggle = true,
             BarAction::ToggleImmersive => self.toggle_immersive(),
             BarAction::ImmersiveHuds(visible) => self.set_immersive_huds(visible),
             BarAction::HoverTips(menu) => {
@@ -13281,6 +13454,8 @@ impl App {
     }
 
     fn draw_ui(&mut self, ui: &mut egui::Ui, projector: &ui::hud::Projector, renderer: &Renderer) -> UiActions {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::unique("vr-active"), renderer.vr_engaged()));
         self.world.refresh_rlva_privacy();
         self.notif_ui.privacy = self.world.rlva_privacy.clone();
         let mut a = UiActions::default();
@@ -14174,7 +14349,61 @@ impl App {
                     self.settings.debug.probes.then(|| self.probes.debug_list()),
                     &self.lod_infos,
                 );
-                if self.camera.mouselook() {
+                if self.vr_restart_offer {
+                    ui::widgets::Modal::new(egui::Id::unique("vr-restart")).show(&ctx, |ui| {
+                        ui.set_max_width(430.0);
+                        ui.heading(aurora_i18n::tr!("vr-restart-title"));
+                        ui.label(aurora_i18n::tr!("vr-restart-body"));
+                        ui.horizontal(|ui| {
+                            if ui::widgets::action_button(
+                                ui,
+                                &p,
+                                "x",
+                                aurora_i18n::text("common-cancel"),
+                                ui::widgets::ActionKind::Flat,
+                                egui::vec2(0.0, 28.0),
+                            )
+                            .clicked()
+                            {
+                                self.vr_restart_offer = false;
+                            }
+                            if ui::widgets::action_button(
+                                ui,
+                                &p,
+                                "refresh",
+                                aurora_i18n::text("vr-restart-confirm"),
+                                ui::widgets::ActionKind::Primary,
+                                egui::vec2(0.0, 28.0),
+                            )
+                            .clicked()
+                            {
+                                self.vr_restart_offer = false;
+                                self.vr_restart = true;
+                            }
+                        });
+                    });
+                }
+                let vr_active = ctx.data(|data| data.get_temp::<bool>(egui::Id::unique("vr-active")).unwrap_or(false));
+                if vr_active {
+                    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("vr-exit-hint")));
+                    aurora_render::vr_hint_marker(&painter, true);
+                    let text = aurora_i18n::tr!("app-vr-leave", key = aurora_i18n::tr!("keybinds-esc").to_string());
+                    let at = egui::pos2(ctx.content_rect().center().x, ctx.content_rect().bottom() - 16.0);
+                    let font = egui::FontId::proportional(18.0);
+                    // Match the desktop mouselook instructions; this layer is excluded from both eyes.
+                    painter.text(
+                        at + egui::vec2(1.0, 1.0),
+                        egui::Align2::CENTER_BOTTOM,
+                        &text,
+                        font.clone(),
+                        p.navy.gamma_multiply(0.6),
+                    );
+                    painter.text(at, egui::Align2::CENTER_BOTTOM, &text, font, p.ink.gamma_multiply(0.6));
+                    aurora_render::vr_hint_marker(&painter, false);
+                }
+                // (a first-person VR entry is mouselook underneath: its
+                // crosshair and instructions stay off the desktop mirror)
+                if self.camera.mouselook() && !vr_active {
                     let c = ctx.content_rect().center();
                     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("xhair")));
                     // LLToolGun::draw: in the middle of the world view; the
@@ -18322,6 +18551,20 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // VR exit owns Escape before egui, pickers, chat or camera shortcuts.
+        if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged())
+            && let WindowEvent::KeyboardInput { event: key, .. } = &event
+        {
+            if key.state == ElementState::Pressed
+                && key.physical_key == PhysicalKey::Code(KeyCode::Escape)
+                && let Some(gfx) = &self.gfx
+            {
+                gfx.renderer.set_vr_enabled(false);
+                gfx.window.request_redraw();
+            }
+            return;
+        }
+
         // the digits of a Windows Alt code typed in a text field are kept
         // from it (alt_codes.rs); the character comes at Alt's release
         if self.alt_code_key(&event) {
@@ -18884,6 +19127,32 @@ fn capture_files(path: &std::path::Path, frames: &str) -> Vec<(u64, std::path::P
     at.into_iter()
         .map(|f| (f, path.with_file_name(format!("{stem}-{f}.{ext}"))))
         .collect()
+}
+
+/// Start this viewer again with `--vr`, as the process ends: the identity
+/// of this instance is kept (title, frame cap, language, grid), not the
+/// one-time login or start place.
+fn restart_with_vr() {
+    let cli = crate::cli::get();
+    let Ok(exe) = std::env::current_exe() else {
+        log::warn!("restart into VR: the viewer's path is unknown");
+        return;
+    };
+    let mut command = std::process::Command::new(exe);
+    if let Some(title) = &cli.title {
+        command.arg("--title").arg(title);
+    }
+    if let Some(fps) = cli.fps_limit {
+        command.arg("--fps-limit").arg(fps.to_string());
+    }
+    if let Some(language) = &cli.language {
+        command.arg("--language").arg(language);
+    }
+    command.arg("--vr");
+    match command.spawn() {
+        Ok(_) => log::info!("restarting into VR"),
+        Err(e) => log::warn!("restart into VR failed: {e}"),
+    }
 }
 
 #[cfg(test)]
