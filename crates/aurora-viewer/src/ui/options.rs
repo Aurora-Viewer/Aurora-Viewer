@@ -436,7 +436,7 @@ pub struct OptionsUi {
     crosshair_dialog: Option<std::sync::mpsc::Receiver<std::path::PathBuf>>,
     /// Shortcut or gesture waiting for its next input, captured by the app.
     pub capture: Option<Capture>,
-    joystick_capture: Option<pages::joystick::ButtonCapture>,
+    joystick_capture: Option<pages::joystick::JoystickCapture>,
     capture_modifier: Option<winit::keyboard::KeyCode>,
     clear: Option<(crate::keybinds::Action, usize)>,
     /// Sound assets being typed (Legacy name -> text).
@@ -1102,7 +1102,7 @@ fn reset_rows(
 pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, st: &mut OptionsUi, open: &mut bool) -> OptionsResult {
     let _ = icons;
     if let Some(capture) = &mut st.joystick_capture {
-        capture.visible = false;
+        capture.hide();
     }
     st.focus_search = *open && (st.focus_search || !st.was_open);
     let mut r = OptionsResult::default();
@@ -1131,7 +1131,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
         *open = false;
     }
     st.was_open = *open && !super::widgets::floater_minimized(ctx, WINDOW);
-    if !st.was_open || st.joystick_capture.as_ref().is_some_and(|capture| !capture.visible) {
+    if !st.was_open || st.joystick_capture.as_ref().is_some_and(|capture| !capture.visible()) {
         st.cancel_joystick_capture();
     }
     if !*open {

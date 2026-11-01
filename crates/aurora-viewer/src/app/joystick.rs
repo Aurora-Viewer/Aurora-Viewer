@@ -187,7 +187,7 @@ impl App {
         }
         if !self.joystick.demo_started {
             self.joystick.demo_started = true;
-            if mode == "rearm" {
+            if matches!(mode.as_str(), "rearm" | "axis-capture") {
                 self.settings.joystick = Default::default();
             }
             self.settings.joystick.enabled = true;
@@ -222,6 +222,15 @@ impl App {
             d.axes[5] = -0.5;
             if mode == "roll" {
                 d.axes[4] = 0.6;
+            }
+        }
+        if mode == "axis-capture" {
+            d.axes = [0.0; crate::joystick::AXES];
+            if (700..760).contains(&self.frame_count) || (820..880).contains(&self.frame_count) {
+                // A small sideways motion accompanies a clear movement
+                // on another native axis, as when assigning a stick's Y.
+                d.axes[0] = 0.05;
+                d.axes[7] = -0.8;
             }
         }
         if mode == "rearm" {

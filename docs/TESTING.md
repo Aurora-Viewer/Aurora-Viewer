@@ -331,7 +331,7 @@ the background still applies outside screenshots.
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_JOYSTICK=preferences\|axes\|avatar\|flycam\|roll\|rearm` | Synthetic joystick input, its preferences or an independent six-axis camera flight |
+| `AURORA_DEMO_JOYSTICK=preferences\|axes\|avatar\|flycam\|roll\|rearm\|axis-capture` | Synthetic joystick input, its preferences or an independent six-axis camera flight |
 | `AURORA_CAPTURE=<file.png>` | Saves a screenshot of the frame |
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
@@ -369,6 +369,13 @@ Capture at `700,760,830`: camera flight, stopped movement after leaving,
 then avatar movement. The log records the flycam state and motion axes at
 701, 761 and 831; the zoom channel stays zero throughout. Keep the viewer
 running past frame 831 to include all three log entries.
+`axis-capture` supplies minor axis-0 movement (0.05) alongside strong axis-7
+movement (-0.8) during frames 700–759 and 820–879. Combine it with
+`AURORA_DEMO_OPTIONS=controls/1:search=forward` (English) or
+`controls/1:search=avancer` (French). Click the axis assignment before frame
+700: it must capture axis 7, then re-centre at 760. Invert Avatar before
+820 to see backward movement on the second gesture without changing gain
+magnitude. Capture before, during and after assignment, then after inversion.
 The avatar must stay put in the two camera scenarios. Compare the photo
 free camera (`AURORA_DEMO_CONTROLS=free`) and normal camera controls as well.
 Hardware validation: select the real device, enable input, apply Gamepad or
@@ -385,6 +392,14 @@ joystick control disabled. Zoom selects an analog axis, independently of
 button numbers; it changes only the flycam's field of view and requires
 a non-zero Camera gain (zero by default). Absolute zoom maps position to
 field of view; relative zoom uses deflection as zoom speed.
+Axis assignments: click the assigned axis (or Assign) and move the intended
+stick direction or trigger. Minor sideways movement must not win over the
+main gesture. Detection observes up to 180 ms once movement is significant,
+or finishes on release; a similarly strong diagonal waits until released
+and retried. Resting triggers at -1 and small stick jitter must not assign
+anything. None and cancellation behave like button capture. Invert is
+separate for Avatar and Camera and preserves the gain magnitude; previous
+negative gains appear inverted, and the choice persists even with zero gain.
 Repeat the toggle while holding a movement stick, including a quick second
 press. Configure zoom on an axis that rests away from zero: the other axes
 and the flycam button must still work. Direct zoom also accepts a non-zero

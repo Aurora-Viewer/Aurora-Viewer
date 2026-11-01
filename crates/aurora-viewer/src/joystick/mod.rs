@@ -4,6 +4,7 @@
 //! its latest state. Axis numbers are native, including unmapped joysticks.
 
 mod backend;
+pub mod capture;
 pub mod flycam;
 
 pub use backend::{Backend, Use};

@@ -2748,6 +2748,10 @@ normal search, modified-settings and reset paths.
 Its four button assignments capture native press counters from the selected
 device, including taps released between frames. Capture suspends controller
 actions and cancels when its row, device or application focus goes away.
+Axis assignments use the same capture lifecycle. `joystick/capture.rs`
+observes displacement from the initial sample, selects the dominant axis
+over a short gesture and ignores resting triggers, jitter and ambiguous
+diagonals. Per-mode inversion uses the existing signed tuning gains.
 
 `build/task_inventory.rs` centralises the permissions and the destinations of
 the transfer of an object's contents to the personal inventory;
