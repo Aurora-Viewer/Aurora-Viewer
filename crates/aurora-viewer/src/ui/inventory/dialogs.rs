@@ -226,7 +226,7 @@ pub(super) fn show(
                             .collect();
                         let holds_worn = rules::worn_ancestors(inv, &facts.worn);
                         if ids.iter().all(|id| {
-                            rules::movable(inv, *id, &prefs.protected) && rules::in_type(inv, *id, 14) && !holds_worn.contains(id)
+                            rules::removable(inv, *id, &prefs.protected) && rules::in_type(inv, *id, 14) && !holds_worn.contains(id)
                         }) {
                             Ok(Mutation {
                                 operations,

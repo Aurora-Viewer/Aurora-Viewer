@@ -8394,6 +8394,9 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             ..Default::default()
         },
     ));
+    if bom_rezzed::pbr() {
+        list.push((bom_rezzed::MATERIAL, bom_rezzed::material()));
+    }
     list
 }
 
@@ -8635,13 +8638,18 @@ fn midday_sky() -> Llsd {
     }
 }
 
-/// Day cycle with a single sky frame (and the default water).
+/// Day cycle with a single sky frame (and the default water, or the one
+/// `AURORA_DEMO_WATER_EEP` asks for).
 fn demo_day(sky: Llsd) -> Llsd {
     use aurora_llsd::llsd_map;
     let mut frames = aurora_llsd::Map::new();
     frames.insert("sky".into(), sky);
     // a valid day needs a water track too (Firestorm recordEnvironment)
-    frames.insert("water".into(), llsd_map! { "type" => "water" });
+    let water = std::env::var("AURORA_DEMO_WATER_EEP")
+        .ok()
+        .map(|v| demo_water_eep(&v))
+        .unwrap_or_else(|| llsd_map! { "type" => "water" });
+    frames.insert("water".into(), water);
     let key = |name: &str| Llsd::Array(vec![llsd_map! { "key_keyframe" => 0.0, "key_name" => name }]);
     llsd_map! {
         "day_length" => 14400,
@@ -8650,6 +8658,26 @@ fn demo_day(sky: Llsd) -> Llsd {
             "frames" => Llsd::Map(frames),
             "tracks" => Llsd::Array(vec![key("water"), key("sky")]),
         },
+    }
+}
+
+/// AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal
+/// scale>[,<fog r>,<fog g>,<fog b>]: the water of the demo's EEP day (with
+/// AURORA_DEMO_SKY), as a region's asset carries it, out-of-range values
+/// included; a missing or unreadable value keeps the default.
+fn demo_water_eep(v: &str) -> Llsd {
+    use aurora_llsd::llsd_map;
+    let n: Vec<Option<f64>> = v.split(',').map(|s| s.trim().parse::<f64>().ok()).collect();
+    let at = |i: usize, default: f64| n.get(i).copied().flatten().unwrap_or(default);
+    let arr = |v: &[f64]| Llsd::Array(v.iter().map(|x| Llsd::Real(*x)).collect());
+    let scale = at(3, 2.0);
+    llsd_map! {
+        "type" => "water",
+        "fresnel_offset" => at(0, 0.5),
+        "fresnel_scale" => at(1, 0.3999),
+        "blur_multiplier" => at(2, 0.04),
+        "normal_scale" => arr(&[scale, scale, scale]),
+        "water_fog_color" => arr(&[at(4, 0.0156), at(5, 0.149), at(6, 0.2509), 1.0]),
     }
 }
 

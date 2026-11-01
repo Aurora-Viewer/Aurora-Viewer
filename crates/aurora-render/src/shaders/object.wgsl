@@ -765,6 +765,29 @@ fn fs_depth_mask_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) ->
 // Viewer's MINIMUM_ALPHA.
 override DEPTH_CONTACT_ALPHA: f32 = 0.5;
 
+// The blended faces' side of the water (waterClip, deferredUtil.glsl): 1
+// keeps the camera's side (drawn after the water), 2 the other side (drawn
+// before it, POOL_ALPHA_PRE_WATER); 0, every other use, keeps all. A face
+// crossing the surface is drawn in both lists, each half here. Only while
+// the camera is above the water, as the lists are split
+// (blend_order::water_sides); under it nothing is clipped, as before. The
+// flat region water height (`frame.params.y`, main_water_height), the one
+// the lists are split at, as LLDrawPoolAlpha uses getWaterHeight for both;
+// not enhanced water's displaced level at the camera (`cam_up.w`), or a
+// face within the waves would lose a slice, or be drawn twice unclipped.
+override WATER_CLIP: u32 = 0u;
+
+fn water_clip(world_pos: vec3<f32>) {
+    let h = frame.params.y;
+    if (WATER_CLIP == 0u || frame.camera_pos.z < h) {
+        return;
+    }
+    let above = world_pos.z >= h;
+    if ((WATER_CLIP == 1u) != above) {
+        discard;
+    }
+}
+
 // Depth of the blended faces opaque enough to cast contact shadows (half
 // covered, as the impostor pictures keep them), drawn over a copy of the
 // prepass (contact_shadows.rs).
@@ -777,6 +800,7 @@ fn depth_contact(record: u32, uv: vec2<f32>, world_pos: vec3<f32>) {
         return;
     }
     portal_clip(rec, world_pos);
+    water_clip(world_pos);
     if (sample_tex(rec.tex.x, uv).a * rec.base_color.a < DEPTH_CONTACT_ALPHA) {
         discard;
     }
@@ -802,6 +826,7 @@ fn fs_depth_contact_normal(in: DepthMaskOut, @builtin(front_facing) front: bool)
 fn fs_depth_opaque(in: VsOut) {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
+    water_clip(in.world_pos);
     if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < 0.95) {
         discard;
     }
@@ -1543,6 +1568,11 @@ fn blend_color(in: VsOut, front: bool) -> vec4<f32> {
         let color = apply_fog(surface.color * frame.sky_cloud_pd2.w, in.world_pos);
         return vec4<f32>(color * surface.alpha, surface.alpha);
     }
+    // (not the portal surfaces above: they are not split by the water, and
+    // stay drawn whole after it, as before. The ban lines are clipped to the
+    // camera's side: the Legacy Viewer draws them after the scene, behind
+    // the water's depth)
+    water_clip(in.world_pos);
     // RiggedBlendDepth::Split: the texels at least half covered, then the
     // fainter ones, by the alpha of fs_depth_contact (the occlusion's depth
     // holds the same ones); tested before the material, which the other
@@ -1643,6 +1673,7 @@ fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
+    water_clip(in.world_pos);
     if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) {
         discard;
     }

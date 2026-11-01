@@ -1,5 +1,10 @@
 # Aurora Viewer architecture
 
+Texture imports and material maps share the PNG channel normalization in
+`aurora-assets/src/import_texture.rs`: expand luminance to RGB, retain alpha
+and reduce 16-bit samples to their high byte, following
+`LLPngWrapper::normalizeImage` (#1527). Preview and upload use those same pixels.
+
 Chat volume formatting (#1323) is shared by the Conversations renderers and
 nearby-chat cards/lines: `ui/chat.rs::message_emphasis` and `message_color`,
 with `ui/fonts.rs::TextEmphasis` carried through emoji runs, links and search
@@ -2084,7 +2089,8 @@ trackpad deltas. Hint visibility and height units are saved
 in Settings. The main scene continues to use its normal shape/morph streaming.
 
 `aurora-net/session/wearable_save.rs` checks shape ownership and Modify/Copy,
-uploads the wearable through the existing AssetUpload/Xfer path, preserves item
+uploads the wearable through the existing AssetUpload/Xfer path with its inventory
+asset type (bodypart 13 or clothing 5), preserves item
 permissions for Save As through CopyInventoryItem, patches only the transaction
 `hash_id` through AIS and reads the resulting asset back before acknowledging
 success. Non-modifiable shapes can be copied only unchanged. Requests and replies
@@ -2665,6 +2671,15 @@ changing the objects. `scene/selection_demo.rs` provides the offline mesh
 with separate curved islands of the `faces-complex` scenario, next to a
 closed torus primitive.
 
+PBR BOM maps retain their canonical UUIDs in assets and face overrides.
+`scene/shown_bakes.rs` resolves all four rendered channels per wearer, including
+last-good-bake retention and appearance-service sources. Effective PBR maps
+also feed `Scene::bom_mask`; material arrivals invalidate that visibility mask.
+Editing windows retain the coloured `BAKED_*` reference images in texture
+pickers, map swatches and material previews, for both PBR and Blinn-Phong.
+Only the scene substitutes the avatar's current bakes, following the requested
+editing behaviour rather than the Legacy Viewer's resolved picker preview.
+
 `ui/texture_picker/tree.rs` shares the search cache and the virtual tree of
 `ui/inventory/view.rs`. The folders load in bounded batches; the expanded
 states of search and of navigation stay separate. `ui/texture_picker.rs`
@@ -3019,6 +3034,10 @@ and Create > Copy selection, including Shift-drag duplication in the move
 manipulator.
 The demo simulator retains the group supplied by each creation request for
 its property replies.
+`RezScript` (new/dropped scripts and bridge installation) and `DeRezObject`
+(Delete, Take and Take Copy, including separate items) instead send the
+current active group directly, independent of the parcel rez preference.
+The script inventory item keeps its own permission group unchanged.
 
 Rezzing from the inventory goes through `ui/inventory.rs` (payload and release before the end of the egui pass), `app/inventory_drag.rs` (rules, group, preparation of the commands and local consumption of the non-copyable items), `Scene::inventory_surface` (triangles among the candidates of the index, terrain, without a GPU wait) and `aurora-net/src/inventory/rez.rs` (reliable `RezObject` message in the targeted region). Transparent pixels are tested with a mask of one bit per 2×2 block, prepared by the decoding tasks; invisible and rigged surfaces are discarded. The cursor keeps the result for 100 ms at most when the ray does not move; the release always recomputes the surface. Over an object, what goes into its contents (Ctrl for an object, without it for the other items, and a selection or a folder of several entries) is decided by `build/contents_drop.rs`, all the entries accepted or none, and sent with `UpdateTaskInventory` / `RezScript`; the Contents tab uses the same rules. The demo uses a synthetic cube as the reply to the rez. `app/contents_drop_demo.rs` drives `AURORA_DEMO_CONTENTS_DROP`.
 

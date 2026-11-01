@@ -1267,7 +1267,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SCULPT_ZERO=1` | Subtype-zero sculpt classification beside torus and sphere controls |
 | `AURORA_DEMO_SCULPT_MISSING=1\|late` | A sculpt whose map is missing: the sphere placeholder, then its torus with `late` |
 | `AURORA_DEMO_TEXTURE_MISSING=1` | Boxes whose texture is missing: the Legacy Viewer's grey, never the rez grid for ever |
-| `AURORA_DEMO_BOM_REZZED=1` | A box of bake-on-mesh placeholders on the ground: the placeholder textures, never white |
+| `AURORA_DEMO_BOM_REZZED=1\|pbr` | Ground BOM placeholders, or PBR BOM maps on a ground box and an attachment |
 | `AURORA_DEMO_OBJECT_MENU=<mode>` | Object actions, scene menu customization/notecards, object profile and pathfinding readers |
 
 **Beacon details.** `AURORA_DEMO_BEACONS=1` adds seven labelled sources, including an invisible scripted cube. `lines`, `highlights` and `off` isolate the two render modes; `hidden-particles` keeps the source marker while hiding emitted particles. `parcels` frames the terrain boundaries and ownership colours. `owned` opens My land with an offline parcel and group contributions. Check each source switch, Scripted versus Touch, width, both master switches off, and closing/reopening the floater without losing the active filters. The grid check compares real sound/particle/media sources, linked children, attachments, neighbouring parcels and the personal holdings list with the Legacy Viewer.
@@ -1418,10 +1418,21 @@ the fix they stayed the grid for as long as they were in view. Capture with
 `AURORA_DEMO_BOM_REZZED=1` places a box ahead of the start view (x=135,
 y=129.5) whose faces carry the bake-on-mesh placeholders of the head, the upper
 body and the lower body, like a BOM body part rezzed out. The demo stands in
-for the grid's placeholder textures with diagonal stripes: orange (head), teal
+for the grid's placeholder textures with labelled diagonal stripes: orange (head), teal
 (upper body) and violet (lower body). Not worn, the box shows them, as the
 Legacy Viewer does; before the fix its faces were white. On the grid the
 placeholders are the real "baked" channel textures.
+
+`AURORA_DEMO_BOM_REZZED=pbr` adds a material with BOM in all four channels,
+on the ground box and a chest attachment (`81141`). Both demo avatars supply
+skin, normal, ORM and emissive bakes. Use
+`AURORA_DEMO_BUILD=pbr-bom,object:81141,0` to frame the attachment and open
+its map picker; the final number selects colour (0), normal (1), ORM (2) or
+emissive (3). The picker, swatches and material sphere show the coloured
+`BAKED_*` reference images while the worn object uses the avatar's bakes.
+`AURORA_DEMO_BUILD=bp-bom,object:81141` shows the same reference-image preview
+for a Blinn-Phong diffuse map. The ground box keeps the placeholders.
+Check both `AURORA_DEMO_BUILD_STYLE=aurora` and `legacy`.
 
 `AURORA_DEMO_PROJECTOR=1`, `AURORA_DEMO_BUILD=move,object:9712` and
 `AURORA_DEMO_BUILD_TAB=features:light-picker` select a light and open its
@@ -3393,6 +3404,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
 | `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>[,<probe ambiance>]]]\|midday` | EEP sky with this gamma, classic unless it has a probe ambiance; or the library Midday |
+| `AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r,g,b>]` | Water of the `AURORA_DEMO_SKY` day with these values, out-of-range ones included |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
 | `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>]` | Where the real sky is seen from, and its stars' brightness |
@@ -3572,6 +3584,28 @@ both open states and the selection count. Capture at frame 620.
   at 0.02 on the other, without adding up. `shell`: the layer also shows its
   other faces; the back one, seen from behind, must add nothing (same values
   as with `1`).
+- **`AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r>,<fog g>,<fog b>]`**:
+  the water of the EEP day `AURORA_DEMO_SKY` gives the region, with these
+  values as a region's asset carries them (the normal scale on its three
+  axes); a missing or unreadable value keeps the default (0.5, 0.3999,
+  0.04, 2, fog 0.0156 / 0.149 / 0.2509). Values beyond the Legacy Viewer's
+  ranges are clamped to them like LLSettingsWater's validation (unit test
+  `water_values_are_clamped_to_the_legacy_ranges`; the image does not show
+  it: a fresnel offset clamped to 1 still mirrors the whole sky, so
+  `AURORA_DEMO_WATER_EEP=1.8,0,0,2,1.6,1.6,1.6` under a white midday sky is
+  a white sheet before and after). The reported region's water: with
+  `AURORA_DEMO_TOD=0 AURORA_DEMO_SKY=1.6,37,1.2
+  AURORA_DEMO_WATER_EEP=0.5,0,0,0,0.101,0.211,0.196` (a hazy midday sky; a
+  normal scale of 0, a fresnel scale of 0 and no blur) and
+  `AURORA_DEMO_WATER=off:shore`, the sea is dark and hazed toward the
+  horizon, without any reflection, as in the Legacy Viewer (its reflection
+  normal is normalize(0) there), never a white sheet; with `medium:shore`
+  (enhanced water) it keeps its waves and foam and has no reflection
+  either: turquoise near the shore, blue toward the horizon, not white.
+  Without these variables (the demo's default sky and water), every sea
+  takes the Legacy haze and reflection: the distant water is darker than
+  before and meets the sky on a sharper line. Compare the Legacy Viewer
+  with the same values in Personal Lighting.
 - **`AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>]]`**: classic EEP sky (without
   reflection probe ambiance) with this sky gamma and a sun colour
   above 1: legacy gamma and object light normalised like
@@ -4761,6 +4795,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   then opens the chosen flow: RGBA image, PBR material, Collada cube,
   BVH / `.anim` animations and synthetic WAV sound. Check the settings, the
   previews, the camera, the permissions, the selection and the confirmation.
+  With `texture` and `AURORA_DEMO_IMPORT_FILE`, also check grayscale and
+  grayscale/alpha PNGs, and 16-bit grayscale, RGB and RGBA exports: all must
+  show a preview without a channel error. Luminance is repeated in RGB,
+  alpha is retained, and 16-bit channels use their high byte, following
+  `LLPngWrapper::normalizeImage`. Ordinary 8-bit RGB/RGBA files and material
+  maps must still load with the same colours and transparency.
   The texture inspector shows "Limit size to 1024 × 1024" only when the
   unrestricted power-of-two width or height would exceed 1024. It is off by
   default (2048 maximum). Each explicit change is saved; newly added textures
@@ -10227,7 +10267,7 @@ The enhanced-water master is disabled by default (2026-10-19), including missing
 
 Experimental water defaults validation (2026-10-19): final `scripts/check.ps1` green, 3,576 passed, zero failures, 26 ignored; scripts/formatting/Clippy clean. Regressions cover fresh/missing/partial defaults, disabled render flags, saved choices, all graphics presets, Aurora section reset and explicit bulk opt-in. Built the default dev viewer and inspected `.scratch/ao-water-spacing-final-fr.png`, `ao-water-spacing-final-en.png` (1024x768), `water-experimental-off-fr.png` and `water-experimental-on-en.png`, compared with `ao-optional-water-controls-fr.png` and `water-experimental-before-fr.png`. The two gesture gaps are wider and scrolling remains available. Water preferences show exactly one warning on global activation, with ordinary individual controls and readable disabled choices. Both water modes are explicit offline fixtures; they do not verify a real user's saved preference. Last-five disabled-water preferences before/after medians: 60 FPS, UI 0.83/0.80 ms and GPU 1.95/1.59 ms; baseline compilation and desktop load vary, so no isolated performance gain is claimed. Preferences captures have zero warnings/errors/panics; AO captures have no errors/panics and only the baseline synthetic missing-outfit warning. Human acceptance remains required before PR.
 
-Modes `off`, `low`, `medium`, `high`, `ultra` explicitly select the demo's initial master/quality, overriding the normal disabled default; `medium:underwater` (or another quality with `:underwater`) starts the camera below the surface. The `cycle` mode (also `cycle:window` for the underwater camera) switches the master and each individual effect, cycling all four qualities every 60 frames; its log records each transition. Camera suffixes `:shore` and `:close` inspect grazing reflections/shore breakers and detailed hull/foot contacts; `:foam` inspects close shoreline coverage and reflected highlights, and `:avatar` inspects wading droplets (`:avatar:run` raises horizontal speed to exercise running) (also test with `AURORA_DEMO_TOD=3` for sunset lighting); `:underwater` inspects refracted caustics and bubble lighting. `:surface` follows a horizontal swimmer; `:window` looks up through the water at a colored above-water crossbar, and `:window-grazing` inspects internal reflection at shallow angles. Only demo mode reads it. The inspection view stays fixed across frames unless free camera is active; action scenarios retain their own framing. Preferences remain editable. Combine with `AURORA_DEMO_OPTIONS=graphics/3:cogs` for Preferences › Graphics › Reflections and water (Aurora water); `AURORA_AO=gtao:2` for the GTAO integration; `AURORA_PROFILE=1` for CPU/GPU timings. Capture several settled frames: shoreline and pillar foam should persist, the moving hull should leave an expanding wake, immersed avatar motion should emit bubbles, and droplets should fall back into the water. From above, submerged particles enter the refracted scene; below, they are seen directly through water fog. Switch each effect independently, change quality, and disable/enable the master switch: saved choices remain intact, physics and motion do not change. Also test MSAA 4×, SMAA, TAA, a night sky, a region crossing, and a teleport (no stale trails). Grid validation requires the human: boats, scripted objects, attachments, animated/custom avatars and region water at different heights. These effects target native region water, not arbitrary mesh pools.
+Modes `off`, `low`, `medium`, `high`, `ultra` explicitly select the demo's initial master/quality, overriding the normal disabled default; `medium:underwater` (or another quality with `:underwater`) starts the camera below the surface. The `cycle` mode (also `cycle:window` for the underwater camera) switches the master and each individual effect, cycling all four qualities every 60 frames; its log records each transition. Camera suffixes `:shore` and `:close` inspect grazing reflections/shore breakers and detailed hull/foot contacts; `:foam` inspects close shoreline coverage and reflected highlights, and `:avatar` inspects wading droplets (`:avatar:run` raises horizontal speed to exercise running) (also test with `AURORA_DEMO_TOD=3` for sunset lighting); `:underwater` inspects refracted caustics and bubble lighting. `:surface` follows a horizontal swimmer; `:window` looks up through the water at a colored above-water crossbar, and `:window-grazing` inspects internal reflection at shallow angles. `:alpha` (#1678) adds three semi-transparent boxes, green under the water, yellow across its surface and magenta above it: from above (`off:shore:alpha`, `medium:shore:alpha`), the green one and the lower half of the yellow one must be refracted and fogged by the water like the ground around them, never drawn crisp over the surface, while the upper half and the magenta one look as before; from below (`:underwater:alpha`) nothing changes. Only demo mode reads it. The inspection view stays fixed across frames unless free camera is active; action scenarios retain their own framing. Preferences remain editable. Combine with `AURORA_DEMO_OPTIONS=graphics/3:cogs` for Preferences › Graphics › Reflections and water (Aurora water); `AURORA_AO=gtao:2` for the GTAO integration; `AURORA_PROFILE=1` for CPU/GPU timings. Capture several settled frames: shoreline and pillar foam should persist, the moving hull should leave an expanding wake, immersed avatar motion should emit bubbles, and droplets should fall back into the water. From above, submerged particles enter the refracted scene; below, they are seen directly through water fog. Switch each effect independently, change quality, and disable/enable the master switch: saved choices remain intact, physics and motion do not change. Also test MSAA 4×, SMAA, TAA, a night sky, a region crossing, and a teleport (no stale trails). Grid validation requires the human: boats, scripted objects, attachments, animated/custom avatars and region water at different heights. These effects target native region water, not arbitrary mesh pools.
 
 With `AURORA_DEMO_WATER_SHADERS=1`, an offline viewer loads common/spectrum, scene object/environment, water simulation, swept-wake and caustics WGSL from its own source checkout when pipelines are created. Restart the demo after editing shaders; no build is needed for each visual comparison. This switch is ignored without `AURORA_DEMO`; normal viewers and final acceptance runs use baked shaders. Missing source files fall back to the baked version.
 

@@ -9178,6 +9178,19 @@ impl App {
         let slots = self.scene.env_textures(&mut gfx.renderer, env.textures);
         env.sky.cloud_texture = slots[0];
         env.sky.sun_texture = slots[1];
+        // the sun disc's texture once it is ready (or not: the disc is then
+        // procedural), for a report of a missing or misplaced sun
+        {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static SUN_SLOT: AtomicU32 = AtomicU32::new(u32::MAX);
+            if SUN_SLOT.swap(slots[1], Ordering::Relaxed) != slots[1] {
+                log::info!(
+                    "sky: sun texture {} {}",
+                    env.textures[1],
+                    if slots[1] != 0 { "loaded" } else { "not loaded (procedural disc)" }
+                );
+            }
+        }
         env.sky.moon_texture = slots[2];
         env.water.normal_texture = slots[3];
         env.sky.rainbow_texture = slots[4];
@@ -11285,6 +11298,45 @@ impl App {
                                 self.build.begin_contents_rename(&self.world, object, *id);
                             }
                         }
+                    }
+                    crate::build::demo::Step::BomPicker(channel) => {
+                        self.world.preview_bakes(std::collections::HashMap::from([
+                            (8, crate::demo::TEX_BAKE_SKIN),
+                            (9, crate::demo::TEX_BUMPS),
+                            (10, crate::demo::TEX_ORM_DISC),
+                            (42, crate::demo::TEX_TILES),
+                        ]));
+                        let m = crate::demo::bom_rezzed::material();
+                        let maps = [
+                            m.base_color_texture,
+                            m.normal_texture,
+                            m.metallic_roughness_texture,
+                            m.emissive_texture,
+                        ];
+                        let current = maps[channel.unwrap_or(0)];
+                        if channel.is_none() {
+                            for idx in self.build.sel_prims(&self.world) {
+                                if let Some(object) = self.world.objects.get_mut(idx) {
+                                    object.extra.render_materials.clear();
+                                    if let Some(te) = &mut object.te {
+                                        for face in &mut std::sync::Arc::make_mut(te).faces {
+                                            face.texture = current.unwrap_or_default();
+                                        }
+                                    }
+                                    object.material_dirty = true;
+                                }
+                            }
+                        }
+                        self.build.ui.tex_tab = usize::from(channel.is_some());
+                        self.build.tab = 3;
+                        self.build.ui.picker.open_with_defaults(
+                            aurora_i18n::tr!("build-ui-texture-choose-texture"),
+                            current.unwrap_or_default(),
+                            None,
+                            true,
+                        );
+                        self.build.ui.pick_target =
+                            Some(channel.map_or(crate::build::ui::PickTarget::Diffuse, crate::build::ui::PickTarget::PbrMap));
                     }
                     crate::build::demo::Step::TexturePicker(materials, local) => {
                         let current = self
