@@ -458,8 +458,9 @@ impl App {
             crate::demo::action_overlay(976, pos, rotation)
         } else {
             let alpha = match mode {
-                "camera-glass" => "blend-half",
-                "camera-mask" => "mask-zero",
+                m if m.starts_with("camera-faint") => "blend-faint",
+                m if m.starts_with("camera-glass") => "blend-half",
+                m if m.starts_with("camera-mask") => "mask-zero",
                 _ => "blend-zero",
             };
             crate::demo::alpha_click_overlay(alpha, pos, rotation)

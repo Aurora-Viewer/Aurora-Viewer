@@ -875,6 +875,9 @@ struct Pipelines {
     pick_terrain_mask: wgpu::RenderPipeline,
     pick_2s: wgpu::RenderPipeline,
     pick_visible: wgpu::RenderPipeline,
+    pick_left: wgpu::RenderPipeline,
+    pick_left_2s: wgpu::RenderPipeline,
+    pick_left_visible: wgpu::RenderPipeline,
     pick_overlay: wgpu::RenderPipeline,
 }
 
@@ -3840,6 +3843,19 @@ impl Backend {
             fs: Some("fs_pick_visible"),
             ..pick_desc("visible pick", Some(wgpu::Face::Back))
         });
+        let pick_left = pipe(PipeDesc {
+            constants: &[("WORLD_LEFT_PICK", 1.0)],
+            ..pick_desc("left world pick", Some(wgpu::Face::Back))
+        });
+        let pick_left_visible = pipe(PipeDesc {
+            fs: Some("fs_pick_visible"),
+            constants: &[("WORLD_LEFT_PICK", 1.0)],
+            ..pick_desc("left visible world pick", Some(wgpu::Face::Back))
+        });
+        let pick_left_2s = pipe(PipeDesc {
+            constants: &[("WORLD_LEFT_PICK", 1.0)],
+            ..pick_desc("left world pick 2s", None)
+        });
         let pick_overlay = pipe(PipeDesc {
             fs: Some("fs_pick_overlay"),
             ..pick_desc("transparency overlay pick", None)
@@ -3992,6 +4008,9 @@ impl Backend {
             pick_terrain_mask,
             pick_2s,
             pick_visible,
+            pick_left,
+            pick_left_2s,
+            pick_left_visible,
             pick_overlay,
         }
     }
@@ -7814,20 +7833,27 @@ impl Backend {
         // ---- faces drawn under a clicked pixel: opaque and masked, then
         // blended ones in front of them (only in the frame of a click)
         if drawn_px.is_some() {
-            let blend_pick = if drawn_px.is_some_and(|(_, _, mode)| mode == crate::DrawnMode::Visible) {
-                &self.pipelines.pick_visible
+            let blend_pick = match drawn_px.map(|(_, _, mode)| mode) {
+                Some(crate::DrawnMode::Visible) => &self.pipelines.pick_visible,
+                Some(crate::DrawnMode::LeftVisible) => &self.pipelines.pick_left_visible,
+                Some(crate::DrawnMode::Left) => &self.pipelines.pick_left,
+                _ => &self.pipelines.pick,
+            };
+            let left = drawn_px.is_some_and(|(_, _, mode)| matches!(mode, crate::DrawnMode::Left | crate::DrawnMode::LeftVisible));
+            let (solid_pick, solid_pick_2s) = if left {
+                (&self.pipelines.pick_left, &self.pipelines.pick_left_2s)
             } else {
-                &self.pipelines.pick
+                (&self.pipelines.pick, &self.pipelines.pick_2s)
             };
             let layers: [&[(&wgpu::RenderPipeline, (u64, u32), Option<usize>)]; 2] = [
                 &[
                     (&self.pipelines.pick_terrain, rg.terrain, None),
                     (&self.pipelines.pick_terrain, rg.terrain_pbr, None),
                     (&self.pipelines.pick_terrain_mask, rg.terrain_mask, None),
-                    (&self.pipelines.pick, rg.opaque, Some(0)),
-                    (&self.pipelines.pick_2s, rg.opaque_2s, Some(1)),
-                    (&self.pipelines.pick, rg.mask, Some(2)),
-                    (&self.pipelines.pick_2s, rg.mask_2s, Some(3)),
+                    (solid_pick, rg.opaque, Some(0)),
+                    (solid_pick_2s, rg.opaque_2s, Some(1)),
+                    (solid_pick, rg.mask, Some(2)),
+                    (solid_pick_2s, rg.mask_2s, Some(3)),
                 ],
                 &[
                     (blend_pick, rg.blend, None),

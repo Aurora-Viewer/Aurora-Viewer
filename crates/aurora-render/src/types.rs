@@ -184,6 +184,9 @@ pub mod flags {
     pub const PORTAL_CLIP: u32 = 16384;
     /// Procedural Aurora portal surface; uses the ordinary sorted blend/glow.
     pub const PORTAL_EFFECT: u32 = 32768;
+    /// World face whose material permits Blend texture alpha. Excludes
+    /// avatars, worn objects and opaque/masked/emissive material modes.
+    pub const WORLD_BLEND_PICK: u32 = 65536;
 }
 
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;

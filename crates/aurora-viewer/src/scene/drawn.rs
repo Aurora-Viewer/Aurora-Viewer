@@ -33,8 +33,8 @@
 //! Camera clicks (Alt + click, Focus tool) use the visible-surface mode of
 //! that pass directly: no CPU rest-pose or invisible touch-surface search.
 //!
-//! [`reaches`] is that rule, alone and tested. Blend faces intercept a
-//! press regardless of their texel opacity or the presence of an action.
+//! [`reaches`] is that rule, alone and tested. Worn Blend faces intercept a
+//! press regardless of texel opacity; world Blend left picks skip alpha zero.
 
 use super::*;
 use aurora_net::TouchSurface;
