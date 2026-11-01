@@ -12,6 +12,7 @@ fn transparent_pbr_sidedness_matches_colour_and_depth_on_gpu() {
         "fs_depth_contact",
         "fs_depth_contact_normal",
         "fs_depth_opaque",
+        "water_clip",
     ] {
         let start = object.find(&format!("fn {name}(")).expect("production fragment");
         let end = start + object[start..].find("\n}").expect("fragment end") + 2;
@@ -33,8 +34,9 @@ const BLEND_SPLIT:u32=0u;
 const DEPTH_CONTACT_ALPHA:f32=0.5;
 struct DrawRecord {{flags:vec4<u32>,tex:vec4<u32>,base_color:vec4<f32>,params:vec4<f32>}};
 @group(0) @binding(0) var<storage,read> records:array<DrawRecord>;
-struct Frame {{sky_cloud_pd2:vec4<f32>}};
-const frame=Frame(vec4<f32>(1.0));
+struct Frame {{sky_cloud_pd2:vec4<f32>,params:vec4<f32>,camera_pos:vec4<f32>}};
+const frame=Frame(vec4<f32>(1.0),vec4<f32>(0.0),vec4<f32>(0.0,0.0,1.0,1.0));
+override WATER_CLIP:u32=0u;
 struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) @interpolate(flat) record:u32,
     @location(1) world_pos:vec3<f32>,@location(2) uv:vec2<f32>}};
 struct Material {{color:vec4<f32>}};
@@ -43,7 +45,6 @@ struct DepthMaskOut {{record:u32,uv:vec2<f32>,world_pos:vec3<f32>,normal:vec3<f3
 fn portal_surface(r:DrawRecord,uv:vec2<f32>,aa:f32)->Surface {{return Surface(1.0,vec3<f32>(1.0));}}
 fn apply_fog(c:vec3<f32>,p:vec3<f32>)->vec3<f32> {{return c;}}
 fn portal_clip(r:DrawRecord,p:vec3<f32>) {{}}
-fn water_clip(p:vec3<f32>) {{}}
 fn sample_tex(t:u32,uv:vec2<f32>)->vec4<f32> {{return vec4<f32>(1.0);}}
 fn eval_material(v:VsOut,front:bool)->Material {{return Material(records[v.record].base_color);}}
 fn shade_material(v:VsOut,m:Material)->Material {{return m;}}
@@ -53,7 +54,8 @@ fn depth_normal(n:vec3<f32>,front:bool,cur:vec4<f32>,prev:vec4<f32>)->vec4<f32> 
 @vertex fn vs(@builtin(vertex_index) vertex:u32,@builtin(instance_index) instance:u32)->VsOut {{
     let positions=array<vec2<f32>,3>(vec2<f32>(-1.0,-1.0),vec2<f32>(3.0,-1.0),vec2<f32>(-1.0,3.0));
     let index=select(vertex,2u-vertex,records[instance].flags.y!=0u);
-    return VsOut(vec4<f32>(positions[index],0.5,1.0),instance,vec3<f32>(0.0),vec2<f32>(0.5));
+    let height=select(-1.0,1.0,records[instance].flags.z!=0u);
+    return VsOut(vec4<f32>(positions[index],0.5,1.0),instance,vec3<f32>(0.0,0.0,height),vec2<f32>(0.5));
 }}
 @fragment fn colour(v:VsOut,@builtin(front_facing) front:bool)->@location(0) vec4<f32> {{return fs_blend(v,front);}}
 @fragment fn contact(v:VsOut,@builtin(front_facing) front:bool)->@location(0) vec4<f32> {{
@@ -82,15 +84,18 @@ fn depth_normal(n:vec3<f32>,front:bool,cur:vec4<f32>,prev:vec4<f32>)->vec4<f32> 
         source: wgpu::ShaderSource::Wgsl(source.into()),
     });
     let mut records = Vec::<[u32; 16]>::new();
-    for row in 0..4 {
+    // Every colour/depth cut, above and below the plane, for unclipped,
+    // post-water and pre-water pipelines. This also covers the #1788 overlap.
+    for row in 0..24 {
         for (double, back) in [(false, false), (false, true), (true, false), (true, true)] {
             let mut rec = [0; 16];
             rec[0] = flags::PBR | flags::ALPHA_BLEND | if double { flags::DOUBLE_SIDED } else { 0 };
             rec[1] = u32::from(back);
+            rec[2] = u32::from((row / 4) % 2 != 0);
             for value in &mut rec[8..12] {
                 *value = 1.0_f32.to_bits();
             }
-            rec[11] = if row == 3 { 0.98_f32 } else { 0.6_f32 }.to_bits();
+            rec[11] = if row % 4 == 3 { 0.98_f32 } else { 0.6_f32 }.to_bits();
             records.push(rec);
         }
     }
@@ -103,19 +108,21 @@ fn depth_normal(n:vec3<f32>,front:bool,cur:vec4<f32>,prev:vec4<f32>)->vec4<f32> 
         &device,
         "sidedness pixels",
         64,
-        64,
+        384,
         wgpu::TextureFormat::Rgba8Unorm,
         1,
         wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
     );
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("sidedness readback"),
-        size: 64 * 256,
+        size: 384 * 256,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
     let mut encoder = device.create_command_encoder(&Default::default());
-    for (row, entry) in ["colour", "contact", "normal", "opaque"].into_iter().enumerate() {
+    for row in 0..24 {
+        let entry = ["colour", "contact", "normal", "opaque"][row % 4];
+        let water_clip = (row / 8) as f64;
         let pipelines = [false, true].map(|double_sided| {
             let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(entry),
@@ -135,7 +142,10 @@ fn depth_normal(n:vec3<f32>,front:bool,cur:vec4<f32>,prev:vec4<f32>)->vec4<f32> 
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some(entry),
-                    compilation_options: Default::default(),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &[("WATER_CLIP", water_clip)],
+                        ..Default::default()
+                    },
                     targets: &[Some(wgpu::TextureFormat::Rgba8Unorm.into())],
                 }),
                 multiview_mask: None,
@@ -192,10 +202,13 @@ fn depth_normal(n:vec3<f32>,front:bool,cur:vec4<f32>,prev:vec4<f32>)->vec4<f32> 
     readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("sidedness readback"));
     device.poll(wgpu::PollType::wait_indefinitely()).expect("sidedness completion");
     let pixels = readback.get_mapped_range(..).expect("sidedness pixels");
-    for row in 0..4 {
+    for row in 0..24 {
+        let clip = row / 8;
+        let above = (row / 4) % 2 != 0;
         for column in 0..4 {
             let offset = (row * 16 + 8) * 256 + (column * 16 + 8) * 4;
-            assert_eq!(pixels[offset] > 0, column != 1, "pass {row}, front/back case {column}");
+            let visible = column != 1 && (clip == 0 || (clip == 1) == above);
+            assert_eq!(pixels[offset] > 0, visible, "pass {row}, front/back case {column}");
         }
     }
 }
