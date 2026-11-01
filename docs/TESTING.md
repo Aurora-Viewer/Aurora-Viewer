@@ -7617,7 +7617,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder`**
 — opens Appearance with four synthetic outfits:
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
@@ -7652,6 +7652,17 @@ for them (`5 to look up`), as a cold inventory cache.
   replacement has no single saved base; use Save as to save the combination.
   Conflicting body parts use the last selected outfit in display order,
   following `LLAppearanceMgr::filterWearableItems`.
+- `multi-items` / `multi-worn`: the second outfit open in the list with
+  two of its items selected, or two worn items selected in Worn. Ctrl/Cmd
+  and Shift pick items within one outfit or within Worn; a click in
+  another list starts a new selection there. Right-click a selected item:
+  Wear, Add, Attach to, Take off / Detach, the favourites and Remove from
+  outfit act on every selected item, in one action; Edit, Touch, Object
+  profile and Show original need a single item. Take off / Detach leaves
+  body parts out and is named Remove (clothing), Detach (objects) or
+  Take off / Detach (both). A selection mixing worn and unworn items
+  offers Wear / Add for the unworn ones and Take off for the worn ones.
+  The outfit editor keeps one selected row.
 - `folders` / `folders-outfits`: the gallery or the list with outfit
   folders in My Outfits: "Beach" (one outfit and a "Night" subfolder with
   one), "Club" (two outfits) and an empty "Spring". The list shows them as
@@ -8234,6 +8245,8 @@ What the inventory must show with these scenarios:
 | `AURORA_SOUND_OCCLUSION=0` or `1` | "Muffle sounds behind walls" forced off or on for this launch, without saving it |
 | `AURORA_DEMO_SOUND_HRTF=1`, `circle` or `updown` | A sound circling the listener and one rising above it and falling, for the 3D sound for headphones |
 | `AURORA_SOUND_HRTF=0` or `1` | "3D sound for headphones (HRTF)" forced off or on for this launch, without saving it |
+| `AURORA_DEMO_SOUND_REVERB=1`, `room` or `hall` | A clapper above our avatar, a small room and a large hall to walk into (or to start in), for the reverb of the surroundings; its estimate in the log |
+| `AURORA_SOUND_REVERB=0` or `1` | "Reverb from the surroundings" forced off or on for this launch, without saving it |
 | `AURORA_DEMO_MINIMIZED_MUTE=1\|off` | Force mute when minimized on or off for an offline run |
 | `AURORA_DEMO_SOUND_EXPLORER=1\|all\|blacklist\|blacklist-ignored\|avatar-menu\|avatar-menu-mixed\|avatar-menu-pie` | Sound Explorer, separate blacklist categories, ignored objects or avatar sound-category switches |
 | `AURORA_DEMO_ANIMATION_EXPLORER=1\|blacklist` | Animation explorer with a stand-in preview, or a blacklisted animation |
@@ -8629,6 +8642,32 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_SOUND`.
 - **`AURORA_SOUND_HRTF=0|1`**: overrides Preferences › Sound, "3D sound for
   headphones (HRTF)", for this launch (demo or grid), without saving it.
+- **`AURORA_DEMO_SOUND_REVERB=1|room|hall`**: turn Preferences › Sound,
+  "Reverb from the surroundings" on (or launch with
+  `AURORA_SOUND_REVERB=1`). Our avatar starts in the open air south-east of
+  the plaza, by a small lit post labelled "Open air" (`room` and `hall`
+  start inside those instead); a violet "Clapper" cube floats above its
+  head and claps twice every two seconds, wherever it goes. Ahead on the
+  left stands a small closed room (7 x 7 x 3 m inside, its doorway on the
+  side facing the path), straight ahead a large hall (22 x 30 x 12 m, a
+  wide doorway facing the start); both are light grey boxes with their name
+  above the doorway. Walk in and out (the listener is the camera: if the
+  third-person camera ends up in or behind a wall, zoom in or use
+  mouselook). In the open the claps are almost dry; in the small room they
+  get a short, close ring (about half a second); in the hall a long, soft
+  tail (about two seconds) that keeps sounding between the claps. Walking
+  through a doorway changes the reverb over a second or two, without a
+  click; the setting off makes every clap dry again, fading the tail out.
+  The log gives the estimate and the parameters when they change
+  (`sound reverb: enclosure <0..1>, open <0..1>, mean <m> (measured ...):
+  level <0..1>, decay <s>, pre-delay <ms>, damping <0..1>, path <m>`), at
+  info level in this scenario (debug otherwise); with `AURORA_PROFILE=1`, a
+  `sound reverb summary` line every ten seconds gives the measures' cost on
+  the main thread and in their job, and the per-frame cost of the sounds'
+  sends. Sounds play without `AURORA_DEMO_SOUND`.
+- **`AURORA_SOUND_REVERB=0|1`**: overrides Preferences › Sound, "Reverb from
+  the surroundings", for this launch (demo or grid), without saving it: the
+  same build measured with and without the reverb.
 - **`AURORA_DEMO_WIND=<x>,<y>[,fly]`**: the demo region gets a uniform wind
   of x, y m/s (default `3,2`; LLWind::getVelocity doubles it, as on the
   grid), and with `fly` our avatar arrives flying. The wind noise plays on

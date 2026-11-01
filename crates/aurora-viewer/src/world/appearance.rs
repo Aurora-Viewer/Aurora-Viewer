@@ -75,7 +75,7 @@ pub enum Action {
     },
     DeleteFromOutfit {
         folder: Uuid,
-        item: Uuid,
+        items: Vec<Uuid>,
     },
     ShowOriginal(Uuid),
     Favorite(Uuid),
@@ -358,8 +358,8 @@ fn base_link(inv: &Inventory, id: Uuid) -> OutfitLink {
 
 /// Produces one acknowledged AIS operation. No optimistic inventory mutation.
 pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result<(OutfitMutation, bool), String> {
-    // DeleteFromOutfit removes the saved link, never the original or the worn item.
-    if let Action::DeleteFromOutfit { folder, item } = action {
+    // DeleteFromOutfit removes the saved links, never the originals or the worn items.
+    if let Action::DeleteFromOutfit { folder, items } = action {
         if !inv
             .folders
             .get(&folder)
@@ -372,7 +372,10 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             OutfitMutation {
                 folder,
                 create: None,
-                links: usable_links(inv, folder).into_iter().filter(|l| l.target != item).collect(),
+                links: usable_links(inv, folder)
+                    .into_iter()
+                    .filter(|l| !items.contains(&l.target))
+                    .collect(),
                 cof: None,
             },
             false,
@@ -2258,11 +2261,31 @@ mod tests {
         let current = folder_links(&inv, cof(&inv).expect("COF"));
         let item = Uuid::from_u128(717);
         let folder = Uuid::from_u128(704);
-        let (change, sync) = plan(&inv, Action::DeleteFromOutfit { folder, item }, &HashMap::new()).expect("delete link");
+        // a multiple selection goes in one update: another link of the outfit with it
+        let other = folder_links(&inv, folder)
+            .into_iter()
+            .find(|l| !l.folder && l.target != item)
+            .expect("a second link")
+            .target;
+        let kept = folder_links(&inv, folder).len() - 2;
+        let (change, sync) = plan(
+            &inv,
+            Action::DeleteFromOutfit {
+                folder,
+                items: vec![item, other],
+            },
+            &HashMap::new(),
+        )
+        .expect("delete links");
         assert!(!sync, "saved-outfit removal must not detach worn objects");
         demo_mutate(&mut inv, Uuid::from_u128(1), &change).expect("mutation");
-        assert!(!folder_links(&inv, folder).iter().any(|l| l.target == item));
-        assert!(inv.items.contains_key(&item), "original retained");
+        let links = folder_links(&inv, folder);
+        assert!(!links.iter().any(|l| l.target == item || l.target == other));
+        assert_eq!(links.len(), kept, "the other links stay");
+        assert!(
+            inv.items.contains_key(&item) && inv.items.contains_key(&other),
+            "originals retained"
+        );
         assert_eq!(folder_links(&inv, cof(&inv).expect("COF")), current);
     }
 

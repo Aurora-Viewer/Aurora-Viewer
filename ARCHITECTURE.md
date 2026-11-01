@@ -2334,6 +2334,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `scene/hover.rs` | Cached object and surface point under the cursor: compact sphere index maintained by sync, candidates near the ray or displayed depth, reused while the question and nearby scene stay unchanged, refreshed at least every 100 ms; never a click cache. Foreground Blend triangles block hover without an action and at zero alpha, retaining large-face hierarchies; Mask holes remain pass-through. The cached point bounds media hover. Always-tested objects (avatars and rigged meshes in crowds) have classes computed after arrival / change to exclude irrelevant steps. AURORA_HOVER_CHECK compares the full reference search; AURORA_HOVER_LEGACY compares the index / hierarchy strategy; hover summary provides profiling. |
 | `scene/pick_accel.rs` | Triangle bounding-volume hierarchy for a picking face: the same ray distance as exhaustive triangle tests, built by a background job when a large mesh / sculpt face is first queried. Hover and the shared Blend query use ready hierarchies; other click surface tests remain exhaustive. |
 | `scene/sound_occlusion.rs` | World sounds muffled by what stands between them and the listener (Aurora's own, Preferences › Sound, on): ten times a second, three rays per playing world sound from the camera to the source and beside it; the main thread gathers the objects near the rays from the pick index (`PickIndex::segment_candidates`), their transforms and shared geometry, and the terrain under the rays; a background job counts the drawn triangles crossed (large faces through their hierarchies, `Accel::crossings`) into layers, ignoring avatars, worn and rigged objects, plants and the emitting linkset; the amount goes to the mixer's per-voice low-pass and gain cut (`AudioEngine::world_occlusion`). `AURORA_DEMO_SOUND_OCCLUSION` |
+| `scene/sound_reverb.rs` | The reverb of the surroundings (Aurora's own, Preferences › Sound, off): about three times a second, 48 rays from the camera in fixed Fibonacci-lattice directions up to 40 m; the main thread gathers the objects in range from the pick index (`PickIndex::sphere_candidates`, the 160 that look largest kept), their transforms and shared geometry (`Scene::sound_surface`, the occlusion's rule) and the terrain and water along the rays; a background job finds each ray's nearest hit (`Accel::nearest` for large faces). Enclosure, openness and mean distance, glided over ~1.2 s, become the decay (Sabine), pre-delay, damping, mean free path and level sent to the mixer (`AudioEngine::set_reverb`); each world sound's send factor grows with its distance (`AudioEngine::world_reverb_send`). `AURORA_DEMO_SOUND_REVERB` |
 | `media/` | Media of prims and parcels (objects with media kept up to date by the change stream of the `ObjectStore`, with no pass over all the objects), OpenID cookie of the grid's web pages (`openid.rs`), private browser profile deleted after use for the Web tab of "Search" (`private_profile.rs`: its own folder under `cache\web-private`, usage lock, deletion when the browser stops, on exit and at the next startup), shared browser cache emptied at every start (`cef_cache.rs`: the plugin's `cache/cef/cef_cache/<pid>` profiles of the earlier runs renamed `_old` before the first browser, then deleted in the background), download of Aurora's media plugins pack when no plugins are found, with retries (`pack.rs`), the media filter (`filter.rs`: the account's allow / deny list of sites, `medialist.xml`, and the questions; checked before a parcel media, a prim media or the parcel music reaches a site) |
 | `demo_tex_refresh.rs` | `AURORA_DEMO_TEXREFRESH` scenario: a panel whose texture file in the disk cache is stale, the right one on the local asset server (`demo_asset_server.rs`); "Refresh textures" (or `auto`) downloads it again |
 | `demo_aa_switch.rs` | `AURORA_DEMO_AA_SWITCH`: the anti-aliasing changed at given frames, to watch the pipelines for new MSAA samples compile on their worker without a long frame |
@@ -2522,6 +2523,22 @@ are preallocated by the mixer (one per voice it holds): the callback neither
 allocates nor locks. About 0.5 ms per 10 ms buffer for 30 moving sounds.
 `demo_sound_hrtf.rs` (`AURORA_DEMO_SOUND_HRTF`) moves two sources around the
 camera.
+With the reverb of the surroundings (Preferences › Sound, Aurora's own, off),
+`scene/sound_reverb.rs` sends the mixer the parameters of the place
+(`AudioEngine::set_reverb`) and each world sound's send factor
+(`AudioEngine::world_reverb_send`, more for a farther sound; HUD sounds stay
+dry). `aurora-audio/src/reverb.rs` is one shared bus: the world voices of
+the Sounds and Ambient channels add their mono signal after the occlusion
+filter and before the panning or the HRTF (the late reverberation is
+diffuse); a pre-delay, four allpass diffusers and an 8-line feedback delay
+network (Householder matrix, per-line RT60 gain and one-pole damping, line
+lengths following the room's mean free path through allpass fractional
+delays) return a plain stereo tail at the master volume. Parameters glide,
+the lengths slew by 1.5 % at most, on / off fades over 50 ms; preallocated,
+no lock, idle (and cleared) once a tail dies out; off, the mix is the dry
+one bit for bit. Interface sounds, voice chat, music and media never feed
+it. `demo_sound_reverb.rs` (`AURORA_DEMO_SOUND_REVERB`) builds a small room
+and a hall and keeps a clapper above our avatar.
 
 `aurora-audio/src/processing.rs` owns Sonora/WebRTC AEC3, AGC2, noise suppression
 and high-pass processing. Device callbacks only queue microphone samples and

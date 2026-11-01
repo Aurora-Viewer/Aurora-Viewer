@@ -57,6 +57,7 @@ pub mod shape;
 mod shown_bakes;
 mod skin_binds;
 pub mod sound_occlusion;
+pub mod sound_reverb;
 pub mod sounds;
 pub mod still_check;
 mod sync_check;
@@ -990,6 +991,8 @@ pub struct Scene {
     pub sounds: sounds::SoundManager,
     /// How muffled each world sound is behind walls (sound_occlusion.rs).
     sound_occlusion: sound_occlusion::SoundOcclusion,
+    /// The reverb of the surroundings (sound_reverb.rs).
+    sound_reverb: sound_reverb::SoundReverb,
     /// Environment settings assets (the EEP default day).
     pub settings: settings::SettingsStreamer,
     /// Landmark asset fetches done, for `World::landmarks` (the app passes
@@ -1535,6 +1538,7 @@ impl Scene {
             blend_tmp: Vec::new(),
             sounds: sounds::SoundManager::new(cache_dir_anim.clone()),
             sound_occlusion: Default::default(),
+            sound_reverb: Default::default(),
             settings: settings::SettingsStreamer::new(cache_dir_anim.clone()),
             landmark_results: Vec::new(),
             anims,
