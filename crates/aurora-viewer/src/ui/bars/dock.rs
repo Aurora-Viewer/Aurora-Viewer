@@ -336,8 +336,10 @@ fn chat_island(
         Pos2::new(field.left() + FIELD_PAD, field.top()),
         Pos2::new(smile.left() - 6.0, field.bottom()),
     );
-    let hint = RichText::new(aurora_i18n::tr!("common-nearby-chat")).size(12.5);
-    let centre = crate::ui::widgets::field_text_margin(ui.ctx(), &egui::FontId::proportional(12.5));
+    // at the chat's text size (Preferences › Chat)
+    let size = crate::ui::fonts::chat_size(ui.ctx(), 12.5);
+    let hint = RichText::new(aurora_i18n::tr!("common-nearby-chat")).size(size);
+    let centre = crate::ui::widgets::field_text_margin(ui.ctx(), &egui::FontId::proportional(size));
     let mut child = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(text)
@@ -347,7 +349,7 @@ fn chat_island(
     child.visuals_mut().weak_text_color = Some(p.muted_dim);
     let out = crate::ui::chat::bar_input(&mut child, p, chat, gestures, emoji.as_deref_mut(), text.width(), |edit| {
         edit.frame(egui::Frame::NONE.inner_margin(centre))
-            .font(egui::FontId::proportional(12.5))
+            .font(egui::FontId::proportional(size))
             .text_color(p.ink)
             .hint_text(hint)
             .desired_width(text.width())

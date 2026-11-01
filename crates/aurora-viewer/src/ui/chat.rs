@@ -652,7 +652,7 @@ fn date_marker(ui: &mut egui::Ui, p: &Palette, year: i64, month: i64, day: i64) 
     );
     ui.add_space(4.0);
     ui.vertical_centered(|ui| {
-        ui.label(RichText::new(text).size(11.0).color(p.muted_dim));
+        ui.label(RichText::new(text).size(super::fonts::chat_size(ui.ctx(), 11.0)).color(p.muted_dim));
     });
 }
 
@@ -1777,7 +1777,7 @@ fn send_button(ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, enab
 /// The time at the right of a message header, laid out before the names so
 /// that they know the room it takes.
 fn header_time(ui: &egui::Ui, p: &Palette, time: String) -> std::sync::Arc<egui::Galley> {
-    let text = RichText::new(time).size(11.5).color(p.muted);
+    let text = RichText::new(time).size(super::fonts::chat_size(ui.ctx(), 11.5)).color(p.muted);
     egui::WidgetText::from(text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body)
 }
 
@@ -1793,7 +1793,14 @@ const USERNAME_MIN_W: f32 = 36.0;
 /// of the name, clickable.
 fn header_names(ui: &mut egui::Ui, p: &Palette, name: &str, username: Option<&str>, col: Color32, reserve: f32) -> egui::Response {
     let room = ui.available_width() - reserve;
-    let label = super::widgets::elided_label(ui, RichText::new(name).size(13.0).strong().color(col), room);
+    let label = super::widgets::elided_label(
+        ui,
+        RichText::new(name)
+            .size(super::fonts::chat_size(ui.ctx(), 13.0))
+            .strong()
+            .color(col),
+        room,
+    );
     let r = ui.add(label.sense(egui::Sense::click()));
     let Some(u) = username else {
         return r;
@@ -1802,7 +1809,9 @@ fn header_names(ui: &mut egui::Ui, p: &Palette, name: &str, username: Option<&st
     if room < USERNAME_MIN_W {
         return r.on_hover_text(u);
     }
-    let text = RichText::new(format!("- {u}")).size(11.5).color(p.indigo_light);
+    let text = RichText::new(format!("- {u}"))
+        .size(super::fonts::chat_size(ui.ctx(), 11.5))
+        .color(p.indigo_light);
     ui.add(super::widgets::elided_label(ui, text, room));
     r
 }
@@ -2345,7 +2354,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
             world,
             env.want_names,
             &line.text,
-            12.5,
+            super::fonts::chat_size(ui.ctx(), 12.5),
             tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
             true,
             mark,
@@ -2441,7 +2450,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     world,
                     env.want_names,
                     &visible,
-                    13.5,
+                    super::fonts::chat_size(ui.ctx(), 13.5),
                     tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
                     message_emphasis(line.kind, italics),
                     mark,
@@ -3491,9 +3500,9 @@ pub fn toasts(
             // the islands' pills: the mockup's 12 px text, 9 × 4 margins and
             // 4 px between two lines
             let (size, margin, gap) = if pills {
-                (12.0, egui::Margin::symmetric(9, 4), 4.0)
+                (super::fonts::chat_size(ui.ctx(), 12.0), egui::Margin::symmetric(9, 4), 4.0)
             } else {
-                (13.0, egui::Margin::symmetric(6, 2), 2.0)
+                (super::fonts::chat_size(ui.ctx(), 13.0), egui::Margin::symmetric(6, 2), 2.0)
             };
             let family = pills.then(|| super::fonts::semibold(ui.ctx()));
             if pills {

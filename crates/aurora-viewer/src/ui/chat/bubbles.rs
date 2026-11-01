@@ -13,6 +13,7 @@
 
 use super::{LineEnv, Mark, chat_text_marked, hhmm, history_tone, line_name_menu, presence, view};
 use crate::theme::Palette;
+use crate::ui::fonts::chat_size;
 use crate::world::chat_log::format::Slt;
 use crate::world::{ChatKind, Origin};
 use egui::{Color32, RichText};
@@ -73,7 +74,7 @@ fn day_marker(ui: &mut egui::Ui, p: &Palette, day: (i64, i64, i64)) {
     let text = day_text(day);
     ui.add_space(6.0);
     ui.vertical_centered(|ui| {
-        ui.label(RichText::new(text).size(11.0).color(p.muted_dim));
+        ui.label(RichText::new(text).size(chat_size(ui.ctx(), 11.0)).color(p.muted_dim));
     });
     ui.add_space(4.0);
 }
@@ -115,7 +116,7 @@ fn text_width(ui: &egui::Ui, text: &str, size: f32, max: f32) -> f32 {
 fn system_pill(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLine, mark: Option<Mark>) {
     let (p, world) = (env.p, env.world);
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
-    let width = text_width(ui, &line.text, TEXT_SIZE, ui.available_width() * 0.86);
+    let width = text_width(ui, &line.text, chat_size(ui.ctx(), TEXT_SIZE), ui.available_width() * 0.86);
     ui.add_space(3.0);
     ui.vertical_centered(|ui| {
         egui::Frame::new()
@@ -132,7 +133,7 @@ fn system_pill(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLi
                         world,
                         env.want_names,
                         &line.text,
-                        12.0,
+                        chat_size(ui.ctx(), 12.0),
                         tone.unwrap_or(p.muted),
                         true,
                         mark,
@@ -220,8 +221,12 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
                 .or(tone)
                 .unwrap_or_else(|| super::super::colors::sender_color(line));
             let r = ui.add(
-                super::super::widgets::elided_label(ui, RichText::new(&name).size(11.5).strong().color(col), max_bubble)
-                    .sense(egui::Sense::click()),
+                super::super::widgets::elided_label(
+                    ui,
+                    RichText::new(&name).size(chat_size(ui.ctx(), 11.5)).strong().color(col),
+                    max_bubble,
+                )
+                .sense(egui::Sense::click()),
             );
             if !avatar.is_nil() {
                 line_name_menu(&r, p, world, avatar, line, env.menu);
@@ -266,7 +271,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     ui.with_layout(layout, |ui| {
         ui.add_space(lead);
         let behind = ui.painter().add(egui::Shape::Noop);
-        let size = env.emoji.message_size(&visible, TEXT_SIZE);
+        let size = env.emoji.message_size(&visible, chat_size(ui.ctx(), TEXT_SIZE));
         // as wide as its widest card, within the bubble's share of the row
         let cards = env.previews.as_ref().map_or(0.0, |pv| pv.width(line, &text));
         let width = text_width(ui, &visible, size, max_bubble).max(cards.min(max_bubble - 20.0));
@@ -344,7 +349,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             };
             ui.with_layout(layout, |ui| {
                 ui.add_space(lead + 2.0);
-                ui.label(RichText::new(time).size(10.5).color(p.muted_dim));
+                ui.label(RichText::new(time).size(chat_size(ui.ctx(), 10.5)).color(p.muted_dim));
             });
         }
         ui.add_space(4.0);

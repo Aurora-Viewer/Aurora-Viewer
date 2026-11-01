@@ -953,6 +953,20 @@ fn text_scale(settings: &Settings) -> f32 {
         })
 }
 
+/// The conversations' text size, or AURORA_CHAT_TEXT_SIZE for this launch
+/// (brought into the range of the Preferences, never saved), handed to the
+/// fonts with the interface's text size it replaces.
+fn apply_chat_text_scale(ctx: &egui::Context, settings: &Settings) {
+    let chat = std::env::var("AURORA_CHAT_TEXT_SIZE")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|s| s.is_finite())
+        .map_or(settings.chat_font_scale, |s| {
+            s.clamp(crate::settings::FONT_SCALE_MIN, crate::settings::FONT_SCALE_MAX)
+        });
+    ui::fonts::set_chat_scale(ctx, chat, text_scale(settings));
+}
+
 /// The colour vision the interface adapts to: the preferences', or in demo
 /// mode `AURORA_DEMO_COLORBLIND` (a capture's, never saved).
 fn wanted_vision(settings: &Settings) -> crate::colorblind::Vision {
@@ -1101,6 +1115,7 @@ impl App {
         crate::high_contrast::set(wanted_high_contrast(&settings));
         crate::interface_colors::set(wanted_interface_colors(&settings));
         let skin = Skin::load(&egui_ctx, "aurora", text_scale(&settings));
+        apply_chat_text_scale(&egui_ctx, &settings);
         crate::crash::update(&skin.theme, &settings);
         let palette = skin.theme.palette();
         egui_ctx.set_zoom_factor(ui_scale(&settings));
@@ -10028,6 +10043,7 @@ impl App {
                 self.cursors.set_palette(&self.palette);
             }
             self.skin.theme.apply(&self.egui_ctx, text_scale(&self.settings));
+            apply_chat_text_scale(&self.egui_ctx, &self.settings);
             ui::colors::set(&self.settings.colors);
             crate::keywords::set(&self.keyword_settings());
             crate::spelling::configure(&self.egui_ctx, &self.settings.spelling);

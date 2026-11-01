@@ -5,6 +5,7 @@
 //! (indra/llui/llchatentry.cpp) bounds expansion before scrolling.
 
 use crate::ui::emoji::Emoji;
+use crate::ui::fonts::chat_size;
 use egui::{Context, Id, TextEdit, Ui};
 
 const MAX_ROWS: f32 = 4.0;
@@ -76,6 +77,10 @@ pub(super) fn show(
                 .max_height(previous)
                 .show(ui, |ui| {
                     let width = ui.available_width();
+                    // the chat's text size (ChatFontSize sizes the chat
+                    // fields too), for a field given no font of its own
+                    let font = egui::FontSelection::default().resolve(ui.style());
+                    ui.style_mut().override_font_id = Some(egui::FontId::new(chat_size(ui.ctx(), font.size), font.family));
                     match emoji {
                         Some(emoji) => emoji.text_field(ui, text, |edit| editor(build(edit), field, width, minimum)),
                         None => editor(build(TextEdit::multiline(text)), field, width, minimum).show(ui),
