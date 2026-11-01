@@ -358,6 +358,13 @@ impl App {
                                 0.6
                             });
                         }
+                        if own_mesh && let Some(te) = o.texture_entry.as_mut() {
+                            // opaque: the press depth is then the mesh, inside
+                            // our box whatever the pose, not the floor behind
+                            for f in &mut std::sync::Arc::make_mut(te).faces {
+                                f.texture = aurora_prim::te::BLANK_TEXTURE;
+                            }
+                        }
                         if hidden && let Some(te) = o.texture_entry.as_mut() {
                             for f in &mut std::sync::Arc::make_mut(te).faces {
                                 f.color[3] = 0.0;
