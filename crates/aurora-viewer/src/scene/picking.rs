@@ -1494,7 +1494,12 @@ pub(super) mod tests {
         world.objects.get_mut(front).unwrap().update_flags = 1 << 7;
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::TOUCH;
         scene.gpu[front].rigged = true;
-        scene.gpu[front].owner_avatar = world.objects.avatars().next().map(|(idx, _)| idx);
+        // another resident's: a rigged mesh we wear never takes the touch
+        scene.gpu[front].owner_avatar = world
+            .objects
+            .avatars()
+            .find(|(_, a)| a.full_id != world.agent_id)
+            .map(|(idx, _)| idx);
         scene.gpu[front].faces[0].te_alpha = 0.5;
         let hit = scene.action_point(&world, Some(ray), Some(displayed), false, 100.0);
         assert_eq!(
