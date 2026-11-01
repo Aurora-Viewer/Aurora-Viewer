@@ -438,7 +438,18 @@ impl Scene {
             if let Some((t, idx)) = hit {
                 return (Some(ray.0 + ray.1 * t), Some(idx));
             }
+            // No surface on the ray: the point is the land's (or an
+            // avatar's), never an object whose box merely contains it. A
+            // mesh's box spans all of it (a house, a fence, landscaping), and
+            // the ground clicked beside the mesh inside that box opened the
+            // object's menu instead of the land's. LLPickInfo takes an
+            // object only from LLVOVolume::lineSegmentIntersect, its faces.
+            let target = point
+                .and_then(|p| self.interaction_at(world, p, now, build))
+                .filter(|&idx| self.gpu.get(idx).is_some_and(|g| g.is_avatar));
+            return (point, target);
         }
+        // (no ray: only a point is known, the object around it)
         let target = point
             .and_then(|p| self.interaction_at(world, p, now, build))
             .filter(|&idx| select_probes || world.objects.get(idx).is_some_and(|o| o.extra.reflection_probe.is_none()));
@@ -1907,6 +1918,37 @@ pub(super) mod tests {
                 assert!(scene.swim_landing(&world, origin, Vec3::X, 1.7).is_none());
             }
         }
+    }
+
+    /// The ground clicked beside a mesh, inside the mesh's box but off its
+    /// surface (a house, a fence run, landscaping): the right click is the
+    /// land's, as LLPickInfo takes an object only from its faces. The box
+    /// alone opened the mesh's menu, and "Edit terrain" was out of reach.
+    #[test]
+    fn ground_inside_an_objects_box_but_off_its_surface_is_the_lands() {
+        let (world, mut scene, front, back) = scene_with_two_objects();
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        // `front` is a 1 m box at (3, 0, 50) whose only surface is its -X
+        // side (x = 2.5); straight down at x = 3.2, the ray never meets it
+        let ray = (Vec3::new(3.2, 0.0, 60.0), -Vec3::Z);
+        let ground = Vec3::new(3.2, 0.0, 50.0);
+        for build in [false, true] {
+            assert_eq!(
+                scene.selection_pick(&world, Some(ray), Some(ground), build, false, 100.0),
+                (Some(ground), None),
+                "build tools {build}"
+            );
+        }
+        // the same point without a ray (no surface to test): the object
+        // around it, as before
+        assert_eq!(scene.selection_pick(&world, None, Some(ground), false, false, 100.0).1, Some(front));
+        // and a ray that does meet its face still picks it
+        let side = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        assert_eq!(scene.selection_pick(&world, Some(side), None, false, false, 100.0).1, Some(front));
     }
 
     pub(in crate::scene) fn scene_with_two_objects() -> (World, Scene, usize, usize) {
