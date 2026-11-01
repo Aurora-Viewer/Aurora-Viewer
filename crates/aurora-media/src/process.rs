@@ -397,13 +397,16 @@ impl Drop for PluginProcess {
 /// folder beside it when there is one (a Legacy Viewer install chosen as the
 /// plugins folder: `bin/SLPlugin`, `lib/libcef.so`; its wrapper.sh puts
 /// `lib` first in LD_LIBRARY_PATH, indra/newview/linux_tools/wrapper.sh),
-/// then the inherited value. Empty entries are dropped: the loader reads one
-/// as the current folder, which wrapper.sh adds when LD_LIBRARY_PATH was
-/// unset or empty.
+/// then the inherited value. The folder is resolved first, as wrapper.sh
+/// resolves its own path with `readlink -f`: `lib` sits beside the real
+/// `bin`, not beside a link to it. Empty entries are dropped: the loader
+/// reads one as the current folder, which wrapper.sh adds when
+/// LD_LIBRARY_PATH was unset or empty.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn plugin_library_path(launcher_dir: &Path, inherited: Option<&std::ffi::OsStr>) -> Vec<PathBuf> {
-    let mut paths = vec![launcher_dir.to_path_buf()];
-    if let Some(lib) = launcher_dir.parent().map(|p| p.join("lib")).filter(|lib| lib.is_dir()) {
+    let dir = launcher_dir.canonicalize().unwrap_or_else(|_| launcher_dir.to_path_buf());
+    let mut paths = vec![dir.clone()];
+    if let Some(lib) = dir.parent().map(|p| p.join("lib")).filter(|lib| lib.is_dir()) {
         paths.push(lib);
     }
     if let Some(old) = inherited {
@@ -559,6 +562,13 @@ mod tests {
         // Aurora's pack: llplugin/SLPlugin, nothing beside llplugin
         let pack = root.join("pack").join("llplugin");
         std::fs::create_dir_all(&pack).expect("fixture");
+        // the paths come back resolved (macOS' temp folder is a link,
+        // Windows' gets its `\\?\` prefix)
+        let (bin, lib, pack) = (
+            bin.canonicalize().expect("fixture"),
+            lib.canonicalize().expect("fixture"),
+            pack.canonicalize().expect("fixture"),
+        );
         let sep = if cfg!(windows) { ";" } else { ":" };
 
         assert_eq!(plugin_library_path(&bin, None), vec![bin.clone(), lib.clone()]);
@@ -569,7 +579,17 @@ mod tests {
             vec![pack.clone(), PathBuf::from("/usr/local/lib"), PathBuf::from("/opt/x")]
         );
         // set but empty: no trailing empty entry (the current folder)
-        assert_eq!(plugin_library_path(&bin, Some(std::ffi::OsStr::new(""))), vec![bin.clone(), lib]);
+        assert_eq!(
+            plugin_library_path(&bin, Some(std::ffi::OsStr::new(""))),
+            vec![bin.clone(), lib.clone()]
+        );
+        // a link to the install's bin: lib is found beside the real folder
+        #[cfg(unix)]
+        {
+            let link = root.join("link-to-bin");
+            std::os::unix::fs::symlink(&bin, &link).expect("fixture");
+            assert_eq!(plugin_library_path(&link, None), vec![bin.clone(), lib]);
+        }
         std::fs::remove_dir_all(&root).expect("cleanup");
     }
 
