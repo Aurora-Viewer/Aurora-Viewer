@@ -8,19 +8,21 @@
 //! bound (#1714: 92 GB in 770,000 files).
 //!
 //! Port of LLAppViewer::startCefCachePurge and FSCefCachePurgeThread
-//! (indra/newview/llappviewer.cpp): at start, before any browser, the whole
-//! `cef_cache` folder is renamed `cef_cache_old`; when that fails (another
-//! running viewer holds files in it, or an unfinished purge left the old
-//! one), each profile folder is renamed `<pid>_old` instead, and the ones in
-//! use stay where they are. A background thread then deletes everything
-//! renamed, so a large cache never slows the start. A purge cut short by the
-//! exit carries on at the next start.
+//! (indra/newview/llappviewer.cpp): at start, before any browser, each
+//! profile of an earlier run is renamed `<pid>_old`, and a background thread
+//! then deletes everything renamed, so a large cache never slows the start.
+//! A purge cut short by the exit carries on at the next start.
+//!
+//! On Windows the whole `cef_cache` folder is renamed `cef_cache_old` first;
+//! when that fails (another running viewer holds files in it, or an
+//! unfinished purge left the old one), each profile folder is renamed
+//! instead, and the ones in use refuse it and stay where they are.
 //!
 //! Linux and macOS rename a folder whatever is open in it, so the rename of
 //! the whole folder would also take the live profiles of another running
 //! viewer, and the purge would delete them under it (the Legacy Viewer has
-//! the same gap). There each profile is set aside on its own, and only when
-//! no process with its pid runs.
+//! the same gap). There the whole folder is never renamed, and a profile is
+//! set aside only when no process with its pid runs.
 
 use std::path::{Path, PathBuf};
 
@@ -71,7 +73,8 @@ fn set_aside_whole(_cache: &Path) -> bool {
 }
 
 /// Whether the plugin that owns this profile, named after its pid, still
-/// runs. On Windows the rename itself tells.
+/// runs. On Windows the rename itself tells. A pid reused since by another
+/// process keeps a dead profile until a later start: nothing is lost.
 #[cfg(unix)]
 fn in_use(profile: &Path) -> bool {
     profile
