@@ -186,6 +186,16 @@ pub fn save_gpu_stall(dir: &Path, seconds: u64) {
     save_stacks(dir, "gpu-stall", &format!("GPU stall: no frame for {seconds} s"), None);
 }
 
+/// Off Windows no other thread's stack can be read: the header alone, which
+/// is what the report and the next start's safe graphics offer need.
+#[cfg(not(windows))]
+pub fn save_gpu_stall(dir: &Path, seconds: u64) {
+    let pending = dir.join("gpu-stall.pending");
+    if std::fs::write(&pending, format!("GPU stall: no frame for {seconds} s\n")).is_ok() {
+        let _ = std::fs::rename(pending, dir.join("gpu-stall.txt"));
+    }
+}
+
 /// `<name>.txt`: a header line, then the main thread's stack when given and
 /// those of [`THREADS`].
 #[cfg(windows)]

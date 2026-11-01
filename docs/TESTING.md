@@ -6265,8 +6265,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   responding" shows; Yes keeps waiting (shown again a minute later if still
   stuck), No closes the viewer in at most a few seconds, logged out, and the
   crash session holds `gpu-stall.txt`: the report says
-  `| Crash | GPU not responding |` with the render thread's stack, and the
-  next start offers the safe graphics. When the frame ends the box goes
+  `| Crash | GPU not responding |` with the render thread's stack (on
+  Windows; elsewhere the stall's length alone), and the next start offers
+  the safe graphics. When the frame ends the box goes
   away by itself and drawing resumes (`the graphics card answered again`).
   With `AURORA_FPS_LIMIT=60`, frame 600 comes about 10 s after the start.
   The window's close button during the stall closes at once (the exit

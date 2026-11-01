@@ -301,15 +301,12 @@ pub fn failure(message: &str) {
 }
 
 /// The GPU has kept a frame for `seconds` while the window still answers:
-/// the render thread's stack goes to `gpu-stall.txt`, so a session ended
-/// now is reported as such. [`gpu_answered`] takes it back.
+/// `gpu-stall.txt` (with the render thread's stack on Windows), so a
+/// session ended now is reported as such. [`gpu_answered`] takes it back.
 pub fn gpu_stalled(seconds: u64) {
-    #[cfg(windows)]
     if let Some(session) = SESSION.get() {
         watchdog::save_gpu_stall(&session.dir, seconds);
     }
-    #[cfg(not(windows))]
-    let _ = seconds;
 }
 
 /// The GPU device is lost for good (app/gpu_stall.rs): the session, which
@@ -318,6 +315,7 @@ pub fn gpu_lost() {
     if let Some(session) = SESSION.get() {
         let _ = std::fs::write(session.dir.join("gpu-lost.txt"), []);
         let _ = std::fs::write(session.dir.join("failed"), []);
+        ending_in_gpu_trouble(&session.dir);
     }
 }
 
@@ -341,6 +339,7 @@ pub fn overlay_hook(file: &str) {
 pub fn gpu_closed() {
     if let Some(session) = SESSION.get() {
         let _ = std::fs::write(session.dir.join("failed"), []);
+        ending_in_gpu_trouble(&session.dir);
     }
 }
 
@@ -368,6 +367,17 @@ fn note_gpu_trouble(dir: &Path) {
     {
         let _ = std::fs::write(root.join(GPU_TROUBLE), []);
     }
+}
+
+/// The session ends now with the GPU in trouble. On Windows its watcher
+/// marks it once the viewer is gone ([`preserve`], which also leaves out a
+/// session Windows itself ended); elsewhere no watcher outlives the viewer
+/// (crash/native.rs), so the session marks itself.
+fn ending_in_gpu_trouble(dir: &Path) {
+    #[cfg(not(windows))]
+    note_gpu_trouble(dir);
+    #[cfg(windows)]
+    let _ = dir;
 }
 
 /// The last session that ended badly had the GPU in trouble: true once,
@@ -585,6 +595,30 @@ mod tests {
         let root = std::env::temp_dir().join(format!("aurora-crash-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&root).unwrap();
         root
+    }
+
+    /// Off Windows no watcher outlives the viewer: a session that ends with
+    /// the GPU stalled or lost marks the next start itself, once.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_session_ending_in_gpu_trouble_marks_the_next_start_itself() {
+        let root = scratch_root();
+        for trouble in ["stall", "lost"] {
+            let dir = root.join(uuid::Uuid::new_v4().to_string());
+            std::fs::create_dir(&dir).unwrap();
+            if trouble == "stall" {
+                watchdog::save_gpu_stall(&dir, 6);
+                let text = std::fs::read_to_string(dir.join("gpu-stall.txt")).unwrap();
+                assert_eq!(text, "GPU stall: no frame for 6 s\n");
+            } else {
+                std::fs::write(dir.join("gpu-lost.txt"), []).unwrap();
+            }
+            assert!(!root.join(GPU_TROUBLE).exists());
+            ending_in_gpu_trouble(&dir);
+            assert!(root.join(GPU_TROUBLE).exists(), "{trouble}");
+            std::fs::remove_file(root.join(GPU_TROUBLE)).unwrap();
+        }
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// What the viewer hands to its helper process (session argument, demo
