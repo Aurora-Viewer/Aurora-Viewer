@@ -290,6 +290,7 @@ const GROUPS: &[(&str, RowId)] = &[
     ("aurora-hud-scales", RowId::Interface),
     ("aurora-local-previews", RowId::Interface),
     ("aurora-photo-save", RowId::Interface),
+    ("aurora-open-wait", RowId::Interface),
     ("aurora-geometry-needs", RowId::Meshes),
     ("aurora-hover-height", RowId::Avatars),
 ];
