@@ -6133,7 +6133,8 @@ failure. Grid validation and any paid upload are performed by the human.
   exit without a watcher. The `recovery` mode makes it possible to check the
   recovery at the next launch (relaunch with `normal`). Linux has no
   watcher: every mode's window opens at the next launch, as with
-  `recovery`, and a session closed normally is removed then. No
+  `recovery`, and a session closed normally is removed then, as is one
+  ended by SIGTERM, SIGHUP or SIGINT (`kill -TERM` gives no window). No
   connection and no GPU initialisation, except for `freeze`: the viewer
   starts, its main thread stops answering once the window shows, and 13 s
   later the process ends itself with exit code 1, as Task Manager's End task

@@ -754,10 +754,79 @@ fn parse_stat(text: &str) -> Option<Stat> {
     })
 }
 
+/// The desktop ending the session (log out, shutdown) stops programs with
+/// SIGTERM, a closed terminal with SIGHUP, Ctrl+C with SIGINT: the viewer
+/// did not crash. The signal leaves the session's `system-ending` marker,
+/// as Windows' watcher does when the system ends, then ends the process
+/// exactly as before. The Legacy Viewer quits on these signals
+/// (LLApp::setQuitting from default_unix_signal_handler,
+/// indra/llcommon/llapp.cpp).
+#[cfg(target_os = "linux")]
+mod ending {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStringExt;
+    use std::path::Path;
+    use std::sync::OnceLock;
+
+    static MARKER: OnceLock<CString> = OnceLock::new();
+
+    pub fn install(dir: &Path) -> anyhow::Result<()> {
+        // Built here: the handler may not allocate.
+        let _ = MARKER.set(CString::new(dir.join("system-ending").into_os_string().into_vec())?);
+        for signal in [libc::SIGTERM, libc::SIGHUP, libc::SIGINT] {
+            // SAFETY: plain sigaction calls on zeroed structs we own; the
+            // handler only uses async-signal-safe calls.
+            unsafe {
+                let mut old: libc::sigaction = std::mem::zeroed();
+                anyhow::ensure!(
+                    libc::sigaction(signal, std::ptr::null(), &mut old) == 0,
+                    "cannot read signal {signal}"
+                );
+                // A signal the parent ignores (nohup) stays ignored.
+                if old.sa_sigaction == libc::SIG_IGN {
+                    continue;
+                }
+                let mut action: libc::sigaction = std::mem::zeroed();
+                action.sa_sigaction = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+                action.sa_flags = libc::SA_RESETHAND;
+                libc::sigemptyset(&mut action.sa_mask);
+                anyhow::ensure!(
+                    libc::sigaction(signal, &action, std::ptr::null_mut()) == 0,
+                    "cannot handle signal {signal}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    extern "C" fn on_signal(signal: libc::c_int) {
+        if let Some(path) = MARKER.get() {
+            // SAFETY: open and close are async-signal-safe; the path is a
+            // C string that lives as long as the process.
+            unsafe {
+                let file = libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_CREAT | libc::O_CLOEXEC, 0o600);
+                if file >= 0 {
+                    libc::close(file);
+                }
+            }
+        }
+        // SA_RESETHAND gave the signal its default action back: it now
+        // ends the process as it would have without this handler.
+        // SAFETY: raise is async-signal-safe.
+        unsafe {
+            libc::raise(signal);
+        }
+    }
+}
+
 #[cfg(not(windows))]
 mod platform {
     use std::path::Path;
-    pub fn install(_dir: &Path) -> anyhow::Result<()> {
+    pub fn install(dir: &Path) -> anyhow::Result<()> {
+        #[cfg(target_os = "linux")]
+        super::ending::install(dir)?;
+        #[cfg(not(target_os = "linux"))]
+        let _ = dir;
         Ok(())
     }
     pub fn write_stack(_out: &mut impl std::io::Write) {}
