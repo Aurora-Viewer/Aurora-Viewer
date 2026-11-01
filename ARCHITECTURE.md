@@ -2772,9 +2772,17 @@ have separate edge/release arming and use an axis threshold of ±0.5.
 ignoring controls already held when listening begins. While adjusting,
 shared camera channels and analog modifier/button sources are consumed;
 the shared stick must centre before its ordinary camera action resumes.
-Both added modes integrate and retain the lens on release, independent of
-the old absolute-axis flag. Button zoom has its own positive speed and
-stops immediately. The preferences keep these controls together in a zoom
+All three modes share absolute/relative zoom. Absolute input offsets the
+flight's editable reference lens; two-control triggers retain their full
+pressure range and require release before arming after focus loss. In
+relative mode, button zoom uses its own positive speed and stops immediately;
+release retains the lens. `joystick/zoom.rs` recognizes relative reset
+gestures: both controls together, a double modifier press, or two direct-axis
+impulses. The first tap must release within 250 ms and the second must start
+within 350 ms of the first; hysteresis ignores jitter and lifecycle resets
+discard gesture history. Native button counters preserve intervening releases.
+Reset restores only the reference lens, clears smoothing and consumes zoom
+until the controls return to rest. The preferences keep these controls in a zoom
 group; `Cx::conditional` hides inactive branches on their page while
 retaining their search, modified-view and reset declarations.
 

@@ -157,6 +157,9 @@ impl App {
             && let Some(cam) = self.camera.flycam.as_mut()
         {
             let m = self.joystick.motion;
+            if m.reset_zoom {
+                cam.reset_zoom();
+            }
             let mut axes = m.axes;
             axes[2] += (f32::from(u8::from(m.rise)) - f32::from(u8::from(m.fall))) * 2.0;
             cam.step(axes, &self.settings.joystick, dt);
@@ -173,9 +176,12 @@ impl App {
         if !self.demo {
             return;
         }
-        let Ok(mode) = std::env::var("AURORA_DEMO_JOYSTICK") else {
+        let Ok(scenario) = std::env::var("AURORA_DEMO_JOYSTICK") else {
             return;
         };
+        let absolute = scenario.ends_with("-absolute");
+        let reset_demo = scenario.starts_with("reset-");
+        let mode = scenario.trim_start_matches("reset-").trim_end_matches("-absolute").to_owned();
         if self.frame_count < 600 {
             return;
         }
@@ -217,6 +223,9 @@ impl App {
                     self.settings.joystick.zoom_speed = 0.6;
                 }
             }
+            if absolute {
+                self.settings.joystick.direct_zoom = true;
+            }
             self.joystick.snapshot.devices = vec![crate::joystick::Device::new(
                 "demo-joystick".into(),
                 "Demo joystick / NDOF".into(),
@@ -250,7 +259,7 @@ impl App {
                 d.axes[7] = -0.8;
             }
         }
-        if mode == "zoom" {
+        if mode == "zoom" && !reset_demo {
             d.axes = [0.0; crate::joystick::AXES];
             if (650..710).contains(&self.frame_count) {
                 d.axes[6] = 0.6;
@@ -289,7 +298,11 @@ impl App {
                 let inside = (650..690).contains(&self.frame_count) || (780..810).contains(&self.frame_count);
                 let outside = (720..760).contains(&self.frame_count) || (780..810).contains(&self.frame_count);
                 if mode == "zoom-triggers" {
-                    d.axes[6] = f32::from(u8::from(inside));
+                    d.axes[6] = if inside && absolute {
+                        if self.frame_count < 670 { 0.25 } else { 0.75 }
+                    } else {
+                        f32::from(u8::from(inside))
+                    };
                     d.axes[7] = f32::from(u8::from(outside));
                 } else {
                     d.buttons = (u32::from(inside) << 8) | (u32::from(outside) << 9);
@@ -327,6 +340,59 @@ impl App {
                     self.frame_count,
                     self.joystick.active,
                     self.joystick.motion.axes
+                );
+            }
+        }
+        if reset_demo {
+            d.axes = [0.0; crate::joystick::AXES];
+            d.buttons = 0;
+            d.presses = [0; crate::joystick::BUTTONS];
+            let first = (650..690).contains(&self.frame_count);
+            let tap = (730..736).contains(&self.frame_count) || (744..770).contains(&self.frame_count);
+            let resumed = (810..840).contains(&self.frame_count);
+            match mode.as_str() {
+                "zoom" => {
+                    d.axes[6] = if first || tap {
+                        0.6
+                    } else if resumed {
+                        -0.6
+                    } else {
+                        0.0
+                    };
+                }
+                "zoom-hold" => {
+                    d.axes[6] = if first || tap || resumed { 0.9 } else { 0.0 };
+                    // Leave the shared stick deflected briefly after release.
+                    d.axes[5] = if first || tap || (770..780).contains(&self.frame_count) {
+                        0.8
+                    } else if resumed {
+                        -0.8
+                    } else {
+                        0.0
+                    };
+                }
+                "zoom-buttons" | "zoom-triggers" => {
+                    let inside = first || (744..770).contains(&self.frame_count);
+                    let outside = (744..755).contains(&self.frame_count) || resumed;
+                    if mode == "zoom-triggers" {
+                        d.axes[6] = f32::from(u8::from(inside));
+                        d.axes[7] = f32::from(u8::from(outside));
+                    } else {
+                        d.buttons = (u32::from(inside) << 8) | (u32::from(outside) << 9);
+                        d.presses[8] = u64::from(self.frame_count >= 650) + u64::from(self.frame_count >= 744);
+                        d.presses[9] = u64::from(self.frame_count >= 744) + u64::from(self.frame_count >= 810);
+                    }
+                }
+                _ => {}
+            }
+            if matches!(self.frame_count, 701 | 741 | 751 | 781 | 841) {
+                log::info!(
+                    "joystick zoom reset: mode={} frame={} fov={:.4} yaw={:.4} zoom={:.4}",
+                    mode,
+                    self.frame_count,
+                    self.camera.fov_y,
+                    self.joystick.motion.axes[5],
+                    self.joystick.motion.axes[6]
                 );
             }
         }

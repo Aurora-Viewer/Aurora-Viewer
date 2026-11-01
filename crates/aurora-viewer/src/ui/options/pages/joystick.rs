@@ -428,8 +428,16 @@ fn zoom_settings(cx: &mut Cx) {
                 true,
             );
             cx.slider(
-                tr!("joystick-zoom-speed"),
-                tr!("joystick-zoom-speed-hint"),
+                if cx.s.joystick.absolute_zoom() {
+                    tr!("joystick-zoom-strength")
+                } else {
+                    tr!("joystick-zoom-speed")
+                },
+                if cx.s.joystick.absolute_zoom() {
+                    tr!("joystick-zoom-strength-hint")
+                } else {
+                    tr!("joystick-zoom-speed-hint")
+                },
                 &field!(joystick.zoom_speed),
                 0.1..=5.0,
                 "",
@@ -444,13 +452,11 @@ fn zoom_settings(cx: &mut Cx) {
                 true,
             );
         });
-        cx.conditional(mode == ZoomMode::Axis, |cx| {
-            cx.toggle(
-                tr!("joystick-direct-zoom"),
-                tr!("joystick-direct-zoom-hint"),
-                &field!(joystick.direct_zoom),
-            );
-        });
+        cx.toggle(
+            tr!("joystick-direct-zoom"),
+            tr!("joystick-direct-zoom-hint"),
+            &field!(joystick.direct_zoom),
+        );
         cx.conditional(mode != ZoomMode::Buttons, |cx| {
             let hint = format!("{} {}", tr!("joystick-axis-hint"), tr!("joystick-zoom-hint"));
             axis_row(cx, 6, tr!("joystick-zoom"), &hint);
@@ -704,6 +710,10 @@ mod tests {
         for _ in 0..3 {
             texts = zoom_modes_frame(&mut frames, &mut settings, &mut state, Vec::new()).0;
         }
+        assert!(
+            texts.iter().any(|text| text.source == tr!("joystick-direct-zoom")),
+            "two-buttons mode exposes absolute zoom"
+        );
         for binding in [8, 46] {
             click_with(
                 &mut frames,
@@ -744,6 +754,10 @@ mod tests {
             zoom_modes_frame,
         );
         assert_eq!(settings.joystick.zoom_mode, crate::joystick::ZoomMode::HoldAxis);
+        assert!(
+            texts.iter().any(|text| text.source == tr!("joystick-direct-zoom")),
+            "hold-plus-axis mode exposes absolute zoom"
+        );
         assert_eq!(settings.joystick.flycam.gain[6], 1.0);
         assert!(!texts.iter().any(|text| text.source == tr!("joystick-zoom-in-button")));
         state.joystick.devices[0].axes[6] = 0.8;

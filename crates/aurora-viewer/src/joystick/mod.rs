@@ -6,6 +6,7 @@
 mod backend;
 pub mod capture;
 pub mod flycam;
+mod zoom;
 
 pub use backend::{Backend, Use};
 use serde::{Deserialize, Serialize};
@@ -146,7 +147,7 @@ impl Settings {
     }
 
     pub fn absolute_zoom(&self) -> bool {
-        self.zoom_mode == ZoomMode::Axis && self.direct_zoom
+        self.direct_zoom
     }
 
     pub fn gamepad(&mut self) {
@@ -230,6 +231,7 @@ impl Snapshot {
 pub struct Motion {
     pub axes: [f32; CHANNELS],
     pub toggle_flycam: bool,
+    pub reset_zoom: bool,
     pub jump: bool,
     pub jump_pressed: bool,
     pub rise: bool,
@@ -250,7 +252,7 @@ impl Motion {
     }
 
     pub fn moving(&self) -> bool {
-        self.axes.iter().any(|v| v.abs() > 0.0001) || self.jump || self.rise || self.fall
+        self.axes.iter().any(|v| v.abs() > 0.0001) || self.jump || self.rise || self.fall || self.reset_zoom
     }
 }
 
@@ -266,6 +268,8 @@ pub struct Controller {
     zoom_adjusting: bool,
     axis_buttons_previous: Option<u16>,
     axis_buttons_armed: u16,
+    zoom_pressure_armed: [bool; 2],
+    zoom_reset: zoom::ResetGesture,
 }
 
 fn finite(value: f32, fallback: f32) -> f32 {
@@ -296,6 +300,8 @@ impl Controller {
         self.filtered = [0.0; CHANNELS];
         self.zoom_adjusting = false;
         self.axis_buttons_armed = 0;
+        self.zoom_pressure_armed = [false; 2];
+        self.zoom_reset = Default::default();
     }
 
     fn reset(&mut self) {
@@ -365,6 +371,26 @@ impl Controller {
         let axis_bit = |binding| button_axis(binding).map(|(axis, positive)| 1u16 << (axis * 2 + usize::from(!positive)));
         let zoom_held = |binding| axis_bit(binding).map_or_else(|| held(binding), |bit| axis_buttons & self.axis_buttons_armed & bit != 0);
         let zoom_pressed = |binding| axis_bit(binding).map_or_else(|| pressed(binding), |bit| axis_edges & bit != 0);
+        let pressure = |binding| {
+            button_axis(binding).map_or_else(
+                || f32::from(u8::from(held(binding))),
+                |(axis, positive)| {
+                    if axis < d.axis_count {
+                        (finite(d.axes[axis], 0.0) * if positive { 1.0 } else { -1.0 }).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    }
+                },
+            )
+        };
+        let raw_pressure = [pressure(s.zoom_in_button), pressure(s.zoom_out_button)];
+        let mut zoom_pressure = raw_pressure;
+        for (armed, value) in self.zoom_pressure_armed.iter_mut().zip(&mut zoom_pressure) {
+            *armed |= *value <= 0.1;
+            if !*armed {
+                *value = 0.0;
+            }
+        }
         let adjusting = flycam && s.zoom_mode == ZoomMode::HoldAxis && zoom_held(s.zoom_hold_button);
         if adjusting != self.zoom_adjusting {
             self.zoom_adjusting = adjusting;
@@ -383,8 +409,12 @@ impl Controller {
             match s.zoom_mode {
                 ZoomMode::Axis => {}
                 ZoomMode::Buttons => {
-                    let direction = f32::from(u8::from(zoom_held(s.zoom_out_button) || zoom_pressed(s.zoom_out_button)))
-                        - f32::from(u8::from(zoom_held(s.zoom_in_button) || zoom_pressed(s.zoom_in_button)));
+                    let direction = if s.absolute_zoom() {
+                        zoom_pressure[1] - zoom_pressure[0]
+                    } else {
+                        f32::from(u8::from(zoom_held(s.zoom_out_button) || zoom_pressed(s.zoom_out_button)))
+                            - f32::from(u8::from(zoom_held(s.zoom_in_button) || zoom_pressed(s.zoom_in_button)))
+                    };
                     target[6] = direction * finite(s.zoom_speed, 1.0).clamp(0.0, 20.0);
                 }
                 ZoomMode::HoldAxis => {
@@ -420,6 +450,37 @@ impl Controller {
                 self.filtered[6] = 0.0;
             }
         }
+        let mut reset_zoom = false;
+        if flycam && s.flycam_enabled && !s.absolute_zoom() {
+            let (value, press, chord) = match s.zoom_mode {
+                ZoomMode::Axis => (
+                    usize::try_from(s.mapping[6])
+                        .ok()
+                        .filter(|&axis| axis < d.axis_count.min(AXES))
+                        .map_or(0.0, |axis| finite(d.axes[axis], 0.0).abs()),
+                    false,
+                    false,
+                ),
+                ZoomMode::Buttons => (
+                    raw_pressure[0].max(raw_pressure[1]),
+                    false,
+                    s.zoom_in_button != s.zoom_out_button && zoom_held(s.zoom_in_button) && zoom_held(s.zoom_out_button),
+                ),
+                ZoomMode::HoldAxis => (
+                    pressure(s.zoom_hold_button),
+                    button_axis(s.zoom_hold_button).is_none() && zoom_pressed(s.zoom_hold_button),
+                    false,
+                ),
+            };
+            let (reset, suppress) = self
+                .zoom_reset
+                .sample(value, press, chord, s.zoom_mode != ZoomMode::Buttons, Instant::now());
+            reset_zoom = reset;
+            if suppress {
+                target[6] = 0.0;
+                self.filtered[6] = 0.0;
+            }
+        }
         // Arm relative channels independently; button capture and the
         // modifier already enforce release after focus/settings changes.
         for (i, goal) in target.iter_mut().enumerate() {
@@ -451,6 +512,7 @@ impl Controller {
         Motion {
             axes: self.filtered,
             toggle_flycam,
+            reset_zoom,
             jump,
             jump_pressed,
             rise: held(s.rise_button),
@@ -477,6 +539,179 @@ mod tests {
     }
 
     #[test]
+    fn joystick_absolute_zoom_uses_control_position_in_all_modes_and_trigger_pressure() {
+        for mode in [ZoomMode::Axis, ZoomMode::Buttons, ZoomMode::HoldAxis] {
+            for trigger in [false, true] {
+                let (mut snap, mut s, mut controller) = fixture();
+                s.zoom_mode = mode;
+                s.direct_zoom = true;
+                s.mapping[6] = 6;
+                s.flycam.gain[6] = 0.4;
+                s.flycam.dead_zone[6] = 0.0;
+                s.flycam.feather = 0.0;
+                s.zoom_speed = 0.4;
+                s.zoom_in_button = if trigger { 44 } else { 8 };
+                s.zoom_out_button = if trigger { 46 } else { 9 };
+                s.zoom_hold_button = if trigger { 46 } else { 8 };
+                let mut camera = flycam::Flycam::from_view(glam::Vec3::ZERO, glam::Vec3::X, glam::Vec3::Z, 1.0);
+                controller.sample(&snap, &s, true, true, 0.1);
+                snap.devices[0].axes[6] = 0.25;
+                snap.devices[0].axes[7] = if mode == ZoomMode::HoldAxis { 0.9 } else { 0.0 };
+                snap.devices[0].button(8, true);
+                let expected = if mode == ZoomMode::Buttons && !trigger { 0.6 } else { 0.9 };
+                for dt in [0.01, 0.2, 0.05] {
+                    let motion = controller.sample(&snap, &s, true, true, dt);
+                    assert!(!motion.reset_zoom);
+                    camera.step(motion.axes, &s, dt);
+                    assert!(
+                        (camera.fov - expected).abs() < 1e-5,
+                        "absolute zoom is position-based, not integrated"
+                    );
+                }
+                if mode == ZoomMode::Buttons && trigger {
+                    // Small pressure must be useful, but never replayed after focus loss.
+                    controller.sample(&snap, &s, false, true, 0.1);
+                    assert_eq!(controller.sample(&snap, &s, true, true, 0.1).axes[6], 0.0);
+                }
+                snap.devices[0].axes = [0.0; AXES];
+                snap.devices[0].button(8, false);
+                let motion = controller.sample(&snap, &s, true, true, 0.1);
+                camera.step(motion.axes, &s, 0.1);
+                assert!(
+                    (camera.fov - 1.0).abs() < 1e-5,
+                    "rest returns to the flight reference in every absolute mode"
+                );
+                for stage in 0..3 {
+                    let active = stage != 1;
+                    snap.devices[0].axes[6] = if active { 0.8 } else { 0.0 };
+                    snap.devices[0].axes[7] = if (mode == ZoomMode::HoldAxis && active) || (mode == ZoomMode::Buttons && stage == 2) {
+                        0.9
+                    } else {
+                        0.0
+                    };
+                    snap.devices[0].button(8, active);
+                    snap.devices[0].button(9, mode == ZoomMode::Buttons && stage == 2);
+                    assert!(
+                        !controller.sample(&snap, &s, true, true, 0.1).reset_zoom,
+                        "absolute mode ignores relative reset gestures"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn joystick_relative_zoom_reset_gestures_restore_only_the_lens_and_wait_for_release() {
+        for mode in [ZoomMode::Axis, ZoomMode::Buttons, ZoomMode::HoldAxis] {
+            for trigger in [false, true] {
+                let (mut snap, mut s, mut controller) = fixture();
+                s.zoom_mode = mode;
+                s.auto_level = false;
+                s.mapping[6] = 6;
+                s.flycam.gain[6] = 0.7;
+                s.flycam.feather = 8.0;
+                s.zoom_in_button = if trigger { 44 } else { 8 };
+                s.zoom_out_button = if trigger { 46 } else { 9 };
+                s.zoom_hold_button = if trigger { 46 } else { 8 };
+                let mut camera = flycam::Flycam::from_view(glam::Vec3::new(3.0, 4.0, 5.0), glam::Vec3::X, glam::Vec3::Z, 1.0);
+                camera.step([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.8], &s, 0.2);
+                assert!(camera.fov > 1.1);
+                let pose = (camera.position, camera.rotation);
+                controller.sample(&snap, &s, true, true, 0.1);
+                let mut reset = Motion::default();
+                for stage in 0..3 {
+                    let value = if stage == 1 { 0.0 } else { 0.8 };
+                    match mode {
+                        ZoomMode::Axis => snap.devices[0].axes[6] = value,
+                        ZoomMode::HoldAxis if trigger => snap.devices[0].axes[7] = value,
+                        ZoomMode::HoldAxis => snap.devices[0].button(8, value > 0.5),
+                        ZoomMode::Buttons => {
+                            if trigger {
+                                snap.devices[0].axes[6] = 0.8;
+                                snap.devices[0].axes[7] = if stage == 2 { 0.8 } else { 0.0 };
+                            } else {
+                                snap.devices[0].button(8, true);
+                                snap.devices[0].button(9, stage == 2);
+                            }
+                        }
+                    }
+                    reset = controller.sample(&snap, &s, true, true, 0.1);
+                    assert_eq!(reset.reset_zoom, stage == 2);
+                }
+                assert!(reset.moving(), "a lens reset counts as user activity");
+                assert_eq!(reset.axes[6], 0.0, "reset clears filtered zoom immediately");
+                camera.set_fov(0.9);
+                camera.step([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.8], &s, 0.2);
+                camera.reset_zoom();
+                camera.step(reset.axes, &s, 0.1);
+                assert!((camera.fov - 0.9).abs() < 1e-5, "reset follows the edited flight reference");
+                assert_eq!((camera.position, camera.rotation), pose, "lens reset preserves the flight pose");
+                let held = controller.sample(&snap, &s, true, true, 0.1);
+                assert!(!held.reset_zoom && held.axes[6] == 0.0);
+                snap.devices[0].axes = [0.0; AXES];
+                snap.devices[0].button(8, false);
+                snap.devices[0].button(9, false);
+                assert_eq!(controller.sample(&snap, &s, true, true, 0.1).axes[6], 0.0);
+                if mode == ZoomMode::Buttons {
+                    if trigger {
+                        snap.devices[0].axes[6] = 0.8;
+                    } else {
+                        snap.devices[0].button(8, true);
+                    }
+                } else {
+                    snap.devices[0].axes[6] = 0.8;
+                    if mode == ZoomMode::HoldAxis {
+                        if trigger {
+                            snap.devices[0].axes[7] = 0.8;
+                        } else {
+                            snap.devices[0].button(8, true);
+                        }
+                    }
+                }
+                assert!(
+                    controller.sample(&snap, &s, true, true, 0.1).axes[6] < 0.0,
+                    "zoom resumes after release"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn joystick_zoom_reset_discards_tap_history_across_input_lifecycle_changes() {
+        for barrier in 0..5 {
+            let (mut snap, mut s, mut controller) = fixture();
+            s.mapping[6] = 6;
+            s.flycam.gain[6] = 1.0;
+            controller.sample(&snap, &s, true, true, 0.1);
+            snap.devices[0].axes[6] = 0.8;
+            controller.sample(&snap, &s, true, true, 0.1);
+            snap.devices[0].axes[6] = 0.0;
+            controller.sample(&snap, &s, true, true, 0.1);
+            match barrier {
+                0 => {
+                    controller.sample(&snap, &s, false, true, 0.1);
+                }
+                1 => {
+                    snap.updated = Some(Instant::now() - std::time::Duration::from_secs(1));
+                    controller.sample(&snap, &s, true, true, 0.1);
+                    snap.updated = Some(Instant::now());
+                }
+                2 => snap.devices[0].id = "replacement".into(),
+                3 => s.flycam.gain[6] = 0.7,
+                _ => {
+                    controller.sample(&snap, &s, true, false, 0.1);
+                }
+            }
+            controller.sample(&snap, &s, true, true, 0.1);
+            snap.devices[0].axes[6] = 0.8;
+            assert!(
+                !controller.sample(&snap, &s, true, true, 0.1).reset_zoom,
+                "a tap cannot cross an input reset"
+            );
+        }
+    }
+
+    #[test]
     fn joystick_zoom_buttons_change_both_directions_cancel_and_stop_on_release() {
         for triggers in [false, true] {
             let (mut snap, mut s, mut controller) = fixture();
@@ -486,7 +721,7 @@ mod tests {
             s.mapping[4] = 6;
             s.mapping[5] = 7;
             s.zoom_speed = 0.8;
-            s.direct_zoom = true;
+            s.direct_zoom = false;
             let mut camera = flycam::Flycam::from_view(glam::Vec3::ZERO, glam::Vec3::X, glam::Vec3::Z, 1.0);
             controller.sample(&snap, &s, true, true, 0.1);
             for (inside, outside, expected) in [(true, false, 0.92), (false, false, 0.92), (false, true, 1.0), (true, true, 1.0)] {
@@ -521,7 +756,7 @@ mod tests {
         s.mapping[6] = s.mapping[5];
         s.flycam.gain[6] = 1.0;
         s.flycam.feather = 0.0;
-        s.direct_zoom = true;
+        s.direct_zoom = false;
         let mut camera = flycam::Flycam::from_view(glam::Vec3::ZERO, glam::Vec3::X, glam::Vec3::Z, 1.0);
         controller.sample(&snap, &s, true, true, 0.1);
         snap.devices[0].axes[5] = 0.8;
@@ -553,7 +788,7 @@ mod tests {
         camera.step(released.axes, &s, 0.1);
         assert!(
             (camera.fov - 1.0).abs() < 1e-5,
-            "release must retain the adjusted lens even with the old absolute flag"
+            "relative zoom must retain the adjusted lens on release"
         );
         snap.devices[0].axes[5] = 0.0;
         controller.sample(&snap, &s, true, true, 0.1);
@@ -616,7 +851,7 @@ mod tests {
             };
             let restored: Settings = serde_json::from_str(&serde_json::to_string(&chosen).expect("saved zoom")).expect("restored zoom");
             assert_eq!(restored, chosen);
-            assert!(!restored.absolute_zoom());
+            assert!(restored.absolute_zoom());
         }
     }
 

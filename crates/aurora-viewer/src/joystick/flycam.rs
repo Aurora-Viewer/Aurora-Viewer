@@ -30,6 +30,10 @@ impl Flycam {
         self.reference_fov = fov;
     }
 
+    pub fn reset_zoom(&mut self) {
+        self.fov = self.reference_fov;
+    }
+
     pub fn forward(&self) -> Vec3 {
         self.rotation * Vec3::X
     }
@@ -51,7 +55,7 @@ impl Flycam {
             self.rotation = self.rotation.slerp(leveled.rotation, blend);
         }
         if settings.absolute_zoom() {
-            if settings.mapping[6] >= 0 && settings.flycam.gain[6] != 0.0 {
+            if settings.zoom_mode == super::ZoomMode::Buttons || (settings.mapping[6] >= 0 && settings.flycam.gain[6] != 0.0) {
                 self.fov = self.reference_fov + a[6];
             }
         } else {
