@@ -1901,28 +1901,77 @@ mod tests {
         assert!(inv.folders.contains_key(&outfit), "saved outfits are retained");
     }
 
+    /// An ordinary folder (no outfit type) holding `items`, under `parent`.
+    fn plain_folder(inv: &mut Inventory, id: u128, parent: Uuid, items: &[u128]) -> Uuid {
+        let id = Uuid::from_u128(id);
+        let mut folder = inv.folders[&Uuid::from_u128(703)].clone();
+        folder.info.id = id;
+        folder.info.parent = parent;
+        folder.info.type_default = -1;
+        folder.info.name = format!("Folder {id}");
+        folder.children.clear();
+        folder.items = items.iter().map(|n| Uuid::from_u128(*n)).collect();
+        inv.folders.insert(id, folder);
+        if let Some(p) = inv.folders.get_mut(&parent) {
+            p.children.push(id);
+        }
+        for item in &folder_items(inv, id) {
+            inv.items.get_mut(item).expect("folder item").parent = id;
+        }
+        id
+    }
+
+    fn folder_items(inv: &Inventory, id: Uuid) -> Vec<Uuid> {
+        inv.folders[&id].items.clone()
+    }
+
     /// Issue #1849: "Remove from current outfit" on an ordinary folder (a
-    /// demo worn from Recent) refused it as an outfit it cannot modify.
+    /// demo worn from Recent) refused it as an outfit it cannot modify. The
+    /// Legacy Viewer (takeOffOutfit) takes off the worn clothing and
+    /// attachments of any folder and its subfolders, originals or links,
+    /// never a body part, and leaves the rest of the outfit on.
     #[test]
     fn remove_outfit_takes_off_an_ordinary_folder() {
         let mut inv = fixture();
-        let (worn, _) = worn_clothing(&inv)[0];
-        let demo = Uuid::from_u128(1100);
-        let mut folder = inv.folders[&Uuid::from_u128(703)].clone();
-        folder.info.id = demo;
-        folder.info.parent = inv.root;
-        folder.info.type_default = -1;
-        folder.info.name = "Demo".into();
-        folder.children.clear();
-        folder.items = vec![worn];
-        inv.folders.insert(demo, folder);
-        inv.items.get_mut(&worn).expect("worn clothing").parent = demo;
+        let (skin, jacket, pants, hair, earrings, spare) = (711, 715, 716, 717, 718, 722);
+        let worn = |change: &OutfitMutation, n: u128| change.links.iter().any(|l| l.target == Uuid::from_u128(n));
+        let current = usable_links(&inv, cof(&inv).expect("COF"));
+        let before = |n: u128| current.iter().any(|l| l.target == Uuid::from_u128(n));
+        assert!([skin, jacket, pants, hair, earrings].into_iter().all(before), "worn in the demo");
+        assert!(!before(spare), "the spare shirt is not");
+        // the demo: worn originals, an unworn one, a body part, and a
+        // subfolder holding a link to a worn attachment
+        let root = inv.root;
+        let demo = plain_folder(&mut inv, 1100, root, &[jacket, spare, skin]);
+        let sub = plain_folder(&mut inv, 1101, demo, &[]);
+        let link = Uuid::from_u128(1102);
+        let mut hair_link = inv.items[&Uuid::from_u128(hair)].clone();
+        hair_link.id = link;
+        hair_link.parent = sub;
+        hair_link.asset_type = 24;
+        hair_link.asset_id = Uuid::from_u128(hair);
+        inv.items.insert(link, hair_link);
+        inv.folders.get_mut(&sub).expect("subfolder").items.push(link);
         let (change, sync) = plan(&inv, Action::RemoveOutfit(demo), &HashMap::new()).expect("take off a demo folder");
         assert!(sync);
-        assert!(!change.links.iter().any(|l| l.target == worn), "its clothing is taken off");
-        for id in 710..714 {
-            assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(id)), "body part {id}");
+        assert!(!worn(&change, jacket), "its clothing is taken off");
+        assert!(!worn(&change, hair), "the attachment linked in its subfolder too");
+        assert!(!worn(&change, spare), "nothing is put on");
+        assert!(worn(&change, skin), "a body part in the folder stays");
+        for n in 710..714 {
+            assert!(worn(&change, n), "body part {n}");
         }
+        for n in [pants, earrings, 719, 720, 721] {
+            assert!(worn(&change, n), "{n}, outside the folder, stays worn");
+        }
+        // two ordinary folders at once: one outfit change for both
+        let other = plain_folder(&mut inv, 1103, root, &[pants]);
+        let (change, _) = plan(&inv, Action::RemoveOutfits(vec![demo, other]), &HashMap::new()).expect("take off two folders");
+        assert!(!worn(&change, jacket) && !worn(&change, pants) && !worn(&change, hair));
+        assert!(worn(&change, earrings));
+        // an unloaded folder waits instead of taking off part of it
+        inv.folders.get_mut(&sub).expect("subfolder").state = FetchState::Unknown;
+        assert!(plan(&inv, Action::RemoveOutfit(demo), &HashMap::new()).is_err());
     }
 
     #[test]
