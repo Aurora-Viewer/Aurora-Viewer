@@ -181,6 +181,9 @@ pub struct Background {
     since: Option<Instant>,
     /// Its textures went, since it is behind.
     away: bool,
+    /// They went with the viewer past the driver's budget: its 3D drawing
+    /// pauses too ([`Background::paused`]).
+    crowded: bool,
 }
 
 impl Background {
@@ -201,12 +204,26 @@ impl Background {
         if in_front && !minimized {
             self.since = None;
             self.away = false;
+            self.crowded = false;
             return false;
         }
         let since = *self.since.get_or_insert(now);
         let after = if minimized { MINIMIZED_AFTER } else { BACKGROUNDED_AFTER };
+        self.crowded |= crowded;
         self.away |= crowded || now.duration_since(since) >= after;
         self.away
+    }
+
+    /// The window is behind and was past the driver's budget there: it
+    /// stops drawing its 3D scene and its 3D targets shrink until it is in
+    /// front again (the app's frame, #1808). Its textures alone were not
+    /// enough on the grid: at 4K in a busy region the window behind still
+    /// held 6.1 GB (2.1 of textures at the highest step, 1.35 of geometry,
+    /// the rest render targets and allocator room) beside the 7.6 GB of the
+    /// one in front on a 12 GB card, and drew its scene at 15 fps, 30 ms of
+    /// GPU each: both fell to 1 or 2 fps.
+    pub fn paused(&self) -> bool {
+        self.crowded
     }
 }
 
@@ -539,15 +556,20 @@ mod tests {
         let s = Duration::from_secs;
         let mut b = Background::default();
         assert!(!b.update(t0, false, false, false));
+        assert!(!b.paused());
         assert!(b.update(t0 + s(5), false, false, true));
+        assert!(b.paused(), "past the budget behind: the 3D drawing pauses");
         // back under the budget once they went: still gone while behind
         assert!(b.update(t0 + s(6), false, false, false));
-        // in front, crowded or not: its textures stay
+        assert!(b.paused());
+        // in front, crowded or not: its textures stay, the drawing resumes
         assert!(!b.update(t0 + s(7), true, false, true));
-        // behind again, not crowded: the Legacy minute again
+        assert!(!b.paused());
+        // behind again, not crowded: the Legacy minute again, still drawing
         assert!(!b.update(t0 + s(8), false, false, false));
         assert!(!b.update(t0 + s(60), false, false, false));
         assert!(b.update(t0 + s(69), false, false, false));
+        assert!(!b.paused(), "the Legacy minute alone does not pause");
         // minimised and crowded: at once too
         let mut m = Background::default();
         assert!(m.update(t0, true, true, true));

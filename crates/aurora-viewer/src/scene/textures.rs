@@ -2917,6 +2917,12 @@ impl TextureStreamer {
         self.minimized = minimized;
     }
 
+    /// The window is behind and the viewer was past the driver's budget
+    /// there: the 3D drawing pauses (texture_budget::Background::paused).
+    pub fn drawing_paused(&self) -> bool {
+        self.background.paused()
+    }
+
     /// Memory budget, a few times a second: what the textures may hold now
     /// and the pressure step for what they hold (texture_budget.rs).
     fn press(&mut self, renderer: &mut Renderer, now: Instant, setting: u64) {
@@ -2938,7 +2944,9 @@ impl TextureStreamer {
             self.pressure.hold_max(now);
             let place = if self.minimized { "minimised" } else { "in the background" };
             if crowded {
-                log::info!("texture memory: the window is {place} with the video memory short, freeing up video memory");
+                log::info!(
+                    "texture memory: the window is {place} with the video memory short, freeing up video memory; the 3D drawing pauses until it is in front"
+                );
             } else {
                 let after = if self.minimized {
                     texture_budget::MINIMIZED_AFTER
