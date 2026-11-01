@@ -15969,6 +15969,7 @@ impl ApplicationHandler for App {
         self.options_ui.gpus = renderer.info.adapters.clone();
         self.options_ui.gpu_in_use = renderer.info.name.clone();
         self.options_ui.gpu_notice = renderer.info.notice;
+        self.options_ui.oit_supported = renderer.info.oit;
         self.login_form.driver_notice = self.driver_notice(&renderer.info);
         self.safe_graphics_at_start();
         self.screen_rate.poll(&window, Instant::now());

@@ -1530,6 +1530,12 @@ override BLEND_SPLIT: u32 = 0u;
 
 @fragment
 fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return blend_color(in, front);
+}
+
+// A blended face's premultiplied colour (fs_blend), shared with the
+// order-independent capture (fs_blend_oit).
+fn blend_color(in: VsOut, front: bool) -> vec4<f32> {
     let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
     if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         let surface = portal_surface(records[in.record], in.uv, portal_aa);
@@ -1565,6 +1571,52 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
     }
     // premultiplied alpha
     return vec4<f32>(c.rgb * c.a, c.a);
+}
+
+// ---- order-independent transparency: capture (oit.rs, oit.wgsl)
+//
+// Each blended fragment in front of the opaque scene is appended to its
+// pixel's list instead of being blended: premultiplied colour (rg and b as
+// halves), alpha (8 bits), the MSAA samples it covers (8 bits), its depth and
+// the next node. oit.wgsl sorts and composites the lists. Once the node pool
+// is full, the fragment is blended as before (in the draw order, back to
+// front), so a crowded scene degrades to the old image, never to holes.
+struct OitParams {
+    node_cap: u32,
+    width: u32,
+    height: u32,
+    max_layers: u32,
+};
+// heads[0] counts the nodes; heads[1 + y * width + x] is the pixel's first
+// node plus one (0: empty)
+@group(3) @binding(20) var<storage, read_write> oit_heads: array<atomic<u32>>;
+@group(3) @binding(21) var<storage, read_write> oit_nodes: array<vec4<u32>>;
+@group(3) @binding(22) var<uniform> oit_params: OitParams;
+
+@fragment
+fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_mask) coverage: u32) -> @location(0) vec4<f32> {
+    let c = blend_color(in, front);
+    let px = vec2<u32>(in.clip.xy);
+    // behind the opaque scene (reverse-Z): a node would only be thrown away
+    // by the resolve. With MSAA this is the single-sample prepass; the
+    // resolve tests each sample again against the MSAA depth.
+    if (in.clip.z <= textureLoad(depth_tex, vec2<i32>(px), 0)) {
+        discard;
+    }
+    let idx = atomicAdd(&oit_heads[0], 1u);
+    if (idx >= oit_params.node_cap) {
+        return c;
+    }
+    let prev = atomicExchange(&oit_heads[1u + px.y * oit_params.width + px.x], idx + 1u);
+    let a8 = u32(round(clamp(c.a, 0.0, 1.0) * 255.0));
+    let b16 = pack2x16float(vec2<f32>(clamp(c.b, 0.0, 65504.0), 0.0)) & 0xffffu;
+    oit_nodes[idx] = vec4<u32>(
+        pack2x16float(clamp(c.rg, vec2<f32>(0.0), vec2<f32>(65504.0))),
+        b16 | (a8 << 16u) | ((coverage & 0xffu) << 24u),
+        bitcast<u32>(in.clip.z),
+        prev,
+    );
+    return vec4<f32>(0.0);
 }
 
 // Glow amount into the scene alpha (additive, alpha channel only), drawn

@@ -32,6 +32,7 @@ pub mod main_thread;
 mod motion_debug;
 mod motion_history;
 mod occlusion;
+pub mod oit;
 pub mod pacing;
 mod packet;
 mod pick;

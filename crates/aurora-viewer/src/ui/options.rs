@@ -404,6 +404,9 @@ pub struct OptionsUi {
     pub gpus: Vec<String>,
     pub gpu_in_use: String,
     pub gpu_notice: Option<aurora_render::adapter_choice::Notice>,
+    /// The GPU can sort blended faces per pixel (GpuInfo::oit); set by the
+    /// app: the transparency rows are greyed otherwise.
+    pub oit_supported: bool,
     /// The sky in use is tone mapped (not classic); set by the app each
     /// frame: the tone mapper choice is greyed otherwise.
     pub sky_tone_mapped: bool,

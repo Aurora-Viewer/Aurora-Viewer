@@ -71,6 +71,8 @@ pub struct GpuInfo {
     /// Why the dedicated GPU may not be the one drawing (shown under that
     /// choice too).
     pub notice: Option<crate::adapter_choice::Notice>,
+    /// Blended faces can be sorted per pixel (oit.rs `supported`).
+    pub oit: bool,
 }
 
 /// The part of a range of skin bindings to send that is in a list of `len`.
@@ -408,6 +410,7 @@ impl Renderer {
             max_texture_size: alim.max_texture_dimension_2d,
             adapters,
             notice,
+            oit: crate::oit::supported(&device),
         };
 
         // ---- the scene's stores; what they write at creation is replayed

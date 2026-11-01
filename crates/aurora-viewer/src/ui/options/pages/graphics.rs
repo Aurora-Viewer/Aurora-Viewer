@@ -719,6 +719,28 @@ fn image(cx: &mut Cx) {
             &field!(specular_aa),
         );
     });
+    // Order-independent transparency (aurora-render oit.rs), an Aurora addition
+    cx.group(tr!("ui-options-transparency"), |cx| {
+        cx.greyed(!cx.st.oit_supported);
+        cx.toggle(tr!("ui-options-oit"), tr!("ui-options-oit-help"), &field!(oit));
+        let off = !cx.s.oit;
+        cx.subs(off, |cx| {
+            cx.slider(
+                tr!("ui-options-oit-nodes"),
+                tr!("ui-options-oit-nodes-help"),
+                &field!(oit_nodes_per_pixel),
+                aurora_render::oit::MIN_NODES_PER_PIXEL..=aurora_render::oit::MAX_NODES_PER_PIXEL,
+                "",
+            );
+            cx.slider(
+                tr!("ui-options-oit-layers"),
+                tr!("ui-options-oit-layers-help"),
+                &field!(oit_max_layers),
+                1..=aurora_render::oit::MAX_SORTED_LAYERS,
+                "",
+            );
+        });
+    });
     cx.group(tr!("ui-options-color-and-sharpness"), |cx| {
         // "HDR and Emissive" (RenderDisableVintageMode): off, the tone
         // mapping, its mix and the sharpening are greyed, as in
