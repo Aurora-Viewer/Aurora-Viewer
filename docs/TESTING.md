@@ -7617,7 +7617,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder`**
 — opens Appearance with four synthetic outfits:
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
@@ -7686,6 +7686,13 @@ for them (`5 to look up`), as a cold inventory cache.
   missing, as on the grid after the original was deleted. The scarf shows
   greyed, without an icon; Wear, Add and Take off on any outfit work, skip
   it, and the rewritten current outfit drops it (no "still loading").
+- `take-off-folder`: the Worn tab, with an ordinary "Demo delivery"
+  folder in the inventory (not a saved outfit) holding the worn jacket and
+  pants and, in an "Accessories" subfolder, a link to the worn mesh hair.
+  At frame 600 the inventory's Remove from current outfit takes it off
+  (#1849): the jacket, pants and mesh hair leave the Worn tab, the body
+  parts and the other attachments stay, and no "This outfit folder cannot
+  be modified" message shows. Capture at frame 720 or later.
 - `layers`: the outfit editor with three worn tattoos, listed furthest
   from the body first as in the Legacy Viewer: Lipstick, Freckles, Star.
   A tattoo row drags within the tattoos (a violet marker shows where it

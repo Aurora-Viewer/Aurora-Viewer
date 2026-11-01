@@ -1260,6 +1260,57 @@ pub fn demo_outfit_count() -> usize {
 }
 
 /// A mode of `AURORA_DEMO_OUTFITS` (`closed`, `scroll`, `locate`).
+/// `AURORA_DEMO_APPEARANCE=take-off-folder` (#1849): an ordinary folder,
+/// not a saved outfit, as a demo or a delivery worn from Recent. It holds
+/// the worn jacket and pants originals and, in a subfolder, a link to the
+/// worn mesh hair; frame 600 takes it off as the inventory's Remove from
+/// current outfit does.
+pub const DEMO_TAKE_OFF_FOLDER: Uuid = Uuid::from_u128(0x1849_0001);
+
+pub fn seed_demo_take_off(inv: &mut Inventory, agent: Uuid) {
+    use super::inventory::Folder;
+    let sub = Uuid::from_u128(0x1849_0002);
+    let folder = |id, parent, name: &str, children| Folder {
+        info: InvFolder {
+            id,
+            parent,
+            name: name.into(),
+            type_default: -1,
+            version: 1,
+            ..Default::default()
+        },
+        children,
+        items: Vec::new(),
+        state: FetchState::Fetched,
+        library: false,
+    };
+    let root = inv.root;
+    inv.folders
+        .insert(DEMO_TAKE_OFF_FOLDER, folder(DEMO_TAKE_OFF_FOLDER, root, "Demo delivery", vec![sub]));
+    inv.folders
+        .insert(sub, folder(sub, DEMO_TAKE_OFF_FOLDER, "Accessories", Vec::new()));
+    if let Some(r) = inv.folders.get_mut(&root) {
+        r.children.push(DEMO_TAKE_OFF_FOLDER);
+    }
+    let items = [715, 716]
+        .into_iter()
+        .filter_map(|n| inv.items.get(&Uuid::from_u128(n)).cloned())
+        .map(|mut it| {
+            it.parent = DEMO_TAKE_OFF_FOLDER;
+            it
+        })
+        .collect();
+    inv.apply(vec![aurora_net::inventory::FolderContents {
+        folder_id: DEMO_TAKE_OFF_FOLDER,
+        owner_id: agent,
+        version: 2,
+        folders: Vec::new(),
+        items,
+    }]);
+    let hair: Vec<_> = inv.items.get(&Uuid::from_u128(717)).map(item_link).into_iter().collect();
+    demo_replace(inv, agent, sub, &hair);
+}
+
 pub fn demo_outfit_mode(mode: &str) -> bool {
     std::env::var("AURORA_DEMO_OUTFITS").is_ok_and(|v| v.split(',').skip(1).any(|m| m.trim() == mode))
 }
