@@ -274,6 +274,41 @@ impl PickIndex {
                 .map(|(i, _)| i),
         );
     }
+    /// The objects whose bounds come within `pad` of one of `segments`
+    /// (at most 64), each with a bit per segment it is near (sound
+    /// occlusion). Never avatars, what they wear, rigged meshes nor objects
+    /// without bounds: none of them blocks a sound.
+    pub fn segment_candidates(&self, segments: &[(Vec3, Vec3)], pad: f32, out: &mut Vec<(usize, u64)>) {
+        out.clear();
+        let Some(&(first, _)) = segments.first() else {
+            return;
+        };
+        let segments = &segments[..segments.len().min(64)];
+        let (lo, hi) = segments
+            .iter()
+            .fold((first, first), |(lo, hi), (a, b)| (lo.min(*a).min(*b), hi.max(*a).max(*b)));
+        for (i, e) in self.entries.iter().enumerate() {
+            if !e.pickable() || e.always || e.aside {
+                continue;
+            }
+            let r = e.radius * 1.05 + pad;
+            if e.center.cmplt(lo - Vec3::splat(r)).any() || e.center.cmpgt(hi + Vec3::splat(r)).any() {
+                continue;
+            }
+            let mut bits = 0u64;
+            for (k, (a, b)) in segments.iter().enumerate() {
+                let ab = *b - *a;
+                let t = ((e.center - *a).dot(ab) / ab.length_squared().max(1e-12)).clamp(0.0, 1.0);
+                if (*a + ab * t).distance_squared(e.center) <= r * r {
+                    bits |= 1 << k;
+                }
+            }
+            if bits != 0 {
+                out.push((i, bits));
+            }
+        }
+    }
+
     fn note(&mut self, e: PickEntry, by: Disturbed) {
         if !self.disturbed && self.watch.is_some_and(|probe| e.concerns(&probe)) {
             self.disturbed = true;
@@ -1510,7 +1545,8 @@ mod tests {
             for z in 0..N {
                 let a = y * (N + 1) + z;
                 let b = a + N + 1;
-                indices.extend([a, b, a + 1, a + 1, b, b + 1]);
+                // Face the camera at negative X, as the visible mesh does.
+                indices.extend([a, a + 1, b, a + 1, b + 1, b]);
             }
         }
         assert!(indices.len() >= crate::scene::pick_accel::MIN_TRIANGLES * 3);

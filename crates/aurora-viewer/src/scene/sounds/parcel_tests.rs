@@ -16,7 +16,10 @@ fn fixture() -> (World, SoundManager, Uuid, Uuid, Listener) {
     let listener = Listener {
         pos: Vec3::new(124.0, 131.0, 30.0),
         right: Vec3::X,
+        forward: Vec3::Y,
+        up: Vec3::Z,
         underwater: false,
+        binaural: false,
     };
     (world, sounds, object, asset, listener)
 }

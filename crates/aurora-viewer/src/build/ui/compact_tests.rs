@@ -1429,6 +1429,11 @@ fn material_previews_are_larger_above_their_options_and_open_the_correct_picker(
         }
         assert!(inspector.tool.ui.picker.open);
         assert_eq!(inspector.tool.ui.pick_target, Some(targets[1]));
+        let (_, labels) = inspector.show(vec![]);
+        assert!(
+            labels.iter().any(|(label, _)| label == aurora_i18n::tr!("picker-bom")),
+            "map pickers expose BOM choices"
+        );
         assert!(
             !inspector.tool.ui.wanted_images.contains(&asset),
             "glTF assets are not texture images"
