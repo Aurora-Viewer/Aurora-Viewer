@@ -30,8 +30,9 @@ tests, simulator rendering and physical headset streaming are separate gates.
 
 - A GPU/driver meeting Aurora's existing renderer feature/resource requirements.
   The runtime-selected GPU must also be suitable for the desktop window.
-- A configured headset runtime. On Linux and Windows the Khronos OpenXR loader is
-  built into the viewer; macOS still uses the installed loader. VR is set up when
+- A configured headset runtime. On Windows the Khronos OpenXR loader is built into
+  the viewer; Linux uses the distribution's loader package (WiVRn and Monado
+  install it), macOS the installed loader. VR is set up when
   Aurora starts: with the headset connected later, the headset button offers
   "Restart in VR" (the viewer restarts with `--vr` and enters VR once the world
   shows). VR is optional: without a runtime, the viewer starts as usual.
@@ -48,7 +49,8 @@ is made. No standalone Android/visionOS Aurora application is included.
 
 ## Linux
 
-Install a compatible Vulkan 1.3 OpenXR runtime (no loader package needed). Start
+Install the distribution OpenXR loader (`libopenxr_loader.so.1`; WiVRn and Monado
+depend on it) and a compatible Vulkan 1.3 runtime. Start
 WiVRn/server and connect the headset before launching, or use "Restart in VR".
 Use the runtime's supported active-runtime registration. Normal use needs no demo
 variable. Other Linux runtimes/headsets/GPUs remain unvalidated.

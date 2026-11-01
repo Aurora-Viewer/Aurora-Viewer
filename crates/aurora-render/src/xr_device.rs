@@ -14,12 +14,22 @@ pub(crate) struct Graphics {
     raw_instance: ash::Instance,
     physical: vk::PhysicalDevice,
 }
+/// The OpenXR loader: built in on Windows (the `static` feature), the
+/// distribution's on Linux, which its runtimes install.
+fn entry() -> Result<xr::Entry> {
+    #[cfg(target_os = "windows")]
+    return Ok(xr::Entry::linked(&())?);
+    // SAFETY: openxr's checked loading of the system loader library.
+    #[cfg(not(target_os = "windows"))]
+    return Ok(unsafe { xr::Entry::load(&())? });
+}
+
 /// Whether the active OpenXR runtime has a headset now (instance and
 /// system only, no session): when VR was unavailable at startup because the
 /// headset was not connected yet, a restart can then bring it.
 pub fn headset_ready() -> bool {
     let probe = || -> Result<()> {
-        let entry = xr::Entry::linked(&())?;
+        let entry = entry()?;
         if !entry.enumerate_extensions()?.khr_vulkan_enable2 {
             return Err("XR_KHR_vulkan_enable2 unavailable".into());
         }
@@ -56,7 +66,7 @@ impl Graphics {
     pub fn new(flags: wgpu::InstanceFlags) -> Result<Self> {
         // The Khronos loader is linked in (the `static` feature): it finds the
         // runtime the system has active, with nothing installed beside the exe.
-        let entry = xr::Entry::linked(&())?;
+        let entry = entry()?;
         let available = entry.enumerate_extensions()?;
         if !available.khr_vulkan_enable2 {
             return Err("XR_KHR_vulkan_enable2 unavailable".into());

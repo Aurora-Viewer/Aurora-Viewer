@@ -37,9 +37,11 @@ impl Graphics {
                 engine_version: 0,
                 api_version: xr::Version::new(1, 0, 0),
             },
-            &xr::ExtensionSet {
-                khr_metal_enable: true,
-                ..Default::default()
+            &{
+                // a non-exhaustive struct: set the one extension on a default
+                let mut extensions = xr::ExtensionSet::default();
+                extensions.khr_metal_enable = true;
+                extensions
             },
             &[],
             &(),

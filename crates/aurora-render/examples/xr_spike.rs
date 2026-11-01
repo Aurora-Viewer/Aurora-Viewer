@@ -25,7 +25,12 @@ mod native {
     pub fn run() -> Result<()> {
         // The Khronos loader is linked in (the `static` feature): it finds the
         // runtime the system has active, with nothing installed beside the exe.
+        // the loader: built in on Windows, the distribution's on Linux
+        #[cfg(target_os = "windows")]
         let entry = xr::Entry::linked(&())?;
+        // SAFETY: openxr's checked loading of the system loader library.
+        #[cfg(not(target_os = "windows"))]
+        let entry = unsafe { xr::Entry::load(&())? };
         let available = entry.enumerate_extensions()?;
         if !available.khr_vulkan_enable2 {
             return Err("XR_KHR_vulkan_enable2 unavailable".into());

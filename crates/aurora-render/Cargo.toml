@@ -46,10 +46,14 @@ windows-sys = { version = "0.61.2", features = ["Win32_System_Threading", "Win32
 libc = "0.2.190"
 
 # Shared native OpenXR path (Vulkan on Linux/Windows, Metal on macOS).
-# `static`: the Khronos loader is built in (cmake), so the viewer needs no
-# openxr_loader beside it; only the runtime is the user's.
-[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+# Windows: `static`, the Khronos loader built in (cmake), so the viewer needs
+# no openxr_loader beside it; Windows runtimes seldom install one where an app
+# finds it. Linux loads the distribution's loader, which its runtimes depend on
+# (building it in needs the X11, Vulkan and OpenGL headers).
+[target.'cfg(target_os = "windows")'.dependencies]
 openxr = { version = "0.22", default-features = false, features = ["static"] }
+[target.'cfg(target_os = "linux")'.dependencies.openxr]
+version = "0.22"
 
 [dev-dependencies]
 naga = { version = "30", features = ["wgsl-in"] }
