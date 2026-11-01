@@ -353,10 +353,10 @@ pub struct OptionsUi {
     was_open: bool,
     focus_search: bool,
     pub modified_view: bool,
-    /// Measured each frame (`Cx`): the size of each row's control, the
-    /// number of rows behind each cog and whether its row is off, the cogs
-    /// open, the counts of the sidebar.
-    control_sizes: HashMap<egui::Id, Vec2>,
+    /// Measured each frame (`Cx`): each row's control size and available
+    /// width, the number of rows behind each cog and whether its row is off,
+    /// the cogs open, and the sidebar counts.
+    control_sizes: HashMap<egui::Id, (f32, Vec2)>,
     subs: HashMap<egui::Id, (usize, bool)>,
     open_subs: HashSet<egui::Id>,
     counts: Counts,
