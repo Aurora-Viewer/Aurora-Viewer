@@ -1,4 +1,4 @@
-//! Unified upload window; the existing per-asset inspectors remain intact.
+//! Unified and type-specific windows share the existing per-asset inspectors.
 
 use super::*;
 
@@ -15,12 +15,19 @@ pub(super) fn show(
     let mut open = imports.open;
     let busy = imports.busy() || imports.confirm;
     let window = imports.window_choice();
+    let unified = window == Choice::Bulk;
     let window_id = egui::Id::unique(window.window_id());
-    if imports.demo_started && imports.preview_zoom.is_none() {
+    if imports.demo_started && !imports.launcher_open && imports.preview_zoom.is_none() {
         ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, window_id));
     }
     let (size, min_size) = dimensions(window);
-    let mut floater = Floater::new(window.window_id(), aurora_i18n::tr!("import-window-title"), IMPORT_POSITION, size).steady_size();
+    let title = if unified {
+        aurora_i18n::tr!("import-window-title").to_owned()
+    } else {
+        aurora_i18n::tr!("import-type-title", type = window.label())
+    };
+    let offset = window.window_index().map_or(0.0, |index| 24.0 * index as f32);
+    let mut floater = Floater::new(window.window_id(), title, IMPORT_POSITION + Vec2::splat(offset), size).steady_size();
     floater.min_size = min_size;
     floater.show(ctx, p, &mut open, |ui| {
         let height = ui.available_height().max(100.0);
@@ -28,7 +35,7 @@ pub(super) fn show(
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(Vec2::new(files_width, height), egui::Layout::top_down(egui::Align::Min), |ui| {
                 ui.set_width(files_width);
-                queue::show(ui, p, imports, height, busy, actions);
+                queue::show(ui, p, imports, prefs, height, busy, actions);
             });
             let (separator, _) = ui.allocate_exact_size(Vec2::new(1.0, height), egui::Sense::hover());
             ui.painter()
@@ -41,20 +48,25 @@ pub(super) fn show(
                     let mut right = ui.new_child(egui::UiBuilder::new().id_salt("import_right_pane").max_rect(bounds));
                     right.set_clip_rect(bounds.intersect(ui.clip_rect()));
                     let ui = &mut right;
-                    let mut tab = imports.tab as usize;
-                    widgets::tabs(
-                        ui,
-                        p,
-                        &mut tab,
-                        &[
-                            (aurora_i18n::tr!("import-tab-batch"), true),
-                            (aurora_i18n::tr!("import-tab-folder"), true),
-                            (aurora_i18n::tr!("import-tab-permissions"), true),
-                        ],
-                    );
-                    imports.tab = match tab {
-                        1 => Tab::Folder,
-                        2 => Tab::Permissions,
+                    let mut tab = if unified {
+                        imports.tab as usize
+                    } else {
+                        usize::from(imports.tab == Tab::Permissions)
+                    };
+                    let unified_tabs = [
+                        (aurora_i18n::tr!("import-tab-batch"), true),
+                        (aurora_i18n::tr!("import-tab-folder"), true),
+                        (aurora_i18n::tr!("import-tab-permissions"), true),
+                    ];
+                    let type_tabs = [
+                        (aurora_i18n::tr!("import-tab-batch"), true),
+                        (aurora_i18n::tr!("import-tab-permissions"), true),
+                    ];
+                    let tabs: &[(&str, bool)] = if unified { &unified_tabs } else { &type_tabs };
+                    widgets::tabs(ui, p, &mut tab, tabs);
+                    imports.tab = match (unified, tab) {
+                        (true, 1) => Tab::Folder,
+                        (true, 2) | (false, 1) => Tab::Permissions,
                         _ => Tab::Batch,
                     };
                     widgets::divider(ui, p);
@@ -89,7 +101,7 @@ pub(super) fn show(
                                     });
                             }
                             Tab::Permissions => {
-                                egui::ScrollArea::vertical()
+                                egui::ScrollArea::both()
                                     .id_salt("import_permissions_tab")
                                     .max_height(height)
                                     .show(ui, |ui| {
@@ -217,7 +229,7 @@ pub(super) fn show(
                                                                     let canvas = if let Some(model) = &entry.model {
                                                                         aurora_render::preview::paint_with_pose(
                                                                             ui,
-                                                                            egui::Id::unique(("animation_preview", entry.id)),
+                                                                            ui.scope_id().with(("animation_preview", entry.id)),
                                                                             model.clone(),
                                                                             &mut entry.view,
                                                                             Vec2::new(230.0, 190.0),
@@ -410,8 +422,16 @@ pub(super) fn show(
     imports.open = open;
 }
 
-pub(super) fn dimensions(_choice: Choice) -> (Vec2, Vec2) {
-    (Vec2::new(1160.0, 820.0), Vec2::new(1060.0, 650.0))
+pub(super) fn dimensions(choice: Choice) -> (Vec2, Vec2) {
+    match choice {
+        Choice::Texture => (Vec2::new(820.0, 700.0), Vec2::new(740.0, 580.0)),
+        Choice::Sound => (Vec2::new(780.0, 680.0), Vec2::new(740.0, 580.0)),
+        Choice::Animation => (Vec2::new(900.0, 740.0), Vec2::new(840.0, 640.0)),
+        Choice::Material => (Vec2::new(720.0, 790.0), Vec2::new(620.0, 660.0)),
+        Choice::Mesh => (Vec2::new(1040.0, 780.0), Vec2::new(1020.0, 650.0)),
+        Choice::Local => (Vec2::new(1040.0, 780.0), Vec2::new(900.0, 650.0)),
+        Choice::Bulk => (Vec2::new(1160.0, 820.0), Vec2::new(1060.0, 650.0)),
+    }
 }
 
 fn local_settings(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {

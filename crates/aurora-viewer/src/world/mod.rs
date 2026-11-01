@@ -181,12 +181,12 @@ impl ChatKind {
         matches!(self, ChatKind::Own(_))
     }
 
-    /// How loud a resident's line was said, ours included (LLChat's
+    /// How loud a resident's or object's line was said, ours included (LLChat's
     /// mChatType): whispered and shouted lines read the same whoever said
     /// them (FSChatHistory::appendMessage).
     pub fn volume(self) -> Option<ChatType> {
         match self {
-            ChatKind::Local(t) | ChatKind::Own(t) => Some(t),
+            ChatKind::Local(t) | ChatKind::Own(t) | ChatKind::Object(t) => Some(t),
             _ => None,
         }
     }
@@ -2769,6 +2769,13 @@ impl World {
             NetEvent::ScriptDialog {
                 object_id, object_name, ..
             } if self.object_blocked(&object_id, &object_name) => None,
+            // RLVa @sendchat (LLScriptHandler::processNotification,
+            // llnotificationscripthandler.cpp): a dialog or text box whose
+            // answer would be said on public chat is not shown at all.
+            NetEvent::ScriptDialog { channel: 0, .. } if self.rlva.has("sendchat") => {
+                self.system_notice(aurora_i18n::tr!("rlva-blocked-script-dialog"), notice_topics::Topic::Warning);
+                None
+            }
             // process_script_question drops only the questions of a blocked
             // object (LLMuteList::isMuted(taskid)): not those of a blocked
             // owner, nor on any other condition (no click needed, object out
@@ -3024,6 +3031,9 @@ impl World {
             } => {
                 let answer = eep::EnvAnswer::from_llsd(&environment);
                 let parcel_id = answer.parcel_id;
+                for w in eep::water_out_of_range(&environment) {
+                    log::info!("water values out of the Legacy ranges, clamped: {w:?}");
+                }
                 match answer.day.as_ref().filter(|d| d.is_valid()) {
                     Some(d) => {
                         log::info!(
@@ -3044,6 +3054,22 @@ impl World {
                                 s.blue_horizon,
                                 s.haze_horizon,
                                 s.haze_density
+                            );
+                        }
+                        // the region's water (in the Legacy ranges; the
+                        // values it sent out of them are logged on reading):
+                        // what a report of odd water needs
+                        if let Some(w) = d.water.first().map(|k| &k.1) {
+                            log::info!(
+                                "water: fog {:?} density {} underwater mod {} fresnel scale {} offset {} blur {} normal scale {:?} normal map {}",
+                                w.fog_color,
+                                w.fog_density,
+                                w.underwater_fog_mod,
+                                w.fresnel_scale,
+                                w.fresnel_offset,
+                                w.blur_multiplier,
+                                w.normal_scale,
+                                w.normal_map
                             );
                         }
                     }

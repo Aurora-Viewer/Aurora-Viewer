@@ -19,6 +19,18 @@ impl App {
                 self.settings.imports.folder_layout = Some(self.imports.folders.layout);
                 self.settings.imports.batch_folder = self.world.inventory.root;
             }
+            if matches!(
+                self.imports.demo_mode.as_str(),
+                "loose-folder" | "loose-folder-preview" | "sound-folder"
+            ) {
+                self.settings.imports.use_default_folders = false;
+                self.settings.imports.folder_layout = Some(crate::imports::folders::Layout::Flat);
+                self.settings.imports.batch_folder = self.world.inventory.root;
+                self.imports.set_loose_folder(Some("Release"));
+                if self.imports.demo_mode == "loose-folder-preview" {
+                    self.imports.tab = crate::imports::ui::Tab::Folder;
+                }
+            }
             if self.imports.demo_mode.starts_with("mesh") {
                 // Offline previews use the existing synthetic idle; normal
                 // operation loads the standard asset through AnimStreamer.
@@ -80,6 +92,14 @@ impl App {
         self.save_import_animation_models();
         for command in commands {
             self.send(command);
+        }
+        if self.demo && self.frame_count == 500 && matches!(self.imports.demo_mode.as_str(), "sound-confirm" | "material-confirm") {
+            self.imports.confirm = true;
+            self.imports.confirm_choice = Some(if self.imports.demo_mode == "sound-confirm" {
+                crate::imports::Choice::Sound
+            } else {
+                crate::imports::Choice::Material
+            });
         }
         if self.demo && self.imports.demo_mode == "folders-lods" && !self.imports.entries.is_empty() {
             let key = egui::Id::unique("import_demo_lod_family_shown");
@@ -275,17 +295,22 @@ impl App {
             self.settings.imports.preview_on_avatar = true;
         }
         let before = self.settings.imports.clone();
-        if self.imports.open {
-            if let Some(id) = self.imports.active.filter(|id| {
-                self.imports
-                    .entries
-                    .iter()
-                    .any(|e| e.id == *id && matches!(e.source, Some(Source::Animation { .. })) && !e.player.started)
-            }) {
+        let active_before: std::collections::HashSet<_> = self.imports.active_ids().collect();
+        if self.imports.any_window_open() {
+            let animations: Vec<_> = self
+                .imports
+                .entries
+                .iter()
+                .filter(|entry| {
+                    active_before.contains(&entry.id) && matches!(entry.source, Some(Source::Animation { .. })) && !entry.player.started
+                })
+                .map(|entry| entry.id)
+                .collect();
+            for id in animations {
                 self.imports.play(id, &self.scene.jobs, ctx, self.scene.avatar_lib.rig.clone());
             }
             for entry in &mut self.imports.entries {
-                let mesh_visible = self.imports.active == Some(entry.id)
+                let mesh_visible = active_before.contains(&entry.id)
                     || self.imports.preview_zoom.is_some_and(|(id, slot)| id == entry.id && slot.is_none());
                 if mesh_visible
                     && let Some(Source::Mesh(draft)) = &entry.source
@@ -295,7 +320,7 @@ impl App {
                 {
                     ctx.request_repaint();
                 }
-                if self.imports.active == Some(entry.id) && matches!(entry.source, Some(Source::Animation { .. })) {
+                if active_before.contains(&entry.id) && matches!(entry.source, Some(Source::Animation { .. })) {
                     if self.demo
                         && self.imports.demo_mode == "animation-own"
                         && !self.imports.demo_animation_positioned
@@ -317,7 +342,7 @@ impl App {
                 }
             }
         }
-        let was_open = self.imports.open;
+        let was_open = self.imports.any_window_open();
         let mut actions = crate::imports::ui::show(
             ctx,
             palette,
@@ -343,7 +368,8 @@ impl App {
         if self.settings.imports != before {
             self.settings.save();
         }
-        if was_open && !self.imports.open {
+        let active_after: std::collections::HashSet<_> = self.imports.active_ids().collect();
+        if was_open && !self.imports.any_window_open() {
             if let Some(request) = self.imports.play_request.take() {
                 self.world.preview_animation(request, false);
             }
@@ -355,10 +381,39 @@ impl App {
                 entry.sound.stop();
             }
             self.imports.sound_playing = None;
+        } else {
+            let stop_sound = self
+                .imports
+                .sound_playing
+                .is_some_and(|id| active_before.contains(&id) && !active_after.contains(&id));
+            if stop_sound {
+                if let Some(engine) = &self.audio_engine {
+                    engine.stop_world(SOUND_PREVIEW);
+                }
+                self.imports.sound_playing = None;
+            }
+            let stop_preview = self.imports.play_request.filter(|request| {
+                self.imports.entries.iter().any(|entry| {
+                    active_before.contains(&entry.id) && !active_after.contains(&entry.id) && entry.player.request == Some(*request)
+                })
+            });
+            if let Some(request) = stop_preview {
+                self.imports.play_request = None;
+                self.world.preview_animation(request, false);
+            }
+            for entry in &mut self.imports.entries {
+                if active_before.contains(&entry.id) && !active_after.contains(&entry.id) {
+                    entry.player.playing = false;
+                    entry.sound.stop();
+                }
+            }
         }
         for action in actions {
             match action {
                 Action::Files => self.imports.choose_files(&self.scene.jobs, ctx, self.settings.imports.texture()),
+                Action::Choose(choice) => self
+                    .imports
+                    .choose_type_files(&self.scene.jobs, ctx, self.settings.imports.texture(), choice),
                 Action::Folder => self.imports.choose_folder(&self.scene.jobs, ctx, self.settings.imports.texture()),
                 Action::StageLocalUploads => {
                     self.imports
@@ -369,7 +424,12 @@ impl App {
                     ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("import_large_preview")));
                 }
                 Action::LargeMap(id, slot) => self.imports.request_large_map(id, slot, &self.scene.jobs, ctx),
-                Action::Start => {
+                Action::Start | Action::StartFor(_) => {
+                    let choice = if let Action::StartFor(choice) = action {
+                        choice
+                    } else {
+                        self.imports.choice
+                    };
                     let prices = if self.demo {
                         Prices {
                             texture: Some(10),
@@ -381,8 +441,9 @@ impl App {
                         self.world.login.as_ref().map(|l| Prices::from_login(&l.raw)).unwrap_or_default()
                     };
                     let prices = prices.with_fallback(self.world.upload_cost);
-                    self.imports
-                        .start_confirmed(&self.world, &self.settings.inventory, &self.settings.imports, &prices);
+                    self.imports.with_choice(choice, |imports| {
+                        imports.start_confirmed(&self.world, &self.settings.inventory, &self.settings.imports, &prices);
+                    });
                 }
                 Action::Cancel => self.imports.cancel_remaining(),
                 Action::Preview(id) => {
@@ -463,14 +524,16 @@ impl App {
                     }
                     self.imports.reload(id, &self.scene.jobs, ctx);
                 }
-                Action::Quote(id) => self.imports.quote_mesh(
-                    id,
-                    ctx,
-                    &self.scene.jobs,
-                    &self.world,
-                    &self.settings.inventory,
-                    self.settings.imports.permissions_for(aurora_net::inventory::upload::Kind::Mesh),
-                ),
+                Action::Quote(id) => self.imports.with_choice(crate::imports::Choice::Mesh, |imports| {
+                    imports.quote_mesh(
+                        id,
+                        ctx,
+                        &self.scene.jobs,
+                        &self.world,
+                        &self.settings.inventory,
+                        self.settings.imports.permissions_for(aurora_net::inventory::upload::Kind::Mesh),
+                    )
+                }),
                 Action::MeshFile(id, level) => self.imports.mesh_file(id, level, &self.scene.jobs, ctx),
                 Action::PhysicsPreset(id, save) => {
                     if save {
@@ -570,9 +633,14 @@ impl App {
                     }
                 }
                 Action::MapFile(id, slot) => self.imports.map_file(id, slot, &self.scene.jobs, ctx),
-                Action::Resume => {
+                Action::Resume | Action::ResumeFor(_) => {
+                    let choice = if let Action::ResumeFor(choice) = action {
+                        choice
+                    } else {
+                        self.imports.choice
+                    };
                     for entry in &mut self.imports.entries {
-                        if matches!(entry.status, crate::imports::Status::Cancelled) {
+                        if choice.accepts(entry) && matches!(entry.status, crate::imports::Status::Cancelled) {
                             entry.status = crate::imports::Status::Ready;
                         }
                     }
@@ -626,7 +694,9 @@ impl App {
                             }
                         }
                         self.scene.jobs.discard(entry);
-                        self.imports.active = self.imports.entries.iter().find(|e| self.imports.choice.accepts(e)).map(|e| e.id);
+                        if self.imports.active == Some(id) {
+                            self.imports.reconcile_active();
+                        }
                     }
                 }
                 Action::MapInventory(id, slot) => {
@@ -638,15 +708,15 @@ impl App {
         self.update_import_avatar_preview();
         self.imports.show_map_picker(ctx, palette, &mut self.world, &self.ui_images);
         let mut maps: Vec<_> = self.imports.map_picker.wanted_images.drain().collect();
-        if let Some(entry) = self.imports.active.and_then(|id| self.imports.entries.iter().find(|e| e.id == id))
-            && let Some(Source::Material { value, images }) = &entry.source
-        {
-            maps.extend(
-                crate::imports::maps::ids(value)
-                    .into_iter()
-                    .enumerate()
-                    .filter_map(|(slot, id)| if images[slot].is_none() { id } else { None }),
-            );
+        for entry in self.imports.entries.iter().filter(|entry| self.imports.entry_visible(entry.id)) {
+            if let Some(Source::Material { value, images }) = &entry.source {
+                maps.extend(
+                    crate::imports::maps::ids(value)
+                        .into_iter()
+                        .enumerate()
+                        .filter_map(|(slot, id)| if images[slot].is_none() { id } else { None }),
+                );
+            }
         }
         if let Some(gfx) = &mut self.gfx {
             for asset in maps {
@@ -662,7 +732,7 @@ impl App {
             .entries
             .iter()
             .filter(|e| {
-                (self.imports.active == Some(e.id) || e.local)
+                (self.imports.entry_visible(e.id) || e.local)
                     && e.preview.is_none()
                     && (!e.preview_pending || e.preview_job_generation != e.preview_generation)
                     && e.preview_error.is_none()
@@ -679,7 +749,7 @@ impl App {
             .entries
             .iter()
             .filter(|e| {
-                self.imports.active == Some(e.id)
+                self.imports.entry_visible(e.id)
                     && (e.model.is_none() || e.model_generation != Some(e.preview_generation))
                     && (!e.preview_pending || e.preview_job_generation != e.preview_generation)
                     && e.preview_error.is_none()
@@ -726,7 +796,7 @@ impl App {
         match local_status::show(ctx, palette, &mut self.imports.local_status, &status) {
             Some(Action::Library) => {
                 self.imports.open(crate::imports::Choice::Local);
-                ui::widgets::open_floater(ctx, crate::imports::Choice::Local.window_id(), &mut self.imports.open);
+                ui::widgets::open_floater(ctx, crate::imports::ui::WINDOW, &mut self.imports.open);
             }
             Some(Action::Remove) => {
                 self.sync_local_picker_bindings();
@@ -783,8 +853,7 @@ impl App {
             .entries
             .iter()
             .find(|e| {
-                self.imports.open
-                    && self.imports.active == Some(e.id)
+                self.imports.entry_visible(e.id)
                     && self.settings.imports.preview_on_avatar
                     && e.player.request.is_some()
                     && e.player.request == self.imports.play_request

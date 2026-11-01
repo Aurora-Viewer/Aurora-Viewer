@@ -1289,7 +1289,7 @@ fn drag_update(
                         local_ids: ids,
                         offset: Vec3::ZERO,
                         flags: 0,
-                        group_id: uuid::Uuid::nil(),
+                        group_id: world.group_for_rez(s.rez_under_land_group),
                     });
                 }
             }
@@ -1700,6 +1700,132 @@ fn draw_scale_ruler(p: &mut Painter3d, s: &BuildSettings, start: Vec3, dir: Vec3
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shift_arrow_drag_copies_once_with_the_current_rez_group() {
+        use aurora_net::{NetCommand, NetEvent};
+        use std::sync::Arc;
+        use uuid::Uuid;
+
+        let mut world = hud_world();
+        for event in crate::demo::face_selection_events(false) {
+            world.apply(event);
+        }
+        for event in crate::demo::demo_reply(&NetCommand::RequestGroups) {
+            world.apply(event);
+        }
+        let idx = world.objects.index_of_uuid(&crate::demo::action_id(99622)).unwrap();
+        let key = world.objects.get(idx).unwrap().key;
+        let land = world.groups.groups[0].id;
+        let active = Uuid::from_u128(8800);
+        let nil = Uuid::nil();
+        let mut settings = BuildSettings {
+            snap: false,
+            actual_root: false,
+            ..Default::default()
+        };
+        for (active, parcel, under_land, expected) in [
+            (active, Some(land), true, land),
+            (active, Some(land), false, active),
+            (active, Some(Uuid::from_u128(8899)), true, active),
+            (active, Some(nil), true, active),
+            (active, None, true, active),
+            (nil, Some(land), true, land),
+            (nil, Some(land), false, nil),
+            (nil, None, true, nil),
+        ] {
+            world.apply(NetEvent::ActiveGroup {
+                id: active,
+                name: "Active group".into(),
+                title: "Builder".into(),
+            });
+            world.parcel = parcel.map(|group_id| {
+                Arc::new(aurora_net::ParcelInfo {
+                    group_id,
+                    ..Default::default()
+                })
+            });
+            settings.rez_under_land_group = under_land;
+            for axis in 0..3 {
+                let now = Instant::now();
+                let pivot = bounds_of(&world, &[key], false, now).unwrap().center;
+                let eye = pivot + Vec3::new(4.0, -6.0, 3.0);
+                let fov = 60f32.to_radians();
+                let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(fov, 1280.0 / 720.0, 0.01);
+                let cam = Cam::new(
+                    eye,
+                    pivot,
+                    projection * glam::camera::rh::view::look_at_mat4(eye, pivot, Vec3::Z),
+                    fov,
+                    1280.0,
+                    720.0,
+                    1.0,
+                );
+                let start = cam.project_px(pivot + unit(axis) * cam.meters_for_pixels(pivot, 45.0)).unwrap();
+                let cursor = cam.project_px(pivot + unit(axis) * cam.meters_for_pixels(pivot, 85.0)).unwrap();
+                let before = world.objects.get(idx).unwrap().position;
+                let mut manip = Manip::default();
+                assert!(manip.try_grab(&mut world, &settings, &cam, &[key], false, EditMode::Move, start, now));
+                assert_eq!(manip.drag.as_ref().unwrap().part, Part::Arrow(axis));
+                let mut out = Vec::new();
+                let shift = Mods {
+                    shift: true,
+                    ..Default::default()
+                };
+                manip.update(
+                    &mut world,
+                    &settings,
+                    &cam,
+                    &[key],
+                    false,
+                    EditMode::Move,
+                    (start.0 + 0.1, start.1),
+                    false,
+                    shift,
+                    now,
+                    &mut out,
+                );
+                assert!(out.is_empty(), "a press within the drag slop must not copy");
+                manip.update(
+                    &mut world,
+                    &settings,
+                    &cam,
+                    &[key],
+                    false,
+                    EditMode::Move,
+                    cursor,
+                    false,
+                    shift,
+                    now,
+                    &mut out,
+                );
+                assert!(
+                    matches!(&out[..], [BuildCmd::Duplicate { handle, local_ids, offset, flags, group_id }]
+                    if *handle == key.region && local_ids == &[key.local_id] && *offset == Vec3::ZERO && *flags == 0 && *group_id == expected),
+                    "axis {axis}, land mode {under_land}: {out:?}"
+                );
+                let after = world.objects.get(idx).unwrap().position;
+                assert!(after.distance(before) > 1e-4, "the original still moves along the arrow");
+                manip.update(
+                    &mut world,
+                    &settings,
+                    &cam,
+                    &[key],
+                    false,
+                    EditMode::Move,
+                    cursor,
+                    false,
+                    shift,
+                    now,
+                    &mut out,
+                );
+                manip.release(&mut world, &settings, false, &mut out);
+                assert_eq!(out.iter().filter(|cmd| matches!(cmd, BuildCmd::Duplicate { .. })).count(), 1);
+                assert!(matches!(out.last(), Some(BuildCmd::Transform { updates, .. })
+                    if updates[0].local_id == key.local_id && updates[0].position.unwrap().abs_diff_eq(after, 1e-5)));
+            }
+        }
+    }
 
     #[test]
     fn seated_linkset_transforms_preserve_occupant_and_attachment_local_transforms() {

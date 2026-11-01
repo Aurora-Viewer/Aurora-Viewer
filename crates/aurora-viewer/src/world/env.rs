@@ -4,7 +4,7 @@
 //! Light settings follow LLSettingsSky::calculateLightSettings (Second Life
 //! viewer, Copyright (C) Linden Research, Inc., originally LGPL 2.1).
 
-use super::eep::{SkyFrame, WaterFrame};
+use super::eep::{self, SkyFrame, WaterFrame};
 use aurora_render::{SkyParams, WaterParams};
 use glam::Vec3;
 use std::time::{Duration, Instant};
@@ -285,8 +285,12 @@ impl Environment {
             // SL-13084: the x scroll is negated (custom cloud textures are flipped)
             cloud_pos_density1: sky.cloud_pos_density1 + Vec3::new(-scroll.x, scroll.y, 0.0),
             cloud_pos_density2: sky.cloud_pos_density2,
-            dome_offset: sky.dome_offset,
-            dome_radius: sky.dome_radius,
+            // LLSettingsSky::getDomeOffset / getDomeRadius return DOME_OFFSET
+            // and DOME_RADIUS, never the sky's own values: a smaller dome moves
+            // the haze glow (skyF's +50 m) below the sun, and the water then
+            // reflects it away from the sun's glint.
+            dome_offset: eep::LEGACY_DOME_OFFSET,
+            dome_radius: eep::LEGACY_DOME_RADIUS,
             hdr_scale,
             classic: sky.can_auto_adjust,
             no_post: !tone_mapped(sky.probe_ambiance),
@@ -388,7 +392,8 @@ impl Environment {
             concat!(
                 "sky frame: classic {} probe ambiance {} gamma {} sun elevation {:.1} deg, ",
                 "sunlight {:.3?} (objects {:.3?}), ambient {:.3?}, cloud shadow {:.3}, ",
-                "haze {:.3} / {:.3}, density x {:.6}, distance x {:.3}"
+                "haze {:.3} / {:.3}, density x {:.6}, distance x {:.3}, ",
+                "sun texture {} x {:.2}, dome {} x {} (drawn {} x {})"
             ),
             sky.can_auto_adjust,
             sky.probe_ambiance,
@@ -402,6 +407,12 @@ impl Environment {
             sky.haze_density,
             sky.density_multiplier,
             sky.distance_multiplier,
+            sky.sun_id,
+            sky.sun_scale,
+            sky.dome_offset,
+            sky.dome_radius,
+            eep::LEGACY_DOME_OFFSET,
+            eep::LEGACY_DOME_RADIUS,
         )
     }
 }

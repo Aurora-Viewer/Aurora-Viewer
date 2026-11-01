@@ -198,7 +198,7 @@ fn preview(
     let response = if let Some(model) = &entry.model {
         aurora_render::preview::paint_with_pose(
             ui,
-            egui::Id::unique(("mesh_preview", entry.id)),
+            ui.scope_id().with(("mesh_preview", entry.id)),
             model.clone(),
             &mut entry.view,
             Vec2::new(width, height),

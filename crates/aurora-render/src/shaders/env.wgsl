@@ -867,7 +867,9 @@ fn fs_terrain_depth(in: TerrainPbrOut) {
 @fragment
 fn fs_terrain_depth_normal(in: TerrainPbrOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     terrain_depth_mask(in);
-    return depth_normal(in.normal, front);
+    // the terrain stays put: the camera's motion alone
+    let ep = vec4<f32>(in.world_pos - frame.eye.xyz, 1.0);
+    return depth_normal(in.normal, front, frame.motion_vp * ep, frame.motion_prev_vp * ep);
 }
 
 // Picking gives the region metres as the surface coordinates of a hit (the
@@ -1095,6 +1097,34 @@ fn water_underside(surface:vec3<f32>,level:f32,incident:vec3<f32>,normal:vec3<f3
     return mix(transmitted,reflected,reflectance)*fog.transmission+fog.color;
 }
 
+// A unit vector, or straight up when `v` has no length: a normal scale of
+// 0 (a valid EEP value) leaves the waves flat, and normalize(0) gives NaN,
+// which turned the whole surface white or black.
+fn water_unit(v: vec3<f32>) -> vec3<f32> {
+    let l = length(v);
+    if (!(l > 1e-6)) { return vec3<f32>(0.0, 0.0, 1.0); }
+    return v / l;
+}
+
+// pbrPunctual (deferredUtil.glsl) for the water: metallic 1, so no diffuse;
+// returns clamp(nl x specContrib, 0, 10), before the light, shadow and haze.
+fn legacy_water_punctual(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32, specular: vec3<f32>) -> vec3<f32> {
+    let perceptual = max(roughness, 8.0 / 255.0);
+    let a = perceptual * perceptual;
+    let reflectance90 = clamp(max(max(specular.r, specular.g), specular.b) * 25.0, 0.0, 1.0);
+    let h = normalize(l + v);
+    let nl = clamp(dot(n, l), 0.001, 1.0);
+    let nv = clamp(abs(dot(n, v)), 0.001, 1.0);
+    let nh = clamp(dot(n, h), 0.0, 1.0);
+    let vh = clamp(dot(v, h), 0.0, 1.0);
+    let f = specular + (vec3<f32>(reflectance90) - specular) * pow(1.0 - vh, 5.0);
+    let a2 = a * a;
+    let g = 2.0 * nl / (nl + sqrt(a2 + (1.0 - a2) * nl * nl)) * (2.0 * nv / (nv + sqrt(a2 + (1.0 - a2) * nv * nv)));
+    let dd = (nh * a2 - nh) * nh + 1.0;
+    let d = a2 / (PI * dd * dd);
+    return clamp(nl * (f * g * d / (4.0 * nl * nv)), vec3<f32>(0.0), vec3<f32>(10.0));
+}
+
 fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(water_excluded(in.world_pos)){discard;}
     if(water_fx_on(1u) || water_fx_on(16u)) {
@@ -1137,7 +1167,28 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         let micro=water_micro(in.world_pos.xy,frame.camera_pos.w,water_fx.counts.w,footprint);
         let detail=clamp(length(frame.water_normal.xy)*0.35,0.5,1.5);
         n=normalize(vec3<f32>((n.xy*0.18-micro.xy*detail)*furrow,1.0)+water_fx_normal(in.world_pos.xy,in.level,wake.xy));
-    } else { n=normalize(n+water_fx_normal(in.world_pos.xy,in.level,wake.xy)); }
+    } else { n=water_unit(n+water_fx_normal(in.world_pos.xy,in.level,wake.xy)); }
+    // waterF.glsl: the reflection follows the waves scaled by the EEP normal
+    // scale (wave_ibl), the sun glint the unscaled waves flattened with
+    // distance (enhanced water off). With a normal scale of 0, wave_ibl is
+    // normalize(0), NaN on the GPU, and what follows depends on the driver:
+    // NaN through mix/max, or a probe lookup giving 0. We take the latter:
+    // the water keeps its refraction and fog and loses its reflection,
+    // which is what the reported region shows in the Legacy Viewer (a flat,
+    // dark sea) and what its creator chose. That rule holds with enhanced
+    // water on too: its own normals would otherwise mirror the sky.
+    // legacy_water: no enhanced effect at all (the master switch off gives
+    // no flag; bit 1 alone is only its Waves option)
+    let legacy_water = water_fx.counts.z == 0u;
+    var wave_ibl = wavef * frame.water_normal.xyz;
+    wave_ibl.z *= 2.0;
+    let legacy_reflects = length(wave_ibl) > 1e-6;
+    var legacy_glint_n = n;
+    if (legacy_water) {
+        let vdu = clamp(-view_vec.z * 2.0, 0.0, 1.0);
+        let up_bias = max(dist, 32.0) / 32.0 * (1.0 - vdu);
+        legacy_glint_n = water_unit(water_unit(wavef) + vec3<f32>(0.0, 0.0, up_bias));
+    }
 
     // Below water, transmit the world through the moving Snell window and
     // reflect the submerged scene at grazing angles. The sky itself is unchanged.
@@ -1154,7 +1205,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     var df3 = max(vec3<f32>(0.0), vec3<f32>(
         dot(view_vec, wave1), dot(view_vec, (wave2 + wave3) * 0.5), dot(view_vec, wave3)) * fs + vec3<f32>(fo));
     df3 *= df3;
-    let df2 = max(vec2<f32>(0.0), vec2<f32>(df3.x + df3.y + df3.z, dot(view_vec, normalize(wavef)) * fs + fo));
+    let df2 = max(vec2<f32>(0.0), vec2<f32>(df3.x + df3.y + df3.z, dot(view_vec, water_unit(wavef)) * fs + fo));
 
     // refraction of the scene behind the surface
     let dmod = sqrt(dist);
@@ -1197,11 +1248,25 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     } else { fb = fb * wf.transmission + wf.color; }
 
     // reflection: planar texture, screen-space rays, or the sky
-    let r = reflect(view_vec, normalize(mix(vec3<f32>(0.0, 0.0, 1.0), n, 0.6)));
-    var radiance = sky_color(vec3<f32>(r.x, r.y, abs(r.z)));
+    var r = reflect(view_vec, normalize(mix(vec3<f32>(0.0, 0.0, 1.0), n, 0.6)));
+    // the direction the sky and the probes are read along: kept above the
+    // horizon for Aurora's softened normal; along wave_ibl's ray as it is,
+    // as doProbeSample reads it. A steep facet then reflects the probe's
+    // lower half, not the sky flipped up, which put a second sun on the
+    // water beside the glint (the Legacy Viewer shows one)
+    var sky_dir = vec3<f32>(r.x, r.y, abs(r.z));
+    if (legacy_water && legacy_reflects) {
+        r = reflect(view_vec, normalize(wave_ibl));
+        sky_dir = r;
+    }
+    var radiance = sky_color(vec3<f32>(sky_dir.x, sky_dir.y, abs(sky_dir.z)));
     if (probes_on()) {
         // without a planar reflection the water reflects its probes
-        let s = sample_probes_water(in.world_pos, in.clip.xy, vec3<f32>(r.x, r.y, abs(r.z)), 0.0);
+        // as blurred as the EEP asks (doProbeSample: lod = (1 - gloss) x
+        // max lod, gloss = 1 - blur_multiplier): a sharp sun disc and haze
+        // at lod 0 whitened the surface
+        let lod = clamp(frame.water_params.w, 0.0, 1.0) * probe_max_lod();
+        let s = sample_probes_water(in.world_pos, in.clip.xy, sky_dir, lod);
         if (s.w > 0.0) {
             radiance = s.rgb;
         }
@@ -1214,6 +1279,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         radiance = mix(radiance, hit.rgb, hit.a);
     }
     if (!water_fx_on(512u)) { radiance *= df2.y; }
+    if (!legacy_reflects) { radiance = vec3<f32>(0.0); }
 
     // sun glint (punctual light, roughness = blur multiplier)
     let l = normalize(frame.sun_dir.xyz);
@@ -1222,21 +1288,31 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     var rough=clamp(frame.water_params.w,0.02,1.0);
     if(water_fx_on(1u)){rough=clamp(rough*0.65+footprint*0.06,0.035,0.25);}
     rough=mix(rough,0.055,smoothstep(0.004,0.045,-wake.z)*0.65);
-    let nh = max(dot(n, h), 0.0);
-    let nl = max(dot(n, l), 0.0);
-    let spec = d_ggx(nh, rough * rough) * v_smith(max(dot(n, vv), 1e-3), nl, rough * rough) * nl;
+    let gn = select(n, legacy_glint_n, legacy_water);
     let shadow = shadow_factor(in.world_pos, vec3<f32>(0.0, 0.0, 1.0), dist);
-    // a sky with a probe ambiance: waterF.glsl's sunlit_linear (env.rs keeps
-    // it x 3 for the surfaces)
-    let sun_light = select(frame.sun_color.rgb, frame.sun_color.rgb / 3.0, frame.sky_ll.x < 0.5);
-    let punctual = clamp(spec * sun_light * shadow, vec3<f32>(0.0), vec3<f32>(10.0));
+    // waterF.glsl: punctual = clamp(nl x (diffPunc + specPunc), 0, 10) x
+    // sunlit_linear x shadow x atten, metallic 1 (no diffuse), roughness the
+    // blur multiplier, F0 the `specular` uniform (LLDrawPoolWater: the
+    // light's colour normalized, x (1.5 + 6 x its horizontal part squared),
+    // made linear). The sun colour used to multiply the highlight before the
+    // clamp: its faint tail became a second, larger sun beside the reflected
+    // one (the Legacy Viewer shows one).
+    let light_rgb = frame.sky_obj_light.rgb;
+    let light_hue = select(vec3<f32>(0.0), light_rgb / max(length(light_rgb), 1e-6), dot(light_rgb, light_rgb) > 0.0);
+    let spec_color = srgb_to_linear(light_hue * (1.5 + 6.0 * dot(l.xy, l.xy)));
+    let perceptual = select(rough, frame.water_params.w, legacy_water);
+    let atm = ll_atmos(in.world_pos - frame.camera_pos.xyz);
+    // calcAtmosphericVarsLinear: sunlit made linear only on a sky with a
+    // probe ambiance, then x sky_sunlight_scale (1.5)
+    let sunlit_linear = select(srgb_to_linear(atm.sunlit), atm.sunlit, frame.sky_ll.x > 0.5) * 1.5;
+    let punctual = legacy_water_punctual(gn, vv, l, perceptual, spec_color) * sunlit_linear * shadow * atm.atten;
 
     var reflectance = min(1.0,df2.x);
     var glint = punctual;
     if (water_fx_on(512u)) {
+        // (the glint has its own fresnel, F of pbrPunctual)
         let cos_i = clamp(dot(n,vv),0.0,1.0);
         reflectance = 0.02037+0.97963*pow(1.0-cos_i,5.0);
-        glint *= 0.02037+0.97963*pow(1.0-max(dot(vv,h),0.0),5.0);
     }
     var color = mix(fb, radiance, reflectance) + glint;
     color = mix(fb, color, min(1.0, fade * 60.0));
@@ -1284,12 +1360,27 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         }
         color=mix(color,max(foam_light,vec3<f32>(0.0)),foam*0.9);
     }
+    // waterF.glsl: frag_color = min(vec4(1), max(color, vec4(0))). The
+    // surface never goes past white before the exposure, and a value that is
+    // not a number does not spread through the bloom.
+    color = clamp(select(color, vec3<f32>(0.0), color != color), vec3<f32>(0.0), vec3<f32>(1.0));
     // The upper face is viewed through air. Opaque source water fog was
     // removed above; do not add another fictitious submerged interval here.
     if(camera_underwater()) {
         let fog=water_fog_view(rel,frame.water_normal.w);
         color=color*fog.transmission+fog.color;
-    } else {color=apply_air_fog(color,in.world_pos);}
+    } else {
+        // The Legacy air haze, enhanced water or not: waterF.glsl has none of
+        // its own, but the water writes depth and doAtmospherics runs after
+        // it (renderGeomPostDeferred: "just before post water alpha"), so
+        // hazeF.glsl blends over the surface, on every sky. Aurora's classic
+        // air fog (a mix to a fog colour) made that colour near white under
+        // a hazy, bright classic sky. Through ll_haze, as the objects beside
+        // it (hazeF.glsl's blend uses atten.r, ll_haze the whole atten:
+        // TASKS.md), with calcAtmosphericVars in hazeF's eye space
+        // (ll_atmos_eye): in world space its glow put a second sun on the sea.
+        color = ll_haze(color, ll_atmos_eye(in.world_pos - frame.camera_pos.xyz));
+    }
     return vec4<f32>(color, 1.0);
 }
 

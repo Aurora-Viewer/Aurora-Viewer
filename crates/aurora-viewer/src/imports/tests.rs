@@ -901,10 +901,31 @@ fn shared_material_maps_are_charged_once_with_equivalent_effective_encoding() {
     second.options.max_height = 2048;
     imports.entries.push(second);
     assert_eq!(imports.total(&prices()), Some(10));
+    assert!(imports.has_shared_textures());
+    imports.entries[1].options.lossless_small = !imports.entries[0].options.lossless_small;
+    assert!(!imports.has_shared_textures(), "different effective encodings are separate uploads");
+    imports.entries[1].options.lossless_small = imports.entries[0].options.lossless_small;
     if let Some(Source::Material { images, .. }) = &mut imports.entries[1].source {
         images[0].as_mut().expect("map").asset = Some(Uuid::new_v4());
     }
     imports.entries[0].selected = false;
+    assert_eq!(imports.total(&prices()), Some(0));
+    assert!(!imports.has_shared_textures());
+    let options = imports.entries[1].options;
+    let Some(Source::Material { images, .. }) = &mut imports.entries[1].source else {
+        panic!("material")
+    };
+    let map = images[0].as_mut().unwrap();
+    map.asset = None;
+    let key = map.upload_key(options);
+    imports.uploaded.insert(
+        key,
+        Receipt {
+            item: Default::default(),
+            cost: 10,
+        },
+    );
+    assert!(imports.has_shared_textures(), "an already uploaded shared dependency is reused");
     assert_eq!(imports.total(&prices()), Some(0));
 }
 #[test]

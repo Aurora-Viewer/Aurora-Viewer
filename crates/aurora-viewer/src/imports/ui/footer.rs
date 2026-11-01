@@ -117,6 +117,7 @@ pub(super) fn show(
             ctx.data_mut(|data| data.insert_temp(egui::Id::unique("import_upload_action"), (upload.rect, ui.clip_rect(), can_upload)));
             if upload.clicked() {
                 imports.confirm = true;
+                imports.confirm_choice = Some(imports.choice);
             }
         }
         if busy {

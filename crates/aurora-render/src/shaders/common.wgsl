@@ -105,6 +105,13 @@ struct Frame {
     spot_fade: vec4<f32>,
     contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque enough cast it
     features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes)
+    // Motion vectors (main view; zero in the other passes), without the TAA
+    // jitter: this frame's view-projection for positions relative to `eye`,
+    // the last frame's for the same positions, and this frame's clip space
+    // to the last frame's (a point the depth places, where nothing drew).
+    motion_vp: mat4x4<f32>,
+    motion_prev_vp: mat4x4<f32>,
+    motion_reproj: mat4x4<f32>,
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -220,6 +227,10 @@ struct SkinBind {
     joint: vec4<u32>,
 };
 @group(1) @binding(2) var<storage, read> skin_binds: array<SkinBind>;
+// What the last frame drew with (motion_history.rs): the joint palettes and
+// each record's model matrix.
+@group(1) @binding(3) var<storage, read> prev_palettes: array<mat4x4<f32>>;
+@group(1) @binding(4) var<storage, read> prev_models: array<mat4x4<f32>>;
 
 // Bindless textures pooled in pages (textures.rs): a slot's location packs
 // the page (high 16 bits) and its layer (low 16 bits).
@@ -1261,6 +1272,17 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     return sum / f32(taps * taps);
 }
 
+// The motion of a pixel on the screen from its clip positions, this frame's
+// and the last frame's: in uv units (y down), what to take from its uv to
+// find where the last frame drew it. None for a point that was behind the
+// camera.
+fn screen_motion(cur: vec4<f32>, prev: vec4<f32>) -> vec2<f32> {
+    if (prev.w <= 1e-6 || cur.w <= 1e-6) {
+        return vec2<f32>(0.0);
+    }
+    return (cur.xy / cur.w - prev.xy / prev.w) * vec2<f32>(0.5, -0.5);
+}
+
 // The view shown instead of the image (frame.light_mode.z, Preferences ›
 // Debug), or `col`.
 // 1 (also AURORA_DEBUG_SHADOWS): the cascade each pixel reads — red, green,
@@ -2080,18 +2102,50 @@ struct LLAtmos {
 
 // calcAtmosphericVars: `rel` = point minus camera (world, z up).
 fn ll_atmos(rel_in: vec3<f32>) -> LLAtmos {
+    return ll_atmos_core(rel_in, vec3<f32>(0.0, 0.0, 1.0), frame.sky_light.xyz, frame.sun_dir.xyz);
+}
+
+// calcAtmosphericVars as hazeF.glsl runs it over a surface: the point in
+// eye space (rebuilt from the depth), `lightnorm` in world GL axes
+// (LLEnvironment::toLightNorm: x north, y up, z east) and `light_dir` in eye
+// space. The haze glow's first factor thus mixes eye and world axes: its
+// hotspot is not along the sun for rays down to the water, where the
+// world-space ll_atmos put a second sun on the sea (the Legacy Viewer shows
+// none). `rel_world` = point minus camera (world, z up).
+fn ll_atmos_eye(rel_world: vec3<f32>) -> LLAtmos {
+    let forward = normalize((frame.inv_view_proj_rot * vec4<f32>(0.0, 0.0, 0.5, 1.0)).xyz);
+    let up = normalize(frame.cam_up.xyz - forward * dot(frame.cam_up.xyz, forward));
+    let right = cross(forward, up);
+    let ln = frame.sky_light.xyz;
+    return ll_atmos_core(
+        ll_eye_axes(rel_world, right, up, forward),
+        vec3<f32>(0.0, 1.0, 0.0),
+        vec3<f32>(ln.y, ln.z, ln.x),
+        ll_eye_axes(frame.sun_dir.xyz, right, up, forward),
+    );
+}
+
+// A world vector in eye axes (x right, y up, z backward).
+fn ll_eye_axes(v: vec3<f32>, right: vec3<f32>, up: vec3<f32>, forward: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(dot(v, right), dot(v, up), -dot(v, forward));
+}
+
+// The body of calcAtmosphericVars: `rel_in` the point in the frame of
+// `up_axis` (the altitude limit and the direction's nudge), `glow_norm` and
+// `glow_light` the two vectors of the haze glow.
+fn ll_atmos_core(rel_in: vec3<f32>, up_axis: vec3<f32>, glow_norm: vec3<f32>, glow_light: vec3<f32>) -> LLAtmos {
     var rel_pos = rel_in;
     let max_y = frame.sky_glow.w;
-    if (abs(rel_pos.z) > max_y) {
-        rel_pos *= max_y / abs(rel_pos.z);
+    let rel_up = dot(rel_pos, up_axis);
+    if (abs(rel_up) > max_y) {
+        rel_pos *= max_y / abs(rel_up);
     }
-    let rel_pos_norm = normalize(rel_pos + vec3<f32>(0.0, 0.0, 1e-6));
+    let rel_pos_norm = normalize(rel_pos + up_axis * 1e-6);
     let rel_pos_len = length(rel_pos);
     let blue_density = frame.sky_blue_density.rgb;
     let haze_density = frame.sky_blue_density.w;
     let density_multiplier = frame.sky_ambient.w;
     let lightnorm = frame.sky_light.xyz;
-    let light_dir = frame.sun_dir.xyz;
     // sunlight_color / moonlight_color as LLPipeline::bindDeferredShader sets
     // them: normalized, and the moon without skyV's 0.7
     var sunlight = frame.sky_obj_light.rgb;
@@ -2103,8 +2157,8 @@ fn ll_atmos(rel_in: vec3<f32>) -> LLAtmos {
     sunlight *= exp(-light_atten * (1.0 / max(1e-6, lightnorm.z)));
     let density_dist = rel_pos_len * density_multiplier;
     let atten = exp(-combined * density_dist * frame.sky_ll.y);
-    var haze_glow = dot(rel_pos_norm, lightnorm);
-    haze_glow *= max(0.0, dot(light_dir, rel_pos_norm));
+    var haze_glow = dot(rel_pos_norm, glow_norm);
+    haze_glow *= max(0.0, dot(glow_light, rel_pos_norm));
     haze_glow = max(1.0 - haze_glow, 0.001) * frame.sky_glow.x;
     haze_glow = clamp(pow(haze_glow, frame.sky_glow.z), -100000.0, 100000.0) + 0.25;
     haze_glow *= frame.sky_light.w;

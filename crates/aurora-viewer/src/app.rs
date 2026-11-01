@@ -650,6 +650,8 @@ pub struct App {
     minimized_mute: audio_mute::MinimizedMute,
     /// When the crash report's state was last noted (app/crash_state.rs).
     crash_state_at: Option<Instant>,
+    /// Swapchain recreations of the last seconds, for the same state.
+    crash_swapchain: crash_state::SwapchainRecent,
     /// The graphics card stopped finishing frames (app/gpu_stall.rs).
     gpu_stall: gpu_stall::GpuStall,
     /// The Down key's latch (FSCrouchToggle).
@@ -1387,6 +1389,7 @@ impl App {
             stream_title_said: None,
             minimized_mute: audio_mute::MinimizedMute::default(),
             crash_state_at: None,
+            crash_swapchain: Default::default(),
             gpu_stall: Default::default(),
             crouch_toggle: Default::default(),
             music_parcel_url: String::new(),
@@ -1589,6 +1592,7 @@ impl App {
                 item.add = true;
             }
         }
+        self.world.rlva_filter_lure(&mut cmd);
         let cmd = if let NetCommand::Chat {
             message,
             channel,
@@ -4071,7 +4075,7 @@ impl App {
             Action::ToggleInterface => self.toggle_interface(),
             Action::HoverTips => self.toggle_hover_tips(),
             Action::ShowHuds => self.set_show_huds(!self.settings.show_huds),
-            Action::Import => self.imports.toggle_window(&self.egui_ctx),
+            Action::Import => self.imports.toggle_import(&self.egui_ctx, &self.settings.imports),
             Action::Beacons => ui::widgets::toggle_floater(&self.egui_ctx, ui::beacons::WINDOW, &mut self.panels.beacons),
             Action::PropertyLines => {
                 self.settings.world_overlays.property_lines = !self.settings.world_overlays.property_lines;
@@ -9178,6 +9182,19 @@ impl App {
         let slots = self.scene.env_textures(&mut gfx.renderer, env.textures);
         env.sky.cloud_texture = slots[0];
         env.sky.sun_texture = slots[1];
+        // the sun disc's texture once it is ready (or not: the disc is then
+        // procedural), for a report of a missing or misplaced sun
+        {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static SUN_SLOT: AtomicU32 = AtomicU32::new(u32::MAX);
+            if SUN_SLOT.swap(slots[1], Ordering::Relaxed) != slots[1] {
+                log::info!(
+                    "sky: sun texture {} {}",
+                    env.textures[1],
+                    if slots[1] != 0 { "loaded" } else { "not loaded (procedural disc)" }
+                );
+            }
+        }
         env.sky.moon_texture = slots[2];
         env.water.normal_texture = slots[3];
         env.sky.rainbow_texture = slots[4];
@@ -11957,7 +11974,7 @@ impl App {
             // FSCommon::report_to_nearby_chat(gAgent.mMOTD)
             BarAction::MessageOfTheDay => self.world.system_message(self.world.motd.clone()),
             BarAction::Import => {
-                self.imports.toggle_window(&self.egui_ctx);
+                self.imports.toggle_import(&self.egui_ctx, &self.settings.imports);
                 self.egui_ctx.request_repaint();
             }
             BarAction::BlenderLive => {
@@ -13135,6 +13152,7 @@ impl App {
         self.options_ui.current_parcel = self.world.current_parcel_entry();
         self.options_ui.selected_parcel = self.world.selected_parcel_entry();
         self.options_ui.rlva_camera_preset_locked = self.world.rlva.camera_preset_locked(uuid::Uuid::nil());
+        self.options_ui.rlva_sendim_locked = self.world.rlva.has("sendim");
         self.options_ui.rlva_camera_fov_locked = self.world.rlva.camera_owner().is_some();
         self.options_ui.joystick = self.joystick.snapshot.clone();
         self.options_ui.flycam_active = self.joystick.active;
@@ -14179,7 +14197,9 @@ impl App {
                         painter.text(at, egui::Align2::CENTER_BOTTOM, &text, font, p.ink.gamma_multiply(0.6));
                     }
                 }
-                if self.skin.layout.chat_toasts && !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)) {
+                if self.skin.layout.chat_toasts
+                    && (crate::demo::chat_volume_comparison() || !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)))
+                {
                     // FSBubblesHideConsoleAndToasts: the residents' lines are
                     // in their bubbles
                     let residents = !(self.chat_bubbles() && self.settings.chat_bubbles_hide_console);
@@ -14191,7 +14211,11 @@ impl App {
                         &mut self.chat_ui.wanted_names,
                         &mut self.chat_ui.wanted_pics,
                         bottom_top,
-                        self.settings.chat_toast_seconds,
+                        if crate::demo::chat_volume_comparison() {
+                            3600.0
+                        } else {
+                            self.settings.chat_toast_seconds
+                        },
                         self.settings.chat_timestamps,
                         !classic_bars,
                         // AURORA_DEMO_CHAT_LINES=legacy: the one-line look
