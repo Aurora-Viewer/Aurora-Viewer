@@ -43,13 +43,8 @@ cargo build --locked -p aurora-viewer
 ./scripts/check.ps1
 ```
 
-Existing Windows workspace/all-target Clippy compiles the enabled Windows path.
-The **Windows VR test build** workflow additionally builds and uploads
-`xr_spike.exe` and `aurora-viewer.exe` for maintainer testing, without requiring a
-headset on CI. Those diagnostic CI binaries use the existing `ci` profile;
-local testing uses dev. Artifacts do not contain the OpenXR loader, runtime,
-headset client or optional media packs. Fork pushes also run this preflight when Actions is enabled on the fork.
-Upstream PR workflows may require maintainer approval.
+The existing Windows workspace/all-target Clippy of the CI compiles the enabled
+Windows path. Headset tests use a local dev build.
 
 ## Maintainer validation checklist
 
