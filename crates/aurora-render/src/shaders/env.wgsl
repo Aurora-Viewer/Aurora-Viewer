@@ -1154,7 +1154,9 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     // final max(color, 0) leaves the water without any reflection, only its
     // refraction and fog. Regions made for it rely on that (a flat, dark
     // blue sea), so the reflection is dropped the same way.
-    let legacy_water = !water_fx_on(1u);
+    // no enhanced effect at all (the master switch off gives no flag; bit
+    // 1 alone is only its Waves option)
+    let legacy_water = water_fx.counts.z == 0u;
     var wave_ibl = wavef * frame.water_normal.xyz;
     wave_ibl.z *= 2.0;
     let legacy_reflects = length(wave_ibl) > 1e-6;

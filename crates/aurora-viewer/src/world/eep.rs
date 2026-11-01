@@ -309,6 +309,25 @@ fn sky_frame(s: &Llsd) -> Option<SkyFrame> {
 }
 
 fn water_frame(w: &Llsd) -> Option<WaterFrame> {
+    water_frame_as_sent(w).map(WaterFrame::validated)
+}
+
+/// A water frame of `environment` (an ExtEnvironment answer) whose values
+/// were out of the Legacy ranges, as the region sent it; logged where the
+/// environment arrives, not in [`water_frame`], which the water editor runs
+/// on every redraw.
+pub fn water_out_of_range(environment: &Llsd) -> Vec<WaterFrame> {
+    let frames = &environment["day_cycle"]["frames"];
+    let Some(map) = frames.as_map() else {
+        return Vec::new();
+    };
+    map.values()
+        .filter_map(water_frame_as_sent)
+        .filter(|w| w.validated() != *w)
+        .collect()
+}
+
+fn water_frame_as_sent(w: &Llsd) -> Option<WaterFrame> {
     let d = WaterFrame::default();
     if !w.is_map() || !type_is(w, "water") {
         return None;
@@ -325,11 +344,7 @@ fn water_frame(w: &Llsd) -> Option<WaterFrame> {
         wave2: vec2(&w["wave2_direction"]).unwrap_or(d.wave2),
         normal_map: uuid(w, "normal_map", d.normal_map),
     };
-    let valid = frame.validated();
-    if valid != frame {
-        log::info!("water values out of the Legacy ranges, clamped: {frame:?}");
-    }
-    Some(valid)
+    Some(frame)
 }
 
 /// Distance from `begin` to `end` going forward around the day
@@ -752,6 +767,15 @@ mod tests {
         assert_eq!(f.fog_color, Vec3::new(1.0, 0.0, 0.5));
         assert_eq!(f.normal_scale, Vec3::new(0.0, 10.0, 2.0));
         assert_eq!(f.wave1, Vec2::new(20.0, -20.0));
+        // where the environment arrives: only the frames out of range, as sent
+        let mut frames = aurora_llsd::Map::new();
+        frames.insert("odd".into(), w.clone());
+        frames.insert("fine".into(), llsd_map! { "type" => "water" });
+        frames.insert("sky".into(), llsd_map! { "type" => "sky" });
+        let env = llsd_map! { "day_cycle" => llsd_map! { "frames" => Llsd::Map(frames) } };
+        let odd = water_out_of_range(&env);
+        assert_eq!(odd.len(), 1);
+        assert_eq!(odd[0].fresnel_offset, 1.8);
         // values in range stay as they are
         let d = WaterFrame::default().validated();
         assert_eq!((d.fresnel_offset, d.fog_density), (WaterFrame::default().fresnel_offset, 2.0));
