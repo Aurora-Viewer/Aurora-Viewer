@@ -8,29 +8,59 @@ use std::path::Path;
 const RENAME_ATTEMPTS: u32 = 6;
 
 /// Publish `bytes` as the file at `path` (counted as the viewer's other
-/// files in the disk statistics, `disk_io`).
+/// files in the disk statistics, `disk_io`), on the disk before it replaces
+/// the old file: the user's files (settings, accounts, layout…) survive a
+/// hard reset of the PC. Without the flush, ext4 (Linux's default) brought
+/// a file created shortly before the reset back empty or not at all: an
+/// emptied `login_accounts.json` after a desktop freeze (#1809). Costs a
+/// disk flush: off the frame thread.
 pub fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    publish(path, bytes)?;
+    publish_with(path, bytes, true)?;
     crate::disk_io::written(crate::disk_io::Origin::Other, bytes.len());
     Ok(())
 }
 
-/// [`write`] without counting the bytes: for writers that count them
-/// under their own origin (the disk cache).
+/// [`write`] without counting the bytes nor the disk flush: for the disk
+/// cache, which counts them under its own origin and fetches again what a
+/// reset loses.
 pub fn publish(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    publish_with(path, bytes, false)
+}
+
+fn publish_with(path: &Path, bytes: &[u8], durable: bool) -> std::io::Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let temporary = parent.join(format!(".aurora-{}-{}.tmp", std::process::id(), uuid::Uuid::new_v4()));
     let result = (|| {
         let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary)?;
         file.write_all(bytes)?;
+        if durable {
+            file.sync_data()?;
+        }
         drop(file);
-        rename_retrying(&temporary, path)
+        rename_retrying(&temporary, path)?;
+        if durable {
+            sync_dir(parent);
+        }
+        Ok(())
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&temporary);
     }
     result
 }
+
+/// The rename itself on the disk: on Unix a folder's entries are flushed
+/// with the folder. NTFS journals the rename, and Windows does not open a
+/// folder as a file to flush it. A failure leaves at worst the old file.
+#[cfg(unix)]
+fn sync_dir(dir: &Path) {
+    if let Ok(dir) = std::fs::File::open(dir) {
+        let _ = dir.sync_all();
+    }
+}
+
+#[cfg(not(unix))]
+fn sync_dir(_: &Path) {}
 
 /// `rename`, retried a few times (1 + 2 + 4 + 8 + 16 ms at most) while it is
 /// only refused for an access conflict; any other error is returned at once.

@@ -1480,6 +1480,8 @@ both keep the camera, while only the scripted attachment receives a touch.
 capture frames 690 and 780 to compare. `camera-zero` puts a zero-alpha Blend texture before the Buy cube;
 `camera-te` uses an invisible scripted TE face. Alt-focus must reach the cube
 behind both; `camera-glass` instead reaches the translucent solid pane.
+`camera-faint` uses texture alpha 1/255: it must still take the focus, since
+only alpha-zero texels pass through world Blend objects (#1574).
 `camera-mask` uses a fully transparent Mask texel and also reaches the cube.
 Add `-ctrl` to any `camera-*` mode to press Ctrl + Alt together. Repeat with
 `AURORA_DEMO_DEBUG=alpha`: all four modes must focus the highlighted panel
@@ -1931,12 +1933,24 @@ No real L$ and no connection to a grid.
   click, for manual testing (near x=138, y=126).
 - `blend-zero`, `blend-faint`, `blend-half`, `blend-solid`: non-actionable
   panel before a Buy object, with texture alpha 0, 1/255, 128/255 or 255/255.
-  Left click must reach panel 976 and leave `dialog=false`. The GPU response
-  `demo drawn pick` must include it in `blend` for the first three modes,
-  even at zero alpha. `mask-zero` uses the zero-alpha texture in Mask mode:
+  `blend-zero` must pass the left click to Buy (971), with `dialog=true`;
+  the other three must reach panel 976 and leave `dialog=false`. The GPU
+  response must omit the zero-alpha panel but retain the faint/half panels.
+  `blend-zero-menu` must still target panel 976 with the right click.
+  `blend-backface` replaces it with a cube whose transparent entry face
+  reveals Buy while the opaque exit face is invisible from this camera.
+  Its shadow must not prevent Buy (971) from receiving the click:
+  `dialog=true`, including with shadows disabled. The CPU fallback must
+  reject that back face just as the GPU does.
+  Back-facing surfaces must also be ignored by hover, menus, build selection,
+  placement and media, regardless of their texture or alpha mode. On the grid,
+  repeat with a cutout cube in front of a scripted box and replace its unseen
+  exit faces with Blank: they must not intercept the interaction. Explicitly
+  double-sided PBR faces remain targets on both visible sides.
+  `mask-zero` uses the zero-alpha texture in Mask mode:
   the click must reach Buy (971), with `dialog=true` and no panel in the GPU
   response. Capture after frame 620.
-- Add `-ready` to the five Blend / Mask modes above to test hover without
+- Add `-ready` to the Blend / Mask modes above to test hover without
   an automatic click. At frame 650, `demo cursor hover` must report
   `prim=Some(976), action=None` before Blend at every opacity, and
   `prim=Some(971), action=Some(Buy)` through the Mask hole. Enable

@@ -5460,6 +5460,9 @@ impl App {
         self.settings.save();
         // the last lines of the conversations reach their files
         self.world.chat_log.flush(Duration::from_secs(2));
+        // and the settings theirs (written by the save thread), before a
+        // restarted viewer reads them
+        Settings::wait_saved(Duration::from_secs(5));
         if self.restart_into_vr {
             restart_with_vr();
         }
@@ -6138,7 +6141,7 @@ impl App {
                 let Some(picked) = self.click_pick() else {
                     return true;
                 };
-                let (_, target) = self.scene.selection_pick(
+                let (_, target) = self.scene.left_selection_pick(
                     &self.world,
                     picked.ray,
                     picked.depth,
@@ -6211,7 +6214,7 @@ impl App {
             let ray = self.build.cam.ray(x, y);
             let target = self
                 .scene
-                .edit_ray_hits(
+                .left_edit_ray_hits(
                     &self.world,
                     ray,
                     false,
@@ -6226,7 +6229,7 @@ impl App {
                 return false;
             };
             let (hit, target) = if matches!(self.build.tool, crate::build::Tool::Edit | crate::build::Tool::Grab) {
-                self.scene.selection_pick(
+                self.scene.left_selection_pick(
                     &self.world,
                     picked.ray,
                     picked.depth,
@@ -6255,7 +6258,7 @@ impl App {
         };
         // the surface under the cursor: face tool, grab surface info
         let surface = match (self.build.tool, target) {
-            (crate::build::Tool::Edit | crate::build::Tool::Grab, Some(i)) => self.scene.touch_surface(&self.world, i, ray),
+            (crate::build::Tool::Edit | crate::build::Tool::Grab, Some(i)) => self.scene.left_touch_surface(&self.world, i, ray),
             _ => None,
         };
         let used = self.build.mouse_down(
