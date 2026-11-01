@@ -17603,7 +17603,7 @@ impl ApplicationHandler for App {
                 self.appearance_ui.open(
                     match view.as_str() {
                         "outfits" | "multi-outfits" | "folders-outfits" | "folders-many-outfits" | "wearables-outfits" | "broken" => 1,
-                        "worn" | "save" | "wearables" => 2,
+                        "worn" | "multi-worn" | "save" | "wearables" => 2,
                         _ => 0,
                     },
                     matches!(view.as_str(), "edit" | "wearables-edit") || view.starts_with("layers"),
@@ -17617,8 +17617,11 @@ impl ApplicationHandler for App {
                 if view == "duplicates" {
                     crate::world::appearance::seed_duplicate_response(&mut self.world.inventory, self.world.agent_id);
                 }
-                if matches!(view.as_str(), "menu" | "duplicates" | "broken") {
+                if matches!(view.as_str(), "menu" | "duplicates" | "broken" | "multi-items") {
                     self.appearance_ui.open_outfit(uuid::Uuid::from_u128(704));
+                }
+                if matches!(view.as_str(), "multi-items" | "multi-worn") {
+                    self.appearance_ui.demo_item_selection(&self.world.inventory, view == "multi-worn");
                 }
                 if view == "wearables-outfits" {
                     self.appearance_ui.open_outfit(uuid::Uuid::from_u128(705));
