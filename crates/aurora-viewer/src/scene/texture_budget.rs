@@ -15,7 +15,14 @@
 //!   then lose up to two more levels, those out of view first;
 //! - a loaded texture is lowered on the GPU from the levels it already
 //!   holds, a few per frame, never decoded again; avatar bakes, HUDs, the
-//!   interface, sculpt maps and the terrain are left alone.
+//!   interface, sculpt maps and the terrain are left alone;
+//! - a window in the background for a minute, or minimised for a second,
+//!   goes to the highest pressure and gives its video memory back
+//!   ("freeing up video memory", TextureDiscardBackgroundedTime 60 s,
+//!   TextureDiscardMinimizedTime 1 s), then takes up again where it was
+//!   once in front ([`Background`]): with two viewers on one card, the one
+//!   behind leaves room to the one in front (#1808; on the grid, 6.6 and
+//!   5.9 GB on a 12 GB card overfilled it, GPU frames of 1 s).
 //!
 //! What differs, on purpose:
 //! - the budget is read from the driver as it is now and the use is what
@@ -158,12 +165,43 @@ pub struct Reading {
     pub below: u64,
 }
 
+/// LLViewerTexture::updateClass: how long the window stays in the background
+/// (not in front) or minimised before its textures go
+/// (TextureDiscardBackgroundedTime, TextureDiscardMinimizedTime).
+pub const BACKGROUNDED_AFTER: Duration = Duration::from_secs(60);
+pub const MINIMIZED_AFTER: Duration = Duration::from_secs(1);
+
+/// Whether the window has been in the background long enough to give its
+/// textures back, see the module.
+#[derive(Debug, Default)]
+pub struct Background {
+    /// Since when the window is not in front.
+    since: Option<Instant>,
+}
+
+impl Background {
+    /// The window's state now (`in_front`: it has the focus and is not
+    /// minimised); whether its textures should go.
+    pub fn update(&mut self, now: Instant, in_front: bool, minimized: bool) -> bool {
+        if in_front && !minimized {
+            self.since = None;
+            return false;
+        }
+        let since = *self.since.get_or_insert(now);
+        let after = if minimized { MINIMIZED_AFTER } else { BACKGROUNDED_AFTER };
+        now.duration_since(since) >= after
+    }
+}
+
 /// The pressure step, see the module.
 #[derive(Debug)]
 pub struct Pressure {
     step: u8,
     over_since: Option<Instant>,
     changed: Instant,
+    /// The step before the window went to the background, while it is held
+    /// at the highest ([`Pressure::hold_max`]).
+    held: Option<u8>,
 }
 
 impl Pressure {
@@ -172,11 +210,38 @@ impl Pressure {
             step: 0,
             over_since: None,
             changed: now,
+            held: None,
         }
     }
 
     pub fn step(&self) -> u8 {
         self.step
+    }
+
+    /// Held at the highest step for a window in the background.
+    pub fn held(&self) -> bool {
+        self.held.is_some()
+    }
+
+    /// The window went to the background: the highest step, the one it was
+    /// at kept for [`Pressure::release`].
+    pub fn hold_max(&mut self, now: Instant) {
+        if self.held.is_none() {
+            self.held = Some(self.step);
+            self.step = MAX_PRESSURE;
+            self.changed = now;
+            self.over_since = None;
+        }
+    }
+
+    /// The window is in front again: back to the step it was at, the usual
+    /// rules taking over from there (the Legacy Viewer restores its bias).
+    pub fn release(&mut self, now: Instant) {
+        if let Some(step) = self.held.take() {
+            self.step = step;
+            self.changed = now;
+            self.over_since = None;
+        }
     }
 
     /// The step for this reading. Up: at once from none (textures only come
@@ -186,6 +251,9 @@ impl Pressure {
     /// 90 % of the target for a while, and only if the textures would still
     /// fit there one step below.
     pub fn update(&mut self, now: Instant, r: Reading) -> u8 {
+        if self.held.is_some() {
+            return self.step;
+        }
         let free = r.target / 10 * 9;
         if r.used > r.target {
             let since = *self.over_since.get_or_insert(now);
@@ -395,5 +463,54 @@ mod tests {
         assert_eq!(p.update(t0 + s(70), reading(800, true, below_estimate(850, 800, 800))), 0);
         // the free room of the pages counts as it is now
         assert_eq!(below_estimate(850, 1000, 800), 1062);
+    }
+
+    #[test]
+    fn a_window_behind_for_a_minute_or_minimised_for_a_second_gives_its_textures_back() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut b = Background::default();
+        assert!(!b.update(t0, true, false));
+        // in the background: a minute, as TextureDiscardBackgroundedTime
+        assert!(!b.update(t0 + s(1), false, false));
+        assert!(!b.update(t0 + s(60), false, false));
+        assert!(b.update(t0 + s(61), false, false));
+        // in front again: at once, and the minute starts over
+        assert!(!b.update(t0 + s(62), true, false));
+        assert!(!b.update(t0 + s(63), false, false));
+        assert!(!b.update(t0 + s(100), false, false));
+        // minimised: a second, as TextureDiscardMinimizedTime
+        let mut m = Background::default();
+        assert!(!m.update(t0, false, true));
+        assert!(m.update(t0 + s(1), false, true));
+        // minimised even with the focus (restored, not yet in front)
+        let mut f = Background::default();
+        assert!(!f.update(t0, true, true));
+        assert!(f.update(t0 + s(2), true, true));
+    }
+
+    #[test]
+    fn a_held_window_stays_at_the_highest_step_and_comes_back_to_its_own() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut p = Pressure::new(t0);
+        assert_eq!(p.update(t0, reading(1007, true, 1007)), 1);
+        p.hold_max(t0 + s(1));
+        assert!(p.held());
+        assert_eq!(p.step(), MAX_PRESSURE);
+        // readings change nothing while held, under the target or over it
+        assert_eq!(p.update(t0 + s(20), reading(100, true, 100)), MAX_PRESSURE);
+        assert_eq!(p.update(t0 + s(30), reading(2000, true, 2000)), MAX_PRESSURE);
+        // holding again keeps the step it came from
+        p.hold_max(t0 + s(31));
+        p.release(t0 + s(40));
+        assert!(!p.held());
+        assert_eq!(p.step(), 1);
+        // then the usual rules: no step down before LOWER_AFTER
+        assert_eq!(p.update(t0 + s(42), reading(100, true, 100)), 1);
+        assert_eq!(p.update(t0 + s(46), reading(100, true, 100)), 0);
+        // releasing what is not held changes nothing
+        p.release(t0 + s(50));
+        assert_eq!(p.step(), 0);
     }
 }

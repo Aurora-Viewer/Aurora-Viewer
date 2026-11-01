@@ -930,6 +930,11 @@ pub struct TextureStreamer {
     decodes: usize,
     /// Memory pressure step (texture_budget.rs), decided in `maintain`.
     pressure: Pressure,
+    /// The window in the background long enough to give its textures back
+    /// (texture_budget::Background), and its state (`set_window_state`).
+    background: texture_budget::Background,
+    in_front: bool,
+    minimized: bool,
     last_budget: Instant,
     /// Passes of `recompute_wants` since the step last changed.
     passes_at_step: u32,
@@ -1211,6 +1216,9 @@ impl TextureStreamer {
             max_decodes: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(2),
             decodes: 0,
             pressure: Pressure::new(Instant::now()),
+            background: texture_budget::Background::default(),
+            in_front: true,
+            minimized: false,
             last_budget: Instant::now(),
             passes_at_step: 0,
             reductions: Vec::new(),
@@ -2901,6 +2909,14 @@ impl TextureStreamer {
         }
     }
 
+    /// The window's state, each frame: whether it has the focus, whether it
+    /// is minimised (`press` gives the textures back behind,
+    /// texture_budget::Background).
+    pub fn set_window_state(&mut self, in_front: bool, minimized: bool) {
+        self.in_front = in_front;
+        self.minimized = minimized;
+    }
+
     /// Memory budget, a few times a second: what the textures may hold now
     /// and the pressure step for what they hold (texture_budget.rs).
     fn press(&mut self, renderer: &mut Renderer, now: Instant, setting: u64) {
@@ -2912,6 +2928,26 @@ impl TextureStreamer {
         let video = renderer.video_memory.read(&renderer.device);
         let target = texture_budget::forced_target().unwrap_or_else(|| texture_budget::texture_target(setting, used, video));
         let before = self.pressure.step();
+        // a window behind for a minute or minimised for a second gives its
+        // textures back, and takes up again once in front
+        // (LLViewerTexture::updateClass, texture_budget::Background)
+        let away = self.background.update(now, self.in_front, self.minimized);
+        if away && !self.pressure.held() {
+            self.pressure.hold_max(now);
+            let after = if self.minimized {
+                texture_budget::MINIMIZED_AFTER
+            } else {
+                texture_budget::BACKGROUNDED_AFTER
+            };
+            log::info!(
+                "texture memory: the window was {} for {} s, freeing up video memory",
+                if self.minimized { "minimised" } else { "in the background" },
+                after.as_secs()
+            );
+        } else if !away && self.pressure.held() {
+            self.pressure.release(now);
+            log::info!("texture memory: the window is in front again, textures load as before");
+        }
         // what the pages would hold one step below, from step 1 too
         // (texture_budget::below_estimate)
         let below = texture_budget::below_estimate(self.bytes_below, used, live);
@@ -2924,7 +2960,13 @@ impl TextureStreamer {
                 below,
             },
         );
-        self.to_lower = texture_budget::lowering_goal(used, live, target);
+        // (behind: everything the highest step allows, not only what brings
+        // the pages under the target)
+        self.to_lower = if self.pressure.held() {
+            u64::MAX
+        } else {
+            texture_budget::lowering_goal(used, live, target)
+        };
         if step != before {
             self.passes_at_step = 0;
             renderer.textures.set_eager_compaction(step > 0);
