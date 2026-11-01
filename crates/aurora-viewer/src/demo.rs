@@ -219,6 +219,10 @@ pub mod sound_hrtf;
 pub mod sound_occlusion;
 #[path = "demo_sound_parcels.rs"]
 pub mod sound_parcels;
+/// A clapper above our avatar, a small room and a large hall, for the
+/// reverb of the surroundings (AURORA_DEMO_SOUND_REVERB).
+#[path = "demo_sound_reverb.rs"]
+pub mod sound_reverb;
 /// The Aurora team's marks on demo residents (AURORA_DEMO_STAFF).
 #[path = "demo_staff.rs"]
 pub mod staff;

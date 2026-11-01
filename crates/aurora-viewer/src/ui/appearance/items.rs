@@ -74,6 +74,14 @@ pub(crate) fn worn_labels(world: &World) -> HashMap<Uuid, String> {
     labels
 }
 
+/// The menu of an outfit's item row `it`, acting on `selected` (the row
+/// alone, or the selection it is part of). As updateItemsVisibility does,
+/// Wear, Add, Attach to, Take off / Detach, the favorites and Delete from
+/// outfit act on every selected item; Edit, Touch, the profile and Show
+/// original need one. Unlike it, a selection of worn and unworn items
+/// offers to wear the unworn ones and take off the worn ones, instead of
+/// neither.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn context_menu(
     response: &egui::Response,
     p: &Palette,
@@ -81,42 +89,56 @@ pub(super) fn context_menu(
     st: &mut AppearanceUi,
     folder: Uuid,
     it: &InvItem,
+    selected: &[Uuid],
     actions: &mut Vec<Action>,
 ) {
     menu::context_menu(response, p, |ui| {
-        let worn = worn_items(world).contains(&it.id);
-        let wearable = matches!(it.asset_type, 5 | 6 | 13);
-        let editable = matches!(it.asset_type, 5 | 13);
+        let worn_set = worn_items(world);
+        let items: Vec<&InvItem> = selected.iter().filter_map(|id| world.inventory.items.get(id)).collect();
+        let single = items.len() <= 1;
+        let (worn, unworn): (Vec<&InvItem>, Vec<&InvItem>) = items.iter().partition(|it| worn_set.contains(&it.id));
+        let wearable: Vec<Uuid> = unworn
+            .iter()
+            .filter(|it| matches!(it.asset_type, 5 | 6 | 13))
+            .map(|it| it.id)
+            .collect();
+        let is_worn = worn_set.contains(&it.id);
         // RLVa greys what a lock forbids, as LLWearableItemsList::ContextMenu
-        // does with ERlvWearMask (llwearableitemslist.cpp).
+        // does with ERlvWearMask (llwearableitemslist.cpp): enabled when a
+        // lock lets one of the items through; the outgoing COF update drops
+        // the others (World::rlva_prepare_outfit).
         let locks = world.rlva_wear_locks();
-        if worn && editable && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit")) {
+        if single && is_worn && matches!(it.asset_type, 5 | 13) && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit")) {
             crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::EditWorn(it.id));
         }
-        if !worn && wearable {
-            let wear = locks.wear(&world.inventory, it.id, 0);
-            if menu::item_if(ui, p, "shirt-filled", aurora_i18n::tr!("common-wear"), wear.replace) {
-                actions.push(Action::WearItem {
-                    item: it.id,
-                    replace: true,
-                    point: 0,
-                });
+        if !wearable.is_empty() {
+            let wear = |id: &Uuid| locks.wear(&world.inventory, *id, 0);
+            if menu::item_if(
+                ui,
+                p,
+                "shirt-filled",
+                aurora_i18n::tr!("common-wear"),
+                wearable.iter().any(|id| wear(id).replace),
+            ) {
+                actions.push(wear_action(wearable.clone(), true, 0));
             }
-            if it.asset_type != 13 && menu::item_if(ui, p, "plus", aurora_i18n::tr!("common-add"), wear.add) {
-                actions.push(Action::WearItem {
-                    item: it.id,
-                    replace: false,
-                    point: 0,
-                });
+            let addable: Vec<Uuid> = wearable
+                .iter()
+                .filter(|id| world.inventory.items.get(id).is_some_and(|it| it.asset_type != 13))
+                .copied()
+                .collect();
+            if !addable.is_empty() && menu::item_if(ui, p, "plus", aurora_i18n::tr!("common-add"), addable.iter().any(|id| wear(id).add)) {
+                actions.push(wear_action(addable, false, 0));
             }
-            if it.asset_type == 6 {
-                attach_menu(ui, p, world, &locks, it.id, false, actions);
-                attach_menu(ui, p, world, &locks, it.id, true, actions);
+            // the attach menus when the selection is only unworn objects
+            if unworn.iter().all(|it| it.asset_type == 6) {
+                attach_menu(ui, p, world, &locks, &wearable, false, actions);
+                attach_menu(ui, p, world, &locks, &wearable, true, actions);
             }
         }
         // "touch" / "edit" of a worn object (updateItemsVisibility); editing
         // worn clothing waits for the appearance editor
-        if worn && it.asset_type == 6 {
+        if single && is_worn && it.asset_type == 6 {
             let touch = world.touchable_attachment_items().contains(&it.id);
             if menu::item_if(ui, p, "click-filled", aurora_i18n::tr!("ui-context-touch"), touch) {
                 crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::TouchWorn(it.id));
@@ -126,40 +148,42 @@ pub(super) fn context_menu(
                 crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::EditWorn(it.id));
             }
         }
-        if worn
-            && it.asset_type != 13
-            && menu::item_if(
-                ui,
-                p,
-                "circle-x-filled",
-                if it.asset_type == 6 {
-                    aurora_i18n::tr!("common-detach")
-                } else {
-                    aurora_i18n::tr!("ui-appearance-items-remove")
-                },
-                locks.can_remove(it.id),
-            )
-        {
-            actions.push(Action::Remove(it.id));
-        }
-        if menu::item(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-appearance-items-object-profile")) {
-            st.profile_item = Some(it.id);
-        }
-        menu::separator(ui, p);
+        remove_item(ui, p, &worn, &locks, aurora_i18n::tr!("ui-appearance-items-remove"), actions);
         if menu::item_if(
             ui,
             p,
-            "star-filled",
-            if it.favorite {
+            "info-circle-filled",
+            aurora_i18n::tr!("ui-appearance-items-object-profile"),
+            single,
+        ) {
+            st.profile_item = Some(it.id);
+        }
+        menu::separator(ui, p);
+        // favorites_add / favorites_remove: each one shown when an item of
+        // the selection is in the other state
+        for favorite in [false, true] {
+            let ids: Vec<Uuid> = items
+                .iter()
+                .filter(|it| it.favorite == favorite && !st.favorite_pending.contains(&it.id))
+                .map(|it| it.id)
+                .collect();
+            let shown = items.iter().any(|it| it.favorite == favorite);
+            let label = if favorite {
                 aurora_i18n::tr!("common-remove-from-favorites")
             } else {
                 aurora_i18n::tr!("common-add-to-favorites")
-            },
-            !st.favorite_pending.contains(&it.id),
-        ) {
-            actions.push(Action::Favorite(it.id));
+            };
+            if shown && menu::item_if(ui, p, "star-filled", label, !ids.is_empty()) {
+                actions.extend(ids.into_iter().map(Action::Favorite));
+            }
         }
-        if menu::item(ui, p, "external-link-filled", aurora_i18n::tr!("ui-appearance-items-show-original")) {
+        if menu::item_if(
+            ui,
+            p,
+            "external-link-filled",
+            aurora_i18n::tr!("ui-appearance-items-show-original"),
+            single,
+        ) {
             actions.push(Action::ShowOriginal(it.id));
         }
         if menu::item_if(
@@ -169,9 +193,59 @@ pub(super) fn context_menu(
             aurora_i18n::tr!("ui-appearance-items-remove-from-outfit"),
             st.pending.is_none(),
         ) {
-            actions.push(Action::DeleteFromOutfit { folder, item: it.id });
+            actions.push(Action::DeleteFromOutfit {
+                folder,
+                items: items.iter().map(|it| it.id).collect(),
+            });
         }
     });
+}
+
+/// One item stays the single-item action; several go in one COF update.
+fn wear_action(mut items: Vec<Uuid>, replace: bool, point: u8) -> Action {
+    if items.len() == 1 {
+        Action::WearItem {
+            item: items.remove(0),
+            replace,
+            point,
+        }
+    } else {
+        Action::WearItems { items, replace, point }
+    }
+}
+
+/// Take off / Detach of the worn `items`, body parts left out (they are
+/// only replaced), labelled as the take_off, detach and take_off_or_detach
+/// entries of LLWearingContextMenu (llpanelwearing.cpp): `clothing` for
+/// clothing alone, Detach for objects alone, both names for a mix. RLVa
+/// greys it when every item is locked on; only the unlocked ones are sent,
+/// in one COF update (LLAppearanceMgr::removeItemsFromAvatar).
+pub(super) fn remove_item(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    items: &[&InvItem],
+    locks: &crate::world::rlva::WearLocks,
+    clothing: &str,
+    actions: &mut Vec<Action>,
+) {
+    let items: Vec<&&InvItem> = items.iter().filter(|it| it.asset_type != 13).collect();
+    if items.is_empty() {
+        return;
+    }
+    let objects = items.iter().any(|it| it.asset_type == 6);
+    let label = match (objects, items.iter().any(|it| it.asset_type != 6)) {
+        (true, true) => aurora_i18n::tr!("inventory-menu-editor-detach"),
+        (true, false) => aurora_i18n::tr!("common-detach"),
+        _ => clothing,
+    };
+    let mut unlocked: Vec<Uuid> = items.iter().map(|it| it.id).filter(|id| locks.can_remove(*id)).collect();
+    if menu::item_if(ui, p, "circle-x-filled", label, !unlocked.is_empty()) {
+        actions.push(if unlocked.len() == 1 {
+            Action::Remove(unlocked.remove(0))
+        } else {
+            Action::RemoveItems(unlocked)
+        });
+    }
 }
 
 fn attach_menu(
@@ -179,7 +253,7 @@ fn attach_menu(
     p: &Palette,
     world: &World,
     locks: &crate::world::rlva::WearLocks,
-    item: Uuid,
+    items: &[Uuid],
     hud: bool,
     actions: &mut Vec<Action>,
 ) {
@@ -213,14 +287,10 @@ fn attach_menu(
                         .unwrap_or(aurora_i18n::tr!("common-attachment"));
                     let name = point_name(name);
                     let label = if hud { name.to_owned() } else { format!("{name} ({id})") };
-                    let open = locks.wear(&world.inventory, item, *id).add;
+                    let open = items.iter().any(|item| locks.wear(&world.inventory, *item, *id).add);
                     if menu::item_if(ui, p, if hud { "device-desktop-filled" } else { "man-filled" }, &label, open) {
                         // Firestorm's Attach To always adds, even on an occupied point.
-                        actions.push(Action::WearItem {
-                            item,
-                            replace: false,
-                            point: *id,
-                        });
+                        actions.push(wear_action(items.to_vec(), false, *id));
                     }
                 }
             });
