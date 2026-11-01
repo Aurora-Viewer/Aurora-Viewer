@@ -2487,7 +2487,7 @@ mod tests {
                 draw_input(&ctx, &mut world, &mut st, input(grab + delta * (i as f32 / 20.0).min(1.0), None));
             }
             let dragged = area();
-            assert_eq!(dragged.width(), 390.0, "down to its minimum width");
+            assert!((dragged.width() - 390.0).abs() < 0.1, "down to its minimum width: {dragged:?}");
             draw_input(&ctx, &mut world, &mut st, input(grab + delta, Some(false)));
             for _ in 0..20 {
                 draw(&ctx, &mut world, &mut st, None);

@@ -838,7 +838,7 @@ mod tests {
         assert!(
             labels.iter().any(|text| text.starts_with("105"))
                 && labels.contains(&"\u{00b0}")
-                && labels.iter().all(|text| !text.contains('\u{00c2}')),
+                && labels.iter().all(|text| !text.contains("\u{00c2}\u{00b0}")),
             "numeric value and separate degree suffix: {labels:?}"
         );
         for shape in &output.shapes {

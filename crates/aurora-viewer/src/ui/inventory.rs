@@ -4034,7 +4034,7 @@ mod tests {
         outside.parent = Uuid::from_u128(8002);
         inv.add_items(vec![nested, outside]);
         let mut st = InventoryUi {
-            search: "instructions".into(),
+            search: inv.items[&Uuid::from_u128(8103)].name.clone(),
             ..Default::default()
         };
         folder_window_frame(&ctx, &mut inv, root, &mut st);
