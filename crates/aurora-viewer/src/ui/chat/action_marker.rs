@@ -123,7 +123,15 @@ pub(super) fn reserve_icon(job: &mut LayoutJob, size: f32, lead: f32) {
 
 /// One wrapping, clickable atom: marker and destination share interaction
 /// and cannot separate into unrelated controls. Selection copies `text`.
-pub(super) fn link(ui: &mut Ui, action: Action, text: &str, size: f32, color: Color32, background: Option<Color32>) -> Response {
+pub(super) fn link(
+    ui: &mut Ui,
+    action: Action,
+    text: &str,
+    size: f32,
+    color: Color32,
+    background: Option<Color32>,
+    emphasis: crate::ui::fonts::TextEmphasis,
+) -> Response {
     let behind = super::select::atom_begin(ui);
     let mut job = LayoutJob::default();
     reserve_icon(&mut job, size, 0.0);
@@ -131,11 +139,9 @@ pub(super) fn link(ui: &mut Ui, action: Action, text: &str, size: f32, color: Co
         text,
         2.0,
         TextFormat {
-            font_id: FontId::proportional(size),
-            color,
             background: background.unwrap_or(Color32::TRANSPARENT),
             valign: ui.text_valign(),
-            ..Default::default()
+            ..emphasis.format(ui.ctx(), size, color)
         },
     );
     let (origin, galley, response) = egui::Label::new(job).sense(egui::Sense::click()).layout_in_ui(ui);

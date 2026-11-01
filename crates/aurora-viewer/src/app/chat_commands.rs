@@ -322,8 +322,7 @@ impl App {
         let size = width.clamp(MIN_PRIM_SCALE, MAX_PRIM_SCALE);
         let p = aurora_net::build::NewPrim {
             handle,
-            // FSCommon::getGroupForRezzing: Aurora has no active group yet.
-            group_id: Uuid::nil(),
+            group_id: self.world.group_for_rez(self.settings.build.rez_under_land_group),
             pcode: aurora_prim::params::LL_PCODE_VOLUME,
             // LL_MCODE_METAL
             material: 1,

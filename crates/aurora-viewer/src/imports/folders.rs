@@ -186,7 +186,7 @@ impl Imports {
             && self
                 .entries
                 .iter()
-                .filter(|entry| !entry.local && entry.selected && matches!(entry.status, Status::Ready))
+                .filter(|entry| self.choice.accepts(entry) && entry.selected && matches!(entry.status, Status::Ready))
                 .all(|entry| entry.upload_path.as_ref().is_some_and(|path| valid_path(path)))
     }
 

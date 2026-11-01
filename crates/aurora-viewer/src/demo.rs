@@ -1163,7 +1163,7 @@ pub fn bubbles_events() -> Vec<NetEvent> {
     ev
 }
 
-/// `AURORA_DEMO_CHAT_LINES=1|legacy`: nearby chat said at the arrival, to
+/// `AURORA_DEMO_CHAT_LINES=1|legacy|volumes`: nearby chat said at the arrival, to
 /// see the lines above the chat bar (`ui/chat/console.rs`): two lines of
 /// one resident, an emote, an object's line, a long line with a link, a
 /// shout. `legacy` shows them as the Legacy Viewer's lines for the session
@@ -1174,6 +1174,14 @@ pub fn chat_lines_scenario() -> Option<bool> {
         "" | "0" => None,
         _ => Some(false),
     }
+}
+
+/// Show the same six messages in Conversations and above the bar (#1323).
+pub fn chat_volume_comparison() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("AURORA_DEMO").is_some() && std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode == "volumes")
+    })
 }
 
 pub fn chat_lines_events() -> Vec<NetEvent> {
@@ -1196,6 +1204,21 @@ pub fn chat_lines_events() -> Vec<NetEvent> {
         })
     };
     let normal = aurora_net::ChatType::Normal;
+    if chat_volume_comparison() {
+        return [
+            (normal, aurora_i18n::tr!("demo-bubbles-local-1")),
+            (aurora_net::ChatType::Whisper, aurora_i18n::tr!("demo-aurora-local-own-whisper")),
+            (aurora_net::ChatType::Shout, aurora_i18n::tr!("demo-aurora-local-own-shout")),
+        ]
+        .into_iter()
+        .flat_map(|(volume, text)| {
+            [
+                say(DEMO_AGENT, "Aurora Demo", text, false, volume),
+                say(object, aurora_i18n::tr!("common-demo-hud"), text, true, volume),
+            ]
+        })
+        .collect();
+    }
     vec![
         say(DEMO_NOVA, nova, aurora_i18n::tr!("demo-bubbles-local-1"), false, normal),
         say(DEMO_NOVA, nova, aurora_i18n::tr!("demo-bubbles-local-2"), false, normal),
@@ -1549,6 +1572,9 @@ pub enum AuroraCall {
 }
 
 pub fn aurora_scenario() -> Option<AuroraScene> {
+    if chat_volume_comparison() {
+        return parse_aurora_scene("aurora:local");
+    }
     parse_aurora_scene(&std::env::var("AURORA_DEMO_CONV").ok()?)
 }
 
@@ -1764,6 +1790,9 @@ fn world_name(id: Uuid) -> String {
 /// a mention of us, after the bubbles scenario's lines; then the friend's
 /// status of `friend-away` / `friend-offline`.
 pub fn aurora_events(scene: &AuroraScene) -> Vec<NetEvent> {
+    if chat_volume_comparison() {
+        return Vec::new();
+    }
     let say = |from: Uuid, name: &str, text: String, chat_type| {
         NetEvent::Chat(aurora_net::ChatMessage {
             from_name: name.into(),
@@ -8606,13 +8635,18 @@ fn midday_sky() -> Llsd {
     }
 }
 
-/// Day cycle with a single sky frame (and the default water).
+/// Day cycle with a single sky frame (and the default water, or the one
+/// `AURORA_DEMO_WATER_EEP` asks for).
 fn demo_day(sky: Llsd) -> Llsd {
     use aurora_llsd::llsd_map;
     let mut frames = aurora_llsd::Map::new();
     frames.insert("sky".into(), sky);
     // a valid day needs a water track too (Firestorm recordEnvironment)
-    frames.insert("water".into(), llsd_map! { "type" => "water" });
+    let water = std::env::var("AURORA_DEMO_WATER_EEP")
+        .ok()
+        .map(|v| demo_water_eep(&v))
+        .unwrap_or_else(|| llsd_map! { "type" => "water" });
+    frames.insert("water".into(), water);
     let key = |name: &str| Llsd::Array(vec![llsd_map! { "key_keyframe" => 0.0, "key_name" => name }]);
     llsd_map! {
         "day_length" => 14400,
@@ -8621,6 +8655,26 @@ fn demo_day(sky: Llsd) -> Llsd {
             "frames" => Llsd::Map(frames),
             "tracks" => Llsd::Array(vec![key("water"), key("sky")]),
         },
+    }
+}
+
+/// AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal
+/// scale>[,<fog r>,<fog g>,<fog b>]: the water of the demo's EEP day (with
+/// AURORA_DEMO_SKY), as a region's asset carries it, out-of-range values
+/// included; a missing or unreadable value keeps the default.
+fn demo_water_eep(v: &str) -> Llsd {
+    use aurora_llsd::llsd_map;
+    let n: Vec<Option<f64>> = v.split(',').map(|s| s.trim().parse::<f64>().ok()).collect();
+    let at = |i: usize, default: f64| n.get(i).copied().flatten().unwrap_or(default);
+    let arr = |v: &[f64]| Llsd::Array(v.iter().map(|x| Llsd::Real(*x)).collect());
+    let scale = at(3, 2.0);
+    llsd_map! {
+        "type" => "water",
+        "fresnel_offset" => at(0, 0.5),
+        "fresnel_scale" => at(1, 0.3999),
+        "blur_multiplier" => at(2, 0.04),
+        "normal_scale" => arr(&[scale, scale, scale]),
+        "water_fog_color" => arr(&[at(4, 0.0156), at(5, 0.149), at(6, 0.2509), 1.0]),
     }
 }
 

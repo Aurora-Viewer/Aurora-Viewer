@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 
 use egui::Color32;
 
-use super::{BubbleJob, JobLook, Link, bubble_link, bubble_sender_link, color_for, hhmm, line_extras, line_job, thread};
+use super::{BubbleJob, JobLook, Link, bubble_link, bubble_sender_link, hhmm, line_extras, line_job, thread};
 use crate::theme::Palette;
 use crate::world::{ChatKind, ChatLine, World};
 use aurora_net::ChatType;
@@ -280,7 +280,17 @@ fn compact_card<'a>(
             badges,
             sender,
             name,
-        } = line_job(line, p, world, want_names, WIDTH - 18.0 - lead, size, false, JobLook::Compact);
+        } = line_job(
+            ui.ctx(),
+            line,
+            p,
+            world,
+            want_names,
+            WIDTH - 18.0 - lead,
+            size,
+            false,
+            JobLook::Compact,
+        );
         let base = super::bidi_base(&name, &line.from);
         let visual = ui.ctx().fonts_mut(|f| crate::ui::bidi::layout(f, job, base));
         let galley = visual.galley.clone();
@@ -373,7 +383,7 @@ fn body(
         badges,
         name,
         ..
-    } = line_job(line, p, world, want_names, width, TEXT, false, JobLook::Body);
+    } = line_job(ui.ctx(), line, p, world, want_names, width, TEXT, false, JobLook::Body);
     let base = super::bidi_base(&name, &line.from);
     let visual = ui.ctx().fonts_mut(|f| crate::ui::bidi::layout(f, job, base));
     let galley = visual.galley.clone();
@@ -381,9 +391,7 @@ fn body(
     let mut painter = ui.painter().clone();
     painter.multiply_opacity(fade);
     painter.galley(rect.min, galley.clone(), p.ink);
-    let col = crate::ui::colors::keyword_color(line)
-        .unwrap_or_else(|| color_for(line.kind, p))
-        .gamma_multiply(fade);
+    let col = super::message_color(line, p, world).gamma_multiply(fade);
     line_extras(ui, p, world, &visual, rect.min, TEXT, fade, badges, line_links, col, links);
 }
 
@@ -551,10 +559,13 @@ mod tests {
     /// name is part of its sentence.
     #[test]
     fn the_body_leaves_the_name_to_the_head_except_an_emotes() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
         let p = crate::theme::Theme::default().palette();
         let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         let job = |l: &ChatLine| {
-            line_job(l, &p, &world, &mut HashSet::new(), 400.0, TEXT, true, JobLook::Body)
+            line_job(&ctx, l, &p, &world, &mut HashSet::new(), 400.0, TEXT, true, JobLook::Body)
                 .job
                 .text
         };

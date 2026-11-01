@@ -763,4 +763,14 @@ mod tests {
         assert_eq!(a.get(RowId::MeshCache).get(Column::Disk), Some(150.0));
         assert_eq!(a.get(RowId::Services).get(Column::Disk), Some(8.0));
     }
+
+    #[test]
+    fn every_attributed_thread_name_survives_the_linux_cut() {
+        // Linux keeps 15 bytes of a thread's name: each group this table
+        // attributes must come back whole from the cut one
+        for name in GROUPS.iter().map(|g| g.0).chain(SHARED) {
+            let cut = &name[..name.len().min(15)];
+            assert_eq!(crate::sys_probe::proc_text::full_thread_name(cut), name);
+        }
+    }
 }

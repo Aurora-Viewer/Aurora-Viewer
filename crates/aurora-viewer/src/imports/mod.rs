@@ -21,6 +21,7 @@ mod stage;
 #[cfg(test)]
 mod tests;
 pub mod ui;
+pub mod windows;
 
 use aurora_assets::{Animation, DecodedImage, PbrMaterial, import_sound::Sound, import_texture};
 use aurora_net::inventory::upload::{Error, Kind, Permissions, Prices, Receipt, Request};
@@ -63,7 +64,7 @@ impl Choice {
                             | (Choice::Mesh, Kind::Mesh)
                     )
             }
-            None => true,
+            None => self == Self::Bulk || entry.load_choice == Some(self),
         }
     }
     pub fn label(self) -> &'static str {
@@ -78,9 +79,17 @@ impl Choice {
         }
     }
 
-    /// Every source type uses the same remembered upload window.
+    /// The full uploader and each quick-import type retain independent geometry.
     pub fn window_id(self) -> &'static str {
-        ui::WINDOW
+        match self {
+            Self::Texture => "import_textures",
+            Self::Sound => "import_sounds",
+            Self::Animation => "import_animations",
+            Self::Material => "import_materials",
+            Self::Mesh => "import_meshes",
+            Self::Local => "import_local",
+            Self::Bulk => ui::WINDOW,
+        }
     }
 }
 
@@ -101,6 +110,7 @@ fn texture_needs_size_limit(image: &DecodedImage) -> bool {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
+    pub icon_bar: bool,
     pub max_width: u32,
     pub max_height: u32,
     pub limit_texture_size: bool,
@@ -140,6 +150,7 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
+            icon_bar: false,
             max_width: 1024,
             max_height: 1024,
             limit_texture_size: false,
@@ -306,6 +317,7 @@ impl Source {
 }
 
 pub struct Entry {
+    pub load_choice: Option<Choice>,
     pub id: Uuid,
     pub path: PathBuf,
     pub from_live: bool,
@@ -388,6 +400,7 @@ impl Entry {
         };
         Self {
             id: Uuid::new_v4(),
+            load_choice: None,
             name: path.file_stem().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
             path,
             from_live: false,
@@ -491,6 +504,9 @@ struct Step {
 
 pub struct Imports {
     pub open: bool,
+    pub launcher_open: bool,
+    pub windows: [windows::Window; 6],
+    window_scope: Option<Choice>,
     pub tab: ui::Tab,
     pub preview_zoom: Option<(Uuid, Option<usize>)>,
     pub mesh_permission_account: Uuid,
@@ -502,8 +518,10 @@ pub struct Imports {
     pub active: Option<Uuid>,
     pub message: String,
     pub confirm: bool,
+    pub confirm_choice: Option<Choice>,
     pub scale_bulk_1k: bool,
     pub pending_files: Option<Uuid>,
+    pending_file_choice: Option<Choice>,
     /// The pending files come from the texture picker's Local tab.
     pub picker_files: bool,
     pub(super) tx: Sender<Worker>,
@@ -547,6 +565,9 @@ impl Default for Imports {
         let (tx, rx) = crossbeam_channel::unbounded();
         Self {
             open: false,
+            launcher_open: false,
+            windows: std::array::from_fn(|_| Default::default()),
+            window_scope: None,
             tab: Default::default(),
             preview_zoom: None,
             mesh_permission_account: Uuid::nil(),
@@ -558,8 +579,10 @@ impl Default for Imports {
             active: None,
             message: String::new(),
             confirm: false,
+            confirm_choice: None,
             scale_bulk_1k: false,
             pending_files: None,
+            pending_file_choice: None,
             picker_files: false,
             tx,
             rx,
@@ -624,7 +647,16 @@ impl Imports {
         self.entries.push(entry);
         self.open(Choice::Animation);
     }
-    /// The shortcut and menu share the same queue window, without a file dialog.
+    /// The shortcut and menu use the same saved entry point.
+    pub fn toggle_import(&mut self, ctx: &egui::Context, prefs: &Preferences) {
+        if prefs.icon_bar {
+            crate::ui::widgets::toggle_floater(ctx, ui::launcher::WINDOW, &mut self.launcher_open);
+        } else {
+            self.toggle_window(ctx);
+        }
+    }
+
+    /// Open the queue without requesting a native file picker.
     pub fn toggle_window(&mut self, ctx: &egui::Context) {
         if self.open {
             crate::ui::widgets::toggle_floater(ctx, ui::WINDOW, &mut self.open);
@@ -660,7 +692,7 @@ impl Imports {
     }
 
     pub fn window_choice(&self) -> Choice {
-        Choice::Bulk
+        self.window_scope.unwrap_or(Choice::Bulk)
     }
 
     /// External editors may request a type; all paid assets share one queue.
@@ -700,7 +732,8 @@ impl Imports {
             .iter()
             .enumerate()
             .filter_map(|(i, e)| {
-                (e.local == local && Self::type_index(Self::type_choice(e)).is_none_or(|i| self.type_filters[i])).then_some(i)
+                (e.local == local && self.choice.accepts(e) && Self::type_index(Self::type_choice(e)).is_none_or(|i| self.type_filters[i]))
+                    .then_some(i)
             })
             .collect()
     }
@@ -771,6 +804,23 @@ impl Imports {
         }
         Some(total)
     }
+    pub fn has_shared_textures(&self) -> bool {
+        let mut images = HashSet::new();
+        self.entries
+            .iter()
+            .filter(|entry| self.choice.accepts(entry) && entry.selected && matches!(entry.status, Status::Ready))
+            .any(|entry| {
+                let Some(Source::Material { images: textures, .. }) = &entry.source else {
+                    return false;
+                };
+                let options = self.options(entry);
+                textures.iter().flatten().filter(|image| image.asset.is_none()).any(|image| {
+                    let key = image.upload_key(options);
+                    !images.insert(key) || self.uploaded.contains_key(&key)
+                })
+            })
+    }
+
     pub fn start(
         &mut self,
         world: &crate::world::World,
@@ -1008,8 +1058,12 @@ impl Imports {
             match worker {
                 Worker::Loaded(request, mut entries) if self.pending_files == Some(request) => {
                     self.pending_files = None;
+                    let loaded_choice = self.pending_file_choice.take();
                     let batch_folder = Self::batch_folder(world, self.load_preferences.batch_folder);
                     for entry in &mut entries {
+                        if entry.source.is_none() {
+                            entry.load_choice = loaded_choice;
+                        }
                         // Capture the latest choice on admission, not when the
                         // asynchronous file dialog/load started. Existing rows
                         // keep their independent choices.
@@ -1042,6 +1096,9 @@ impl Imports {
                         .then(|| entries.iter().find(|e| matches!(e.status, Status::Error(_))).map(|e| e.id))
                         .flatten();
                     self.entries.extend(entries);
+                    if let Some(choice) = loaded_choice {
+                        self.reconcile_window(choice);
+                    }
                     self.sync_folder_plan(world, prefs);
                     if let Some(id) = failed {
                         self.open(Choice::Local);

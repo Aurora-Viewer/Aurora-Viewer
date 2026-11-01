@@ -51,6 +51,9 @@ pub struct State {
     pub objects: usize,
     pub avatars: usize,
     pub regions: usize,
+    /// Swapchain recreations (window resizes among them) in the 10 s
+    /// before this note, or before the GPU was lost.
+    pub swapchain_10s: u64,
 }
 
 impl State {
@@ -68,6 +71,7 @@ impl State {
         let _ = writeln!(out, "objects={}", self.objects);
         let _ = writeln!(out, "avatars={}", self.avatars);
         let _ = writeln!(out, "regions={}", self.regions);
+        let _ = writeln!(out, "swapchain_10s={}", self.swapchain_10s);
     }
 }
 

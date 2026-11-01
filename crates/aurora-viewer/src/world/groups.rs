@@ -246,6 +246,18 @@ pub fn split_im(text: &str) -> Vec<&str> {
 }
 
 impl World {
+    /// Group used by LLToolPlacer::addObject, LLToolDragAndDrop::dropObject
+    /// and cmdline_rezplat: FSCommon::getGroupForRezzing
+    /// (indra/newview/fscommon.cpp, originally LGPL 2.1).
+    pub fn group_for_rez(&self, under_land: bool) -> Uuid {
+        self.parcel
+            .as_ref()
+            .filter(|_| under_land)
+            .map(|p| p.group_id)
+            .filter(|id| !id.is_nil() && self.groups.is_member(id))
+            .unwrap_or(self.groups.active)
+    }
+
     /// The current count shared by group profiles and search results.
     pub fn group_member_count(&self, id: Uuid) -> Option<i64> {
         self.group_data.member_count(id, self.search.groups.get(&id))

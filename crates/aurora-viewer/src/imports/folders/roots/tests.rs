@@ -2,6 +2,50 @@ use super::super::tests::{complete_one, fixture};
 use super::*;
 
 #[test]
+fn a_named_loose_file_folder_preserves_real_source_roots_inner_edits_and_default_routing() {
+    let (mut imports, world, inventory) = fixture();
+    imports.entries[2].source_folders.clear();
+    imports.entries[2].upload_path = None;
+    let mut prefs = Preferences {
+        use_default_folders: false,
+        folder_layout: Some(Layout::Flat),
+        ..Default::default()
+    };
+    assert!(imports.set_loose_folder(Some("")));
+    imports.sync_destinations(&prefs, &world, &inventory);
+    assert!(
+        !imports.folder_plan_valid(&world, &inventory),
+        "an enabled unnamed folder blocks upload"
+    );
+    for invalid in ["a/b", "..", " bad", "a|b"] {
+        assert!(!imports.set_loose_folder(Some(invalid)));
+    }
+    assert!(imports.set_loose_folder(Some("Release")));
+    for layout in [Layout::Flat, Layout::Type, Layout::Mirror] {
+        prefs.folder_layout = Some(layout);
+        imports.sync_destinations(&prefs, &world, &inventory);
+        let mut expected = vec!["Release".to_owned()];
+        if layout == Layout::Type {
+            expected.push(folder_name(aurora_i18n::tr!("import-folders-textures")));
+        }
+        assert_eq!(imports.entries[2].upload_path.as_ref(), Some(&expected));
+        assert_eq!(imports.entries[0].upload_path.as_ref().unwrap()[0], "Project");
+        assert!(imports.entries[2].source_folders.is_empty(), "no synthetic disk folder");
+    }
+    imports.entries[2].upload_path = Some(vec!["Release".into(), "Custom".into()]);
+    assert!(imports.set_loose_folder(Some("Renamed")));
+    assert_eq!(imports.entries[2].upload_path.as_ref().unwrap(), &vec!["Renamed", "Custom"]);
+    assert!(imports.set_loose_folder(None));
+    assert_eq!(imports.entries[2].upload_path.as_ref().unwrap(), &vec!["Custom"]);
+    assert!(imports.set_loose_folder(Some("Release")));
+    prefs.use_default_folders = true;
+    imports.sync_destinations(&prefs, &world, &inventory);
+    assert!(!imports.folders.active());
+    assert!(imports.folder_plan_ready(&world, &inventory));
+    assert_eq!(world.inventory.folders.len(), 1, "editing the plan creates nothing");
+}
+
+#[test]
 fn every_layout_can_include_rename_or_omit_the_source_root_without_wrapping_loose_files() {
     let (mut imports, world, inventory) = fixture();
     imports.entries[1].source_folders[0] = "Other Pack".into();
