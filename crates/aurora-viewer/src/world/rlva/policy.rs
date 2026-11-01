@@ -174,6 +174,9 @@ impl World {
             NetCommand::SendImDialog { to, dialog: 0, .. } => self.rlva_allows_im("sendim", *to),
             NetCommand::SendImDialog { to, dialog: 17, .. } => self.rlva_can_send_session(*to),
             NetCommand::SendImDialog { to, dialog: 4, .. } => r.allows("share", &to.to_string()),
+            // A dialog shown before @sendchat (process_script_dialog_response,
+            // llviewermessage.cpp): its public-chat answer is not sent.
+            NetCommand::ScriptDialogReply { channel: 0, .. } => !r.has("sendchat"),
             NetCommand::ActivateGroup(group) => {
                 !blocked("setgroup") || (actor == super::groups::ACTOR && r.has("setgroup") && r.groups.restore_allowed(*group))
             }

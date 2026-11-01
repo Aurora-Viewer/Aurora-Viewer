@@ -650,14 +650,26 @@ fn avatar_social_items(ui: &mut Builder, f: &Facts, id: Uuid) {
         CtxAction::AddFriend(id),
     );
     contact_set_entries(ui, f, id);
-    ui.item("message-circle-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
+    // RLVa @startim: greyed instead of refused after the click
+    // (LLAvatarActions::startIM / startCall refuse both).
+    ui.item_if(
+        "message-circle-filled",
+        aurora_i18n::tr!("ui-context-send-im"),
+        !f.im_blocked,
+        CtxAction::Im(id),
+    );
     // Avatar.GiveCard (enabled like RLV.CanShowName: always here)
     ui.item(
         "id-filled",
         aurora_i18n::tr!("ui-context-give-my-calling-card"),
         CtxAction::GiveCallingCard(id),
     );
-    ui.item_if("phone-filled", aurora_i18n::tr!("common-voice-call"), f.voice, CtxAction::Call(id));
+    ui.item_if(
+        "phone-filled",
+        aurora_i18n::tr!("common-voice-call"),
+        f.voice && !f.im_blocked,
+        CtxAction::Call(id),
+    );
     // Avatar.InviteToGroup (enabled like RLV.CanShowName: always here)
     ui.item(
         "users-plus",

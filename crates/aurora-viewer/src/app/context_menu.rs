@@ -199,6 +199,7 @@ impl App {
                 f.particles_blocked = self.settings.particle_filters.blocked(*id, true);
                 f.sound_blocks = w.derender.owner_sound_flags(*id);
                 f.contact_sets = w.contact_sets.set_names();
+                f.im_blocked = !w.rlva_can_start_im(*id);
                 f.friend = w.social.friends.iter().any(|fr| fr.id == *id);
                 f.voice_volume = crate::ui::context::voice_volume_of(w, *id);
                 f.worn = !super::inspect::worn_roots(w, id).is_empty();
