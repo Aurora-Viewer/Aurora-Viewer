@@ -662,3 +662,32 @@ fn names_are_trimmed_bounded_and_cannot_inject_legacy_asset_headers() {
     assert!(clean_name("A|B").is_err());
     assert_eq!(clean_name(&"é".repeat(90)).expect("bounded name").chars().count(), 63);
 }
+
+#[test]
+fn a_link_can_be_pasted_into_an_outfit_folder_but_a_copy_cannot() {
+    let mut inv = fixture();
+    let original = id(8109);
+    inv.created_folders(vec![
+        InvFolder {
+            id: id(9700),
+            parent: inv.root,
+            name: "My Outfits".into(),
+            type_default: 48,
+            ..Default::default()
+        },
+        InvFolder {
+            id: id(9701),
+            parent: id(9700),
+            name: "Outfit".into(),
+            type_default: 47,
+            ..Default::default()
+        },
+    ]);
+    let none = HashSet::new();
+    for outfit in [id(9700), id(9701)] {
+        assert!(paste_allowed(&inv, &[original], outfit, false, true, &none, &none), "{outfit}");
+        assert!(!paste_allowed(&inv, &[original], outfit, false, false, &none, &none), "{outfit}");
+    }
+    assert!(paste(&inv, &[original], id(9701), false, true, &none, &none).is_ok());
+    assert!(paste(&inv, &[original], id(9701), false, false, &none, &none).is_err());
+}
