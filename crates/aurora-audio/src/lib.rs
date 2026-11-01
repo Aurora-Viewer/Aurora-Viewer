@@ -12,6 +12,8 @@
 //! * One-shot sounds ([`SoundClip`]) for UI / sound effects.
 //! * The ambient wind noise ([`AudioEngine::set_wind`]), synthesised on the
 //!   Ambient channel.
+//! * The reverb of the surroundings ([`AudioEngine::set_reverb`]): one
+//!   shared bus the world sounds feed.
 //! * Device selection ([`output_devices`], [`input_devices`],
 //!   [`AudioEngine::set_output_device`]) and microphone capture
 //!   ([`MicCapture`]: 48 kHz mono, input gain, level meter) for voice.
@@ -34,6 +36,7 @@ mod mixer;
 mod output;
 mod processing;
 mod resample;
+mod reverb;
 mod stream;
 mod wind;
 
@@ -48,6 +51,7 @@ pub use devices::{input_devices, output_devices};
 pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE};
 pub use output::OutputInfo;
 pub use processing::{EchoReference, MicProcessing};
+pub use reverb::ReverbParams;
 pub use stream::StreamStatus;
 pub use wind::WindTarget;
 
@@ -263,6 +267,21 @@ impl AudioEngine {
     /// not played yet takes it at once.
     pub fn world_occlusion(&self, id: u64, amount: f32) {
         let _ = self.inner.cmd_tx.try_send(Command::WorldOcclusion(id, amount));
+    }
+
+    /// How much more of a world sound goes to the reverb of the surroundings
+    /// than its distance gain (a farther sound sends relatively more; 0, the
+    /// value of a new sound, keeps it dry). Glides over a buffer; a sound
+    /// that has not played yet takes it at once.
+    pub fn world_reverb_send(&self, id: u64, factor: f32) {
+        let _ = self.inner.cmd_tx.try_send(Command::WorldReverbSend(id, factor));
+    }
+
+    /// The reverb of the surroundings on with these parameters (they glide
+    /// there), or off (`None`: its output fades out, then the mix is the dry
+    /// one, bit for bit).
+    pub fn set_reverb(&self, params: Option<ReverbParams>) {
+        let _ = self.inner.cmd_tx.try_send(Command::Reverb(params));
     }
 
     /// Fades a world sound out and removes it.

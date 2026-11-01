@@ -5037,6 +5037,9 @@ impl App {
         // what stands between each sound and the listener (Aurora's own)
         let occlusion = crate::scene::sound_occlusion::forced().unwrap_or(self.settings.audio.sound_occlusion);
         self.scene.update_sound_occlusion(&self.world, engine, listener.pos, occlusion, now);
+        // the reverb of the surroundings (Aurora's own)
+        let reverb = crate::scene::sound_reverb::forced().unwrap_or(self.settings.audio.sound_reverb);
+        self.scene.update_sound_reverb(&self.world, engine, listener.pos, reverb, now);
     }
 
     /// StreamTitleDisplay::checkMetadata (streamtitledisplay.cpp): the title
@@ -7946,6 +7949,10 @@ impl App {
             }
             // AURORA_DEMO_SOUND_HRTF: the sounds around the listener
             if let Some(e) = crate::demo::sound_hrtf::tick(self.camera.position).and_then(|ev| self.world.apply(ev)) {
+                self.on_app_event(e);
+            }
+            // AURORA_DEMO_SOUND_REVERB: the clapper above our avatar
+            if let Some(e) = crate::demo::sound_reverb::tick(self.world.agent.position).and_then(|ev| self.world.apply(ev)) {
                 self.on_app_event(e);
             }
         }
@@ -18392,6 +18399,19 @@ impl ApplicationHandler for App {
                     self.scene.sounds.insert(id, clip);
                 }
                 for ev in crate::demo::sound_occlusion::events() {
+                    if let Some(e) = self.world.apply(ev) {
+                        self.on_app_event(e);
+                    }
+                }
+            }
+            // AURORA_DEMO_SOUND_REVERB=1: a clapper above our avatar, a
+            // small room and a large hall to walk into
+            if crate::demo::sound_reverb::active() {
+                self.world.agent.get_off(crate::demo::sound_reverb::start());
+                for (id, clip) in crate::demo::sound_reverb::sounds() {
+                    self.scene.sounds.insert(id, clip);
+                }
+                for ev in crate::demo::sound_reverb::events() {
                     if let Some(e) = self.world.apply(ev) {
                         self.on_app_event(e);
                     }
