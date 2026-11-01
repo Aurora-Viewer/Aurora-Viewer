@@ -2991,6 +2991,13 @@ terrain patches arrive for its region (`Region::terrain_revision`). Both
 take their species texture whatever their texture entry says, alpha-tested
 at 0.5, so they cast shadows and are picked through their cut-out.
 
+`World::group_for_rez` shares the agent-parcel membership / active-group
+fallback rule between inventory rezzing, the Create tool, `rezplat`, Ctrl+D
+and Create > Copy selection, including Shift-drag duplication in the move
+manipulator.
+The demo simulator retains the group supplied by each creation request for
+its property replies.
+
 Rezzing from the inventory goes through `ui/inventory.rs` (payload and release before the end of the egui pass), `app/inventory_drag.rs` (rules, group, preparation of the commands and local consumption of the non-copyable items), `Scene::inventory_surface` (triangles among the candidates of the index, terrain, without a GPU wait) and `aurora-net/src/inventory/rez.rs` (reliable `RezObject` message in the targeted region). Transparent pixels are tested with a mask of one bit per 2×2 block, prepared by the decoding tasks; invisible and rigged surfaces are discarded. The cursor keeps the result for 100 ms at most when the ray does not move; the release always recomputes the surface. Over an object, what goes into its contents (Ctrl for an object, without it for the other items, and a selection or a folder of several entries) is decided by `build/contents_drop.rs`, all the entries accepted or none, and sent with `UpdateTaskInventory` / `RezScript`; the Contents tab uses the same rules. The demo uses a synthetic cube as the reply to the rez. `app/contents_drop_demo.rs` drives `AURORA_DEMO_CONTENTS_DROP`.
 
 Giving goes through the same reading: inventory carried over another resident, or over what they wear, opens the Share confirmation of `ui/inventory/dialogs.rs` for every entry carried (`App::avatar_give_input`, the nearest surface of `Scene::inventory_surface` deciding), and `Scene::mark_give_target` outlines their avatar and attachments with the photo subjects' pass. A private conversation and another resident's profile window take the drop too (`ui::inventory::drag::give_target` / `give_target_on`); `ui/give_drop.rs` fades their content behind "Drop here to give to <name>" from the start of the drag. `app/give_demo.rs` drives `AURORA_DEMO_GIVE`.
