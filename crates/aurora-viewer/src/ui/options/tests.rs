@@ -778,6 +778,44 @@ fn preference_shapes(
 }
 
 #[test]
+fn rows_after_a_width_change_match_a_fresh_layout() {
+    fn texts(shapes: &[egui::Shape], out: &mut Vec<(String, i32, i32)>) {
+        for shape in shapes {
+            match shape {
+                egui::Shape::Text(t) => out.push((t.galley.text().to_owned(), t.pos.x.round() as i32, t.pos.y.round() as i32)),
+                egui::Shape::Vec(v) => texts(v, out),
+                _ => {}
+            }
+        }
+    }
+    let layout = |widths: &[f32], page: Page, tab: usize| {
+        let mut frames = Frames::new();
+        let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+        let mut shapes = Vec::new();
+        for &w in widths {
+            for _ in 0..6 {
+                shapes = preference_shapes(&mut frames, &mut s, &mut st, &mut r, (page, tab, w), Vec::new());
+            }
+        }
+        let mut out = Vec::new();
+        texts(&shapes, &mut out);
+        out.sort();
+        out
+    };
+    let mut bad = Vec::new();
+    for page in Page::ALL {
+        for tab in 0..page.tabs().len() {
+            for (from, to) in [(900.0, 420.0), (420.0, 900.0)] {
+                if layout(&[from, to], page, tab) != layout(&[to], page, tab) {
+                    bad.push(format!("{page:?}/{tab} {from}->{to}"));
+                }
+            }
+        }
+    }
+    assert!(bad.is_empty(), "laid out differently after a width change:\n{}", bad.join("\n"));
+}
+
+#[test]
 fn graphics_profile_save_has_a_button_face_to_the_right_of_the_list() {
     for width in [420.0, 700.0, 900.0] {
         let mut frames = Frames::new();
