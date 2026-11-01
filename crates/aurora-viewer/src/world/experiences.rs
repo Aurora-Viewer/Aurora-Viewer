@@ -42,6 +42,10 @@ pub struct Experiences {
     /// while asked.
     pub groups: HashMap<Uuid, Option<Vec<Uuid>>>,
     out: Vec<NetCommand>,
+    /// Forget / Block sent, with the crossfade of the environment they end.
+    clearing: HashMap<Uuid, f32>,
+    /// Experiences whose pushed environment goes, once the server agreed.
+    pub env_clears: Vec<(Uuid, f32)>,
 }
 
 impl Experiences {
@@ -82,15 +86,29 @@ impl Experiences {
     pub fn change(&mut self, experience: Uuid, change: ExperiencePermissionChange) {
         self.busy.insert(experience);
         self.errors.remove(&experience);
+        // the experience pump: Forget fades fast, Block is instant
+        match change {
+            ExperiencePermissionChange::Forget => {
+                self.clearing.insert(experience, 1.0);
+            }
+            ExperiencePermissionChange::Block => {
+                self.clearing.insert(experience, 0.0);
+            }
+            _ => {}
+        }
         self.out.push(NetCommand::ExperiencePermission { experience, change });
     }
 
     /// The server's answer to `change`.
     pub fn permission(&mut self, experience: Uuid, result: Result<ExperiencePermission, String>) {
         self.busy.remove(&experience);
+        let clearing = self.clearing.remove(&experience);
         match result {
             Ok(p) => {
                 self.permissions.insert(experience, p);
+                if let Some(transition) = clearing {
+                    self.env_clears.push((experience, transition));
+                }
             }
             Err(e) => {
                 self.errors.insert(experience, e);

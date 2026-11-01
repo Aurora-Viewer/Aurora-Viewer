@@ -792,6 +792,12 @@ pub enum NetEvent {
         experience: Uuid,
         object_name: String,
     },
+    /// PushExpEnvironment: an experience script pushes or clears an
+    /// environment (`action`, `action_data`), the experience in the invoice.
+    ExperienceEnvironment {
+        experience: Uuid,
+        message: aurora_llsd::Llsd,
+    },
     /// GroupExperiences: the experiences a group owns (empty on a failure).
     GroupExperiences {
         group: Uuid,
