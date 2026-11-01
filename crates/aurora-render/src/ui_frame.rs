@@ -198,6 +198,8 @@ mod tests {
             painter.circle_filled(egui::pos2(50.0, 50.0), 4.0, egui::Color32::WHITE);
         });
         let mut frame = EguiHandOver::default().frame(&ctx, out.shapes, out.textures_delta, out.pixels_per_point);
+        // This CPU-only test never uploads the font atlas to a renderer.
+        frame.textures_delta.clear();
         frame.retain_vr_hint();
         assert_eq!(frame.shapes.len(), 1);
         let egui::Shape::Text(text) = &frame.shapes[0].shape else {
