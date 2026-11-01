@@ -2752,6 +2752,15 @@ Axis assignments use the same capture lifecycle. `joystick/capture.rs`
 observes displacement from the initial sample, selects the dominant axis
 over a short gesture and ignores resting triggers, jitter and ambiguous
 diagonals. Per-mode inversion uses the existing signed tuning gains.
+Axis rows span the preferences width, with assignment, Avatar and Camera
+tuning in aligned columns that wrap in narrow windows. Assigning a zoom
+axis enables its zero Camera gain without replacing an existing non-zero
+gain. `Camera::start_flycam` tracks lens preference edits during flight;
+absolute controller zoom uses the flight's editable reference field of view.
+The Windows backend preserves the driver's 0–1 pressure range for known
+gamepad trigger codes; centred sticks and generic raw axis ranges retain
+their existing normalization. Released triggers can arm relative zoom and
+stop it without crossing a fictitious centre position.
 
 `build/task_inventory.rs` centralises the permissions and the destinations of
 the transfer of an object's contents to the personal inventory;

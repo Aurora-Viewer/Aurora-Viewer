@@ -61,13 +61,7 @@ impl App {
             self.camera.end_free(&self.settings.camera);
             self.snapshots.ui.free.on = false;
             self.photo_free_camera();
-            let up = glam::Quat::from_axis_angle(self.camera.forward(), self.camera.roll) * glam::Vec3::Z;
-            self.camera.flycam = Some(crate::joystick::flycam::Flycam::from_view(
-                self.camera.position,
-                self.camera.target,
-                up,
-                self.camera.fov_y,
-            ));
+            self.camera.start_flycam(&self.settings.camera);
             if was_mouselook {
                 self.set_mouselook_grab(false);
             }
@@ -187,7 +181,7 @@ impl App {
         }
         if !self.joystick.demo_started {
             self.joystick.demo_started = true;
-            if matches!(mode.as_str(), "rearm" | "axis-capture") {
+            if matches!(mode.as_str(), "rearm" | "axis-capture" | "zoom") {
                 self.settings.joystick = Default::default();
             }
             self.settings.joystick.enabled = true;
@@ -199,6 +193,11 @@ impl App {
             if mode == "rearm" {
                 self.settings.joystick.mapping[6] = 6;
                 self.settings.joystick.flycam.gain[6] = 0.5;
+            }
+            if mode == "zoom" {
+                self.settings.camera.fov = crate::camera::DEFAULT_FOV;
+                self.settings.joystick.mapping[6] = 6;
+                self.settings.joystick.flycam.gain[6] = 1.0;
             }
             self.joystick.snapshot.devices = vec![crate::joystick::Device::new(
                 "demo-joystick".into(),
@@ -233,6 +232,29 @@ impl App {
                 d.axes[7] = -0.8;
             }
         }
+        if mode == "zoom" {
+            d.axes = [0.0; crate::joystick::AXES];
+            if (650..710).contains(&self.frame_count) {
+                d.axes[6] = 0.6;
+            }
+            if self.frame_count == 750 {
+                self.settings.camera.fov = 0.9;
+            }
+            if self.frame_count == 800 {
+                self.settings.joystick.direct_zoom = true;
+            }
+            if (820..880).contains(&self.frame_count) {
+                d.axes[6] = 0.4;
+            }
+            if matches!(self.frame_count, 641 | 721 | 771 | 861 | 921) {
+                log::info!(
+                    "joystick zoom: frame={} flycam={} fov={:.4}",
+                    self.frame_count,
+                    self.joystick.active,
+                    self.camera.fov_y
+                );
+            }
+        }
         if mode == "rearm" {
             // A relative zoom axis that never centres must not prevent
             // flycam entry/exit or movement on the other axes.
@@ -256,7 +278,7 @@ impl App {
         }
         self.joystick.snapshot.devices = vec![d];
         self.joystick.snapshot.updated = Some(Instant::now());
-        if self.frame_count == 630 && matches!(mode.as_str(), "flycam" | "roll") {
+        if self.frame_count == 630 && matches!(mode.as_str(), "flycam" | "roll" | "zoom") {
             self.toggle_joystick_flycam();
         }
     }

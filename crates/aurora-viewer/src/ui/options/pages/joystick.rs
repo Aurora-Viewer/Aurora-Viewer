@@ -150,6 +150,11 @@ fn axis_binding(ui: &mut egui::Ui, settings: &mut crate::joystick::Settings, st:
     match captured {
         Some(Ok(Some(axis))) => {
             settings.mapping[channel] = axis;
+            if channel == 6 && settings.flycam.gain[channel] == 0.0 {
+                // Explicitly assigning zoom should produce a usable lens
+                // control, rather than retain the inactive preset's zero gain.
+                settings.flycam.gain[channel] = 1.0f32.copysign(settings.flycam.gain[channel]);
+            }
             changed = true;
             st.cancel_capture();
         }
@@ -200,6 +205,7 @@ fn tuning(ui: &mut egui::Ui, p: &crate::theme::Palette, label: &str, tune: &mut 
     let mut gain = tune.gain[channel].abs();
     let mut gain_changed = false;
     ui.horizontal(|ui| {
+        ui.set_min_height(24.0);
         ui.label(label);
         gain_changed |= widgets::switch_labeled(ui, p, &mut inverted, tr!("joystick-axis-invert")).changed();
     });
@@ -227,6 +233,51 @@ fn tuning(ui: &mut egui::Ui, p: &crate::theme::Palette, label: &str, tune: &mut 
         tune.gain[channel] = if inverted { -gain } else { gain };
     }
     changed || gain_changed
+}
+
+fn axis_controls(
+    ui: &mut egui::Ui,
+    settings: &mut crate::joystick::Settings,
+    st: &mut super::super::OptionsUi,
+    p: &crate::theme::Palette,
+    channel: usize,
+) -> bool {
+    use aurora_i18n::tr;
+    let mut changed = false;
+    let column_width = (ui.spacing().interact_size.x * 2.0 + 8.0).max(210.0);
+    let columns = ((ui.available_width() + 16.0) / (column_width + 16.0)).floor().clamp(1.0, 3.0) as usize;
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.x = 16.0;
+        for start in (0..3).step_by(columns) {
+            ui.columns(columns, |cells| {
+                for (offset, ui) in cells.iter_mut().enumerate() {
+                    let kind = start + offset;
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    ui.push_id((channel, kind), |ui| match kind {
+                        0 => {
+                            ui.horizontal(|ui| {
+                                ui.set_min_height(24.0);
+                                ui.weak(tr!("joystick-axis-assignment"));
+                            });
+                            changed |= axis_binding(ui, settings, st, channel);
+                        }
+                        1 if matches!(channel, 3 | 6) => {
+                            ui.horizontal(|ui| {
+                                ui.set_min_height(24.0);
+                                ui.weak(tr!("joystick-avatar"));
+                            });
+                            ui.weak(tr!("joystick-axis-camera-only"));
+                        }
+                        1 => changed |= tuning(ui, p, tr!("joystick-avatar"), &mut settings.avatar, channel),
+                        2 => changed |= tuning(ui, p, tr!("common-camera"), &mut settings.flycam, channel),
+                        _ => {}
+                    });
+                }
+            });
+        }
+        ui.add_space(4.0);
+    });
+    changed
 }
 
 pub fn page(cx: &mut Cx) {
@@ -407,31 +458,11 @@ pub fn page(cx: &mut Cx) {
                     s.flycam.dead_zone[n] = d.flycam.dead_zone[n];
                 },
             };
-            cx.row_with(
+            cx.below().row_with(
                 label,
                 if n == 6 { &zoom_hint } else { tr!("joystick-axis-hint") },
                 &track,
-                |ui, s, st, _| {
-                    let s = &mut s.joystick;
-                    let mut changed = false;
-                    ui.vertical(|ui| {
-                        ui.set_width(210.0);
-                        changed |= axis_binding(ui, s, st, n);
-                        for (avatar, label, tune) in [
-                            (true, tr!("joystick-avatar"), &mut s.avatar),
-                            (false, tr!("common-camera"), &mut s.flycam),
-                        ] {
-                            // Avatar movement has neither roll nor a lens axis.
-                            if avatar && matches!(n, 3 | 6) {
-                                continue;
-                            }
-                            ui.push_id((n, label), |ui| {
-                                changed |= tuning(ui, &p, label, tune, n);
-                            });
-                        }
-                    });
-                    changed
-                },
+                |ui, s, st, _| axis_controls(ui, &mut s.joystick, st, &p, n),
             );
         }
     });
@@ -538,17 +569,36 @@ mod tests {
         state: &mut OptionsUi,
         events: Vec<egui::Event>,
     ) -> (Vec<Text>, bool) {
+        axis_frame_for(frames, settings, state, events, 0)
+    }
+
+    fn zoom_frame(
+        frames: &mut Frames,
+        settings: &mut crate::settings::Settings,
+        state: &mut OptionsUi,
+        events: Vec<egui::Event>,
+    ) -> (Vec<Text>, bool) {
+        axis_frame_for(frames, settings, state, events, 6)
+    }
+
+    fn axis_frame_for(
+        frames: &mut Frames,
+        settings: &mut crate::settings::Settings,
+        state: &mut OptionsUi,
+        events: Vec<egui::Event>,
+        channel: usize,
+    ) -> (Vec<Text>, bool) {
         state.joystick.updated = Some(Instant::now());
         let mut changed = false;
         let texts = frames.run(events, |ui| {
             ui.set_width(210.0);
-            changed |= axis_binding(ui, &mut settings.joystick, state, 0);
+            changed |= axis_binding(ui, &mut settings.joystick, state, channel);
             changed |= tuning(
                 ui,
                 &crate::theme::Theme::default().palette(),
                 aurora_i18n::tr!("joystick-avatar"),
                 &mut settings.joystick.avatar,
-                0,
+                channel,
             );
         });
         (texts, changed)
@@ -631,6 +681,56 @@ mod tests {
         state.open(Page::Camera, 0);
         assert!(!state.joystick_capturing());
         assert_eq!(settings.joystick.mapping[0], -1);
+    }
+
+    #[test]
+    fn joystick_zoom_assignment_enables_a_zero_gain_and_changes_the_flycam_lens() {
+        use aurora_i18n::tr;
+        for previous_gain in [0.0f32, -0.0, 1.7] {
+            let (mut settings, mut state) = fixture();
+            settings.joystick.flycam.gain[6] = previous_gain;
+            let mut frames = Frames::new();
+            let mut texts = Vec::new();
+            for _ in 0..3 {
+                texts = zoom_frame(&mut frames, &mut settings, &mut state, Vec::new()).0;
+            }
+            click_with(
+                &mut frames,
+                &mut settings,
+                &mut state,
+                &texts,
+                tr!("joystick-button-assign"),
+                zoom_frame,
+            );
+            assert!(state.joystick_capturing());
+            state.joystick.devices[0].axes[2] = 0.8;
+            zoom_frame(&mut frames, &mut settings, &mut state, Vec::new());
+            state.joystick.devices[0].axes[2] = 0.0;
+            let (_, changed) = zoom_frame(&mut frames, &mut settings, &mut state, Vec::new());
+            assert!(changed && !state.joystick_capturing());
+            assert_eq!(settings.joystick.mapping[6], 2);
+            let gain = settings.joystick.flycam.gain[6];
+            assert_eq!(
+                gain,
+                if previous_gain == 0.0 {
+                    1.0f32.copysign(previous_gain)
+                } else {
+                    previous_gain
+                }
+            );
+            let mut controller = crate::joystick::Controller::default();
+            settings.joystick.enabled = true;
+            controller.sample(&state.joystick, &settings.joystick, true, true, 0.1);
+            state.joystick.devices[0].axes[2] = 0.8;
+            let motion = controller.sample(&state.joystick, &settings.joystick, true, true, 0.1);
+            let mut camera = crate::joystick::flycam::Flycam::from_view(glam::Vec3::ZERO, glam::Vec3::X, glam::Vec3::Z, 1.0);
+            camera.step(motion.axes, &settings.joystick, 0.1);
+            assert!(
+                (camera.fov - 1.0).abs() > 0.01,
+                "a new zoom assignment must change the field of view"
+            );
+            assert_eq!(camera.fov < 1.0, gain > 0.0);
+        }
     }
 
     #[test]

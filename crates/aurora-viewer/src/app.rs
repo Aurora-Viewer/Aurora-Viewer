@@ -4057,8 +4057,11 @@ impl App {
                         Action::LensZoomOut => Some(1.2),
                         _ => None,
                     };
-                    self.settings.camera.fov =
-                        crate::camera::zoom_lens(self.settings.camera.fov, factor, aspect, self.world.rlva.camera_fov_limits(aspect));
+                    let current = self.camera.flycam.as_ref().map_or(self.settings.camera.fov, |flight| flight.fov);
+                    self.settings.camera.fov = crate::camera::zoom_lens(current, factor, aspect, self.world.rlva.camera_fov_limits(aspect));
+                    if let Some(flight) = &mut self.camera.flycam {
+                        flight.set_fov(self.settings.camera.fov);
+                    }
                     if !self.demo {
                         self.settings.save();
                     }

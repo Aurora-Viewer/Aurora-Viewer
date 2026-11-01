@@ -331,7 +331,7 @@ the background still applies outside screenshots.
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_JOYSTICK=preferences\|axes\|avatar\|flycam\|roll\|rearm\|axis-capture` | Synthetic joystick input, its preferences or an independent six-axis camera flight |
+| `AURORA_DEMO_JOYSTICK=preferences\|axes\|avatar\|flycam\|roll\|rearm\|axis-capture\|zoom` | Synthetic joystick input, its preferences or an independent six-axis camera flight |
 | `AURORA_CAPTURE=<file.png>` | Saves a screenshot of the frame |
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
@@ -376,6 +376,14 @@ movement (-0.8) during frames 700–759 and 820–879. Combine it with
 700: it must capture axis 7, then re-centre at 760. Invert Avatar before
 820 to see backward movement on the second gesture without changing gain
 magnitude. Capture before, during and after assignment, then after inversion.
+`zoom` enters flycam at frame 630 with a neutral, enabled zoom axis. Frames
+650–709 apply relative zoom, frame 750 edits the lens preference to 0.9 rad,
+frame 800 enables absolute zoom, and frames 820–879 deflect the zoom axis
+before returning to its reference. Capture at `640,720,770,860,920`: initial
+view, narrower relative zoom, edited lens, absolute deflection and restored
+reference. Logs at the following frames record the rendered field of view;
+keep the run beyond frame 921 to include every probe. The camera position
+must remain fixed while the projection changes.
 The avatar must stay put in the two camera scenarios. Compare the photo
 free camera (`AURORA_DEMO_CONTROLS=free`) and normal camera controls as well.
 Hardware validation: select the real device, enable input, apply Gamepad or
@@ -389,9 +397,12 @@ also record. The press must not move the avatar or toggle flycam. None
 disables an assignment; Cancel, Escape, focus loss, a device change or
 leaving the row keeps its previous assignment. Capture also works with
 joystick control disabled. Zoom selects an analog axis, independently of
-button numbers; it changes only the flycam's field of view and requires
-a non-zero Camera gain (zero by default). Absolute zoom maps position to
-field of view; relative zoom uses deflection as zoom speed.
+button numbers; it changes only the flycam's field of view. Assigning a
+zoom axis changes a zero Camera gain to 1 (retaining inversion), while a
+previous non-zero gain stays intact. Gain 0 still disables zoom. Absolute
+zoom maps position around the flight's reference field of view; relative
+zoom uses deflection as zoom speed. Lens preference edits and keyboard lens
+zoom must work during flight; the absolute reference follows lens edits.
 Axis assignments: click the assigned axis (or Assign) and move the intended
 stick direction or trigger. Minor sideways movement must not win over the
 main gesture. Detection observes up to 180 ms once movement is significant,
@@ -400,6 +411,15 @@ and retried. Resting triggers at -1 and small stick jitter must not assign
 anything. None and cancellation behave like button capture. Invert is
 separate for Avatar and Camera and preserves the gain magnitude; previous
 negative gains appear inverted, and the choice persists even with zero gain.
+Axis rows use aligned assignment, Avatar and Camera columns across the
+page; check wrapping at narrow window sizes and larger interface scales.
+Roll and Zoom label the unused Avatar column as Camera only.
+Windows trigger zoom: assign a trigger, let it return to rest, enter flycam
+and press it. Its native pressure range must stay 0–1 (released at zero),
+so relative zoom starts without crossing a midpoint and stops on release
+after any configured smoothing. Repeat with Absolute zoom: release returns
+to the reference lens. Check both triggers and confirm the centred sticks
+still move in both directions.
 Repeat the toggle while holding a movement stick, including a quick second
 press. Configure zoom on an axis that rests away from zero: the other axes
 and the flycam button must still work. Direct zoom also accepts a non-zero

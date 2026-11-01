@@ -9,6 +9,7 @@ pub struct Flycam {
     /// Local +X forward, +Y left and +Z up, as in the agent frame.
     pub rotation: Quat,
     pub fov: f32,
+    reference_fov: f32,
 }
 
 impl Flycam {
@@ -20,7 +21,13 @@ impl Flycam {
             position,
             rotation: Quat::from_mat3(&Mat3::from_cols(forward, left, up)).normalize(),
             fov,
+            reference_fov: fov,
         }
+    }
+
+    pub fn set_fov(&mut self, fov: f32) {
+        self.fov = fov;
+        self.reference_fov = fov;
     }
 
     pub fn forward(&self) -> Vec3 {
@@ -45,7 +52,7 @@ impl Flycam {
         }
         if settings.direct_zoom {
             if settings.mapping[6] >= 0 && settings.flycam.gain[6] != 0.0 {
-                self.fov = crate::camera::DEFAULT_FOV + a[6];
+                self.fov = self.reference_fov + a[6];
             }
         } else {
             self.fov += a[6] * dt;
