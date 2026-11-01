@@ -85,7 +85,7 @@ impl MoveTo {
 }
 
 fn destinations(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>) -> Vec<Destination> {
-    if ids.is_empty() || ids.iter().any(|id| !rules::relocatable(inv, *id, protected)) {
+    if ids.is_empty() || ids.iter().any(|id| !rules::move_relocatable(inv, *id, protected)) {
         return Vec::new();
     }
     let roots = rules::roots(inv, ids);
@@ -94,13 +94,12 @@ fn destinations(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>) -> Vec
     let excluded: HashSet<_> = [14, 46, 48, 50, 53]
         .into_iter()
         .filter_map(|kind| rules::system(inv, kind))
-        .chain(protected.iter().copied())
         .chain(roots.iter().filter(|id| inv.folders.contains_key(id)).copied())
         .collect();
     inv.folders
         .par_iter()
         .filter_map(|(&id, _)| {
-            if roots.iter().all(|source| rules::parent(inv, *source) == Some(id)) {
+            if !rules::move_destination(inv, id, protected) || roots.iter().all(|source| rules::parent(inv, *source) == Some(id)) {
                 return None;
             }
             let mut parts = Vec::new();
@@ -357,7 +356,7 @@ mod tests {
                 let rows = destinations(&inv, &selection, &protected);
                 for &to in inv.folders.keys() {
                     let expected = rules::under(&inv, to, inv.root)
-                        && rules::destination(&inv, to, &protected)
+                        && rules::move_destination(&inv, to, &protected)
                         && rules::move_selection(&inv, &selection, to, &protected, &HashSet::new())
                             .is_ok_and(|change| !change.operations.is_empty());
                     assert_eq!(
@@ -450,13 +449,13 @@ mod tests {
     }
 
     #[test]
-    fn changing_permissions_or_folder_membership_invalidates_the_destination() {
+    fn protected_folders_remain_available_as_move_destinations() {
         let mut inv = fixture();
         let mut picker = MoveTo::new(vec![id(8100)]);
         picker.update(&egui::Context::default(), &inv, &HashSet::new());
         picker.selected = Some(id(8001));
         picker.update(&egui::Context::default(), &inv, &HashSet::from([id(8001)]));
-        assert!(picker.selected.is_none());
+        assert_eq!(picker.selected, Some(id(8001)));
         picker.update(&egui::Context::default(), &inv, &HashSet::new());
         picker.selected = Some(id(8001));
         let change = rules::move_selection(&inv, &picker.ids, id(8001), &HashSet::new(), &HashSet::new()).expect("move");

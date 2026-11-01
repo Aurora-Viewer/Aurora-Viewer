@@ -301,14 +301,34 @@ fn clipboard_refuses_no_copy_but_allows_a_link_without_changing_the_original() {
 }
 
 #[test]
-fn protected_system_worn_and_unknown_elements_cannot_be_deleted() {
+fn protected_system_and_worn_elements_cannot_be_deleted() {
     let inv = fixture();
     let trash = system(&inv, 14).expect("trash");
     assert!(!movable(&inv, id(99999), &HashSet::new()));
     assert!(move_selection(&inv, &[inv.root], trash, &HashSet::new(), &HashSet::new()).is_err());
-    assert!(move_selection(&inv, &[id(8100)], trash, &HashSet::from([id(8000)]), &HashSet::new()).is_err());
+    assert!(move_selection(&inv, &[id(8100)], trash, &HashSet::from([id(8000)]), &HashSet::new()).is_ok());
     assert!(move_selection(&inv, &[id(8000)], trash, &HashSet::new(), &HashSet::from([id(8100)])).is_err());
     assert!(!destination(&inv, id(701), &HashSet::new()));
+}
+
+#[test]
+fn protected_folder_cannot_move_but_its_contents_can_move_in_and_out() {
+    let inv = fixture();
+    let locked = id(8000);
+    let protected = HashSet::from([locked]);
+    let trash = system(&inv, 14).expect("trash");
+
+    assert!(!movable(&inv, locked, &protected));
+    assert!(!renameable(&inv, locked, &protected));
+    assert!(!destination(&inv, locked, &protected));
+    assert!(move_destination(&inv, locked, &protected));
+    assert!(move_selection(&inv, &[locked], inv.root, &protected, &HashSet::new()).is_err());
+    assert!(move_selection(&inv, &[locked], trash, &protected, &HashSet::new()).is_err());
+
+    assert!(move_selection(&inv, &[id(8100)], inv.root, &protected, &HashSet::new()).is_ok());
+    assert!(move_selection(&inv, &[id(8100)], locked, &protected, &HashSet::new()).is_ok());
+    assert!(move_selection(&inv, &[id(8100)], id(8001), &protected, &HashSet::new()).is_err());
+    assert!(move_selection(&inv, &[id(8100)], trash, &protected, &HashSet::new()).is_ok());
 }
 
 #[test]

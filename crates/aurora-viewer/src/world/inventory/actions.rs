@@ -56,8 +56,9 @@ pub fn mutable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
     if !(inv.items.contains_key(&id) || inv.folders.contains_key(&id)) || library(inv, id) {
         return false;
     }
-    // Not in the current outfit, Received Items nor a locked folder: one
-    // walk up the parents answers all three (asked per selected entry).
+    // Current Outfit, Received Items, and user-locked folders protect their
+    // whole trees for ordinary mutations. Move operations have narrower
+    // rules below so contents can be moved without weakening other actions.
     let (cof, inbox) = (system(inv, 46), system(inv, 50));
     !ancestors(inv, id).any(|a| Some(a) == cof || Some(a) == inbox || protected.contains(&a))
 }
@@ -79,6 +80,21 @@ pub fn pinned(inv: &Inventory, id: Uuid) -> bool {
 pub fn relocatable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
     movable(inv, id, protected) && !pinned(inv, id)
 }
+/// A selected entry may be moved out of a user-locked folder, but the locked
+/// folder itself and system-protected trees remain immovable.
+fn move_mutable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
+    let (cof, inbox) = (system(inv, 46), system(inv, 50));
+    (inv.items.contains_key(&id) || inv.folders.contains_key(&id))
+        && !library(inv, id)
+        && !protected.contains(&id)
+        && !ancestors(inv, id).any(|a| Some(a) == cof || Some(a) == inbox)
+}
+pub fn move_movable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
+    move_mutable(inv, id, protected) && inv.folders.get(&id).is_none_or(|f| matches!(f.info.type_default, -1 | 47 | 54))
+}
+pub fn move_relocatable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
+    move_movable(inv, id, protected) && !pinned(inv, id)
+}
 pub fn renameable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
     mutable(inv, id, protected)
         && inv.folders.get(&id).map_or_else(
@@ -92,6 +108,16 @@ pub fn renameable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool 
 }
 pub fn destination(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
     inv.folders.contains_key(&id) && mutable(inv, id, protected) && !in_type(inv, id, 14) && !in_type(inv, id, 48)
+}
+/// A protected folder can receive a move while all other protected-folder
+/// and system-folder restrictions continue to apply.
+pub fn move_destination(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
+    let protected_folder_can_receive =
+        protected.contains(&id) && !library(inv, id) && Some(id) != system(inv, 46) && Some(id) != system(inv, 50);
+    inv.folders.contains_key(&id)
+        && (destination(inv, id, protected) || protected_folder_can_receive)
+        && !in_type(inv, id, 14)
+        && !in_type(inv, id, 48)
 }
 pub fn original(inv: &Inventory, mut id: Uuid) -> Option<Uuid> {
     // Most rows are no link: answer them without the cycle guard's set
@@ -244,7 +270,7 @@ pub fn move_selection(
         }
         return super::super::outfit_folders::move_into(inv, ids, to);
     }
-    if !destination(inv, to, protected) && Some(to) != system(inv, 14) {
+    if !move_destination(inv, to, protected) && Some(to) != system(inv, 14) {
         return Err(aurora_i18n::tr!("world-inventory-actions-this-folder-cannot-receive-the-selection").into());
     }
     let mut change = Mutation::default();
@@ -257,9 +283,9 @@ pub fn move_selection(
     }
     for id in roots(inv, ids) {
         let allowed = if to_trash {
-            movable(inv, id, protected)
+            move_movable(inv, id, protected)
         } else {
-            relocatable(inv, id, protected)
+            move_relocatable(inv, id, protected)
         };
         if !allowed || holds_worn.contains(&id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-protected-system-or-worn-item").into());
