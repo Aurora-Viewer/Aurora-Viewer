@@ -226,6 +226,8 @@ fn run_viewer() -> anyhow::Result<()> {
     }
     let mut app = app::App::new()?;
     let result = event_loop.run_app(app.as_mut());
+    // later launches no longer hand their link to this closing viewer
+    slurl_handoff::release();
     // the browsers stop with the app; their private profiles are removed
     // while the plugins let go of their files
     drop(app);
