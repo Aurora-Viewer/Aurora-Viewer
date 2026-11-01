@@ -496,17 +496,43 @@ mod xdg {
     }
 
     /// Writes beside the target, then renames: a reader never sees half a
-    /// file. A symbolic link (a dotfiles folder) keeps pointing at it.
+    /// file. A symbolic link (a dotfiles folder) keeps pointing at it, and
+    /// the file keeps its permissions (a private `mimeapps.list` stays so).
     fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
         let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
         let tmp = path.with_extension("aurora-tmp");
-        std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, &path)).map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
-            format!("{}: {e}", path.display())
-        })
+        let kept = std::fs::metadata(&path).ok().map(|m| m.permissions());
+        std::fs::write(&tmp, text)
+            .and_then(|()| kept.map_or(Ok(()), |mode| std::fs::set_permissions(&tmp, mode)))
+            .and_then(|()| std::fs::rename(&tmp, &path))
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&tmp);
+                format!("{}: {e}", path.display())
+            })
+    }
+
+    /// The ids of a default list (`a.desktop;b.desktop;`), in order.
+    fn ids(list: Option<&str>) -> impl Iterator<Item = &str> {
+        list.unwrap_or_default().split(';').map(str::trim).filter(|id| !id.is_empty())
+    }
+
+    /// Aurora's entry first, then the handlers that were there before it
+    /// (a Legacy Viewer's, set by `xdg-mime default`): turning the links
+    /// off gives them back.
+    pub(super) fn ours_first(list: Option<&str>) -> String {
+        std::iter::once(DESKTOP_ID)
+            .chain(ids(list).filter(|id| *id != DESKTOP_ID))
+            .map(|id| format!("{id};"))
+            .collect()
+    }
+
+    /// The list without Aurora's entry; None when nothing is left.
+    pub(super) fn without_ours(list: Option<&str>) -> Option<String> {
+        let rest: String = ids(list).filter(|id| *id != DESKTOP_ID).map(|id| format!("{id};")).collect();
+        (!rest.is_empty()).then_some(rest)
     }
 
     fn own_entry() -> Result<PathBuf, String> {
@@ -537,7 +563,9 @@ mod xdg {
             Err(e) => return Err(format!("{}: {e}", list.display())),
         };
         for scheme in SCHEMES {
-            text = with_value(&text, DEFAULTS, &format!("x-scheme-handler/{scheme}"), Some(DESKTOP_ID));
+            let key = format!("x-scheme-handler/{scheme}");
+            let list = ours_first(value(&text, DEFAULTS, &key));
+            text = with_value(&text, DEFAULTS, &key, Some(&list));
         }
         write_atomic(&list, &text)?;
         log::info!("secondlife links: registered for this user");
@@ -561,16 +589,9 @@ mod xdg {
             let mut text = old.clone();
             for scheme in SCHEMES {
                 let key = format!("x-scheme-handler/{scheme}");
-                let rest: Vec<&str> = value(&text, DEFAULTS, &key)
-                    .unwrap_or_default()
-                    .split(';')
-                    .map(str::trim)
-                    .filter(|id| !id.is_empty() && *id != DESKTOP_ID)
-                    .collect();
-                let joined = rest.iter().map(|id| format!("{id};")).collect::<String>();
-                let kept = (!rest.is_empty()).then_some(joined.as_str());
-                if kept != value(&text, DEFAULTS, &key) {
-                    text = with_value(&text, DEFAULTS, &key, kept);
+                let kept = without_ours(value(&text, DEFAULTS, &key));
+                if kept.as_deref() != value(&text, DEFAULTS, &key) {
+                    text = with_value(&text, DEFAULTS, &key, kept.as_deref());
                 }
             }
             if text != old {
@@ -675,7 +696,7 @@ mod tests {
 
 #[cfg(all(test, target_os = "linux"))]
 mod xdg_tests {
-    use super::xdg::{desktop_entry, exec_line, exec_program, live_exe, value, with_value};
+    use super::xdg::{desktop_entry, exec_line, exec_program, live_exe, ours_first, value, with_value, without_ours};
     use std::path::PathBuf;
 
     #[test]
@@ -713,6 +734,25 @@ mod xdg_tests {
         assert_eq!(fresh, "[Default Applications]\nx-scheme-handler/hop=a.desktop\n");
         let added = with_value("[Added Associations]\nx=y\n", "Default Applications", "k", Some("v"));
         assert_eq!(added, "[Added Associations]\nx=y\n\n[Default Applications]\nk=v\n");
+    }
+
+    #[test]
+    fn turning_links_on_then_off_gives_the_earlier_handler_back() {
+        let key = "x-scheme-handler/secondlife";
+        let earlier = value(LIST, "Default Applications", key);
+        let on = ours_first(earlier);
+        assert_eq!(on, "aurora-viewer-slurl.desktop;firestorm.desktop;");
+        assert_eq!(without_ours(Some(&on)).as_deref(), earlier);
+        // registered twice, or already in the list: listed once, first
+        assert_eq!(ours_first(Some(&on)), on);
+        assert_eq!(
+            ours_first(Some("a.desktop; aurora-viewer-slurl.desktop;b.desktop")),
+            "aurora-viewer-slurl.desktop;a.desktop;b.desktop;"
+        );
+        // no earlier handler: Aurora alone, and nothing left once off
+        assert_eq!(ours_first(None), "aurora-viewer-slurl.desktop;");
+        assert_eq!(without_ours(Some("aurora-viewer-slurl.desktop;")), None);
+        assert_eq!(without_ours(None), None);
     }
 
     #[test]
