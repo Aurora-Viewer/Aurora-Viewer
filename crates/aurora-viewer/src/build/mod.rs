@@ -2083,7 +2083,7 @@ impl BuildTool {
         };
         let p = aurora_net::build::NewPrim {
             handle,
-            group_id: Uuid::nil(),
+            group_id: world.group_for_rez(s.rez_under_land_group),
             pcode,
             material: s.new_prim_material,
             add_flags: flags,

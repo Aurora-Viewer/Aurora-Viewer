@@ -681,6 +681,84 @@ fn preexisting_create_flags_are_never_selected_after_ownership_arrives() {
 }
 
 #[test]
+fn creation_rez_group_reaches_prim_plant_and_demo_properties() {
+    let (mut world, mut tool, mut settings) = fixture();
+    for event in crate::demo::demo_reply(&NetCommand::RequestGroups) {
+        world.apply(event);
+    }
+    let land = world.groups.groups[0].id;
+    let active = Uuid::from_u128(8800);
+    let other = Uuid::from_u128(8899);
+    let nil = Uuid::nil();
+    for (active, parcel, under_land, expected) in [
+        (active, Some(land), true, land),
+        (active, Some(land), false, active),
+        (active, Some(other), true, active),
+        (active, Some(nil), true, active),
+        (active, None, true, active),
+        (nil, Some(land), true, land),
+        (nil, Some(land), false, nil),
+        (nil, Some(other), true, nil),
+        (nil, None, true, nil),
+    ] {
+        world.apply(NetEvent::ActiveGroup {
+            id: active,
+            name: "Active group".into(),
+            title: "Builder".into(),
+        });
+        world.parcel = parcel.map(|group_id| {
+            Arc::new(aurora_net::ParcelInfo {
+                group_id,
+                ..Default::default()
+            })
+        });
+        settings.rez_under_land_group = under_land;
+        for shape in [0, shapes::shapes().len(), shapes::shapes().len() + 1] {
+            settings.create_shape = shape;
+            let point = world.agent.position + Vec3::X * 5.0;
+            tool.place(&mut world, &settings, Some(point), None, (0.0, 0.0));
+            let commands = std::mem::take(&mut tool.out);
+            let prims: Vec<_> = commands
+                .iter()
+                .filter_map(|command| match command {
+                    NetCommand::Build(BuildCmd::Add(prim)) => Some(prim),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(prims.len(), 1);
+            let prim = prims[0];
+            assert_eq!(prim.group_id, expected, "shape {shape}, land mode {under_land}");
+            let mut sim = demo_sim::DemoSim::default();
+            let command = BuildCmd::Add(prim.clone());
+            let events = sim.reply(&world, &command);
+            let NetEvent::ObjectUpdates { objects, .. } = &events[0] else {
+                panic!("expected created object");
+            };
+            let id = objects[0].full_id;
+            let local_id = objects[0].local_id;
+            for event in events {
+                world.apply(event);
+            }
+            let replies = sim.reply(
+                &world,
+                &BuildCmd::Select {
+                    handle: prim.handle,
+                    local_ids: vec![local_id],
+                },
+            );
+            let props = replies
+                .iter()
+                .find_map(|event| match event {
+                    NetEvent::ObjectProperties(props) => props.iter().find(|props| props.object_id == id),
+                    _ => None,
+                })
+                .expect("created object properties");
+            assert_eq!(props.group_id, expected, "demo must preserve even an empty group");
+        }
+    }
+}
+
+#[test]
 fn primitive_placement_and_deletion_round_trip_through_the_demo_simulator() {
     let (mut world, mut tool, mut settings) = fixture();
     tool.open_build(Tool::Create);
