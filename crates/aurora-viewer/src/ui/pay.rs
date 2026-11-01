@@ -728,22 +728,30 @@ impl PayUi {
             } else {
                 ui.label(RichText::new(aurora_i18n::tr!("ui-pay-object-amounts")).size(12.0).color(p.muted));
             }
-            let amount = if free {
-                parse_amount(&d.amount)
-            } else {
-                parse_amount(&d.amount).filter(|a| quick.contains(a))
-            };
+            // with the free amount, a button fills it in; without it (a vendor
+            // selling at its prices), the button pays at once, like the
+            // Legacy Viewer's quick-pay buttons (LLFloaterPay::onGive)
+            let amount = if free { parse_amount(&d.amount) } else { None };
+            let mut pay = None;
             if !quick.is_empty() {
                 ui.columns(quick.len(), |cols| {
                     for (col, value) in cols.iter_mut().zip(quick.iter().copied()) {
-                        let kind = if amount == Some(value) {
-                            ActionKind::Primary
+                        let (icon, kind) = if !free {
+                            ("coin-filled", ActionKind::Primary)
+                        } else if amount == Some(value) {
+                            ("", ActionKind::Primary)
                         } else {
-                            ActionKind::Flat
+                            ("", ActionKind::Flat)
                         };
                         let h = if free { 28.0 } else { 40.0 };
-                        if widgets::action_button(col, p, "", &money(value), kind, Vec2::new(col.available_width(), h)).clicked() {
-                            d.amount = value.to_string();
+                        if widgets::action_button(col, p, icon, &money(value), kind, Vec2::new(col.available_width(), h)).clicked()
+                            && asked.is_none()
+                        {
+                            if free {
+                                d.amount = value.to_string();
+                            } else if available {
+                                pay = Some(value);
+                            }
                         }
                     }
                 });
@@ -764,7 +772,13 @@ impl PayUi {
                     }
                 });
             });
-            let short = after.is_some_and(|a| a < 0);
+            // a notice only: the payment stays possible and opens Buy L$ for
+            // what is missing (give_money, can_afford_transaction)
+            let short = if free {
+                after.is_some_and(|a| a < 0)
+            } else {
+                world.balance.zip(quick.iter().min()).is_some_and(|(b, low)| *low > b)
+            };
             if short {
                 band(ui, p.danger, |ui| {
                     ui.label(RichText::new(aurora_i18n::tr!("common-insufficient-or-unknown-balance")).color(p.danger));
@@ -804,26 +818,23 @@ impl PayUi {
                 || aurora_i18n::tr!("common-pay").to_owned(),
                 |a| aurora_i18n::tr!("ui-pay-amount", amount = money(a)).to_owned(),
             );
-            match widgets::dialog_buttons(
-                ui,
-                p,
-                &[
-                    button("", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, true),
-                    button("coin-filled", &label, ActionKind::Primary, available && amount.is_some() && !short),
-                ],
-                BUTTON_H,
-            ) {
+            // without the free amount the Legacy Viewer hides its Pay button:
+            // the prices above pay
+            let mut buttons = vec![button("", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, true)];
+            if free {
+                buttons.push(button("coin-filled", &label, ActionKind::Primary, available && amount.is_some()));
+            }
+            match widgets::dialog_buttons(ui, p, &buttons, BUTTON_H) {
                 Some(0) => close = true,
-                Some(_) => {
-                    if let Some(a) = amount {
-                        if needs_confirmation(confirm, threshold, a, world.balance, false) {
-                            asked = Some(a);
-                        } else {
-                            result = Some(a);
-                        }
-                    }
-                }
+                Some(_) => pay = amount,
                 None => {}
+            }
+            if let Some(a) = pay {
+                if needs_confirmation(confirm, threshold, a, world.balance, false) {
+                    asked = Some(a);
+                } else {
+                    result = Some(a);
+                }
             }
         });
         ctx.data_mut(|data| match asked {
@@ -1118,6 +1129,106 @@ mod tests {
                 }
                 assert!(matches!(commands.as_slice(), [NetCommand::PayObject { object, amount: 10, .. }] if *object == target.clicked_id));
                 assert!(state.dialog.is_none(), "classic={classic}, linked={linked}");
+            }
+        }
+    }
+
+    /// Issue #1869: a vendor hiding the free amount (llSetPayPrice(PAY_HIDE,
+    /// [180, …])) sells at one click on its price, in both windows, like
+    /// the Legacy Viewer's quick-pay buttons; short of L$, the same click
+    /// asks for Buy L$ instead of a greyed button.
+    #[test]
+    fn a_vendor_price_pays_at_one_click_or_asks_for_the_missing_l() {
+        let library = std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        for classic in [false, true] {
+            for (balance, last) in [(Some(1000), 0), (Some(1000), 25), (Some(100), 0), (None, 0)] {
+                let mut world = World::new(library.clone());
+                for event in crate::demo::events().into_iter().chain(crate::demo::action_events()) {
+                    world.apply(event);
+                }
+                world.balance = balance;
+                let idx = world.objects.index_of_uuid(&crate::demo::action_id(972)).unwrap();
+                let target = crate::interaction::menu_target(&world, idx, Action::Pay).unwrap();
+                let mut state = Interactions::default();
+                if last > 0 {
+                    // an earlier payment at another price (`last_amount`)
+                    state.open(target);
+                    state.on_properties(&[aurora_net::build::ObjectProps {
+                        object_id: target.root,
+                        ..Default::default()
+                    }]);
+                    state.on_prices(target.object, 10, vec![last]);
+                    let mut rich = World::new(library.clone());
+                    for event in crate::demo::events().into_iter().chain(crate::demo::action_events()) {
+                        rich.apply(event);
+                    }
+                    rich.balance = Some(1000);
+                    assert!(state.confirm(&rich, Some(last)).is_some());
+                }
+                state.open(target);
+                state.on_properties(&[aurora_net::build::ObjectProps {
+                    object_id: target.root,
+                    name: "Vendor".into(),
+                    ..Default::default()
+                }]);
+                state.on_prices(target.object, -1, vec![180, -1, -1, -1]);
+                let mut frames = widgets::elide_tests::Frames::new();
+                let theme = crate::theme::Theme::default();
+                theme.apply(&frames.ctx, 1.0);
+                let p = theme.palette();
+                let mut pay = PayUi::default();
+                let mut commands = Vec::new();
+                let mut shortfall = None;
+                {
+                    let mut draw = |ui: &mut egui::Ui| {
+                        let answer = if classic {
+                            super::super::object_actions::show(ui.ctx(), &p, &mut state, &world)
+                        } else {
+                            pay.show_object(ui.ctx(), &p, &mut state, &world, false, 200).map(Some)
+                        };
+                        if let Some(amount) = answer {
+                            match state.confirm(&world, amount) {
+                                Some(command) => commands.push(command),
+                                None => shortfall = state.take_shortfall(),
+                            }
+                        }
+                    };
+                    for _ in 0..3 {
+                        frames.run(Vec::new(), &mut draw);
+                    }
+                    let texts = frames.run(Vec::new(), &mut draw);
+                    let pos = texts.iter().find(|t| t.source == money(180)).expect("price button").rect.center();
+                    for pressed in [true, false] {
+                        frames.run(
+                            vec![
+                                egui::Event::PointerMoved(pos),
+                                egui::Event::PointerButton {
+                                    pos,
+                                    button: egui::PointerButton::Primary,
+                                    pressed,
+                                    modifiers: Default::default(),
+                                },
+                            ],
+                            &mut draw,
+                        );
+                    }
+                    frames.run(Vec::new(), &mut draw);
+                }
+                let case = format!("classic={classic}, balance={balance:?}, last={last}");
+                match balance {
+                    Some(1000) => {
+                        assert!(
+                            matches!(commands.as_slice(), [NetCommand::PayObject { object, amount: 180, .. }] if *object == target.clicked_id),
+                            "{case}: {commands:?}"
+                        );
+                        assert!(state.dialog.is_none(), "{case}");
+                    }
+                    _ => {
+                        assert!(commands.is_empty(), "{case}");
+                        assert_eq!(shortfall, Some(180 - balance.unwrap_or(0)), "{case}");
+                        assert!(state.dialog.is_some(), "{case}: the window stays to try again");
+                    }
+                }
             }
         }
     }

@@ -3387,6 +3387,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 "pay-layout" => (1956, vec![1956, 3913, 5870, 7826]),
                 "pay-hidden" => (-1, vec![1956, -1, 5870, -1]),
                 "pay-large" => (i32::MAX, vec![i32::MAX, 3913, 5870, 7826]),
+                // a CasperVend-like vendor: one price, no free amount (#1869)
+                "pay-vendor" | "pay-vendor-short" => (-1, vec![180, -1, -1, -1]),
                 _ => (10, vec![1, 5, 10, 20]),
             };
             vec![NetEvent::PayPrice {
@@ -3845,6 +3847,12 @@ pub fn action_events() -> Vec<NetEvent> {
         object.click_action = crate::interaction::code::TOUCH;
         object.update_flags |= 1 << 7;
     }
+    // a boxed product left on the default Touch, bought from the menu (#1869)
+    if mode.starts_with("buy-touch-menu")
+        && let Some(object) = objects.iter_mut().find(|o| o.local_id == 971)
+    {
+        object.click_action = crate::interaction::code::TOUCH;
+    }
     let selected = action_mode_id(&mode);
     if selected != 0 {
         objects.retain(|o| {
@@ -3862,6 +3870,8 @@ pub fn action_events() -> Vec<NetEvent> {
     }
     let balance = if matches!(mode.as_str(), "pay-layout" | "pay-hidden" | "pay-large") {
         i32::MAX
+    } else if mode == "pay-vendor-short" {
+        100
     } else {
         250
     };

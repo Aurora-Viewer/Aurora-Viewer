@@ -170,13 +170,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                             .show(ui, |ui| {
                                 for index in 0..4 {
                                     if let Some(&amount) = buttons.get(index).filter(|v| **v > 0) {
-                                        if ui
-                                            .add_enabled_ui(affordable(amount), |ui| {
-                                                flat_button_sized(ui, p, &money(amount), Vec2::new(button_width, 24.0))
-                                            })
-                                            .inner
-                                            .clicked()
-                                        {
+                                        // never greyed: short of L$, Buy L$ opens
+                                        // (give_money)
+                                        if flat_button_sized(ui, p, &money(amount), Vec2::new(button_width, 24.0)).clicked() {
                                             confirm = Some(Some(amount));
                                         }
                                     } else {
@@ -225,7 +221,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                 let valid = available
                     && d.props.as_ref().is_some_and(|props| {
                         let price = if buy { Some(props.sale_price) } else { amount };
-                        price.is_some_and(|v| v >= 0 && world.balance.is_some_and(|b| v <= b))
+                        price.is_some_and(|v| v >= 0)
                             && if buy {
                                 (1..=3).contains(&props.sale_type)
                                     && (props.sale_type != 3
