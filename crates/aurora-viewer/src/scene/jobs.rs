@@ -671,10 +671,16 @@ mod tests {
         let (jobs, results) = Jobs::new();
         // per thread: the lowest and highest address of a local seen
         let seen: Arc<Mutex<HashMap<std::thread::ThreadId, (usize, usize)>>> = Arc::default();
+        let elsewhere = Arc::new(AtomicUsize::new(0));
         let (batches, items) = (200usize, 64usize);
         for _ in 0..batches {
             let seen = seen.clone();
+            let elsewhere = elsewhere.clone();
             jobs.spawn_many((0..items).collect(), move |_| {
+                // on the background pool, never on the frame's (frame_par.rs)
+                if !std::thread::current().name().is_some_and(|n| n.starts_with("aurora-jobs-")) {
+                    elsewhere.fetch_add(1, Ordering::Relaxed);
+                }
                 let local = 0u8;
                 let at = std::hint::black_box(&local) as *const u8 as usize;
                 std::thread::sleep(std::time::Duration::from_micros(50));
@@ -690,6 +696,7 @@ mod tests {
         }
         let deepest = seen.lock().expect("lock").values().map(|(lo, hi)| hi - lo).max().unwrap_or(0);
         assert!(deepest < 64 * 1024, "jobs nested {deepest} bytes deep on one thread's stack");
+        assert_eq!(elsewhere.load(Ordering::Relaxed), 0, "jobs ran outside the background pool");
     }
 
     /// Tells on which thread it is dropped.
