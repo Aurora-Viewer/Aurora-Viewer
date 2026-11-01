@@ -51,9 +51,46 @@ fn attachment(agent: Uuid, expected: Uuid, invoice: Uuid, parameters: &[&[u8]]) 
     })
 }
 
+/// The event of an ExperienceEvent message for the log.
+fn log_event(agent: Uuid, expected: Uuid, invoice: Uuid, parameters: &[&[u8]]) -> Option<ExperienceLogEvent> {
+    if expected.is_nil() || agent != expected || invoice.is_nil() {
+        return None;
+    }
+    let document = parameters.first()?;
+    if document.len() > 1024 * 1024 {
+        return None;
+    }
+    let document = document.strip_prefix(b"<?llsd/notation?>").unwrap_or(document);
+    let document = aurora_llsd::from_notation(document)
+        .or_else(|_| aurora_llsd::from_xml(document))
+        .or_else(|_| aurora_llsd::from_binary(document).map(|(document, _)| document))
+        .ok()?;
+    let text = |index: usize| {
+        parameters
+            .get(index)
+            .filter(|bytes| bytes.len() <= 1024)
+            .map(|bytes| field_str(bytes))
+            .unwrap_or_default()
+    };
+    Some(ExperienceLogEvent {
+        experience: invoice,
+        permission: document["Permission"].as_i32(),
+        owner: document["OwnerID"].as_uuid(),
+        object_name: text(1),
+        parcel_name: text(2),
+        attachment: document["IsAttachment"].as_bool(),
+    })
+}
+
 impl Session<'_> {
     pub(super) fn on_experience_generic(&self, agent: Uuid, method: &[u8], invoice: Uuid, parameters: &[&[u8]]) {
-        let event = match field_str(method).as_str() {
+        let method = field_str(method);
+        if method == "ExperienceEvent"
+            && let Some(event) = log_event(agent, self.agent_id(), invoice, parameters)
+        {
+            emit(self.sh, NetEvent::ExperienceLog(event));
+        }
+        let event = match method.as_str() {
             "ExperienceEvent" => attachment(agent, self.agent_id(), invoice, parameters),
             "PushExpEnvironment" => environment(agent, self.agent_id(), invoice, parameters),
             _ => None,

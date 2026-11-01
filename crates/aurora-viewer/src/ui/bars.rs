@@ -677,6 +677,15 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::check(ui, p, "receipt-filled", tracker, panels.money_tracker, true) {
             super::money_tracker::toggle(ui.ctx(), &mut panels.money_tracker);
         }
+        // menu_viewer.xml: Me › Experiences, after Picks
+        flip_window(
+            ui,
+            p,
+            "flask-filled",
+            aurora_i18n::tr!("ui-experiences-title"),
+            super::experiences::WINDOW,
+            &mut panels.experiences,
+        );
         menu::separator(ui, p);
         if menu::item(ui, p, "home-filled", aurora_i18n::tr!("common-go-home")) {
             *action = BarAction::TeleportHome;

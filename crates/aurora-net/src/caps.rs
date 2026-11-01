@@ -13,6 +13,7 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // these (session_offline.rs)
     "AcceptFriendship",
     "AcceptGroupInvite",
+    "AgentExperiences",
     "AgentPreferences",
     "AgentProfile",
     // the scripts of my attachments (Script info)
@@ -41,7 +42,10 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "FetchLibDescendents2",
     // the experience picker of About Land (LLExperienceCache::findExperienceByName)
     "FindExperienceByName",
+    // the Experiences window's lists (LLFloaterExperiences::refreshContents)
+    "GetAdminExperiences",
     "GetCreatorExperiences",
+    "GetExperiences",
     "GetDisplayNames",
     "GetExperienceInfo",
     "GetMesh",
