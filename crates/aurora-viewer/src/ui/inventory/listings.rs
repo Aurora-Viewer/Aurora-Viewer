@@ -283,7 +283,7 @@ mod tests {
         execute("protect-folder", demo::HOODIE, &inv, &mut state, &mut prefs);
         assert!(prefs.protected.contains(&demo::HOODIE));
         let catalog = context_catalog::build(&inv, item, &state, &prefs, &Facts::default());
-        for key in ["rename", "cut", "delete"] {
+        for key in ["rename", "delete"] {
             assert!(
                 !catalog
                     .entries
@@ -293,6 +293,10 @@ mod tests {
                     .enabled
             );
         }
+        assert!(
+            catalog.entries.iter().find(|entry| entry.id == "cut").expect("cut command").enabled,
+            "protected contents can be moved out"
+        );
         execute("protect-folder", demo::HOODIE, &inv, &mut state, &mut prefs);
         execute("show-window", demo::HOODIE, &inv, &mut state, &mut prefs);
         assert!(state.windows.iter().any(|window| window.root == demo::HOODIE && window.open));
