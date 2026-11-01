@@ -7182,6 +7182,8 @@ world-inventory-demo-item = { "Item " }{ $n }
 ui-appearance-attached-items = Attached items
 ui-appearance-temporary-items = Temporary attachments ({ $count })
 ui-appearance-items-to-wear = Items to wear
+ui-appearance-clipboard-cannot-take = This selection cannot be copied or cut.
+ui-appearance-clipboard-select-an-outfit = Select an outfit to paste into.
 ui-environment-elevation = Elevation
 ui-env-editor-edit-sky = Edit Sky
 ui-env-editor-edit-water = Edit Water
@@ -12612,6 +12614,9 @@ ui-appearance-folders-save-in = Save in
 world-outfit-folders-cannot-move-here = It cannot be moved into this folder.
 world-outfit-folders-already-there = It is already in this folder.
 world-outfit-folders-too-deep = Outfit folders go no deeper than four levels.
+world-outfit-paste-cannot-be-used-in-outfits = One or more items can't be used inside outfits.
+world-outfit-paste-already-in-outfit = Already in this outfit.
+world-outfit-paste-already-worn = Already worn.
 
 ## Build › Edit particles (particle editor)
 particle-editor-title = Particle editor

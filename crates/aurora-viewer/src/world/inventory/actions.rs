@@ -293,7 +293,13 @@ fn copy_one(inv: &Inventory, id: Uuid, to: Uuid, change: &mut Mutation, visited:
             id: new,
             parent: to,
             name: f.info.name.clone(),
-            type_default: -1,
+            // copy_inventory_category keeps the folder's type: a copied
+            // outfit stays an outfit. No other system type is copied.
+            type_default: if f.info.type_default == super::super::appearance::FT_OUTFIT {
+                f.info.type_default
+            } else {
+                -1
+            },
         });
         change.refresh.extend([to, new]);
         for child in f.children.iter().chain(&f.items) {
@@ -328,6 +334,16 @@ fn copy_one(inv: &Inventory, id: Uuid, to: Uuid, change: &mut Mutation, visited:
         return Err(aurora_i18n::tr!("common-item-not-found").into());
     }
     Ok(())
+}
+/// A copy of the folder or item `id` into `to`, without the destination
+/// checks of `paste`: the outfit rules (`outfit_paste`) make their own.
+pub fn copy_tree(inv: &Inventory, id: Uuid, to: Uuid) -> Result<Mutation, String> {
+    let mut change = Mutation {
+        defer_folder_contents: true,
+        ..Default::default()
+    };
+    copy_one(inv, id, to, &mut change, &mut HashSet::new())?;
+    Ok(change)
 }
 pub fn paste(
     inv: &Inventory,
