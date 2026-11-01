@@ -7617,7 +7617,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken`**
 — opens Appearance with four synthetic outfits:
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
@@ -7652,6 +7652,17 @@ for them (`5 to look up`), as a cold inventory cache.
   replacement has no single saved base; use Save as to save the combination.
   Conflicting body parts use the last selected outfit in display order,
   following `LLAppearanceMgr::filterWearableItems`.
+- `multi-items` / `multi-worn`: the second outfit open in the list with
+  two of its items selected, or two worn items selected in Worn. Ctrl/Cmd
+  and Shift pick items within one outfit or within Worn; a click in
+  another list starts a new selection there. Right-click a selected item:
+  Wear, Add, Attach to, Take off / Detach, the favourites and Remove from
+  outfit act on every selected item, in one action; Edit, Touch, Object
+  profile and Show original need a single item. Take off / Detach leaves
+  body parts out and is named Remove (clothing), Detach (objects) or
+  Take off / Detach (both). A selection mixing worn and unworn items
+  offers Wear / Add for the unworn ones and Take off for the worn ones.
+  The outfit editor keeps one selected row.
 - `folders` / `folders-outfits`: the gallery or the list with outfit
   folders in My Outfits: "Beach" (one outfit and a "Night" subfolder with
   one), "Club" (two outfits) and an empty "Spring". The list shows them as
