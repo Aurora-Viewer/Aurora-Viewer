@@ -1046,6 +1046,11 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
         validate(&crate::contact_shadows::shader_source(192, 13));
         let (count, hard) = crate::contact_shadows::samples(100.0);
         validate(&crate::contact_shadows::shader_source(count, hard));
+        // the diagnostic variants (AURORA_CONTACT_VARIANT)
+        use crate::contact_shadows::{Variant, variant_source};
+        for v in [Variant::NoEarlyOut, Variant::NoShared, Variant::Short] {
+            validate(&variant_source(v));
+        }
     }
 
     #[test]

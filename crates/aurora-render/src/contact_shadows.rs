@@ -340,6 +340,92 @@ impl Override {
     }
 }
 
+/// `AURORA_CONTACT_VARIANT`: a diagnostic of the GPU hangs (device lost)
+/// some AMD RX 9070 XT cards had as soon as the pass ran, each variant
+/// without one construct of the window's shader (`variant_source`), to find
+/// the one the driver does not take. The photo's pipelines stay Bend's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Variant {
+    /// The shader as it is.
+    Bend,
+    /// No early exit of an all-sky wavefront through `workgroupUniformLoad`:
+    /// every wavefront goes on to the barrier. Same mask.
+    NoEarlyOut,
+    /// No workgroup memory and no barrier: each thread reads from the
+    /// texture what the others would have shared. Same mask, slower.
+    NoShared,
+    /// 16 samples per pixel instead of 60 (smaller unrolled loops): the
+    /// shadows are about four times shorter.
+    Short,
+    /// No dispatch of the shader at all (the mask stays cleared, then
+    /// filtered): no contact shadow.
+    Skip,
+}
+
+impl Variant {
+    pub(crate) fn parse(v: Option<&str>) -> Self {
+        match v.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            Some("no-early-out") => Variant::NoEarlyOut,
+            Some("no-shared") => Variant::NoShared,
+            Some("short") => Variant::Short,
+            Some("skip") => Variant::Skip,
+            _ => Variant::Bend,
+        }
+    }
+
+    pub(crate) fn from_env() -> Self {
+        static VARIANT: std::sync::OnceLock<Variant> = std::sync::OnceLock::new();
+        *VARIANT.get_or_init(|| {
+            let v = Variant::parse(std::env::var("AURORA_CONTACT_VARIANT").ok().as_deref());
+            if v != Variant::Bend {
+                log::info!("contact shadows: diagnostic variant {v:?} (AURORA_CONTACT_VARIANT)");
+            }
+            v
+        })
+    }
+}
+
+/// The window's shader for `variant`: Bend's as it is, or without one of
+/// its constructs. Each rewrite panics when its text is not found, so a
+/// change to the shader cannot leave a variant silently equal to Bend's
+/// (the tests build every one).
+pub(crate) fn variant_source(variant: Variant) -> String {
+    let bend = include_str!("shaders/contact_shadows.wgsl");
+    let lf = || bend.replace("\r\n", "\n");
+    let cut = |src: &mut String, from: &str, to: &str, with: &str| {
+        let start = src.find(from).unwrap_or_else(|| panic!("contact shadows variant: no `{from}`"));
+        let len = src[start..]
+            .find(to)
+            .unwrap_or_else(|| panic!("contact shadows variant: no `{to}`"))
+            + to.len();
+        src.replace_range(start..start + len, with);
+    };
+    match variant {
+        Variant::Bend | Variant::Skip => bend.to_owned(),
+        Variant::Short => shader_source(16, 1),
+        Variant::NoEarlyOut => {
+            let mut src = lf();
+            cut(&mut src, "    if (workgroupUniformLoad(&any_live) == 0u) {", "    }\n", "");
+            src
+        }
+        Variant::NoShared => {
+            let mut src = lf();
+            cut(&mut src, "var<workgroup> depth_data", "var<workgroup> any_live: u32;\n", "");
+            cut(
+                &mut src,
+                "    // ---- early out of a wavefront",
+                "    if (skip_pixel) {\n        return;\n    }\n",
+                "    let skip_pixel = sampling_depth[0] >= NEAR_DEPTH || sampling_depth[0] <= FAR_DEPTH;\n    if (skip_pixel) {\n        return;\n    }\n    let wave = Wave(start_xy, end_xy, xy_delta, x_axis_major, reverse_direction, major_axis_start, ma_light_frac, direction, z_sign);\n",
+            );
+            let reads = src.matches("depth_data[sample_index + i]").count();
+            assert_eq!(reads, 3, "contact shadows variant: the shared reads");
+            src = src.replace("depth_data[sample_index + i]", "stored_depth(wave, sample_index + i)");
+            src.push_str(&include_str!("shaders/contact_shadows_no_shared.wgsl").replace("\r\n", "\n"));
+            src
+        }
+    }
+}
+
 /// Must match `Params` in contact_shadows.wgsl.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -373,6 +459,8 @@ pub(crate) struct ContactShadows {
     /// This frame's dispatches (`write`, then `encode`).
     list: DispatchList,
     filter: Filter,
+    /// `AURORA_CONTACT_VARIANT`: `Skip` dispatches no wavefront.
+    variant: Variant,
 }
 
 /// The softening of the mask before the shading reads it
@@ -462,6 +550,9 @@ pub(crate) struct Targets {
     /// The shadow in `.r`, 0 lit, 1 in contact shadow, softened; read by the
     /// shading.
     pub result: wgpu::TextureView,
+    /// The pass's mask before the filter (the variants' test).
+    #[cfg(test)]
+    raw: wgpu::TextureView,
 }
 
 const RESULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -479,9 +570,14 @@ impl Targets {
 
 impl ContactShadows {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
+        Self::with_variant(device, Variant::from_env())
+    }
+
+    /// [`Self::new`] with the window's shader of `variant`.
+    pub(crate) fn with_variant(device: &wgpu::Device, variant: Variant) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("contact shadows"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/contact_shadows.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(variant_source(variant).into()),
         });
         let stride = std::mem::size_of::<ParamsU>().next_multiple_of(device.limits().min_uniform_buffer_offset_alignment as usize) as u64;
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -553,6 +649,7 @@ impl ContactShadows {
             stride,
             list: DispatchList::default(),
             filter,
+            variant,
         }
     }
 
@@ -606,7 +703,8 @@ impl ContactShadows {
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format: RESULT_FORMAT,
-                    usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+                    // copied out by the variants' test only
+                    usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
                     view_formats: &[],
                 })
                 .create_view(&wgpu::TextureViewDescriptor::default())
@@ -681,6 +779,8 @@ impl ContactShadows {
             depth_texture,
             depth: own_depth,
             result,
+            #[cfg(test)]
+            raw,
         }
     }
 
@@ -733,7 +833,12 @@ impl ContactShadows {
             _ => &self.pipeline,
         };
         pass.set_pipeline(pipeline);
-        for (i, d) in self.list.dispatches().iter().enumerate() {
+        let list = if self.variant == Variant::Skip {
+            &[][..]
+        } else {
+            self.list.dispatches()
+        };
+        for (i, d) in list.iter().enumerate() {
             pass.set_bind_group(0, group, &[(i as u64 * self.stride) as u32]);
             pass.dispatch_workgroups(d.wave_count[0] as u32, d.wave_count[1] as u32, d.wave_count[2] as u32);
         }
@@ -937,5 +1042,203 @@ mod tests {
         for line in ["const SAMPLE_COUNT: i32 = 60;", "const READ_COUNT: i32 = 2;"] {
             assert!(!photo.contains(line), "{line}");
         }
+    }
+
+    #[test]
+    fn the_diagnostic_variant_comes_from_its_name() {
+        assert_eq!(Variant::parse(None), Variant::Bend);
+        assert_eq!(Variant::parse(Some("")), Variant::Bend);
+        assert_eq!(Variant::parse(Some("bend")), Variant::Bend);
+        assert_eq!(Variant::parse(Some("whatever")), Variant::Bend);
+        assert_eq!(Variant::parse(Some("no-early-out")), Variant::NoEarlyOut);
+        assert_eq!(Variant::parse(Some(" No-Shared ")), Variant::NoShared);
+        assert_eq!(Variant::parse(Some("short")), Variant::Short);
+        assert_eq!(Variant::parse(Some("SKIP")), Variant::Skip);
+    }
+
+    /// Each variant drops what it says and only that (the shaders' own
+    /// validity: `contact_shadows_shader_is_valid` in lib.rs).
+    #[test]
+    fn each_variant_drops_its_construct() {
+        let bend = include_str!("shaders/contact_shadows.wgsl");
+        assert_eq!(variant_source(Variant::Bend), bend);
+        assert_eq!(variant_source(Variant::Skip), bend);
+        let no_exit = variant_source(Variant::NoEarlyOut);
+        assert!(!no_exit.contains("workgroupUniformLoad") && no_exit.contains("workgroupBarrier()"));
+        let no_shared = variant_source(Variant::NoShared);
+        for gone in ["var<workgroup>", "workgroupBarrier", "workgroupUniformLoad", "depth_data"] {
+            assert!(!no_shared.contains(gone), "{gone}");
+        }
+        assert_eq!(no_shared.matches("stored_depth(wave, sample_index + i)").count(), 3);
+        assert!(variant_source(Variant::Short).contains("const SAMPLE_COUNT: i32 = 16;"));
+    }
+
+    /// The mask each variant draws over a ground with a box on it, read
+    /// back: `no-early-out` and `no-shared` must draw Bend's exactly, or
+    /// the tester's answers would compare different work.
+    #[test]
+    #[ignore = "requires a GPU"]
+    fn the_variants_that_keep_the_image_draw_bends_mask() {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("device");
+        let (w, h) = (320u32, 192u32);
+        let format = wgpu::TextureFormat::Depth32Float;
+        let depth_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("test depth"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        // reversed depth drawn by a full-screen triangle (a depth texture
+        // takes no copy): a ground rising towards the camera, a box nearer,
+        // sky along the top
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("test depth"),
+            source: wgpu::ShaderSource::Wgsl(
+                "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+                    let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+                    return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
+                }
+                @fragment fn fs(@builtin(position) pos: vec4<f32>) -> @builtin(frag_depth) f32 {
+                    let ground = 0.0005 * (pos.y + 96.0);
+                    let in_box = pos.x >= 120.0 && pos.x < 170.0 && pos.y >= 90.0 && pos.y < 130.0;
+                    return select(select(ground, ground * 1.02, in_box), 0.0, pos.y < 20.0);
+                }"
+                .into(),
+            ),
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("test depth"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: Default::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("test depth"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.draw(0..3, 0..1);
+        }
+        queue.submit([encoder.finish()]);
+        // the sun ahead and high, its point on screen above the image
+        let light = [0.2, 1.6, 0.0, 0.8];
+        let mask = |variant: Variant| -> Vec<u8> {
+            let mut cs = ContactShadows::with_variant(&device, variant);
+            let t = cs.targets(&device, &depth_view, format, w, h);
+            cs.write(&device, &queue, &t, light, 0.1, 1.0);
+            let mut encoder = device.create_command_encoder(&Default::default());
+            cs.encode(&mut encoder, &t, false);
+            let row = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: (row * h) as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            encoder.copy_texture_to_buffer(
+                t.raw.texture().as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(row),
+                        rows_per_image: Some(h),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
+            queue.submit([encoder.finish()]);
+            buffer.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("map"));
+            device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+            let data = buffer.slice(..).get_mapped_range().expect("mapped");
+            data.chunks(row as usize)
+                .flat_map(|r| r[..(w * 4) as usize].chunks(4).map(|p| p[0]))
+                .collect()
+        };
+        let bend = mask(Variant::Bend);
+        let shadowed = bend.iter().filter(|&&v| v > 128).count();
+        assert!(shadowed > 50 && shadowed < bend.len() / 2, "a shadow to compare: {shadowed} pixels");
+        // the pixels two wavefronts write (where Bend's dispatches meet) take
+        // whichever lands last: only the others are compared
+        let mut writes = vec![0u8; (w * h) as usize];
+        let list = build_dispatch_list(light, [w as i32, h as i32], [0, 0], [w as i32, h as i32], WAVE_SIZE);
+        written_pixels(&list, WAVE_SIZE, |x, y| {
+            if x >= 0 && y >= 0 && x < w as i32 && y < h as i32 {
+                writes[(y * w as i32 + x) as usize] += 1;
+            }
+        });
+        let once = writes.iter().filter(|&&n| n == 1).count();
+        assert!(once > writes.len() * 3 / 4, "{once} pixels written once");
+        let differ = |other: &[u8]| -> Vec<(usize, u8, u8)> {
+            bend.iter()
+                .zip(other)
+                .enumerate()
+                .filter(|(i, (a, b))| a != b && writes[*i] == 1)
+                .map(|(i, (a, b))| (i, *a, *b))
+                .collect()
+        };
+        let again = differ(&mask(Variant::Bend));
+        assert!(
+            again.is_empty(),
+            "Bend twice: {} pixels differ, {:?}",
+            again.len(),
+            &again[..again.len().min(8)]
+        );
+        for variant in [Variant::NoEarlyOut, Variant::NoShared] {
+            let d = differ(&mask(variant));
+            assert!(d.is_empty(), "{variant:?}: {} pixels differ, {:?}", d.len(), &d[..d.len().min(8)]);
+        }
+        assert!(mask(Variant::Skip).iter().all(|&v| v == 0), "skip: nothing");
     }
 }
