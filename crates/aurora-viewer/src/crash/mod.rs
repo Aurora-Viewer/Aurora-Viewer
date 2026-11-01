@@ -428,6 +428,11 @@ fn recover_in(root: &Path, mut show: impl FnMut(&Path)) {
             .create_new(true)
             .open(dir.join("recovery-attempted"))
             .is_ok()
+            // A session the system cannot tell from a live one (written on
+            // Linux before its start time was recorded) is kept, not shown:
+            // a window for each of those older sessions at once would report
+            // what may only have been a viewer killed or still running.
+            && native::identifies(record.process_started)
         {
             // Its watcher died with it: nobody marked it at its end.
             note_gpu_trouble(&dir);
@@ -662,38 +667,42 @@ mod tests {
         std::fs::remove_dir_all(elsewhere).unwrap();
     }
 
-    /// A session whose watcher never started stays behind: the next launch
-    /// removes it after a normal close and reports it once after a crash.
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
+    fn test_session(root: &Path, pid: u32, process_started: u64, markers: &[&str]) -> PathBuf {
+        let dir = root.join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir(&dir).unwrap();
+        let record = Record {
+            schema: 1,
+            pid,
+            process_started,
+            started_unix: 456,
+            version: "0.4.0".into(),
+            commit: "abcdef".into(),
+            profile: "debug".into(),
+            language: "en".into(),
+            font: "Inter".into(),
+            font_scale: 1.0,
+            theme: Default::default(),
+            log_path: dir.join("viewer.log"),
+            demo: true,
+            os: String::new(),
+            crash_reports: Default::default(),
+        };
+        save(&dir, &record).unwrap();
+        for marker in markers {
+            std::fs::write(dir.join(marker), []).unwrap();
+        }
+        dir
+    }
+
+    /// A session whose watcher never started (on Linux there is none) stays
+    /// behind: the next launch removes it after a normal close and reports
+    /// it once after a crash.
+    #[cfg(any(windows, target_os = "linux"))]
     #[test]
     fn the_next_launch_clears_closed_sessions_and_reports_crashed_ones_once() {
         let root = scratch_root();
-        let session = |pid: u32, process_started: u64, markers: &[&str]| {
-            let dir = root.join(uuid::Uuid::new_v4().to_string());
-            std::fs::create_dir(&dir).unwrap();
-            let record = Record {
-                schema: 1,
-                pid,
-                process_started,
-                started_unix: 456,
-                version: "0.4.0".into(),
-                commit: "abcdef".into(),
-                profile: "debug".into(),
-                language: "en".into(),
-                font: "Inter".into(),
-                font_scale: 1.0,
-                theme: Default::default(),
-                log_path: dir.join("viewer.log"),
-                demo: true,
-                os: String::new(),
-                crash_reports: Default::default(),
-            };
-            save(&dir, &record).unwrap();
-            for marker in markers {
-                std::fs::write(dir.join(marker), []).unwrap();
-            }
-            dir
-        };
+        let session = |pid: u32, process_started: u64, markers: &[&str]| test_session(&root, pid, process_started, markers);
         // No process started at instant 1: these viewers have stopped.
         let closed = session(std::process::id(), 1, &["normal"]);
         let failed = session(std::process::id(), 1, &["normal", "failed"]);
@@ -714,6 +723,28 @@ mod tests {
         shown.clear();
         recover_in(&root, |dir| shown.push(dir.to_owned()));
         assert!(shown.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Sessions written on Linux before the start time was recorded: the
+    /// ones closed normally are removed, the others kept without a window,
+    /// and one whose PID still runs is left alone.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sessions_without_a_start_time_are_cleared_but_never_reported() {
+        let root = scratch_root();
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead = child.id();
+        child.wait().unwrap();
+        let closed = test_session(&root, dead, 0, &["normal"]);
+        let killed = test_session(&root, dead, 0, &[]);
+        let running = test_session(&root, std::process::id(), 0, &[]);
+        let mut shown = Vec::new();
+        recover_in(&root, |dir| shown.push(dir.to_owned()));
+        assert!(shown.is_empty(), "{shown:?}");
+        assert!(!closed.exists());
+        assert!(killed.join("recovery-attempted").exists());
+        assert!(!running.join("recovery-attempted").exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 
