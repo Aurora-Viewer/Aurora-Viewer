@@ -29,7 +29,8 @@
 //!
 //! With the depth, a click asks what the next frame draws under its pixel
 //! (`Renderer::request_drawn`): the object of a rigged mesh, which only the
-//! GPU poses, is designated from that answer (scene/drawn.rs). Camera picks
+//! GPU poses, a worn mesh, and for a left click a worn prim with an action,
+//! are designated from that answer (scene/drawn.rs). Camera picks
 //! reject transparent texture holes unless the transparency overlay shows
 //! their surface; interactions retain invisible Blend surfaces. The answer
 //! comes a frame after the depth.

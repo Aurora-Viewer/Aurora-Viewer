@@ -19,6 +19,13 @@ impl App {
     pub(super) fn world_click_demo_steps(&mut self) {
         let Some(spec) = mode().filter(|_| self.demo) else { return };
         let mode = spec.strip_suffix("-keep-camera").unwrap_or(spec);
+        // `-held`: the touch is held and the cursor slides over the
+        // attachment, as a script reading the touch position expects
+        // (LLToolGrabBase)
+        let (mode, held) = mode.strip_suffix("-held").map_or((mode, false), |m| (m, true));
+        // `-moving`: the wearer moves between the press and the GPU's
+        // answer, as an animated avatar does
+        let (mode, moving) = mode.strip_suffix("-moving").map_or((mode, false), |m| (m, true));
         let drag = mode.ends_with("-drag");
         if mode.starts_with("avatar") || spec.ends_with("-keep-camera") {
             // Camera comparisons need a stationary subject even when another
@@ -45,6 +52,32 @@ impl App {
                 self.settings.camera.click_avatar_keeps_camera = spec.ends_with("-keep-camera");
             }
             self.world_click_fixture(mode);
+            if moving
+                && let Some(o) = self
+                    .world
+                    .objects
+                    .index_of_uuid(&crate::demo::action_id(975))
+                    .and_then(|idx| self.world.objects.get_mut(idx))
+            {
+                // a small clicker, which a few frames of motion take off
+                // the cursor's ray
+                o.scale = Vec3::splat(0.1);
+            }
+        }
+        if moving && (701..=705).contains(&self.frame_count) {
+            let wearer = self
+                .world
+                .objects
+                .index_of_uuid(&crate::demo::action_id(975))
+                .and_then(|idx| self.world.objects.get(idx))
+                .and_then(|o| self.world.objects.parent_of(o));
+            if let Some(o) = wearer.and_then(|idx| self.world.objects.get_mut(idx)) {
+                o.position.x += 0.08;
+            }
+        }
+        if held && (710..=760).contains(&self.frame_count) {
+            self.cursor_pos.0 += 1.0;
+            self.cursor_pos.1 += 0.5;
         }
         if mode == "mouselook-touch" && self.frame_count == 690 {
             // a touchable panel right under the crosshair
@@ -144,14 +177,14 @@ impl App {
         if drag && (710..=760).contains(&self.frame_count) {
             self.camera_mouse_delta(6.0, 0.0);
         }
-        if self.frame_count == if drag { 761 } else { 701 } {
+        if self.frame_count == if drag || held { 761 } else { 701 } {
             self.mouse_input(MouseButton::Left, false, false);
             // Release modifiers before the deferred pick finishes: its
             // captured press must still choose the original gesture.
             self.ctrl = false;
             self.shift = false;
         }
-        if self.frame_count == if drag { 820 } else { 740 } {
+        if self.frame_count == if drag || held { 820 } else { 740 } {
             self.alt = false;
             self.ctrl = false;
             self.world_click_camera_note("after", spec);
