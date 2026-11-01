@@ -113,7 +113,9 @@ pub use bus::listen;
 #[cfg(target_os = "linux")]
 pub use bus::release;
 
-/// The pipe ends with its thread once the receiver is gone.
+/// Nothing to give back on the other systems. The Windows pipe still takes
+/// a link while the viewer closes: its thread only finds the receiver gone
+/// after reading it (TASKS.md, "later").
 #[cfg(not(target_os = "linux"))]
 pub fn release() {}
 
