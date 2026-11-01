@@ -487,9 +487,19 @@ impl Oit {
                 ),
             ],
         });
+        // The glow reads the lists in the pass that composites them, where
+        // the composite binds them read only: a read-write binding of the
+        // same buffer there would invalidate the whole pass (wgpu usage
+        // scopes), so the glow has read-only bindings of its own.
+        let read_only = buffer(B::Storage { read_only: true });
         let glow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("oit glow"),
-            entries: &[common[0], common[1], common[2], entry(24, frag, slots_texture())],
+            entries: &[
+                entry(25, frag, read_only),
+                entry(26, frag, read_only),
+                common[2],
+                entry(24, frag, slots_texture()),
+            ],
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("oit resolve"),
@@ -703,8 +713,8 @@ impl Oit {
             label: Some("oit glow"),
             layout: &self.shared.glow_layout,
             entries: &[
-                bind(20, heads.as_entire_binding()),
-                bind(21, nodes.as_entire_binding()),
+                bind(25, heads.as_entire_binding()),
+                bind(26, nodes.as_entire_binding()),
                 bind(22, self.params.as_entire_binding()),
                 bind(24, wgpu::BindingResource::TextureView(&slots_view)),
             ],

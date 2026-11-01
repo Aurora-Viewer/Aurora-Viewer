@@ -1642,6 +1642,10 @@ struct OitParams {
 // the slots: written by the capture, read by fs_glow_oit
 @group(3) @binding(23) var oit_slots_w: texture_storage_2d_array<rgba32uint, write>;
 @group(3) @binding(24) var oit_slots_r: texture_2d_array<u32>;
+// fs_glow_oit's read-only view of the heads and nodes: it runs in the pass
+// that composites the lists, which binds them read only (oit.rs)
+@group(3) @binding(25) var<storage, read> oit_heads_r: array<u32>;
+@group(3) @binding(26) var<storage, read> oit_nodes_r: array<vec4<u32>>;
 
 // The depth test runs before the shader where the GPU allows forcing it
 // (oit.rs `object_source` turns the marker below into
@@ -1704,9 +1708,9 @@ fn fs_glow_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_ma
     let px = vec2<u32>(in.clip.xy);
     var through = 1.0;
     let pixel = 1u + 2u * (px.y * oit_params.width + px.x);
-    let in_slots = min(atomicLoad(&oit_heads[pixel]), oit_params.slots);
+    let in_slots = min(oit_heads_r[pixel], oit_params.slots);
     var k = 0u;
-    var idx = atomicLoad(&oit_heads[pixel + 1u]);
+    var idx = oit_heads_r[pixel + 1u];
     var steps = 0u;
     loop {
         if (through <= 0.0) {
@@ -1721,7 +1725,7 @@ fn fs_glow_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_ma
             if (idx == 0u || steps >= oit_params.node_cap) {
                 break;
             }
-            n = oit_nodes[idx - 1u];
+            n = oit_nodes_r[idx - 1u];
             idx = n.w;
             steps += 1u;
         }
