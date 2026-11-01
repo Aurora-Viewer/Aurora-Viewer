@@ -119,6 +119,23 @@ pub(crate) fn quality(level: u8) -> Quality {
     }
 }
 
+/// From this many pixels (2560 x 1440) the occlusion is computed at half
+/// the scene's resolution at every level. At 3840 x 2054 ultra took 8.9 ms
+/// of a 16.7 ms frame at full resolution and 2.3 ms at half (RTX 5070,
+/// #1489): a half-resolution texel still covers less of the scene than a
+/// 1080p pixel, the accumulation spreads the samples over frames, and the
+/// depth-aware upsample (`upsample` in gtao.wgsl) keeps the occlusion from
+/// crossing silhouettes; the frames showed no difference but along them,
+/// where the bilinear stretch of low quality left a thin line.
+const HALF_RES_PIXELS: u64 = 2560 * 1440;
+
+/// The quality of `level` for a scene of `width` x `height`.
+pub(crate) fn quality_for(level: u8, width: u32, height: u32) -> Quality {
+    let mut q = quality(level);
+    q.half_res |= u64::from(width) * u64::from(height) >= HALF_RES_PIXELS;
+    q
+}
+
 /// `AURORA_AO`: the method forced for a comparison.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Override {
@@ -482,6 +499,8 @@ pub(crate) struct Gtao {
     main_bitmask: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     denoise_il: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     denoise_il_final: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
+    upsample: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
+    upsample_il: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     buffer: wgpu::Buffer,
 }
 
@@ -499,8 +518,10 @@ enum Blur {
 /// The screen-space indirect light's targets and bind groups.
 pub(crate) struct IndirectTargets {
     main: wgpu::BindGroup,
-    /// In order; the last one writes `result`.
+    /// In order; the last one writes `result` (at half resolution the
+    /// half-resolution light, which `upsample` takes to `result`).
     denoise: Vec<(wgpu::BindGroup, bool)>,
+    upsample: Option<wgpu::BindGroup>,
     /// The light (linear rgb, the units of the lit colour), sampled by the
     /// shading.
     pub result: wgpu::TextureView,
@@ -520,6 +541,11 @@ pub(crate) struct Targets {
     /// result, or after the accumulation into history target `i`.
     denoise: Vec<(wgpu::BindGroup, Blur)>,
     denoise_temporal: [Vec<(wgpu::BindGroup, Blur)>; 2],
+    /// At half resolution: the blur's last turn writes a half-resolution
+    /// result, which this takes to `result` at the scene's size.
+    upsample: Option<wgpu::BindGroup>,
+    /// The scene's size (`result`'s).
+    full: (u32, u32),
     history: History,
     /// This frame's history target, when it accumulates (set by `write`).
     accumulate: Option<usize>,
@@ -703,6 +729,26 @@ impl Gtao {
                     storage_entry(12, LIGHT_FORMAT),
                 ],
             ),
+            upsample: make(
+                "upsample",
+                &[
+                    uniform_entry(),
+                    texture_entry(1, wgpu::TextureSampleType::Depth),
+                    texture_entry(4, UNFILTERED),
+                    texture_entry(7, UNFILTERED),
+                    storage_entry(19, RESULT_FORMAT),
+                ],
+            ),
+            upsample_il: make(
+                "upsample_il",
+                &[
+                    uniform_entry(),
+                    texture_entry(1, wgpu::TextureSampleType::Depth),
+                    texture_entry(4, UNFILTERED),
+                    texture_entry(10, UNFILTERED),
+                    storage_entry(20, LIGHT_FORMAT),
+                ],
+            ),
             buffer: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("gtao params"),
                 size: std::mem::size_of::<GtaoU>() as u64,
@@ -724,8 +770,9 @@ impl Gtao {
         height: u32,
         level: u8,
     ) -> Targets {
-        let q = quality(level);
+        let q = quality_for(level, width, height);
         let (w, h) = target_size(width, height, q);
+        let full = (width.max(1), height.max(1));
         let storage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
         let texture = |label: &str, format, mips| {
             device.create_texture(&wgpu::TextureDescriptor {
@@ -769,7 +816,27 @@ impl Gtao {
             view(texture("gtao history depth b", META_FORMAT, 1)),
         ];
         let edges = view(texture("gtao edges", EDGES_FORMAT, 1));
-        let result = view(texture("gtao", RESULT_FORMAT, 1));
+        // the shading samples the result at the scene's size: at half
+        // resolution the blur ends in `low`, taken up by `upsample`
+        let full_texture = |label: &str, format| {
+            view(device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: full.0,
+                    height: full.1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: storage,
+                view_formats: &[],
+            }))
+        };
+        let result = full_texture("gtao", RESULT_FORMAT);
+        let low = q.half_res.then(|| view(texture("gtao half", RESULT_FORMAT, 1)));
+        let blurred = low.as_ref().unwrap_or(&result);
         // drawn by the depth prepass, at the window's size
         let normals = view(device.create_texture(&wgpu::TextureDescriptor {
             label: Some("gtao normals"),
@@ -834,7 +901,7 @@ impl Gtao {
                     let src = if i == 0 { first } else { work[(i + 1) % 2] };
                     let dst = work[i % 2];
                     let bg = match kind {
-                        Blur::Final => group(&self.denoise_final.1, &[(7, src), (8, &edges), (9, &result)]),
+                        Blur::Final => group(&self.denoise_final.1, &[(7, src), (8, &edges), (9, blurred)]),
                         Blur::Both => group(&self.denoise.1, &[(5, dst), (7, src), (8, &edges)]),
                         Blur::Bent => group(&self.denoise_bent.1, &[(5, dst), (7, src), (8, &edges)]),
                     };
@@ -849,7 +916,9 @@ impl Gtao {
                 view(texture("gtao light a", LIGHT_FORMAT, 1)),
                 view(texture("gtao light b", LIGHT_FORMAT, 1)),
             ];
-            let result = view(texture("gtao light", LIGHT_FORMAT, 1));
+            let result = full_texture("gtao light", LIGHT_FORMAT);
+            let low = q.half_res.then(|| view(texture("gtao light half", LIGHT_FORMAT, 1)));
+            let blurred = low.as_ref().unwrap_or(&result);
             let main = group(
                 &self.main_bitmask.1,
                 &[(4, &all_mips), (11, &normals), (13, scene), (14, &light[0])],
@@ -861,14 +930,25 @@ impl Gtao {
                 .map(|i| {
                     let (src, dst) = (&light[i as usize % 2], &light[(i as usize + 1) % 2]);
                     if i + 1 == il_passes {
-                        (group(&self.denoise_il_final.1, &[(8, &edges), (10, src), (12, &result)]), true)
+                        (group(&self.denoise_il_final.1, &[(8, &edges), (10, src), (12, blurred)]), true)
                     } else {
                         (group(&self.denoise_il.1, &[(8, &edges), (10, src), (14, dst)]), false)
                     }
                 })
                 .collect();
-            IndirectTargets { main, denoise, result }
+            let upsample = low
+                .as_ref()
+                .map(|low| group(&self.upsample_il.1, &[(1, depth), (4, &all_mips), (10, low), (20, &result)]));
+            IndirectTargets {
+                main,
+                denoise,
+                upsample,
+                result,
+            }
         });
+        let upsample = low
+            .as_ref()
+            .map(|low| group(&self.upsample.1, &[(1, depth), (4, &all_mips), (7, low), (19, &result)]));
         let mips = (0..mip_count).map(|l| ((w >> l).max(1), (h >> l).max(1))).collect();
         Targets {
             quality: q,
@@ -880,6 +960,8 @@ impl Gtao {
             temporal,
             denoise,
             denoise_temporal,
+            upsample,
+            full,
             history: History::default(),
             accumulate: None,
             result,
@@ -964,6 +1046,17 @@ impl Gtao {
             pass.set_bind_group(0, bg, &[]);
             dispatch(&mut pass, groups(t.size));
         }
+        // half resolution: back to the scene's size, along the depth
+        if let Some(bg) = &t.upsample {
+            pass.set_pipeline(&self.upsample.0);
+            pass.set_bind_group(0, bg, &[]);
+            dispatch(&mut pass, groups(t.full));
+        }
+        if let Some(bg) = il.and_then(|il| il.upsample.as_ref()) {
+            pass.set_pipeline(&self.upsample_il.0);
+            pass.set_bind_group(0, bg, &[]);
+            dispatch(&mut pass, groups(t.full));
+        }
     }
 }
 
@@ -983,6 +1076,25 @@ mod tests {
         assert_eq!((q[3].slices, q[3].steps), (9, 3));
         // anything above ultra is ultra
         assert_eq!(quality(7), q[3]);
+    }
+
+    #[test]
+    fn large_scenes_compute_every_level_at_half_resolution() {
+        for level in 0..4 {
+            // 1080p and a 1440p window short of its bars: as the level says
+            assert_eq!(quality_for(level, 1920, 1080), quality(level));
+            assert_eq!(quality_for(level, 2560, 1369), quality(level));
+            // 1440p, 4K and a 150 % 4K window: half, the rest unchanged
+            for (w, h) in [(2560, 1440), (3840, 2054), (5760, 3081)] {
+                let q = quality_for(level, w, h);
+                assert!(q.half_res, "level {level} at {w} x {h}");
+                assert_eq!((q.slices, q.steps, q.denoise_passes), {
+                    let l = quality(level);
+                    (l.slices, l.steps, l.denoise_passes)
+                });
+            }
+        }
+        assert_eq!(target_size(3840, 2054, quality_for(3, 3840, 2054)), (1920, 1027));
     }
 
     #[test]
