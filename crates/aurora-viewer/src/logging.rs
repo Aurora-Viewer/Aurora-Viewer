@@ -48,14 +48,7 @@ pub fn open_logs_dir() {
 
 /// Show a directory in the system file manager (also the transcripts folder).
 pub fn open_directory(path: &Path) -> std::io::Result<()> {
-    let program = if cfg!(windows) {
-        "explorer"
-    } else if cfg!(target_os = "macos") {
-        "open"
-    } else {
-        "xdg-open"
-    };
-    std::process::Command::new(program).arg(path).spawn().map(|_| ())
+    crate::open_path::open(path)
 }
 
 /// Mask the id of capability URLs (".../cap/<uuid>").
