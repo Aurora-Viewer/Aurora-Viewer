@@ -142,7 +142,10 @@ fn toolbar_layout_and_lock_are_shared_across_accounts_after_restart() {
 #[test]
 fn water_mode_toolbar_buttons_are_opt_in_and_preserve_saved_placements() {
     let layout = Layout::default();
-    let mut toolbar = ToolbarSettings::default();
+    let mut toolbar = ToolbarSettings {
+        vr_button_migrated: true,
+        ..Default::default()
+    };
     let mut state = ToolbarUi::default();
     for command in ["movement", "water_walk"] {
         assert!(toolbar.location(command, &layout).is_none(), "absent from defaults: {command}");
@@ -210,7 +213,11 @@ fn toolbar_migration_uses_the_first_connected_accounts_layout_not_another_accoun
     let common = restored.toolbar.as_ref().expect("migrated toolbar");
     assert_eq!(
         common.buttons(&layout()).iter().map(|b| b.command.as_str()).collect::<Vec<_>>(),
-        ["inventory"]
+        if cfg!(any(target_os = "linux", target_os = "windows", target_os = "macos")) {
+            vec!["inventory", "vr_view"]
+        } else {
+            vec!["inventory"]
+        }
     );
     assert!(common.locked);
     assert!(!restored.migrate_toolbar(first));
@@ -722,19 +729,19 @@ fn toolbar_sanitize_keeps_each_command_once_over_the_three_toolbars() {
     assert_eq!(commands(&settings.right), ["search"]);
 }
 
-/// The window lists Firestorm's toybox (its 66 commands) and Aurora's own
-/// three, each once, with an embedded icon and a label in both languages;
+/// The window lists the Legacy Viewer commands and Aurora additions, each
+/// once, with an embedded icon and localized labels;
 /// what Aurora runs does something, what it cannot run yet does nothing.
 #[test]
 fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
-    assert_eq!(all.len(), 73);
-    assert_eq!(COMMANDS.len(), 73);
+    assert_eq!(all.len(), 74);
+    assert_eq!(COMMANDS.len(), 74);
     let mut ids: Vec<_> = COMMANDS.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     ids.dedup();
-    assert_eq!(ids.len(), 73, "each command once");
+    assert_eq!(ids.len(), 74, "each command once");
     assert!(ready("texture_library"));
     assert!(ready("movelock") && ready("move_lock") && ready("movement") && ready("water_walk"));
     assert_eq!(catalogue::find("move_lock").map(|c| c.id), Some("movelock"));
@@ -840,4 +847,49 @@ fn toolbar_drop_anywhere_on_the_window_removes_the_button() {
         assert_eq!(bench.saves, 1, "islands {islands}");
         assert_eq!(bench.settings.location("people", &layout()), None);
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+#[test]
+fn vr_toolbar_migration_preserves_customization_and_manual_removal() {
+    let mut settings = ToolbarSettings {
+        buttons: Some(vec![button("inventory"), button("view"), button("preferences")]),
+        ..Default::default()
+    };
+    assert!(settings.migrate_vr_button());
+    let commands: Vec<_> = settings
+        .buttons
+        .as_ref()
+        .expect("custom toolbar")
+        .iter()
+        .map(|b| b.command.as_str())
+        .collect();
+    assert_eq!(commands, ["inventory", "view", "vr_view", "preferences"]);
+    settings
+        .buttons
+        .as_mut()
+        .expect("custom toolbar")
+        .retain(|b| b.command != "vr_view");
+    assert!(!settings.migrate_vr_button());
+    assert!(
+        !settings
+            .buttons
+            .as_ref()
+            .expect("custom toolbar")
+            .iter()
+            .any(|b| b.command == "vr_view")
+    );
+    let mut empty = ToolbarSettings {
+        buttons: Some(vec![]),
+        ..Default::default()
+    };
+    empty.migrate_vr_button();
+    assert!(empty.buttons.expect("explicit empty toolbar").is_empty());
+    let mut side = ToolbarSettings {
+        buttons: Some(vec![button("view")]),
+        left: vec![button("vr_view")],
+        ..Default::default()
+    };
+    side.migrate_vr_button();
+    assert_eq!(side.buttons.expect("custom toolbar").len(), 1);
 }

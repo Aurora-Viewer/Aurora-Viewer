@@ -243,6 +243,43 @@ pub fn view(p: &Palette) -> View {
 mod tests {
     use super::*;
     #[test]
+    fn pbr_bom_previews_use_the_coloured_reference_images_for_every_channel() {
+        let _inline = crate::scene::jobs::execute_inline_on_this_thread();
+        let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        let mut scene = Scene::new(std::env::temp_dir(), avatars);
+        let maps = [0, 1, 2, 8].map(|slot| crate::scene::avatar::BAKES[slot].2);
+        let colours = [[240, 80, 20, 255], [30, 190, 170, 255], [150, 110, 235, 255], [220, 180, 40, 255]];
+        for (id, rgba) in maps.into_iter().zip(colours) {
+            scene.textures.set_local_pixels(
+                id,
+                Arc::new(Image {
+                    size: [1, 1],
+                    rgba: Vec::from(rgba).into(),
+                }),
+            );
+        }
+        let material = Arc::new(aurora_assets::PbrMaterial {
+            base_color_texture: Some(maps[0]),
+            normal_texture: Some(maps[1]),
+            metallic_roughness_texture: Some(maps[2]),
+            emissive_texture: Some(maps[3]),
+            ..Default::default()
+        });
+        let ctx = egui::Context::default();
+        let mut previews = Previews::default();
+        let mut wanted = HashSet::new();
+        let asset = Uuid::from_u128(1793);
+        previews.material_model(asset, material, MaterialShape::Sphere, &mut scene, &mut wanted, &ctx);
+        previews.poll();
+        let model = previews.entries[&asset].model.as_ref().unwrap();
+        for (slot, rgba) in colours.iter().enumerate() {
+            assert_eq!(model.parts[0].textures[slot].as_ref().unwrap().rgba.as_ref(), rgba);
+            assert_eq!(previews.thumbnails(asset)[slot].as_ref().unwrap().0, maps[slot]);
+        }
+        assert_eq!(wanted, HashSet::from(maps));
+    }
+
+    #[test]
     fn material_shape_changes_rebuild_geometry_and_keep_maps_and_uvs_on_every_face() {
         let _inline = crate::scene::jobs::execute_inline_on_this_thread();
         let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());

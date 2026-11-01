@@ -57,7 +57,8 @@ jobs:
         shell: pwsh
         run: |
           if ($env:TAG -ne 'dry-run') { $env:AURORA_VERSION_TAG = $env:TAG }
-          cargo build --release --locked -p aurora-viewer
+          # the OpenXR loader built in: the published exe needs nothing beside it
+          cargo build --release --locked -p aurora-viewer --features xr-static-loader
       - name: Verify compiled version
         if: env.TAG != 'dry-run'
         shell: pwsh

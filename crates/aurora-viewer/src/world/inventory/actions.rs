@@ -53,16 +53,25 @@ pub fn library(inv: &Inventory, id: Uuid) -> bool {
     inv.folders.get(&id).is_some_and(|f| f.library) || parent(inv, id).and_then(|p| inv.folders.get(&p)).is_some_and(|f| f.library)
 }
 pub fn mutable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
+    mutable_content(inv, id, protected, system(inv, 50))
+}
+fn mutable_content(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, inbox: Option<Uuid>) -> bool {
     if !(inv.items.contains_key(&id) || inv.folders.contains_key(&id)) || library(inv, id) {
         return false;
     }
-    // Not in the current outfit, Received Items nor a locked folder: one
-    // walk up the parents answers all three (asked per selected entry).
-    let (cof, inbox) = (system(inv, 46), system(inv, 50));
+    // One parent walk checks the current outfit, the optional read-only
+    // inbox and locked folders (asked per selected entry).
+    let cof = system(inv, 46);
     !ancestors(inv, id).any(|a| Some(a) == cof || Some(a) == inbox || protected.contains(&a))
 }
 pub fn movable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
     mutable(inv, id, protected) && inv.folders.get(&id).is_none_or(|f| matches!(f.info.type_default, -1 | 47 | 54))
+}
+/// get_is_item_removable / get_is_category_removable
+/// (indra/newview/llinventoryfunctions.cpp): Received contents may go to
+/// Trash; their system inbox itself stays protected, like other system folders.
+pub fn removable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
+    mutable_content(inv, id, protected, None) && inv.folders.get(&id).is_none_or(|f| matches!(f.info.type_default, -1 | 47 | 54))
 }
 /// The viewer support folders the Legacy Viewer keeps in place at the root
 /// (FIRE-28977 in LLFolderBridge::isItemMovable, llinventorybridge.cpp):
@@ -257,7 +266,7 @@ pub fn move_selection(
     }
     for id in roots(inv, ids) {
         let allowed = if to_trash {
-            movable(inv, id, protected)
+            removable(inv, id, protected)
         } else {
             relocatable(inv, id, protected)
         };

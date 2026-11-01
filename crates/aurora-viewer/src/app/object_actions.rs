@@ -66,7 +66,7 @@ impl App {
             Action::Play => self.media.toggle_parcel(&self.world, &self.settings.media),
             Action::OpenMedia => {
                 let face = shown
-                    .or_else(|| ray.and_then(|r| self.scene.touch_surface(&self.world, idx, r)))
+                    .or_else(|| ray.and_then(|r| self.scene.left_touch_surface(&self.world, idx, r)))
                     .map_or(-1, |s| s.face);
                 self.interactions.media_url = self.media.click_open_media(&self.world, idx, face, &self.settings.media);
             }
@@ -95,7 +95,7 @@ impl App {
                 // so dragging a child does not make a linked object jump.
                 let offset = rot.inverse() * (pos - clicked) / self.world.hud_scale(idx);
                 let surface = shown
-                    .or_else(|| ray.and_then(|r| self.scene.touch_surface(&self.world, idx, r)))
+                    .or_else(|| ray.and_then(|r| self.scene.left_touch_surface(&self.world, idx, r)))
                     .unwrap_or_default();
                 let physical = self
                     .world
@@ -150,7 +150,7 @@ impl App {
                     self.world
                         .objects
                         .index_of(&h.target.key)
-                        .and_then(|idx| self.scene.touch_surface(&self.world, idx, ray))
+                        .and_then(|idx| self.scene.left_touch_surface(&self.world, idx, ray))
                         .unwrap_or_default()
                 })
                 .unwrap_or(h.surface);
@@ -185,7 +185,7 @@ impl App {
         } else {
             self.scene
                 .object_cursor_ray(idx, self.cursor_pos, renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1))
-                .and_then(|ray| self.scene.touch_surface(&self.world, idx, ray))
+                .and_then(|ray| self.scene.left_touch_surface(&self.world, idx, ray))
                 .unwrap_or_default()
         };
         if self.cursor_pos == h.cursor && surface == h.surface {

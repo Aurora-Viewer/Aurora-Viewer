@@ -309,7 +309,7 @@ impl World {
         self.conversation_push(session, l, unread);
     }
 
-    fn session_system(&mut self, session: Uuid, text: impl Into<String>) {
+    pub(super) fn session_system(&mut self, session: Uuid, text: impl Into<String>) {
         self.session_push(
             session,
             line(String::new(), text.into(), ChatKind::System, Uuid::nil(), SystemTime::now()),
