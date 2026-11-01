@@ -1140,6 +1140,14 @@ pub struct Settings {
     /// pixel, so they stop shimmering as the camera moves. An Aurora
     /// improvement, on by default.
     pub specular_aa: bool,
+    /// The sky ambient keeps its colour at full strength (x 0.7), as the
+    /// first PBR release lit it (tag Second_Life_Release#843866d-DRTVWR-559),
+    /// instead of a softened ambient (pow 0.9, x 0.57) turned grey under
+    /// linear and HDR skies (Environment::with_colored_ambient): warm or
+    /// tinted skies colour the interiors again. Classic skies keep their
+    /// colour either way and only take the 0.7 curve, a little brighter. An
+    /// experimental setting, off by default.
+    pub colored_sky_ambient: bool,
     /// 0 Khronos PBR Neutral, 1 ACES (RenderTonemapType: ACES by default,
     /// like the Legacy Viewer)
     pub tonemapper: u8,
@@ -1913,6 +1921,7 @@ impl Default for Settings {
             antialiasing: 6,
             render_scale_percent: 100,
             specular_aa: true,
+            colored_sky_ambient: false,
             tonemapper: 1,
             tonemap_mix: TONEMAP_MIX,
             hdr_emissive: true,
