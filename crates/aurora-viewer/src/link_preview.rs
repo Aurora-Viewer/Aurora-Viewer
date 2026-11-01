@@ -783,6 +783,7 @@ async fn text_head(client: &reqwest::Client, url: &str, accept: &str, end: &str)
             .get(name)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|v| v.is_finite())
     };
     let exhausted = header("x-ratelimit-remaining").is_some_and(|left| left < 1.0);
     let pause = (exhausted || resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS).then(|| {
@@ -1328,6 +1329,48 @@ mod tests {
         // no head: never more than the limit
         let (page, pause) = get("c");
         assert_eq!(page.ok().map(|p| p.len()), Some(HEAD_BYTES));
+        assert_eq!(pause, None);
+        thread.join().unwrap();
+    }
+
+    #[test]
+    fn invalid_rate_limit_delays_fall_back_and_later_requests_complete() {
+        let cases = [
+            ("Retry-After: NaN", Duration::from_secs(60)),
+            ("Retry-After: inf", Duration::from_secs(60)),
+            ("Retry-After: -inf", Duration::from_secs(60)),
+            ("x-ratelimit-reset: NaN\r\nRetry-After: 7", Duration::from_secs(7)),
+            ("x-ratelimit-reset: inf\r\nRetry-After: 8", Duration::from_secs(8)),
+            ("Retry-After: invalid", Duration::from_secs(60)),
+            ("Retry-After: -2", Duration::from_secs(1)),
+            ("Retry-After: 999999999999999999999999", MAX_PAUSE),
+            ("Retry-After: 0.5", Duration::from_secs(1)),
+            ("Retry-After: 1.5", Duration::from_millis(1500)),
+        ];
+        let mut answers: Vec<_> = cases
+            .iter()
+            .map(|(header, _)| {
+                format!("HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n{header}\r\n\r\n").into_bytes()
+            })
+            .collect();
+        let head = "<html><head></head>";
+        answers.push(
+            format!(
+                "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{head}",
+                head.len()
+            )
+            .into_bytes(),
+        );
+        let (base, thread) = server(answers);
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let client = test_client();
+        for (index, (header, expected)) in cases.iter().enumerate() {
+            let (page, pause) = rt.block_on(text_head(&client, &format!("{base}/{index}"), "text/html", "</head>"));
+            assert_eq!(page.err(), Some(Failure::Unavailable), "{header}");
+            assert_eq!(pause, Some(*expected), "{header}");
+        }
+        let (page, pause) = rt.block_on(text_head(&client, &format!("{base}/valid"), "text/html", "</head>"));
+        assert_eq!(page.unwrap(), head);
         assert_eq!(pause, None);
         thread.join().unwrap();
     }

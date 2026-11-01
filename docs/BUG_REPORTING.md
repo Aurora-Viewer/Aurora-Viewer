@@ -89,7 +89,9 @@ What each part tells the one who fixes it:
   game capture), named from the viewer's fixed list only.
 - **Last state**: screen, frame rate, frame time, window size, graphics
   preset, memory, video memory used / budget, texture memory pressure,
-  objects, avatars, regions, as noted every 2 seconds.
+  objects, avatars, regions, as noted every 2 seconds, and the swapchain
+  recreations of the last 10 seconds (window resizes among them), frozen
+  when the graphics card is lost.
 - **Recent warnings and errors**: the last 20, as
   `-<seconds before the end> s | level | Rust module | kind`, repeats folded
   (`(x3)`); the messages themselves stay in the local log.

@@ -117,4 +117,12 @@ pub fn page(cx: &mut Cx) {
         }
         cx.track(&field!(received_items_since));
     });
+    cx.group(tr!("import-window-title"), |cx| {
+        cx.choice(
+            tr!("import-entry-point"),
+            tr!("import-entry-point-help"),
+            &field!(imports.icon_bar),
+            &[(false, tr!("import-entry-window"), false), (true, tr!("import-icon-bar"), false)],
+        );
+    });
 }

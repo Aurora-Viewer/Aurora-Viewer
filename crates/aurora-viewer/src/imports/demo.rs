@@ -128,7 +128,21 @@ pub(super) fn fixtures(root: &Path) -> Result<(), String> {
 }
 
 pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
-    let Ok(mode) = std::env::var("AURORA_DEMO_IMPORTS") else { return };
+    let Ok(mut mode) = std::env::var("AURORA_DEMO_IMPORTS") else {
+        return;
+    };
+    let type_windows = mode.starts_with("type-");
+    if type_windows {
+        mode = mode.trim_start_matches("type-").to_owned();
+        if mode == "windows" {
+            mode = "unified".into();
+        }
+    }
+    if mode == "icon-bar" {
+        imports.demo_mode = mode;
+        imports.launcher_open = true;
+        return;
+    }
     if matches!(mode.as_str(), "launcher" | "settings" | "permissions") {
         imports.demo_mode = mode.clone();
         imports.open = true;
@@ -145,16 +159,38 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
         | "material-maps"
         | "material-zoom"
         | "material-texture-zoom"
-        | "material-loading" => Choice::Material,
+        | "material-loading"
+        | "material-confirm" => Choice::Material,
         "mesh" | "mesh-low" | "mesh-error" | "mesh-physics" | "mesh-degenerate" | "mesh-options" | "mesh-zoom" | "mesh-normals"
         | "mesh-colors" | "mesh-avatar" | "mesh-avatar-rigged" | "mesh-journal" | "mesh-multiple" => Choice::Mesh,
         "animation" | "animation-own" | "animation-custom" => Choice::Animation,
-        "sound" | "sound-split" => Choice::Sound,
+        "sound" | "sound-split" | "sound-folder" | "sound-confirm" => Choice::Sound,
         mode if mode.starts_with("local") => Choice::Local,
         _ => Choice::Bulk,
     };
     imports.mesh_permission_denied = mode == "bulk-mesh-denied";
     let choice = imports.choice;
+    if type_windows {
+        imports.open = false;
+        imports.choice = Choice::Bulk;
+        imports.launcher_open = true;
+        let types: &[Choice] = if mode == "unified" {
+            &[Choice::Texture, Choice::Sound]
+        } else {
+            std::slice::from_ref(&choice)
+        };
+        for (index, choice) in types.iter().enumerate() {
+            imports.open_type_window(ctx, *choice);
+            if types.len() > 1 {
+                crate::ui::widgets::place_floater(
+                    ctx,
+                    choice.window_id(),
+                    egui::pos2(16.0 + index as f32 * 776.0, 112.0),
+                    egui::vec2(760.0, 780.0),
+                );
+            }
+        }
+    }
     if mode.starts_with("folders") {
         imports.folders.enabled = true;
         imports.tab = ui::Tab::Folder;
@@ -306,7 +342,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                             }
                             if matches!(
                                 mode.as_str(),
-                                "material-maps" | "material-zoom" | "material-texture-zoom" | "material-loading"
+                                "material-maps" | "material-zoom" | "material-texture-zoom" | "material-loading" | "material-confirm"
                             ) {
                                 for entry in &mut loaded {
                                     if let Some(Source::Material { images, .. }) = &mut entry.source {

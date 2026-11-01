@@ -182,6 +182,7 @@ fn unified_import_shortcut_opens_one_window_without_opening_a_native_picker() {
     assert!(f.imports.open);
     let (_, actions) = f.frame(Vec::new());
     assert!(!actions.iter().any(|a| matches!(a, Action::Files)));
+    let mut windows = std::collections::HashSet::new();
     for choice in [
         Choice::Texture,
         Choice::Sound,
@@ -191,10 +192,310 @@ fn unified_import_shortcut_opens_one_window_without_opening_a_native_picker() {
         Choice::Bulk,
         Choice::Local,
     ] {
-        assert_eq!(choice.window_id(), WINDOW);
+        assert!(windows.insert(choice.window_id()), "each type has independent geometry");
     }
+    assert_eq!(Choice::Bulk.window_id(), WINDOW);
     f.imports.toggle_window(&f.ctx);
     assert!(!f.imports.open);
+}
+
+fn click_launcher(f: &mut Fixture, choice: Choice) -> Vec<Action> {
+    f.settle();
+    let pos = f.ctx.data(|data| {
+        data.get_temp::<egui::Rect>(egui::Id::unique(("import_launcher_choice", choice as usize)))
+            .expect("launcher icon")
+            .center()
+    });
+    let mut actions = Vec::new();
+    for pressed in [true, false] {
+        actions.extend(
+            f.frame(vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ])
+            .1,
+        );
+    }
+    actions
+}
+
+#[test]
+fn import_icon_bar_preference_round_trips_and_toggles_independently_of_the_queue() {
+    let mut f = Fixture::new();
+    let defaults: Preferences = serde_json::from_str("{}").unwrap();
+    assert!(!defaults.icon_bar);
+    f.prefs.icon_bar = true;
+    let saved = serde_json::to_string(&f.prefs).unwrap();
+    f.prefs = serde_json::from_str(&saved).unwrap();
+    assert!(f.prefs.icon_bar);
+    let ids: Vec<_> = f.imports.entries.iter().map(|e| e.id).collect();
+    f.imports.open = false;
+    f.imports.toggle_import(&f.ctx, &f.prefs);
+    let (_, actions) = f.frame(Vec::new());
+    assert!(f.imports.launcher_open);
+    assert!(!f.imports.open);
+    assert!(actions.is_empty());
+    assert!(matches!(click_launcher(&mut f, Choice::Bulk).as_slice(), [Action::Folder]));
+    assert!(f.imports.open);
+    f.imports.toggle_import(&f.ctx, &f.prefs);
+    assert!(!f.imports.launcher_open);
+    assert!(f.imports.open);
+    assert_eq!(f.imports.entries.iter().map(|e| e.id).collect::<Vec<_>>(), ids);
+}
+
+#[test]
+fn unified_import_switch_updates_the_saved_entry_point_and_bar_without_changing_the_queue() {
+    let mut f = Fixture::new();
+    let output = f.settle();
+    let pos = text_position(&output, aurora_i18n::tr!("import-icon-bar")) + egui::vec2(5.0, 5.0);
+    for pressed in [true, false] {
+        let (_, actions) = f.frame(vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        assert!(actions.is_empty());
+    }
+    assert!(f.imports.launcher_open && f.imports.open);
+    assert!(f.prefs.icon_bar);
+    assert_eq!(f.imports.entries.len(), 2);
+    f.settle();
+    let mut first = None::<egui::Rect>;
+    for choice in [
+        Choice::Texture,
+        Choice::Sound,
+        Choice::Animation,
+        Choice::Material,
+        Choice::Mesh,
+        Choice::Bulk,
+        Choice::Local,
+    ] {
+        let rect = f.ctx.data(|data| {
+            data.get_temp::<egui::Rect>(egui::Id::unique(("import_launcher_choice", choice as usize)))
+                .unwrap()
+        });
+        if let Some(first) = first {
+            assert_eq!(rect.center().y, first.center().y, "all types share one row");
+            assert!(rect.left() > first.right());
+        } else {
+            first = Some(rect);
+        }
+    }
+    let output = f.settle();
+    let pos = text_position(&output, aurora_i18n::tr!("import-icon-bar")) + egui::vec2(5.0, 5.0);
+    for pressed in [true, false] {
+        let (_, actions) = f.frame(vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        assert!(actions.is_empty());
+    }
+    assert!(!f.prefs.icon_bar);
+    assert!(!f.imports.launcher_open);
+    assert!(f.imports.open);
+    assert_eq!(f.imports.entries.len(), 2);
+    f.imports.open = false;
+    f.imports.toggle_import(&f.ctx, &f.prefs);
+    assert!(f.imports.open && !f.imports.launcher_open, "off restores the window entry point");
+}
+
+#[test]
+fn import_icon_bar_reuses_typed_drafts_and_only_empty_types_request_a_filtered_picker() {
+    let mut f = Fixture::new();
+    f.imports.open = false;
+    f.imports.launcher_open = true;
+    let mesh = f.imports.entries[0].id;
+    assert!(click_launcher(&mut f, Choice::Mesh).is_empty());
+    assert!(!f.imports.open);
+    assert!(f.imports.window_open(Choice::Mesh));
+    f.imports.with_window(Choice::Mesh, |imports| {
+        assert_eq!(imports.active, Some(mesh));
+        assert_eq!(imports.visible_indices(), vec![0]);
+    });
+    assert!(f.imports.entries.iter().all(|e| e.selected));
+    for choice in [Choice::Sound, Choice::Animation, Choice::Material, Choice::Local] {
+        let actions = click_launcher(&mut f, choice);
+        assert!(matches!(actions.as_slice(), [Action::Choose(picked)] if *picked == choice));
+        assert!(!f.imports.open);
+        assert!(f.imports.window_open(choice));
+        assert!(f.imports.launcher_open);
+    }
+    assert!(click_launcher(&mut f, Choice::Texture).is_empty());
+    let texture = f.imports.entries[1].id;
+    f.imports.with_window(Choice::Texture, |imports| {
+        assert_eq!(imports.active, Some(texture));
+        assert_eq!(imports.visible_indices(), vec![1]);
+    });
+    assert!(f.imports.window_open(Choice::Mesh) && f.imports.window_open(Choice::Texture));
+    f.settle();
+    let mesh_rect = f
+        .ctx
+        .memory(|memory| memory.area_rect(egui::Id::unique(Choice::Mesh.window_id())))
+        .unwrap();
+    let texture_rect = f
+        .ctx
+        .memory(|memory| memory.area_rect(egui::Id::unique(Choice::Texture.window_id())))
+        .unwrap();
+    assert_ne!(mesh_rect, texture_rect);
+    assert!(matches!(click_launcher(&mut f, Choice::Bulk).as_slice(), [Action::Folder]));
+    assert!(f.imports.open);
+    assert_eq!(f.imports.visible_indices(), vec![0, 1]);
+    assert_eq!(f.imports.entries.len(), 2);
+}
+
+#[test]
+fn import_icon_bar_blocks_another_picker_while_loading_and_escape_keeps_drafts() {
+    let mut f = Fixture::new();
+    f.imports.open = false;
+    f.imports.launcher_open = true;
+    f.imports.pending_files = Some(Uuid::new_v4());
+    assert!(click_launcher(&mut f, Choice::Sound).is_empty());
+    assert!(!f.imports.open);
+    f.imports.windows[Choice::Sound.window_index().unwrap()].open = false;
+    f.frame(vec![egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }]);
+    assert!(!f.imports.launcher_open);
+    assert_eq!(f.imports.entries.len(), 2);
+    assert!(f.imports.pending_files.is_some());
+}
+
+#[test]
+fn type_queue_actions_wrap_between_buttons_with_large_text_instead_of_breaking_their_labels() {
+    let mut f = Fixture::new();
+    f.theme.apply(&f.ctx, 1.5);
+    f.imports.open = false;
+    f.imports.open_type_window(&f.ctx, Choice::Texture);
+    let output = f.settle();
+    for label in [aurora_i18n::tr!("import-reload"), aurora_i18n::tr!("common-remove")] {
+        let text = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == label => Some(text),
+                _ => None,
+            })
+            .expect("queue action label");
+        assert_eq!(text.galley.rows.len(), 1, "{label} stays on one line");
+    }
+}
+
+#[test]
+fn type_window_confirmation_keeps_its_price_and_action_when_another_type_is_opened() {
+    let mut f = Fixture::new();
+    f.world.inventory.root = Uuid::from_u128(1);
+    f.world.inventory.created_folders(vec![aurora_net::inventory::InvFolder {
+        id: f.world.inventory.root,
+        name: "Inventory".into(),
+        type_default: 8,
+        ..Default::default()
+    }]);
+    f.world.balance = Some(1000);
+    f.imports.demo_started = true;
+    f.imports.open = false;
+    f.imports.launcher_open = true;
+    assert!(click_launcher(&mut f, Choice::Texture).is_empty());
+    f.settle();
+    let (rect, clip, enabled) = f.ctx.data(|data| {
+        data.get_temp::<(egui::Rect, egui::Rect, bool)>(egui::Id::unique("import_upload_action"))
+            .expect("type upload action")
+    });
+    assert!(
+        enabled && clip.contains_rect(rect),
+        "an unquoted mesh cannot block the texture window"
+    );
+    let click = |f: &mut Fixture, rect: egui::Rect| {
+        let mut actions = Vec::new();
+        for pressed in [true, false] {
+            actions.extend(
+                f.frame(vec![
+                    egui::Event::PointerMoved(rect.center()),
+                    egui::Event::PointerButton {
+                        pos: rect.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ])
+                .1,
+            );
+        }
+        actions
+    };
+    assert!(click(&mut f, rect).is_empty());
+    assert!(f.imports.confirm);
+    assert_eq!(f.imports.confirm_choice, Some(Choice::Texture));
+    assert_eq!(f.imports.choice, Choice::Bulk);
+    f.imports.open_type_window(&f.ctx, Choice::Mesh);
+    f.settle();
+    let rect = f.ctx.data(|data| {
+        data.get_temp::<egui::Rect>(egui::Id::unique("import_confirm_upload"))
+            .expect("confirmation stays above the type windows")
+    });
+    let actions = click(&mut f, rect);
+    assert!(matches!(actions.as_slice(), [Action::StartFor(Choice::Texture)]));
+    assert!(!f.imports.confirm && f.imports.confirm_choice.is_none());
+    assert!(f.imports.window_open(Choice::Mesh) && f.imports.window_open(Choice::Texture));
+}
+
+#[test]
+fn confirmation_mentions_shared_textures_only_when_the_selected_type_actually_reuses_them() {
+    let mut f = Fixture::new();
+    let map = LocalImage {
+        path: None,
+        key: Uuid::new_v4(),
+        name: "Shared".into(),
+        pixels: crate::imports::tests::image(4, 4),
+        asset: None,
+        empty_alpha: false,
+    };
+    let material = Source::Material {
+        value: PbrMaterial::default(),
+        images: Box::new([Some(map.clone()), Some(map), None, None]),
+    };
+    f.imports.entries = vec![
+        Entry::new(
+            "tone.wav".into(),
+            Ok(Source::Sound(Arc::new(Sound {
+                source_channels: 1,
+                source_bits: 16,
+                mono: vec![0.0; 44100],
+            }))),
+            Default::default(),
+        ),
+        Entry::new("shared.gltf".into(), Ok(material), Default::default()),
+    ];
+    f.imports.demo_started = true;
+    f.imports.open = false;
+    f.imports.confirm = true;
+    for (choice, selected, shared) in [
+        (Choice::Sound, true, false),
+        (Choice::Material, true, true),
+        (Choice::Material, false, false),
+    ] {
+        f.imports.confirm_choice = Some(choice);
+        f.imports.entries[1].selected = selected;
+        let output = f.settle();
+        assert_eq!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("import-confirm-shared-textures"))), shared);
+    }
 }
 
 #[test]

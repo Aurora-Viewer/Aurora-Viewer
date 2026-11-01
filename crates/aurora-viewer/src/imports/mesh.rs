@@ -708,7 +708,7 @@ impl Imports {
         prefs: &crate::ui::inventory::InventoryPreferences,
         rights: Permissions,
     ) {
-        if !self.folder_plan_valid(world, prefs) {
+        if !self.with_choice(Choice::Mesh, |imports| imports.folder_plan_valid(world, prefs)) {
             self.message = aurora_i18n::tr!("import-invalid-request").into();
             return;
         }
