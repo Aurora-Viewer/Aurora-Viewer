@@ -184,6 +184,9 @@ pub mod flags {
     pub const PORTAL_CLIP: u32 = 16384;
     /// Procedural Aurora portal surface; uses the ordinary sorted blend/glow.
     pub const PORTAL_EFFECT: u32 = 32768;
+    /// Bit of flags[3], above the texture animation's 24 packed bits.
+    /// World faces whose material permits Blend texture alpha only.
+    pub const WORLD_BLEND_PICK: u32 = 1 << 31;
 }
 
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;
@@ -334,6 +337,12 @@ impl Default for DrawRecord {
 }
 
 impl DrawRecord {
+    /// Keep picking metadata out of flags[0]'s packed HUD zoom and out of
+    /// flags[3]'s texture-animation mode and dimensions.
+    pub fn set_world_blend_pick(&mut self, enabled: bool) {
+        self.flags[3] = (self.flags[3] & !flags::WORLD_BLEND_PICK) | if enabled { flags::WORLD_BLEND_PICK } else { 0 };
+    }
+
     /// Upper 16 bits of flags.x: visual HUD zoom in units of 1/4096.
     /// Zero means 1. The shader removes it from planar texture generation,
     /// before materials and animations, without enlarging every GPU record.
@@ -2012,5 +2021,23 @@ mod tests {
         }
         record.set_hud_zoom(1.0);
         assert_eq!(record.flags[0], 0x0fff);
+    }
+
+    #[test]
+    fn world_blend_pick_survives_zoom_packing_without_changing_texture_animation() {
+        let animation = 1 | (7 << 8) | (15 << 16);
+        let mut record = DrawRecord {
+            flags: [flags::PLANAR | flags::TEX_ANIM, 42, 128, animation],
+            ..Default::default()
+        };
+        record.set_world_blend_pick(true);
+        for zoom in [1.0, 0.1, 2.0, 8.0] {
+            record.set_hud_zoom(zoom);
+            assert_ne!(record.flags[3] & flags::WORLD_BLEND_PICK, 0);
+            assert_eq!(record.flags[3] & 0x00ff_ffff, animation);
+            assert_eq!(record.flags[0] & 0xffff, flags::PLANAR | flags::TEX_ANIM);
+        }
+        record.set_world_blend_pick(false);
+        assert_eq!(record.flags[3], animation);
     }
 }

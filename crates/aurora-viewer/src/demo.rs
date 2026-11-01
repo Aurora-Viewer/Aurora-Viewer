@@ -3648,8 +3648,8 @@ pub fn action_overlay(id: u32, pos: Vec3, rotation: Quat) -> NetEvent {
     }
 }
 
-/// A non-actionable face placed before Buy. Blend blocks every texel;
-/// Mask's zero-alpha texture lets the click reach Buy.
+/// A non-actionable face placed before Buy. Zero-alpha texture pixels let
+/// left clicks through; every nonzero Blend texel still blocks them.
 pub fn alpha_click_overlay(mode: &str, pos: Vec3, rotation: Quat) -> NetEvent {
     let texture = match mode.trim_end_matches("-ready") {
         "blend-faint" => TEX_PICK_FAINT,
@@ -3666,6 +3666,17 @@ pub fn alpha_click_overlay(mode: &str, pos: Vec3, rotation: Quat) -> NetEvent {
         for face in &mut Arc::make_mut(te).faces {
             face.texture = texture;
             face.material_id = material;
+        }
+        if mode.starts_with("blend-backface") {
+            // A transparent entry face followed by an opaque exit face.
+            // The latter casts a shadow but is culled from this camera.
+            object.scale.x = 0.5;
+            let cube = aurora_prim::generate_volume(&object.volume, aurora_prim::volume::DETAIL_SCALES[3]);
+            for (face, mesh) in cube.faces.iter().enumerate() {
+                if mesh.normals.first().is_some_and(|normal| normal[0] < -0.9) {
+                    Arc::make_mut(te).faces[face].texture = BLANK_TEXTURE;
+                }
+            }
         }
     }
     NetEvent::ObjectUpdates {

@@ -2,6 +2,8 @@
 
 // Alpha-masked faces use alpha-to-coverage with MSAA, an alpha test otherwise.
 override ALPHA_TO_COVERAGE: bool = true;
+// Only left-button pipelines enable the world Blend transparency rule.
+override WORLD_LEFT_PICK: bool = false;
 
 // Evaluated after skinning/attachment placement, in every surface/depth pass.
 // Outside the actual ellipse, even geometry beyond the plane stays visible.
@@ -1865,7 +1867,11 @@ fn fs_pick_overlay(in: PickOut) -> @location(0) vec4<u32> {
 fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
-    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u) {
+    let world_left = WORLD_LEFT_PICK && (rec.flags.w & FLAG_WORLD_BLEND_PICK) != 0u;
+    if (world_left && sample_tex(rec.tex.x, in.uv).a <= 0.0) {
+        discard;
+    }
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && !world_left) {
         // (the level the scene samples: each texel of the target is a
         // pixel of the screen)
         let a = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
@@ -1887,7 +1893,9 @@ fn fs_pick_visible(in: PickOut) -> @location(0) vec4<u32> {
     // An emissive mask uses texture alpha for lighting, not opacity
     // (eval_material): its visible surface must remain a camera target.
     let terrain_pbr = (rec.flags.x & (FLAG_TERRAIN | FLAG_PBR)) == (FLAG_TERRAIN | FLAG_PBR);
-    let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(select(rec.tex.x, 0u, terrain_pbr), in.uv).a <= 32.0 / 255.0;
+    let world_blend = WORLD_LEFT_PICK && (rec.flags.w & FLAG_WORLD_BLEND_PICK) != 0u;
+    let cutoff = select(32.0 / 255.0, 0.0, world_blend);
+    let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(select(rec.tex.x, 0u, terrain_pbr), in.uv).a <= cutoff;
     // An opaque glTF material ignores its base color alpha (FaceDraw::
     // fully_transparent): drawn, it stays a target.
     let gltf_opaque = (rec.flags.x & FLAG_PBR) != 0u && (rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) == 0u;
