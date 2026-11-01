@@ -17,10 +17,10 @@ pub(crate) struct Graphics {
 /// The OpenXR loader: built in on Windows (the `static` feature), the
 /// distribution's on Linux, which its runtimes install.
 fn entry() -> Result<xr::Entry> {
-    #[cfg(target_os = "windows")]
+    #[cfg(feature = "xr-static-loader")]
     return Ok(xr::Entry::linked(&())?);
     // SAFETY: openxr's checked loading of the system loader library.
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(feature = "xr-static-loader"))]
     return Ok(unsafe { xr::Entry::load(&())? });
 }
 

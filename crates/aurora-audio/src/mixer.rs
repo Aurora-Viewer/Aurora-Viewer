@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use crossbeam_channel::Receiver;
 
 use crate::hrtf::{BLOCK, Binaural, Hrir, Hrtf};
+use crate::reverb::{Reverb, ReverbParams};
 use crate::wind::{SharedWind, WindGen};
 
 /// Internal mixing rate. Every source is converted to this rate (stereo,
@@ -455,6 +456,11 @@ const BINAURAL_SWITCH_FRAMES: f32 = 256.0;
 /// distance gain instead of the two gains, and the mono signal goes,
 /// after the occlusion, through the head-related filters of that direction
 /// (`hrtf.rs`), in a state of the mixer's pool.
+///
+/// With the reverb of the surroundings, the mono signal after the occlusion
+/// also goes to the reverb's send (`reverb.rs`), at its distance gain times
+/// its send factor (more for a farther sound); the factor is 0, a dry
+/// voice, until the viewer gives one.
 pub(crate) struct WorldVoice {
     pub(crate) id: u64,
     bus: usize,
@@ -490,6 +496,9 @@ pub(crate) struct WorldVoice {
     /// A first placement by direction, applied when the mixer takes the
     /// voice (where the pool is).
     start_binaural: Option<(f32, [f32; 3])>,
+    /// Current and target send factors to the reverb.
+    send: f32,
+    send_target: f32,
 }
 
 impl WorldVoice {
@@ -516,6 +525,18 @@ impl WorldVoice {
             blend: 0.0,
             slot: None,
             start_binaural: None,
+            send: 0.0,
+            send_target: 0.0,
+        }
+    }
+
+    /// New send factor to the reverb: glided to over a buffer, at once
+    /// before the voice played.
+    fn set_reverb_send(&mut self, factor: f32) {
+        let f = if factor.is_finite() { factor.clamp(0.0, MAX_SEND) } else { 0.0 };
+        self.send_target = f;
+        if self.fresh {
+            self.send = f;
         }
     }
 
@@ -579,13 +600,21 @@ impl WorldVoice {
         self.binaural = true;
     }
 
-    fn mix_into(&mut self, bus: &mut [f32], pool: &mut [Binaural]) -> bool {
+    /// Mixes one buffer into `bus`, and into the reverb's mono `send` when
+    /// it runs. Returns `false` when the voice is done.
+    fn mix_into(&mut self, bus: &mut [f32], pool: &mut [Binaural], send: Option<&mut [f32]>) -> bool {
         let frames = bus.len() / 2;
         let len = self.data.len() & !1;
         if len == 0 || frames == 0 {
             return !self.stopping && len > 0;
         }
         self.fresh = false;
+        let mut send = send.map(|buf| Send {
+            buf,
+            factor: self.send,
+            step: (self.send_target - self.send) / frames as f32,
+        });
+        self.send = self.send_target;
         let target = if self.stopping { (0.0, 0.0) } else { self.target };
         let (dl, dr) = ((target.0 - self.gain.0) / frames as f32, (target.1 - self.gain.1) / frames as f32);
         let (mut gl, mut gr) = self.gain;
@@ -618,7 +647,7 @@ impl WorldVoice {
         let state = self.slot.and_then(|s| pool.get_mut(s));
         match state {
             Some(state) if self.binaural || self.blend > 0.0 => {
-                self.mix_binaural(bus, state, &mut ramp, &mut lowpass, (gl, gr), (dl, dr));
+                self.mix_binaural(bus, state, &mut ramp, &mut lowpass, (gl, gr), (dl, dr), &mut send);
             }
             _ => {
                 // panned (the Legacy Viewer's rendering)
@@ -634,6 +663,11 @@ impl WorldVoice {
                     gr += dr;
                     bus[2 * f] += m * gl;
                     bus[2 * f + 1] += m * gr;
+                    if let Some(s) = &mut send {
+                        // (the louder side: the distance gain, whatever the
+                        // panning)
+                        s.add(f, m * gl.max(gr));
+                    }
                     self.pos += 2;
                 }
                 self.blend = 0.0;
@@ -654,6 +688,7 @@ impl WorldVoice {
         lowpass: &mut [f32; 2],
         (mut gl, mut gr): (f32, f32),
         (dl, dr): (f32, f32),
+        send: &mut Option<Send>,
     ) {
         let frames = bus.len() / 2;
         let len = self.data.len() & !1;
@@ -694,12 +729,36 @@ impl WorldVoice {
                     out[2 * i + 1] += m * gr * panned;
                 }
                 *x = m * g * blend;
+                if let Some(s) = send {
+                    s.add(f + i, m * (g * blend + gl.max(gr) * panned));
+                }
             }
             state.render(n, out);
             f += n;
         }
         self.blend = blend;
         self.binaural_gain = target;
+    }
+}
+
+/// Most a voice sends to the reverb, over its distance gain.
+const MAX_SEND: f32 = 4.0;
+
+/// A voice's share of the reverb's mono send over one buffer, its factor
+/// ramped from the last value to the new one.
+struct Send<'a> {
+    buf: &'a mut [f32],
+    factor: f32,
+    step: f32,
+}
+
+impl Send<'_> {
+    #[inline(always)]
+    fn add(&mut self, frame: usize, v: f32) {
+        self.factor += self.step;
+        if let Some(o) = self.buf.get_mut(frame) {
+            *o += v * self.factor;
+        }
     }
 }
 
@@ -741,6 +800,10 @@ pub(crate) enum Command {
     WorldBinaural(u64, f32, [f32; 3]),
     /// New occlusion of a world voice (0 clear .. 1 behind two walls or more).
     WorldOcclusion(u64, f32),
+    /// New send factor of a world voice to the reverb.
+    WorldReverbSend(u64, f32),
+    /// The reverb of the surroundings on with these parameters, or off.
+    Reverb(Option<ReverbParams>),
     /// Fade a world voice out and drop it.
     StopWorld(u64),
 }
@@ -766,6 +829,24 @@ pub(crate) struct Mixer {
     tmp: Vec<f32>,
     /// The world voices' binaural states.
     binaural: BinauralPool,
+    /// The reverb of the surroundings, its mono send per bus (only the
+    /// Sounds and Ambient buses feed it) and their sum.
+    reverb: Reverb,
+    sends: [Vec<f32>; NUM_BUSES],
+    send: Vec<f32>,
+    /// The reverb's stereo output of a buffer.
+    wet: Vec<f32>,
+    /// Gains of the reverb's input (the Sounds and Ambient channels alone)
+    /// and output (master), so that muting the master silences its tail
+    /// at once.
+    reverb_gains: [GainSmoother; 3],
+}
+
+/// Buses whose world voices feed the reverb.
+const REVERB_BUSES: [Channel; 2] = [Channel::Sfx, Channel::Ambient];
+
+fn feeds_reverb(bus: usize) -> bool {
+    REVERB_BUSES.iter().any(|c| c.bus() == Some(bus))
 }
 
 impl Mixer {
@@ -774,6 +855,8 @@ impl Mixer {
         Hrtf::embedded();
         let smoothers =
             std::array::from_fn(|i| GainSmoother::new(params.bus_target(BUS_CHANNELS[i]), GAIN_SMOOTHING_SECS, ENGINE_SAMPLE_RATE));
+        let reverb_gains = [Channel::Master, REVERB_BUSES[0], REVERB_BUSES[1]]
+            .map(|ch| GainSmoother::new(params.get(ch).effective_gain(), GAIN_SMOOTHING_SECS, ENGINE_SAMPLE_RATE));
         Self {
             params,
             cmd_rx,
@@ -785,6 +868,11 @@ impl Mixer {
             smoothers,
             tmp: Vec::with_capacity(4096),
             binaural: BinauralPool::new(),
+            reverb: Reverb::new(),
+            sends: std::array::from_fn(|_| Vec::with_capacity(4096)),
+            send: Vec::with_capacity(4096),
+            wet: Vec::with_capacity(4096),
+            reverb_gains,
         }
     }
 
@@ -830,6 +918,12 @@ impl Mixer {
                         w.set_occlusion(amount);
                     }
                 }
+                Ok(Command::WorldReverbSend(id, factor)) => {
+                    if let Some(w) = self.world.iter_mut().find(|w| w.id == id) {
+                        w.set_reverb_send(factor);
+                    }
+                }
+                Ok(Command::Reverb(params)) => self.reverb.set(params),
                 Ok(Command::StopWorld(id)) => {
                     for w in self.world.iter_mut().filter(|w| w.id == id) {
                         w.stopping = true;
@@ -844,14 +938,25 @@ impl Mixer {
             bus.clear();
             bus.resize(len, 0.0);
         }
+        // the reverb's sends, only while it runs: off, nothing differs from
+        // the dry mix
+        let reverb = self.reverb.running();
+        if reverb {
+            for b in REVERB_BUSES.iter().filter_map(|c| c.bus()) {
+                self.sends[b].clear();
+                self.sends[b].resize(len / 2, 0.0);
+            }
+        }
 
         let buses = &mut self.buses;
+        let sends = &mut self.sends;
         let tmp = &mut self.tmp;
         self.pcm.retain_mut(|s| s.mix_into(&mut buses[s.bus], tmp));
         self.clips.retain_mut(|c| c.mix_into(&mut buses[c.bus]));
         let (states, free) = (&mut self.binaural.states, &mut self.binaural.free);
         self.world.retain_mut(|w| {
-            let keep = w.mix_into(&mut buses[w.bus], states);
+            let send = (reverb && feeds_reverb(w.bus)).then(|| &mut sends[w.bus][..]);
+            let keep = w.mix_into(&mut buses[w.bus], states, send);
             if !keep {
                 BinauralPool::release(free, w);
             }
@@ -865,19 +970,63 @@ impl Mixer {
 
         let targets: [f32; NUM_BUSES] = std::array::from_fn(|i| self.params.bus_target(BUS_CHANNELS[i]));
 
-        for (f, frame) in out[..len].as_chunks_mut::<ENGINE_CHANNELS>().0.iter_mut().enumerate() {
+        if !reverb {
+            for (f, frame) in out[..len].as_chunks_mut::<ENGINE_CHANNELS>().0.iter_mut().enumerate() {
+                let mut l = 0.0f32;
+                let mut r = 0.0f32;
+                for ((smoother, bus), &target) in self.smoothers.iter_mut().zip(&self.buses).zip(&targets) {
+                    let g = smoother.next(target);
+                    l += bus[2 * f] * g;
+                    r += bus[2 * f + 1] * g;
+                }
+                frame[0] = l.clamp(-1.0, 1.0);
+                frame[1] = r.clamp(-1.0, 1.0);
+            }
+        } else {
+            self.mix_with_reverb(&mut out[..len], &targets);
+        }
+        for s in &mut out[len..] {
+            *s = 0.0;
+        }
+    }
+
+    /// The final mix with the reverb: the buses as without it, the sends
+    /// summed at their channels' volumes into the reverb, its output at the
+    /// master volume, then the clamp.
+    fn mix_with_reverb(&mut self, out: &mut [f32], targets: &[f32; NUM_BUSES]) {
+        let frames = out.len() / 2;
+        let gain = |ch: Channel| self.params.get(ch).effective_gain();
+        let reverb_targets = [gain(Channel::Master), gain(REVERB_BUSES[0]), gain(REVERB_BUSES[1])];
+        let reverb_buses = REVERB_BUSES.map(|c| c.bus().unwrap_or(0));
+        self.send.clear();
+        self.send.resize(frames, 0.0);
+        for (f, frame) in out.as_chunks_mut::<ENGINE_CHANNELS>().0.iter_mut().enumerate() {
             let mut l = 0.0f32;
             let mut r = 0.0f32;
-            for ((smoother, bus), &target) in self.smoothers.iter_mut().zip(&self.buses).zip(&targets) {
+            for ((smoother, bus), &target) in self.smoothers.iter_mut().zip(&self.buses).zip(targets) {
                 let g = smoother.next(target);
                 l += bus[2 * f] * g;
                 r += bus[2 * f + 1] * g;
             }
-            frame[0] = l.clamp(-1.0, 1.0);
-            frame[1] = r.clamp(-1.0, 1.0);
+            frame[0] = l;
+            frame[1] = r;
+            let [_, sfx, ambient] = &mut self.reverb_gains;
+            self.send[f] = self.sends[reverb_buses[0]][f] * sfx.next(reverb_targets[1])
+                + self.sends[reverb_buses[1]][f] * ambient.next(reverb_targets[2]);
         }
-        for s in &mut out[len..] {
-            *s = 0.0;
+        self.wet.clear();
+        self.wet.resize(out.len(), 0.0);
+        self.reverb.render(&self.send, &mut self.wet);
+        let master = &mut self.reverb_gains[0];
+        for (frame, wet) in out
+            .as_chunks_mut::<ENGINE_CHANNELS>()
+            .0
+            .iter_mut()
+            .zip(self.wet.as_chunks::<ENGINE_CHANNELS>().0)
+        {
+            let g = master.next(reverb_targets[0]);
+            frame[0] = (frame[0] + wet[0] * g).clamp(-1.0, 1.0);
+            frame[1] = (frame[1] + wet[1] * g).clamp(-1.0, 1.0);
         }
     }
 
@@ -1345,7 +1494,9 @@ mod tests {
                 }
             }
             let (mut a, mut b) = (vec![0.0f32; frames * 2], vec![0.0f32; frames * 2]);
-            voice.mix_into(&mut a, &mut pool.states);
+            // (feeding the reverb or not changes nothing in the dry mix)
+            let mut send = vec![0.0f32; frames];
+            voice.mix_into(&mut a, &mut pool.states, (k % 2 == 1).then_some(&mut send[..]));
             reference.mix_into(&mut b);
             assert!(a.iter().zip(&b).all(|(x, y)| x.to_bits() == y.to_bits()), "buffer {k} differs");
         }
@@ -1570,6 +1721,227 @@ mod tests {
         if !cfg!(debug_assertions) {
             // a small share of the buffer's time, even on a loaded PC
             assert!(binaural.0 < period * 0.2, "binaural render {:.0} us of {period:.0}", binaural.0);
+        }
+    }
+
+    fn small_room() -> ReverbParams {
+        ReverbParams {
+            level: 1.0,
+            decay: 0.6,
+            predelay: 0.008,
+            damping: 0.7,
+            path: 4.0,
+        }
+    }
+
+    /// Renders `buffers` buffers of 480 frames, `between(k, tx)` sent
+    /// before each.
+    fn render_all(m: &mut Mixer, tx: &Sender<Command>, buffers: usize, between: impl Fn(usize, &Sender<Command>)) -> Vec<f32> {
+        run(m, tx, buffers, 480, between)
+    }
+
+    #[test]
+    fn reverb_off_is_bit_identical_to_the_dry_mix() {
+        let data = noise(11, 24_000);
+        let voices = |tx: &Sender<Command>| {
+            tx.send(Command::PlayWorld(WorldVoice::new(1, Channel::Sfx, data.clone(), true, (0.6, 0.3))))
+                .unwrap();
+            tx.send(Command::PlayWorld(WorldVoice::new_binaural(
+                2,
+                Channel::Ambient,
+                data.clone(),
+                true,
+                0.4,
+                [0.5, 0.5, 0.2],
+            )))
+            .unwrap();
+            tx.send(Command::WorldOcclusion(1, 0.4)).unwrap();
+        };
+        let moves = |k: usize, tx: &Sender<Command>| {
+            tx.send(Command::WorldGain(1, (0.6 - 0.001 * k as f32, 0.3))).unwrap();
+        };
+        // never told about the reverb
+        let (mut dry, _p, tx) = mixer();
+        voices(&tx);
+        let dry_out = render_all(&mut dry, &tx, 300, moves);
+        // sends given, the reverb never on: the same samples
+        let (mut sent, _p, tx) = mixer();
+        voices(&tx);
+        tx.send(Command::WorldReverbSend(1, 1.5)).unwrap();
+        tx.send(Command::WorldReverbSend(2, 2.0)).unwrap();
+        let sent_out = render_all(&mut sent, &tx, 300, moves);
+        assert!(
+            dry_out.iter().zip(&sent_out).all(|(a, b)| a.to_bits() == b.to_bits()),
+            "sends alone change nothing"
+        );
+        // on for a second, then off: once faded, the same samples again
+        let (mut wet, _p, tx) = mixer();
+        voices(&tx);
+        tx.send(Command::WorldReverbSend(1, 1.5)).unwrap();
+        tx.send(Command::WorldReverbSend(2, 2.0)).unwrap();
+        tx.send(Command::Reverb(Some(small_room()))).unwrap();
+        let wet_out = render_all(&mut wet, &tx, 300, |k, tx| {
+            moves(k, tx);
+            if k == 100 {
+                tx.send(Command::Reverb(None)).unwrap();
+            }
+        });
+        let on = &wet_out[..100 * 960];
+        assert!(
+            on.iter().zip(&dry_out).any(|(a, b)| (a - b).abs() > 1e-3),
+            "the reverb is heard while on"
+        );
+        let after = 110 * 960;
+        assert!(
+            wet_out[after..]
+                .iter()
+                .zip(&dry_out[after..])
+                .all(|(a, b)| a.to_bits() == b.to_bits()),
+            "off: the dry mix, bit for bit"
+        );
+        assert!(!wet.reverb.running());
+    }
+
+    #[test]
+    fn only_world_sounds_on_sounds_and_ambient_are_reverberated() {
+        let data = noise(3, 9_600);
+        let render = |reverb: bool| {
+            let (mut m, _p, tx) = mixer();
+            if reverb {
+                tx.send(Command::Reverb(Some(small_room()))).unwrap();
+            }
+            // an interface sound played as a world voice (previews), a clip
+            tx.send(Command::PlayWorld(WorldVoice::new(1, Channel::Ui, data.clone(), true, (0.5, 0.5))))
+                .unwrap();
+            tx.send(Command::WorldReverbSend(1, 2.0)).unwrap();
+            tx.send(Command::PlayClip(ClipVoice::new(Channel::Sfx, data.clone(), 0.5))).unwrap();
+            // voice chat: a PCM source
+            let (mut prod, cons) = rtrb::RingBuffer::<f32>::new(96_000);
+            tx.send(Command::AddPcm(Box::new(PcmSource::new(Channel::Voice, cons, 10, None, None))))
+                .unwrap();
+            for v in data.iter() {
+                let _ = prod.push(*v * 0.3);
+            }
+            render_all(&mut m, &tx, 100, |_, _| {})
+        };
+        let (off, on) = (render(false), render(true));
+        assert!(off.iter().any(|v| v.abs() > 1e-3), "heard");
+        assert!(off.iter().zip(&on).all(|(a, b)| a.to_bits() == b.to_bits()));
+    }
+
+    #[test]
+    fn a_world_sound_rings_after_it_stops_and_master_mute_silences_it() {
+        let click: Arc<[f32]> = vec![0.8f32; 96].into();
+        let tail = |mute_at: Option<usize>| {
+            let (mut m, params, tx) = mixer();
+            tx.send(Command::Reverb(Some(small_room()))).unwrap();
+            tx.send(Command::PlayWorld(WorldVoice::new(
+                1,
+                Channel::Sfx,
+                click.clone(),
+                false,
+                (1.0, 1.0),
+            )))
+            .unwrap();
+            tx.send(Command::WorldReverbSend(1, 1.0)).unwrap();
+            let mut out = Vec::new();
+            let mut buf = vec![0.0; 960];
+            for k in 0..60 {
+                if Some(k) == mute_at {
+                    params.set_muted(Channel::Master, true);
+                }
+                m.render(&mut buf);
+                out.extend_from_slice(&buf);
+            }
+            out
+        };
+        let ringing = tail(None);
+        // from 100 ms after the click: only the reverb
+        let late = rms(&ringing[..20 * 960], 4_800);
+        assert!(late > 1e-4, "rings: {late}");
+        let muted = tail(Some(10));
+        let after = &muted[10 * 960 + 2 * 4_800..];
+        assert!(after.iter().all(|v| v.abs() < 1e-4), "muted at once");
+    }
+
+    #[test]
+    fn panned_and_binaural_voices_feed_the_same_reverb() {
+        let data = noise(21, 24_000);
+        let wet = |binaural: bool| {
+            let out = |reverb: bool| {
+                let (mut m, _p, tx) = mixer();
+                if reverb {
+                    tx.send(Command::Reverb(Some(small_room()))).unwrap();
+                }
+                let v = if binaural {
+                    WorldVoice::new_binaural(1, Channel::Sfx, data.clone(), true, 0.5, [0.7, 0.7, 0.0])
+                } else {
+                    WorldVoice::new(1, Channel::Sfx, data.clone(), true, (0.5, 0.2))
+                };
+                tx.send(Command::PlayWorld(v)).unwrap();
+                tx.send(Command::WorldReverbSend(1, 1.5)).unwrap();
+                tx.send(Command::WorldOcclusion(1, 0.3)).unwrap();
+                render_all(&mut m, &tx, 50, |_, _| {})
+            };
+            let (on, off) = (out(true), out(false));
+            on.iter().zip(&off).map(|(a, b)| a - b).collect::<Vec<f32>>()
+        };
+        let (p, b) = (wet(false), wet(true));
+        let level = rms(&p, 4_800);
+        assert!(level > 1e-3, "heard: {level}");
+        let diff = p.iter().zip(&b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+        assert!(diff < 1e-5, "the same tail either way: {diff}");
+    }
+
+    /// The mixer's cost with 30 world sounds and the reverb: printed
+    /// (`cargo test --workspace reverb_render_cost -- --nocapture`), and
+    /// bounded in optimised builds.
+    #[test]
+    fn reverb_render_cost() {
+        const VOICES: u64 = 30;
+        const FRAMES: usize = 480;
+        let measure = |reverb: bool| {
+            let (mut m, _p, tx) = mixer();
+            if reverb {
+                tx.send(Command::Reverb(Some(ReverbParams {
+                    level: 1.0,
+                    decay: 2.5,
+                    predelay: 0.03,
+                    damping: 0.5,
+                    path: 18.0,
+                })))
+                .unwrap();
+            }
+            for id in 0..VOICES {
+                let v = WorldVoice::new(id, Channel::Sfx, noise(id as u32, 24_000), true, (0.2, 0.2));
+                tx.send(Command::PlayWorld(v)).unwrap();
+                tx.send(Command::WorldOcclusion(id, 0.3)).unwrap();
+                tx.send(Command::WorldReverbSend(id, 1.5)).unwrap();
+            }
+            let mut buf = vec![0.0; FRAMES * 2];
+            let mut times = Vec::with_capacity(300);
+            for k in 0..300 {
+                for id in 0..VOICES {
+                    let a = (k as f32 * 3.0 + id as f32 * 12.0).to_radians();
+                    tx.send(Command::WorldGain(id, (0.2 + 0.1 * a.sin(), 0.2 - 0.1 * a.sin()))).unwrap();
+                }
+                let t = std::time::Instant::now();
+                m.render(&mut buf);
+                times.push(t.elapsed().as_secs_f64() * 1e6);
+            }
+            times.sort_by(f64::total_cmp);
+            (times[0], times[times.len() / 2], times[times.len() * 99 / 100])
+        };
+        let period = FRAMES as f64 / ENGINE_SAMPLE_RATE as f64 * 1e6;
+        let dry = measure(false);
+        let wet = measure(true);
+        eprintln!(
+            "mixer render, {VOICES} world sounds, {FRAMES} frames ({period:.0} us): dry min {:.0} / median {:.0} / p99 {:.0} us, \
+             reverb min {:.0} / median {:.0} / p99 {:.0} us",
+            dry.0, dry.1, dry.2, wet.0, wet.1, wet.2
+        );
+        if !cfg!(debug_assertions) {
+            assert!(wet.0 - dry.0 < period * 0.05, "reverb {:.0} us of {period:.0}", wet.0 - dry.0);
         }
     }
 }
