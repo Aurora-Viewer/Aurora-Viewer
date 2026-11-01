@@ -8088,8 +8088,10 @@ impl Backend {
     /// Done here, on the thread that submits and presents: the wait holds
     /// the device's locks.
     pub fn finish_frames_before(&self, frame: u64, timeout: Duration) {
-        // (the wait runs the callbacks of `on_submitted_work_done` too)
-        if !self.gpu_frames.enabled || self.lost.get() {
+        // (the wait runs the callbacks of `on_submitted_work_done` too).
+        // Not while the GPU is not the limit (pacing.rs `Gate`): this
+        // thread takes the next frame at once, as without the pacing
+        if !self.gpu_frames.active() || self.lost.get() {
             return;
         }
         let Some(last) = frame.checked_sub(1) else {
