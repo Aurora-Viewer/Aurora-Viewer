@@ -3667,6 +3667,17 @@ pub fn alpha_click_overlay(mode: &str, pos: Vec3, rotation: Quat) -> NetEvent {
             face.texture = texture;
             face.material_id = material;
         }
+        if mode.starts_with("blend-backface") {
+            // A transparent entry face followed by an opaque exit face.
+            // The latter casts a shadow but is culled from this camera.
+            object.scale.x = 0.5;
+            let cube = aurora_prim::generate_volume(&object.volume, aurora_prim::volume::DETAIL_SCALES[3]);
+            for (face, mesh) in cube.faces.iter().enumerate() {
+                if mesh.normals.first().is_some_and(|normal| normal[0] < -0.9) {
+                    Arc::make_mut(te).faces[face].texture = BLANK_TEXTURE;
+                }
+            }
+        }
     }
     NetEvent::ObjectUpdates {
         handle: HANDLE,

@@ -1937,10 +1937,15 @@ No real L$ and no connection to a grid.
   the other three must reach panel 976 and leave `dialog=false`. The GPU
   response must omit the zero-alpha panel but retain the faint/half panels.
   `blend-zero-menu` must still target panel 976 with the right click.
+  `blend-backface` replaces it with a cube whose transparent entry face
+  reveals Buy while the opaque exit face is invisible from this camera.
+  Its shadow must not prevent Buy (971) from receiving the click:
+  `dialog=true`, including with shadows disabled. The CPU fallback must
+  reject that back face just as the GPU does.
   `mask-zero` uses the zero-alpha texture in Mask mode:
   the click must reach Buy (971), with `dialog=true` and no panel in the GPU
   response. Capture after frame 620.
-- Add `-ready` to the five Blend / Mask modes above to test hover without
+- Add `-ready` to the Blend / Mask modes above to test hover without
   an automatic click. At frame 650, `demo cursor hover` must report
   `prim=Some(976), action=None` before Blend at every opacity, and
   `prim=Some(971), action=Some(Buy)` through the Mask hole. Enable

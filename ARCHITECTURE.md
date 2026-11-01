@@ -15,6 +15,10 @@ objects. GPU left/camera pick variants apply the same zero threshold to
 separate. The default Blend mode retains this rule when binary texture
 pixels are rendered as an automatic mask. Unknown textures remain pickable
 until decoded.
+World left-pick CPU intersections also reject back-facing triangles,
+matching the GPU; explicitly double-sided PBR materials and their overrides
+retain both sides. A transparent cube's invisible exit face cannot reclaim
+a click that passed through its entry texture.
 
 Chat volume formatting (#1323) is shared by the Conversations renderers and
 nearby-chat cards/lines: `ui/chat.rs::message_emphasis` and `message_color`,

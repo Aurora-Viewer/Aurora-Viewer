@@ -795,12 +795,15 @@ impl Scene {
             })
         });
         if matches!(mode, FacePick::Left | FacePick::LeftBlend) && !g.hud && g.owner_avatar.is_none() {
+            // LLVolume::lineSegmentIntersect rejects back faces. After a
+            // texture hole, an invisible exit face must not reclaim the
+            // click from the surface the GPU actually drew (#1574).
             return pick::ray_faces_filtered(
                 faces,
                 model,
                 ray.0,
                 ray.1,
-                |_| true,
+                |face| self.face_double_sided(world, o, face),
                 |hit| {
                     if !self.blend_face_mode(world, o, g, hit.face, true) {
                         return true;
@@ -822,7 +825,7 @@ impl Scene {
                 .filter_map(|face| {
                     let hit = if g.hud {
                         pick::ray_faces_with_sidedness(std::iter::once(face), model, ray.0, ray.1, |face| {
-                            self.hud_double_sided(world, o, face)
+                            self.face_double_sided(world, o, face)
                         })?
                     } else {
                         pick::ray_faces(std::iter::once(face), model, ray.0, ray.1)?
@@ -866,10 +869,10 @@ impl Scene {
         }
         // LLVolume::lineSegmentIntersect rejects back-facing triangles.
         // Explicit double-sided materials remain interactive on both sides.
-        pick::ray_faces_with_sidedness(faces, model, ray.0, ray.1, |face| self.hud_double_sided(world, o, face))
+        pick::ray_faces_with_sidedness(faces, model, ray.0, ray.1, |face| self.face_double_sided(world, o, face))
     }
 
-    fn hud_double_sided(&self, world: &World, o: &Object, face: usize) -> bool {
+    fn face_double_sided(&self, world: &World, o: &Object, face: usize) -> bool {
         let Some(id) = o.visual_material(face) else {
             return false;
         };
@@ -3141,6 +3144,110 @@ pub(super) mod tests {
             scene.selection_pick(&world, Some(ray), Some(depth), true, false, 100.0),
             (Some(front_point), Some(front))
         );
+    }
+
+    #[test]
+    fn world_blend_left_clicks_ignore_the_exit_faces_of_a_transparent_cube() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let mesh = aurora_prim::generate_volume(&aurora_prim::params::VolumeParams::default(), aurora_prim::volume::DETAIL_SCALES[3]);
+        assert_eq!(mesh.faces.len(), 6);
+        let template = scene.gpu[front].faces[0];
+        let hole = Uuid::from_u128(8892);
+        scene
+            .textures
+            .pick_masks
+            .insert(hole, super::super::textures::PickMask::from_rgba(1, 1, &[0; 4]).unwrap());
+        scene.textures.alpha_by_slot = vec![AlphaKind::Blend];
+        let mut geometry = GpuGeom {
+            faces: Vec::new(),
+            min: -Vec3::splat(0.5),
+            max: Vec3::splat(0.5),
+            joint_bounds: Vec::new(),
+            pick_faces: Vec::new(),
+        };
+        scene.gpu[front].faces.clear();
+        for (face, mesh) in mesh.faces.into_iter().enumerate() {
+            let allocation = aurora_render::MeshAlloc {
+                vertex_offset: 0,
+                vertex_count: mesh.positions.len() as u32,
+                index_offset: face as u32 * 100,
+                index_count: mesh.indices.len() as u32,
+            };
+            let mut draw = template;
+            draw.te_index = face as u8;
+            draw.cmd.first_index = allocation.index_offset;
+            draw.cmd.index_count = allocation.index_count;
+            draw.legacy_alpha = Some(legacy_mat::alpha_mode::BLEND);
+            // The entry face has a texture hole; the exit face is solid.
+            draw.tex_id = if mesh.normals[0][0] < -0.9 { hole } else { Uuid::nil() };
+            scene.gpu[front].faces.push(draw);
+            geometry.faces.push(Some(allocation));
+            geometry
+                .pick_faces
+                .push(Some(PickFace::new(mesh.positions, mesh.uvs, mesh.indices)));
+        }
+        let key = GeomKey::Prim { hash: 8892, lod: 3 };
+        scene.geoms.insert(
+            key,
+            GeomEntry {
+                refs: 1,
+                zero_since: 0,
+                state: GeomState::Ready(Arc::new(geometry)),
+            },
+        );
+        scene.gpu[front].geom = Some(key);
+        world.objects.get_mut(front).unwrap().update_flags = 0;
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::NONE;
+        world.objects.get_mut(back).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        for idx in [front, back] {
+            let g = &mut scene.gpu[idx];
+            g.center = world.objects.get(idx).unwrap().position;
+            g.radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(g));
+        }
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let depth = Vec3::new(6.5, 0.0, 50.0);
+        assert!(
+            scene.left_touch_surface(&world, front, ray).is_none(),
+            "invisible exit face must not catch a touch"
+        );
+        assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(depth));
+        assert_eq!(scene.action_point(&world, Some(ray), None, false, 100.0), Some(depth));
+        assert_eq!(
+            scene.left_selection_pick(&world, Some(ray), Some(depth), true, false, 100.0),
+            (Some(depth), Some(back))
+        );
+
+        // An explicitly double-sided PBR cube really displays the exit face.
+        let material = Uuid::from_u128(8893);
+        scene.materials.insert(
+            material,
+            aurora_assets::PbrMaterial {
+                alpha_mode: aurora_assets::AlphaMode::Blend,
+                double_sided: true,
+                ..Default::default()
+            },
+        );
+        world.objects.get_mut(front).unwrap().extra.render_materials = (0..6).map(|face| (face, material)).collect();
+        let exit = scene.left_touch_surface(&world, front, ray).unwrap().position;
+        assert!(exit.distance(Vec3::new(3.5, 0.0, 50.0)) < 1e-5);
+        let object = world.objects.get(front).unwrap();
+        world.gltf_overrides.insert(
+            object.key,
+            (0..6)
+                .map(|face| {
+                    (
+                        face,
+                        aurora_assets::material::PbrOverride {
+                            double_sided: Some(false),
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect::<Vec<_>>()
+                .into(),
+        );
+        assert!(scene.left_touch_surface(&world, front, ray).is_none());
     }
 
     #[test]
