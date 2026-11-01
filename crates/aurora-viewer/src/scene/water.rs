@@ -26,6 +26,9 @@ pub struct WaterGpu {
     tiles: Vec<Tile>,
     records: Vec<u32>,
     key: u64,
+    /// The agent region's water height (LLEnvironment::getWaterHeight),
+    /// the plane the blended faces are drawn before or after the water by.
+    pub height: Option<f32>,
 }
 
 impl WaterGpu {
@@ -48,6 +51,7 @@ impl WaterGpu {
     /// Rebuild the water records when regions, sizes or heights change.
     pub fn sync(&mut self, renderer: &mut Renderer, world: &World) {
         let Some(main) = world.main_region else {
+            self.height = None;
             return;
         };
         // (offset, size, height) of every region with known water
@@ -60,6 +64,7 @@ impl WaterGpu {
         }
         regions.sort_by(|a, b| a.0.x.total_cmp(&b.0.x).then(a.0.y.total_cmp(&b.0.y)));
         let main_height = world.main_water_height();
+        self.height = Some(main_height);
         let mut key = main ^ 0x5157_4154_4552;
         for (o, s, hgt) in &regions {
             key = key.rotate_left(7).wrapping_mul(0x100_0000_01B3)
