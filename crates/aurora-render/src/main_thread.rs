@@ -1570,6 +1570,11 @@ fn open_device(adapter: &wgpu::Adapter) -> Result<OpenedDevice, RenderError> {
     if afeat.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
         features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
     }
+    // order-independent transparency (oit.rs): the capture's depth test
+    // before its shader
+    if afeat.contains(wgpu::Features::SHADER_EARLY_DEPTH_TEST) {
+        features |= wgpu::Features::SHADER_EARLY_DEPTH_TEST;
+    }
     // GPU draw lists (gpu_cull.rs): draw counts written by the GPU
     if afeat.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT) {
         features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;

@@ -2269,7 +2269,10 @@ impl Impostors {
         let src = format!(
             "{}\n{}\n{}",
             crate::common_shader_source(),
-            crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
+            crate::oit::object_source(
+                device,
+                &crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl"))
+            ),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -3156,7 +3159,10 @@ impl Backend {
         let src = format!(
             "{}\n{}\n{}",
             crate::common_shader_source(),
-            crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
+            crate::oit::object_source(
+                device,
+                &crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl"))
+            ),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -3420,7 +3426,11 @@ impl Backend {
                     write_mask: wgpu::ColorWrites::ALL,
                     depth_write: false,
                     depth_compare: wgpu::CompareFunction::Greater,
-                    constants: &[("BLEND_EARLY_DISCARD", 1.0)],
+                    constants: if crate::oit::early_depth(device) {
+                        &[("BLEND_EARLY_DISCARD", 1.0), ("OIT_EARLY_DEPTH", 1.0)]
+                    } else {
+                        &[("BLEND_EARLY_DISCARD", 1.0)]
+                    },
                     ..base("blend oit capture", "vs_main", "fs_blend_oit")
                 },
             )

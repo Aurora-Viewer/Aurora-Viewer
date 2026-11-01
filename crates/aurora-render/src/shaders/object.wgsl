@@ -1593,16 +1593,22 @@ struct OitParams {
 @group(3) @binding(21) var<storage, read_write> oit_nodes: array<vec4<u32>>;
 @group(3) @binding(22) var<uniform> oit_params: OitParams;
 
-@fragment
+// The depth test runs before the shader where the GPU allows forcing it
+// (oit.rs `object_source` turns the marker below into
+// `@early_depth_test(force)` and sets OIT_EARLY_DEPTH): writing the lists
+// would otherwise make it shade every fragment behind the opaque scene (the
+// strands behind a head) before testing it. With MSAA a fragment runs when
+// one of its samples passes; the resolve tests each sample again. Without
+// it, the shader leaves early itself, against the single-sample prepass.
+override OIT_EARLY_DEPTH: bool = false;
+
+@fragment /*OIT_EARLY_DEPTH*/
 fn fs_blend_oit(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_mask) coverage: u32) -> @location(0) vec4<f32> {
-    let c = blend_color(in, front);
     let px = vec2<u32>(in.clip.xy);
-    // behind the opaque scene (reverse-Z): a node would only be thrown away
-    // by the resolve. With MSAA this is the single-sample prepass; the
-    // resolve tests each sample again against the MSAA depth.
-    if (in.clip.z <= textureLoad(depth_tex, vec2<i32>(px), 0)) {
+    if (!OIT_EARLY_DEPTH && in.clip.z <= textureLoad(depth_tex, vec2<i32>(px), 0)) {
         discard;
     }
+    let c = blend_color(in, front);
     let idx = atomicAdd(&oit_heads[0], 1u);
     if (idx >= oit_params.node_cap) {
         return c;

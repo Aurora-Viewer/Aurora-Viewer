@@ -24,7 +24,7 @@ pub const MAX_NODES_PER_PIXEL: u32 = 32;
 /// Layers sorted exactly in one pixel (the shader's arrays hold
 /// `MAX_SORTED_LAYERS`, oit.wgsl `MAX_LAYERS`).
 pub const DEFAULT_SORTED_LAYERS: u32 = 24;
-pub const MAX_SORTED_LAYERS: u32 = 32;
+pub const MAX_SORTED_LAYERS: u32 = 24;
 /// The node pool never takes more video memory than this.
 pub const MAX_POOL_BYTES: u64 = 512 << 20;
 /// A node: premultiplied colour, alpha and coverage, depth, next.
@@ -60,6 +60,22 @@ pub(crate) fn env_override() -> Option<bool> {
         "1" => Some(true),
         _ => None,
     })
+}
+
+/// object.wgsl for this device: the capture's depth test forced before its
+/// shader when the device can (`Features::SHADER_EARLY_DEPTH_TEST`; the
+/// attribute is refused otherwise, and with it the whole module).
+pub(crate) fn object_source(device: &wgpu::Device, src: &str) -> String {
+    if early_depth(device) {
+        src.replace("/*OIT_EARLY_DEPTH*/", "@early_depth_test(force)")
+    } else {
+        src.to_string()
+    }
+}
+
+/// The capture's depth test can be forced before its shader.
+pub(crate) fn early_depth(device: &wgpu::Device) -> bool {
+    device.features().contains(wgpu::Features::SHADER_EARLY_DEPTH_TEST)
 }
 
 /// Nodes the pool holds for a `width` × `height` screen: `nodes_per_pixel`

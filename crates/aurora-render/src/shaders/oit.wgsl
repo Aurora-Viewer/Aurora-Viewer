@@ -23,8 +23,10 @@ struct OitParams {
 // MSAA only: the scene depth, sample by sample
 @group(0) @binding(3) var depth_ms: texture_depth_multisampled_2d;
 
-// sorted exactly; the shader's arrays are this long
-const MAX_LAYERS: u32 = 32u;
+// sorted exactly; the arrays are this long (oit.rs MAX_SORTED_LAYERS). Kept
+// small, two words a layer: larger ones leave the registers and cost more
+// than the whole capture
+const MAX_LAYERS: u32 = 24u;
 // a guard against a broken list (never reached by a valid one)
 const MAX_TRAVERSAL: u32 = 1024u;
 
@@ -51,7 +53,9 @@ fn resolve(px: vec2<u32>, bit: u32, opaque: f32, test: bool) -> vec4<f32> {
         discard;
     }
     let keep = min(params.max_layers, MAX_LAYERS);
-    var col: array<vec4<f32>, MAX_LAYERS>;
+    // the kept layers' nodes and depths only (two words each): the arrays
+    // must stay in registers, the colours are read again once sorted
+    var ids: array<u32, MAX_LAYERS>;
     var dep: array<f32, MAX_LAYERS>;
     var cnt = 0u;
     // beyond `keep`: the weighted tail
@@ -63,23 +67,24 @@ fn resolve(px: vec2<u32>, bit: u32, opaque: f32, test: bool) -> vec4<f32> {
         if (idx == 0u || steps >= MAX_TRAVERSAL) {
             break;
         }
-        let n = nodes[idx - 1u];
+        let id = idx - 1u;
+        let n = nodes[id];
         idx = n.w;
         steps += 1u;
         let z = bitcast<f32>(n.z);
         if ((n.y >> 24u) & bit) == 0u || (test && z <= opaque) {
             continue;
         }
-        let c = node_color(n);
         // the first `keep` of the list (the last drawn: the faces come back
         // to front, so mostly the nearest) are sorted, the rest averaged;
         // one pass over the list whatever its length
         if (cnt < keep) {
-            col[cnt] = c;
+            ids[cnt] = id;
             dep[cnt] = z;
             cnt += 1u;
             continue;
         }
+        let c = node_color(n);
         tail_sum += c.rgb;
         tail_a += c.a;
         tail_trans *= 1.0 - c.a;
@@ -89,18 +94,18 @@ fn resolve(px: vec2<u32>, bit: u32, opaque: f32, test: bool) -> vec4<f32> {
     }
     // insertion sort, farthest first (reverse-Z: ascending depth)
     for (var i = 1u; i < cnt; i += 1u) {
-        let c = col[i];
+        let c = ids[i];
         let d = dep[i];
         var j = i;
         loop {
             if (j == 0u || dep[j - 1u] <= d) {
                 break;
             }
-            col[j] = col[j - 1u];
+            ids[j] = ids[j - 1u];
             dep[j] = dep[j - 1u];
             j -= 1u;
         }
-        col[j] = c;
+        ids[j] = c;
         dep[j] = d;
     }
     var accum = vec3<f32>(0.0);
@@ -112,7 +117,7 @@ fn resolve(px: vec2<u32>, bit: u32, opaque: f32, test: bool) -> vec4<f32> {
         accum = tail_sum / tail_a * cov;
     }
     for (var i = 0u; i < cnt; i += 1u) {
-        let c = col[i];
+        let c = node_color(nodes[ids[i]]);
         accum = c.rgb + accum * (1.0 - c.a);
         cov = c.a + cov * (1.0 - c.a);
     }
