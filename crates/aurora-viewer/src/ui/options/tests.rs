@@ -165,6 +165,7 @@ const BEFORE: &[&str] = &[
     "hover_tips.delay",
     "inventory.sort",
     "inventory.received_sort",
+    "inventory.recent_sort",
     "inventory.show_library",
     "inventory.show_recent",
     "inventory.recent_hours",
@@ -415,6 +416,7 @@ fn a_page_reset_leaves_the_other_pages_alone() {
     s.auto_accept_inventory_chat = false;
     s.auto_accept_inventory_notify = false;
     s.inventory.received_sort.folders_by_name = true;
+    s.inventory.recent_sort.by_date = false;
     reset_page_settings(Page::Graphics, &mut s);
     let d = Settings::default();
     assert_eq!(s.draw_distance, d.draw_distance);
@@ -436,6 +438,7 @@ fn a_page_reset_leaves_the_other_pages_alone() {
     assert_eq!(s.username, "kept");
     assert!(!s.inventory.sort.by_date, "other pages keep both inventory orders");
     assert!(s.inventory.received_sort.folders_by_name);
+    assert!(!s.inventory.recent_sort.by_date);
     assert_eq!(s.plate_click, crate::settings::PlateClick::Profile);
     assert_eq!(s.plate_shift_click, crate::settings::PlateClick::InstantMessage);
     assert_eq!(s.plate_ctrl_click, crate::settings::PlateClick::Menu);
@@ -449,6 +452,7 @@ fn a_page_reset_leaves_the_other_pages_alone() {
     assert!(s.auto_accept_inventory_chat && s.auto_accept_inventory_notify);
     assert_eq!(s.inventory.sort, d.inventory.sort);
     assert_eq!(s.inventory.received_sort, d.inventory.received_sort);
+    assert_eq!(s.inventory.recent_sort, d.inventory.recent_sort);
     reset_page_settings(Page::Layout, &mut s);
     assert_eq!(s.ui_scale, d.ui_scale);
 }
