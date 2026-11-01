@@ -2751,11 +2751,14 @@ actions and cancels when its row, device or application focus goes away.
 Axis assignments use the same capture lifecycle. `joystick/capture.rs`
 observes displacement from the initial sample, selects the dominant axis
 over a short gesture and ignores resting triggers, jitter and ambiguous
-diagonals. Per-mode inversion uses the existing signed tuning gains.
-Axis rows span the preferences width, with assignment, Avatar and Camera
-tuning in aligned columns that wrap in narrow windows. Assigning a zoom
-axis enables its zero Camera gain without replacing an existing non-zero
-gain. `Camera::start_flycam` tracks lens preference edits during flight;
+diagonals. One inversion switch beside the axis assignment and None applies
+to Avatar and Camera together, using the existing signed tuning gains.
+A negative legacy gain in either mode reverses both; unused Avatar gains
+for Roll/Zoom do not participate. Sensitivity and dead zones remain separate.
+Axis rows span the preferences width, with Avatar and Camera tuning in
+aligned columns below the assignment, wrapping in narrow windows. Assigning
+a zoom axis enables its zero Camera gain without replacing an existing
+non-zero gain. `Camera::start_flycam` tracks lens preference edits during flight;
 absolute controller zoom uses the flight's editable reference field of view.
 The Windows backend preserves the driver's 0–1 pressure range for known
 gamepad trigger codes; centred sticks and generic raw axis ranges retain

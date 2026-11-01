@@ -206,7 +206,13 @@ fn button_hint(cx: &mut Cx, label: &str, hint: &str, field: F<i8>, capture_axes:
     });
 }
 
-fn axis_binding(ui: &mut egui::Ui, settings: &mut crate::joystick::Settings, st: &mut super::super::OptionsUi, channel: usize) -> bool {
+fn axis_binding(
+    ui: &mut egui::Ui,
+    settings: &mut crate::joystick::Settings,
+    st: &mut super::super::OptionsUi,
+    channel: usize,
+    p: &crate::theme::Palette,
+) -> bool {
     use aurora_i18n::tr;
     let mut changed = false;
     let captured = match st.joystick_capture.as_mut() {
@@ -263,22 +269,22 @@ fn axis_binding(ui: &mut egui::Ui, settings: &mut crate::joystick::Settings, st:
                 changed = true;
             }
         }
+        let mut inverted = settings.axis_inverted(channel);
+        if widgets::switch_labeled(ui, p, &mut inverted, tr!("joystick-axis-invert")).changed() {
+            settings.set_axis_inverted(channel, inverted);
+            changed = true;
+        }
     });
     changed
 }
 
-fn tuning(ui: &mut egui::Ui, p: &crate::theme::Palette, label: &str, tune: &mut crate::joystick::Tuning, channel: usize) -> bool {
+fn tuning(ui: &mut egui::Ui, label: &str, tune: &mut crate::joystick::Tuning, channel: usize, inverted: bool) -> bool {
     use aurora_i18n::tr;
     let mut changed = false;
-    let mut inverted = tune.gain[channel].is_sign_negative();
     let mut gain = tune.gain[channel].abs();
     let mut gain_changed = false;
     ui.horizontal(|ui| {
-        ui.set_min_height(24.0);
         ui.label(label);
-        gain_changed |= widgets::switch_labeled(ui, p, &mut inverted, tr!("joystick-axis-invert")).changed();
-    });
-    ui.horizontal(|ui| {
         gain_changed |= ui
             .add(
                 egui::DragValue::new(&mut gain)
@@ -297,8 +303,7 @@ fn tuning(ui: &mut egui::Ui, p: &crate::theme::Palette, label: &str, tune: &mut 
             .changed();
     });
     if gain_changed {
-        // Keep the existing signed-gain format, including a signed zero
-        // when inversion is chosen before enabling an axis's gain.
+        // Preserve the shared direction when editing a mode's magnitude.
         tune.gain[channel] = if inverted { -gain } else { gain };
     }
     changed || gain_changed
@@ -313,12 +318,19 @@ fn axis_controls(
 ) -> bool {
     use aurora_i18n::tr;
     let mut changed = false;
-    let column_width = (ui.spacing().interact_size.x * 2.0 + 8.0).max(210.0);
-    let kinds: &[usize] = if channel == 6 { &[0, 2] } else { &[0, 1, 2] };
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let label_width = [tr!("joystick-avatar"), tr!("common-camera")]
+        .iter()
+        .map(|label| ui.painter().layout_no_wrap((*label).to_owned(), font.clone(), p.ink).size().x)
+        .fold(0.0, f32::max);
+    let column_width = ui.spacing().interact_size.x * 2.0 + label_width + 16.0;
+    let kinds: &[usize] = if channel == 6 { &[2] } else { &[1, 2] };
     let columns = ((ui.available_width() + 16.0) / (column_width + 16.0))
         .floor()
         .clamp(1.0, kinds.len() as f32) as usize;
     ui.vertical(|ui| {
+        changed |= axis_binding(ui, settings, st, channel, p);
+        let inverted = settings.axis_inverted(channel);
         ui.spacing_mut().item_spacing.x = 16.0;
         for chunk in kinds.chunks(columns) {
             ui.columns(columns, |cells| {
@@ -326,22 +338,15 @@ fn axis_controls(
                     let Some(&kind) = chunk.get(offset) else { continue };
                     ui.spacing_mut().item_spacing.x = 8.0;
                     ui.push_id((channel, kind), |ui| match kind {
-                        0 => {
-                            ui.horizontal(|ui| {
-                                ui.set_min_height(24.0);
-                                ui.weak(tr!("joystick-axis-assignment"));
-                            });
-                            changed |= axis_binding(ui, settings, st, channel);
-                        }
                         1 if matches!(channel, 3 | 6) => {
                             ui.horizontal(|ui| {
                                 ui.set_min_height(24.0);
                                 ui.weak(tr!("joystick-avatar"));
+                                ui.weak(tr!("joystick-axis-camera-only"));
                             });
-                            ui.weak(tr!("joystick-axis-camera-only"));
                         }
-                        1 => changed |= tuning(ui, p, tr!("joystick-avatar"), &mut settings.avatar, channel),
-                        2 => changed |= tuning(ui, p, tr!("common-camera"), &mut settings.flycam, channel),
+                        1 => changed |= tuning(ui, tr!("joystick-avatar"), &mut settings.avatar, channel, inverted),
+                        2 => changed |= tuning(ui, tr!("common-camera"), &mut settings.flycam, channel, inverted),
                         _ => {}
                     });
                 }
@@ -368,6 +373,7 @@ fn axis_row(cx: &mut Cx, n: usize, label: &str, hint: &str) {
         modified: move |s: &crate::settings::Settings, d: &crate::settings::Settings| {
             let (s, d) = (&s.joystick, &d.joystick);
             s.mapping[n] != d.mapping[n]
+                || s.axis_inverted(n) != d.axis_inverted(n)
                 || s.avatar.gain[n] != d.avatar.gain[n]
                 || s.flycam.gain[n] != d.flycam.gain[n]
                 || s.avatar.dead_zone[n] != d.avatar.dead_zone[n]
@@ -825,14 +831,21 @@ mod tests {
         state.joystick.updated = Some(Instant::now());
         let mut changed = false;
         let texts = frames.run(events, |ui| {
-            ui.set_width(210.0);
-            changed |= axis_binding(ui, &mut settings.joystick, state, channel);
+            ui.set_width(700.0);
+            changed |= axis_binding(
+                ui,
+                &mut settings.joystick,
+                state,
+                channel,
+                &crate::theme::Theme::default().palette(),
+            );
+            let inverted = settings.joystick.axis_inverted(channel);
             changed |= tuning(
                 ui,
-                &crate::theme::Theme::default().palette(),
                 aurora_i18n::tr!("joystick-avatar"),
                 &mut settings.joystick.avatar,
                 channel,
+                inverted,
             );
         });
         (texts, changed)
@@ -890,7 +903,7 @@ mod tests {
         assert_eq!(settings.joystick.avatar.gain[0], -1.0);
         assert_eq!(
             settings.joystick.flycam.gain[0],
-            crate::joystick::Settings::default().flycam.gain[0]
+            -crate::joystick::Settings::default().flycam.gain[0]
         );
         let mut controller = crate::joystick::Controller::default();
         let input_settings = crate::joystick::Settings {
@@ -968,7 +981,7 @@ mod tests {
     }
 
     #[test]
-    fn joystick_axis_inversion_preserves_old_negative_gains_and_a_disabled_axis_choice() {
+    fn joystick_shared_axis_inversion_preserves_gain_magnitudes_and_a_disabled_axis_choice() {
         use aurora_i18n::tr;
         let (mut settings, mut state) = fixture();
         settings.joystick.avatar.gain[0] = 0.0;
@@ -986,12 +999,17 @@ mod tests {
             axis_frame,
         );
         assert!(settings.joystick.avatar.gain[0].is_sign_negative());
+        assert_eq!(
+            settings.joystick.flycam.gain[0],
+            -crate::joystick::Settings::default().flycam.gain[0]
+        );
         let json = serde_json::to_string(&settings.joystick).expect("controller settings");
         let restored: crate::joystick::Settings = serde_json::from_str(&json).expect("restored controller settings");
         assert!(
             restored.avatar.gain[0].is_sign_negative(),
             "inversion survives a restart before setting a non-zero gain"
         );
+        assert!(restored.axis_inverted(0));
         settings.joystick.avatar.gain[0] = -2.0;
         texts = axis_frame(&mut frames, &mut settings, &mut state, Vec::new()).0;
         assert_eq!(settings.joystick.avatar.gain[0], -2.0);
@@ -1004,6 +1022,10 @@ mod tests {
             axis_frame,
         );
         assert_eq!(settings.joystick.avatar.gain[0], 2.0);
+        assert_eq!(
+            settings.joystick.flycam.gain[0],
+            crate::joystick::Settings::default().flycam.gain[0]
+        );
     }
 
     #[test]

@@ -421,15 +421,18 @@ stick direction or trigger. Minor sideways movement must not win over the
 main gesture. Detection observes up to 180 ms once movement is significant,
 or finishes on release; a similarly strong diagonal waits until released
 and retried. Resting triggers at -1 and small stick jitter must not assign
-anything. None and cancellation behave like button capture. Invert is
-separate for Avatar and Camera and preserves the gain magnitude; previous
-negative gains appear inverted, and the choice persists even with zero gain.
-Axis rows use aligned assignment, Avatar and Camera columns across the
-page; check wrapping at narrow window sizes and larger interface scales.
+anything. None and cancellation behave like button capture. One Invert
+switch sits beside the axis assignment and None, reversing Avatar and
+Camera together while preserving each mode's gain magnitude and dead zone.
+A previous negative gain in either mode appears as shared inversion;
+unused Avatar gains for Roll/Zoom do not participate. The choice persists
+even with zero gain and remains detectable by modified-settings/reset.
+Avatar and Camera tuning use aligned columns below the assignment;
+check wrapping at narrow window sizes and larger interface scales.
 Roll labels the unused Avatar column as Camera only. Zoom has its own group
 with direct-axis, two-buttons and hold-plus-axis choices; its axis row has
-only assignment and Camera tuning. Only the chosen mode's controls appear
-on the page, while all remain searchable and resettable.
+only the shared assignment/inversion and Camera tuning. Only the chosen
+mode's controls appear on the page, while all remain searchable and resettable.
 Assign the two zoom controls and the modifier by pressing a physical button
 or trigger. Trigger/axis directions display as Axis N (+/−), not fabricated
 physical button numbers. Controls held before capture must be released

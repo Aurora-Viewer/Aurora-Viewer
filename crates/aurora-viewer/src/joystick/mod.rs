@@ -132,6 +132,19 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// Reuse signed gains in saved profiles for one common axis direction.
+    /// Roll and zoom have no Avatar input, so only their Camera sign matters.
+    pub fn axis_inverted(&self, channel: usize) -> bool {
+        finite(self.flycam.gain[channel], 0.0).is_sign_negative()
+            || (!matches!(channel, 3 | 6) && finite(self.avatar.gain[channel], 0.0).is_sign_negative())
+    }
+
+    pub fn set_axis_inverted(&mut self, channel: usize, inverted: bool) {
+        let sign = if inverted { -1.0 } else { 1.0 };
+        self.avatar.gain[channel] = self.avatar.gain[channel].abs().copysign(sign);
+        self.flycam.gain[channel] = self.flycam.gain[channel].abs().copysign(sign);
+    }
+
     pub fn absolute_zoom(&self) -> bool {
         self.zoom_mode == ZoomMode::Axis && self.direct_zoom
     }
@@ -268,7 +281,9 @@ fn mapped(d: &Device, s: &Settings, tune: &Tuning) -> [f32; CHANNELS] {
             .map_or(0.0, |n| d.axes[n]);
         let raw = finite(raw, 0.0).clamp(-1.0, 1.0);
         let zone = finite(tune.dead_zone[i], 1.0).clamp(0.0, 1.0);
-        let gain = finite(tune.gain[i], 0.0).clamp(-20.0, 20.0);
+        // A negative legacy gain represents one common input inversion;
+        // magnitudes and dead zones remain specific to the active mode.
+        let gain = finite(tune.gain[i], 0.0).abs().min(20.0) * if s.axis_inverted(i) { -1.0 } else { 1.0 };
         let sign = [-1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0][i];
         (raw.abs() - zone).max(0.0) * raw.signum() * gain * sign
     })
@@ -602,6 +617,43 @@ mod tests {
             let restored: Settings = serde_json::from_str(&serde_json::to_string(&chosen).expect("saved zoom")).expect("restored zoom");
             assert_eq!(restored, chosen);
             assert!(!restored.absolute_zoom());
+        }
+    }
+
+    #[test]
+    fn joystick_shared_axis_inversion_preserves_mode_tuning_and_legacy_signs() {
+        let (mut snap, mut s, _) = fixture();
+        snap.devices[0].axes[1] = -0.8;
+        s.avatar.gain[0] = 1.7;
+        s.flycam.gain[0] = 0.9;
+        let zones = (s.avatar.dead_zone, s.flycam.dead_zone);
+        let avatar = mapped(&snap.devices[0], &s, &s.avatar)[0];
+        let camera = mapped(&snap.devices[0], &s, &s.flycam)[0];
+        assert!(avatar > 0.0 && camera > 0.0);
+        s.set_axis_inverted(0, true);
+        assert_eq!((s.avatar.gain[0], s.flycam.gain[0]), (-1.7, -0.9));
+        assert_eq!(mapped(&snap.devices[0], &s, &s.avatar)[0], -avatar);
+        assert_eq!(mapped(&snap.devices[0], &s, &s.flycam)[0], -camera);
+        assert_eq!((s.avatar.dead_zone, s.flycam.dead_zone), zones);
+        s.set_axis_inverted(0, false);
+        assert_eq!(mapped(&snap.devices[0], &s, &s.avatar)[0], avatar);
+        assert_eq!(mapped(&snap.devices[0], &s, &s.flycam)[0], camera);
+        for negative_avatar in [false, true] {
+            // Either legacy mode's negative sign now reverses both modes.
+            s.avatar.gain[0] = if negative_avatar { -1.7 } else { 1.7 };
+            s.flycam.gain[0] = if negative_avatar { 0.9 } else { -0.9 };
+            assert!(s.axis_inverted(0));
+            assert_eq!(mapped(&snap.devices[0], &s, &s.avatar)[0], -avatar);
+            assert_eq!(mapped(&snap.devices[0], &s, &s.flycam)[0], -camera);
+        }
+        for channel in [3, 6] {
+            s.avatar.gain[channel] = -1.0;
+            s.flycam.gain[channel] = 0.0;
+            assert!(!s.axis_inverted(channel), "unused Avatar gains do not invert Camera-only axes");
+            s.set_axis_inverted(channel, true);
+            let json = serde_json::to_string(&s).expect("saved shared inversion");
+            let restored: Settings = serde_json::from_str(&json).expect("restored shared inversion");
+            assert!(restored.axis_inverted(channel), "inverted zero persists until gain is raised");
         }
     }
 
