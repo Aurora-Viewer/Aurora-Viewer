@@ -134,12 +134,17 @@ pub fn destination(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool
 /// included) stays closed, as do the Trash (moved to by the delete path)
 /// and My Outfits (`outfit_folders::move_into`).
 pub fn move_destination(inv: &Inventory, id: Uuid) -> bool {
+    link_destination(inv, id) && !in_type(inv, id, 48)
+}
+/// Where a link can be pasted: `move_destination` plus My Outfits and its
+/// folders, whose contents are links (LLFolderBridge::pasteLinkFromClipboard,
+/// indra/newview/llinventorybridge.cpp, originally LGPL 2.1).
+pub fn link_destination(inv: &Inventory, id: Uuid) -> bool {
     let (cof, inbox) = (system(inv, 46), system(inv, 50));
     inv.folders.contains_key(&id)
         && !library(inv, id)
         && !ancestors(inv, id).any(|a| Some(a) == cof || Some(a) == inbox)
         && !in_type(inv, id, 14)
-        && !in_type(inv, id, 48)
 }
 pub fn original(inv: &Inventory, mut id: Uuid) -> Option<Uuid> {
     // Most rows are no link: answer them without the cycle guard's set
@@ -379,7 +384,13 @@ pub fn paste(
     protected: &HashSet<Uuid>,
     worn: &HashSet<Uuid>,
 ) -> Result<Mutation, String> {
-    if ids.is_empty() || !move_destination(inv, to) {
+    if ids.is_empty()
+        || !(if links {
+            link_destination(inv, to)
+        } else {
+            move_destination(inv, to)
+        })
+    {
         return Err(aurora_i18n::tr!("world-inventory-actions-the-clipboard-is-empty-or-the-folder-is-protected").into());
     }
     if let Some(root) = crate::world::marketplace::root(inv).filter(|root| under(inv, to, *root)) {
@@ -764,7 +775,11 @@ pub fn paste_allowed(
         HashSet::new()
     };
     !ids.is_empty()
-        && move_destination(inv, to)
+        && (if links {
+            link_destination(inv, to)
+        } else {
+            move_destination(inv, to)
+        })
         && !(links && cut)
         && ids.iter().all(|id| {
             if *id == to || under(inv, to, *id) {
