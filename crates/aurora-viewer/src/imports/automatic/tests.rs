@@ -105,6 +105,95 @@ fn confirmation_creates_acknowledged_folders_then_starts_uploads_without_another
 }
 
 #[test]
+fn named_loose_files_create_the_folder_only_after_confirmation_and_use_its_acknowledged_uuid() {
+    let (mut imports, mut world, inventory, mut settings, prices) = fixture(false);
+    imports.entries[0].source_folders.clear();
+    imports.entries[0].upload_path = None;
+    settings.folder_layout = Some(folders::Layout::Flat);
+    imports.set_loose_folder(Some(""));
+    imports.sync_destinations(&settings, &world, &inventory);
+    imports.start_confirmed(&world, &inventory, &settings, &prices);
+    assert!(!imports.busy() && imports.queue.is_empty());
+    assert!(imports.set_loose_folder(Some("Release")));
+    imports.sync_destinations(&settings, &world, &inventory);
+    assert_eq!(world.inventory.folders.len(), 1);
+    assert!(imports.next_import_folder(&world, &inventory).is_none());
+    imports.start_confirmed(&world, &inventory, &settings, &prices);
+    assert!(imports.busy());
+    assert_eq!(world.inventory.folders.len(), 1);
+    folders(&mut imports, &mut world, &inventory);
+    assert!(imports.advance_confirmed(&world, &inventory).is_empty());
+    assert_eq!(imports.queue.len(), 1);
+    let target = imports.queue[0].folder;
+    assert_eq!(world.inventory.folders[&target].info.name, "Release");
+    assert_eq!(world.inventory.folders[&target].info.parent, world.inventory.root);
+    assert_eq!(imports.entries[0].folder, target);
+    assert!(imports.entries[0].source_folders.is_empty());
+    assert_eq!(imports.spent, 0);
+}
+
+#[test]
+fn type_confirmation_retains_its_scope_while_other_windows_and_folder_jobs_are_active() {
+    let (mut imports, mut world, inventory, settings, prices) = fixture(false);
+    let texture = imports.entries[0].id;
+    let mut mesh = Entry::new(
+        "Other.dae".into(),
+        Ok(Source::Mesh(Box::new(crate::imports::tests::mesh_fixture()))),
+        Default::default(),
+    );
+    mesh.source_folders = vec!["Other".into()];
+    imports.entries.push(mesh);
+    imports.sync_destinations(&settings, &world, &inventory);
+    assert!(imports.total(&prices).is_none(), "the other mesh has no quote");
+    imports.with_choice(Choice::Texture, |imports| {
+        assert_eq!(imports.total(&prices), Some(10));
+        imports.start_confirmed(&world, &inventory, &settings, &prices);
+    });
+    assert!(imports.pending_confirmed.is_some());
+    assert_eq!(imports.choice, Choice::Bulk);
+    imports.open_type_window(&egui::Context::default(), Choice::Mesh);
+    folders(&mut imports, &mut world, &inventory);
+    assert!(imports.advance_confirmed(&world, &inventory).is_empty(), "no unrelated mesh quote");
+    assert_eq!(imports.choice, Choice::Bulk);
+    assert_eq!(imports.queue.len(), 1);
+    assert_eq!(imports.queue[0].entry, Some(texture));
+    assert!(matches!(imports.entries[1].status, Status::Ready));
+    assert_eq!(imports.spent, 0);
+}
+
+#[test]
+fn a_type_mesh_requote_ignores_an_invalid_destination_in_another_type_window() {
+    let (mut imports, mut world, inventory, settings, prices) = fixture(true);
+    let mesh = imports.entries[0].id;
+    let mut texture = Entry::new(
+        "Other.png".into(),
+        Ok(Source::Texture(crate::imports::tests::image(16, 16))),
+        Default::default(),
+    );
+    texture.upload_path = Some(vec!["invalid/name".into()]);
+    imports.entries.push(texture);
+    imports.sync_destinations(&settings, &world, &inventory);
+    assert!(!imports.folder_plan_valid(&world, &inventory));
+    imports.with_choice(Choice::Mesh, |imports| {
+        imports.start_confirmed(&world, &inventory, &settings, &prices);
+    });
+    folders(&mut imports, &mut world, &inventory);
+    let requests = imports.advance_confirmed(&world, &inventory);
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].0, mesh);
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    imports.quote_mesh(mesh, &egui::Context::default(), &jobs, &world, &inventory, requests[0].1);
+    let Some(Source::Mesh(draft)) = &imports.entries[0].source else {
+        panic!("mesh")
+    };
+    assert!(
+        draft.pending.is_some(),
+        "background requotes retain the mesh scope after restoring the main view"
+    );
+    assert_eq!(imports.choice, Choice::Bulk);
+}
+
+#[test]
 fn confirmed_mesh_requotes_real_destination_and_stops_if_the_approved_price_increases() {
     for new_price in [20, 21] {
         let (mut imports, mut world, inventory, settings, prices) = fixture(true);

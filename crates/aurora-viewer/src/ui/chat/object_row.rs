@@ -224,7 +224,18 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
             .unwrap_or_else(|| text_color(line, p));
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
-            chat_text_marked(ui, p, env.emoji, world, env.want_names, text, TEXT, color, italics, mark);
+            chat_text_marked(
+                ui,
+                p,
+                env.emoji,
+                world,
+                env.want_names,
+                text,
+                TEXT,
+                color,
+                super::message_emphasis(line.kind, italics),
+                mark,
+            );
         });
     });
     super::find::note_message(ui, top, Some(row.response.rect.bottom()));

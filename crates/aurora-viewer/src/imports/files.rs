@@ -686,10 +686,20 @@ impl Imports {
         });
     }
     pub fn choose_files(&mut self, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, options: import_texture::Options) {
+        self.choose_type_files(jobs, ctx, options, self.choice);
+    }
+
+    pub fn choose_type_files(
+        &mut self,
+        jobs: &crate::scene::jobs::Jobs,
+        ctx: &egui::Context,
+        options: import_texture::Options,
+        choice: Choice,
+    ) {
         if self.busy() {
             return;
         }
-        self.load_files(jobs, ctx, options, self.choice, self.choice == Choice::Local, Selection::Files);
+        self.load_files(jobs, ctx, options, choice, choice == Choice::Local, Selection::Files);
     }
     pub fn choose_folder(&mut self, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, options: import_texture::Options) {
         if self.busy() || self.pending_files.is_some() {
@@ -750,6 +760,7 @@ impl Imports {
         let request = Uuid::new_v4();
         self.pending_files = Some(request);
         self.picker_files = false;
+        self.pending_file_choice = Some(if local { Choice::Local } else { choice });
         let sound_limit = self.sound_limit;
         let prefs = self.load_preferences.clone();
         let mut retained = self

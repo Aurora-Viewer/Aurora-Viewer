@@ -21,6 +21,39 @@ pub(super) fn destination_row(
         ui.label(aurora_i18n::tr!("import-local-free"));
         return;
     }
+    if imports.window_choice() != Choice::Bulk {
+        let before = (prefs.use_default_folders, prefs.batch_folder, prefs.include_source_folder);
+        ui.add_enabled_ui(!busy, |ui| {
+            checkbox(
+                ui,
+                p,
+                &mut prefs.use_default_folders,
+                aurora_i18n::tr!("import-use-default-folders"),
+            );
+            ui.horizontal_wrapped(|ui| {
+                ui.label(aurora_i18n::tr!("import-destination"));
+                let mut folder = if prefs.use_default_folders {
+                    imports
+                        .active
+                        .and_then(|id| imports.entries.iter().find(|entry| entry.id == id))
+                        .map_or(world.inventory.root, |entry| entry.folder)
+                } else {
+                    Imports::batch_folder(world, prefs.batch_folder)
+                };
+                ui.add_enabled_ui(!prefs.use_default_folders, |ui| {
+                    imports.destination.show(ui, p, &world.inventory, &inventory.protected, &mut folder);
+                });
+                if !prefs.use_default_folders {
+                    prefs.batch_folder = folder;
+                }
+            });
+            ui.add_enabled_ui(!prefs.use_default_folders, |ui| source_root::show(ui, p, imports, prefs));
+        });
+        if before != (prefs.use_default_folders, prefs.batch_folder, prefs.include_source_folder) {
+            imports.sync_destinations(prefs, world, inventory);
+        }
+        return;
+    }
     let layout = prefs
         .folder_layout
         .get_or_insert(if prefs.use_default_folders { Layout::Mirror } else { Layout::Flat });

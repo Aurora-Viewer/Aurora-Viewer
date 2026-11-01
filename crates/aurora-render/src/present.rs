@@ -8,7 +8,11 @@
 //! Vulkan the unsynchronized side has two modes; the one in use is written to
 //! the log and to the bug reports, since what the driver and the compositor
 //! do with it depends on the screen under the window (variable refresh rate,
-//! screens of different rates).
+//! screens of different rates). Every configuration of the surface goes
+//! through [`configure`], which counts the swapchain recreations for the
+//! crash reports.
+
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use wgpu::PresentMode;
 
@@ -56,6 +60,25 @@ pub(crate) fn forced() -> Option<PresentMode> {
         }
         mode
     })
+}
+
+/// Swapchain recreations since the start (every `configure` below).
+static RECREATIONS: AtomicU64 = AtomicU64::new(0);
+
+/// Configures the surface, counted. wgpu first waits for the GPU to finish
+/// its work, then destroys and recreates the swapchain (wgpu-core
+/// `Device::configure_surface`): a window resized by its edge does it on
+/// almost every frame, 33 ms each in demo at 3200 x 1800 (RTX 3060 Laptop). The
+/// crash reports say how many there were just before the end (#1701, a
+/// device lost while the window was being resized).
+pub(crate) fn configure(surface: &wgpu::Surface<'_>, device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) {
+    RECREATIONS.fetch_add(1, Ordering::Relaxed);
+    surface.configure(device, config);
+}
+
+/// Swapchain recreations since the start.
+pub fn recreations() -> u64 {
+    RECREATIONS.load(Ordering::Relaxed)
 }
 
 /// Stable name of a mode for the log, the profile and the bug reports.

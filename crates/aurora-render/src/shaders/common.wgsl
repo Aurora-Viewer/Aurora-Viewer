@@ -105,6 +105,13 @@ struct Frame {
     spot_fade: vec4<f32>,
     contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque enough cast it
     features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes)
+    // Motion vectors (main view; zero in the other passes), without the TAA
+    // jitter: this frame's view-projection for positions relative to `eye`,
+    // the last frame's for the same positions, and this frame's clip space
+    // to the last frame's (a point the depth places, where nothing drew).
+    motion_vp: mat4x4<f32>,
+    motion_prev_vp: mat4x4<f32>,
+    motion_reproj: mat4x4<f32>,
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -220,6 +227,10 @@ struct SkinBind {
     joint: vec4<u32>,
 };
 @group(1) @binding(2) var<storage, read> skin_binds: array<SkinBind>;
+// What the last frame drew with (motion_history.rs): the joint palettes and
+// each record's model matrix.
+@group(1) @binding(3) var<storage, read> prev_palettes: array<mat4x4<f32>>;
+@group(1) @binding(4) var<storage, read> prev_models: array<mat4x4<f32>>;
 
 // Bindless textures pooled in pages (textures.rs): a slot's location packs
 // the page (high 16 bits) and its layer (low 16 bits).
@@ -1259,6 +1270,17 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
         }
     }
     return sum / f32(taps * taps);
+}
+
+// The motion of a pixel on the screen from its clip positions, this frame's
+// and the last frame's: in uv units (y down), what to take from its uv to
+// find where the last frame drew it. None for a point that was behind the
+// camera.
+fn screen_motion(cur: vec4<f32>, prev: vec4<f32>) -> vec2<f32> {
+    if (prev.w <= 1e-6 || cur.w <= 1e-6) {
+        return vec2<f32>(0.0);
+    }
+    return (cur.xy / cur.w - prev.xy / prev.w) * vec2<f32>(0.5, -0.5);
 }
 
 // The view shown instead of the image (frame.light_mode.z, Preferences ›

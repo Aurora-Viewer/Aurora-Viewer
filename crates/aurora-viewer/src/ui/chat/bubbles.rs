@@ -279,7 +279,18 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             }
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                 if !visible.is_empty() {
-                    chat_text_marked(ui, p, env.emoji, world, env.want_names, &visible, size, text_color, italics, mark);
+                    chat_text_marked(
+                        ui,
+                        p,
+                        env.emoji,
+                        world,
+                        env.want_names,
+                        &visible,
+                        size,
+                        text_color,
+                        super::message_emphasis(line.kind, italics),
+                        mark,
+                    );
                 }
                 super::previews::cards(ui, env, line, &text);
             });

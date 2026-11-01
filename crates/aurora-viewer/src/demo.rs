@@ -1163,7 +1163,7 @@ pub fn bubbles_events() -> Vec<NetEvent> {
     ev
 }
 
-/// `AURORA_DEMO_CHAT_LINES=1|legacy`: nearby chat said at the arrival, to
+/// `AURORA_DEMO_CHAT_LINES=1|legacy|volumes`: nearby chat said at the arrival, to
 /// see the lines above the chat bar (`ui/chat/console.rs`): two lines of
 /// one resident, an emote, an object's line, a long line with a link, a
 /// shout. `legacy` shows them as the Legacy Viewer's lines for the session
@@ -1174,6 +1174,14 @@ pub fn chat_lines_scenario() -> Option<bool> {
         "" | "0" => None,
         _ => Some(false),
     }
+}
+
+/// Show the same six messages in Conversations and above the bar (#1323).
+pub fn chat_volume_comparison() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("AURORA_DEMO").is_some() && std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode == "volumes")
+    })
 }
 
 pub fn chat_lines_events() -> Vec<NetEvent> {
@@ -1196,6 +1204,21 @@ pub fn chat_lines_events() -> Vec<NetEvent> {
         })
     };
     let normal = aurora_net::ChatType::Normal;
+    if chat_volume_comparison() {
+        return [
+            (normal, aurora_i18n::tr!("demo-bubbles-local-1")),
+            (aurora_net::ChatType::Whisper, aurora_i18n::tr!("demo-aurora-local-own-whisper")),
+            (aurora_net::ChatType::Shout, aurora_i18n::tr!("demo-aurora-local-own-shout")),
+        ]
+        .into_iter()
+        .flat_map(|(volume, text)| {
+            [
+                say(DEMO_AGENT, "Aurora Demo", text, false, volume),
+                say(object, aurora_i18n::tr!("common-demo-hud"), text, true, volume),
+            ]
+        })
+        .collect();
+    }
     vec![
         say(DEMO_NOVA, nova, aurora_i18n::tr!("demo-bubbles-local-1"), false, normal),
         say(DEMO_NOVA, nova, aurora_i18n::tr!("demo-bubbles-local-2"), false, normal),
@@ -1549,6 +1572,9 @@ pub enum AuroraCall {
 }
 
 pub fn aurora_scenario() -> Option<AuroraScene> {
+    if chat_volume_comparison() {
+        return parse_aurora_scene("aurora:local");
+    }
     parse_aurora_scene(&std::env::var("AURORA_DEMO_CONV").ok()?)
 }
 
@@ -1764,6 +1790,9 @@ fn world_name(id: Uuid) -> String {
 /// a mention of us, after the bubbles scenario's lines; then the friend's
 /// status of `friend-away` / `friend-offline`.
 pub fn aurora_events(scene: &AuroraScene) -> Vec<NetEvent> {
+    if chat_volume_comparison() {
+        return Vec::new();
+    }
     let say = |from: Uuid, name: &str, text: String, chat_type| {
         NetEvent::Chat(aurora_net::ChatMessage {
             from_name: name.into(),

@@ -4430,7 +4430,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>` | The region goes silent (the unsteady-connection pill and its count), or the link is lost (login screen offering to go back to the same place) |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
-| `AURORA_DEMO_CHAT_LINES=1\|legacy` | Nearby chat lines above the chat bar: cards by sender, or the one-line look |
+| `AURORA_DEMO_CHAT_LINES=1\|legacy\|volumes` | Nearby chat lines above the chat bar: cards by sender, or the one-line look |
 | `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact |
 | `AURORA_DEMO_TYPING=1` | We type in the nearby chat from our arrival on: typing animation, dots on our plate |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
@@ -4480,7 +4480,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|channel\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, commands to worn scripts, completion, the chat bar's list of gestures and menu access |
-| `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the empty Batch / Permissions tab |
+| `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the quick import bar; `type-*` opens independent type windows |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
 | `AURORA_DEMO_LOCAL_APPEARANCES=1\|menu\|reveal\|confirm\|remove\|cancel` | Applied-local-appearance warning, highlight toggle and confirmed removal |
@@ -4697,8 +4697,25 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   of the question. Capture at frame 620. `AURORA_DEMO_RCLICK="x,y"` on the
   ground shows the entry in the menu.
 - **`AURORA_DEMO_IMPORTS=launcher|settings`** opens the empty unified import
-  window or its Permissions tab. Ctrl+U and Build > Import open the same
-  window directly, without a separate type strip or an automatic disk dialog.
+  window or its Permissions tab. Ctrl+U and Build > Import follow the saved
+  Preferences > Inventory > Open imports with choice (Upload window by default).
+- **`AURORA_DEMO_IMPORTS=icon-bar`** opens the movable quick import bar without
+  a disk dialog. The Aurora glass surface groups flat action buttons and
+  a grip for moving the bar; the open inspector or Permissions is accented.
+  Texture, sound, animation, material and mesh each open their own window,
+  reusing existing drafts or requesting the corresponding file filter if empty.
+  Local previews have a separate window; Folder opens the unified uploader
+  and immediately asks for a directory. Each type window retains its own
+  selection, tab and geometry, with fees and confirmation limited to that type.
+  The uploader's Quick import bar switch changes
+  the same saved entry-point preference and shows or hides the strip at once.
+  The preference is at the bottom of Inventory, after Received items.
+  Closing a window leaves the shared drafts intact.
+- **`AURORA_DEMO_IMPORTS=type-texture|type-sound|type-animation|type-material|type-mesh|type-local`**
+  loads that type's synthetic draft into its dedicated window with the bar visible.
+  **`type-windows`** loads a mixed queue and places texture and sound windows
+  side by side (1600×1000). Check independent selections, titles, tab switches,
+  close/reopen, type-filtered Add files, and confirmation while another window is open.
 - **`AURORA_DEMO_IMPORTS=unified`** loads a mixed queue with a mesh first,
   followed by a texture, sound, BVH animation and material. The first row is
   selected automatically. Click each queue row: the right inspector follows
@@ -4739,6 +4756,21 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   disable the action; exceeding queue/input budgets creates no partial batch.
   Empty the queue and complete an upload with its payment receipt visible:
   the window keeps its size, and the controls below the queue stay reachable.
+- **`AURORA_DEMO_IMPORTS=loose-folder|loose-folder-preview|type-sound-folder`**
+  shows files added without a disk folder, grouped under a named Release folder.
+  Uncheck Use default folders, toggle Create folder and enter a name. The name
+  updates the destination immediately, with no Apply button; clearing it or
+  entering an invalid name blocks upload until corrected.
+  There is no Include source folder control for loose files. Check Files and
+  Folder preview, and the dedicated sound window: changing the name or disabling
+  grouping retains manual inner paths and never changes disk paths. An enabled
+  unnamed folder blocks uploads. Folder creation starts only after confirmation,
+  and uploads wait for acknowledged inventory UUIDs. Selected disk directories
+  keep their own Include source folder option, including in mixed queues.
+- **`AURORA_DEMO_IMPORTS=sound-confirm|material-confirm`** opens the confirmation
+  over a sound or a material that reuses one image in multiple maps. Only the
+  material shows the shared-texture note. The note follows selected files and
+  effective texture encoding, not merely the presence of a texture or material.
 - **`AURORA_DEMO_IMPORTS=inspectors`** loads every type, including local
   previews, in the same window. Queue selection replaces the former type tabs.
 - **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|mesh-avatar|mesh-avatar-rigged|mesh-journal|permissions|animation|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
@@ -4836,8 +4868,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   to the grid's asset maximum; long WAV sources enable splitting on load.
   `animation` shows aligned settings beside its preview, with loop units
   labelled and easing fields aligned. A mixed queue containing meshes needs their
-  quotes before confirmation. Ctrl+U toggles the unified import window; the file picker
-  opens only after Add files. Rebind it in Preferences › Shortcuts.
+  quotes before confirmation. Ctrl+U toggles the saved entry point (the unified
+  window by default, or the quick import bar). Add files requests a file picker;
+  an empty type icon requests its filtered picker and Folder requests a directory.
+  Rebind the shortcut in Preferences › Shortcuts.
   The quote and the uploads stay entirely inside the demo server.
   In `destination`, uncheck Use default folders to open the inventory destination
   tree, with the current path expanded. Toggle a parent caret: only its children fold/unfold; the selected
@@ -6294,7 +6328,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   is disabled; only enter synthetic values for this test.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
-- **`AURORA_DEMO_CHAT_LINES=1|legacy`**: nearby chat said at the arrival,
+- **`AURORA_DEMO_CHAT_LINES=1|legacy|volumes`**: nearby chat said at the arrival,
   shown above the chat bar with the Conversations window closed: two lines
   of one resident, an emote, an object's line, a long line with a link, a
   shout (only the 6 most recent lines show, as always). `1`: Aurora's cards
@@ -6304,6 +6338,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Viewer's one-line look for the session (nothing saved). Check them over a
   dark and a bright world (`AURORA_DEMO_SKY=2,4,2`): readable on both, the
   name, the picture and the links clickable, the world clickable around.
+  `volumes` shows the same normal, whispered and shouted messages from us
+  and an object in both the cards and Conversations, visible together to
+  compare their colours, whisper italics and shout weight. These demo cards
+  remain visible for an hour without changing the saved timeout.
+
 - **`AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy|lines[:on][:im][:imlines]`**
   (#475, #741): nearby chat said at the arrival, two residents among a
   greeter, a tip jar, our HUD's owner-say, a door's emote and a vendor's
@@ -8583,6 +8622,7 @@ What the inventory must show with these scenarios:
 | `AURORA_GTAO_SPECULAR=0` or `alt` | GTAO without its specular occlusion (reflections in creases), as before |
 | `AURORA_GTAO_TEMPORAL=0` or `alt` | GTAO without its accumulation over the frames (fixed noise, finer grain), as before |
 | `AURORA_GTAO_NORMALS=depth` or `alt` | GTAO with the normal rebuilt from the depth (facets on low-poly meshes), as before |
+| `AURORA_DEBUG_MOTION=1` | The screen's motion vectors shown instead of the image |
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
@@ -8720,20 +8760,27 @@ What the inventory must show with these scenarios:
     (`texture memory: pressure 0 -> 1 (… MB in pages for a target of … MB, …
     lowered so far)`): 1 brings the textures back to their on-screen size,
     2 to 7 then remove half a level at a time, up to two levels, off-screen
-    first. The same line gives the viewer's video memory: its resources,
+    first. Each step lowers only what brings the pages back to 85 % of the
+    target, the largest textures first. The same line gives the viewer's video memory: its resources,
     what the driver counts for it and the budget granted. The full
     Performance window shows the target and the step ("Texture budget", in
     Memory and streaming).
   - In demo, with `AURORA_DEMO_STREAM=3000` (4.7 GB of textures):
     `AURORA_DEMO_POS="168,126"` places the avatar in the middle of the
-    objects; 512 stays at step 1, 96 climbs to step 4 or 5 depending on the
-    run. The textures of this scenario are then reloaded on demand, like
+    objects; 512 climbs to step 3 and settles near 440 MB of pages, 96
+    climbs to step 6 or 7. Without `AURORA_DEMO_POS`, 3000 goes over the
+    target once, by a few megabytes: about 460 textures are lowered, 2.5 GB
+    stay, and the step comes back to 0 (before the lowering was limited to
+    the goal: 3,571 lowered, 105 MB left). The textures of this scenario are then reloaded on demand, like
     those of the grid (camera moved closer after a reduction). A huge value
     (1000000) removes all pressure, to compare.
 - **`AURORA_VRAM_BUDGET_MB=<n>`**: the budget the driver grants the viewer
   is taken as n MB (at least 256), what the texture budget and the
   Performance window then read (`aurora-render/src/vram.rs`); what the
-  driver counts for the viewer stays the real figure.
+  driver counts for the viewer stays the real figure. It replaces the
+  budget given out, the driver's lowest of the last minute (log line
+  `GPU memory budget: … given out`), which a smaller card would not show
+  either.
   - In demo, `AURORA_DEMO_STREAM=3000` with `AURORA_VRAM_BUDGET_MB=2048`
     behaves like a small card: the texture target leaves 20 % of the
     budget free with the rest of what the viewer holds (render targets,
@@ -8863,6 +8910,21 @@ What the inventory must show with these scenarios:
   back, the waist and the skirt of our avatar, and the large sphere behind
   the material panels, where the lines of the mesh's creases showed;
   `AURORA_DEMO_SKY=1,0.8,1.2` for a sky with strong ambient light.
+- **`AURORA_DEBUG_MOTION=1`**: the motion vectors replace the image
+  (`motion_debug.rs`, `shaders/motion_debug.wgsl`): the hue gives the
+  direction a point moved on screen since the last frame (red left, cyan
+  right, violet down), the brightness its length (two thirds of full
+  brightness at about 8 pixels a frame), a dim grey where nothing moves
+  (darker for the sky). The depth prepass writes them beside GTAO's
+  normals (`depth_normal` in object.wgsl, from the last frame's matrices
+  and joint palettes, `motion_history.rs`), so only while GTAO uses the
+  mesh normals; elsewhere, and where nothing was drawn, the camera's
+  motion alone is shown. Lip morphs and other morphs count as still. With
+  `AURORA_DEMO_CAMERA=alt,640,400` capture frame 645 (the orbit: the sky
+  one colour, the terrain shading through black where it crosses the
+  pivot's distance); with `AURORA_DEMO_CAMERA=close,640,500,45` frame 625
+  (the zoom: colours fanning out from the focus, the still objects the
+  colour of the terrain behind them); frame 700 of the first is all grey.
 - **`AURORA_SSIL=1|0|alt`**: Preferences › Graphics › Indirect light
   (GTAO) for this launch, without changing the saved setting; it needs the
   GTAO method. A pass after GTAO's gathers the light on a visibility
@@ -9614,13 +9676,13 @@ thread.
   stays tiny.
 - `off_cpu:`: on the same principle, the steps of both threads that spent
   at least 1 ms **off the processor** in a frame (elapsed time minus the
-  thread's CPU time, Windows only), the longest first. A slow step listed
-  there waited instead of working: a lock (the heap while the background
-  tasks allocate, for example), or a core taken by another thread when the
-  machine is loaded. The steps that hand work to the pool (`sync`, `lists`,
-  `poses`, `r_finish`) wait there for their threads by construction; those
-  that wait by nature (`render`, `limiter`, `r_acquire`, `r_present`) are
-  not listed there.
+  thread's CPU time, Windows and Linux), the longest first. A slow step
+  listed there waited instead of working: a lock (the heap while the
+  background tasks allocate, for example), or a core taken by another
+  thread when the machine is loaded. The steps that hand work to the pool
+  (`sync`, `lists`, `poses`, `r_finish`) wait there for their threads by
+  construction; those that wait by nature (`render`, `limiter`,
+  `r_acquire`, `r_present`) are not listed there.
 - `thread=on|off`, then where the two threads meet:
   - `packet` (main thread, in `render`): the closing of the frame — the
     modified ranges of the scene tables in the frame's write journal, a
@@ -9895,19 +9957,22 @@ tens of thousands of objects), the threads listed by a thread of their own.
   the geometry (render targets, shadow maps, tables); then the textures
   (`texture_mb` their levels, `pages`, `pages_mb` allocated),
   `texture_target_mb` and `pressure` of the texture budget, `geometry_mb`
-  the geometry arena and `geometry_used_mb` what is used of it.
-- `cpu summary` (Windows), written by the `aurora-probe` thread: the
-  process's CPU time as a share of one core and of all the cores,
+  the geometry arena and `geometry_used_mb` what is used of it. On Linux
+  `working_set` is the resident memory (`VmRSS`), `peak` its high-water
+  mark (`VmHWM`) and `private` the anonymous memory, resident or swapped
+  out (`RssAnon` + `VmSwap`).
+- `cpu summary` (Windows and Linux), written by the `aurora-probe` thread:
+  the process's CPU time as a share of one core and of all the cores,
   `machine=` how busy all the cores were (every process: another program
   loading the PC shows there), then each group of threads as a share of
   one core, the busiest first: `main`, `aurora-render`, `aurora-worker`
   (the frame's parallel loops), `aurora-jobs` (decodes, meshes, disk),
   `aurora-net` (the network runtime), `aurora-pages`, `aurora-trash`,
-  audio, voice, `unnamed` (the driver's and the system's threads)…; a
-  pool gives its threads and its busiest one (`aurora-jobs=320%(14t
-  max=31%)`); the groups under 0.1 % of a core are only counted
-  (`quiet_groups=`). `main` near 100 %: the main thread is the limit; a pool near
-  its thread count × 100 %: that pool is; `machine` near 100 %: the PC is.
+  audio, voice, `unnamed` (the driver's and the system's threads)…; a pool
+  gives its threads and its busiest one (`aurora-jobs=320%(14t max=31%)`);
+  the groups under 0.1 % of a core are only counted (`quiet_groups=`).
+  `main` near 100 %: the main thread is the limit; a pool near its thread
+  count × 100 %: that pool is; `machine` near 100 %: the PC is.
 
 ### Teleports and region crossings
 

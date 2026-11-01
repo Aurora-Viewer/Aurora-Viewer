@@ -30,6 +30,8 @@ pub struct DemoSim {
     /// The inventory folder each object rezzed from inventory came from,
     /// sent back in its ObjectProperties (FolderID) as a simulator does.
     rezzed_from: HashMap<Uuid, Uuid>,
+    /// Groups supplied by creation requests, including an explicitly empty group.
+    rezzed_groups: HashMap<Uuid, Uuid>,
 }
 
 /// An object's position, rotation and scale.
@@ -105,6 +107,7 @@ impl DemoSim {
     }
     fn props_of(&mut self, world: &World, id: Uuid) -> &mut ObjectProps {
         let folder_id = self.rezzed_from.get(&id).copied().unwrap_or_default();
+        let group = self.rezzed_groups.get(&id).copied();
         self.props.entry(id).or_insert_with(|| {
             let name = world
                 .objects
@@ -136,11 +139,13 @@ impl DemoSim {
                 full: true,
                 creator_id: DEMO_CREATOR,
                 owner_id,
-                group_id: if owner_id == crate::demo::DEMO_AGENT {
-                    crate::demo::DEMO_GROUP1
-                } else {
-                    Uuid::nil()
-                },
+                group_id: group.unwrap_or_else(|| {
+                    if owner_id == crate::demo::DEMO_AGENT {
+                        crate::demo::DEMO_GROUP1
+                    } else {
+                        Uuid::nil()
+                    }
+                }),
                 last_owner_id: DEMO_CREATOR,
                 creation_date: 1_700_000_000_000_000,
                 base_mask: PERM_ALL,
@@ -239,10 +244,15 @@ impl DemoSim {
 
     pub fn reply(&mut self, world: &World, c: &BuildCmd) -> Vec<NetEvent> {
         match c {
-            BuildCmd::Add(p) => vec![NetEvent::ObjectUpdates {
-                handle: p.handle,
-                objects: vec![crate::demo::build_rez(p)],
-            }],
+            BuildCmd::Add(p) => {
+                let object = crate::demo::build_rez(p);
+                self.rezzed_groups.insert(object.full_id, p.group_id);
+                vec![NetEvent::ObjectUpdates {
+                    handle: p.handle,
+                    objects: vec![object],
+                }]
+            }
+
             BuildCmd::DeRez {
                 handle,
                 local_ids,
@@ -502,6 +512,7 @@ impl DemoSim {
             BuildCmd::RezInventory(rez) => {
                 let object = crate::demo::inventory_rez(rez);
                 self.rezzed_from.insert(object.full_id, rez.item.parent);
+                self.rezzed_groups.insert(object.full_id, rez.group);
                 vec![NetEvent::ObjectUpdates {
                     handle: rez.handle,
                     objects: vec![object],

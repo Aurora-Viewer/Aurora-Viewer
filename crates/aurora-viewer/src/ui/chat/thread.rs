@@ -224,32 +224,13 @@ fn name_color(env: &LineEnv, th: &Thread, line: &ChatLine, who: &Who) -> Color32
 /// The text of a message and how it reads: an emote is the name in violet
 /// italics, a whisper in grey italics; the user's chat colours otherwise.
 fn body(env: &LineEnv, line: &ChatLine, name: &str) -> (String, Color32, bool) {
-    let p = env.p;
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
-    let tone = history_tone(p, line.origin);
-    if let Some(color) = crate::ui::colors::contact_chat_color(line, env.world) {
-        let text = if emote {
-            format!("{name}{}", &line.text[3..])
-        } else {
-            line.text.clone()
-        };
-        return (text, color, emote || line.kind.volume() == Some(ChatType::Whisper));
-    }
-    if emote {
-        return (format!("{name}{}", &line.text[3..]), tone.unwrap_or(p.violet_pale), true);
-    }
-    let whisper = line.kind.volume() == Some(ChatType::Whisper);
-    let shout = line.kind.volume() == Some(ChatType::Shout);
-    let color = tone.or_else(|| crate::ui::colors::keyword_color(line)).unwrap_or_else(|| {
-        if whisper {
-            p.muted
-        } else if shout {
-            p.ink
-        } else {
-            crate::ui::colors::chat_color(line, env.world)
-        }
-    });
-    (line.text.clone(), color, whisper)
+    let text = if emote {
+        format!("{name}{}", &line.text[3..])
+    } else {
+        line.text.clone()
+    };
+    (text, super::message_color(line, env.p, env.world), emote)
 }
 
 /// The tags after a name: MOD and OBJECT on a pill, SHOUTS and WHISPERS
@@ -371,7 +352,18 @@ fn roomy_row(
             let visible = super::previews::text(env.previews.as_deref(), line, &text, ui.available_width());
             if !visible.is_empty() {
                 let size = env.emoji.message_size(&visible, TEXT);
-                chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &visible, size, color, italics, mark);
+                chat_text_marked(
+                    ui,
+                    p,
+                    env.emoji,
+                    env.world,
+                    env.want_names,
+                    &visible,
+                    size,
+                    color,
+                    super::message_emphasis(line.kind, italics),
+                    mark,
+                );
             }
             super::previews::cards(ui, env, line, &text);
         });
@@ -423,7 +415,18 @@ fn compact_row(
             ui.add_space(1.0);
             if !visible.is_empty() {
                 let size = env.emoji.message_size(&visible, TEXT);
-                chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &visible, size, color, italics, mark);
+                chat_text_marked(
+                    ui,
+                    p,
+                    env.emoji,
+                    env.world,
+                    env.want_names,
+                    &visible,
+                    size,
+                    color,
+                    super::message_emphasis(line.kind, italics),
+                    mark,
+                );
             }
             super::previews::cards(ui, env, line, &text);
         });
