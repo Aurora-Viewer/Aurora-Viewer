@@ -50,6 +50,7 @@ mod shadow_merge;
 #[cfg(test)]
 mod specular_aa;
 pub mod stars;
+pub mod stereo_view;
 #[cfg(test)]
 mod terrain_tests;
 #[cfg(test)]
@@ -63,13 +64,33 @@ mod ui_frame;
 mod ui_glass;
 mod ui_world;
 pub mod upload;
+mod vr_control;
 pub mod vram;
 pub mod vulkan_drivers;
 pub mod vulkan_layers;
 pub mod water_effects;
 mod water_optics;
 mod water_wake;
+pub use vr_control::VrState;
+/// Whether a VR headset is ready now (`xr_device::headset_ready`), for the
+/// restart that brings VR when the headset came after startup; not probed
+/// on macOS yet (its Metal path is unvalidated).
+pub fn vr_headset_ready() -> bool {
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    return xr_device::headset_ready();
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    false
+}
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+mod vr_mirror;
 pub mod writes;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod xr_device;
+#[cfg(target_os = "macos")]
+#[path = "xr_metal.rs"]
+mod xr_device;
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+mod xr_frame;
 pub use water_effects::{WaterEffects, WaterEvent, WaterGround};
 
 pub use arena::MeshAlloc;
@@ -88,7 +109,7 @@ pub use renderer::{CASCADES, RenderError};
 pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips_alpha_weighted, preserve_alpha_coverage};
 pub use types::*;
 pub use ui_blur::blurred_backdrop;
-pub use ui_frame::{EguiFrame, EguiHandOver};
+pub use ui_frame::{EguiFrame, EguiHandOver, vr_hint_marker};
 pub use ui_glass::{glass_panel, glass_panel_faded, glass_region};
 pub use ui_world::end_world_labels;
 pub use upload::{StagedMesh, StagedTexture, StagingPool, TexelFormat};

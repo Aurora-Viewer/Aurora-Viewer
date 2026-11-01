@@ -2585,6 +2585,9 @@ impl Settings {
             self.toolbar = Some(self.legacy_toolbars.remove(&account).unwrap_or_default());
             changed = true;
         }
+        if let Some(toolbar) = &mut self.toolbar {
+            changed |= toolbar.migrate_vr_button();
+        }
         if !self.legacy_toolbars.is_empty() {
             self.legacy_toolbars.clear();
             changed = true;
