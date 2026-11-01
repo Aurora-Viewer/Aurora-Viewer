@@ -8720,7 +8720,10 @@ What the inventory must show with these scenarios:
 - **`AURORA_VRAM_BUDGET_MB=<n>`**: the budget the driver grants the viewer
   is taken as n MB (at least 256), what the texture budget and the
   Performance window then read (`aurora-render/src/vram.rs`); what the
-  driver counts for the viewer stays the real figure.
+  driver counts for the viewer stays the real figure. It replaces the
+  budget given out, the driver's lowest of the last minute (log line
+  `GPU memory budget: … given out`), which a smaller card would not show
+  either.
   - In demo, `AURORA_DEMO_STREAM=3000` with `AURORA_VRAM_BUDGET_MB=2048`
     behaves like a small card: the texture target leaves 20 % of the
     budget free with the rest of what the viewer holds (render targets,
