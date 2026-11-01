@@ -1362,18 +1362,16 @@ impl Bridge {
                     self.enter(Phase::Upload, now);
                 } else if self.phase == Phase::Listing {
                     // A bridge made before the query service gets only the
-                    // missing script; the controller keeps its item.
+                    // missing script; the controller keeps its item. RezScript
+                    // uses the active group (LLViewerObject::saveScript,
+                    // indra/newview/llviewerobject.cpp), even for attachments.
                     for name in [NAME, QUERY_NAME, ik::NAME] {
                         if find(name).is_none() {
                             self.commands.push(NetCommand::Build(BuildCmd::RezScript {
                                 handle: root.key.region,
                                 local_id: root.key.local_id,
                                 enabled: false,
-                                // Keep internal script installation in the private, agent-owned
-                                // bridge independent of the user's active group. This deliberately
-                                // differs from LLViewerObject::saveScript (indra/newview/
-                                // llviewerobject.cpp), which sends the active group.
-                                group_id: Uuid::nil(),
+                                group_id: world.groups.active,
                                 item: Box::new(TaskItem {
                                     parent_id: *object,
                                     creator_id: world.agent_id,

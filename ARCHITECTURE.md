@@ -3019,14 +3019,10 @@ and Create > Copy selection, including Shift-drag duplication in the move
 manipulator.
 The demo simulator retains the group supplied by each creation request for
 its property replies.
-`RezScript` for user-created/dropped scripts and `DeRezObject`
+`RezScript` (new/dropped scripts and bridge installation) and `DeRezObject`
 (Delete, Take and Take Copy, including separate items) instead send the
 current active group directly, independent of the parcel rez preference.
 The script inventory item keeps its own permission group unchanged.
-Internal script installation in Aurora's private, agent-owned bridge deliberately
-retains an empty request-group context, independent of the user's active group.
-This is an intentional exception to `LLViewerObject::saveScript`
-(indra/newview/llviewerobject.cpp), which sends the active group.
 
 Rezzing from the inventory goes through `ui/inventory.rs` (payload and release before the end of the egui pass), `app/inventory_drag.rs` (rules, group, preparation of the commands and local consumption of the non-copyable items), `Scene::inventory_surface` (triangles among the candidates of the index, terrain, without a GPU wait) and `aurora-net/src/inventory/rez.rs` (reliable `RezObject` message in the targeted region). Transparent pixels are tested with a mask of one bit per 2×2 block, prepared by the decoding tasks; invisible and rigged surfaces are discarded. The cursor keeps the result for 100 ms at most when the ray does not move; the release always recomputes the surface. Over an object, what goes into its contents (Ctrl for an object, without it for the other items, and a selection or a folder of several entries) is decided by `build/contents_drop.rs`, all the entries accepted or none, and sent with `UpdateTaskInventory` / `RezScript`; the Contents tab uses the same rules. The demo uses a synthetic cube as the reply to the rez. `app/contents_drop_demo.rs` drives `AURORA_DEMO_CONTENTS_DROP`.
 
