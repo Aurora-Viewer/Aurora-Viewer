@@ -15,6 +15,12 @@
 //! use stay where they are. A background thread then deletes everything
 //! renamed, so a large cache never slows the start. A purge cut short by the
 //! exit carries on at the next start.
+//!
+//! Linux and macOS rename a folder whatever is open in it, so the rename of
+//! the whole folder would also take the live profiles of another running
+//! viewer, and the purge would delete them under it (the Legacy Viewer has
+//! the same gap). There each profile is set aside on its own, and only when
+//! no process with its pid runs.
 
 use std::path::{Path, PathBuf};
 
@@ -37,18 +43,47 @@ fn with_old(path: &Path) -> PathBuf {
 /// on the main thread before the first browser starts.
 pub fn set_aside(root: &Path) {
     let cache = root.join(DIR);
-    if !cache.is_dir() || std::fs::rename(&cache, with_old(&cache)).is_ok() {
+    if !cache.is_dir() || set_aside_whole(&cache) {
         return;
     }
     let Ok(entries) = std::fs::read_dir(&cache) else {
         return;
     };
     for dir in entries.flatten().map(|e| e.path()) {
-        // a folder another viewer still uses refuses the rename and stays
-        if dir.is_dir() && !is_old(&dir) {
+        // a profile another viewer still uses stays: Windows refuses its
+        // rename, elsewhere its plugin still runs
+        if dir.is_dir() && !is_old(&dir) && !in_use(&dir) {
             let _ = std::fs::rename(&dir, with_old(&dir));
         }
     }
+}
+
+/// Windows refuses to rename a folder that holds files in use.
+#[cfg(not(unix))]
+fn set_aside_whole(cache: &Path) -> bool {
+    std::fs::rename(cache, with_old(cache)).is_ok()
+}
+
+/// Unix renames it anyway, profiles of running viewers included: never.
+#[cfg(unix)]
+fn set_aside_whole(_cache: &Path) -> bool {
+    false
+}
+
+/// Whether the plugin that owns this profile, named after its pid, still
+/// runs. On Windows the rename itself tells.
+#[cfg(unix)]
+fn in_use(profile: &Path) -> bool {
+    profile
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.parse::<libc::pid_t>().ok())
+        .is_some_and(super::process_runs)
+}
+
+#[cfg(not(unix))]
+fn in_use(_profile: &Path) -> bool {
+    false
 }
 
 /// Delete what [`set_aside`] renamed, now or at an earlier start. Slow on a
@@ -88,6 +123,7 @@ mod tests {
         dir
     }
 
+    #[cfg(not(unix))]
     #[test]
     fn the_earlier_profiles_are_deleted_at_start() {
         let root = root("whole");
@@ -106,26 +142,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // plugin ids far above any pid_max: no process runs with them on Unix
     #[test]
     fn without_the_whole_folder_each_profile_is_set_aside() {
         let root = root("each");
         let cache = root.join(DIR);
         // an unfinished purge left the old folder: the rename of the whole
         // folder fails, as it does when another viewer holds files in it
-        let unfinished = profile(&root.join("cef_cache_old"), "1111");
-        let a = profile(&cache, "1234");
-        let left = profile(&cache, "999_old");
+        // (on Unix it is never tried)
+        let unfinished = profile(&root.join("cef_cache_old"), "2147483001");
+        let a = profile(&cache, "2147483002");
+        let left = profile(&cache, "2147483003_old");
         std::fs::write(cache.join("stray.txt"), b"x").expect("file");
         set_aside(&root);
-        assert!(!a.exists() && cache.join("1234_old").is_dir());
+        assert!(!a.exists() && cache.join("2147483002_old").is_dir());
         assert!(
-            left.is_dir() && !cache.join("999_old_old").exists(),
+            left.is_dir() && !cache.join("2147483003_old_old").exists(),
             "an old folder is not renamed again"
         );
         purge(&root);
         assert!(!unfinished.exists() && !root.join("cef_cache_old").exists());
-        assert!(!cache.join("1234_old").exists() && !left.exists());
+        assert!(!cache.join("2147483002_old").exists() && !left.exists());
         assert!(cache.join("stray.txt").is_file(), "only profile folders are touched");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_profile_of_a_running_plugin_is_kept() {
+        let root = root("live");
+        let cache = root.join(DIR);
+        // another viewer's plugin, still running (our own pid stands in for
+        // it), and the profile of a plugin that has exited
+        let live = profile(&cache, &std::process::id().to_string());
+        let gone = profile(&cache, "2147483000");
+        set_aside(&root);
+        assert!(cache.is_dir() && !root.join("cef_cache_old").exists(), "the whole folder stays");
+        assert!(live.is_dir() && !gone.exists() && cache.join("2147483000_old").is_dir());
+        purge(&root);
+        assert!(live.join("Default").join("Cache").join("data_0").is_file());
+        assert!(!cache.join("2147483000_old").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 
