@@ -213,6 +213,13 @@ fn volumes(cx: &mut Cx) {
             tr!("ui-options-sound-hrtf-help"),
             &field!(audio.sound_hrtf),
         );
+        // Aurora's own (scene/sound_reverb.rs): off plays every world sound
+        // dry, as the Legacy Viewer
+        cx.toggle(
+            tr!("ui-options-sound-reverb"),
+            tr!("ui-options-sound-reverb-help"),
+            &field!(audio.sound_reverb),
+        );
         // Legacy Viewer › Sound & Media (MuteWhenMinimized)
         cx.toggle(
             tr!("ui-options-mute-when-minimized"),
