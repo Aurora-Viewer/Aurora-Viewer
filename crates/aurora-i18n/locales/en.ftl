@@ -3860,6 +3860,7 @@ ui-notifications-history = History
 ui-notifications-nothing-to-do = Nothing to do · everything is in the History
 ui-notifications-search-history = Search the history…
 ui-notifications-history-empty = Nothing in the history
+ui-notifications-clear-history = Clear history
 ui-notifications-outcome-answered = Answered
 ui-notifications-outcome-declined = Declined
 ui-notifications-outcome-kept = Kept
