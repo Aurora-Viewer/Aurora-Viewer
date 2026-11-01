@@ -439,6 +439,7 @@ impl Editor {
         {
             let allowed = self.picker.cancelled()
                 || asset.is_nil()
+                || crate::scene::avatar::bake_slot_for(&asset).is_some()
                 || [aurora_prim::te::BLANK_TEXTURE, aurora_prim::te::TRANSPARENT_TEXTURE].contains(&asset)
                 || world.inventory.items.values().any(|it| it.asset_id == asset && map_source(it));
             if allowed {
@@ -508,6 +509,44 @@ fn map_mut(value: &mut PbrMaterial, slot: usize) -> &mut Option<Uuid> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pbr_bom_choices_preview_cancel_and_save_the_magic_uuid_in_every_map() {
+        for slot in 0..4 {
+            let mut ui = crate::ui::texture_picker::tests::PickerUi::new();
+            let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let mut editor = Editor::new(Uuid::from_u128(1), Arc::new(PbrMaterial::default()));
+            let magic = crate::scene::avatar::BAKES[0].2;
+            for cancel in [true, false] {
+                editor.open_map(slot, None);
+                ui.settle(|ctx, p| {
+                    editor.show_picker(ctx, p, &mut world, &HashMap::new());
+                });
+                for label in [aurora_i18n::tr!("picker-bom"), aurora_i18n::tr!("picker-bom-head")] {
+                    ui.click(label, |ctx, p| {
+                        editor.show_picker(ctx, p, &mut world, &HashMap::new());
+                    });
+                    ui.settle(|ctx, p| {
+                        editor.show_picker(ctx, p, &mut world, &HashMap::new());
+                    });
+                }
+                assert_eq!(*map_mut(Arc::make_mut(&mut editor.draft), slot), Some(magic));
+                assert!(editor.picker.open);
+                assert!(editor.message.is_empty());
+                ui.click(
+                    if cancel {
+                        aurora_i18n::tr!("common-cancel")
+                    } else {
+                        aurora_i18n::tr!("common-ok")
+                    },
+                    |ctx, p| {
+                        editor.show_picker(ctx, p, &mut world, &HashMap::new());
+                    },
+                );
+                assert_eq!(*map_mut(Arc::make_mut(&mut editor.draft), slot), (!cancel).then_some(magic));
+            }
+        }
+    }
+
     #[test]
     fn live_picker_edits_the_same_map_repeatedly_and_cancel_restores_an_unlisted_original() {
         let mut ui = crate::ui::texture_picker::tests::PickerUi::new();

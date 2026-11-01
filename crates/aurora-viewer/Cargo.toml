@@ -157,5 +157,10 @@ xkbcommon-dl = { version = "0.4.2", features = ["x11"] }
 flate2 = "1.1.10"
 winresource = { version = "0.1.34", default-features = false }
 
+[features]
+# The Khronos OpenXR loader built into the exe (needs CMake): the published
+# Windows viewer (release.yml); local builds load the runtime's loader.
+xr-static-loader = ["aurora-render/xr-static-loader"]
+
 [lints]
 workspace = true

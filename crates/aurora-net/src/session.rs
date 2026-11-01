@@ -5852,7 +5852,7 @@ mod event_queue_tests {
         task
     }
 
-    fn shared(events: crate::EventSender) -> Shared {
+    pub(super) fn shared(events: crate::EventSender) -> Shared {
         Shared {
             http: reqwest::Client::new(),
             caps_http: reqwest::Client::new(),
@@ -5868,7 +5868,7 @@ mod event_queue_tests {
     }
 
     /// The agent in `main_addr` (handle 10), `neighbour_addr` (20) beside.
-    fn two_regions(sh: &Shared, sock: Arc<UdpSocket>, main_addr: SocketAddr, neighbour_addr: SocketAddr) -> Session<'_> {
+    pub(super) fn two_regions(sh: &Shared, sock: Arc<UdpSocket>, main_addr: SocketAddr, neighbour_addr: SocketAddr) -> Session<'_> {
         let login = Arc::new(LoginResponse {
             agent_id: Uuid::from_u128(1),
             session_id: Uuid::from_u128(2),

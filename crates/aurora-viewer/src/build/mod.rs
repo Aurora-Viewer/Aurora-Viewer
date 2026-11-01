@@ -1345,6 +1345,8 @@ impl BuildTool {
     }
 
     /// Delete (to the trash): roots only (LLSelectMgr::selectDelete).
+    /// The active group goes in DeRezObject, like LLSelectMgr::packDeRezHeader
+    /// (indra/newview/llselectmgr.cpp), regardless of the parcel group.
     pub fn delete(&mut self, world: &mut World) {
         if self.attachment_selected(world) {
             return;
@@ -1370,7 +1372,7 @@ impl BuildTool {
                 local_ids: ids,
                 destination: derez::TRASH,
                 destination_id: trash,
-                group_id: Uuid::nil(),
+                group_id: world.groups.active,
             });
         }
         // LLSelectMgr::confirmDelete
@@ -1388,6 +1390,7 @@ impl BuildTool {
 
     /// Take into the folder the objects were rezzed from (handle_take), take
     /// a copy into the Objects folder (handle_take_copy; derez_objects).
+    /// DeRezObject uses the active group (indra/newview/llviewermenu.cpp).
     pub fn take(&mut self, world: &mut World, copy: bool) {
         if self.attachment_selected(world) {
             return;
@@ -1414,7 +1417,7 @@ impl BuildTool {
                 local_ids: ids,
                 destination: dest,
                 destination_id: objects,
-                group_id: Uuid::nil(),
+                group_id: world.groups.active,
             });
         }
         // derez_objects
@@ -1426,7 +1429,8 @@ impl BuildTool {
 
     /// "Take as separate items" / "Take copies as separate items"
     /// (derez_objects_separate): one DeRezObject per root, each its own
-    /// transaction and inventory item.
+    /// transaction and inventory item, with the active group
+    /// (derez_objects, indra/newview/llviewermenu.cpp).
     pub fn take_separate(&mut self, world: &mut World, copy: bool) {
         if self.attachment_selected(world) {
             return;
@@ -1450,7 +1454,7 @@ impl BuildTool {
                     local_ids: vec![local_id],
                     destination,
                     destination_id: objects,
-                    group_id: Uuid::nil(),
+                    group_id: world.groups.active,
                 });
                 world.ui_sounds.push(crate::ui_sound::UiSound::ObjectRezOut);
             }

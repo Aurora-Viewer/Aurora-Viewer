@@ -26,13 +26,15 @@
 //! Except that a left click on one with nothing to do with it (no touch
 //! script, no click action) goes on to what is behind, as in the Legacy
 //! Viewer: the scripted prims worn under a mesh body or rigged clothing
-//! stay touchable (`touch_passes_through`, `touch_depth`).
+//! stay touchable (`touch_passes_through`, `touch_depth`). A rigged mesh
+//! worn by our own avatar lets a left click through even when scripted, as
+//! in the Legacy Viewer: a press on our mesh body steers our avatar.
 //!
 //! Camera clicks (Alt + click, Focus tool) use the visible-surface mode of
 //! that pass directly: no CPU rest-pose or invisible touch-surface search.
 //!
-//! [`reaches`] is that rule, alone and tested. Blend faces intercept a
-//! press regardless of their texel opacity or the presence of an action.
+//! [`reaches`] is that rule, alone and tested. Worn Blend faces intercept a
+//! press regardless of texel opacity; world Blend left picks skip alpha zero.
 
 use super::*;
 use aurora_net::TouchSurface;
@@ -57,6 +59,9 @@ pub struct Status {
     pub posed_by_gpu: bool,
     /// Worn by an avatar.
     pub worn: bool,
+    /// A rigged mesh worn by our avatar: a left click passes through it
+    /// even when it has an action, so that a press on our body steers it.
+    pub own_rigged: bool,
     pub avatar: bool,
     /// CLICK_ACTION_IGNORE.
     pub ignored: bool,
@@ -115,6 +120,11 @@ impl Scene {
         Status {
             posed_by_gpu: !g.hud && !g.is_avatar && (g.rigged || (worn && o.visual_volume().is_mesh())),
             worn: worn && !g.hud,
+            own_rigged: !g.hud
+                && g.rigged
+                && g.owner_avatar
+                    .and_then(|a| world.objects.get(a))
+                    .is_some_and(|a| a.full_id == world.agent_id),
             avatar: g.is_avatar,
             ignored: o.click_action == crate::interaction::code::IGNORE,
             selectable: crate::build::selectable(world, idx),
@@ -125,10 +135,13 @@ impl Scene {
     /// to do with a click, no touch script and no click action, lets it
     /// through, as the Legacy Viewer's left click does with every rigged
     /// mesh: a mesh body or rigged clothing does not hide the scripted prims
-    /// worn under it (#488).
+    /// worn under it (#488). A rigged mesh we wear lets it through even with
+    /// a touch script: like LLToolPie::handleMouseDown (`pick_rigged =
+    /// false`), a press on our mesh body steers our avatar
+    /// (LLToolCamera::mMouseSteering) instead of touching the body.
     pub fn touch_passes_through(&self, world: &World, idx: usize) -> bool {
         let s = self.drawn_status(world, idx);
-        s.posed_by_gpu && !s.avatar && crate::interaction::target(world, idx, &HashMap::new()).is_none()
+        s.posed_by_gpu && !s.avatar && (s.own_rigged || crate::interaction::target(world, idx, &HashMap::new()).is_none())
     }
 
     /// The depth a left click searches from: the GPU's, or, when the
@@ -228,6 +241,7 @@ mod tests {
     const RIGGED: Status = Status {
         posed_by_gpu: true,
         worn: false,
+        own_rigged: false,
         avatar: false,
         ignored: false,
         selectable: true,
@@ -298,7 +312,12 @@ mod tests {
     #[test]
     fn a_touch_goes_through_a_rigged_mesh_without_an_action() {
         let (mut world, mut scene, clothing, prim) = super::super::picking::tests::scene_with_two_objects();
-        let wearer = world.objects.avatars().next().map(|(idx, _)| idx);
+        // another resident wears it: a rigged mesh we wear never takes the touch
+        let wearer = world
+            .objects
+            .avatars()
+            .find(|(_, a)| a.full_id != world.agent_id)
+            .map(|(idx, _)| idx);
         // the clothing's face at x = 2.5, the prim's 10 cm behind it
         world.objects.get_mut(prim).unwrap().position = Vec3::new(3.1, 0.0, 50.0);
         for (idx, flags) in [(clothing, 0), (prim, crate::ui::context::flags::HANDLE_TOUCH)] {
@@ -367,6 +386,30 @@ mod tests {
             scene.touch_depth(&world, &drawn, Some(ray), Some(on_clothing), 100.0),
             Some(on_clothing)
         );
+
+        // ...unless we wear it: the press goes on to our avatar (to steer
+        // it), or to the scripted prim worn just under it
+        world.agent_id = world.objects.get(wearer.unwrap()).unwrap().full_id;
+        assert!(scene.touch_passes_through(&world, clothing));
+        assert_eq!(designated(&scene, &world, Gesture::Touch), None);
+        assert_eq!(designated(&scene, &world, Gesture::Menu), Some(clothing));
+        world.objects.get_mut(prim).unwrap().position = Vec3::new(3.1, 0.0, 50.0);
+        let depth = scene
+            .touch_depth(&world, &drawn, Some(ray), Some(on_clothing), 100.0)
+            .expect("a depth");
+        assert_eq!(scene.interaction_at_ray(&world, depth, ray, true), Some(prim));
+        // the build tools still reach it, as with the build floater open in
+        // the Legacy Viewer (LLVOVolume::lineSegmentIntersect)
+        let built = scene.designated(
+            &world,
+            Gesture::Touch,
+            &drawn,
+            Some(ray),
+            Some(on_clothing),
+            Some(on_clothing),
+            true,
+        );
+        assert_eq!(built.map(|d| d.idx), Some(clothing));
     }
 
     /// #1241: an invisible clicker (every face at alpha 0, no draw record)

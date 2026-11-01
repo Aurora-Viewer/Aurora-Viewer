@@ -30,6 +30,11 @@ impl Upload {
         if self.report.is_some() {
             return 0;
         }
+        // LLXferManager::processFileRequest uses the type declared by
+        // LLViewerAssetStorage::storeAssetData, including existing clothing.
+        if let Some(pending) = &self.wearable {
+            return pending.item.asset_type as i8;
+        }
         self.import
             .as_ref()
             .map_or(if self.kind < 4 { 13 } else { 5 }, |(_, request)| request.kind.asset_type() as i8)
@@ -71,7 +76,7 @@ impl Session<'_> {
         let asset = Uuid::from_bytes(md5::compute(key).0);
         let mut message = AssetUploadRequest::default();
         message.asset_block.transaction_id = transaction;
-        // bodypart (13) for a shape, clothing (5) for a physics layer
+        // Keep the inventory asset type for every body part or clothing layer.
         message.asset_block.type_ = pending.item.asset_type as i8;
         if data.len() + 100 < 1200 {
             message.asset_block.asset_data.clone_from(&data);
@@ -514,6 +519,111 @@ impl Session<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn receive<M: Msg>(socket: &UdpSocket) -> M {
+        let mut bytes = [0; 8192];
+        let (size, _) = tokio::time::timeout(Duration::from_secs(2), socket.recv_from(&mut bytes))
+            .await
+            .expect("offline simulator receives a packet")
+            .expect("datagram");
+        parse_packet(&bytes[..size]).expect("packet").decode().expect("message")
+    }
+
+    fn dispatch<M: Msg>(session: &mut Session<'_>, from: SocketAddr, message: &M) -> bool {
+        let mut bytes = Vec::new();
+        aurora_msg::build_packet(message, 1, false, false, &[], &mut bytes);
+        session
+            .dispatch_inventory_upload(from, &parse_packet(&bytes).expect("packet"))
+            .expect("upload dispatch")
+    }
+
+    #[tokio::test]
+    async fn saved_wearables_transfer_their_original_asset_type_before_copying() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        sock.writable().await.expect("viewer socket ready");
+        let simulator = UdpSocket::bind("127.0.0.1:0").await.expect("offline simulator");
+        let main = simulator.local_addr().expect("simulator address");
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = super::super::event_queue_tests::shared(crate::EventSender(events));
+        let mut session = super::super::event_queue_tests::two_regions(&sh, sock, main, "127.0.0.1:9".parse().expect("neighbour"));
+        // Universal first: a third-party asset large enough to require Xfer.
+        for kind in std::iter::once(16).chain(0..16) {
+            for big in [false, true] {
+                let request = Uuid::new_v4();
+                let item = crate::inventory::InvItem {
+                    id: Uuid::new_v4(),
+                    asset_id: Uuid::new_v4(),
+                    owner: session.agent_id(),
+                    creator: Uuid::from_u128(99),
+                    owner_mask: 0x7fff_ffff,
+                    asset_type: if kind < 4 { 13 } else { 5 },
+                    flags: kind,
+                    ..Default::default()
+                };
+                let data: Vec<_> = (0..2500).map(|i| (i % 251) as u8).collect();
+                session.save_wearable(request, item.clone(), data.clone(), Some("Edited copy".into()));
+                let upload: AssetUploadRequest = receive(&simulator).await;
+                assert_eq!(i32::from(upload.asset_block.type_), item.asset_type);
+                assert!(upload.asset_block.asset_data.is_empty(), "large assets use Xfer");
+                let asset = *session.inventory_uploads.assets.keys().next().expect("pending upload");
+                let mut xfer = RequestXfer::default();
+                xfer.xfer_id.id = 42;
+                xfer.xfer_id.v_file_id = asset;
+                xfer.xfer_id.v_file_type = if item.asset_type == 5 { 13 } else { 5 };
+                assert!(!dispatch(&mut session, main, &xfer), "wrong asset types remain rejected");
+                xfer.xfer_id.v_file_type = item.asset_type as i16;
+                xfer.xfer_id.use_big_packets = big;
+                assert!(dispatch(&mut session, main, &xfer), "wearable {kind} must accept its own Xfer type");
+                let mut transferred = Vec::new();
+                let mut index = 0;
+                loop {
+                    let packet: SendXferPacket = receive(&simulator).await;
+                    assert_eq!(packet.xfer_id.id, 42);
+                    assert_eq!(packet.xfer_id.packet & 0x7fff_ffff, index);
+                    let bytes = if index == 0 {
+                        assert_eq!(&packet.data_packet.data[..4], &(data.len() as i32).to_le_bytes());
+                        &packet.data_packet.data[4..]
+                    } else {
+                        &packet.data_packet.data[..]
+                    };
+                    transferred.extend_from_slice(bytes);
+                    let mut ack = ConfirmXferPacket::default();
+                    ack.xfer_id.id = 42;
+                    ack.xfer_id.packet = index;
+                    assert!(dispatch(&mut session, main, &ack));
+                    if packet.xfer_id.packet & 0x8000_0000 != 0 {
+                        break;
+                    }
+                    index += 1;
+                }
+                assert_eq!(transferred, data);
+                assert!(
+                    session.inventory_uploads.wearable_copies.is_empty(),
+                    "no copy before upload acknowledgement"
+                );
+                assert!(received.is_empty(), "no premature save result");
+                let mut complete = AssetUploadComplete::default();
+                complete.asset_block.uuid = asset;
+                complete.asset_block.type_ = item.asset_type as i8;
+                complete.asset_block.success = true;
+                assert!(dispatch(&mut session, main, &complete));
+                let copy: CopyInventoryItem = receive(&simulator).await;
+                assert_eq!(copy.inventory_data[0].old_item_id, item.id);
+                let pending = session
+                    .inventory_uploads
+                    .wearable_copies
+                    .remove(&copy.inventory_data[0].callback_id)
+                    .expect("copy waits for confirmation");
+                assert_eq!(pending.request, request);
+                assert_eq!(pending.item.creator, item.creator);
+                assert_eq!(pending.item.owner_mask, item.owner_mask);
+                assert_eq!(pending.asset, asset);
+                assert_eq!(pending.transaction, upload.asset_block.transaction_id);
+                assert!(session.inventory_uploads.assets.is_empty());
+            }
+        }
+    }
+
     #[test]
     fn xfer_prefix_and_final_bit_follow_llxfer() {
         let bytes: Vec<_> = (0..2500).map(|i| (i % 251) as u8).collect();

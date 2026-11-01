@@ -1399,6 +1399,8 @@ build-land-cancel-edit = 編集をキャンセル
 ui-options-anti-aliasing = アンチエイリアシング
 ui-options-specular-aa = 鏡面反射のアンチエイリアシング
 ui-options-specular-aa-help = カメラの移動時に小さく明るいハイライト（細かい凹凸、金属、光沢のある髪）がちらつくのを抑えます。表面の向きが1ピクセルで表せるより速く変わる部分のハイライトを広げます。負荷はほぼありません
+ui-options-colored-sky-ambient = 空の環境光をカラーに
+ui-options-colored-sky-ambient-help = 最初のPBRビューアのように、空の環境光の色をそのままの強さで使います。リニアやHDRの空で灰色になる柔らかい環境光の代わりになり、暖色や色付きの空で室内が再び色づきます。クラシックな空はどちらでも色を保ち、少し明るくなるだけです。Legacy Viewerとは異なる表示になります
 ui-profile-preview-with-links = リンク付きでプレビュー
 build-land-flatten = 平坦にする
 common-appearance = 外観
@@ -1907,6 +1909,11 @@ build-ui-floaters-total-capacity = 許容数合計
 build-ui-object-square = 正方形
 common-map = マップ
 demo-welcome-card = ウェルカムカード
+demo-sound-occlusion-open = 遮るもののない音
+demo-sound-occlusion-wall = 壁の向こう
+demo-sound-occlusion-box = 箱の中
+demo-sound-hrtf-circle = 周りを回る音
+demo-sound-hrtf-updown = 上下に動く音
 common-world-map = ワールドマップ
 ui-options-integrated-graphics = 内蔵グラフィックス
 ui-contacts-map = マップ…
@@ -5318,6 +5325,10 @@ ui-options-collision-sounds = 衝突音
 ui-options-interface-sounds = インターフェースのサウンド
 ui-options-gesture-sounds = ジェスチャーのサウンド
 ui-options-sounds-played-by-other-avatars-gestures = 他のアバターのジェスチャーが再生するサウンド
+ui-options-sound-occlusion = 壁の向こうの音をこもらせる
+ui-options-sound-occlusion-help = 壁、オブジェクト、丘の向こうから聞こえるワールドのサウンドが、別の部屋の音のようにこもって小さくなります。オフにすると、レガシービューアと同じように、すべてのサウンドが遮られずに聞こえます。
+ui-options-sound-hrtf = ヘッドホン用３Ｄサウンド（ＨＲＴＦ）
+ui-options-sound-hrtf-help = ワールドのサウンドが、左右だけでなく、前後や上下など実際の方向から聞こえます。ヘッドホンを使用してください。スピーカーでは正しく聞こえません。オフにすると、レガシービューアと同じように、サウンドは左右に振り分けられます。
 ui-inventory-dialogs-ease-out-s = { "イーズアウト：" }{ $value0 }{ "秒" }
 ui-options-audio-output = オーディオ出力
 ui-options-commands-output-to-a-channel = チャンネルに出力
@@ -7392,7 +7403,7 @@ hud-move-locked = クイック移動をロック
 hud-local-scale-reset = １００％にリセット
 hud-local-scale-forget = 保存したサイズを消去
 hud-local-scale-help = ＨＵＤでキーを押したまま、左ドラッグで移動、ホイールでサイズ変更、Shiftでより細かく調整します。サイズは名前と制作者ごとに、このアカウント用としてこのＰＣに保存されます。ＨＵＤの編集中は、このキーを押さずにホイールを回すとすべてのＨＵＤの表示がズームします。
-cli-help = { "Auroraビューア\u000A\u000A使い方：aurora-viewer [--title <text>] [--fps-limit <fps>] [--language <code>] [--grid <name>]\u000A                     [--login <first> <last> <password>] [--version] [<slurl>]\u000A\u000A  --title <text>   このウィンドウ（\"Auroraビューア <version> - <text>\"）とログファイル\u000A                   （aurora-<text>.log、デモモードでは aurora-demo-<text>.log）に名前を付ける\u000A  --fps-limit <fps>  初期設定を保存せずに、このプロセスを1～500 ＦＰＳに制限する\u000A  --language <code>  このプロセスのＵＩ言語を上書きする（" }{ $languages }{ "）\u000A  --grid <name>    agni、aditi、保存されたグリッド名、またはログインＵＲＩで起動する（--loginuri <uri> も可）\u000A  --login <first> <last> <password>  このアカウントですぐにログインする\u000A  <slurl>, --url <slurl>  この場所から開始する。以降の引数は読み込まれない。すでに\u000A                   起動しているビューアがあれば、そちらが受け取る\u000A  -V, --version   起動せずにコンパイルされたビューアのバージョンを表示する\u000A  -h, --help       このヘルプを表示する\u000A\u000Aテスト用のスイッチは環境変数です（AURORA_DEMO=1、AURORA_CAPTURE=...）：\u000AREADME.md を参照してください。" }
+cli-help = { "Auroraビューア\u000A\u000A使い方：aurora-viewer [--title <text>] [--fps-limit <fps>] [--vr] [--language <code>] [--grid <name>]\u000A                     [--login <first> <last> <password>] [--version] [<slurl>]\u000A\u000A  --title <text>   このウィンドウ（\"Auroraビューア <version> - <text>\"）とログファイル\u000A                   （aurora-<text>.log、デモモードでは aurora-demo-<text>.log）に名前を付ける\u000A  --fps-limit <fps>  初期設定を保存せずに、このプロセスを1～500 ＦＰＳに制限する\u000A  --language <code>  このプロセスのＵＩ言語を上書きする（" }{ $languages }{ "）\u000A  --grid <name>    agni、aditi、保存されたグリッド名、またはログインＵＲＩで起動する（--loginuri <uri> も可）\u000A  --login <first> <last> <password>  このアカウントですぐにログインする\u000A  <slurl>, --url <slurl>  この場所から開始する。以降の引数は読み込まれない。すでに\u000A                   起動しているビューアがあれば、そちらが受け取る\u000A  --vr             ワールドが表示されたらVRに入ります（ヘッドセット接続時）\u000A  -V, --version   起動せずにコンパイルされたビューアのバージョンを表示する\u000A  -h, --help       このヘルプを表示する\u000A\u000Aテスト用のスイッチは環境変数です（AURORA_DEMO=1、AURORA_CAPTURE=...）：\u000AREADME.md を参照してください。" }
 demo-media-page = { "data:text/html;charset=utf-8,<html><body style='margin:0;height:100vh;background:linear-gradient(135deg,%232a1f4a,%230f6d6d);color:white;font:56px sans-serif;text-align:center'><h1 style='margin:40px 0 10px'>Auroraメディア</h1><p id='t' style='font-size:90px;margin:10px'>--</p><button onclick=\"document.body.style.background='%237a3b9c';this.textContent='クリックされました！'\" style='font-size:48px;padding:10px 40px'>クリック</button><br><input placeholder='ここに記入' style='font-size:44px;margin-top:30px;width:70%'><script>setInterval(function(){document.getElementById('t').textContent=new Date().toLocaleTimeString()},250)</script></body></html>" }
 
 # Secondary labels and status messages
@@ -12763,3 +12774,16 @@ import-source-folder-name-help = { $source } のインベントリ内のフォ�
 
 import-local-stage-upload = アップロードに追加（{ $count }）
 import-local-stage-upload-help = 非表示を含むチェック済みファイルのアップロードを準備し、ローカルプレビューは保持します。料金は別途確認します。
+
+vr-view = VR表示
+vr-unavailable = VRを利用できません。OpenXRランタイムとヘッドセットの接続を確認してください。
+vr-restart-title = ヘッドセットが接続されました
+vr-restart-body = ヘッドセットはAuroraの起動後に接続されました。AuroraはVRを起動時に準備するため、VRを使うには再起動してください。ワールドに戻ると自動的にVRに入ります。
+vr-restart-confirm = VRで再起動
+ui-options-camera-vr = VR
+ui-options-camera-vr-view = ヘッドセットの視点
+ui-options-camera-vr-view-help = VRに入ったときの視点の位置です。アバターの目の位置か、カメラがあった位置から始まります。
+ui-options-camera-vr-view-first-person = 一人称
+ui-options-camera-vr-view-desktop-camera = カメラの位置
+
+app-vr-leave = { $key } キーでデスクトップモードに戻ります

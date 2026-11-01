@@ -105,6 +105,9 @@ pub(crate) struct Spent {
 }
 
 pub(crate) struct FramePacket {
+    /// Optional caller-owned output, retained through GPU submission. None
+    /// acquires the desktop swapchain (or the existing snapshot target).
+    pub output: Option<wgpu::Texture>,
     /// Frames handed over before this one.
     pub index: u64,
     pub writes: GpuWrites,

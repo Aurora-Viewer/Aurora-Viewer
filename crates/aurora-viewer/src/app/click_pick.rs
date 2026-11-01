@@ -385,10 +385,11 @@ impl App {
         let camera = (self.alt && !matches!(click, Click::Gun { .. }))
             || self.object_view
             || (self.build.open && self.build.tool == crate::build::Tool::Focus);
-        let mode = if camera {
-            aurora_render::DrawnMode::Visible
-        } else {
-            aurora_render::DrawnMode::Interaction
+        let mode = match (click == Click::Menu, camera) {
+            (true, true) => aurora_render::DrawnMode::Visible,
+            (true, false) => aurora_render::DrawnMode::Interaction,
+            (false, true) => aurora_render::DrawnMode::LeftVisible,
+            (false, false) => aurora_render::DrawnMode::Left,
         };
         let drawn = Some(g.renderer.request_drawn(x, y, mode));
         let tags = self.name_tag_candidates(ray);
@@ -670,9 +671,15 @@ impl App {
         let now = Instant::now();
         let build = self.build.open;
         let tools = build && !self.alt && matches!(click, Click::Press | Click::Build);
+        let selection_pick = if click == Click::Menu {
+            Scene::selection_pick
+        } else {
+            Scene::left_selection_pick
+        };
         let (point, idx) =
             if click == Click::Menu || tools && matches!(self.build.tool, crate::build::Tool::Edit | crate::build::Tool::Grab) {
-                self.scene.selection_pick(
+                selection_pick(
+                    &self.scene,
                     &self.world,
                     ray,
                     depth,
