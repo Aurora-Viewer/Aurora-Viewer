@@ -2929,21 +2929,27 @@ impl TextureStreamer {
         let target = texture_budget::forced_target().unwrap_or_else(|| texture_budget::texture_target(setting, used, video));
         let before = self.pressure.step();
         // a window behind for a minute or minimised for a second gives its
-        // textures back, and takes up again once in front
-        // (LLViewerTexture::updateClass, texture_budget::Background)
-        let away = self.background.update(now, self.in_front, self.minimized);
+        // textures back, at once while the memory is short, and takes up
+        // again once in front (LLViewerTexture::updateClass,
+        // texture_budget::Background)
+        let crowded = before > 0 || video.is_some_and(|v| v.usage > v.budget);
+        let away = self.background.update(now, self.in_front, self.minimized, crowded);
         if away && !self.pressure.held() {
             self.pressure.hold_max(now);
-            let after = if self.minimized {
-                texture_budget::MINIMIZED_AFTER
+            let place = if self.minimized { "minimised" } else { "in the background" };
+            if crowded {
+                log::info!("texture memory: the window is {place} with the video memory short, freeing up video memory");
             } else {
-                texture_budget::BACKGROUNDED_AFTER
-            };
-            log::info!(
-                "texture memory: the window was {} for {} s, freeing up video memory",
-                if self.minimized { "minimised" } else { "in the background" },
-                after.as_secs()
-            );
+                let after = if self.minimized {
+                    texture_budget::MINIMIZED_AFTER
+                } else {
+                    texture_budget::BACKGROUNDED_AFTER
+                };
+                log::info!(
+                    "texture memory: the window was {place} for {} s, freeing up video memory",
+                    after.as_secs()
+                );
+            }
         } else if !away && self.pressure.held() {
             self.pressure.release(now);
             log::info!("texture memory: the window is in front again, textures load as before");

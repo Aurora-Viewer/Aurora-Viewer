@@ -22,7 +22,9 @@
 //!   TextureDiscardMinimizedTime 1 s), then takes up again where it was
 //!   once in front ([`Background`]): with two viewers on one card, the one
 //!   behind leaves room to the one in front (#1808; on the grid, 6.6 and
-//!   5.9 GB on a 12 GB card overfilled it, GPU frames of 1 s).
+//!   5.9 GB on a 12 GB card overfilled it, GPU frames of 1 s). On purpose,
+//!   a window behind gives them back at once while the memory is short,
+//!   without waiting its minute.
 //!
 //! What differs, on purpose:
 //! - the budget is read from the driver as it is now and the use is what
@@ -181,15 +183,21 @@ pub struct Background {
 
 impl Background {
     /// The window's state now (`in_front`: it has the focus and is not
-    /// minimised); whether its textures should go.
-    pub fn update(&mut self, now: Instant, in_front: bool, minimized: bool) -> bool {
+    /// minimised; `crowded`: the textures are under pressure or the viewer
+    /// is past the driver's budget); whether its textures should go.
+    ///
+    /// Crowded, a window behind gives them back at once, which the Legacy
+    /// Viewer does not: two viewers arriving in a busy region within the
+    /// same minute overfilled a 12 GB card in 25 to 40 s, before the one
+    /// behind had waited its minute, and one lost its device (#1808).
+    pub fn update(&mut self, now: Instant, in_front: bool, minimized: bool, crowded: bool) -> bool {
         if in_front && !minimized {
             self.since = None;
             return false;
         }
         let since = *self.since.get_or_insert(now);
         let after = if minimized { MINIMIZED_AFTER } else { BACKGROUNDED_AFTER };
-        now.duration_since(since) >= after
+        crowded || now.duration_since(since) >= after
     }
 }
 
@@ -470,23 +478,23 @@ mod tests {
         let t0 = Instant::now();
         let s = Duration::from_secs;
         let mut b = Background::default();
-        assert!(!b.update(t0, true, false));
+        assert!(!b.update(t0, true, false, false));
         // in the background: a minute, as TextureDiscardBackgroundedTime
-        assert!(!b.update(t0 + s(1), false, false));
-        assert!(!b.update(t0 + s(60), false, false));
-        assert!(b.update(t0 + s(61), false, false));
+        assert!(!b.update(t0 + s(1), false, false, false));
+        assert!(!b.update(t0 + s(60), false, false, false));
+        assert!(b.update(t0 + s(61), false, false, false));
         // in front again: at once, and the minute starts over
-        assert!(!b.update(t0 + s(62), true, false));
-        assert!(!b.update(t0 + s(63), false, false));
-        assert!(!b.update(t0 + s(100), false, false));
+        assert!(!b.update(t0 + s(62), true, false, false));
+        assert!(!b.update(t0 + s(63), false, false, false));
+        assert!(!b.update(t0 + s(100), false, false, false));
         // minimised: a second, as TextureDiscardMinimizedTime
         let mut m = Background::default();
-        assert!(!m.update(t0, false, true));
-        assert!(m.update(t0 + s(1), false, true));
+        assert!(!m.update(t0, false, true, false));
+        assert!(m.update(t0 + s(1), false, true, false));
         // minimised even with the focus (restored, not yet in front)
         let mut f = Background::default();
-        assert!(!f.update(t0, true, true));
-        assert!(f.update(t0 + s(2), true, true));
+        assert!(!f.update(t0, true, true, false));
+        assert!(f.update(t0 + s(2), true, true, false));
     }
 
     #[test]
@@ -512,5 +520,21 @@ mod tests {
         // releasing what is not held changes nothing
         p.release(t0 + s(50));
         assert_eq!(p.step(), 0);
+    }
+
+    #[test]
+    fn a_window_behind_gives_its_textures_back_at_once_while_the_memory_is_short() {
+        // run F: the second viewer arrives while the first is behind;
+        // the card was full long before the minute
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut b = Background::default();
+        assert!(!b.update(t0, false, false, false));
+        assert!(b.update(t0 + s(5), false, false, true));
+        // in front, crowded or not: its textures stay
+        assert!(!b.update(t0 + s(6), true, false, true));
+        // minimised and crowded: at once too
+        let mut m = Background::default();
+        assert!(m.update(t0, true, true, true));
     }
 }
