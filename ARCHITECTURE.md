@@ -2745,6 +2745,9 @@ including roll, zoom and region-origin shifts. It is cleared by reset,
 mouselook, teleport and photo free-camera entry. Preferences › Mouse and
 keyboard › Joystick and 3D mouse (`ui/options/pages/joystick.rs`) shares the
 normal search, modified-settings and reset paths.
+Its four button assignments capture native press counters from the selected
+device, including taps released between frames. Capture suspends controller
+actions and cancels when its row, device or application focus goes away.
 
 `build/task_inventory.rs` centralises the permissions and the destinations of
 the transfer of an object's contents to the personal inventory;

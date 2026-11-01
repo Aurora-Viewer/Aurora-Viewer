@@ -436,6 +436,7 @@ pub struct OptionsUi {
     crosshair_dialog: Option<std::sync::mpsc::Receiver<std::path::PathBuf>>,
     /// Shortcut or gesture waiting for its next input, captured by the app.
     pub capture: Option<Capture>,
+    joystick_capture: Option<pages::joystick::ButtonCapture>,
     capture_modifier: Option<winit::keyboard::KeyCode>,
     clear: Option<(crate::keybinds::Action, usize)>,
     /// Sound assets being typed (Legacy name -> text).
@@ -461,6 +462,20 @@ pub struct OptionsUi {
 }
 
 impl OptionsUi {
+    pub fn joystick_capturing(&self) -> bool {
+        self.joystick_capture.is_some()
+    }
+
+    pub fn cancel_capture(&mut self) {
+        self.capture = None;
+        self.capture_modifier = None;
+        self.joystick_capture = None;
+    }
+
+    pub fn cancel_joystick_capture(&mut self) {
+        self.joystick_capture = None;
+    }
+
     pub fn prepare_scale_input(&mut self, input: &egui::RawInput, pixels_per_point: f32, numeric_captured: bool) {
         self.interface_scale.prepare_input(input, pixels_per_point, numeric_captured);
         self.text_scale.prepare_input(input, pixels_per_point, numeric_captured);
@@ -502,7 +517,7 @@ impl OptionsUi {
         self.tab = tab;
         self.query.clear();
         self.modified_view = false;
-        self.capture = None;
+        self.cancel_capture();
     }
 
     /// Opens the Chat page on the YouTube player's settings (a player's
@@ -542,7 +557,7 @@ impl OptionsUi {
         r.audio_changed |= matches!(page, Page::Sound | Page::Media);
         r.reset_camera |= matches!(page, Page::Camera);
         r.ui_scale_changed |= matches!(page, Page::Layout);
-        self.capture = None;
+        self.cancel_capture();
         self.keyword_sound_text = None;
         self.ui_sound_text.clear();
         self.trusted_site_typed.clear();
@@ -938,8 +953,10 @@ fn binding_cell(
     let caps_left = egui::pos2(resp.rect.center().x - caps_width / 2.0, resp.rect.center().y);
     keycap::paint_row(ui, p, &caps, caps_left, fill);
     if resp.clicked() {
-        st.capture_modifier = None;
-        st.capture = if capturing { None } else { Some(Capture::Binding(a, slot)) };
+        st.cancel_capture();
+        if !capturing {
+            st.capture = Some(Capture::Binding(a, slot));
+        }
     }
     if resp.secondary_clicked() && b.is_some() {
         st.clear = Some((a, slot));
@@ -1084,6 +1101,9 @@ fn reset_rows(
 
 pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, st: &mut OptionsUi, open: &mut bool) -> OptionsResult {
     let _ = icons;
+    if let Some(capture) = &mut st.joystick_capture {
+        capture.visible = false;
+    }
     st.focus_search = *open && (st.focus_search || !st.was_open);
     let mut r = OptionsResult::default();
     let d = st.defaults.take().unwrap_or_else(|| Box::new(Settings::default()));
@@ -1111,6 +1131,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
         *open = false;
     }
     st.was_open = *open && !super::widgets::floater_minimized(ctx, WINDOW);
+    if !st.was_open || st.joystick_capture.as_ref().is_some_and(|capture| !capture.visible) {
+        st.cancel_joystick_capture();
+    }
     if !*open {
         // the window closed: a reset waiting for its undo is done
         st.finish_undo(&mut r);
@@ -1263,7 +1286,7 @@ fn sidebar(
         }
         if field.changed() {
             st.modified_view = false;
-            st.capture = None;
+            st.cancel_capture();
         }
         if !st.query.is_empty() && super::widgets::icon_button(ui, p, "x", aurora_i18n::tr!("common-clear"), true) {
             st.query.clear();
@@ -1313,7 +1336,7 @@ fn sidebar(
             if entry.clicked() {
                 st.query.clear();
                 st.modified_view = true;
-                st.capture = None;
+                st.cancel_capture();
             }
             for page in Page::ALL.into_iter().skip(1) {
                 if let Some(title) = page.section() {
@@ -1541,7 +1564,7 @@ fn page_area(
     if !searching && !modified_view && tabs.len() > 1 {
         let labels: Vec<(&str, bool)> = tabs.iter().map(|t| (*t, true)).collect();
         if super::widgets::tabs(&mut ui, p, &mut st.tab, &labels) {
-            st.capture = None;
+            st.cancel_capture();
             st.flash = None;
         }
     } else {

@@ -81,7 +81,11 @@ impl App {
     }
 
     pub(super) fn poll_joystick(&mut self, dt: f32) {
-        let mode = if self.settings.joystick.enabled {
+        if !self.panels.settings || !(self.focused || self.joystick.demo_started) {
+            self.options_ui.cancel_joystick_capture();
+        }
+        let capturing = self.options_ui.joystick_capturing();
+        let mode = if self.settings.joystick.enabled || capturing {
             Use::On
         } else if self.panels.settings && self.options_ui.page == crate::ui::options::Page::Controls && self.options_ui.tab != 0 {
             // The joystick tab lists the devices to choose from.
@@ -105,7 +109,7 @@ impl App {
         let motion = self.joystick.controller.sample(
             &self.joystick.snapshot,
             &self.settings.joystick,
-            (self.focused || self.joystick.demo_started) && available,
+            (self.focused || self.joystick.demo_started) && available && !capturing,
             self.joystick.active,
             dt,
         );
@@ -155,6 +159,7 @@ impl App {
             return false;
         }
         if (self.focused || self.joystick.demo_started)
+            && !self.options_ui.joystick_capturing()
             && let Some(cam) = self.camera.flycam.as_mut()
         {
             let m = self.joystick.motion;

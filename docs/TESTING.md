@@ -375,6 +375,16 @@ Hardware validation: select the real device, enable input, apply Gamepad or
 SpaceMouse, centre its axes and release its buttons; check the live input,
 walking, sliding, looking, jump held to fly and a press to land. Start and
 stop flycam with its configured button or Alt+Shift+F, and return with Escape.
+Button assignments: click the assigned button (or Assign), then press the
+desired controller button, including stick clicks and buttons beyond 9.
+Already-held buttons must be released and pressed again; a quick tap must
+also record. The press must not move the avatar or toggle flycam. None
+disables an assignment; Cancel, Escape, focus loss, a device change or
+leaving the row keeps its previous assignment. Capture also works with
+joystick control disabled. Zoom selects an analog axis, independently of
+button numbers; it changes only the flycam's field of view and requires
+a non-zero Camera gain (zero by default). Absolute zoom maps position to
+field of view; relative zoom uses deflection as zoom speed.
 Repeat the toggle while holding a movement stick, including a quick second
 press. Configure zoom on an axis that rests away from zero: the other axes
 and the flycam button must still work. Direct zoom also accepts a non-zero
