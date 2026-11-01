@@ -114,6 +114,15 @@ const BUDGET_EVERY: Duration = Duration::from_millis(250);
 /// them.
 const REDUCTIONS_PER_SECOND: f32 = 3000.0;
 const REDUCTIONS_PER_FRAME: std::ops::RangeInclusive<usize> = 8..=512;
+/// While the 3D drawing is paused behind (texture_budget::Background): the
+/// size on screen divided by this (ten levels: every texture at its last
+/// one, those of a fixed size, HUDs and the interface, left as they are),
+/// and that many reductions a frame. On the grid the window behind still
+/// held 2 GB of textures 8 s into the pause, their size on screen decaying
+/// by half a pass, while the one in front grew by 4 GB in 10 s and lost
+/// its device (#1808).
+const PAUSED_DROPPED: f32 = 1024.0;
+const PAUSED_REDUCTIONS_PER_FRAME: usize = 8192;
 /// Firestorm asks for MAX_IMAGE_DATA_SIZE (indra/llimage/llimage.h) when it
 /// wants the whole file.
 const MAX_IMAGE_DATA_SIZE: u64 = 4096 * 4096 * 8;
@@ -1905,7 +1914,14 @@ impl TextureStreamer {
     /// lowered then loaded again as the camera sways).
     pub fn recompute_wants(&mut self) {
         let step = self.pressure.step();
-        let dropped = texture_budget::dropped(step);
+        // (the 3D drawing paused behind: nothing is drawn, every texture
+        // down to its last level at once rather than as its size on screen
+        // decays, texture_budget::Background::paused)
+        let dropped = if self.background.paused() {
+            (PAUSED_DROPPED, PAUSED_DROPPED)
+        } else {
+            texture_budget::dropped(step)
+        };
         let below = texture_budget::dropped(step.saturating_sub(1));
         // the photo quality: every texture in view at full resolution, while
         // the memory allows it (under pressure the budget decides, as always)
@@ -2885,8 +2901,11 @@ impl TextureStreamer {
     /// layer (`TextureTable::shrink`), nothing is decoded. Each is checked
     /// again, the list may be a few frames old.
     fn reduce(&mut self, renderer: &mut Renderer, frame: Duration) {
-        let most =
-            ((frame.as_secs_f32() * REDUCTIONS_PER_SECOND) as usize).clamp(*REDUCTIONS_PER_FRAME.start(), *REDUCTIONS_PER_FRAME.end());
+        let most = if self.background.paused() {
+            PAUSED_REDUCTIONS_PER_FRAME
+        } else {
+            ((frame.as_secs_f32() * REDUCTIONS_PER_SECOND) as usize).clamp(*REDUCTIONS_PER_FRAME.start(), *REDUCTIONS_PER_FRAME.end())
+        };
         let mut done = 0;
         while done < most {
             let Some((id, keep, _)) = self.reductions.pop() else {
