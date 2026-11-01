@@ -1,5 +1,10 @@
 # Aurora Viewer architecture
 
+Texture imports and material maps share the PNG channel normalization in
+`aurora-assets/src/import_texture.rs`: expand luminance to RGB, retain alpha
+and reduce 16-bit samples to their high byte, following
+`LLPngWrapper::normalizeImage` (#1527). Preview and upload use those same pixels.
+
 Chat volume formatting (#1323) is shared by the Conversations renderers and
 nearby-chat cards/lines: `ui/chat.rs::message_emphasis` and `message_color`,
 with `ui/fonts.rs::TextEmphasis` carried through emoji runs, links and search
@@ -2084,7 +2089,8 @@ trackpad deltas. Hint visibility and height units are saved
 in Settings. The main scene continues to use its normal shape/morph streaming.
 
 `aurora-net/session/wearable_save.rs` checks shape ownership and Modify/Copy,
-uploads the wearable through the existing AssetUpload/Xfer path, preserves item
+uploads the wearable through the existing AssetUpload/Xfer path with its inventory
+asset type (bodypart 13 or clothing 5), preserves item
 permissions for Save As through CopyInventoryItem, patches only the transaction
 `hash_id` through AIS and reads the resulting asset back before acknowledging
 success. Non-modifiable shapes can be copied only unchanged. Requests and replies
@@ -2664,6 +2670,15 @@ click fades out in 0.7 s. "Show selection again" restarts this tint without
 changing the objects. `scene/selection_demo.rs` provides the offline mesh
 with separate curved islands of the `faces-complex` scenario, next to a
 closed torus primitive.
+
+PBR BOM maps retain their canonical UUIDs in assets and face overrides.
+`scene/shown_bakes.rs` resolves all four rendered channels per wearer, including
+last-good-bake retention and appearance-service sources. Effective PBR maps
+also feed `Scene::bom_mask`; material arrivals invalidate that visibility mask.
+Editing windows retain the coloured `BAKED_*` reference images in texture
+pickers, map swatches and material previews, for both PBR and Blinn-Phong.
+Only the scene substitutes the avatar's current bakes, following the requested
+editing behaviour rather than the Legacy Viewer's resolved picker preview.
 
 `ui/texture_picker/tree.rs` shares the search cache and the virtual tree of
 `ui/inventory/view.rs`. The folders load in bounded batches; the expanded

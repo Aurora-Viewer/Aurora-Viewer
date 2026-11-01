@@ -11299,6 +11299,45 @@ impl App {
                             }
                         }
                     }
+                    crate::build::demo::Step::BomPicker(channel) => {
+                        self.world.preview_bakes(std::collections::HashMap::from([
+                            (8, crate::demo::TEX_BAKE_SKIN),
+                            (9, crate::demo::TEX_BUMPS),
+                            (10, crate::demo::TEX_ORM_DISC),
+                            (42, crate::demo::TEX_TILES),
+                        ]));
+                        let m = crate::demo::bom_rezzed::material();
+                        let maps = [
+                            m.base_color_texture,
+                            m.normal_texture,
+                            m.metallic_roughness_texture,
+                            m.emissive_texture,
+                        ];
+                        let current = maps[channel.unwrap_or(0)];
+                        if channel.is_none() {
+                            for idx in self.build.sel_prims(&self.world) {
+                                if let Some(object) = self.world.objects.get_mut(idx) {
+                                    object.extra.render_materials.clear();
+                                    if let Some(te) = &mut object.te {
+                                        for face in &mut std::sync::Arc::make_mut(te).faces {
+                                            face.texture = current.unwrap_or_default();
+                                        }
+                                    }
+                                    object.material_dirty = true;
+                                }
+                            }
+                        }
+                        self.build.ui.tex_tab = usize::from(channel.is_some());
+                        self.build.tab = 3;
+                        self.build.ui.picker.open_with_defaults(
+                            aurora_i18n::tr!("build-ui-texture-choose-texture"),
+                            current.unwrap_or_default(),
+                            None,
+                            true,
+                        );
+                        self.build.ui.pick_target =
+                            Some(channel.map_or(crate::build::ui::PickTarget::Diffuse, crate::build::ui::PickTarget::PbrMap));
+                    }
                     crate::build::demo::Step::TexturePicker(materials, local) => {
                         let current = self
                             .build
