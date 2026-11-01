@@ -1484,9 +1484,12 @@ wears a scripted prim on our own chest (issue #488): the press must touch it
 `worn-own-mesh` wears the scripted rigged mesh, drawn opaque, on our own
 chest and presses it on our back, off the classic body: like the Legacy
 Viewer's left click, which ignores rigged meshes, the press goes to our avatar
-and must log no `ObjectGrab 975`; `worn-own-mesh-drag` drags at 710–760 and
-the `demo world click camera` lines show the agent yaw turning. Opaque, the
-mesh gives the press its depth, inside our box whatever the pose.
+and must log no `ObjectGrab 975` and no `click bits`; `worn-own-mesh-drag`
+drags at 710–760, and in the `demo world click camera` line after the drag
+`agent_yaw` equals the camera's heading (`atan2` of target − position). The
+heading depends on how far the drag turns the camera, which varies between
+PCs: compare it with the camera, not with a fixed number. Opaque, the mesh
+gives the press its depth, inside our box whatever the pose.
 `worn-other` puts that prim on another resident's chest; `worn-other-link`
 adds a scriptless child above it and presses the child (`ObjectGrab 988`).
 `worn-other-covered` and `worn-other-under` put the demo's rigged mesh,
