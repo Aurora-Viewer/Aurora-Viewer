@@ -50,16 +50,18 @@ impl Session {
         let vi = h.shared_instance().raw_instance();
         // SAFETY: The handles and queue are from this runtime-compatible device.
         let (session, waiter, stream) = unsafe {
-            instance.create_session::<xr::Vulkan>(
-                system,
-                &xr::vulkan::SessionCreateInfo {
-                    instance: vi.handle().as_raw() as _,
-                    physical_device: h.raw_physical_device().as_raw() as _,
-                    device: h.raw_device().handle().as_raw() as _,
-                    queue_family_index: h.queue_family_index(),
-                    queue_index: h.queue_index(),
-                },
-            ).map_err(|e| format!("xrCreateSession: {e}"))?
+            instance
+                .create_session::<xr::Vulkan>(
+                    system,
+                    &xr::vulkan::SessionCreateInfo {
+                        instance: vi.handle().as_raw() as _,
+                        physical_device: h.raw_physical_device().as_raw() as _,
+                        device: h.raw_device().handle().as_raw() as _,
+                        queue_family_index: h.queue_family_index(),
+                        queue_index: h.queue_index(),
+                    },
+                )
+                .map_err(|e| format!("xrCreateSession: {e}"))?
         };
         let format_raw = match format {
             wgpu::TextureFormat::Bgra8Unorm => vk::Format::B8G8R8A8_UNORM,
@@ -245,7 +247,10 @@ impl Session {
                 let p = head.pose.position;
                 let now = glam::Vec3::new(p.x, p.y, p.z);
                 if now.distance(last) > JUMP {
-                    log::info!("XR world: the head jumped {:.2} m after anchoring, anchoring again", now.distance(last));
+                    log::info!(
+                        "XR world: the head jumped {:.2} m after anchoring, anchoring again",
+                        now.distance(last)
+                    );
                     self.anchor = None;
                     self.settle = (0, None);
                     self.anchored = None;

@@ -1012,6 +1012,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 |---|---|
 | `--title <text>` | Names the window "Aurora Viewer <version> - <text> (Dev)" and its log file |
 | `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
+| `--vr` | Enters VR once the world shows, with a headset connected (Windows and Linux) |
 | `--language <code>` | Forces the language of this instance (`en`, `fr`, `ja`, or another language added to the catalogues), without changing the saved choice |
 | `--grid <name>` | Selects the login grid: `agni`, `aditi`, a saved grid name/nickname or a login URI (`--loginuri <uri>` too) |
 | `--login <first> <last> <password>` | Logs in with this account as soon as the login screen opens |
@@ -1023,6 +1024,8 @@ exe before publishing; the local build also writes it to `version.txt`.
   file is `aurora-<text>.log` (`aurora-demo-<text>.log` in demo mode).
 - `--fps-limit`: applies an extra limit to this process, including captures
   and online sessions; a lower user preference remains effective.
+- `--vr`: what the VR button's "Restart in VR" passes when the headset was
+  connected after the viewer started (VR is set up at startup).
 - `--language`: also accepts `--language=fr`. An unavailable language falls
   back to English; the argument is meant for demos and screenshots.
 - `<slurl>`: `secondlife://Region/x/y/z`, `hop://grid:port/Region/x/y/z`,

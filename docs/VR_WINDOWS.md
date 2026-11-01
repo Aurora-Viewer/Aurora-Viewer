@@ -14,23 +14,24 @@ The validated configuration remains Quest 3 / WiVRn 26.9 / RTX 3090 on Linux.
 - A configured active Windows OpenXR runtime supporting the intended headset and
   `XR_KHR_vulkan_enable2`. Select the runtime through its vendor's supported tool.
   An OpenXR badge alone does not guarantee Vulkan interoperability.
-- The x64 Khronos loader, `openxr_loader.dll`, discoverable by the application.
-  It is loaded dynamically, not linked or bundled by this PR. If the runtime's
-  installation does not provide a discoverable loader, obtain the official
-  Khronos loader from [OpenXR SDK](https://github.com/KhronosGroup/OpenXR-SDK)
-  and follow its Windows build/install instructions; do not use an unrelated DLL
-  download site. Place a matching x64 loader beside the test executables if needed.
+- Nothing else to install: the Khronos OpenXR loader is built into the viewer
+  (the `openxr` crate's `static` feature), and it finds the runtime the system
+  has active.
 - `PRIMARY_STEREO` with two views, `LOCAL`/`VIEW` reference spaces, opaque
   composition, compatible RGBA8/BGRA8 eye formats and swapchain images usable as
   color attachments, sampled textures and transfer sources.
-- Runtime running and headset connected **before** starting each test process.
+- Runtime running and headset connected when the viewer starts. A headset
+  connected later makes the headset button offer "Restart in VR": the viewer
+  restarts with `--vr` and enters VR once the world shows.
   WiVRn is the Linux test route, not a Windows requirement. No OpenVR bridge,
   VR framework or streaming client is bundled with Aurora.
 
-No Windows runtime/headset/GPU combination is certified by this PR yet. The
+Tested by a maintainer on 2026-11-01: RTX 4090, Virtual Desktop's OpenXR
+runtime (VDXR). Other runtimes are expected to work but are untested. The
 runtime selects the Vulkan GPU; a conflicting explicit Aurora GPU preference or
-hybrid-GPU configuration may prevent initialization. Late runtime attachment,
-headset reconnection and runtime-loss recovery remain unfinished.
+hybrid-GPU configuration may prevent initialization. Attaching a headset
+without a restart, headset reconnection and runtime-loss recovery remain
+unfinished.
 
 ## Build and CI
 
@@ -79,8 +80,13 @@ Windows path. Headset tests use a local dev build.
 
 ## Deliberate limits
 
-**Viewing only:** the viewpoint is anchored at the desktop camera's entry
-position and horizontal heading. Head tracking permits looking around and small
+**Where the view starts:** Preferences › Camera › VR, "Headset view". By
+default ("First person") at the avatar's eyes, as in mouselook, with the head
+and what is worn on it hidden; "Camera position" starts where the desktop
+camera was. Either way the heading is kept and pitch/roll are levelled to the
+horizon, and the view stays anchored there.
+
+**Viewing only:** head tracking permits looking around and small
 physical leaning, not locomotion or camera relocation. No supported VR menus,
 chat, inventory, building, object interaction, controllers, hands or teleporting.
 Exit with Esc to interact or reposition the desktop camera. Esc needs viewer
@@ -89,4 +95,4 @@ keyboard focus; headset controllers cannot exit VR.
 Each eye is capped at 1600 x 1600. Stereo backends add GPU time/memory; the
 30 FPS desktop mirror reuses an eye image instead of rendering a third scene.
 No Windows performance, recording overhead or disconnect-recovery claim is made.
-macOS/visionOS remain outside this implementation.
+macOS/visionOS remain outside this implementation (a later step).

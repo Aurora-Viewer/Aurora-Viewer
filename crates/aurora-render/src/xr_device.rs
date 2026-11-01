@@ -14,6 +14,41 @@ pub(crate) struct Graphics {
     raw_instance: ash::Instance,
     physical: vk::PhysicalDevice,
 }
+/// Whether the active OpenXR runtime has a headset now (instance and
+/// system only, no session): when VR was unavailable at startup because the
+/// headset was not connected yet, a restart can then bring it.
+pub fn headset_ready() -> bool {
+    let probe = || -> Result<()> {
+        let entry = xr::Entry::linked(&())?;
+        if !entry.enumerate_extensions()?.khr_vulkan_enable2 {
+            return Err("XR_KHR_vulkan_enable2 unavailable".into());
+        }
+        let mut extensions = xr::ExtensionSet::default();
+        extensions.khr_vulkan_enable2 = true;
+        let xr = entry.create_instance(
+            &xr::ApplicationInfo {
+                application_name: "Aurora headset probe",
+                application_version: 0,
+                engine_name: "Aurora",
+                engine_version: 0,
+                api_version: xr::Version::new(1, 0, 0),
+            },
+            &extensions,
+            &[],
+            &(),
+        )?;
+        xr.system(xr::FormFactor::HEAD_MOUNTED_DISPLAY)?;
+        Ok(())
+    };
+    match probe() {
+        Ok(()) => true,
+        Err(e) => {
+            log::info!("OpenXR headset probe: {e}");
+            false
+        }
+    }
+}
+
 impl Graphics {
     pub fn binding(&self) -> (xr::Instance, xr::SystemId) {
         (self.xr.clone(), self.system)

@@ -164,9 +164,11 @@ your distribution and graphics card.
 
 ## Experimental VR scene viewing (Linux/OpenXR)
 
-This is **viewing only**, anchored at the desktop camera's position when VR starts.
-Place the camera where you want to look from **before** entering VR. Its horizontal
-heading is preserved and its pitch/roll are leveled to the horizon. Head rotation
+This is **viewing only**. **Where the view starts:** Preferences › Camera › VR, "Headset view". By
+default ("First person") at the avatar's eyes, as in mouselook, with the head
+and what is worn on it hidden; "Camera position" starts where the desktop
+camera was. Either way the heading is kept and pitch/roll are levelled to the
+horizon, and the view stays anchored there. Head rotation
 and small physical movements provide stereo head tracking around that anchor;
 they do not move the avatar or provide locomotion around the world.
 
@@ -174,8 +176,8 @@ they do not move the avatar or provide locomotion around the world.
 
 - Linux desktop viewer with a Vulkan 1.3 driver/GPU that meets Aurora's existing
   renderer feature and bindless resource requirements.
-- A native OpenXR loader (`libopenxr_loader.so.1`; install your distribution's
-  OpenXR loader package) and a configured, running Linux OpenXR runtime.
+- A configured, running Linux OpenXR runtime. The Khronos OpenXR loader is
+  built into the viewer: no loader package to install.
 - Runtime support for `XR_KHR_vulkan_enable2`, a head-mounted display with
   `PRIMARY_STEREO` (two views), `LOCAL` and `VIEW` reference spaces, opaque
   composition, and the viewer's selected RGBA8/BGRA8 output format. Eye swapchains
@@ -215,15 +217,17 @@ available. A desktop-only instruction reminds you how to exit.
   building/editing, object interaction, movement controls, controllers, hands or
   VR shortcuts. Exit VR to interact with the viewer or change camera placement.
   Esc is the supported keyboard action while VR is engaged.
-- **The viewpoint stays anchored where the desktop camera was placed.** Head
+- **The viewpoint stays anchored where VR started** (the avatar's eyes or the
+  desktop camera, Preferences › Camera › VR). Head
   tracking permits looking around and physical leaning; there is no VR travel,
   camera repositioning, avatar movement or controller teleportation.
 - Headset output has no viewer interface, nameplates, chat overlays, worn HUDs,
   selection outlines or editing overlays. Desktop output is a left-eye mirror
   with the exit instruction, not a second interactive desktop viewport.
-- Starting Aurora before the runtime/headset is ready can leave VR unavailable
-  for that process. Connecting later and recovering from a runtime restart or
-  headset disconnect are unfinished; a viewer restart may be needed. Repeatable
+- VR is set up when Aurora starts. A headset connected later makes the headset
+  button offer "Restart in VR" (the viewer restarts with `--vr` and enters VR
+  once the world shows). Recovering from a runtime restart or a headset
+  disconnect is unfinished. Repeatable
   normal enter/exit does not imply disconnect/reconnection support.
 - Each eye is capped at 1600 pixels in each dimension. Two eye backends maintain
   independent depth, visibility and temporal history; this uses additional GPU
@@ -234,11 +238,11 @@ available. A desktop-only instruction reminds you how to exit.
 
 ### Dependencies and footprint
 
-The only new direct Rust dependency is Linux/Windows-only `openxr 0.22.0` (MIT/Apache-2.0).
-It adds `openxr-sys 0.14.0` (MIT/Apache-2.0) and `libloading 0.9.0` (ISC); the
-existing `libloading 0.8.9` remains for other dependencies. These licenses are
-compatible with this repository. The loader is dynamically loaded: the system
-OpenXR loader and runtime are installed separately, not bundled in Aurora.
+The only new direct Rust dependency is Linux/Windows-only `openxr 0.22.0` (MIT/Apache-2.0),
+with `openxr-sys 0.14.0` (MIT/Apache-2.0). Its `static` feature builds the Khronos
+OpenXR loader (Apache-2.0) into the viewer with cmake, already needed by the build.
+These licenses are compatible with this repository. The OpenXR runtime stays the
+user's (WiVRn, Monado, SteamVR...).
 
 No VR framework/engine, WiVRn, SteamVR, OpenVR compatibility layer, OBS, video
 encoder or headset client is added to the application. Existing wgpu/Vulkan and

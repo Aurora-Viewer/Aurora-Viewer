@@ -266,6 +266,15 @@ pub struct App {
     /// session anchors on the view of the frame it starts in, so the eye
     /// view must have been drawn first.
     vr_start_in: u8,
+    /// The headset came after startup (VR is set up with the GPU device
+    /// then): the restart dialog is open, its Restart was pressed, and the
+    /// exit under way restarts the viewer with `--vr`.
+    vr_restart_offer: bool,
+    vr_restart: bool,
+    restart_into_vr: bool,
+    /// `--vr`: enter VR once the world has shown for a moment.
+    vr_at_start: bool,
+    vr_world_since: Option<Instant>,
     input: MoveInput,
     joystick: joystick::State,
     /// Keys and bindable mouse buttons held down.
@@ -1161,6 +1170,11 @@ impl App {
             vr_camera: None,
             vr_toggle: false,
             vr_start_in: 0,
+            vr_restart_offer: false,
+            vr_restart: false,
+            restart_into_vr: false,
+            vr_at_start: crate::cli::get().vr,
+            vr_world_since: None,
             input: MoveInput::default(),
             joystick: Default::default(),
             down: HashSet::new(),
@@ -5442,6 +5456,9 @@ impl App {
         self.settings.save();
         // the last lines of the conversations reach their files
         self.world.chat_log.flush(Duration::from_secs(2));
+        if self.restart_into_vr {
+            restart_with_vr();
+        }
         event_loop.exit();
     }
 
@@ -9988,9 +10005,32 @@ impl App {
             self.net.set_bandwidth(bandwidth_kbps(&self.settings));
         }
         self.handle_actions(actions, event_loop);
+        if self.vr_at_start && self.in_world() {
+            // the scene around has a moment to arrive before the headset
+            let since = *self.vr_world_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= Duration::from_secs(2) {
+                self.vr_at_start = false;
+                self.vr_toggle = true;
+            }
+        }
+        if std::mem::take(&mut self.vr_restart) {
+            self.restart_into_vr = true;
+            self.confirm_exit(ui::exit::Action::Quit);
+        }
         if self.vr_start_in > 0 {
             self.vr_start_in -= 1;
             self.vr_toggle |= self.vr_start_in == 0;
+        }
+        // no VR device at startup: a headset there now needs a restart (the
+        // GPU device is opened through the VR runtime, at startup only)
+        if self.vr_toggle && gfx.renderer.vr_state() == aurora_render::VrState::Unavailable {
+            self.vr_toggle = false;
+            if aurora_render::vr_headset_ready() {
+                self.vr_restart_offer = true;
+            } else {
+                self.world
+                    .system_notice(aurora_i18n::tr!("vr-unavailable"), crate::world::notice_topics::Topic::Warning);
+            }
         }
         if std::mem::take(&mut self.vr_toggle) {
             let engaged = gfx.renderer.vr_engaged();
@@ -14250,6 +14290,40 @@ impl App {
                     self.settings.debug.probes.then(|| self.probes.debug_list()),
                     &self.lod_infos,
                 );
+                if self.vr_restart_offer {
+                    ui::widgets::Modal::new(egui::Id::unique("vr-restart")).show(&ctx, |ui| {
+                        ui.set_max_width(430.0);
+                        ui.heading(aurora_i18n::tr!("vr-restart-title"));
+                        ui.label(aurora_i18n::tr!("vr-restart-body"));
+                        ui.horizontal(|ui| {
+                            if ui::widgets::action_button(
+                                ui,
+                                &p,
+                                "x",
+                                aurora_i18n::text("common-cancel"),
+                                ui::widgets::ActionKind::Flat,
+                                egui::vec2(0.0, 28.0),
+                            )
+                            .clicked()
+                            {
+                                self.vr_restart_offer = false;
+                            }
+                            if ui::widgets::action_button(
+                                ui,
+                                &p,
+                                "refresh",
+                                aurora_i18n::text("vr-restart-confirm"),
+                                ui::widgets::ActionKind::Primary,
+                                egui::vec2(0.0, 28.0),
+                            )
+                            .clicked()
+                            {
+                                self.vr_restart_offer = false;
+                                self.vr_restart = true;
+                            }
+                        });
+                    });
+                }
                 let vr_active = ctx.data(|data| data.get_temp::<bool>(egui::Id::unique("vr-active")).unwrap_or(false));
                 if vr_active {
                     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("vr-exit-hint")));
@@ -18994,6 +19068,32 @@ fn capture_files(path: &std::path::Path, frames: &str) -> Vec<(u64, std::path::P
     at.into_iter()
         .map(|f| (f, path.with_file_name(format!("{stem}-{f}.{ext}"))))
         .collect()
+}
+
+/// Start this viewer again with `--vr`, as the process ends: the identity
+/// of this instance is kept (title, frame cap, language, grid), not the
+/// one-time login or start place.
+fn restart_with_vr() {
+    let cli = crate::cli::get();
+    let Ok(exe) = std::env::current_exe() else {
+        log::warn!("restart into VR: the viewer's path is unknown");
+        return;
+    };
+    let mut command = std::process::Command::new(exe);
+    if let Some(title) = &cli.title {
+        command.arg("--title").arg(title);
+    }
+    if let Some(fps) = cli.fps_limit {
+        command.arg("--fps-limit").arg(fps.to_string());
+    }
+    if let Some(language) = &cli.language {
+        command.arg("--language").arg(language);
+    }
+    command.arg("--vr");
+    match command.spawn() {
+        Ok(_) => log::info!("restarting into VR"),
+        Err(e) => log::warn!("restart into VR failed: {e}"),
+    }
 }
 
 #[cfg(test)]

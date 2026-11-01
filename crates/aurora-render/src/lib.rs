@@ -71,6 +71,14 @@ pub mod water_effects;
 mod water_optics;
 mod water_wake;
 pub use vr_control::VrState;
+/// Whether a VR headset is ready now (`xr_device::headset_ready`); never on
+/// macOS, where the VR path is not built yet.
+pub fn vr_headset_ready() -> bool {
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    return xr_device::headset_ready();
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    false
+}
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod vr_mirror;
 pub mod writes;
