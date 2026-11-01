@@ -3719,13 +3719,6 @@ impl Scene {
                 base_tex = texture;
                 source = TexSource::Asset;
             }
-            if !g.hud
-                && wearer.is_none()
-                && matches!(pbr_alpha, None | Some(1))
-                && matches!(legacy_alpha, None | Some(legacy_mat::alpha_mode::BLEND))
-            {
-                rec.flags[0] |= flags::WORLD_BLEND_PICK;
-            }
             if !base_tex.is_nil() {
                 g.tex_ids.push(base_tex);
             }
@@ -3755,6 +3748,12 @@ impl Scene {
                 }
             }
             rec.set_hud_zoom(hud_zoom);
+            rec.set_world_blend_pick(
+                !g.hud
+                    && wearer.is_none()
+                    && matches!(pbr_alpha, None | Some(1))
+                    && matches!(legacy_alpha, None | Some(legacy_mat::alpha_mode::BLEND)),
+            );
             rec.set_anchor(anchor.map(|a| a.matrix));
             let record = renderer.records.alloc(rec);
             g.faces.push(FaceDraw {

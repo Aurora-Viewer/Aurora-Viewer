@@ -1764,7 +1764,7 @@ fn fs_pick_overlay(in: PickOut) -> @location(0) vec4<u32> {
 fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
-    let world_left = WORLD_LEFT_PICK && (rec.flags.x & FLAG_WORLD_BLEND_PICK) != 0u;
+    let world_left = WORLD_LEFT_PICK && (rec.flags.w & FLAG_WORLD_BLEND_PICK) != 0u;
     if (world_left && sample_tex(rec.tex.x, in.uv).a <= 0.0) {
         discard;
     }
@@ -1790,7 +1790,7 @@ fn fs_pick_visible(in: PickOut) -> @location(0) vec4<u32> {
     // An emissive mask uses texture alpha for lighting, not opacity
     // (eval_material): its visible surface must remain a camera target.
     let terrain_pbr = (rec.flags.x & (FLAG_TERRAIN | FLAG_PBR)) == (FLAG_TERRAIN | FLAG_PBR);
-    let world_blend = WORLD_LEFT_PICK && (rec.flags.x & FLAG_WORLD_BLEND_PICK) != 0u;
+    let world_blend = WORLD_LEFT_PICK && (rec.flags.w & FLAG_WORLD_BLEND_PICK) != 0u;
     let cutoff = select(32.0 / 255.0, 0.0, world_blend);
     let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(select(rec.tex.x, 0u, terrain_pbr), in.uv).a <= cutoff;
     // An opaque glTF material ignores its base color alpha (FaceDraw::
