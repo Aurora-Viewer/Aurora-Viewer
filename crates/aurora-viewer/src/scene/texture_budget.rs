@@ -179,25 +179,34 @@ pub const MINIMIZED_AFTER: Duration = Duration::from_secs(1);
 pub struct Background {
     /// Since when the window is not in front.
     since: Option<Instant>,
+    /// Its textures went, since it is behind.
+    away: bool,
 }
 
 impl Background {
     /// The window's state now (`in_front`: it has the focus and is not
-    /// minimised; `crowded`: the textures are under pressure or the viewer
-    /// is past the driver's budget); whether its textures should go.
+    /// minimised; `crowded`: the viewer is past the driver's budget);
+    /// whether its textures should go. Once gone they stay gone until the
+    /// window is in front again (their going brings the viewer back under
+    /// the budget).
     ///
     /// Crowded, a window behind gives them back at once, which the Legacy
     /// Viewer does not: two viewers arriving in a busy region within the
     /// same minute overfilled a 12 GB card in 25 to 40 s, before the one
-    /// behind had waited its minute, and one lost its device (#1808).
+    /// behind had waited its minute, and one lost its device (#1808). Past
+    /// the budget only, not under mere pressure: one viewer holds step 1 for
+    /// minutes in a busy region, and a glance at another program would have
+    /// cost it every texture.
     pub fn update(&mut self, now: Instant, in_front: bool, minimized: bool, crowded: bool) -> bool {
         if in_front && !minimized {
             self.since = None;
+            self.away = false;
             return false;
         }
         let since = *self.since.get_or_insert(now);
         let after = if minimized { MINIMIZED_AFTER } else { BACKGROUNDED_AFTER };
-        crowded || now.duration_since(since) >= after
+        self.away |= crowded || now.duration_since(since) >= after;
+        self.away
     }
 }
 
@@ -531,8 +540,14 @@ mod tests {
         let mut b = Background::default();
         assert!(!b.update(t0, false, false, false));
         assert!(b.update(t0 + s(5), false, false, true));
+        // back under the budget once they went: still gone while behind
+        assert!(b.update(t0 + s(6), false, false, false));
         // in front, crowded or not: its textures stay
-        assert!(!b.update(t0 + s(6), true, false, true));
+        assert!(!b.update(t0 + s(7), true, false, true));
+        // behind again, not crowded: the Legacy minute again
+        assert!(!b.update(t0 + s(8), false, false, false));
+        assert!(!b.update(t0 + s(60), false, false, false));
+        assert!(b.update(t0 + s(69), false, false, false));
         // minimised and crowded: at once too
         let mut m = Background::default();
         assert!(m.update(t0, true, true, true));

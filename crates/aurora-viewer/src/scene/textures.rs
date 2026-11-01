@@ -2932,7 +2932,7 @@ impl TextureStreamer {
         // textures back, at once while the memory is short, and takes up
         // again once in front (LLViewerTexture::updateClass,
         // texture_budget::Background)
-        let crowded = before > 0 || video.is_some_and(|v| v.usage > v.budget);
+        let crowded = video.is_some_and(|v| v.usage > v.budget);
         let away = self.background.update(now, self.in_front, self.minimized, crowded);
         if away && !self.pressure.held() {
             self.pressure.hold_max(now);
