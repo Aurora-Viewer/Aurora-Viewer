@@ -187,7 +187,7 @@ pub fn save_gpu_stall(dir: &Path, seconds: u64) {
 }
 
 /// Off Windows no other thread's stack can be read: the header alone, which
-/// is what the report and the next start's safe graphics offer need.
+/// is all the next start's safe graphics offer needs.
 #[cfg(not(windows))]
 pub fn save_gpu_stall(dir: &Path, seconds: u64) {
     let pending = dir.join("gpu-stall.pending");
