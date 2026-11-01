@@ -9236,6 +9236,19 @@ impl App {
         let slots = self.scene.env_textures(&mut gfx.renderer, env.textures);
         env.sky.cloud_texture = slots[0];
         env.sky.sun_texture = slots[1];
+        // the sun disc's texture once it is ready (or not: the disc is then
+        // procedural), for a report of a missing or misplaced sun
+        {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static SUN_SLOT: AtomicU32 = AtomicU32::new(u32::MAX);
+            if SUN_SLOT.swap(slots[1], Ordering::Relaxed) != slots[1] {
+                log::info!(
+                    "sky: sun texture {} {}",
+                    env.textures[1],
+                    if slots[1] != 0 { "loaded" } else { "not loaded (procedural disc)" }
+                );
+            }
+        }
         env.sky.moon_texture = slots[2];
         env.water.normal_texture = slots[3];
         env.sky.rainbow_texture = slots[4];

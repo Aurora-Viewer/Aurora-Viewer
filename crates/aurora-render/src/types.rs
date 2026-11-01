@@ -532,6 +532,11 @@ pub struct DrawLists {
     pub water_ground: crate::WaterGround,
     /// Sorted back to front, the first `blend_depth` apart (below).
     pub blend: Vec<DrawCmd>,
+    /// The blended faces under the water while the camera is above it, back
+    /// to front, the rigged first: drawn before the water and the scene copy
+    /// it refracts, writing depth, without glow (POOL_ALPHA_PRE_WATER). A
+    /// face crossing the surface is in both lists, clipped to each side.
+    pub blend_under_water: Vec<DrawCmd>,
     /// The first `blend_depth` entries of `blend` are rigged faces (worn
     /// rigged meshes, animesh): drawn before the other blended faces and
     /// writing depth, so that a layer in front (mesh hair) hides what is
@@ -688,6 +693,7 @@ impl DrawLists {
         self.water.clone_from(&src.water);
         self.water_exclusion.clone_from(&src.water_exclusion);
         self.blend.clone_from(&src.blend);
+        self.blend_under_water.clone_from(&src.blend_under_water);
         self.blend_glow.clone_from(&src.blend_glow);
         self.blend_depth = src.blend_depth;
         self.blend_depth_mode = src.blend_depth_mode;
@@ -737,6 +743,7 @@ impl DrawLists {
         self.water.clear();
         self.water_exclusion.clear();
         self.blend.clear();
+        self.blend_under_water.clear();
         self.blend_depth = 0;
         self.blend_depth_mode = RiggedBlendDepth::default();
         self.blend_depth_runs.clear();
@@ -784,6 +791,7 @@ impl DrawLists {
             + self.mask_two_sided.len()
             + self.water.len()
             + self.blend.len()
+            + self.blend_under_water.len()
     }
 }
 
@@ -1756,6 +1764,7 @@ mod tests {
         scene.creation_preview.push(cmd(25));
         scene.physics_shapes.push(cmd(26));
         scene.blend.extend([cmd(7), cmd(8), cmd(9)]);
+        scene.blend_under_water.push(cmd(29));
         scene.blend_glow.extend([false, true, false]);
         scene.blend_depth = 1;
         scene.glow.push(cmd(4));
@@ -1804,6 +1813,7 @@ mod tests {
         assert_eq!(packet.creation_preview[0].record, 25);
         assert_eq!(packet.physics_shapes[0].record, 26);
         assert_eq!(packet.blend.iter().map(|c| c.record).collect::<Vec<_>>(), [7, 8, 9]);
+        assert_eq!(packet.blend_under_water.iter().map(|c| c.record).collect::<Vec<_>>(), [29]);
         assert_eq!(packet.blend_glow, [false, true, false]);
         assert_eq!(packet.blend_depth, 1);
         assert_eq!((packet.terrain.len(), packet.glow.len(), packet.select_root.len()), (1, 1, 1));
@@ -1822,6 +1832,7 @@ mod tests {
         scene.blend.push(cmd(1));
         assert_eq!(packet.blend.len(), 3);
         assert!(scene.hud_view.is_none());
+        assert!(scene.blend_under_water.is_empty());
         assert!(scene.hud_opaque.is_empty());
         assert!(scene.hud_debug_red.is_empty());
         assert!(scene.creation_preview.is_empty());

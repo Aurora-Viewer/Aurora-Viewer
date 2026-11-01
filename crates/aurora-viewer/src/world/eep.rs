@@ -19,6 +19,10 @@ pub const DEFAULT_WATER_NORMAL: Uuid = uuid::uuid!("822ded49-9a6c-f61c-cb89-6df5
 /// Default rainbow and 22° halo textures (LLSettingsSky IMG_RAINBOW, IMG_HALO).
 pub const DEFAULT_RAINBOW_ID: Uuid = uuid::uuid!("11b4c57c-56b3-04ed-1f82-2004363882e4");
 pub const DEFAULT_HALO_ID: Uuid = uuid::uuid!("12149143-f599-91a7-77ac-b52a3c0f59cd");
+/// The sky dome's height and radius (LLSettingsSky::DOME_OFFSET and
+/// DOME_RADIUS). The Legacy Viewer draws with these whatever a sky sets.
+pub const LEGACY_DOME_OFFSET: f32 = 0.96;
+pub const LEGACY_DOME_RADIUS: f32 = 15000.0;
 
 #[derive(Debug, Clone, Copy)]
 pub struct SkyFrame {
@@ -94,8 +98,8 @@ impl Default for SkyFrame {
             moon_brightness: 0.5,
             star_brightness: 250.0,
             gamma: 1.0,
-            dome_offset: 0.96,
-            dome_radius: 15000.0,
+            dome_offset: LEGACY_DOME_OFFSET,
+            dome_radius: LEGACY_DOME_RADIUS,
             probe_ambiance: 0.0,
             can_auto_adjust: true,
             moisture_level: 0.0,
@@ -107,7 +111,7 @@ impl Default for SkyFrame {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WaterFrame {
     pub fog_color: Vec3,
     pub fog_density: f32,
@@ -119,6 +123,31 @@ pub struct WaterFrame {
     pub wave1: Vec2,
     pub wave2: Vec2,
     pub normal_map: Uuid,
+}
+
+impl WaterFrame {
+    /// The ranges LLSettingsWater::validationList clamps a water setting to
+    /// (llsettingswater.cpp; verifyFloatRange / verifyVectorMinMax clamp,
+    /// they do not reject). Values out of them (a fresnel offset above 1, a
+    /// fog colour above 1) turned the water white; a value that is not a
+    /// number becomes the bottom of its range.
+    pub fn validated(self) -> WaterFrame {
+        let f = |v: f32, lo: f32, hi: f32| if v.is_nan() { lo } else { v.clamp(lo, hi) };
+        let v3 = |v: Vec3, lo: f32, hi: f32| Vec3::new(f(v.x, lo, hi), f(v.y, lo, hi), f(v.z, lo, hi));
+        let v2 = |v: Vec2, lo: f32, hi: f32| Vec2::new(f(v.x, lo, hi), f(v.y, lo, hi));
+        WaterFrame {
+            fog_color: v3(self.fog_color, 0.0, 1.0),
+            fog_density: f(self.fog_density, 0.001, 100.0),
+            underwater_fog_mod: f(self.underwater_fog_mod, 0.0, 20.0),
+            fresnel_scale: f(self.fresnel_scale, 0.0, 1.0),
+            fresnel_offset: f(self.fresnel_offset, 0.0, 1.0),
+            blur_multiplier: f(self.blur_multiplier, -0.5, 0.5),
+            normal_scale: v3(self.normal_scale, 0.0, 10.0),
+            wave1: v2(self.wave1, -20.0, 20.0),
+            wave2: v2(self.wave2, -20.0, 20.0),
+            normal_map: self.normal_map,
+        }
+    }
 }
 
 impl Default for WaterFrame {
@@ -284,6 +313,25 @@ fn sky_frame(s: &Llsd) -> Option<SkyFrame> {
 }
 
 fn water_frame(w: &Llsd) -> Option<WaterFrame> {
+    water_frame_as_sent(w).map(WaterFrame::validated)
+}
+
+/// A water frame of `environment` (an ExtEnvironment answer) whose values
+/// were out of the Legacy ranges, as the region sent it; logged where the
+/// environment arrives, not in [`water_frame`], which the water editor runs
+/// on every redraw.
+pub fn water_out_of_range(environment: &Llsd) -> Vec<WaterFrame> {
+    let frames = &environment["day_cycle"]["frames"];
+    let Some(map) = frames.as_map() else {
+        return Vec::new();
+    };
+    map.values()
+        .filter_map(water_frame_as_sent)
+        .filter(|w| w.validated() != *w)
+        .collect()
+}
+
+fn water_frame_as_sent(w: &Llsd) -> Option<WaterFrame> {
     let d = WaterFrame::default();
     if !w.is_map() || !type_is(w, "water") {
         return None;
@@ -701,6 +749,40 @@ impl WaterFrame {
 mod tests {
     use super::*;
     use aurora_llsd::llsd_map;
+
+    #[test]
+    fn water_values_are_clamped_to_the_legacy_ranges() {
+        let arr = |v: &[f64]| Llsd::Array(v.iter().map(|x| Llsd::Real(*x)).collect());
+        let w = llsd_map! {
+            "type" => "water",
+            "fresnel_offset" => 1.8,
+            "fresnel_scale" => -0.5,
+            "blur_multiplier" => 2.0,
+            "water_fog_density" => 0.0,
+            "underwater_fog_mod" => 50.0,
+            "water_fog_color" => arr(&[1.6, -0.2, 0.5, 1.0]),
+            "normal_scale" => arr(&[0.0, 12.0, 2.0]),
+            "wave1_direction" => arr(&[30.0, -25.0]),
+        };
+        let f = water_frame(&w).expect("water");
+        assert_eq!((f.fresnel_offset, f.fresnel_scale, f.blur_multiplier), (1.0, 0.0, 0.5));
+        assert_eq!((f.fog_density, f.underwater_fog_mod), (0.001, 20.0));
+        assert_eq!(f.fog_color, Vec3::new(1.0, 0.0, 0.5));
+        assert_eq!(f.normal_scale, Vec3::new(0.0, 10.0, 2.0));
+        assert_eq!(f.wave1, Vec2::new(20.0, -20.0));
+        // where the environment arrives: only the frames out of range, as sent
+        let mut frames = aurora_llsd::Map::new();
+        frames.insert("odd".into(), w.clone());
+        frames.insert("fine".into(), llsd_map! { "type" => "water" });
+        frames.insert("sky".into(), llsd_map! { "type" => "sky" });
+        let env = llsd_map! { "day_cycle" => llsd_map! { "frames" => Llsd::Map(frames) } };
+        let odd = water_out_of_range(&env);
+        assert_eq!(odd.len(), 1);
+        assert_eq!(odd[0].fresnel_offset, 1.8);
+        // values in range stay as they are
+        let d = WaterFrame::default().validated();
+        assert_eq!((d.fresnel_offset, d.fog_density), (WaterFrame::default().fresnel_offset, 2.0));
+    }
 
     #[test]
     fn sky_and_water_round_trip_through_llsd() {
