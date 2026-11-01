@@ -631,10 +631,11 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 Action::RemoveOutfits(ids) => ids,
                 _ => unreachable!(),
             };
-            // takeOffOutfit never removes the four required body parts.
+            // takeOffOutfit never removes the four required body parts, and
+            // takes any folder: a demo or a delivery, not only a saved outfit
+            // (#1849).
             let mut removable = HashSet::new();
             for id in folders {
-                require_outfit(inv, id)?;
                 require_complete(inv, id)?;
                 warn_broken(inv, id);
                 removable.extend(
@@ -1898,6 +1899,30 @@ mod tests {
         assert!(!change.links.iter().any(|l| !l.folder && removable.contains(&l.target)));
         assert_eq!(base(&inv), Some(Uuid::from_u128(705)));
         assert!(inv.folders.contains_key(&outfit), "saved outfits are retained");
+    }
+
+    /// Issue #1849: "Remove from current outfit" on an ordinary folder (a
+    /// demo worn from Recent) refused it as an outfit it cannot modify.
+    #[test]
+    fn remove_outfit_takes_off_an_ordinary_folder() {
+        let mut inv = fixture();
+        let (worn, _) = worn_clothing(&inv)[0];
+        let demo = Uuid::from_u128(1100);
+        let mut folder = inv.folders[&Uuid::from_u128(703)].clone();
+        folder.info.id = demo;
+        folder.info.parent = inv.root;
+        folder.info.type_default = -1;
+        folder.info.name = "Demo".into();
+        folder.children.clear();
+        folder.items = vec![worn];
+        inv.folders.insert(demo, folder);
+        inv.items.get_mut(&worn).expect("worn clothing").parent = demo;
+        let (change, sync) = plan(&inv, Action::RemoveOutfit(demo), &HashMap::new()).expect("take off a demo folder");
+        assert!(sync);
+        assert!(!change.links.iter().any(|l| l.target == worn), "its clothing is taken off");
+        for id in 710..714 {
+            assert!(change.links.iter().any(|l| l.target == Uuid::from_u128(id)), "body part {id}");
+        }
     }
 
     #[test]
