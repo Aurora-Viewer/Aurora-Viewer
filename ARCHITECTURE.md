@@ -67,6 +67,10 @@ with the item records used by inventory views. Obsolete item/folder links are
 removed once per response batch, including records no longer in the child lists;
 older snapshots, originals and links in other folders are preserved (#1515).
 Outfit demos use this same reconciliation instead of removing links themselves.
+`world/inventory/items.rs` holds those records behind `Items`, which indexes
+the links by parent on every write: a readback looks only at its folder's own
+links, not at every record (#1963). Reads go through `Deref` to the map; a
+record lent out by `get_mut` is indexed again before the next lookup.
 
 `imports/folders.rs` owns editable relative destinations for bulk uploads.
 `folders/roots.rs` applies the optional source wrapper in mirror, type and flat
