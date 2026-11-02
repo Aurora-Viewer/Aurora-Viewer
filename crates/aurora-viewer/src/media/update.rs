@@ -538,7 +538,7 @@ impl MediaManager {
                     continue;
                 };
                 self.last_create = now;
-                match MediaPlugin::launch(paths, plugin_name, m.width, m.height, &browser, "") {
+                match MediaPlugin::launch_in_world(paths, plugin_name, m.width, m.height, &browser, "") {
                     Ok(mut p) => {
                         p.set_auto_scale(m.auto_scale);
                         p.set_loop(m.looping);

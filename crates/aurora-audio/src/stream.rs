@@ -305,6 +305,29 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
+    #[test]
+    #[ignore = "contacts the public HTTPS station reported in #1628"]
+    fn issue_1628_live_probe() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let resp = http::open("https://stream.electroradio.fm/320k", &stop).unwrap();
+        eprintln!("content_type={:?} metaint={:?}", resp.content_type, resp.metaint);
+        let title = Arc::new(Mutex::new(None));
+        let reader: Box<dyn Read + Send + Sync> = match resp.metaint {
+            Some(mi) => Box::new(IcyReader::new(resp.body, mi, title.clone())),
+            None => resp.body,
+        };
+        let mut decoder = DecodeStream::open(Box::new(ReadOnlySource::new(reader)), Some("mp3")).unwrap();
+        let mut frames = 0;
+        let mut peak = 0.0_f32;
+        while frames < 44_100 {
+            let chunk = decoder.next_chunk().unwrap().expect("audio chunk");
+            frames += chunk.samples.len() / chunk.channels;
+            peak = chunk.samples.iter().fold(peak, |peak, sample| peak.max(sample.abs()));
+        }
+        eprintln!("decoded frames={frames} peak={peak} title={:?}", *title.lock());
+        assert!(peak > 0.0);
+    }
+
     /// Serves one ICY response on loopback: MP3 frames with in-band metadata.
     fn serve_icy_once(metaint: usize) -> (String, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
