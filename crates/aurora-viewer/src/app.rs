@@ -8877,8 +8877,14 @@ impl App {
                 ctrl: self.ctrl,
                 alt: self.alt,
             };
-            self.build
-                .update(&mut self.world, &self.settings.build, self.cursor_pos, over_ui, mods);
+            self.build.update(
+                &mut self.world,
+                &self.settings.build,
+                Some(&self.scene),
+                self.cursor_pos,
+                over_ui,
+                mods,
+            );
             let mut selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
             // another avatar's attachment the open menu is about, outlined
             // like a child prim of a selection (it cannot be selected)
@@ -10541,10 +10547,23 @@ impl App {
             if self.frame_count == crate::demo::notifs::DND_AT && mode == "dnd" {
                 self.world.set_dnd(true);
             }
+            // the demo inventory, for the purchase to link its Received
+            // Items (#1604)
+            if self.frame_count == crate::demo::notifs::PURCHASE_AT && mode.starts_with("purchase") {
+                crate::world::inventory::demo::seed(&mut self.world.inventory, agent);
+                crate::world::inventory::demo::seed_received(&mut self.world.inventory, agent);
+            }
             for event in crate::demo::notifs::events(self.frame_count, agent) {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
+            }
+            // the link clicked: the inventory on its Received tab
+            if self.frame_count == crate::demo::notifs::PURCHASE_AT + 60
+                && mode == "purchase-open"
+                && let Some(inbox) = crate::world::inventory::actions::system(&self.world.inventory, 50)
+            {
+                self.run_app_link(crate::slapp::AppLink::Inventory { id: inbox, name: None });
             }
             if self.frame_count == 850 && mode == "object-history" {
                 if let Some(id) = self.world.notifications.list.first().map(|n| n.id) {
@@ -12425,6 +12444,11 @@ impl App {
                 let me = self.world.agent_id;
                 self.profile_ui.open(&mut self.world, me);
             }
+            BarAction::MyPicks => {
+                self.profile_ui
+                    .toggle_picks(&self.egui_ctx, &mut self.world, self.settings.classic_profiles);
+            }
+            BarAction::ToggleChatBar => self.chat_ui.toggle_bar(),
             BarAction::BuyCurrency => self.open_buy_currency(),
             BarAction::Marketplace => self.marketplace_ui.open(None),
             BarAction::MarketplaceListings => self.open_marketplace_listings(),
@@ -14112,7 +14136,7 @@ impl App {
                     classic: classic_bars,
                     mouselook: self.camera.mouselook(),
                     show_in_mouselook: self.settings.camera.show_interface_in_mouselook,
-                    chat_active: self.chat_ui.has_focus || self.chat_ui.focus_request || !self.chat_ui.input.trim().is_empty(),
+                    chat_active: self.chat_ui.in_use(),
                     // AURORA_DEMO_BARS=peek: the pointer at the top edge
                     pointer: if demo_hidden == Some(true) {
                         Some(egui::pos2(screen_rect.center().x, screen_rect.top()))
@@ -15776,6 +15800,10 @@ impl App {
                     self.settings.classic_profiles,
                     self.settings.profile_rights,
                 );
+                self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
+                self.toolbar_ui.chat_bar_active = self.chat_ui.bar_shown();
+                let pointer_busy = ctx.input(|i| i.pointer.any_down() || i.pointer.any_released());
+                self.chat_ui.note_frame(pointer_busy);
                 for pa in acts {
                     match pa {
                         ui::profile::ProfileAction::Im(id) => a.ctx_action = Some(ui::context::CtxAction::Im(id)),

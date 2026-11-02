@@ -1501,6 +1501,11 @@ pub(crate) struct Backend {
     /// The window's size while a photo frame draws at its own size in
     /// `config` (`Capture::Snapshot`); put back by `result`.
     snapshot_window: Option<(u32, u32)>,
+    /// Video memory the size-dependent render targets took when last made,
+    /// and their pixels (`RenderStats::target_bytes_per_pixel`); the TAA
+    /// history, made apart, in `taa_bytes`.
+    target_bytes: Option<(u64, u64)>,
+    taa_bytes: u64,
     surface_srgb: bool,
     egui: egui_wgpu::Renderer,
     ui_blur: Option<crate::ui_blur::Blur>,
@@ -3101,6 +3106,8 @@ impl Backend {
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             xr_retry: (0, None),
             snapshot_window: None,
+            target_bytes: None,
+            taa_bytes: 0,
             surface_srgb,
             egui,
             ui_blur: None,
@@ -4703,8 +4710,22 @@ impl Backend {
             (mk(&self.dummies.white), mk(raw))
         });
         if self.taa.is_some() {
-            self.taa = Some(self.make_taa());
+            self.remake_taa();
         }
+    }
+
+    /// The bytes of the live textures and buffers (wgpu's counters).
+    fn live_bytes(&self) -> u64 {
+        let live = self.device.get_internal_counters().hal;
+        (live.texture_memory.read() + live.buffer_memory.read()).max(0) as u64
+    }
+
+    /// The TAA history at the current size, measured (`taa_bytes`).
+    fn remake_taa(&mut self) {
+        let before = self.live_bytes();
+        let taa = self.make_taa();
+        self.taa_bytes = self.live_bytes().saturating_sub(before);
+        self.taa = Some(taa);
     }
 
     fn scene_size(&self) -> (u32, u32) {
@@ -4728,7 +4749,10 @@ impl Backend {
             self.config.height,
             scale
         );
-        self.targets = Self::make_targets(
+        // the new targets are made while the old ones live: the counters'
+        // growth in between is what this size takes
+        let before = self.live_bytes();
+        let targets = Self::make_targets(
             &self.device,
             &self.post_layout,
             &self.post_sampler,
@@ -4741,13 +4765,17 @@ impl Backend {
             self.msaa_samples,
             &self.settings,
         );
-        self.exposure
-            .bind(&self.device, &self.targets.color, &self.targets.depth_ss, &self.glow.views[1]);
-        self.histogram.bind(&self.device, &self.targets.color);
-        self.smaa_targets = (self.settings.aa == AntiAliasing::Smaa).then(|| {
+        let smaa = (self.settings.aa == AntiAliasing::Smaa).then(|| {
             self.smaa
                 .make_targets(&self.device, &self.queue, &self.dummies.white, size.0, size.1, self.surface_srgb)
         });
+        let made = self.live_bytes().saturating_sub(before);
+        self.target_bytes = Some((made, u64::from(size.0) * u64::from(size.1)));
+        self.targets = targets;
+        self.smaa_targets = smaa;
+        self.exposure
+            .bind(&self.device, &self.targets.color, &self.targets.depth_ss, &self.glow.views[1]);
+        self.histogram.bind(&self.device, &self.targets.color);
         self.rebuild_bind_groups();
     }
 
@@ -4931,10 +4959,11 @@ impl Backend {
         self.settings = s;
         if s.aa == AntiAliasing::Taa {
             if !taa_was {
-                self.taa = Some(self.make_taa());
+                self.remake_taa();
             }
         } else {
             self.taa = None;
+            self.taa_bytes = 0;
             self.prev_view_proj = None;
         }
         if targets_dirty {
@@ -8639,6 +8668,10 @@ impl Backend {
 
         stats.gpu_ms = self.timer.as_ref().and_then(|t| t.last_ms);
         stats.gpu_pixels = self.timer.as_ref().map_or(0, |t| t.last_pixels);
+        stats.target_bytes_per_pixel = self
+            .target_bytes
+            .filter(|&(bytes, pixels)| bytes > 0 && pixels > 0)
+            .map(|(bytes, pixels)| (bytes + self.taa_bytes) as f32 / pixels as f32);
         stats.gpu_elements = self.timer.as_ref().and_then(|t| t.last_elements);
         stats.shadow.gpu_ms = self.timer.as_ref().and_then(|t| t.last_shadow_parts);
         stats.gpu_depth = self.timer.as_ref().and_then(|t| t.last_depth);
