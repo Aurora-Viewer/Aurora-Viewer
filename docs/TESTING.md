@@ -4685,7 +4685,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_APPLINKS=1\|actions\|preview\|<command>[:restore]` | URI examples, visible action markers, their previews or a minimize/reopen scenario |
 | `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival; also fills Me › Experiences |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
-| `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
+| `AURORA_DEMO_CHATLOG=<mode>` | Conversation history, offline IMs and saved private/group conversation restoration |
 | `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
@@ -7157,13 +7157,24 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   into a menu, contact sets wrap when needed, and every quick action stays
   visible. The list controls must stay inside their pane. Returning
   from the large layout to a reduced one restores the list and its selection.
-- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|long:<n>[:scroll]`**:
+- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|restore[:slow]|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in
   `config\demo\accounts\<demo account uuid>\chat_logs\demo\`, never in
   the folder of a real account, and the scenario rewrites them at each launch
   (without this variable, the demo writes and reads back no history). The
   windows are placed at a known size.
+  - `restore` (#1683): write and read back the demo account's `open_ims.xml`
+    with a resident, a typed group and an older untyped group entry. Both
+    quiet groups must show their names and group controls without receiving
+    a live message. The second group is selected; its usual demo history
+    appears after the join acknowledgement. No resident placeholder or
+    new-message sound is expected for either restored group.
+    `restore:slow` holds the mute reply until frame 1100. Capture at frames
+    760 and 1300: both quiet group names must already appear in the first
+    image, before any join/history request; their ordinary group history
+    and participants arrive only after the reply. Closing or snoozing a
+    displayed group before frame 1100 must prevent its automatic rejoin.
   - `im`: a conversation with Nova whose file contains two past
     days. What to see: these lines in grey, with their senders' profile
     pictures dimmed (this scenario gives Nova and us one), with a date
