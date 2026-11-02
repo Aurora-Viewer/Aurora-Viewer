@@ -3012,6 +3012,14 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                     ..g(DEMO_GROUP3, aurora_i18n::tr!("common-plaza-market"), true)
                 },
             ];
+            // AURORA_DEMO_GROUPS=many: exercise the Conversations group
+            // picker with more entries than fit in its submenu.
+            if std::env::var("AURORA_DEMO_GROUPS").is_ok_and(|mode| mode == "many") {
+                groups.extend((0..64).map(|i| {
+                    let id = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_1000 + i);
+                    g(id, &format!("Demo group {:02}", i + 1), true)
+                }));
+            }
             if !group::adjust_groups(&mut groups) {
                 return vec![NetEvent::Groups(groups)];
             }
