@@ -10956,6 +10956,19 @@ resource-preview-no-fee = Aucun frais d’importation
 resource-preview-read-only = Ce matériau est en lecture seule. La permission de modification est nécessaire pour le modifier.
 resource-preview-map-rights = Une texture de remplacement nécessite les permissions de copie et de transfert.
 resource-preview-upload-map = Importer une texture locale. Vérifiez le tarif dans Importer ; cette texture sera remplacée une fois l’importation terminée.
+material-variants-title = Variantes
+material-variants-count = { $count ->
+    [one] { $count } variante
+   *[other] { $count } variantes
+    }
+material-variants-original = { $name } (original)
+material-variants-add = Nouvelle variante : une copie de l'original, ouverte ici
+material-variants-new = Variante
+material-variants-duplicate = Dupliquer cette variante, avec ses modifications non enregistrées
+material-variants-delete = Mettre cette variante à la corbeille
+material-variants-locked = Enregistrez ou annulez vos modifications pour changer de variante.
+material-variants-elsewhere = Les variantes sont enregistrées à côté de l'original : copiez d'abord ce matériau dans votre inventaire.
+material-variants-failed = { $name } : { $reason }
 texture-library-side = Afficher sur le côté
 texture-library-bottom = Afficher en bas
 texture-library-empty = Placez vos ressources dans #Aurora/Aurora Library ou ses sous-dossiers.

@@ -1970,6 +1970,13 @@ geometry. Its bounded scroll viewport and measured footer keep wrapped settings
 from expanding the floater. PBR preview workers also prepare the four map thumbnails
 from their cached sources, so an already resident scene map needs no new GPU upload;
 shape and factor changes reuse unchanged map pixels and thumbnails.
+`material_variants.rs` draws the editor's Variants card: the family of a material
+(its original and the materials whose description tag names it), its selector with
+small material balls, new, duplicate, rename and delete. It also holds the library's
+single variant creation (copy, asset save when it differs, then the description tag),
+so closing the editor does not stop it. A window keeps the
+floater of the item it first opened while the selector, a new variant or Save As moves
+it to another item.
 Inventory and library opens share these windows
 and the same bounded model cache; reopening an item raises/restores its window
 without resetting its camera. Each window survives closing either source panel,

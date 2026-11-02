@@ -10960,6 +10960,19 @@ resource-preview-no-fee = No upload fee
 resource-preview-read-only = This material is read only. Modify permission is required to edit it.
 resource-preview-map-rights = A replacement texture requires copy and transfer permission.
 resource-preview-upload-map = Upload a local texture. Review its fee in Import; this map is replaced after the upload completes.
+material-variants-title = Variants
+material-variants-count = { $count ->
+    [one] { $count } variant
+   *[other] { $count } variants
+    }
+material-variants-original = { $name } (Original)
+material-variants-add = New variant: a copy of the original, opened here
+material-variants-new = Variant
+material-variants-duplicate = Duplicate this variant, with its unsaved changes
+material-variants-delete = Move this variant to the trash
+material-variants-locked = Save or cancel your changes to switch variant.
+material-variants-elsewhere = Variants are saved next to the original: copy this material into your inventory first.
+material-variants-failed = { $name }: { $reason }
 texture-library-side = Show on the side
 texture-library-bottom = Show at the bottom
 texture-library-empty = Place resources in #Aurora/Aurora Library or any of its subfolders.

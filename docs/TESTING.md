@@ -4506,7 +4506,14 @@ cube and Aurora model, with independent orbit/reset controls. The
 `preview-controls-cube` and `preview-controls-aurora` variants select those models
 for offline captures. `preview-controls-drop` drags the texture inspector's image
 onto the material's empty Metallic-roughness map at frames 760–765 (capture at 763 to see the outline
-over the swatch, after 770 for the replaced map and its name). All four assigned maps must show their pixels in the large
+over the swatch, after 770 for the replaced map and its name). `preview-controls-variants` (#1372) drives the
+material's Variants card. Alone, the material shows only the card's title and + (capture at 730); + at frame 740 creates "Wood 01 · PBR Variant" and opens it in the same window
+(capture at 760), a red tint at 770 then Duplicate at 780 save "… Variant Copy" with that tint and open it
+(capture at 800; the log lists `material variant saved` and each `material variant created` with its
+description, which ends with `[variant:<original item>]`). At 820 the selector opens, a list
+narrower than the selector with a small material ball per variant, and at 825 the pointer rests on "… Variant":
+capture at 830 for the wood preview of the hovered variant and "3 variants" in the header. At 860 it picks the
+original: after 900 the same window, in place, edits it again. All four assigned maps must show their pixels in the large
 map thumbnails, including textures already resident in the world. Check
 the image fitting, native 100% scroll view, ratio presets/custom ratio, dimensions,
 description, UUID, refresh and permission-gated PNG/TGA export. Local map uploads

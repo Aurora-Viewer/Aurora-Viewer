@@ -275,6 +275,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "compass",
     "confetti",
     "copy",
+    "copy-plus",
     "crown",
     "current-location",
     "dashboard",
