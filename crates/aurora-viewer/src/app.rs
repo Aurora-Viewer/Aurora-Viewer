@@ -1598,7 +1598,7 @@ impl App {
         if let NetCommand::RequestServerAppearance { cof_version } = cmd
             && self.world.bakes_locally()
         {
-            self.local_bakes.rebake();
+            self.local_bakes.rebake(Instant::now());
             self.world.apply(NetEvent::AppearanceRequestResult {
                 cof_version,
                 success: true,
@@ -2715,7 +2715,7 @@ impl App {
         self.shape_camera = None;
         self.physics_ui = Default::default();
         self.wearable_ui = Default::default();
-        self.local_bakes.end_session();
+        self.local_bakes.end_session(&mut self.scene);
         self.reset_avatar_health();
         self.interactions = Default::default();
         self.screen = Screen::Login;
@@ -3033,8 +3033,9 @@ impl App {
             return;
         }
         if let NetEvent::RebakeRequested(texture) = &ev {
-            log::info!("local bake: the region lacks a bake ({texture}), baking again");
-            self.local_bakes.rebake();
+            if self.local_bakes.rebake(Instant::now()) {
+                log::info!("local bake: the region lacks a bake ({texture}), baking again");
+            }
             return;
         }
         if let NetEvent::InventoryPreview { item, asset, result } = &ev {

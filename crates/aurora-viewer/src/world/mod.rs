@@ -1184,9 +1184,15 @@ impl World {
 
     /// Whether we bake our own avatar: the region does not
     /// (`UpdateAvatarAppearance`) but takes our bakes (`UploadBakedTexture`).
+    /// Only on the region's full answer: a neighbour's first seed answer can
+    /// stand for the main region's for a while after a crossing (#750), and
+    /// a partial one must never make a region that bakes get our own bakes.
     pub fn bakes_locally(&self) -> bool {
-        self.main()
-            .is_some_and(|region| region.caps.contains_key("UploadBakedTexture") && !region.caps.contains_key("UpdateAvatarAppearance"))
+        self.main().is_some_and(|region| {
+            region.caps.contains_key("UploadBakedTexture")
+                && region.caps.contains_key("FetchInventoryDescendents2")
+                && !region.caps.contains_key("UpdateAvatarAppearance")
+        })
     }
 
     /// `inventory_writable` on a grid with AIS, for what must stay away from

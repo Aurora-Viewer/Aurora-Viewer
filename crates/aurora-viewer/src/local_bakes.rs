@@ -37,6 +37,10 @@ const ASKED_AT_ONCE: usize = 4;
 /// Bakes tried again after a failed upload (the Legacy Viewer's final bakes
 /// try 7 times, with a growing delay).
 const UPLOAD_TRIES: u32 = 3;
+/// Reads of a worn wearable before the bake goes without it.
+const WEARABLE_TRIES: u32 = 3;
+/// Least time between two rebakes the region or the outfit sync asks for.
+const REBAKE_COOLDOWN: Duration = Duration::from_secs(30);
 /// Wearable types, as `bake.rs` numbers them.
 const SKIRT: u8 = 12;
 
@@ -58,7 +62,9 @@ enum Reply {
 pub struct LocalBakes {
     assets: HashMap<(Uuid, Uuid), Wearable>,
     requested: HashSet<(Uuid, Uuid)>,
-    failed: HashSet<(Uuid, Uuid)>,
+    /// Failed reads of a worn wearable: past [`WEARABLE_TRIES`] it is left
+    /// out of the bake, as the self preview leaves a mismatched one.
+    failed: HashMap<(Uuid, Uuid), u32>,
     /// What is worn, (item, asset), in the folder's layer order.
     inputs: Vec<(Uuid, Uuid)>,
     /// The worn wearables' (type, asset), for the cache keys.
@@ -81,13 +87,27 @@ pub struct LocalBakes {
     tries: u32,
     /// Bakes sent, for our own avatar to show (`take_sent`).
     sent: Option<HashMap<usize, Uuid>>,
+    /// The last rebake asked for, and whether bakes went out since: a region
+    /// that keeps asking gets one rebake per bake sent, 30 s apart at most.
+    last_rebake: Option<Instant>,
+    rebake_pending: bool,
 }
 
 impl LocalBakes {
-    /// Bake again (RebakeAvatarTextures, or a bake the server was asked for).
-    pub fn rebake(&mut self) {
-        self.dirty = Some(Instant::now() - SETTLE);
+    /// Bake again (RebakeAvatarTextures, or a bake the server was asked
+    /// for), once per bake sent and [`REBAKE_COOLDOWN`] apart: a region that
+    /// keeps asking, for a bake it keeps refusing, makes no endless loop of
+    /// bakes and uploads. False when the request is let go.
+    pub fn rebake(&mut self, now: Instant) -> bool {
+        if self.rebake_pending || self.last_rebake.is_some_and(|at| now.duration_since(at) < REBAKE_COOLDOWN) {
+            log::info!("local bake: rebake let go, one already asked for since the last bake sent");
+            return false;
+        }
+        self.rebake_pending = true;
+        self.last_rebake = Some(now);
+        self.dirty = Some(now - SETTLE);
         self.tries = 0;
+        true
     }
 
     pub fn loaded(&mut self, item: Uuid, asset: Uuid, result: &Result<Vec<u8>, String>) {
@@ -100,8 +120,9 @@ impl LocalBakes {
                 self.assets.insert(key, wearable);
             }
             None => {
-                log::warn!("local bake: a worn wearable could not be read");
-                self.failed.insert(key);
+                let tries = self.failed.entry(key).or_default();
+                *tries += 1;
+                log::warn!("local bake: a worn wearable could not be read ({tries} of {WEARABLE_TRIES})");
             }
         }
     }
@@ -128,11 +149,25 @@ impl LocalBakes {
 
     /// Logout: nothing of this session's outfit is kept. The next login
     /// wears the same items, which would otherwise look unchanged and
-    /// never be baked (#1985). A job still composing stops; the textures
-    /// held go with the scene, cleared on the way to the login screen.
-    pub fn end_session(&mut self) {
+    /// never be baked (#1985). A job still composing stops, and the
+    /// textures it held are let go: the scene keeps its textures across
+    /// sessions.
+    pub fn end_session(&mut self, scene: &mut Scene) {
+        for id in self.reset() {
+            scene.textures.release(&id);
+        }
+    }
+
+    /// The state of a new session; the textures held until now.
+    fn reset(&mut self) -> HashSet<Uuid> {
         self.cancel();
-        *self = Self::default();
+        std::mem::take(self).held
+    }
+
+    /// A worn wearable the bake still waits for: not read yet, and not
+    /// given up on.
+    fn still_reading(&self, key: (Uuid, Uuid)) -> bool {
+        !self.assets.contains_key(&key) && self.failed.get(&key).copied().unwrap_or(0) < WEARABLE_TRIES
     }
 
     fn cancel(&mut self) {
@@ -149,6 +184,8 @@ impl LocalBakes {
     pub fn update(&mut self, world: &World, scene: &mut Scene) -> Vec<NetCommand> {
         let mut commands = Vec::new();
         if !world.bakes_locally() {
+            // nothing to read for a bake: `apply` lets the textures go
+            self.wanted.clear();
             return commands;
         }
         let Some(cof) = crate::world::appearance::cof(&world.inventory) else {
@@ -184,14 +221,16 @@ impl LocalBakes {
             let key = (item.id, item.asset_id);
             if !self.assets.contains_key(&key)
                 && !self.requested.contains(&key)
-                && !self.failed.contains(&key)
+                && self.failed.get(&key).copied().unwrap_or(0) < WEARABLE_TRIES
                 && self.requested.len() < ASKED_AT_ONCE
             {
                 self.requested.insert(key);
                 commands.push(NetCommand::PreviewInventoryItem(item.clone()));
             }
         }
-        if worn.iter().any(|item| !self.assets.contains_key(&(item.id, item.asset_id))) {
+        // waiting for the wearables still read; one that failed every try is
+        // left out rather than holding the bake for good
+        if worn.iter().any(|item| self.still_reading((item.id, item.asset_id))) {
             return commands;
         }
         // a wearable whose asset is not of its item's type is left out, as
@@ -291,6 +330,9 @@ impl LocalBakes {
             commands.push(NetCommand::SetAppearance(Box::new(self.appearance(params.clone(), *height))));
             log::info!("local bake: appearance sent with {} bakes", self.baked.len());
             self.sent = Some(self.baked.clone());
+            self.rebake_pending = false;
+            // the bakes are out: their textures need not stay at top priority
+            self.wanted.clear();
             self.job = None;
             self.finished = None;
             self.uploads.clear();
@@ -399,7 +441,7 @@ fn compose_all(
         }
         let rgba = bake::compose(defs, region, region.size, &worn, &global, &images)?;
         // LLViewerTexLayerSet::isVisible: nothing of the layer set shows
-        let j2c = if rgba.chunks_exact(4).all(|pixel| pixel[3] == 0) {
+        let j2c = if rgba.as_chunks::<4>().0.iter().all(|pixel| pixel[3] == 0) {
             None
         } else {
             // lossy, as LLImageJ2C's default for bakes
@@ -439,13 +481,66 @@ mod tests {
             tries: 2,
             ..Default::default()
         };
+        bakes.held.insert(Uuid::from_u128(5));
         let running = bakes.generation.clone();
-        bakes.end_session();
+        let released = bakes.reset();
+        assert_eq!(
+            released.into_iter().collect::<Vec<_>>(),
+            [Uuid::from_u128(5)],
+            "the textures held are let go"
+        );
         assert_ne!(running.load(Ordering::Relaxed), 0, "the job of the session left stops");
         assert!(bakes.inputs.is_empty(), "the same items count as a change at the next login");
         assert!(bakes.baked.is_empty() && bakes.sent.is_none() && bakes.dirty.is_none());
         assert_eq!(bakes.tries, 0);
         assert_ne!(bakes.inputs, worn);
+    }
+
+    #[test]
+    fn only_a_full_answer_from_a_region_that_does_not_bake_bakes_locally() {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let region = world.main_region.expect("region");
+        let mut with = |caps: &[&str]| {
+            world.regions.get_mut(&region).expect("region").caps =
+                Arc::new(caps.iter().map(|c| ((*c).to_owned(), "https://cap.invalid/".to_owned())).collect());
+            world.bakes_locally()
+        };
+        assert!(with(&["UploadBakedTexture", "FetchInventoryDescendents2"]), "OpenSim");
+        assert!(
+            !with(&["UploadBakedTexture", "FetchInventoryDescendents2", "UpdateAvatarAppearance"]),
+            "a region that bakes"
+        );
+        assert!(!with(&["UploadBakedTexture"]), "a neighbour's partial seed answer");
+    }
+
+    #[test]
+    fn a_region_that_keeps_asking_gets_one_rebake_per_bake_sent() {
+        let mut bakes = LocalBakes::default();
+        let t0 = Instant::now();
+        assert!(bakes.rebake(t0));
+        assert!(!bakes.rebake(t0 + Duration::from_secs(1)), "one already asked for");
+        // the bakes went out (`receive`)
+        bakes.rebake_pending = false;
+        assert!(!bakes.rebake(t0 + Duration::from_secs(10)), "within the cooldown");
+        assert!(bakes.rebake(t0 + REBAKE_COOLDOWN + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn a_wearable_that_never_reads_is_left_out_instead_of_holding_the_bake() {
+        let mut bakes = LocalBakes::default();
+        let key = (Uuid::from_u128(1), Uuid::from_u128(2));
+        for _ in 0..WEARABLE_TRIES {
+            assert!(bakes.still_reading(key));
+            bakes.requested.insert(key);
+            bakes.loaded(key.0, key.1, &Err("unreadable".into()));
+        }
+        assert!(!bakes.still_reading(key), "given up on after {WEARABLE_TRIES} reads");
+        bakes.requested.insert(key);
+        bakes.loaded(key.0, key.1, &Ok(b"not a wearable".to_vec()));
+        assert!(!bakes.still_reading(key));
     }
 
     #[test]
