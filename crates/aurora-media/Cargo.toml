@@ -17,6 +17,11 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Syste
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.190"
 
+# The sound server's protocol, for a web page's volume (stream_volume.rs).
+# Already in the tree through cpal, without any system library.
+[target.'cfg(target_os = "linux")'.dependencies]
+pulseaudio = "0.3.2"
+
 [dev-dependencies]
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 env_logger = "0.11.11"
