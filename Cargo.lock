@@ -587,6 +587,7 @@ dependencies = [
  "image",
  "libc",
  "log",
+ "pulseaudio",
  "windows-sys 0.61.2",
 ]
 
