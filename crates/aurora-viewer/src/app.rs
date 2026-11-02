@@ -11950,12 +11950,12 @@ impl App {
     /// command (FSCmdLine) or a line sent on its channel.
     fn send_local_chat(&mut self, mut c: ui::chat::OutgoingChat) {
         if c.channel == 0 {
-            // the MU* pose first, then the gesture (FSNearbyChat::sendChat)
-            if self.settings.colon_emote {
-                ui::chat::colon_emote(&mut c.message);
-            }
-            let (revised, gesture) = self.gesture_state.manager.revise(&c.message);
-            c.message = revised;
+            // the MU* pose first, then the gesture (FSNearbyChat::sendChat),
+            // and the channel read again from what the gesture says (#1916)
+            let (channel, message, gesture) =
+                ui::chat::prepare_local_line(&mut self.gesture_state.manager, &c.message, self.settings.colon_emote);
+            c.channel = channel;
+            c.message = message;
             if let Some(id) = gesture {
                 self.gesture_play(id, None);
             }
