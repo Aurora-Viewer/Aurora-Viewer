@@ -7424,8 +7424,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   and the name tag and the window show Officer of Northern Wolves; at
   frame 1500 it is back in the demo region, wearing Builder again.
   `still`: no teleport, to try the window (This region, Type region with
-  a demo map name such as "sandbox", Clear region, the rules' pencil and
-  trash, the default title).
+  a demo map name such as "sandbox" in English, "sablière" in French, kept
+  as the map spells it, or a made-up name: "could not be found" after
+  10 s; Clear region, the rules' pencil and trash, the default title).
 - **`AURORA_DEMO_GROUP_CREATE=form|cost|refused|limit|created[:classic]`**:
   "Create a group", as from the "Create" button of People › Groups, once
   the group list is in. The login of these scenarios gives a Base
