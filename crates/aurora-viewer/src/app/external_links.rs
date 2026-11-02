@@ -265,14 +265,15 @@ mod tests {
     use super::*;
 
     fn settings_on(grid: crate::settings::GridChoice, custom: &str, saved: &[&str]) -> Settings {
-        let mut settings = Settings::default();
-        settings.grid = grid;
-        settings.custom_login_uri = custom.to_owned();
-        settings.grids = saved
-            .iter()
-            .map(|address| crate::grids::Grid::manual(address).expect("valid test grid"))
-            .collect();
-        settings
+        Settings {
+            grid,
+            custom_login_uri: custom.to_owned(),
+            grids: saved
+                .iter()
+                .map(|address| crate::grids::Grid::manual(address).expect("valid test grid"))
+                .collect(),
+            ..Default::default()
+        }
     }
 
     #[test]
