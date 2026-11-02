@@ -7851,7 +7851,7 @@ impl Backend {
             let resolve_ready = self.pipelines.oit_resolve.as_ref().is_some_and(|r| r.samples() == samples);
             let depth_msaa = self.targets.depth_msaa.as_ref();
             let depth_ss = &self.targets.depth_ss;
-            let (device, queue) = (&self.device, &self.queue);
+            let (device, queue, indirect) = (&self.device, &self.queue, &self.indirect);
             resolve_ready
                 && self.oit.as_mut().is_some_and(|o| {
                     o.prepare(
@@ -7860,12 +7860,16 @@ impl Backend {
                         size.width,
                         size.height,
                         samples,
-                        s.oit_nodes_per_pixel,
+                        crate::oit::nodes_override().unwrap_or(s.oit_nodes_per_pixel),
                         s.oit_max_layers,
                         // (the largest range a gated draw asks for)
                         bn.max(rg.creation_preview.1),
                         depth_ss,
                         depth_msaa,
+                        indirect,
+                        // the draws a frame gates: the blend list and the
+                        // creation preview
+                        [rg.blend, rg.creation_preview],
                     )
                 })
         };
@@ -7878,14 +7882,17 @@ impl Backend {
             .unwrap_or(&self.pipelines.blend);
         // A draw of the in-order path, or gated by the OIT flags (`Some((flags,
         // offset))`, oit::REPLAY_FLAG or COMPOSITED_FLAG): then all of it or
-        // nothing, as the classify decided on the GPU.
+        // nothing, as the classify decided on the GPU, through the copy of
+        // its arguments with or without their instances (oit_gate.rs).
         let draw_g =
             |pass: &mut wgpu::RenderPass, pipe: &wgpu::RenderPipeline, r: (u64, u32), gate: Option<(&wgpu::Buffer, u64)>| match gate {
                 None => draw(pass, pipe, r),
-                Some((flags, at)) if r.1 > 0 => {
-                    calls.set(calls.get() + 1);
-                    pass.set_pipeline(pipe);
-                    pass.multi_draw_indexed_indirect_count(&self.indirect, r.0, flags, at, r.1);
+                Some((_, at)) if r.1 > 0 => {
+                    if let Some((args, offset)) = self.oit.as_ref().and_then(|o| o.gated(at, r.0, r.1)) {
+                        calls.set(calls.get() + 1);
+                        pass.set_pipeline(pipe);
+                        pass.multi_draw_indexed_indirect(args, offset, r.1);
+                    }
                 }
                 Some(_) => {}
             };

@@ -18,8 +18,9 @@
 //! (LLDrawPoolAlpha). What does not fit changes nothing: when the pool is
 //! full, the classify skips the composite and the blended faces are drawn
 //! again exactly as without OIT, rigged ones by their `RiggedBlendDepth`
-//! mode, its depth copy included (all decided on the GPU: draws counted by
-//! [`Oit::flags`], no wait on the CPU); past `max_layers` layers
+//! mode, its depth copy included (all decided on the GPU from [`Oit::flags`]:
+//! the gated draws read copies of their arguments, oit_gate.rs, no wait on
+//! the CPU); past `max_layers` layers
 //! in one pixel, the farthest are folded into a weighted average. Off, or
 //! when the pool cannot be allocated, the renderer draws exactly as before.
 
@@ -77,14 +78,12 @@ pub(crate) const COMPOSITED_FLAG: u64 = 4;
 const DEPTH_COPY_ARGS: u64 = 8;
 
 /// Whether this device can capture: storage written from fragment shaders,
-/// with two more storage buffers than the blended faces already read, and
-/// draws counted on the GPU (the overflow's replay). Off on macOS for now:
-/// not yet checked on Apple GPUs.
+/// with two more storage buffers than the blended faces already read. The
+/// overflow's replay and the composite are gated with plain indirect draws
+/// (oit_gate.rs), so Metal, which has no counted draws, captures too.
 pub(crate) fn supported(device: &wgpu::Device) -> bool {
-    !cfg!(target_os = "macos")
-        && device.limits().max_storage_buffers_per_shader_stage >= CAPTURE_STORAGE_BUFFERS
+    device.limits().max_storage_buffers_per_shader_stage >= CAPTURE_STORAGE_BUFFERS
         && device.limits().max_storage_textures_per_shader_stage >= 1
-        && device.features().contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT)
 }
 
 /// `AURORA_OIT=0|1` turns it off or on whatever the setting (before / after
@@ -96,6 +95,14 @@ pub(crate) fn env_override() -> Option<bool> {
         "1" => Some(true),
         _ => None,
     })
+}
+
+/// `AURORA_OIT_NODES=<n>`: the pool's layers per pixel for this launch,
+/// whatever the setting (docs/TESTING.md). At its lowest (2) a scene with
+/// many layers fills the pool, to check the in-order replay.
+pub(crate) fn nodes_override() -> Option<u32> {
+    static OVERRIDE: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *OVERRIDE.get_or_init(|| std::env::var("AURORA_OIT_NODES").ok()?.trim().parse().ok())
 }
 
 /// object.wgsl for this device: the capture's depth test forced before its
@@ -243,6 +250,8 @@ pub(crate) struct Oit {
     pool: Option<Pool>,
     /// a pool that could not be allocated is tried again later
     retry: crate::gpu_alloc::Backoff,
+    /// the gated draws' copies of their arguments (oit_gate.rs)
+    gate: crate::oit_gate::Gate,
 }
 
 fn entry(binding: u32, visibility: wgpu::ShaderStages, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
@@ -526,6 +535,7 @@ impl Oit {
             last_params: None,
             pool: None,
             retry: Default::default(),
+            gate: crate::oit_gate::Gate::new(device),
         })
     }
 
@@ -550,6 +560,8 @@ impl Oit {
         draws: u32,
         depth_ss: &wgpu::TextureView,
         depth_msaa: Option<&wgpu::TextureView>,
+        indirect: &wgpu::Buffer,
+        gated: [(u64, u32); crate::oit_gate::SPANS],
     ) -> bool {
         let limits = device.limits();
         let max_binding = limits.max_storage_buffer_binding_size.min(limits.max_buffer_size);
@@ -610,7 +622,8 @@ impl Oit {
         // tiles' list starts at `tiles` (their first_instance)
         let args: [u32; 8] = [6, 0, 0, 0, 6, 0, 0, pool.tiles];
         queue.write_buffer(&pool.args, 0, bytemuck::cast_slice(&args));
-        true
+        let flags = pool.flags.clone();
+        self.gate.prepare(device, queue, indirect, &flags, gated)
     }
 
     /// The pool's buffers and texture, or why one could not be made: every
@@ -820,7 +833,22 @@ impl Oit {
             pass.set_pipeline(&r.classify);
             pass.set_bind_group(0, group, &[]);
             pass.dispatch_workgroups(pool.tiles_x, pool.tiles / pool.tiles_x, 1);
+            // the gated draws' arguments, from the flags it just set
+            self.gate.dispatch(&mut pass);
         }
+    }
+
+    /// Where a gated draw reads its arguments: the draws `offset..` of the
+    /// indirect buffer (`count` of them) in the copy drawn when the pool
+    /// overflowed (REPLAY_FLAG) or when it did not (COMPOSITED_FLAG).
+    /// `None`: not a gated range this frame, nothing to draw.
+    pub fn gated(&self, flag: u64, offset: u64, count: u32) -> Option<(&wgpu::Buffer, u64)> {
+        let copy = if flag == REPLAY_FLAG {
+            crate::oit_gate::Copy::Replay
+        } else {
+            crate::oit_gate::Copy::Composited
+        };
+        self.gate.args(copy, offset, count)
     }
 
     /// When the pool overflowed (decided on the GPU by [`Oit::classify`]),

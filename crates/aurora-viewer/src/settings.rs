@@ -1994,7 +1994,9 @@ impl Default for Settings {
             display_name_notices: true,
             mirrors: 1,
             ssr: false,
-            oit: true,
+            // off until tried on modest GPUs (integrated graphics, 4 GB
+            // cards): its node pool takes video memory on every frame
+            oit: false,
             oit_nodes_per_pixel: aurora_render::oit::DEFAULT_NODES_PER_PIXEL,
             oit_max_layers: aurora_render::oit::DEFAULT_SORTED_LAYERS,
             anisotropy: 8,
