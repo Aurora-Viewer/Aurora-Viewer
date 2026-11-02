@@ -405,7 +405,9 @@ impl ChatUi {
 
     /// The toolbar's Chat bar (FSNearbyChat::onDefaultChatBarButtonClicked →
     /// showDefaultChatBar): a shown bar goes away, its draft kept; a hidden
-    /// one comes back with the keyboard (setFocus(visible)).
+    /// one comes back with the keyboard (setFocus(visible)). The Legacy
+    /// Viewer hides the bar's whole panel; here the chat island keeps its
+    /// Conversations button, as when autohidden (human decision).
     pub fn toggle_bar(&mut self) {
         if self.bar_shown() || self.shown_before_click {
             self.bar_hidden = true;
