@@ -64,6 +64,12 @@ pub enum BarAction {
     /// (World.SetHomeLocation).
     SetHome,
     ToggleFly,
+    /// Our profile on its Picks tab, or closed when Picks is shown
+    /// (Avatar.TogglePicks, llviewermenu.cpp).
+    MyPicks,
+    /// The nearby chat bar put away or brought back with the keyboard
+    /// (MainChatbarVisible, FSNearbyChat::onDefaultChatBarButtonClicked).
+    ToggleChatBar,
     ToggleMoveLock,
     /// Me › Quickjump (Self.toggleIgnorePreJump, FSIgnoreFinishAnimation).
     ToggleQuickjump,
@@ -2016,8 +2022,14 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "assetblacklist" => toggle(super::blacklist::WINDOW, &mut panels.asset_blacklist),
         "group_titles" => toggle(super::group_titles::WINDOW, &mut panels.group_titles),
         "gridstatus" => toggle(super::grid_status::WINDOW, &mut panels.grid_status),
-        "performance" => toggle("perf", &mut panels.perf),
+        // the Legacy Viewer's Statistics (Floater.Toggle stats) opens
+        // Aurora's Performance window
+        "performance" | "statistics" => toggle("perf", &mut panels.perf),
         "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
+        // Avatar.TogglePicks: our profile on its Picks tab
+        "picks" => return BarAction::MyPicks,
+        // MainChatbarVisible: the nearby chat bar shown or put away
+        "defaultchatbar" => return BarAction::ToggleChatBar,
         "preferences" => toggle("options", &mut panels.settings),
         // Firestorm's Move and View buttons open the controls
         "move" => panels.movement_controls = !panels.movement_controls,
@@ -2087,7 +2099,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "assetblacklist" => panels.asset_blacklist,
         "group_titles" => panels.group_titles,
         "gridstatus" => panels.grid_status,
-        "performance" => panels.perf,
+        "performance" | "statistics" => panels.perf,
         "snapshot" => panels.snapshot,
         "preferences" => panels.settings,
         "move" => panels.movement_controls,
@@ -2786,6 +2798,10 @@ pub(crate) fn toolbar_row(
             toolbar.movement_active
         } else if b.command == "water_walk" {
             toolbar.water_walk_active
+        } else if b.command == "picks" {
+            toolbar.picks_active
+        } else if b.command == "defaultchatbar" {
+            toolbar.chat_bar_active
         } else if b.command == "vr_view" {
             ui.ctx()
                 .data(|data| data.get_temp::<bool>(egui::Id::unique("vr-active")))
@@ -3493,6 +3509,7 @@ mod tests {
             ("assetblacklist", super::super::blacklist::WINDOW, |p| p.asset_blacklist),
             ("group_titles", super::super::group_titles::WINDOW, |p| p.group_titles),
             ("gridstatus", super::super::grid_status::WINDOW, |p| p.grid_status),
+            ("statistics", "perf", |p| p.perf),
         ] {
             run_command(&ctx, cmd, &mut panels);
             if !open(&panels) {
@@ -3517,6 +3534,23 @@ mod tests {
         assert!(matches!(run_command(&ctx, "movement", &mut panels), BarAction::ToggleSwimming));
         assert!(matches!(run_command(&ctx, "water_walk", &mut panels), BarAction::ToggleWaterWalk));
         assert!(!panels.ao);
+    }
+
+    #[test]
+    fn statistics_picks_and_chat_bar_toolbar_commands_are_wired() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        for cmd in ["statistics", "picks", "defaultchatbar"] {
+            assert!(super::super::toolbar::ready(cmd), "{cmd}");
+        }
+        // Statistics is Aurora's Performance window: both buttons light
+        panels.perf = false;
+        run_command(&ctx, "statistics", &mut panels);
+        assert!(panels.perf);
+        assert!(command_active("statistics", &panels, false, false, false));
+        assert!(command_active("performance", &panels, false, false, false));
+        assert!(matches!(run_command(&ctx, "picks", &mut panels), BarAction::MyPicks));
+        assert!(matches!(run_command(&ctx, "defaultchatbar", &mut panels), BarAction::ToggleChatBar));
     }
 
     #[test]

@@ -12413,6 +12413,11 @@ impl App {
                 let me = self.world.agent_id;
                 self.profile_ui.open(&mut self.world, me);
             }
+            BarAction::MyPicks => {
+                self.profile_ui
+                    .toggle_picks(&self.egui_ctx, &mut self.world, self.settings.classic_profiles);
+            }
+            BarAction::ToggleChatBar => self.chat_ui.toggle_bar(),
             BarAction::BuyCurrency => self.open_buy_currency(),
             BarAction::Marketplace => self.marketplace_ui.open(None),
             BarAction::MarketplaceListings => self.open_marketplace_listings(),
@@ -15756,6 +15761,8 @@ impl App {
                     self.settings.classic_profiles,
                     self.settings.profile_rights,
                 );
+                self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
+                self.toolbar_ui.chat_bar_active = self.chat_ui.bar_shown();
                 for pa in acts {
                     match pa {
                         ui::profile::ProfileAction::Im(id) => a.ctx_action = Some(ui::context::CtxAction::Im(id)),

@@ -77,6 +77,10 @@ pub struct ChatUi {
     /// The chat bar shows only while it is used (Preferences › Chat; the
     /// Legacy Viewer's AutohideChatBar, #1009): `bar_shown`.
     pub autohide: bool,
+    /// The toolbar's Chat bar put the bar away for this session (the Legacy
+    /// Viewer's MainChatbarVisible off, not saved): `toggle_bar`. Enter or
+    /// a letter key brings it back with the keyboard.
+    pub bar_hidden: bool,
     /// The pointer was over the chat bar the last time it was drawn: a
     /// click on it (its emoji, its handle) does not hide it under the
     /// pointer once the field lets the keyboard go.
@@ -389,7 +393,24 @@ impl ChatUi {
     /// empty bar puts it away too, where the Legacy Viewer waited for
     /// Escape. A draft keeps it.
     pub fn bar_shown(&self) -> bool {
+        if self.bar_hidden {
+            return self.focus_request;
+        }
         !self.autohide || self.has_focus || self.focus_request || !self.input.trim().is_empty() || self.bar_emoji_open || self.bar_hovered
+    }
+
+    /// The toolbar's Chat bar (FSNearbyChat::onDefaultChatBarButtonClicked →
+    /// showDefaultChatBar): a shown bar goes away, its draft kept; a hidden
+    /// one comes back with the keyboard (setFocus(visible)).
+    pub fn toggle_bar(&mut self) {
+        if self.bar_shown() {
+            self.bar_hidden = true;
+            self.has_focus = false;
+            self.focus_request = false;
+        } else {
+            self.bar_hidden = false;
+            self.focus_request = true;
+        }
     }
 
     /// The nearby chat is in its own window (#910): the chat island's
@@ -3948,6 +3969,8 @@ pub(crate) fn bar_input(
     // straight back to the world
     let focusing = std::mem::take(&mut st.focus_request);
     if focusing {
+        // Enter or a letter key shows a bar put away (showDefaultChatBar(true))
+        st.bar_hidden = false;
         resp.request_focus();
         // FSNearbyChat::showDefaultChatBar only moves the caret after
         // inserting `/` into an empty field; a draft keeps its position.
@@ -4002,6 +4025,28 @@ mod tests {
             front,
             focused,
             tab_visible,
+        }
+    }
+
+    #[test]
+    fn the_chat_bar_button_puts_the_bar_away_and_brings_it_back_with_the_keyboard() {
+        for autohide in [false, true] {
+            let mut st = ChatUi {
+                autohide,
+                ..Default::default()
+            };
+            st.input = "draft".into();
+            assert!(st.bar_shown(), "autohide {autohide}");
+            st.toggle_bar();
+            assert!(!st.bar_shown(), "autohide {autohide}: put away, even with a draft");
+            assert_eq!(st.input, "draft", "the draft is kept");
+            st.toggle_bar();
+            assert!(st.bar_shown() && st.focus_request, "autohide {autohide}: back with the keyboard");
+            assert!(!st.bar_hidden);
+            // Enter or a letter key also brings a hidden bar back
+            st.toggle_bar();
+            st.focus_request = true;
+            assert!(st.bar_shown(), "autohide {autohide}: Enter shows it");
         }
     }
 
