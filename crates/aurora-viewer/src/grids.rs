@@ -22,6 +22,9 @@ pub struct Grid {
     pub about: String,
     pub search: String,
     pub profile: String,
+    /// The currency helper's base (`helperuri` or `economy`): Buy L$ and
+    /// Buy Land post to its `currency.php` and `landtool.php`.
+    pub helper: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,12 +118,25 @@ impl Grid {
             &self.about,
             &self.search,
             &self.profile,
+            &self.helper,
         ] {
             if !page.trim().is_empty() && web_url(page).is_none() {
                 return Err(Error::Address);
             }
         }
         Ok(())
+    }
+
+    /// LLGridManager::getHelperURI: the helper's base, which its page names
+    /// are appended to (a missing final slash is added).
+    pub fn helper_page(&self) -> Option<String> {
+        web_url(&self.helper)?;
+        let helper = self.helper.trim();
+        Some(if helper.ends_with('/') {
+            helper.to_owned()
+        } else {
+            format!("{helper}/")
+        })
     }
 
     pub fn search_url(&self, query: &str, language: &str, maturity: u8) -> Option<String> {
@@ -158,6 +174,9 @@ pub fn parse_info(address: &str, bytes: &[u8]) -> Result<Grid, Error> {
             "about" => grid.about = value,
             "search" => grid.search = value,
             "web_profile_url" | "profileuri" => grid.profile = value,
+            // gridInfoResponderCB: "sic! economy and helperuri is 2 names
+            // for the same". A malformed one only leaves Buy L$ unavailable.
+            "helperuri" | "economy" if web_url(&value).is_some() => grid.helper = value,
             _ => {}
         }
     }
@@ -271,6 +290,7 @@ mod tests {
             <password>https://grid.example/password</password><help>https://grid.example/help</help>
             <about>https://grid.example/</about><search>https://grid.example/search?q=[QUERY]&amp;m=[MATURITY]&amp;l=[LANGUAGE]</search>
             <profileuri>https://profiles.example/</profileuri><unknown>ignored</unknown>
+            <economy>https://grid.example/currency</economy>
             </gridinfo>"#,
         )
         .expect("grid information");
@@ -280,6 +300,7 @@ mod tests {
         assert_eq!(grid.login, "https://login.example/endpoint");
         assert_eq!(grid.gatekeeper, "https://gate.example:8003");
         assert_eq!(grid.profile, "https://profiles.example/");
+        assert_eq!(grid.helper_page().as_deref(), Some("https://grid.example/currency/"));
         for page in [&grid.welcome, &grid.register, &grid.password, &grid.help, &grid.about] {
             assert!(!page.is_empty());
         }
@@ -291,6 +312,7 @@ mod tests {
         assert_eq!(fallback.login, "http://localhost:9000/");
         assert_eq!(fallback.name, "localhost:9000");
         assert!(fallback.search_url("test", "en", 13).is_none());
+        assert!(fallback.helper_page().is_none(), "no helper: Buy L$ unavailable");
     }
 
     #[test]
@@ -313,6 +335,9 @@ mod tests {
         ] {
             assert!(parse_info("grid.example", body).is_err());
         }
+        let grid = parse_info("grid.example", b"<gridinfo><economy>javascript:alert(1)</economy></gridinfo>")
+            .expect("a bad helper is dropped, not the grid");
+        assert!(grid.helper_page().is_none());
     }
 
     #[test]

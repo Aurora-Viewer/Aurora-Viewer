@@ -552,6 +552,10 @@ pub enum NetEvent {
         /// not given, always on Second Life.
         grid_status_feed: String,
         grid_status_page: String,
+        /// "OpenSimExtras" "currency-base-uri": the region's own currency
+        /// helper, ahead of the grid's (LFSimFeatureHandler's
+        /// mHelperUriOverride); empty when not given.
+        currency_base_uri: String,
     },
     HoverHeightUpdated {
         region: RegionHandle,

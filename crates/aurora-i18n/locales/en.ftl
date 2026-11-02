@@ -1784,6 +1784,7 @@ grids-help = Help
 grids-about = Website
 grids-search = Search URL ([QUERY], [LANGUAGE], [MATURITY])
 grids-profile = Web profile URL
+grids-helper = Currency helper URL (Buy L$)
 grids-fetch = Retrieve grid information
 grids-fetching = Retrieving grid information…
 grids-error-address = Enter a valid HTTP or HTTPS address without credentials.

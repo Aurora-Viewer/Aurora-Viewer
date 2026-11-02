@@ -73,6 +73,7 @@ impl Manager {
             <welcome>https://grid.example/welcome</welcome><register>https://grid.example/register</register>
             <password>https://grid.example/password</password><help>https://grid.example/help</help>
             <about>https://grid.example/</about><search>https://grid.example/search?q=[QUERY]</search>
+            <economy>https://grid.example/helper/</economy>
             </gridinfo>"#,
         );
         if let Ok(grid) = grid {
@@ -129,7 +130,8 @@ impl Manager {
         // Like the account manager, this dialog owns input and uses login glass
         // over the account cards. Its editor scrolls independently of the list.
         let width = (ctx.content_rect().width() - 64.0).clamp(320.0, 860.0);
-        let height = (ctx.content_rect().height() - 260.0).clamp(140.0, 390.0);
+        // the web pages tab whole: eight fields
+        let height = (ctx.content_rect().height() - 260.0).clamp(140.0, 447.0);
         let editable = can_edit && self.result.is_none();
         let mut close = false;
         let dialog = widgets::Modal::new(egui::Id::unique("grid_manager"))
@@ -266,6 +268,7 @@ impl Manager {
                                 ui.add_enabled_ui(editable, |ui| {
                                     edit(ui, p, aurora_i18n::tr!("grids-search"), &mut self.draft.search);
                                     edit(ui, p, aurora_i18n::tr!("grids-profile"), &mut self.draft.profile);
+                                    edit(ui, p, aurora_i18n::tr!("grids-helper"), &mut self.draft.helper);
                                 });
                             }
                         });

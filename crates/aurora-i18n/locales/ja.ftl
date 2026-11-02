@@ -1784,6 +1784,7 @@ grids-help = ヘルプ
 grids-about = Webサイト
 grids-search = 検索ＵＲＬ（[QUERY]、[LANGUAGE]、[MATURITY]）
 grids-profile = WebプロフィールのＵＲＬ
+grids-helper = 通貨ヘルパーのＵＲＬ（L$の購入）
 grids-fetch = グリッド情報を取得
 grids-fetching = グリッド情報を取得しています…
 grids-error-address = 認証情報を含まない有効なＨＴＴＰまたはＨＴＴＰＳのアドレスを入力してください。
