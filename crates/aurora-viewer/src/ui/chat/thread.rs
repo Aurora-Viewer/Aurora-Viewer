@@ -19,6 +19,7 @@
 
 use super::{LineEnv, Mark, chat_text_marked, hhmm, history_tone, line_name_menu, sender_name, view};
 use crate::theme::Palette;
+use crate::ui::fonts::chat_size;
 use crate::world::chat_log::format::Slt;
 use crate::world::{ChatKind, ChatLine, Origin};
 use aurora_net::ChatType;
@@ -159,7 +160,7 @@ pub(super) fn draw(
                 egui::pos2(left + GUTTER * 0.5, rect.top() + 11.0),
                 egui::Align2::CENTER_CENTER,
                 t,
-                egui::FontId::proportional(10.0),
+                egui::FontId::proportional(chat_size(ui.ctx(), 10.0)),
                 p.muted_dim,
             );
         }
@@ -260,10 +261,12 @@ fn tags(ui: &mut egui::Ui, p: &Palette, th: &Thread, line: &ChatLine, who: &Who)
 /// A tag: small semi-bold capitals, on a pill of `fill` when given (also
 /// the cards of the nearby chat lines, `console.rs`).
 pub(super) fn tag(ui: &mut egui::Ui, text: &str, fill: Option<Color32>, color: Color32) {
-    let font = egui::FontId::new(if fill.is_some() { 9.5 } else { 10.0 }, crate::ui::fonts::semibold(ui.ctx()));
+    // beside the names: at the chat's text size
+    let k = chat_size(ui.ctx(), 1.0);
+    let font = egui::FontId::new(k * if fill.is_some() { 9.5 } else { 10.0 }, crate::ui::fonts::semibold(ui.ctx()));
     let galley = ui.painter().layout_no_wrap(text.to_uppercase(), font, color);
     let pad = if fill.is_some() { 5.0 } else { 0.0 };
-    let size = egui::vec2(galley.size().x + 2.0 * pad, 15.0);
+    let size = egui::vec2(galley.size().x + 2.0 * pad, 15.0 * k);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     if let Some(fill) = fill {
         ui.painter().rect_filled(rect, crate::ui::widgets::inner_radius(ui.visuals()), fill);
@@ -275,7 +278,7 @@ pub(super) fn tag(ui: &mut egui::Ui, text: &str, fill: Option<Color32>, color: C
 /// author's menu on a right click.
 fn name_label(ui: &mut egui::Ui, env: &LineEnv, line: &ChatLine, name: &str, color: Color32, who: &Who, max: f32) {
     let text = RichText::new(name)
-        .font(egui::FontId::new(13.5, crate::ui::fonts::semibold(ui.ctx())))
+        .font(egui::FontId::new(chat_size(ui.ctx(), 13.5), crate::ui::fonts::semibold(ui.ctx())))
         .color(color);
     let r = ui.add(crate::ui::widgets::elided_label(ui, text, max).sense(egui::Sense::click()));
     if who.avatar.is_nil() {
@@ -344,14 +347,14 @@ fn roomy_row(
                     tags(ui, p, th, line, who);
                     let time = when(line);
                     if th.times && !time.is_empty() {
-                        ui.label(RichText::new(time).size(11.0).color(p.muted_dim));
+                        ui.label(RichText::new(time).size(chat_size(ui.ctx(), 11.0)).color(p.muted_dim));
                     }
                 });
             }
             let (text, color, italics) = body(env, line, name);
             let visible = super::previews::text(env.previews.as_deref(), line, &text, ui.available_width());
             if !visible.is_empty() {
-                let size = env.emoji.message_size(&visible, TEXT);
+                let size = env.emoji.message_size(&visible, chat_size(ui.ctx(), TEXT));
                 chat_text_marked(
                     ui,
                     p,
@@ -388,12 +391,14 @@ fn compact_row(
         ui.spacing_mut().item_spacing.x = 6.0;
         ui.add_space(4.0);
         if th.times {
-            let (r, _) = ui.allocate_exact_size(egui::vec2(TIME_W, 20.0), egui::Sense::hover());
+            // the column grows with the chat's text size
+            let k = chat_size(ui.ctx(), 1.0);
+            let (r, _) = ui.allocate_exact_size(egui::vec2(TIME_W * k, 20.0 * k), egui::Sense::hover());
             ui.painter().text(
-                egui::pos2(r.right(), r.top() + 10.5),
+                egui::pos2(r.right(), r.top() + 10.5 * k),
                 egui::Align2::RIGHT_CENTER,
                 hhmm(line.time),
-                egui::FontId::proportional(10.5),
+                egui::FontId::proportional(10.5 * k),
                 p.muted_dim,
             );
         }
@@ -414,7 +419,7 @@ fn compact_row(
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
             ui.add_space(1.0);
             if !visible.is_empty() {
-                let size = env.emoji.message_size(&visible, TEXT);
+                let size = env.emoji.message_size(&visible, chat_size(ui.ctx(), TEXT));
                 chat_text_marked(
                     ui,
                     p,
@@ -508,7 +513,18 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
             ui.add_space(1.0);
-            chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &line.text, 12.0, tone, false, mark);
+            chat_text_marked(
+                ui,
+                p,
+                env.emoji,
+                env.world,
+                env.want_names,
+                &line.text,
+                chat_size(ui.ctx(), 12.0),
+                tone,
+                false,
+                mark,
+            );
         });
     });
     super::find::note_message(ui, top, Some(row.response.rect.bottom()));
@@ -521,7 +537,7 @@ fn day_separator(ui: &mut egui::Ui, p: &Palette, text: &str) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), egui::Sense::hover());
     let galley = ui
         .painter()
-        .layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.0), p.muted_dim);
+        .layout_no_wrap(text.to_owned(), egui::FontId::proportional(chat_size(ui.ctx(), 11.0)), p.muted_dim);
     let half = galley.size().x * 0.5 + 8.0;
     let y = rect.center().y;
     let stroke = egui::Stroke::new(1.0, p.raised.gamma_multiply(0.8));
@@ -539,10 +555,11 @@ fn day_separator(ui: &mut egui::Ui, p: &Palette, text: &str) {
 /// opened: "NEW" at its right end, in the colour of the unread counts.
 fn new_separator(ui: &mut egui::Ui, p: &Palette) {
     ui.add_space(6.0);
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 14.0), egui::Sense::hover());
+    let k = chat_size(ui.ctx(), 1.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 14.0 * k), egui::Sense::hover());
     let galley = ui.painter().layout_no_wrap(
         aurora_i18n::tr!("ui-chat-new-messages").to_uppercase(),
-        egui::FontId::proportional(10.0),
+        egui::FontId::proportional(10.0 * k),
         p.danger,
     );
     let y = rect.center().y;
@@ -553,7 +570,7 @@ fn new_separator(ui: &mut egui::Ui, p: &Palette) {
         egui::Stroke::new(1.0, p.danger.gamma_multiply(0.6)),
     );
     // capitals only: their middle on the line
-    let font = egui::FontId::proportional(10.0);
+    let font = egui::FontId::proportional(10.0 * k);
     let baseline = crate::ui::widgets::centered_baseline(ui.painter(), font, y);
     crate::ui::widgets::paint_on_baseline(ui.painter(), galley, text_left, baseline, p.danger);
     ui.add_space(2.0);

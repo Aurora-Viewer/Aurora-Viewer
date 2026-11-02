@@ -154,6 +154,8 @@ pub struct History {
     early: Vec<Entry>,
     /// The worker has delivered the file.
     read: bool,
+    /// A clear was requested before the worker delivered the saved entries.
+    cleared_while_loading: bool,
 }
 
 impl History {
@@ -216,15 +218,16 @@ impl History {
             return;
         };
         self.read = true;
-        self.entries = read.into();
+        self.entries = if self.cleared_while_loading { VecDeque::new() } else { read.into() };
         let early = std::mem::take(&mut self.early);
         for e in early.into_iter().rev() {
             self.entries.push_front(e);
         }
         self.prune(now_secs());
-        if !self.entries.is_empty() {
+        if self.cleared_while_loading || !self.entries.is_empty() {
             self.save();
         }
+        self.cleared_while_loading = false;
     }
 
     /// The worker has not delivered the file yet.
@@ -239,6 +242,15 @@ impl History {
         }
         self.entries.push_front(entry);
         self.prune(now_secs());
+        self.save();
+    }
+
+    /// Remove every saved and pending entry without changing notifications
+    /// that are still waiting in the center's "To do" list.
+    pub fn clear(&mut self) {
+        self.early.clear();
+        self.entries.clear();
+        self.cleared_while_loading |= self.loading();
         self.save();
     }
 
@@ -263,9 +275,8 @@ impl History {
         self.entries.len() + self.early.len()
     }
 
-    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.early.is_empty() && self.entries.is_empty()
     }
 
     /// 500 entries at most, none older than 30 days.
@@ -362,6 +373,34 @@ mod tests {
             vec!["early", "from disk"]
         );
         drop(h);
+        let _ = std::fs::remove_dir_all(path.parent().expect("parent"));
+    }
+
+    #[test]
+    fn clearing_before_load_finishes_also_clears_the_saved_file() {
+        let path = temp(FILE);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&Saved {
+                entries: vec![entry(now_secs(), "old entry")],
+            })
+            .expect("json"),
+        )
+        .expect("write");
+        let mut h = History::load(path.clone());
+        h.clear();
+        for _ in 0..500 {
+            h.poll();
+            if h.read {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(h.is_empty());
+        drop(h);
+        let h = loaded(path.clone());
+        assert!(h.is_empty());
         let _ = std::fs::remove_dir_all(path.parent().expect("parent"));
     }
 

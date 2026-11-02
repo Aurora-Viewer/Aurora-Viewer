@@ -23,6 +23,7 @@
 //! in one pixel, the farthest are folded into a weighted average. Off, or
 //! when the pool cannot be allocated, the renderer draws exactly as before.
 
+use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 
 /// Blended fragments per screen pixel the pool holds on average.
@@ -356,7 +357,7 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
             immediate_size: 0,
         })
     };
-    let classify = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+    let classify = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
         label: Some("oit classify"),
         layout: Some(&pl("oit classify", &shared.classify_layouts[usize::from(ms)])),
         module: &shared.module,
@@ -366,7 +367,7 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
     });
     let draw_layout = pl("oit composite", &shared.draw_layouts[usize::from(ms)]);
     let draw = |label, fs| {
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(&draw_layout),
             vertex: wgpu::VertexState {
@@ -415,7 +416,7 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
             cache: None,
         })
     };
-    let depth_copy = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let depth_copy = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
         label: Some("oit replay depth copy"),
         layout: Some(&draw_layout),
         vertex: wgpu::VertexState {

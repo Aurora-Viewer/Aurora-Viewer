@@ -17,6 +17,7 @@
 //!   greeter object the viewer has never seen.
 
 use super::{HANDLE, floor_at, height, prim, shape, te};
+use aurora_llsd::{Llsd, llsd_map};
 use aurora_net::NetCommand;
 use aurora_net::NetEvent;
 use aurora_net::experience::{ExperienceDetails, ExperiencePermission, ExperiencePermissionChange};
@@ -254,6 +255,8 @@ impl ExperienceDemo {
     fn act(&self, source: Source) -> Reply {
         if source.questions & TELEPORT != 0 {
             Reply::Events(teleport())
+        } else if source.questions & ENVIRONMENT != 0 {
+            Reply::Events(vec![environment(source.experience)])
         } else {
             Reply::Say(aurora_i18n::tr!("demo-experience-greeter-done").into())
         }
@@ -308,6 +311,29 @@ fn details(id: Uuid) -> ExperienceDetails {
         owner: Uuid::from_u128(0x2222),
         group: Uuid::nil(),
         slurl: slurl.into(),
+    }
+}
+
+/// llSetEnvironment of a land experience: a violet sunset over the sky and a
+/// red water fog, over 3 s (PushPartialEnvironment).
+fn environment(experience: Uuid) -> NetEvent {
+    let rgb = |r: f64, g: f64, b: f64| Llsd::Array(vec![r.into(), g.into(), b.into()]);
+    NetEvent::ExperienceEnvironment {
+        experience,
+        message: llsd_map! {
+            "action" => "PushPartialEnvironment",
+            "action_data" => llsd_map! {
+                "transition_time" => 3.0,
+                "settings" => llsd_map! {
+                    "sky" => llsd_map! {
+                        "sunlight_color" => rgb(2.0, 0.6, 1.4),
+                        "blue_horizon" => rgb(0.9, 0.2, 0.6),
+                        "blue_density" => rgb(0.5, 0.1, 0.5),
+                    },
+                    "water" => llsd_map! { "water_fog_color" => rgb(0.6, 0.05, 0.05) },
+                },
+            },
+        },
     }
 }
 
@@ -466,7 +492,10 @@ mod tests {
             questions: greeter.questions,
             region: HANDLE,
         };
-        assert!(matches!(demo.reply(&answer), Some(Reply::Say(_))));
+        assert!(matches!(
+            demo.reply(&answer),
+            Some(Reply::Events(events)) if matches!(events[..], [NetEvent::ExperienceEnvironment { experience: GREETER_EXPERIENCE, .. }])
+        ));
         assert_eq!(demo.permission(GREETER_EXPERIENCE), ExperiencePermission::Allowed);
         assert!(!details(GREETER_EXPERIENCE).invalid());
     }

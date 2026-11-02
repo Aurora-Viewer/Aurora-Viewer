@@ -59,6 +59,7 @@ impl Window {
                 key,
                 object,
                 root: object,
+                menu: false,
             },
             result: Some(Ok(items)),
             opened: std::time::Instant::now(),

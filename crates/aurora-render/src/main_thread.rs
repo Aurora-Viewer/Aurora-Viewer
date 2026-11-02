@@ -272,6 +272,7 @@ impl Renderer {
         vsync: bool,
         gpu: &str,
     ) -> Result<Renderer, RenderError> {
+        crate::start_progress::enter(crate::start_progress::Phase::GpuDevice);
         let desc = || {
             let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
             desc.backends = crate::BACKENDS;
@@ -418,6 +419,7 @@ impl Renderer {
             wgpu::DeviceLostReason::Destroyed => log::info!("GPU device released: {message}"),
             _ => {
                 on_lost.set();
+                crate::pipeline_cache::device_lost();
                 log::error!("GPU device lost ({reason:?}): {message}");
             }
         });
@@ -470,6 +472,10 @@ impl Renderer {
         let vr = Arc::new(crate::vr_control::Control::new(xr_graphics.is_some()));
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
         let vr = Arc::new(crate::vr_control::Control::new(false));
+        // the compiled pipelines of the earlier starts (pipeline_cache.rs),
+        // before the first one is made
+        crate::pipeline_cache::open(&device, &ainfo);
+        crate::start_progress::enter(crate::start_progress::Phase::Pipelines);
         let backend = Backend::new(BackendInit {
             vr: vr.clone(),
             gpu_frames: gpu_frames.clone(),
@@ -513,6 +519,8 @@ impl Renderer {
                 "frames drawn on the main thread (AURORA_RENDER_THREAD=0)"
             }
         );
+        crate::start_progress::enter(crate::start_progress::Phase::Ready);
+        crate::pipeline_cache::log_start();
         Ok(Renderer {
             host,
             vr,
@@ -1595,6 +1603,21 @@ struct OpenedDevice {
     max_textures: u32,
 }
 
+/// The blocks of video memory wgpu's allocator carves resources out of
+/// (its `Performance` hint: 128 to 256 MB). Anything larger gets a block of
+/// its own, given back to the driver the moment it is destroyed; a smaller
+/// one only once its whole block is empty. With 16 MB blocks every render
+/// target of a 4K window (16 to 64 MB each) has its own: when they shrink
+/// (a window behind past its budget pauses its 3D drawing, #1808; a resize)
+/// the driver gets their memory back at once. Demo crowd at 3840 x 2054:
+/// the driver counted 2,585 MB for 1,772 MB of resources, 2,250 MB with
+/// 16 MB blocks, and 2,640 MB against 1,385 MB once the 3D drawing paused;
+/// the render thread's resource writes took 0.04 ms more a frame. Texture
+/// pages have memory of their own (dedicated.rs), so the cost of a new
+/// block under the allocator's lock, which ruled out 64 MB blocks for them,
+/// no longer falls on the pages.
+const MEMORY_BLOCK: u64 = 16 << 20;
+
 /// Open `adapter` with the features the renderer needs and the optional
 /// ones it has; an error when it lacks a needed one or the device fails.
 fn open_device(
@@ -1675,13 +1698,24 @@ fn open_device(
     if afeat.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT) {
         features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;
     }
-    let max_textures = texture_page_limit(&alim);
+    // Aurora's own pipeline cache on disk (pipeline_cache.rs)
+    features |= crate::pipeline_cache::feature(afeat);
+    let in_all_pools = descriptors_in_all_pools(adapter);
+    let max_textures = texture_page_limit(&alim, in_all_pools);
+    if max_textures < texture_page_limit(&alim, None) {
+        log::info!(
+            "texture pages: {max_textures}, held to the driver's {} update-after-bind descriptors in all pools",
+            in_all_pools.unwrap_or_default()
+        );
+    }
     let descriptor = wgpu::DeviceDescriptor {
         label: Some("aurora"),
         required_features: features,
         required_limits: alim.clone(),
         experimental_features: wgpu::ExperimentalFeatures::disabled(),
-        memory_hints: wgpu::MemoryHints::Performance,
+        memory_hints: wgpu::MemoryHints::Manual {
+            suballocated_device_memory_block_size: MEMORY_BLOCK..MEMORY_BLOCK,
+        },
         trace: wgpu::Trace::Off,
     };
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -1737,10 +1771,64 @@ fn detect_vram_mb(adapter: &wgpu::Adapter) -> Option<u64> {
     (bytes > 0).then_some(bytes / (1024 * 1024))
 }
 
-// Binding-array entries have their own limit; they do not consume the
-// ordinary sampled-texture slots used by frame attachments.
-fn texture_page_limit(limits: &wgpu::Limits) -> u32 {
-    limits.max_binding_array_elements_per_shader_stage.clamp(64, 16384)
+/// `maxUpdateAfterBindDescriptorsInAllPools`, which bounds the pools of the
+/// binding arrays: wgpu keeps it to itself. `None` without the query
+/// (a Vulkan 1.0 instance or device) or another backend.
+#[cfg(not(target_os = "macos"))]
+fn descriptors_in_all_pools(adapter: &wgpu::Adapter) -> Option<u32> {
+    use ash::vk;
+    // SAFETY: the hal adapter is only borrowed for this call; the physical
+    // device queries do not change any state.
+    let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
+    let shared = hal.shared_instance();
+    let instance = shared.raw_instance();
+    let pd = hal.raw_physical_device();
+    // vkGetPhysicalDeviceProperties2 is core from Vulkan 1.1 only: ash
+    // would panic on the missing entry point of a 1.0 instance.
+    // SAFETY: as above.
+    let device_version = unsafe { instance.get_physical_device_properties(pd) }.api_version;
+    if shared.instance_api_version() < vk::API_VERSION_1_1 || device_version < vk::API_VERSION_1_1 {
+        return None;
+    }
+    // Same structure for VK_EXT_descriptor_indexing and Vulkan 1.2; left
+    // at 0 by a driver that has neither.
+    let mut indexing = vk::PhysicalDeviceDescriptorIndexingProperties::default();
+    let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut indexing);
+    // SAFETY: as above; the entry point exists (checked just before).
+    unsafe { instance.get_physical_device_properties2(pd, &mut properties) };
+    Some(indexing.max_update_after_bind_descriptors_in_all_pools)
+}
+
+#[cfg(target_os = "macos")]
+fn descriptors_in_all_pools(_adapter: &wgpu::Adapter) -> Option<u32> {
+    None
+}
+
+/// Sets wgpu-hal makes the first descriptor pool of a layout for, as soon
+/// as the layout is created (`POOL_MIN_SETS`, wgpu-hal 30
+/// src/vulkan/descriptor.rs). Check it again when wgpu is updated.
+const WGPU_POOL_MIN_SETS: u32 = 64;
+
+/// Texture pages, the length of the "textures" binding array.
+///
+/// Binding-array entries have their own limit; they do not consume the
+/// ordinary sampled-texture slots used by frame attachments. Their pool
+/// does count against `descriptors_in_all_pools`: wgpu-hal sizes it for
+/// `WGPU_POOL_MIN_SETS` sets of the layout without checking that total,
+/// and a driver may refuse a larger pool. wgpu then loses the device as
+/// out of memory. Intel's Windows driver (Iris Xe, 101.7092) allows
+/// 1,048,576: 16384 pages made a pool of 1,048,704 and the viewer stopped
+/// before the login screen (#1892). The pages are held to what fits.
+fn texture_page_limit(limits: &wgpu::Limits, descriptors_in_all_pools: Option<u32>) -> u32 {
+    let array = limits.max_binding_array_elements_per_shader_stage.clamp(64, 16384);
+    // 0: a driver that did not fill the structure, not a real limit
+    match descriptors_in_all_pools.filter(|&n| n > 0) {
+        Some(total) => {
+            let fit = (total / WGPU_POOL_MIN_SETS).saturating_sub(crate::textures::OTHER_DESCRIPTORS);
+            array.min(fit).max(64)
+        }
+        None => array,
+    }
 }
 
 #[cfg(test)]
@@ -1754,9 +1842,29 @@ mod tests {
             max_binding_array_elements_per_shader_stage: 1_000_000,
             ..Default::default()
         };
-        assert_eq!(texture_page_limit(&limits), 16384);
+        assert_eq!(texture_page_limit(&limits, None), 16384);
         limits.max_binding_array_elements_per_shader_stage = 512;
-        assert_eq!(texture_page_limit(&limits), 512);
+        assert_eq!(texture_page_limit(&limits, None), 512);
+    }
+
+    #[test]
+    fn texture_pages_fit_the_update_after_bind_pool() {
+        let limits = wgpu::Limits {
+            max_binding_array_elements_per_shader_stage: 1_048_576,
+            ..Default::default()
+        };
+        // Intel Iris Xe on Windows: 64 sets of the layout fill the total
+        let pages = texture_page_limit(&limits, Some(1_048_576));
+        assert_eq!(pages, 16382);
+        assert!(u64::from(WGPU_POOL_MIN_SETS) * u64::from(pages + crate::textures::OTHER_DESCRIPTORS) <= 1_048_576);
+        // NVIDIA (u32::MAX) and RADV (67,108,863): unchanged
+        assert_eq!(texture_page_limit(&limits, Some(u32::MAX)), 16384);
+        assert_eq!(texture_page_limit(&limits, Some(67_108_863)), 16384);
+        // unknown or not filled in: unchanged
+        assert_eq!(texture_page_limit(&limits, Some(0)), 16384);
+        // a smaller total, and never under the 64 pages of the bindless minimum
+        assert_eq!(texture_page_limit(&limits, Some(262_144)), 4094);
+        assert_eq!(texture_page_limit(&limits, Some(1000)), 64);
     }
 
     #[test]

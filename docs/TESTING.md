@@ -331,7 +331,7 @@ the background still applies outside screenshots.
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_JOYSTICK=preferences\|axes\|avatar\|flycam\|roll` | Synthetic joystick input, its preferences or an independent six-axis camera flight |
+| `AURORA_DEMO_JOYSTICK=<mode>` | Synthetic joystick input, preferences, lens reset gestures or an independent six-axis camera flight |
 | `AURORA_CAPTURE=<file.png>` | Saves a screenshot of the frame |
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
@@ -362,12 +362,125 @@ or a grid. `preferences` opens Mouse and keyboard › Joystick and 3D mouse;
 `axes` filters the axis mapping rows in preference search; `avatar` walks and turns;
 `flycam` starts at frame 630 and moves after 650;
 `roll` also enables roll and disables auto-level. Capture after frame 900.
+`rearm` keeps a relative zoom axis at -1, enters flycam with a synthetic
+button press at frame 630 and leaves it at 750 while movement is held.
+The other axes centre at 770 and move the avatar again from 800.
+Capture at `700,760,830`: camera flight, stopped movement after leaving,
+then avatar movement. The log records the flycam state and motion axes at
+701, 761 and 831; the zoom channel stays zero throughout. Keep the viewer
+running past frame 831 to include all three log entries.
+`axis-capture` supplies minor axis-0 movement (0.05) alongside strong axis-7
+movement (-0.8) during frames 700–759 and 820–879. Combine it with
+`AURORA_DEMO_OPTIONS=controls/1:search=forward` (English) or
+`controls/1:search=avancer` (French). Click the axis assignment before frame
+700: it must capture axis 7, then re-centre at 760. Invert Avatar before
+820 to see backward movement on the second gesture without changing gain
+magnitude. Capture before, during and after assignment, then after inversion.
+`zoom` enters flycam at frame 630 with a neutral, enabled zoom axis. Frames
+650–709 apply relative zoom, frame 750 edits the lens preference to 0.9 rad,
+frame 800 enables absolute zoom, and frames 820–879 deflect the zoom axis
+before returning to its reference. Capture at `640,720,770,860,920`: initial
+view, narrower relative zoom, edited lens, absolute deflection and restored
+reference. Logs at the following frames record the rendered field of view;
+keep the run beyond frame 921 to include every probe. The camera position
+must remain fixed while the projection changes.
+`zoom-buttons` and `zoom-triggers` enter flycam with two physical buttons
+(8/9) or two analog triggers (axes 6/7) assigned to zoom. Frames 650–689
+zoom in, 720–759 zoom out, and 780–809 hold both controls to reset relative zoom.
+Capture `640,700,770,820,860`: initial lens, narrower lens, restored lens,
+both-controls reset and retained lens. `zoom-hold` assigns trigger
+6 as modifier and shares axis 5 with camera yaw. Frames 650–689 zoom in,
+720–759 zoom out; 760–789 release the modifier while keeping the axis
+deflected, which must not rotate the camera. Frames 790–809 centre it;
+810–849 resume ordinary yaw. Capture `640,700,770,780,840,880`: fixed-pose
+zoom in/out, safe modifier release, then resumed yaw. Logs at frames 641,
+701, 771, 791, 831 and 861 report the lens and yaw/zoom inputs.
+Append `-absolute` to `zoom-buttons`, `zoom-triggers` or `zoom-hold` to
+verify position-based zoom and return to the reference at rest; it must
+not accumulate with hold duration. Trigger zoom uses continuous pressure.
+`reset-zoom`, `reset-zoom-buttons`, `reset-zoom-triggers` and `reset-zoom-hold`
+first zoom in at frames 650–689, then reset relatively: the direct axis or
+modifier gives two impulses at 730–735 and 744–769; two-control modes hold
+both at 744–754, then only one until 769. The reset must hold the reference
+through frame 809; new input at 810–839 must resume zoom. Capture
+`640,700,750,780,850` and inspect the lens/yaw/zoom probes at frames 701,
+741, 751, 781 and 841. Hold mode leaves the shared stick off-centre until
+780 to verify that releasing the modifier cannot replay camera yaw.
+Combine any of these with `AURORA_DEMO_OPTIONS=controls/1:joystick-zoom`
+to show its normal preferences group, scrolled to the zoom mode selector.
 The avatar must stay put in the two camera scenarios. Compare the photo
 free camera (`AURORA_DEMO_CONTROLS=free`) and normal camera controls as well.
 Hardware validation: select the real device, enable input, apply Gamepad or
 SpaceMouse, centre its axes and release its buttons; check the live input,
 walking, sliding, looking, jump held to fly and a press to land. Start and
 stop flycam with its configured button or Alt+Shift+F, and return with Escape.
+Button assignments: click the assigned button (or Assign), then press the
+desired controller button, including stick clicks and buttons beyond 9.
+Already-held buttons must be released and pressed again; a quick tap must
+also record. The press must not move the avatar or toggle flycam. None
+disables an assignment; Cancel, Escape, focus loss, a device change or
+leaving the row keeps its previous assignment. Capture also works with
+joystick control disabled. Zoom selects an analog axis, independently of
+button numbers; it changes only the flycam's field of view. Assigning a
+zoom axis changes a zero Camera gain to 1 (retaining inversion), while a
+previous non-zero gain stays intact. Gain 0 still disables zoom. Absolute
+zoom maps position around the flight's reference field of view; relative
+zoom uses deflection as zoom speed. Lens preference edits and keyboard lens
+zoom must work during flight; the absolute reference follows lens edits.
+Axis assignments: click the assigned axis (or Assign) and move the intended
+stick direction or trigger. Minor sideways movement must not win over the
+main gesture. Detection observes up to 180 ms once movement is significant,
+or finishes on release; a similarly strong diagonal waits until released
+and retried. Resting triggers at -1 and small stick jitter must not assign
+anything. None and cancellation behave like button capture. One Invert
+switch sits beside the axis assignment and None, reversing Avatar and
+Camera together while preserving each mode's gain magnitude and dead zone.
+A previous negative gain in either mode appears as shared inversion;
+unused Avatar gains for Roll/Zoom do not participate. The choice persists
+even with zero gain and remains detectable by modified-settings/reset.
+Avatar and Camera tuning use aligned columns below the assignment;
+check wrapping at narrow window sizes and larger interface scales.
+Roll labels the unused Avatar column as Camera only. Zoom has its own group
+with direct-axis, two-buttons and hold-plus-axis choices; its axis row has
+only the shared assignment/inversion and Camera tuning. Only the chosen
+mode's controls appear on the page, while all remain searchable and resettable.
+Assign the two zoom controls and the modifier by pressing a physical button
+or trigger. Trigger/axis directions display as Axis N (+/−), not fabricated
+physical button numbers. Controls held before capture must be released
+before a fresh press is learned. Two-controls mode must zoom both ways,
+stop when released, and work without an axis assignment or Camera gain.
+With absolute zoom off, pressing both controls together must restore the
+reference field of view. Hold-plus-axis mode must keep the relative lens
+after release, consume the shared camera axis while held, and wait for
+that axis to centre before ordinary movement resumes. A trigger used as
+a zoom button or modifier must not also drive its old camera mapping.
+Repeat after focus loss, a device change and stale input: held controls
+must not restart zoom until released and pressed again. Old direct-axis
+profiles retain their mode and absolute/relative choice.
+Absolute zoom must be selectable in all three modes. Its control value sets
+an offset from the flight's reference field of view; rest returns to that
+reference. Two-buttons mode labels its amount as a range, rather than speed,
+and trigger pressure below the button threshold must still adjust it.
+In relative hold-plus-axis mode, double-press the assigned modifier; in
+direct-axis mode, give two quick impulses with a return to rest between
+them. The first press must release within 250 ms and the second must start
+within 350 ms of the first. Both gestures must restore the reference lens,
+including after a keyboard/preference edit, without moving or rotating the
+camera. A long hold, slow repeats, jitter or a tap before focus/device/mode
+changes must not reset it. After any reset, keep the second control held:
+zoom must stay at the reference until release, then resume on fresh input.
+Absolute mode must never trigger these relative reset gestures.
+Windows trigger zoom: assign a trigger, let it return to rest, enter flycam
+and press it. Its native pressure range must stay 0–1 (released at zero),
+so relative zoom starts without crossing a midpoint and stops on release
+after any configured smoothing. Repeat with Absolute zoom: release returns
+to the reference lens. Check both triggers and confirm the centred sticks
+still move in both directions.
+Repeat the toggle while holding a movement stick, including a quick second
+press. Configure zoom on an axis that rests away from zero: the other axes
+and the flycam button must still work. Direct zoom also accepts a non-zero
+initial position. After a focus change, release each held movement control
+before reusing it; fresh buttons must work even if another axis stays held.
 Check all six axes, inverted gain, zones, smoothing, focus loss, disconnect,
 reconnect and saved settings. On the grid, the human verifies simulator
 controls (including a seated vehicle), loading around the flycam, region
@@ -1452,10 +1565,17 @@ same colour, intensity, range and falloff, and its projector controls become
 disabled. Cancel instead restores its texture and projector settings. Use
 `features` without the suffix to inspect the light before or after editing.
 
-`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-own-mesh[-drag]|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|worn-other-hidden-inside|mouselook-gun|mouselook-touch|ground|photo-touch[-ctrl]|photo-hud[-ctrl]`:
+`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-own-mesh[-drag]|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|worn-other-hidden-inside|worn-other-moving|mouselook-gun|mouselook-touch|ground|photo-touch[-ctrl]|photo-hud[-ctrl]`:
 install the fixture at frame 600, issue a real left press at 700 and release
 at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
-or later. `photo-touch[-ctrl]` and `photo-hud[-ctrl]` open the photo viewfinder:
+or later. `worn-other-moving` makes the scripted prim a 10 cm clicker and
+moves its wearer 8 cm a frame from 701 to 705, while the GPU answer of the
+press is on its way, as an animated avatar does: the press must still touch
+it (`demo touch_start: prim=975`). Add `-held` to a `worn-*` mode to hold the
+touch and slide the cursor over the attachment from 710 to 760, released at
+761 (capture at 840): every `demo touch / grab update` line must give a new
+`st` (none repeats the `touch_start` one), which a script reading the touch
+position sees. `photo-touch[-ctrl]` and `photo-hud[-ctrl]` open the photo viewfinder:
 Ctrl + left click touches the scripted cube or the HUD without moving the AF
 point, then releases the touch even if Ctrl is released before the GPU pick
 returns. The plain cube click moves the AF point instead; a visible HUD also
@@ -1961,6 +2081,13 @@ Transaction windows, with the same variable:
 
 - `pay-layout`, `pay-hidden`, `pay-large`: four four-digit amounts, free
   field and hidden buttons, maximum amount.
+- `pay-vendor`, `pay-vendor-short` (#1869): a vendor with one L$ 180 price
+  and no free amount, like CasperVend. The price button pays at once (no
+  Pay button below it); `-short` starts with L$ 100: the button stays
+  enabled and opens Buy L$ for the missing L$ 80, the window staying open.
+- `buy-touch-menu` (#1869): the for-sale cube keeps the Touch click action
+  and Buy is chosen from its menu; add `-confirm` to press Buy at frame 320
+  (the log shows `demo purchase confirmed: … prim=971, price=10`).
 - `buy-original`, `buy` (copy), `buy-contents`: purchase of an original, of
   a copy or of the contents, list of the included items and permissions of
   the next owner.
@@ -3428,7 +3555,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` (or `alpha`) | GLTF material override (`alpha`: overrides with a zero base color alpha) |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
-| `AURORA_DEMO_PBR_EMISSIVE=1` | Three orange emissive PBR spheres: opaque, alpha-masked, blended |
+| `AURORA_DEMO_PBR_EMISSIVE=1\|sided` | Emissive PBR spheres or transparent single-/double-sided faces |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
 | `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
@@ -3541,6 +3668,13 @@ both open states and the selection count. Capture at frame 620.
   alpha-masked and blended. All three glow orange; with `AURORA_HDR=0`
   ("HDR and Emissive" off) the opaque and masked ones turn dark grey and
   only the blended one keeps its light, as in the Legacy Viewer.
+  With `sided`, four isolated translucent cyan faces stand ahead of the
+  start position, in increasing world Y order: single-sided front/back,
+  then double-sided front/back (#1727). Seen from the start (lower X), the
+  single-sided back must be absent and both double-sided faces must be
+  visible. Move to the other side to reverse the front/back views: again
+  exactly three faces must show. These are isolated faces, with no opposite
+  wall that could conceal missing back faces.
 - **`AURORA_DEMO_PBR_METAL=1`**: three white metal spheres (PBR, metallic 1,
   roughness 0.05, 0.3 and 0.6) and a polished slab ahead of the start
   position. A white metal has no colour of its own: the polished one
@@ -5044,6 +5178,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   stays in the list, reports a load error and keeps the previous preview.
   `AURORA_DEMO_IMPORT_FILE` replaces the fixtures with an existing file,
   read without modification; choose the mode matching its type.
+  In `folders` modes it can point to an existing directory instead; its GLB/glTF
+  files produce separate mesh and PBR material drafts. Toggle Mesh and Material
+  visibility independently, and use row checkboxes to select what to upload.
+  Add files in the mixed uploader captures its Material/Mesh filters: material
+  only extracts materials, mesh only loads geometry, both extracts both, neither
+  skips GLB/glTF files. Dedicated type windows always use their own type.
 
 
 ### Import inspector layout
@@ -6180,7 +6320,10 @@ failure. Grid validation and any paid upload are performed by the human.
   with `AURORA_DEMO`: triggers a Rust panic, a native Windows
   exception, an abnormal exit without a trace, a normal close or an
   exit without a watcher. The `recovery` mode makes it possible to check the
-  recovery at the next launch (relaunch with `normal`). No
+  recovery at the next launch (relaunch with `normal`). Linux has no
+  watcher: every mode's window opens at the next launch, as with
+  `recovery`, and a session closed normally is removed then, as is one
+  ended by SIGTERM, SIGHUP or SIGINT (`kill -TERM` gives no window). No
   connection and no GPU initialisation, except for `freeze`: the viewer
   starts, its main thread stops answering once the window shows, and 13 s
   later the process ends itself with exit code 1, as Task Manager's End task
@@ -6694,8 +6837,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `walk` and `arrive` place no door. `arrive`: the plaza's land-scope
   experience "Aurora Plaza Welcome" asks at frame 420 from a "Plaza greeter"
   the viewer has never seen (out of view, no click): "Animate your avatar"
-  and "Change your environment settings"; Yes says "welcome to the plaza" in
-  the chat.
+  and "Change your environment settings"; Yes makes the greeter push an
+  environment (PushExpEnvironment, PushPartialEnvironment): over 3 s the sky
+  fades to a violet sunset and the water fog turns red. The profile's Forget
+  fades it back over 1 s, Block at once (ENV_PUSH, `world/eep_push.rs`).
 - **`AURORA_DEMO_LURE=offer|request|god|answers|reject|offer-card|request-card|card-answered|notification-answered|legacy|exceeded|exceeded-continue|blocked`**:
   teleports received from Tess Touch (issue #280, parts B1 and B2). Each
   offer and request opens her conversation (unread) with its card and has
@@ -7618,7 +7763,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder`**
 — opens Appearance with four synthetic outfits:
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
@@ -7664,6 +7809,14 @@ for them (`5 to look up`), as a cold inventory cache.
   Take off / Detach (both). A selection mixing worn and unworn items
   offers Wear / Add for the unworn ones and Take off for the worn ones.
   The outfit editor keeps one selected row.
+- `clipboard`: the second outfit open with two of its items selected; at
+  frame 500 Ctrl+C copies them, at frame 540 the first outfit ("Empty")
+  is selected and Ctrl+V pastes: the capture (frame 620) shows "Empty"
+  holding the two items, as links to the same originals. By hand, in any
+  mode: Ctrl+C / Ctrl+X on selected outfits or items, Ctrl+V with an outfit
+  selected (items go into it, folders beside it), Ctrl+V in Worn wears what
+  was copied. The clipboard is the inventory's: what is copied in one
+  window pastes in the other.
 - `folders` / `folders-outfits`: the gallery or the list with outfit
   folders in My Outfits: "Beach" (one outfit and a "Night" subfolder with
   one), "Club" (two outfits) and an empty "Spring". The list shows them as
@@ -7698,6 +7851,13 @@ for them (`5 to look up`), as a cold inventory cache.
   missing, as on the grid after the original was deleted. The scarf shows
   greyed, without an icon; Wear, Add and Take off on any outfit work, skip
   it, and the rewritten current outfit drops it (no "still loading").
+- `take-off-folder`: the Worn tab, with an ordinary "Demo delivery"
+  folder in the inventory (not a saved outfit) holding the worn jacket and
+  pants and, in an "Accessories" subfolder, a link to the worn mesh hair.
+  At frame 600 the inventory's Remove from current outfit takes it off
+  (#1849): the jacket, pants and mesh hair leave the Worn tab, the body
+  parts and the other attachments stay, and no "This outfit folder cannot
+  be modified" message shows. Capture at frame 720 or later.
 - `layers`: the outfit editor with three worn tattoos, listed furthest
   from the body first as in the Legacy Viewer: Lipstick, Freckles, Star.
   A tattoo row drags within the tattoos (a violet marker shows where it
@@ -8733,6 +8893,7 @@ What the inventory must show with these scenarios:
 | `AURORA_VULKAN_DRIVERS=keep` | Loads Dozen (Vulkan on Direct3D 12) when installed, which the viewer keeps out |
 | `AURORA_GPU=<number>`, `<name>` or `auto` | The GPU to draw with for this launch, over Preferences › Graphics |
 | `AURORA_GPU_START_FAIL=1` | Start as if no graphics card could draw the window: the message the user gets then |
+| `AURORA_PIPELINE_CACHE=0` | No pipeline cache of Aurora's own: every pipeline compiled by the driver, or taken from its own cache, as before |
 | `AURORA_HOVER_CHECK=1` | Diagnostics of the hover cursor |
 | `AURORA_CLICK_PICK=wait` or `check` | Depth under a click read by waiting for the GPU, or checked |
 | `AURORA_HOVER_LEGACY=1` or `ab` | Search for the object under the cursor as before the classes and the triangle hierarchies |
@@ -8745,6 +8906,7 @@ What the inventory must show with these scenarios:
 | `AURORA_FONT_FALLBACK=0` | Without the system fallback fonts |
 | `AURORA_UI_FONT=<font>`, `AURORA_UI_SCALE=<scale>` | Interface font and scale for this launch, without changing the Preferences |
 | `AURORA_TEXT_SIZE=<size>` | Text size for this launch, without changing the Preferences |
+| `AURORA_CHAT_TEXT_SIZE=<size>` | Chat text size for this launch, without changing the Preferences |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Forces the texture memory budget |
 | `AURORA_VRAM_BUDGET_MB=<n>` | The driver's video memory budget taken as n MB, a smaller card on a large one |
 | `AURORA_TEXTURE_SIZING=screen` | Textures sized by their object's diameter on screen times the repeats, as before the Legacy Viewer's sizing |
@@ -8764,6 +8926,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
+| `AURORA_CONTACT_VARIANT=no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs on some AMD cards) |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
@@ -8846,6 +9009,17 @@ What the inventory must show with these scenarios:
   report: it is no crash); it now shows a native error box with what to try
   and the log's path, then exits. Automated captures (`AURORA_CAPTURE`) skip
   the box. The same box shows when the window itself cannot be created.
+- **`AURORA_PIPELINE_CACHE=0`**: the renderer makes its pipelines without
+  Aurora's cache (`aurora-render/src/pipeline_cache.rs`), as before: the
+  driver compiles each one, or takes it from its own disk cache when that
+  still holds it. To see a cold start without emptying the driver's cache,
+  point NVIDIA's at an empty folder for one launch:
+  `__GL_SHADER_DISK_CACHE_PATH=<empty folder>` (honoured by the Vulkan
+  driver on Windows, checked 2026-11-01: the folder fills, and the next
+  launch with the same folder is warm). The log says `pipeline cache: … read
+  for <n> pipelines`, `… not used (<reason>)` or `none yet`, then
+  `pipelines at start: <n> made in <ms>` with the three slowest. Its file
+  is `<cache>/pipelines/<wgpu key>.bin` (`cache\demo\pipelines` in demo).
 - **`AURORA_BANDWIDTH_KBPS=<n>`**: the "Maximum bandwidth" of Preferences ›
   Network and cache for this launch, without changing the saved setting,
   from 100 to 10,000. A session first asks its simulator for one and a
@@ -9117,7 +9291,21 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_SUN=0,12`) and a dotted line under the hovering shoe of
   `AURORA_DEMO_FEET` seen from above (`AURORA_DEMO_CAMERA=alt,615,672`,
   frame 690). Softened, neither shows and no shadow spreads from the
-  ground onto a caster nor the reverse. They only draw with the
+  ground onto a caster nor the reverse.
+  **`AURORA_CONTACT_VARIANT=no-early-out|no-shared|short|skip`**: a
+  diagnostic of the GPU hangs (device lost, Windows TDR) some AMD RX 9070 XT
+  cards had as soon as the pass ran, each value without one construct of
+  the window's shader (`variant_source`, contact_shadows.rs; photos keep
+  Bend's): `no-early-out`, no early exit of an all-sky wavefront through
+  `workgroupUniformLoad`; `no-shared`, no workgroup memory nor barrier (each
+  thread reads from the depth what the others would have shared,
+  `contact_shadows_no_shared.wgsl`). Both draw the same mask as Bend's
+  (the GPU test `the_variants_that_keep_the_image_draw_bends_mask`, run
+  with `-- --ignored`). `short`: 16 samples per pixel instead of 60, the
+  shadows about four times shorter; `skip`: the shader is not dispatched,
+  no contact shadow (the mask is still cleared and filtered). Any other
+  value keeps Bend's shader; the log says `contact shadows: diagnostic
+  variant …` when one is taken. They only draw with the
   sun shadows on. To see them, `AURORA_DEBUG_SHADOWS=1` (the shadow view
   takes them too) with `AURORA_DEMO_TOD=2` (high sun) or `3` (low sun),
   `AURORA_DEMO_CROWD=40` and `AURORA_DEMO_POS=129,134`: thin shadows appear
@@ -9338,6 +9526,18 @@ What the inventory must show with these scenarios:
   it, a sidebar label and its count, a footer's hint and its buttons),
   initials and the AO glyph inside their tile like the icons beside them,
   windows that keep their size.
+- **`AURORA_CHAT_TEXT_SIZE=<size>`**: the chat's text size (0.8 to 2,
+  Preferences › Chat › Chat text size) of this launch, never saved, on its
+  own or with `AURORA_TEXT_SIZE` to show that each size leaves the other
+  alone: the messages, names and times of the Conversations window (every
+  style), the chat lines over the world, the chat bubbles above the heads
+  (`AURORA_DEMO_TAGS=voice` with `AURORA_DEMO_CHAT_BUBBLES=1`), the
+  invitation, offer and payment cards and the text typed in the chat
+  fields (`AURORA_DEMO_CHAT_INPUT=1`) follow it; the fields' placeholders,
+  the tabs, the sidebar, the buttons and the rest of the interface keep
+  the interface's text size. What to look for: no name or time over its
+  message, the fields growing with their text, the cards' buttons under
+  their text.
 - **`AURORA_PRESENT_MODE=immediate|mailbox|fifo|fifo-relaxed`**: replaces
   the present mode chosen from vertical sync
   (`aurora-render/src/present.rs`: without sync `Mailbox`, otherwise

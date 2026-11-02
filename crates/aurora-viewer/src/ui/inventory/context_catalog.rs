@@ -338,6 +338,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
     let ready = st.pending.is_none();
     let writable = rules::mutable(inv, id, &prefs.protected);
     let movable = ids.iter().all(|id| rules::relocatable(inv, *id, &prefs.protected));
+    let moveable = ids.iter().all(|id| rules::move_relocatable(inv, *id, &prefs.protected));
     let worn = target.is_some_and(|id| facts.worn.contains(&id));
     let trash = rules::in_type(inv, id, 14);
     let linked = item.is_some_and(|it| matches!(it.asset_type, 24 | 25));
@@ -396,11 +397,10 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         "top",
         "cut",
         aurora_i18n::tr!("common-cut"),
-        ready && movable,
+        ready && moveable,
         Command::Copy(ids.clone(), true),
     );
-    let paste =
-        ready && single && to.is_some_and(|to| rules::paste_allowed(inv, &st.clipboard, to, st.cut, false, &prefs.protected, &facts.worn));
+    let paste = ready && single && to.is_some_and(|to| clipboard::paste_allowed(inv, st, to, prefs, facts));
     c.add(
         "paste",
         "top",
@@ -781,7 +781,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         &organize,
         "folder-filled",
         aurora_i18n::tr!("inventory-move-to"),
-        ready && movable,
+        ready && moveable,
         Command::Move(id),
     );
     if !trash || all {
@@ -791,7 +791,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                 &organize,
                 "folder-filled",
                 aurora_i18n::tr!("ui-inventory-context-move-to-default-folder"),
-                ready && movable,
+                ready && moveable,
                 Command::DefaultFolder(ids.clone()),
             );
         }

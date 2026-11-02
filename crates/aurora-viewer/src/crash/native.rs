@@ -81,6 +81,10 @@ mod platform {
         started(process.0) == creation && unsafe { WaitForSingleObject(process.0, 0) } != WAIT_OBJECT_0
     }
 
+    pub fn identifies(_creation: u64) -> bool {
+        true
+    }
+
     pub fn watch(dir: &Path, record: &super::super::Record) -> anyhow::Result<()> {
         let process = open(record.pid).ok_or_else(|| anyhow::anyhow!("cannot open viewer process"))?;
         if started(process.0) != record.process_started {
@@ -680,18 +684,149 @@ mod platform {
     }
 }
 
-#[cfg(not(windows))]
-mod platform {
-    use std::path::Path;
+#[cfg(target_os = "linux")]
+mod identity {
+    fn read(pid: u32) -> Option<super::Stat> {
+        super::parse_stat(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+    }
+
+    /// The start time in clock ticks since boot: with the PID, it names this
+    /// process and not a later one given the same number.
+    pub fn current_process_started() -> u64 {
+        read(std::process::id()).map_or(0, |stat| stat.started)
+    }
+
+    /// No watcher waits on the viewer here (it would outlive a closed
+    /// terminal or a killed session badly): the next launch asks the kernel.
+    /// A session written without a start time (older builds) is alive while
+    /// its PID is, so another instance is never taken for a crash.
+    pub fn is_alive(pid: u32, creation: u64) -> bool {
+        read(pid).is_some_and(|stat| !stat.zombie && (creation == 0 || stat.started == creation))
+    }
+
+    /// Without a start time, a dead PID may have been a crash, a kill, or a
+    /// viewer still running under a reused PID: never offered as a crash.
+    pub fn identifies(creation: u64) -> bool {
+        creation != 0
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub use identity::*;
+
+#[cfg(not(any(windows, target_os = "linux")))]
+mod identity {
     pub fn current_process_started() -> u64 {
         0
     }
     pub fn is_alive(_pid: u32, _creation: u64) -> bool {
-        // Automatic monitoring is currently Windows-only, like the releases.
-        // Do not misidentify another live instance as crashed on other hosts.
+        // No process identity is read on this system yet. Do not
+        // misidentify another live instance as crashed.
         true
     }
-    pub fn install(_dir: &Path) -> anyhow::Result<()> {
+    pub fn identifies(_creation: u64) -> bool {
+        false
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub use identity::*;
+
+/// The fields of `/proc/<pid>/stat` that identify a process.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[derive(Debug, PartialEq)]
+struct Stat {
+    zombie: bool,
+    started: u64,
+}
+
+/// `pid (comm) state ppid … starttime …` (proc_pid_stat(5)): the name may
+/// hold spaces and parentheses, so the fields are counted after its last
+/// `)`. `state` is field 3, `starttime` field 22.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn parse_stat(text: &str) -> Option<Stat> {
+    let mut fields = text.get(text.rfind(')')? + 1..)?.split_ascii_whitespace();
+    let state = fields.next()?;
+    let started = fields.nth(18)?.parse().ok()?;
+    Some(Stat {
+        zombie: matches!(state, "Z" | "X" | "x"),
+        started,
+    })
+}
+
+/// The desktop ending the session (log out, shutdown) stops programs with
+/// SIGTERM, a closed terminal with SIGHUP, Ctrl+C with SIGINT: the viewer
+/// did not crash. The signal leaves the session's `system-ending` marker,
+/// as Windows' watcher does when the system ends, then ends the process
+/// exactly as before. The Legacy Viewer quits on these signals
+/// (LLApp::setQuitting from default_unix_signal_handler,
+/// indra/llcommon/llapp.cpp).
+#[cfg(target_os = "linux")]
+mod ending {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStringExt;
+    use std::path::Path;
+    use std::sync::OnceLock;
+
+    static MARKER: OnceLock<CString> = OnceLock::new();
+
+    pub fn install(dir: &Path) -> anyhow::Result<()> {
+        // Built here: the handler may not allocate.
+        let _ = MARKER.set(CString::new(dir.join("system-ending").into_os_string().into_vec())?);
+        for signal in [libc::SIGTERM, libc::SIGHUP, libc::SIGINT] {
+            // SAFETY: plain sigaction calls on zeroed structs we own; the
+            // handler only uses async-signal-safe calls.
+            unsafe {
+                let mut old: libc::sigaction = std::mem::zeroed();
+                anyhow::ensure!(
+                    libc::sigaction(signal, std::ptr::null(), &mut old) == 0,
+                    "cannot read signal {signal}"
+                );
+                // A signal the parent ignores (nohup) stays ignored.
+                if old.sa_sigaction == libc::SIG_IGN {
+                    continue;
+                }
+                let mut action: libc::sigaction = std::mem::zeroed();
+                action.sa_sigaction = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+                action.sa_flags = libc::SA_RESETHAND;
+                libc::sigemptyset(&mut action.sa_mask);
+                anyhow::ensure!(
+                    libc::sigaction(signal, &action, std::ptr::null_mut()) == 0,
+                    "cannot handle signal {signal}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    extern "C" fn on_signal(signal: libc::c_int) {
+        if let Some(path) = MARKER.get() {
+            // SAFETY: open and close are async-signal-safe; the path is a
+            // C string that lives as long as the process.
+            unsafe {
+                let file = libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_CREAT | libc::O_CLOEXEC, 0o600);
+                if file >= 0 {
+                    libc::close(file);
+                }
+            }
+        }
+        // SA_RESETHAND gave the signal its default action back: it now
+        // ends the process as it would have without this handler.
+        // SAFETY: raise is async-signal-safe.
+        unsafe {
+            libc::raise(signal);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod platform {
+    use std::path::Path;
+    pub fn install(dir: &Path) -> anyhow::Result<()> {
+        #[cfg(target_os = "linux")]
+        super::ending::install(dir)?;
+        #[cfg(not(target_os = "linux"))]
+        let _ = dir;
         Ok(())
     }
     pub fn write_stack(_out: &mut impl std::io::Write) {}
@@ -708,3 +843,38 @@ mod platform {
 }
 
 pub use platform::*;
+
+#[cfg(test)]
+mod tests {
+    use super::{Stat, parse_stat};
+
+    #[test]
+    fn the_start_time_is_read_after_the_last_parenthesis_of_the_name() {
+        let tail = "S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 987654 20 21";
+        assert_eq!(
+            parse_stat(&format!("4242 (aurora-viewer) {tail}")),
+            Some(Stat {
+                zombie: false,
+                started: 987654
+            })
+        );
+        // A process may name itself with spaces and parentheses.
+        assert_eq!(parse_stat(&format!("4242 (a) b (c) {tail}")).map(|stat| stat.started), Some(987654));
+        assert!(parse_stat(&format!("4242 (x) Z{}", &tail[1..])).is_some_and(|stat| stat.zombie));
+        assert_eq!(parse_stat("4242 (aurora-viewer) S 1 2"), None);
+        assert_eq!(parse_stat(""), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn this_process_is_alive_and_a_reused_pid_is_not() {
+        let started = super::current_process_started();
+        assert_ne!(started, 0);
+        assert!(super::is_alive(std::process::id(), started));
+        assert!(!super::is_alive(std::process::id(), started + 1));
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        assert!(!super::is_alive(pid, 0));
+    }
+}

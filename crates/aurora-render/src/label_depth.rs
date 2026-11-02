@@ -14,6 +14,7 @@
 //! its pixel. Nothing is read back and nothing is copied: the labels the
 //! scene hides entirely cost their vertices, as before.
 
+use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 use egui::epaint::{ClippedPrimitive, Primitive};
 use glam::{Mat4, Vec2, Vec3};
@@ -334,7 +335,7 @@ impl LabelDepth {
             bind_group_layouts: &[Some(&layout), Some(&texture_layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some("labels"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {

@@ -140,7 +140,8 @@ your desktop (GNOME, KDE and other GLib desktops read such paths).
 ## Not on Linux yet
 
 - Automatic installation of updates (above).
-- The crash report window.
+- The crash window right after a crash: it opens at the next launch
+  instead, and a native crash (a signal) leaves no trace in it.
 
 ## Building from source
 
