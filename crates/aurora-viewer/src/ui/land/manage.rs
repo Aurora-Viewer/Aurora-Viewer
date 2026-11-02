@@ -409,7 +409,7 @@ fn access(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut 
                     egui::DragValue::new(&mut price)
                         .custom_parser(aurora_i18n::parse_number)
                         .range(0..=500)
-                        .suffix(" L$"),
+                        .suffix(format!(" {}", aurora_i18n::currency())),
                 );
                 let active = r.dragged() || r.has_focus() || r2.dragged() || r2.has_focus();
                 if active {

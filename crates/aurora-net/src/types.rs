@@ -556,6 +556,9 @@ pub enum NetEvent {
         /// helper, ahead of the grid's (LFSimFeatureHandler's
         /// mHelperUriOverride); empty when not given.
         currency_base_uri: String,
+        /// "OpenSimExtras" "currency": the region's own money symbol
+        /// (mCurrencySymbolOverride); empty when not given.
+        currency_symbol: String,
     },
     HoverHeightUpdated {
         region: RegionHandle,

@@ -3335,6 +3335,7 @@ impl App {
             NetEvent::LoggedIn(l) => {
                 self.session_started(l.session_id);
                 self.refresh_grid_helper();
+                self.world.grid_currency = buy_currency::grid_currency(&l.raw, self.settings.grid == crate::settings::GridChoice::Custom);
                 self.named_teleport = Default::default();
                 if !self.demo {
                     let root = self.world.inventory.root;
@@ -15708,6 +15709,7 @@ impl App {
                 }
                 self.poll_grid_helper();
                 self.notice_region_helper();
+                self.follow_currency_symbol();
                 a.currency = self.buy_currency_ui.show(&ctx, &p, &self.world);
                 a.currency.extend(self.show_buy_land(&ctx, &p));
                 // links and names clicked anywhere (LLAgentHandler)
