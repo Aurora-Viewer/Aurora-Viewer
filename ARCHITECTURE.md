@@ -2264,6 +2264,10 @@ disabled.
 clickable diagnostics. `editing.rs` shares the native cursor and history
 between the commands and typing; `dialogs.rs` carries search/replace, the
 preferences and the keyword help.
+Object-script reset availability follows the live object/item, independently
+of source permissions and running-state replies, as in LLLiveLSLEditor::onReset.
+`app/scripts.rs` rechecks that target before sending ScriptReset and querying
+its running state; the shared command path retains RLVa restrictions.
 `Editors` owns one search/replace panel shared by all scripts, following
 `LLFloaterSearchReplace::show`. Opening search rebinds its editor, retaining
 the query, replacement and options. It is drawn once after all editors have
