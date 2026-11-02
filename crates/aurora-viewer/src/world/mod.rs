@@ -623,6 +623,10 @@ fn saved_prefix(timestamp: u32) -> String {
     ) + " "
 }
 
+/// The largest region a grid can have (Constants.MaximumRegionSize,
+/// OpenSim): a corrupt patch number must not make a land grid of gigabytes.
+const MAX_REGION_SIZE: u32 = 4096;
+
 impl World {
     pub fn water_visual_dz(&self, id: &Uuid) -> f32 {
         if *id == self.agent_id && !self.teleporting && self.movement_complete && !self.agent.is_sitting() {
@@ -1838,7 +1842,18 @@ impl World {
         self.conversation_push(session, line, false);
     }
 
+    /// The region, made at `size` or grown to it. Grown, because events can
+    /// come before the handshake that gives the size: arrival and early land
+    /// made a large OpenSim region 256 x 256 for good, its land past that
+    /// dropped. LLWorld::addRegion is told the size from the start.
     fn ensure_region(&mut self, h: RegionHandle, size: (u32, u32)) -> &mut Region {
+        if let Some(region) = self.regions.get_mut(&h)
+            && region.heightmap.grow(size.0, size.1)
+        {
+            region.dirty_chunks.extend(0..region.heightmap.chunk_count());
+            region.terrain_revision += 1;
+            region.terrain_surface.applied = None;
+        }
         self.regions.entry(h).or_insert_with(|| Region {
             handle: h,
             name: String::new(),
@@ -2521,7 +2536,14 @@ impl World {
                 None
             }
             NetEvent::Terrain { handle, patches } => {
-                let r = self.ensure_region(handle, (256, 256));
+                // land can come before the handshake: its own place says
+                // the region reaches at least that far
+                let reach = |axis: fn(&aurora_net::terrain::TerrainPatch) -> u32| {
+                    let end = patches.iter().map(|p| (axis(p) + 1).saturating_mul(p.size)).max().unwrap_or(0);
+                    end.min(MAX_REGION_SIZE).next_multiple_of(256).max(256)
+                };
+                let size = (reach(|p| p.x), reach(|p| p.y));
+                let r = self.ensure_region(handle, size);
                 for p in patches {
                     let dirty = r.heightmap.apply_patch(p.x, p.y, p.size, &p.heights);
                     r.dirty_chunks.extend(dirty);
@@ -8090,5 +8112,58 @@ mod group_insignia_tests {
             ..Default::default()
         })));
         assert_eq!(world.groups.group(&group).map(|g| g.insignia), Some(Uuid::nil()));
+    }
+}
+
+#[cfg(test)]
+mod region_size_order_tests {
+    use super::*;
+    use aurora_net::terrain::TerrainPatch;
+
+    fn world() -> World {
+        World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()))
+    }
+
+    fn patch(x: u32, y: u32) -> TerrainPatch {
+        TerrainPatch {
+            x,
+            y,
+            size: 16,
+            heights: vec![5.0; 256],
+        }
+    }
+
+    #[test]
+    fn a_region_made_before_its_size_is_known_grows_to_it() {
+        let mut world = world();
+        world.set_main_region(1);
+        assert_eq!(world.regions[&1].heightmap.size_x, 256);
+        let region = world.ensure_region(1, (1024, 768));
+        assert_eq!((region.heightmap.size_x, region.heightmap.size_y), (1024, 768));
+        assert_eq!(region.dirty_chunks.len() as u32, region.heightmap.chunk_count());
+    }
+
+    #[test]
+    fn land_before_the_handshake_keeps_its_place_on_a_large_region() {
+        let mut world = world();
+        world.set_main_region(1);
+        world.apply(NetEvent::Terrain {
+            handle: 1,
+            patches: vec![patch(53, 41)],
+        });
+        let map = &world.regions[&1].heightmap;
+        assert_eq!((map.size_x, map.size_y), (1024, 768));
+        assert_eq!(map.heights[(41 * 16 * 1024 + 53 * 16) as usize], 5.0);
+    }
+
+    #[test]
+    fn a_corrupt_patch_number_stays_within_the_largest_region() {
+        let mut world = world();
+        world.apply(NetEvent::Terrain {
+            handle: 1,
+            patches: vec![patch(0xFFFF, 0xFFFF)],
+        });
+        let map = &world.regions[&1].heightmap;
+        assert_eq!((map.size_x, map.size_y), (MAX_REGION_SIZE, MAX_REGION_SIZE));
     }
 }
