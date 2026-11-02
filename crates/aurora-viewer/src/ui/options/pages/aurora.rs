@@ -341,7 +341,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     cx,
                     tr!("ui-options-particle-intersections"),
                     tr!("ui-options-particle-intersections-help"),
-                    aurora,
+                    tr!("ui-options-particle-intersections-aurora"),
                     tr!("ui-options-particle-intersections-legacy"),
                     &field!(classic_particle_intersections),
                 );

@@ -12937,4 +12937,5 @@ app-vr-leave = { $key } キーでデスクトップモードに戻ります
 
 ui-options-particle-intersections = パーティクルの交差
 ui-options-particle-intersections-help = Auroraでは面の近くでパーティクルをフェードします。レガシーではフェードせずに面で切り取ります。
-ui-options-particle-intersections-legacy = レガシー
+ui-options-particle-intersections-aurora = フェード（Aurora）
+ui-options-particle-intersections-legacy = クリップ（Legacy）

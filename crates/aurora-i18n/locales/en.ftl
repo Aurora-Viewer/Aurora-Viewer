@@ -12955,6 +12955,7 @@ ui-options-camera-vr-view-desktop-camera = Camera position
 
 app-vr-leave = Press { $key } to return to desktop mode
 
-ui-options-particle-intersections = Particle intersections
+ui-options-particle-intersections = Particle intersection
 ui-options-particle-intersections-help = Aurora fades particles near surfaces. Legacy clips them at the surface without fading.
-ui-options-particle-intersections-legacy = Legacy
+ui-options-particle-intersections-aurora = Faded (Aurora)
+ui-options-particle-intersections-legacy = Clipped (Legacy)
