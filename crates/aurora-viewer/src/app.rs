@@ -3147,11 +3147,13 @@ impl App {
                             self.appearance_ui.saved_new = false;
                         }
                         if sync {
-                            let crate::world::appearance::CofSync { mut commands, unknown } =
-                                crate::world::appearance::sync_plan(&self.world.inventory, self.world.agent_id, &self.outfit_sync_worn());
-                            for attachment in self.appearance_ui.attachments.drain(..) {
-                                crate::world::appearance::apply_attachment_override(&mut commands, attachment);
-                            }
+                            let crate::world::appearance::CofSync { commands, unknown } = crate::world::appearance::sync_with_attachments(
+                                &self.world.inventory,
+                                self.world.agent_id,
+                                &self.outfit_sync_worn(),
+                                &self.appearance_ui.worn_before,
+                                std::mem::take(&mut self.appearance_ui.attachments),
+                            );
                             for cmd in commands {
                                 self.send_from(cmd, actor);
                             }
