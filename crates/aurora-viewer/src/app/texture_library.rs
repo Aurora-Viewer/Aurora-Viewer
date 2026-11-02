@@ -327,7 +327,7 @@ impl App {
             if ui::inventory::drag::demo::enabled() {
                 self.panels.texture_library = false;
                 self.panels.inventory = false;
-                ui::inventory::drag::demo::setup(ctx, &mut self.world.inventory, &mut self.inventory_ui, &mut self.settings.inventory);
+                ui::inventory::drag::demo::setup(ctx, &mut self.world.inventory, &mut self.inventory_ui);
             }
             if mode.starts_with("cascade") {
                 let kind = match mode.as_str() {
