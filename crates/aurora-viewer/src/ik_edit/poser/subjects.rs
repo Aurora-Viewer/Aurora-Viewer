@@ -298,6 +298,7 @@ impl Editor {
                 QueryState::Silent => Some(("alert-triangle-filled", "poser-bridge-silent")),
                 QueryState::Failed => Some(("alert-triangle-filled", "poser-bridge-failed")),
                 QueryState::Detached => Some(("unlink", "poser-bridge-needed")),
+                QueryState::Off => Some(("unlink", "poser-bridge-disabled")),
             };
             if let Some((icon, key)) = hint {
                 menu::info(ui, p, icon, aurora_i18n::text(key));
