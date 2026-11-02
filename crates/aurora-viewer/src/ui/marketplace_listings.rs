@@ -138,6 +138,17 @@ pub struct ListingsUi {
     demo_menu: Option<Uuid>,
 }
 
+/// The inventory cargo let go over `r` this frame, its payload cleared.
+/// Not `dnd_release_payload`: egui takes the payload before checking its
+/// type, so asking for an item first threw a dragged folder away.
+fn released(r: &egui::Response) -> bool {
+    let released = r.contains_pointer() && r.ctx.input(|i| i.pointer.any_released());
+    if released {
+        egui::DragAndDrop::clear_payload(&r.ctx);
+    }
+    released
+}
+
 /// isInActiveFolder: an object inside the version folder of a listed listing.
 fn in_active_folder(data: &MarketplaceData, inv: &Inventory, root: Uuid, id: Uuid) -> bool {
     let depth = mp::depth(inv, root, id);
@@ -481,7 +492,8 @@ impl ListingsUi {
         if root_drop {
             self.drop_target(ui, p, &zone.response, inv, worn, root, root, actions);
         } else if zone.response.contains_pointer()
-            && (zone.response.dnd_release_payload::<InvDrag>().is_some() || zone.response.dnd_release_payload::<FolderDrag>().is_some())
+            && (zone.response.dnd_hover_payload::<InvDrag>().is_some() || zone.response.dnd_hover_payload::<FolderDrag>().is_some())
+            && released(&zone.response)
         {
             // TooltipOutboxCannotDropOnRoot
             self.message = aurora_i18n::tr!("marketplace-reason-cannot-drop-on-root").into();
@@ -784,8 +796,7 @@ impl ListingsUi {
         } else {
             egui::CursorIcon::NotAllowed
         });
-        let released = r.dnd_release_payload::<InvDrag>().is_some() || r.dnd_release_payload::<FolderDrag>().is_some();
-        if !released {
+        if !released(r) {
             return;
         }
         match plan {
@@ -1306,6 +1317,40 @@ mod tests {
         assert!(actions.iter().any(|a| matches!(a, Action::Edit(_))), "{actions:?}");
         let requests = ui.data.take_requests(std::time::Instant::now());
         assert!(matches!(requests[..], [aurora_net::slm::SlmRequest::Create { folder, .. }] if folder == demo::LANTERN));
+    }
+
+    #[test]
+    fn a_folder_let_go_over_a_row_is_released() {
+        let ctx = egui::Context::default();
+        let folder = demo::LANTERN;
+        let at = egui::pos2(50.0, 20.0);
+        let mut frame = |events: Vec<egui::Event>| {
+            let mut seen = None;
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(200.0, 100.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let r = ui.allocate_response(Vec2::new(200.0, 40.0), egui::Sense::hover());
+                    let cargo = r.dnd_hover_payload::<FolderDrag>().map(|d| d.0);
+                    seen = cargo.map(|id| (id, released(&r)));
+                },
+            );
+            seen
+        };
+        frame(vec![egui::Event::PointerMoved(at)]);
+        egui::DragAndDrop::set_payload(&ctx, FolderDrag(folder));
+        assert_eq!(frame(vec![egui::Event::PointerMoved(at)]), Some((folder, false)));
+        let up = egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        };
+        assert_eq!(frame(vec![up]), Some((folder, true)), "the folder reaches the drop");
+        assert!(!egui::DragAndDrop::has_any_payload(&ctx), "and the release clears it");
     }
 
     #[test]
