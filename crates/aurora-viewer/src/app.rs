@@ -10535,10 +10535,23 @@ impl App {
             if self.frame_count == crate::demo::notifs::DND_AT && mode == "dnd" {
                 self.world.set_dnd(true);
             }
+            // the demo inventory, for the purchase to link its Received
+            // Items (#1604)
+            if self.frame_count == crate::demo::notifs::PURCHASE_AT && mode.starts_with("purchase") {
+                crate::world::inventory::demo::seed(&mut self.world.inventory, agent);
+                crate::world::inventory::demo::seed_received(&mut self.world.inventory, agent);
+            }
             for event in crate::demo::notifs::events(self.frame_count, agent) {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
+            }
+            // the link clicked: the inventory on its Received tab
+            if self.frame_count == crate::demo::notifs::PURCHASE_AT + 60
+                && mode == "purchase-open"
+                && let Some(inbox) = crate::world::inventory::actions::system(&self.world.inventory, 50)
+            {
+                self.run_app_link(crate::slapp::AppLink::Inventory { id: inbox, name: None });
             }
             if self.frame_count == 850 && mode == "object-history" {
                 if let Some(id) = self.world.notifications.list.first().map(|n| n.id) {
