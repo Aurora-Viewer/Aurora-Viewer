@@ -113,6 +113,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // (LLNearbyVoiceModeration)
     "SpatialVoiceModerationRequest",
     "UpdateAvatarAppearance",
+    // our own bakes, where the region does not bake (OpenSim)
+    "UploadBakedTexture",
     // the maturity preference (LLAgent::sendMaturityPreferenceToServer)
     "UpdateAgentInformation",
     "UpdateAgentLanguage",

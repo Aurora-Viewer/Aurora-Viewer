@@ -22,6 +22,7 @@ mod im_reply;
 pub mod inventory;
 pub mod land;
 pub mod land_tool;
+pub mod local_bakes;
 pub mod login;
 pub mod lsl_syntax;
 pub mod message_split;
