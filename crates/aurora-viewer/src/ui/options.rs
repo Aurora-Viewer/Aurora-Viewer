@@ -391,6 +391,9 @@ pub struct OptionsUi {
     /// The account settings the grid keeps (Privacy), while logged in (set
     /// by the app).
     pub account: Option<privacy::Account>,
+    /// The session's "Show my favorite landmarks at login", while logged in
+    /// with an account the login screen remembers (set by the app).
+    pub login_favorites: Option<bool>,
     system_fonts: Option<Vec<SystemFont>>,
     font_filter: String,
     /// Disk cache usage (bytes) and whether a clear is running; set by the app.
@@ -609,6 +612,8 @@ pub struct OptionsResult {
     pub maturity: Option<u8>,
     /// An account setting of Privacy changed, to send to the server.
     pub account: Option<crate::world::user_info::Change>,
+    /// "Show my favorite landmarks at login" switched (Privacy).
+    pub login_favorites: Option<bool>,
     /// Open the Dev Toolbox (Network and cache › Logs and tools).
     pub open_dev_toolbox: bool,
     /// Back up the settings to a file the user chooses.
