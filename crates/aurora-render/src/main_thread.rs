@@ -412,6 +412,11 @@ impl Renderer {
         // waits on the device any more (device_lost.rs). `Destroyed` is the
         // device's own end at shutdown.
         let lost = DeviceLost::default();
+        // AURORA_GPU_START_FAIL=lost: as if the driver lost the device now
+        if std::env::var("AURORA_GPU_START_FAIL").is_ok_and(|mode| mode == "lost") {
+            log::error!("GPU device lost (Unknown): AURORA_GPU_START_FAIL");
+            lost.set();
+        }
         let on_lost = lost.clone();
         device.set_device_lost_callback(move |reason, message| match reason {
             wgpu::DeviceLostReason::Destroyed => log::info!("GPU device released: {message}"),
@@ -1693,6 +1698,14 @@ fn open_device(
     // Aurora's own pipeline cache on disk (pipeline_cache.rs)
     features |= crate::pipeline_cache::feature(afeat);
     let max_textures = texture_page_limit(&alim);
+    // Before the device opens, which is where a driver that dislikes these
+    // numbers stops: read back from the crash report (crash/summary.rs).
+    log::info!(
+        "GPU descriptors: {} in an array, {} sampled per stage, {} in all pools, {max_textures} texture pages",
+        alim.max_binding_array_elements_per_shader_stage,
+        alim.max_sampled_textures_per_shader_stage,
+        descriptors_in_all_pools(adapter).map_or_else(|| "unknown".to_string(), |n| n.to_string()),
+    );
     let descriptor = wgpu::DeviceDescriptor {
         label: Some("aurora"),
         required_features: features,
@@ -1722,6 +1735,29 @@ fn open_device(
         adapter_specific,
         max_textures,
     })
+}
+
+/// `maxUpdateAfterBindDescriptorsInAllPools`, which bounds the pools of the
+/// binding arrays: wgpu keeps it to itself. One pool holds at least 64 sets
+/// (`POOL_MIN_SETS`, wgpu-hal's vulkan/descriptor.rs), so the texture pages
+/// count 64 times there.
+#[cfg(not(target_os = "macos"))]
+fn descriptors_in_all_pools(adapter: &wgpu::Adapter) -> Option<u32> {
+    use ash::vk;
+    // SAFETY: the hal adapter is only borrowed for this call; the physical
+    // device query does not change any state, and descriptor indexing was
+    // found on this adapter, so the query exists.
+    let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
+    let instance = hal.shared_instance().raw_instance();
+    let mut indexing = vk::PhysicalDeviceDescriptorIndexingProperties::default();
+    let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut indexing);
+    unsafe { instance.get_physical_device_properties2(hal.raw_physical_device(), &mut properties) };
+    Some(indexing.max_update_after_bind_descriptors_in_all_pools)
+}
+
+#[cfg(target_os = "macos")]
+fn descriptors_in_all_pools(_adapter: &wgpu::Adapter) -> Option<u32> {
+    None
 }
 
 /// Size of the largest device-local memory heap (the GPU's own VRAM on a
