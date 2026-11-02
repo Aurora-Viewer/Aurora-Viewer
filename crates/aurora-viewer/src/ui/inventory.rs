@@ -346,6 +346,11 @@ pub struct PropertyEdit {
     pub everyone: u32,
     pub sale_type: u8,
     pub price: i32,
+    /// Text loses focus on pointer press; commit on release so a clicked
+    /// control can join the same mutation before inventory becomes busy.
+    commit_name: bool,
+    commit_desc: bool,
+    commit_price: bool,
 }
 impl From<&aurora_net::inventory::InvItem> for PropertyEdit {
     fn from(it: &aurora_net::inventory::InvItem) -> Self {
@@ -357,6 +362,9 @@ impl From<&aurora_net::inventory::InvItem> for PropertyEdit {
             everyone: it.everyone_mask,
             sale_type: it.sale_type,
             price: it.sale_price,
+            commit_name: false,
+            commit_desc: false,
+            commit_price: false,
         }
     }
 }
