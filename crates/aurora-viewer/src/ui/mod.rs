@@ -40,6 +40,7 @@ pub mod env_editor;
 pub mod environment;
 pub mod exit;
 pub mod experience_profile;
+pub mod experiences;
 pub mod find_shortcut;
 pub mod follow;
 pub mod fonts;
@@ -181,6 +182,8 @@ pub struct Panels {
     pub asset_blacklist: bool,
     /// "Money tracker" (Me menu): the L$ received and paid.
     pub money_tracker: bool,
+    /// "Experiences" (Me menu): the agent's experiences by tab.
+    pub experiences: bool,
     /// "Bumps, pushes & hits" (Help menu): who bumped, pushed or hit us.
     pub bumps: bool,
     /// "Grid status" (Help menu, toolbar): the grid's incidents.
@@ -241,6 +244,7 @@ impl Panels {
             avatar_render_settings: false,
             asset_blacklist: false,
             money_tracker: false,
+            experiences: false,
             bumps: false,
             grid_status: false,
             about: false,

@@ -61,6 +61,9 @@ pub struct AppearanceUi {
     pub pending_actor: Uuid,
     pub saved_new: bool,
     pub attachments: Vec<aurora_net::AttachRequest>,
+    /// Only objects already worn when this COF write began may be detached
+    /// by its readback; later arrivals still need registration.
+    pub worn_before: HashSet<Uuid>,
     pub favorite_pending: HashSet<Uuid>,
     profile_item: Option<Uuid>,
     pub message: String,
