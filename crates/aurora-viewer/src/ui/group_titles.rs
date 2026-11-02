@@ -505,7 +505,7 @@ impl GroupTitlesUi {
             WINDOW,
             aurora_i18n::tr!("toolbar-command-group-titles"),
             egui::pos2(300.0, 160.0),
-            Vec2::new(640.0, 460.0),
+            Vec2::new(640.0, 540.0),
         );
         floater.min_size = Vec2::new(520.0, 320.0);
         floater.show(ctx, p, open, |ui| {

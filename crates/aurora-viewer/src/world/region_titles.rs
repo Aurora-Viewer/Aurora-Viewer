@@ -287,6 +287,9 @@ pub struct RegionTitles {
     path: Option<PathBuf>,
     /// The region whose arrival was handled (mLastAppliedRegion).
     handled: Option<String>,
+    /// The region handle whose name was read: the frames after it skip
+    /// the name until the agent's region changes.
+    seen: Option<aurora_net::RegionHandle>,
     /// The titles of each of our groups, for the window.
     pub titles: HashMap<Uuid, Vec<GroupTitle>>,
     /// The request each group's titles answer.
@@ -503,8 +506,15 @@ impl super::World {
         if !self.movement_complete || !self.groups.list_received || !self.groups.active_received {
             return out;
         }
+        if self.region_titles.seen.is_some() && self.region_titles.seen == self.main_region {
+            return out;
+        }
         let region = self.region_name();
-        if region.is_empty() || !self.region_titles.arrived(&region) {
+        if region.is_empty() {
+            return out;
+        }
+        self.region_titles.seen = self.main_region;
+        if !self.region_titles.arrived(&region) {
             return out;
         }
         let groups = &self.groups;
@@ -710,11 +720,70 @@ mod tests {
         assert_eq!(t.saved.rules[0].region, "Boreal Lagoon");
         assert_eq!(t.lookup_result, Some(LookupResult::Added("Boreal Lagoon".into())));
         t.look_up("Nowhere", target(G1, R1, "Builder"), None, start);
+        t.take_commands();
         t.lookup_tick(None, start + LOOKUP_TIMEOUT);
         assert_eq!(t.lookup_result, Some(LookupResult::NotFound("Nowhere".into())));
         assert_eq!(t.saved.rules.len(), 1);
         t.look_up("Known", target(G2, R2, "Guide"), Some("KNOWN".into()), start);
         assert!(t.take_commands().is_empty() && t.saved.rule_for("known").is_some());
+    }
+
+    /// The arrival waits for the move, the region's name and our groups,
+    /// sends once per region, and nothing while RLVa holds the group.
+    #[test]
+    fn the_arrival_waits_for_the_region_and_the_groups() {
+        use aurora_net::{GroupMembership, NetEvent};
+        let mut w = super::super::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.region_titles.saved.assign("North", target(G1, R1, "Builder"));
+        let (north, south): (u64, u64) = (1 << 40, 2 << 40);
+        w.set_main_region(north);
+        let now = Instant::now();
+        assert!(w.region_title_tick(now).is_empty(), "the move is not complete");
+        w.movement_complete = true;
+        assert!(w.region_title_tick(now).is_empty(), "no name, no groups yet");
+        w.ensure_region(north, (256, 256)).name = "North".into();
+        assert!(w.region_title_tick(now).is_empty(), "our groups are not known yet");
+        let member = |id| GroupMembership {
+            id,
+            name: "Group".into(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        };
+        w.apply(NetEvent::Groups(vec![member(G1), member(G2)]));
+        w.apply(NetEvent::ActiveGroup {
+            id: G2,
+            name: "Group".into(),
+            title: "Guide".into(),
+        });
+        let sent = w.region_title_tick(now);
+        assert!(
+            matches!(
+                &sent[..],
+                [NetCommand::GroupTitleUpdate { group: G1, role: R1 }, NetCommand::ActivateGroup(G1)]
+            ),
+            "{sent:?}"
+        );
+        assert!(w.region_title_tick(now).is_empty(), "once per region");
+        // the user's own choice stays: nothing for a region without a rule
+        w.set_main_region(south);
+        w.ensure_region(south, (256, 256)).name = "South".into();
+        assert!(w.region_title_tick(now).is_empty());
+        // back in North, under @setgroup: nothing either
+        w.rlva.configure(true);
+        assert!(w.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "HUD".into(),
+            source_id: G2,
+            owner_id: Uuid::nil(),
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: "@setgroup=n".into(),
+        }));
+        w.set_main_region(north);
+        assert!(w.region_title_tick(now).is_empty(), "held by RLVa");
     }
 
     #[test]
