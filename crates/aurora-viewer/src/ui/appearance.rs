@@ -16,6 +16,8 @@ mod folders;
 mod gallery;
 pub(crate) mod items;
 mod layers;
+#[cfg(test)]
+mod perf_tests;
 mod selection;
 pub use clipboard::{PasteTo, Request as ClipboardRequest};
 
@@ -2300,7 +2302,7 @@ mod tests {
         }
     }
 
-    fn draw(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, key: Option<egui::Key>) -> Vec<Action> {
+    pub(super) fn draw(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, key: Option<egui::Key>) -> Vec<Action> {
         let mut input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
             ..Default::default()
@@ -3148,7 +3150,7 @@ mod tests {
         assert!(st.shown_outfits(&world.inventory).contains(&worn));
     }
 
-    fn wardrobe(count: usize) -> World {
+    pub(super) fn wardrobe(count: usize) -> World {
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         world.agent_id = crate::demo::DEMO_AGENT;
         model::seed_demo(&mut world.inventory, world.agent_id);

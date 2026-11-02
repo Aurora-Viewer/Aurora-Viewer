@@ -406,10 +406,14 @@ fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut 
     });
     ui.horizontal(|ui| {
         if !e.target.object.is_nil() {
-            ui.add_enabled_ui(e.can_edit && e.running.is_some() && e.saving.is_none(), |ui| {
+            // LLLiveLSLEditor::onReset (indra/newview/llpreviewscript.cpp):
+            // resetting does not require access to the source or a running reply.
+            ui.add_enabled_ui(e.can_reset && e.saving.is_none(), |ui| {
                 if flat_button(ui, p, aurora_i18n::tr!("script-reset")).clicked() {
                     actions.push(Action::Reset(e.target));
                 }
+            });
+            ui.add_enabled_ui(e.can_edit && e.running.is_some() && e.saving.is_none(), |ui| {
                 let mut running = e.running.unwrap_or(false);
                 if crate::ui::widgets::checkbox(ui, p, &mut running, aurora_i18n::tr!("script-running")).changed() {
                     actions.push(Action::Running { target: e.target, running });
@@ -975,6 +979,90 @@ fn poll_files(ctx: &egui::Context, e: &mut Editor, id: Id, settings: &ScriptSett
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn script_reset_click_does_not_require_source_permissions_or_running_info() {
+        use aurora_net::scripts::ScriptTarget;
+        use uuid::Uuid;
+
+        for (in_object, readable, editable, available, saving, expected) in [
+            (true, false, false, true, false, true),
+            (true, true, false, true, false, true),
+            (true, true, true, true, false, true),
+            (true, false, false, false, false, false),
+            (true, true, true, true, true, false),
+            (false, true, true, false, false, false),
+        ] {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let target = ScriptTarget {
+                object: if in_object { Uuid::from_u128(9) } else { Uuid::nil() },
+                item: Uuid::from_u128(10),
+            };
+            let mut editors = super::super::Editors::default();
+            editors.open(target, "Script".into(), readable, editable);
+            let e = &mut editors.documents[0];
+            e.can_reset = available;
+            if saving {
+                e.saving = Some(super::super::PendingSave {
+                    request: Uuid::from_u128(11),
+                    source: String::new(),
+                    mono: true,
+                    experience: None,
+                    running: false,
+                });
+            }
+            assert!(e.running.is_none());
+            let mut frame = |events| {
+                let mut actions = Vec::new();
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| footer(ui, &p, e, Id::unique("reset_test"), &mut actions),
+                );
+                output.textures_delta.clear();
+                (output, actions)
+            };
+            for _ in 0..3 {
+                frame(Vec::new());
+            }
+            let (output, _) = frame(Vec::new());
+            let position = output.shapes.iter().find_map(|s| match &s.shape {
+                egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-reset") => Some(t.pos + t.galley.size() * 0.5),
+                _ => None,
+            });
+            if !in_object {
+                assert!(position.is_none(), "inventory scripts have no Reset button");
+                continue;
+            }
+            let pos = position.expect("object script Reset button");
+            let mut reset = false;
+            for pressed in [true, false] {
+                let (_, actions) = frame(vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+                reset |= actions.iter().any(|action| matches!(action, Action::Reset(t) if *t == target));
+                assert!(!actions.iter().any(|action| matches!(action, Action::Save { .. })));
+            }
+            assert_eq!(
+                reset, expected,
+                "readable={readable}, editable={editable}, available={available}, saving={saving}"
+            );
+            assert!(e.source.is_empty());
+            assert!(!e.can_save());
+        }
+    }
 
     #[test]
     fn word_wrap_reflows_without_changing_source_selection_or_line_numbers() {

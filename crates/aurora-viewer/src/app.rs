@@ -88,6 +88,7 @@ mod inventory_thumbnail;
 mod joystick;
 mod land_moderation;
 mod link_health;
+mod login_favorites;
 mod marketplace_listings;
 mod money_tracker;
 mod monitor;
@@ -647,6 +648,9 @@ pub struct App {
     /// After the link with the region was lost: the grid, the user and the
     /// place "Reconnect" goes back to (ui/link_health.rs).
     reconnect_place: Option<(String, String, aurora_net::login::StartLocation)>,
+    /// The session's account whose favourites the login screen gets
+    /// (app/login_favorites.rs).
+    login_favorites: login_favorites::Session,
     /// SLURLs from outside and the command line's login (app/external_links.rs).
     external: external_links::ExternalLinks,
     /// AURORA_DEMO_LINK: a silence of the region to show, or a lost link.
@@ -1419,6 +1423,7 @@ impl App {
             region_restart: Default::default(),
             attention: Default::default(),
             reconnect_place: None,
+            login_favorites: Default::default(),
             external: external_links::ExternalLinks::start(),
             demo_link_health: link_health::LinkHealthDemo::from_env(),
             demo_lookups: Vec::new(),
@@ -2510,6 +2515,12 @@ impl App {
             }
             if let Some(l) = &self.login_form.start_slurl {
                 log::info!("demo login: start at {}", crate::external_url::place_label(l));
+            } else if let Some(favorite) = self.chosen_start_favorite() {
+                log::info!(
+                    "demo login: start at the favourite {} ({})",
+                    favorite.name,
+                    favorite.start_location().to_login_string()
+                );
             }
             if matches!(mode.as_str(), "derez" | "derez1" | "connecting") {
                 self.login_form.busy = true;
@@ -2548,16 +2559,22 @@ impl App {
         } else {
             None
         };
-        let start = reconnect.or(slurl).unwrap_or_else(|| match self.settings.start_location.as_str() {
-            "home" => StartLocation::Home,
-            "region" if !self.settings.start_region.trim().is_empty() => StartLocation::Region {
-                name: self.settings.start_region.trim().to_owned(),
-                x: 128,
-                y: 128,
-                z: 30,
-            },
-            _ => StartLocation::Last,
-        });
+        // then a favourite chosen in the account's start menu
+        // (FSPanelLogin::onLocationSLURL with a favourite's SLURL)
+        let favorite = self.chosen_start_favorite().map(|f| f.start_location());
+        let start = reconnect
+            .or(slurl)
+            .or(favorite)
+            .unwrap_or_else(|| match self.settings.start_location.as_str() {
+                "home" => StartLocation::Home,
+                "region" if !self.settings.start_region.trim().is_empty() => StartLocation::Region {
+                    name: self.settings.start_region.trim().to_owned(),
+                    x: 128,
+                    y: 128,
+                    z: 30,
+                },
+                _ => StartLocation::Last,
+            });
         let catalog_key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
         let login_agent = self
             .login_form
@@ -2682,6 +2699,10 @@ impl App {
         self.env_applying = None;
         self.env_beacons_frame();
         self.world.eep.clear_edit();
+        // the favourites as they are at the end of the session, for the
+        // login screen that comes back
+        self.keep_login_favorites(true);
+        self.login_favorites.session_ended();
         self.world.save_inventory_cache();
         self.world.save_mute_cache();
         if let Some(path) = self.name_cache_path() {
@@ -3374,8 +3395,15 @@ impl App {
                 self.login_form.adding = false;
                 self.login_form.add_return = None;
                 self.login_form.editing = false;
-                // a start SLURL serves one login
+                // a start SLURL serves one login, a chosen favourite too
                 self.login_form.start_slurl = None;
+                self.login_form.start_favorite = None;
+                if !self.demo {
+                    self.login_form
+                        .favorites
+                        .open(crate::settings::config_dir().join(crate::login_favorites::FILE));
+                }
+                self.login_favorites.session_started(&self.settings, self.demo);
                 // the demo's teleport history: several days, never saved
                 if self.demo {
                     self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(crate::demo::place::history());
@@ -5503,6 +5531,10 @@ impl App {
         if self.capture.is_none() {
             ui::layout::save(&self.egui_ctx);
         }
+        // LLFavoritesOrderStorage::destroyClass: the favourites as they are
+        // now, on the disk before the process ends
+        self.keep_login_favorites(true);
+        self.login_form.favorites.flush();
         self.world.save_inventory_cache();
         if let Some(path) = self.name_cache_path() {
             self.world.social.avatar_names.save(&path);
@@ -7568,6 +7600,8 @@ impl App {
                 ActionResult::Unavailable => self.inventory_ui.message = aurora_i18n::tr!("inventory-landmark-location-unknown").into(),
             }
         }
+        // the favourites the login screen will offer (app/login_favorites.rs)
+        self.keep_login_favorites(false);
         let mut cmds = self.world.place_details.take_commands();
         cmds.extend(self.world.place_snapshots.take_commands());
         cmds.extend(self.world.landmarks.take_commands());
@@ -12041,12 +12075,12 @@ impl App {
     /// command (FSCmdLine) or a line sent on its channel.
     fn send_local_chat(&mut self, mut c: ui::chat::OutgoingChat) {
         if c.channel == 0 {
-            // the MU* pose first, then the gesture (FSNearbyChat::sendChat)
-            if self.settings.colon_emote {
-                ui::chat::colon_emote(&mut c.message);
-            }
-            let (revised, gesture) = self.gesture_state.manager.revise(&c.message);
-            c.message = revised;
+            // the MU* pose first, then the gesture (FSNearbyChat::sendChat),
+            // and the channel read again from what the gesture says (#1916)
+            let (channel, message, gesture) =
+                ui::chat::prepare_local_line(&mut self.gesture_state.manager, &c.message, self.settings.colon_emote);
+            c.channel = channel;
+            c.message = message;
             if let Some(id) = gesture {
                 self.gesture_play(id, None);
             }
@@ -13248,6 +13282,9 @@ impl App {
                     crate::login_accounts::save(crate::login_accounts::Account::from_settings(&self.settings, false, None));
             }
             self.login_form.accounts_loaded = true;
+            self.login_form
+                .favorites
+                .load(crate::settings::config_dir().join(crate::login_favorites::FILE));
             self.login_form.places.load(&self.login_form.accounts);
             if !self.login_form.editing
                 && let Some(account) = self.login_form.accounts.iter().find(|account| account.key() == key)
@@ -13421,6 +13458,7 @@ impl App {
             show_in_search: self.world.show_in_search(),
             second_life,
         });
+        self.options_ui.login_favorites = self.login_favorites.key().map(|key| self.login_form.favorites.shown(key));
         let time_of_day = self.settings.time_of_day;
         if self.options_ui.anti_spam_version != self.world.anti_spam.version {
             self.options_ui.anti_spam_version = self.world.anti_spam.version;
@@ -13505,6 +13543,16 @@ impl App {
             && let Some(cmd) = self.world.change_user_info(change)
         {
             self.send(cmd);
+        }
+        // showFavoritesOnLoginChanged: off removes them at once, on writes
+        // them again now
+        if let Some(shown) = res.login_favorites
+            && let Some(key) = self.login_favorites.key().cloned()
+        {
+            self.login_form.favorites.set_shown(&key, shown);
+            if shown {
+                self.keep_login_favorites(true);
+            }
         }
         if let Some(maturity) = res.maturity {
             self.world.set_maturity_preference(maturity);
@@ -13652,6 +13700,7 @@ impl App {
                     &self.login_info,
                     progress,
                 );
+                self.grid_link_question(&ctx, &p);
                 self.sync_remembered_password();
                 // the cogwheel of the login screen (settings before login);
                 // the screen's cards are areas of the same order, and a click
@@ -16287,8 +16336,9 @@ impl ApplicationHandler for App {
         // the cache folder (aurora-render's pipeline_cache.rs)
         aurora_render::pipeline_cache::configure(crate::settings::cache_dir().join("pipelines"), aurora_version::version());
         // AURORA_GPU_START_FAIL=1: as if no card could draw, to see the
-        // message the user gets then (graphics_start.rs)
-        let created = if std::env::var_os("AURORA_GPU_START_FAIL").is_some() {
+        // message the user gets then (graphics_start.rs); `lost` is read by
+        // the renderer, which gets as far as a real device loss does
+        let created = if std::env::var("AURORA_GPU_START_FAIL").is_ok_and(|mode| mode != "lost") {
             Err(aurora_render::RenderError::NoAdapter("AURORA_GPU_START_FAIL".into()))
         } else {
             Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu)
@@ -16303,6 +16353,11 @@ impl ApplicationHandler for App {
                     aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-vulkan", e = format!("{}", e))
                 };
                 eprintln!("{message}");
+                // unlike a missing card this is a crash, and a report is the
+                // only way to hear of it (#1892)
+                if matches!(e, aurora_render::RenderError::DeviceLost) {
+                    crate::crash::gpu_lost_at_start();
+                }
                 // the window is still hidden: without this the viewer just
                 // vanished (#894)
                 graphics_start::report(&e.to_string(), capture);
@@ -16505,6 +16560,16 @@ impl ApplicationHandler for App {
                         })
                         .collect();
                     self.login_form.accounts_loaded = true;
+                    // AURORA_DEMO_LOGIN_FAVORITES: stored favourites for two of them
+                    if let Some(favorites) = crate::login_favorites::demo() {
+                        let uri = self.settings.login_uri();
+                        self.login_form.favorites = crate::login_favorites::demo_store(&uri);
+                        if favorites == crate::login_favorites::Demo::Pick {
+                            let key = crate::login_favorites::key(&uri, "Example 2");
+                            self.login_form.start_favorite =
+                                self.login_form.favorites.favorites(&key).get(1).map(|f| (key.clone(), f.item));
+                        }
+                    }
                     self.login_form
                         .places
                         .preview(&self.egui_ctx, &self.palette, &mut self.login_form.accounts);
@@ -17783,6 +17848,11 @@ impl ApplicationHandler for App {
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_INVENTORY") {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                if matches!(view.as_str(), "calling-card" | "aurora-calling-card") {
+                    // the viewer-made card naming the wolf, selected
+                    self.panels.inventory = true;
+                    self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8114));
+                }
                 if matches!(view.as_str(), "landmark" | "aurora-landmark") {
                     let mut landmark = self.world.inventory.items[&uuid::Uuid::from_u128(8103)].clone();
                     landmark.id = uuid::Uuid::from_u128(8120);
