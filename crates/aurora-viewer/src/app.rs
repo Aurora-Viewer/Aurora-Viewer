@@ -12967,7 +12967,14 @@ impl App {
     /// which loads nothing by itself and has no session.
     fn search_home(&self) -> Option<crate::world::search::WebHome> {
         if self.demo {
-            let url = std::env::var("AURORA_DEMO_SEARCH_WEB").ok().filter(|u| !u.trim().is_empty())?;
+            let page = std::env::var("AURORA_DEMO_SEARCH_WEB").ok().filter(|u| !u.trim().is_empty())?;
+            let url = if page == "teleport" {
+                use base64::Engine as _;
+                let html = include_str!("ui/search/fixtures/teleport.html");
+                format!("data:text/html;base64,{}", base64::engine::general_purpose::STANDARD.encode(html))
+            } else {
+                page
+            };
             return Some(crate::world::search::WebHome { url, identified: false });
         }
         if let Some(grid) = crate::grids::active(&self.settings) {

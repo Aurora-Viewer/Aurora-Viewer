@@ -634,12 +634,13 @@ enough room (`quality-tight:5000`) nothing changes from `quality`.
 the clouds still and the worn lights off (the log gives `photo light:
 PhotoChoice { … time: Some(3) … }`); the saved `time_of_day` and
 `exposure` stay the user's.
-`windlight` opens the window on its Light section with the library's
+`windlight` opens the viewfinder with its light panel (the dock's sun
+button, the only place of the photo's light) and the library's
 "Coastal Sunset" sky, "Murky Water" and the sun turned low in the east
 (azimuth 80°, elevation 12°), for the photo only: the lists show them, the
 environment window keeps the user's own. `windlight-keep` then presses
 "Keep this light" (frame 900, the log gives `photo light kept as the local
-environment`) and closes the window (960): the scene keeps that light.
+environment`) and leaves the photo mode (960): the scene keeps that light.
 `classic` shows Firestorm's floater instead of the panel for this run
 (Preferences › Aurora › Photo window, not saved): a floating window in the
 middle, Refresh and the controls on the left, the preview on the right.
@@ -4745,7 +4746,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
 | `AURORA_DEMO_SEARCH=<tab>[:text]` | "Search" on a tab (or Aurora's "all" chip), search done |
-| `AURORA_DEMO_SEARCH_WEB=<page>` | Page loaded by the Web tab of "Search" in demo |
+| `AURORA_DEMO_SEARCH_WEB=<page>` | Page loaded by the Web tab of "Search" in demo; `teleport` opens the offline link test |
 | `AURORA_DEMO_GRID_HELP=<page>` | Help › Knowledge base shown, opening this page |
 | `AURORA_DEMO_MARKETPLACE=<page>` | Marketplace window open at start on this page |
 | `AURORA_DEMO_MARKETPLACE_LISTINGS=<mode>` | Marketplace listings window open on a simulated SLM server |
@@ -7638,7 +7639,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `xyz` finds nothing ("'xyz' not found").
 - **`AURORA_DEMO_SEARCH_WEB=<page>`**: the address the Web tab loads in
   demo (a local `file:///…` page is enough to try back, forward,
-  reload and the address). Without it the Web tab of the demo loads
+  reload and the address). Set it to `teleport` for the bundled offline
+  test page; its button should open the viewer's teleport confirmation.
+  Programmatic navigation to a SLURL must not trigger an action. Without it
+  the Web tab of the demo loads
   nothing: the search page of the grid is only opened once
   connected.
 - **`AURORA_DEMO_GRID_HELP=<page>`**: Help › Knowledge base shows in demo
@@ -7875,6 +7879,14 @@ for them (`5 to look up`), as a cold inventory cache.
 
 **`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder`**
 — opens Appearance with four synthetic outfits:
+
+In My Outfits, double-click an unworn attachment or clothing item to add it
+beside the current outfit; double-click a worn one to take it off. Worn and
+the outfit editor also remove a worn item on double-click. Worn body parts
+stay; an unworn body part replaces the current one. Ctrl/Cmd/Shift-clicks
+keep selecting, and RLVa locks still apply. In Worn, a temporary attachment
+also detaches on double-click without creating an inventory item. The
+gallery's double-click continues to open the outfit's contents.
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
   choice, save to the chosen outfit and move to the Trash);

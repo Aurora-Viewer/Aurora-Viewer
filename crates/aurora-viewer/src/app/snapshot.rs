@@ -317,8 +317,8 @@ struct DemoPhoto {
     light: bool,
     /// AURORA_DEMO_SNAPSHOT=windlight[-keep]: the library's "Coastal
     /// Sunset" sky and "Murky Water" with the sun turned low in the east,
-    /// the Light section in view; `-keep` keeps that light (frame 900) and
-    /// closes the window (960).
+    /// in the viewfinder with its light panel open; `-keep` keeps that
+    /// light (frame 900) and leaves the photo mode (960).
     windlight: Option<bool>,
 }
 
@@ -2056,7 +2056,7 @@ LUT_3D_SIZE {n}
             let message = self.snapshots.message.clone();
             let last_saved = self.snapshots.last_saved.clone();
             let gallery = self.snapshots.gallery.clone();
-            // (lent to the drawer's Light section while the viewfinder draws)
+            // (lent to the light panel while the viewfinder draws)
             self.photo_env_lists(ctx);
             let env_ui = std::mem::take(&mut self.env_ui);
             let view = crate::ui::snapshot::View {
@@ -2097,7 +2097,6 @@ LUT_3D_SIZE {n}
             let profile = (self.snapshots.ui.destination == Destination::Profile).then(|| self.photo_profile_view(window));
             let email = (self.snapshots.ui.destination == Destination::Email).then(|| self.photo_email_view(window));
             let mut state = std::mem::take(&mut self.snapshots.ui);
-            self.photo_env_lists(ctx);
             let tiles = self.photo_tiles(renderer, photo).len();
             let s = &self.snapshots;
             let busy = if let Some(t) = s.detail_wait {
@@ -2348,6 +2347,8 @@ LUT_3D_SIZE {n}
     fn photo_light(&mut self) {
         if !self.panels.snapshot {
             self.snapshots.ui.light = snapshot::light::PhotoLight::default();
+            // (the user's own fades back in)
+            self.world.eep.close_photo();
         }
         let light = &mut self.snapshots.ui.light;
         // a change made elsewhere, a camera preset or "Keep this light"
@@ -2609,7 +2610,9 @@ LUT_3D_SIZE {n}
                 }
             });
             let words: Vec<&str> = kind.split('-').collect();
-            let viewfinder = (words[0] == "viewfinder").then(|| {
+            // (windlight: the photo's light lives in the viewfinder's panel)
+            let windlight = words[0] == "windlight";
+            let viewfinder = (words[0] == "viewfinder" || windlight).then(|| {
                 use crate::snapshot::viewfinder::Display;
                 let has = |w: &str| words.contains(&w);
                 DemoViewfinder {
@@ -2623,7 +2626,7 @@ LUT_3D_SIZE {n}
                     menu: has("menu"),
                     help: has("help"),
                     drawer: has("drawer"),
-                    light: has("light"),
+                    light: has("light") || windlight,
                     focus_mode: if has("mf") {
                         Some(crate::dof::PhotoFocus::Manual)
                     } else if has("afc") {
@@ -2784,10 +2787,6 @@ LUT_3D_SIZE {n}
                 }
             }
         }
-        // (once the window has its layout)
-        if demo.windlight.is_some() && self.frame_count == 660 {
-            self.snapshots.ui.reveal_light = true;
-        }
         if demo.windlight == Some(true) {
             if self.frame_count == 900 {
                 log::info!("demo photo: the photo's light kept");
@@ -2845,11 +2844,12 @@ fn env_view<'a>(
     env_ui: &'a crate::ui::environment::EnvironmentUi,
     eep: &crate::world::eep_env::EnvSelector,
 ) -> crate::ui::snapshot::EnvView<'a> {
-    let sky = eep.shown_sky().unwrap_or_default();
+    // (the sky's own sun: the photo's turned one would be its own reset)
+    let sun = eep.unturned_sun().unwrap_or(crate::world::eep::SkyFrame::default().sun_rotation);
     crate::ui::snapshot::EnvView {
         catalog: env_ui.catalog(),
         own: eep.local_view(),
-        sun: crate::ui::environment::azimuth_elevation(sky.sun_rotation),
+        sun: crate::ui::environment::azimuth_elevation(sun),
         locked: eep.rlva_locked,
         loading: eep.photo_loading(),
     }

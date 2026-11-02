@@ -40,7 +40,7 @@ jobs:
       # the whole history (the version is read from the last tag, and the
       # changed files from the base), without the files of other commits:
       # the captures branch alone weighs hundreds of MB
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           filter: blob:none
@@ -94,7 +94,7 @@ jobs:
     name: clippy (Linux)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           filter: blob:none
@@ -211,7 +211,7 @@ jobs:
           - part: rest
             filter: "--skip ui::"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           filter: blob:none
@@ -290,7 +290,7 @@ jobs:
     name: secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       # The gitleaks CLI, not gitleaks-action: the action needs a paid
