@@ -21,6 +21,13 @@ pub(super) struct Editor {
     pub close_ready: bool,
     deferred_maps: Vec<(usize, Uuid)>,
     map_names: [(Option<Uuid>, u64, String); 4],
+    pub(super) variants: super::material_variants::Panel,
+    /// A variant chosen in the selector, for the window to open in place.
+    pub switch_to: Option<Uuid>,
+    /// The variant under the pointer in the selector's list, `(item,
+    /// asset)`: the preview shows it instead of the draft meanwhile.
+    pub preview_variant: Option<(Uuid, Uuid)>,
+    family: Option<(Uuid, u64, Arc<super::material_variants::Family>)>,
 }
 impl Editor {
     pub fn new(asset: Uuid, material: Arc<PbrMaterial>) -> Self {
@@ -40,6 +47,22 @@ impl Editor {
             close_ready: false,
             deferred_maps: Vec::new(),
             map_names: std::array::from_fn(|_| (None, u64::MAX, String::new())),
+            variants: Default::default(),
+            switch_to: None,
+            preview_variant: None,
+            family: None,
+        }
+    }
+    /// The item's variant family, kept until the inventory changes.
+    pub fn family(&mut self, world: &World, item: &aurora_net::inventory::InvItem) -> Arc<super::material_variants::Family> {
+        let generation = world.inventory.generation;
+        match &self.family {
+            Some((id, at, family)) if *id == item.id && *at == generation => family.clone(),
+            _ => {
+                let family = Arc::new(super::material_variants::family(&world.inventory, item));
+                self.family = Some((item.id, generation, family.clone()));
+                family
+            }
         }
     }
     pub fn dirty(&self) -> bool {
@@ -83,6 +106,10 @@ impl Editor {
         model: Option<Arc<aurora_render::preview::Model>>,
         view: &mut aurora_render::preview::View,
         path: &str,
+        family: &super::material_variants::Family,
+        swatches: &HashMap<Uuid, super::material_variants::Swatch>,
+        balls: &HashMap<Uuid, Arc<aurora_render::preview::Model>>,
+        creation: Option<&super::material_variants::Creation>,
         actions: &mut Vec<Action>,
     ) {
         // Allocate the chosen window size once. Scroll contents and wrapped
@@ -132,35 +159,58 @@ impl Editor {
                         view.reset_camera();
                     }
                 });
-                let side = ui.available_width().min((body.height() * 0.33).clamp(96.0, 240.0));
-                ui.horizontal(|ui| {
-                    ui.add_space(((ui.available_width() - side) * 0.5).max(0.0));
-                    view.background = previews::view(p).background;
-                    let response = if let Some(model) = model {
-                        aurora_render::preview::paint(ui, ui.scope_id().with(item.id), model, view, Vec2::splat(side))
-                    } else {
-                        widgets::picture(ui, p, None, Vec2::splat(side), "cube-3d-sphere", "")
-                    }
-                    .on_hover_text(aurora_i18n::tr!("import-preview-gestures"));
-                    ui.ctx()
-                        .data_mut(|data| data.insert_temp(egui::Id::unique(("resource_material_scene", item.id)), response.rect));
-                });
-                ui.horizontal_wrapped(|ui| {
-                    let label = aurora_i18n::tr!("texture-library-material-drag");
-                    let width = widgets::action_button_fit(ui, "grip-vertical", label).min(ui.available_width());
-                    let path_width = (ui.available_width() - width - ui.spacing().item_spacing.x).max(0.0);
-                    ui.add_sized(
-                        [path_width, 24.0],
-                        egui::Label::new(RichText::new(path).small().color(p.muted)).truncate(),
-                    )
-                    .on_hover_text(path);
-                    let drag = widgets::action_button(ui, p, "grip-vertical", label, ActionKind::Flat, Vec2::new(width, 24.0))
-                        .interact(egui::Sense::click_and_drag())
-                        .on_hover_cursor(egui::CursorIcon::Grab)
-                        .on_hover_text(aurora_i18n::tr!("texture-library-material-drag-hint"));
-                    drag.dnd_set_drag_payload(InvDrag(item.id));
-                    ui.ctx()
-                        .data_mut(|data| data.insert_temp(egui::Id::unique(("resource_material_handle", item.id)), drag.rect));
+                // The mockup-style card of #1372: the variants of this
+                // material above its preview.
+                let locked = self.dirty() || self.saving.is_some();
+                widgets::surface(ui, p, |ui| {
+                    let picked = super::material_variants::card(
+                        &mut self.variants,
+                        ui,
+                        p,
+                        super::material_variants::Card {
+                            item,
+                            world,
+                            images,
+                            family,
+                            swatches,
+                            balls,
+                            creation,
+                            locked,
+                        },
+                        actions,
+                    );
+                    self.switch_to = picked.switch;
+                    self.preview_variant = picked.preview;
+                    let side = ui.available_width().min((body.height() * 0.33).clamp(96.0, 240.0));
+                    ui.horizontal(|ui| {
+                        ui.add_space(((ui.available_width() - side) * 0.5).max(0.0));
+                        view.background = previews::view(p).background;
+                        let response = if let Some(model) = model {
+                            aurora_render::preview::paint(ui, ui.scope_id().with(item.id), model, view, Vec2::splat(side))
+                        } else {
+                            widgets::picture(ui, p, None, Vec2::splat(side), "cube-3d-sphere", "")
+                        }
+                        .on_hover_text(aurora_i18n::tr!("import-preview-gestures"));
+                        ui.ctx()
+                            .data_mut(|data| data.insert_temp(egui::Id::unique(("resource_material_scene", item.id)), response.rect));
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        let label = aurora_i18n::tr!("texture-library-material-drag");
+                        let width = widgets::action_button_fit(ui, "grip-vertical", label).min(ui.available_width());
+                        let path_width = (ui.available_width() - width - ui.spacing().item_spacing.x).max(0.0);
+                        ui.add_sized(
+                            [path_width, 24.0],
+                            egui::Label::new(RichText::new(path).small().color(p.muted)).truncate(),
+                        )
+                        .on_hover_text(path);
+                        let drag = widgets::action_button(ui, p, "grip-vertical", label, ActionKind::Flat, Vec2::new(width, 24.0))
+                            .interact(egui::Sense::click_and_drag())
+                            .on_hover_cursor(egui::CursorIcon::Grab)
+                            .on_hover_text(aurora_i18n::tr!("texture-library-material-drag-hint"));
+                        drag.dnd_set_drag_payload(InvDrag(item.id));
+                        ui.ctx()
+                            .data_mut(|data| data.insert_temp(egui::Id::unique(("resource_material_handle", item.id)), drag.rect));
+                    });
                 });
                 ui.add_enabled_ui(editable && self.saving.is_none(), |ui| {
                     for slot in [0, 2, 3, 1] {
@@ -191,6 +241,15 @@ impl Editor {
         if value != *self.draft {
             self.draft = Arc::new(value);
             self.message.clear();
+        }
+        // After the maps, so a value typed just before Duplicate is included.
+        if let Some(name) = self.variants.duplicate.take() {
+            actions.push(Action::SaveMaterialVariant {
+                item: item.id,
+                root: family.root,
+                name,
+                material: self.dirty().then(|| (*self.draft).clone()),
+            });
         }
         // The bottom-anchored footer is laid out first. Include numeric edits
         // committed on focus loss by this frame's click on Save / Save As.

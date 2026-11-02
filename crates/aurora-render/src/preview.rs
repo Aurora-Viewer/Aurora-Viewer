@@ -161,6 +161,13 @@ pub fn paint_swatch(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: Vi
 
 fn paint_tile(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: View, size: egui::Vec2, sense: egui::Sense) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(size, sense);
+    paint_in(ui, rect, id, model, view);
+    response
+}
+
+/// A still tile drawn into `rect` without a widget of its own, for a row
+/// that already handles the pointer (the material variant list).
+pub fn paint_in(ui: &egui::Ui, rect: egui::Rect, id: egui::Id, model: Arc<Model>, view: View) {
     if ui.is_rect_visible(rect) {
         ui.painter().add(egui::Shape::Callback(egui::PaintCallback {
             rect,
@@ -172,7 +179,6 @@ fn paint_tile(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: View, si
             }),
         }));
     }
-    response
 }
 pub fn paint_with_pose(
     ui: &mut egui::Ui,

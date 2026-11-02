@@ -121,6 +121,36 @@ impl App {
             }
             return;
         }
+        if mode == "preview-controls-variants" {
+            // Material variants (#1372): New at frame 740 opens "Variant",
+            // Duplicate at 780 saves the red draft of 770 as "Variant Copy", then the
+            // selector opens, the pointer rests on "Variant" and picks the original.
+            let [_, _, material, _] = crate::demo::texture_library::preview_items();
+            let rect = |key: &str| {
+                self.egui_ctx
+                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique((key.to_owned(), material))))
+            };
+            let row = |index: usize| {
+                self.egui_ctx
+                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("resource_material_variant_row", index))))
+            };
+            let click =
+                |raw: &mut egui::RawInput, point, pressed| raw.events.extend([egui::Event::PointerMoved(point), button(point, pressed)]);
+            let target = match self.frame_count {
+                740 | 741 => rect("resource_material_variants_add"),
+                780 | 781 => rect("resource_material_variants_duplicate"),
+                820 | 821 => rect("resource_material_variants_select"),
+                825 => row(1),
+                860 | 861 => row(0),
+                _ => None,
+            };
+            match (self.frame_count, target) {
+                (825, Some(row)) => raw.events.push(egui::Event::PointerMoved(row.center())),
+                (frame, Some(rect)) => click(raw, rect.center(), frame % 2 == 0),
+                _ => {}
+            }
+            return;
+        }
         if mode == "preview-controls-drop" {
             // The texture inspector's image dragged onto the material's empty metallic-roughness map (#1279).
             let [texture, _, material, _] = crate::demo::texture_library::preview_items();
@@ -425,6 +455,12 @@ impl App {
                 self.texture_library.demo_preview_controls(&mode);
             }
         }
+        if self.demo
+            && matches!(self.frame_count, 730 | 770)
+            && std::env::var("AURORA_DEMO_TEXTURE_LIBRARY").is_ok_and(|mode| mode == "preview-controls-variants")
+        {
+            self.texture_library.demo_material_variants(self.frame_count == 770);
+        }
         let preferences = self.settings.texture_library.clone();
         let actions = self.texture_library.show(
             ctx,
@@ -464,6 +500,12 @@ impl App {
                     ui::widgets::open_floater(ctx, "inventory", &mut self.panels.inventory);
                 }
                 library::Action::SaveMaterial { item, material, name } => self.resource_material_save(item, material, name),
+                library::Action::SaveMaterialVariant {
+                    item,
+                    root,
+                    name,
+                    material,
+                } => self.resource_material_variant(item, root, name, material),
                 library::Action::RefreshTexture(asset) => {
                     self.ui_images.remove(&asset);
                     self.scene.textures.refresh(&asset);
@@ -547,11 +589,7 @@ impl App {
                 copy: aurora_net::inventory::operations::CopyItem {
                     item: id,
                     owner: item.owner,
-                    parent: if rules::library(&self.world.inventory, id) || rules::in_type(&self.world.inventory, id, 53) {
-                        rules::system(&self.world.inventory, 57).unwrap_or(self.world.inventory.root)
-                    } else {
-                        item.parent
-                    },
+                    parent: self.material_copy_parent(&item),
                     name,
                 },
             });
@@ -566,6 +604,118 @@ impl App {
                 Err(reason) => self.resource_material_saved(request, Err(reason.to_string())),
             }
         }
+    }
+    /// LLMaterialEditor::onSaveAsMsgCallback: a copy goes next to its
+    /// original, except from the Library or Marketplace listings, which send
+    /// it to the Materials folder.
+    fn material_copy_parent(&self, item: &aurora_net::inventory::InvItem) -> Uuid {
+        let inv = &self.world.inventory;
+        if rules::library(inv, item.id) || rules::in_type(inv, item.id, 53) {
+            rules::system(inv, 57).unwrap_or(inv.root)
+        } else {
+            item.parent
+        }
+    }
+    /// A new material variant (#1372): the Save As rules above; its asset is
+    /// saved after the copy only when it differs from the copied item's, then
+    /// its description is tagged with `root`, the original.
+    fn resource_material_variant(&mut self, id: Uuid, root: Uuid, name: String, material: Option<aurora_assets::PbrMaterial>) {
+        let Some(item) = self.world.inventory.items.get(&id).cloned() else {
+            return;
+        };
+        if item.asset_type != 57 || item.owner_mask & rules::COPY == 0 {
+            return;
+        }
+        let name = match rules::clean_name(&name) {
+            Ok(name) => name,
+            Err(reason) => {
+                self.texture_library.material_message(id, reason);
+                return;
+            }
+        };
+        let parent = self.material_copy_parent(&item);
+        if let Some(request) = self.texture_library.begin_material_variant(id, root, name.clone(), material) {
+            self.send(NetCommand::CopyInventoryItem {
+                request,
+                copy: aurora_net::inventory::operations::CopyItem {
+                    item: id,
+                    owner: item.owner,
+                    parent,
+                    name,
+                },
+            });
+        }
+    }
+    pub(super) fn material_variant_copied(&mut self, request: Uuid, result: Result<aurora_net::inventory::InvItem, String>) {
+        let item = match result {
+            Ok(item) => item,
+            Err(reason) => {
+                self.texture_library.material_variant_answered(request, Err(reason));
+                return;
+            }
+        };
+        self.world.inventory.add_items(vec![item.clone()]);
+        self.texture_library.material_variant_copied(request, item.id);
+        let encoded = self
+            .texture_library
+            .material_variant(request)
+            .map(|material| material.map(|m| m.encode_asset().map_err(|e| e.to_string())));
+        match encoded {
+            Some(Some(Ok(data))) => self.send(NetCommand::SaveInventoryContent {
+                request,
+                item: item.id,
+                asset_type: 57,
+                data,
+            }),
+            Some(Some(Err(reason))) => {
+                self.texture_library.material_variant_answered(request, Err(reason));
+            }
+            Some(None) => self.material_variant_tag(request),
+            None => {}
+        }
+    }
+    pub(super) fn material_variant_saved(&mut self, request: Uuid, result: Result<aurora_net::inventory::InvItem, String>) {
+        match result {
+            Ok(item) => {
+                if let Some(material) = self.texture_library.material_variant(request).flatten().cloned() {
+                    log::info!("material variant saved: {} ({})", item.name, item.asset_id);
+                    self.scene.materials.insert(item.asset_id, material);
+                }
+                self.world.inventory.add_items(vec![item]);
+                self.material_variant_tag(request);
+            }
+            Err(reason) => {
+                self.texture_library.material_variant_answered(request, Err(reason));
+            }
+        }
+    }
+    /// The last step: the copy's description names its original.
+    fn material_variant_tag(&mut self, request: Uuid) {
+        match self.texture_library.material_variant_tag(&self.world.inventory, request) {
+            Some((_, Some(change))) => self.send(NetCommand::EditInventory { request, change }),
+            Some((copy, None)) => self.material_variant_created(request, copy),
+            None => {}
+        }
+    }
+    pub(super) fn material_variant_tagged(&mut self, request: Uuid, result: Result<aurora_net::inventory::operations::Reply, String>) {
+        match result {
+            Ok(reply) => {
+                self.world.inventory.remove(&reply.removed);
+                self.world.inventory.apply(reply.contents);
+                if let Some((copy, _)) = self.texture_library.material_variant_tag(&self.world.inventory, request) {
+                    self.material_variant_created(request, copy);
+                }
+            }
+            Err(reason) => {
+                self.texture_library.material_variant_answered(request, Err(reason));
+            }
+        }
+    }
+    fn material_variant_created(&mut self, request: Uuid, copy: Uuid) {
+        if let Some(item) = self.world.inventory.items.get(&copy) {
+            log::info!("material variant created: {} ({})", item.name, item.desc);
+        }
+        self.texture_library.material_variant_answered(request, Ok(copy));
     }
     pub(super) fn resource_material_copied(&mut self, request: Uuid, result: Result<aurora_net::inventory::InvItem, String>) {
         match result {

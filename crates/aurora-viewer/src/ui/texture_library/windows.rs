@@ -6,6 +6,11 @@ use super::*;
 
 pub(super) struct PreviewWindow {
     pub id: Uuid,
+    /// The item it first opened: its floater keeps that identity, and so its
+    /// place, when Save As or the variant selector moves it to another item.
+    key: Uuid,
+    /// Shape and Variants state carried to the editor of the next variant.
+    carry: Option<(crate::imports::preview::MaterialShape, material_variants::Panel)>,
     pub view: aurora_render::preview::View,
     first_show: bool,
     pub(super) editor: Option<material_editor::Editor>,
@@ -142,8 +147,8 @@ impl LibraryUi {
         if let Some(editor) = &mut window.editor {
             editor.confirm_close = true;
         }
-        widgets::open_floater(ctx, &window_id(window.id), &mut true);
-        self.focus_preview = Some(window.id);
+        widgets::open_floater(ctx, &window_id(window.key), &mut true);
+        self.focus_preview = Some(window.key);
         false
     }
     pub(crate) fn material_message(&mut self, item: Uuid, message: String) {
@@ -166,6 +171,19 @@ impl LibraryUi {
                 draft.metallic_factor = 0.35;
                 draft.roughness_factor = 0.6;
                 draft.double_sided = true;
+            }
+        }
+    }
+    /// `preview-controls-variants`: a saved draft, so New and the selector
+    /// work at once; at frame 770 a red tint, which Duplicate then keeps.
+    pub(crate) fn demo_material_variants(&mut self, red: bool) {
+        for window in &mut self.windows {
+            if let Some(editor) = &mut window.editor {
+                if red {
+                    std::sync::Arc::make_mut(&mut editor.draft).base_color_factor = [0.8, 0.05, 0.05, 1.0];
+                } else {
+                    editor.draft = editor.original.clone();
+                }
             }
         }
     }
@@ -230,6 +248,49 @@ impl LibraryUi {
         editor.finish_save(result);
         material
     }
+    /// Starts a variant unless one is still being created; returns the
+    /// request of its copy.
+    pub(crate) fn begin_material_variant(
+        &mut self,
+        source: Uuid,
+        root: Uuid,
+        name: String,
+        material: Option<aurora_assets::PbrMaterial>,
+    ) -> Option<Uuid> {
+        if self
+            .variant_creation
+            .as_ref()
+            .is_some_and(|c| c.outcome == material_variants::Outcome::Pending)
+        {
+            return None;
+        }
+        let creation = material_variants::Creation::new(source, root, name, material);
+        let request = creation.request;
+        self.variant_creation = Some(creation);
+        Some(request)
+    }
+    pub(crate) fn material_variant_pending(&self, request: Uuid) -> bool {
+        self.variant_creation.as_ref().is_some_and(|c| c.pending(request))
+    }
+    /// What to save into the copy just made: `Some(None)` when nothing.
+    pub(crate) fn material_variant(&self, request: Uuid) -> Option<Option<&aurora_assets::PbrMaterial>> {
+        self.variant_creation.as_ref()?.material(request)
+    }
+    pub(crate) fn material_variant_copied(&mut self, request: Uuid, copy: Uuid) {
+        if let Some(creation) = &mut self.variant_creation {
+            creation.copied(request, copy);
+        }
+    }
+    /// The copy made and the patch that tags it, none when it has its tag.
+    pub(crate) fn material_variant_tag(&self, inv: &Inventory, request: Uuid) -> Option<(Uuid, Option<Mutation>)> {
+        let creation = self.variant_creation.as_ref()?;
+        let copy = creation.copy(request)?;
+        Some((copy, material_variants::tag_change(inv, copy, creation.root)))
+    }
+    /// Ends the variant; returns its material when one was saved.
+    pub(crate) fn material_variant_answered(&mut self, request: Uuid, result: Result<Uuid, String>) -> Option<aurora_assets::PbrMaterial> {
+        self.variant_creation.as_mut()?.answer(request, result)
+    }
     pub(crate) fn export_texture(&mut self, item: Uuid, png: bool) {
         if let Some(window) = self.windows.iter_mut().find(|w| w.id == item) {
             window.texture.export = Some(png);
@@ -260,10 +321,14 @@ impl LibraryUi {
         let Some(item) = catalogue::resource(&world.inventory, id) else {
             return;
         };
-        let mut existing = self.windows.iter().any(|window| window.id == item.id);
+        let key = self.windows.iter().find(|window| window.id == item.id).map(|window| window.key);
+        let mut existing = key.is_some();
+        let key = key.unwrap_or(item.id);
         if !existing {
             self.windows.push(PreviewWindow {
                 id: item.id,
+                key,
+                carry: None,
                 view: Default::default(),
                 first_show: true,
                 editor: None,
@@ -271,8 +336,8 @@ impl LibraryUi {
                 description: None,
             });
         }
-        widgets::open_floater(ctx, &window_id(item.id), &mut existing);
-        self.focus_preview = Some(item.id);
+        widgets::open_floater(ctx, &window_id(key), &mut existing);
+        self.focus_preview = Some(key);
     }
 
     pub(super) fn show_previews(
@@ -316,7 +381,7 @@ impl LibraryUi {
         let material = item.asset_type == 57;
         let asset = catalogue::asset(&item);
         let path = super::super::inventory::inventory_path(&world.inventory, item.parent);
-        let id = window_id(item.id);
+        let id = window_id(window.key);
         // Human-requested defaults by resource type. Only new windows inherit
         // the last manual size; visible windows retain their own geometry.
         if window.first_show {
@@ -349,7 +414,12 @@ impl LibraryUi {
                         scene.materials.get(&asset)
                     }
                 {
-                    window.editor = Some(material_editor::Editor::new(asset, value));
+                    let mut editor = material_editor::Editor::new(asset, value);
+                    if let Some((shape, variants)) = window.carry.take() {
+                        editor.shape = shape;
+                        editor.variants = variants;
+                    }
+                    window.editor = Some(editor);
                 }
             } else {
                 self.wanted_images.insert(asset);
@@ -451,17 +521,83 @@ impl LibraryUi {
             }
             if material {
                 if let Some(editor) = &mut window.editor {
-                    let model =
-                        self.previews
-                            .material_model(item.id, editor.draft.clone(), editor.shape, scene, &mut self.wanted_images, ctx);
+                    // A variant pointed at in the selector's list shows as
+                    // saved, under its own model so the draft's stays ready.
+                    let hovered = editor
+                        .preview_variant
+                        .filter(|(id, _)| *id != item.id)
+                        .and_then(|(id, asset)| Some((id, scene.materials.get(&asset)?)));
+                    let (key, material) = hovered.unwrap_or((item.id, editor.draft.clone()));
+                    let model = self
+                        .previews
+                        .material_model(key, material, editor.shape, scene, &mut self.wanted_images, ctx);
                     let thumbnails = self.previews.thumbnails(item.id);
-                    editor.show(ui, p, &item, world, images, &thumbnails, model, &mut window.view, &path, actions);
+                    let family = editor.family(world, &item);
+                    // The open variant shows its draft; the others as saved,
+                    // which also asks for the ones not loaded yet.
+                    let swatches: HashMap<Uuid, material_variants::Swatch> = family
+                        .members
+                        .iter()
+                        .filter_map(|m| {
+                            let swatch = if m.id == item.id {
+                                material_variants::Swatch::of(&editor.draft)
+                            } else {
+                                material_variants::Swatch::of(&*scene.materials.get(&m.asset)?)
+                            };
+                            Some((m.id, swatch))
+                        })
+                        .collect();
+                    self.wanted_images.extend(swatches.values().filter_map(|s| s.texture));
+                    // Each variant's saved look as a small ball, from the
+                    // same cache as the library's cards.
+                    let balls: HashMap<Uuid, std::sync::Arc<aurora_render::preview::Model>> = family
+                        .members
+                        .iter()
+                        .filter_map(|m| Some((m.id, self.previews.model(m.asset, scene, &mut self.wanted_images, ctx)?)))
+                        .collect();
+                    let creation = self.variant_creation.as_ref();
+                    editor.show(
+                        ui,
+                        p,
+                        &item,
+                        world,
+                        images,
+                        &thumbnails,
+                        model,
+                        &mut window.view,
+                        &path,
+                        &family,
+                        &swatches,
+                        &balls,
+                        creation,
+                        actions,
+                    );
                 } else {
                     ui.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-image"));
                 }
             }
         });
         open &= !close_clicked;
+        // A variant created from this family opens here, like Save As moves
+        // its window to the copy.
+        if let Some(editor) = &mut window.editor
+            && editor.switch_to.is_none()
+            && let Some(creation) = &self.variant_creation
+            && let material_variants::Outcome::Created(id) = creation.outcome
+            && editor.family(world, &item).contains(creation.source)
+        {
+            editor.switch_to = Some(id);
+            self.variant_creation = None;
+        }
+        if let Some(target) = window.editor.as_mut().and_then(|editor| editor.switch_to.take()) {
+            // The selector only offers a switch without unsaved edits; the
+            // next variant's editor starts once its material is loaded.
+            if let Some(editor) = window.editor.take() {
+                window.carry = Some((editor.shape, editor.variants));
+            }
+            window.id = target;
+            return true;
+        }
         if let Some(editor) = &mut window.editor {
             if editor.close_ready {
                 return false;

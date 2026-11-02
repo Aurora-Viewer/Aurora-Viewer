@@ -2937,6 +2937,10 @@ impl App {
                 self.resource_material_saved(request, result);
                 return;
             }
+            if self.texture_library.material_variant_pending(request) {
+                self.material_variant_saved(request, result);
+                return;
+            }
             if self.env_editor.saving == Some(request) {
                 self.env_editor_saved(result);
                 return;
@@ -2971,6 +2975,10 @@ impl App {
                 self.resource_material_copied(request, result);
                 return;
             }
+            if self.texture_library.material_variant_pending(request) {
+                self.material_variant_copied(request, result);
+                return;
+            }
             self.wear_copied(request, result);
             return;
         }
@@ -2987,6 +2995,10 @@ impl App {
             return;
         }
         if let NetEvent::InventoryEdited { request, result } = ev {
+            if self.texture_library.material_variant_pending(request) {
+                self.material_variant_tagged(request, result);
+                return;
+            }
             if self.world.attachment_inventory.owns(request) {
                 self.world.attachment_inventory_result(request, result);
                 if self.appearance_ui.pending.is_some_and(|(id, _)| id == request) {

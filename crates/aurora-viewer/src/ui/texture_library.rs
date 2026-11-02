@@ -3,6 +3,7 @@
 
 pub(crate) mod catalogue;
 mod material_editor;
+mod material_variants;
 pub(crate) mod previews;
 pub(crate) mod texture_view;
 mod windows;
@@ -122,6 +123,14 @@ pub enum Action {
         material: aurora_assets::PbrMaterial,
         name: Option<String>,
     },
+    /// A new material variant: a copy of `item`, saved with `material`
+    /// when given, tagged as a variant of `root` (#1372).
+    SaveMaterialVariant {
+        item: Uuid,
+        root: Uuid,
+        name: String,
+        material: Option<aurora_assets::PbrMaterial>,
+    },
     RefreshTexture(Uuid),
     ExportTexture {
         item: Uuid,
@@ -159,6 +168,7 @@ pub struct LibraryUi {
     pub message: String,
     pub wanted_images: HashSet<Uuid>,
     map_uploads: HashMap<Uuid, (Uuid, usize)>,
+    variant_creation: Option<material_variants::Creation>,
 }
 impl LibraryUi {
     pub fn demo(&mut self, mode: &str, agent: Uuid) {
