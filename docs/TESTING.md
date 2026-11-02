@@ -7128,7 +7128,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   into a menu, contact sets wrap when needed, and every quick action stays
   visible. The list controls must stay inside their pane. Returning
   from the large layout to a reduced one restores the list and its selection.
-- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|restore|long:<n>[:scroll]`**:
+- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|restore[:slow]|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in
   `config\demo\accounts\<demo account uuid>\chat_logs\demo\`, never in
@@ -7141,6 +7141,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     a live message. The second group is selected; its usual demo history
     appears after the join acknowledgement. No resident placeholder or
     new-message sound is expected for either restored group.
+    `restore:slow` holds the mute reply until frame 1100. Capture at frames
+    760 and 1300: both quiet group names must already appear in the first
+    image, before any join/history request; their ordinary group history
+    and participants arrive only after the reply. Closing or snoozing a
+    displayed group before frame 1100 must prevent its automatic rejoin.
   - `im`: a conversation with Nova whose file contains two past
     days. What to see: these lines in grey, with their senders' profile
     pictures dimmed (this scenario gives Nova and us one), with a date

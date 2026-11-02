@@ -129,6 +129,10 @@ impl super::World {
     /// Called each frame: group membership and mutes may arrive after login.
     pub fn restore_open_ims(&mut self, enabled: bool) {
         if !enabled {
+            let previews: Vec<Uuid> = self.groups.restoring.iter().copied().collect();
+            for preview in previews {
+                self.discard_restoring_group(preview);
+            }
             self.reopen_ims.clear();
             return;
         }
@@ -138,19 +142,23 @@ impl super::World {
             let group = match saved {
                 Conversation::Resident(_) => false,
                 Conversation::Group(_) => {
-                    if !self.groups.is_member(&id) || !self.mutes.is_loaded() {
+                    if !self.groups.is_member(&id) {
                         return true;
                     }
                     true
                 }
                 Conversation::Legacy(_) => {
-                    if !self.groups.list_received || !self.mutes.is_loaded() {
+                    if !self.groups.list_received {
                         return true;
                     }
                     self.groups.is_member(&id)
                 }
             };
             if group {
+                if !self.mutes.is_loaded() {
+                    self.prepare_saved_group_chat(id);
+                    return true;
+                }
                 self.restore_saved_group_chat(id);
             } else {
                 self.social.session_mut(id);
@@ -238,7 +246,7 @@ mod tests {
     }
 
     #[test]
-    fn open_ims_groups_wait_for_membership_and_mutes_then_join_without_a_message() {
+    fn open_ims_groups_appear_before_the_mute_reply_and_only_then_join() {
         let mut w = world();
         let (resident, group, old_group) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
         w.social.focus_im = Some(resident);
@@ -252,7 +260,13 @@ mod tests {
         assert_eq!(w.social.avatar_names.take_asks(), [resident]);
         w.on_group_event(NetEvent::Groups(vec![membership(group), membership(old_group)]));
         w.restore_open_ims(true);
-        assert!(!w.is_group_session(&group), "the block list has not arrived");
+        for id in [group, old_group] {
+            assert!(w.is_group_session(&id), "show groups without waiting for the block list");
+            assert_eq!(w.session_title(&id), membership(id).name);
+            assert!(w.groups.restoring.contains(&id));
+            assert!(!w.groups.sessions[&id].started_by_us);
+        }
+        assert!(w.groups.take_commands().is_empty(), "displaying a group never joins it early");
         w.mutes.on_server(aurora_net::MuteListSource::UseCache, None);
         w.restore_open_ims(true);
         assert!(w.reopen_ims.is_empty());
@@ -264,6 +278,7 @@ mod tests {
             assert_eq!(w.session_title(&id), membership(id).name);
             assert!(w.social.ims.iter().find(|s| s.other == id).unwrap().lines.is_empty());
             assert!(w.groups.sessions[&id].started_by_us);
+            assert!(!w.groups.restoring.contains(&id));
         }
         let commands = w.groups.take_commands();
         assert_eq!(commands.len(), 2);
@@ -374,7 +389,15 @@ mod tests {
             w.on_group_event(NetEvent::Groups(vec![membership(id)]));
             w.reopen_ims = vec![Conversation::Group(id)];
             w.restore_open_ims(true);
-            w.start_group_chat(id);
+            w.on_group_event(NetEvent::SessionInvite(aurora_net::SessionInvite {
+                session: id,
+                from: Uuid::from_u128(7),
+                from_name: "Sender".into(),
+                message: "Deferred".into(),
+                session_name: membership(id).name,
+                offline: false,
+                timestamp: 0,
+            }));
             if snooze {
                 assert!(w.snooze_group_chat(id, 60));
             } else {
@@ -382,10 +405,150 @@ mod tests {
             }
             assert!(w.reopen_ims.is_empty());
             w.groups.take_commands();
-            w.mutes.on_server(aurora_net::MuteListSource::UseCache, None);
+            w.on_mute_list(aurora_net::MuteListSource::UseCache);
             w.restore_open_ims(true);
             assert!(!w.social.has_session(&id));
             assert!(w.groups.take_commands().is_empty());
         }
+        let mut w = world();
+        w.on_group_event(NetEvent::Groups(vec![membership(id)]));
+        w.reopen_ims = vec![Conversation::Group(id)];
+        w.restore_open_ims(true);
+        assert!(w.social.has_session(&id));
+        w.restore_open_ims(false);
+        w.on_mute_list(aurora_net::MuteListSource::UseCache);
+        assert!(!w.social.has_session(&id));
+        assert!(w.groups.restoring.is_empty());
+        assert!(w.reopen_ims.is_empty());
+        assert!(w.groups.take_commands().is_empty());
+    }
+
+    #[test]
+    fn open_ims_pending_groups_drop_live_traffic_and_disappear_if_the_mute_reply_blocks_them() {
+        let mut w = world();
+        let group = Uuid::from_u128(42);
+        let sender = Uuid::from_u128(7);
+        w.on_group_event(NetEvent::Groups(vec![membership(group)]));
+        w.reopen_ims = vec![Conversation::Group(group)];
+        w.restore_open_ims(true);
+        assert_eq!(w.session_title(&group), membership(group).name);
+        w.on_group_event(NetEvent::SessionInvite(aurora_net::SessionInvite {
+            session: group,
+            from: sender,
+            from_name: "Sender".into(),
+            message: "Not accepted yet".into(),
+            session_name: membership(group).name,
+            offline: false,
+            timestamp: 0,
+        }));
+        let message = aurora_net::InstantMessage {
+            from_agent_id: sender,
+            from_name: "Sender".into(),
+            to_agent_id: w.agent_id,
+            dialog: dialog::SESSION_SEND,
+            session_id: group,
+            message: "Not displayed yet".into(),
+            offline: false,
+            from_group: true,
+            binary_bucket: Vec::new(),
+            timestamp: 0,
+        };
+        assert!(w.on_session_im(&message));
+        assert!(w.social.ims[0].lines.is_empty());
+        assert!(
+            w.groups.take_commands().is_empty(),
+            "no join, accept or history request before mutes"
+        );
+        assert!(w.im_messages.is_empty());
+        w.on_mute_list(aurora_net::MuteListSource::File(format!("0 {} Group:{group}|\n", Uuid::nil())));
+        w.restore_open_ims(true);
+        assert!(!w.social.has_session(&group));
+        assert!(!w.is_group_session(&group));
+        assert!(w.groups.restoring.is_empty());
+        assert!(w.reopen_ims.is_empty());
+        assert!(w.groups.take_commands().is_empty());
+        assert!(w.on_session_im(&message));
+        assert!(!w.social.has_session(&group));
+    }
+
+    #[test]
+    fn open_ims_an_incoming_invitation_can_finish_restoration_without_a_duplicate_join() {
+        let mut w = world();
+        let group = Uuid::from_u128(42);
+        w.on_group_event(NetEvent::Groups(vec![membership(group)]));
+        w.reopen_ims = vec![Conversation::Group(group)];
+        w.restore_open_ims(true);
+        w.mutes.on_server(aurora_net::MuteListSource::UseCache, None);
+        w.on_group_event(NetEvent::SessionInvite(aurora_net::SessionInvite {
+            session: group,
+            from: Uuid::from_u128(7),
+            from_name: "Sender".into(),
+            message: "Hello".into(),
+            session_name: membership(group).name,
+            offline: false,
+            timestamp: 0,
+        }));
+        assert!(!w.groups.restoring.contains(&group));
+        w.restore_open_ims(true);
+        assert_eq!(w.social.ims.len(), 1);
+        assert_eq!(w.social.ims[0].lines.len(), 1);
+        assert!(w.groups.take_commands().iter().all(|cmd| !matches!(
+            cmd,
+            NetCommand::SendImDialog {
+                dialog: dialog::SESSION_GROUP_START,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn open_ims_sending_from_a_preview_starts_the_group_first_and_respects_new_rlva_rules() {
+        let group = Uuid::from_u128(42);
+        let mut w = world();
+        w.on_group_event(NetEvent::Groups(vec![membership(group)]));
+        w.reopen_ims = vec![Conversation::Group(group)];
+        w.restore_open_ims(true);
+        w.send_session_im(group, "Hello");
+        assert!(w.reopen_ims.is_empty());
+        assert!(!w.groups.restoring.contains(&group));
+        let out = w.groups.take_commands();
+        assert!(matches!(
+            out[..],
+            [
+                NetCommand::SendImDialog {
+                    dialog: dialog::SESSION_GROUP_START,
+                    ..
+                },
+                NetCommand::SendImDialog {
+                    dialog: dialog::SESSION_SEND,
+                    ..
+                }
+            ]
+        ));
+
+        let mut w = world();
+        w.agent_id = Uuid::from_u128(99);
+        w.on_group_event(NetEvent::Groups(vec![membership(group)]));
+        w.reopen_ims = vec![Conversation::Group(group)];
+        w.restore_open_ims(true);
+        w.rlva.configure(true);
+        w.apply(NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Controller".into(),
+            source_id: Uuid::from_u128(88),
+            owner_id: w.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: "@startim=n".into(),
+        }));
+        assert!(
+            !w.rlva_can_start_im(group),
+            "a displayed preview is not an authorized existing session"
+        );
+        w.send_session_im(group, "Blocked");
+        assert!(w.groups.take_commands().is_empty());
+        assert!(w.social.ims[0].lines.is_empty());
+        w.restore_open_ims(true);
+        assert!(!w.social.has_session(&group));
     }
 }

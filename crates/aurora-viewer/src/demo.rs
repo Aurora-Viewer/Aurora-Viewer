@@ -2978,7 +2978,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 text
             };
             let text = text + &tags::mute_line().unwrap_or_default();
-            vec![NetEvent::MuteList(aurora_net::MuteListSource::File(text))]
+            chatlog::mute_list_reply(text)
         }
         // two groups, and someone starts a chat in the first one
         aurora_net::NetCommand::RequestGroups => {

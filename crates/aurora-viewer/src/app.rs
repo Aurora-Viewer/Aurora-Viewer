@@ -8136,7 +8136,12 @@ impl App {
                 self.net.send(NetCommand::RefuseNeighbourRegions(refuse));
             }
             // FSRestoreOpenIMs, extended to groups: wait for membership and
-            // mute replies rather than treating session ids as residents.
+            // display names now; joining still waits for the mute reply.
+            if self.demo
+                && let Some(event) = crate::demo::chatlog::delayed_mute_list(self.frame_count)
+            {
+                self.world.apply(event);
+            }
             self.world.restore_open_ims(
                 self.settings.reopen_ims || (self.demo && crate::demo::chatlog::mode() == Some(crate::demo::chatlog::Mode::Restore)),
             );
