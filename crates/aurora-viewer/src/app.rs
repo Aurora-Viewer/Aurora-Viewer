@@ -8135,16 +8135,11 @@ impl App {
                 self.neighbours_refused = refuse;
                 self.net.send(NetCommand::RefuseNeighbourRegions(refuse));
             }
-            // FSRestoreOpenIMs: the last session's private conversations,
-            // once, after login
-            if !self.world.reopen_ims.is_empty() {
-                let others = std::mem::take(&mut self.world.reopen_ims);
-                if self.settings.reopen_ims {
-                    for other in others {
-                        self.world.social.session_mut(other);
-                    }
-                }
-            }
+            // FSRestoreOpenIMs, extended to groups: wait for membership and
+            // mute replies rather than treating session ids as residents.
+            self.world.restore_open_ims(
+                self.settings.reopen_ims || (self.demo && crate::demo::chatlog::mode() == Some(crate::demo::chatlog::Mode::Restore)),
+            );
             // AURORA_DEMO_OBJECT_IM: a filter for this run only
             self.world.object_im_filter = crate::demo::object_im::settings()
                 .filter(|_| self.demo)
@@ -17631,13 +17626,17 @@ impl ApplicationHandler for App {
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(8.0, 44.0), egui::vec2(660.0, 560.0));
                 ui::widgets::place_floater(&self.egui_ctx, "chat_history", egui::pos2(8.0, 44.0), egui::vec2(620.0, 600.0));
                 let me = self.world.agent_id;
-                if !matches!(mode, Mode::Long { .. })
+                if !matches!(mode, Mode::Long { .. } | Mode::Restore)
                     && let Some(dir) = self.world.chat_log.dir().map(std::path::Path::to_path_buf)
                     && let Err(e) = chatlog::seed(&dir, mode, &self.world.own_name())
                 {
                     log::warn!("demo transcripts not written: {e}");
                 }
                 match mode {
+                    Mode::Restore => {
+                        chatlog::seed_restore(&mut self.world);
+                        self.world.restore_open_ims(true);
+                    }
                     Mode::Long { lines, .. } => {
                         for i in 0..lines {
                             let (own, text) = chatlog::long_line(i);
@@ -17660,7 +17659,11 @@ impl ApplicationHandler for App {
                     let (title, file) = self.world.transcript_of(Some(chatlog::PEER));
                     self.history_ui.show_file(title, file);
                 }
-                self.chat_ui.selected = Some(chatlog::PEER);
+                self.chat_ui.selected = Some(if mode == Mode::Restore {
+                    crate::demo::DEMO_GROUP2
+                } else {
+                    chatlog::PEER
+                });
                 if chatlog::find_flag("legacy") {
                     self.chat_ui.demo_style = Some(crate::settings::ChatStyle::Legacy);
                 }

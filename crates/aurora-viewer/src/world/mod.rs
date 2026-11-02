@@ -591,11 +591,11 @@ pub struct World {
     pub collisions: collisions::Collisions,
     /// Always fly after a teleport (FSFlyAfterTeleport, from the settings).
     pub fly_after_teleport: bool,
-    /// The account's list of open private conversations (open_ims.rs).
+    /// The account's list of open private and group conversations (open_ims.rs).
     open_ims_path: Option<std::path::PathBuf>,
     /// Conversations of the last session, read at login, that the app
     /// reopens when the setting asks for it.
-    pub reopen_ims: Vec<Uuid>,
+    pub reopen_ims: Vec<open_ims::Conversation>,
     /// Disk cache root (inventory cache).
     pub cache_dir: Option<std::path::PathBuf>,
 }
@@ -833,14 +833,6 @@ impl World {
         self.chat_log = chat_log;
         self.cache_dir = cache_dir;
         self.quiet_automated_chat = quiet;
-    }
-
-    /// saveOpenIMs, when the session ends (quit, logout or disconnection).
-    pub fn save_open_ims(&self) {
-        if let Some(path) = &self.open_ims_path {
-            let others: Vec<Uuid> = self.social.ims.iter().map(|s| s.other).collect();
-            open_ims::save(path, &others);
-        }
     }
 
     /// LLTeleportHistory::onTeleportFinished → LLTeleportHistoryStorage:

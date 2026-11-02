@@ -358,6 +358,7 @@ impl World {
     /// (LLIMModel::sendLeaveSession), a 1:1 conversation only leaves the list
     /// (nothing is sent; the next message from that resident opens it again).
     pub fn leave_session(&mut self, session: Uuid) {
+        self.cancel_saved_im(session);
         if self.groups.sessions.remove(&session).is_some() {
             self.groups.im(session, dialog::SESSION_LEAVE, session, String::new());
         }
@@ -376,6 +377,7 @@ impl World {
         if !self.groups.sessions.get(&group).is_some_and(|s| s.group) {
             return false;
         }
+        self.cancel_saved_im(group);
         self.groups.sessions.remove(&group);
         self.social.ims.retain(|s| s.other != group);
         self.groups.snooze(group, Instant::now() + Duration::from_secs(seconds.into()));
@@ -415,6 +417,22 @@ impl World {
             return false;
         };
         self.mutes.group_chat_muted(session) || self.groups.mute_all_groups || (self.groups.mute_when_notices_off && !g.accept_notices)
+    }
+
+    /// Login restoration joins quietly and never unmutes a group or steals focus.
+    pub(super) fn restore_saved_group_chat(&mut self, group: Uuid) {
+        if self.groups.sessions.contains_key(&group) {
+            return;
+        }
+        if self.group_chat_unwanted(&group) || !self.rlva_start_ims(&[group]) {
+            // Retire a resident placeholder from an old untyped save too.
+            self.social.ims.retain(|s| s.other != group);
+            return;
+        }
+        self.reopen_group_chat(group, "");
+        if let Some(info) = self.groups.sessions.get_mut(&group) {
+            info.started_by_us = true;
+        }
     }
 
     /// Ask for the group list once we are in world (STATE_INVENTORY_SEND).
@@ -474,6 +492,11 @@ impl World {
         match ev {
             NetEvent::Groups(list) => {
                 for g in list {
+                    // A legacy saved id can have been opened before a later
+                    // membership packet identifies it as a group (#1683).
+                    if self.social.has_session(&g.id) && !self.groups.sessions.contains_key(&g.id) {
+                        self.reopen_ims.push(super::open_ims::Conversation::Group(g.id));
+                    }
                     if let Some(s) = self.groups.sessions.get_mut(&g.id) {
                         s.group = true;
                         s.name = g.name.clone();
