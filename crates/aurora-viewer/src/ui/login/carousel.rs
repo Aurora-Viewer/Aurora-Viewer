@@ -1011,7 +1011,10 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            assert!(texts.iter().any(|t| t.starts_with("A synthetic")), "the menu shows the favourite: {texts:?}");
+            assert!(
+                texts.iter().any(|t| t.starts_with("A synthetic")),
+                "the menu shows the favourite: {texts:?}"
+            );
             // a favourite chosen: no region field under the menu
             assert!(!texts.iter().any(|t| t == aurora_i18n::tr!("ui-login-region-name")));
             assert_eq!(favorites.chosen, Some(list[0].item));

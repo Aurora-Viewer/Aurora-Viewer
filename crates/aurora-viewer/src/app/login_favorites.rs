@@ -111,7 +111,12 @@ impl App {
                 },
                 _ => None,
             };
-            current.push(Current { item: id, asset, name, place });
+            current.push(Current {
+                item: id,
+                asset,
+                name,
+                place,
+            });
         }
         let list = stored::merge(self.login_form.favorites.favorites(&key), current);
         let count = list.len();

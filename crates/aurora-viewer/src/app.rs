@@ -2548,16 +2548,19 @@ impl App {
         // then a favourite chosen in the account's start menu
         // (FSPanelLogin::onLocationSLURL with a favourite's SLURL)
         let favorite = self.chosen_start_favorite().map(|f| f.start_location());
-        let start = reconnect.or(slurl).or(favorite).unwrap_or_else(|| match self.settings.start_location.as_str() {
-            "home" => StartLocation::Home,
-            "region" if !self.settings.start_region.trim().is_empty() => StartLocation::Region {
-                name: self.settings.start_region.trim().to_owned(),
-                x: 128,
-                y: 128,
-                z: 30,
-            },
-            _ => StartLocation::Last,
-        });
+        let start = reconnect
+            .or(slurl)
+            .or(favorite)
+            .unwrap_or_else(|| match self.settings.start_location.as_str() {
+                "home" => StartLocation::Home,
+                "region" if !self.settings.start_region.trim().is_empty() => StartLocation::Region {
+                    name: self.settings.start_region.trim().to_owned(),
+                    x: 128,
+                    y: 128,
+                    z: 30,
+                },
+                _ => StartLocation::Last,
+            });
         let catalog_key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
         let login_agent = self
             .login_form
@@ -5508,8 +5511,10 @@ impl App {
         if self.capture.is_none() {
             ui::layout::save(&self.egui_ctx);
         }
-        // LLFavoritesOrderStorage::destroyClass: the favourites as they are now
+        // LLFavoritesOrderStorage::destroyClass: the favourites as they are
+        // now, on the disk before the process ends
         self.keep_login_favorites(true);
+        self.login_form.favorites.flush();
         self.world.save_inventory_cache();
         if let Some(path) = self.name_cache_path() {
             self.world.social.avatar_names.save(&path);

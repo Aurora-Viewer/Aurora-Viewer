@@ -346,7 +346,9 @@ pub(super) fn start_menu(
     if let Some(place) = place {
         shown.response.on_hover_text(place);
     } else if let Some(favorite) = &chosen {
-        shown.response.on_hover_text(format!("{}\n{}", favorite.name, favorite_place(favorite)));
+        shown
+            .response
+            .on_hover_text(format!("{}\n{}", favorite.name, favorite_place(favorite)));
     }
 }
 

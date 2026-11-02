@@ -145,17 +145,15 @@ struct Writer {
 impl Writer {
     fn start(path: PathBuf) -> Option<Self> {
         let (sender, changes): (Sender<Change>, Receiver<Change>) = crossbeam_channel::unbounded();
-        let worker = std::thread::Builder::new()
-            .name("aurora-login-favorites".into())
-            .spawn(move || {
-                while let Ok(first) = changes.recv() {
-                    let mut batch = vec![first];
-                    batch.extend(changes.try_iter());
-                    if let Err(error) = write_changes(&path, batch) {
-                        log::warn!("stored favourites not saved: {error}");
-                    }
+        let worker = std::thread::Builder::new().name("aurora-login-favorites".into()).spawn(move || {
+            while let Ok(first) = changes.recv() {
+                let mut batch = vec![first];
+                batch.extend(changes.try_iter());
+                if let Err(error) = write_changes(&path, batch) {
+                    log::warn!("stored favourites not saved: {error}");
                 }
-            });
+            }
+        });
         match worker {
             Ok(worker) => Some(Self {
                 sender: Some(sender),
@@ -299,9 +297,9 @@ impl Store {
         }
     }
 
-    /// Wait for the writes sent so far (tests).
-    #[cfg(test)]
-    fn flush(&mut self) {
+    /// Wait for the writes sent so far (the viewer closing, the tests); the
+    /// next change starts the writer again.
+    pub fn flush(&mut self) {
         self.writer = None;
     }
 }
@@ -327,7 +325,10 @@ pub fn merge(stored: &[Favorite], current: Vec<Current>) -> Vec<Favorite> {
         .filter_map(|c| {
             let (region, pos) = match c.place {
                 Some(place) => place,
-                None => stored.iter().find(|f| f.item == c.item && f.asset == c.asset).map(|f| (f.region.clone(), f.pos))?,
+                None => stored
+                    .iter()
+                    .find(|f| f.item == c.item && f.asset == c.asset)
+                    .map(|f| (f.region.clone(), f.pos))?,
             };
             Some(Favorite {
                 item: c.item,
@@ -449,7 +450,10 @@ mod tests {
         let mut store = Store::default();
         store.load(path.clone());
         // the catalogue's key: trimmed, any case
-        assert_eq!(store.favorites(&key("synthetic-grid", "SYNTHETIC ALPHA")), [fav(1, "One"), fav(2, "Two")]);
+        assert_eq!(
+            store.favorites(&key("synthetic-grid", "SYNTHETIC ALPHA")),
+            [fav(1, "One"), fav(2, "Two")]
+        );
         assert_eq!(store.favorites(&alpha_beta_grid), [fav(3, "Three")]);
         store.forget(&beta);
         store.flush();
@@ -540,7 +544,10 @@ mod tests {
         );
         assert_eq!(merged.len(), 2, "the never placed one waits");
         assert_eq!((merged[0].item, merged[0].region.as_str()), (Uuid::from_u128(2), "Synthetic moved"));
-        assert_eq!((merged[1].name.as_str(), merged[1].region.as_str()), ("New name", "Synthetic region 1"));
+        assert_eq!(
+            (merged[1].name.as_str(), merged[1].region.as_str()),
+            ("New name", "Synthetic region 1")
+        );
         // another landmark behind the same item: its old place is not kept
         let merged = merge(&stored, vec![current(1, 999, "Relinked", None)]);
         assert!(merged.is_empty());
