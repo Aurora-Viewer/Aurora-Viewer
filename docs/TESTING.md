@@ -8667,6 +8667,15 @@ What the inventory must show with these scenarios:
   replaced when these two values change.
 - **`AURORA_DEMO_MUSIC`**: `1` designates an unreachable dummy address; the
   music waits for the radio button.
+  For #1628, use `https://stream.electroradio.fm/320k` and enable the parcel
+  radio: music should play and the stream title should update. Stop and
+  restart the radio, then check another HTTP/ICY station. The explicit
+  `cargo test --workspace --locked issue_1628_live_probe -- --ignored --nocapture`
+  test checks this public HTTPS station without a grid or an audio device;
+  it is skipped by default because it needs internet access.
+  Windows/macOS use the system's certificate verifier, which can complete
+  missing intermediate chains. Linux uses the system CA bundle and still
+  needs the intermediates from the server or its trust store.
 - **`AURORA_DEMO_MEDIA_FILTER`**: turns the media filter on for the run.
   `ask` (or `1`) starts a parcel media on `media.example.com`, which the
   filter asks about (the question is up from the first frames; nothing
