@@ -21,7 +21,10 @@
 //! Only the hashes leave this module, plus the raw adapter address the
 //! viewer statistics carry (`adapter_mac`, send_viewer_stats'
 //! `mac_address`), and the identifiers are never logged (the Legacy Viewer
-//! logs the raw serial; Aurora logs the source only).
+//! logs the raw serial; Aurora logs the source only). These values go as
+//! they are to Linden Lab's grids only: any other grid gets values derived
+//! from them and from its own login host (`aurora_net::login::device_id_for`,
+//! `adapter_for`).
 
 use std::sync::{Once, OnceLock};
 use std::time::{Duration, Instant};

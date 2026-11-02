@@ -13700,6 +13700,7 @@ impl App {
                     &self.login_info,
                     progress,
                 );
+                self.grid_link_question(&ctx, &p);
                 self.sync_remembered_password();
                 // the cogwheel of the login screen (settings before login);
                 // the screen's cards are areas of the same order, and a click

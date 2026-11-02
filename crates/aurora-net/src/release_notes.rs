@@ -27,7 +27,7 @@ pub async fn fetch(cap_url: &str) -> Result<String, String> {
         .timeout(Duration::from_secs(20))
         .build()
         .map_err(|e| e.to_string())?;
-    let resp = http.get(cap_url).send().await.map_err(|e| e.to_string())?;
+    let resp = http.get(cap_url).send().await.map_err(|e| e.without_url().to_string())?;
     let location = resp.headers().get(reqwest::header::LOCATION).and_then(|v| v.to_str().ok());
     page_of(location).ok_or_else(|| format!("status {} without a page", resp.status().as_u16()))
 }

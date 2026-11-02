@@ -93,7 +93,7 @@ pub async fn send(http: &reqwest::Client, url: &str, postcard: &Postcard, jpeg: 
             .body(body.clone())
             .send()
             .await
-            .map_err(|e| Error::Failed(e.to_string()))?;
+            .map_err(|e| Error::Failed(e.without_url().to_string()))?;
         let answer = llsd_reply(answer).await?;
         if answer.has("error") {
             return Err(Error::Failed(answer["error"]["message"].to_string_value()));
@@ -118,7 +118,7 @@ pub async fn send(http: &reqwest::Client, url: &str, postcard: &Postcard, jpeg: 
                 Ok(done) => last = Error::Failed(format!("state {}", done["state"].to_string_value())),
                 Err(e) => last = e,
             },
-            Err(e) => last = Error::Failed(e.to_string()),
+            Err(e) => last = Error::Failed(e.without_url().to_string()),
         }
         log::warn!("postcard: upload attempt {} failed ({last})", attempt + 1);
     }
@@ -133,7 +133,7 @@ async fn llsd_reply(r: reqwest::Response) -> Result<Llsd, Error> {
     if !status.is_success() {
         return Err(Error::Failed(format!("status {}", status.as_u16())));
     }
-    let bytes = r.bytes().await.map_err(|e| Error::Failed(e.to_string()))?;
+    let bytes = r.bytes().await.map_err(|e| Error::Failed(e.without_url().to_string()))?;
     if bytes.is_empty() {
         return Ok(Llsd::Undef);
     }

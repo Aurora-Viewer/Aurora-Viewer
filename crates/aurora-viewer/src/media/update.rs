@@ -691,11 +691,11 @@ impl MediaManager {
                         .timeout(Duration::from_secs(30))
                         .send()
                         .await
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| e.without_url().to_string())?;
                     if !resp.status().is_success() {
                         return Err(format!("HTTP {}", resp.status()));
                     }
-                    let body = resp.bytes().await.map_err(|e| e.to_string())?;
+                    let body = resp.bytes().await.map_err(|e| e.without_url().to_string())?;
                     match aurora_llsd::from_xml(&body) {
                         Ok(v) if v.has("error") => Err(format!("error {}", v.get("error").get("code").as_i32())),
                         _ => Ok(()),
@@ -917,7 +917,7 @@ fn probe_mime(rt: &tokio::runtime::Handle, http: reqwest::Client, url: String) -
                 .filter(|v| !v.is_empty())
                 .unwrap_or_else(|| "text/html".into()),
             Err(e) => {
-                log::info!("media: type probe of {} failed: {e}", sanitize(&url));
+                log::info!("media: type probe of {} failed: {}", sanitize(&url), e.without_url());
                 "text/html".into()
             }
         };
