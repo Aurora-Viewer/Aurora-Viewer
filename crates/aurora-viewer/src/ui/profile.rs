@@ -318,7 +318,8 @@ impl ProfileUi {
             };
             let asset = world.profiles.get(&window.id).map_or(Uuid::nil(), |profile| match photo.slot {
                 PictureSlot::FirstLife => profile.fl_image,
-                _ => profile.sl_image,
+                PictureSlot::SecondLife => profile.sl_image,
+                PictureSlot::Pick(_) | PictureSlot::Classified(_) => photo.asset,
             });
             if asset.is_nil() {
                 window.photo = None;
@@ -689,7 +690,8 @@ fn photo_window(
     let name = aurora::display_name(world, &window.id);
     let caption = match photo.slot {
         PictureSlot::FirstLife => aurora_i18n::tr!("ui-profile-rl-picture"),
-        _ => aurora_i18n::tr!("ui-profile-profile-picture"),
+        PictureSlot::SecondLife => aurora_i18n::tr!("ui-profile-profile-picture"),
+        PictureSlot::Pick(_) | PictureSlot::Classified(_) => aurora_i18n::tr!("ui-profile-aurora-snapshot"),
     };
     let id = format!("profile-photo-{}", window.id);
     let size = Vec2::new(460.0, 520.0);
