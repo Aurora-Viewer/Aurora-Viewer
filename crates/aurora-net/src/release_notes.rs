@@ -23,8 +23,7 @@ pub async fn fetch(cap_url: &str) -> Result<String, String> {
     let http = reqwest::Client::builder()
         .user_agent(aurora_version::user_agent())
         .redirect(reqwest::redirect::Policy::none())
-        .tls_certs_only(crate::simulator_roots())
-        .tls_danger_accept_invalid_hostnames(true)
+        .tls_backend_preconfigured(crate::simulator_tls().map_err(|e| e.to_string())?)
         .timeout(Duration::from_secs(20))
         .build()
         .map_err(|e| e.to_string())?;
