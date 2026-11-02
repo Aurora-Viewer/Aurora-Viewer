@@ -74,6 +74,7 @@ impl ExperiencesUi {
         }
         if !std::mem::replace(&mut self.shown, true) {
             world.experiences.request_lists();
+            world.experiences.log.refresh(&experience_log::now().0);
         }
         let screen = ctx.content_rect();
         Floater::new(
@@ -152,14 +153,14 @@ impl ExperiencesUi {
         });
         if go {
             let query = self.query.trim().to_owned();
-            world.land.search_experiences(&query);
+            world.land.search_experiences_for_window(&query);
             self.searched = Some(query);
         }
         ui.add_space(6.0);
         let Some(searched) = self.searched.clone() else {
             return;
         };
-        let found = match world.land.experience_search.as_ref() {
+        let found = match world.land.window_experience_search.as_ref() {
             Some((q, found)) if *q == searched => found.clone(),
             _ => None,
         };
@@ -203,23 +204,18 @@ impl ExperiencesUi {
             .log
             .events
             .iter()
-            .cloned()
             .enumerate()
             .rev()
             .skip(self.page * size)
             .take(size)
+            .map(|(index, entry)| (index, entry.clone()))
             .collect();
-        // The footer's height as laid out on the previous frame: reserving a
-        // guess either grows the window each frame or leaves a gap.
-        let footer_id = ui.make_persistent_id("xp_log_footer");
-        let footer: f32 = ui.data(|d| d.get_temp(footer_id)).unwrap_or(70.0);
-        let list_height = (ui.available_height() - footer - ui.spacing().item_spacing.y).max(60.0);
         let mut open_profile = None;
+        let (mut list, footer) = widgets::above_footer(ui);
         egui::ScrollArea::vertical()
             .id_salt("experiences_log")
-            .max_height(list_height)
             .auto_shrink([false, false])
-            .show(ui, |ui| {
+            .show(&mut list, |ui| {
                 if page.is_empty() {
                     empty(ui, p, "history", aurora_i18n::tr!("ui-experiences-log-none"));
                 }
@@ -270,56 +266,62 @@ impl ExperiencesUi {
                     ui.add_space(3.0);
                 }
             });
-        let footer_top = ui.cursor().min.y;
-        widgets::divider(ui, p);
         let entry = self.selected.and_then(|i| world.experiences.log.events.get(i).cloned());
-        ui.horizontal(|ui| {
-            if widgets::flat_button(ui, p, "‹").clicked() && self.page > 0 {
-                self.page -= 1;
-            }
-            ui.label(RichText::new(format!("{} / {pages}", self.page + 1)).size(12.0).color(p.muted));
-            if widgets::flat_button(ui, p, "›").clicked() && self.page + 1 < pages {
-                self.page += 1;
-            }
-            ui.add_enabled_ui(entry.is_some(), |ui| {
-                if widgets::flat_button(ui, p, aurora_i18n::tr!("ui-experiences-log-notify")).clicked()
-                    && let Some(entry) = entry.as_ref()
-                {
-                    world.notify_experience_event(entry);
+        footer.show(ui, |ui| {
+            widgets::divider(ui, p);
+            ui.horizontal_wrapped(|ui| {
+                if widgets::flat_button(ui, p, "‹").clicked() && self.page > 0 {
+                    self.page -= 1;
                 }
-                if widgets::flat_button(ui, p, aurora_i18n::tr!("ui-group-experiences-profile")).clicked()
-                    && let Some(entry) = entry.as_ref()
-                {
-                    open_profile = Some(entry.experience);
+                ui.label(RichText::new(format!("{} / {pages}", self.page + 1)).size(12.0).color(p.muted));
+                if widgets::flat_button(ui, p, "›").clicked() && self.page + 1 < pages {
+                    self.page += 1;
                 }
-                if widgets::flat_button(ui, p, aurora_i18n::tr!("ui-experiences-log-report")).clicked()
-                    && let Some(entry) = entry.as_ref()
-                {
-                    crate::ui::context::request(
-                        ui.ctx(),
-                        crate::ui::context::CtxAction::ReportAbuse(crate::report_abuse::ReportTarget::Experience(entry.experience)),
-                    );
-                }
+                ui.add_enabled_ui(entry.is_some(), |ui| {
+                    if widgets::flat_button(ui, p, aurora_i18n::tr!("ui-experiences-log-notify")).clicked()
+                        && let Some(entry) = entry.as_ref()
+                    {
+                        world.notify_experience_event(entry);
+                    }
+                    if widgets::flat_button(ui, p, aurora_i18n::tr!("ui-group-experiences-profile")).clicked()
+                        && let Some(entry) = entry.as_ref()
+                    {
+                        open_profile = Some(entry.experience);
+                    }
+                    if widgets::flat_button(ui, p, aurora_i18n::tr!("ui-experiences-log-report")).clicked()
+                        && let Some(entry) = entry.as_ref()
+                    {
+                        crate::ui::context::request(
+                            ui.ctx(),
+                            crate::ui::context::CtxAction::ReportAbuse(crate::report_abuse::ReportTarget::Experience(entry.experience)),
+                        );
+                    }
+                });
+                ui.add_enabled_ui(total > 0, |ui| {
+                    if widgets::flat_button(ui, p, aurora_i18n::tr!("ui-experiences-log-clear")).clicked() {
+                        world.experiences.log.clear();
+                        self.selected = None;
+                        self.page = 0;
+                    }
+                });
             });
-            ui.add_enabled_ui(total > 0, |ui| {
-                if widgets::flat_button(ui, p, aurora_i18n::tr!("ui-experiences-log-clear")).clicked() {
-                    world.experiences.log.clear();
-                    self.selected = None;
-                    self.page = 0;
+            ui.horizontal_wrapped(|ui| {
+                let log = &mut world.experiences.log;
+                if widgets::checkbox(ui, p, &mut log.notify, aurora_i18n::tr!("ui-experiences-log-notify-all")).changed() {
+                    log.save();
+                }
+                ui.label(RichText::new(aurora_i18n::tr!("ui-experiences-log-days")).size(12.0).color(p.muted));
+                // LLPanelExperienceLog::logSizeChanged: the list loses the
+                // days that no longer fit; the worker writes once it is quiet
+                let mut days = log.max_days;
+                if ui
+                    .add(egui::DragValue::new(&mut days).range(0..=experience_log::MAX_DAYS))
+                    .changed()
+                {
+                    log.set_max_days(days, &experience_log::now().0);
                 }
             });
         });
-        ui.horizontal(|ui| {
-            let log = &mut world.experiences.log;
-            let mut changed = widgets::checkbox(ui, p, &mut log.notify, aurora_i18n::tr!("ui-experiences-log-notify-all")).changed();
-            ui.label(RichText::new(aurora_i18n::tr!("ui-experiences-log-days")).size(12.0).color(p.muted));
-            changed |= ui.add(egui::DragValue::new(&mut log.max_days).range(1..=365)).changed();
-            if changed {
-                log.save();
-            }
-        });
-        let measured = ui.min_rect().bottom() - footer_top;
-        ui.data_mut(|d| d.insert_temp(footer_id, measured));
         if let Some(id) = open_profile {
             world.experiences.open_profile(id);
         }
@@ -483,6 +485,41 @@ mod tests {
         );
         let names: Vec<_> = list.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, ["Alpha", "beta", "zed"]);
+    }
+
+    /// The Events tab keeps the window's size: its list sits above the
+    /// footer (`widgets::above_footer`), the Days setting drawn inside.
+    #[test]
+    fn the_events_tab_keeps_the_window_size() {
+        let world = || {
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            for n in 0..40 {
+                let event = aurora_net::ExperienceLogEvent {
+                    experience: Uuid::from_u128(1),
+                    permission: [3, 4, 11, 16][n % 4],
+                    owner: Uuid::from_u128(2),
+                    object_name: format!("Object {n}"),
+                    parcel_name: "Plaza".into(),
+                    attachment: false,
+                };
+                world.experiences.log.record(&event, "2026-05-01", "10:00:00");
+            }
+            world
+        };
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            WINDOW,
+            &[Vec2::new(520.0, 400.0), Vec2::new(360.0, 300.0)],
+            aurora_i18n::tr!("ui-experiences-log-days"),
+            || {
+                let ui = ExperiencesUi {
+                    tab: LOG_TAB,
+                    shown: true,
+                    ..ExperiencesUi::default()
+                };
+                (ui, world())
+            },
+            |(ui, world), ctx, p| ui.show(ctx, p, world, &mut true),
+        );
     }
 
     #[test]
