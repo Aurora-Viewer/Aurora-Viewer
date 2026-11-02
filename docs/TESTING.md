@@ -2023,7 +2023,7 @@ No real L$ and no connection to a grid.
   folder, held there from frame 640 (the folder is outlined and the cursor
   says move, the spare cube being no copy). `-drop` releases at frame 720:
   the notecard and the script go straight into Objects (no new folder; its
-  count goes from 5 to 7) and the move warning lists the spare cube, with
+  count goes up by two) and the move warning lists the spare cube, with
   the scripted object's line; Move takes it out of the cube. The log has
   `demo contents folder drag: over the inventory folder`, then `released`.
   Capture at frame 700 (hover) or 780 (warning) with
