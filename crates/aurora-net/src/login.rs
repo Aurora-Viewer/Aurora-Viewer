@@ -338,9 +338,9 @@ pub async fn login(http: &reqwest::Client, req: &LoginRequest) -> Result<LoginRe
             .body(body)
             .send()
             .await
-            .map_err(|e| LoginError::Http(e.to_string()))?;
+            .map_err(|e| LoginError::Http(e.without_url().to_string()))?;
         let status = resp.status();
-        let bytes = resp.bytes().await.map_err(|e| LoginError::Http(e.to_string()))?;
+        let bytes = resp.bytes().await.map_err(|e| LoginError::Http(e.without_url().to_string()))?;
         if !status.is_success() {
             return Err(LoginError::Http(format!("HTTP {status}")));
         }

@@ -49,10 +49,10 @@ impl Session<'_> {
                 Ok(resp) if resp.status().is_success() => match resp.bytes().await {
                     Ok(bytes) if bytes.is_empty() => Ok(aurora_llsd::Llsd::Undef),
                     Ok(bytes) => aurora_llsd::from_xml(&bytes).map_err(|e| e.to_string()),
-                    Err(e) => Err(e.to_string()),
+                    Err(e) => Err(e.without_url().to_string()),
                 },
                 Ok(resp) => Err(format!("HTTP {}", resp.status())),
-                Err(e) => Err(e.to_string()),
+                Err(e) => Err(e.without_url().to_string()),
             };
             match contents {
                 // "Error requesting offline messages via capability...
@@ -138,7 +138,7 @@ impl Session<'_> {
                     }
                 }
                 Ok(resp) => log::warn!("friendship offer {what}: HTTP {}", resp.status()),
-                Err(e) => log::warn!("friendship offer {what}: {e}"),
+                Err(e) => log::warn!("friendship offer {what}: {}", e.without_url()),
             }
         });
     }
