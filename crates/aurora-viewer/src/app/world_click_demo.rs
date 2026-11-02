@@ -326,9 +326,9 @@ impl App {
             // `worn-other-hidden*`: every face of the scripted attachment at
             // alpha 0, the invisible clickers of a headpat or a slapper
             let hidden = mode.starts_with("worn-other-hidden");
-            // `worn-other-clear-mesh`: hidden by the transparent texture
+            // `worn-other-clear[-mesh]`: hidden by the transparent texture
             // instead, its alpha left at 1 (a slapper's mesh cheeks)
-            let clear = mode == "worn-other-clear-mesh";
+            let clear = mode.starts_with("worn-other-clear");
             let unrigged_mesh = matches!(
                 mode,
                 "worn-other-mesh" | "worn-other-hidden-mesh" | "worn-other-hidden-mesh-under" | "worn-other-clear-mesh"
