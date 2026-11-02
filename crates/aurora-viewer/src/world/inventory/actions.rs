@@ -146,6 +146,24 @@ pub fn link_destination(inv: &Inventory, id: Uuid) -> bool {
         && !ancestors(inv, id).any(|a| Some(a) == cof || Some(a) == inbox)
         && !in_type(inv, id, 14)
 }
+/// A folder whose pasted links follow the outfit rule: My Outfits and its
+/// folders, or any outfit folder (LLFolderBridge::pasteLinkFromClipboard's
+/// `move_is_into_outfit`).
+fn outfit_destination(inv: &Inventory, id: Uuid) -> bool {
+    in_type(inv, id, 48) || inv.folders.get(&id).is_some_and(|f| f.info.type_default == 47)
+}
+/// What a link pasted into an outfit may point at (can_move_to_outfit,
+/// indra/newview/llinventoryfunctions.cpp; LLFolderBridge::dropToOutfit,
+/// indra/newview/llinventorybridge.cpp, originally LGPL 2.1): a wearable, a
+/// gesture or an object to attach, never a coalesced object nor a folder.
+/// Textures and snapshots, the outfit pictures of old, are not linked
+/// either, and the other types are skipped.
+pub fn outfit_link_target(inv: &Inventory, original: Uuid) -> bool {
+    // IT_OBJECT, IT_ATTACHMENT, IT_WEARABLE, IT_GESTURE
+    inv.items
+        .get(&original)
+        .is_some_and(|it| matches!(it.inv_type, 6 | 17 | 18 | 20) && it.flags & crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS == 0)
+}
 pub fn original(inv: &Inventory, mut id: Uuid) -> Option<Uuid> {
     // Most rows are no link: answer them without the cycle guard's set
     // (it allocates, and every visible row asks, for its permissions and
@@ -411,6 +429,7 @@ pub fn paste(
         defer_folder_contents: true,
         ..Default::default()
     };
+    let outfit = links && outfit_destination(inv, to);
     for id in roots(inv, ids) {
         if id == to || under(inv, to, id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-a-folder-cannot-be-copied-into-itself").into());
@@ -419,6 +438,11 @@ pub fn paste(
             let id = original(inv, id).ok_or(aurora_i18n::tr!("common-the-link-is-broken"))?;
             if library(inv, id) || in_type(inv, id, 14) {
                 return Err(aurora_i18n::tr!("world-inventory-actions-copy-this-item-to-your-inventory-first").into());
+            }
+            // an outfit links only what can be worn; the rest of the
+            // clipboard is skipped, as the Legacy Viewer does
+            if outfit && !outfit_link_target(inv, id) {
+                continue;
             }
             let folder = inv.folders.contains_key(&id);
             let it = inv.items.get(&id);
@@ -439,6 +463,9 @@ pub fn paste(
         } else {
             copy_one(inv, id, to, &mut change, &mut HashSet::new())?;
         }
+    }
+    if outfit && change.operations.is_empty() {
+        return Err(aurora_i18n::tr!("world-inventory-actions-this-item-type-cannot-be-linked").into());
     }
     Ok(change)
 }
@@ -795,6 +822,10 @@ pub fn paste_allowed(
                 copyable(inv, *id, &mut HashSet::new())
             }
         })
+        // an outfit takes the links of what can be worn, the rest skipped
+        && (!links
+            || !outfit_destination(inv, to)
+            || ids.iter().any(|id| original(inv, *id).is_some_and(|id| outfit_link_target(inv, id))))
 }
 
 /// LLGiveInventory::giveInventoryCategory: type/UUID tuples, bounded below

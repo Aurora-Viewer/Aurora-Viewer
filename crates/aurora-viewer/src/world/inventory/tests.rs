@@ -690,4 +690,39 @@ fn a_link_can_be_pasted_into_an_outfit_folder_but_a_copy_cannot() {
     }
     assert!(paste(&inv, &[original], id(9701), false, true, &none, &none).is_ok());
     assert!(paste(&inv, &[original], id(9701), false, false, &none, &none).is_err());
+
+    // can_move_to_outfit: only what can be worn is linked into an outfit;
+    // a notecard, a texture, a coalesced object and a folder are skipped
+    let item = |n: u128, inv_type: i32, asset_type: i32, flags: u32| InvItem {
+        id: id(n),
+        parent: inv.root,
+        inv_type,
+        asset_type,
+        flags,
+        ..Default::default()
+    };
+    inv.add_items(vec![
+        item(9710, 18, 13, 0),
+        item(9711, 7, 7, 0),
+        item(9712, 0, 0, 0),
+        item(9713, 6, 6, crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS),
+    ]);
+    let folder = id(9720);
+    inv.created_folders(vec![InvFolder {
+        id: folder,
+        parent: inv.root,
+        name: "Loose".into(),
+        type_default: -1,
+        ..Default::default()
+    }]);
+    for refused in [id(9711), id(9712), id(9713), folder] {
+        assert!(!paste_allowed(&inv, &[refused], id(9701), false, true, &none, &none), "{refused}");
+        assert!(paste(&inv, &[refused], id(9701), false, true, &none, &none).is_err(), "{refused}");
+        // elsewhere the link is still allowed
+        assert!(paste_allowed(&inv, &[refused], id(8000), false, true, &none, &none), "{refused}");
+    }
+    let mixed = [id(9710), id(9711), folder];
+    assert!(paste_allowed(&inv, &mixed, id(9701), false, true, &none, &none));
+    let change = paste(&inv, &mixed, id(9701), false, true, &none, &none).expect("the wearable is linked");
+    assert_eq!(change.operations.len(), 1, "only the wearable");
 }
