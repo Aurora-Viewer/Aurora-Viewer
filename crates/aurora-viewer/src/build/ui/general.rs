@@ -55,6 +55,58 @@ fn perm_state(list: &[&ObjectProps], mask: impl Fn(&ObjectProps) -> u32) -> (u32
     (on, off)
 }
 
+/// can_set_export (llpanelpermissions.cpp, FS:CR): base and own must have
+/// Export, next owner must be unrestricted.
+fn can_set_export(base: u32, own: u32, next: u32) -> bool {
+    base & perm::EXPORT != 0 && own & perm::EXPORT != 0 && next & perm::UNRESTRICTED == perm::UNRESTRICTED
+}
+
+/// perms_allow_export.
+fn allows_export(base: u32, everyone: u32) -> bool {
+    base & perm::EXPORT != 0 && everyone & perm::EXPORT != 0
+}
+
+/// Whether the agent may tick Export (LLPanelPermissions::refresh, FS:CR):
+/// its own objects, which it created, with Export in base and own and an
+/// unrestricted next owner; their contents read so far allow export, and
+/// so does one of its inventory items for each face's texture. Every prim
+/// of the linksets is looked at, not only the root as in the Legacy Viewer.
+fn export_settable(tool: &BuildTool, world: &World, props: &[ObjectProps]) -> bool {
+    let own_work = !props.is_empty()
+        && props.iter().all(|x| {
+            x.owner_id == world.agent_id && x.creator_id == x.owner_id && can_set_export(x.base_mask, x.owner_mask, x.next_owner_mask)
+        });
+    if !own_work {
+        return false;
+    }
+    let contents = props.iter().all(|x| {
+        tool.contents
+            .objects
+            .get(&x.object_id)
+            .is_none_or(|inv| inv.items.iter().all(|i| allows_export(i.base_mask, i.everyone_mask)))
+    });
+    if !contents {
+        return false;
+    }
+    // is_asset_exportable: a null texture needs no check
+    let mut textures: std::collections::HashSet<Uuid> = tool
+        .linkset_prims(world)
+        .into_iter()
+        .filter_map(|i| world.objects.get(i).and_then(|o| o.te.clone()))
+        .flat_map(|te| te.faces.iter().map(|f| f.texture).collect::<Vec<_>>())
+        .filter(|id| !id.is_nil())
+        .collect();
+    for item in world.inventory.items.values() {
+        if textures.is_empty() {
+            break;
+        }
+        if allows_export(item.base_mask, item.everyone_mask) {
+            textures.remove(&item.asset_id);
+        }
+    }
+    textures.is_empty()
+}
+
 /// (value, tentative) of one bit.
 fn bit(state: (u32, u32), b: u32) -> (bool, bool) {
     if state.0 & b == b {
@@ -601,6 +653,14 @@ fn ownership_permissions(
         ) {
             tool.set_perm(world, perm_field::EVERYONE, n, perm::COPY);
         }
+        // OpenSim's export permission, only where the region honours it
+        if world.export_supported() {
+            let (v, t) = bit(everyone, perm::EXPORT);
+            let settable = can_manipulate && export_settable(tool, world, props);
+            if let Some(n) = check(ui, p, v, t, aurora_i18n::tr!("build-ui-general-export"), settable) {
+                tool.set_perm(world, perm_field::EVERYONE, n, perm::EXPORT);
+            }
+        }
     });
     label(ui, p, aurora_i18n::tr!("build-ui-general-next-owner"));
     ui.horizontal(|ui| {
@@ -640,6 +700,18 @@ fn ownership_permissions(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_needs_export_in_base_and_own_and_an_unrestricted_next_owner() {
+        let full = perm::UNRESTRICTED | perm::MOVE | perm::EXPORT;
+        assert!(can_set_export(full, full, perm::UNRESTRICTED));
+        assert!(!can_set_export(full & !perm::EXPORT, full, perm::UNRESTRICTED));
+        assert!(!can_set_export(full, full & !perm::EXPORT, perm::UNRESTRICTED));
+        assert!(!can_set_export(full, full, perm::COPY | perm::TRANSFER), "no-modify next owner");
+        assert!(allows_export(full, perm::EXPORT));
+        assert!(!allows_export(full, perm::COPY), "Everyone's bit decides");
+        assert!(!allows_export(perm::UNRESTRICTED, perm::EXPORT), "base without Export");
+    }
 
     #[test]
     fn perm_bits_mixed() {

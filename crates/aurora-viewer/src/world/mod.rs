@@ -155,6 +155,8 @@ pub struct Region {
     pub currency_base_uri: String,
     /// OpenSimExtras' currency: this region's money symbol.
     pub currency_symbol: String,
+    /// OpenSimExtras' ExportSupported: the export permission applies here.
+    pub export_supported: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1856,6 +1858,7 @@ impl World {
             grid_status: Default::default(),
             currency_base_uri: String::new(),
             currency_symbol: String::new(),
+            export_supported: false,
         })
     }
 
@@ -2248,12 +2251,14 @@ impl World {
                 grid_status_page,
                 currency_base_uri,
                 currency_symbol,
+                export_supported,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
                 r.lsl_syntax_id = Some(lsl_syntax_id);
                 r.grid_status = (grid_status_feed, grid_status_page);
                 r.currency_base_uri = currency_base_uri;
                 r.currency_symbol = currency_symbol;
+                r.export_supported = export_supported;
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
@@ -4766,6 +4771,12 @@ impl World {
             .map(|r| r.currency_symbol.trim())
             .filter(|symbol| !symbol.is_empty())
             .unwrap_or(&self.grid_currency)
+    }
+
+    /// The agent's region honours OpenSim's export permission
+    /// (LFSimFeatureHandler::simSupportsExport).
+    pub fn export_supported(&self) -> bool {
+        self.main().is_some_and(|r| r.export_supported)
     }
 
     /// The status feed and page the agent's region names for its OpenSim
@@ -7733,6 +7744,7 @@ mod motion_tests {
                 grid_status_page: String::new(),
                 currency_base_uri: String::new(),
                 currency_symbol: String::new(),
+                export_supported: false,
             };
             world.apply(features(true));
             assert!(world.hover_height_available());

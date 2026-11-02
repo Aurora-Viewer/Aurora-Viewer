@@ -4139,6 +4139,7 @@ ui-options-same-sounds-and-defaults-as-firestorm-these-are-second = Mêmes sons 
 ui-land-experiences-any-resident-experience-can-be-blocked-blocked-experiences-cannot = N'importe quelle expérience de résident peut être bloquée. Les expériences bloquées ne peuvent pas s'exécuter sur ce terrain.
 build-ui-floaters-anyone = N'importe qui
 build-ui-general-anyone = N'importe qui :
+build-ui-general-export = Exporter
 build-ui-floaters-anyone-can-copy = N'importe qui peut copier
 ui-land-media-web-browser = Navigateur Web
 ui-land-objects-count = Nbre

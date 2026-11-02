@@ -80,6 +80,7 @@ mod tests {
             grid_status_page: String::new(),
             currency_base_uri: String::new(),
             currency_symbol: String::new(),
+            export_supported: false,
         });
         w
     }

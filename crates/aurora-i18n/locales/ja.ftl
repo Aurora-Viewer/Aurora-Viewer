@@ -4136,6 +4136,7 @@ ui-options-same-sounds-and-defaults-as-firestorm-these-are-second = レガシー
 ui-land-experiences-any-resident-experience-can-be-blocked-blocked-experiences-cannot = 住人の体験はすべてブロックできます。ブロックした体験はこの土地で実行できません。
 build-ui-floaters-anyone = 全員
 build-ui-general-anyone = 全員：
+build-ui-general-export = エクスポート
 build-ui-floaters-anyone-can-copy = 全員がコピー可能
 ui-land-media-web-browser = ウェブブラウザー
 ui-land-objects-count = 数

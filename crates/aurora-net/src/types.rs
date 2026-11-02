@@ -559,6 +559,9 @@ pub enum NetEvent {
         /// "OpenSimExtras" "currency": the region's own money symbol
         /// (mCurrencySymbolOverride); empty when not given.
         currency_symbol: String,
+        /// "OpenSimExtras" "ExportSupported": the region honours the export
+        /// permission (LFSimFeatureHandler::simSupportsExport).
+        export_supported: bool,
     },
     HoverHeightUpdated {
         region: RegionHandle,
