@@ -642,6 +642,7 @@ inventory-resize-columns = ドラッグして列のサイズを変更します�
 inventory-resize-sidebar = ドラッグしてフォルダのサイドバーのサイズを変更します。ダブルクリックで幅をリセットします。
 inventory-column-modified = 更新日
 inventory-pill-link = リンク
+inventory-pill-protected = ロック中
 inventory-take-off = 脱ぐ
 inventory-more-actions = その他の操作
 inventory-profile = プロフィール

@@ -755,7 +755,7 @@ impl Imports {
     fn default_folder(world: &crate::world::World, prefs: &crate::ui::inventory::InventoryPreferences, kind: Kind) -> Uuid {
         use crate::world::inventory::actions;
         let folder = prefs.upload_folders[kind.folder_slot()];
-        if actions::destination(&world.inventory, folder, &prefs.protected) {
+        if actions::destination(&world.inventory, folder) {
             return folder;
         }
         actions::system(&world.inventory, kind.asset_type()).unwrap_or(world.inventory.root)
@@ -831,7 +831,7 @@ impl Imports {
         if self.busy() {
             return;
         }
-        if !self.folder_plan_ready(world, prefs) {
+        if !self.folder_plan_ready(world) {
             self.message = aurora_i18n::tr!("import-invalid-request").into();
             return;
         }
@@ -853,7 +853,7 @@ impl Imports {
                     || entry.description.len() > 127
                     || entry.name.contains('\0')
                     || entry.description.contains('\0')
-                    || !crate::world::inventory::actions::destination(&world.inventory, entry.folder, &prefs.protected)
+                    || !crate::world::inventory::actions::destination(&world.inventory, entry.folder)
             })
         {
             self.message = aurora_i18n::tr!("import-invalid-request").into();
@@ -1040,8 +1040,8 @@ impl Imports {
         prefs: &crate::ui::inventory::InventoryPreferences,
     ) -> Vec<aurora_net::NetCommand> {
         let mut commands = Vec::new();
-        self.sync_folder_plan(world, prefs);
-        if let Some(command) = self.next_import_folder(world, prefs) {
+        self.sync_folder_plan(world);
+        if let Some(command) = self.next_import_folder(world) {
             commands.push(command);
         }
         // Retire only acknowledged uploads. Local previews and drafts that
@@ -1099,7 +1099,7 @@ impl Imports {
                     if let Some(choice) = loaded_choice {
                         self.reconcile_window(choice);
                     }
-                    self.sync_folder_plan(world, prefs);
+                    self.sync_folder_plan(world);
                     if let Some(id) = failed {
                         self.open(Choice::Local);
                         self.active = Some(id);

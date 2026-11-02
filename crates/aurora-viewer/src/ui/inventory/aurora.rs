@@ -371,7 +371,7 @@ fn compact(
     });
     let zone = ui.interact(out.inner_rect, ui.scope_id().with("aurora_list_zone"), Sense::hover());
     let target = list_destination(st, root);
-    task_drop::target(ui, p, &zone, inv, target, prefs, actions);
+    task_drop::target(ui, p, &zone, inv, target, actions);
     drag::target(ui, p, &zone, inv, target, st, prefs, facts, actions);
     in_rect(ui, foot, "aurora_inventory_foot", |ui| {
         if let Some((text, color)) = message {
@@ -508,7 +508,7 @@ fn explorer_list(
     };
     widgets::remember_scroll_bar(ui, list_id, &out);
     let zone = ui.interact(out.inner_rect, ui.scope_id().with("aurora_list_zone"), Sense::hover());
-    task_drop::target(ui, p, &zone, inv, target, prefs, actions);
+    task_drop::target(ui, p, &zone, inv, target, actions);
     drag::target(ui, p, &zone, inv, target, st, prefs, facts, actions);
     in_rect(ui, foot, "aurora_inventory_foot", |ui| match layout {
         Layout::Medium => {

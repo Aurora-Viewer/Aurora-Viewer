@@ -412,7 +412,7 @@ pub(super) fn show(
                         let footer_rect = egui::Rect::from_min_max(egui::pos2(remaining.left(), content.bottom()), remaining.max);
                         let mut footer_ui = ui.new_child(egui::UiBuilder::new().id_salt("import_tab_footer").max_rect(footer_rect));
                         footer_ui.set_clip_rect(footer_rect.intersect(ui.clip_rect()));
-                        let measured = footer::show(&mut footer_ui, p, imports, prefs, world, inventory_prefs, prices, actions);
+                        let measured = footer::show(&mut footer_ui, p, imports, prefs, world, prices, actions);
                         ctx.data_mut(|data| data.insert_temp(footer_key, measured));
                     }
                 },

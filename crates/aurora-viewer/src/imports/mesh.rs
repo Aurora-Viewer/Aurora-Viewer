@@ -708,7 +708,7 @@ impl Imports {
         prefs: &crate::ui::inventory::InventoryPreferences,
         rights: Permissions,
     ) {
-        if !self.with_choice(Choice::Mesh, |imports| imports.folder_plan_valid(world, prefs)) {
+        if !self.with_choice(Choice::Mesh, |imports| imports.folder_plan_valid(world)) {
             self.message = aurora_i18n::tr!("import-invalid-request").into();
             return;
         }
@@ -717,7 +717,7 @@ impl Imports {
                 .iter()
                 .find(|entry| entry.id == id)
                 .and_then(|entry| entry.upload_path.as_ref())
-                .and_then(|path| self.folders.resolved(path, &world.inventory, &prefs.protected))
+                .and_then(|path| self.folders.resolved(path, &world.inventory))
                 .or(Some(self.folders.destination))
         } else {
             None

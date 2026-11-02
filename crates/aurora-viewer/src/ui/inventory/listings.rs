@@ -121,7 +121,7 @@ impl Panel<'_> {
 
     pub fn rename(&mut self, ui: &mut egui::Ui, p: &Palette, inv: &Inventory, id: Uuid) -> bool {
         self.state.visible.push(id);
-        rename_row(ui, p, inv, id, self.state, self.prefs, &mut self.actions)
+        rename_row(ui, p, inv, id, self.state, &mut self.actions)
     }
 
     pub fn interact(&mut self, ui: &egui::Ui, inv: &Inventory, id: Uuid, response: &egui::Response) {
@@ -139,7 +139,7 @@ impl Panel<'_> {
     }
 
     pub fn finish(&mut self, ctx: &egui::Context, inv: &Inventory) {
-        finish_hidden_rename(inv, self.state, self.prefs, &mut self.actions);
+        finish_hidden_rename(inv, self.state, &mut self.actions);
         self.state.menu_editor.finish_inventory_frame(ctx, &mut self.prefs.context_menus);
     }
 
@@ -282,21 +282,19 @@ mod tests {
         state.dialog = None;
         execute("protect-folder", demo::HOODIE, &inv, &mut state, &mut prefs);
         assert!(prefs.protected.contains(&demo::HOODIE));
-        let catalog = context_catalog::build(&inv, item, &state, &prefs, &Facts::default());
-        for key in ["rename", "delete"] {
-            assert!(
-                !catalog
-                    .entries
-                    .iter()
-                    .find(|entry| entry.id == key)
-                    .expect("protected command")
-                    .enabled
-            );
+        let enabled = |id, key| {
+            context_catalog::build(&inv, id, &state, &prefs, &Facts::default())
+                .entries
+                .iter()
+                .find(|entry| entry.id == key)
+                .expect("command")
+                .enabled
+        };
+        // the locked folder stays in place; its contents are ordinary entries
+        assert!(!enabled(demo::HOODIE, "delete") && !enabled(demo::HOODIE, "cut"));
+        for key in ["rename", "delete", "cut"] {
+            assert!(enabled(item, key), "{key}");
         }
-        assert!(
-            catalog.entries.iter().find(|entry| entry.id == "cut").expect("cut command").enabled,
-            "protected contents can be moved out"
-        );
         execute("protect-folder", demo::HOODIE, &inv, &mut state, &mut prefs);
         execute("show-window", demo::HOODIE, &inv, &mut state, &mut prefs);
         assert!(state.windows.iter().any(|window| window.root == demo::HOODIE && window.open));

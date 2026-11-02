@@ -77,7 +77,10 @@ fn old_native_folder_is_renamed_once_without_reimporting_or_changing_selection_a
     assert!(matches!(change.operations.as_slice(), [Operation::Patch { id, folder: true, body }]
         if *id == root && body["name"].as_str() == inventory::FOLDER));
     assert!(inventory::editable(&inv, &change, &Default::default()));
-    assert!(!inventory::editable(&inv, &change, &std::collections::HashSet::from([root])));
+    assert!(
+        inventory::editable(&inv, &change, &std::collections::HashSet::from([root])),
+        "a locked folder keeps its rename"
+    );
     assert!(startup.source.root.is_none(), "never read the legacy catalogue for a native rename");
     assert!(
         startup.poll(&mut inv, &target, selected, true).is_none(),

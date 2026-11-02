@@ -1022,7 +1022,7 @@ fn item_row(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         resolved_item_type_icon(ui, icons, inv, it, p);
-        if rename_row(ui, p, inv, *id, st, prefs, actions) {
+        if rename_row(ui, p, inv, *id, st, actions) {
             return;
         }
         let worn = facts.worn_label(inv, *id);
@@ -1073,7 +1073,7 @@ fn item_response(
     // interaction overlay used to consume secondary clicks on the label.
     drag::source(ui, &r, it.id, false, st);
     clipboard::demo_row(&r, st, it.id);
-    task_drop::target(ui, p, &r, inv, it.parent, prefs, actions);
+    task_drop::target(ui, p, &r, inv, it.parent, actions);
     drag::target(ui, p, &r, inv, it.parent, st, prefs, facts, actions);
     super::widgets::demo::rez_row(&r, it.id);
     super::widgets::demo::worn_row(&r, it.id);
@@ -1126,7 +1126,7 @@ fn folder_row(
             _ => name.clone(),
         };
         state.visible.push(id);
-        if rename_row(ui, p, inv, id, state, prefs, actions) {
+        if rename_row(ui, p, inv, id, state, actions) {
             return;
         }
         let sense = if folder_draggable(inv, id, prefs) {
@@ -1135,6 +1135,14 @@ fn folder_row(
             egui::Sense::click()
         };
         let r = tree::label(ui, tree::name(&label, p), state.selection.contains(&id), sense, None);
+        if prefs.protected.contains(&id) {
+            // the " (Protected) " suffix of LLFolderViewItem::drawLabel
+            // (indra/llui/llfolderviewitem.cpp), as the rows' tag
+            let text = aurora_i18n::tr!("inventory-pill-protected");
+            ui.add_space(2.0);
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(super::widgets::row_tag_width(ui, text), 18.0), egui::Sense::hover());
+            super::widgets::paint_row_tag(ui, p, text, false, rect.left(), rect.center().y);
+        }
         if folder_response(ui, p, inv, id, r, Some(resp.rect), open, state, prefs, facts, actions).double_clicked() {
             *open = !*open;
         }
@@ -1174,7 +1182,7 @@ fn folder_response(
         drag::record_row(ui.ctx(), state.ui_id, id, r.rect);
     }
     clipboard::demo_row(&r, state, id);
-    task_drop::target(ui, p, &r, inv, id, prefs, actions);
+    task_drop::target(ui, p, &r, inv, id, actions);
     // Include the caret and icon while dragging, keeping their normal
     // click gestures independent from selection and drag initiation.
     let mut destination = r.clone();
@@ -1265,7 +1273,7 @@ fn folder_window_contents(
         }
         rows::scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h, root, false);
     });
-    task_drop::target(ui, p, &zone.response, inv, root, prefs, actions);
+    task_drop::target(ui, p, &zone.response, inv, root, actions);
     drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
@@ -1330,15 +1338,7 @@ fn status(
             .or_else(|| st.selected.and_then(|id| rules::parent(inv, id)))
             .unwrap_or(inv.root);
         super::widgets::icon_menu(ui, p, "plus", aurora_i18n::tr!("common-new-folder"), |ui| {
-            context::new_menu(
-                ui,
-                p,
-                to,
-                st.pending.is_none() && rules::destination(inv, to, &prefs.protected),
-                st,
-                prefs,
-                actions,
-            );
+            context::new_menu(ui, p, to, st.pending.is_none() && rules::destination(inv, to), st, prefs, actions);
         });
         additional_button(ui, p, st);
         ui.label(
@@ -1561,22 +1561,14 @@ fn row_width(
     depth.min(24) as f32 * ui.spacing().indent + label_width + 40.0
 }
 
-fn rename_row(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    inv: &Inventory,
-    id: Uuid,
-    st: &mut InventoryUi,
-    prefs: &InventoryPreferences,
-    actions: &mut Vec<InvAction>,
-) -> bool {
+fn rename_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, id: Uuid, st: &mut InventoryUi, actions: &mut Vec<InvAction>) -> bool {
     if st.rename.is_none()
         && st.selected == Some(id)
         && st.selection.len() == 1
         && st.pending.is_none()
         && !ui.ctx().text_edit_focused()
         && ui.input(|i| i.key_pressed(egui::Key::F2))
-        && rules::renameable(inv, id, &prefs.protected)
+        && rules::renameable(inv, id)
     {
         st.begin_rename(inv, id);
     }
@@ -1587,7 +1579,7 @@ fn rename_row(
         st.rename = Some(edit);
         return false;
     }
-    if !rules::renameable(inv, id, &prefs.protected) {
+    if !rules::renameable(inv, id) {
         return false;
     }
     let r = ui.add_sized(
@@ -1618,18 +1610,18 @@ fn rename_row(
         return true;
     } else if !r.has_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
         st.rename = Some(edit);
-        finish_rename(inv, st, prefs, actions);
+        finish_rename(inv, st, actions);
         return true;
     }
     st.rename = Some(edit);
     true
 }
 
-fn finish_rename(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, actions: &mut Vec<InvAction>) {
+fn finish_rename(inv: &Inventory, st: &mut InventoryUi, actions: &mut Vec<InvAction>) {
     let Some(mut edit) = st.rename.take() else {
         return;
     };
-    if !rules::renameable(inv, edit.id, &prefs.protected) {
+    if !rules::renameable(inv, edit.id) {
         return;
     }
     match rules::clean_name(&edit.name) {
@@ -1649,10 +1641,10 @@ fn finish_rename(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPrefere
     st.rename = Some(edit);
 }
 
-fn finish_hidden_rename(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, actions: &mut Vec<InvAction>) {
+fn finish_hidden_rename(inv: &Inventory, st: &mut InventoryUi, actions: &mut Vec<InvAction>) {
     // Closing the window, filtering or collapsing a parent also ends editing.
     if st.rename.as_ref().is_some_and(|edit| !st.visible.contains(&edit.id)) {
-        finish_rename(inv, st, prefs, actions);
+        finish_rename(inv, st, actions);
         st.rename = None;
     }
 }
@@ -1814,7 +1806,7 @@ fn inventory_contents(
         list(ui, p, icons, inv, st, prefs, facts, actions, list_h, root, filtered, true);
     });
     let target = list_destination(st, root);
-    task_drop::target(ui, p, &zone.response, inv, target, prefs, actions);
+    task_drop::target(ui, p, &zone.response, inv, target, actions);
     drag::target(ui, p, &zone.response, inv, target, st, prefs, facts, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, target, st, prefs, facts, actions);
@@ -1949,7 +1941,7 @@ pub fn show(
     }
     let inv = &mut world.inventory;
     context_catalog::process_deferred(inv, st, prefs, &facts);
-    bulk_permissions::show(ctx, p, inv, st, prefs, world.agent_id, &mut actions);
+    bulk_permissions::show(ctx, p, inv, st, world.agent_id, &mut actions);
     st.visible.clear();
     fetch_whole_inventory(inv, st);
     // Copied folders load their whole tree for the paste; once loaded, they
@@ -2003,7 +1995,7 @@ pub fn show(
     st.hover.show(p, inv, prefs, hover_images, &mut st.wanted_hover_images);
     st.was_open = *open && !super::widgets::floater_minimized(ctx, "inventory");
     controls::dialogs(ctx, p, st, prefs);
-    finish_hidden_rename(inv, st, prefs, &mut actions);
+    finish_hidden_rename(inv, st, &mut actions);
     dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
     move_to::show(ctx, p, icons, inv, st, prefs, &facts, &mut actions);
     dialogs::preview(ctx, p, icons, inv, inv, st, images, prefs, script_settings, &mut actions);
@@ -2132,9 +2124,9 @@ pub fn show(
             w.state.scope = root;
             w.state.view = Default::default();
         }
-        bulk_permissions::show(ctx, p, &mut world.inventory, &mut w.state, prefs, world.agent_id, &mut actions);
+        bulk_permissions::show(ctx, p, &mut world.inventory, &mut w.state, world.agent_id, &mut actions);
         if w.id != listings::PANEL {
-            finish_hidden_rename(&world.inventory, &mut w.state, prefs, &mut actions);
+            finish_hidden_rename(&world.inventory, &mut w.state, &mut actions);
         }
         controls::dialogs(ctx, p, &mut w.state, prefs);
         context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts);
@@ -4186,7 +4178,7 @@ mod tests {
         rename_frame(&ctx, &inv, &mut st, vec![egui::Event::Text("Nom avant fermeture".into())]);
         st.visible.clear();
         let mut actions = Vec::new();
-        finish_hidden_rename(&inv, &mut st, &InventoryPreferences::default(), &mut actions);
+        finish_hidden_rename(&inv, &mut st, &mut actions);
         assert!(st.rename.is_none());
         assert!(matches!(&actions[..], [InvAction::Edit(change)] if matches!(&change.operations[..],
             [aurora_net::inventory::operations::Operation::Patch { body, .. }] if body["name"].as_str() == "Nom avant fermeture")));
