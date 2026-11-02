@@ -60,6 +60,9 @@ pub struct Inventory {
     pub item_failures: HashMap<Uuid, u8>,
     /// Failed item reads to ask for again (`take_item_retries`).
     pub item_retries: HashSet<Uuid>,
+    /// The listing folders the Marketplace data holds in place, set by the
+    /// listings every frame (`marketplace::Holds`).
+    pub listing_holds: super::marketplace::Holds,
     pub(crate) repaired_parents: HashMap<Uuid, Uuid>,
     pub(crate) pending_parent_repairs: HashSet<Uuid>,
     pub(crate) deferred_parents: HashMap<Uuid, parents::ItemSource>,

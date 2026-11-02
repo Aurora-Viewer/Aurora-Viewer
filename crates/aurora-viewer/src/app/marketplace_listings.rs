@@ -63,9 +63,14 @@ impl App {
     }
 
     /// Every frame: the listings follow the inventory, the queued SLM
-    /// requests go to the session, the alerts to the notifications.
+    /// requests go to the session, the alerts to the notifications, and the
+    /// inventory learns which listing folders stay in place.
     pub(super) fn update_marketplace_listings(&mut self) {
         self.listings_ui.reconcile(&self.world.inventory);
+        let holds = self.listings_ui.data.holds();
+        if self.world.inventory.listing_holds != holds {
+            self.world.inventory.listing_holds = holds;
+        }
         for request in self.listings_ui.data.take_requests(std::time::Instant::now()) {
             log::info!("SLM request queued: {}", request.name());
             self.send(NetCommand::Slm(request));
