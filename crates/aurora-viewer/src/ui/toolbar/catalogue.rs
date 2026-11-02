@@ -97,7 +97,7 @@ pub const COMMANDS: &[Command] = commands![
     "water_walk", "walk", "movement-water-walk", true;
     "resync_animations", "refresh", "toolbar-command-resync-animations", true;
     "regiontracker", "location-filled", "toolbar-command-region-tracker", false;
-    "group_titles", "tags-filled", "toolbar-command-group-titles", false;
+    "group_titles", "tags-filled", "toolbar-command-group-titles", true;
     "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", false;
     "beacons", "bulb-filled", "toolbar-command-beacons", false;
     "discord", "brand-discord-filled", "toolbar-command-discord", false;

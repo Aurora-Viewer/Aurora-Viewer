@@ -50,6 +50,7 @@ pub(crate) mod give_drop;
 pub mod grid_status;
 pub mod grids;
 pub mod group_profile;
+pub mod group_titles;
 pub mod hover_height;
 pub mod hover_tips;
 pub mod hud;
@@ -141,6 +142,9 @@ pub struct Panels {
     pub dev_toolbox: bool,
     /// Advanced › Region console (SimConsoleAsync, estate managers).
     pub sim_console: bool,
+    /// Group titles (FSFloaterGroupTitles): the toolbar's command and
+    /// Contacts › Groups › Titles.
+    pub group_titles: bool,
     /// The photo window (Firestorm's snapshot floater).
     pub snapshot: bool,
     pub people: bool,
@@ -216,6 +220,7 @@ impl Panels {
             perf: settings.show_perf,
             dev_toolbox: false,
             sim_console: false,
+            group_titles: false,
             snapshot: false,
             people: settings.show_people,
             minimap: settings.show_minimap,

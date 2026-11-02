@@ -479,6 +479,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "chat_history" => "history",
         "people" | "group_picker" | "group_profile" | "contact_set_config" => "users-group",
         "group_invite" | "group_invite_choice" => "user-plus",
+        "group_titles" => "tags-filled",
         "search" => "search-filled",
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",

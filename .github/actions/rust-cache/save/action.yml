@@ -1,0 +1,43 @@
+name: Rust cache (save)
+description: >
+  Saves the Cargo registry and target/ under the key that ../action.yml
+  computed, without Aurora's own build outputs. For main only (pull requests
+  and queue runs read main's caches and write none, see ci.yml).
+inputs:
+  key:
+    description: The key output of ../action.yml
+    required: true
+runs:
+  using: composite
+  steps:
+    # Aurora's crates change with every commit: whoever restores the cache
+    # rebuilds them anyway, and they would make it about twice as large.
+    # Packages name .fingerprint/ and build/, targets (underscored) name
+    # deps/; the binaries and their .d files sit at the top of the profile.
+    - name: Drop the workspace's own outputs
+      shell: bash
+      run: |
+        meta=$(cargo metadata --no-deps --format-version 1 --locked)
+        packages=$(jq -r '.packages[].name' <<< "$meta")
+        targets=$(jq -r '.packages[].targets[].name' <<< "$meta" | tr '-' '_' | sort -u)
+        for profile in target/*/; do
+          [ -d "$profile.fingerprint" ] || continue
+          find "$profile" -maxdepth 1 -type f -delete
+          rm -rf "${profile}incremental"
+          for p in $packages; do
+            rm -rf "$profile.fingerprint/$p"-* "${profile}build/$p"-*
+          done
+          for t in $targets; do
+            rm -rf "${profile}deps/$t"-* "${profile}deps/lib$t"-*
+          done
+        done
+        du -sh target || true
+    # the same paths as ../action.yml (see there)
+    - uses: actions/cache/save@v6
+      with:
+        path: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ inputs.key }}
