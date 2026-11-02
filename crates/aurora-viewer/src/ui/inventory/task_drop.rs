@@ -79,19 +79,81 @@ fn target_cursor(ctx: &egui::Context, cursor: egui::CursorIcon) -> bool {
 /// selected row. One item refused refuses the drag (LLFolderViewModelInventory::
 /// startDrag: `can_drag` of every item).
 pub fn source(ui: &mut egui::Ui, r: &egui::Response, world: &World, object: Uuid, items: &[TaskItem], owned: bool) {
-    let access: Result<Vec<TransferKind>, _> = items.iter().map(|item| task_inventory::kind(world, object, item, owned)).collect();
+    let access = items
+        .iter()
+        .map(|item| task_inventory::kind(world, object, item, owned))
+        .collect::<Result<Vec<_>, _>>()
+        .map(|kinds| {
+            // the first item leaving the object makes the cursor a move
+            (!kinds.is_empty()).then(|| {
+                kinds
+                    .iter()
+                    .copied()
+                    .find(|kind| *kind != TransferKind::Copy)
+                    .unwrap_or(TransferKind::Copy)
+            })
+        });
+    begin(ui, r, object, items, access);
+}
+
+/// What a drag of the object's root "Contents" folder carries, in contents
+/// order: every item that can be taken (LLTaskCategoryBridge::startDrag,
+/// indra/newview/llpanelobjectinventory.cpp, then
+/// move_inv_category_world_to_agent, indra/newview/llinventorybridge.cpp).
+/// The Legacy Viewer sends every item and the simulator leaves the refused
+/// ones (someone else's no-copy item, a no-copy item of a worn object) in the
+/// object, silently; its check never resets its `accept` flag, so whether the
+/// drag starts depends on the item order. Here each item is decided on its
+/// own: the refused ones are left out (same outcome, silent too), and the
+/// drag is refused only when nothing can be taken, an empty object included.
+/// A no-copy item of an object you own makes it a move.
+pub fn root_drag(world: &World, object: Uuid, items: &[TaskItem], owned: bool) -> Result<(Vec<TaskItem>, TransferKind), String> {
+    let mut kind = TransferKind::Copy;
+    let mut taken = Vec::new();
+    for item in items.iter().filter(|item| !item.is_folder) {
+        match task_inventory::kind(world, object, item, owned) {
+            Ok(TransferKind::Copy) => {}
+            Ok(TransferKind::Move { scripted }) => {
+                kind = TransferKind::Move { scripted };
+            }
+            Err(_) => continue,
+        }
+        taken.push(item.clone());
+    }
+    if taken.is_empty() {
+        return Err(aurora_i18n::tr!("contents-copy-nothing").into());
+    }
+    // the scripted warning when the object holds a script (warn_move_inventory)
+    if let TransferKind::Move { scripted } = &mut kind {
+        *scripted |= items.iter().any(|item| item.asset_type == 10);
+    }
+    Ok((taken, kind))
+}
+
+/// The root "Contents" row as a drag source. `items` is the whole contents
+/// (folders are left out), whatever the list's filter shows, as
+/// LLViewerObject::getInventoryContents gives it. Dropped on an inventory
+/// folder, the items go straight into it, not into a new folder named after
+/// the object (move_task_inventory_callback moves each (folder, item) pair);
+/// "Copy to inventory" of the Open window is the one that makes that folder.
+pub fn root_source(ui: &mut egui::Ui, r: &egui::Response, world: &World, object: Uuid, items: &[TaskItem], owned: bool) {
+    if !(r.hovered() || r.drag_started() || r.dragged()) {
+        return;
+    }
+    match root_drag(world, object, items, owned) {
+        Ok((taken, kind)) => begin(ui, r, object, &taken, Ok::<_, String>(Some(kind))),
+        Err(error) => begin(ui, r, object, &[], Err(error)),
+    }
+}
+
+/// The payload of a drag that `access` allows, one request per item in
+/// order; `Ok(None)` carries nothing.
+fn begin<E: AsRef<str>>(ui: &mut egui::Ui, r: &egui::Response, object: Uuid, items: &[TaskItem], access: Result<Option<TransferKind>, E>) {
     if let Err(error) = &access {
-        r.clone().on_hover_text(*error);
+        r.clone().on_hover_text(error.as_ref());
     }
     if r.drag_started() {
-        if let Ok(kinds) = access.as_ref()
-            && !kinds.is_empty()
-        {
-            let kind = kinds
-                .iter()
-                .copied()
-                .find(|kind| *kind != TransferKind::Copy)
-                .unwrap_or(TransferKind::Copy);
+        if let Ok(Some(kind)) = access {
             let requests = items
                 .iter()
                 .map(|item| TransferRequest {
@@ -120,6 +182,17 @@ pub fn target(
     prefs: &InventoryPreferences,
     actions: &mut Vec<InvAction>,
 ) {
+    if demo_enabled() && folder != inv.root {
+        // the folder's own row comes before the zones enclosing it
+        let pass = ui.ctx().cumulative_pass_nr();
+        ui.ctx().data_mut(|d| {
+            if d.get_temp::<(u64, egui::Rect)>(demo_target_id(folder))
+                .is_none_or(|(at, _)| at != pass)
+            {
+                d.insert_temp(demo_target_id(folder), (pass, r.rect));
+            }
+        });
+    }
     let Some(cargo) = r.dnd_hover_payload::<TaskDrag>() else { return };
     // Every item accepted or none (LLToolDragAndDrop::dragOrDrop).
     let allowed = cargo
@@ -153,6 +226,26 @@ pub fn target(
         // Do not let an enclosing inventory surface accept a rejected row.
         r.dnd_release_payload::<TaskDrag>();
     }
+}
+
+/// `AURORA_DEMO_ACTIONS=open-folder[-drop]`: the Open window's root folder
+/// dragged onto the inventory's Objects folder (app/contents_folder_drag_demo.rs).
+pub(crate) fn demo_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("AURORA_DEMO").as_deref() == Ok("1")
+            && std::env::var("AURORA_DEMO_ACTIONS").is_ok_and(|mode| mode.starts_with("open-folder"))
+    })
+}
+
+fn demo_target_id(folder: Uuid) -> egui::Id {
+    egui::Id::unique(("task_drop_demo_target", folder))
+}
+
+/// Where a pass last drew the first drop target for `folder`.
+pub(crate) fn demo_target(ctx: &egui::Context, folder: Uuid) -> Option<egui::Rect> {
+    ctx.data(|d| d.get_temp::<(u64, egui::Rect)>(demo_target_id(folder)))
+        .map(|(_, rect)| rect)
 }
 
 /// The first waiting batch, one dialog at a time; its answer gives one
@@ -364,6 +457,132 @@ mod tests {
                     })
                     .collect();
                 assert_eq!(taken, [Uuid::from_u128(99001), Uuid::from_u128(99002)]);
+            }
+        }
+    }
+
+    /// A copyable notecard, a no-copy object and a script, plus the task
+    /// inventory's own root folder entry.
+    fn contents(request: &TransferRequest) -> Vec<TaskItem> {
+        let item = |n: u128, name: &str, asset_type: i8, owner_mask: u32| TaskItem {
+            item_id: Uuid::from_u128(n),
+            name: name.into(),
+            asset_type,
+            inv_type: asset_type,
+            owner_mask,
+            ..request.item.clone()
+        };
+        let copy = aurora_net::build::perm::COPY | aurora_net::build::perm::TRANSFER;
+        vec![
+            TaskItem {
+                is_folder: true,
+                ..item(99100, "Contents", 8, copy)
+            },
+            item(99101, "Card", 7, copy),
+            item(99102, "Spare", 6, aurora_net::build::perm::TRANSFER),
+            item(99103, "Door", 10, copy),
+        ]
+    }
+
+    #[test]
+    fn the_root_folder_takes_every_item_it_can_and_refuses_only_when_none() {
+        let (world, request) = fixture();
+        let object = request.object;
+        let items = contents(&request);
+        let ids = |drag: &(Vec<TaskItem>, TransferKind)| drag.0.iter().map(|item| item.item_id.as_u128()).collect::<Vec<_>>();
+        let nothing = Err(aurora_i18n::tr!("contents-copy-nothing").to_owned());
+        assert_eq!(root_drag(&world, object, &[], true), nothing, "an empty object");
+        assert_eq!(root_drag(&world, object, &items[..1], true), nothing, "its root entry only");
+        assert_eq!(
+            root_drag(&world, object, &[items[0].clone(), items[2].clone()], false),
+            nothing,
+            "every item refused"
+        );
+        // move_inv_category_world_to_agent: a no-copy item of an object you own is moved
+        let ours = root_drag(&world, object, &items, true).expect("ours");
+        assert_eq!(ids(&ours), [99101, 99102, 99103], "contents order, the root entry left out");
+        assert_eq!(
+            ours.1,
+            TransferKind::Move { scripted: true },
+            "the script makes it the scripted warning"
+        );
+        let plain = root_drag(&world, object, &items[..3], true).expect("ours, no script");
+        assert_eq!(plain.1, TransferKind::Move { scripted: false });
+        // someone else's: the no-copy item stays in the object, the rest is copied,
+        // whatever the item order (the Legacy Viewer's check depends on it)
+        let theirs = root_drag(&world, object, &items, false).expect("theirs");
+        assert_eq!(ids(&theirs), [99101, 99103]);
+        assert_eq!(theirs.1, TransferKind::Copy);
+        let spare_first = [items[2].clone(), items[1].clone(), items[3].clone()];
+        assert_eq!(
+            ids(&root_drag(&world, object, &spare_first, false).expect("spare first")),
+            [99101, 99103]
+        );
+    }
+
+    #[test]
+    fn a_real_drag_of_the_root_row_drops_every_takeable_item_into_the_folder() {
+        for owned in [true, false] {
+            let (world, request) = fixture();
+            let items = contents(&request);
+            let folder = world
+                .inventory
+                .folders
+                .values()
+                .find(|f| f.info.type_default == 0 && !f.library)
+                .unwrap()
+                .info
+                .id;
+            let ctx = egui::Context::default();
+            let p = crate::theme::Theme::default().palette();
+            let prefs = InventoryPreferences::default();
+            let mut time = 0.0;
+            let mut actions = Vec::new();
+            let mut frame = |events| {
+                time += 0.04;
+                let mut output = ctx.run_ui(input(time, events), |ui| {
+                    let r = ui.put(
+                        egui::Rect::from_min_size(egui::pos2(20.0, 20.0), Vec2::new(180.0, 26.0)),
+                        egui::Button::new("Contents").sense(egui::Sense::click_and_drag()),
+                    );
+                    root_source(ui, &r, &world, request.object, &items, owned);
+                    let r = ui.put(
+                        egui::Rect::from_min_size(egui::pos2(20.0, 180.0), Vec2::new(180.0, 26.0)),
+                        egui::Button::new("Folder"),
+                    );
+                    target(ui, &p, &r, &world.inventory, folder, &prefs, &mut actions);
+                    if let Some(cursor) = cursor(ui.ctx()) {
+                        ui.ctx().set_cursor_icon(cursor);
+                    }
+                });
+                output.textures_delta.clear();
+                output.platform_output.cursor_icon
+            };
+            let start = egui::pos2(40.0, 32.0);
+            let end = egui::pos2(40.0, 192.0);
+            frame(Vec::new());
+            frame(vec![egui::Event::PointerMoved(start), button(start, true)]);
+            frame(vec![egui::Event::PointerMoved(egui::pos2(100.0, 32.0))]);
+            assert!(egui::DragAndDrop::has_payload_of_type::<TaskDrag>(&ctx));
+            let over = frame(vec![egui::Event::PointerMoved(end)]);
+            frame(vec![button(end, false)]);
+            let taken: Vec<_> = actions
+                .iter()
+                .map(|action| match action {
+                    InvAction::TakeTask(req) if req.folder == folder && req.object == request.object => req.item.item_id.as_u128(),
+                    _ => panic!("one TakeTask into the folder itself per item"),
+                })
+                .collect();
+            if owned {
+                assert_eq!(over, egui::CursorIcon::Move, "the no-copy item leaves the object");
+                assert_eq!(
+                    taken,
+                    [99101, 99102, 99103],
+                    "every item in contents order, the root entry left out"
+                );
+            } else {
+                assert_eq!(over, egui::CursorIcon::Copy);
+                assert_eq!(taken, [99101, 99103], "someone else's no-copy item stays in the object");
             }
         }
     }

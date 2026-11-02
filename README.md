@@ -793,6 +793,8 @@ cycle button between them, the AO switch, and swimming or water walking. The
 run and flight boosts are in Settings › Movement. Its **Settings** button
 opens the full Animation Overrider, with its movement editor and the
 animation lists by category (General, Ground, Jumping, Flying, Swimming).
+Each account remembers its last animation in every list and independent track
+after reconnecting; automatic cycling continues according to the set's options.
 Swimming has its own lists at the surface and underwater. Sets are kept under `#Aurora/Aurora AO`; at first
 start, the sets of a Legacy Viewer `#Firestorm/#AO` folder are brought over.
 Import a ZHAO notecard from the same folder as its animations. The AO is off at first, as in the Legacy Viewer. `cao on` /

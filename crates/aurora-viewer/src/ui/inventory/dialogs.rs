@@ -298,7 +298,12 @@ pub(super) fn show(
         if !st.message.is_empty() {
             ui.label(RichText::new(&st.message).color(p.warn));
         }
-        if (!confirmation && !document_confirmation && flat_button(ui, p, aurora_i18n::tr!("extra-close-cancel")).clicked())
+        let close_label = if properties {
+            aurora_i18n::tr!("common-close")
+        } else {
+            aurora_i18n::tr!("extra-close-cancel")
+        };
+        if (!confirmation && !document_confirmation && flat_button(ui, p, close_label).clicked())
             || ui.input(|i| i.key_pressed(egui::Key::Escape))
         {
             done = true;

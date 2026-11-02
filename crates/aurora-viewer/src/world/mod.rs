@@ -28,6 +28,7 @@ pub mod env_day_edit;
 pub mod env_edit;
 pub mod env_select;
 pub mod estate;
+pub mod experience_log;
 pub mod experiences;
 pub mod favorites;
 pub mod flying_at_exit;
@@ -63,6 +64,7 @@ pub mod objects;
 pub mod open_ims;
 pub mod outfit;
 pub mod outfit_folders;
+pub mod outfit_paste;
 pub mod parcel_visibility;
 pub mod parked;
 pub mod particle_filters;
@@ -79,6 +81,7 @@ pub mod recent;
 pub mod region_alerts;
 pub mod region_messages;
 pub mod region_restart;
+pub mod region_titles;
 pub mod rig_graph;
 pub mod rig_targets;
 pub mod rlva;
@@ -571,6 +574,9 @@ pub struct World {
     /// Members, roles, titles and notices of the groups whose profile is
     /// open (LLGroupMgr).
     pub group_data: group_data::GroupMgr,
+    /// The group title worn by region, and every group's titles for the
+    /// Group titles window (FSGroupTitleRegionMgr).
+    pub region_titles: region_titles::RegionTitles,
     /// The parcels and accounts of the group whose "Land and L$" tab shows.
     pub group_money: group_money::GroupMoney,
     arrived_once: bool,
@@ -787,6 +793,7 @@ impl World {
             place_snapshots: Default::default(),
             search: Default::default(),
             group_data: Default::default(),
+            region_titles: Default::default(),
             group_money: Default::default(),
             notifications: notifications::Notifications::default(),
             teleport_invites: teleport_invites::TeleportInvites::default(),
@@ -1770,6 +1777,25 @@ impl World {
         self.profiles.group_insignia(group, insignia);
     }
 
+    /// LLExperienceLog::notify (the ExperienceEvent notification).
+    pub fn notify_experience_event(&mut self, entry: &experience_log::LogEntry) {
+        let experience = self
+            .experiences
+            .details
+            .get(&entry.experience)
+            .filter(|d| !d.invalid() && !d.name.trim().is_empty())
+            .map_or_else(|| entry.experience.to_string(), |d| d.name.trim().to_owned());
+        let what = experience_log::permission_long(entry.permission);
+        let text = aurora_i18n::tr!(
+            "ui-experiences-log-notice",
+            what = what,
+            experience = experience,
+            object = entry.object_name.clone(),
+            parcel = entry.parcel_name.clone()
+        );
+        self.system_message(text.to_string());
+    }
+
     pub fn system_message(&mut self, text: impl Into<String>) {
         self.system_notice(text, notice_topics::Topic::Info);
     }
@@ -2135,6 +2161,7 @@ impl World {
                     log::info!("invisible: hidden again from {hidden} friend(s) the login still showed us to");
                 }
                 let open = account.join(open_ims::FILE);
+                self.experiences.log = experience_log::ExperienceLog::load(account.join(experience_log::FILE), &experience_log::now().0);
                 self.reopen_ims = open_ims::load(&open);
                 self.open_ims_path = Some(open);
                 self.calls.load_volumes(account.join(calls::VOLUMES_FILE));
@@ -2898,6 +2925,15 @@ impl World {
                 }
                 None
             }
+            NetEvent::ExperienceLog(event) => {
+                let (day, time) = experience_log::now();
+                let entry = self.experiences.log.record(&event, &day, &time).clone();
+                if self.experiences.log.notify {
+                    self.experiences.want(entry.experience);
+                    self.notify_experience_event(&entry);
+                }
+                None
+            }
             NetEvent::ExperienceAttachment { experience, object_name } => {
                 if self.rlva.enabled() {
                     self.rlva.controllers.attachment(experience, object_name, Instant::now());
@@ -2914,6 +2950,10 @@ impl World {
             }
             NetEvent::ExperienceEnvironment { experience, message } => {
                 self.eep.push_experience(experience, &message);
+                None
+            }
+            NetEvent::ExperienceList { kind, ids } => {
+                self.experiences.list_arrived(kind, ids);
                 None
             }
             NetEvent::GroupExperiences { group, ids } => {
@@ -3353,6 +3393,13 @@ impl World {
             | NetEvent::GroupTitles { .. }
             | NetEvent::GroupNotices { .. }
             | NetEvent::GroupBanList { .. }) => {
+                // the Group titles window's own requests
+                if let NetEvent::GroupTitles { group, request, titles } = &ev {
+                    let name = self.groups.group(group).map(|g| g.name.clone()).unwrap_or_default();
+                    if self.region_titles.on_titles(*group, *request, titles, &name) {
+                        return None;
+                    }
+                }
                 self.group_data.on_event(&ev);
                 if matches!(ev, NetEvent::GroupMembers(_)) {
                     self.search.refresh_group_counts(&self.group_data);

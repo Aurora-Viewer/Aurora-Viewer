@@ -13,6 +13,7 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // these (session_offline.rs)
     "AcceptFriendship",
     "AcceptGroupInvite",
+    "AgentExperiences",
     "AgentPreferences",
     "AgentProfile",
     // the scripts of my attachments (Script info)
@@ -41,7 +42,10 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "FetchLibDescendents2",
     // the experience picker of About Land (LLExperienceCache::findExperienceByName)
     "FindExperienceByName",
+    // the Experiences window's lists (LLFloaterExperiences::refreshContents)
+    "GetAdminExperiences",
     "GetCreatorExperiences",
+    "GetExperiences",
     "GetDisplayNames",
     "GetExperienceInfo",
     "GetMesh",
@@ -295,7 +299,7 @@ async fn send_llsd(req: reqwest::RequestBuilder, kind: HttpKind) -> Result<Llsd,
         Ok(resp) => resp,
         Err(e) => {
             finish(timed, 0, 0, false);
-            return Err(CapsError::Http(e.to_string()));
+            return Err(CapsError::Http(e.without_url().to_string()));
         }
     };
     let status = resp.status();
@@ -307,7 +311,7 @@ async fn send_llsd(req: reqwest::RequestBuilder, kind: HttpKind) -> Result<Llsd,
         Ok(bytes) => bytes,
         Err(e) => {
             finish(timed, 0, 0, false);
-            return Err(CapsError::Http(e.to_string()));
+            return Err(CapsError::Http(e.without_url().to_string()));
         }
     };
     finish(timed, status.as_u16(), bytes.len(), true);

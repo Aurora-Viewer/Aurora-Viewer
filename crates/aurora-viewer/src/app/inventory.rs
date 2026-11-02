@@ -889,6 +889,7 @@ impl App {
                 self.appearance_ui.pending = Some((request, sync));
                 self.appearance_ui.pending_actor = actor;
                 self.appearance_ui.attachments = attachments;
+                self.appearance_ui.worn_before = self.world.outfit_attachment_items();
                 self.appearance_ui.message.clear();
                 let mut command = NetCommand::UpdateOutfit { request, change };
                 // An attachment the outfit write left out must not reach the
@@ -898,6 +899,14 @@ impl App {
                 if !self.world.rlva_allows_command(&command, actor) {
                     self.appearance_ui.pending = None;
                     self.appearance_ui.attachments.clear();
+                } else if let NetCommand::UpdateOutfit { change, .. } = &mut command {
+                    crate::world::appearance::defer_attachment_links(
+                        &self.world.inventory,
+                        change,
+                        &self.appearance_ui.worn_before,
+                        &mut self.appearance_ui.attachments,
+                        self.world.agent_id,
+                    );
                 }
                 self.send_from(command, actor);
             }
@@ -916,6 +925,25 @@ impl App {
         let worn = self.world.outfit_attachment_items();
         for command in self.appearance_ui.reload(&mut self.world.inventory, self.world.agent_id, &worn) {
             self.send(command);
+        }
+    }
+
+    /// Ctrl+C, Ctrl+X or Ctrl+V of Appearance, on the inventory's clipboard:
+    /// a paste goes through the inventory's paste, outfit rules included.
+    pub(super) fn appearance_clipboard(&mut self, ctx: &egui::Context, request: ui::appearance::ClipboardRequest) {
+        let facts = ui::inventory::Facts::from_world(&self.world, self.appearance_ui.pending.is_some());
+        self.inventory_ui.message.clear();
+        let actions = ui::inventory::appearance_clipboard(
+            ctx,
+            &self.world.inventory,
+            &mut self.inventory_ui,
+            &self.settings.inventory,
+            &facts,
+            request,
+        );
+        self.appearance_ui.message.clone_from(&self.inventory_ui.message);
+        for action in actions {
+            self.apply_inventory_action(action);
         }
     }
 }

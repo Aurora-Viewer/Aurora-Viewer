@@ -115,6 +115,10 @@ pub mod grounding;
 /// The demo group server (AURORA_DEMO_GROUP_PROFILE).
 #[path = "demo_group.rs"]
 pub mod group;
+/// The Group titles window and the title worn by region
+/// (AURORA_DEMO_GROUP_REGION).
+#[path = "demo_group_region.rs"]
+pub mod group_region;
 #[path = "demo_hand_ik.rs"]
 pub mod hand_ik;
 /// Set Home to Here and Privacy's account settings (AURORA_DEMO_HOME,
@@ -2749,6 +2753,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         _ => {}
     }
     if let Some(events) = hud::reply(cmd) {
+        return events;
+    }
+    if let Some(events) = group_region::reply(cmd) {
         return events;
     }
     if let Some(events) = group::reply(cmd) {
@@ -5719,7 +5726,43 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(plants::events());
     ev.extend(blend_shadows::events());
     ev.extend(bom_rezzed::events());
+    ev.extend(land_beside_events());
     ev
+}
+
+/// AURORA_DEMO_LAND_BESIDE=1: a 4 m square frame lying on the bare ground
+/// 5 m along the start view (a box prim hollowed at 85 %), with
+/// AURORA_DEMO_POS="80,100" (open land: the plaza's floor is a prim). Its
+/// box spans the ground in its middle, its surface does not: a right click
+/// there is the land's (the land menu, Edit terrain), as beside a mesh whose
+/// box covers the ground around it.
+fn land_beside_events() -> Vec<NetEvent> {
+    if !std::env::var("AURORA_DEMO_LAND_BESIDE").is_ok_and(|v| v.trim() == "1") {
+        return Vec::new();
+    }
+    let eye = std::env::var("AURORA_DEMO_POS")
+        .ok()
+        .map(|v| v.split(',').filter_map(|s| s.trim().parse::<f32>().ok()).collect::<Vec<_>>())
+        .filter(|p| p.len() >= 2)
+        .map_or(glam::Vec2::new(80.0, 100.0), |p| glam::Vec2::new(p[0], p[1]));
+    // the start view (AURORA_DEMO_FOLIAGE's `look`)
+    let at = eye + glam::Vec2::new(0.8, 0.4).normalize() * 5.0;
+    let (x, y) = (at.x, at.y);
+    let frame = prim(
+        99700,
+        Vec3::new(x, y, height(x, y) + 0.15),
+        Quat::IDENTITY,
+        Vec3::new(4.0, 4.0, 0.3),
+        // profile_hollow in 1/50000ths: 85 %
+        shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 42500, 0),
+        te([0.85, 0.55, 0.2, 1.0], 0, false, 0.0),
+        Default::default(),
+        "",
+    );
+    vec![NetEvent::ObjectUpdates {
+        handle: HANDLE,
+        objects: vec![frame],
+    }]
 }
 
 /// Unrelated demos stay quiet; each explicit scenario gets only its fixtures.

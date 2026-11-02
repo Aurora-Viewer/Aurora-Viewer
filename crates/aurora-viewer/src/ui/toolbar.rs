@@ -327,7 +327,8 @@ impl ToolbarUi {
     /// Firestorm's (menu_toolbars_horizontal.xml, _vertical.xml), with
     /// Aurora's microphone options and favourites access.
     pub fn context(&mut self, response: &Response, p: &Palette, bar: Bar, style: Style, button: Option<&ToolButton>, locked: bool) {
-        menu::context_menu(response, p, |ui| {
+        // Buttons such as Favorites also own a left-click dropdown.
+        menu::context_menu_of_button(response, p, |ui| {
             if !locked && let Some(button) = button {
                 if menu::item(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-remove")) {
                     self.pending = Some(Edit::Remove(button.command.clone()));
