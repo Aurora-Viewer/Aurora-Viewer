@@ -1771,6 +1771,9 @@ impl BuildTool {
                     for c in cmds {
                         self.send(c);
                     }
+                    for idx in self.manip.take_te_dirty() {
+                        self.send_te(world, idx);
+                    }
                 }
                 if let Some(r) = self.rect.as_mut() {
                     r.1 = cursor;
@@ -1995,6 +1998,9 @@ impl BuildTool {
         self.land.mouse_up();
         for c in cmds {
             self.send(c);
+        }
+        for idx in self.manip.take_te_dirty() {
+            self.send_te(world, idx);
         }
         self.grab_up();
     }
