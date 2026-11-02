@@ -42,7 +42,7 @@ runs:
     # the paths must stay the same as in save/action.yml: they are part of
     # the cache's identity, a different list finds nothing
     - id: restore
-      uses: actions/cache/restore@v6
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.cargo/registry/index/
