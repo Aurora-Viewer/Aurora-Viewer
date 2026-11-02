@@ -294,6 +294,8 @@ pub struct EnvSelector {
     manual_transition: f32,
     /// Next local change without crossfade (TRANSITION_INSTANT).
     instant_next: bool,
+    /// The photo window closed with a light of its own (`close_photo`).
+    photo_closing: bool,
     parcel: Option<Slot>,
     region: Option<Slot>,
     /// Region track altitudes (LLEnvironment::mTrackAltitudes), from the
@@ -892,6 +894,17 @@ impl EnvSelector {
         self.photo.set(choice);
     }
 
+    /// The photo window closed: the user's own light fades back in over
+    /// TRANSITION_DEFAULT, like leaving a local environment, whatever lies
+    /// beneath and even when the photo only turned the sun (no change of
+    /// source, which alone would not fade).
+    pub fn close_photo(&mut self) {
+        if !self.photo.choice.is_empty() {
+            self.photo.set(PhotoChoice::default());
+            self.photo_closing = true;
+        }
+    }
+
     /// A camera preset's light replaces the photo's too.
     pub fn drop_photo(&mut self) {
         if !self.photo.choice.is_empty() {
@@ -1132,8 +1145,10 @@ impl EnvSelector {
             let source = if r.any() { Source::Photo(self.photo.generation) } else { source };
             (source, t, s, w)
         };
+        // (an open editor hides the photo's light: nothing to fade from)
+        let closing = std::mem::take(&mut self.photo_closing) && source != Source::Edit;
         if let Some(prev) = self.shown
-            && (prev.source != source || prev.track != track)
+            && (closing || prev.source != source || prev.track != track)
         {
             // updateEnvironment: from what is shown (itself possibly mid-fade).
             // Manual local changes use FSEnvironmentManualTransitionTime
@@ -1141,7 +1156,11 @@ impl EnvSelector {
             // a live one at once: Aurora fades both, identical with the
             // default 0 s); going back to the shared environment fades over
             // TRANSITION_DEFAULT (setSelectedEnvironment's default).
-            let duration = if prev.source == source {
+            let duration = if closing {
+                // the photo window closed (`close_photo`); otherwise a local
+                // environment beneath would come back as a manual change
+                TRANSITION_DEFAULT
+            } else if prev.source == source {
                 TRANSITION_ALTITUDE
             } else if source == Source::Edit {
                 // an editor shows its settings at once (TRANSITION_INSTANT)
@@ -1929,6 +1948,46 @@ mod tests {
         assert!((sky.gamma - 0.7).abs() < 1e-6);
         assert!((water.fog_density - 9.0).abs() < 1e-6);
         assert!(!sel.take_local_dirty());
+    }
+
+    #[test]
+    fn closing_the_photo_window_fades_back_to_the_users_light() {
+        let mut sel = region_selector();
+        let own = sel.frame(&input(1.0)).0.sun_rotation;
+        // the sun alone: no change of source, yet a fade
+        let sun = crate::ui::environment::rotation_from(45.0, 10.0);
+        sel.set_photo(PhotoChoice {
+            sun: Some(sun),
+            ..PhotoChoice::default()
+        });
+        assert!(sel.frame(&input(2.0)).0.sun_rotation.abs_diff_eq(sun, 1e-6));
+        sel.close_photo();
+        sel.set_photo(PhotoChoice::default());
+        let start = 3.0;
+        assert!(
+            sel.frame(&input(start)).0.sun_rotation.abs_diff_eq(sun, 1e-6),
+            "from the photo's sun"
+        );
+        let mid = sel.frame(&input(start + f64::from(TRANSITION_DEFAULT) / 2.0)).0.sun_rotation;
+        assert!(!mid.abs_diff_eq(sun, 1e-3) && !mid.abs_diff_eq(own, 1e-3), "halfway");
+        let end = sel.frame(&input(start + f64::from(TRANSITION_DEFAULT) + 0.1)).0.sun_rotation;
+        assert!(end.abs_diff_eq(own, 1e-6));
+        // over a local sky: its fade too, not a manual change's (instant)
+        sel.request_local(SKY, SettingsKind::Sky);
+        sel.on_settings(SKY, Some(sky_asset(1.9)));
+        sel.frame(&input(20.0));
+        sel.set_photo(photo(None, Some(WATER)));
+        sel.on_settings(WATER, Some(water_asset(9.0)));
+        assert!((sel.frame(&input(21.0)).1.fog_density - 9.0).abs() < 1e-6);
+        sel.close_photo();
+        assert!((sel.frame(&input(22.0)).1.fog_density - 9.0).abs() < 1e-6, "no instant change");
+        let water = sel.frame(&input(22.0 + f64::from(TRANSITION_DEFAULT) / 2.0)).1;
+        assert!(water.fog_density < 9.0 && water.fog_density > WaterFrame::default().fog_density);
+        // nothing of the photo's left: closing again starts no fade
+        sel.frame(&input(40.0));
+        sel.close_photo();
+        sel.frame(&input(41.0));
+        assert!(sel.fade.is_none());
     }
 
     #[test]

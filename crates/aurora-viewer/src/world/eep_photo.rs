@@ -33,24 +33,59 @@ pub struct PhotoChoice {
     pub time: Option<u8>,
     /// The sun's rotation, over whatever sky is shown.
     pub sun: Option<Quat>,
+    /// The sky, water and time a day replaced: restoring the day gives
+    /// them back, so that its restore button undoes the day alone.
+    pub replaced: Replaced,
+}
+
+/// The photo's picks a day replaced (`PhotoChoice::replaced`).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Replaced {
+    sky: Option<Uuid>,
+    water: Option<Uuid>,
+    time: Option<u8>,
 }
 
 impl PhotoChoice {
+    /// Nothing over the environment shown (what a day replaced shows
+    /// nothing).
     pub fn is_empty(&self) -> bool {
-        *self == Self::default()
+        self.day.is_none() && self.sky.is_none() && self.water.is_none() && self.time.is_none() && self.sun.is_none()
     }
 
     /// An item from one of the lists (None: the user's own again). A day
-    /// replaces the fixed sky, water and time; a sky replaces the time.
+    /// replaces the fixed sky, water and time, which come back with the
+    /// user's own day; a sky replaces the time.
     pub fn pick(&mut self, kind: SettingsKind, asset: Option<Uuid>) {
         match kind {
             SettingsKind::Day => {
-                self.day = asset;
                 if asset.is_some() {
+                    // (a day over a day: what the first one replaced stays,
+                    // under the picks made over the first)
+                    let r = self.replaced;
+                    let (sky, time) = if self.sky.is_some() || self.time.is_some() {
+                        (self.sky, self.time)
+                    } else {
+                        (r.sky, r.time)
+                    };
+                    self.replaced = Replaced {
+                        sky,
+                        water: self.water.or(r.water),
+                        time,
+                    };
                     self.sky = None;
                     self.water = None;
                     self.time = None;
+                } else if self.day.is_some() {
+                    // picks made over the day win over those it replaced
+                    let r = std::mem::take(&mut self.replaced);
+                    if self.sky.is_none() && self.time.is_none() {
+                        self.sky = r.sky;
+                        self.time = r.time;
+                    }
+                    self.water = self.water.or(r.water);
                 }
+                self.day = asset;
             }
             SettingsKind::Sky => {
                 self.sky = asset;
@@ -275,16 +310,40 @@ mod tests {
         c.set_time(Some(4));
         assert_eq!((c.time, c.sky), (Some(4), None));
         c.pick(SettingsKind::Day, Some(id(3)));
-        assert_eq!(
-            c,
-            PhotoChoice {
-                day: Some(id(3)),
-                ..PhotoChoice::default()
-            }
-        );
-        // back to the user's own day
+        assert_eq!((c.day, c.time, c.sky, c.water), (Some(id(3)), None, None, None));
+        // back to the user's own day: what the day replaced comes back
         c.pick(SettingsKind::Day, None);
+        assert_eq!((c.day, c.time, c.sky, c.water), (None, Some(4), None, Some(id(2))));
+        c.set_time(None);
+        c.pick(SettingsKind::Water, None);
         assert!(c.is_empty());
+    }
+
+    #[test]
+    fn restoring_the_day_keeps_the_picks_made_over_it() {
+        let mut c = PhotoChoice::default();
+        c.pick(SettingsKind::Sky, Some(id(1)));
+        c.pick(SettingsKind::Water, Some(id(2)));
+        c.pick(SettingsKind::Day, Some(id(3)));
+        // a sky over the day, then another day: that sky waits now, with
+        // the water the first day replaced
+        c.pick(SettingsKind::Sky, Some(id(5)));
+        c.pick(SettingsKind::Day, Some(id(6)));
+        assert_eq!((c.sky, c.water), (None, None));
+        c.pick(SettingsKind::Day, None);
+        assert_eq!((c.sky, c.water), (Some(id(5)), Some(id(2))));
+        c.pick(SettingsKind::Day, Some(id(6)));
+        c.set_time(Some(2));
+        c.pick(SettingsKind::Day, None);
+        assert_eq!(
+            (c.day, c.time, c.sky, c.water),
+            (None, Some(2), None, Some(id(2))),
+            "the time picked over the day stays, the replaced water comes back"
+        );
+        // nothing left to give back
+        c.pick(SettingsKind::Day, Some(id(3)));
+        c.pick(SettingsKind::Day, None);
+        assert_eq!((c.time, c.sky, c.water), (Some(2), None, Some(id(2))));
     }
 
     #[test]

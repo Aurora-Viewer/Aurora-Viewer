@@ -1194,14 +1194,30 @@ fn env_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::Phot
             }
         });
     }
-    // the sun: LLFloaterEnvironmentAdjust's azimuth and elevation, over any sky
-    let (mut az, mut el) = l.env.sun.map_or(env.sun, super::environment::azimuth_elevation);
-    let mut moved = false;
-    for (label, value, range) in [
-        (aurora_i18n::tr!("photo-light-sun-azimuth"), &mut az, 0.0..=359.99),
-        (aurora_i18n::tr!("photo-light-sun-elevation"), &mut el, -90.0..=90.0),
+    // the sun: LLFloaterEnvironmentAdjust's azimuth and elevation, over any
+    // sky; each row's restore button gives back the sky's own value of its
+    // slider and keeps the other's
+    let own = env.sun;
+    let (mut az, mut el) = l.env.sun.map_or(own, super::environment::azimuth_elevation);
+    let (mut moved, mut restored) = (false, false);
+    for (label, tip, value, range, own_value, wraps) in [
+        (
+            aurora_i18n::tr!("photo-light-sun-azimuth"),
+            aurora_i18n::tr!("photo-light-sun-azimuth-reset"),
+            &mut az,
+            0.0..=359.99,
+            own.0,
+            true,
+        ),
+        (
+            aurora_i18n::tr!("photo-light-sun-elevation"),
+            aurora_i18n::tr!("photo-light-sun-elevation-reset"),
+            &mut el,
+            -90.0..=90.0,
+            own.1,
+            false,
+        ),
     ] {
-        let reset = range.start() < &0.0;
         row(ui, p, label, None, |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().slider_width = (ui.available_width() - 100.0).max(40.0);
@@ -1212,16 +1228,31 @@ fn env_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::Phot
                     .clamping(egui::SliderClamping::Edits)
                     .custom_parser(aurora_i18n::parse_number);
                 moved |= ui.add(slider).changed();
-                // one restore button for the sun, on its second row
-                if reset && widgets::icon_button(ui, p, "restore", aurora_i18n::tr!("photo-light-sun-reset"), l.env.sun.is_some()) {
-                    l.env.sun = None;
+                let off = l.env.sun.is_some() && sun_differs(*value, own_value, wraps);
+                if widgets::icon_button(ui, p, "restore", tip, off) {
+                    *value = own_value;
+                    restored = true;
                 }
             });
         });
     }
-    if moved {
+    if restored {
+        // both back: the sky's own sun again, moving with its day
+        let fixed = sun_differs(az, own.0, true) || sun_differs(el, own.1, false);
+        l.env.sun = fixed.then(|| super::environment::rotation_from(az, el));
+    } else if moved {
         l.env.sun = Some(super::environment::rotation_from(az, el));
     }
+}
+
+/// A sun slider's value is off the sky's own (degrees; an azimuth wraps
+/// at 360°), past what its whole-degree display shows.
+fn sun_differs(value: f32, own: f32, wraps: bool) -> bool {
+    let mut d = (value - own).abs();
+    if wraps {
+        d = d.min(360.0 - d);
+    }
+    d >= 0.5
 }
 
 /// The full-frame strip's depth of field: its switch and the aperture.
@@ -1634,6 +1665,15 @@ fn shutter(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sun_value_differs_past_its_shown_degree_and_azimuths_wrap() {
+        assert!(!sun_differs(120.3, 120.0, true));
+        assert!(sun_differs(121.0, 120.0, true));
+        assert!(!sun_differs(359.8, 0.1, true), "across north");
+        assert!(sun_differs(359.8, 0.1, false));
+        assert!(sun_differs(-10.0, 10.0, false));
+    }
 
     #[test]
     fn the_photo_fits_the_screen_and_the_rest_is_masked() {

@@ -2291,6 +2291,8 @@ LUT_3D_SIZE {n}
     fn photo_light(&mut self) {
         if !self.panels.snapshot {
             self.snapshots.ui.light = snapshot::light::PhotoLight::default();
+            // (the user's own fades back in)
+            self.world.eep.close_photo();
         }
         let light = &mut self.snapshots.ui.light;
         // a change made elsewhere, a camera preset or "Keep this light"
