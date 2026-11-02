@@ -1,5 +1,13 @@
 # Aurora Viewer architecture
 
+`world/inventory/system.rs` indexes system-folder lookups for inventory and
+Appearance by inventory generation and root identity. Root-listed duplicates
+retain their smallest UUID; incomplete listings retain the previous fallback.
+All folder types, including absent ones, share one rebuild instead of repeatedly
+walking a large inventory root while drawing visible rows (#1963).
+`ui/appearance/perf_tests.rs` provides an ignored offline benchmark for the three
+Appearance tabs with thousands of outfits or 200,000 ordinary inventory items.
+
 AO account settings retain the last animation link/group UUID per state or track
 folder (`ao::Account::animations`). `ao/runtime.rs` restores cursor positions by
 identity and reports changed selections; `app/ao.rs` saves them through the existing
