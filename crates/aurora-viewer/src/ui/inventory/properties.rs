@@ -451,7 +451,6 @@ mod tests {
                         &Icons::default(),
                         inv,
                         st,
-                        &InventoryPreferences::default(),
                         &Facts::default(),
                         &HashMap::new(),
                         Uuid::from_u128(8102),
