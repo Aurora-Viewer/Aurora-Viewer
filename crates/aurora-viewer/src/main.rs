@@ -228,6 +228,9 @@ fn run_viewer() -> anyhow::Result<()> {
     let result = event_loop.run_app(app.as_mut());
     // later launches no longer hand their link to this closing viewer
     slurl_handoff::release();
+    // the pipelines compiled since the last save (made after the start:
+    // another anti-aliasing, the photo passes…)
+    aurora_render::pipeline_cache::flush(std::time::Duration::from_secs(2));
     // a save asked on a way out other than `shutdown` (settings/saver.rs)
     settings::Settings::wait_saved(std::time::Duration::from_secs(5));
     // the browsers stop with the app; their private profiles are removed

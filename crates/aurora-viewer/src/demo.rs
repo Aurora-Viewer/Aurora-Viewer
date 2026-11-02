@@ -3334,19 +3334,10 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             anims: vec![(IDLE_ANIM, 1)],
         }],
         aurora_net::NetCommand::RequestObjectProperties { object, .. } if (970..=982).any(|id| action_id(id) == *object) => {
-            let mode = std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default();
             vec![NetEvent::ObjectProperties(vec![aurora_net::build::ObjectProps {
                 object_id: *object,
                 owner_id: DEMO_NOVA,
-                sale_type: if *object == action_id(971) {
-                    match mode.as_str() {
-                        "buy-original" => 1,
-                        "buy-contents" | "buy-empty" => 3,
-                        _ => 2,
-                    }
-                } else {
-                    0
-                },
+                sale_type: action_sale_type(*object),
                 next_owner_mask: aurora_net::build::perm::TRANSFER,
                 // Nova may sell copies (for_sale_selection, the hover tips)
                 owner_mask: aurora_net::build::perm::TRANSFER | aurora_net::build::perm::COPY | aurora_net::build::perm::MODIFY,
@@ -3387,6 +3378,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 "pay-layout" => (1956, vec![1956, 3913, 5870, 7826]),
                 "pay-hidden" => (-1, vec![1956, -1, 5870, -1]),
                 "pay-large" => (i32::MAX, vec![i32::MAX, 3913, 5870, 7826]),
+                // a CasperVend-like vendor: one price, no free amount (#1869)
+                "pay-vendor" | "pay-vendor-short" => (-1, vec![180, -1, -1, -1]),
                 _ => (10, vec![1, 5, 10, 20]),
             };
             vec![NetEvent::PayPrice {
@@ -3563,6 +3556,20 @@ pub fn stand_from_prim(seat: Vec3, size: Vec3) -> Vec<NetEvent> {
         handle: HANDLE,
         objects: vec![avatar],
     }]
+}
+
+/// The sale type of an AURORA_DEMO_ACTIONS cube (the for-sale cube only),
+/// the same in the hover / purchase reply and in the selection's
+/// properties (`build/demo_sim.rs`), which the right-click menu reads.
+pub fn action_sale_type(object: Uuid) -> u8 {
+    if object != action_id(971) {
+        return 0;
+    }
+    match std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default().as_str() {
+        "buy-original" => 1,
+        "buy-contents" | "buy-empty" => 3,
+        _ => 2,
+    }
 }
 
 pub fn action_mode_id(mode: &str) -> u32 {
@@ -3845,6 +3852,12 @@ pub fn action_events() -> Vec<NetEvent> {
         object.click_action = crate::interaction::code::TOUCH;
         object.update_flags |= 1 << 7;
     }
+    // a boxed product left on the default Touch, bought from the menu (#1869)
+    if mode.starts_with("buy-touch-menu")
+        && let Some(object) = objects.iter_mut().find(|o| o.local_id == 971)
+    {
+        object.click_action = crate::interaction::code::TOUCH;
+    }
     let selected = action_mode_id(&mode);
     if selected != 0 {
         objects.retain(|o| {
@@ -3862,6 +3875,8 @@ pub fn action_events() -> Vec<NetEvent> {
     }
     let balance = if matches!(mode.as_str(), "pay-layout" | "pay-hidden" | "pay-large") {
         i32::MAX
+    } else if mode == "pay-vendor-short" {
+        100
     } else {
         250
     };
@@ -4813,7 +4828,35 @@ pub fn events() -> Vec<NetEvent> {
     // position with the same orange emissive, opaque, alpha-masked and
     // blended: without HDR and Emissive (AURORA_HDR=0) the first two lose
     // their light, the blended one keeps it (HAS_EMISSIVE)
-    if std::env::var_os("AURORA_DEMO_PBR_EMISSIVE").is_some() {
+    if std::env::var("AURORA_DEMO_PBR_EMISSIVE").is_ok_and(|mode| mode == "sided") {
+        // Only one face of each box exists visually: compare its front/back
+        // without the opposite wall of a closed solid hiding the defect (#1727).
+        let mesh = aurora_prim::generate_volume(&boxp, 2.0);
+        if let Some(face) = mesh.faces.iter().position(|face| face.normals.first().is_some_and(|n| n[0] < -0.9)) {
+            let floor = height(cx, cy) + 0.35;
+            for k in 0..4 {
+                let mut t = TextureEntry::default();
+                for f in &mut t.faces {
+                    f.texture = BLANK_TEXTURE;
+                    f.color = [1.0, 1.0, 1.0, 0.0];
+                }
+                add(prim(
+                    id,
+                    Vec3::new(136.0, 123.0 + 2.0 * k as f32, floor + 2.6),
+                    Quat::from_rotation_z(if k % 2 == 0 { 0.0 } else { std::f32::consts::PI }),
+                    Vec3::new(0.02, 1.5, 2.0),
+                    boxp,
+                    Arc::new(t),
+                    ExtraParams {
+                        render_materials: vec![(face as u8, MAT_PBR_SIDED[k / 2])],
+                        ..Default::default()
+                    },
+                    "",
+                ));
+                id += 1;
+            }
+        }
+    } else if std::env::var_os("AURORA_DEMO_PBR_EMISSIVE").is_some() {
         let floor = height(cx, cy) + 0.35;
         for (k, mat) in MAT_PBR_EMISSIVE.into_iter().enumerate() {
             let mut t = TextureEntry::default();
@@ -8386,6 +8429,12 @@ const MAT_PBR_EMISSIVE: [Uuid; 3] = [
     Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0032),
 ];
 
+/// The same translucent material, single- and double-sided (#1727).
+const MAT_PBR_SIDED: [Uuid; 2] = [
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0040),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0041),
+];
+
 /// PBR materials of the demo (normally fetched as assets).
 pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
     let mut list = vec![(
@@ -8398,6 +8447,20 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             ..Default::default()
         },
     )];
+    for (mat, double_sided) in MAT_PBR_SIDED.into_iter().zip([false, true]) {
+        list.push((
+            mat,
+            aurora_assets::PbrMaterial {
+                base_color_factor: [0.15, 0.6, 0.9, 0.6],
+                emissive_factor: [0.05, 0.2, 0.3],
+                metallic_factor: 0.0,
+                roughness_factor: 0.5,
+                alpha_mode: aurora_assets::AlphaMode::Blend,
+                double_sided,
+                ..Default::default()
+            },
+        ));
+    }
     for (mat, roughness) in MAT_PBR_METAL.into_iter().zip([0.05, 0.3, 0.6]) {
         list.push((
             mat,

@@ -10,7 +10,8 @@ const SOUND_PREVIEW: u64 = u64::MAX - 10;
 impl App {
     pub(super) fn show_imports(&mut self, ctx: &egui::Context, palette: &Palette) {
         if self.demo && !self.imports.demo_started {
-            self.world.balance = Some(1000);
+            // keep a scenario's own balance (AURORA_DEMO_ACTIONS sets one)
+            self.world.balance.get_or_insert(1000);
             self.imports.demo_started = true;
             self.imports.load_preferences = self.settings.imports.clone();
             crate::imports::demo::start(&mut self.imports, &self.scene.jobs, ctx);

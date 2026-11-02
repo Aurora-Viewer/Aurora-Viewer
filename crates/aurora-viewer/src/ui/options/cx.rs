@@ -421,6 +421,17 @@ impl<'a> Cx<'a> {
         self.greyed = off;
     }
 
+    /// Hide an inactive branch on its page, while retaining its settings
+    /// in search, modified views, reset and declaration passes.
+    pub fn conditional(&mut self, visible: bool, body: impl FnOnce(&mut Self)) {
+        if self.mode != Mode::Show || visible {
+            let before = self.greyed;
+            self.greyed |= !visible;
+            body(self);
+            self.greyed = before;
+        }
+    }
+
     /// A search is under way: the rows' `keywords` are read (a page skips
     /// building costly ones otherwise).
     pub fn searching(&self) -> bool {

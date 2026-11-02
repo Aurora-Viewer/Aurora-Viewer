@@ -129,8 +129,8 @@ windows-sys = { version = "0.61.2", features = ["Win32_UI_Input", "Win32_UI_Inpu
 windows = { version = "0.62.2", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications", "Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_System_Com", "Win32_System_Ole", "Win32_System_Registry", "Win32_System_Variant", "Win32_System_WinRT", "Win32_System_Wmi"] }
 
 [target.'cfg(unix)'.dependencies]
-# getenv without allocating, for the allocator's choice (allocator.rs); already
-# in the tree
+# getenv without allocating, for the allocator's choice (allocator.rs), and
+# the signals that end a session on Linux (crash/native.rs); already in the tree
 libc = "0.2.190"
 
 [target.'cfg(target_os = "macos")'.dependencies]

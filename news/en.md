@@ -26,6 +26,22 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-11-02 — Aurora 0.8.5: immersive sound and VR, both experimental
+World sounds now go dull behind a wall or inside a closed box, pass behind your head with headphones (HRTF), and ring like the place you stand in: dry in the open air, a long soft tail in a large hall. Three switches in Preferences › Sound; HRTF and reverb are off by default. With an OpenXR headset, the headset button of the bottom toolbar shows the world in stereo, from your avatar's eyes or the camera. Viewing only for now: Esc brings the desktop back.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.5)
+
+## 2026-11-02 — Quicker starts, smoother busy places
+Aurora keeps its own cache of compiled graphics pipelines, so a start no longer waits twenty seconds on a black window when the driver emptied its own. On 4K screens ambient occlusion costs about a third of what it did, textures stay sharp after a teleport into a busy region, a viewer window behind gives its video memory back to the one in front, and fast cards get back the frame rates of 0.8.3 in busy places.
+
+## 2026-11-02 — Stars, portals and building
+Choose where on Earth the real night sky is seen from, and how bright its stars shine. Drag a place from Favorites, Places, the teleport history or search into the world to open a portal. A selection rectangle takes only what it surrounds, objects rez with your active group, BOM textures go in every PBR map, and grayscale PNG textures upload. An experience you allow can now change your sky and water.
+
+## 2026-11-02 — Outfits, shopping and Linux
+Pick several items in an outfit or in Worn and wear or take them off at once; Remove from current outfit works on any folder. Vendors sell on one click, and a short balance opens Buy L$. Clear the notification history, see a friend go on or offline in their open conversation, and assign gamepad buttons by pressing them. On Linux, a second viewer keeps the first one's web pages, and the safe graphics are offered after a GPU problem.
+
+## 2026-11-02 — Steadier
+Your logs and settings survive a hard reset of the PC, About Land saves its Allowed and Banned lists, the water no longer turns white under some region skies, and photos wait for a busy graphics card instead of failing. Thanks to anne-skydancer, circuskid, Gaalrauch, KanikaBreed, lambskin, Marakiinfinity, Odessa-Draekavik, vexxbyte, voidel, wolfosbournesl and zdub0is.
+
 ## 2026-10-31 — Aurora 0.8.4: copy anything, build in a crowd
 Click a name in a profile to copy it, and select the text of a greyed-out field to copy it too: a no-modify object's name, a parcel's media address. Outfits copy their item names and creator credits. In a busy sandbox, the build tools can select only your own objects, or only the ones you may move, and the editor has a Legacy layout. Ctrl+Shift+H takes you home.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.4)
