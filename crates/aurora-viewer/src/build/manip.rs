@@ -1245,6 +1245,15 @@ struct TexSave {
     idx: usize,
     scale: Vec3,
     faces: Vec<(f32, f32)>,
+    /// Per face with a glTF material: its override's texture scales and
+    /// offsets (mGLTFScales, mGLTFOffsets), the defaults without override.
+    gltf: Vec<Option<GltfSave>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GltfSave {
+    scale: [[f32; 2]; 4],
+    offset: [[f32; 2]; 4],
 }
 
 /// Every prim a stretch can resize (the movers and the linkset they carry
@@ -1261,10 +1270,21 @@ fn save_textures(world: &World, movers: &[Mover]) -> Vec<TexSave> {
         }
         let Some(o) = world.objects.get(idx) else { continue };
         let Some(te) = o.te.as_deref() else { continue };
+        let gltf = (0..te.faces.len())
+            .map(|face| {
+                super::BuildTool::gltf_asset(world, idx, face as u8)?;
+                let over = super::BuildTool::gltf_override(world, idx, face as u8);
+                Some(GltfSave {
+                    scale: over.transforms.map(|t| t.scale),
+                    offset: over.transforms.map(|t| t.offset),
+                })
+            })
+            .collect();
         out.push(TexSave {
             idx,
             scale: o.scale,
             faces: te.faces.iter().map(|f| (f.scale_s, f.scale_t)).collect(),
+            gltf,
         });
     }
     out
@@ -1280,9 +1300,12 @@ fn adjust_textures(world: &mut World, saved: &[TexSave], stretch: bool) -> bool 
     for save in saved {
         let Some(o) = world.objects.get_mut(save.idx) else { continue };
         let scale = o.scale;
+        let key = o.key;
         let Some(te) = o.te.as_deref() else { continue };
         let mut te = te.clone();
         let mut touched = false;
+        let mut overrides: Vec<(u8, aurora_assets::material::PbrOverride)> = Vec::new();
+        let mut gltf_changed = false;
         for (face, tf) in te.faces.iter_mut().enumerate() {
             let Some(&(s0, t0)) = save.faces.get(face) else { continue };
             let planar = tf.planar();
@@ -1300,6 +1323,44 @@ fn adjust_textures(world: &mut World, saved: &[TexSave], stretch: bool) -> bool 
                 tf.scale_t = t;
                 touched = true;
             }
+            if let Some(Some(g)) = save.gltf.get(face) {
+                let mut over = super::BuildTool::gltf_override(world, save.idx, face as u8);
+                for (i, t) in over.transforms.iter_mut().enumerate() {
+                    t.scale = [
+                        gltf_scale(planar, g.scale[i][0], save.scale[sa], scale[sa]),
+                        gltf_scale(planar, g.scale[i][1], save.scale[ta], scale[ta]),
+                    ];
+                    t.offset = [
+                        gltf_offset(g.offset[i][0], g.scale[i][0], t.scale[0]),
+                        gltf_offset(g.offset[i][1], g.scale[i][1], t.scale[1]),
+                    ];
+                }
+                overrides.push((face as u8, over));
+            }
+        }
+        if !overrides.is_empty() {
+            let mut list: Vec<(u8, aurora_assets::material::PbrOverride)> =
+                world.gltf_overrides.get(&key).map(|v| v.to_vec()).unwrap_or_default();
+            for (face, over) in overrides {
+                match list.iter_mut().find(|(f, _)| *f == face) {
+                    Some(slot) if slot.1 == over => {}
+                    Some(slot) => {
+                        slot.1 = over;
+                        gltf_changed = true;
+                    }
+                    None => {
+                        list.push((face, over));
+                        gltf_changed = true;
+                    }
+                }
+            }
+            world.gltf_overrides.insert(key, std::sync::Arc::from(list));
+        }
+        let Some(o) = world.objects.get_mut(save.idx) else { continue };
+        if gltf_changed {
+            o.material_dirty = true;
+            o.render.needs_records = true;
+            changed = true;
         }
         if touched {
             o.te = Some(std::sync::Arc::new(te));
@@ -1309,6 +1370,20 @@ fn adjust_textures(world: &mut World, saved: &[TexSave], stretch: bool) -> bool 
         }
     }
     changed
+}
+
+/// New repeat of a glTF texture slot: the ratio captured at the start of the
+/// drag (`saved * old size` planar, `saved / old size` otherwise) follows the
+/// new size like a diffuse repeat.
+fn gltf_scale(planar: bool, saved: f32, old: f32, new: f32) -> f32 {
+    if planar { saved * old / new } else { saved / old * new }
+}
+
+/// Offset that keeps the texture centred when its repeat changes, wrapped to
+/// 0..1 (LLSelectMgr::adjustTexturesByScale).
+fn gltf_offset(saved_offset: f32, saved_scale: f32, scale: f32) -> f32 {
+    let o = (saved_offset + (saved_scale - scale)) / 2.0 % 1.0;
+    if o < 0.0 { o + 1.0 } else { o }
 }
 
 /// Write new world transforms to the objects (local echo). `targets` maps
@@ -2647,6 +2722,7 @@ mod tests {
             idx,
             scale: Vec3::new(1.0, 2.0, 4.0),
             faces: vec![(1.0, 1.0); 8],
+            gltf: vec![None, None, None, None, None, None, None, None],
         }];
         world.objects.get_mut(idx).unwrap().scale = Vec3::new(2.0, 4.0, 8.0);
         let face = |world: &World, n: usize| {
@@ -2666,5 +2742,48 @@ mod tests {
         assert!(adjust_textures(&mut world, &saved, true));
         assert_eq!(face(&world, 0), (1.0, 1.0));
         assert_eq!(face(&world, 1), (0.5, 0.5));
+    }
+
+    #[test]
+    fn stretching_follows_gltf_overrides_and_legacy_material_repeats() {
+        let mut world = hud_world();
+        for event in crate::demo::face_selection_events(false) {
+            world.apply(event);
+        }
+        let idx = world.objects.index_of_uuid(&crate::demo::action_id(99622)).unwrap();
+        let key = world.objects.get(idx).unwrap().key;
+        let o = world.objects.get_mut(idx).unwrap();
+        o.scale = Vec3::new(1.0, 2.0, 4.0);
+        let mut te = aurora_prim::te::TextureEntry::default();
+        te.faces[1].material_id = uuid::Uuid::from_u128(7);
+        o.te = Some(std::sync::Arc::new(te));
+        o.extra.render_materials.push((0, uuid::Uuid::from_u128(9)));
+        let g = GltfSave {
+            scale: [[1.0, 1.0]; 4],
+            offset: [[0.0, 0.0]; 4],
+        };
+        let saved = [TexSave {
+            idx,
+            scale: Vec3::new(1.0, 2.0, 4.0),
+            faces: vec![(1.0, 1.0); 8],
+            gltf: vec![Some(g), None, None, None, None, None, None, None],
+        }];
+        world.objects.get_mut(idx).unwrap().scale = Vec3::new(2.0, 4.0, 8.0);
+        assert!(adjust_textures(&mut world, &saved, false));
+        let over = super::super::BuildTool::gltf_override(&world, idx, 0);
+        assert_eq!(over.transforms[0].scale, [2.0, 2.0]);
+        assert_eq!(over.transforms[3].scale, [2.0, 2.0]);
+        assert!(world.gltf_overrides.contains_key(&key));
+        // the Blinn-Phong maps track the diffuse repeats
+        let mut tool = super::super::BuildTool::default();
+        let id = world.objects.get(idx).unwrap().full_id;
+        tool.ui.legacy_pending.insert(
+            (id, 1),
+            (uuid::Uuid::from_u128(7), Some(crate::scene::legacy_mat::LegacyMaterial::default())),
+        );
+        tool.send_stretch_materials(&mut world, None, idx, false);
+        let m = tool.ui.legacy_pending[&(id, 1)].1.clone().unwrap();
+        assert_eq!(m.normal_st[..2], [2.0, 2.0]);
+        assert_eq!(m.specular_st[..2], [2.0, 2.0]);
     }
 }

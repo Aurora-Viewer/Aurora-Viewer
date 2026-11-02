@@ -3487,7 +3487,7 @@ mod tests {
                 assert!(pan.cross(Vec3::Y).length() < 1e-6);
                 camera.pan_edit(pan, &mut w.agent, &s);
                 tool.cam = projection(&camera);
-                tool.update(&mut w, &settings, cursor, false, Mods::default());
+                tool.update(&mut w, &settings, None, cursor, false, Mods::default());
                 camera.update(&mut w, &s, &f);
                 tool.cam = projection(&camera);
                 let position = Scene::object_transform(&w, idx, Instant::now(), 0).unwrap().0;

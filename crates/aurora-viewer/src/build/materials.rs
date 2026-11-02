@@ -7,6 +7,7 @@
 use super::BuildTool;
 use super::edits::CapPurpose;
 use crate::media::entry::{MediaEntry, ObjectMediaData};
+use crate::scene::Scene;
 use crate::scene::legacy_mat::{self, LegacyMaterial};
 use crate::world::World;
 use aurora_assets::material::PbrOverride;
@@ -126,6 +127,61 @@ impl BuildTool {
                     CapPurpose::LegacyMaterials,
                 );
             }
+        }
+    }
+
+    /// Send the materials of a prim whose texture repeats a stretch changed
+    /// (LLSelectMgr::adjustTexturesByScale): the Blinn-Phong normal and
+    /// specular repeats track the diffuse ones, and the glTF override carries
+    /// the transforms `Manip` already applied locally. Only the faces the
+    /// stretch corrects are sent: planar ones with "Stretch Textures" on, the
+    /// others with it off.
+    pub fn send_stretch_materials(&mut self, world: &mut World, scene: Option<&Scene>, idx: usize, stretch: bool) {
+        let Some(o) = world.objects.get(idx) else { return };
+        let Some(te) = o.te.clone() else { return };
+        let id = o.full_id;
+        let mut puts = Vec::new();
+        let mut gltf = Vec::new();
+        for (face, tf) in te.faces.iter().enumerate() {
+            if tf.planar() != stretch {
+                continue;
+            }
+            let face = face as u8;
+            if Self::gltf_asset(world, idx, face).is_some() {
+                gltf.push(GltfUpdate {
+                    object: idx,
+                    face,
+                    asset: None,
+                    over: Some(Self::gltf_override(world, idx, face)),
+                });
+                continue;
+            }
+            if tf.material_id.is_nil() {
+                continue;
+            }
+            let pending = self
+                .ui
+                .legacy_pending
+                .get(&(id, face))
+                .filter(|(old, _)| *old == tf.material_id)
+                .map(|(_, m)| m.clone());
+            let current = match pending {
+                Some(m) => m,
+                None => scene.and_then(|s| s.legacy_mats.peek(&tf.material_id)).map(|m| (*m).clone()),
+            };
+            let Some(mut m) = current else { continue };
+            let st = [tf.scale_s, tf.scale_t];
+            if m.normal_st[..2] == st && m.specular_st[..2] == st {
+                continue;
+            }
+            m.normal_st[..2].copy_from_slice(&st);
+            m.specular_st[..2].copy_from_slice(&st);
+            self.ui.legacy_pending.insert((id, face), (tf.material_id, Some(m.clone())));
+            puts.push((idx, face, Some(m)));
+        }
+        self.legacy_put(world, puts);
+        if !gltf.is_empty() {
+            self.gltf_update(world, gltf);
         }
     }
 
