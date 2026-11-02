@@ -103,14 +103,35 @@ impl Items {
         self.map.values_mut()
     }
 
+    /// Updates the index record by record: `Inventory::remove` runs this on
+    /// every deletion, and a full rebuild would cost the scan it replaces.
     pub fn retain(&mut self, mut keep: impl FnMut(&Uuid, &mut InvItem) -> bool) {
-        self.map.retain(|id, item| keep(id, item));
-        // the closure may also have changed the records it kept
-        self.all_lent = true;
+        let mut dropped = Vec::new();
+        let lent = &mut self.lent;
+        self.map.retain(|id, item| {
+            let before = (is_link(item), item.parent);
+            if !keep(id, item) {
+                dropped.push(*id);
+                return false;
+            }
+            // the closure may also have changed a record it kept
+            if (is_link(item), item.parent) != before {
+                lent.insert(*id);
+            }
+            true
+        });
+        for id in dropped {
+            self.unindex(id);
+            self.lent.remove(&id);
+        }
     }
 
     pub fn clear(&mut self) {
-        *self = Self::default();
+        self.map.clear();
+        self.links.clear();
+        self.indexed.clear();
+        self.lent.clear();
+        self.all_lent = false;
     }
 
     pub fn drain(&mut self) -> std::collections::hash_map::Drain<'_, Uuid, InvItem> {
@@ -221,6 +242,19 @@ mod tests {
         assert_eq!(links_in(&mut items, 20), [1, 2]);
         items.retain(|id, _| *id == Uuid::from_u128(2));
         assert_eq!(links_in(&mut items, 20), [2]);
+        assert!(!items.all_lent, "a retain updates the index without a rebuild");
+        // a record the closure keeps but moves is indexed under its new parent
+        items.retain(|_, it| {
+            it.parent = Uuid::from_u128(30);
+            true
+        });
+        assert_eq!(links_in(&mut items, 20), Vec::<u128>::new());
+        assert_eq!(links_in(&mut items, 30), [2]);
+        items.extend([(Uuid::from_u128(5), record(5, 30, 25))]);
+        assert_eq!(links_in(&mut items, 30), [2, 5]);
+        let drained: Vec<_> = items.drain().collect();
+        assert_eq!(drained.len(), 2);
+        assert_eq!(links_in(&mut items, 30), Vec::<u128>::new());
         items.clear();
         assert_eq!(links_in(&mut items, 20), Vec::<u128>::new());
     }
