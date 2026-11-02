@@ -345,13 +345,19 @@ impl Editor<'_> {
             ui.horizontal(|ui| {
                 let label = metadata.map_or_else(|| name.to_owned(), |m| format!("{name}\n{m}"));
                 let size = Vec2::new((ui.available_width() - 28.0).max(40.0), 28.0);
+                // Elision is single-line; groups and tracks keep their summary below the name.
+                let wrap = if metadata.is_some() {
+                    egui::TextWrapMode::Wrap
+                } else {
+                    egui::TextWrapMode::Truncate
+                };
                 let response = ui
                     .add_enabled_ui(!self.state.busy(), |ui| {
                         ui.add_sized(
                             size,
                             egui::Button::selectable(selected, label)
                                 .sense(egui::Sense::click_and_drag())
-                                .truncate(),
+                                .wrap_mode(wrap),
                         )
                     })
                     .inner

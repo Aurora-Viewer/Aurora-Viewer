@@ -145,6 +145,43 @@ impl Fixture {
 }
 
 #[test]
+fn ao_group_and_track_rows_keep_their_summary_line() {
+    fn galley(shape: &egui::Shape, text: &str) -> Option<std::sync::Arc<egui::Galley>> {
+        match shape {
+            egui::Shape::Text(t) if t.galley.text() == text => Some(t.galley.clone()),
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| galley(s, text)),
+            _ => None,
+        }
+    }
+    for mode in ["interface-group", "interface-track"] {
+        let mut f = Fixture::new();
+        f.inv = Inventory::default();
+        f.account.selected = crate::ao::demo::seed_interface(&mut f.inv, Uuid::from_u128(1), mode);
+        f.catalog = Default::default();
+        f.catalog.refresh(&mut f.inv);
+        f.settle();
+        let c = &f.catalog.selected(f.account.selected).expect("set").states[&State::Standing];
+        let (name, count) = if mode == "interface-group" {
+            let group = c.steps.iter().find(|s| s.group).expect("group");
+            (group.name.clone(), group.members.len())
+        } else {
+            let track = c.tracks.first().expect("track");
+            (track.name.clone(), track.members.len())
+        };
+        let summary = if mode == "interface-group" {
+            aurora_i18n::tr!("ao-group-summary", count = count)
+        } else {
+            aurora_i18n::tr!("ao-track-summary", count = count)
+        };
+        let text = format!("{name}\n{summary}");
+        let shapes = f.draw(Vec::new()).1;
+        let text = shapes.iter().find_map(|s| galley(&s.shape, &text)).expect("group/track row");
+        assert_eq!(text.rows.len(), 2, "{mode}: name and summary are separate visible rows");
+        assert!(!text.elided, "{mode}: the summary is not elided");
+    }
+}
+
+#[test]
 fn ao_manager_at_reduced_ui_scale_keeps_its_size() {
     for zoom in [0.9, 0.8, 0.85, 0.95, 1.1] {
         let mut f = Fixture::new();
