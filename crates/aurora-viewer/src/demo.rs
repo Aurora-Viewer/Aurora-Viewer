@@ -130,6 +130,10 @@ pub mod home;
 pub mod hover_tips;
 #[path = "demo_hud.rs"]
 pub mod hud;
+/// IMs announced as their sender starts typing, and the unread count in
+/// the window title (AURORA_DEMO_IM_ANNOUNCE).
+#[path = "demo_im_announce.rs"]
+pub mod im_announce;
 /// Keyword alerts on lines of every kind (AURORA_DEMO_KEYWORDS).
 #[path = "demo_keywords.rs"]
 pub mod keywords;
