@@ -182,12 +182,12 @@ fn a_pass_counts_the_targets_the_renderer_measured_and_its_output() {
 #[test]
 fn an_8k_photo_no_longer_fits_one_pass_on_a_card_with_2_gb_free() {
     // Agni, 2026-11-02, RTX 5070: 9,959 MB budget, 7,504 MB used, no MSAA;
-    // the targets took about 120 bytes a pixel, counted 34 before
+    // the targets took 87 bytes a pixel (measured there), counted 34 before
     let free = (9_959u64 - 7_504) * 1_000_000 / 2;
     let photo = (7680, 4108);
     let before = plan(photo, 16384, pass_pixels(free, 34, (3840, 2054)), TILE_GUARD);
     assert_eq!(before.len(), 1, "the plan that lost the GPU");
-    let per_pixel = pass_bytes_per_pixel(Some(120.0), 1);
+    let per_pixel = pass_bytes_per_pixel(Some(87.0), 1);
     let tiles = plan(photo, 16384, pass_pixels(free, per_pixel, (3840, 2054)), TILE_GUARD);
     assert!(tiles.len() > 1, "{}", tiles.len());
     for t in &tiles {

@@ -467,8 +467,8 @@ pub const PASS_OUTPUT_BYTES: u64 = 8;
 
 /// Bytes of render targets a pixel takes when the renderer has not measured
 /// them yet, besides [`FALLBACK_BYTES_PER_SAMPLE`] per MSAA sample: fitted
-/// on 2026-11-02 to the peak memory of photo passes (about 195 bytes a pixel
-/// with MSAA 8x in demo, 153 with 4x on Agni), with some room.
+/// on 2026-11-02 to the targets measured (87 bytes a pixel without MSAA on
+/// Agni, 187 with 8x in demo), with some room.
 const FALLBACK_BYTES_PER_PIXEL: u64 = 120;
 const FALLBACK_BYTES_PER_SAMPLE: u64 = 12;
 
@@ -477,8 +477,9 @@ const FALLBACK_BYTES_PER_SAMPLE: u64 = 12;
 /// `RenderStats::target_bytes_per_pixel`, which follows every effect and
 /// the MSAA of the current settings), or the fallback with `samples`, and
 /// the pass's output. Constants of 16 bytes a pixel and 18 a sample, from
-/// October, counted a third of what the targets took by November without
-/// MSAA (34 bytes for about 120): an 8K photo was planned in one pass of
+/// October, counted under half of what the targets took by November
+/// without MSAA (34 bytes for 87, and 8 more for the output): an 8K photo
+/// was planned in one pass of
 /// 31 Mpx on a card with 2.4 GB free, the driver moved memory out to the
 /// system's and the GPU, crawling, was reset after a few seconds.
 pub fn pass_bytes_per_pixel(measured: Option<f32>, samples: u32) -> u64 {
