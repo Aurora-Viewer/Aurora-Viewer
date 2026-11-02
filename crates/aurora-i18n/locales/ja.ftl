@@ -1298,6 +1298,8 @@ common-show-in-search = 検索に表示
 ui-inventory-context-show-in-a-new-window = 新しいウィンドウで表示
 ui-places-show-the-corresponding-location-on-the-map = 対応する場所をマップに表示
 ui-options-show-time = 発言時刻を表示
+ui-options-chat-text-size = チャットの文字サイズ
+ui-options-chat-text-size-hint = 近くのチャットと会話のメッセージ、チャット入力欄の文字サイズです。「外観 › 文字サイズ」とは別に設定できます。
 ui-options-chat-keep-focus = 送信後もチャットバーをアクティブにしておく
 ui-options-chat-keep-focus-hint = Enterで送信し、バーは次のメッセージの入力待ちになります。空のバーでEnterを押すか、他の場所をクリックすると移動操作に戻ります。
 ui-options-gesture-autocomplete = 近くのチャットでジェスチャーを補完
@@ -7206,6 +7208,8 @@ world-inventory-demo-item = { "アイテム" }{ $n }
 ui-appearance-attached-items = 装着中のアイテム
 ui-appearance-temporary-items = 一時的な装着物（{ $count }個）
 ui-appearance-items-to-wear = 着用するアイテム
+ui-appearance-clipboard-cannot-take = この選択はコピーも切り取りもできません。
+ui-appearance-clipboard-select-an-outfit = 貼り付け先のアウトフィットを選択してください。
 ui-environment-elevation = 標高
 ui-env-editor-edit-sky = 空を編集
 ui-env-editor-edit-water = 水面を編集
@@ -12624,6 +12628,9 @@ ui-appearance-folders-save-in = 保存先
 world-outfit-folders-cannot-move-here = このフォルダには移動できません。
 world-outfit-folders-already-there = すでにこのフォルダにあります。
 world-outfit-folders-too-deep = アウトフィットのフォルダは4階層までです。
+world-outfit-paste-cannot-be-used-in-outfits = アウトフィットに入れられないアイテムがあります。
+world-outfit-paste-already-in-outfit = すでにこのアウトフィットにあります。
+world-outfit-paste-already-worn = すでに着用しています。
 
 ## Build › Edit particles (particle editor)
 particle-editor-title = パーティクルエディタ

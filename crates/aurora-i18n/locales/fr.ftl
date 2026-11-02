@@ -1301,6 +1301,8 @@ common-show-in-search = Afficher dans la recherche
 ui-inventory-context-show-in-a-new-window = Afficher dans une nouvelle fenêtre
 ui-places-show-the-corresponding-location-on-the-map = Afficher l'emplacement correspondant sur la carte
 ui-options-show-time = Afficher l'heure
+ui-options-chat-text-size = Taille du texte du chat
+ui-options-chat-text-size-hint = Taille des messages du chat local et des conversations, et des champs de saisie du chat, indépendamment d'Apparence › Taille du texte.
 ui-options-chat-keep-focus = Garder la barre de chat active après l'envoi
 ui-options-chat-keep-focus-hint = Entrée envoie et la barre reste prête pour le message suivant ; Entrée dans la barre vide ou un clic ailleurs rend la main au déplacement.
 ui-options-gesture-autocomplete = Compléter les gestes dans le chat local
@@ -7211,6 +7213,8 @@ world-inventory-demo-item = { "Élément " }{ $n }
 ui-appearance-attached-items = Éléments attachés
 ui-appearance-temporary-items = Éléments temporaires ({ $count })
 ui-appearance-items-to-wear = Éléments à porter
+ui-appearance-clipboard-cannot-take = Cette sélection ne peut pas être copiée ni coupée.
+ui-appearance-clipboard-select-an-outfit = Sélectionnez une tenue où coller.
 ui-environment-elevation = Élévation
 ui-env-editor-edit-sky = Modifier le ciel
 ui-env-editor-edit-water = Modifier l'eau
@@ -12635,6 +12639,9 @@ ui-appearance-folders-save-in = Enregistrer dans
 world-outfit-folders-cannot-move-here = Impossible de le déplacer dans ce dossier.
 world-outfit-folders-already-there = Il est déjà dans ce dossier.
 world-outfit-folders-too-deep = Les dossiers de tenues ne dépassent pas quatre niveaux.
+world-outfit-paste-cannot-be-used-in-outfits = Un ou plusieurs éléments ne peuvent pas aller dans une tenue.
+world-outfit-paste-already-in-outfit = Déjà dans cette tenue.
+world-outfit-paste-already-worn = Déjà porté.
 
 ## Build › Modifier les particules (éditeur de particules)
 particle-editor-title = Éditeur de particules

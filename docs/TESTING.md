@@ -7763,7 +7763,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder`**
 — opens Appearance with four synthetic outfits:
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
@@ -7809,6 +7809,14 @@ for them (`5 to look up`), as a cold inventory cache.
   Take off / Detach (both). A selection mixing worn and unworn items
   offers Wear / Add for the unworn ones and Take off for the worn ones.
   The outfit editor keeps one selected row.
+- `clipboard`: the second outfit open with two of its items selected; at
+  frame 500 Ctrl+C copies them, at frame 540 the first outfit ("Empty")
+  is selected and Ctrl+V pastes: the capture (frame 620) shows "Empty"
+  holding the two items, as links to the same originals. By hand, in any
+  mode: Ctrl+C / Ctrl+X on selected outfits or items, Ctrl+V with an outfit
+  selected (items go into it, folders beside it), Ctrl+V in Worn wears what
+  was copied. The clipboard is the inventory's: what is copied in one
+  window pastes in the other.
 - `folders` / `folders-outfits`: the gallery or the list with outfit
   folders in My Outfits: "Beach" (one outfit and a "Night" subfolder with
   one), "Club" (two outfits) and an empty "Spring". The list shows them as
@@ -8898,6 +8906,7 @@ What the inventory must show with these scenarios:
 | `AURORA_FONT_FALLBACK=0` | Without the system fallback fonts |
 | `AURORA_UI_FONT=<font>`, `AURORA_UI_SCALE=<scale>` | Interface font and scale for this launch, without changing the Preferences |
 | `AURORA_TEXT_SIZE=<size>` | Text size for this launch, without changing the Preferences |
+| `AURORA_CHAT_TEXT_SIZE=<size>` | Chat text size for this launch, without changing the Preferences |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Forces the texture memory budget |
 | `AURORA_VRAM_BUDGET_MB=<n>` | The driver's video memory budget taken as n MB, a smaller card on a large one |
 | `AURORA_TEXTURE_SIZING=screen` | Textures sized by their object's diameter on screen times the repeats, as before the Legacy Viewer's sizing |
@@ -9505,6 +9514,18 @@ What the inventory must show with these scenarios:
   it, a sidebar label and its count, a footer's hint and its buttons),
   initials and the AO glyph inside their tile like the icons beside them,
   windows that keep their size.
+- **`AURORA_CHAT_TEXT_SIZE=<size>`**: the chat's text size (0.8 to 2,
+  Preferences › Chat › Chat text size) of this launch, never saved, on its
+  own or with `AURORA_TEXT_SIZE` to show that each size leaves the other
+  alone: the messages, names and times of the Conversations window (every
+  style), the chat lines over the world, the chat bubbles above the heads
+  (`AURORA_DEMO_TAGS=voice` with `AURORA_DEMO_CHAT_BUBBLES=1`), the
+  invitation, offer and payment cards and the text typed in the chat
+  fields (`AURORA_DEMO_CHAT_INPUT=1`) follow it; the fields' placeholders,
+  the tabs, the sidebar, the buttons and the rest of the interface keep
+  the interface's text size. What to look for: no name or time over its
+  message, the fields growing with their text, the cards' buttons under
+  their text.
 - **`AURORA_PRESENT_MODE=immediate|mailbox|fifo|fifo-relaxed`**: replaces
   the present mode chosen from vertical sync
   (`aurora-render/src/present.rs`: without sync `Mailbox`, otherwise

@@ -1298,6 +1298,8 @@ common-show-in-search = Show in search
 ui-inventory-context-show-in-a-new-window = Show in a new window
 ui-places-show-the-corresponding-location-on-the-map = Show the corresponding location on the map
 ui-options-show-time = Show time
+ui-options-chat-text-size = Chat text size
+ui-options-chat-text-size-hint = Size of the messages in the nearby chat and the conversations, and of the chat fields, apart from Appearance › Text size.
 ui-options-chat-keep-focus = Keep the chat bar active after sending
 ui-options-chat-keep-focus-hint = Enter sends and the bar stays ready for the next message; Enter on an empty bar or a click elsewhere returns to moving.
 ui-options-gesture-autocomplete = Complete gestures in nearby chat
@@ -7209,6 +7211,8 @@ world-inventory-demo-item = { "Item " }{ $n }
 ui-appearance-attached-items = Attached items
 ui-appearance-temporary-items = Temporary attachments ({ $count })
 ui-appearance-items-to-wear = Items to wear
+ui-appearance-clipboard-cannot-take = This selection cannot be copied or cut.
+ui-appearance-clipboard-select-an-outfit = Select an outfit to paste into.
 ui-environment-elevation = Elevation
 ui-env-editor-edit-sky = Edit Sky
 ui-env-editor-edit-water = Edit Water
@@ -12639,6 +12643,9 @@ ui-appearance-folders-save-in = Save in
 world-outfit-folders-cannot-move-here = It cannot be moved into this folder.
 world-outfit-folders-already-there = It is already in this folder.
 world-outfit-folders-too-deep = Outfit folders go no deeper than four levels.
+world-outfit-paste-cannot-be-used-in-outfits = One or more items can't be used inside outfits.
+world-outfit-paste-already-in-outfit = Already in this outfit.
+world-outfit-paste-already-worn = Already worn.
 
 ## Build › Edit particles (particle editor)
 particle-editor-title = Particle editor

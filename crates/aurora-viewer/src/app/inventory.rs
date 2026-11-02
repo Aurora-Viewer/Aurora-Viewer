@@ -918,4 +918,23 @@ impl App {
             self.send(command);
         }
     }
+
+    /// Ctrl+C, Ctrl+X or Ctrl+V of Appearance, on the inventory's clipboard:
+    /// a paste goes through the inventory's paste, outfit rules included.
+    pub(super) fn appearance_clipboard(&mut self, ctx: &egui::Context, request: ui::appearance::ClipboardRequest) {
+        let facts = ui::inventory::Facts::from_world(&self.world, self.appearance_ui.pending.is_some());
+        self.inventory_ui.message.clear();
+        let actions = ui::inventory::appearance_clipboard(
+            ctx,
+            &self.world.inventory,
+            &mut self.inventory_ui,
+            &self.settings.inventory,
+            &facts,
+            request,
+        );
+        self.appearance_ui.message.clone_from(&self.inventory_ui.message);
+        for action in actions {
+            self.apply_inventory_action(action);
+        }
+    }
 }
