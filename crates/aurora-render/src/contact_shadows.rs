@@ -434,7 +434,33 @@ struct ParamsU {
     light: [f32; 4],
     wave_offset: [i32; 4],
     tuning: [f32; 4],
+    fade: [f32; 4],
 }
+
+/// The close-range fade of the shader's `fade`: near plane, metres per
+/// pixel per metre (from the projection's vertical scale and the image's
+/// height) and the reach in metres over which the shadow fades in.
+/// `AURORA_CONTACT_FADE=<from>,<to>` (metres) tunes it, `0` turns it off.
+fn close_fade(near: f32, proj_y: f32, height: i32) -> [f32; 4] {
+    let (from, to) = match std::env::var("AURORA_CONTACT_FADE").ok().as_deref() {
+        Some("0") => return [0.0; 4],
+        Some(v) => {
+            let mut it = v.split(',').filter_map(|x| x.trim().parse::<f32>().ok());
+            match (it.next(), it.next()) {
+                (Some(a), Some(b)) if b > a => (a, b),
+                _ => (CLOSE_FADE_FROM, CLOSE_FADE_TO),
+            }
+        }
+        None => (CLOSE_FADE_FROM, CLOSE_FADE_TO),
+    };
+    if near <= 0.0 || proj_y <= 0.0 || height <= 0 {
+        return [0.0; 4];
+    }
+    [near, 2.0 / (proj_y * height as f32), from, to]
+}
+
+const CLOSE_FADE_FROM: f32 = 0.015;
+const CLOSE_FADE_TO: f32 = 0.025;
 
 /// The light of the frame as Bend takes it: the direction towards it (w =
 /// 0) through the view-projection the depth prepass was drawn with.
@@ -790,17 +816,28 @@ impl ContactShadows {
     /// plane is `near` metres away, in an image `scale` times taller than
     /// the viewfinder's view of it (its pipeline, [`Self::prepare`]), before
     /// the encoder runs.
-    pub(crate) fn write(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, t: &Targets, light: [f32; 4], near: f32, scale: f32) {
+    pub(crate) fn write(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        t: &Targets,
+        light: [f32; 4],
+        near: f32,
+        proj_y: f32,
+        scale: f32,
+    ) {
         self.prepare(device, scale);
         let (w, h) = (t.size.0 as i32, t.size.1 as i32);
         self.list = build_dispatch_list(light, [w, h], [0, 0], [w, h], WAVE_SIZE);
         let occluder = occluder_units(Override::from_env().occluder_depth(), near);
+        let fade = close_fade(near, proj_y, h);
         let mut bytes = vec![0u8; (self.stride as usize) * self.list.count];
         for (i, d) in self.list.dispatches().iter().enumerate() {
             let u = ParamsU {
                 light: self.list.light,
                 wave_offset: [d.wave_offset[0], d.wave_offset[1], 0, 0],
                 tuning: [SURFACE_THICKNESS, BILINEAR_THRESHOLD, SHADOW_CONTRAST, occluder],
+                fade,
             };
             let at = i * self.stride as usize;
             bytes[at..at + std::mem::size_of::<ParamsU>()].copy_from_slice(bytemuck::bytes_of(&u));
@@ -1173,7 +1210,7 @@ mod tests {
         let mask = |variant: Variant| -> Vec<u8> {
             let mut cs = ContactShadows::with_variant(&device, variant);
             let t = cs.targets(&device, &depth_view, format, w, h);
-            cs.write(&device, &queue, &t, light, 0.1, 1.0);
+            cs.write(&device, &queue, &t, light, 0.1, 0.0, 1.0);
             let mut encoder = device.create_command_encoder(&Default::default());
             cs.encode(&mut encoder, &t, false);
             let row = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);

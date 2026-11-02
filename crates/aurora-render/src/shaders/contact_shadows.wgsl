@@ -50,6 +50,11 @@ struct Params {
     // occluders' depth in units of surface thickness per unit of reversed
     // depth (0: Bend's shell of one unit)
     tuning: vec4<f32>,
+    // x near plane (metres), y metres per pixel per metre of distance, zw
+    // the contact reach (metres) over which the shadow fades in (y = 0: no
+    // fade). Close up the sun's shadow map already resolves what a short
+    // reach would add, and the depth's facets only add hard edges.
+    fade: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -233,7 +238,11 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
     let contrast = params.tuning.z;
     shadow_value = saturate(shadow_value * contrast + (1.0 - contrast));
     hard_shadow = saturate(hard_shadow * contrast + (1.0 - contrast));
-    let result = min(hard_shadow, dot(shadow_value, vec4<f32>(0.25)));
+    var result = min(hard_shadow, dot(shadow_value, vec4<f32>(0.25)));
+    if (params.fade.y > 0.0) {
+        let reach = f32(SAMPLE_COUNT) * params.fade.x / sampling_depth[0] * params.fade.y;
+        result = mix(1.0, result, smoothstep(params.fade.z, params.fade.w, reach));
+    }
     let size = vec2<i32>(textureDimensions(out_tex));
     if (all(write_xy >= vec2<i32>(0)) && all(write_xy < size)) {
         textureStore(out_tex, write_xy, vec4<f32>(1.0 - result, 0.0, 0.0, 0.0));
