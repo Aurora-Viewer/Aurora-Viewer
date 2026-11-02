@@ -46,6 +46,20 @@ impl App {
         }
     }
 
+    /// The toolbar's Move and View, the View menu, the shortcut
+    /// (`ui::controls::request`; the free camera keeps Aurora's window).
+    pub(super) fn request_controls(&mut self, movement: bool, toggle: bool) {
+        let classic = self.settings.classic_controls && self.camera.free().is_none();
+        crate::ui::controls::request(
+            &self.egui_ctx,
+            &mut self.panels.camera_controls,
+            &mut self.panels.movement_controls,
+            classic,
+            movement,
+            toggle,
+        );
+    }
+
     fn control_action(&mut self, action: ControlAction) {
         if self.world.rlva.camera_preset_locked(uuid::Uuid::nil())
             && matches!(

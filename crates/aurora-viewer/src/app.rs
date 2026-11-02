@@ -4116,7 +4116,7 @@ impl App {
             Action::PassWall => self.pass_wall(),
             Action::SitGround => self.sit_stand_shortcut(),
             Action::Mouselook => self.toggle_mouselook(),
-            Action::CameraControls => self.panels.camera_controls = !self.panels.camera_controls,
+            Action::CameraControls => self.request_controls(false, true),
             Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault => {
                 if self.world.rlva.camera_owner().is_none() {
                     let aspect = self.view_aspect();
@@ -12413,6 +12413,11 @@ impl App {
             }
             BarAction::BuyCurrency => self.open_buy_currency(),
             BarAction::Marketplace => self.marketplace_ui.open(None),
+            // (none on a grid without a Marketplace)
+            BarAction::MarketplaceInBrowser => match self.marketplace_home() {
+                Some(url) => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
+                None => log::info!("toolbar: no Marketplace on this grid"),
+            },
             BarAction::MarketplaceListings => self.open_marketplace_listings(),
             BarAction::ChatPrefs => {
                 self.panels.settings = true;
@@ -12518,7 +12523,7 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
                 self.options_ui.open(ui::options::Page::Graphics, 0);
             }
-            BarAction::CameraControls => self.panels.camera_controls = true,
+            BarAction::Controls { movement, toggle } => self.request_controls(movement, toggle),
             BarAction::ToggleMoveLock => self.toggle_move_lock(),
             BarAction::ToggleQuickjump => {
                 self.settings.quickjump = !self.settings.quickjump;

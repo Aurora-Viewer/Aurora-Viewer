@@ -120,6 +120,9 @@ pub enum BarAction {
     SetDoubleClick(crate::autopilot::DoubleClick),
     /// World › SL Marketplace (FSLoadSLMarketplace).
     Marketplace,
+    /// The toolbar's Marketplace (Avatar.OpenMarketplace): its page in the
+    /// system's browser.
+    MarketplaceInBrowser,
     /// Me › Marketplace listings (menu_viewer.xml "MarketplaceListings").
     MarketplaceListings,
     /// World › Landmark this Place (World.CreateLandmark).
@@ -143,7 +146,11 @@ pub enum BarAction {
     FpsCap(bool),
     CameraPreset(crate::camera::CameraPreset),
     GraphicsPreferences,
-    CameraControls,
+    /// The camera or movement controls (`ui::controls::request`).
+    Controls {
+        movement: bool,
+        toggle: bool,
+    },
     /// Performance on its Network section (`perf::show_network`).
     NetworkGraph,
     /// The toolbar's "Toolbar buttons" window.
@@ -1096,10 +1103,16 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         // Firestorm's View › Camera Controls and Movement Controls
         let camera = crate::keybinds::chord_label("KeyC", true, false, true);
         if menu::item_keys(ui, p, "video-filled", aurora_i18n::tr!("controls-camera-title"), &camera) {
-            panels.camera_controls = true;
+            *action = BarAction::Controls {
+                movement: false,
+                toggle: false,
+            };
         }
         if menu::item(ui, p, "walk", aurora_i18n::tr!("controls-movement-title")) {
-            panels.movement_controls = true;
+            *action = BarAction::Controls {
+                movement: true,
+                toggle: false,
+            };
         }
         if menu::item(ui, p, "eye-filled", aurora_i18n::tr!("common-mouselook-m")) {
             *action = BarAction::ToggleMouselook;
@@ -2024,10 +2037,23 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // without the window (the keyboard's Save to disk)
         "snapshot_to_disk" => return BarAction::PhotoToDisk,
         "beacons" => toggle(super::beacons::WINDOW, &mut panels.beacons),
+        // Avatar.OpenMarketplace: the Marketplace in the system's browser
+        // (LLWeb::loadURLExternal), not the World menu's window
+        "marketplace" => return BarAction::MarketplaceInBrowser,
         "preferences" => toggle("options", &mut panels.settings),
         // Firestorm's Move and View buttons open the controls
-        "move" => panels.movement_controls = !panels.movement_controls,
-        "view" => panels.camera_controls = !panels.camera_controls,
+        "move" => {
+            return BarAction::Controls {
+                movement: true,
+                toggle: true,
+            };
+        }
+        "view" => {
+            return BarAction::Controls {
+                movement: false,
+                toggle: true,
+            };
+        }
         "fly" => return BarAction::ToggleFly,
         "movelock" | "move_lock" => return BarAction::ToggleMoveLock,
         "water_walk" => return BarAction::ToggleWaterWalk,
@@ -3535,6 +3561,17 @@ mod tests {
         assert!(super::super::toolbar::ready("snapshot_to_disk"));
         assert!(matches!(run_command(&ctx, "snapshot_to_disk", &mut panels), BarAction::PhotoToDisk));
         assert!(!panels.snapshot);
+    }
+
+    #[test]
+    fn marketplace_opens_in_the_system_browser() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(super::super::toolbar::ready("marketplace"));
+        assert!(matches!(
+            run_command(&ctx, "marketplace", &mut panels),
+            BarAction::MarketplaceInBrowser
+        ));
     }
 
     #[test]
