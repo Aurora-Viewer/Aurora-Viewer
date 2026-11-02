@@ -864,6 +864,8 @@ impl Camera {
             self.change_to_default(agent, s);
         }
         if reset_camera {
+            // LLAgentCamera::resetView resets the camera roll too.
+            self.roll = 0.0;
             if !steering && self.third_person() {
                 // leaving mouse steering: the pitch fades out
                 self.pitch *= 1.0 - interpolant(0.3, self.dt);
@@ -3165,9 +3167,11 @@ mod tests {
         cam.orbit_drag(-200.0, 60.0, 1.0, &mut agent);
         cam.zoom_fraction = 0.4;
         cam.fov_zoom = 0.3;
+        cam.roll = 0.4;
         let heading = agent.yaw;
         cam.reset_to_defaults(&mut agent, &s);
         assert_eq!((cam.orbit_yaw, cam.pitch, cam.zoom_fraction, cam.fov_zoom), (0.0, 0.0, 1.0, 0.0));
+        assert_eq!(cam.roll, 0.0, "reset levels the camera");
         assert_eq!(agent.yaw, heading, "the avatar keeps its heading");
         w.agent = agent;
         settle(&mut cam, &mut w, &s);

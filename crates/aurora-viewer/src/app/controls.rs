@@ -14,6 +14,7 @@ impl App {
         let flight = self.snapshots.ui.free;
         let view = View {
             zoom: self.camera.zoom_fraction(),
+            roll: self.camera.roll,
             preset: self.settings.camera.preset,
             shots: &self.settings.camera_shots,
             flying: self.world.agent.flying,
@@ -87,6 +88,12 @@ impl App {
                 self.reset_camera_all();
                 self.settings.save();
             }
+            ControlAction::RollBy(delta) => {
+                if self.in_world() && !self.camera.mouselook() && self.camera.free().is_none() && self.camera.flycam.is_none() {
+                    self.camera.roll += delta;
+                }
+            }
+            ControlAction::LevelRoll => self.camera.roll = 0.0,
             ControlAction::Zoom(fraction) => self.camera.set_zoom_fraction(fraction),
             ControlAction::Mouselook => self.toggle_mouselook(),
             ControlAction::ObjectView => self.object_view = !self.object_view,
@@ -160,6 +167,10 @@ impl App {
                 }
             }
             Ok("camera") => self.panels.camera_controls = true,
+            Ok("roll") => {
+                self.panels.camera_controls = true;
+                self.camera.roll = 15.0_f32.to_radians();
+            }
             Ok("movement") => self.panels.movement_controls = true,
             Ok("compact" | "compact-move") => {
                 self.panels.camera_controls = true;
