@@ -111,6 +111,7 @@ fn portal_aperture_on_gpu_keeps_side_and_corner_geometry_and_matches_picking() {
         r#"
 const FLAG_PORTAL_CLIP:u32=16384u;
 const FLAG_PORTAL_EFFECT:u32=32768u;
+const FLAG_DOUBLE_SIDED:u32=2048u;
 const PORTAL_HALF_WIDTH:f32={PORTAL_HALF_WIDTH:.1};
 const PORTAL_HALF_HEIGHT:f32={PORTAL_HALF_HEIGHT:.1};
 const PORTAL_SURFACE_SCALE:f32=1.16;

@@ -271,7 +271,7 @@ fn inventory_drag_ctrl_selection_moves_both_textures_once_without_changing_the_m
 
 #[test]
 fn inventory_drag_rejects_the_whole_batch_when_a_source_or_destination_is_protected_or_busy() {
-    for rejection in 0..4 {
+    for rejection in [0, 2, 3] {
         let mut f = Fixture::new();
         f.click(100, false);
         f.click(101, true);
@@ -281,9 +281,6 @@ fn inventory_drag_rejects_the_whole_batch_when_a_source_or_destination_is_protec
         match rejection {
             0 => {
                 f.prefs.protected.insert(id(101));
-            }
-            1 => {
-                f.prefs.protected.insert(id(20));
             }
             2 => {
                 f.state.pending = Some(id(999));
@@ -298,6 +295,18 @@ fn inventory_drag_rejects_the_whole_batch_when_a_source_or_destination_is_protec
         assert!(f.actions.is_empty(), "a rejected row must not fall through to the enclosing root");
         assert!(!f.state.message.is_empty());
     }
+}
+
+#[test]
+fn inventory_drag_can_move_items_into_a_protected_folder() {
+    let mut f = Fixture::new();
+    f.click(100, false);
+    f.start(100);
+    let to = f.row(20);
+    f.prefs.protected.insert(id(20));
+    assert_eq!(f.hover(to), egui::CursorIcon::Move);
+    f.button(to, false, false);
+    assert_eq!(f.actions.len(), 1);
 }
 
 #[test]

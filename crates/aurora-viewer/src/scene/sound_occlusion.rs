@@ -77,18 +77,24 @@ pub fn forced() -> Option<bool> {
     })
 }
 
-/// An object that may block some of the rays.
-struct Blocker {
-    geom: Arc<GpuGeom>,
+/// A drawn object that stops or reflects sound, in the space of its
+/// geometry (the occlusion's blockers, the reverb's reflectors).
+pub(super) struct Surface {
+    pub(super) geom: Arc<GpuGeom>,
     /// Render space to the space of its geometry.
-    inv: Mat4,
+    pub(super) inv: Mat4,
     /// The faces drawn (texture entry numbers).
-    faces: u64,
-    /// The sounds whose rays come near it (bits of `Request::sounds`).
-    sounds: u64,
+    pub(super) faces: u64,
     /// Its large faces may go through their hierarchy: not a prim, whose
     /// triangles a flexible one replaces at each frame.
-    hierarchy: bool,
+    pub(super) hierarchy: bool,
+}
+
+/// An object that may block some of the rays.
+struct Blocker {
+    surface: Surface,
+    /// The sounds whose rays come near it (bits of `Request::sounds`).
+    sounds: u64,
 }
 
 struct SoundRays {
@@ -347,27 +353,6 @@ impl Scene {
             .collect();
         let mut blockers = Vec::new();
         for &(idx, mut bits) in candidates.iter() {
-            let (Some(g), Some(o)) = (self.gpu.get(idx), world.objects.get(idx)) else {
-                continue;
-            };
-            if g.hud
-                || g.is_avatar
-                || g.rigged
-                || g.owner_avatar.is_some()
-                || g.parcel_hidden
-                || g.photo_hidden
-                || super::plants::plant_face(o).is_some()
-            {
-                continue;
-            }
-            let faces = g
-                .faces
-                .iter()
-                .filter(|f| f.pass != Pass::Hidden && f.te_index < 64)
-                .fold(0u64, |m, f| m | (1 << f.te_index));
-            if faces == 0 {
-                continue;
-            }
             let root = linkset_root(world, idx);
             for (k, emitter) in emitters.iter().enumerate() {
                 if *emitter == Some(root) {
@@ -377,23 +362,48 @@ impl Scene {
             if bits == 0 {
                 continue;
             }
-            let Some(key) = g.geom else { continue };
-            let Some(geom) = self.geom_ready(&key) else {
-                continue;
-            };
-            let Some((pos, rot, _)) = Self::object_transform(world, idx, now, 0) else {
-                continue;
-            };
-            let model = self.drawn_model(g, o, world.visual_scale_at(idx, now), Some(key), pos, rot);
-            blockers.push(Blocker {
-                geom,
-                inv: model.inverse(),
-                faces,
-                sounds: bits,
-                hierarchy: !matches!(key, GeomKey::Prim { .. }),
-            });
+            if let Some(surface) = self.sound_surface(world, idx, now) {
+                blockers.push(Blocker { surface, sounds: bits });
+            }
         }
         Request { sounds, blockers }
+    }
+
+    /// Object `idx` as a surface that stops or reflects sound: its drawn
+    /// faces, transform and shared geometry. `None` for what never does
+    /// (HUDs, avatars, what they wear, rigged meshes, hidden objects, trees
+    /// and grass, every face at alpha 0) and while its geometry is not
+    /// ready.
+    pub(super) fn sound_surface(&self, world: &World, idx: usize, now: Instant) -> Option<Surface> {
+        let (g, o) = (self.gpu.get(idx)?, world.objects.get(idx)?);
+        if g.hud
+            || g.is_avatar
+            || g.rigged
+            || g.owner_avatar.is_some()
+            || g.parcel_hidden
+            || g.photo_hidden
+            || super::plants::plant_face(o).is_some()
+        {
+            return None;
+        }
+        let faces = g
+            .faces
+            .iter()
+            .filter(|f| f.pass != Pass::Hidden && f.te_index < 64)
+            .fold(0u64, |m, f| m | (1 << f.te_index));
+        if faces == 0 {
+            return None;
+        }
+        let key = g.geom?;
+        let geom = self.geom_ready(&key)?;
+        let (pos, rot, _) = Self::object_transform(world, idx, now, 0)?;
+        let model = self.drawn_model(g, o, world.visual_scale_at(idx, now), Some(key), pos, rot);
+        Some(Surface {
+            geom,
+            inv: model.inverse(),
+            faces,
+            hierarchy: !matches!(key, GeomKey::Prim { .. }),
+        })
     }
 }
 
@@ -457,7 +467,7 @@ fn ray_layers(blockers: &[Blocker], bit: u64, from: Vec3, to: Vec3, terrain: boo
         if layers >= FULL_LAYERS {
             break;
         }
-        layers += crossings(b, from, to).div_ceil(2);
+        layers += crossings(&b.surface, from, to).div_ceil(2);
     }
     layers.min(FULL_LAYERS)
 }
@@ -465,7 +475,7 @@ fn ray_layers(blockers: &[Blocker], bit: u64, from: Vec3, to: Vec3, terrain: boo
 /// How many times the segment crosses drawn surfaces of `b`, its ends left
 /// out. Hits at the same place count once: a ray through the edge two
 /// triangles share, or through a corner, meets both.
-fn crossings(b: &Blocker, from: Vec3, to: Vec3) -> u32 {
+fn crossings(b: &Surface, from: Vec3, to: Vec3) -> u32 {
     let len = from.distance(to);
     if len <= 2.0 * END_GAP {
         return 0;

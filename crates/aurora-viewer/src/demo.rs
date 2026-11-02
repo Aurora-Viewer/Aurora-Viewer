@@ -219,6 +219,10 @@ pub mod sound_hrtf;
 pub mod sound_occlusion;
 #[path = "demo_sound_parcels.rs"]
 pub mod sound_parcels;
+/// A clapper above our avatar, a small room and a large hall, for the
+/// reverb of the surroundings (AURORA_DEMO_SOUND_REVERB).
+#[path = "demo_sound_reverb.rs"]
+pub mod sound_reverb;
 /// The Aurora team's marks on demo residents (AURORA_DEMO_STAFF).
 #[path = "demo_staff.rs"]
 pub mod staff;
@@ -4809,7 +4813,35 @@ pub fn events() -> Vec<NetEvent> {
     // position with the same orange emissive, opaque, alpha-masked and
     // blended: without HDR and Emissive (AURORA_HDR=0) the first two lose
     // their light, the blended one keeps it (HAS_EMISSIVE)
-    if std::env::var_os("AURORA_DEMO_PBR_EMISSIVE").is_some() {
+    if std::env::var("AURORA_DEMO_PBR_EMISSIVE").is_ok_and(|mode| mode == "sided") {
+        // Only one face of each box exists visually: compare its front/back
+        // without the opposite wall of a closed solid hiding the defect (#1727).
+        let mesh = aurora_prim::generate_volume(&boxp, 2.0);
+        if let Some(face) = mesh.faces.iter().position(|face| face.normals.first().is_some_and(|n| n[0] < -0.9)) {
+            let floor = height(cx, cy) + 0.35;
+            for k in 0..4 {
+                let mut t = TextureEntry::default();
+                for f in &mut t.faces {
+                    f.texture = BLANK_TEXTURE;
+                    f.color = [1.0, 1.0, 1.0, 0.0];
+                }
+                add(prim(
+                    id,
+                    Vec3::new(136.0, 123.0 + 2.0 * k as f32, floor + 2.6),
+                    Quat::from_rotation_z(if k % 2 == 0 { 0.0 } else { std::f32::consts::PI }),
+                    Vec3::new(0.02, 1.5, 2.0),
+                    boxp,
+                    Arc::new(t),
+                    ExtraParams {
+                        render_materials: vec![(face as u8, MAT_PBR_SIDED[k / 2])],
+                        ..Default::default()
+                    },
+                    "",
+                ));
+                id += 1;
+            }
+        }
+    } else if std::env::var_os("AURORA_DEMO_PBR_EMISSIVE").is_some() {
         let floor = height(cx, cy) + 0.35;
         for (k, mat) in MAT_PBR_EMISSIVE.into_iter().enumerate() {
             let mut t = TextureEntry::default();
@@ -8346,6 +8378,12 @@ const MAT_PBR_EMISSIVE: [Uuid; 3] = [
     Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0032),
 ];
 
+/// The same translucent material, single- and double-sided (#1727).
+const MAT_PBR_SIDED: [Uuid; 2] = [
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0040),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0041),
+];
+
 /// PBR materials of the demo (normally fetched as assets).
 pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
     let mut list = vec![(
@@ -8358,6 +8396,20 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             ..Default::default()
         },
     )];
+    for (mat, double_sided) in MAT_PBR_SIDED.into_iter().zip([false, true]) {
+        list.push((
+            mat,
+            aurora_assets::PbrMaterial {
+                base_color_factor: [0.15, 0.6, 0.9, 0.6],
+                emissive_factor: [0.05, 0.2, 0.3],
+                metallic_factor: 0.0,
+                roughness_factor: 0.5,
+                alpha_mode: aurora_assets::AlphaMode::Blend,
+                double_sided,
+                ..Default::default()
+            },
+        ));
+    }
     for (mat, roughness) in MAT_PBR_METAL.into_iter().zip([0.05, 0.3, 0.6]) {
         list.push((
             mat,

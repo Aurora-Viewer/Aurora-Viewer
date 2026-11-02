@@ -22,6 +22,7 @@
 
 use super::eep::{self, DayCycle, EnvAnswer, Settings, SkyFrame, WaterFrame};
 use super::eep_photo::{PhotoChoice, PhotoLayer};
+use super::eep_push::PushLayer;
 use super::env_select::{SettingsKind, Shown as ListShown};
 use aurora_llsd::Llsd;
 use aurora_net::RegionHandle;
@@ -196,6 +197,8 @@ pub enum Source {
     /// The photo's own sky, water or day over what lies beneath
     /// (`eep_photo`), while the photo window is open.
     Photo(u64),
+    /// ENV_PUSH: what an experience's environment controller pushed.
+    Push(u64),
     /// ENV_PARCEL of the main region.
     Parcel(u64),
     /// ENV_REGION: the region's day, or Firestorm's default day asset when
@@ -312,6 +315,8 @@ pub struct EnvSelector {
     edit: Option<(SkyFrame, WaterFrame)>,
     /// The photo's own light over the local environment (`eep_photo`).
     photo: PhotoLayer,
+    /// What experience environment controllers pushed (`eep_push`).
+    push: PushLayer,
     /// The selector changed the photo's choice (a change made elsewhere, a
     /// camera preset, "Keep this light"): the photo window follows.
     photo_changed: bool,
@@ -477,7 +482,7 @@ impl EnvSelector {
                 out.push(p.asset);
             }
         }
-        for id in self.photo.wanted() {
+        for id in self.photo.wanted().chain(self.push.wanted()) {
             if !out.contains(&id) {
                 out.push(id);
             }
@@ -485,9 +490,30 @@ impl EnvSelector {
         out
     }
 
+    /// A `PushExpEnvironment` message from an experience controller.
+    pub fn push_experience(&mut self, experience: Uuid, message: &Llsd) {
+        self.push.handle(experience, message);
+    }
+
+    /// The agent forgot or blocked an experience: its environment goes
+    /// (Forget fades fast, Block is instant: TRANSITION_FAST / INSTANT).
+    pub fn clear_experience(&mut self, experience: Uuid, transition: f32) {
+        self.push.clear(experience, transition);
+    }
+
+    /// Experiences with something pushed or waiting (the ExperienceQuery of
+    /// the parcel check, still to come, will need it).
+    #[cfg(test)]
+    pub fn pushing_experiences(&self) -> Vec<Uuid> {
+        self.push.experiences()
+    }
+
     /// A settings asset arrived (`None`: it could not be fetched or parsed).
     pub fn on_settings(&mut self, id: Uuid, settings: Option<Arc<Settings>>) {
         self.photo.on_settings(id, settings.as_ref());
+        // onSetEnvAssetLoaded for a pushed environment: FailedToFindSettings
+        let failed = self.push.on_settings(id, settings.as_ref());
+        self.failed_local.extend(failed);
         let mut local = false;
         for p in self.pending.iter_mut().filter(|p| p.asset == id) {
             if matches!(p.state, PendingState::Waiting) {
@@ -1077,16 +1103,23 @@ impl EnvSelector {
             (Source::Local(l.generation), track, sky, water)
         } else {
             let (source, slot) = self.selected(input);
+            let pushed_day = self.push.day();
             let (track, sky, water) = match slot {
                 Some(s) => {
                     let pos = s.position(input.unix_secs);
-                    let track = s.day.track_for_altitude(&self.altitudes, input.altitude);
-                    (track, s.day.sky_at(pos, track), s.day.water_at(pos))
+                    let day = pushed_day.unwrap_or(&s.day);
+                    let track = day.track_for_altitude(&self.altitudes, input.altitude);
+                    (track, day.sky_at(pos, track), day.water_at(pos))
                 }
                 None if source == Source::Legacy => (0, SkyFrame::with_sun(input.legacy_sun), WaterFrame::default()),
                 None => (0, SkyFrame::default(), WaterFrame::default()),
             };
-            (source, track, sky, water)
+            if self.push.is_active() {
+                let (sky, water) = self.push.apply(sky, water);
+                (Source::Push(self.push.generation()), track, sky, water)
+            } else {
+                (source, track, sky, water)
+            }
         };
         // the photo's layer, under an open editor only (`eep_photo`); the
         // targets stay those beneath it, for what a local change inherits
@@ -1125,6 +1158,8 @@ impl EnvSelector {
                 }
             } else if matches!(prev.source, Source::Local(_) | Source::Photo(_)) {
                 TRANSITION_DEFAULT
+            } else if matches!(source, Source::Push(_)) || matches!(prev.source, Source::Push(_)) {
+                self.push.transition()
             } else {
                 self.next_fade
             };
@@ -1289,6 +1324,33 @@ mod tests {
 
     fn gamma(sel: &mut EnvSelector, now: f64) -> f32 {
         sel.frame(&input(now)).0.gamma
+    }
+
+    #[test]
+    fn an_experience_push_overrides_the_parcel_fades_and_clears() {
+        let mut sel = EnvSelector::default();
+        sel.on_answer(REGION, -1, answer(-1, Some(0.7)), ctx(None));
+        gamma(&mut sel, 0.0);
+        let experience = Uuid::from_u128(9);
+        sel.push_experience(
+            experience,
+            &llsd_map! {
+                "action" => "PushPartialEnvironment",
+                "action_data" => llsd_map! {
+                    "transition_time" => 2.0,
+                    "settings" => llsd_map! { "sky" => llsd_map! { "gamma" => 3.0 } },
+                },
+            },
+        );
+        assert!((gamma(&mut sel, 1.0) - 0.7).abs() < 1e-6, "the fade starts from the region sky");
+        assert!((gamma(&mut sel, 3.1) - 3.0).abs() < 1e-6);
+        assert!(matches!(sel.shown_source(), Some(Source::Push(_))));
+        assert_eq!(sel.pushing_experiences(), vec![experience]);
+        // Forget: back to the shared environment over the fast transition
+        sel.clear_experience(experience, 1.0);
+        gamma(&mut sel, 4.0);
+        assert!((gamma(&mut sel, 5.1) - 0.7).abs() < 1e-6);
+        assert!(matches!(sel.shown_source(), Some(Source::Region(_))));
     }
 
     #[test]

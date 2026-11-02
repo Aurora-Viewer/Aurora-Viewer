@@ -449,6 +449,11 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
 }
 
 fn folder_fixtures(root: &Path, prefs: &Preferences) -> Result<Vec<Entry>, String> {
+    if let Some(folder) = std::env::var_os("AURORA_DEMO_IMPORT_FILE").map(PathBuf::from)
+        && folder.is_dir()
+    {
+        return Ok(files::load_folder(&folder, prefs, prefs.texture(), 30, 0, 0));
+    }
     fixtures(root)?;
     let pack = root.join("Creator Pack");
     for directory in ["Coat/Empty", "Hat", "Animations", "Sounds"] {

@@ -75,7 +75,7 @@ pub enum Action {
     },
     DeleteFromOutfit {
         folder: Uuid,
-        item: Uuid,
+        items: Vec<Uuid>,
     },
     ShowOriginal(Uuid),
     Favorite(Uuid),
@@ -358,8 +358,8 @@ fn base_link(inv: &Inventory, id: Uuid) -> OutfitLink {
 
 /// Produces one acknowledged AIS operation. No optimistic inventory mutation.
 pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result<(OutfitMutation, bool), String> {
-    // DeleteFromOutfit removes the saved link, never the original or the worn item.
-    if let Action::DeleteFromOutfit { folder, item } = action {
+    // DeleteFromOutfit removes the saved links, never the originals or the worn items.
+    if let Action::DeleteFromOutfit { folder, items } = action {
         if !inv
             .folders
             .get(&folder)
@@ -372,7 +372,10 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             OutfitMutation {
                 folder,
                 create: None,
-                links: usable_links(inv, folder).into_iter().filter(|l| l.target != item).collect(),
+                links: usable_links(inv, folder)
+                    .into_iter()
+                    .filter(|l| !items.contains(&l.target))
+                    .collect(),
                 cof: None,
             },
             false,
@@ -631,10 +634,11 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 Action::RemoveOutfits(ids) => ids,
                 _ => unreachable!(),
             };
-            // takeOffOutfit never removes the four required body parts.
+            // takeOffOutfit never removes the four required body parts, and
+            // takes any folder: a demo or a delivery, not only a saved outfit
+            // (#1849).
             let mut removable = HashSet::new();
             for id in folders {
-                require_outfit(inv, id)?;
                 require_complete(inv, id)?;
                 warn_broken(inv, id);
                 removable.extend(
@@ -1256,6 +1260,58 @@ pub fn demo_outfit_count() -> usize {
         .ok()
         .and_then(|v| v.split(',').next().and_then(|n| n.trim().parse().ok()))
         .unwrap_or(0)
+}
+
+/// `AURORA_DEMO_APPEARANCE=take-off-folder` (#1849): an ordinary folder,
+/// not a saved outfit, as a demo or a delivery worn from Recent. It holds
+/// the worn jacket and pants originals and, in a subfolder, a link to the
+/// worn mesh hair; frame 600 takes it off as the inventory's Remove from
+/// current outfit does.
+pub const DEMO_TAKE_OFF_FOLDER: Uuid = Uuid::from_u128(0x1849_0001);
+
+/// Seeds the [`DEMO_TAKE_OFF_FOLDER`] folder and its subfolder.
+pub fn seed_demo_take_off(inv: &mut Inventory, agent: Uuid) {
+    use super::inventory::Folder;
+    let sub = Uuid::from_u128(0x1849_0002);
+    let folder = |id, parent, name: &str, children| Folder {
+        info: InvFolder {
+            id,
+            parent,
+            name: name.into(),
+            type_default: -1,
+            version: 1,
+            ..Default::default()
+        },
+        children,
+        items: Vec::new(),
+        state: FetchState::Fetched,
+        library: false,
+    };
+    let root = inv.root;
+    inv.folders
+        .insert(DEMO_TAKE_OFF_FOLDER, folder(DEMO_TAKE_OFF_FOLDER, root, "Demo delivery", vec![sub]));
+    inv.folders
+        .insert(sub, folder(sub, DEMO_TAKE_OFF_FOLDER, "Accessories", Vec::new()));
+    if let Some(r) = inv.folders.get_mut(&root) {
+        r.children.push(DEMO_TAKE_OFF_FOLDER);
+    }
+    let items = [715, 716]
+        .into_iter()
+        .filter_map(|n| inv.items.get(&Uuid::from_u128(n)).cloned())
+        .map(|mut it| {
+            it.parent = DEMO_TAKE_OFF_FOLDER;
+            it
+        })
+        .collect();
+    inv.apply(vec![aurora_net::inventory::FolderContents {
+        folder_id: DEMO_TAKE_OFF_FOLDER,
+        owner_id: agent,
+        version: 2,
+        folders: Vec::new(),
+        items,
+    }]);
+    let hair: Vec<_> = inv.items.get(&Uuid::from_u128(717)).map(item_link).into_iter().collect();
+    demo_replace(inv, agent, sub, &hair);
 }
 
 /// A mode of `AURORA_DEMO_OUTFITS` (`closed`, `scroll`, `locate`).
@@ -1900,6 +1956,79 @@ mod tests {
         assert!(inv.folders.contains_key(&outfit), "saved outfits are retained");
     }
 
+    /// An ordinary folder (no outfit type) holding `items`, under `parent`.
+    fn plain_folder(inv: &mut Inventory, id: u128, parent: Uuid, items: &[u128]) -> Uuid {
+        let id = Uuid::from_u128(id);
+        let mut folder = inv.folders[&Uuid::from_u128(703)].clone();
+        folder.info.id = id;
+        folder.info.parent = parent;
+        folder.info.type_default = -1;
+        folder.info.name = format!("Folder {id}");
+        folder.children.clear();
+        folder.items = items.iter().map(|n| Uuid::from_u128(*n)).collect();
+        inv.folders.insert(id, folder);
+        if let Some(p) = inv.folders.get_mut(&parent) {
+            p.children.push(id);
+        }
+        for item in &folder_items(inv, id) {
+            inv.items.get_mut(item).expect("folder item").parent = id;
+        }
+        id
+    }
+
+    fn folder_items(inv: &Inventory, id: Uuid) -> Vec<Uuid> {
+        inv.folders[&id].items.clone()
+    }
+
+    /// Issue #1849: "Remove from current outfit" on an ordinary folder (a
+    /// demo worn from Recent) refused it as an outfit it cannot modify. The
+    /// Legacy Viewer (takeOffOutfit) takes off the worn clothing and
+    /// attachments of any folder and its subfolders, originals or links,
+    /// never a body part, and leaves the rest of the outfit on.
+    #[test]
+    fn remove_outfit_takes_off_an_ordinary_folder() {
+        let mut inv = fixture();
+        let (skin, jacket, pants, hair, earrings, spare) = (711, 715, 716, 717, 718, 722);
+        let worn = |change: &OutfitMutation, n: u128| change.links.iter().any(|l| l.target == Uuid::from_u128(n));
+        let current = usable_links(&inv, cof(&inv).expect("COF"));
+        let before = |n: u128| current.iter().any(|l| l.target == Uuid::from_u128(n));
+        assert!([skin, jacket, pants, hair, earrings].into_iter().all(before), "worn in the demo");
+        assert!(!before(spare), "the spare shirt is not");
+        // the demo: worn originals, an unworn one, a body part, and a
+        // subfolder holding a link to a worn attachment
+        let root = inv.root;
+        let demo = plain_folder(&mut inv, 1100, root, &[jacket, spare, skin]);
+        let sub = plain_folder(&mut inv, 1101, demo, &[]);
+        let link = Uuid::from_u128(1102);
+        let mut hair_link = inv.items[&Uuid::from_u128(hair)].clone();
+        hair_link.id = link;
+        hair_link.parent = sub;
+        hair_link.asset_type = 24;
+        hair_link.asset_id = Uuid::from_u128(hair);
+        inv.items.insert(link, hair_link);
+        inv.folders.get_mut(&sub).expect("subfolder").items.push(link);
+        let (change, sync) = plan(&inv, Action::RemoveOutfit(demo), &HashMap::new()).expect("take off a demo folder");
+        assert!(sync);
+        assert!(!worn(&change, jacket), "its clothing is taken off");
+        assert!(!worn(&change, hair), "the attachment linked in its subfolder too");
+        assert!(!worn(&change, spare), "nothing is put on");
+        assert!(worn(&change, skin), "a body part in the folder stays");
+        for n in 710..714 {
+            assert!(worn(&change, n), "body part {n}");
+        }
+        for n in [pants, earrings, 719, 720, 721] {
+            assert!(worn(&change, n), "{n}, outside the folder, stays worn");
+        }
+        // two ordinary folders at once: one outfit change for both
+        let other = plain_folder(&mut inv, 1103, root, &[pants]);
+        let (change, _) = plan(&inv, Action::RemoveOutfits(vec![demo, other]), &HashMap::new()).expect("take off two folders");
+        assert!(!worn(&change, jacket) && !worn(&change, pants) && !worn(&change, hair));
+        assert!(worn(&change, earrings));
+        // an unloaded folder waits instead of taking off part of it
+        inv.folders.get_mut(&sub).expect("subfolder").state = FetchState::Unknown;
+        assert!(plan(&inv, Action::RemoveOutfit(demo), &HashMap::new()).is_err());
+    }
+
     #[test]
     fn save_to_selected_outfit_updates_its_links_and_the_cof_base() {
         let mut inv = fixture();
@@ -2133,11 +2262,31 @@ mod tests {
         let current = folder_links(&inv, cof(&inv).expect("COF"));
         let item = Uuid::from_u128(717);
         let folder = Uuid::from_u128(704);
-        let (change, sync) = plan(&inv, Action::DeleteFromOutfit { folder, item }, &HashMap::new()).expect("delete link");
+        // a multiple selection goes in one update: another link of the outfit with it
+        let other = folder_links(&inv, folder)
+            .into_iter()
+            .find(|l| !l.folder && l.target != item)
+            .expect("a second link")
+            .target;
+        let kept = folder_links(&inv, folder).len() - 2;
+        let (change, sync) = plan(
+            &inv,
+            Action::DeleteFromOutfit {
+                folder,
+                items: vec![item, other],
+            },
+            &HashMap::new(),
+        )
+        .expect("delete links");
         assert!(!sync, "saved-outfit removal must not detach worn objects");
         demo_mutate(&mut inv, Uuid::from_u128(1), &change).expect("mutation");
-        assert!(!folder_links(&inv, folder).iter().any(|l| l.target == item));
-        assert!(inv.items.contains_key(&item), "original retained");
+        let links = folder_links(&inv, folder);
+        assert!(!links.iter().any(|l| l.target == item || l.target == other));
+        assert_eq!(links.len(), kept, "the other links stay");
+        assert!(
+            inv.items.contains_key(&item) && inv.items.contains_key(&other),
+            "originals retained"
+        );
         assert_eq!(folder_links(&inv, cof(&inv).expect("COF")), current);
     }
 

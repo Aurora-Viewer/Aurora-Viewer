@@ -925,7 +925,7 @@ mod tests {
     }
 
     #[test]
-    fn received_sort_controls_edit_only_the_active_order_in_both_layouts() {
+    fn inventory_sort_controls_edit_only_the_active_order_in_both_layouts() {
         fn label_rect(shape: &egui::Shape, label: &str) -> Option<Rect> {
             match shape {
                 egui::Shape::Text(text) if text.galley.text() == label => Some(Rect::from_min_size(text.pos, text.galley.size())),
@@ -957,9 +957,12 @@ mod tests {
                     },
                 ))
             };
-            for tab in [RECEIVED_TAB, 0] {
-                let other_tab = if tab == RECEIVED_TAB { 0 } else { RECEIVED_TAB };
-                let other_order = prefs.sort_for(other_tab);
+            for tab in [RECEIVED_TAB, 2, 0] {
+                let other_orders: Vec<_> = [0, 2, RECEIVED_TAB]
+                    .into_iter()
+                    .filter(|other| *other != tab)
+                    .map(|other| (other, prefs.sort_for(other)))
+                    .collect();
                 for (label, switch) in [
                     (aurora_i18n::tr!("common-by-name"), false),
                     (aurora_i18n::tr!("ui-inventory-controls-folders-always-by-name"), true),
@@ -995,15 +998,17 @@ mod tests {
                             ],
                         ));
                     }
-                    assert_eq!(
-                        prefs.sort_for(other_tab),
-                        other_order,
-                        "changing {label} leaves the other tab intact"
-                    );
+                    for &(other_tab, other_order) in &other_orders {
+                        assert_eq!(
+                            prefs.sort_for(other_tab),
+                            other_order,
+                            "changing {label} leaves the other tab intact"
+                        );
+                    }
                 }
                 let order = prefs.sort_for(tab);
                 assert!(!order.by_date);
-                assert_eq!(order.folders_by_name, tab == RECEIVED_TAB);
+                assert_eq!(order.folders_by_name, tab != 0);
                 assert!(!order.system_first);
                 assert_eq!(sort_text(&prefs, tab), aurora_i18n::tr!("inventory-sort-name"));
             }

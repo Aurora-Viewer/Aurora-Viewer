@@ -102,6 +102,11 @@ impl Session<'_> {
                 };
                 let transaction = Uuid::new_v4();
                 let (sections, chunks) = land::access_list_chunks(&entries);
+                log::debug!(
+                    "ParcelAccessListUpdate: parcel {local_id}, kind {flags:#x}, {} entries in {} message(s), to {addr}",
+                    entries.len(),
+                    chunks.len()
+                );
                 for (i, chunk) in chunks.iter().enumerate() {
                     let mut m = ParcelAccessListUpdate::default();
                     m.agent_data.agent_id = agent;
@@ -780,6 +785,12 @@ impl Session<'_> {
         let id = pkt.id;
         if id == ParcelAccessListReply::ID {
             let m: ParcelAccessListReply = pkt.decode()?;
+            log::debug!(
+                "ParcelAccessListReply: parcel {}, kind {:#x}, {} entries, from {from}",
+                m.data.local_id,
+                m.data.flags,
+                m.list.iter().filter(|e| !e.id.is_nil()).count()
+            );
             let entries = m
                 .list
                 .iter()

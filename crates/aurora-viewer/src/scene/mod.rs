@@ -57,6 +57,7 @@ pub mod shape;
 mod shown_bakes;
 mod skin_binds;
 pub mod sound_occlusion;
+pub mod sound_reverb;
 pub mod sounds;
 pub mod still_check;
 mod sync_check;
@@ -990,6 +991,8 @@ pub struct Scene {
     pub sounds: sounds::SoundManager,
     /// How muffled each world sound is behind walls (sound_occlusion.rs).
     sound_occlusion: sound_occlusion::SoundOcclusion,
+    /// The reverb of the surroundings (sound_reverb.rs).
+    sound_reverb: sound_reverb::SoundReverb,
     /// Environment settings assets (the EEP default day).
     pub settings: settings::SettingsStreamer,
     /// Landmark asset fetches done, for `World::landmarks` (the app passes
@@ -1535,6 +1538,7 @@ impl Scene {
             blend_tmp: Vec::new(),
             sounds: sounds::SoundManager::new(cache_dir_anim.clone()),
             sound_occlusion: Default::default(),
+            sound_reverb: Default::default(),
             settings: settings::SettingsStreamer::new(cache_dir_anim.clone()),
             landmark_results: Vec::new(),
             anims,
@@ -4643,6 +4647,7 @@ impl Scene {
                             distance: blend_d,
                             cmd,
                             glow: f.glow,
+                            double_sided: f.two_sided,
                             rigged: g.rigged,
                             object: idx as u32,
                             face: f.te_index,
@@ -4701,19 +4706,23 @@ impl Scene {
         self.lists.mask_two_sided = result.mask2;
         self.blend_tmp = result.blend;
         self.blend_tmp.extend(
-            [(self.banlines.cmds.as_slice(), false), (self.portals.cmds.as_slice(), true)]
-                .into_iter()
-                .flat_map(|(cmds, glow)| {
-                    cmds.iter().map(move |(d, c)| blend_order::BlendEntry {
-                        distance: *d,
-                        cmd: *c,
-                        glow,
-                        rigged: false,
-                        object: u32::MAX,
-                        face: 0,
-                        rig: None,
-                    })
-                }),
+            [
+                (self.banlines.cmds.as_slice(), false, false),
+                (self.portals.cmds.as_slice(), true, true),
+            ]
+            .into_iter()
+            .flat_map(|(cmds, glow, double_sided)| {
+                cmds.iter().map(move |(d, c)| blend_order::BlendEntry {
+                    distance: *d,
+                    cmd: *c,
+                    glow,
+                    double_sided,
+                    rigged: false,
+                    object: u32::MAX,
+                    face: 0,
+                    rig: None,
+                })
+            }),
         );
         self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
         self.lists.blend_depth_mode = blend_order::depth_mode();
@@ -4730,7 +4739,9 @@ impl Scene {
         let mut under = result.blend_under;
         blend_order::sort(&mut under, true);
         self.lists.blend_under_water.extend(under.iter().map(|e| e.cmd));
+        self.lists.blend_under_double_sided.extend(under.iter().map(|e| e.double_sided));
         self.lists.blend_glow.extend(self.blend_tmp.iter().map(|e| e.glow));
+        self.lists.blend_double_sided.extend(self.blend_tmp.iter().map(|e| e.double_sided));
         self.lists.shadow_casters.extend(result.casters);
         self.lists.reflection = result.refl;
         self.lists.probe = result.probe;

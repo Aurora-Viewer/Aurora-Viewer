@@ -1452,10 +1452,17 @@ same colour, intensity, range and falloff, and its projector controls become
 disabled. Cancel instead restores its texture and projector settings. Use
 `features` without the suffix to inspect the light before or after editing.
 
-`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-own-mesh[-drag]|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|worn-other-hidden-inside|mouselook-gun|mouselook-touch|ground|photo-touch[-ctrl]|photo-hud[-ctrl]`:
+`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-own-mesh[-drag]|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|worn-other-hidden-inside|worn-other-moving|mouselook-gun|mouselook-touch|ground|photo-touch[-ctrl]|photo-hud[-ctrl]`:
 install the fixture at frame 600, issue a real left press at 700 and release
 at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
-or later. `photo-touch[-ctrl]` and `photo-hud[-ctrl]` open the photo viewfinder:
+or later. `worn-other-moving` makes the scripted prim a 10 cm clicker and
+moves its wearer 8 cm a frame from 701 to 705, while the GPU answer of the
+press is on its way, as an animated avatar does: the press must still touch
+it (`demo touch_start: prim=975`). Add `-held` to a `worn-*` mode to hold the
+touch and slide the cursor over the attachment from 710 to 760, released at
+761 (capture at 840): every `demo touch / grab update` line must give a new
+`st` (none repeats the `touch_start` one), which a script reading the touch
+position sees. `photo-touch[-ctrl]` and `photo-hud[-ctrl]` open the photo viewfinder:
 Ctrl + left click touches the scripted cube or the HUD without moving the AF
 point, then releases the touch even if Ctrl is released before the GPU pick
 returns. The plain cube click moves the AF point instead; a visible HUD also
@@ -3428,7 +3435,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` (or `alpha`) | GLTF material override (`alpha`: overrides with a zero base color alpha) |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
-| `AURORA_DEMO_PBR_EMISSIVE=1` | Three orange emissive PBR spheres: opaque, alpha-masked, blended |
+| `AURORA_DEMO_PBR_EMISSIVE=1\|sided` | Emissive PBR spheres or transparent single-/double-sided faces |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
 | `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
@@ -3541,6 +3548,13 @@ both open states and the selection count. Capture at frame 620.
   alpha-masked and blended. All three glow orange; with `AURORA_HDR=0`
   ("HDR and Emissive" off) the opaque and masked ones turn dark grey and
   only the blended one keeps its light, as in the Legacy Viewer.
+  With `sided`, four isolated translucent cyan faces stand ahead of the
+  start position, in increasing world Y order: single-sided front/back,
+  then double-sided front/back (#1727). Seen from the start (lower X), the
+  single-sided back must be absent and both double-sided faces must be
+  visible. Move to the other side to reverse the front/back views: again
+  exactly three faces must show. These are isolated faces, with no opposite
+  wall that could conceal missing back faces.
 - **`AURORA_DEMO_PBR_METAL=1`**: three white metal spheres (PBR, metallic 1,
   roughness 0.05, 0.3 and 0.6) and a polished slab ahead of the start
   position. A white metal has no colour of its own: the polished one
@@ -5044,6 +5058,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   stays in the list, reports a load error and keeps the previous preview.
   `AURORA_DEMO_IMPORT_FILE` replaces the fixtures with an existing file,
   read without modification; choose the mode matching its type.
+  In `folders` modes it can point to an existing directory instead; its GLB/glTF
+  files produce separate mesh and PBR material drafts. Toggle Mesh and Material
+  visibility independently, and use row checkboxes to select what to upload.
+  Add files in the mixed uploader captures its Material/Mesh filters: material
+  only extracts materials, mesh only loads geometry, both extracts both, neither
+  skips GLB/glTF files. Dedicated type windows always use their own type.
 
 
 ### Import inspector layout
@@ -6180,7 +6200,10 @@ failure. Grid validation and any paid upload are performed by the human.
   with `AURORA_DEMO`: triggers a Rust panic, a native Windows
   exception, an abnormal exit without a trace, a normal close or an
   exit without a watcher. The `recovery` mode makes it possible to check the
-  recovery at the next launch (relaunch with `normal`). No
+  recovery at the next launch (relaunch with `normal`). Linux has no
+  watcher: every mode's window opens at the next launch, as with
+  `recovery`, and a session closed normally is removed then, as is one
+  ended by SIGTERM, SIGHUP or SIGINT (`kill -TERM` gives no window). No
   connection and no GPU initialisation, except for `freeze`: the viewer
   starts, its main thread stops answering once the window shows, and 13 s
   later the process ends itself with exit code 1, as Task Manager's End task
@@ -6313,10 +6336,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   stays as it was). After 6 s the native box "the graphics card is not
   responding" shows; Yes keeps waiting (shown again a minute later if still
   stuck), No closes the viewer in at most a few seconds, logged out, and the
-  crash session holds `gpu-stall.txt`: the report says
-  `| Crash | GPU not responding |` with the render thread's stack, and the
-  next start offers the safe graphics. When the frame ends the box goes
-  away by itself and drawing resumes (`the graphics card answered again`).
+  crash session holds `gpu-stall.txt` (on Windows with the render thread's
+  stack, and the report says `| Crash | GPU not responding |`; elsewhere
+  the stall's length alone), and the next start offers the safe graphics.
+  When the frame ends the box goes away by itself and drawing resumes
+  (`the graphics card answered again`).
   With `AURORA_FPS_LIMIT=60`, frame 600 comes about 10 s after the start.
   The window's close button during the stall closes at once (the exit
   prompt cannot be drawn).
@@ -6693,8 +6717,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `walk` and `arrive` place no door. `arrive`: the plaza's land-scope
   experience "Aurora Plaza Welcome" asks at frame 420 from a "Plaza greeter"
   the viewer has never seen (out of view, no click): "Animate your avatar"
-  and "Change your environment settings"; Yes says "welcome to the plaza" in
-  the chat.
+  and "Change your environment settings"; Yes makes the greeter push an
+  environment (PushExpEnvironment, PushPartialEnvironment): over 3 s the sky
+  fades to a violet sunset and the water fog turns red. The profile's Forget
+  fades it back over 1 s, Block at once (ENV_PUSH, `world/eep_push.rs`).
 - **`AURORA_DEMO_LURE=offer|request|god|answers|reject|offer-card|request-card|card-answered|notification-answered|legacy|exceeded|exceeded-continue|blocked`**:
   teleports received from Tess Touch (issue #280, parts B1 and B2). Each
   offer and request opens her conversation (unread) with its card and has
@@ -7617,7 +7643,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder`**
 — opens Appearance with four synthetic outfits:
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
@@ -7652,6 +7678,17 @@ for them (`5 to look up`), as a cold inventory cache.
   replacement has no single saved base; use Save as to save the combination.
   Conflicting body parts use the last selected outfit in display order,
   following `LLAppearanceMgr::filterWearableItems`.
+- `multi-items` / `multi-worn`: the second outfit open in the list with
+  two of its items selected, or two worn items selected in Worn. Ctrl/Cmd
+  and Shift pick items within one outfit or within Worn; a click in
+  another list starts a new selection there. Right-click a selected item:
+  Wear, Add, Attach to, Take off / Detach, the favourites and Remove from
+  outfit act on every selected item, in one action; Edit, Touch, Object
+  profile and Show original need a single item. Take off / Detach leaves
+  body parts out and is named Remove (clothing), Detach (objects) or
+  Take off / Detach (both). A selection mixing worn and unworn items
+  offers Wear / Add for the unworn ones and Take off for the worn ones.
+  The outfit editor keeps one selected row.
 - `folders` / `folders-outfits`: the gallery or the list with outfit
   folders in My Outfits: "Beach" (one outfit and a "Night" subfolder with
   one), "Club" (two outfits) and an empty "Spring". The list shows them as
@@ -7686,6 +7723,13 @@ for them (`5 to look up`), as a cold inventory cache.
   missing, as on the grid after the original was deleted. The scarf shows
   greyed, without an icon; Wear, Add and Take off on any outfit work, skip
   it, and the rewritten current outfit drops it (no "still loading").
+- `take-off-folder`: the Worn tab, with an ordinary "Demo delivery"
+  folder in the inventory (not a saved outfit) holding the worn jacket and
+  pants and, in an "Accessories" subfolder, a link to the worn mesh hair.
+  At frame 600 the inventory's Remove from current outfit takes it off
+  (#1849): the jacket, pants and mesh hair leave the Worn tab, the body
+  parts and the other attachments stay, and no "This outfit folder cannot
+  be modified" message shows. Capture at frame 720 or later.
 - `layers`: the outfit editor with three worn tattoos, listed furthest
   from the body first as in the Legacy Viewer: Lipstick, Freckles, Star.
   A tattoo row drags within the tattoos (a violet marker shows where it
@@ -8227,6 +8271,8 @@ What the inventory must show with these scenarios:
 | `AURORA_SOUND_OCCLUSION=0` or `1` | "Muffle sounds behind walls" forced off or on for this launch, without saving it |
 | `AURORA_DEMO_SOUND_HRTF=1`, `circle` or `updown` | A sound circling the listener and one rising above it and falling, for the 3D sound for headphones |
 | `AURORA_SOUND_HRTF=0` or `1` | "3D sound for headphones (HRTF)" forced off or on for this launch, without saving it |
+| `AURORA_DEMO_SOUND_REVERB=1`, `room` or `hall` | A clapper above our avatar, a small room and a large hall to walk into (or to start in), for the reverb of the surroundings; its estimate in the log |
+| `AURORA_SOUND_REVERB=0` or `1` | "Reverb from the surroundings" forced off or on for this launch, without saving it |
 | `AURORA_DEMO_MINIMIZED_MUTE=1\|off` | Force mute when minimized on or off for an offline run |
 | `AURORA_DEMO_SOUND_EXPLORER=1\|all\|blacklist\|blacklist-ignored\|avatar-menu\|avatar-menu-mixed\|avatar-menu-pie` | Sound Explorer, separate blacklist categories, ignored objects or avatar sound-category switches |
 | `AURORA_DEMO_ANIMATION_EXPLORER=1\|blacklist` | Animation explorer with a stand-in preview, or a blacklisted animation |
@@ -8622,6 +8668,32 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_SOUND`.
 - **`AURORA_SOUND_HRTF=0|1`**: overrides Preferences › Sound, "3D sound for
   headphones (HRTF)", for this launch (demo or grid), without saving it.
+- **`AURORA_DEMO_SOUND_REVERB=1|room|hall`**: turn Preferences › Sound,
+  "Reverb from the surroundings" on (or launch with
+  `AURORA_SOUND_REVERB=1`). Our avatar starts in the open air south-east of
+  the plaza, by a small lit post labelled "Open air" (`room` and `hall`
+  start inside those instead); a violet "Clapper" cube floats above its
+  head and claps twice every two seconds, wherever it goes. Ahead on the
+  left stands a small closed room (7 x 7 x 3 m inside, its doorway on the
+  side facing the path), straight ahead a large hall (22 x 30 x 12 m, a
+  wide doorway facing the start); both are light grey boxes with their name
+  above the doorway. Walk in and out (the listener is the camera: if the
+  third-person camera ends up in or behind a wall, zoom in or use
+  mouselook). In the open the claps are almost dry; in the small room they
+  get a short, close ring (about half a second); in the hall a long, soft
+  tail (about two seconds) that keeps sounding between the claps. Walking
+  through a doorway changes the reverb over a second or two, without a
+  click; the setting off makes every clap dry again, fading the tail out.
+  The log gives the estimate and the parameters when they change
+  (`sound reverb: enclosure <0..1>, open <0..1>, mean <m> (measured ...):
+  level <0..1>, decay <s>, pre-delay <ms>, damping <0..1>, path <m>`), at
+  info level in this scenario (debug otherwise); with `AURORA_PROFILE=1`, a
+  `sound reverb summary` line every ten seconds gives the measures' cost on
+  the main thread and in their job, and the per-frame cost of the sounds'
+  sends. Sounds play without `AURORA_DEMO_SOUND`.
+- **`AURORA_SOUND_REVERB=0|1`**: overrides Preferences › Sound, "Reverb from
+  the surroundings", for this launch (demo or grid), without saving it: the
+  same build measured with and without the reverb.
 - **`AURORA_DEMO_WIND=<x>,<y>[,fly]`**: the demo region gets a uniform wind
   of x, y m/s (default `3,2`; LLWind::getVelocity doubles it, as on the
   grid), and with `fly` our avatar arrives flying. The wind noise plays on
@@ -8725,6 +8797,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
+| `AURORA_CONTACT_VARIANT=no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs on some AMD cards) |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
@@ -9088,7 +9161,21 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_SUN=0,12`) and a dotted line under the hovering shoe of
   `AURORA_DEMO_FEET` seen from above (`AURORA_DEMO_CAMERA=alt,615,672`,
   frame 690). Softened, neither shows and no shadow spreads from the
-  ground onto a caster nor the reverse. They only draw with the
+  ground onto a caster nor the reverse.
+  **`AURORA_CONTACT_VARIANT=no-early-out|no-shared|short|skip`**: a
+  diagnostic of the GPU hangs (device lost, Windows TDR) some AMD RX 9070 XT
+  cards had as soon as the pass ran, each value without one construct of
+  the window's shader (`variant_source`, contact_shadows.rs; photos keep
+  Bend's): `no-early-out`, no early exit of an all-sky wavefront through
+  `workgroupUniformLoad`; `no-shared`, no workgroup memory nor barrier (each
+  thread reads from the depth what the others would have shared,
+  `contact_shadows_no_shared.wgsl`). Both draw the same mask as Bend's
+  (the GPU test `the_variants_that_keep_the_image_draw_bends_mask`, run
+  with `-- --ignored`). `short`: 16 samples per pixel instead of 60, the
+  shadows about four times shorter; `skip`: the shader is not dispatched,
+  no contact shadow (the mask is still cleared and filtered). Any other
+  value keeps Bend's shader; the log says `contact shadows: diagnostic
+  variant …` when one is taken. They only draw with the
   sun shadows on. To see them, `AURORA_DEBUG_SHADOWS=1` (the shadow view
   takes them too) with `AURORA_DEMO_TOD=2` (high sun) or `3` (low sun),
   `AURORA_DEMO_CROWD=40` and `AURORA_DEMO_POS=129,134`: thin shadows appear
