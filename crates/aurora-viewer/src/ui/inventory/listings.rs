@@ -126,6 +126,12 @@ impl Panel<'_> {
         rename_row(ui, p, inv, id, self.state, &mut self.actions)
     }
 
+    /// Start a drag like an inventory row: the whole selection when the row
+    /// is part of one (LLFolderView's drag of every selected item).
+    pub fn drag_source(&mut self, ui: &egui::Ui, id: Uuid, folder: bool, response: &egui::Response) {
+        super::drag::source(ui, response, id, folder, self.state);
+    }
+
     pub fn interact(&mut self, ui: &egui::Ui, inv: &Inventory, id: Uuid, response: &egui::Response) {
         if response.clicked() || response.secondary_clicked() {
             // The same selection rules, with the order of this hosted tree.

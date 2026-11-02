@@ -7,7 +7,7 @@
 //! LLFloaterMarketplaceValidation, originally LGPL 2.1.
 
 use super::icons::Icons;
-use super::inventory::{FolderDrag, InvDrag, listings::Panel, tree};
+use super::inventory::{listings::Panel, tree};
 use super::widgets::{self, ActionKind, Floater, Modal};
 use crate::theme::Palette;
 use crate::world::inventory::actions::{request_tree, under};
@@ -136,6 +136,11 @@ pub struct ListingsUi {
     reconciled: u64,
     demo_audited: bool,
     demo_menu: Option<Uuid>,
+}
+
+/// The inventory a drag holds over `r`: an item, a folder or a selection.
+fn carried(r: &egui::Response) -> Option<Vec<Uuid>> {
+    r.contains_pointer().then(|| super::inventory::drag::carried_ids(&r.ctx)).flatten()
 }
 
 /// The inventory cargo let go over `r` this frame, its payload cleared.
@@ -491,10 +496,7 @@ impl ListingsUi {
         panel.shortcuts(ui, inv, root);
         if root_drop {
             self.drop_target(ui, p, &zone.response, inv, worn, root, root, actions);
-        } else if zone.response.contains_pointer()
-            && (zone.response.dnd_hover_payload::<InvDrag>().is_some() || zone.response.dnd_hover_payload::<FolderDrag>().is_some())
-            && released(&zone.response)
-        {
+        } else if zone.response.contains_pointer() && carried(&zone.response).is_some() && released(&zone.response) {
             // TooltipOutboxCannotDropOnRoot
             self.message = aurora_i18n::tr!("marketplace-reason-cannot-drop-on-root").into();
         }
@@ -608,7 +610,7 @@ impl ListingsUi {
             })
             .inner;
         if !renaming {
-            response.dnd_set_drag_payload(FolderDrag(id));
+            panel.drag_source(ui, id, true, &response);
             panel.interact(ui, inv, id, &response);
             if response.double_clicked() {
                 self.toggle(id);
@@ -669,7 +671,7 @@ impl ListingsUi {
                 if renaming {
                     continue;
                 }
-                response.dnd_set_drag_payload(InvDrag(item));
+                panel.drag_source(ui, item, false, &response);
                 panel.interact(ui, inv, item, &response);
                 super::menu::context_menu(&response, p, |ui| {
                     panel
@@ -778,16 +780,13 @@ impl ListingsUi {
         dest: Uuid,
         actions: &mut Vec<Action>,
     ) {
-        let cargo = r
-            .dnd_hover_payload::<InvDrag>()
-            .map(|d| d.0)
-            .or_else(|| r.dnd_hover_payload::<FolderDrag>().map(|d| d.0));
-        let Some(id) = cargo else { return };
-        let plan = if self.data.activation_state(id) {
+        // an item, a folder or a selection, like an inventory window
+        let Some(ids) = carried(r) else { return };
+        let plan = if ids.iter().any(|id| self.data.activation_state(*id)) {
             // TooltipOutboxDragActive: a listed listing or its version folder
             Err(aurora_i18n::tr!("marketplace-reason-drag-active").to_owned())
         } else {
-            validate::drop_plan(inv, root, dest, &[id], worn)
+            validate::drop_plan(inv, root, dest, &ids, worn)
         };
         // the inventory's drop feedback: outline and cursor
         tree::drop_outline(ui, p, r.rect, plan.is_ok());
@@ -800,15 +799,9 @@ impl ListingsUi {
             return;
         }
         match plan {
-            Ok(_) => match self.drop_prompt(inv, root, id, dest) {
-                Some(prompt) => {
-                    self.confirm = Some(Confirm::Drop {
-                        dest,
-                        ids: vec![id],
-                        prompt,
-                    })
-                }
-                None => self.apply_drop(inv, worn, root, dest, &[id], actions),
+            Ok(_) => match self.drop_prompt(inv, root, &ids, dest) {
+                Some(prompt) => self.confirm = Some(Confirm::Drop { dest, ids, prompt }),
+                None => self.apply_drop(inv, worn, root, dest, &ids, actions),
             },
             Err(reason) => {
                 self.message.clone_from(&reason);
@@ -818,16 +811,18 @@ impl ListingsUi {
     }
 
     /// The question of a drop, in the order of
-    /// LLFolderBridge::dragCategoryIntoFolder and dragItemIntoFolder.
-    fn drop_prompt(&self, inv: &Inventory, root: Uuid, id: Uuid, dest: Uuid) -> Option<Prompt> {
-        let from_listings = mp::depth(inv, root, id) >= 0;
-        if (from_listings && in_active_folder(&self.data, inv, root, id)) || in_active_folder(&self.data, inv, root, dest) {
+    /// LLFolderBridge::dragCategoryIntoFolder and dragItemIntoFolder; one
+    /// question for the whole cargo.
+    fn drop_prompt(&self, inv: &Inventory, root: Uuid, ids: &[Uuid], dest: Uuid) -> Option<Prompt> {
+        let from_listings = |id: &&Uuid| mp::depth(inv, root, **id) >= 0;
+        let mut moved = ids.iter().filter(from_listings);
+        if moved.clone().any(|id| in_active_folder(&self.data, inv, root, *id)) || in_active_folder(&self.data, inv, root, dest) {
             Some(Prompt::ActiveChange)
-        } else if from_listings && self.data.is_version_folder(id) {
+        } else if moved.clone().any(|id| self.data.is_version_folder(*id)) {
             Some(Prompt::ClearVersion)
-        } else if from_listings && self.data.is_listed(id) {
+        } else if moved.any(|id| self.data.is_listed(*id)) {
             Some(Prompt::ListingCutOrDelete)
-        } else if !from_listings {
+        } else if !ids.iter().all(|id| from_listings(&id)) {
             Some(Prompt::MoveInventory)
         } else {
             None
@@ -1324,7 +1319,7 @@ mod tests {
         let ctx = egui::Context::default();
         let folder = demo::LANTERN;
         let at = egui::pos2(50.0, 20.0);
-        let mut frame = |events: Vec<egui::Event>| {
+        let frame = |events: Vec<egui::Event>| {
             let mut seen = None;
             let _ = ctx.run_ui(
                 egui::RawInput {
@@ -1334,23 +1329,51 @@ mod tests {
                 },
                 |ui| {
                     let r = ui.allocate_response(Vec2::new(200.0, 40.0), egui::Sense::hover());
-                    let cargo = r.dnd_hover_payload::<FolderDrag>().map(|d| d.0);
+                    let cargo = carried(&r);
                     seen = cargo.map(|id| (id, released(&r)));
                 },
             );
             seen
         };
         frame(vec![egui::Event::PointerMoved(at)]);
-        egui::DragAndDrop::set_payload(&ctx, FolderDrag(folder));
-        assert_eq!(frame(vec![egui::Event::PointerMoved(at)]), Some((folder, false)));
+        egui::DragAndDrop::set_payload(&ctx, crate::ui::inventory::FolderDrag(folder));
+        assert_eq!(frame(vec![egui::Event::PointerMoved(at)]), Some((vec![folder], false)));
         let up = egui::Event::PointerButton {
             pos: at,
             button: egui::PointerButton::Primary,
             pressed: false,
             modifiers: Default::default(),
         };
-        assert_eq!(frame(vec![up]), Some((folder, true)), "the folder reaches the drop");
+        assert_eq!(frame(vec![up]), Some((vec![folder], true)), "the folder reaches the drop");
         assert!(!egui::DragAndDrop::has_any_payload(&ctx), "and the release clears it");
+    }
+
+    #[test]
+    fn a_selection_drops_into_a_listing_like_the_legacy_viewer() {
+        let inv = demo_inventory();
+        let ui = merchant(&inv);
+        let root = mp::root(&inv).unwrap();
+        let worn = HashSet::new();
+        let (chair, vase, texture) = (Uuid::from_u128(8_400_110), Uuid::from_u128(8_400_111), Uuid::from_u128(8_400_112));
+        let folders = |change: &Mutation| change.operations.iter().filter(|op| matches!(op, Operation::Folder { .. })).count();
+        // move_item_to_marketplacelistings: copyable items go straight into
+        // a version folder, a no-copy one into a stock folder of its own
+        let change = validate::drop_plan(&inv, root, demo::DRAFT_VERSION, &[chair, texture], &worn).expect("two items");
+        assert_eq!(folders(&change), 0);
+        let change = validate::drop_plan(&inv, root, demo::DRAFT_VERSION, &[vase], &worn).expect("no-copy item");
+        assert_eq!(folders(&change), 1);
+        // on a listing folder, an item gets a version folder
+        let change = validate::drop_plan(&inv, root, demo::DRAFT, &[chair], &worn).expect("item on a listing");
+        assert_eq!(folders(&change), 1);
+        assert_eq!(
+            ui.drop_prompt(&inv, root, &[chair, texture], demo::DRAFT_VERSION),
+            Some(Prompt::MoveInventory)
+        );
+        assert_eq!(
+            ui.drop_prompt(&inv, root, &[chair, Uuid::from_u128(8_400_102)], demo::DRAFT_VERSION),
+            Some(Prompt::ActiveChange),
+            "one question for the whole cargo, the strongest"
+        );
     }
 
     #[test]
