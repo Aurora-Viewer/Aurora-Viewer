@@ -355,6 +355,35 @@ impl Bench {
                     None,
                     &bars::favorites::View::default(),
                 );
+                let favorites = bars::favorites::View::default();
+                let row = bars::Row {
+                    unread: 0,
+                    latest_unread: None,
+                    flash: 0.0,
+                    flying: false,
+                    seated: false,
+                    mouselook: false,
+                    ao_active: false,
+                    locked: self.settings.locked,
+                    favorites: &favorites,
+                    bar: Bar::Bottom,
+                    style: Style::default(),
+                    editing: false,
+                };
+                bars::side::bars(
+                    ui,
+                    &p,
+                    &Icons::default(),
+                    &layout,
+                    &mut self.state,
+                    &self.settings,
+                    &mut self.panels,
+                    &mut bars::MicButton::default(),
+                    &row,
+                    Rect::from_min_max(egui::pos2(0.0, 20.0), egui::pos2(900.0, 600.0)),
+                    self.islands,
+                    [true, true],
+                );
                 self.state.show(ui.ctx(), &p, &layout, &self.settings);
                 if self.state.commit(&layout, &mut self.settings) {
                     self.saves += 1;
@@ -425,6 +454,49 @@ impl Bench {
 fn toolbar_real_right_click_removes_one_button_without_opening_its_window() {
     for islands in [false, true] {
         toolbar_real_right_click_removes_one_button_without_opening_its_window_in(islands);
+    }
+}
+
+#[test]
+fn favorites_left_grid_and_right_toolbar_menu_stay_separate_on_every_bar() {
+    for islands in [false, true] {
+        for bar in Bar::ALL {
+            let mut bench = Bench {
+                islands,
+                ..Bench::default()
+            };
+            bench.settings.buttons = Some(Vec::new());
+            match bar {
+                Bar::Bottom => bench.settings.buttons = Some(vec![button("favorites")]),
+                Bar::Left => bench.settings.left = vec![button("favorites")],
+                Bar::Right => bench.settings.right = vec![button("favorites")],
+            }
+            bench.frame(vec![]);
+            bench.frame(vec![]);
+            let pos = bench.pos("favorites");
+            bench.pointer(pos, true, false);
+            bench.pointer(pos, false, false);
+            bench.frame(vec![]);
+            assert!(
+                bars::favorites::take_shown(&bench.ctx),
+                "left click opens Favorites: {bar:?}, islands={islands}"
+            );
+            bench.pointer(pos, true, true);
+            bench.pointer(pos, false, true);
+            bars::favorites::take_shown(&bench.ctx);
+            let remove = bench.text(aurora_i18n::tr!("toolbar-remove"));
+            assert!(
+                !bars::favorites::take_shown(&bench.ctx),
+                "right click only opens the toolbar menu: {bar:?}, islands={islands}"
+            );
+            bench.pointer(remove, true, false);
+            bench.pointer(remove, false, false);
+            assert!(
+                bench.settings.bar(bar, &layout()).is_empty(),
+                "Remove stays usable: {bar:?}, islands={islands}"
+            );
+            assert_eq!(bench.saves, 1);
+        }
     }
 }
 

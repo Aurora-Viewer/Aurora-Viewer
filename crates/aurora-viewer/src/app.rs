@@ -61,6 +61,7 @@ mod dev_toolbox;
 mod folders;
 use folders::chat_log_root;
 mod contents_drop_demo;
+mod contents_folder_drag_demo;
 mod dof;
 mod double_click;
 mod driver_check;
@@ -74,6 +75,7 @@ mod give_demo;
 mod gpu_stall;
 mod graphics_start;
 mod grid_status;
+mod group_titles;
 mod hover_height;
 mod hover_tips;
 mod hud_drag;
@@ -600,6 +602,7 @@ pub struct App {
     area_search_feed: area_search::Feed,
     /// "Asset blacklist" (World menu).
     blacklist_ui: ui::blacklist::BlacklistUi,
+    group_titles_ui: ui::group_titles::GroupTitlesUi,
     /// "Bumps, pushes & hits" (Help menu).
     bumps_ui: ui::bumps::BumpsUi,
     /// Help › Grid status: the grid's feed (`app/grid_status.rs`), whether
@@ -617,6 +620,7 @@ pub struct App {
     pay_ui: ui::pay::PayUi,
     /// "Money tracker" (Me menu): the L$ received and paid.
     money_tracker_ui: ui::money_tracker::MoneyTrackerUi,
+    experiences_ui: ui::experiences::ExperiencesUi,
     /// Buy Land (LLFloaterBuyLand), and the selection it follows.
     buy_land_ui: ui::buy_land::BuyLandUi,
     buy_land_source: buy_land::BuyLandSource,
@@ -673,6 +677,8 @@ pub struct App {
     crash_state_at: Option<Instant>,
     /// Swapchain recreations of the last seconds, for the same state.
     crash_swapchain: crash_state::SwapchainRecent,
+    /// The state kept for the report once the GPU is lost.
+    crash_kept: crash_state::KeptState,
     /// The graphics card stopped finishing frames (app/gpu_stall.rs).
     gpu_stall: gpu_stall::GpuStall,
     /// The Down key's latch (FSCrouchToggle).
@@ -956,6 +962,20 @@ fn text_scale(settings: &Settings) -> f32 {
         })
 }
 
+/// The conversations' text size, or AURORA_CHAT_TEXT_SIZE for this launch
+/// (brought into the range of the Preferences, never saved), handed to the
+/// fonts with the interface's text size it replaces.
+fn apply_chat_text_scale(ctx: &egui::Context, settings: &Settings) {
+    let chat = std::env::var("AURORA_CHAT_TEXT_SIZE")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|s| s.is_finite())
+        .map_or(settings.chat_font_scale, |s| {
+            s.clamp(crate::settings::FONT_SCALE_MIN, crate::settings::FONT_SCALE_MAX)
+        });
+    ui::fonts::set_chat_scale(ctx, chat, text_scale(settings));
+}
+
 /// The colour vision the interface adapts to: the preferences', or in demo
 /// mode `AURORA_DEMO_COLORBLIND` (a capture's, never saved).
 fn wanted_vision(settings: &Settings) -> crate::colorblind::Vision {
@@ -1104,6 +1124,7 @@ impl App {
         crate::high_contrast::set(wanted_high_contrast(&settings));
         crate::interface_colors::set(wanted_interface_colors(&settings));
         let skin = Skin::load(&egui_ctx, "aurora", text_scale(&settings));
+        apply_chat_text_scale(&egui_ctx, &settings);
         crate::crash::update(&skin.theme, &settings);
         let palette = skin.theme.palette();
         egui_ctx.set_zoom_factor(ui_scale(&settings));
@@ -1369,6 +1390,7 @@ impl App {
             avatar_render_settings_ui: Default::default(),
             area_search_feed: Default::default(),
             blacklist_ui: Default::default(),
+            group_titles_ui: Default::default(),
             bumps_ui: Default::default(),
             grid_status: Default::default(),
             grid_status_listed: false,
@@ -1379,6 +1401,7 @@ impl App {
             buy_currency_ui: Default::default(),
             pay_ui: Default::default(),
             money_tracker_ui: Default::default(),
+            experiences_ui: Default::default(),
             buy_land_ui: Default::default(),
             buy_land_source: Default::default(),
             marketplace_ui: Default::default(),
@@ -1419,6 +1442,7 @@ impl App {
             minimized_mute: audio_mute::MinimizedMute::default(),
             crash_state_at: None,
             crash_swapchain: Default::default(),
+            crash_kept: Default::default(),
             gpu_stall: Default::default(),
             crouch_toggle: Default::default(),
             music_parcel_url: String::new(),
@@ -1558,6 +1582,10 @@ impl App {
                 }
             }
             crate::demo::experience::Reply::Say(text) => self.world.system_message(text),
+            crate::demo::experience::Reply::SayLogged(text, event) => {
+                self.world.apply(*event);
+                self.world.system_message(text);
+            }
             crate::demo::experience::Reply::Nothing => {}
         }
     }
@@ -1607,6 +1635,7 @@ impl App {
         }
         if let NetCommand::GroupTitleUpdate { group, role } = &cmd {
             self.world.group_data.title_sent(*group, *role);
+            self.world.region_titles.title_sent(*group, *role);
         }
         if let NetCommand::Build(aurora_net::build::BuildCmd::Transform { handle, updates }) = &cmd {
             self.world.objects.note_sent_transforms(*handle, updates, Instant::now());
@@ -3132,11 +3161,13 @@ impl App {
                             self.appearance_ui.saved_new = false;
                         }
                         if sync {
-                            let crate::world::appearance::CofSync { mut commands, unknown } =
-                                crate::world::appearance::sync_plan(&self.world.inventory, self.world.agent_id, &self.outfit_sync_worn());
-                            for attachment in self.appearance_ui.attachments.drain(..) {
-                                crate::world::appearance::apply_attachment_override(&mut commands, attachment);
-                            }
+                            let crate::world::appearance::CofSync { commands, unknown } = crate::world::appearance::sync_with_attachments(
+                                &self.world.inventory,
+                                self.world.agent_id,
+                                &self.outfit_sync_worn(),
+                                &self.appearance_ui.worn_before,
+                                std::mem::take(&mut self.appearance_ui.attachments),
+                            );
                             for cmd in commands {
                                 self.send_from(cmd, actor);
                             }
@@ -3313,6 +3344,7 @@ impl App {
                         crate::settings::account_dir(&l.agent_id).join(crate::world::rlva::last_points::FILE),
                     )
                 };
+                self.load_region_titles(l.agent_id);
                 self.world.favorites = if self.demo {
                     Default::default()
                 } else {
@@ -7144,6 +7176,9 @@ impl App {
                 let folder = self.world.calling_card_folder();
                 self.send(ui::contacts::friendship_offer(to, message, folder));
             }
+            ContactsAction::GroupTitles => {
+                ui::widgets::toggle_floater(&self.egui_ctx, ui::group_titles::WINDOW, &mut self.panels.group_titles);
+            }
             ContactsAction::ToggleTornOff => {
                 let torn_off = !self.settings.contacts.torn_off;
                 self.settings.contacts.torn_off = torn_off;
@@ -7659,6 +7694,8 @@ impl App {
         for c in self.world.sim_console.take_commands() {
             self.send(c);
         }
+        // Group titles: the window's lists, the arrival's title
+        self.group_titles_tick();
         // the script editor's keywords follow the region's LSL syntax
         if let Some(c) = self.world.follow_lsl_syntax() {
             self.send(c);
@@ -7765,6 +7802,10 @@ impl App {
             self.apply_appearance_action(crate::world::appearance::Action::RemoveOutfit(
                 crate::world::appearance::DEMO_TAKE_OFF_FOLDER,
             ));
+        }
+        // AURORA_DEMO_GROUP_REGION: the Group titles window
+        if self.demo && self.frame_count == 600 && crate::demo::group_region::on() {
+            self.panels.group_titles = true;
         }
         // AURORA_DEMO_SIM_CONSOLE=open: the console and two commands
         if self.demo && self.frame_count == 600 && crate::demo::sim_extras::console_open() {
@@ -9666,6 +9707,7 @@ impl App {
             self.portal_demo_input(&mut raw);
             self.give_demo_input(&mut raw, vp, (w, h));
             self.contents_drop_demo_input(&mut raw, vp, (w, h));
+            self.contents_folder_drag_demo_input(&mut raw);
             if self.frame_count == 420
                 && std::env::var("AURORA_DEMO_ACTIONS").as_deref() == Ok("open-multi")
                 && let Some(c) = &self.interactions.contents
@@ -9687,6 +9729,11 @@ impl App {
             raw.events.extend(crate::demo::conv_button::input_events(&ctx, self.frame_count));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::appearance::demo_events(self.frame_count));
+            raw.events.extend(self.appearance_ui.demo_clipboard_events(
+                &ctx,
+                self.frame_count,
+                self.inventory_ui.clipboard.first().copied(),
+            ));
             raw.events.extend(ui::appearance::layer_demo_events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::resize_events(&ctx, self.frame_count));
@@ -10064,6 +10111,7 @@ impl App {
                 self.cursors.set_palette(&self.palette);
             }
             self.skin.theme.apply(&self.egui_ctx, text_scale(&self.settings));
+            apply_chat_text_scale(&self.egui_ctx, &self.settings);
             ui::colors::set(&self.settings.colors);
             crate::keywords::set(&self.keyword_settings());
             crate::spelling::configure(&self.egui_ctx, &self.settings.spelling);
@@ -11156,6 +11204,14 @@ impl App {
             .and_then(|demo| demo.tick(self.frame_count, &mut self.world))
         {
             self.apply_experience_demo(reply);
+        }
+        // AURORA_DEMO_GROUP_REGION=1: to a region with its own group title and back
+        if self.demo
+            && let Some(events) = crate::demo::group_region::trip(self.frame_count, &self.world)
+        {
+            for ev in events {
+                self.world.apply(ev);
+            }
         }
         // AURORA_DEMO_TP_AWAY=1: out of reach of the demo region, then back
         if self.demo
@@ -15119,6 +15175,9 @@ impl App {
                 ) {
                     self.apply_appearance_action(action);
                 }
+                if let Some(request) = self.appearance_ui.take_clipboard() {
+                    self.appearance_clipboard(&ctx, request);
+                }
                 if self.settings.appearance_fill_previews != self.appearance_ui.fill_previews {
                     self.settings.appearance_fill_previews = self.appearance_ui.fill_previews;
                     self.settings.save();
@@ -15255,6 +15314,7 @@ impl App {
                 }
                 self.show_pay(&ctx, &p, &mut a);
                 self.show_money_tracker(&ctx, &p, &mut a);
+                self.experiences_ui.show(&ctx, &p, &mut self.world, &mut self.panels.experiences);
                 for action in contents_actions {
                     self.apply_contents_action(action);
                 }
@@ -15567,6 +15627,7 @@ impl App {
                     }
                 }
                 self.blacklist_window(&ctx, &p);
+                self.group_titles_window(&ctx, &p);
                 self.area_search_window(&ctx, &p);
                 self.sound_explorer_window(&ctx, &p);
                 self.animation_explorer_window(&ctx, &p);
@@ -17617,6 +17678,7 @@ impl ApplicationHandler for App {
                     crate::ao::Account {
                         enabled: mode != "off",
                         selected,
+                        ..Default::default()
                     },
                 );
                 self.panels.ao = true;
@@ -17677,10 +17739,10 @@ impl ApplicationHandler for App {
                 if view == "duplicates" {
                     crate::world::appearance::seed_duplicate_response(&mut self.world.inventory, self.world.agent_id);
                 }
-                if matches!(view.as_str(), "menu" | "duplicates" | "broken" | "multi-items") {
+                if matches!(view.as_str(), "menu" | "duplicates" | "broken" | "multi-items" | "clipboard") {
                     self.appearance_ui.open_outfit(uuid::Uuid::from_u128(704));
                 }
-                if matches!(view.as_str(), "multi-items" | "multi-worn") {
+                if matches!(view.as_str(), "multi-items" | "multi-worn" | "clipboard") {
                     self.appearance_ui.demo_item_selection(&self.world.inventory, view == "multi-worn");
                 }
                 if view == "wearables-outfits" {

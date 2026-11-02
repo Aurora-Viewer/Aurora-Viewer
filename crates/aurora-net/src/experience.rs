@@ -227,6 +227,58 @@ pub fn parse_group_experiences(reply: &Llsd) -> Vec<Uuid> {
         .collect()
 }
 
+/// The tabs of the "My Experiences" window (LLFloaterExperiences::postBuild).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ExperienceListKind {
+    Allowed,
+    Blocked,
+    Admin,
+    Contributor,
+    Owned,
+}
+
+impl ExperienceListKind {
+    /// retrieveExperienceListCoro's tab map: `GetExperiences` answers
+    /// `experiences` and `blocked`, the other capabilities `experience_ids`.
+    pub fn key(self) -> &'static str {
+        match self {
+            ExperienceListKind::Allowed => "experiences",
+            ExperienceListKind::Blocked => "blocked",
+            _ => "experience_ids",
+        }
+    }
+}
+
+/// The ids under the key of each of `kinds` in one answer.
+pub fn parse_list(reply: &Llsd, kind: ExperienceListKind) -> Vec<Uuid> {
+    reply[kind.key()]
+        .as_array()
+        .iter()
+        .map(Llsd::as_uuid)
+        .filter(|id| !id.is_nil())
+        .collect()
+}
+
+/// One capability's answer for the tabs it feeds; a failure or a missing
+/// capability gives `None` for each of them (the tab shows no experience).
+pub async fn fetch_lists(
+    http: &reqwest::Client,
+    cap: Option<&str>,
+    kinds: &[ExperienceListKind],
+) -> Vec<(ExperienceListKind, Option<Vec<Uuid>>)> {
+    let reply = match cap {
+        Some(cap) => llsd(http.get(cap))
+            .await
+            .map_err(|e| log::warn!("experience list failed: {e}"))
+            .ok(),
+        None => None,
+    };
+    kinds
+        .iter()
+        .map(|kind| (*kind, reply.as_ref().map(|r| parse_list(r, *kind))))
+        .collect()
+}
+
 /// Reads or changes the permission; the answer is the permission the
 /// server now has (every reply carries the `experiences` / `blocked` lists).
 pub async fn permission(
@@ -284,6 +336,19 @@ mod tests {
             )]
         );
         assert!(info_urls("https://cap.example/info", &[]).is_empty());
+    }
+
+    #[test]
+    fn lists_are_read_under_the_key_of_their_tab() {
+        let a = Uuid::from_u128(1);
+        let b = Uuid::from_u128(2);
+        let reply = llsd_map! {
+            "experiences" => Llsd::Array(vec![Llsd::Uuid(a), Llsd::Uuid(Uuid::nil())]),
+            "blocked" => Llsd::Array(vec![Llsd::Uuid(b)]),
+        };
+        assert_eq!(parse_list(&reply, ExperienceListKind::Allowed), vec![a]);
+        assert_eq!(parse_list(&reply, ExperienceListKind::Blocked), vec![b]);
+        assert!(parse_list(&reply, ExperienceListKind::Owned).is_empty());
     }
 
     #[test]

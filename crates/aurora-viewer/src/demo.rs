@@ -115,6 +115,10 @@ pub mod grounding;
 /// The demo group server (AURORA_DEMO_GROUP_PROFILE).
 #[path = "demo_group.rs"]
 pub mod group;
+/// The Group titles window and the title worn by region
+/// (AURORA_DEMO_GROUP_REGION).
+#[path = "demo_group_region.rs"]
+pub mod group_region;
 #[path = "demo_hand_ik.rs"]
 pub mod hand_ik;
 /// Set Home to Here and Privacy's account settings (AURORA_DEMO_HOME,
@@ -2749,6 +2753,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         _ => {}
     }
     if let Some(events) = hud::reply(cmd) {
+        return events;
+    }
+    if let Some(events) = group_region::reply(cmd) {
         return events;
     }
     if let Some(events) = group::reply(cmd) {

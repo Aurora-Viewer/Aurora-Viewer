@@ -15,9 +15,12 @@ on:
   push:
     branches: [main]
 
+# a push to main is never cancelled (as in macos.yml): when the cache key
+# changed, its jobs build the cache from nothing for about ten minutes, and
+# the next merge would otherwise cancel them before they save it
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 permissions:
   contents: read
@@ -51,12 +54,13 @@ jobs:
           rustup update stable --no-self-update
           rustup component add rustfmt clippy
       # caches are written from main only, and read by every PR and queue
-      # run: PR caches would otherwise evict main's from the 10 GB quota
-      - uses: Swatinem/rust-cache@v2
+      # run: PR caches would otherwise evict main's from the 10 GB quota.
+      # Not Swatinem/rust-cache: .github/actions/rust-cache says why
+      - uses: ./.github/actions/rust-cache
         id: cache
         if: steps.changes.outputs.code == 'true'
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          name: lint
       # Windows PowerShell 5.1, the one the Aurora tools run with
       - name: PowerShell scripts parse
         if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
@@ -70,6 +74,11 @@ jobs:
       - name: Clippy (warnings are errors)
         if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || steps.cache.outputs.cache-hit != 'true')
         run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings
+      - name: Save the Rust cache
+        if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/rust-cache/save
+        with:
+          key: ${{ steps.cache.outputs.key }}
 
   lint-linux:
     # The Linux code paths (media plugins' shared memory and keyboard, the
@@ -101,12 +110,11 @@ jobs:
       # the key is named, not the job's: the old one holds clippy's output
       # only, and main, finding it, would never build the tests into it
       # (as in macos.yml)
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-cache
         id: cache
         if: steps.changes.outputs.code == 'true'
         with:
-          shared-key: linux-tests
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          name: linux-tests
       # dead code is the Windows job's: Windows-only helpers (system probes,
       # toasts…) build here without their callers
       - name: Clippy (warnings are errors)
@@ -129,6 +137,11 @@ jobs:
       - name: Build the tests (cache)
         if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
         run: cargo test --profile ci --workspace --locked --no-run
+      - name: Save the Rust cache
+        if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/rust-cache/save
+        with:
+          key: ${{ steps.cache.outputs.key }}
 
   tests:
     # Not on pull requests: the agent ran them locally (check.ps1) and the
@@ -168,12 +181,12 @@ jobs:
         run: |
           ./.github/drop-extra-targets.ps1
           rustup update stable --no-self-update
-      # the parts share the job's cache key (the matrix is not part of it)
-      - uses: Swatinem/rust-cache@v2
+      # the parts share one cache, written by the interface part on main
+      - uses: ./.github/actions/rust-cache
         id: cache
         if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || matrix.part == 'interface')
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' && matrix.part == 'interface' }}
+          name: tests
       - name: Tests (${{ matrix.part }})
         if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
         run: cargo test --profile ci --workspace --locked -- ${{ matrix.filter }}
@@ -182,6 +195,11 @@ jobs:
       - name: Build the tests (cache)
         if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && matrix.part == 'interface' && steps.cache.outputs.cache-hit != 'true'
         run: cargo test --profile ci --workspace --locked --no-run
+      - name: Save the Rust cache
+        if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && matrix.part == 'interface' && steps.cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/rust-cache/save
+        with:
+          key: ${{ steps.cache.outputs.key }}
 
   tests-result:
     # The check that main requires: green when every part passed (or was

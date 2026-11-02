@@ -36,6 +36,133 @@ pub(super) fn step(set: &Set, state: State, index: usize) -> Uuid {
 }
 
 #[test]
+fn ao_choices_survive_settings_restart_reordering_groups_tracks_and_inactive_states() {
+    let (_, mut set) = fixture();
+    let config = set.states.get_mut(&State::Standing).expect("standing");
+    config.cycle = Cycle::default();
+    config.steps[1].group = true;
+    let member = config.steps[0].members[0].clone();
+    config.steps[1].members.push(member);
+    let track_id = Uuid::new_v4();
+    config.tracks.push(Track {
+        id: track_id,
+        name: "Independent".into(),
+        cycle: Cycle::default(),
+        members: config.steps.iter().map(|s| s.members[0].clone()).collect(),
+    });
+    let standing_folder = config.folder;
+    let group = config.steps[1].id;
+    let track_link = config.tracks[0].members[1].link;
+    let walking = set.states.get_mut(&State::Walking).expect("walking");
+    let mut extra = walking.steps[0].clone();
+    extra.id = Uuid::new_v4();
+    walking.steps.push(extra);
+    let walking_folder = walking.folder;
+    let walk = walking.steps[1].id;
+    let now = Instant::now();
+    let raw = [signal(State::Standing, now)];
+    let mut runtime = Runtime::default();
+    runtime.update(Some(&set), frame(&raw), now, |_| true, |_| 0);
+    runtime.choose(State::Standing, standing_folder, 1);
+    runtime.choose(State::Standing, track_id, 1);
+    runtime.choose(State::Walking, walking_folder, 1);
+    let account_id = Uuid::new_v4();
+    let mut settings = crate::settings::Settings::default();
+    settings.ao.accounts.insert(
+        account_id,
+        Account {
+            enabled: true,
+            selected: set.id,
+            animations: runtime.take_choices(Some(&set)).expect("new selection"),
+        },
+    );
+    assert!(
+        runtime.take_choices(Some(&set)).is_none(),
+        "unchanged frames never queue another save"
+    );
+    let saved = serde_json::to_string(&settings).expect("settings");
+    let restored: crate::settings::Settings = serde_json::from_str(&saved).expect("restart");
+    let account = &restored.ao.accounts[&account_id];
+    assert_eq!(account.animations[&standing_folder], group);
+    assert_eq!(account.animations[&track_id], track_link);
+    assert_eq!(account.animations[&walking_folder], walk);
+    let standing = set.states.get_mut(&State::Standing).expect("standing");
+    standing.steps.swap(0, 1);
+    standing.tracks[0].members.swap(0, 1);
+    let mut runtime = Runtime::with_choices(account.animations.clone());
+    let (pose, _) = runtime.update(Some(&set), frame(&raw), now, |_| true, |_| 0);
+    assert_eq!(runtime.index(State::Standing, standing_folder), 0, "group restored by identity");
+    assert_eq!(runtime.index(State::Standing, track_id), 0, "track restored by link");
+    assert_eq!(runtime.index(State::Walking, walking_folder), 1, "inactive choice restored too");
+    for animation in &set.states[&State::Standing].steps[0].members {
+        assert!(pose.iter().any(|a| a.id == animation.asset), "whole group still plays");
+    }
+}
+
+#[test]
+fn ao_saved_choice_is_used_before_cycling_and_survives_set_switches_and_loading() {
+    let (_, mut set) = fixture();
+    let state = State::Standing;
+    let config = set.states.get_mut(&state).expect("standing");
+    config.cycle = Cycle {
+        cycle: true,
+        random: false,
+        seconds: 5.0,
+    };
+    let folder = config.folder;
+    let chosen = config.steps[0].id;
+    let mut runtime = Runtime::with_choices(HashMap::from([(folder, chosen)]));
+    let now = Instant::now();
+    let raw = [signal(state, now)];
+    let (pose, _) = runtime.update(Some(&set), frame(&raw), now, |_| true, |_| 0);
+    assert!(
+        pose.iter().any(|a| a.id == step(&set, state, 0)),
+        "first frame retains the saved stand"
+    );
+    runtime.update(Some(&set), frame(&raw), now + Duration::from_secs(6), |_| true, |_| 0);
+    let choices = runtime.take_choices(Some(&set)).expect("timed cycle changed choice");
+    assert_eq!(choices[&folder], set.states[&state].steps[1].id);
+    let other_set = Set::new("Another set".into());
+    runtime.update(Some(&other_set), frame(&raw), now, |_| true, |_| 0);
+    runtime.update(Some(&set), frame(&raw), now, |_| true, |_| 0);
+    assert_eq!(runtime.index(state, folder), 1, "set re-entry retains the latest choice");
+    set.states.get_mut(&state).expect("standing").steps.swap(0, 1);
+    runtime.prefetch(Some(&set), 1, |_| {});
+    runtime.update(Some(&set), frame(&raw), now, |_| true, |_| 0);
+    assert_eq!(runtime.index(state, folder), 0, "live reordering also follows the saved identity");
+    runtime.choose(state, folder, 1);
+    runtime.prefetch(Some(&set), 2, |_| {});
+    assert_eq!(
+        runtime.index(state, folder),
+        1,
+        "inventory refresh preserves a pending editor choice"
+    );
+    set.states.get_mut(&state).expect("standing").steps.swap(0, 1);
+    let mut incomplete = set.clone();
+    incomplete.states.clear();
+    let mut runtime = Runtime::with_choices(choices);
+    runtime.update(Some(&incomplete), frame(&raw), now, |_| true, |_| 0);
+    runtime.prefetch(Some(&set), 2, |_| {});
+    runtime.update(Some(&set), frame(&raw), now, |_| true, |_| 0);
+    assert_eq!(runtime.index(state, folder), 1, "restore after inventory finishes loading");
+}
+
+#[test]
+fn ao_missing_saved_animation_falls_back_and_old_account_settings_still_load() {
+    let (_, mut set) = fixture();
+    let config = set.states.get_mut(&State::Standing).expect("standing");
+    config.cycle = Cycle::default();
+    let folder = config.folder;
+    let mut runtime = Runtime::with_choices(HashMap::from([(folder, Uuid::new_v4())]));
+    let now = Instant::now();
+    let raw = [signal(State::Standing, now)];
+    let (pose, _) = runtime.update(Some(&set), frame(&raw), now, |_| true, |_| 0);
+    assert!(pose.iter().any(|a| a.id == step(&set, State::Standing, 0)));
+    let account: Account = serde_json::from_str(r#"{"enabled":true}"#).expect("old account");
+    assert!(account.enabled && account.animations.is_empty());
+}
+
+#[test]
 fn stock_jump_covers_the_pose_until_the_ao_jump_is_loaded() {
     let (_, set) = fixture();
     let asset = step(&set, State::Jumping, 0);

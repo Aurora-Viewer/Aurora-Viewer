@@ -677,6 +677,16 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::check(ui, p, "receipt-filled", tracker, panels.money_tracker, true) {
             super::money_tracker::toggle(ui.ctx(), &mut panels.money_tracker);
         }
+        // menu_viewer.xml: Me › Experiences (Picks, before it there, has
+        // no entry in this menu)
+        flip_window(
+            ui,
+            p,
+            "flask-filled",
+            aurora_i18n::tr!("ui-experiences-title"),
+            super::experiences::WINDOW,
+            &mut panels.experiences,
+        );
         menu::separator(ui, p);
         if menu::item(ui, p, "home-filled", aurora_i18n::tr!("common-go-home")) {
             *action = BarAction::TeleportHome;
@@ -2004,6 +2014,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "areasearch" => toggle(super::area_search::WINDOW, &mut panels.area_search),
         "soundexplorer" => toggle(super::sound_explorer::WINDOW, &mut panels.sound_explorer),
         "assetblacklist" => toggle(super::blacklist::WINDOW, &mut panels.asset_blacklist),
+        "group_titles" => toggle(super::group_titles::WINDOW, &mut panels.group_titles),
         "gridstatus" => toggle(super::grid_status::WINDOW, &mut panels.grid_status),
         "performance" => toggle("perf", &mut panels.perf),
         "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
@@ -2074,6 +2085,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "areasearch" => panels.area_search,
         "soundexplorer" => panels.sound_explorer,
         "assetblacklist" => panels.asset_blacklist,
+        "group_titles" => panels.group_titles,
         "gridstatus" => panels.grid_status,
         "performance" => panels.perf,
         "snapshot" => panels.snapshot,
@@ -3479,6 +3491,7 @@ mod tests {
             ("areasearch", super::super::area_search::WINDOW, |p| p.area_search),
             ("soundexplorer", super::super::sound_explorer::WINDOW, |p| p.sound_explorer),
             ("assetblacklist", super::super::blacklist::WINDOW, |p| p.asset_blacklist),
+            ("group_titles", super::super::group_titles::WINDOW, |p| p.group_titles),
             ("gridstatus", super::super::grid_status::WINDOW, |p| p.grid_status),
         ] {
             run_command(&ctx, cmd, &mut panels);
