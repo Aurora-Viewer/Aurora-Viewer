@@ -130,6 +130,9 @@ where
             type_default: OUTFIT_FOLDER,
         })
         .await?;
+        if !crate::inventory::operations::folder_landed(http, fetch_cap, owner, cat.parent, change.folder).await {
+            return Err(aurora_i18n::tr!("outfits-the-server-did-not-confirm-outfit-creation-refresh-inventory").into());
+        }
         refresh = vec![cat.parent, change.folder];
     }
     let mut slams = vec![(change.folder, &change.links)];
@@ -246,6 +249,105 @@ pub(crate) async fn send(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Ll
 pub(crate) mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn folder_reply(folder: Uuid, children: &[Uuid], links: &[Uuid]) -> Llsd {
+        let categories = children
+            .iter()
+            .map(|id| llsd_map! { "category_id" => *id, "parent_id" => folder, "name" => "Look", "type_default" => 47, "version" => 1 })
+            .collect();
+        let items = links
+            .iter()
+            .map(|target| llsd_map! { "item_id" => Uuid::new_v4(), "parent_id" => folder, "asset_id" => *target, "name" => "Hair", "type" => 24, "inv_type" => 18 })
+            .collect();
+        llsd_map! { "folders" => Llsd::Array(vec![llsd_map! {
+            "folder_id" => folder, "version" => 3, "categories" => Llsd::Array(categories), "items" => Llsd::Array(items),
+        }]) }
+    }
+
+    fn new_outfit(folder: Uuid, parent: Uuid, target: Uuid) -> OutfitMutation {
+        OutfitMutation {
+            folder,
+            create: Some(InvFolder {
+                id: folder,
+                parent,
+                name: "Look".into(),
+                ..Default::default()
+            }),
+            links: vec![OutfitLink {
+                target,
+                name: "Hair".into(),
+                desc: String::new(),
+                folder: false,
+                inv_type: 18,
+            }],
+            cof: None,
+        }
+    }
+
+    fn recorder() -> (
+        std::sync::Arc<std::sync::Mutex<Vec<UdpEdit>>>,
+        impl FnMut(UdpEdit) -> std::future::Ready<Result<(), String>>,
+    ) {
+        let edits = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = edits.clone();
+        let send = move |edit| {
+            log.lock().expect("edits").push(edit);
+            std::future::ready(Ok(()))
+        };
+        (edits, send)
+    }
+
+    #[tokio::test]
+    async fn links_wait_for_a_new_outfit_folder_to_show() {
+        let (folder, parent, target) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let (url, task) = server(vec![
+            (200, folder_reply(parent, &[], &[])),
+            (200, folder_reply(parent, &[folder], &[])),
+            (
+                200,
+                llsd_map! { "folders" => Llsd::Array(vec![
+                    folder_reply(parent, &[folder], &[])["folders"].at(0).clone(),
+                    folder_reply(folder, &[], &[target])["folders"].at(0).clone(),
+                ]) },
+            ),
+        ])
+        .await;
+        let (edits, send) = recorder();
+        let result = mutate_udp(
+            &reqwest::Client::new(),
+            &format!("{url}/fetch"),
+            Uuid::nil(),
+            new_outfit(folder, parent, target),
+            send,
+        )
+        .await;
+        task.abort();
+        assert!(result.is_ok(), "{result:?}");
+        let edits = edits.lock().expect("edits");
+        assert!(
+            matches!(edits.as_slice(), [UdpEdit::CreateFolder { .. }, UdpEdit::Link { .. }]),
+            "{edits:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_link_is_sent_for_a_folder_that_never_shows() {
+        let (folder, parent, target) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let (url, task) = server(vec![(200, folder_reply(parent, &[], &[])); 7]).await;
+        let (edits, send) = recorder();
+        let result = mutate_udp(
+            &reqwest::Client::new(),
+            &format!("{url}/fetch"),
+            Uuid::nil(),
+            new_outfit(folder, parent, target),
+            send,
+        )
+        .await;
+        task.abort();
+        assert!(result.is_err());
+        // a link sent now would land in a default folder
+        assert!(matches!(edits.lock().expect("edits").as_slice(), [UdpEdit::CreateFolder { .. }]));
+    }
 
     pub(crate) async fn server(replies: Vec<(u16, Llsd)>) -> (String, tokio::task::JoinHandle<Vec<(String, Llsd)>>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local test server");

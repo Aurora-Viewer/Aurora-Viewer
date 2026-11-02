@@ -88,6 +88,30 @@ pub enum UdpEdit {
     Purge(Uuid),
 }
 
+/// Waits until a folder made over the circuit shows in its parent. The
+/// simulator handles inventory packets on several threads, and files an item
+/// whose folder does not exist yet in a default folder without a word
+/// (`Scene.AddInventoryItem`, OpenSim's Scene.Inventory.cs). The Legacy Viewer
+/// fills a new folder from the creation's callback; UDP has no answer, so the
+/// fetch service stands in for it.
+pub(crate) async fn folder_landed(http: &reqwest::Client, fetch_cap: &str, owner: Uuid, parent: Uuid, folder: Uuid) -> bool {
+    const RETRIES: u32 = 6;
+    for attempt in 0..=RETRIES {
+        let body = super::fetch_request_body(&[parent], owner);
+        if let Ok(doc) = crate::caps::post_llsd(http, fetch_cap, &body).await
+            && super::parse_fetch_response(&doc)
+                .iter()
+                .any(|contents| contents.folders.iter().any(|f| f.id == folder))
+        {
+            return true;
+        }
+        if attempt < RETRIES {
+            tokio::time::sleep(std::time::Duration::from_millis(100 << attempt.min(3))).await;
+        }
+    }
+    false
+}
+
 fn not_on_this_grid() -> String {
     aurora_i18n::tr!("session-inventory-change-not-supported-on-this-grid").into()
 }
@@ -344,6 +368,9 @@ where
                     name,
                     type_default,
                 } => {
+                    if !folder_landed(http, fetch_cap, owner, *parent, *id).await {
+                        return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-new-folder-reload").into());
+                    }
                     created.insert(*id, *id);
                     folders.push(super::InvFolder {
                         id: *id,
