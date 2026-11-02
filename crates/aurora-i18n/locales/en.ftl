@@ -12934,3 +12934,8 @@ ui-options-camera-vr-view-first-person = First person
 ui-options-camera-vr-view-desktop-camera = Camera position
 
 app-vr-leave = Press { $key } to return to desktop mode
+
+controls-roll-left = Roll left
+controls-roll-right = Roll right
+controls-roll-level = Level the camera (reset roll)
+controls-roll-angle = Roll { $angle }

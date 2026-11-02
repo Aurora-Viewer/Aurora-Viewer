@@ -95,6 +95,8 @@ pub struct ControlsUi {
 pub struct View<'a> {
     /// LLAgentCamera::getCameraZoomFraction (1 all the way in).
     pub zoom: f32,
+    /// Camera roll in radians.
+    pub roll: f32,
     pub preset: CameraPreset,
     pub shots: &'a [CameraShot],
     pub flying: bool,
@@ -130,6 +132,8 @@ pub enum ControlAction {
     /// Every camera setting back, like Preferences › Camera.
     ResetCamera,
     Zoom(f32),
+    RollBy(f32),
+    LevelRoll,
     Mouselook,
     ObjectView,
     Walk,
@@ -214,7 +218,10 @@ impl ControlsUi {
                 if widgets::floater_minimized(ui.ctx(), WINDOW) {
                     match view.free {
                         Some(free) => free_compact(ui, p, view, free, &mut out),
-                        None => sticks(ui, p, view, &mut out, COMPACT_WIDTH),
+                        None => {
+                            sticks(ui, p, view, &mut out, COMPACT_WIDTH);
+                            roll_controls(ui, p, view, &mut out);
+                        }
                     }
                 } else {
                     self.body(ui, p, view, &mut out);
@@ -265,6 +272,7 @@ impl ControlsUi {
 
     fn camera_tab(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
         sticks(ui, p, view, out, INNER);
+        roll_controls(ui, p, view, out);
         // the four views of Preferences › Camera, in one click
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = ROW_GAP;
@@ -592,8 +600,60 @@ fn sync_tab(ui: &mut ControlsUi, camera: &mut bool, movement: &mut bool) {
     }
 }
 
-/// The two joysticks and the zoom between them (floater_camera.xml), on
-/// one line across `width`.
+/// LLPanelCameraZoom::getOrbitRate / onRollLeftHeldDown / onRollRightHeldDown
+/// (indra/newview/llfloatercamera.cpp): a gentle nudge ramps over 250 ms.
+/// LLAgentCamera::updateCamera uses 45 degrees per second at full speed.
+fn roll_controls(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
+    ui.add_enabled_ui(!view.mouselook, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = ROW_GAP;
+            let readout_width = ui.available_width() - 2.0 * (BUTTON_H + ROW_GAP);
+            for (icon, label, direction) in [
+                ("rotate-2", aurora_i18n::tr!("controls-roll-left"), -1.0),
+                ("rotate-clockwise-2", aurora_i18n::tr!("controls-roll-right"), 1.0),
+            ] {
+                if direction > 0.0 {
+                    let degrees = (view.roll.to_degrees() + 180.0).rem_euclid(360.0) - 180.0;
+                    let angle = format!("{}°", aurora_i18n::number(f64::from(degrees), 1));
+                    let text = aurora_i18n::tr!("controls-roll-angle", angle = angle.as_str());
+                    if widgets::action_button(
+                        ui,
+                        p,
+                        "tilt-shift-filled",
+                        &text,
+                        widgets::ActionKind::Flat,
+                        Vec2::new(readout_width, BUTTON_H),
+                    )
+                    .on_hover_text(aurora_i18n::tr!("controls-roll-level"))
+                    .clicked()
+                    {
+                        out.actions.push(ControlAction::LevelRoll);
+                    }
+                }
+                let response = widgets::action_button(ui, p, icon, "", widgets::ActionKind::Flat, Vec2::splat(BUTTON_H))
+                    // A sustained press belongs to this control, including pointer
+                    // jitter: a click-only button lets the floater acquire its drag.
+                    .interact(Sense::click_and_drag())
+                    .on_hover_text(label);
+                response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
+                let id = response.id.with("roll-start");
+                let now = ui.input(|i| i.time);
+                if ui.is_enabled() && response.is_pointer_button_down_on() {
+                    let start = ui.ctx().data_mut(|d| *d.get_temp_mut_or_insert_with(id, || now));
+                    let rate = 0.05 + ((now - start) as f32 / 0.25).clamp(0.0, 1.0) * 0.95;
+                    let dt = ui.input(|i| i.stable_dt).min(0.1);
+                    out.actions
+                        .push(ControlAction::RollBy(direction * rate * 45.0_f32.to_radians() * dt));
+                    ui.ctx().request_repaint();
+                } else {
+                    ui.ctx().data_mut(|d| d.remove::<f64>(id));
+                }
+            }
+        });
+    });
+}
+
+/// The orbit and pan joysticks, with zoom between them.
 fn sticks(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output, width: f32) {
     // (drawn in place, then the row is taken: the slider's own ui must not
     // move the parent's cursor)
@@ -1022,6 +1082,7 @@ fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output)
         }
     });
     sticks(ui, p, view, out, ui.available_width());
+    roll_controls(ui, p, view, out);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         egui::ComboBox::from_id_salt("camera_shots_classic")
@@ -1433,6 +1494,155 @@ fn key_rows(ui: &mut egui::Ui, p: &Palette, rows: &[(Vec<KeyPart>, &str)], gap: 
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_long_roll_press_never_drags_or_snaps_its_floater() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let keys = KeyBindings::default();
+        let view = View {
+            zoom: 0.5,
+            roll: 0.0,
+            preset: CameraPreset::Rear,
+            shots: &[],
+            flying: false,
+            always_run: false,
+            seated: false,
+            mouselook: false,
+            object_view: false,
+            keys: &keys,
+            free: None,
+        };
+        let window = egui::Id::unique("roll_hold_fixture");
+        let mut time = 0.0;
+        let mut frame = |events| {
+            time += 1.0 / 60.0;
+            let mut button = Rect::NOTHING;
+            let mut out = Output::default();
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 700.0))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    super::super::layout::frame(ui.ctx(), &p, true);
+                    Floater::new("roll_hold_fixture", "Camera", Pos2::new(100.0, 100.0), Vec2::new(WIDTH, 160.0))
+                        .fixed()
+                        .auto_height()
+                        .show(ui.ctx(), &p, &mut true, |ui| {
+                            button = Rect::from_min_size(ui.cursor().min, Vec2::splat(BUTTON_H));
+                            roll_controls(ui, &p, &view, &mut out);
+                        });
+                },
+            );
+            (ctx.memory(|m| m.area_rect(window).expect("the controls floater")), button, out)
+        };
+        for _ in 0..8 {
+            frame(vec![]);
+        }
+        let (before, button, _) = frame(vec![]);
+        for start in [
+            button.center(),
+            egui::pos2(before.right() - 12.0 - BUTTON_H / 2.0, button.center().y),
+        ] {
+            frame(vec![egui::Event::PointerMoved(start)]);
+            frame(vec![egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }]);
+            let end = start + Vec2::new(5.0, 3.0);
+            for n in 0..180 {
+                let (rect, _, out) = frame(vec![egui::Event::PointerMoved(if n % 2 == 0 { start } else { end })]);
+                assert_eq!(rect, before, "holding roll must not move the controls");
+                assert!(!widgets::window_dragging(&ctx), "the roll button must own a sustained press");
+                assert!(
+                    matches!(out.actions.as_slice(), [ControlAction::RollBy(_)]),
+                    "roll must continue throughout the hold"
+                );
+            }
+            frame(vec![egui::Event::PointerButton {
+                pos: end,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }]);
+            assert!(frame(vec![]).2.actions.is_empty());
+        }
+    }
+
+    #[test]
+    fn roll_buttons_ramp_stop_on_release_and_level_without_resetting_the_view() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let keys = KeyBindings::default();
+        let mut time = 0.0;
+        let mut frame = |events, mouselook| {
+            time += 0.05;
+            let view = View {
+                zoom: 0.5,
+                roll: 0.3,
+                preset: CameraPreset::Rear,
+                shots: &[],
+                flying: false,
+                always_run: false,
+                seated: false,
+                mouselook,
+                object_view: false,
+                keys: &keys,
+                free: None,
+            };
+            let mut out = Output::default();
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_width(INNER);
+                    roll_controls(ui, &p, &view, &mut out);
+                },
+            );
+            out.actions
+        };
+        frame(vec![], false);
+        let event = |pos, pressed| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        for (x, sign) in [(15.0, -1.0), (260.0, 1.0)] {
+            let pos = egui::pos2(x, 15.0);
+            let first = frame(event(pos, true), false);
+            assert!(matches!(first.as_slice(), [ControlAction::RollBy(v)] if v * sign > 0.0));
+            let mut last = first;
+            for _ in 0..6 {
+                last = frame(vec![], false);
+            }
+            assert!(matches!(last.as_slice(), [ControlAction::RollBy(v)] if v * sign > 0.01));
+            assert!(frame(event(pos, false), false).is_empty());
+            assert!(frame(vec![], false).is_empty());
+        }
+        let level = egui::pos2(140.0, 15.0);
+        frame(event(level, true), false);
+        assert_eq!(frame(event(level, false), false), vec![ControlAction::LevelRoll]);
+        assert!(frame(event(egui::pos2(15.0, 15.0), true), true).is_empty());
+    }
+
     /// #1815: Move on a minimized window opened its camera joysticks.
     #[test]
     fn a_request_expands_a_minimized_window_on_the_tab_asked_for() {
@@ -1595,6 +1805,7 @@ mod tests {
             let mut controls = ControlsUi::default();
             let view = View {
                 zoom: 0.5,
+                roll: 0.0,
                 preset: CameraPreset::Rear,
                 shots: &shots,
                 flying: false,

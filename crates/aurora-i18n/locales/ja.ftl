@@ -12917,3 +12917,8 @@ ui-options-camera-vr-view-first-person = 一人称
 ui-options-camera-vr-view-desktop-camera = カメラの位置
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
+
+controls-roll-left = 左に傾ける
+controls-roll-right = 右に傾ける
+controls-roll-level = カメラの傾きをリセット
+controls-roll-angle = 傾き { $angle }
