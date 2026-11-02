@@ -12413,11 +12413,6 @@ impl App {
             }
             BarAction::BuyCurrency => self.open_buy_currency(),
             BarAction::Marketplace => self.marketplace_ui.open(None),
-            // (none on a grid without a Marketplace)
-            BarAction::MarketplaceInBrowser => match self.marketplace_home() {
-                Some(url) => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
-                None => log::info!("toolbar: no Marketplace on this grid"),
-            },
             BarAction::MarketplaceListings => self.open_marketplace_listings(),
             BarAction::ChatPrefs => {
                 self.panels.settings = true;

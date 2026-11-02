@@ -120,9 +120,6 @@ pub enum BarAction {
     SetDoubleClick(crate::autopilot::DoubleClick),
     /// World › SL Marketplace (FSLoadSLMarketplace).
     Marketplace,
-    /// The toolbar's Marketplace (Avatar.OpenMarketplace): its page in the
-    /// system's browser.
-    MarketplaceInBrowser,
     /// Me › Marketplace listings (menu_viewer.xml "MarketplaceListings").
     MarketplaceListings,
     /// World › Landmark this Place (World.CreateLandmark).
@@ -2037,9 +2034,6 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // without the window (the keyboard's Save to disk)
         "snapshot_to_disk" => return BarAction::PhotoToDisk,
         "beacons" => toggle(super::beacons::WINDOW, &mut panels.beacons),
-        // Avatar.OpenMarketplace: the Marketplace in the system's browser
-        // (LLWeb::loadURLExternal), not the World menu's window
-        "marketplace" => return BarAction::MarketplaceInBrowser,
         "preferences" => toggle("options", &mut panels.settings),
         // Firestorm's Move and View buttons open the controls
         "move" => {
@@ -3561,17 +3555,6 @@ mod tests {
         assert!(super::super::toolbar::ready("snapshot_to_disk"));
         assert!(matches!(run_command(&ctx, "snapshot_to_disk", &mut panels), BarAction::PhotoToDisk));
         assert!(!panels.snapshot);
-    }
-
-    #[test]
-    fn marketplace_opens_in_the_system_browser() {
-        let ctx = egui::Context::default();
-        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
-        assert!(super::super::toolbar::ready("marketplace"));
-        assert!(matches!(
-            run_command(&ctx, "marketplace", &mut panels),
-            BarAction::MarketplaceInBrowser
-        ));
     }
 
     #[test]
