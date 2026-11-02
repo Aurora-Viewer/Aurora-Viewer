@@ -14,6 +14,7 @@
 //!   events, input, navigation, transport, volume).
 //! * [`process::PluginPaths`]: where SLPlugin and the plugins are found
 //!   (a folder chosen by the user, the viewer's own, else Aurora's pack).
+//! * `stream_volume` (Linux): a web page's volume, on the sound server.
 //!
 //! Derived from indra/llplugin of the Second Life / Firestorm viewer source,
 //! Copyright (C) Linden Research, Inc. and The Phoenix Firestorm Project,
@@ -23,6 +24,8 @@ pub mod media;
 pub mod message;
 pub mod process;
 mod shm;
+#[cfg(target_os = "linux")]
+mod stream_volume;
 
 pub use media::{
     BrowserSettings, Cookie, Frame, KeyEvent, MediaEvent, MediaPlugin, MediaStatus, Modifiers, MouseEvent, Priority, Rect,

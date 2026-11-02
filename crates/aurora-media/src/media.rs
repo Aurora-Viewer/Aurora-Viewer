@@ -243,6 +243,10 @@ pub struct MediaPlugin {
     priority: Priority,
     low_priority_size_limit: i32,
     requested_volume: f32,
+    /// Linux: a web page's sound, which the plugin does not set
+    /// (stream_volume.rs).
+    #[cfg(target_os = "linux")]
+    stream_volume: Option<crate::stream_volume::StreamVolume>,
     status: MediaStatus,
     events: Vec<MediaEvent>,
     failed: bool,
@@ -281,7 +285,13 @@ impl MediaPlugin {
                 format!("{} not found", file.display()),
             ));
         }
-        let process = PluginProcess::launch(&paths.launcher, &paths.plugin_dir, &file)?;
+        #[cfg(target_os = "linux")]
+        let stream_volume = (plugin == "media_plugin_cef").then(crate::stream_volume::StreamVolume::new);
+        #[cfg(target_os = "linux")]
+        let env: Vec<(String, String)> = stream_volume.iter().map(crate::stream_volume::StreamVolume::env).collect();
+        #[cfg(not(target_os = "linux"))]
+        let env: Vec<(String, String)> = Vec::new();
+        let process = PluginProcess::launch(&paths.launcher, &paths.plugin_dir, &file, &env)?;
         let mut m = MediaPlugin {
             process,
             queue: VecDeque::new(),
@@ -314,6 +324,8 @@ impl MediaPlugin {
             priority: Priority::Normal,
             low_priority_size_limit: LOW_PRIORITY_TEXTURE_SIZE_DEFAULT,
             requested_volume: 0.0,
+            #[cfg(target_os = "linux")]
+            stream_volume,
             status: MediaStatus::None,
             events: Vec::new(),
             failed: false,
@@ -754,6 +766,10 @@ impl MediaPlugin {
 
     /// Volume 0..1 (sent only when it changes).
     pub fn set_volume(&mut self, volume: f32) {
+        #[cfg(target_os = "linux")]
+        if let Some(stream) = self.stream_volume.as_mut() {
+            stream.set(volume);
+        }
         if volume_changed(self.requested_volume, volume) {
             self.requested_volume = volume;
             self.send(PluginMessage::new(CLASS_MEDIA_TIME, "set_volume").with("volume", volume as f64));
