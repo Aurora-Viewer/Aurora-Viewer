@@ -1119,7 +1119,7 @@ mod tests {
                 .into(),
             ),
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some("test depth"),
             layout: None,
             vertex: wgpu::VertexState {
