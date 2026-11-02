@@ -148,7 +148,9 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
         edit.group = it.group_mask;
         edit.everyone = it.everyone_mask;
         edit.sale_type = it.sale_type;
-        edit.price = it.sale_price;
+        if !edit.commit_price {
+            edit.price = it.sale_price;
+        }
     }
     let mut response = PropertyResponse::default();
     egui::ScrollArea::vertical().max_height(550.0).show(ui, |ui| {
@@ -337,15 +339,22 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
         });
         ui.horizontal(|ui| {
             ui.label(aurora_i18n::tr!("ui-inventory-properties-price-l"));
-            sale_changed |= ui
+            edit.commit_price |= ui
                 .add_enabled(
                     for_sale && can_edit,
                     egui::DragValue::new(&mut edit.price)
+                        .update_while_editing(false)
                         .custom_parser(aurora_i18n::parse_number)
                         .range(0..=i32::MAX),
                 )
                 .changed();
         });
+        // Keep a numeric drag uninterrupted, and combine a typed price's
+        // focus loss with the control clicked next, like the text fields.
+        if can_edit && edit.commit_price && !ui.input(|input| input.pointer.any_down()) {
+            edit.commit_price = false;
+            sale_changed = true;
+        }
         if sale_changed {
             let committed = response.edit.get_or_insert_with(|| PropertyEdit::from(it));
             committed.sale_type = edit.sale_type;
@@ -616,6 +625,120 @@ mod tests {
         };
         assert!(body["desc"].as_str().contains("updated"));
         assert_ne!(body["permissions"]["next_owner_mask"].as_u32(), inv.items[&id].next_owner_mask);
+    }
+
+    #[test]
+    fn inventory_property_price_saves_complete_numbers_and_completed_drags() {
+        let ctx = egui::Context::default();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let id = Uuid::from_u128(8102);
+        let item = inv.items.get_mut(&id).unwrap();
+        item.sale_type = 2;
+        item.sale_price = 42;
+        let mut st = InventoryUi::default();
+        for _ in 0..3 {
+            frame(&ctx, &inv, &mut st, vec![]);
+        }
+        let price_point =
+            |texts: &[(String, egui::Rect)], value: i32| texts.iter().find(|(text, _)| text == &value.to_string()).unwrap().1.center();
+        for (price, enter) in [(12, true), (345, false)] {
+            let (labels, _) = frame(&ctx, &inv, &mut st, vec![]);
+            assert!(click(&ctx, &inv, &mut st, price_point(&labels, inv.items[&id].sale_price)).is_empty());
+            for digit in price.to_string().chars() {
+                assert!(
+                    frame(&ctx, &inv, &mut st, vec![egui::Event::Text(digit.to_string())]).1.is_empty(),
+                    "Typing a number must not submit its first digit and disable the field"
+                );
+            }
+            let actions = if enter {
+                frame(
+                    &ctx,
+                    &inv,
+                    &mut st,
+                    vec![egui::Event::Key {
+                        key: egui::Key::Enter,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Default::default(),
+                    }],
+                )
+                .1
+            } else {
+                let (labels, _) = frame(&ctx, &inv, &mut st, vec![]);
+                let point = labels
+                    .iter()
+                    .rev()
+                    .find(|(text, _)| text == aurora_i18n::tr!("common-edit"))
+                    .unwrap()
+                    .1
+                    .center();
+                click(&ctx, &inv, &mut st, point)
+            };
+            let [InvAction::Edit(change)] = &actions[..] else {
+                panic!("Expected one complete price update")
+            };
+            let [aurora_net::inventory::operations::Operation::Patch { body, .. }] = &change.operations[..] else {
+                panic!("Expected a price patch")
+            };
+            assert_eq!(body["sale_info"]["sale_price"].as_i32(), price);
+            if !enter {
+                assert_ne!(body["permissions"]["next_owner_mask"].as_u32(), inv.items[&id].next_owner_mask);
+            }
+            rules::demo_mutate(&mut inv, Uuid::from_u128(2), change.clone()).unwrap();
+            assert!(frame(&ctx, &inv, &mut st, vec![]).1.is_empty());
+        }
+        let (labels, _) = frame(&ctx, &inv, &mut st, vec![]);
+        let start = price_point(&labels, inv.items[&id].sale_price);
+        assert!(frame(&ctx, &inv, &mut st, vec![egui::Event::PointerMoved(start)]).1.is_empty());
+        assert!(
+            frame(
+                &ctx,
+                &inv,
+                &mut st,
+                vec![egui::Event::PointerButton {
+                    pos: start,
+                    pressed: true,
+                    button: egui::PointerButton::Primary,
+                    modifiers: Default::default(),
+                }]
+            )
+            .1
+            .is_empty()
+        );
+        for offset in [40.0, 70.0] {
+            assert!(
+                frame(
+                    &ctx,
+                    &inv,
+                    &mut st,
+                    vec![egui::Event::PointerMoved(start + egui::vec2(offset, 0.0))]
+                )
+                .1
+                .is_empty(),
+                "A numeric drag stays usable until release"
+            );
+        }
+        let actions = frame(
+            &ctx,
+            &inv,
+            &mut st,
+            vec![egui::Event::PointerButton {
+                pos: start + egui::vec2(70.0, 0.0),
+                pressed: false,
+                button: egui::PointerButton::Primary,
+                modifiers: Default::default(),
+            }],
+        )
+        .1;
+        let [InvAction::Edit(change)] = &actions[..] else {
+            panic!("Expected one update after the numeric drag")
+        };
+        let [aurora_net::inventory::operations::Operation::Patch { body, .. }] = &change.operations[..] else {
+            panic!("Expected a dragged price patch")
+        };
+        assert!(body["sale_info"]["sale_price"].as_i32() > 345);
     }
 
     #[test]

@@ -2227,8 +2227,10 @@ Use `AURORA_DEMO_BUILD=contents-properties,object:118` with the Contents
 section to open a task item in the same properties panel as agent inventory
 (name, picture, owner/creator/date, description, masks and sale). Task items
 have no thumbnail metadata, so their Picture action is disabled. There is no
-Save button: permissions and sale controls save on each change; name and
+Save button: permissions and sale choices save on each change; name and
 description save when their field loses focus (Enter also commits the name).
+Typed prices commit on Enter or focus loss, and numeric drags on release;
+neither may be interrupted by saving an intermediate digit or drag position.
 The window stays open. Changes must update the original object's item even
 after changing the build selection, and survive closing and reopening its
 properties. Check the same behavior with `AURORA_DEMO_INVENTORY=properties`.
