@@ -546,7 +546,14 @@ it (in the photo folder, or `<folder>`). The log gives `photo: <W> x <H>
 drawn in <n> part(s), <ms>`, `snapshot <W> x <H>: <MB> of textures … at its
 peak` (the video memory of the photo frame) and `photo saved: <file> (<KB>,
 written in <ms>)`. Open the file: its framing is the window's (cropped to
-its proportions), without the interface unless asked. With
+its proportions), without the interface unless asked. The plan line,
+`photo: <W> x <H> planned in <n> part(s), at most <n> Mpx a pass (…; <b>
+bytes a pixel, measured)`, counts the render targets the renderer measured
+at its last size: the `snapshot` lines' memory, from one size to another,
+must grow by about that many bytes a pixel. With
+`AURORA_VRAM_BUDGET_MB` a little above the demo's use (3500 on a card that
+uses about 900 MB), an 8K photo is drawn in many parts, none of which
+takes more at its peak than half of what the budget leaves free. With
 `AURORA_DEMO_SNAPSHOT_TILE=2048`, an 8K photo is drawn in 15 tiles: compare
 it with the same photo in one pass, the tiles must not show (the demo's
 particles and animations make a few levels of difference everywhere). Each

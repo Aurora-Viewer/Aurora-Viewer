@@ -167,6 +167,36 @@ fn a_card_over_its_budget_still_draws_passes_of_the_windows_size() {
 }
 
 #[test]
+fn a_pass_counts_the_targets_the_renderer_measured_and_its_output() {
+    // measured: whatever the MSAA, the targets' own bytes (rounded up)
+    assert_eq!(pass_bytes_per_pixel(Some(112.3), 1), 113 + PASS_OUTPUT_BYTES);
+    assert_eq!(pass_bytes_per_pixel(Some(195.0), 8), 195 + PASS_OUTPUT_BYTES);
+    // not measured yet, or nonsense: the fallback grows with the samples
+    let one = pass_bytes_per_pixel(None, 1);
+    let eight = pass_bytes_per_pixel(None, 8);
+    assert!(one >= 120 && eight > one, "{one} {eight}");
+    assert_eq!(pass_bytes_per_pixel(Some(0.0), 1), one);
+    assert_eq!(pass_bytes_per_pixel(Some(f32::NAN), 1), one);
+}
+
+#[test]
+fn an_8k_photo_no_longer_fits_one_pass_on_a_card_with_2_gb_free() {
+    // Agni, 2026-11-02, RTX 5070: 9,959 MB budget, 7,504 MB used, no MSAA;
+    // the targets took about 120 bytes a pixel, counted 34 before
+    let free = (9_959u64 - 7_504) * 1_000_000 / 2;
+    let photo = (7680, 4108);
+    let before = plan(photo, 16384, pass_pixels(free, 34, (3840, 2054)), TILE_GUARD);
+    assert_eq!(before.len(), 1, "the plan that lost the GPU");
+    let per_pixel = pass_bytes_per_pixel(Some(120.0), 1);
+    let tiles = plan(photo, 16384, pass_pixels(free, per_pixel, (3840, 2054)), TILE_GUARD);
+    assert!(tiles.len() > 1, "{}", tiles.len());
+    for t in &tiles {
+        let bytes = u64::from(t.draw.width) * u64::from(t.draw.height) * per_pixel;
+        assert!(bytes <= free, "a pass of {} x {} takes {bytes} bytes", t.draw.width, t.draw.height);
+    }
+}
+
+#[test]
 fn a_tile_is_drawn_with_a_guard_band_on_the_sides_it_shares() {
     // 3200 x 1800 with sides of 1024 at most: 5 x 3 tiles of 640 x 600,
     // drawn with up to 128 pixels more on each inner side
