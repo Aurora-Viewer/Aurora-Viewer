@@ -552,6 +552,13 @@ pub struct World {
     /// `tp_storage` (LLViewerParcelMgr's teleport finished signal): global
     /// position and when it happened.
     tp_record: Option<(glam::DVec3, Instant)>,
+    /// A saved place whose grid was not known yet: its global position and
+    /// region, given its `hop://` SLURL when the region's SimulatorFeatures
+    /// come.
+    tp_slurl_pending: Option<(glam::DVec3, String, Vec3)>,
+    /// On an OpenSim grid, the login grid as a Hypergrid address
+    /// (`grids::home`, set by the app); None on Second Life.
+    pub home_grid: Option<String>,
     /// Between the change of region of a border crossing and its arrival.
     crossing: bool,
     /// The last arrival was a border crossing: the agent was not placed.
@@ -785,6 +792,8 @@ impl World {
             tp_history: tphistory::TeleportHistory::default(),
             tp_storage: Default::default(),
             tp_record: None,
+            tp_slurl_pending: None,
+            home_grid: None,
             crossing: false,
             arrived_by_crossing: false,
             inventory_retried: HashSet::new(),
@@ -869,7 +878,32 @@ impl World {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0.0, |d| d.as_secs_f64());
-        self.tp_storage.add(&title, global, now);
+        // OpenSim: the SLURL names the place's grid, for going back to it
+        // after a Hypergrid teleport (LLTeleportHistoryPersistentItem::mSLURL)
+        let local = self
+            .main_region
+            .map(|h| {
+                let (ox, oy) = aurora_net::handle_to_origin(h);
+                Vec3::new((global.x - ox as f64) as f32, (global.y - oy as f64) as f32, global.z as f32)
+            })
+            .unwrap_or(Vec3::ZERO);
+        let grid = self.main_region.and_then(|h| self.grid_of(h));
+        let slurl = match &grid {
+            Some(grid) => crate::slurl::make_on(Some(grid), &region, local),
+            None => String::new(),
+        };
+        self.tp_slurl_pending = (grid.is_none() && self.home_grid.is_some()).then(|| (global, region.clone(), local));
+        self.tp_storage.add(&title, global, now, slurl);
+    }
+
+    /// On an OpenSim grid, the grid a region is on (`grids::here`): its
+    /// GridURL, else the login grid. None on Second Life, or until the
+    /// region's SimulatorFeatures came.
+    pub fn grid_of(&self, handle: RegionHandle) -> Option<String> {
+        let home = self.home_grid.as_deref()?;
+        let region = self.regions.get(&handle)?;
+        region.lsl_syntax_id?;
+        crate::grids::here(Some(home), Some(&region.opensim))
     }
 
     /// An arrival whose parcel did not come within a few seconds is saved
@@ -2250,6 +2284,16 @@ impl World {
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
+                // the place we arrived at learns its grid
+                if Some(handle) == self.main_region
+                    && let Some(grid) = self.grid_of(handle)
+                {
+                    self.tp_history.set_grid(handle, Some(grid.clone()));
+                    if let Some((global, region, local)) = self.tp_slurl_pending.take() {
+                        self.tp_storage
+                            .set_slurl(global, crate::slurl::make_on(Some(&grid), &region, local));
+                    }
+                }
                 None
             }
             NetEvent::HoverHeightUpdated { region, request, success } => {
@@ -2344,12 +2388,14 @@ impl World {
                     let at = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_or(0, |d| d.as_secs() as i64);
+                    let grid = self.grid_of(handle);
                     self.tp_history.arrived(tphistory::TpEntry {
                         region,
                         handle,
                         position,
                         parcel: String::new(),
                         at,
+                        grid,
                     });
                     // LLViewerParcelMgr::onTeleportFinished: a local teleport keeps
                     // the agent parcel (the simulator only sends ParcelProperties

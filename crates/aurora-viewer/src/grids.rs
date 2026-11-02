@@ -236,22 +236,45 @@ pub fn known<'a>(settings: &'a Settings, address: &str) -> Option<&'a Grid> {
     })
 }
 
+/// The login grid as a Hypergrid address (`host[:port]`): its gatekeeper,
+/// else its login address. None on Second Life.
+pub fn home(settings: &Settings) -> Option<String> {
+    if settings.grid != GridChoice::Custom {
+        return None;
+    }
+    active(settings)
+        .and_then(|grid| authority(&grid.gatekeeper))
+        .or_else(|| authority(&settings.custom_login_uri))
+}
+
+/// The grid a region is on, from its GridURL, else the login grid (`home`).
+pub fn here(home: Option<&str>, extras: Option<&OpenSimExtras>) -> Option<String> {
+    let home = home?;
+    Some(extras.and_then(|e| authority(&e.grid_url)).unwrap_or_else(|| home.to_owned()))
+}
+
 /// The grid the agent is on now, as a Hypergrid address (`host[:port]`), on
 /// an OpenSim grid; None on Second Life. After a Hypergrid teleport it is
 /// the visited grid, not the login one. Port of
 /// LFSimFeatureHandler::hyperGridURL: the region's GridURL, else the login
 /// grid's gatekeeper, else the login grid.
 pub fn current(settings: &Settings, extras: Option<&OpenSimExtras>) -> Option<String> {
-    if settings.grid != GridChoice::Custom {
-        return None;
+    here(home(settings).as_deref(), extras)
+}
+
+/// Whether two Hypergrid addresses name the same grid, by any of the
+/// addresses saved for it.
+pub fn same_grid(settings: &Settings, a: &str, b: &str) -> bool {
+    let (Some(a), Some(b)) = (authority(a), authority(b)) else {
+        return false;
+    };
+    if a == b {
+        return true;
     }
-    if let Some(address) = extras.and_then(|e| authority(&e.grid_url)) {
-        return Some(address);
+    if is_login_grid(settings, &a) || is_login_grid(settings, &b) {
+        return is_login_grid(settings, &a) && is_login_grid(settings, &b);
     }
-    let login = active(settings);
-    login
-        .and_then(|grid| authority(&grid.gatekeeper))
-        .or_else(|| authority(&settings.custom_login_uri))
+    known(settings, &a).is_some_and(|grid| known(settings, &b) == Some(grid))
 }
 
 /// Whether a Hypergrid address is the grid we logged in to, by any of its
@@ -356,16 +379,7 @@ pub fn resolve(settings: &Settings, extras: Option<&OpenSimExtras>, destination:
     if settings.grid != GridChoice::Custom {
         return Err(Error::CrossGrid);
     }
-    let here = current(settings, extras);
-    let same_grid = match &here {
-        // a region's GridURL may be spelled unlike the saved grid: the grid
-        // we are on counts by any of the addresses saved for it
-        Some(here) if is_login_grid(settings, here) => is_login_grid(settings, target_authority),
-        Some(here) => {
-            here.as_str() == target_authority || known(settings, here).is_some_and(|grid| known(settings, target_authority) == Some(grid))
-        }
-        None => false,
-    };
+    let same_grid = current(settings, extras).is_some_and(|here| same_grid(settings, &here, target_authority));
     if same_grid {
         return Ok(location.region);
     }
@@ -618,6 +632,26 @@ mod tests {
             resolve(&settings, Some(&home), "hop://gate.example:8003/My%20Region"),
             Ok("My Region".into())
         );
+    }
+
+    #[test]
+    fn grids_compare_by_any_of_their_addresses() {
+        let settings = two_grids();
+        assert_eq!(home(&settings).as_deref(), Some("gate.example:8003"));
+        assert_eq!(home(&Settings::default()), None);
+        assert_eq!(
+            here(Some("gate.example:8003"), Some(&visiting("http://other.example:8002/"))).as_deref(),
+            Some("other.example:8002")
+        );
+        assert_eq!(here(None, Some(&visiting("other.example:8002"))), None);
+        // the login grid by its login, discovery or gatekeeper address
+        assert!(same_grid(&settings, "login.example:8002", "gate.example:8003"));
+        assert!(same_grid(&settings, "grid.example", "gate.example:8003"));
+        // another saved grid by its own addresses
+        assert!(same_grid(&settings, "other.example:8002", "other-gate.example:8003"));
+        assert!(!same_grid(&settings, "other.example:8002", "gate.example:8003"));
+        assert!(!same_grid(&settings, "unknown.example", "other.example:8002"));
+        assert!(same_grid(&settings, "unknown.example:80", "unknown.example"));
     }
 
     #[test]

@@ -6630,6 +6630,12 @@ impl App {
                 aurora_i18n::tr!("app-teleporting-to-2", value0 = e.region.to_string()),
                 crate::world::notice_topics::Topic::Teleport,
             );
+            // a place of another grid: its handle means nothing here
+            if let Some(grid) = e.grid.as_deref()
+                && self.teleport_other_grid(grid, &e.region, e.position)
+            {
+                return;
+            }
             if !self.request_user_teleport(
                 NetCommand::TeleportTo {
                     handle: e.handle,
@@ -6641,6 +6647,48 @@ impl App {
             ) {
                 self.world.tp_history.failed();
             }
+        }
+    }
+
+    /// A place of another OpenSim grid than the one we are on (after a
+    /// Hypergrid teleport): its region through that grid's gatekeeper, as
+    /// LLTeleportHistory::goToItem / LLTeleportHistoryStorage::goToItem do
+    /// (sendNamedRegionRequest of "gatekeeper:region", then the teleport).
+    /// False when the place is on this grid: the caller teleports as usual.
+    fn teleport_other_grid(&mut self, grid: &str, region: &str, pos: Vec3) -> bool {
+        let here = crate::grids::here(self.world.home_grid.as_deref(), self.world.opensim_extras());
+        if here
+            .as_deref()
+            .is_none_or(|here| crate::grids::same_grid(&self.settings, here, grid))
+        {
+            return false;
+        }
+        self.teleport_to_location(crate::grids::target(grid, region), pos);
+        true
+    }
+
+    /// A saved place of the Places window or the map's history, by its
+    /// global position: on another grid through its SLURL, else by its
+    /// position on this grid (LLTeleportHistoryStorage::goToItem).
+    fn teleport_saved_place(&mut self, global: glam::DVec3) {
+        let saved = self.world.tp_storage.items.iter().rev().find(|item| item.global == global).cloned();
+        let other = saved
+            .as_ref()
+            .filter(|item| !item.slurl.is_empty())
+            .and_then(|item| crate::slurl::parse_hypergrid(&item.slurl));
+        if let Some(place) = other
+            && let Some(grid) = place.grid.as_deref()
+            && self.teleport_other_grid(grid, &place.region, place.pos)
+        {
+            // its global position is another grid's: nothing to track here
+            self.world.map.track = None;
+            return;
+        }
+        self.world.map.track_location(global.x, global.y, global.z as f32, true);
+        if let Some(item) = saved
+            && let Some(track) = self.world.map.track.as_mut()
+        {
+            track.label = item.title;
         }
     }
 
@@ -7619,6 +7667,13 @@ impl App {
     /// Map server tiles, connected regions known to the world map, map
     /// requests and teleports queued by the maps, tracking arrival.
     fn update_maps(&mut self) {
+        // the OpenSim grids the SLURLs and saved places name: the login one,
+        // and the one we are on (None on Second Life and in the demo)
+        let home = if self.demo { None } else { crate::grids::home(&self.settings) };
+        if self.world.home_grid != home {
+            self.world.home_grid = home;
+        }
+        crate::slurl::set_grid(crate::grids::here(self.world.home_grid.as_deref(), self.world.opensim_extras()));
         if !self.demo
             && let Some(l) = &self.world.login
         {
@@ -15845,7 +15900,7 @@ impl App {
                 for pa in places_acts {
                     use ui::places::PlacesAction;
                     match pa {
-                        PlacesAction::Teleport(g) => self.world.map.track_location(g.x, g.y, g.z as f32, true),
+                        PlacesAction::Teleport(g) => self.teleport_saved_place(g),
                         PlacesAction::TeleportLandmark(asset) => a.landmark = Some(asset),
                         PlacesAction::CreateLandmark(dest) => self.open_create_landmark(dest),
                         PlacesAction::ShowOnMap(g) => {
@@ -15988,6 +16043,7 @@ impl App {
                             self.panels.world_map = false;
                         }
                         ui::worldmap::WorldMapAction::TeleportLandmark(asset) => a.landmark = Some(asset),
+                        ui::worldmap::WorldMapAction::TeleportHistory(global) => self.teleport_saved_place(global),
                         ui::worldmap::WorldMapAction::OpenPlace(source) => self.show_place_profile(source),
                     }
                 }
