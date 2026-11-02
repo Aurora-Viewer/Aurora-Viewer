@@ -360,6 +360,40 @@ pub struct MeanCollision {
     pub kind: u8,
 }
 
+/// What an OpenSim region says about its own grid in SimulatorFeatures'
+/// "OpenSimExtras" (LFSimFeatureHandler::setSupportedFeatures). Each is empty
+/// when the region does not give it, always on Second Life. After a
+/// Hypergrid teleport they name the grid the agent is on now, not the one
+/// it logged in to.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OpenSimExtras {
+    /// "GridURL": the grid's Hypergrid address (`host:port`, any scheme
+    /// stripped), LFSimFeatureHandler::hyperGridURL.
+    pub grid_url: String,
+    /// "search-server-url": the grid's web search page.
+    pub search_url: String,
+    /// "map-server-url": the grid's map tile server.
+    pub map_url: String,
+}
+
+impl OpenSimExtras {
+    /// Read from SimulatorFeatures' "OpenSimExtras" map.
+    pub fn from_llsd(extras: &aurora_llsd::Llsd) -> Self {
+        let grid_url = extras["GridURL"].to_string_value();
+        // Only the scheme is stripped, the port and any path stay, as
+        // LFSimFeatureHandler does.
+        let grid_url = match grid_url.split_once("://") {
+            Some((_, rest)) => rest.to_owned(),
+            None => grid_url,
+        };
+        Self {
+            grid_url: grid_url.trim().to_owned(),
+            search_url: extras["search-server-url"].to_string_value().trim().to_owned(),
+            map_url: extras["map-server-url"].to_string_value().trim().to_owned(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum NetEvent {
     /// The mute list (LLMuteList): downloaded file, or keep the cached copy.
@@ -552,6 +586,8 @@ pub enum NetEvent {
         /// not given, always on Second Life.
         grid_status_feed: String,
         grid_status_page: String,
+        /// The rest of an OpenSim region's "OpenSimExtras" this viewer uses.
+        opensim: OpenSimExtras,
     },
     HoverHeightUpdated {
         region: RegionHandle,
@@ -2272,4 +2308,37 @@ pub struct ExperienceLogEvent {
     pub object_name: String,
     pub parcel_name: String,
     pub attachment: bool,
+}
+
+#[cfg(test)]
+mod opensim_extras_tests {
+    use super::OpenSimExtras;
+    use aurora_llsd::Llsd;
+
+    #[test]
+    fn opensim_extras_strip_only_the_scheme_of_the_grid_url() {
+        let extras = Llsd::Map(
+            [
+                ("GridURL", "http://hg.osgrid.org:80/"),
+                ("search-server-url", " https://search.example/?q=[QUERY] "),
+                ("map-server-url", "https://maps.example/"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), Llsd::String(v.to_owned())))
+            .collect(),
+        );
+        let read = OpenSimExtras::from_llsd(&extras);
+        assert_eq!(read.grid_url, "hg.osgrid.org:80/");
+        assert_eq!(read.search_url, "https://search.example/?q=[QUERY]");
+        assert_eq!(read.map_url, "https://maps.example/");
+        // a GridURL given without a scheme, as most grids do
+        let bare = Llsd::Map(
+            [("GridURL".to_owned(), Llsd::String("grid.example:8002".to_owned()))]
+                .into_iter()
+                .collect(),
+        );
+        assert_eq!(OpenSimExtras::from_llsd(&bare).grid_url, "grid.example:8002");
+        // Second Life: no OpenSimExtras at all
+        assert_eq!(OpenSimExtras::from_llsd(&Llsd::Undef), OpenSimExtras::default());
+    }
 }

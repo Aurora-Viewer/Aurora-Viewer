@@ -3,6 +3,7 @@
 //! Network discovery is explicit and asynchronous; the catalogue contains no accounts.
 
 use crate::settings::{GridChoice, Settings};
+use aurora_net::OpenSimExtras;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
@@ -123,18 +124,27 @@ impl Grid {
         Ok(())
     }
 
-    pub fn search_url(&self, query: &str, language: &str, maturity: u8) -> Option<String> {
-        if self.search.is_empty() {
-            return None;
+    /// A Retrieve's answer laid over what the user had: a field the grid does
+    /// not publish keeps the user's value instead of being blanked (OSgrid
+    /// and Kitely, for instance, publish no search page).
+    pub fn refreshed(self, mut retrieved: Grid) -> Grid {
+        let kept = [
+            (&mut retrieved.nickname, self.nickname),
+            (&mut retrieved.gatekeeper, self.gatekeeper),
+            (&mut retrieved.welcome, self.welcome),
+            (&mut retrieved.register, self.register),
+            (&mut retrieved.password, self.password),
+            (&mut retrieved.help, self.help),
+            (&mut retrieved.about, self.about),
+            (&mut retrieved.search, self.search),
+            (&mut retrieved.profile, self.profile),
+        ];
+        for (field, mine) in kept {
+            if field.trim().is_empty() {
+                *field = mine;
+            }
         }
-        // FSPanelSearchWeb::loadURL / LLWeb::expandURLSubstitutions. Never send
-        // a Second Life session or OpenID cookie to another grid's search site.
-        let url = self
-            .search
-            .replace("[QUERY]", &crate::slurl::encode(query))
-            .replace("[LANGUAGE]", language)
-            .replace("[MATURITY]", &maturity.to_string());
-        web_url(&url).map(|_| url)
+        retrieved
     }
 }
 
@@ -215,13 +225,126 @@ pub fn store(settings: &mut Settings, mut grid: Grid, previous: Option<&str>) ->
     Ok(())
 }
 
+/// The saved grid known by this Hypergrid address (`host[:port]`), through
+/// its discovery, login or gatekeeper address.
+pub fn known<'a>(settings: &'a Settings, address: &str) -> Option<&'a Grid> {
+    let address = authority(address)?;
+    settings.grids.iter().find(|grid| {
+        [&grid.service, &grid.login, &grid.gatekeeper]
+            .into_iter()
+            .any(|a| authority(a).as_deref() == Some(address.as_str()))
+    })
+}
+
+/// The grid the agent is on now, as a Hypergrid address (`host[:port]`), on
+/// an OpenSim grid; None on Second Life. After a Hypergrid teleport it is
+/// the visited grid, not the login one. Port of
+/// LFSimFeatureHandler::hyperGridURL: the region's GridURL, else the login
+/// grid's gatekeeper, else the login grid.
+pub fn current(settings: &Settings, extras: Option<&OpenSimExtras>) -> Option<String> {
+    if settings.grid != GridChoice::Custom {
+        return None;
+    }
+    if let Some(address) = extras.and_then(|e| authority(&e.grid_url)) {
+        return Some(address);
+    }
+    let login = active(settings);
+    login
+        .and_then(|grid| authority(&grid.gatekeeper))
+        .or_else(|| authority(&settings.custom_login_uri))
+}
+
+/// Whether a Hypergrid address is the grid we logged in to, by any of its
+/// addresses (login, discovery or gatekeeper).
+fn is_login_grid(settings: &Settings, address: &str) -> bool {
+    if authority(&settings.custom_login_uri).as_deref() == Some(address) {
+        return true;
+    }
+    active(settings).is_some_and(|grid| {
+        [&grid.service, &grid.login, &grid.gatekeeper]
+            .into_iter()
+            .any(|a| authority(a).as_deref() == Some(address))
+    })
+}
+
+/// The name to show for the grid the agent is on now: its saved name, else
+/// its Hypergrid address. None on Second Life.
+pub fn current_label(settings: &Settings, extras: Option<&OpenSimExtras>) -> Option<String> {
+    let address = current(settings, extras)?;
+    if let Some(grid) = known(settings, &address) {
+        return Some(grid.name.clone());
+    }
+    if is_login_grid(settings, &address)
+        && let Some(grid) = active(settings)
+    {
+        return Some(grid.name.clone());
+    }
+    Some(address)
+}
+
+/// LLSD default "SearchURLOpenSim": the search page of an OpenSim grid that
+/// names none.
+pub const OPENSIM_SEARCH: &str = "http://search.metaverseink.com/opensim/results.jsp?query=[QUERY]&submit=[CATEGORY]";
+
+/// The web search page on an OpenSim grid (None on Second Life), as
+/// LFSimFeatureHandler::searchURL picks it: the region's search-server-url,
+/// else the login response's "search", else the saved grid's page while on
+/// it, else the OpenSim default. Then FSPanelSearchWeb::loadURL's
+/// substitutions, with OpenSim's maturity (13, 21, 42) and an empty
+/// [CATEGORY] (what that code ends up sending). No session or token is ever
+/// added for another grid's site.
+pub fn opensim_search_url(
+    settings: &Settings,
+    extras: Option<&OpenSimExtras>,
+    login_search: &str,
+    query: &str,
+    language: &str,
+    maturity: u8,
+) -> Option<String> {
+    if settings.grid != GridChoice::Custom {
+        return None;
+    }
+    let on_login_grid = current(settings, extras).is_some_and(|address| is_login_grid(settings, &address));
+    let saved = active(settings).filter(|_| on_login_grid).map(|grid| grid.search.as_str());
+    let template = [extras.map(|e| e.search_url.as_str()), Some(login_search), saved]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|url| web_url(url).is_some())
+        .unwrap_or(OPENSIM_SEARCH);
+    let url = template
+        .replace("[QUERY]", &crate::slurl::encode(query))
+        .replace("[LANGUAGE]", language)
+        .replace("[MATURITY]", &maturity.to_string())
+        .replace("[CATEGORY]", "");
+    web_url(&url).map(|_| url)
+}
+
+/// The map tile server: the region's map-server-url on an OpenSim grid,
+/// else the login response's, else Second Life's
+/// (LFSimFeatureHandler::mapServerURL, else CurrentMapServerURL).
+pub fn map_server<'a>(extras: Option<&'a OpenSimExtras>, login_map: &'a str) -> &'a str {
+    [extras.map(|e| e.map_url.as_str()), Some(login_map)]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|url| web_url(url).is_some())
+        .unwrap_or("https://map.secondlife.com/")
+}
+
 /// Preserve the destination grid through context menus and place windows that
 /// carry a region string. Only the app translates it into the simulator's name.
 pub fn target(grid: &str, region: &str) -> String {
     format!("hop://{grid}/{}", crate::slurl::encode(region))
 }
 
-pub fn resolve(settings: &Settings, destination: &str) -> Result<String, Error> {
+/// What a destination becomes for the simulator: a region name on the grid
+/// we are on, `gatekeeper:region` for another one (LLTeleportHistory::goToItem
+/// and LLSLURL's Hypergrid handling). `extras` is the agent's region's
+/// OpenSimExtras, so that after a Hypergrid teleport "this grid" is the
+/// visited one: the login grid's own links then go back through its
+/// gatekeeper.
+pub fn resolve(settings: &Settings, extras: Option<&OpenSimExtras>, destination: &str) -> Result<String, Error> {
     let Some(location) = crate::slurl::parse_hypergrid(destination) else {
         if destination.to_ascii_lowercase().starts_with("hop://") || destination.to_ascii_lowercase().starts_with("x-grid-location-info://")
         {
@@ -233,12 +356,16 @@ pub fn resolve(settings: &Settings, destination: &str) -> Result<String, Error> 
     if settings.grid != GridChoice::Custom {
         return Err(Error::CrossGrid);
     }
-    let current = active(settings);
-    let same_grid = authority(&settings.custom_login_uri).as_deref() == Some(target_authority)
-        || current.is_some_and(|grid| {
-            authority(&grid.service).as_deref() == Some(target_authority)
-                || authority(&grid.gatekeeper).as_deref() == Some(target_authority)
-        });
+    let here = current(settings, extras);
+    let same_grid = match &here {
+        // a region's GridURL may be spelled unlike the saved grid: the grid
+        // we are on counts by any of the addresses saved for it
+        Some(here) if is_login_grid(settings, here) => is_login_grid(settings, target_authority),
+        Some(here) => {
+            here.as_str() == target_authority || known(settings, here).is_some_and(|grid| known(settings, target_authority) == Some(grid))
+        }
+        None => false,
+    };
     if same_grid {
         return Ok(location.region);
     }
@@ -283,14 +410,11 @@ mod tests {
         for page in [&grid.welcome, &grid.register, &grid.password, &grid.help, &grid.about] {
             assert!(!page.is_empty());
         }
-        assert_eq!(
-            grid.search_url("café & music", "fr", 21).as_deref(),
-            Some("https://grid.example/search?q=caf%C3%A9%20%26%20music&m=21&l=fr")
-        );
+        assert_eq!(grid.search, "https://grid.example/search?q=[QUERY]&m=[MATURITY]&l=[LANGUAGE]");
         let fallback = parse_info("localhost:9000", b"<gridinfo/>").expect("manual endpoint fallback");
         assert_eq!(fallback.login, "http://localhost:9000/");
         assert_eq!(fallback.name, "localhost:9000");
-        assert!(fallback.search_url("test", "en", 13).is_none());
+        assert!(fallback.search.is_empty());
     }
 
     #[test]
@@ -363,26 +487,191 @@ mod tests {
         other.gatekeeper = "https://other-gate.example:8003/".into();
         store(&mut settings, other, None).expect("other");
         for source in ["grid.example", "login.example:8002", "gate.example:8003"] {
-            assert_eq!(resolve(&settings, &target(source, "My Region")), Ok("My Region".into()));
+            assert_eq!(resolve(&settings, None, &target(source, "My Region")), Ok("My Region".into()));
         }
         assert_eq!(
-            resolve(&settings, "hop://other.example:8002/My%20Region/1/2/3"),
+            resolve(&settings, None, "hop://other.example:8002/My%20Region/1/2/3"),
             Ok("other-gate.example:8003:My Region".into())
         );
         assert_eq!(
-            resolve(&settings, "hop://unknown.example:9000/My%20Region"),
+            resolve(&settings, None, "hop://unknown.example:9000/My%20Region"),
             Ok("unknown.example:9000:My Region".into())
         );
         assert_eq!(
-            resolve(&settings, "x-grid-location-info://other.example:8002/region/My%20Region/1/2/3"),
+            resolve(
+                &settings,
+                None,
+                "x-grid-location-info://other.example:8002/region/My%20Region/1/2/3"
+            ),
             Ok("other-gate.example:8003:My Region".into())
         );
-        assert_eq!(resolve(&settings, "hop://other.example/Region/NaN/1/2"), Err(Error::Address));
-        assert_eq!(resolve(&settings, "Local Region"), Ok("Local Region".into()));
+        assert_eq!(resolve(&settings, None, "hop://other.example/Region/NaN/1/2"), Err(Error::Address));
+        assert_eq!(resolve(&settings, None, "Local Region"), Ok("Local Region".into()));
         settings.grid = GridChoice::SecondLife;
-        assert_eq!(resolve(&settings, "hop://other.example:8002/Region/1/2/3"), Err(Error::CrossGrid));
+        assert_eq!(
+            resolve(&settings, None, "hop://other.example:8002/Region/1/2/3"),
+            Err(Error::CrossGrid)
+        );
         settings.grid = GridChoice::SecondLifeBeta;
-        assert_eq!(resolve(&settings, "hop://other.example:8002/Region/1/2/3"), Err(Error::CrossGrid));
+        assert_eq!(
+            resolve(&settings, None, "hop://other.example:8002/Region/1/2/3"),
+            Err(Error::CrossGrid)
+        );
+    }
+
+    #[test]
+    fn retrieve_keeps_what_the_grid_does_not_publish() {
+        let mut mine = Grid::manual("https://grid.example").expect("grid");
+        mine.search = "https://my.search.example/?q=[QUERY]".into();
+        mine.help = "https://my.help.example/".into();
+        mine.nickname = "mine".into();
+        let mut retrieved = Grid::manual("https://grid.example").expect("grid");
+        retrieved.name = "Example".into();
+        retrieved.help = "https://grid.example/help".into();
+        let merged = mine.refreshed(retrieved);
+        assert_eq!(merged.name, "Example");
+        // published: the grid's value
+        assert_eq!(merged.help, "https://grid.example/help");
+        // not published: the user's value
+        assert_eq!(merged.search, "https://my.search.example/?q=[QUERY]");
+        assert_eq!(merged.nickname, "mine");
+    }
+
+    /// The login grid (with a gatekeeper) and a second saved grid, logged in
+    /// to the first.
+    fn two_grids() -> Settings {
+        let mut settings = Settings {
+            grid: GridChoice::Custom,
+            custom_login_uri: "https://login.example:8002/".into(),
+            ..Default::default()
+        };
+        let mut home = Grid::manual("https://grid.example").expect("home grid");
+        home.name = "Home".into();
+        home.login = settings.custom_login_uri.clone();
+        home.gatekeeper = "https://gate.example:8003".into();
+        home.search = "https://grid.example/search?q=[QUERY]".into();
+        store(&mut settings, home, None).expect("home");
+        let mut other = Grid::manual("https://other.example:8002").expect("other grid");
+        other.name = "Other".into();
+        other.gatekeeper = "https://other-gate.example:8003/".into();
+        store(&mut settings, other, None).expect("other");
+        settings
+    }
+
+    fn visiting(grid_url: &str) -> OpenSimExtras {
+        OpenSimExtras {
+            grid_url: grid_url.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_current_grid_follows_the_region_after_a_hypergrid_teleport() {
+        let settings = two_grids();
+        // before SimulatorFeatures, or a region without GridURL: the login
+        // grid's gatekeeper
+        assert_eq!(current(&settings, None).as_deref(), Some("gate.example:8003"));
+        assert_eq!(current_label(&settings, None).as_deref(), Some("Home"));
+        assert_eq!(
+            current(&settings, Some(&OpenSimExtras::default())).as_deref(),
+            Some("gate.example:8003")
+        );
+        // GridURL wins, its scheme already stripped by OpenSimExtras
+        let away = visiting("other-gate.example:8003");
+        assert_eq!(current(&settings, Some(&away)).as_deref(), Some("other-gate.example:8003"));
+        assert_eq!(current_label(&settings, Some(&away)).as_deref(), Some("Other"));
+        // an unsaved grid shows its address
+        let unknown = visiting("hg.unknown.example:80");
+        assert_eq!(current_label(&settings, Some(&unknown)).as_deref(), Some("hg.unknown.example"));
+        // Second Life has no Hypergrid address
+        let sl = Settings::default();
+        assert_eq!(current(&sl, Some(&away)), None);
+    }
+
+    #[test]
+    fn destinations_are_judged_from_the_grid_we_are_on() {
+        let settings = two_grids();
+        let away = visiting("other.example:8002");
+        // on the visited grid its own regions are local, by any of its addresses
+        assert_eq!(
+            resolve(&settings, Some(&away), "hop://other.example:8002/Wright%20Plaza/1/2/3"),
+            Ok("Wright Plaza".into())
+        );
+        assert_eq!(
+            resolve(&settings, Some(&away), "hop://other-gate.example:8003/Wright%20Plaza"),
+            Ok("Wright Plaza".into())
+        );
+        // and the login grid is reached back through its gatekeeper
+        assert_eq!(
+            resolve(&settings, Some(&away), "hop://grid.example/My%20Region"),
+            Ok("gate.example:8003:My Region".into())
+        );
+        assert_eq!(
+            resolve(&settings, Some(&away), "hop://login.example:8002/My%20Region"),
+            Ok("gate.example:8003:My Region".into())
+        );
+        // a bare name stays on the grid we are on
+        assert_eq!(resolve(&settings, Some(&away), "Wright Plaza"), Ok("Wright Plaza".into()));
+        // at home, a GridURL spelled unlike the saved addresses is still home
+        let home = visiting("grid.example:80");
+        assert_eq!(
+            resolve(&settings, Some(&home), "hop://gate.example:8003/My%20Region"),
+            Ok("My Region".into())
+        );
+    }
+
+    #[test]
+    fn opensim_search_follows_the_region_then_the_login_then_the_default() {
+        let settings = two_grids();
+        let url = |extras: Option<&OpenSimExtras>, login: &str| opensim_search_url(&settings, extras, login, "café & music", "fr", 21);
+        // the region's search-server-url first
+        let region = OpenSimExtras {
+            search_url: "https://region.example/find?q=[QUERY]&m=[MATURITY]&c=[CATEGORY]".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            url(Some(&region), "https://login.example/s?q=[QUERY]").as_deref(),
+            Some("https://region.example/find?q=caf%C3%A9%20%26%20music&m=21&c=")
+        );
+        // then the login response's "search"
+        assert_eq!(
+            url(None, "https://login.example/s?q=[QUERY]").as_deref(),
+            Some("https://login.example/s?q=caf%C3%A9%20%26%20music")
+        );
+        // then the saved grid's page, on that grid only
+        assert_eq!(
+            url(None, "").as_deref(),
+            Some("https://grid.example/search?q=caf%C3%A9%20%26%20music")
+        );
+        let away = visiting("other.example:8002");
+        assert_eq!(
+            url(Some(&away), "").as_deref(),
+            Some("http://search.metaverseink.com/opensim/results.jsp?query=caf%C3%A9%20%26%20music&submit=")
+        );
+        // never a page that is not http(s)
+        assert_eq!(
+            url(None, "javascript:alert(1)").as_deref(),
+            Some("https://grid.example/search?q=caf%C3%A9%20%26%20music")
+        );
+        // and nothing of this on Second Life
+        assert_eq!(opensim_search_url(&Settings::default(), Some(&region), "", "x", "en", 13), None);
+    }
+
+    #[test]
+    fn the_map_server_follows_the_region() {
+        let region = OpenSimExtras {
+            map_url: "https://maps.other.example/".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            map_server(Some(&region), "https://maps.home.example/"),
+            "https://maps.other.example/"
+        );
+        assert_eq!(
+            map_server(Some(&OpenSimExtras::default()), "https://maps.home.example/"),
+            "https://maps.home.example/"
+        );
+        assert_eq!(map_server(None, " "), "https://map.secondlife.com/");
     }
 
     #[test]

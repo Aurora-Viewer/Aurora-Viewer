@@ -109,7 +109,7 @@ impl Manager {
                     self.result = None;
                     match result {
                         Ok(grid) => {
-                            self.draft = grid;
+                            self.draft = std::mem::take(&mut self.draft).refreshed(grid);
                             self.error = None;
                         }
                         Err(error) => self.error = Some(error),

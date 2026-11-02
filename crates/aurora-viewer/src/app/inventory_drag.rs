@@ -860,6 +860,7 @@ mod tests {
                 materials_limits: Default::default(),
                 max_tasks: 0,
                 grid_status: Default::default(),
+                opensim: Default::default(),
             },
         );
         let r = rez(prepare(

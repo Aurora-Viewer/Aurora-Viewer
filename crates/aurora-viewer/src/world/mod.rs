@@ -151,6 +151,9 @@ pub struct Region {
     /// An OpenSim grid's status feed and page (SimulatorFeatures'
     /// OpenSimExtras GridStatusRSS, GridStatus); empty when not given.
     pub grid_status: (String, String),
+    /// What an OpenSim region says of its grid (GridURL, search and map
+    /// servers): after a Hypergrid teleport, the grid we are on now.
+    pub opensim: aurora_net::OpenSimExtras,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1847,6 +1850,7 @@ impl World {
             materials_limits: Default::default(),
             max_tasks: 0,
             grid_status: Default::default(),
+            opensim: Default::default(),
         })
     }
 
@@ -2237,10 +2241,12 @@ impl World {
                 lsl_syntax_id,
                 grid_status_feed,
                 grid_status_page,
+                opensim,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
                 r.lsl_syntax_id = Some(lsl_syntax_id);
                 r.grid_status = (grid_status_feed, grid_status_page);
+                r.opensim = opensim;
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
@@ -4744,6 +4750,12 @@ impl World {
     /// grid (LFSimFeatureHandler::gridStatusRSS, gridStatusURL).
     pub fn grid_status_extras(&self) -> Option<(&str, &str)> {
         self.main().map(|r| (r.grid_status.0.as_str(), r.grid_status.1.as_str()))
+    }
+
+    /// The agent's region's own word on its OpenSim grid (GridURL, search
+    /// and map servers), None before its SimulatorFeatures came.
+    pub fn opensim_extras(&self) -> Option<&aurora_net::OpenSimExtras> {
+        self.main().map(|r| &r.opensim)
     }
 
     /// `id` talked with us now (LLRecentPeople::add), here.
@@ -7703,6 +7715,7 @@ mod motion_tests {
                 lsl_syntax_id: Uuid::nil(),
                 grid_status_feed: String::new(),
                 grid_status_page: String::new(),
+                opensim: Default::default(),
             };
             world.apply(features(true));
             assert!(world.hover_height_available());
