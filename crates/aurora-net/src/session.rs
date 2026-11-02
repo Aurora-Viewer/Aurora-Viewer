@@ -1909,6 +1909,12 @@ impl Session<'_> {
                         m.agent_data.session_id = self.session_id();
                         m.agent_data.avatar_id = id;
                         self.send_main(&m, true);
+                        // what AgentProfile would have carried
+                        // (LLAvatarPropertiesProcessor::sendAvatarPicksRequest,
+                        // sendAvatarNotesRequest); the groups come with the
+                        // properties
+                        self.send_generic("avatarpicksrequest", &[id.to_string()]);
+                        self.send_generic("avatarnotesrequest", &[id.to_string()]);
                     }
                 }
             }
@@ -4203,6 +4209,43 @@ impl Session<'_> {
                 let m: CameraConstraint = pkt.decode()?;
                 emit(self.sh, NetEvent::CameraConstraint(m.camera_collide_plane.plane));
             }
+        } else if id == AvatarPicksReply::ID {
+            let m: AvatarPicksReply = pkt.decode()?;
+            let picks = m.data.iter().map(|p| (p.pick_id, field_str(&p.pick_name))).collect();
+            emit(
+                self.sh,
+                NetEvent::AvatarPicks {
+                    target: m.agent_data.target_id,
+                    picks,
+                },
+            );
+        } else if id == AvatarNotesReply::ID {
+            let m: AvatarNotesReply = pkt.decode()?;
+            emit(
+                self.sh,
+                NetEvent::AvatarNotes {
+                    target: m.data.target_id,
+                    notes: field_str(&m.data.notes),
+                },
+            );
+        } else if id == AvatarGroupsReply::ID {
+            let m: AvatarGroupsReply = pkt.decode()?;
+            let groups = m
+                .group_data
+                .iter()
+                .map(|g| crate::profile::ProfileGroup {
+                    id: g.group_id,
+                    name: field_str(&g.group_name),
+                    insignia: g.group_insignia_id,
+                })
+                .collect();
+            emit(
+                self.sh,
+                NetEvent::AvatarGroups {
+                    avatar: m.agent_data.avatar_id,
+                    groups,
+                },
+            );
         } else if id == PickInfoReply::ID {
             let m: PickInfoReply = pkt.decode()?;
             let d = &m.data;

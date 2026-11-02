@@ -63,8 +63,41 @@ impl Profiles {
         self.pending.contains(id) || self.in_flight.contains(id)
     }
 
+    /// Picks, notes or groups that came in their own message (grids without
+    /// `AgentProfile`), kept with the profile whichever comes first.
+    pub fn merge_picks(&mut self, target: Uuid, picks: Vec<(Uuid, String)>) {
+        self.entry(target).picks = picks;
+    }
+
+    pub fn merge_notes(&mut self, target: Uuid, notes: String) {
+        self.entry(target).notes = Some(notes);
+    }
+
+    pub fn merge_groups(&mut self, avatar: Uuid, groups: Vec<aurora_net::profile::ProfileGroup>) {
+        self.entry(avatar).groups = groups;
+    }
+
+    fn entry(&mut self, id: Uuid) -> &mut AvatarProfile {
+        self.map.entry(id).or_insert_with(|| AvatarProfile {
+            id,
+            legacy: true,
+            ..Default::default()
+        })
+    }
+
     pub fn insert(&mut self, p: AvatarProfile) {
         self.in_flight.remove(&p.id);
+        let old = self.map.get(&p.id);
+        // AvatarPropertiesReply carries no picks nor groups: those that came
+        // in their own message stay
+        let p = match old.filter(|_| p.legacy) {
+            Some(old) => AvatarProfile {
+                picks: if p.picks.is_empty() { old.picks.clone() } else { p.picks },
+                groups: if p.groups.is_empty() { old.groups.clone() } else { p.groups },
+                ..p
+            },
+            None => p,
+        };
         let old = self.map.get(&p.id);
         // the legacy reply has no notes: keep the ones we know
         let notes = p.notes.clone().or_else(|| old.and_then(|o| o.notes.clone()));
@@ -638,5 +671,69 @@ mod tests {
             assert_eq!(p.groups[0].insignia, Uuid::from_u128(70));
             assert_eq!(p.groups[1].insignia, Uuid::from_u128(60));
         }
+    }
+}
+
+#[cfg(test)]
+mod legacy_merge_tests {
+    use super::*;
+
+    fn properties(id: Uuid) -> AvatarProfile {
+        AvatarProfile {
+            id,
+            sl_about: "About".into(),
+            legacy: true,
+            ..Default::default()
+        }
+    }
+
+    fn group() -> aurora_net::profile::ProfileGroup {
+        aurora_net::profile::ProfileGroup {
+            id: Uuid::from_u128(5),
+            name: "Builders".into(),
+            insignia: Uuid::nil(),
+        }
+    }
+
+    #[test]
+    fn picks_groups_and_notes_stay_whichever_comes_first() {
+        let id = Uuid::from_u128(1);
+        let pick = (Uuid::from_u128(9), "Home".to_string());
+        // before the properties
+        let mut before = Profiles::default();
+        before.merge_picks(id, vec![pick.clone()]);
+        before.merge_groups(id, vec![group()]);
+        before.merge_notes(id, "a friend".into());
+        before.insert(properties(id));
+        // after them
+        let mut after = Profiles::default();
+        after.insert(properties(id));
+        after.merge_picks(id, vec![pick.clone()]);
+        after.merge_groups(id, vec![group()]);
+        after.merge_notes(id, "a friend".into());
+        for profiles in [&before, &after] {
+            let p = profiles.get(&id).expect("profile");
+            assert_eq!(p.sl_about, "About");
+            assert_eq!(p.picks, [pick.clone()]);
+            assert_eq!(p.groups, [group()]);
+            assert_eq!(p.notes.as_deref(), Some("a friend"));
+        }
+    }
+
+    #[test]
+    fn a_full_profile_replaces_the_pieces() {
+        let id = Uuid::from_u128(1);
+        let mut profiles = Profiles::default();
+        profiles.merge_picks(id, vec![(Uuid::from_u128(9), "Old".into())]);
+        let full = AvatarProfile {
+            id,
+            picks: vec![(Uuid::from_u128(10), "New".into())],
+            ..Default::default()
+        };
+        profiles.insert(full);
+        assert_eq!(
+            profiles.get(&id).expect("profile").picks,
+            [(Uuid::from_u128(10), "New".to_string())]
+        );
     }
 }
