@@ -3721,7 +3721,9 @@ both open states and the selection count. Capture at frame 620.
   small cube to a teal "hand" cube 5 m away, sagging under gravity, two links
   per burst and a 2.5 m y scale (ribbons ignore it). It must look like a
   thin chain; tall vertical strips are the links emitted together drawn as
-  billboards (#1049).
+  billboards (#1049). Its texture is a band of links along u: the chain
+  must be one unbroken line, a row of short crossbars (dashes) is the
+  texture turned 90° on each segment (#1924).
   `load`: instead, 32 more fountains in a circle around the plaza,
   that is about 4,000 live particles, to measure the `p_part_*` parts
   of the profile (combine with `AURORA_DEMO_STREAM=<n>` for the
