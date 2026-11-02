@@ -48,12 +48,7 @@ impl App {
             };
             request.item = item.clone();
         }
-        if !task_inventory::destination(
-            &self.world.inventory,
-            request.folder,
-            &request.item,
-            &self.settings.inventory.protected,
-        ) {
+        if !task_inventory::destination(&self.world.inventory, request.folder, &request.item) {
             self.inventory_ui.message = aurora_i18n::tr!("task-transfer-destination").into();
             return;
         }
@@ -296,7 +291,7 @@ impl App {
                 }
             }
             InvAction::Create { parent, kind, name } => {
-                if rules::destination(&self.world.inventory, parent, &self.settings.inventory.protected) {
+                if rules::destination(&self.world.inventory, parent) {
                     if let aurora_net::inventory::operations::NewItem::Wearable(kind) = kind {
                         match crate::world::inventory::wearable::create_with_permissions(
                             kind,
@@ -526,7 +521,7 @@ impl App {
                 }
                 let worn = crate::ui::inventory::Facts::from_world(&self.world, false).worn;
                 for id in rules::roots(&self.world.inventory, &items) {
-                    match rules::offer(&self.world.inventory, id, &self.settings.inventory.protected, &worn) {
+                    match rules::offer(&self.world.inventory, id, &worn) {
                         Ok(bucket) => {
                             // LLGiveInventory removes copy-protected originals
                             // locally after the reliable offer, including folder contents.

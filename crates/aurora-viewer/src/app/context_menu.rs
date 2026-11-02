@@ -818,6 +818,13 @@ impl App {
             CtxAction::AppLink(link) => self.run_app_link(link),
             CtxAction::OpenUrl(url) => {
                 use crate::link_trust::Trust;
+                // only web pages go to the system, as the links of a
+                // notification: a link of a text, a profile or a server reply
+                // must not start a local program (the scheme alone is logged)
+                if let Some(scheme) = crate::link_trust::refused_scheme(&url) {
+                    log::warn!("link not opened: the {scheme} scheme is not a web page");
+                    return;
+                }
                 // LLWeb::loadURLInternal: a Marketplace page opens in the
                 // Marketplace window (Firestorm's default browser choice keeps
                 // the Second Life sites inside the viewer)

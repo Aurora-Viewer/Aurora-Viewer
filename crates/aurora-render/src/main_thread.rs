@@ -414,6 +414,11 @@ impl Renderer {
         // waits on the device any more (device_lost.rs). `Destroyed` is the
         // device's own end at shutdown.
         let lost = DeviceLost::default();
+        // AURORA_GPU_START_FAIL=lost: as if the driver lost the device now
+        if std::env::var("AURORA_GPU_START_FAIL").is_ok_and(|mode| mode == "lost") {
+            log::error!("GPU device lost (Unknown): AURORA_GPU_START_FAIL");
+            lost.set();
+        }
         let on_lost = lost.clone();
         device.set_device_lost_callback(move |reason, message| match reason {
             wgpu::DeviceLostReason::Destroyed => log::info!("GPU device released: {message}"),
@@ -1708,6 +1713,14 @@ fn open_device(
             in_all_pools.unwrap_or_default()
         );
     }
+    // Before the device opens, which is where a driver that dislikes these
+    // numbers stops: read back from the crash report (crash/summary.rs).
+    log::info!(
+        "GPU descriptors: {} in an array, {} sampled per stage, {} in all pools, {max_textures} texture pages",
+        alim.max_binding_array_elements_per_shader_stage,
+        alim.max_sampled_textures_per_shader_stage,
+        in_all_pools.map_or_else(|| "unknown".to_string(), |n| n.to_string()),
+    );
     let descriptor = wgpu::DeviceDescriptor {
         label: Some("aurora"),
         required_features: features,

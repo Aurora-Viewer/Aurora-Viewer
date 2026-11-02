@@ -105,7 +105,7 @@ pub(super) fn ray_may_hit(g: &super::ObjGpu, ray: (Vec3, Vec3)) -> bool {
 /// A mesh without a skin worn by an avatar. It is placed by its attachment
 /// point like a worn prim, but the GPU draws its faces at a newer pose: the
 /// CPU only answers for the faces the GPU does not draw, those at alpha 0
-/// (#416, #419). These are the invisible clickers worn on an avatar, which
+/// (#416, #419) or under the transparent texture (`Scene::face_undrawn`). These are the invisible clickers worn on an avatar, which
 /// the Legacy Viewer picks when they have a touch script or a click action
 /// (LLVOVolume::lineSegmentIntersect, specialHoverCursor) (#488).
 fn worn_unrigged_mesh(o: &Object, g: &super::ObjGpu) -> bool {
@@ -438,7 +438,18 @@ impl Scene {
             if let Some((t, idx)) = hit {
                 return (Some(ray.0 + ray.1 * t), Some(idx));
             }
+            // No surface on the ray: the point is the land's (or an
+            // avatar's), never an object whose box merely contains it. A
+            // mesh's box spans all of it (a house, a fence, landscaping), and
+            // the ground clicked beside the mesh inside that box opened the
+            // object's menu instead of the land's. LLPickInfo takes an
+            // object only from LLVOVolume::lineSegmentIntersect, its faces.
+            let target = point
+                .and_then(|p| self.interaction_at(world, p, now, build))
+                .filter(|&idx| self.gpu.get(idx).is_some_and(|g| g.is_avatar));
+            return (point, target);
         }
+        // (no ray: only a point is known, the object around it)
         let target = point
             .and_then(|p| self.interaction_at(world, p, now, build))
             .filter(|&idx| select_probes || world.objects.get(idx).is_some_and(|o| o.extra.reflection_probe.is_none()));
@@ -783,7 +794,7 @@ impl Scene {
                 return None;
             }
             let hidden = o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004);
-            if only_hidden && !hidden {
+            if only_hidden && !hidden && !Self::face_undrawn(g, face) {
                 return None;
             }
             if !include_hidden && super::plants::plant_face(o).is_none() && hidden && !(g.hud && mode == FacePick::Surface) {
@@ -1016,7 +1027,7 @@ impl Scene {
                 continue;
             }
             let hidden = o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004);
-            if only_hidden && !hidden {
+            if only_hidden && !hidden && !Self::face_undrawn(g, face) {
                 continue;
             }
             if !include_hidden && super::plants::plant_face(o).is_none() && hidden {
@@ -1441,6 +1452,16 @@ impl Scene {
             && crate::interaction::target(world, idx, &HashMap::new()).is_some()
     }
 
+    /// Whether face `face` of `g` is built but never drawn (Pass::Hidden):
+    /// the transparent texture, its alpha left at 1. A worn mesh hidden that
+    /// way is a clicker the GPU does not show, like one at alpha 0; the
+    /// Legacy Viewer's transparent pick reaches every face
+    /// (LLVOVolume::lineSegmentIntersect, `pick_transparent`). A texture of
+    /// its own that is clear everywhere is drawn (Mask) and not covered.
+    fn face_undrawn(g: &ObjGpu, face: usize) -> bool {
+        g.faces.iter().any(|f| usize::from(f.te_index) == face && f.pass == Pass::Hidden)
+    }
+
     /// Whether an object has a face `transparent_action_point` looks at:
     /// blended (absent from the GPU depth), or hidden when `hidden` counts.
     /// By the alpha class of its texture as it is now.
@@ -1790,6 +1811,41 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn worn_mesh_under_the_transparent_texture_takes_the_touch() {
+        // A slapper's mesh worn by another avatar, hidden by the transparent
+        // texture with its alpha left at 1: built (Pass::Hidden) but never
+        // drawn, so only the CPU can find it.
+        let (mut world, mut scene, front, _) = scene_with_two_objects();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let front_point = Vec3::new(2.5, 0.0, 50.0);
+        let behind = Vec3::new(6.5, 0.0, 50.0);
+        let o = world.objects.get_mut(front).unwrap();
+        o.update_flags = 1 << 7;
+        o.click_action = crate::interaction::code::TOUCH;
+        let mut volume = o.volume;
+        volume.sculpt = Some(aurora_prim::params::SculptParams {
+            texture: Uuid::from_u128(0x488),
+            sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+        });
+        o.render.local_volume = Some(Box::new(volume));
+        scene.gpu[front].owner_avatar = world.objects.avatars().next().map(|(idx, _)| idx);
+        scene.gpu[front].built_faces = scene.gpu[front].faces.len();
+        // Drawn, its surface is the GPU's alone.
+        assert!(scene.face_hit(&world, front, ray, Instant::now(), true).is_none());
+        for f in &mut scene.gpu[front].faces {
+            f.tex_id = aurora_prim::te::TRANSPARENT_TEXTURE;
+            f.base_slot = aurora_render::textures::TRANSPARENT;
+            // as rebuild_faces classifies it
+            f.pass = super::classify(f, AlphaKind::Opaque);
+            assert_eq!(f.pass, Pass::Hidden);
+        }
+        assert!(scene.face_hit(&world, front, ray, Instant::now(), false).is_none());
+        assert!(scene.face_hit(&world, front, ray, Instant::now(), true).is_some());
+        assert_eq!(scene.action_point(&world, Some(ray), Some(behind), false, 100.0), Some(front_point));
+        assert_eq!(scene.interaction_at_ray(&world, front_point, ray, true), Some(front));
+    }
+
+    #[test]
     fn sphere_test_keeps_what_the_ray_can_reach() {
         let g = |center: Vec3, radius: f32| super::super::ObjGpu {
             center,
@@ -1907,6 +1963,37 @@ pub(super) mod tests {
                 assert!(scene.swim_landing(&world, origin, Vec3::X, 1.7).is_none());
             }
         }
+    }
+
+    /// The ground clicked beside a mesh, inside the mesh's box but off its
+    /// surface (a house, a fence run, landscaping): the right click is the
+    /// land's, as LLPickInfo takes an object only from its faces. The box
+    /// alone opened the mesh's menu, and "Edit terrain" was out of reach.
+    #[test]
+    fn ground_inside_an_objects_box_but_off_its_surface_is_the_lands() {
+        let (world, mut scene, front, back) = scene_with_two_objects();
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        // `front` is a 1 m box at (3, 0, 50) whose only surface is its -X
+        // side (x = 2.5); straight down at x = 3.2, the ray never meets it
+        let ray = (Vec3::new(3.2, 0.0, 60.0), -Vec3::Z);
+        let ground = Vec3::new(3.2, 0.0, 50.0);
+        for build in [false, true] {
+            assert_eq!(
+                scene.selection_pick(&world, Some(ray), Some(ground), build, false, 100.0),
+                (Some(ground), None),
+                "build tools {build}"
+            );
+        }
+        // the same point without a ray (no surface to test): the object
+        // around it, as before
+        assert_eq!(scene.selection_pick(&world, None, Some(ground), false, false, 100.0).1, Some(front));
+        // and a ray that does meet its face still picks it
+        let side = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        assert_eq!(scene.selection_pick(&world, Some(side), None, false, false, 100.0).1, Some(front));
     }
 
     pub(in crate::scene) fn scene_with_two_objects() -> (World, Scene, usize, usize) {

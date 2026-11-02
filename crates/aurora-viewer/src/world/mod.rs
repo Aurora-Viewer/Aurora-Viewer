@@ -81,6 +81,7 @@ pub mod recent;
 pub mod region_alerts;
 pub mod region_messages;
 pub mod region_restart;
+pub mod region_titles;
 pub mod rig_graph;
 pub mod rig_targets;
 pub mod rlva;
@@ -573,6 +574,9 @@ pub struct World {
     /// Members, roles, titles and notices of the groups whose profile is
     /// open (LLGroupMgr).
     pub group_data: group_data::GroupMgr,
+    /// The group title worn by region, and every group's titles for the
+    /// Group titles window (FSGroupTitleRegionMgr).
+    pub region_titles: region_titles::RegionTitles,
     /// The parcels and accounts of the group whose "Land and L$" tab shows.
     pub group_money: group_money::GroupMoney,
     arrived_once: bool,
@@ -587,11 +591,11 @@ pub struct World {
     pub collisions: collisions::Collisions,
     /// Always fly after a teleport (FSFlyAfterTeleport, from the settings).
     pub fly_after_teleport: bool,
-    /// The account's list of open private conversations (open_ims.rs).
+    /// The account's list of open private and group conversations (open_ims.rs).
     open_ims_path: Option<std::path::PathBuf>,
     /// Conversations of the last session, read at login, that the app
     /// reopens when the setting asks for it.
-    pub reopen_ims: Vec<Uuid>,
+    pub reopen_ims: Vec<open_ims::Conversation>,
     /// Disk cache root (inventory cache).
     pub cache_dir: Option<std::path::PathBuf>,
 }
@@ -789,6 +793,7 @@ impl World {
             place_snapshots: Default::default(),
             search: Default::default(),
             group_data: Default::default(),
+            region_titles: Default::default(),
             group_money: Default::default(),
             notifications: notifications::Notifications::default(),
             teleport_invites: teleport_invites::TeleportInvites::default(),
@@ -828,14 +833,6 @@ impl World {
         self.chat_log = chat_log;
         self.cache_dir = cache_dir;
         self.quiet_automated_chat = quiet;
-    }
-
-    /// saveOpenIMs, when the session ends (quit, logout or disconnection).
-    pub fn save_open_ims(&self) {
-        if let Some(path) = &self.open_ims_path {
-            let others: Vec<Uuid> = self.social.ims.iter().map(|s| s.other).collect();
-            open_ims::save(path, &others);
-        }
     }
 
     /// LLTeleportHistory::onTeleportFinished → LLTeleportHistoryStorage:
@@ -3388,6 +3385,13 @@ impl World {
             | NetEvent::GroupTitles { .. }
             | NetEvent::GroupNotices { .. }
             | NetEvent::GroupBanList { .. }) => {
+                // the Group titles window's own requests
+                if let NetEvent::GroupTitles { group, request, titles } = &ev {
+                    let name = self.groups.group(group).map(|g| g.name.clone()).unwrap_or_default();
+                    if self.region_titles.on_titles(*group, *request, titles, &name) {
+                        return None;
+                    }
+                }
                 self.group_data.on_event(&ev);
                 if matches!(ev, NetEvent::GroupMembers(_)) {
                     self.search.refresh_group_counts(&self.group_data);

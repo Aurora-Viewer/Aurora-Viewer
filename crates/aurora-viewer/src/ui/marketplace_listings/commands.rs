@@ -126,8 +126,13 @@ impl ListingsUi {
         in_active_folder(&self.data, inv, root, id) || (self.data.is_listed(id) && self.data.activation_state(id))
     }
 
-    /// Confirm structural edits to an active listing from any inventory panel,
-    /// including Delete, Move to default folder and Create folder from selection.
+    /// Confirm edits to the listings from any inventory panel, including
+    /// Rename, Properties, Delete, Move to default folder and Create folder
+    /// from selection: the prompts of LLInventoryAction::doToSelected
+    /// (llinventoryfunctions.cpp) and of LLFolderBridge::dragCategoryIntoFolder,
+    /// dragItemIntoFolder and pasteFromClipboard (llinventorybridge.cpp), in
+    /// their order. A listed listing and its version folder never get here:
+    /// they cannot move or go to the Trash (`marketplace::Holds`).
     pub fn guard_inventory_change(&mut self, inv: &Inventory, change: Mutation, cut: bool) -> Option<Mutation> {
         let Some(root) = mp::root(inv) else { return Some(change) };
         if change.operations.iter().any(|operation| {
@@ -139,27 +144,47 @@ impl ListingsUi {
         }) {
             return None;
         }
-        let mut affected = Vec::new();
+        // what is edited in place, what leaves its folder, and where to
+        let (mut edited, mut moved, mut removed, mut into) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for operation in &change.operations {
             match operation {
-                Operation::Folder { parent, .. } => affected.push(*parent),
+                Operation::Folder { parent, .. } => into.push(*parent),
                 Operation::Patch { id, body, .. } if body.has("parent_id") => {
-                    affected.extend([*id, body["parent_id"].as_uuid()]);
+                    moved.push(*id);
+                    into.push(body["parent_id"].as_uuid());
                 }
-                Operation::Delete { id, .. } | Operation::Purge(id) => affected.push(*id),
-                _ => {}
+                Operation::Patch { id, .. } => edited.push(*id),
+                Operation::Delete { id, .. } | Operation::Purge(id) => removed.push(*id),
+                Operation::Links { .. } => {}
             }
         }
-        affected.extend(change.copies.iter().map(|copy| copy.parent));
-        if affected.iter().any(|id| self.data.is_updating(inv, root, *id)) {
+        into.extend(change.copies.iter().map(|copy| copy.parent));
+        if moved.iter().chain(&into).any(|id| self.data.is_updating(inv, root, *id)) {
             return None;
         }
-        if affected.iter().any(|id| self.affects_active(inv, root, *id)) {
-            self.open = true;
-            self.confirm = Some(Confirm::Inventory { change, cut });
-            None
+        let prompt = if edited
+            .iter()
+            .chain(&moved)
+            .chain(&removed)
+            .any(|id| self.affects_active(inv, root, *id))
+            || into.iter().any(|id| in_active_folder(&self.data, inv, root, *id))
+        {
+            Some(Prompt::ActiveChange)
+        } else if !cut && moved.iter().any(|id| self.data.is_version_folder(*id)) {
+            // a drag only: the paste of a cut version folder asks nothing
+            Some(Prompt::ClearVersion)
+        } else if moved.iter().chain(&removed).any(|id| self.data.is_listed(*id)) {
+            Some(Prompt::ListingCutOrDelete)
         } else {
-            Some(change)
+            None
+        };
+        match prompt {
+            Some(prompt) => {
+                self.open = true;
+                self.confirm = Some(Confirm::Inventory { change, cut, prompt });
+                None
+            }
+            None => Some(change),
         }
     }
 

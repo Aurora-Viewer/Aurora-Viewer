@@ -130,11 +130,14 @@ impl Scene {
             posed_by_gpu: !g.hud && !g.is_avatar && (g.rigged || (worn && o.visual_volume().is_mesh())),
             worn: worn && !g.hud,
             actionable: crate::interaction::target(world, idx, &HashMap::new()).is_some(),
+            // skinned to our own skeleton: a worn animesh has its own
+            // and keeps its touch, like a rezzed one
             own_rigged: !g.hud
                 && g.rigged
                 && g.owner_avatar
                     .and_then(|a| world.objects.get(a))
-                    .is_some_and(|a| a.full_id == world.agent_id),
+                    .is_some_and(|a| a.full_id == world.agent_id)
+                && !matches!(Self::skeleton_owner(world, idx), Some((_, a)) if Some(a) != g.owner_avatar),
             avatar: g.is_avatar,
             ignored: o.click_action == crate::interaction::code::IGNORE,
             selectable: crate::build::selectable(world, idx),
@@ -427,6 +430,16 @@ mod tests {
             true,
         );
         assert_eq!(built.map(|d| d.idx), Some(clothing));
+
+        // a scripted animesh we wear has a skeleton of its own: it keeps the
+        // touch, like a rezzed one (a pet worn on the head)
+        let wearer_local = world.objects.get(wearer.unwrap()).unwrap().key.local_id;
+        let pet = world.objects.get_mut(clothing).unwrap();
+        pet.parent_id = wearer_local;
+        pet.extra.extended_mesh_flags = Some(aurora_prim::extra::EXTENDED_MESH_ANIMATED);
+        assert_eq!(Scene::skeleton_owner(&world, clothing).map(|(_, a)| a), Some(clothing));
+        assert!(!scene.touch_passes_through(&world, clothing));
+        assert_eq!(designated(&scene, &world, Gesture::Touch), Some(clothing));
     }
 
     /// #1241: an invisible clicker (every face at alpha 0, no draw record)

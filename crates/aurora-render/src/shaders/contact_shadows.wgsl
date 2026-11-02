@@ -73,8 +73,9 @@ const FAR_DEPTH: f32 = 0.0;
 const NEAR_DEPTH: f32 = 1.0;
 
 var<workgroup> depth_data: array<f32, READ_COUNT * WAVE_SIZE>;
-// set by any thread whose pixel needs a shadow (zero at the start)
-var<workgroup> any_live: u32;
+// Several live invocations set this concurrently. Atomic writes avoid a
+// workgroup data race before the uniform load's barrier (zero at the start).
+var<workgroup> any_live: atomic<u32>;
 
 fn load_depth(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(depth_tex));
@@ -181,7 +182,7 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
     // ---- early out of a wavefront with nothing but sky (DepthBounds 0, 1)
     let skip_pixel = sampling_depth[0] >= NEAR_DEPTH || sampling_depth[0] <= FAR_DEPTH;
     if (!skip_pixel) {
-        any_live = 1u;
+        atomicOr(&any_live, 1u);
     }
     if (workgroupUniformLoad(&any_live) == 0u) {
         return;

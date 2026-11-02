@@ -16,9 +16,9 @@ fn job(roots: &[u128], options: BulkPerms) -> Job {
     state.start();
     state.job.take().unwrap()
 }
-fn finish(job: &mut Job, inv: &mut Inventory, prefs: &InventoryPreferences, agent: Uuid) -> Mutation {
+fn finish(job: &mut Job, inv: &mut Inventory, agent: Uuid) -> Mutation {
     for _ in 0..30 {
-        if let Some(change) = job.advance(inv, prefs, agent).unwrap() {
+        if let Some(change) = job.advance(inv, agent).unwrap() {
             return change;
         }
     }
@@ -69,16 +69,17 @@ fn inventory_bulk_menu_supports_multiple_items_and_folders_with_pinned_targets()
     let folder = Uuid::from_u128(8000);
     let catalog = super::super::context_catalog::build(&inv, folder, &st, &prefs, &facts);
     assert!(catalog.entries.iter().any(|e| e.id == "bulk-permissions" && e.enabled));
+    // a locked folder keeps its contents editable (Legacy Viewer parity)
     prefs.protected.insert(folder);
     let catalog = super::super::context_catalog::build(&inv, folder, &st, &prefs, &facts);
-    assert!(catalog.entries.iter().any(|e| e.id == "bulk-permissions" && !e.enabled));
+    assert!(catalog.entries.iter().any(|e| e.id == "bulk-permissions" && e.enabled));
     let catalog = super::super::context_catalog::build(&inv, inv.lib_root, &st, &prefs, &facts);
     assert!(!catalog.entries.iter().any(|e| e.id == "bulk-permissions" && e.enabled));
 }
 
 #[test]
 fn inventory_bulk_descendants_are_deduplicated_and_restricted_items_and_links_are_skipped() {
-    let (mut inv, mut prefs, agent) = fixture();
+    let (mut inv, _, agent) = fixture();
     let nested = Uuid::from_u128(8001);
     let script = Uuid::from_u128(8102);
     let mut item = inv.items[&script].clone();
@@ -90,14 +91,13 @@ fn inventory_bulk_descendants_are_deduplicated_and_restricted_items_and_links_ar
         .unwrap()
         .items
         .retain(|id| *id != script);
-    prefs.protected.insert(Uuid::from_u128(8103));
     inv.items.get_mut(&Uuid::from_u128(8104)).unwrap().owner = Uuid::from_u128(900);
     let mut plan = job(&[8000, 8001, 8102, 8000], BulkPerms::default());
-    let change = finish(&mut plan, &mut inv, &prefs, agent);
+    let change = finish(&mut plan, &mut inv, agent);
     let ids = targets(&change);
     assert!(ids.contains(&script), "No Modify asset still allows next-owner permissions");
     assert_eq!(change.operations.len(), ids.len(), "No duplicate PATCH");
-    assert!(!ids.contains(&Uuid::from_u128(8103)));
+    assert!(ids.contains(&Uuid::from_u128(8103)), "a locked item is an ordinary entry");
     assert!(!ids.contains(&Uuid::from_u128(8104)));
     assert!(ids.iter().all(|id| !matches!(inv.items[id].asset_type, 24 | 25)));
     assert_eq!(change.refresh.iter().copied().collect::<HashSet<_>>().len(), change.refresh.len());
@@ -105,31 +105,31 @@ fn inventory_bulk_descendants_are_deduplicated_and_restricted_items_and_links_ar
 
 #[test]
 fn inventory_bulk_waits_for_all_folders_and_sends_nothing_on_read_failure_or_timeout() {
-    let (mut inv, prefs, agent) = fixture();
+    let (mut inv, _, agent) = fixture();
     let child = Uuid::from_u128(8001);
     inv.folders.get_mut(&child).unwrap().state = FetchState::Unknown;
     let mut plan = job(&[8000], BulkPerms::default());
-    assert!(plan.advance(&mut inv, &prefs, agent).unwrap().is_none());
+    assert!(plan.advance(&mut inv, agent).unwrap().is_none());
     assert!(plan.change.operations.is_empty());
     assert_eq!(inv.queue, vec![(child, false)]);
     inv.folders.get_mut(&child).unwrap().state = FetchState::Failed;
-    assert!(plan.advance(&mut inv, &prefs, agent).is_err());
+    assert!(plan.advance(&mut inv, agent).is_err());
     inv.folders.get_mut(&child).unwrap().state = FetchState::Fetched;
-    let change = finish(&mut plan, &mut inv, &prefs, agent);
+    let change = finish(&mut plan, &mut inv, agent);
     assert!(!change.operations.is_empty());
     let mut plan = job(&[8000], BulkPerms::default());
     plan.started = Instant::now() - Duration::from_secs(121);
-    assert!(plan.advance(&mut inv, &prefs, agent).is_err());
+    assert!(plan.advance(&mut inv, agent).is_err());
 }
 
 #[test]
 fn inventory_bulk_type_filters_and_fair_use_respect_base_and_sharing_rights() {
-    let (mut inv, prefs, agent) = fixture();
+    let (mut inv, _, agent) = fixture();
     for (index, kind) in [20, 13, 5, 21, 7, 6, 10, 1, 0, 56, 57].into_iter().enumerate() {
         let mut options = BulkPerms::default();
         options.types.fill(false);
         options.types[index] = true;
-        let change = finish(&mut job(&[8000], options), &mut inv, &prefs, agent);
+        let change = finish(&mut job(&[8000], options), &mut inv, agent);
         let ids = targets(&change);
         assert!(!ids.is_empty());
         assert!(ids.iter().all(|id| inv.items[id].asset_type == kind));
@@ -163,7 +163,6 @@ fn frame(
     ctx: &egui::Context,
     inv: &mut Inventory,
     st: &mut InventoryUi,
-    prefs: &InventoryPreferences,
     agent: Uuid,
     events: Vec<egui::Event>,
 ) -> (Vec<(String, egui::Rect)>, Vec<InvAction>) {
@@ -175,7 +174,7 @@ fn frame(
             events,
             ..Default::default()
         },
-        |_| show(ctx, &crate::theme::Theme::default().palette(), inv, st, prefs, agent, &mut actions),
+        |_| show(ctx, &crate::theme::Theme::default().palette(), inv, st, agent, &mut actions),
     );
     output.textures_delta.clear();
     fn text(shape: &egui::Shape, result: &mut Vec<(String, egui::Rect)>) {
@@ -198,24 +197,23 @@ fn frame(
 
 #[test]
 fn inventory_bulk_apply_keeps_selection_and_options_and_ok_outlives_the_window() {
-    let (mut inv, prefs, agent) = fixture();
+    let (mut inv, _, agent) = fixture();
     let ctx = egui::Context::default();
     let mut st = InventoryUi::default();
     st.open_bulk_permissions(vec![Uuid::from_u128(8102)]);
     st.selection.insert(Uuid::from_u128(8103));
     for _ in 0..4 {
-        frame(&ctx, &mut inv, &mut st, &prefs, agent, vec![]);
+        frame(&ctx, &mut inv, &mut st, agent, vec![]);
     }
     for (label, closes) in [(aurora_i18n::tr!("common-apply"), false), (aurora_i18n::tr!("common-ok"), true)] {
-        let (labels, _) = frame(&ctx, &mut inv, &mut st, &prefs, agent, vec![]);
+        let (labels, _) = frame(&ctx, &mut inv, &mut st, agent, vec![]);
         let point = labels.iter().find(|(text, _)| text == label).unwrap().1.center();
-        frame(&ctx, &mut inv, &mut st, &prefs, agent, vec![egui::Event::PointerMoved(point)]);
+        frame(&ctx, &mut inv, &mut st, agent, vec![egui::Event::PointerMoved(point)]);
         for pressed in [true, false] {
             frame(
                 &ctx,
                 &mut inv,
                 &mut st,
-                &prefs,
                 agent,
                 vec![egui::Event::PointerButton {
                     pos: point,
@@ -228,20 +226,20 @@ fn inventory_bulk_apply_keeps_selection_and_options_and_ok_outlives_the_window()
         assert_eq!(st.bulk_permissions.open, !closes);
         assert!(st.bulk_permissions.job.is_some());
         st.bulk_permissions.options.types.fill(false);
-        let (_, actions) = frame(&ctx, &mut inv, &mut st, &prefs, agent, vec![]);
+        let (_, actions) = frame(&ctx, &mut inv, &mut st, agent, vec![]);
         let [InvAction::Edit(change)] = &actions[..] else {
             panic!("Expected one bulk mutation")
         };
         assert_eq!(targets(change), HashSet::from([Uuid::from_u128(8102)]));
         st.finish_bulk_permissions(None);
         st.bulk_permissions.options.types.fill(true);
-        frame(&ctx, &mut inv, &mut st, &prefs, agent, vec![]);
+        frame(&ctx, &mut inv, &mut st, agent, vec![]);
     }
 }
 
 #[test]
 fn inventory_bulk_large_plans_remain_incremental_and_recheck_protection_before_patching() {
-    let (mut inv, mut prefs, agent) = fixture();
+    let (mut inv, _, agent) = fixture();
     let template = inv.items[&Uuid::from_u128(8100)].clone();
     inv.add_items(
         (0..1000)
@@ -252,13 +250,10 @@ fn inventory_bulk_large_plans_remain_incremental_and_recheck_protection_before_p
             .collect(),
     );
     let mut plan = job(&[8000], BulkPerms::default());
-    assert!(plan.advance(&mut inv, &prefs, agent).unwrap().is_none());
+    assert!(plan.advance(&mut inv, agent).unwrap().is_none());
     assert!(plan.change.operations.is_empty(), "Discovery must precede every PATCH");
-    let excluded = Uuid::from_u128(100_000);
-    prefs.protected.insert(excluded);
-    let change = finish(&mut plan, &mut inv, &prefs, agent);
+    let change = finish(&mut plan, &mut inv, agent);
     assert!(change.operations.len() >= 999);
-    assert!(!targets(&change).contains(&excluded));
     let old = inv.items[&Uuid::from_u128(8100)].clone();
     let reply = rules::demo_mutate(&mut inv, agent, change).unwrap();
     inv.apply(reply.contents);
@@ -267,7 +262,7 @@ fn inventory_bulk_large_plans_remain_incremental_and_recheck_protection_before_p
         (updated.name.as_str(), updated.asset_id, updated.owner_mask),
         (old.name.as_str(), old.asset_id, old.owner_mask)
     );
-    let unchanged = finish(&mut job(&[8000], BulkPerms::default()), &mut inv, &prefs, agent);
+    let unchanged = finish(&mut job(&[8000], BulkPerms::default()), &mut inv, agent);
     assert!(unchanged.operations.is_empty(), "Applying the same permissions twice is a no-op");
 }
 
@@ -291,18 +286,18 @@ fn inventory_bulk_window_keeps_its_footer_inside_at_larger_text_sizes() {
         &[Vec2::new(360.0, 354.0)],
         aurora_i18n::tr!("common-cancel"),
         || {
-            let (inv, prefs, agent) = fixture();
+            let (inv, _, agent) = fixture();
             let mut st = InventoryUi::default();
             st.open_bulk_permissions(vec![Uuid::from_u128(8000)]);
-            (inv, prefs, agent, st)
+            (inv, agent, st)
         },
-        |(inv, prefs, agent, st), ctx, p| show(ctx, p, inv, st, prefs, *agent, &mut Vec::new()),
+        |(inv, agent, st), ctx, p| show(ctx, p, inv, st, *agent, &mut Vec::new()),
     );
 }
 
 #[test]
 fn inventory_bulk_object_permissions_carry_rez_overrides_and_preserve_existing_flags() {
-    let (mut inv, prefs, agent) = fixture();
+    let (mut inv, _, agent) = fixture();
     let id = Uuid::from_u128(8100);
     inv.items.get_mut(&id).unwrap().flags = 0x20;
     let options = BulkPerms {
@@ -310,7 +305,7 @@ fn inventory_bulk_object_permissions_carry_rez_overrides_and_preserve_existing_f
         everyone_copy: true,
         ..Default::default()
     };
-    let change = finish(&mut job(&[8100], options), &mut inv, &prefs, agent);
+    let change = finish(&mut job(&[8100], options), &mut inv, agent);
     let [Operation::Patch { body, .. }] = &change.operations[..] else {
         panic!()
     };
