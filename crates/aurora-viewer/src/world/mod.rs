@@ -351,6 +351,10 @@ pub struct World {
     bake_refreshes: HashMap<Uuid, u64>,
     shape_preview: Option<Vec<u8>>,
     preview_bakes: HashMap<usize, Uuid>,
+    /// Our own bakes as last sent (local_bakes.rs). The region does not send
+    /// our appearance back after a change (OpenSim sends it to the others),
+    /// so ours shows them as LLVOAvatarSelf shows its own composites.
+    local_bakes: HashMap<usize, Uuid>,
     shape_preview_generation: u64,
     pub alerts: VecDeque<String>,
     /// The announced restart of the agent's region (region_restart.rs).
@@ -704,6 +708,7 @@ impl World {
             bake_refreshes: HashMap::new(),
             shape_preview: None,
             preview_bakes: HashMap::new(),
+            local_bakes: HashMap::new(),
             shape_preview_generation: 0,
             alerts: VecDeque::new(),
             region_restart: Default::default(),
@@ -2103,6 +2108,15 @@ impl World {
 
     /// Publish one complete local editor generation without changing the
     /// authoritative appearance received from the server.
+    /// Show the bakes we just sent on our own avatar.
+    pub fn show_local_bakes(&mut self, bakes: HashMap<usize, Uuid>) {
+        if self.local_bakes != bakes {
+            self.local_bakes = bakes;
+            let agent = self.agent_id;
+            self.refresh_bakes(&agent);
+        }
+    }
+
     pub fn preview_bakes(&mut self, bakes: HashMap<usize, Uuid>) {
         if self.preview_bakes != bakes {
             self.preview_bakes = bakes;
@@ -2115,7 +2129,7 @@ impl World {
     pub fn bake_texture(&self, avatar_idx: usize, te_index: usize) -> Option<Uuid> {
         let o = self.objects.get(avatar_idx)?;
         if o.full_id == self.agent_id
-            && let Some(id) = self.preview_bakes.get(&te_index)
+            && let Some(id) = self.preview_bakes.get(&te_index).or_else(|| self.local_bakes.get(&te_index))
         {
             return Some(*id);
         }

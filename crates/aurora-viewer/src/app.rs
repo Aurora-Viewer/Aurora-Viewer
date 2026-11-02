@@ -8223,6 +8223,9 @@ impl App {
         for command in self.local_bakes.update(&self.world, &mut self.scene) {
             self.send(command);
         }
+        if let Some(bakes) = self.local_bakes.take_sent() {
+            self.world.show_local_bakes(bakes);
+        }
         self.local_bakes.apply(&mut self.scene, &mut gfx.renderer);
         self.update_blender_live(&mut gfx.renderer);
         let t_up = Instant::now();

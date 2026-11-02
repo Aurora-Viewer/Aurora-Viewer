@@ -79,6 +79,8 @@ pub struct LocalBakes {
     expected: HashSet<usize>,
     finished: Option<(Vec<u8>, f32)>,
     tries: u32,
+    /// Bakes sent, for our own avatar to show (`take_sent`).
+    sent: Option<HashMap<usize, Uuid>>,
 }
 
 impl LocalBakes {
@@ -279,6 +281,7 @@ impl LocalBakes {
         {
             commands.push(NetCommand::SetAppearance(Box::new(self.appearance(params.clone(), *height))));
             log::info!("local bake: appearance sent with {} bakes", self.baked.len());
+            self.sent = Some(self.baked.clone());
             self.job = None;
             self.finished = None;
             self.uploads.clear();
@@ -311,6 +314,11 @@ impl LocalBakes {
             texture_entry: aurora_prim::te::pack_texture_entry(&te, AVATAR_FACES),
             params,
         }
+    }
+
+    /// The bakes just sent, once: our own avatar shows them.
+    pub fn take_sent(&mut self) -> Option<HashMap<usize, Uuid>> {
+        self.sent.take()
     }
 
     /// Hold the textures the job reads, as the self preview does.
