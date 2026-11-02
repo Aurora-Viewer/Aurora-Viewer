@@ -944,6 +944,15 @@ pub struct TextureStreamer {
     background: texture_budget::Background,
     in_front: bool,
     minimized: bool,
+    /// The other viewers on this PC (instances.rs): the budget is shared
+    /// with them. And what the driver counts for this one, for them.
+    peers: crate::instances::Peers,
+    video_usage: u64,
+    /// The card as every program uses it (gpu_load.rs), its total memory
+    /// (read with the first budget pass), and the target eased on its rise.
+    gpu: crate::gpu_load::GpuLoad,
+    card_total: Option<u64>,
+    target_ramp: texture_budget::TargetRamp,
     last_budget: Instant,
     /// Passes of `recompute_wants` since the step last changed.
     passes_at_step: u32,
@@ -1228,6 +1237,11 @@ impl TextureStreamer {
             background: texture_budget::Background::default(),
             in_front: true,
             minimized: false,
+            peers: Default::default(),
+            video_usage: 0,
+            gpu: crate::gpu_load::GpuLoad::new(),
+            card_total: None,
+            target_ramp: Default::default(),
             last_budget: Instant::now(),
             passes_at_step: 0,
             reductions: Vec::new(),
@@ -2939,6 +2953,24 @@ impl TextureStreamer {
         self.minimized = minimized;
     }
 
+    /// The other viewers running now (instances.rs).
+    pub fn set_peers(&mut self, peers: &crate::instances::Peers) {
+        if self.peers != *peers {
+            self.peers = peers.clone();
+        }
+    }
+
+    /// Other programs keep the card busy (gpu_load.rs).
+    pub fn gpu_busy_elsewhere(&self) -> bool {
+        self.gpu.get().busy_elsewhere()
+    }
+
+    /// Bytes of video memory the driver counts for this viewer, as of the
+    /// last budget pass (what the other viewers are told).
+    pub fn video_usage(&self) -> u64 {
+        self.video_usage
+    }
+
     /// The window is behind and the viewer was past the driver's budget
     /// there: the 3D drawing pauses (texture_budget::Background::paused).
     pub fn drawing_paused(&self) -> bool {
@@ -2954,7 +2986,28 @@ impl TextureStreamer {
         self.last_budget = now;
         let (used, live) = (renderer.textures.page_bytes(), renderer.textures.bytes());
         let video = renderer.video_memory.read(&renderer.device);
-        let target = texture_budget::forced_target().unwrap_or_else(|| texture_budget::texture_target(setting, used, video));
+        self.video_usage = video.map_or(0, |v| v.usage);
+        if self.card_total.is_none()
+            && let Some((luid, total)) = renderer.video_memory.card()
+        {
+            self.card_total = Some(total);
+            self.gpu.start(luid);
+        }
+        // (the viewers on this PC share the budget, instances.rs, and the
+        // card is shared with every program that uses it, gpu_load.rs;
+        // "crowded" below stays on the driver's own figure)
+        let shared = video.map(|v| aurora_render::vram::VideoMemory {
+            budget: crate::instances::share_cap(v.budget, &self.peers),
+            ..v
+        });
+        let over = match (self.card_total, self.gpu.get().adapter_used) {
+            (Some(total), Some(used)) => crate::gpu_load::oversubscribed(total, used, self.video_usage),
+            _ => 0,
+        };
+        let target = texture_budget::forced_target().unwrap_or_else(|| {
+            let target = texture_budget::texture_target(setting, used, shared);
+            self.target_ramp.update(texture_budget::relieve(target, used, over), now)
+        });
         let before = self.pressure.step();
         // a window behind for a minute or minimised for a second gives its
         // textures back, at once while the memory is short, and takes up

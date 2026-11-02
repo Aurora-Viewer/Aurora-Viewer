@@ -153,6 +153,46 @@ pub fn texture_target(setting: u64, pages: u64, video: Option<VideoMemory>) -> u
     setting.min(process.saturating_sub(others)).max(MIN_TEXTURE_BYTES)
 }
 
+/// The target with the card oversubscribed by `over` bytes (gpu_load.rs):
+/// the pages hold that much less, no less than the minimum. Nothing while
+/// the programs fit.
+pub fn relieve(target: u64, pages: u64, over: u64) -> u64 {
+    if over == 0 {
+        return target;
+    }
+    target.min(pages.saturating_sub(over)).max(MIN_TEXTURE_BYTES)
+}
+
+/// Most the texture target rises in a second, in bytes. A drop counts at
+/// once, a rise takes this long: when another program frees the card the
+/// driver's budget jumps by gigabytes, and a target that follows lets
+/// thousands of lowered textures load again together, in the second the
+/// card is shared with that program. A tester's device was lost 1 s after
+/// the target went from 1.6 to 4.4 GB (budget 3.9 -> 7.3 GB, 2.9 GB used).
+const RISE_PER_SECOND: u64 = 256 * MB;
+
+/// The target given to the pressure: down at once, up by
+/// [`RISE_PER_SECOND`] at most.
+#[derive(Debug, Default)]
+pub struct TargetRamp {
+    last: Option<(Instant, u64)>,
+}
+
+impl TargetRamp {
+    pub fn update(&mut self, target: u64, now: Instant) -> u64 {
+        let eased = match self.last {
+            Some((_, last)) if target <= last => target,
+            Some((at, last)) => {
+                let rise = (RISE_PER_SECOND as f64 * now.saturating_duration_since(at).as_secs_f64()) as u64;
+                target.min(last.saturating_add(rise))
+            }
+            None => target,
+        };
+        self.last = Some((now, eased));
+        eased
+    }
+}
+
 /// What the pressure is decided on, a few times a second.
 #[derive(Clone, Copy, Debug)]
 pub struct Reading {
@@ -375,6 +415,32 @@ mod tests {
         // the driver behind the counters (a buffer just created): the live
         // resources at least
         assert_eq!(texture_target(6 * GB, 3 * GB, v(4 * GB)), 6 * GB - GB / 2 - GB);
+    }
+
+    #[test]
+    fn an_oversubscribed_card_takes_its_excess_from_the_pages() {
+        assert_eq!(relieve(4000 * MB, 3000 * MB, 0), 4000 * MB);
+        assert_eq!(relieve(4000 * MB, 3000 * MB, 500 * MB), 2500 * MB);
+        // the target when it is lower already, the minimum when little is left
+        assert_eq!(relieve(2000 * MB, 3000 * MB, 500 * MB), 2000 * MB);
+        assert_eq!(relieve(4000 * MB, 300 * MB, 500 * MB), 256 * MB);
+    }
+
+    #[test]
+    fn the_target_drops_at_once_and_rises_slowly() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut r = TargetRamp::default();
+        // the first figure is taken as it is
+        assert_eq!(r.update(4400 * MB, t0), 4400 * MB);
+        assert_eq!(r.update(1600 * MB, t0 + s(1)), 1600 * MB);
+        // the budget jumps: 256 MB a second
+        assert_eq!(r.update(4400 * MB, t0 + s(2)), 1600 * MB + 256 * MB);
+        assert_eq!(r.update(4400 * MB, t0 + s(4)), 1856 * MB + 512 * MB);
+        // a dip counts at once and the climb starts from it
+        assert_eq!(r.update(2000 * MB, t0 + s(5)), 2000 * MB);
+        // never past the target itself
+        assert_eq!(r.update(2100 * MB, t0 + s(60)), 2100 * MB);
     }
 
     #[test]

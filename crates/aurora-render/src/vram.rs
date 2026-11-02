@@ -157,6 +157,45 @@ impl VideoMemoryProbe {
         Some(VideoMemory { budget, usage, allocated })
     }
 
+    /// The card's identity for the system's adapter-wide counters (the LUID
+    /// Windows names its adapters by, `high << 32 | low`) and the size of its
+    /// largest device-local heap; None without the Vulkan 1.1 query.
+    #[cfg(not(target_os = "macos"))]
+    pub fn card(&self) -> Option<(u64, u64)> {
+        // SAFETY: the hal adapter is only borrowed for this call; the queries
+        // read properties and change no state.
+        let hal = unsafe { self.adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
+        let shared = hal.shared_instance();
+        if shared.instance_api_version() < vk::API_VERSION_1_1 {
+            return None;
+        }
+        let mut id = vk::PhysicalDeviceIDProperties::default();
+        let mut props = vk::PhysicalDeviceProperties2::default().push_next(&mut id);
+        // SAFETY: as above.
+        unsafe {
+            shared
+                .raw_instance()
+                .get_physical_device_properties2(hal.raw_physical_device(), &mut props);
+        }
+        if id.device_luid_valid != vk::TRUE {
+            return None;
+        }
+        // SAFETY: as above.
+        let memory = unsafe {
+            shared
+                .raw_instance()
+                .get_physical_device_memory_properties(hal.raw_physical_device())
+        };
+        let total = memory.memory_heaps_as_slice().get(self.heap?)?.size;
+        Some((u64::from_le_bytes(id.device_luid), total))
+    }
+
+    /// Metal has no adapter-wide counters to name.
+    #[cfg(target_os = "macos")]
+    pub fn card(&self) -> Option<(u64, u64)> {
+        None
+    }
+
     /// The largest device-local heap (the card's own memory on a discrete
     /// GPU, the shared memory on an integrated one), when the extension and
     /// the query it extends are there.
