@@ -1,5 +1,13 @@
 # Aurora Viewer architecture
 
+`world/inventory/system.rs` indexes system-folder lookups for inventory and
+Appearance by inventory generation and root identity. Root-listed duplicates
+retain their smallest UUID; incomplete listings retain the previous fallback.
+All folder types, including absent ones, share one rebuild instead of repeatedly
+walking a large inventory root while drawing visible rows (#1963).
+`ui/appearance/perf_tests.rs` provides an ignored offline benchmark for the three
+Appearance tabs with thousands of outfits or 200,000 ordinary inventory items.
+
 AO account settings retain the last animation link/group UUID per state or track
 folder (`ao::Account::animations`). `ao/runtime.rs` restores cursor positions by
 identity and reports changed selections; `app/ao.rs` saves them through the existing
@@ -2075,7 +2083,10 @@ The first account entering the world after the update supplies its former
 per-account layout; an existing shared layout always wins. Legacy layouts
 survive pre-login saves until migration. Without an override the skin's live
 bottom layout remains authoritative. Edits save only on release or an
-explicit action, and an empty override stays empty. `ui/bars/side.rs` draws
+explicit action, and an empty override stays empty. The empty Aurora dock
+is drawn only during an unlocked toolbar drag, matching
+LLToolBarView::draw; nearby chat retains its independent island (#1631).
+`ui/bars/side.rs` draws
 the left and right toolbars (glass islands with the islands, full-height
 panels with Firestorm's bars) and the windows' room beside them;
 `ui/bars/sizing.rs` lays out a toolbar's buttons by mode and layout style on
