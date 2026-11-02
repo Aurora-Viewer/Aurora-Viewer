@@ -133,6 +133,12 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // Preferences › Privacy: online visibility, offline IMs by e-mail
     // (LLAgent::sendAgentUserInfoRequest / sendAgentUpdateUserInfo)
     "UserInfo",
+    // OpenSim's flag for PBR terrain, not a capability: only a viewer that
+    // asks for it gets the region's terrain materials (TerrainPBR1-4) in
+    // RegionHandshake's TerrainDetail0-3, the others get the legacy terrain
+    // textures. Firestorm asks for it everywhere (FIRE-34104,
+    // LLViewerRegionImpl::buildCapabilityNames); other grids ignore it.
+    "VETPBR",
     "ViewerAsset",
     "ViewerStats",
     "VoiceSignalingRequest",
@@ -225,6 +231,12 @@ mod language_tests {
         ] {
             assert!(REQUESTED_CAPS.contains(&cap), "{cap}");
         }
+    }
+
+    #[test]
+    fn opensim_pbr_terrain_is_asked_for() {
+        // OpenSim sends PBR terrain materials only to viewers asking for it
+        assert!(REQUESTED_CAPS.contains(&"VETPBR"));
     }
 
     #[test]
