@@ -15,9 +15,12 @@ on:
   push:
     branches: [main]
 
+# a push to main is never cancelled (as in macos.yml): when the cache key
+# changed, its jobs build the cache from nothing for about ten minutes, and
+# the next merge would otherwise cancel them before they save it
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 permissions:
   contents: read
