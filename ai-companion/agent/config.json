@@ -1,0 +1,9 @@
+{
+  "name": "Mira",
+  "model": "qwen3-vl:4b-instruct",
+  "ollama_url": "http://127.0.0.1:11434/api/chat",
+  "seconds_between_steps": 15,
+  "screenshot": true,
+  "allow_walking": false,
+  "allow_chat": false
+}

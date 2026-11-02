@@ -25,6 +25,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 mod about;
+mod ai_control;
 mod animation_explorer;
 mod ao;
 mod app_links;
@@ -236,6 +237,7 @@ pub struct App {
     logo: Option<egui::TextureHandle>,
     logo_rx: Option<crossbeam_channel::Receiver<LogoData>>,
     world: World,
+    ai_bridge: Option<ai_control::Bridge>,
     bridge_runtime: crate::world::bridge::Bridge,
     native_anchor: crate::movement::movelock::Controller,
     anchor_stands: crate::ao::anchor::StandCheck,
@@ -1056,6 +1058,7 @@ impl App {
                 w.cache_dir = Some(cache_root);
                 w
             },
+            ai_bridge: ai_control::Bridge::start(),
             bridge_runtime: Default::default(),
             native_anchor: Default::default(),
             anchor_stands: Default::default(),
@@ -7711,6 +7714,7 @@ impl App {
         // ---- agent / camera
         let typing = self.egui_ctx.egui_wants_keyboard_input();
         self.update_move_input(typing, dt);
+        self.poll_ai_bridge();
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_GROUNDING")
             && let Some(input) = crate::demo::grounding::scripted_input(&mode, self.frame_count)
@@ -7718,6 +7722,10 @@ impl App {
             self.input = input;
         }
         self.update_autopilot(dt);
+        // Apply AI movement to the REAL avatar controls, not animation-only inputs.
+        if let Some(bridge) = self.ai_bridge.as_ref() {
+            bridge.apply_move_input(&mut self.input);
+        }
         if self.in_world() {
             self.world.auto_land(&self.input);
         }

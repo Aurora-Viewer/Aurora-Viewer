@@ -1,0 +1,75 @@
+name: Aurora AI - Windows build
+
+# CI builds the AI feature branch after every push, independently of main.
+on:
+  push:
+    branches:
+      - feature/autonomous-avatar-ai
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aurora-ai-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Rust stable
+        shell: pwsh
+        run: |
+          rustup update stable --no-self-update
+
+      - name: Rust dependency cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: aurora-ai-windows
+
+      - name: Check Python source and tests
+        shell: pwsh
+        run: |
+          python -m compileall -q ai-companion/agent
+          Push-Location ai-companion/agent
+          try {
+            python -m unittest discover -s tests -v
+            if ($LASTEXITCODE -ne 0) { throw 'Python tests failed' }
+          } finally { Pop-Location }
+
+      - name: Build patched Aurora Viewer (release)
+        shell: pwsh
+        run: |
+          cargo build --release --locked -p aurora-viewer
+          if ($LASTEXITCODE -ne 0) { throw 'Rust build failed' }
+
+      - name: Package viewer and agent
+        shell: pwsh
+        run: |
+          $folder = 'Aurora-AI-Viewer-windows-x64'
+          ./scripts/package.ps1 -Exe target/release/aurora-viewer.exe -Out $folder
+          if ($LASTEXITCODE -ne 0) { throw 'Aurora packaging failed' }
+          Copy-Item -LiteralPath 'ai-companion' -Destination (Join-Path $folder 'ai-companion') -Recurse
+          # The launcher is meant to be run from inside the ai-companion folder.
+          Compress-Archive -Path $folder -DestinationPath "$folder.zip" -Force
+          $hash = (Get-FileHash -LiteralPath "$folder.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $folder.zip" | Set-Content -LiteralPath "$folder.zip.sha256" -Encoding utf8NoBOM
+
+      - name: Upload ready-to-download Windows build
+        uses: actions/upload-artifact@v7
+        with:
+          name: Aurora-AI-Viewer-windows-x64
+          path: |
+            Aurora-AI-Viewer-windows-x64.zip
+            Aurora-AI-Viewer-windows-x64.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
