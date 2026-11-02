@@ -12,9 +12,12 @@
 //! encoding run on the scene's workers. A change of what is worn starts
 //! again, after a moment for a burst of changes to settle.
 //!
-//! Not done: the Legacy Viewer first asks the simulator for the bakes it
-//! keeps (AgentCachedTexture) and only uploads those it lacks; this bakes
-//! again at each login.
+//! Before baking, the region is asked for the bakes it keeps for what is
+//! worn (AgentCachedTexture, LLAgentWearables::queryWearableCache and
+//! LLAgent::processAgentCachedTextureResponse): OpenSim keeps each face's
+//! cache key with the appearance, across logins, so a login in the same
+//! outfit, or a change of one layer, only composes and uploads what the
+//! region lacks.
 
 use crate::scene::Scene;
 use crate::scene::avatar::{IMG_DEFAULT_AVATAR, IMG_INVISIBLE};
@@ -41,6 +44,9 @@ const UPLOAD_TRIES: u32 = 3;
 const WEARABLE_TRIES: u32 = 3;
 /// Least time between two rebakes the region or the outfit sync asks for.
 const REBAKE_COOLDOWN: Duration = Duration::from_secs(30);
+/// How long the region may take to say which bakes it keeps, before
+/// everything is baked anyway.
+const QUERY_WAIT: Duration = Duration::from_secs(5);
 /// Wearable types, as `bake.rs` numbers them.
 const SKIRT: u8 = 12;
 
@@ -91,13 +97,23 @@ pub struct LocalBakes {
     /// that keeps asking gets one rebake per bake sent, 30 s apart at most.
     last_rebake: Option<Instant>,
     rebake_pending: bool,
+    /// The outfit last sent: a server bake asked for it is not redone.
+    sent_inputs: Option<Vec<(Uuid, Uuid)>>,
+    /// Whether the region was asked for this outfit's bakes, the question
+    /// still open (its serial and when it went), and what it keeps: face ->
+    /// texture.
+    queried: bool,
+    query: Option<(i32, Instant)>,
+    serial: i32,
+    cached: HashMap<usize, Uuid>,
 }
 
 impl LocalBakes {
-    /// Bake again (RebakeAvatarTextures, or a bake the server was asked
-    /// for), once per bake sent and [`REBAKE_COOLDOWN`] apart: a region that
-    /// keeps asking, for a bake it keeps refusing, makes no endless loop of
-    /// bakes and uploads. False when the request is let go.
+    /// The region lacks one of our bakes (RebakeAvatarTextures): bake
+    /// everything again, without asking it what it keeps. Once per bake
+    /// sent and [`REBAKE_COOLDOWN`] apart: a region that keeps asking, for a
+    /// bake it keeps refusing, makes no endless loop of bakes and uploads.
+    /// False when the request is let go.
     pub fn rebake(&mut self, now: Instant) -> bool {
         if self.rebake_pending || self.last_rebake.is_some_and(|at| now.duration_since(at) < REBAKE_COOLDOWN) {
             log::info!("local bake: rebake let go, one already asked for since the last bake sent");
@@ -105,9 +121,44 @@ impl LocalBakes {
         }
         self.rebake_pending = true;
         self.last_rebake = Some(now);
+        self.restart();
+        self.queried = true;
         self.dirty = Some(now - SETTLE);
-        self.tries = 0;
         true
+    }
+
+    /// The server is asked to bake (RequestServerAppearance): nothing to do
+    /// when this outfit is sent or on its way, which baked it twice at
+    /// each login.
+    pub fn refresh(&mut self) {
+        if self.dirty.is_some() || self.job.is_some() || self.sent_inputs.as_ref() == Some(&self.inputs) {
+            return;
+        }
+        self.restart();
+        self.dirty = Some(Instant::now() - SETTLE);
+    }
+
+    /// A new round: ask the region again.
+    fn restart(&mut self) {
+        self.tries = 0;
+        self.queried = false;
+        self.query = None;
+        self.cached.clear();
+    }
+
+    /// AgentCachedTextureResponse: the region's bakes for the faces asked,
+    /// a nil texture for those it lacks.
+    pub fn cached_answer(&mut self, serial: i32, faces: &[(u8, Uuid)]) {
+        if self.query.is_none_or(|(asked, _)| asked != serial) {
+            return;
+        }
+        self.query = None;
+        self.cached = faces
+            .iter()
+            .filter(|(_, texture)| !texture.is_nil())
+            .map(|(te, texture)| (usize::from(*te), *texture))
+            .collect();
+        log::info!("local bake: the region keeps {} of {} bakes", self.cached.len(), faces.len());
     }
 
     pub fn loaded(&mut self, item: Uuid, asset: Uuid, result: &Result<Vec<u8>, String>) {
@@ -210,8 +261,8 @@ impl LocalBakes {
         if self.inputs != inputs {
             self.inputs = inputs;
             self.cancel();
+            self.restart();
             self.dirty = Some(Instant::now());
-            self.tries = 0;
         }
         self.receive(&mut commands);
         let Some(changed) = self.dirty else {
@@ -244,7 +295,38 @@ impl LocalBakes {
             .collect();
         self.worn_kinds = pairs.iter().map(|(asset, value)| (value.kind, *asset)).collect();
         let values: Vec<Wearable> = pairs.into_iter().map(|(_, value)| value).collect();
-        // the textures the bakes read, held and ready
+        // Legacy rules: no skirt bake without a skirt; the bakes of bakes on
+        // mesh only with a universal (LLAgent::sendAgentSetAppearance)
+        let skirt = values.iter().any(|value| value.kind == SKIRT);
+        let universal = values.iter().any(|value| value.kind == UNIVERSAL);
+        let expected: HashSet<usize> = BAKES
+            .iter()
+            .map(|b| usize::from(b.te))
+            .filter(|te| (*te != 19 || skirt) && (*te < 40 || universal))
+            .collect();
+        if !self.queried {
+            self.queried = true;
+            let keys: Vec<(Uuid, u8)> = BAKES
+                .iter()
+                .filter(|b| expected.contains(&usize::from(b.te)))
+                .filter_map(|b| cache_id(b, |kind| self.worn(kind)).map(|id| (id, b.te)))
+                .collect();
+            if !keys.is_empty() {
+                self.serial = self.serial.wrapping_add(1);
+                self.query = Some((self.serial, Instant::now()));
+                commands.push(NetCommand::QueryCachedBakes { serial: self.serial, keys });
+            }
+        }
+        if let Some((_, asked)) = self.query {
+            if asked.elapsed() < QUERY_WAIT {
+                return commands;
+            }
+            log::warn!("local bake: the region did not say which bakes it keeps");
+            self.query = None;
+        }
+        let compose: HashSet<usize> = expected.iter().filter(|te| !self.cached.contains_key(te)).copied().collect();
+        // the textures the bakes read, held and ready; none when the region
+        // keeps every bake
         let mut sources = HashMap::new();
         let mut ready = true;
         self.wanted.clear();
@@ -252,6 +334,7 @@ impl LocalBakes {
             .iter()
             .flat_map(|value| value.textures.values())
             .copied()
+            .filter(|_| !compose.is_empty())
             .collect::<HashSet<_>>()
         {
             if texture.is_nil() || texture == IMG_DEFAULT_AVATAR || texture == IMG_INVISIBLE || texture == aurora_prim::te::BLANK_TEXTURE {
@@ -266,25 +349,27 @@ impl LocalBakes {
         if !ready || self.job.is_some() || changed.elapsed() < SETTLE {
             return commands;
         }
-        // Legacy rules: no skirt bake without a skirt; the bakes of bakes on
-        // mesh only with a universal (LLAgent::sendAgentSetAppearance)
-        let skirt = values.iter().any(|value| value.kind == SKIRT);
-        let universal = values.iter().any(|value| value.kind == UNIVERSAL);
-        self.expected = BAKES
+        self.baked = self
+            .cached
             .iter()
-            .map(|b| usize::from(b.te))
-            .filter(|te| (*te != 19 || skirt) && (*te < 40 || universal))
+            .filter(|(te, _)| expected.contains(te))
+            .map(|(te, texture)| (*te, *texture))
             .collect();
-        let expected = self.expected.clone();
+        self.expected = expected;
         let lib = world.avatar_lib.clone();
         let token = self.generation.clone();
         let generation = token.load(Ordering::Relaxed);
         let (tx, rx) = crossbeam_channel::unbounded();
         self.job = Some(rx);
         self.dirty = None;
-        log::info!("local bake: {} wearables into {} bakes", values.len(), expected.len());
+        log::info!(
+            "local bake: {} wearables into {} bakes, {} kept by the region",
+            values.len(),
+            self.expected.len(),
+            self.baked.len()
+        );
         scene.jobs.execute(move || {
-            if let Err(reason) = compose_all(&token, generation, &lib, values, sources, &expected, &tx) {
+            if let Err(reason) = compose_all(&token, generation, &lib, values, sources, &compose, &tx) {
                 let _ = tx.send(Reply::Failed(reason));
             }
         });
@@ -333,6 +418,7 @@ impl LocalBakes {
             self.rebake_pending = false;
             // the bakes are out: their textures need not stay at top priority
             self.wanted.clear();
+            self.sent_inputs = Some(self.inputs.clone());
             self.job = None;
             self.finished = None;
             self.uploads.clear();
@@ -346,17 +432,10 @@ impl LocalBakes {
         for (i, face) in te.faces.iter_mut().enumerate().take(AVATAR_FACES) {
             face.texture = self.baked.get(&i).copied().unwrap_or(IMG_DEFAULT_AVATAR);
         }
-        let worn = |kind: u8| -> Vec<Uuid> {
-            self.worn_kinds
-                .iter()
-                .filter(|(k, _)| *k == kind)
-                .map(|(_, asset)| *asset)
-                .collect()
-        };
         let cache = BAKES
             .iter()
             .filter(|b| self.baked.contains_key(&usize::from(b.te)))
-            .filter_map(|b| cache_id(b, worn).map(|id| (id, b.te)))
+            .filter_map(|b| cache_id(b, |kind| self.worn(kind)).map(|id| (id, b.te)))
             .collect();
         Appearance {
             // DEFAULT_AGENT_DEPTH, DEFAULT_AGENT_WIDTH (indra_constants.h)
@@ -365,6 +444,15 @@ impl LocalBakes {
             texture_entry: aurora_prim::te::pack_texture_entry(&te, AVATAR_FACES),
             params,
         }
+    }
+
+    /// The worn assets of one wearable type, in layer order.
+    fn worn(&self, kind: u8) -> Vec<Uuid> {
+        self.worn_kinds
+            .iter()
+            .filter(|(k, _)| *k == kind)
+            .map(|(_, asset)| *asset)
+            .collect()
     }
 
     /// The bakes just sent, once: our own avatar shows them.
@@ -387,15 +475,15 @@ impl LocalBakes {
     }
 }
 
-/// The job: every expected bake composed and encoded, then the visual
-/// parameters and the body's height from the same wearables.
+/// The job: every bake the region lacks composed and encoded, then the
+/// visual parameters and the body's height from the same wearables.
 fn compose_all(
     token: &AtomicU64,
     generation: u64,
     lib: &crate::scene::avatar::AvatarLibrary,
     values: Vec<Wearable>,
     sources: HashMap<Uuid, crate::scene::textures::PreviewSource>,
-    expected: &HashSet<usize>,
+    compose: &HashSet<usize>,
     tx: &crossbeam_channel::Sender<Reply>,
 ) -> Result<(), String> {
     let defs = bake::definitions()?;
@@ -435,7 +523,7 @@ fn compose_all(
             rgba: vec![0; 4].into(),
         }),
     );
-    for region in defs.regions.iter().filter(|region| expected.contains(&region.te)) {
+    for region in defs.regions.iter().filter(|region| compose.contains(&region.te)) {
         if token.load(Ordering::Relaxed) != generation {
             return Ok(());
         }
@@ -555,6 +643,45 @@ mod tests {
         }
         assert_eq!((a.size.x, a.size.y, a.size.z), (0.45, 0.60, 1.8));
         assert_eq!(a.params, [1, 2, 3]);
+    }
+
+    #[test]
+    fn only_the_answer_to_the_open_question_counts() {
+        let mut bakes = LocalBakes {
+            query: Some((2, Instant::now())),
+            ..Default::default()
+        };
+        bakes.cached_answer(1, &[(8, Uuid::from_u128(80))]);
+        assert!(bakes.cached.is_empty() && bakes.query.is_some(), "an older question's answer");
+        bakes.cached_answer(2, &[(8, Uuid::from_u128(80)), (9, Uuid::nil())]);
+        assert_eq!(bakes.cached, HashMap::from([(8, Uuid::from_u128(80))]), "nil: the region lacks it");
+        assert!(bakes.query.is_none());
+    }
+
+    #[test]
+    fn a_server_bake_of_the_outfit_sent_is_not_redone() {
+        let outfit = vec![(Uuid::from_u128(1), Uuid::from_u128(2))];
+        let mut bakes = LocalBakes {
+            inputs: outfit.clone(),
+            sent_inputs: Some(outfit),
+            ..Default::default()
+        };
+        bakes.refresh();
+        assert!(bakes.dirty.is_none());
+        // another outfit than the one sent is baked, asking the region first
+        bakes.inputs.push((Uuid::from_u128(3), Uuid::from_u128(4)));
+        bakes.refresh();
+        assert!(bakes.dirty.is_some() && !bakes.queried);
+    }
+
+    #[test]
+    fn a_bake_the_region_lacks_is_redone_without_asking() {
+        let mut bakes = LocalBakes {
+            cached: HashMap::from([(8, Uuid::from_u128(80))]),
+            ..Default::default()
+        };
+        assert!(bakes.rebake(Instant::now()));
+        assert!(bakes.dirty.is_some() && bakes.queried && bakes.cached.is_empty());
     }
 
     #[test]

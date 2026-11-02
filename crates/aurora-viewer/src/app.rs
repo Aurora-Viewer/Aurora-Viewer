@@ -1598,7 +1598,7 @@ impl App {
         if let NetCommand::RequestServerAppearance { cof_version } = cmd
             && self.world.bakes_locally()
         {
-            self.local_bakes.rebake(Instant::now());
+            self.local_bakes.refresh();
             self.world.apply(NetEvent::AppearanceRequestResult {
                 cof_version,
                 success: true,
@@ -3030,6 +3030,10 @@ impl App {
         }
         if let NetEvent::BakeUploaded { request, result } = &ev {
             self.local_bakes.uploaded(*request, result);
+            return;
+        }
+        if let NetEvent::CachedBakes { serial, faces } = &ev {
+            self.local_bakes.cached_answer(*serial, faces);
             return;
         }
         if let NetEvent::RebakeRequested(texture) = &ev {
