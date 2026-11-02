@@ -7581,6 +7581,7 @@ contents-count = { $count ->
     [one] Contents ({ $count } item)
    *[other] Contents ({ $count } items)
     }
+contents-root-drag-tip = Drag onto an inventory folder to take every item of the object into it
 face-count = { $count ->
     [one] { $count } face
    *[other] { $count } faces

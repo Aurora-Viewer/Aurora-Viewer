@@ -7583,6 +7583,7 @@ contents-count = { $count ->
     [one] Contenus ({ $count } élément)
    *[other] Contenus ({ $count } éléments)
     }
+contents-root-drag-tip = Glissez sur un dossier de l'inventaire pour y placer tous les éléments de l'objet
 face-count = { $count ->
     [one] { $count } face
    *[other] { $count } faces
