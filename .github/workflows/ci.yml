@@ -215,6 +215,20 @@ jobs:
         with:
           fetch-depth: 0
           filter: blob:none
+      # self-hosted: the tools the steps below call, named in one clear
+      # error rather than a bare "command not found" midway. Windows
+      # PowerShell, the one shell every Windows machine has; a service sees
+      # a new system PATH only after a reboot
+      - name: Tools of the self-hosted runner
+        if: runner.environment == 'self-hosted'
+        shell: powershell
+        run: |
+          $missing = @('bash', 'git', 'pwsh', 'cargo', 'rustup') | Where-Object { -not (Get-Command $_ -ErrorAction SilentlyContinue) }
+          if ($missing) {
+            Write-Output "::error::self-hosted runner $env:RUNNER_NAME lacks: $($missing -join ', ') (PATH seen by the service: $env:PATH)"
+            exit 1
+          }
+          (Get-Command bash).Source
       - name: Code changed?
         id: changes
         uses: ./.github/actions/code-changed
