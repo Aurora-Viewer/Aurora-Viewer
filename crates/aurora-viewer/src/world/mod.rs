@@ -3669,7 +3669,10 @@ impl World {
                 data,
             } => {
                 self.parcel_visibility.invalidate(handle);
-                self.ensure_region(handle, size);
+                // handle 0: a simulator we have no circuit to; no region for it
+                if handle != 0 {
+                    self.ensure_region(handle, size);
+                }
                 self.map.apply_overlay(handle, size, sequence, &data);
                 None
             }
