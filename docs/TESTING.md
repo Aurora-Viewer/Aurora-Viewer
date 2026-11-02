@@ -4680,6 +4680,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REGION=overview\|manage\|people[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
 | `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
+| `AURORA_DEMO_GROUP_REGION=1\|still` | Group titles window with region rules; `1` teleports to a region with its own title and back |
 | `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set", "Block particles" and calling card |
 | `AURORA_DEMO_LAND_MODERATION=menu\|none\|freeze\|eject\|eject-ban` | "Freeze" and "Eject" of a resident on our land |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
@@ -7426,6 +7427,22 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   then the guest's view) and, in Preferences › Aurora › Profiles, the
   classic window with its "Members and roles", "Notices", "Land and L$"
   and "Experiences" sections.
+- **`AURORA_DEMO_GROUP_REGION=1|still`**: the Group titles window (the
+  toolbar's Group titles command, Contacts › Groups › Titles) opens at frame
+  600, with every title of the three demo groups and three region rules:
+  the demo region wears "Aurora Builders" › Builder (already worn at the
+  start: the log says `region group title: AlreadyWorn`), "Boreal Lagoon"
+  wears "Northern Wolves" › Officer, and "Pine Grove" a group left since
+  (listed as "group left, ignored"). The demo server answers every group's
+  titles, keeps the title chosen in each and names the active group with
+  it. `1`: at frame 900 the avatar teleports to "Boreal Lagoon": the log
+  shows `demo group region: GroupTitleUpdate …` then `ActivateGroup …`,
+  and the name tag and the window show Officer of Northern Wolves; at
+  frame 1500 it is back in the demo region, wearing Builder again.
+  `still`: no teleport, to try the window (This region, Type region with
+  a demo map name such as "sandbox" in English, "sablière" in French, kept
+  as the map spells it, or a made-up name: "could not be found" after
+  10 s; Clear region, the rules' pencil and trash, the default title).
 - **`AURORA_DEMO_GROUP_CREATE=form|cost|refused|limit|created[:classic]`**:
   "Create a group", as from the "Create" button of People › Groups, once
   the group list is in. The login of these scenarios gives a Base

@@ -80,6 +80,10 @@ pub struct GroupChats {
     /// Our active group (AgentDataUpdate; nil = none) and its title.
     pub active: Uuid,
     pub active_title: String,
+    /// The group list (AgentGroupDataUpdate) and the active group
+    /// (AgentDataUpdate) arrived this session.
+    pub list_received: bool,
+    pub active_received: bool,
     /// Pinned groups, listed first (FSFavoriteGroups).
     pub favorites: HashSet<Uuid>,
     favorites_path: Option<PathBuf>,
@@ -479,12 +483,14 @@ impl World {
                         None => self.groups.groups.push(g),
                     }
                 }
+                self.groups.list_received = true;
                 log::info!("groups: {}", self.groups.groups.len());
             }
             NetEvent::ActiveGroup { id, name, title } => {
                 log::info!("active group: {}", if id.is_nil() { "none" } else { &name });
                 self.groups.active = id;
                 self.groups.active_title = title;
+                self.groups.active_received = true;
             }
             NetEvent::GroupDropped(id) => {
                 self.groups.groups.retain(|g| g.id != id);
