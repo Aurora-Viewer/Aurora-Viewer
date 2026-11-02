@@ -92,6 +92,7 @@ pub mod social;
 pub mod sound_parcels;
 pub mod staff;
 pub mod status;
+pub mod system_messages;
 pub mod teleport_invites;
 pub mod temp_attachments;
 pub mod terrain;
@@ -3943,6 +3944,12 @@ impl World {
             }
             return;
         }
+        // the grid's own message: a notice, not a line from "System"
+        // (system_messages.rs)
+        if system_messages::is_system_im(&im) {
+            self.on_system_im(&im.message);
+            return;
+        }
         // dialog 19 = MessageFromObject
         if self.object_im_filtered(&im) {
             return;
@@ -3960,8 +3967,7 @@ impl World {
             im.message
         };
         // an object's message by FSFlashOnObjectIM, told like an IM by its
-        // name (GrowlManager::onNearbyChatMessage); a message without a
-        // sender ("System") is a SystemMessage
+        // name (GrowlManager::onNearbyChatMessage)
         let cause = if im.dialog == 19 {
             attention::Cause::ObjectIm
         } else {
