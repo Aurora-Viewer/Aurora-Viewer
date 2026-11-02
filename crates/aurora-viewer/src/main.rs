@@ -56,6 +56,7 @@ mod keywords;
 mod link_preview;
 mod link_trust;
 mod links;
+mod local_bakes;
 mod logging;
 mod login_accounts;
 mod login_places;

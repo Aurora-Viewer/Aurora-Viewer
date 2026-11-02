@@ -357,6 +357,26 @@ impl ShapeParams {
             .collect()
     }
 
+    /// The transmitted values of worn wearables' parameters (the others at
+    /// their default), quantised as LLAgent::sendAgentSetAppearance sends
+    /// them: F32_to_U8 truncates (llquantize.h), where `values_with` rounds.
+    pub fn transmit_values(&self, weights: &BTreeMap<i32, f32>) -> Vec<u8> {
+        self.transmitted
+            .iter()
+            .map(|id| {
+                let Some(p) = self.params.get(id) else {
+                    return 0;
+                };
+                let w = weights.get(id).copied().filter(|w| w.is_finite()).unwrap_or(p.default);
+                if p.max > p.min {
+                    ((w.clamp(p.min, p.max) - p.min) / (p.max - p.min) * 255.0) as u8
+                } else {
+                    0
+                }
+            })
+            .collect()
+    }
+
     /// Edit the shape only, retaining the other wearables' transmitted values.
     /// F32_to_U8 uses truncation, as llquantize.h / LLAgent::sendAgentSetAppearance.
     pub fn edit_values(&self, base: &[u8], changed: &BTreeMap<i32, f32>) -> Vec<u8> {
@@ -543,5 +563,27 @@ mod tests {
                 assert_eq!(edited[index], base[index]);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod transmit_tests {
+    use crate::scene::avatar::AvatarLibrary;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn transmitted_values_truncate_as_the_legacy_viewer_sends_them() {
+        let lib = AvatarLibrary::load();
+        let p = &lib.shape_params;
+        let defaults = p.transmit_values(&BTreeMap::new());
+        assert_eq!(defaults.len(), p.transmitted_count());
+        // a weight a hair under a step goes down, where rounding goes up
+        let id = p.transmitted[0];
+        let param = &p.params[&id];
+        let step = (param.max - param.min) / 255.0;
+        let weight = param.min + step * 10.9;
+        let values = p.transmit_values(&BTreeMap::from([(id, weight)]));
+        assert_eq!(values[0], 10);
+        assert_eq!(p.values_with(&[(id, weight)])[0], 11);
     }
 }

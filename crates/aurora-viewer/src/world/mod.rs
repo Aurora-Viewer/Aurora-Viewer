@@ -1177,6 +1177,13 @@ impl World {
                 .is_some_and(|region| region.caps.get("FetchInventoryDescendents2").is_some_and(|url| !url.is_empty()))
     }
 
+    /// Whether we bake our own avatar: the region does not
+    /// (`UpdateAvatarAppearance`) but takes our bakes (`UploadBakedTexture`).
+    pub fn bakes_locally(&self) -> bool {
+        self.main()
+            .is_some_and(|region| region.caps.contains_key("UploadBakedTexture") && !region.caps.contains_key("UpdateAvatarAppearance"))
+    }
+
     /// `inventory_writable` on a grid with AIS, for what must stay away from
     /// the others (the bridge: FSLSLBridge does not create itself on OpenSim).
     pub fn inventory_writable_with_ais(&self) -> bool {

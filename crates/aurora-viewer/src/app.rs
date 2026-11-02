@@ -849,6 +849,8 @@ pub struct App {
     shape_camera: Option<Camera>,
     physics_ui: crate::physics_editor::State,
     wearable_ui: crate::wearable_editor::State,
+    /// Our own bakes on a grid that does not bake (local_bakes.rs).
+    local_bakes: crate::local_bakes::LocalBakes,
     /// Me › Avatar health and the customise animation.
     avatar_health: avatar_health::AvatarHealth,
     last_social_poll: Instant,
@@ -1544,6 +1546,7 @@ impl App {
             shape_camera: None,
             physics_ui: Default::default(),
             wearable_ui: Default::default(),
+            local_bakes: Default::default(),
             avatar_health: Default::default(),
             last_social_poll: Instant::now(),
             last_input: Instant::now(),
@@ -1591,6 +1594,18 @@ impl App {
     }
 
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
+        // a region that does not bake: our own bakes stand for the server's
+        if let NetCommand::RequestServerAppearance { cof_version } = cmd
+            && self.world.bakes_locally()
+        {
+            self.local_bakes.rebake();
+            self.world.apply(NetEvent::AppearanceRequestResult {
+                cof_version,
+                success: true,
+                expected: None,
+            });
+            return;
+        }
         self.settings.inventory.creation_permissions.prepare(&mut cmd);
         if !self.object_profile.retain_selection(&self.world, &mut cmd) {
             return;
@@ -3011,6 +3026,18 @@ impl App {
             }
             self.inventory_result(request, result);
             return;
+        }
+        if let NetEvent::BakeUploaded { request, result } = &ev {
+            self.local_bakes.uploaded(*request, result);
+            return;
+        }
+        if let NetEvent::RebakeRequested(texture) = &ev {
+            log::info!("local bake: the region lacks a bake ({texture}), baking again");
+            self.local_bakes.rebake();
+            return;
+        }
+        if let NetEvent::InventoryPreview { item, asset, result } = &ev {
+            self.local_bakes.loaded(*item, *asset, result);
         }
         if let NetEvent::InventoryPreview { item, asset, result } = ev {
             if self.ik_editor.project_preview(&self.world, item, &result) {
@@ -8193,6 +8220,10 @@ impl App {
         };
         self.apply_local_imports(&mut gfx.renderer);
         self.wearable_ui.preview.apply(&mut self.world, &mut self.scene, &mut gfx.renderer);
+        for command in self.local_bakes.update(&self.world, &mut self.scene) {
+            self.send(command);
+        }
+        self.local_bakes.apply(&mut self.scene, &mut gfx.renderer);
         self.update_blender_live(&mut gfx.renderer);
         let t_up = Instant::now();
         let (w, h) = gfx.renderer.size();
