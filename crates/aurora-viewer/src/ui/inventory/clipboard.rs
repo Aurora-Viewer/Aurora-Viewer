@@ -1053,7 +1053,7 @@ mod tests {
         assert!(h.st.dialog.is_none());
         h.st.pending = None;
         h.prefs.protected.insert(id(8000));
-        h.select(id(8100), false);
+        h.select(id(8000), false); // the locked folder itself; its contents stay ordinary
         h.frame(vec![delete_key(Default::default())]);
         h.click(h.trash_button(h.st.ui_id).center(), Default::default());
         assert!(h.st.dialog.is_none());
@@ -1224,12 +1224,13 @@ mod tests {
         h.frame(vec![Event::Copy]); // Still available for Paste as link.
         h.select(id(8001), false);
         assert!(h.paste().is_empty(), "no-copy item cannot be duplicated");
-        h.select(id(8100), false);
+        h.select(id(8000), false); // the locked folder itself
         h.prefs.protected.insert(id(8000));
         h.frame(vec![Event::Cut]);
         assert!(!h.st.cut);
         assert_eq!(h.st.clipboard, vec![id(8109)]);
         h.prefs.protected.clear();
+        h.select(id(8100), false);
         h.st.pending = Some(id(99));
         h.frame(vec![Event::Cut]);
         assert_eq!(h.st.clipboard, vec![id(8109)]);

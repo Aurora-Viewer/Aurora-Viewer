@@ -346,7 +346,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_FREEZE_WORLD=1` | With `AURORA_DEMO_SNAPSHOT=viewfinder-frozen`: a prop derezzed and particles started while the world is frozen |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora or a LUT), the chosen one's strength and settings, the before / after line, the filter panel |
-| `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic\|free\|free-compact` | The Controls window open on a tab, Firestorm's two windows, or driving the photo window's free camera |
+| `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|compact-move\|classic\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, or driving the photo window's free camera |
 | `AURORA_DEMO_CAMERA_PRESETS=save\|apply\|object\|pick[-…]` | The viewfinder's camera presets: saved on the avatar, a place and an object, applied, or the object chosen in the scene |
 
 `AURORA_DEMO_RENDER_TEXTURE`: with demo mode and `AURORA_CAPTURE`, the capture
@@ -712,6 +712,8 @@ its Camera tab (joysticks, zoom, the four views, object view, mouselook,
 reset, saved positions), `movement` on its Movement tab
 (the eight buttons with the keys of the keyboard's layout, walk / run / fly),
 `compact` the window in its compact view (its joysticks and zoom only),
+`compact-move` the same, then at frame 640 the toolbar's Move pressed on it
+(#1815: it expands on its Movement tab; capture at 700),
 `classic` Firestorm's camera and movement windows (Preferences › Aurora,
 not saved). `free` opens the photo window with its "Free camera" switch on:
 the Controls window opens by itself on its camera tab, which drives the free
@@ -4569,7 +4571,8 @@ row at frame 660, hover the stone folder at 670 and release at 740. Check the
 two-item badge, Move cursor, target outline, one-second spring opening, and
 that both actual inventory items change folders after the acknowledgement.
 `inventory-move-hover` holds until 840 (capture at 800); `inventory-move-rejected`
-protects the destination and must keep both items in their original folder,
+makes the destination a Library folder (a locked one still receives moves)
+and must keep both items in their original folder,
 showing rejection instead of moving them into the enclosing library root.
 Also test Shift selection, moving between inventory windows, folder/child
 selections, same-parent no-ops, Escape, no-copy items, and protection changes
@@ -4731,6 +4734,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
 | `AURORA_DEMO_REGION=overview\|manage\|people[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
 | `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
+| `AURORA_DEMO_GROUPS=many` | More than 50 group memberships for the Conversations group picker |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
 | `AURORA_DEMO_GROUP_REGION=1\|still` | Group titles window with region rules; `1` teleports to a region with its own title and back |
 | `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set", "Block particles" and calling card |
@@ -5348,6 +5352,11 @@ failure. Grid validation and any paid upload are performed by the human.
   Regression filter `inventory_hover_cache` exercises 1,000 successive images,
   real egui handle release, active/recent retention, expiry, shared world/UI
   source references, bounded workers and replies arriving after cancellation.
+- **`AURORA_DEMO_INVENTORY=locked|aurora-locked`**: locks the demo folder
+  holding the demo object, in the Legacy or Aurora inventory. Check its
+  "Locked" tag after the name; the folder itself refuses Delete, Cut and a
+  drag but keeps Rename, while its contents rename, delete and move like any
+  entry (Legacy Viewer parity).
 - **`AURORA_DEMO_INVENTORY=default-permissions|aurora-default-permissions`**:
   opens the shared Default permissions window over the Legacy or Aurora
   inventory. The final New-menu entry opens the same window. Check creation
@@ -7491,6 +7500,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   then the guest's view) and, in Preferences › Aurora › Profiles, the
   classic window with its "Members and roles", "Notices", "Land and L$"
   and "Experiences" sections.
+- **`AURORA_DEMO_GROUPS=many`**: with `AURORA_DEMO=1`, the simulated
+  `RequestGroups` response adds 64 named memberships (67 total). Combine it
+  with `AURORA_DEMO_CONV=aurora:new`, then open Start group in the Conversations
+  column to inspect the scrollable picker and reach the last entry.
 - **`AURORA_DEMO_GROUP_REGION=1|still`**: the Group titles window (the
   toolbar's Group titles command, Contacts › Groups › Titles) opens at frame
   600, with every title of the three demo groups and three region rules:

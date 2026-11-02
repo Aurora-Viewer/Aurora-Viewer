@@ -341,9 +341,9 @@ fn protected_system_worn_and_unknown_elements_cannot_be_deleted() {
     let trash = system(&inv, 14).expect("trash");
     assert!(!movable(&inv, id(99999), &HashSet::new()));
     assert!(move_selection(&inv, &[inv.root], trash, &HashSet::new(), &HashSet::new()).is_err());
-    assert!(move_selection(&inv, &[id(8100)], trash, &HashSet::from([id(8000)]), &HashSet::new()).is_err());
+    assert!(move_selection(&inv, &[id(8000)], trash, &HashSet::from([id(8000)]), &HashSet::new()).is_err());
     assert!(move_selection(&inv, &[id(8000)], trash, &HashSet::new(), &HashSet::from([id(8100)])).is_err());
-    assert!(!destination(&inv, id(701), &HashSet::new()));
+    assert!(!destination(&inv, id(701)));
 }
 
 #[test]
@@ -356,48 +356,40 @@ fn protected_folder_cannot_move_but_its_contents_can_move_in_and_out() {
     let (sub, item) = (id(8001), id(8100));
     let none = HashSet::new();
 
-    // the folder itself: held in place, not renamed, not deleted
+    // the folder itself (LLFolderBridge::isProtected): held in place and out
+    // of the Trash, but renamed and filled like any folder
     assert!(!movable(&inv, locked, &protected));
-    assert!(!move_relocatable(&inv, locked, &protected));
-    assert!(!renameable(&inv, locked, &protected));
+    assert!(!relocatable(&inv, locked, &protected));
     assert!(!removable(&inv, locked, &protected));
-    assert!(!destination(&inv, locked, &protected));
-    assert!(move_destination(&inv, locked));
+    assert!(renameable(&inv, locked));
+    assert!(destination(&inv, locked));
     assert!(move_selection(&inv, &[locked], inv.root, &protected, &none).is_err());
     assert!(move_selection(&inv, &[locked], trash, &protected, &none).is_err());
 
-    // its contents, a subfolder's included, move out and in
+    // its contents, a subfolder's included, are ordinary entries: they move
+    // out, in and to the Trash
     for entry in [item, sub] {
-        assert!(move_relocatable(&inv, entry, &protected), "{entry}");
-        assert!(move_selection(&inv, &[entry], inv.root, &protected, &none).is_ok(), "{entry}");
+        assert!(relocatable(&inv, entry, &protected), "{entry}");
+        assert!(removable(&inv, entry, &protected), "{entry}");
+        for to in [inv.root, trash] {
+            assert!(move_selection(&inv, &[entry], to, &protected, &none).is_ok(), "{entry} to {to}");
+        }
     }
+    assert!(renameable(&inv, sub));
     assert!(move_selection(&inv, &[item], locked, &protected, &none).is_ok());
-    assert!(move_destination(&inv, sub));
     assert!(move_selection(&inv, &[item], sub, &protected, &none).is_ok());
-
-    // rule B (#1728): nothing under a locked folder goes to the Trash, by a
-    // drag as by Delete (`removable`)
-    for entry in [item, sub] {
-        assert!(!removable(&inv, entry, &protected), "{entry}");
-        assert!(move_selection(&inv, &[entry], trash, &protected, &none).is_err(), "{entry}");
-        assert!(!paste_allowed(&inv, &[entry], trash, true, false, &protected, &none), "{entry}");
-    }
 }
 
 #[test]
-fn a_folder_holding_a_locked_folder_does_not_go_to_the_trash() {
+fn a_folder_holding_a_locked_folder_goes_to_the_trash_with_it() {
     let inv = fixture();
     let (outer, locked) = (id(8000), id(8001));
     let protected = HashSet::from([locked]);
     let none = HashSet::new();
     let trash = system(&inv, 14).expect("trash");
-    // deleting the parent would take the locked folder with it
-    assert!(!removable(&inv, outer, &protected));
-    assert!(move_selection(&inv, &[outer], trash, &protected, &none).is_err());
-    assert!(!paste_allowed(&inv, &[outer], trash, true, false, &protected, &none));
-    // without the lock below it, the same folder goes to the Trash
-    assert!(removable(&inv, outer, &none));
-    // and it may still move elsewhere, the locked folder with it
+    // get_is_category_and_children_removable only refuses system folders below
+    assert!(removable(&inv, outer, &protected));
+    assert!(move_selection(&inv, &[outer], trash, &protected, &none).is_ok());
     assert!(move_selection(&inv, &[outer], inv.root, &protected, &none).is_ok());
 }
 
@@ -472,7 +464,7 @@ fn root_support_folders_stay_in_place_but_can_still_be_deleted() {
             move_selection(&inv, &[pinned_id], trash, &none, &none).is_ok(),
             "delete stays allowed"
         );
-        assert!(renameable(&inv, pinned_id, &none));
+        assert!(renameable(&inv, pinned_id));
     }
     // A misplaced #RLV goes back to the root; names match exactly, as RLVa's.
     assert!(move_selection(&inv, &[id(9101)], inv.root, &none, &none).is_ok());
@@ -652,18 +644,18 @@ fn marketplace_requires_transfer_and_stages_no_copy_objects_in_stock_folders() {
 #[test]
 fn offers_are_bounded_and_include_the_folder_as_the_first_tuple() {
     let mut inv = fixture();
-    assert!(offer(&inv, id(8110), &HashSet::new(), &HashSet::new()).is_err());
+    assert!(offer(&inv, id(8110), &HashSet::new()).is_err());
     inv.remove(&[id(8110), id(8113)]);
-    let bucket = offer(&inv, id(8000), &HashSet::new(), &HashSet::new()).expect("offer folder");
+    let bucket = offer(&inv, id(8000), &HashSet::new()).expect("offer folder");
     assert_eq!(bucket[0], 8);
     assert_eq!(&bucket[1..17], id(8000).as_bytes());
     assert_eq!(bucket.len() % 17, 0);
     assert!(offer_has_no_copy(&inv, &bucket));
     assert!(!offer_has_no_copy(
         &inv,
-        &offer(&inv, id(8100), &HashSet::new(), &HashSet::new()).expect("copyable item")
+        &offer(&inv, id(8100), &HashSet::new()).expect("copyable item")
     ));
-    assert!(offer(&inv, id(8100), &HashSet::new(), &HashSet::from([id(8100)])).is_err());
+    assert!(offer(&inv, id(8100), &HashSet::from([id(8100)])).is_err());
 }
 
 #[test]

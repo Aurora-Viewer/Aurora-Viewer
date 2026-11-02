@@ -67,6 +67,8 @@ pub const COMMANDS: &[Command] = commands![
     "block_list", "ban", "toolbar-command-block-list", true;
     "contact_sets", "users-group", "toolbar-command-contact-sets", true;
     "stop_animations", "player-stop-filled", "ui-context-stop-animations", true;
+    "snapshot_to_disk", "device-floppy-filled", "toolbar-command-snapshot-to-disk", true;
+    "beacons", "bulb-filled", "toolbar-command-beacons", true;
     // Aurora's own: the interface hidden but the chat (#859)
     "immersive", "maximize", "ui-bars-immersive", true;
     // Firestorm's, not in Aurora yet
@@ -91,7 +93,6 @@ pub const COMMANDS: &[Command] = commands![
     "phototools", "camera-cog", "toolbar-command-phototools", false;
     "phototools_view", "video-filled", "toolbar-command-phototools-camera", false;
     "pose_stand", "man-filled", "toolbar-command-pose-stand", false;
-    "snapshot_to_disk", "device-floppy-filled", "toolbar-command-snapshot-to-disk", false;
     "conversation_log", "file-text-filled", "toolbar-command-conversation-log", false;
     "movelock", "lock-filled", "movelock-title", true;
     "water_walk", "walk", "movement-water-walk", true;
@@ -99,7 +100,6 @@ pub const COMMANDS: &[Command] = commands![
     "regiontracker", "location-filled", "toolbar-command-region-tracker", false;
     "group_titles", "tags-filled", "toolbar-command-group-titles", true;
     "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", false;
-    "beacons", "bulb-filled", "toolbar-command-beacons", false;
     "discord", "brand-discord-filled", "toolbar-command-discord", false;
     "360capture", "panorama-horizontal-filled", "toolbar-command-360-snapshot", false;
     "omnifilter", "filter-filled", "toolbar-command-omnifilter", false;

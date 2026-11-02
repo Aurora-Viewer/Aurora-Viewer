@@ -184,6 +184,9 @@ pub(super) struct Snapshots {
     pub look_focus: Option<f32>,
     /// The window was closed when the photo was asked (Ctrl+`).
     quiet: bool,
+    /// A photo to disk asked while the renderer draws the frame (the
+    /// toolbar's Snapshot to disk): taken by the next `photo_update`.
+    to_disk: bool,
     /// The price to confirm before the upload.
     confirm: Option<i32>,
     /// The price the balance cannot pay.
@@ -384,6 +387,7 @@ impl Default for Snapshots {
             lut_import: None,
             look_focus: None,
             quiet: false,
+            to_disk: false,
             confirm: None,
             short: None,
             upload: None,
@@ -1403,6 +1407,8 @@ impl App {
     /// window, without it.
     pub(super) fn photo_to_disk(&mut self) {
         let Some(gfx) = self.gfx.take() else {
+            // (the frame's UI actions run while the frame is drawn)
+            self.snapshots.to_disk = true;
             return;
         };
         self.snapshots.quiet = !self.panels.snapshot;
@@ -1412,6 +1418,10 @@ impl App {
 
     /// Every frame: the saves, thumbnails, dialogs and preview to follow.
     pub(super) fn photo_update(&mut self, renderer: &Renderer) {
+        if std::mem::take(&mut self.snapshots.to_disk) {
+            self.snapshots.quiet = !self.panels.snapshot;
+            self.photo_take(renderer, None);
+        }
         self.photo_demo(renderer);
         self.photo_luts_update();
         self.photo_quality(renderer);

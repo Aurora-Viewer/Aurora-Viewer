@@ -645,6 +645,7 @@ inventory-resize-columns = Faites glisser pour redimensionner les colonnes. Doub
 inventory-resize-sidebar = Faites glisser pour redimensionner le panneau des dossiers. Double-cliquez pour rétablir sa largeur.
 inventory-column-modified = Modifié
 inventory-pill-link = Lien
+inventory-pill-protected = Verrouillé
 inventory-take-off = Retirer
 inventory-more-actions = Plus d’actions
 inventory-profile = Profil
