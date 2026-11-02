@@ -91,6 +91,8 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
 | `AURORA_RENDER_SCALE=50..100` | World resolution percentage; interface and HUDs stay native |
 | `AURORA_TEXTURE_BUDGET_MB=256..32768` | Manual texture memory budget for this launch |
+| `AURORA_MAX_TEXTURE_RES=512\|1024\|2048` | Overrides "Maximum texture resolution" (Graphics › Distance and detail) |
+| `AURORA_DEMO_TEXTURE_RES=1` | Boards with 2048 px streamed textures, tinted by the resolution shown |
 | `AURORA_TEST_NEUTRAL_POSE=1` | Local neutral-pose comparison in the online or demo Hover Height floater |
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
@@ -314,6 +316,26 @@ use `AURORA_DEMO=1` for isolated comparisons. A Retina comparison can use
 `AURORA_WINDOW_SIZE=1728,1056`, `AURORA_GRAPHICS_PRESET=high`,
 `AURORA_DEMO_TEXTURES=9000`, `AURORA_DEMO_CROWD=20` and the same capture
 frame, changing only `AURORA_RENDER_SCALE` between 100, 67 and 50.
+
+`AURORA_MAX_TEXTURE_RES` sets Preferences › Graphics › Maximum texture
+resolution (the Legacy Viewer's RenderMaxTextureResolution), saved with the
+profile like a change in the page; another value takes the choice just below
+it. World textures load no larger than that on their largest side, and those
+loaded larger are lowered on the GPU within a few frames (the log tells each
+change: `textures: maximum resolution 2048 -> 512 px`); our own bakes, HUDs,
+the sky and the texture and profile picture windows keep their full size.
+The demo's own textures are drawn, not streamed, and never pass 512 px:
+`AURORA_DEMO_TEXTURE_RES=1` adds three boards east of the start position
+(8, 4 and 2 m wide), whose 2048 px textures go through the streamer like
+downloaded ones. Each level of their picture is tinted by its resolution:
+2048 green, 1024 amber, 512 red, smaller blue-grey, so the colour is the
+resolution the GPU shows. Walk up to the large board until it fills most of
+the view (or `AURORA_DEMO_POS="146,138"`): green under 2048, amber within a
+second of choosing 1024, red under 512, and green again when 2048 comes
+back. The smaller boards, further away on screen, stay amber or red
+whatever the setting. With the textures of a cache instead,
+`AURORA_DEMO_STREAM=60,60,j2k=<folder>,size=4` (2048 px files) shows the
+same on real pictures, softer under 512.
 
 `AURORA_WINDOW_SIZE`: width and height of the render area, in logical pixels
 (at least 800 × 560), to measure according to the size of the window:

@@ -185,7 +185,7 @@ impl Preview {
             if texture.is_nil() || texture == IMG_DEFAULT_AVATAR || texture == IMG_INVISIBLE || texture == aurora_prim::te::BLANK_TEXTURE {
                 continue;
             }
-            scene.textures.note_usage(&texture, f32::MAX);
+            scene.textures.note_usage_boosted(&texture, f32::MAX);
             self.wanted.insert(texture);
             let source = scene.textures.preview_source(&texture);
             revisions.insert(texture, source.bake_revision());

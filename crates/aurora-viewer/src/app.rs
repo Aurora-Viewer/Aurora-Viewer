@@ -764,6 +764,7 @@ pub struct App {
     outfit_restore_demo: Option<crate::demo::outfit_restore::OutfitRestoreDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
+    texture_res_demo: Option<crate::demo::texture_res::TextureResDemo>,
     /// AURORA_DEMO_AA_SWITCH: the anti-aliasing changes still to come.
     aa_switch_demo: Vec<(u64, u8)>,
     /// AURORA_DEMO_SCULPT_MISSING: a sculpt whose map is missing.
@@ -1044,6 +1045,9 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Some(v) = std::env::var("AURORA_TEXTURE_BUDGET_MB").ok().and_then(|v| v.parse::<u32>().ok()) {
         settings.texture_budget_auto = false;
         settings.texture_budget_mb = v.clamp(256, 32768);
+    }
+    if let Some(v) = std::env::var("AURORA_MAX_TEXTURE_RES").ok().and_then(|v| v.parse::<u32>().ok()) {
+        settings.max_texture_resolution = crate::settings::max_texture_resolution_choice(v);
     }
     if let Some(v) = std::env::var("AURORA_MAX_COMPLEXITY").ok().and_then(|v| v.parse().ok()) {
         settings.max_complexity = v;
@@ -1494,6 +1498,7 @@ impl App {
             arrival_demo: None,
             outfit_restore_demo: None,
             tex_refresh_demo: None,
+            texture_res_demo: None,
             aa_switch_demo: if std::env::var_os("AURORA_DEMO").is_some() {
                 crate::demo::aa_switch::from_env()
             } else {
@@ -8661,6 +8666,7 @@ impl App {
                 pixel_angle: lod_height as f32 / self.camera.fov_y.max(1e-3),
             };
             self.scene.lod_factor = self.settings.lod_factor;
+            self.scene.textures.set_max_resolution(self.settings.max_texture_resolution);
             self.scene.max_avatars = self.settings.max_avatars as usize;
             if self.demo {
                 self.scene.max_avatars = crate::demo::impostor_flip(self.scene.max_avatars);
@@ -11223,6 +11229,16 @@ impl App {
             && let Some(object) = demo.tick(self.frame_count, &mut self.world, self.scene.textures.cache_dir())
         {
             self.refresh_object_textures(object);
+        }
+        // AURORA_DEMO_TEXTURE_RES: boards with 2048 px streamed textures
+        if let (Some(demo), Some(g)) = (&mut self.texture_res_demo, &mut self.gfx) {
+            demo.tick(
+                self.frame_count,
+                &mut self.world,
+                &mut self.scene.textures,
+                &mut g.renderer,
+                &self.scene.jobs,
+            );
         }
         if let Some(demo) = &mut self.sculpt_missing_demo {
             demo.tick(self.frame_count, &mut self.world, &mut self.scene.textures);
@@ -18369,6 +18385,7 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
             }
             self.tex_refresh_demo = crate::demo::tex_refresh::TexRefreshDemo::from_env();
+            self.texture_res_demo = crate::demo::texture_res::TextureResDemo::from_env();
             self.sculpt_missing_demo = crate::demo::sculpt::MissingMapDemo::from_env();
             self.texture_missing_demo = crate::demo::missing_texture::MissingTextureDemo::from_env();
             self.experience_demo = crate::demo::experience::ExperienceDemo::from_env();
