@@ -139,7 +139,8 @@ mod tests {
         assert_eq!(text.len(), 2, "the announcement, then the reply noted: {text:?}");
         let sent = world.groups.take_commands();
         assert!(
-            sent.iter().any(|c| matches!(c, aurora_net::NetCommand::SendImDialog { to, .. } if *to == FROM)),
+            sent.iter()
+                .any(|c| matches!(c, aurora_net::NetCommand::SendImDialog { to, .. } if *to == FROM)),
             "the do not disturb reply is sent"
         );
     }
