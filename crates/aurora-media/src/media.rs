@@ -278,6 +278,35 @@ impl MediaPlugin {
         browser: &BrowserSettings,
         target: &str,
     ) -> std::io::Result<MediaPlugin> {
+        Self::launch_with(paths, plugin, width, height, browser, target, false)
+    }
+
+    /// [`MediaPlugin::launch`] for media on a face or a parcel, whose sound
+    /// follows the viewer's volume. On Linux, only these web pages get their
+    /// own stream name and tag (stream_volume.rs): the sound server keeps a
+    /// volume per stream name, so a web window sharing that name would start
+    /// at the last volume set on a world page (muted, for example), with
+    /// nothing to set it back.
+    pub fn launch_in_world(
+        paths: &PluginPaths,
+        plugin: &str,
+        width: i32,
+        height: i32,
+        browser: &BrowserSettings,
+        target: &str,
+    ) -> std::io::Result<MediaPlugin> {
+        Self::launch_with(paths, plugin, width, height, browser, target, true)
+    }
+
+    fn launch_with(
+        paths: &PluginPaths,
+        plugin: &str,
+        width: i32,
+        height: i32,
+        browser: &BrowserSettings,
+        target: &str,
+        in_world: bool,
+    ) -> std::io::Result<MediaPlugin> {
         let file = paths.plugin_file(plugin);
         if !file.is_file() {
             return Err(std::io::Error::new(
@@ -286,7 +315,9 @@ impl MediaPlugin {
             ));
         }
         #[cfg(target_os = "linux")]
-        let stream_volume = (plugin == "media_plugin_cef").then(crate::stream_volume::StreamVolume::new);
+        let stream_volume = (in_world && plugin == "media_plugin_cef").then(crate::stream_volume::StreamVolume::new);
+        #[cfg(not(target_os = "linux"))]
+        let _ = in_world;
         #[cfg(target_os = "linux")]
         let env: Vec<(String, String)> = stream_volume.iter().map(crate::stream_volume::StreamVolume::env).collect();
         #[cfg(not(target_os = "linux"))]
