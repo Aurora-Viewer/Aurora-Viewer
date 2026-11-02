@@ -503,7 +503,8 @@ fn fountain_particles() -> Vec<u8> {
 
 /// Leash script (legacy block): a ribbon chain dropped at the collar that
 /// steers towards `target` and sags under gravity, two links per burst. Its
-/// y scale is long because ribbons ignore it (#1049).
+/// y scale is long because ribbons ignore it (#1049); its texture runs
+/// along the chain, like leash textures do (#1924).
 fn leash_particles(target: Uuid) -> Vec<u8> {
     use aurora_prim::particles::*;
     let mut out = fountain_particles();
@@ -513,6 +514,7 @@ fn leash_particles(target: Uuid) -> Vec<u8> {
     out[15..17].copy_from_slice(&0u16.to_le_bytes()); // burst rate (clamped)
     out[23] = 2; // particles per burst
     out[34..36].copy_from_slice(&(((-1.0f32 + 256.0) * 128.0) as u16).to_le_bytes()); // gravity
+    out[36..52].copy_from_slice(TEX_LEASH_CHAIN.as_bytes());
     out[52..68].copy_from_slice(target.as_bytes());
     let part = PS_SYS_DATA_BLOCK_SIZE;
     let flags = LL_PART_RIBBON_MASK | LL_PART_FOLLOW_SRC_MASK | LL_PART_TARGET_POS_MASK | LL_PART_EMISSIVE_MASK;
@@ -8115,6 +8117,27 @@ pub const TEX_ORM_DISC: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0
 /// Foliage of AURORA_DEMO_FOLIAGE (256 × 256, alpha a mask): thin blades
 /// and small leaves, about a sixth of the texels drawn.
 pub const TEX_FOLIAGE: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0009);
+/// Chain of the demo leash (AURORA_DEMO_PARTICLES=leash): a horizontal band
+/// of two links, transparent above and below, as leash textures are drawn.
+const TEX_LEASH_CHAIN: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_000A);
+
+/// Two metal links along x, 12 texels thick in the middle rows. A ribbon
+/// lays u along its segment: turned 90° it draws a crossbar per link.
+fn leash_chain_texture() -> (Vec<u8>, u32, u32) {
+    const N: u32 = 64;
+    let mut px = Vec::with_capacity((N * N * 4) as usize);
+    for y in 0..N {
+        for x in 0..N {
+            let across = (y as f32 + 0.5 - N as f32 * 0.5).abs() / 6.0;
+            // a darker joint where two links meet
+            let joint = (x % 32) < 3;
+            let shade = if joint { 110 } else { (235.0 - across * 90.0) as u8 };
+            let a = if across < 1.0 { 255 } else { 0 };
+            px.extend_from_slice(&[shade, shade, shade.saturating_add(12), a]);
+        }
+    }
+    (px, N, N)
+}
 
 #[cfg(test)]
 mod foliage_tests {
@@ -8249,6 +8272,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     }
     if *id == TEX_FOLIAGE {
         return Some(foliage_texture());
+    }
+    if *id == TEX_LEASH_CHAIN {
+        return Some(leash_chain_texture());
     }
     if let Some(species) = plants::texture(id) {
         return Some(species);
@@ -8828,6 +8854,8 @@ mod particle_tests {
         assert_eq!(d.burst_part_count, 2);
         assert_eq!(d.part_accel, Vec3::new(0.0, 0.0, -1.0));
         assert_eq!(d.target_id, target);
+        assert_eq!(d.part_image_id, TEX_LEASH_CHAIN);
+        assert!(local_texture(&TEX_LEASH_CHAIN).is_some());
         assert_eq!(d.part.flags & ps::LL_PART_RIBBON_MASK, ps::LL_PART_RIBBON_MASK);
         assert_eq!(d.part.max_age, 3.5);
         assert_eq!(d.part.start_scale, glam::Vec2::new(0.0625, 2.5));
