@@ -1567,15 +1567,17 @@ same colour, intensity, range and falloff, and its projector controls become
 disabled. Cancel instead restores its texture and projector settings. Use
 `features` without the suffix to inspect the light before or after editing.
 
-`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-own-mesh[-drag]|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|worn-other-hidden-inside|worn-other-moving|mouselook-gun|mouselook-touch|ground|photo-touch[-ctrl]|photo-hud[-ctrl]`:
+`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-own-mesh[-drag]|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|worn-other-hidden-inside|worn-other-clear[-mesh]|worn-other-moving|mouselook-gun|mouselook-touch|ground|photo-touch[-ctrl]|photo-hud[-ctrl]`:
 install the fixture at frame 600, issue a real left press at 700 and release
 at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
 or later. `worn-other-moving` makes the scripted prim a 10 cm clicker and
 moves its wearer 8 cm a frame from 701 to 705, while the GPU answer of the
 press is on its way, as an animated avatar does: the press must still touch
-it (`demo touch_start: prim=975`). Add `-held` to a `worn-*` mode to hold the
-touch and slide the cursor over the attachment from 710 to 760, released at
-761 (capture at 840): every `demo touch / grab update` line must give a new
+it (`demo touch_start: prim=975`). `worn-other-clear` and
+`worn-other-clear-mesh` hide the worn prim or mesh with the transparent
+texture instead of alpha 0, as a slapper's mesh does: the press must touch
+it too. Add `-held` to a `worn-*` mode to hold the touch and slide the
+cursor over the attachment from 710 to 760, released at 761 (capture at 840): every `demo touch / grab update` line must give a new
 `st` (none repeats the `touch_start` one), which a script reading the touch
 position sees. `photo-touch[-ctrl]` and `photo-hud[-ctrl]` open the photo viewfinder:
 Ctrl + left click touches the scripted cube or the HUD without moving the AF
@@ -4694,7 +4696,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
-| `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|channel\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, commands to worn scripts, completion, the chat bar's list of gestures and menu access |
+| `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the quick import bar; `type-*` opens independent type windows |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
@@ -7966,7 +7968,7 @@ and that Esc creates nothing. Online, validate real objects, forbidden land,
 the Trash / Library, neighbouring regions, the group of the land and
 objects already worn; the human logs in and carries out these tests.
 
-**`AURORA_DEMO_GESTURES=manager|editor|numpad|play|replay|channel|completion|completion-send|list|communicate|communicate-open`** — three synthetic gestures:
+**`AURORA_DEMO_GESTURES=manager|editor|numpad|play|replay|channel|channel-replace|completion|completion-send|list|communicate|communicate-open`** — three synthetic gestures:
 chat with a replacement and F8 shortcut, an animated pose on F9, and an
 inactive chime on F10. `manager` opens the list; `editor` also opens the
 chat gesture's editor; `play` starts the chat and animation at frame 650.
@@ -7992,6 +7994,12 @@ the demo's worn listener answers each line ("Heard on channel -4242: ping"),
 and the log has one `demo channel chat: channel=…` line per step. Capture
 frame 800 (`AURORA_FPS_LIMIT=60`) to see the three answers. On the grid, a
 negative channel goes as a `ScriptDialogReply`, as in the Legacy Viewer.
+`channel-replace` adds an active `/hudreplace` gesture whose replacement is
+`/5capture` and sends its trigger from the chat bar at frame 650: the
+replacement is read for its channel (`#1916`), so the worn listener answers
+"Heard on channel 5: capture", the log has one
+`demo channel chat: channel=5 message="capture"` line, and no line is echoed
+on channel 0. Capture frame 800 (`AURORA_FPS_LIMIT=60`).
 `completion` gives the chat gesture the `/eject` trigger, focuses nearby
 chat at frame 540 and types `/ej` at frame 550: capture frame 620 to see
 `/eject` with the added `ect` selected. `completion-send` also presses
