@@ -657,6 +657,12 @@ pub struct Settings {
     pub mfa_hash: String,
     pub font: String,
     pub font_scale: f32,
+    /// Text size of the conversations, independent of `font_scale`
+    /// (ChatFontSize, Preferences › Chat; 1.0 is the Legacy Viewer's Medium):
+    /// their messages, names and times, the chat lines over the world and
+    /// the chat fields. A multiplier in the limits of the interface's text
+    /// size rather than the Legacy Viewer's four steps.
+    pub chat_font_scale: f32,
     pub chat_timestamps: bool,
     /// The channel selector of the nearby chat's field (FSShowChatChannel,
     /// off by default; Preferences > Chat). "/n" before the text works
@@ -1769,6 +1775,7 @@ impl Default for Settings {
             mfa_hash: String::new(),
             font: crate::ui::fonts::DEFAULT.into(),
             font_scale: 1.0,
+            chat_font_scale: 1.0,
             chat_timestamps: true,
             show_chat_channel: false,
             script_errors_in_chat: true,
@@ -2556,6 +2563,11 @@ impl Settings {
         self.mouse_sensitivity = self.mouse_sensitivity.clamp(0.1, 5.0);
         self.texture_budget_mb = self.texture_budget_mb.clamp(256, 32768);
         self.font_scale = self.font_scale.clamp(FONT_SCALE_MIN, FONT_SCALE_MAX);
+        self.chat_font_scale = if self.chat_font_scale.is_finite() {
+            self.chat_font_scale.clamp(FONT_SCALE_MIN, FONT_SCALE_MAX)
+        } else {
+            1.0
+        };
         self.hover_tips.delay = if self.hover_tips.delay.is_finite() {
             self.hover_tips.delay.clamp(0.0, MAX_HOVER_TIP_DELAY)
         } else {
