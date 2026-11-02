@@ -200,6 +200,14 @@ impl Store {
         }
     }
 
+    /// The file, read unless it already is (a login that skipped the
+    /// login screen's catalogue).
+    pub fn open(&mut self, path: PathBuf) {
+        if self.path.is_none() {
+            self.load(path);
+        }
+    }
+
     /// A store in memory with these favourites (the demo).
     pub fn seeded(entries: impl IntoIterator<Item = (Key, Vec<Favorite>)>) -> Self {
         Self {

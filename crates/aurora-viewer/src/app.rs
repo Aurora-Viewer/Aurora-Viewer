@@ -3383,6 +3383,11 @@ impl App {
                 // a start SLURL serves one login, a chosen favourite too
                 self.login_form.start_slurl = None;
                 self.login_form.start_favorite = None;
+                if !self.demo {
+                    self.login_form
+                        .favorites
+                        .open(crate::settings::config_dir().join(crate::login_favorites::FILE));
+                }
                 self.login_favorites.session_started(&self.settings, self.demo);
                 // the demo's teleport history: several days, never saved
                 if self.demo {
