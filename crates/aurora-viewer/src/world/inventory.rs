@@ -338,6 +338,7 @@ impl Inventory {
         self.generation += 1;
         for mut it in items {
             self.preserve_favorite(&mut it);
+            calling_card_target(&mut it);
             if !it.parent.is_nil() && self.repaired_parents.get(&it.id).is_some_and(|parent| *parent != it.parent) {
                 self.repaired_parents.remove(&it.id);
                 self.pending_parent_repairs.remove(&it.id);
@@ -370,6 +371,9 @@ impl Inventory {
         items.retain(|item| !item.id.is_nil());
         for item in &mut items {
             self.preserve_favorite(item);
+            // before the comparison below: a card's record is otherwise
+            // always "changed"
+            calling_card_target(item);
         }
         let mut changed = HashSet::new();
         // Folders whose subfolders changed, sorted again below; moved items
@@ -638,7 +642,9 @@ impl Inventory {
             cur.info.thumbnail = c.thumbnail;
             cur.state = FetchState::Fetched;
             let mut listed = Vec::with_capacity(c.items.len());
-            for it in c.items {
+            for mut it in c.items {
+                // caches written before the cards' target was read
+                calling_card_target(&mut it);
                 if let Entry::Vacant(slot) = self.items.entry(it.id) {
                     listed.push(it.id);
                     slot.insert(it);
@@ -665,6 +671,22 @@ impl Inventory {
         for id in self.held.take().unwrap_or_default() {
             self.request(id);
         }
+    }
+}
+
+/// LLInventoryModel::updateItem (indra/newview/llinventorymodel.cpp): a
+/// calling card made by a viewer (create_inventory_callingcard, a resident
+/// dragged into the inventory) is created by its owner and names its resident
+/// by key in its description. That key becomes the card's creator, which
+/// every calling card action reads: without it, opening the card showed our
+/// own profile. The friendship cards made by the server have no key there.
+fn calling_card_target(item: &mut InvItem) {
+    // LLUUID::set accepts the 36-character hyphenated form
+    if item.asset_type == 2
+        && item.desc.len() == 36
+        && let Ok(id) = Uuid::try_parse(&item.desc)
+    {
+        item.creator = id;
     }
 }
 

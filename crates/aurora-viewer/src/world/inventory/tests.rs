@@ -72,6 +72,41 @@ fn multiple_inventory_favorites_keep_independent_flags_and_batch_originals() {
 }
 
 #[test]
+fn viewer_made_calling_cards_take_their_resident_from_the_description() {
+    let mut inv = fixture();
+    let me = id(2);
+    let friend = Uuid::parse_str("8f3b2c1a-0d4e-4b5f-9a6c-7e8d9f0a1b2c").expect("key");
+    let card = |n: u128, desc: &str, creator: Uuid| InvItem {
+        id: id(n),
+        parent: id(8000),
+        asset_type: 2,
+        desc: desc.into(),
+        creator,
+        owner: me,
+        ..Default::default()
+    };
+    // A card made by a viewer: created by us, the resident's key as description.
+    inv.add_items(vec![card(9100, &friend.to_string(), me)]);
+    assert_eq!(inv.items[&id(9100)].creator, friend);
+    // A friendship card made by the server keeps its creator.
+    inv.add_items(vec![card(9101, "", friend)]);
+    assert_eq!(inv.items[&id(9101)].creator, friend);
+    // Text that is not a key, and a key in another kind of item, change nothing.
+    inv.add_items(vec![card(9102, "my best friend", me)]);
+    assert_eq!(inv.items[&id(9102)].creator, me);
+    let mut note = card(9103, &friend.to_string(), me);
+    note.asset_type = 7;
+    inv.add_items(vec![note]);
+    assert_eq!(inv.items[&id(9103)].creator, me);
+    // The simulator resends the card as created by us: still the friend's,
+    // and the record is not seen as changed.
+    let version = inv.folders[&id(8000)].info.version;
+    inv.server_updated(Vec::new(), vec![card(9100, &friend.to_string(), me)]);
+    assert_eq!(inv.items[&id(9100)].creator, friend);
+    assert_eq!(inv.folders[&id(8000)].info.version, version);
+}
+
+#[test]
 fn partial_inventory_updates_preserve_favorites_until_an_authoritative_removal() {
     let mut inv = fixture();
     inv.items.insert(
