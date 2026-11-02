@@ -6138,6 +6138,7 @@ mod tests {
                 edit_tracking: None,
                 eye_offset: scene.eyes_offset(&world, &owner),
                 draw_distance: 128.0,
+                region_width: 256.0,
                 aspect: 1.0,
             };
             camera.update(&mut world, &settings, &input);
@@ -6201,6 +6202,7 @@ mod tests {
             edit_tracking: None,
             eye_offset: scene.eyes_offset(&world, &owner),
             draw_distance: 128.0,
+            region_width: 256.0,
             aspect: 1.0,
         };
         camera.update(&mut world, &settings, &input);

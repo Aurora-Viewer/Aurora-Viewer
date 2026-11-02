@@ -3660,13 +3660,14 @@ impl World {
                 self.map.apply_collision(handle, kind, use_pass, bitmap);
                 None
             }
-            NetEvent::ParcelOverlay { handle, sequence, data } => {
+            NetEvent::ParcelOverlay {
+                handle,
+                size,
+                sequence,
+                data,
+            } => {
                 self.parcel_visibility.invalidate(handle);
-                let size = self
-                    .regions
-                    .get(&handle)
-                    .map(|r| (r.heightmap.size_x, r.heightmap.size_y))
-                    .unwrap_or((256, 256));
+                self.ensure_region(handle, size);
                 self.map.apply_overlay(handle, size, sequence, &data);
                 None
             }
