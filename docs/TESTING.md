@@ -4732,7 +4732,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
 | `AURORA_DEMO_SEARCH=<tab>[:text]` | "Search" on a tab (or Aurora's "all" chip), search done |
-| `AURORA_DEMO_SEARCH_WEB=<page>` | Page loaded by the Web tab of "Search" in demo |
+| `AURORA_DEMO_SEARCH_WEB=<page>` | Page loaded by the Web tab of "Search" in demo; `teleport` opens the offline link test |
 | `AURORA_DEMO_GRID_HELP=<page>` | Help › Knowledge base shown, opening this page |
 | `AURORA_DEMO_MARKETPLACE=<page>` | Marketplace window open at start on this page |
 | `AURORA_DEMO_MARKETPLACE_LISTINGS=<mode>` | Marketplace listings window open on a simulated SLM server |
@@ -7605,7 +7605,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `xyz` finds nothing ("'xyz' not found").
 - **`AURORA_DEMO_SEARCH_WEB=<page>`**: the address the Web tab loads in
   demo (a local `file:///…` page is enough to try back, forward,
-  reload and the address). Without it the Web tab of the demo loads
+  reload and the address). Set it to `teleport` for the bundled offline
+  test page; its button should open the viewer's teleport confirmation.
+  Programmatic navigation to a SLURL must not trigger an action. Without it
+  the Web tab of the demo loads
   nothing: the search page of the grid is only opened once
   connected.
 - **`AURORA_DEMO_GRID_HELP=<page>`**: Help › Knowledge base shows in demo
