@@ -12670,6 +12670,13 @@ keybinds-lens-zoom-out = Widen viewing angle
 keybinds-lens-zoom-default = Reset viewing angle
 inventory-hover-pictures = Show pictures on hover
 inventory-hover-pictures-help = Preview photos and saved item or folder pictures after hovering for a moment.
+inventory-folder-colors = Folder colors
+inventory-folder-colors-help = Add "Folder color…" to a folder's menu, to give its icon a color of your choice. The colors are kept in this viewer only: nobody else sees them.
+inventory-folder-color = Folder color…
+inventory-folder-color-title = Folder color
+inventory-folder-color-custom = Custom color
+inventory-folder-color-restore = Restore default
+inventory-folder-color-private = Only you see these colors.
 
 area-search-group = Group
 area-search-last-owner = Last owner

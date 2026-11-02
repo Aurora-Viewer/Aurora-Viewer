@@ -355,7 +355,8 @@ fn share(
             let icon = item.map_or_else(
                 || {
                     let kind = inv.folders.get(id).map_or(-1, |f| f.info.type_default);
-                    (super::tree::folder_icon(kind, false), p.muted)
+                    let tint = super::folder_colors::tint(prefs, *id).unwrap_or(p.muted);
+                    (super::tree::folder_icon(kind, false), tint)
                 },
                 |it| inventory_item_icon(inv, it, p),
             );
