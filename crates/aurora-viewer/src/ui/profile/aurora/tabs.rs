@@ -120,17 +120,30 @@ fn cover(ui: &egui::Ui, tex: &egui::TextureHandle, rect: Rect, radius: egui::Cor
         .paint_at(ui, rect);
 }
 
-/// A snapshot, or the place icon on a darker face while there is none.
+/// The largest centred rect with the picture's aspect that fits in `rect`.
+fn contain_rect(rect: Rect, size: [usize; 2]) -> Rect {
+    let aspect = size[0].max(1) as f32 / size[1].max(1) as f32;
+    let fitted = if aspect > rect.width() / rect.height().max(1.0) {
+        Vec2::new(rect.width(), rect.width() / aspect)
+    } else {
+        Vec2::new(rect.height() * aspect, rect.height())
+    };
+    Rect::from_center_size(rect.center(), fitted)
+}
+
+/// A snapshot shown whole, or the place icon on a darker face while there is
+/// none; the bars left by another ratio show that face.
 fn snapshot(ui: &egui::Ui, env: &mut Env, id: Uuid, rect: Rect, radius: egui::CornerRadius, icon: &str) {
     if !id.is_nil() {
         env.wanted_images.insert(id);
     }
+    ui.painter().rect_filled(rect, radius, env.p.raised.gamma_multiply(0.6));
     match env.images.get(&id).filter(|_| !id.is_nil()) {
-        Some(t) => cover(ui, t, rect, radius),
-        None => {
-            ui.painter().rect_filled(rect, radius, env.p.raised.gamma_multiply(0.6));
-            paint_icon(ui, icon, rect.center(), 26.0, env.p.muted_dim);
+        Some(t) => {
+            let fitted = contain_rect(rect, t.size());
+            egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), fitted.size())).paint_at(ui, fitted);
         }
+        None => paint_icon(ui, icon, rect.center(), 26.0, env.p.muted_dim),
     }
 }
 
@@ -433,7 +446,7 @@ fn feature(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, v: &PickView, editi
             egui::Layout::left_to_right(egui::Align::Min)
         };
         ui.with_layout(layout, |ui| {
-            let (rect, _) = ui.allocate_exact_size(image_size, Sense::hover());
+            let (rect, picture) = ui.allocate_exact_size(image_size, Sense::click());
             let corners = if compact {
                 egui::CornerRadius {
                     nw: radius.nw,
@@ -450,6 +463,9 @@ fn feature(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, v: &PickView, editi
                 }
             };
             snapshot(ui, env, v.snapshot, rect, corners, "map-pin-filled");
+            if !editing && !v.snapshot.is_nil() && picture.on_hover_text(aurora_i18n::tr!("ui-profile-aurora-big-photo")).clicked() {
+                w.open_photo(PictureSlot::Pick(w.id), v.snapshot);
+            }
             if let Some(m) = v.maturity {
                 let badge = Rect::from_min_size(rect.min + Vec2::splat(8.0), Vec2::splat(15.0));
                 widgets::paint_maturity_badge(ui.painter(), p, m, badge, widgets::inner_radius(ui.visuals()));
@@ -1914,5 +1930,20 @@ mod tests {
         // a new one gets its id when sent
         let fresh = ClassifiedEdit::default();
         assert!(!classified_of(&fresh).id.is_nil());
+    }
+}
+
+#[cfg(test)]
+mod contain_tests {
+    use super::*;
+
+    #[test]
+    fn contain_keeps_the_whole_picture() {
+        let rect = Rect::from_min_size(pos2(10.0, 10.0), Vec2::new(200.0, 100.0));
+        let tall = contain_rect(rect, [100, 200]);
+        assert_eq!(tall.size(), Vec2::new(50.0, 100.0));
+        assert_eq!(tall.center(), rect.center());
+        let wide = contain_rect(rect, [400, 100]);
+        assert_eq!(wide.size(), Vec2::new(200.0, 50.0));
     }
 }
