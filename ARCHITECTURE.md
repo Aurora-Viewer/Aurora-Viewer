@@ -1,5 +1,35 @@
 # Aurora Viewer architecture
 
+The mesh Collisions tab keeps its level-of-detail selector and triangle-retention
+slider on one row, without numbered steps. Optional source-file/preset actions
+occupy a following row so they do not displace those primary controls.
+Analyze sits at the right of the five VHACD inputs with a common caption height
+and room for its busy state. Resolution exposes the Legacy quality presets from
+200,000 to 2,000,000 voxels, retaining the 400,000 default and describing the
+current budget in hover text. Existing custom values remain unchanged until an
+explicit preset choice.
+
+Texture decoding tries the bounded TGA decoder when memory signature detection
+finds no format: TGA has no reliable magic bytes. Texture imports and material
+maps share this path and its existing pixel/allocation limits; recognised formats
+retain their own decoder and errors.
+
+`imports/ui/zoom.rs` keeps the shared enlarged preview alive while any importer
+is open, including the independent type windows; the unified queue's `open`
+flag alone cannot determine its lifetime. Closing the last importer or pressing
+Escape clears the loupe and its material-map GPU handle.
+
+Mesh fee preparation retains invalid collision geometry for the import footer's
+live diagnosis and explicit convex-hull conversion. The action invalidates the
+quote, opens the collision preview and uses the existing asynchronous analysis;
+it never edits visual LODs or drops triangles. Fee requests wait for a valid
+prepared collision shape, with the protocol's degeneracy threshold unchanged.
+The collision UI exposes VHACD's five analysis parameters; hull vertex limits
+apply during analysis, without a separate post-analysis simplification stage.
+The Analyze button uses the preview queue's pending/debounce state while hull
+preparation is missing; a shared busy action face shows its spinner and status
+without another clickable analysis request. Cached view-only redraws stay idle.
+
 `world/inventory/system.rs` indexes system-folder lookups for inventory and
 Appearance by inventory generation and root identity. Root-listed duplicates
 retain their smallest UUID; incomplete listings retain the previous fallback.

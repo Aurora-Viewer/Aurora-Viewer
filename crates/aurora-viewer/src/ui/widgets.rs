@@ -2269,6 +2269,25 @@ pub fn action_button_if(
     action_button_keyed(ui, p, icon, label, kind, size, enabled, None)
 }
 
+/// An inactive action face with a live spinner and readable work status.
+pub fn busy_button(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
+    const SPINNER: f32 = 14.0;
+    const GAP: f32 = 7.0;
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), control_font(ui, 12.0), p.ink);
+    let content = SPINNER + GAP + galley.size().x;
+    let size = Vec2::new(content + KEYED_PAD, ui.spacing().interact_size.y);
+    let response = action_button_if(ui, p, "", "", ActionKind::Flat, size, false);
+    let left = response.rect.center().x - content / 2.0;
+    egui::Spinner::new().color(p.violet_light).paint_at(
+        ui,
+        egui::Rect::from_center_size(egui::pos2(left + SPINNER / 2.0, response.rect.center().y), Vec2::splat(SPINNER)),
+    );
+    let origin = row_text_origin(ui.painter(), &galley, left + SPINNER + GAP, response.rect.center().y);
+    ui.painter().galley(origin, galley, p.ink);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, false, label));
+    response
+}
+
 const KEYED_ICON: f32 = 15.0;
 const KEYED_GAP: f32 = 7.0;
 /// Room around the content of a button that takes its content's width.

@@ -23,6 +23,47 @@ fn request(draft: &Draft) -> aurora_net::inventory::mesh_upload::Request {
 }
 
 #[test]
+fn mesh_physics_convex_conversion_repairs_collision_only_and_keeps_the_upload_guard() {
+    let mut draft = crate::imports::tests::invalid_physics_fixture();
+    let original = prepare(&draft).expect("visual and physical geometry");
+    assert_eq!(original.degenerate_triangles, 1);
+    assert!(original.physics_error().is_some());
+    assert!(
+        super::request(
+            &draft,
+            &original,
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            "Physics",
+            "",
+            Permissions::default(),
+            Default::default()
+        )
+        .is_err()
+    );
+    let visual = original.lods[0]
+        .each_ref()
+        .map(|lod| encode::lod(lod.as_ref().expect("visual LOD"), false).expect("visual geometry"));
+    draft.options.decompose = true;
+    let repaired = prepare(&draft).expect("convex collision geometry");
+    assert!(repaired.physics_error().is_none());
+    assert!(!repaired.hulls[0].hulls.is_empty());
+    assert_eq!(
+        original.physics[0].as_ref().unwrap().triangles(),
+        repaired.physics[0].as_ref().unwrap().triangles()
+    );
+    for (lod, original) in repaired.lods[0].iter().zip(&visual) {
+        assert_eq!(
+            encode::lod(lod.as_ref().expect("visual LOD"), false).expect("visual geometry"),
+            *original
+        );
+    }
+    assert!(request(&draft).validate().is_ok());
+    draft.options.decompose = false;
+    assert_eq!(prepare(&draft).expect("original physics").degenerate_triangles, 1);
+}
+
+#[test]
 fn mesh_import_parity_authored_lod_subsets_reorder_pad_and_match_suffixes() {
     let mut draft = draft();
     let scene = Arc::make_mut(&mut draft.scene);

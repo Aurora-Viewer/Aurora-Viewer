@@ -341,7 +341,15 @@ import-local-mesh-selection = Select a prim or mesh in the world before applying
 import-local-mesh-scale = Use imported dimensions in the preview
 import-local-meters = Assume units are meters
 import-local-mesh-rez-hint = Click in the world to create the prim that will display this local preview.
-import-voxel-resolution = Voxel resolution
+import-voxel-resolution = Resolution
+import-physics-resolution-low = Low
+import-physics-resolution-normal = Normal
+import-physics-resolution-high = High
+import-physics-resolution-very-high = Very high
+import-physics-resolution-ultra = Ultra
+import-physics-resolution-maximum = Maximum
+import-physics-resolution-custom = Custom
+import-physics-resolution-help = Precision of the 3D grid used to analyze collisions ({ $voxels } voxels). Higher settings can preserve finer details, but take longer and use more memory.
 import-max-hulls = Maximum hulls
 import-hull-vertices = Vertices per hull
 import-error-tolerance = Error tolerance
@@ -543,7 +551,12 @@ import-preview-physics-fill = Physics fill
 import-preview-physics-edges = Physics edges
 import-preview-degenerate-fill = Degenerate triangle fill
 import-preview-degenerate-edges = Degenerate triangle edges
-import-degenerate-physics = Physics mesh: { $count } degenerate triangles. Analyze or simplify before requesting a quote.
+import-degenerate-physics = { $count ->
+    [one] Physics needs repair: { $count } triangle is too small, narrow or collapsed for collision.
+   *[other] Physics needs repair: { $count } triangles are too small, narrow or collapsed for collision.
+    }
+import-physics-convex-repair = Create convex collision hulls
+import-physics-convex-help = Convex hulls approximate the collision shape and may fill openings. Visual LODs stay unchanged. Check the physics preview before requesting a quote.
 import-max-size = Limit size to 1024 × 1024
 import-texture-size = Upload size: { $width } × { $height } px
 import-lossless = Lossless compression
@@ -11355,8 +11368,9 @@ texture-library-open-hint = Double-click to open. Drag into object contents, or 
 import-preview-settings = Preview options
 import-section-avatar = Avatar
 import-section-journal = Journal
-import-collision-step-source = Step 1: Level of detail
-import-collision-step-hulls = Step 2: Convert to convex hulls (optional)
+import-collision-step-source = Level of detail
+import-collision-step-hulls = Create convex hulls
+import-collision-use-triangles = Use triangle mesh
 import-collision-results = Results — Triangles: { $triangles } · Vertices: { $vertices } · Hulls: { $hulls }
 import-collision-results-pending = Results — Triangles: N/A · Vertices: N/A · Hulls: N/A
 import-avatar-joints = Joints:
@@ -11381,6 +11395,7 @@ import-log-lod-ready = LOD{ $level }: { $triangles } triangles prepared.
 import-log-model-detail = Model { $model }, LOD{ $level }: { $vertices } vertices, { $faces } faces.
 
 import-collision-analyze = Analyze
+import-collision-analyzing = Analyzing…
 
 import-fill-mode = Fill mode
 
