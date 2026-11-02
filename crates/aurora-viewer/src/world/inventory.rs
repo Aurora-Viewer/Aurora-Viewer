@@ -14,6 +14,7 @@ pub mod demo;
 mod lost;
 mod parents;
 pub mod preview;
+mod system;
 pub mod wearable;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +36,8 @@ pub struct Folder {
 
 #[derive(Default)]
 pub struct Inventory {
+    /// Root/system lookups retained until the inventory changes.
+    pub(crate) system_folders: system::Cache,
     /// Session-only RLVa preview restrictions, shared by every inventory floater.
     pub rlva_preview_mask: u8,
     pub owner: Uuid,
