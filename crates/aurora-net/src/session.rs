@@ -296,6 +296,16 @@ fn emit(sh: &Shared, ev: NetEvent) {
     let _ = sh.events.send(ev);
 }
 
+/// A folder made without AIS, known to the viewer before anything goes in
+/// it (createNewCategoryCoro's updateCategory): the server's own updates
+/// for the items then find their folder instead of Lost And Found.
+fn announce_folder(events: &crate::EventSender, folder: crate::inventory::InvFolder) {
+    let _ = events.send(NetEvent::InventoryUpdated {
+        folders: vec![folder],
+        items: Vec::new(),
+    });
+}
+
 /// Items read, items the server says do not exist, and failed reads.
 fn send_item_reads(events: &crate::EventSender, reads: crate::inventory::ais::ItemReads, attachment: bool) {
     if !reads.items.is_empty() {
@@ -2265,9 +2275,11 @@ impl Session<'_> {
                     let owner = self.agent_id();
                     let moves = self.inventory_move_tx.clone();
                     let edits = self.inventory_udp_tx.clone();
+                    let create_cap = self.main_cap("CreateInventoryCategory");
                     tokio::spawn(async move {
                         let result = crate::inventory::operations::mutate_udp(
                             &http,
+                            create_cap.as_deref(),
                             &fetch_cap,
                             owner,
                             change,
@@ -2276,6 +2288,7 @@ impl Session<'_> {
                             |progress| {
                                 let _ = events.send(NetEvent::InventoryProgress { request, progress });
                             },
+                            &|folder| announce_folder(&events, folder),
                         )
                         .await;
                         let _ = events.send(NetEvent::InventoryEdited { request, result });
@@ -2793,10 +2806,18 @@ impl Session<'_> {
                     let events = self.sh.events.clone();
                     let owner = self.agent_id();
                     let edits = self.inventory_udp_tx.clone();
+                    let create_cap = self.main_cap("CreateInventoryCategory");
                     tokio::spawn(async move {
-                        let result =
-                            crate::outfits::mutate_udp(&http, &fetch_cap, owner, change, |edit| inventory_udp::submit(edits.clone(), edit))
-                                .await;
+                        let result = crate::outfits::mutate_udp(
+                            &http,
+                            create_cap.as_deref(),
+                            &fetch_cap,
+                            owner,
+                            change,
+                            |edit| inventory_udp::submit(edits.clone(), edit),
+                            &|folder| announce_folder(&events, folder),
+                        )
+                        .await;
                         let _ = events.send(NetEvent::OutfitUpdated { request, result });
                     });
                     return;
