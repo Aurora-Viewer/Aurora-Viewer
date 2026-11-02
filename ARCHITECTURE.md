@@ -209,8 +209,9 @@ Binding-array texture pages are limited independently of ordinary frame texture
 bindings. `RenderSettings::render_scale_percent` reuses the separate world-target
 path in `rlva/resolution.rs`; the RLVa resolution divisor takes precedence,
 following the reference RenderResolutionMultiplier behavior. The user
-scale uses nine bilinear Catmull-Rom taps before native-resolution labels, HUDs
-and egui; RLVa-only scaling retains its nearest-pixel behavior. Target changes
+scale uses CAS reconstruction and the Sharpness setting in one pass before
+native-resolution labels, HUDs and egui. The reduced post pass leaves CAS off;
+RLVa-only scaling retains its nearest-pixel behavior. Target changes
 invalidate depth/occlusion history, and snapshots bypass the user's scale.
 
 `scene/anim.rs` restarts active resident and control-avatar motions from one shared
