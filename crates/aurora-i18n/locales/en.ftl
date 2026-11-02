@@ -642,6 +642,7 @@ inventory-resize-columns = Drag to resize columns. Double-click to reset their w
 inventory-resize-sidebar = Drag to resize the folder sidebar. Double-click to reset its width.
 inventory-column-modified = Modified
 inventory-pill-link = Link
+inventory-pill-protected = Locked
 inventory-take-off = Take off
 inventory-more-actions = More actions
 inventory-profile = Profile

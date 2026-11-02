@@ -17882,6 +17882,8 @@ impl ApplicationHandler for App {
                     view.as_str(),
                     "default-permissions"
                         | "aurora-default-permissions"
+                        | "locked"
+                        | "aurora-locked"
                         | "permissions"
                         | "lost"
                         | "bulk-permissions"
@@ -17960,6 +17962,11 @@ impl ApplicationHandler for App {
                     self.inventory_ui.filters_open = view == "filters";
                     self.inventory_ui.preferences_open = view == "preferences";
                     self.inventory_ui.default_permissions_open = view.ends_with("default-permissions");
+                    if view.ends_with("locked") {
+                        // a locked folder: its "Locked" tag, its contents ordinary
+                        self.settings.inventory.protected.insert(uuid::Uuid::from_u128(8000));
+                        self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
+                    }
                     if view.starts_with("bulk-") {
                         let ids = if view == "bulk-folder" {
                             vec![uuid::Uuid::from_u128(8000)]
