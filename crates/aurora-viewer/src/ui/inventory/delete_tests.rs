@@ -125,6 +125,69 @@ fn received_deletion_preserves_system_worn_library_and_locked_folder_protections
     assert!(rules::move_selection(&inv, &[id(30)], id(TRASH), &prefs.protected, &facts.worn).is_err());
 }
 
+/// Rule B of #1728: a locked folder's contents move but are not deleted,
+/// whether dragged to the Trash or deleted from the menu or the Delete key.
+#[test]
+fn a_locked_folders_contents_move_but_neither_drag_nor_delete_trashes_them() {
+    let mut inv = received();
+    folder(&mut inv, id(40), id(ROOT), -1);
+    folder(&mut inv, id(41), id(40), -1);
+    item(&mut inv, id(50), id(40));
+    item(&mut inv, id(51), id(41));
+    let prefs = InventoryPreferences {
+        protected: HashSet::from([id(40)]),
+        ..Default::default()
+    };
+    let facts = Facts::default();
+    let st = InventoryUi::default();
+    for target in [id(40), id(41), id(50), id(51)] {
+        assert!(!delete::allowed(&inv, &[target], &prefs, &facts), "Delete {target}");
+        assert!(
+            rules::move_selection(&inv, &[target], id(TRASH), &prefs.protected, &facts.worn).is_err(),
+            "drag {target}"
+        );
+        let menu = context_catalog::build(&inv, target, &st, &prefs, &facts);
+        assert!(
+            menu.entries.iter().any(|entry| entry.id == "delete" && !entry.enabled),
+            "menu {target}"
+        );
+    }
+    for target in [id(41), id(50), id(51)] {
+        assert!(
+            rules::move_selection(&inv, &[target], id(ROOT), &prefs.protected, &facts.worn).is_ok(),
+            "move {target}"
+        );
+    }
+    assert!(rules::move_selection(&inv, &[id(40)], id(ROOT), &prefs.protected, &facts.worn).is_err());
+}
+
+/// "Lock" is offered on a delivery folder inside Received Items too: the
+/// lock must not open it, nor anything in Received Items, to moves in.
+#[test]
+fn a_locked_folder_in_received_items_stays_closed_to_moves_in() {
+    let mut inv = received();
+    folder(&mut inv, id(40), id(ROOT), -1);
+    item(&mut inv, id(50), id(40));
+    let mut prefs = InventoryPreferences::default();
+    let facts = Facts::default();
+    for locked in [id(20), id(21)] {
+        prefs.protected = HashSet::from([locked]);
+        for to in [id(10), id(20), id(21)] {
+            assert!(!rules::move_destination(&inv, to), "{locked} locked, to {to}");
+            assert!(
+                rules::move_selection(&inv, &[id(50)], to, &prefs.protected, &facts.worn).is_err(),
+                "{locked} locked, to {to}"
+            );
+            for cut in [true, false] {
+                assert!(
+                    !rules::paste_allowed(&inv, &[id(50)], to, cut, false, &prefs.protected, &facts.worn),
+                    "{locked} locked, paste into {to}"
+                );
+            }
+        }
+    }
+}
+
 /// `folders` personal folders ten wide (four or five deep), two items in
 /// each, and `selected` items in one folder three levels down; 60 worn items.
 fn large(folders: u128, selected: u128) -> (Inventory, Vec<Uuid>, Facts) {

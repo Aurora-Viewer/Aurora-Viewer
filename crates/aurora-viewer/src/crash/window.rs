@@ -673,6 +673,17 @@ impl ApplicationHandler for Recovery {
         }
     }
 
+    /// As the viewer's own window does (app.rs): egui-winit's state and the
+    /// window go while the event loop, and with it the Wayland connection,
+    /// still lives. Dropped after `run_app`, the clipboard's objects were
+    /// destroyed on a closed connection and closing this window ended in a
+    /// segmentation fault on Wayland, before `acknowledged` was written.
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        self.input = None;
+        self.surface = None;
+        self.window = None;
+    }
+
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let cap = crate::cli::get()
             .fps_limit

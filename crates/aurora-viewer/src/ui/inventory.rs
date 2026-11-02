@@ -70,6 +70,7 @@ pub fn legacy_demo() -> bool {
 pub fn aurora_demo_active() -> bool {
     aurora::demo_active()
 }
+pub use clipboard::appearance_request as appearance_clipboard;
 pub use view::InventoryPreferences;
 
 // Keep the existing tab indices: slot 1 was unused after the single-tree layout.

@@ -11,11 +11,13 @@ use egui::{RichText, Vec2};
 use model::Action;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+mod clipboard;
 mod folders;
 mod gallery;
 pub(crate) mod items;
 mod layers;
 mod selection;
+pub use clipboard::{PasteTo, Request as ClipboardRequest};
 
 #[derive(Default)]
 pub struct AppearanceUi {
@@ -41,6 +43,8 @@ pub struct AppearanceUi {
     /// and LLPanelWearing allow a multiple selection.
     item_selection: selection::Selection,
     item_scope: Option<Uuid>,
+    /// Ctrl+C, Ctrl+X or Ctrl+V of this frame, for the app (`take_clipboard`).
+    clipboard: Option<ClipboardRequest>,
     /// The drag of a worn clothing layer in the outfit editor.
     layers: layers::Drag,
     /// The temporary attachments counted last frame: one more opens their
@@ -225,6 +229,7 @@ impl AppearanceUi {
 
     fn select_outfit(&mut self, response: &egui::Response, id: Uuid, outfits: &[Uuid]) {
         if response.clicked() || response.secondary_clicked() {
+            clipboard::request_focus(&response.ctx);
             self.outfit_selection
                 .click(id, outfits, response.ctx.input(|i| i.modifiers), response.secondary_clicked());
             self.clear_items();
@@ -242,6 +247,7 @@ impl AppearanceUi {
         if !(response.clicked() || response.secondary_clicked()) {
             return;
         }
+        clipboard::request_focus(&response.ctx);
         if self.item_scope != Some(scope) {
             self.item_selection = selection::Selection::default();
             self.item_scope = Some(scope);
@@ -1243,6 +1249,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
             let removable = locks.can_remove(it.id);
             if edit {
                 if resp.clicked() {
+                    clipboard::request_focus(ui.ctx());
                     st.selected_item = Some(it.id);
                 }
                 item_menu(&resp, p, inv, &locks, &[it.id], actions);
@@ -1677,6 +1684,7 @@ pub fn show(
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 let list_width = ui.available_width();
+                clipboard::list_focus(ui, egui::Rect::from_min_size(ui.cursor().min, Vec2::new(list_width, height)));
                 egui::ScrollArea::vertical()
                     .id_salt("appearance_list")
                     .max_height(height)
@@ -1704,6 +1712,7 @@ pub fn show(
                         });
                     });
             });
+        st.clipboard_shortcuts(ui, &world.inventory, &outfits);
         if !st.editing && st.tab == 2 {
             temporary_attachments(ui, p, world, st);
         }
@@ -2906,6 +2915,132 @@ mod tests {
             worn.iter().map(|it| it.id).collect::<HashSet<_>>()
         );
         assert!(model::plan(&world.inventory, actions[0].clone(), &HashMap::new()).is_ok());
+    }
+
+    /// Ctrl+C, Ctrl+X and Ctrl+V, as egui-winit delivers them.
+    fn clipboard_key(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, event: egui::Event) -> Option<ClipboardRequest> {
+        draw_input(
+            ctx,
+            world,
+            st,
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                events: vec![event],
+                ..Default::default()
+            },
+        );
+        st.take_clipboard()
+    }
+
+    /// The request: Ctrl+C, Ctrl+X and Ctrl+V of the Legacy Viewer's
+    /// inventory in the outfit windows too. A copy carries the outfit's
+    /// links, a paste names where it goes, and the keys do nothing while
+    /// the lists do not have the keyboard.
+    #[test]
+    fn clipboard_keys_take_the_selected_rows_of_outfits_and_worn() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        let folder = Uuid::from_u128(703);
+        let mut st = AppearanceUi::default();
+        st.open_outfit(folder);
+        st.reveal_outfit = None;
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        assert_eq!(
+            clipboard_key(&ctx, &mut world, &mut st, egui::Event::Copy),
+            None,
+            "no row clicked yet"
+        );
+        let inv = &world.inventory;
+        let targets: Vec<_> = model::folder_links(inv, folder).iter().take(2).map(|l| l.target).collect();
+        let names: Vec<_> = targets.iter().map(|id| inv.items[id].name.clone()).collect();
+        let link = |folder: Uuid, target: Uuid| {
+            inv.folders[&folder]
+                .items
+                .iter()
+                .copied()
+                .find(|id| inv.items[id].asset_id == target)
+                .expect("a link")
+        };
+        let mut links: Vec<_> = targets.iter().map(|target| link(folder, *target)).collect();
+        let cof = model::cof(inv).expect("COF");
+        let worn_link = link(cof, targets[0]);
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &names[0],
+            egui::Modifiers::NONE,
+            egui::PointerButton::Primary,
+        );
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &names[1],
+            egui::Modifiers::CTRL,
+            egui::PointerButton::Primary,
+        );
+        let Some(ClipboardRequest::Store { mut ids, cut: false }) = clipboard_key(&ctx, &mut world, &mut st, egui::Event::Copy) else {
+            panic!("a copy of the selected items");
+        };
+        ids.sort();
+        links.sort();
+        assert_eq!(ids, links, "the outfit's links, not the originals");
+        assert!(matches!(
+            clipboard_key(&ctx, &mut world, &mut st, egui::Event::Cut),
+            Some(ClipboardRequest::Store { cut: true, .. })
+        ));
+        assert_eq!(
+            clipboard_key(&ctx, &mut world, &mut st, egui::Event::Paste("marker".into())),
+            Some(ClipboardRequest::Paste {
+                to: PasteTo::Outfit(Some(folder)),
+                text: "marker".into(),
+            })
+        );
+
+        // The worn tab copies the Current Outfit's links and pastes there.
+        st.open(2, false);
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &names[0],
+            egui::Modifiers::NONE,
+            egui::PointerButton::Primary,
+        );
+        assert_eq!(
+            clipboard_key(&ctx, &mut world, &mut st, egui::Event::Copy),
+            Some(ClipboardRequest::Store {
+                ids: vec![worn_link],
+                cut: false
+            })
+        );
+        assert!(matches!(
+            clipboard_key(&ctx, &mut world, &mut st, egui::Event::Paste("marker".into())),
+            Some(ClipboardRequest::Paste { to: PasteTo::Worn, .. })
+        ));
+
+        // The filter field keeps its own Ctrl+C.
+        let field = label_position(&ctx, &mut world, &mut st, aurora_i18n::tr!("ui-appearance-filter-outfits"));
+        modified_click(
+            &ctx,
+            &mut world,
+            &mut st,
+            field,
+            egui::Modifiers::NONE,
+            egui::PointerButton::Primary,
+        );
+        draw(&ctx, &mut world, &mut st, None);
+        assert!(ctx.text_edit_focused());
+        assert_eq!(clipboard_key(&ctx, &mut world, &mut st, egui::Event::Copy), None);
     }
 
     #[test]
