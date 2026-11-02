@@ -17848,6 +17848,11 @@ impl ApplicationHandler for App {
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_INVENTORY") {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                if matches!(view.as_str(), "calling-card" | "aurora-calling-card") {
+                    // the viewer-made card naming the wolf, selected
+                    self.panels.inventory = true;
+                    self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8114));
+                }
                 if matches!(view.as_str(), "landmark" | "aurora-landmark") {
                     let mut landmark = self.world.inventory.items[&uuid::Uuid::from_u128(8103)].clone();
                     landmark.id = uuid::Uuid::from_u128(8120);

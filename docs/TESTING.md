@@ -8045,6 +8045,11 @@ offline; the files and snapshots uploaded in demo stay offline.
 - `1`: the inventory alone. This mode and every one below but the
   `aurora` ones were written for the Legacy Viewer's window and show it,
   whatever Preferences › Aurora › Inventory says.
+- `calling-card`, `aurora-calling-card`: open the inventory on the "Orion
+  Example" calling card of the "Right-click tests" folder, made like a
+  viewer's card: created by us, with the wolf's key as description (the
+  demo's name service calls that key Orion Example). Double-click it, or use
+  its profile entry: Orion Example's profile must open, not ours.
 - `landmark`, `aurora-landmark`: a landmark's context menu in each inventory
   layout. Capture at frame 700. Copy SLurl must copy the destination's actual
   region and coordinates; Show on map must open and center the map without
