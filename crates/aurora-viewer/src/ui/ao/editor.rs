@@ -110,7 +110,7 @@ pub(super) fn show(
             ui.label(RichText::new(state.state.label()).strong().color(p.violet_pale));
             egui::ScrollArea::vertical()
                 .id_salt(("ao_state_details", set.id, state.state, state.container))
-                .max_height(height - 24.0)
+                .max_height(ui.available_height())
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     if state.state.swimming() {

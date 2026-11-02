@@ -145,6 +145,63 @@ impl Fixture {
 }
 
 #[test]
+fn ao_cycle_footer_is_fully_visible_after_scrolling_with_large_text() {
+    fn collect(shape: &egui::Shape, text: &str, out: &mut Vec<egui::Rect>) {
+        match shape {
+            egui::Shape::Text(t) if t.galley.text() == text => out.push(egui::Rect::from_min_size(t.pos, t.galley.size())),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, text, out)),
+            _ => {}
+        }
+    }
+    let mut f = Fixture::new();
+    f.inv = Inventory::default();
+    f.account.selected = crate::ao::demo::seed_interface(&mut f.inv, Uuid::from_u128(1), "interface");
+    f.catalog = Default::default();
+    f.catalog.refresh(&mut f.inv);
+    crate::theme::Theme::default().apply(&f.ctx, 2.0);
+    f.ctx.set_zoom_factor(0.9);
+    super::super::widgets::place_floater(&f.ctx, "ao", egui::Pos2::ZERO, egui::vec2(1400.0, 980.0));
+    for _ in 0..40 {
+        f.draw(Vec::new());
+    }
+    let mut headings = Vec::new();
+    for shape in f.draw(Vec::new()).1 {
+        collect(&shape.shape, State::Standing.label(), &mut headings);
+    }
+    let heading = headings
+        .into_iter()
+        .max_by(|a, b| a.left().total_cmp(&b.left()))
+        .expect("detail heading");
+    let at = egui::pos2(heading.left() + 40.0, heading.bottom() + 300.0);
+    for _ in 0..30 {
+        f.draw(vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -1000.0),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Wheel,
+                modifiers: Default::default(),
+            },
+        ]);
+    }
+    let mut found = false;
+    for shape in f.draw(Vec::new()).1 {
+        let mut labels = Vec::new();
+        collect(&shape.shape, aurora_i18n::tr!("common-apply"), &mut labels);
+        for rect in labels {
+            found = true;
+            assert!(
+                shape.clip_rect.contains_rect(rect),
+                "the complete Apply label stays inside the scroll viewport: {rect:?} in {:?}",
+                shape.clip_rect
+            );
+        }
+    }
+    assert!(found, "the cycle footer is visible at the end of the detail pane");
+}
+
+#[test]
 fn ao_group_and_track_rows_keep_their_summary_line() {
     fn galley(shape: &egui::Shape, text: &str) -> Option<std::sync::Arc<egui::Galley>> {
         match shape {
