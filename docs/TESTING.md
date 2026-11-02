@@ -563,7 +563,13 @@ most a quarter of the forced side: with `AURORA_BLOOM=1`, compare a
 (the lamps of the plaza, the glowing objects): the same size as in one
 pass, never cut along a border. With `AURORA_AO=gtao:2` and
 `AURORA_DEMO_DEBUG=ao`, no dark line may cross the ground along the tiles'
-borders. With `AURORA_DEBUG_SHADOWS=1`, the sun's shadows are those of the
+borders. A tiled photo with the ambient occlusion on first draws the whole
+photo at a quarter of each side (the log counts it in no part), whose depth
+GTAO's samples read past each tile: in a close-up (the camera a metre from
+the avatar, looking down at its feet), the occlusion's wide gradients must
+run across the borders without a step, the same as the photo in one pass.
+The screen-space reflections fade only at the photo's edges, not along the
+tiles' borders. With `AURORA_DEBUG_SHADOWS=1`, the sun's shadows are those of the
 photo in one pass, in every tile (the shadow of the box on the right of the
 plaza, with `AURORA_DEMO_POS=129,134`). The world keeps the first tile's
 instant until the last: with `AURORA_DEMO_SNAPSHOT_TILE=1024` at
