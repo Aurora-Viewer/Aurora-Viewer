@@ -8779,8 +8779,14 @@ impl App {
                 ctrl: self.ctrl,
                 alt: self.alt,
             };
-            self.build
-                .update(&mut self.world, &self.settings.build, self.cursor_pos, over_ui, mods);
+            self.build.update(
+                &mut self.world,
+                &self.settings.build,
+                Some(&self.scene),
+                self.cursor_pos,
+                over_ui,
+                mods,
+            );
             let mut selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
             // another avatar's attachment the open menu is about, outlined
             // like a child prim of a selection (it cannot be selected)
