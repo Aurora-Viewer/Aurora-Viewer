@@ -170,10 +170,9 @@ pub struct Drag {
     /// Textures" option of the stretch handles (ScaleStretchTextures).
     textures: Vec<TexSave>,
     stretch_textures: bool,
-    /// The saved texture entries changed since they were last sent, and the
-    /// prims whose entry is ready to go out with the next transform.
+    /// The saved texture entries changed during the drag: they go out on
+    /// release (LLManipScale::handleMouseUp, sendTEUpdate).
     te_due: bool,
-    te_send: Vec<usize>,
     /// Ruler info for the scale guide (line start, direction, unit).
     scale_line: Option<(Vec3, Vec3, f32, f32)>,
 }
@@ -366,7 +365,6 @@ impl Manip {
                 *cam
             };
             drag_update(&mut d, world, s, &drag_cam, cursor, mods, now, out);
-            self.te_dirty.append(&mut d.te_send);
             self.animate(Some(d.part));
             self.drag = Some(d);
             return;
@@ -444,7 +442,6 @@ impl Manip {
             textures,
             stretch_textures: s.scale_stretch_textures,
             te_due: false,
-            te_send: Vec::new(),
             scale_line: None,
         };
         let g = f.grid.rotation;
@@ -1622,9 +1619,8 @@ fn drag_update(
     {
         d.last_send = Some(now);
         send_updates(world, d, d.linked, out);
-        if std::mem::take(&mut d.te_due) {
-            d.te_send.extend(d.textures.iter().map(|t| t.idx));
-        }
+        // the textures follow locally (adjustTexturesByScale(false) in
+        // handleHover); the simulator gets them once, on release
     }
 }
 
