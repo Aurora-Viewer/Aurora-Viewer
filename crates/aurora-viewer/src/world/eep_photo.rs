@@ -55,7 +55,10 @@ impl PhotoChoice {
 
     /// An item from one of the lists (None: the user's own again). A day
     /// replaces the fixed sky, water and time, which come back with the
-    /// user's own day; a sky replaces the time.
+    /// user's own day; a sky replaces the time. A sky, a day or a time of
+    /// day brings its own sun, as a preset replaces the whole sky in the
+    /// Legacy Viewer (LLEnvironment::setEnvironment): the photo's turned
+    /// sun goes, otherwise Midnight would be lit by a morning sun.
     pub fn pick(&mut self, kind: SettingsKind, asset: Option<Uuid>) {
         match kind {
             SettingsKind::Day => {
@@ -86,11 +89,15 @@ impl PhotoChoice {
                     self.water = self.water.or(r.water);
                 }
                 self.day = asset;
+                if asset.is_some() {
+                    self.sun = None;
+                }
             }
             SettingsKind::Sky => {
                 self.sky = asset;
                 if asset.is_some() {
                     self.time = None;
+                    self.sun = None;
                 }
             }
             SettingsKind::Water => self.water = asset,
@@ -102,6 +109,7 @@ impl PhotoChoice {
         self.time = time;
         if time.is_some() {
             self.sky = None;
+            self.sun = None;
         }
     }
 
@@ -176,14 +184,8 @@ impl Resolved {
     }
 
     /// The photo's sky and water over those shown beneath (`under`: track,
-    /// sky, water), then its sun.
-    pub fn compose(
-        &self,
-        sun: Option<Quat>,
-        altitudes: &[f32; 4],
-        input: &FrameInput,
-        under: (usize, SkyFrame, WaterFrame),
-    ) -> (usize, SkyFrame, WaterFrame) {
+    /// sky, water); its sun goes on top (`EnvSelector::frame`).
+    pub fn compose(&self, altitudes: &[f32; 4], input: &FrameInput, under: (usize, SkyFrame, WaterFrame)) -> (usize, SkyFrame, WaterFrame) {
         let (mut track, mut sky, mut water) = under;
         if let Some((_, d)) = &self.day {
             // a local day: DEFAULT_DAYLENGTH / DEFAULT_DAYOFFSET
@@ -198,9 +200,6 @@ impl Resolved {
         }
         if let Some((_, w)) = self.water {
             water = w;
-        }
-        if let Some(q) = sun {
-            sky.sun_rotation = q;
         }
         (track, sky, water)
     }
@@ -408,19 +407,26 @@ mod tests {
     }
 
     #[test]
-    fn the_sun_turns_over_any_sky() {
-        let input = FrameInput {
-            main_region: None,
-            eep_region: None,
-            legacy_sun: glam::Vec3::Z,
-            unix_secs: 0.0,
-            now: 0.0,
-            altitude: 20.0,
-        };
-        let under = (2, SkyFrame::default(), WaterFrame::default());
+    fn a_new_sky_brings_its_own_sun() {
         let q = crate::ui::environment::rotation_from(90.0, 30.0);
-        let (track, sky, _) = Resolved::default().compose(Some(q), &[0.0; 4], &input, under);
-        assert_eq!(track, 2, "the sun alone changes no source");
-        assert!(sky.sun_rotation.abs_diff_eq(q, 1e-6));
+        let turned = PhotoChoice {
+            sun: Some(q),
+            ..PhotoChoice::default()
+        };
+        // a water or a restore leaves the turned sun
+        let mut c = turned;
+        c.pick(SettingsKind::Water, Some(id(2)));
+        c.pick(SettingsKind::Sky, None);
+        c.set_time(None);
+        assert_eq!(c.sun, Some(q));
+        for pick in [
+            |c: &mut PhotoChoice| c.pick(SettingsKind::Sky, Some(id(1))),
+            |c: &mut PhotoChoice| c.pick(SettingsKind::Day, Some(id(3))),
+            |c: &mut PhotoChoice| c.set_time(Some(4)),
+        ] {
+            let mut c = turned;
+            pick(&mut c);
+            assert_eq!(c.sun, None, "{c:?}");
+        }
     }
 }

@@ -2790,11 +2790,12 @@ fn env_view<'a>(
     env_ui: &'a crate::ui::environment::EnvironmentUi,
     eep: &crate::world::eep_env::EnvSelector,
 ) -> crate::ui::snapshot::EnvView<'a> {
-    let sky = eep.shown_sky().unwrap_or_default();
+    // (the sky's own sun: the photo's turned one would be its own reset)
+    let sun = eep.unturned_sun().unwrap_or(crate::world::eep::SkyFrame::default().sun_rotation);
     crate::ui::snapshot::EnvView {
         catalog: env_ui.catalog(),
         own: eep.local_view(),
-        sun: crate::ui::environment::azimuth_elevation(sky.sun_rotation),
+        sun: crate::ui::environment::azimuth_elevation(sun),
         locked: eep.rlva_locked,
         loading: eep.photo_loading(),
     }

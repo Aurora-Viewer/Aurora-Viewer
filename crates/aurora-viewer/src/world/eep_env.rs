@@ -26,7 +26,7 @@ use super::eep_push::PushLayer;
 use super::env_select::{SettingsKind, Shown as ListShown};
 use aurora_llsd::Llsd;
 use aurora_net::RegionHandle;
-use glam::Vec3;
+use glam::{Quat, Vec3};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -266,6 +266,9 @@ struct Shown {
     target_water: WaterFrame,
     /// The same with the photo's layer (what "Keep this light" keeps).
     photo_sky: SkyFrame,
+    /// The sun of that sky before the photo turns it (what the photo's
+    /// sun sliders restore).
+    unturned_sun: Quat,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -923,9 +926,10 @@ impl EnvSelector {
         self.photo.loading()
     }
 
-    /// The sky shown without the crossfade, the photo's layer included.
-    pub fn shown_sky(&self) -> Option<SkyFrame> {
-        self.shown.map(|s| s.photo_sky)
+    /// The sun of the sky shown, the photo's sky included but not its own
+    /// sun: the one the photo's sun sliders start from and restore.
+    pub fn unturned_sun(&self) -> Option<Quat> {
+        self.shown.map(|s| s.unturned_sun)
     }
 
     /// A change made elsewhere (environment window, World menu, an editor's
@@ -1137,14 +1141,21 @@ impl EnvSelector {
         // the photo's layer, under an open editor only (`eep_photo`); the
         // targets stay those beneath it, for what a local change inherits
         let (target_sky, target_water) = (sky, water);
-        let (source, track, sky, water) = if source == Source::Edit || self.photo.choice.is_empty() {
+        let (source, track, mut sky, water) = if source == Source::Edit || self.photo.choice.is_empty() {
             (source, track, sky, water)
         } else {
             let r = self.photo.resolve();
-            let (t, s, w) = r.compose(self.photo.choice.sun, &self.altitudes, input, (track, sky, water));
+            let (t, s, w) = r.compose(&self.altitudes, input, (track, sky, water));
             let source = if r.any() { Source::Photo(self.photo.generation) } else { source };
             (source, t, s, w)
         };
+        // then the photo's sun, over any sky
+        let unturned_sun = sky.sun_rotation;
+        if source != Source::Edit
+            && let Some(q) = self.photo.choice.sun
+        {
+            sky.sun_rotation = q;
+        }
         // (an open editor hides the photo's light: nothing to fade from)
         let closing = std::mem::take(&mut self.photo_closing) && source != Source::Edit;
         if let Some(prev) = self.shown
@@ -1215,6 +1226,7 @@ impl EnvSelector {
             target_sky,
             target_water,
             photo_sky,
+            unturned_sun,
         });
         (sky, water)
     }
@@ -1961,6 +1973,11 @@ mod tests {
             ..PhotoChoice::default()
         });
         assert!(sel.frame(&input(2.0)).0.sun_rotation.abs_diff_eq(sun, 1e-6));
+        let unturned = sel.unturned_sun().expect("a frame shown");
+        assert!(
+            unturned.abs_diff_eq(own, 1e-6),
+            "the sliders restore the sky's sun, not the photo's"
+        );
         sel.close_photo();
         sel.set_photo(PhotoChoice::default());
         let start = 3.0;

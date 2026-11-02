@@ -105,7 +105,8 @@ pub struct EnvView<'a> {
     pub catalog: &'a crate::world::env_select::SettingsCatalog,
     /// What the user's own environment shows in each list.
     pub own: crate::world::eep_env::LocalView,
-    /// The sun shown: azimuth and elevation (degrees).
+    /// The sun of the sky shown before the photo turns it: azimuth and
+    /// elevation (degrees), what the sun sliders show and restore.
     pub sun: (f32, f32),
     /// RLVa holds the environment (@setenv): nothing to change.
     pub locked: bool,
