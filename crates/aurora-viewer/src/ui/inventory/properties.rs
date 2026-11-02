@@ -18,7 +18,6 @@ pub(super) fn show(
     icons: &Icons,
     inv: &Inventory,
     st: &mut InventoryUi,
-    prefs: &InventoryPreferences,
     facts: &Facts,
     images: &HashMap<Uuid, egui::TextureHandle>,
     id: Uuid,
@@ -34,7 +33,7 @@ pub(super) fn show(
     let Some((_, edit)) = &mut st.property_edit else {
         return false;
     };
-    let can_edit = rules::mutable(inv, id, &prefs.protected) && !matches!(it.asset_type, 2 | 24 | 25) && st.pending.is_none();
+    let can_edit = rules::mutable(inv, id) && !matches!(it.asset_type, 2 | 24 | 25) && st.pending.is_none();
     let response = panel(
         ui,
         p,
@@ -452,7 +451,6 @@ mod tests {
                         &Icons::default(),
                         inv,
                         st,
-                        &InventoryPreferences::default(),
                         &Facts::default(),
                         &HashMap::new(),
                         Uuid::from_u128(8102),

@@ -2,7 +2,6 @@
 
 use aurora_llsd::Llsd;
 use aurora_net::inventory::{FolderContents, InvFolder, InvItem, parse_skeleton};
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 #[cfg(test)]
@@ -11,6 +10,7 @@ mod action_tests;
 pub mod actions;
 pub mod background;
 pub mod demo;
+pub mod items;
 mod lost;
 mod parents;
 pub mod preview;
@@ -45,7 +45,7 @@ pub struct Inventory {
     pub lib_root: Uuid,
     pub lib_owner: Uuid,
     pub folders: HashMap<Uuid, Folder>,
-    pub items: HashMap<Uuid, InvItem>,
+    pub items: items::Items,
     /// Folders waiting to be fetched (id, library).
     pub queue: Vec<(Uuid, bool)>,
     /// Folders asked for while the cache file is being read (`hold_requests`).
@@ -296,9 +296,15 @@ impl Inventory {
             // index items by parent, so forgotten links stay visible (#1515).
             // Reconcile once per batch, including links already absent from
             // the child lists; originals and other folders remain untouched.
-            self.items.retain(|id, item| {
-                !matches!(item.asset_type, 24 | 25) || refreshed.get(&item.parent).is_none_or(|listed| listed.contains(id))
-            });
+            // The links come from the parent index, not a scan of every
+            // record: ~6 ms per readback with 220,000 items (#1963).
+            for (folder, listed) in &refreshed {
+                for id in self.items.links_in(*folder) {
+                    if !listed.contains(&id) {
+                        self.items.remove(&id);
+                    }
+                }
+            }
             for id in refreshed.keys() {
                 if let Some(folder) = self.folders.get_mut(id) {
                     folder.items.retain(|item| self.items.contains_key(item));
@@ -645,9 +651,9 @@ impl Inventory {
             for mut it in c.items {
                 // caches written before the cards' target was read
                 calling_card_target(&mut it);
-                if let Entry::Vacant(slot) = self.items.entry(it.id) {
+                if !self.items.contains_key(&it.id) {
                     listed.push(it.id);
-                    slot.insert(it);
+                    self.items.insert(it.id, it);
                 }
             }
             if let Some(cur) = self.folders.get_mut(&c.id) {

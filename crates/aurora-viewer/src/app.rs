@@ -4116,7 +4116,7 @@ impl App {
             Action::PassWall => self.pass_wall(),
             Action::SitGround => self.sit_stand_shortcut(),
             Action::Mouselook => self.toggle_mouselook(),
-            Action::CameraControls => self.panels.camera_controls = !self.panels.camera_controls,
+            Action::CameraControls => self.request_controls(false, true),
             Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault => {
                 if self.world.rlva.camera_owner().is_none() {
                     let aspect = self.view_aspect();
@@ -8135,16 +8135,16 @@ impl App {
                 self.neighbours_refused = refuse;
                 self.net.send(NetCommand::RefuseNeighbourRegions(refuse));
             }
-            // FSRestoreOpenIMs: the last session's private conversations,
-            // once, after login
-            if !self.world.reopen_ims.is_empty() {
-                let others = std::mem::take(&mut self.world.reopen_ims);
-                if self.settings.reopen_ims {
-                    for other in others {
-                        self.world.social.session_mut(other);
-                    }
-                }
+            // FSRestoreOpenIMs, extended to groups: wait for membership and
+            // display names now; joining still waits for the mute reply.
+            if self.demo
+                && let Some(event) = crate::demo::chatlog::delayed_mute_list(self.frame_count)
+            {
+                self.world.apply(event);
             }
+            self.world.restore_open_ims(
+                self.settings.reopen_ims || (self.demo && crate::demo::chatlog::mode() == Some(crate::demo::chatlog::Mode::Restore)),
+            );
             // AURORA_DEMO_OBJECT_IM: a filter for this run only
             self.world.object_im_filter = crate::demo::object_im::settings()
                 .filter(|_| self.demo)
@@ -12454,6 +12454,7 @@ impl App {
             },
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
+            BarAction::PhotoToDisk => self.photo_to_disk(),
             BarAction::LandmarkStar(star) => self.landmark_star(star),
             BarAction::PlaceBar { stretch, rights_text } => {
                 self.settings.place_bar_stretch = stretch;
@@ -12519,7 +12520,7 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
                 self.options_ui.open(ui::options::Page::Graphics, 0);
             }
-            BarAction::CameraControls => self.panels.camera_controls = true,
+            BarAction::Controls { movement, toggle } => self.request_controls(movement, toggle),
             BarAction::ToggleMoveLock => self.toggle_move_lock(),
             BarAction::ToggleQuickjump => {
                 self.settings.quickjump = !self.settings.quickjump;
@@ -12961,7 +12962,14 @@ impl App {
     /// which loads nothing by itself and has no session.
     fn search_home(&self) -> Option<crate::world::search::WebHome> {
         if self.demo {
-            let url = std::env::var("AURORA_DEMO_SEARCH_WEB").ok().filter(|u| !u.trim().is_empty())?;
+            let page = std::env::var("AURORA_DEMO_SEARCH_WEB").ok().filter(|u| !u.trim().is_empty())?;
+            let url = if page == "teleport" {
+                use base64::Engine as _;
+                let html = include_str!("ui/search/fixtures/teleport.html");
+                format!("data:text/html;base64,{}", base64::engine::general_purpose::STANDARD.encode(html))
+            } else {
+                page
+            };
             return Some(crate::world::search::WebHome { url, identified: false });
         }
         if let Some(grid) = crate::grids::active(&self.settings) {
@@ -17634,13 +17642,17 @@ impl ApplicationHandler for App {
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(8.0, 44.0), egui::vec2(660.0, 560.0));
                 ui::widgets::place_floater(&self.egui_ctx, "chat_history", egui::pos2(8.0, 44.0), egui::vec2(620.0, 600.0));
                 let me = self.world.agent_id;
-                if !matches!(mode, Mode::Long { .. })
+                if !matches!(mode, Mode::Long { .. } | Mode::Restore)
                     && let Some(dir) = self.world.chat_log.dir().map(std::path::Path::to_path_buf)
                     && let Err(e) = chatlog::seed(&dir, mode, &self.world.own_name())
                 {
                     log::warn!("demo transcripts not written: {e}");
                 }
                 match mode {
+                    Mode::Restore => {
+                        chatlog::seed_restore(&mut self.world);
+                        self.world.restore_open_ims(true);
+                    }
                     Mode::Long { lines, .. } => {
                         for i in 0..lines {
                             let (own, text) = chatlog::long_line(i);
@@ -17663,7 +17675,11 @@ impl ApplicationHandler for App {
                     let (title, file) = self.world.transcript_of(Some(chatlog::PEER));
                     self.history_ui.show_file(title, file);
                 }
-                self.chat_ui.selected = Some(chatlog::PEER);
+                self.chat_ui.selected = Some(if mode == Mode::Restore {
+                    crate::demo::DEMO_GROUP2
+                } else {
+                    chatlog::PEER
+                });
                 if chatlog::find_flag("legacy") {
                     self.chat_ui.demo_style = Some(crate::settings::ChatStyle::Legacy);
                 }
@@ -17874,6 +17890,8 @@ impl ApplicationHandler for App {
                     view.as_str(),
                     "default-permissions"
                         | "aurora-default-permissions"
+                        | "locked"
+                        | "aurora-locked"
                         | "permissions"
                         | "lost"
                         | "bulk-permissions"
@@ -17952,6 +17970,11 @@ impl ApplicationHandler for App {
                     self.inventory_ui.filters_open = view == "filters";
                     self.inventory_ui.preferences_open = view == "preferences";
                     self.inventory_ui.default_permissions_open = view.ends_with("default-permissions");
+                    if view.ends_with("locked") {
+                        // a locked folder: its "Locked" tag, its contents ordinary
+                        self.settings.inventory.protected.insert(uuid::Uuid::from_u128(8000));
+                        self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
+                    }
                     if view.starts_with("bulk-") {
                         let ids = if view == "bulk-folder" {
                             vec![uuid::Uuid::from_u128(8000)]
