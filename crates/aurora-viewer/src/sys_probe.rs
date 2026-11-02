@@ -963,6 +963,7 @@ pub mod proc_text {
         "aurora-audio-stream",
         "aurora-inventory-cache",
         "aurora-notification-history",
+        "aurora-experience-log",
         "aurora-transcript",
         "aurora-favorites",
         "aurora-web-profile",
