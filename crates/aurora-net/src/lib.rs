@@ -40,6 +40,7 @@ pub mod scripts;
 pub mod search;
 mod session;
 pub mod sim_console;
+mod sim_tls;
 pub mod slm;
 pub mod social;
 pub mod stats;
@@ -113,16 +114,10 @@ pub enum NetError {
     Http(String),
 }
 
-/// The certificates a simulator's capability may be signed by: the public
-/// roots and Linden Lab's own CA (the simulator hostname is not checked, see
-/// NetClient::new).
-pub(crate) fn simulator_roots() -> Vec<reqwest::Certificate> {
-    let mut roots: Vec<reqwest::Certificate> = webpki_root_certs::TLS_SERVER_ROOT_CERTS
-        .iter()
-        .filter_map(|c| reqwest::Certificate::from_der(c.as_ref()).ok())
-        .collect();
-    roots.extend(reqwest::Certificate::from_pem_bundle(include_bytes!("../lindenlab.pem")).unwrap_or_default());
-    roots
+/// The TLS configuration of every client that talks to the simulator side
+/// (capabilities, assets, bridge, release notes): sim_tls.rs has the rules.
+pub(crate) fn simulator_tls() -> Result<rustls::ClientConfig, NetError> {
+    sim_tls::client_config().map_err(|e| NetError::Http(format!("simulator TLS: {e}")))
 }
 
 /// How many asset downloads may be under way at once.
@@ -187,16 +182,14 @@ impl NetClient {
             .tls_certs_merge(ll_ca)
             .build()
             .map_err(|e| NetError::Http(e.to_string()))?;
-        // Capabilities / assets: like LL's llcorehttp (mVerifyHost = false) the
-        // certificate chain is verified (public roots + Linden Lab CA) but the
-        // simulator hostname is not.
-        let roots = simulator_roots();
+        // Capabilities / assets: Linden Lab's CA for any simulator name (as
+        // llcorehttp, mVerifyHost = false), public authorities only for the
+        // host's own name (sim_tls.rs).
         let caps_http = reqwest::Client::builder()
             .user_agent(aurora_version::user_agent())
             .pool_max_idle_per_host(32)
             .connect_timeout(std::time::Duration::from_secs(15))
-            .tls_certs_only(roots.clone())
-            .tls_danger_accept_invalid_hostnames(true)
+            .tls_backend_preconfigured(simulator_tls()?)
             .build()
             .map_err(|e| NetError::Http(e.to_string()))?;
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<NetCommand>();
@@ -225,8 +218,7 @@ impl NetClient {
             .connect_timeout(std::time::Duration::from_secs(30))
             .gzip(false)
             .redirect(reqwest::redirect::Policy::limited(10))
-            .tls_certs_only(roots)
-            .tls_danger_accept_invalid_hostnames(true)
+            .tls_backend_preconfigured(simulator_tls()?)
             .build()
             .map_err(|e| NetError::Http(e.to_string()))?;
         let (fetcher, fetch_results) = Fetcher::paced(rt.handle(), asset_http, fetch_slots, stats.clone());
