@@ -1353,7 +1353,7 @@ fn unminimize_quietly(ctx: &egui::Context, id: &str) {
 }
 
 /// Temporary flag of a floater asked to expand (`expand_floater`).
-const EXPAND: &str = "expand";
+pub(crate) const EXPAND: &str = "expand";
 
 /// Title bar button with a Tabler icon (drawn by hand if it is missing).
 fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
