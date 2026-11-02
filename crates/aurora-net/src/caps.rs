@@ -136,8 +136,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // OpenSim's flag for PBR terrain, not a capability: only a viewer that
     // asks for it gets the region's terrain materials (TerrainPBR1-4) in
     // RegionHandshake's TerrainDetail0-3, the others get the legacy terrain
-    // textures. Firestorm asks for it everywhere (FIRE-34104,
-    // LLViewerRegionImpl::buildCapabilityNames); other grids ignore it.
+    // textures. The Legacy Viewer asks for it everywhere
+    // (LLViewerRegionImpl::buildCapabilityNames); other grids ignore it.
     "VETPBR",
     "ViewerAsset",
     "ViewerStats",
