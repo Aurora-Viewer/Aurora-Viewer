@@ -365,7 +365,7 @@ pub struct MeanCollision {
 /// when the region does not give it, always on Second Life. After a
 /// Hypergrid teleport they name the grid the agent is on now, not the one
 /// it logged in to.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct OpenSimExtras {
     /// "GridURL": the grid's Hypergrid address (`host:port`, any scheme
     /// stripped), LFSimFeatureHandler::hyperGridURL.
@@ -374,6 +374,15 @@ pub struct OpenSimExtras {
     pub search_url: String,
     /// "map-server-url": the grid's map tile server.
     pub map_url: String,
+    /// "whisper-range", "say-range", "shout-range": how far the region's
+    /// chat carries, in meters (None: the usual 10, 20 and 100 m).
+    pub whisper_range: Option<f32>,
+    pub say_range: Option<f32>,
+    pub shout_range: Option<f32>,
+    /// "MinPrimScale", "MaxPrimScale": the sizes a prim may take on this
+    /// region (None: the usual 0.01 and 64 m).
+    pub min_prim_scale: Option<f32>,
+    pub max_prim_scale: Option<f32>,
 }
 
 impl OpenSimExtras {
@@ -386,10 +395,27 @@ impl OpenSimExtras {
             Some((_, rest)) => rest.to_owned(),
             None => grid_url,
         };
+        // a positive, finite figure, or nothing (a region's own word on
+        // these is trusted no further)
+        let figure = |key: &str| {
+            let v = &extras[key];
+            match v {
+                aurora_llsd::Llsd::Integer(_) | aurora_llsd::Llsd::Real(_) | aurora_llsd::Llsd::String(_) => {
+                    let n = v.as_f64() as f32;
+                    (n.is_finite() && n > 0.0).then_some(n)
+                }
+                _ => None,
+            }
+        };
         Self {
             grid_url: grid_url.trim().to_owned(),
             search_url: extras["search-server-url"].to_string_value().trim().to_owned(),
             map_url: extras["map-server-url"].to_string_value().trim().to_owned(),
+            whisper_range: figure("whisper-range"),
+            say_range: figure("say-range"),
+            shout_range: figure("shout-range"),
+            min_prim_scale: figure("MinPrimScale"),
+            max_prim_scale: figure("MaxPrimScale"),
         }
     }
 }
@@ -2388,6 +2414,25 @@ mod opensim_extras_tests {
                 .collect(),
         );
         assert_eq!(OpenSimExtras::from_llsd(&bare).grid_url, "grid.example:8002");
+        // chat ranges and prim sizes, as integers or reals; nonsense ignored
+        let limits = Llsd::Map(
+            [
+                ("say-range", Llsd::Integer(30)),
+                ("shout-range", Llsd::Real(256.0)),
+                ("whisper-range", Llsd::Integer(-5)),
+                ("MinPrimScale", Llsd::Real(0.001)),
+                ("MaxPrimScale", Llsd::String("256".into())),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v))
+            .collect(),
+        );
+        let read = OpenSimExtras::from_llsd(&limits);
+        assert_eq!(
+            (read.whisper_range, read.say_range, read.shout_range),
+            (None, Some(30.0), Some(256.0))
+        );
+        assert_eq!((read.min_prim_scale, read.max_prim_scale), (Some(0.001), Some(256.0)));
         // Second Life: no OpenSimExtras at all
         assert_eq!(OpenSimExtras::from_llsd(&Llsd::Undef), OpenSimExtras::default());
     }
