@@ -140,6 +140,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         tp_back: None,
         tp_forward: None,
         tp_session: Default::default(),
+        landmarks: Default::default(),
         maturity: "",
         position: glam::Vec3::new(132.0, 126.0, 33.0),
         fps: 60.0,

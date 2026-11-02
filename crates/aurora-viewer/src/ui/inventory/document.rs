@@ -188,6 +188,21 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
 }
 
 impl InventoryUi {
+    /// LLAnimationBridge::performAction / LLPreviewAnim::play: playback uses
+    /// the existing preview, or opens one for a context-menu action.
+    pub fn open_animation(&mut self, ctx: &egui::Context, inv: &Inventory, asset: Uuid) {
+        let matches = |item: &aurora_net::inventory::InvItem| item.asset_type == 20 && item.asset_id == asset;
+        let item = std::iter::once(&*self)
+            .chain(self.windows.iter().map(|w| &*w.state))
+            .filter_map(|state| state.preview.and_then(|id| inv.items.get(&id)))
+            .find(|item| matches(item))
+            .or_else(|| inv.items.values().find(|item| matches(item)))
+            .map(|item| item.id);
+        if let Some(item) = item {
+            self.open_document(ctx, item, 20);
+        }
+    }
+
     /// LLFloaterReg::showInstance: each item owns its document. Opening an
     /// existing item raises/restores it without replacing an unsaved draft.
     pub fn open_document(&mut self, ctx: &egui::Context, item: Uuid, kind: i32) -> bool {
@@ -349,6 +364,70 @@ pub(super) fn preview_window_id(editor: Uuid, item: Uuid, kind: i32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn animation_playback_reuses_its_window_and_preserves_another_document() {
+        let ctx = egui::Context::default();
+        let mut inv = Inventory::default();
+        let asset = Uuid::from_u128(10);
+        let items = [Uuid::from_u128(2), Uuid::from_u128(3)];
+        inv.add_items(
+            items
+                .map(|id| aurora_net::inventory::InvItem {
+                    id,
+                    asset_id: asset,
+                    asset_type: 20,
+                    ..Default::default()
+                })
+                .to_vec(),
+        );
+        for item in items {
+            let mut state = draft("Unsaved note");
+            state.open_document(&ctx, item, 20);
+            let editor = state.windows[0].id;
+            state.windows[0].state.animation_description = Some((item, "Edited description".into()));
+            for _ in 0..3 {
+                state.open_animation(&ctx, &inv, asset);
+                assert_eq!(state.windows.len(), 1);
+                assert_eq!(state.windows[0].id, editor);
+                assert_eq!(state.windows[0].state.preview, Some(item));
+                assert_eq!(
+                    state.windows[0].state.animation_description,
+                    Some((item, "Edited description".into()))
+                );
+                assert_eq!(state.preview, Some(Uuid::from_u128(1)));
+                assert_eq!(state.preview_text, Some(Ok("Unsaved note".into())));
+                assert!(state.preview_dirty);
+            }
+        }
+    }
+
+    #[test]
+    fn animation_menu_playback_opens_once_and_reuses_a_main_preview() {
+        let ctx = egui::Context::default();
+        let mut inv = Inventory::default();
+        let item = Uuid::from_u128(2);
+        let asset = Uuid::from_u128(10);
+        inv.add_items(vec![aurora_net::inventory::InvItem {
+            id: item,
+            asset_id: asset,
+            asset_type: 20,
+            ..Default::default()
+        }]);
+        let mut state = InventoryUi::default();
+        state.open_animation(&ctx, &inv, Uuid::from_u128(11));
+        assert!(state.preview.is_none() && state.windows.is_empty());
+        for _ in 0..3 {
+            state.open_animation(&ctx, &inv, asset);
+            assert!(state.preview.is_none());
+            assert_eq!(state.windows.len(), 1);
+            assert_eq!(state.windows[0].state.preview, Some(item));
+        }
+        let mut main = InventoryUi::document(item);
+        main.open_animation(&ctx, &inv, asset);
+        assert_eq!(main.preview, Some(item));
+        assert!(main.windows.is_empty());
+    }
 
     #[test]
     fn cascade_notecards_keep_independent_drafts_and_restore_existing_items() {

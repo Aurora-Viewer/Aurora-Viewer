@@ -1,12 +1,14 @@
-//! CPU time of the calling thread, in the processor's cycles
-//! (AURORA_PROFILE): with the clock, it tells a step that worked from one
-//! that waited — for a lock, or for a core behind another thread. Known on
-//! Windows only; elsewhere the counts are 0 and nothing is reported.
+//! CPU time of the calling thread (AURORA_PROFILE): with the clock, it tells
+//! a step that worked from one that waited — for a lock, or for a core
+//! behind another thread. Counted in the processor's cycles on Windows and
+//! in nanoseconds on Linux ([`cycles_per_ms`] converts either); elsewhere
+//! the counts are 0 and nothing is reported.
 
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-/// Cycles the calling thread has run so far (0 where unknown).
+/// Cycles the calling thread has run so far: nanoseconds on Linux, 0 where
+/// unknown.
 pub fn cycles() -> u64 {
     #[cfg(windows)]
     {
@@ -19,14 +21,28 @@ pub fn cycles() -> u64 {
         }
         cycles
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: the call writes one timespec; the clock of the calling
+        // thread always exists.
+        if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) } != 0 {
+            return 0;
+        }
+        (t.tv_sec as u64).wrapping_mul(1_000_000_000).wrapping_add(t.tv_nsec as u64)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     0
 }
 
 /// Cycles of a millisecond on the processor (0 where unknown), measured
 /// once: the fastest of a few short busy loops, so that one cut short by
-/// another thread does not lower the rate.
+/// another thread does not lower the rate. On Linux the counts are
+/// nanoseconds: exactly a million.
 pub fn cycles_per_ms() -> f64 {
+    if cfg!(target_os = "linux") {
+        return 1_000_000.0;
+    }
     static RATE: OnceLock<f64> = OnceLock::new();
     *RATE.get_or_init(|| {
         let mut best = 0.0f64;

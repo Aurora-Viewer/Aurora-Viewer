@@ -102,6 +102,11 @@ impl Session<'_> {
                 };
                 let transaction = Uuid::new_v4();
                 let (sections, chunks) = land::access_list_chunks(&entries);
+                log::debug!(
+                    "ParcelAccessListUpdate: parcel {local_id}, kind {flags:#x}, {} entries in {} message(s), to {addr}",
+                    entries.len(),
+                    chunks.len()
+                );
                 for (i, chunk) in chunks.iter().enumerate() {
                     let mut m = ParcelAccessListUpdate::default();
                     m.agent_data.agent_id = agent;
@@ -514,6 +519,14 @@ impl Session<'_> {
         let events = self.sh.events.clone();
         tokio::spawn(async move {
             let result = post_remote_parcel(&http, &url, &body).await;
+            if let Err(e) = result {
+                // the slot asked, to tell a wrong handle from a missing parcel
+                log::warn!(
+                    "RemoteParcelRequest for region {}, {} at {position}: {e:?}",
+                    (handle >> 32) / 256,
+                    (handle & 0xffff_ffff) / 256
+                );
+            }
             let _ = events.send(NetEvent::RemoteParcel { handle, position, result });
         });
     }
@@ -772,6 +785,12 @@ impl Session<'_> {
         let id = pkt.id;
         if id == ParcelAccessListReply::ID {
             let m: ParcelAccessListReply = pkt.decode()?;
+            log::debug!(
+                "ParcelAccessListReply: parcel {}, kind {:#x}, {} entries, from {from}",
+                m.data.local_id,
+                m.data.flags,
+                m.list.iter().filter(|e| !e.id.is_nil()).count()
+            );
             let entries = m
                 .list
                 .iter()

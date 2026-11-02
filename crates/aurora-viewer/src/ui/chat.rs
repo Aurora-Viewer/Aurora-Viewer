@@ -49,6 +49,8 @@ mod action_marker_tests;
 mod buttons_tests;
 #[cfg(test)]
 mod contact_visual_tests;
+#[cfg(test)]
+mod volume_tests;
 
 use super::context::CtxAction;
 use super::presence;
@@ -412,6 +414,46 @@ impl ChatUi {
         }
     }
 
+    /// Communicate › Nearby Chat (menu_viewer.xml, `control|H`,
+    /// Floater.ToggleOrBringToFront on `fs_nearby_chat`). Docked, that is
+    /// the Conversations window on the nearby tab (FSFloaterNearbyChat::
+    /// openFloater hosts it there; closeHostedFloater closes that window).
+    /// Torn off, it is the nearby window: bring it forward, or put it away
+    /// when it is already in front with the keyboard.
+    pub fn toggle_nearby_chat(&mut self, ctx: &egui::Context, conversations_open: &mut bool) {
+        let apart = self.nearby_apart();
+        let id = if apart {
+            popout::floater_id(None)
+        } else {
+            "conversations".to_owned()
+        };
+        let view = NearbyChatView {
+            apart,
+            shown: if apart { self.popped.shown(None) } else { *conversations_open },
+            minimized: super::widgets::floater_minimized(ctx, &id),
+            front: super::widgets::floater_is_front(ctx, &id),
+            focused: super::widgets::floater_holds_keyboard(ctx, &id),
+            tab_visible: !self.contacts && self.selected.is_none(),
+        };
+        match nearby_chat_shortcut(view) {
+            NearbyChatShortcut::RaiseDetached => {
+                self.popped.raise(None, true);
+            }
+            NearbyChatShortcut::HideDetached => {
+                self.popped.set_hidden(None, true);
+            }
+            NearbyChatShortcut::ShowDocked => {
+                self.selected = None;
+                self.contacts = false;
+                self.show_profile = false;
+                self.conv_focus_request = true;
+                super::widgets::open_floater(ctx, "conversations", conversations_open);
+                super::widgets::bring_floater_front(ctx, "conversations");
+            }
+            NearbyChatShortcut::CloseDocked => *conversations_open = false,
+        }
+    }
+
     /// `AURORA_DEMO_CONV_POPOUT`: `conversation` in its own window, at `pos`.
     pub fn demo_pop_out(&mut self, ctx: &egui::Context, conversation: Option<uuid::Uuid>, pos: egui::Pos2, size: egui::Vec2) {
         self.popped.pop_out(conversation, self.members_open, self.stage_mini, false);
@@ -550,6 +592,32 @@ fn color_for(kind: ChatKind, p: &Palette) -> Color32 {
     }
 }
 
+/// LLChatHistory::appendMessage and LLFloaterIMNearbyChatToastPanel::init
+/// (indra/newview): style by volume for residents and objects alike.
+fn message_emphasis(kind: ChatKind, italics: bool) -> super::fonts::TextEmphasis {
+    super::fonts::TextEmphasis {
+        italics: italics || kind.volume() == Some(ChatType::Whisper),
+        strong: kind.volume() == Some(ChatType::Shout),
+    }
+}
+
+/// The same message tone in the conversation thread and its nearby-chat card.
+fn message_color(line: &crate::world::ChatLine, p: &Palette, world: &World) -> Color32 {
+    if let Some(color) = super::colors::contact_chat_color(line, world) {
+        return color;
+    }
+    let tone = history_tone(p, line.origin);
+    if line.text.starts_with("/me ") || line.text.starts_with("/me'") {
+        return tone.unwrap_or(p.violet_pale);
+    }
+    tone.or_else(|| super::colors::keyword_color(line))
+        .unwrap_or_else(|| match line.kind.volume() {
+            Some(ChatType::Whisper) => p.muted,
+            Some(ChatType::Shout) => p.ink,
+            _ => super::colors::chat_color(line, world),
+        })
+}
+
 /// Time of a chat line, in Second Life time as Firestorm shows it and as
 /// the transcripts have it ("hour,datetime,slt"). Empty for a line whose
 /// time is unknown (history without a timestamp).
@@ -584,7 +652,7 @@ fn date_marker(ui: &mut egui::Ui, p: &Palette, year: i64, month: i64, day: i64) 
     );
     ui.add_space(4.0);
     ui.vertical_centered(|ui| {
-        ui.label(RichText::new(text).size(11.0).color(p.muted_dim));
+        ui.label(RichText::new(text).size(super::fonts::chat_size(ui.ctx(), 11.0)).color(p.muted_dim));
     });
 }
 
@@ -687,6 +755,7 @@ fn place_link(
     u: &str,
     place: crate::slurl::PlaceLink,
     size: f32,
+    emphasis: super::fonts::TextEmphasis,
 ) {
     if place.location.grid.is_none() && super::widgets::region_badge_in_text(ui, p, ratings, &place.location.region, size).is_some() {
         ui.add_space(3.0);
@@ -699,6 +768,7 @@ fn place_link(
         size,
         super::colors::text(k.chat_slurl),
         None,
+        emphasis,
     );
     place_menu(&r, p, u, &place);
     // TooltipTeleportUrl / TooltipSLURL; a place opens its
@@ -753,14 +823,14 @@ pub(crate) fn text_with_links(
         for s in segs {
             match s {
                 Seg::Text(t) => plain(ui, t),
-                Seg::Url(u) => web_link(ui, p, u, u, size),
+                Seg::Url(u) => web_link(ui, p, u, u, size, false.into()),
                 Seg::Slurl(u) => {
                     select::label(ui, RichText::new(u).size(size).color(super::colors::text(k.chat_slurl))).on_hover_text(u);
                 }
-                Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size),
+                Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size, false.into()),
                 Seg::Labelled(label, inner) => match *inner {
-                    Seg::Url(u) => web_link(ui, p, u, &label, size),
-                    Seg::Agent(id) | Seg::Mention(id) => agent_link(ui, p, world, id, &label, size),
+                    Seg::Url(u) => web_link(ui, p, u, &label, size, false.into()),
+                    Seg::Agent(id) | Seg::Mention(id) => agent_link(ui, p, world, id, &label, size, false.into()),
                     Seg::App(u, link) => app_links::link(ui, p, world, u, &link, &label, size),
                     _ => plain(ui, &label),
                 },
@@ -771,7 +841,7 @@ pub(crate) fn text_with_links(
                 // a dialog has no mention highlight: the name, as a link
                 Seg::Agent(id) | Seg::Mention(id) => {
                     wanted.insert(id);
-                    agent_link(ui, p, world, id, &world.social.name_of(&id), size);
+                    agent_link(ui, p, world, id, &world.social.name_of(&id), size, false.into());
                 }
             }
         }
@@ -832,6 +902,7 @@ enum JobLook<'a> {
 
 #[allow(clippy::too_many_arguments)]
 fn line_job(
+    ctx: &egui::Context,
     line: &crate::world::ChatLine,
     p: &Palette,
     world: &World,
@@ -858,15 +929,21 @@ fn line_job(
     let body_only = matches!(look, JobLook::Body);
     let compact = matches!(look, JobLook::Compact);
     // a line that holds a keyword takes its colour, name included
-    let col = super::colors::contact_chat_color(line, world)
-        .or_else(|| super::colors::keyword_color(line))
-        .unwrap_or_else(|| {
-            if compact {
-                object_row::text_color(line, p)
-            } else {
-                color_for(line.kind, p)
-            }
-        });
+    let col = if body_only {
+        message_color(line, p, world)
+    } else {
+        super::colors::contact_chat_color(line, world)
+            .or_else(|| super::colors::keyword_color(line))
+            .unwrap_or_else(|| {
+                if compact {
+                    object_row::text_color(line, p)
+                } else if line.kind.volume() == Some(ChatType::Whisper) {
+                    p.muted
+                } else {
+                    color_for(line.kind, p)
+                }
+            })
+    };
     let mut job = egui::text::LayoutJob::default();
     let small = egui::TextFormat {
         color: p.muted_dim,
@@ -899,20 +976,15 @@ fn line_job(
     if let Some(color) = super::colors::contact_sender_color(line, world) {
         name_fmt.color = color;
     }
-    let text_fmt = egui::TextFormat {
-        color: col,
-        font_id: egui::FontId::proportional(size),
-        italics: emote || ((pill.is_some() || body_only) && line.kind.is_notice()),
-        ..Default::default()
-    };
+    let text_fmt = message_emphasis(line.kind, emote || ((pill.is_some() || body_only) && line.kind.is_notice())).format(ctx, size, col);
     // (before the name, after it, body)
     let (before, after, body) = match line.kind {
         ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_) => ("", "", &line.text[..]),
         _ if emote => ("", "", &line.text[3..]),
         _ if body_only => ("", "", &line.text[..]),
         ChatKind::Im => ("[IM] ", ": ", &line.text[..]),
-        ChatKind::Local(ChatType::Shout) | ChatKind::Own(ChatType::Shout) => ("", aurora_i18n::tr!("status-shouts"), &line.text[..]),
-        ChatKind::Local(ChatType::Whisper) | ChatKind::Own(ChatType::Whisper) => ("", aurora_i18n::tr!("status-whispers"), &line.text[..]),
+        _ if line.kind.volume() == Some(ChatType::Shout) => ("", aurora_i18n::tr!("status-shouts"), &line.text[..]),
+        _ if line.kind.volume() == Some(ChatType::Whisper) => ("", aurora_i18n::tr!("status-whispers"), &line.text[..]),
         _ if pill.is_some() || compact => ("", "", &line.text[..]),
         _ => ("", ": ", &line.text[..]),
     };
@@ -1508,20 +1580,20 @@ fn marked_run(
     text: &str,
     size: f32,
     color: Color32,
-    italics: bool,
+    emphasis: super::fonts::TextEmphasis,
     mark: Option<Mark>,
 ) {
     let Some(mark) = mark else {
-        emoji.inline(ui, text, size, color, italics);
+        emoji.inline(ui, text, size, color, emphasis);
         return;
     };
     let mut at = 0;
     for m in view::find_ci(text, mark.needle) {
-        emoji.inline(ui, &text[at..m.start], size, color, italics);
-        emoji.inline_marked(ui, &text[m.clone()], size, color, italics, Some(mark.wash));
+        emoji.inline(ui, &text[at..m.start], size, color, emphasis);
+        emoji.inline_marked(ui, &text[m.clone()], size, color, emphasis, Some(mark.wash));
         at = m.end;
     }
-    emoji.inline(ui, &text[at..], size, color, italics);
+    emoji.inline(ui, &text[at..], size, color, emphasis);
 }
 
 /// `chat_text` with the matches of a searched text highlighted.
@@ -1535,45 +1607,46 @@ pub(crate) fn chat_text_marked(
     text: &str,
     size: f32,
     color: Color32,
-    italics: bool,
+    emphasis: impl Into<super::fonts::TextEmphasis>,
     mark: Option<Mark>,
 ) {
+    let emphasis = emphasis.into();
     let filtered = world.rlva_filter_text(text);
     let text = filtered.as_ref();
     let segs = segments(text);
     // only a text that has a match is cut into runs
     let mark = mark.filter(|m| !view::find_ci(text, m.needle).is_empty());
     if mark.is_none() && segs.iter().all(|s| matches!(s, Seg::Text(_))) {
-        emoji.rich_text(ui, text, size, color, italics);
+        emoji.rich_text(ui, text, size, color, emphasis);
         return;
     }
     let k = super::colors::get();
     super::emoji::text_rows_in(ui, size, super::bidi::rtl_paragraph(text), |ui| {
         for s in segs {
             match s {
-                Seg::Text(t) => marked_run(ui, emoji, t, size, color, italics, mark),
-                Seg::Url(u) => web_link(ui, p, u, u, size),
+                Seg::Text(t) => marked_run(ui, emoji, t, size, color, emphasis, mark),
+                Seg::Url(u) => web_link(ui, p, u, u, size, emphasis),
                 Seg::Slurl(u) => {
-                    select::label(ui, RichText::new(u).size(size).color(super::colors::text(k.chat_slurl))).on_hover_text(u);
+                    select::label(ui, emphasis.rich_text(ui.ctx(), u, size, super::colors::text(k.chat_slurl))).on_hover_text(u);
                 }
                 Seg::Labelled(label, inner) => match *inner {
-                    Seg::Url(u) => web_link(ui, p, u, &label, size),
-                    Seg::Agent(id) | Seg::Mention(id) => agent_link(ui, p, world, id, &label, size),
+                    Seg::Url(u) => web_link(ui, p, u, &label, size, emphasis),
+                    Seg::Agent(id) | Seg::Mention(id) => agent_link(ui, p, world, id, &label, size, emphasis),
                     Seg::Slurl(u) => {
                         select::label(
                             ui,
-                            RichText::new(label.as_ref()).size(size).color(super::colors::text(k.chat_slurl)),
+                            emphasis.rich_text(ui.ctx(), label.as_ref(), size, super::colors::text(k.chat_slurl)),
                         )
                         .on_hover_text(u);
                     }
-                    Seg::App(u, link) => app_links::link(ui, p, world, u, &link, &label, size),
-                    _ => marked_run(ui, emoji, &label, size, color, italics, mark),
+                    Seg::App(u, link) => app_links::link_emphasized(ui, p, world, u, &link, &label, size, emphasis),
+                    _ => marked_run(ui, emoji, &label, size, color, emphasis, mark),
                 },
                 Seg::App(u, link) => {
                     let label = app_links::label(world, want_names, u, &link);
-                    app_links::link(ui, p, world, u, &link, &label, size);
+                    app_links::link_emphasized(ui, p, world, u, &link, &label, size, emphasis);
                 }
-                Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size),
+                Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size, emphasis),
                 Seg::Mention(id) => {
                     want_names.insert(id);
                     let me = id == world.agent_id;
@@ -1586,6 +1659,7 @@ pub(crate) fn chat_text_marked(
                         size,
                         super::colors::c(k.mention_text),
                         Some(super::colors::c(bg)),
+                        emphasis,
                     );
                     name_menu(&r, p, world, id);
                     if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
@@ -1594,7 +1668,7 @@ pub(crate) fn chat_text_marked(
                 }
                 Seg::Agent(id) => {
                     want_names.insert(id);
-                    agent_link(ui, p, world, id, &world.social.name_of(&id), size);
+                    agent_link(ui, p, world, id, &world.social.name_of(&id), size, emphasis);
                 }
             }
         }
@@ -1603,13 +1677,16 @@ pub(crate) fn chat_text_marked(
 
 /// A web link of a text, its trust badge before it; `text` is the address
 /// or the text it was written with.
-fn web_link(ui: &mut egui::Ui, p: &Palette, url: &str, text: &str, size: f32) {
+fn web_link(ui: &mut egui::Ui, p: &Palette, url: &str, text: &str, size: f32, emphasis: super::fonts::TextEmphasis) {
     let k = super::colors::get();
     link_badge(ui, p, url, size);
     let behind = select::atom_begin(ui);
-    let r = ui.add(egui::Link::new(
-        RichText::new(text).size(size).color(super::colors::text(k.chat_urls)),
-    ));
+    let r = ui.add(egui::Link::new(emphasis.rich_text(
+        ui.ctx(),
+        text,
+        size,
+        super::colors::text(k.chat_urls),
+    )));
     select::atom_end(ui, behind, text, r.rect);
     if r.on_hover_text(url).clicked() {
         open_web_link(ui.ctx(), url);
@@ -1618,7 +1695,8 @@ fn web_link(ui: &mut egui::Ui, p: &Palette, url: &str, text: &str, size: f32) {
 
 /// An avatar link of a text (its name, or the text it was written with):
 /// opens the profile, the name menu on a right click.
-fn agent_link(ui: &mut egui::Ui, p: &Palette, world: &World, id: uuid::Uuid, text: &str, size: f32) {
+#[allow(clippy::too_many_arguments)]
+fn agent_link(ui: &mut egui::Ui, p: &Palette, world: &World, id: uuid::Uuid, text: &str, size: f32, emphasis: super::fonts::TextEmphasis) {
     let projected = if world.rlva_can_name(id) {
         world.rlva_filter_text(text).into_owned()
     } else {
@@ -1633,6 +1711,7 @@ fn agent_link(ui: &mut egui::Ui, p: &Palette, world: &World, id: uuid::Uuid, tex
         size,
         super::colors::text(k.chat_slurl),
         None,
+        emphasis,
     );
     name_menu(&r, p, world, id);
     if r.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1698,7 +1777,7 @@ fn send_button(ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, enab
 /// The time at the right of a message header, laid out before the names so
 /// that they know the room it takes.
 fn header_time(ui: &egui::Ui, p: &Palette, time: String) -> std::sync::Arc<egui::Galley> {
-    let text = RichText::new(time).size(11.5).color(p.muted);
+    let text = RichText::new(time).size(super::fonts::chat_size(ui.ctx(), 11.5)).color(p.muted);
     egui::WidgetText::from(text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body)
 }
 
@@ -1714,7 +1793,14 @@ const USERNAME_MIN_W: f32 = 36.0;
 /// of the name, clickable.
 fn header_names(ui: &mut egui::Ui, p: &Palette, name: &str, username: Option<&str>, col: Color32, reserve: f32) -> egui::Response {
     let room = ui.available_width() - reserve;
-    let label = super::widgets::elided_label(ui, RichText::new(name).size(13.0).strong().color(col), room);
+    let label = super::widgets::elided_label(
+        ui,
+        RichText::new(name)
+            .size(super::fonts::chat_size(ui.ctx(), 13.0))
+            .strong()
+            .color(col),
+        room,
+    );
     let r = ui.add(label.sense(egui::Sense::click()));
     let Some(u) = username else {
         return r;
@@ -1723,7 +1809,9 @@ fn header_names(ui: &mut egui::Ui, p: &Palette, name: &str, username: Option<&st
     if room < USERNAME_MIN_W {
         return r.on_hover_text(u);
     }
-    let text = RichText::new(format!("- {u}")).size(11.5).color(p.indigo_light);
+    let text = RichText::new(format!("- {u}"))
+        .size(super::fonts::chat_size(ui.ctx(), 11.5))
+        .color(p.indigo_light);
     ui.add(super::widgets::elided_label(ui, text, room));
     r
 }
@@ -1931,7 +2019,7 @@ fn select_lines(
                 pressed: true,
                 modifiers,
                 ..
-            } if modifiers.command && !modifiers.alt => {
+            } if modifiers.command && !modifiers.alt && !modifiers.shift => {
                 if let Some((first, last)) = copied.ends() {
                     sel.select_all(first, last);
                 }
@@ -2266,7 +2354,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
             world,
             env.want_names,
             &line.text,
-            12.5,
+            super::fonts::chat_size(ui.ctx(), 12.5),
             tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
             true,
             mark,
@@ -2362,9 +2450,9 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     world,
                     env.want_names,
                     &visible,
-                    13.5,
+                    super::fonts::chat_size(ui.ctx(), 13.5),
                     tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
-                    italics,
+                    message_emphasis(line.kind, italics),
                     mark,
                 );
             }
@@ -3076,10 +3164,13 @@ fn classic_pane(
     let strip_top = ui.min_rect().bottom();
     ui.add_space(4.0);
     // input + emoji
-    let hint = match st.selected {
-        None => aurora_i18n::tr!("ui-chat-to-local-chat").to_owned(),
-        Some(id) => aurora_i18n::tr!("ui-chat-at", value0 = world.session_title(&id).to_string()),
-    };
+    let hint = input::hint(
+        ui,
+        match st.selected {
+            None => aurora_i18n::tr!("ui-chat-to-local-chat").to_owned(),
+            Some(id) => aurora_i18n::tr!("ui-chat-at", value0 = world.session_title(&id).to_string()),
+        },
+    );
     let mut emoji_btn = None;
     let mut send_clicked = false;
     let mut draft = std::mem::take(st.draft_mut(st.selected));
@@ -3215,6 +3306,52 @@ fn classic_pane(
         *st.draft_mut(st.selected) = draft;
     } else {
         st.drafts.remove(&st.selected);
+    }
+}
+
+/// Where Nearby Chat stands when Control+H arrives
+/// (LLFloaterReg::toggleInstanceOrBringToFront).
+struct NearbyChatView {
+    /// Torn off (ChatHistoryTornOff): its own window, not the Conversations host.
+    apart: bool,
+    /// That window is open. Detached: not put away. Docked: Conversations is open.
+    shown: bool,
+    minimized: bool,
+    /// That window is the front one (LLFloater::isFrontmost).
+    front: bool,
+    /// The keyboard is inside it (LLFloater::hasFocus).
+    focused: bool,
+    /// Docked: the nearby tab is the one on screen.
+    tab_visible: bool,
+}
+
+enum NearbyChatShortcut {
+    /// Open or raise the detached window and focus its field.
+    RaiseDetached,
+    /// Put the detached window away. It stays torn off.
+    HideDetached,
+    /// Open Conversations on the nearby tab, in front, its field focused.
+    ShowDocked,
+    /// Close the Conversations window (closeHostedFloater on the host).
+    CloseDocked,
+}
+
+/// Floater.ToggleOrBringToFront for `fs_nearby_chat`. A window that is
+/// minimized, closed, behind another, or without the keyboard opens or
+/// comes forward. Only the front window that already shows nearby chat
+/// and holds the keyboard closes.
+fn nearby_chat_shortcut(view: NearbyChatView) -> NearbyChatShortcut {
+    let engaged = view.shown && !view.minimized && view.front && view.focused;
+    if view.apart {
+        if engaged {
+            NearbyChatShortcut::HideDetached
+        } else {
+            NearbyChatShortcut::RaiseDetached
+        }
+    } else if engaged && view.tab_visible {
+        NearbyChatShortcut::CloseDocked
+    } else {
+        NearbyChatShortcut::ShowDocked
     }
 }
 
@@ -3366,9 +3503,9 @@ pub fn toasts(
             // the islands' pills: the mockup's 12 px text, 9 × 4 margins and
             // 4 px between two lines
             let (size, margin, gap) = if pills {
-                (12.0, egui::Margin::symmetric(9, 4), 4.0)
+                (super::fonts::chat_size(ui.ctx(), 12.0), egui::Margin::symmetric(9, 4), 4.0)
             } else {
-                (13.0, egui::Margin::symmetric(6, 2), 2.0)
+                (super::fonts::chat_size(ui.ctx(), 13.0), egui::Margin::symmetric(6, 2), 2.0)
             };
             let family = pills.then(|| super::fonts::semibold(ui.ctx()));
             if pills {
@@ -3394,6 +3531,7 @@ pub fn toasts(
                             sender,
                             name,
                         } = line_job(
+                            ui.ctx(),
                             line,
                             p,
                             world,
@@ -3839,6 +3977,53 @@ pub(crate) fn bar_input(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn nearby(apart: bool, shown: bool, minimized: bool, front: bool, focused: bool, tab_visible: bool) -> NearbyChatView {
+        NearbyChatView {
+            apart,
+            shown,
+            minimized,
+            front,
+            focused,
+            tab_visible,
+        }
+    }
+
+    #[test]
+    fn nearby_chat_opens_unless_it_is_already_in_front_with_the_keyboard() {
+        assert!(matches!(
+            nearby_chat_shortcut(nearby(false, false, false, false, false, false)),
+            NearbyChatShortcut::ShowDocked
+        ));
+        assert!(matches!(
+            nearby_chat_shortcut(nearby(false, true, true, true, true, true)),
+            NearbyChatShortcut::ShowDocked
+        ));
+        assert!(matches!(
+            nearby_chat_shortcut(nearby(false, true, false, false, true, true)),
+            NearbyChatShortcut::ShowDocked
+        ));
+        assert!(matches!(
+            nearby_chat_shortcut(nearby(false, true, false, true, false, true)),
+            NearbyChatShortcut::ShowDocked
+        ));
+        assert!(matches!(
+            nearby_chat_shortcut(nearby(false, true, false, true, true, false)),
+            NearbyChatShortcut::ShowDocked
+        ));
+        assert!(matches!(
+            nearby_chat_shortcut(nearby(false, true, false, true, true, true)),
+            NearbyChatShortcut::CloseDocked
+        ));
+        assert!(matches!(
+            nearby_chat_shortcut(nearby(true, false, false, false, false, false)),
+            NearbyChatShortcut::RaiseDetached
+        ));
+        assert!(matches!(
+            nearby_chat_shortcut(nearby(true, true, false, true, true, false)),
+            NearbyChatShortcut::HideDetached
+        ));
+    }
 
     #[test]
     fn a_chat_line_isolates_its_sender_s_display_name() {
@@ -4320,6 +4505,7 @@ mod tests {
         };
         let job = |l: &crate::world::ChatLine, pill: Option<&egui::FontFamily>| {
             line_job(
+                &egui::Context::default(),
                 l,
                 &p,
                 &world,

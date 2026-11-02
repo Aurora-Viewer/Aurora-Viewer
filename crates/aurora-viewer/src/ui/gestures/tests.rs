@@ -265,13 +265,15 @@ fn the_manager_keeps_its_size() {
 #[test]
 fn the_editor_warns_about_a_key_the_build_tools_keep() {
     let taken = |key, mask| super::editor::shortcut_taken(key, mask);
+    let ctrl_b = crate::gestures::keys::shortcut(b'B', 1);
+    let ctrl_z = crate::gestures::keys::shortcut(b'Z', 1);
     assert_eq!(
         taken(b'B', 1).as_deref(),
-        Some(aurora_i18n::tr!("gesture-shortcut-taken", shortcut = "Ctrl+B").as_ref())
+        Some(aurora_i18n::tr!("gesture-shortcut-taken", shortcut = ctrl_b.as_str()).as_ref())
     );
     assert_eq!(
         taken(b'Z', 1).as_deref(),
-        Some(aurora_i18n::tr!("gesture-shortcut-taken-building", shortcut = "Ctrl+Z").as_ref())
+        Some(aurora_i18n::tr!("gesture-shortcut-taken-building", shortcut = ctrl_z.as_str()).as_ref())
     );
     assert_eq!(taken(0xa8, 0), None);
     assert_eq!(taken(b'Z', 0), None);

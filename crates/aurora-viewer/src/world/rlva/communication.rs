@@ -114,6 +114,20 @@ impl World {
         !allowed
     }
 
+    /// send_lures (llviewermessage.cpp): a teleport offer to anyone we may not
+    /// start or send an IM to goes with the generic hidden text instead of
+    /// the invitation and our SLURL. The offer itself still goes.
+    pub(crate) fn rlva_filter_lure(&self, command: &mut NetCommand) {
+        if let NetCommand::OfferTeleport { to, message } = command
+            && self.rlva.enabled()
+            && to
+                .iter()
+                .any(|id| !self.rlva_can_start_im(*id) || !self.rlva_allows_im("sendim", *id))
+        {
+            *message = aurora_i18n::tr!("rlva-hidden-generic").into();
+        }
+    }
+
     pub(crate) fn rlva_teleport_message(&self, message: &str, sender: Uuid, godlike: bool) -> String {
         if !self.rlva_allows_im("recvim", sender) || (!godlike && self.rlva.has("showloc")) {
             aurora_i18n::tr!("rlva-hidden-generic").into()
@@ -399,6 +413,68 @@ mod tests {
         world.apply(NetEvent::InstantMessage(im(&world, 0)));
         assert_eq!(last(&world, PERSON), aurora_i18n::tr!("rlva-im-blocked-receive"));
         assert!(world.groups.out.is_empty());
+    }
+
+    #[test]
+    fn rlva_teleport_offer_hides_its_message_when_a_recipient_is_im_blocked() {
+        let mut world = world();
+        let other = Uuid::from_u128(123);
+        let offer = |to: Vec<Uuid>| NetCommand::OfferTeleport {
+            to,
+            message: "Join me\r\nsecondlife://Region/1/2/3".into(),
+        };
+        let text = |command: NetCommand| match command {
+            NetCommand::OfferTeleport { message, .. } => message,
+            _ => unreachable!(),
+        };
+        let filtered = |world: &World, to: Vec<Uuid>| {
+            let mut command = offer(to);
+            world.rlva_filter_lure(&mut command);
+            text(command)
+        };
+        let hidden = aurora_i18n::tr!("rlva-hidden-generic");
+        assert_eq!(filtered(&world, vec![PERSON, other]), text(offer(vec![])));
+        restrict(&mut world, &format!("@startim=n,startim:{PERSON}=n"));
+        assert_eq!(filtered(&world, vec![PERSON]), text(offer(vec![])));
+        assert_eq!(filtered(&world, vec![PERSON, other]), hidden, "one blocked recipient is enough");
+        restrict(&mut world, &format!("@clear,sendimto:{PERSON}=n"));
+        assert_eq!(filtered(&world, vec![PERSON]), hidden);
+        world.rlva.configure(false);
+        assert_eq!(filtered(&world, vec![PERSON]), text(offer(vec![])));
+    }
+
+    #[test]
+    fn rlva_sendchat_hides_public_chat_dialogs_and_refuses_their_answers() {
+        let mut world = world();
+        let dialog = |channel, n: u128| NetEvent::ScriptDialog {
+            sender: "127.0.0.1:13000".parse().unwrap(),
+            object_id: Uuid::from_u128(0x6469_0000 + n),
+            object_name: "Dialog object".into(),
+            owner_name: "Test Resident".into(),
+            message: "Choose".into(),
+            channel,
+            buttons: vec!["Yes".into()],
+        };
+        let reply = |channel| NetCommand::ScriptDialogReply {
+            sender: None,
+            object_id: ISSUER,
+            channel,
+            index: 0,
+            label: "Yes".into(),
+        };
+        restrict(&mut world, "@sendchat=n");
+        let shown = world.notifications.list.len();
+        world.apply(dialog(0, 1));
+        assert_eq!(world.notifications.list.len(), shown, "not shown at all");
+        assert_eq!(world.chat.back().unwrap().text, aurora_i18n::tr!("rlva-blocked-script-dialog"));
+        assert!(!world.rlva_allows_command(&reply(0), Uuid::nil()));
+        world.apply(dialog(-7, 2));
+        assert_eq!(world.notifications.list.len(), shown + 1, "other channels are not public chat");
+        assert!(world.rlva_allows_command(&reply(-7), Uuid::nil()));
+        restrict(&mut world, "@clear");
+        world.apply(dialog(0, 3));
+        assert_eq!(world.notifications.list.len(), shown + 2);
+        assert!(world.rlva_allows_command(&reply(0), Uuid::nil()));
     }
 
     #[test]

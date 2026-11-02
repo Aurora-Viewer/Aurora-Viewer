@@ -65,6 +65,25 @@ fn reason_text(reason: &str) -> &'static str {
     }
 }
 
+fn portal_support(world: &World, surface: (Vec3, Option<usize>), ready: bool) -> Result<(), &'static str> {
+    if let Some(idx) = surface.1 {
+        contents_drop::surface_allowed(world, idx)?;
+    }
+    if !ready {
+        return Err("portal-bridge-required");
+    }
+    let center = surface.0 + Vec3::Z * crate::world::portals::HEIGHT;
+    if !center.is_finite()
+        || !(0.0..=4096.0).contains(&center.z)
+        || world
+            .main()
+            .is_none_or(|region| !crate::world::portals::fits_region(center, [region.heightmap.size_x, region.heightmap.size_y]))
+    {
+        return Err("portal-invalid");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 fn original(world: &World, id: Uuid) -> Result<&InvItem, &'static str> {
     cargo(world, id, false)
@@ -107,16 +126,6 @@ fn cargo(world: &World, id: Uuid, contents: bool) -> Result<&InvItem, &'static s
 
 fn remove_on_rez(inv: &Inventory, item: &InvItem, agent: Uuid, on_object: bool) -> bool {
     !copyable(item, agent) || (on_object && inv.in_folder_type(item.id, 14))
-}
-
-fn group_for_rez(world: &World, under_land: bool) -> Uuid {
-    world
-        .parcel
-        .as_ref()
-        .filter(|_| under_land)
-        .map(|p| p.group_id)
-        .filter(|id| !id.is_nil() && world.groups.groups.iter().any(|g| g.id == *id))
-        .unwrap_or(world.groups.active)
 }
 
 /// The avatar an object is, or is worn by: an attachment counts as its
@@ -188,7 +197,7 @@ fn prepare(
     Ok(InventoryDrop {
         command: BuildCmd::RezInventory(Box::new(RezInventory {
             handle,
-            group: group_for_rez(world, under_land),
+            group: world.group_for_rez(under_land),
             item: item.clone(),
             ray_start: eye - offset,
             ray_end: point - offset,
@@ -209,7 +218,9 @@ impl App {
     pub(super) fn inventory_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Vec<InventoryDrop> {
         self.inventory_drag.cursor = ui::inventory::task_drop::cursor(ctx).or_else(|| ui::inventory::drag::cursor(ctx));
         ui::inventory::drag::badge(ctx, &self.palette);
-        if ui::inventory::drag::carried_count(ctx).is_none() {
+        ui::places::drag::ghost(ctx, &self.palette);
+        let place_drag = egui::DragAndDrop::has_payload_of_type::<ui::places::drag::PlaceDrag>(ctx);
+        if ui::inventory::drag::carried_count(ctx).is_none() && !place_drag {
             self.inventory_drag.checked = None;
         }
         let give = self.avatar_give_input(ctx, renderer);
@@ -217,7 +228,11 @@ impl App {
         if give.is_some() || !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open {
             return Vec::new();
         }
-        if egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx) {
+        if egui::DragAndDrop::payload::<ui::places::drag::PlaceDrag>(ctx).is_some_and(|cargo| cargo.target.item().is_none()) {
+            self.location_portal_input(ctx, renderer);
+            return Vec::new();
+        }
+        if egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx) || place_drag {
             self.item_drag_input(ctx, renderer).into_iter().collect()
         } else {
             self.selection_drag_input(ctx, renderer)
@@ -320,6 +335,47 @@ impl App {
         None
     }
 
+    /// History and directory places carry locations, never items to rez or give.
+    fn location_portal_input(&mut self, ctx: &egui::Context, renderer: &Renderer) {
+        let Some(drag) = ui::places::drag::location_world_drag(ctx) else {
+            return;
+        };
+        let ppp = ctx.pixels_per_point();
+        let Some(ray) = renderer.cursor_ray(drag.position.x * ppp, drag.position.y * ppp) else {
+            return;
+        };
+        self.inventory_drag.refresh_surface(
+            &self.scene,
+            &self.world,
+            self.settings.draw_distance,
+            ray,
+            (drag.position.x * ppp, drag.position.y * ppp),
+            drag.released,
+        );
+        let ready = self.demo || self.bridge_runtime.query_endpoint().is_some();
+        super::portals::landmark::preview(ctx, &self.palette, drag.position, drag.shift, ready);
+        let result = self
+            .inventory_drag
+            .surface
+            .ok_or("rez-no-surface")
+            .and_then(|surface| portal_support(&self.world, surface, ready).map(|()| surface.0));
+        self.inventory_drag.cursor = Some(if result.is_ok() {
+            egui::CursorIcon::Copy
+        } else {
+            egui::CursorIcon::NotAllowed
+        });
+        if drag.released {
+            egui::DragAndDrop::clear_payload(ctx);
+            match result {
+                Ok(point) => {
+                    self.queue_location_portal(drag.target, point, drag.shift);
+                    self.inventory_ui.release_world_drag_focus(ctx);
+                }
+                Err(reason) => self.portal_drop_notice(reason),
+            }
+        }
+    }
+
     /// One inventory item dragged over the world: rezzed, put into an
     /// object's contents, or a landmark turned into a portal.
     fn item_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<InventoryDrop> {
@@ -362,20 +418,10 @@ impl App {
                 target_allowed(&self.world, idx, item, false)?;
             }
             if landmark {
-                if !portal_ready {
-                    return Err("portal-bridge-required");
-                }
                 if item.asset_id.is_nil() {
                     return Err("portal-landmark-unavailable");
                 }
-                let center = surface.0 + Vec3::Z * crate::world::portals::HEIGHT;
-                if !(0.0..=4096.0).contains(&center.z)
-                    || self.world.main().is_none_or(|region| {
-                        !crate::world::portals::fits_region(center, [region.heightmap.size_x, region.heightmap.size_y])
-                    })
-                {
-                    return Err("portal-invalid");
-                }
+                portal_support(&self.world, surface, portal_ready)?;
                 Ok(egui::CursorIcon::Copy)
             } else if let Some(idx) = surface.1.filter(|_| contents) {
                 self.inventory_drag
@@ -834,22 +880,69 @@ mod tests {
     }
 
     #[test]
-    fn rez_uses_agent_parcel_group_only_for_members_when_enabled() {
+    fn inventory_rez_group_reaches_land_object_and_demo_properties() {
         let mut w = world();
         for ev in crate::demo::demo_reply(&NetCommand::RequestGroups) {
             w.apply(ev);
         }
-        w.groups.active = item(8800);
-        let parcel_group = w.groups.groups[0].id;
-        w.parcel = Some(Arc::new(aurora_net::ParcelInfo {
-            group_id: parcel_group,
-            ..Default::default()
-        }));
-        assert_eq!(group_for_rez(&w, true), parcel_group);
-        assert_eq!(group_for_rez(&w, false), item(8800));
-        Arc::make_mut(w.parcel.as_mut().unwrap()).group_id = item(8899);
-        assert_eq!(group_for_rez(&w, true), item(8800));
+        let land = w.groups.groups[0].id;
+        let active = item(8800);
+        let nil = Uuid::nil();
         assert!(crate::build::BuildSettings::default().rez_under_land_group);
+        for (active, parcel, under_land, expected) in [
+            (active, Some(land), true, land),
+            (active, Some(land), false, active),
+            (active, Some(item(8899)), true, active),
+            (active, Some(nil), true, active),
+            (active, None, true, active),
+            (nil, Some(land), true, land),
+            (nil, Some(land), false, nil),
+            (nil, None, true, nil),
+        ] {
+            w.apply(NetEvent::ActiveGroup {
+                id: active,
+                name: "Active group".into(),
+                title: "Builder".into(),
+            });
+            w.parcel = parcel.map(|group_id| {
+                Arc::new(aurora_net::ParcelInfo {
+                    group_id,
+                    ..Default::default()
+                })
+            });
+            for target in [None, Some(object(&w))] {
+                let point = Vec3::new(140.0, 130.0, 32.0);
+                let drop = prepare(&w, item(8100), point + Vec3::Z * 4.0, (point, target), false, false, under_land).unwrap();
+                let request = rez(drop);
+                assert_eq!(request.group, expected);
+                let handle = request.handle;
+                let mut sim = crate::build::demo_sim::DemoSim::default();
+                let events = sim.reply(&w, &BuildCmd::RezInventory(Box::new(request)));
+                let NetEvent::ObjectUpdates { objects, .. } = &events[0] else {
+                    panic!("expected rezzed object");
+                };
+                let id = objects[0].full_id;
+                let local_id = objects[0].local_id;
+                for event in events {
+                    w.apply(event);
+                }
+                let replies = sim.reply(
+                    &w,
+                    &BuildCmd::Select {
+                        handle,
+                        local_ids: vec![local_id],
+                    },
+                );
+                let props = replies
+                    .iter()
+                    .find_map(|event| match event {
+                        NetEvent::ObjectProperties(props) => props.iter().find(|props| props.object_id == id),
+                        _ => None,
+                    })
+                    .expect("rezzed object properties");
+                assert_eq!(props.group_id, expected);
+            }
+        }
     }
 }
 

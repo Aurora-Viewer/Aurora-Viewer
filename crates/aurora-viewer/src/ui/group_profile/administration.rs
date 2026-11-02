@@ -1313,7 +1313,7 @@ impl AdminState {
         if let Some(ids) = self.picker.show(ctx, p, world) {
             self.to_ban = ids;
         }
-        if let Some(texture) = self.texture.show(ctx, p, world, images)
+        if let Some(texture) = self.texture.show_live(ctx, p, world, images)
             && let Some(info) = self.identity.as_mut()
         {
             info.insignia = texture;

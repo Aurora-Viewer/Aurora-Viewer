@@ -18,7 +18,8 @@ pub enum Look {
     Legacy,
 }
 
-/// Every choice of the page set to one look, and Aurora's water with it;
+/// Every choice of the page set to one look (the colored sky ambient
+/// included), and Aurora's water with it;
 /// the avatar plates' own settings and the filing of received items are
 /// left as they are.
 pub fn set_all(s: &mut Settings, look: Look) {
@@ -45,6 +46,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_search = !aurora;
     s.classic_region_estate = !aurora;
     s.classic_inventory = !aurora;
+    s.build.legacy_window = !aurora;
     s.classic_places = !aurora;
     s.classic_pay_window = !aurora;
     s.legacy_money_tracker = !aurora;
@@ -56,6 +58,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.predict_own_motion = aurora;
     s.water_effects.enabled = aurora;
     s.synchronize_animations = aurora;
+    s.colored_sky_ambient = aurora;
 }
 
 /// The aurora gradient at `t` (0 at its start, 1 at its end): the brand's
@@ -267,6 +270,14 @@ pub fn page(cx: &mut Cx, tab: usize) {
             );
             look(
                 cx,
+                tr!("ui-options-aurora-build"),
+                tr!("ui-options-aurora-build-help"),
+                aurora,
+                classic,
+                &field!(build.legacy_window),
+            );
+            look(
+                cx,
                 tr!("ui-options-aurora-pay-window"),
                 tr!("ui-options-aurora-pay-window-help"),
                 tr!("ui-options-aurora-pay-aurora"),
@@ -324,6 +335,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     aurora,
                     tr!("ui-options-aurora-hover-tips-legacy"),
                     &field!(classic_hover_tips),
+                );
+                // also in Graphics › Sky and environment, the same setting
+                cx.wide().experimental().choice(
+                    tr!("ui-options-colored-sky-ambient"),
+                    tr!("ui-options-colored-sky-ambient-help"),
+                    &field!(colored_sky_ambient),
+                    &[(true, aurora, true), (false, tr!("ui-options-aurora-classic"), false)],
                 );
             });
             cx.group(tr!("common-interface"), |cx| {
@@ -417,6 +435,16 @@ mod tests {
     }
 
     #[test]
+    fn the_two_buttons_set_the_colored_sky_ambient_too() {
+        let mut s = Settings::default();
+        assert!(!s.colored_sky_ambient, "off by default");
+        set_all(&mut s, Look::Aurora);
+        assert!(s.colored_sky_ambient);
+        set_all(&mut s, Look::Legacy);
+        assert!(!s.colored_sky_ambient);
+    }
+
+    #[test]
     fn the_two_buttons_set_every_look_and_leave_the_plates_alone() {
         let mut s = Settings {
             plates_friends_only_full: true,
@@ -437,6 +465,7 @@ mod tests {
         assert!(s.classic_search, "Search opens the Legacy Viewer's tabs");
         assert!(s.classic_region_estate);
         assert!(s.classic_inventory, "the Legacy Viewer's single inventory tree");
+        assert!(s.build.legacy_window, "the Legacy Viewer's build tools and tabs");
         assert!(s.classic_places, "Places opens the Legacy Viewer's three tabs");
         assert!(s.classic_pay_window);
         assert!(s.legacy_money_tracker, "the Legacy Viewer's Time / Name / Amount list");
@@ -475,6 +504,7 @@ mod tests {
             "the Aurora inventory is the default"
         );
         assert!(!s.classic_places && !fresh.classic_places, "Aurora's Places is the default");
+        assert!(!s.build.legacy_window && !fresh.build.legacy_window);
         assert!(!s.classic_pay_window && !fresh.classic_pay_window);
         assert!(!s.legacy_money_tracker && !fresh.legacy_money_tracker);
         assert!(!s.classic_controls && !fresh.classic_controls);

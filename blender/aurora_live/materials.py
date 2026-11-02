@@ -6,6 +6,11 @@ from .compat import principled_input
 
 _cache = {}
 MAX_IMAGE = 1024
+# Byte images keep their source encoding, so only spaces with a known
+# transfer function are decoded. Blender 3.x names data "Raw" and linear
+# "Linear"; 4.0 renamed them "Non-Color" and "Linear Rec.709".
+SRGB_SPACES = {"sRGB", "sRGB - Texture", "Utility - sRGB - Texture"}
+LINEAR_SPACES = {"Linear", "Linear Rec.709", "Non-Color", "Raw", "Generic Data", "Utility - Raw", "Utility - Linear - sRGB"}
 
 
 def invalidate():
@@ -138,7 +143,10 @@ def _pixels(image, color, use_alpha=False):
     if key in _cache:
         return _cache[key]
     width, height = image.size
-    if image.colorspace_settings.name not in {"sRGB", "Non-Color", "Linear", "Linear Rec.709"}:
+    space = image.colorspace_settings.name
+    # Float buffers are converted to scene linear on load whatever their tag.
+    if (not image.is_float and space not in SRGB_SPACES | LINEAR_SPACES
+            and not getattr(image.colorspace_settings, "is_data", False)):
         raise ValueError("Use sRGB, Linear Rec.709 or Non-Color image color spaces")
     if not width or not height or width * height > 4096 * 4096:
         raise ValueError("Live source images must be loaded and at most 16 megapixels")
@@ -156,7 +164,7 @@ def _pixels(image, color, use_alpha=False):
         rgb[:] = np.where(alpha > 0.000001, rgb / np.maximum(alpha, 0.000001), 0)
     # Float image buffers are already scene-linear, even with an sRGB source
     # tag. Byte buffers retain their source encoding (Blender Image API).
-    srgb = image.colorspace_settings.name == "sRGB" and not image.is_float
+    srgb = space in SRGB_SPACES and not image.is_float
     if color and not srgb:
         rgb[:] = np.where(rgb <= 0.0031308, rgb * 12.92, 1.055 * np.maximum(rgb, 0) ** (1/2.4) - 0.055)
     elif not color and srgb:
@@ -170,8 +178,11 @@ def _pixels(image, color, use_alpha=False):
 
 
 class Capture:
-    def __init__(self):
+    def __init__(self, lenient=False):
         self.images, self.ids, self.bytes = [], {}, 0
+        # A live preview shows a material it cannot capture in its plain
+        # colour and keeps the reason; strict imports still reject it (#1455).
+        self.lenient, self.warnings = lenient, []
 
     def store(self, value):
         raw = np.rint(np.clip(value, 0, 1) * 255).astype(np.uint8).tobytes()
@@ -186,6 +197,18 @@ class Capture:
         return self.ids[key]
 
     def material(self, source, slot):
+        images, ids, size = len(self.images), dict(self.ids), self.bytes
+        try:
+            return self._material(source, slot)
+        except ValueError as error:
+            if not self.lenient:
+                raise
+            del self.images[images:]
+            self.ids, self.bytes = ids, size
+            self.warnings.append(str(error))
+            return self._material(source, slot, plain=True)
+
+    def _material(self, source, slot, plain=False):
         material = source.material_slots[slot].material if slot < len(source.material_slots) else None
         color = list(material.diffuse_color) if material else [0.45, 0.22, 0.85, 1]
         result = {"metallic": float(material.metallic) if material else 0.0,
@@ -194,7 +217,7 @@ class Capture:
                   "alpha_mode": "OPAQUE", "textures": [None] * 4,
                   "transforms": [[0, 0, 1, 1, 0] for _ in range(4)]}
         shader = None
-        if material and material.use_nodes and material.node_tree:
+        if material and material.use_nodes and material.node_tree and not plain:
             output = next((n for n in material.node_tree.nodes if n.type == "OUTPUT_MATERIAL" and n.is_active_output), None)
             if output:
                 shader, _ = _linked(output.inputs["Surface"])

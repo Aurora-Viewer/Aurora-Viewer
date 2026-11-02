@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora LiveMesh", "author": "Aurora Viewer contributors",
-    "version": (0, 14, 6), "blender": (2, 93, 0),
+    "version": (0, 14, 7), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged and static mesh edits live in Aurora Viewer",
 }
@@ -33,6 +33,8 @@ _last_capture = 0.0
 _force_capture = False
 _last_snapshot = None
 _error = ""
+# Source id -> translated reason a synced mesh is shown without its textures.
+_warnings = {}
 _material_signature = ()
 _incoming_shape = None
 _last_change = 0.0
@@ -179,7 +181,7 @@ def _editing(context=None):
 def _update():
     global _dirty, _revision, _last_capture, _exporting, _error, _material_signature, _object_signature
     global _force_capture, _last_snapshot, _incoming_shape
-    global _geometry_dirty
+    global _geometry_dirty, _warnings
     if _client is None:
         return None
     status, supported = _client.state()
@@ -239,22 +241,31 @@ def _update():
         try:
             if painting:
                 materials.invalidate()
-            errors = {}
+            errors, warnings = {}, {}
             packed = hasattr(_client, "features") and "packed-geometry" in _client.features()
             identities = tracking.source_ids(scene)
-            value = (exporter.material_snapshot(objects, _last_snapshot, identities, _revision + 1, errors)
+            value = (exporter.material_snapshot(objects, _last_snapshot, identities, _revision + 1, errors, warnings)
                      if packed and not forced and not _geometry_dirty else None)
             if value is None:
                 value = exporter.snapshot(objects, supported, _revision + 1, prefs.forward, _client.rest_axes(),
-                                          identities, tracking.link_roots(scene), errors=errors, packed=packed)
+                                          identities, tracking.link_roots(scene), errors=errors, packed=packed,
+                                          warnings=warnings)
             _geometry_dirty = False
+            _warnings = {}
             messages = [polling_error] if polling_error else []
             for entry in prefs.objects:
-                message = errors.get(entry.object.as_pointer(), "") if tracking.valid(scene, entry.object) else ""
+                valid = tracking.valid(scene, entry.object)
+                message = errors.get(entry.object.as_pointer(), "") if valid else ""
                 prefix = entry.name + ": "
                 if message.startswith(prefix):
                     message = message[len(prefix):]
                 text = pgettext_iface(message) if message else ""
+                warning = warnings.get(entry.object.as_pointer(), "") if valid else ""
+                if warning and not text:
+                    # The mesh still syncs; say why its textures are missing.
+                    text = pgettext_iface("Textures skipped, plain color shown: {reason}").format(
+                        reason=pgettext_iface(warning))
+                    _warnings[entry.source_id] = text
                 if entry.error != text:
                     entry.error = text
                 if entry.error:
@@ -281,7 +292,7 @@ def _update():
             for entry in prefs.objects:
                 if entry.enabled and entry.source_id in captured:
                     message = issues.get(entry.source_id, "")
-                    text = pgettext_iface(message) if message else ""
+                    text = pgettext_iface(message) if message else _warnings.get(entry.source_id, "")
                     if entry.error != text:
                         entry.error = text
     return 0.1
@@ -588,6 +599,7 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "Use Linear interpolation for live image textures": "Utilisez l’interpolation Linéaire pour les textures image live",
     "Use sRGB, Linear Rec.709 or Non-Color image color spaces":
         "Utilisez les espaces colorimétriques sRGB, Linéaire Rec.709 ou Non-couleur",
+    "Textures skipped, plain color shown: {reason}": "Textures ignorées, couleur unie affichée : {reason}",
     "Live source images must be loaded and at most 16 megapixels":
         "Les images source live doivent être chargées et contenir au plus 16 mégapixels",
     "Image pixels must be finite": "Les valeurs des pixels doivent être finies",

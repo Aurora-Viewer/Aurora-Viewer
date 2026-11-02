@@ -1603,11 +1603,12 @@ impl ObjectStore {
         if self.by_key.contains_key(&obj.key) || self.by_uuid.contains_key(&obj.full_id) {
             return None;
         }
-        // nothing of it is on the GPU any more; local previews are kept
+        // Nothing of it is on the GPU any more. Appearance applications are
+        // reinstalled from the import bindings: a parked copy may have expired
+        // or been removed while it was out of reach.
         obj.render = RenderState {
             local_volume: obj.render.local_volume.take(),
             local_scale: obj.render.local_scale,
-            local_appearance: std::mem::take(&mut obj.render.local_appearance),
             needs_records: true,
             ..Default::default()
         };

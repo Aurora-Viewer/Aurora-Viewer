@@ -1,6 +1,7 @@
 //! RlvOverlayEffect::run (rlveffects.cpp, originally LGPL 2.1): compose after
 //! world labels and before HUD attachments. This also covers scene-only photos.
 use crate::OverlayEffect;
+use crate::pipeline_cache::CachedPipelines;
 
 pub(crate) struct Overlays {
     pipeline: wgpu::RenderPipeline,
@@ -46,7 +47,7 @@ impl Overlays {
             bind_group_layouts: &[Some(&layout), Some(textures)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some("RLVa overlays"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {

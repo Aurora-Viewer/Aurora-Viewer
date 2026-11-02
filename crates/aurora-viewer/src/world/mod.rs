@@ -20,12 +20,15 @@ pub mod derender;
 pub mod edit_echo;
 pub mod eep;
 pub mod eep_env;
+pub mod eep_photo;
+pub mod eep_push;
 pub mod env;
 pub mod env_apply;
 pub mod env_day_edit;
 pub mod env_edit;
 pub mod env_select;
 pub mod estate;
+pub mod experience_log;
 pub mod experiences;
 pub mod favorites;
 pub mod flying_at_exit;
@@ -52,6 +55,7 @@ pub mod maturity;
 pub mod motion;
 pub mod mutes;
 pub mod names;
+pub mod night_sky;
 pub mod notice_topics;
 pub mod notification_history;
 pub mod notifications;
@@ -60,6 +64,7 @@ pub mod objects;
 pub mod open_ims;
 pub mod outfit;
 pub mod outfit_folders;
+pub mod outfit_paste;
 pub mod parcel_visibility;
 pub mod parked;
 pub mod particle_filters;
@@ -76,6 +81,7 @@ pub mod recent;
 pub mod region_alerts;
 pub mod region_messages;
 pub mod region_restart;
+pub mod region_titles;
 pub mod rig_graph;
 pub mod rig_targets;
 pub mod rlva;
@@ -179,12 +185,12 @@ impl ChatKind {
         matches!(self, ChatKind::Own(_))
     }
 
-    /// How loud a resident's line was said, ours included (LLChat's
+    /// How loud a resident's or object's line was said, ours included (LLChat's
     /// mChatType): whispered and shouted lines read the same whoever said
     /// them (FSChatHistory::appendMessage).
     pub fn volume(self) -> Option<ChatType> {
         match self {
-            ChatKind::Local(t) | ChatKind::Own(t) => Some(t),
+            ChatKind::Local(t) | ChatKind::Own(t) | ChatKind::Object(t) => Some(t),
             _ => None,
         }
     }
@@ -276,6 +282,9 @@ pub enum LocalAssetRequest {
 pub struct World {
     /// mScreen's Y scale (LLVOAvatarSelf::updateCharacter).
     pub hud_aspect: f32,
+    /// Where the HUDs are laid out in the window (left, top, right, bottom
+    /// pixels; `None`: the whole window). `hud_aspect` is its aspect.
+    pub hud_area: Option<[f32; 4]>,
     /// HUD zoom is local to the current session (LLAgentCamera).
     pub hud_zoom: f32,
     pub hud_scales: hud_scale::HudScales,
@@ -565,6 +574,9 @@ pub struct World {
     /// Members, roles, titles and notices of the groups whose profile is
     /// open (LLGroupMgr).
     pub group_data: group_data::GroupMgr,
+    /// The group title worn by region, and every group's titles for the
+    /// Group titles window (FSGroupTitleRegionMgr).
+    pub region_titles: region_titles::RegionTitles,
     /// The parcels and accounts of the group whose "Land and L$" tab shows.
     pub group_money: group_money::GroupMoney,
     arrived_once: bool,
@@ -639,6 +651,7 @@ impl World {
     pub fn new(avatar_lib: Arc<AvatarLibrary>) -> World {
         World {
             hud_aspect: 1.0,
+            hud_area: None,
             hud_zoom: 1.0,
             hud_scales: Default::default(),
             hud_locks: Default::default(),
@@ -780,6 +793,7 @@ impl World {
             place_snapshots: Default::default(),
             search: Default::default(),
             group_data: Default::default(),
+            region_titles: Default::default(),
             group_money: Default::default(),
             notifications: notifications::Notifications::default(),
             teleport_invites: teleport_invites::TeleportInvites::default(),
@@ -996,6 +1010,11 @@ impl World {
             return false;
         }
         self.region_left = old;
+        // LLEnvironment::onRegionChange: experience environments do not
+        // survive a teleport or a region crossing
+        if old.is_some() {
+            self.eep.clear_experience(Uuid::nil(), eep_env::TRANSITION_DEFAULT);
+        }
         self.objects.clear_material_previews();
         self.inventory_retried.clear();
         if let Some(old) = old {
@@ -1758,6 +1777,25 @@ impl World {
         self.profiles.group_insignia(group, insignia);
     }
 
+    /// LLExperienceLog::notify (the ExperienceEvent notification).
+    pub fn notify_experience_event(&mut self, entry: &experience_log::LogEntry) {
+        let experience = self
+            .experiences
+            .details
+            .get(&entry.experience)
+            .filter(|d| !d.invalid() && !d.name.trim().is_empty())
+            .map_or_else(|| entry.experience.to_string(), |d| d.name.trim().to_owned());
+        let what = experience_log::permission_long(entry.permission);
+        let text = aurora_i18n::tr!(
+            "ui-experiences-log-notice",
+            what = what,
+            experience = experience,
+            object = entry.object_name.clone(),
+            parcel = entry.parcel_name.clone()
+        );
+        self.system_message(text.to_string());
+    }
+
     pub fn system_message(&mut self, text: impl Into<String>) {
         self.system_notice(text, notice_topics::Topic::Info);
     }
@@ -1959,7 +1997,7 @@ impl World {
             .as_ref()
             .is_some_and(|l| l.raw["login-flags"].at(0)["ever_logged_in"].as_str() == "N");
         let inputs = outfit::OutfitInputs {
-            worn: self.worn_attachment_items(),
+            worn: self.outfit_attachment_items(),
             received_cof_version: self.appearance_cof_version(&self.agent_id),
             inventory: &mut self.inventory,
             agent: self.agent_id,
@@ -2123,6 +2161,7 @@ impl World {
                     log::info!("invisible: hidden again from {hidden} friend(s) the login still showed us to");
                 }
                 let open = account.join(open_ims::FILE);
+                self.experiences.log = experience_log::ExperienceLog::load(account.join(experience_log::FILE), &experience_log::now().0);
                 self.reopen_ims = open_ims::load(&open);
                 self.open_ims_path = Some(open);
                 self.calls.load_volumes(account.join(calls::VOLUMES_FILE));
@@ -2152,6 +2191,14 @@ impl World {
                 if self.set_main_region(handle) {
                     // no agent update before the new region completes the move
                     self.movement_complete = false;
+                    // LLViewerParcelMgr::onTeleportFinished: the new region's
+                    // parcel is awaited; the one left must not lend its rules
+                    // (flight, build, the bar's icons) in the meantime. The
+                    // session sends it after this event, never before.
+                    if self.parcel.take().is_some() {
+                        log::info!("agent parcel: cleared, region {handle:x} entered");
+                    }
+                    self.parcel_name.clear();
                 }
                 // back in a region left moments ago: its objects first, its
                 // simulator only sends what changed since
@@ -2755,6 +2802,13 @@ impl World {
             NetEvent::ScriptDialog {
                 object_id, object_name, ..
             } if self.object_blocked(&object_id, &object_name) => None,
+            // RLVa @sendchat (LLScriptHandler::processNotification,
+            // llnotificationscripthandler.cpp): a dialog or text box whose
+            // answer would be said on public chat is not shown at all.
+            NetEvent::ScriptDialog { channel: 0, .. } if self.rlva.has("sendchat") => {
+                self.system_notice(aurora_i18n::tr!("rlva-blocked-script-dialog"), notice_topics::Topic::Warning);
+                None
+            }
             // process_script_question drops only the questions of a blocked
             // object (LLMuteList::isMuted(taskid)): not those of a blocked
             // owner, nor on any other condition (no click needed, object out
@@ -2871,6 +2925,15 @@ impl World {
                 }
                 None
             }
+            NetEvent::ExperienceLog(event) => {
+                let (day, time) = experience_log::now();
+                let entry = self.experiences.log.record(&event, &day, &time).clone();
+                if self.experiences.log.notify {
+                    self.experiences.want(entry.experience);
+                    self.notify_experience_event(&entry);
+                }
+                None
+            }
             NetEvent::ExperienceAttachment { experience, object_name } => {
                 if self.rlva.enabled() {
                     self.rlva.controllers.attachment(experience, object_name, Instant::now());
@@ -2880,6 +2943,17 @@ impl World {
             }
             NetEvent::ExperiencePermission { experience, result, .. } => {
                 self.experiences.permission(experience, result);
+                for (experience, transition) in std::mem::take(&mut self.experiences.env_clears) {
+                    self.eep.clear_experience(experience, transition);
+                }
+                None
+            }
+            NetEvent::ExperienceEnvironment { experience, message } => {
+                self.eep.push_experience(experience, &message);
+                None
+            }
+            NetEvent::ExperienceList { kind, ids } => {
+                self.experiences.list_arrived(kind, ids);
                 None
             }
             NetEvent::GroupExperiences { group, ids } => {
@@ -3010,6 +3084,9 @@ impl World {
             } => {
                 let answer = eep::EnvAnswer::from_llsd(&environment);
                 let parcel_id = answer.parcel_id;
+                for w in eep::water_out_of_range(&environment) {
+                    log::info!("water values out of the Legacy ranges, clamped: {w:?}");
+                }
                 match answer.day.as_ref().filter(|d| d.is_valid()) {
                     Some(d) => {
                         log::info!(
@@ -3030,6 +3107,22 @@ impl World {
                                 s.blue_horizon,
                                 s.haze_horizon,
                                 s.haze_density
+                            );
+                        }
+                        // the region's water (in the Legacy ranges; the
+                        // values it sent out of them are logged on reading):
+                        // what a report of odd water needs
+                        if let Some(w) = d.water.first().map(|k| &k.1) {
+                            log::info!(
+                                "water: fog {:?} density {} underwater mod {} fresnel scale {} offset {} blur {} normal scale {:?} normal map {}",
+                                w.fog_color,
+                                w.fog_density,
+                                w.underwater_fog_mod,
+                                w.fresnel_scale,
+                                w.fresnel_offset,
+                                w.blur_multiplier,
+                                w.normal_scale,
+                                w.normal_map
                             );
                         }
                     }
@@ -3192,6 +3285,20 @@ impl World {
                 None
             }
             NetEvent::AgentParcel(info) => {
+                // one line per parcel entered, or when its flight rule changes
+                let fly = info.flags & aurora_net::parcel_flags::ALLOW_FLY != 0;
+                if self
+                    .parcel
+                    .as_ref()
+                    .is_none_or(|p| p.local_id != info.local_id || (p.flags & aurora_net::parcel_flags::ALLOW_FLY != 0) != fly)
+                {
+                    log::info!(
+                        "agent parcel: local id {} in region {:x}, flight {}",
+                        info.local_id,
+                        self.main_region.unwrap_or(0),
+                        if fly { "allowed" } else { "forbidden" }
+                    );
+                }
                 self.parcel_name = info.name.clone();
                 if !info.is_group_owned {
                     self.social.want_name(info.owner_id);
@@ -3286,6 +3393,13 @@ impl World {
             | NetEvent::GroupTitles { .. }
             | NetEvent::GroupNotices { .. }
             | NetEvent::GroupBanList { .. }) => {
+                // the Group titles window's own requests
+                if let NetEvent::GroupTitles { group, request, titles } = &ev {
+                    let name = self.groups.group(group).map(|g| g.name.clone()).unwrap_or_default();
+                    if self.region_titles.on_titles(*group, *request, titles, &name) {
+                        return None;
+                    }
+                }
                 self.group_data.on_event(&ev);
                 if matches!(ev, NetEvent::GroupMembers(_)) {
                     self.search.refresh_group_counts(&self.group_data);
@@ -3908,9 +4022,12 @@ impl World {
                     },
                 );
             }
-            d::TASK_INVENTORY_OFFERED => self.on_task_inventory_offer(im, &from),
+            d::TASK_INVENTORY_OFFERED => {
+                if self.on_task_inventory_offer(im, &from) {
+                    return true;
+                }
+            }
             d::INVENTORY_OFFERED => {
-                self.ui_sounds.push(UiSound::InventoryOffer);
                 let asset_type = im.binary_bucket.first().map(|b| *b as i8).unwrap_or(-1);
                 // A resident's offer is in our inventory before we answer:
                 // prefetch it (inventory_offer_handler, llimprocessing.cpp),
@@ -3945,10 +4062,12 @@ impl World {
                         task_offer: None,
                     },
                 );
-                self.on_inventory_offer_card(im, &from, asset_type, entry);
-                if !self.rlva_inventory_offer(im, entry) {
-                    self.received_items.offer(im, entry);
+                n.link_name(entry, from.clone(), notifications::NameTarget::Avatar(im.from_agent_id));
+                if self.receive_inventory_offer(im, entry) {
+                    return true;
                 }
+                self.ui_sounds.push(UiSound::InventoryOffer);
+                self.on_inventory_offer_card(im, &from, asset_type, entry);
             }
             // FSShowJoinedGroupInvitations (FIRE-20385): an invitation to a
             // group we are already in is dropped unless asked for
@@ -4469,6 +4588,13 @@ impl World {
             // FIRE-2731 (on_avatar_name_cache_notify)
             self.ui_sounds
                 .push(if online { UiSound::FriendOnline } else { UiSound::FriendOffline });
+            // the line of an open conversation with them, so a message is not
+            // written to someone who just left
+            // (LLIMModel::proccessOnlineOfflineNotification, llimview.cpp):
+            // never opens one
+            if self.social.has_session(&id) {
+                self.session_system(id, n.clone());
+            }
             // the toast of LLNotificationTipHandler (ChatOnlineNotification),
             // never during login, in do not disturb nor for a blocked resident
             if self.notifications.toasts.presence && self.notifications.started && !self.status.dnd && !self.mutes.is_muted_id(&id) {
@@ -5167,6 +5293,33 @@ mod parcel_voice_tests {
         world.parcel = None;
         world.apply(event(7, 42, true, Some(true)));
         assert!(world.parcel.is_none(), "voice alone cannot locate the agent parcel");
+    }
+}
+
+#[cfg(test)]
+mod experience_environment_tests {
+    use super::*;
+
+    /// LLEnvironment::onRegionChange: a pushed environment stays in its
+    /// region and goes with a teleport or a crossing.
+    #[test]
+    fn a_pushed_environment_does_not_survive_a_region_change() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        world.set_main_region(7);
+        world.apply(NetEvent::ExperienceEnvironment {
+            experience: Uuid::from_u128(9),
+            message: aurora_llsd::llsd_map! {
+                "action" => "PushPartialEnvironment",
+                "action_data" => aurora_llsd::llsd_map! {
+                    "settings" => aurora_llsd::llsd_map! { "sky" => aurora_llsd::llsd_map! { "gamma" => 3.0 } },
+                },
+            },
+        });
+        assert_eq!(world.eep.pushing_experiences(), vec![Uuid::from_u128(9)]);
+        world.set_main_region(7);
+        assert_eq!(world.eep.pushing_experiences().len(), 1, "the same region keeps it");
+        world.set_main_region(8);
+        assert!(world.eep.pushing_experiences().is_empty());
     }
 }
 

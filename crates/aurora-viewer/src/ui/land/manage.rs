@@ -1321,7 +1321,7 @@ fn parcel_media(
             s.dialog = Some(Dialog::MediaUrl(parcel.media_url.clone()));
         }
         let mut url = parcel.media_url.clone();
-        ui.add_enabled(false, egui::TextEdit::singleline(&mut url).desired_width(260.0));
+        crate::ui::widgets::text_field(ui, false, &mut url, |b, _| egui::TextEdit::singleline(b).desired_width(260.0));
     });
     line(ui, p);
     srow(

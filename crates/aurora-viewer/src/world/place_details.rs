@@ -405,6 +405,34 @@ mod tests {
     }
 
     #[test]
+    fn the_name_search_terminator_does_not_move_the_request() {
+        let now = Instant::now();
+        let mut lm = Landmarks::default();
+        let mut d = PlaceDetails::default();
+        let pos = Vec3::new(168.0, 34.0, 21.0);
+        d.open_window(link("alphatribe island", pos), &WorldMap::default(), &mut lm, now);
+        d.take_commands();
+        // the match, then the closing block repeating the requested name
+        // at slot 0, 0 with access 255: the parcel is asked of the match
+        let mut map = map_with("Alphatribe Island", 1000, 1000);
+        map.apply_blocks(vec![MapBlock {
+            x: 0,
+            y: 0,
+            name: "alphatribe island".into(),
+            access: 255,
+            region_flags: 0,
+            water_height: 0,
+            agents: 0,
+            map_image_id: Uuid::nil(),
+            size_x: 256,
+            size_y: 256,
+        }]);
+        d.update(&map, &mut lm, now);
+        let handle = aurora_net::origin_to_handle(256_000, 256_000);
+        assert!(matches!(&d.take_commands()[..], [NetCommand::RemoteParcelRequest { handle: h, .. }] if *h == handle));
+    }
+
+    #[test]
     fn known_region_requests_at_once_and_reopening_reloads() {
         let now = Instant::now();
         let mut lm = Landmarks::default();

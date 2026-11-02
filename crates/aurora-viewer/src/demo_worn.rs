@@ -64,17 +64,19 @@ pub fn temporary() -> Vec<ObjectUpdate> {
 /// The temporary attachment in the demo's AttachmentResources answer, which
 /// names it, when `AURORA_DEMO_WORN=temporary`.
 pub fn temporary_resources() -> Option<aurora_net::land::ScriptAttachment> {
-    (std::env::var("AURORA_DEMO_WORN").as_deref() == Ok("temporary")).then(|| aurora_net::land::ScriptAttachment {
-        location: "Left Hand".into(),
-        objects: vec![aurora_net::land::ScriptObject {
-            id: temporary()[0].full_id,
-            name: aurora_i18n::tr!("demo-worn-temporary-name").into(),
-            owner: DEMO_AGENT,
-            group_owned: false,
-            memory: 64 * 1024,
-            urls: 0,
-            location: None,
-        }],
+    matches!(std::env::var("AURORA_DEMO_WORN").as_deref(), Ok("temporary" | "temporary-outfit")).then(|| {
+        aurora_net::land::ScriptAttachment {
+            location: "Left Hand".into(),
+            objects: vec![aurora_net::land::ScriptObject {
+                id: temporary()[0].full_id,
+                name: aurora_i18n::tr!("demo-worn-temporary-name").into(),
+                owner: DEMO_AGENT,
+                group_owned: false,
+                memory: 64 * 1024,
+                urls: 0,
+                location: None,
+            }],
+        }
     })
 }
 

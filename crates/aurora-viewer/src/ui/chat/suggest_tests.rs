@@ -26,6 +26,16 @@ fn a_mention_opens_at_the_start_of_a_word() {
 }
 
 #[test]
+fn a_cursor_before_a_mention_does_not_open_it() {
+    for text in [" @Alice", "hi @ja", "hi  @ja", "hi\n@ja", "hi\t@ja", "é 👋 @由紀"] {
+        let chars = chars(text);
+        let at = chars.iter().position(|c| *c == '@').expect("the sample has a mention");
+        assert_eq!(mention_at(&chars, at), None, "before @ in {text:?}");
+        assert_eq!(mention_at(&chars, at + 1), Some((at, String::new())), "after @ in {text:?}");
+    }
+}
+
+#[test]
 fn mentions_match_names_then_words_then_anywhere() {
     let people = [
         person(1, "Moon Child", "luna.star"),
@@ -239,6 +249,20 @@ fn at_lists_the_residents_in_chat_range_and_enter_writes_the_mention() {
         sent.message,
         format!("hi secondlife:///app/agent/{}/mention o/", Uuid::from_u128(11))
     );
+}
+
+#[test]
+fn pasting_a_mention_and_moving_before_it_keeps_the_field_usable() {
+    let mut f = Fixture::new();
+    f.frame(vec![egui::Event::Paste("hi @ja".into())]);
+    assert_eq!(f.shown(), vec!["Moonie", "Janet"]);
+    for _ in 0..3 {
+        assert!(f.key(egui::Key::ArrowLeft).is_none());
+    }
+    assert_eq!(f.chat.input, "hi @ja");
+    assert!(f.shown().is_empty(), "the cursor is before @");
+    f.key(egui::Key::ArrowRight);
+    assert_eq!(f.shown(), vec!["Moonie", "Janet"], "the cursor is after @ again");
 }
 
 #[test]

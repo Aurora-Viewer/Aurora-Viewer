@@ -335,7 +335,9 @@ impl Parts {
 /// The `thread` segment of the summary: `packet` and `wait_render` on the
 /// main thread (inside the `render` lap), `rt_frame` and `rt_idle` on the
 /// render thread.
-const THREAD_KEYS: [&str; 4] = ["packet", "wait_render", "rt_frame", "rt_idle"];
+/// `pace`: the frame pacing's sleep before the next frame (pacing.rs);
+/// `input`: from the frame's input to its presentation.
+const THREAD_KEYS: [&str; 6] = ["packet", "wait_render", "rt_frame", "rt_idle", "pace", "input"];
 
 const LAPS: usize = Lap::ALL.len();
 const GPU: usize = GpuElement::ALL.len();
@@ -376,7 +378,7 @@ struct Period {
     /// Frames drawn by the render thread (last frame).
     threaded: bool,
     /// Main thread and render thread meeting: sums and longest of
-    /// [packet, wait_render, rt_frame, rt_idle] (ms).
+    /// [packet, wait_render, rt_frame, rt_idle, pace, input] (ms).
     thread: [f32; THREAD_KEYS.len()],
     thread_max: [f32; THREAD_KEYS.len()],
     journal_bytes: u64,
@@ -401,6 +403,8 @@ struct Period {
     gpu_contact: f32,
     /// The bloom levels alone (inside g_post).
     gpu_bloom: f32,
+    /// The rest of g_effects: planar reflections, probe, scene copy, SSR.
+    gpu_effects: [f32; 4],
     gpu_frames: u32,
     /// Parts of the shadows and depth GPU time (`ShadowStats::gpu_ms`).
     gpu_shadow: [f32; 5],
@@ -620,7 +624,14 @@ impl FrameProfile {
         keep_max(&mut p.phases_max, &render.cpu_phases);
         add(&mut p.parts.0, &parts.0);
         keep_max(&mut p.parts_max.0, &parts.0);
-        let thread = [render.packet_ms, render.wait_render_ms, render.thread_ms, render.thread_idle_ms];
+        let thread = [
+            render.packet_ms,
+            render.wait_render_ms,
+            render.thread_ms,
+            render.thread_idle_ms,
+            render.pace_ms,
+            render.input_ms.unwrap_or(0.0),
+        ];
         add(&mut p.thread, &thread);
         keep_max(&mut p.thread_max, &thread);
         p.threaded = render.render_thread;
@@ -635,6 +646,9 @@ impl FrameProfile {
         p.gpu_ssao += render.gpu_ssao.unwrap_or(0.0);
         p.gpu_contact += render.gpu_contact.unwrap_or(0.0);
         p.gpu_bloom += render.gpu_bloom.unwrap_or(0.0);
+        if let Some(e) = render.gpu_effects {
+            add(&mut p.gpu_effects, &e);
+        }
         p.draws += render.draws as u64;
         p.blend_triangles += render.blend_triangles;
         p.blend_early += render.blend_early_discard as u32;
@@ -937,6 +951,10 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     for (el, ms) in GpuElement::ALL.iter().zip(p.gpu) {
         let _ = write!(out, " g_{}={:.3}", el.key(), ms / gpu_n);
     }
+    // the rest of g_effects, beside g_ssao and g_contact
+    for (key, ms) in ["planar", "probe", "copy", "ssr"].iter().zip(p.gpu_effects) {
+        let _ = write!(out, " g_{key}={:.3}", ms / gpu_n);
+    }
     // shadows and depth in detail: culling, cascades, prepass; then the
     // casters of each cascade
     let shadow_n = p.gpu_shadow_frames.max(1) as f32;
@@ -1079,7 +1097,7 @@ mod tests {
         assert!(l.contains(" posed=2.0 "), "{l}");
         assert!(l.contains(" records_kb=2.0 "), "{l}");
         assert!(
-            l.contains(" | thread=off packet=0.00 wait_render=0.00 rt_frame=0.00 rt_idle=0.00 | r_acquire="),
+            l.contains(" | thread=off packet=0.00 wait_render=0.00 rt_frame=0.00 rt_idle=0.00 pace=0.00 input=0.00 | r_acquire="),
             "{l}"
         );
         assert!(l.contains(" texture_mb=3 texture_pages=12 pages_mb=5 "), "{l}");
@@ -1207,7 +1225,7 @@ mod tests {
         assert!(l.contains(" render=1.11 "), "{l}");
         // the meeting of the two threads, then the render thread steps
         assert!(
-            l.contains(" | thread=on packet=0.10 wait_render=1.01 rt_frame=4.01 rt_idle=0.00 | r_acquire=0.00 "),
+            l.contains(" | thread=on packet=0.10 wait_render=1.01 rt_frame=4.01 rt_idle=0.00 pace=0.00 input=0.00 | r_acquire=0.00 "),
             "{l}"
         );
         assert!(l.contains(" r_finish=2.50 "), "{l}");

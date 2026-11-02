@@ -16,7 +16,20 @@ fn contact_visuals_chat_colours_are_independent_and_reset_to_original() {
         source: id,
         origin: Origin::Live,
     };
-    let job = |world: &World, line: &ChatLine, look| line_job(line, &p, world, &mut HashSet::new(), 540.0, 12.0, false, look).job;
+    let job = |world: &World, line: &ChatLine, look| {
+        line_job(
+            &egui::Context::default(),
+            line,
+            &p,
+            world,
+            &mut HashSet::new(),
+            540.0,
+            12.0,
+            false,
+            look,
+        )
+        .job
+    };
     let baseline = job(&world, &line, JobLook::Pill(&family));
     let sets = &mut world.contact_sets;
     sets.add_set("Names");

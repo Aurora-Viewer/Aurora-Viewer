@@ -19,7 +19,7 @@ pub struct Command {
 }
 
 macro_rules! commands {
-    ($( $id:literal, $icon:literal, $key:literal, $ready:literal; )*) => {
+    ($( $id:literal, $icon:literal, $key:literal, $ready:expr; )*) => {
         &[$(Command { id: $id, icon: $icon, key: $key, ready: $ready },)*]
     };
 }
@@ -32,6 +32,7 @@ pub const COMMANDS: &[Command] = commands![
     "speak", "Command_Speak_Icon", "ui-skin-speak", true;
     "move", "Command_Move_Icon", "controls-movement-title", true;
     "view", "video-filled", "controls-camera-title", true;
+    "vr_view", "device-vision-pro-filled", "vr-view", cfg!(any(target_os = "linux", target_os = "windows", target_os = "macos"));
     "mouselook", "Command_View_Icon", "common-mouselook-m", true;
     "people", "Command_People_Icon", "common-people", true;
     "friends", "Command_People_Icon", "common-friends", true;
@@ -96,7 +97,7 @@ pub const COMMANDS: &[Command] = commands![
     "water_walk", "walk", "movement-water-walk", true;
     "resync_animations", "refresh", "toolbar-command-resync-animations", true;
     "regiontracker", "location-filled", "toolbar-command-region-tracker", false;
-    "group_titles", "tags-filled", "toolbar-command-group-titles", false;
+    "group_titles", "tags-filled", "toolbar-command-group-titles", true;
     "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", false;
     "beacons", "bulb-filled", "toolbar-command-beacons", false;
     "discord", "brand-discord-filled", "toolbar-command-discord", false;

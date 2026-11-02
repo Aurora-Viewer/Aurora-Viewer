@@ -1,5 +1,6 @@
 //! Render the production fragment cut: CPU picking and every surface pass
 //! must agree at the oval's sides/corners, from both entry directions.
+use crate::pipeline_cache::CachedPipelines;
 use crate::{DrawRecord, PORTAL_HALF_HEIGHT, PORTAL_HALF_WIDTH, PortalClip, arena::RecordStore, types::flags};
 use glam::Vec3;
 use wgpu::util::DeviceExt;
@@ -110,16 +111,19 @@ fn portal_aperture_on_gpu_keeps_side_and_corner_geometry_and_matches_picking() {
         r#"
 const FLAG_PORTAL_CLIP:u32=16384u;
 const FLAG_PORTAL_EFFECT:u32=32768u;
+const FLAG_DOUBLE_SIDED:u32=2048u;
 const PORTAL_HALF_WIDTH:f32={PORTAL_HALF_WIDTH:.1};
 const PORTAL_HALF_HEIGHT:f32={PORTAL_HALF_HEIGHT:.1};
 const PORTAL_SURFACE_SCALE:f32=1.16;
 struct DrawRecord {{portal_clip:vec4<f32>,flags:vec4<u32>,tex:vec4<u32>,base_color:vec4<f32>,params:vec4<f32>}};
 struct VsOut {{world_pos:vec3<f32>,record:u32,uv:vec2<f32>,normal:vec3<f32>}};
+struct DepthMaskOut {{world_pos:vec3<f32>,record:u32,uv:vec2<f32>,normal:vec3<f32>,motion_cur:vec4<f32>,motion_prev:vec4<f32>}};
 struct Case {{clip:vec4<f32>,point:vec4<f32>,flags:vec4<u32>}};
 @group(0) @binding(0) var<storage,read> cases:array<Case>;
 @group(0) @binding(1) var<storage,read> records:array<DrawRecord>;
 fn sample_tex(i:u32,uv:vec2<f32>)->vec4<f32>{{return vec4<f32>(1.0);}}
-fn depth_normal(n:vec3<f32>,front:bool)->vec4<f32>{{return vec4<f32>(1.0);}}
+fn depth_normal(n:vec3<f32>,front:bool,cur:vec4<f32>,prev:vec4<f32>)->vec4<f32>{{return vec4<f32>(1.0);}}
+fn water_clip(p:vec3<f32>){{}}
 {cut}
 {normal_passes}
 @vertex fn vs(@builtin(vertex_index) i:u32)->@builtin(position) vec4<f32>{{
@@ -131,9 +135,10 @@ fn depth_normal(n:vec3<f32>,front:bool)->vec4<f32>{{return vec4<f32>(1.0);}}
     let rec=DrawRecord(c.clip,c.flags,vec4<u32>(0u),vec4<f32>(1.0),vec4<f32>(0.5));
     let index=u32(p.x)+64u*u32(p.y);
     let v=VsOut(c.point.xyz,index,(c.point.xy/PORTAL_SURFACE_SCALE+vec2<f32>(1.0))*0.5,vec3<f32>(0.0,0.0,1.0));
-    if(c.flags.y==1u){{return fs_depth_portal_normal(v,true);}}
-    if(c.flags.y==2u){{return fs_depth_mask_normal(v,true);}}
-    if(c.flags.y==3u){{return fs_depth_contact_normal(v,true);}}
+    let m=DepthMaskOut(v.world_pos,v.record,v.uv,v.normal,vec4<f32>(0.0,0.0,0.0,1.0),vec4<f32>(0.0,0.0,0.0,1.0));
+    if(c.flags.y==1u){{return fs_depth_portal_normal(m,true);}}
+    if(c.flags.y==2u){{return fs_depth_mask_normal(m,true);}}
+    if(c.flags.y==3u){{return fs_depth_contact_normal(m,true);}}
     portal_clip(rec,c.point.xyz);
     return vec4<f32>(1.0);
 }}
@@ -143,7 +148,7 @@ fn depth_normal(n:vec3<f32>,front:bool)->vec4<f32>{{return vec4<f32>(1.0);}}
         label: Some("production portal cut"),
         source: wgpu::ShaderSource::Wgsl(source.into()),
     });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
         label: Some("portal aperture regression"),
         layout: None,
         vertex: wgpu::VertexState {

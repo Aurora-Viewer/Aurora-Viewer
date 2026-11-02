@@ -21,7 +21,7 @@ mod settings;
 
 pub use focus::FocusObject;
 pub use free::FreeCamera;
-pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, zoom_lens};
+pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, VrView, zoom_lens};
 
 /// Reference for a rolled view, shared with flycam handoff and AgentUpdate.
 /// At a vertical pole the world Z axis cannot define an up direction.
@@ -902,6 +902,17 @@ impl Camera {
         self.free.as_mut()
     }
 
+    pub fn start_flycam(&mut self, s: &CameraSettings) {
+        let up = Quat::from_axis_angle(self.forward(), self.roll) * Vec3::Z;
+        self.flycam = Some(crate::joystick::flycam::Flycam::from_view(
+            self.position,
+            self.target,
+            up,
+            self.fov_y,
+        ));
+        self.flycam_lens = Some((s.fov, self.fov_y));
+    }
+
     /// On toggle-off the normal camera takes the exact view back, still
     /// available to Alt-orbit and the camera controls (toggleFlycam).
     pub fn retain_flycam_view(&mut self, agent: &mut AgentState, s: &CameraSettings) {
@@ -1442,6 +1453,9 @@ impl Camera {
             // A subsequent lens edit takes ownership of the value, including
             // when the user later returns to the pre-flight preference.
             self.flycam_lens = Some((s.fov, s.fov));
+            if let Some(flycam) = &mut self.flycam {
+                flycam.set_fov(s.fov);
+            }
         }
         let dt = f.dt.max(0.0);
         self.dt = dt;
@@ -1856,7 +1870,23 @@ impl Camera {
             return flycam.up();
         }
         let direction = self.forward();
-        glam::Quat::from_axis_angle(direction, self.roll) * view_reference_up(direction)
+        let up = self
+            .seated_mouselook_up()
+            .filter(|up| direction.cross(*up).length_squared() > 1e-6)
+            .unwrap_or_else(|| view_reference_up(direction));
+        glam::Quat::from_axis_angle(direction, self.roll) * up
+    }
+
+    /// LLAgentCamera::updateCamera (indra/newview/llagentcamera.cpp,
+    /// originally LGPL 2.1): seated in mouselook, the camera's up is the
+    /// avatar's +Z, so the view banks and pitches with the vehicle; the
+    /// mode of a running transition is the one it leaves (mLastCameraMode).
+    fn seated_mouselook_up(&self) -> Option<Vec3> {
+        let mode = if self.anim.is_some() { self.last_mode } else { self.mode };
+        if mode != CameraMode::Mouselook {
+            return None;
+        }
+        self.avatar.rotation.map(|rotation| rotation * Vec3::Z)
     }
 
     /// LLAgent::getHeadRotation (indra/newview/llagent.cpp, LGPL 2.1): a
@@ -2501,6 +2531,45 @@ mod tests {
     }
 
     #[test]
+    fn joystick_flycam_accepts_lens_edits_and_uses_them_as_the_absolute_zoom_reference() {
+        let mut s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        cam.start_flycam(&s);
+        let mut tuning = crate::joystick::Settings::default();
+        tuning.mapping[6] = 6;
+        tuning.flycam.gain[6] = 1.0;
+        let flight = cam.flycam.as_mut().expect("flight");
+        flight.step([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.5], &tuning, 0.2);
+        let position = flight.position;
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!((cam.fov_y - (s.fov - 0.1)).abs() < 1e-4);
+        s.fov = 0.9;
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!(
+            (cam.fov_y - 0.9).abs() < 1e-4,
+            "a lens preference edit must reach the active flycam"
+        );
+        assert_eq!(cam.position, position, "a lens edit must keep the flight pose");
+        tuning.direct_zoom = true;
+        for (input, expected) in [(0.2, 1.1), (0.0, 0.9)] {
+            let flight = cam.flycam.as_mut().expect("flight");
+            flight.step([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, input], &tuning, 0.1);
+            cam.update(&mut w, &s, &frame(1.0 / 60.0));
+            assert!((cam.fov_y - expected).abs() < 1e-4, "absolute zoom must use the edited reference");
+        }
+        s.fov = 0.7;
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        cam.flycam.as_mut().expect("flight").step([0.0; 7], &tuning, 0.1);
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!((cam.fov_y - 0.7).abs() < 1e-4, "absolute zoom must retain subsequent lens edits");
+        cam.retain_flycam_view(&mut w.agent, &s);
+        settle(&mut cam, &mut w, &s);
+        assert!((cam.fov_y - 0.7).abs() < 1e-4);
+    }
+
+    #[test]
     fn joystick_flycam_keeps_rlva_camera_limits() {
         let s = CameraSettings::default();
         let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
@@ -2660,6 +2729,45 @@ mod tests {
         // without the head offset of a standing avatar
         assert!((cam.position.distance(seated) - 3.09).abs() < 0.05, "{:?}", cam.position);
         assert!((cam.target.distance(seated) - 1.41).abs() < 0.05, "{:?}", cam.target);
+    }
+
+    /// LLAgentCamera::updateCamera: seated in mouselook the view's up is the
+    /// avatar's, so it banks and pitches with a vehicle; in third person and
+    /// standing it stays the world's.
+    #[test]
+    fn seated_mouselook_banks_with_the_vehicle() {
+        let mut world = hover_world(true);
+        let settings = CameraSettings::default();
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &settings);
+        let seat = world
+            .objects
+            .iter()
+            .find(|(_, o)| !o.is_avatar() && o.parent_id == 0)
+            .map(|(idx, _)| idx)
+            .unwrap();
+        let banked = Quat::from_rotation_z(0.6) * Quat::from_rotation_x(0.5);
+        world.objects.get_mut(seat).unwrap().rotation = banked;
+        world.objects.settle(seat);
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        assert!(camera.view_up().abs_diff_eq(Vec3::Z, 1e-5), "third person keeps the world's up");
+        camera.change_to_mouselook(&mut world.agent, &settings, false);
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let index = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let (_, rotation, _) = Scene::object_transform_unshifted(&world, index, Instant::now()).unwrap();
+        let up = rotation * Vec3::Z;
+        assert!(up.angle_between(Vec3::Z) > 0.3, "the seat is banked");
+        assert!(camera.view_up().abs_diff_eq(up, 1e-4), "{:?} vs {up:?}", camera.view_up());
+        // the vehicle turns and banks the other way: the view follows it
+        let turned = Quat::from_rotation_z(-0.9) * Quat::from_rotation_x(-0.4);
+        world.objects.get_mut(seat).unwrap().rotation = turned;
+        world.objects.settle(seat);
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let (_, rotation, _) = Scene::object_transform_unshifted(&world, index, Instant::now()).unwrap();
+        assert!(camera.view_up().abs_diff_eq(rotation * Vec3::Z, 1e-4));
+        camera.change_to_default(&mut world.agent, &settings);
+        camera.update(&mut world, &settings, &frame(10.0));
+        assert!(camera.view_up().abs_diff_eq(Vec3::Z, 1e-5), "back in third person");
     }
 
     #[test]
@@ -3452,7 +3560,7 @@ mod tests {
             }
             let held_end = Scene::object_transform(&w, idx, Instant::now(), 0).unwrap().0;
             assert!(held_end.distance(held_start) > 2.0);
-            tool.mouse_up(&mut w, &settings);
+            tool.mouse_up(&mut w, &settings, None);
             assert_eq!(tool.manip.camera_pan(&settings, &tool.cam, (1590.0, start.1), f.dt), Vec3::ZERO);
             let stopped = camera.position;
             for _ in 0..30 {

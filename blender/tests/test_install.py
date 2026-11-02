@@ -41,9 +41,9 @@ prefs.auto_update = True
 installed = importlib.import_module(module)
 if extension:
     # Blender strips bl_info from extension modules; its manifest is authoritative.
-    assert 'version = "0.14.6"' in Path(installed.__file__).with_name("blender_manifest.toml").read_text()
+    assert 'version = "0.14.7"' in Path(installed.__file__).with_name("blender_manifest.toml").read_text()
 else:
-    assert installed.bl_info["version"] == (0, 14, 6)
+    assert installed.bl_info["version"] == (0, 14, 7)
 assert bpy.ops.aurora.create_sl_rig(with_tshirt=True) == {"FINISHED"}
 shirt = bpy.context.object
 assert len(shirt.find_armature().data.bones) == 159

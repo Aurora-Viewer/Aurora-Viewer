@@ -236,6 +236,7 @@ const STATE_ROWS: &[(&str, &str)] = &[
     ("objects", "Objects"),
     ("avatars", "Avatars"),
     ("regions", "Regions"),
+    ("swapchain_10s", "Swapchain recreations in 10 s (up to a GPU loss)"),
 ];
 
 /// A state value as the watchdog writes it: a number, `n/m`, `WxH` or one
@@ -635,7 +636,7 @@ mod tests {
         std::fs::write(dir.join("stopped-unix.txt"), "1100").unwrap();
         std::fs::write(
             dir.join("alive.txt"),
-            "tick=1098\nresponsive=1075\nram_mb=5120\nscreen=world\nfps=0.4\nwindow=1920x1080\npreset=high\nvram_mb=5800/6000\ntexture_pressure=7/7\nobjects=4200\nregion_name=Private Place\n",
+            "tick=1098\nresponsive=1075\nram_mb=5120\nscreen=world\nfps=0.4\nwindow=1920x1080\npreset=high\nvram_mb=5800/6000\ntexture_pressure=7/7\nobjects=4200\nswapchain_10s=37\nregion_name=Private Place\n",
         )
         .unwrap();
         let summary = build_at(&record, &dir, Some(10));
@@ -652,6 +653,7 @@ mod tests {
             "| Texture memory pressure | 7/7 |",
             "| Window size | 1920x1080 |",
             "| Screen | world |",
+            "| Swapchain recreations in 10 s (up to a GPU loss) | 37 |",
         ] {
             assert!(body.contains(expected), "missing {expected:?} in\n{body}");
         }

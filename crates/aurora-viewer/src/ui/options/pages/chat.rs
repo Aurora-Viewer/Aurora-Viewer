@@ -14,6 +14,16 @@ pub fn page(cx: &mut Cx, tab: usize) {
     match tab {
         0 => {
             cx.group(tr!("common-nearby-chat"), |cx| {
+                // ChatFontSize (Chat › Visuals, Medium): the nearby chat's
+                // and the conversations' text on its own, apart from
+                // Appearance › Text size
+                cx.slider(
+                    tr!("ui-options-chat-text-size"),
+                    tr!("ui-options-chat-text-size-hint"),
+                    &field!(chat_font_scale),
+                    crate::settings::FONT_SCALE_MIN..=crate::settings::FONT_SCALE_MAX,
+                    "×",
+                );
                 cx.toggle(tr!("ui-options-show-time"), "", &field!(chat_timestamps));
                 // FSShowChatChannel: the "/0" chip of the field (off, as in
                 // the Legacy Viewer)
@@ -954,7 +964,11 @@ fn away_and_replies(cx: &mut Cx) {
     }
     cx.group(tr!("ui-options-auto-replies"), |cx| {
         cx.note(tr!("ui-options-enable-these-modes-in-communicate-online-status"));
+        // LLFloaterPreference::refreshEnabledState greys do_not_disturb_response under
+        // RLVa @sendim, and only that response.
+        cx.greyed(cx.st.rlva_sendim_locked);
         text(cx, tr!("ui-options-in-do-not-disturb-mode"), &field!(autoresponse.dnd_text));
+        cx.greyed(false);
         text(
             cx,
             tr!("ui-options-to-everyone-in-auto-reply-mode"),

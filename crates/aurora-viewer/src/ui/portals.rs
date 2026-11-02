@@ -116,10 +116,15 @@ impl PortalUi {
     }
 }
 
-fn label_text(world: &World, entry: &portals::Entry) -> String {
+fn label_text(world: &World, entry: &portals::Entry, unix: u64) -> String {
+    let timer = aurora_i18n::tr!("portal-expires", seconds = entry.portal.expires.saturating_sub(unix).to_string());
     let authorized = entry.allowed(world);
     if !authorized {
-        return format!("{}\n{}", aurora_i18n::tr!("portal-private"), aurora_i18n::tr!("portal-restricted"));
+        return format!(
+            "{}\n{}\n{timer}",
+            aurora_i18n::tr!("portal-private"),
+            aurora_i18n::tr!("portal-restricted")
+        );
     }
     let details = entry.details.as_ref().filter(|_| authorized);
     let destination = match details {
@@ -148,11 +153,12 @@ fn label_text(world: &World, entry: &portals::Entry) -> String {
         .person_name(&entry.label_owner())
         .unwrap_or_else(|| aurora_i18n::tr!("poser-resident").into());
     let name = world.rlva_hover_privacy.apply(&name);
-    format!("{destination}\n{name} · {access}\n{status}")
+    format!("{destination}\n{name} · {access}\n{timer}\n{status}")
 }
 
 pub fn labels(ctx: &egui::Context, p: &Palette, world: &World, projector: &Projector) {
     let painter = super::hud::world_painter(ctx);
+    let unix = portals::unix_time();
     for entry in world.portals.visible(world) {
         let center = Vec3::from(entry.portal.center);
         if center.distance(world.agent.position) > 40.0 {
@@ -160,7 +166,7 @@ pub fn labels(ctx: &egui::Context, p: &Palette, world: &World, projector: &Proje
         }
         let anchor = center + Vec3::Z * (portals::HEIGHT + 0.25);
         let Some((position, _)) = projector.project(anchor) else { continue };
-        let text = label_text(world, entry);
+        let text = label_text(world, entry, unix);
         let galley = painter.layout_no_wrap(text, egui::FontId::proportional(13.0), p.ink);
         let rect = egui::Rect::from_center_size(position, galley.size() + egui::vec2(18.0, 10.0));
         aurora_render::world_label_at(ctx, Some(anchor));

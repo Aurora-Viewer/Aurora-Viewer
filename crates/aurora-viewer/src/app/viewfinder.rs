@@ -79,11 +79,12 @@ impl App {
             v.ae_lock = false;
             v.countdown = None;
             v.pad = Default::default();
-            if v.menu || v.help || v.drawer || v.presets || v.pressed || v.pick.is_some() {
+            if v.menu || v.help || v.drawer || v.presets || v.light || v.pressed || v.pick.is_some() {
                 v.menu = false;
                 v.help = false;
                 v.drawer = false;
                 v.presets = false;
+                v.light = false;
                 v.preset_form.picking = false;
                 v.pressed = false;
                 v.pending_shot = false;

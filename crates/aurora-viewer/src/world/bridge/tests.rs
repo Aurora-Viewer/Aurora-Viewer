@@ -16,6 +16,7 @@ struct Simulator {
     detaches: usize,
     hello_versions: [Option<&'static str>; 3],
     unready_edits: usize,
+    script_rez_groups: Vec<(String, Uuid)>,
 }
 impl Simulator {
     fn new() -> Self {
@@ -44,6 +45,7 @@ impl Simulator {
             detaches: 0,
             hello_versions: [None; 3],
             unready_edits: 0,
+            script_rez_groups: Vec::new(),
         }
     }
     fn event(&mut self, mut event: NetEvent) {
@@ -126,6 +128,10 @@ impl Simulator {
                         });
                     }
                     _ => {
+                        if let NetCommand::Build(BuildCmd::RezScript { group_id, item, .. }) = &command {
+                            assert_eq!(*group_id, self.world.groups.active);
+                            self.script_rez_groups.push((item.name.clone(), *group_id));
+                        }
                         if let NetCommand::DetachAttachments(items) = &command {
                             self.detaches += usize::from(items.contains(&self.bridge.item));
                         }
@@ -2245,4 +2251,40 @@ fn ordinary_object_updates_keep_the_network_receive_time_through_the_bridge() {
     let (predicted, _) = object.predicted(sim.now + Duration::from_secs(5), clock);
     assert!((predicted.x - position.x - (clock - expected) as f32).abs() < 1e-4);
     assert!(predicted.x > position.x + 0.19, "the buffered 200 ms must be retained");
+}
+
+#[test]
+fn bridge_script_installation_and_repair_use_the_current_active_group() {
+    let mut sim = Simulator::new();
+    for event in crate::demo::demo_reply(&NetCommand::RequestGroups) {
+        sim.world.apply(event);
+    }
+    let land = sim.world.groups.groups[0].id;
+    sim.world.parcel = Some(Arc::new(aurora_net::ParcelInfo {
+        group_id: land,
+        ..Default::default()
+    }));
+    let active = Uuid::from_u128(8800);
+    sim.world.groups.active = active;
+    assert_eq!(sim.world.group_for_rez(true), land);
+    sim.ready();
+    let mut expected: Vec<_> = [NAME, QUERY_NAME, ik::NAME]
+        .into_iter()
+        .map(|name| (name.to_owned(), active))
+        .collect();
+    expected.sort();
+    sim.script_rez_groups.sort();
+    assert_eq!(sim.script_rez_groups, expected);
+    for active in [Uuid::nil(), Uuid::from_u128(8801)] {
+        sim.world.apply(NetEvent::ActiveGroup {
+            id: active,
+            name: "Active group".into(),
+            title: "Builder".into(),
+        });
+        sim.script_rez_groups.clear();
+        sim.demo.forget_script(QUERY_NAME);
+        sim.bridge.retry(sim.now);
+        sim.ready();
+        assert_eq!(sim.script_rez_groups, vec![(QUERY_NAME.into(), active)]);
+    }
 }

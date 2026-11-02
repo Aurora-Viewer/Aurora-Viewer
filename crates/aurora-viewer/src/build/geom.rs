@@ -153,6 +153,61 @@ impl Cam {
     pub fn project_px(&self, p: Vec3) -> Option<(f32, f32)> {
         self.project(p).map(|q| (q.x * self.ppp, q.y * self.ppp))
     }
+
+    /// Whether `p` projects inside the pixel rectangle `r` (never behind the
+    /// camera).
+    pub fn in_rect(&self, p: Vec3, r: egui::Rect) -> bool {
+        self.project_px(p).is_some_and(|(x, y)| r.contains(Pos2::new(x, y)))
+    }
+
+    /// Where the box `min..max` placed by `model` falls against the pixel
+    /// rectangle `r`: the role of sphereInFrustum in
+    /// LLToolSelectRect::handleRectangleSelection, with the tighter box.
+    /// What it covers is convex, so all of its corners inside put every
+    /// vertex inside; a box partly behind the camera counts as `Across`.
+    pub fn box_in_rect(&self, model: Mat4, min: Vec3, max: Vec3, r: egui::Rect) -> RectCover {
+        let (mut inside, mut behind) = (0, 0);
+        let mut seen = egui::Rect::NOTHING;
+        for i in 0..8 {
+            let corner = Vec3::new(
+                if i & 1 == 0 { min.x } else { max.x },
+                if i & 2 == 0 { min.y } else { max.y },
+                if i & 4 == 0 { min.z } else { max.z },
+            );
+            match self.project_px(model.transform_point3(corner)) {
+                Some((x, y)) => {
+                    let p = Pos2::new(x, y);
+                    inside += usize::from(r.contains(p));
+                    seen.extend_with(p);
+                }
+                None => behind += 1,
+            }
+        }
+        if inside == 8 {
+            RectCover::Inside
+        } else if behind == 8 || (behind == 0 && !seen.intersects(r)) {
+            RectCover::Outside
+        } else {
+            RectCover::Across
+        }
+    }
+}
+
+/// A prim's box against the selection rectangle (`Cam::box_in_rect`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RectCover {
+    Inside,
+    Outside,
+    /// Across an edge: its vertices decide.
+    Across,
+}
+
+/// LLViewerCamera::areVertsVisible over the selection rectangle: with
+/// `all` (RectangleSelectInclusive, "Select by surrounding") every vertex
+/// must be inside, otherwise one is enough. `inside` tells for each vertex.
+pub fn verts_in_rect(inside: impl IntoIterator<Item = bool>, all: bool) -> bool {
+    let mut inside = inside.into_iter();
+    if all { inside.all(|v| v) } else { inside.any(|v| v) }
 }
 
 /// Intersection of a ray with a plane.

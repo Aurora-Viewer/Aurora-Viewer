@@ -116,11 +116,32 @@ Your settings, cache and logs are kept: they are not in the viewer's folder.
 | Cache | `~/.cache/auroraviewer` |
 | Logs, media plugins | `~/.local/share/auroraviewer` |
 
+## Second Life links
+
+Preferences › Language and updates › "Open SLURL and Hypergrid links in
+Aurora" makes Aurora the handler of `secondlife://`, `hop://` and
+`x-grid-location-info://` links for the current user. It writes a hidden
+desktop entry, `~/.local/share/applications/aurora-viewer-slurl.desktop`,
+and makes it the default for the three schemes in `~/.config/mimeapps.list`;
+the rest of that file is kept. Turning it off removes both. A link opened
+while Aurora runs goes to that viewer over the session bus instead of
+starting a second one. Wayland does not let it bring its window to the
+front, so the window stays where it is (X11 is not tested yet).
+
+A desktop-specific list (`~/.config/<desktop>-mimeapps.list`, such as
+`kde-mimeapps.list`) comes first: if it names another program for these
+links, Preferences names that program instead.
+
+`xdg-open` (from xdg-utils) cannot start a program whose path holds a
+space or a symbol such as `'`, `&` or `(`: it then opens the link in
+another viewer. Keep the viewer's folder path plain, or open links through
+your desktop (GNOME, KDE and other GLib desktops read such paths).
+
 ## Not on Linux yet
 
 - Automatic installation of updates (above).
-- The crash report window.
-- Opening `secondlife://` links from a web browser.
+- The crash window right after a crash: it opens at the next launch
+  instead, and a native crash (a signal) leaves no trace in it.
 
 ## Building from source
 
@@ -141,3 +162,11 @@ Rust from [rustup.rs](https://rustup.rs).
 
 See [Reporting bugs](BUG_REPORTING.md), and say that you are on Linux, with
 your distribution and graphics card.
+
+## Experimental VR scene viewing
+
+See the cross-platform [VR setup and limitations](VR.md) guide. Linux uses the
+native Vulkan/OpenXR path; start WiVRn and connect the headset before launching
+Aurora. Quest 3 / WiVRn 26.9 / RTX 3090 is the human-validated configuration.
+The guide covers toolbar entry, Esc restoration, recording, dependencies and
+viewing-only limitations, plus Windows and experimental macOS setup.

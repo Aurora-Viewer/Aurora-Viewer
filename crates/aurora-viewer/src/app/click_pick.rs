@@ -29,7 +29,8 @@
 //!
 //! With the depth, a click asks what the next frame draws under its pixel
 //! (`Renderer::request_drawn`): the object of a rigged mesh, which only the
-//! GPU poses, is designated from that answer (scene/drawn.rs). Camera picks
+//! GPU poses, a worn mesh, and for a left click a worn prim with an action,
+//! are designated from that answer (scene/drawn.rs). Camera picks
 //! reject transparent texture holes unless the transparency overlay shows
 //! their surface; interactions retain invisible Blend surfaces. The answer
 //! comes a frame after the depth.
@@ -385,10 +386,11 @@ impl App {
         let camera = (self.alt && !matches!(click, Click::Gun { .. }))
             || self.object_view
             || (self.build.open && self.build.tool == crate::build::Tool::Focus);
-        let mode = if camera {
-            aurora_render::DrawnMode::Visible
-        } else {
-            aurora_render::DrawnMode::Interaction
+        let mode = match (click == Click::Menu, camera) {
+            (true, true) => aurora_render::DrawnMode::Visible,
+            (true, false) => aurora_render::DrawnMode::Interaction,
+            (false, true) => aurora_render::DrawnMode::LeftVisible,
+            (false, false) => aurora_render::DrawnMode::Left,
         };
         let drawn = Some(g.renderer.request_drawn(x, y, mode));
         let tags = self.name_tag_candidates(ray);
@@ -601,7 +603,7 @@ impl App {
             self.clicks.hold(Held::BuildRelease);
             return;
         }
-        self.build.mouse_up(&mut self.world, &self.settings.build);
+        self.build.mouse_up(&mut self.world, &self.settings.build, Some(&self.scene));
         self.flush_build();
     }
 
@@ -670,9 +672,15 @@ impl App {
         let now = Instant::now();
         let build = self.build.open;
         let tools = build && !self.alt && matches!(click, Click::Press | Click::Build);
+        let selection_pick = if click == Click::Menu {
+            Scene::selection_pick
+        } else {
+            Scene::left_selection_pick
+        };
         let (point, idx) =
             if click == Click::Menu || tools && matches!(self.build.tool, crate::build::Tool::Edit | crate::build::Tool::Grab) {
-                self.scene.selection_pick(
+                selection_pick(
+                    &self.scene,
                     &self.world,
                     ray,
                     depth,

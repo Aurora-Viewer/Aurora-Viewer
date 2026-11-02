@@ -58,7 +58,7 @@ pub fn decode(bytes: &[u8]) -> Result<DecodedImage, AssetError> {
     decode_inner(bytes, false)
 }
 
-/// Material maps may use luminance PNGs; convert their channels explicitly.
+/// Material maps also accept luminance JPEG2000 sources.
 pub fn decode_map(bytes: &[u8]) -> Result<DecodedImage, AssetError> {
     decode_inner(bytes, true)
 }
@@ -68,17 +68,8 @@ fn decode_inner(bytes: &[u8], maps: bool) -> Result<DecodedImage, AssetError> {
     }
     if bytes.starts_with(&[0xff, 0x4f]) || bytes.get(4..12) == Some(b"jP  \r\n\x87\n") {
         let mut image = crate::decode_j2k(bytes, 0)?;
-        if maps && matches!(image.components, 1 | 2) {
-            let alpha = image.components == 2;
-            let mut data = Vec::with_capacity(image.width as usize * image.height as usize * if alpha { 4 } else { 3 });
-            for pixel in image.data.chunks_exact(image.components as usize) {
-                data.extend_from_slice(&[pixel[0]; 3]);
-                if alpha {
-                    data.push(pixel[1]);
-                }
-            }
-            image.data = data;
-            image.components = if alpha { 4 } else { 3 };
+        if maps {
+            expand_luminance(&mut image);
         }
         validate(&image)?;
         return Ok(image);
@@ -97,28 +88,57 @@ fn decode_inner(bytes: &[u8], maps: bool) -> Result<DecodedImage, AssetError> {
     if u64::from(w) * u64::from(h) > MAX_SOURCE_PIXELS {
         return Err(AssetError::TooLarge("texture pixel area"));
     }
-    if !matches!(decoder.color_type(), image::ColorType::Rgb8 | image::ColorType::Rgba8)
-        && !(maps && matches!(decoder.color_type(), image::ColorType::L8 | image::ColorType::La8))
-    {
+    if !matches!(
+        decoder.color_type(),
+        image::ColorType::L8
+            | image::ColorType::La8
+            | image::ColorType::Rgb8
+            | image::ColorType::Rgba8
+            | image::ColorType::L16
+            | image::ColorType::La16
+            | image::ColorType::Rgb16
+            | image::ColorType::Rgba16
+    ) {
         return Err(AssetError::invalid("texture must have RGB or RGBA channels"));
     }
-    let mut source = image::DynamicImage::from_decoder(decoder).map_err(|e| AssetError::invalid(e.to_string()))?;
-    if maps && source.color() == image::ColorType::L8 {
-        source = image::DynamicImage::ImageRgb8(source.to_rgb8());
-    }
-    if maps && source.color() == image::ColorType::La8 {
-        source = image::DynamicImage::ImageRgba8(source.to_rgba8());
-    }
+    let source = image::DynamicImage::from_decoder(decoder).map_err(|e| AssetError::invalid(e.to_string()))?;
     let components = source.color().channel_count();
-    let image = DecodedImage {
+    // LLPngWrapper::normalizeImage (indra/llimage/llpngwrapper.cpp) uses
+    // png_set_strip_16: keep the high byte, rather than rounding to 8 bits.
+    let high_bytes = |data: Vec<u16>| data.into_iter().map(|sample| (sample >> 8) as u8).collect();
+    let data = match source {
+        image::DynamicImage::ImageLuma16(pixels) => high_bytes(pixels.into_raw()),
+        image::DynamicImage::ImageLumaA16(pixels) => high_bytes(pixels.into_raw()),
+        image::DynamicImage::ImageRgb16(pixels) => high_bytes(pixels.into_raw()),
+        image::DynamicImage::ImageRgba16(pixels) => high_bytes(pixels.into_raw()),
+        _ => source.into_bytes(),
+    };
+    let mut image = DecodedImage {
         width: w,
         height: h,
         components,
-        data: source.into_bytes(),
+        data,
         discard: 0,
     };
+    expand_luminance(&mut image);
     validate(&image)?;
     Ok(image)
+}
+
+/// LLPngWrapper::normalizeImage expands gray to RGB before upload validation.
+fn expand_luminance(image: &mut DecodedImage) {
+    if matches!(image.components, 1 | 2) {
+        let alpha = image.components == 2;
+        let mut data = Vec::with_capacity(image.width as usize * image.height as usize * if alpha { 4 } else { 3 });
+        for pixel in image.data.chunks_exact(image.components as usize) {
+            data.extend_from_slice(&[pixel[0]; 3]);
+            if alpha {
+                data.push(pixel[1]);
+            }
+        }
+        image.data = data;
+        image.components = if alpha { 4 } else { 3 };
+    }
 }
 
 pub(crate) fn validate(image: &DecodedImage) -> Result<(), AssetError> {
@@ -190,6 +210,62 @@ pub fn encode(pixels: &DecodedImage, options: Options) -> Result<Vec<u8>, AssetE
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_png_upload(source: image::DynamicImage, components: u8, data: Vec<u8>) {
+        let expected = DecodedImage {
+            width: 4,
+            height: 4,
+            components,
+            data,
+            discard: 0,
+        };
+        let mut file = Cursor::new(Vec::new());
+        source.write_to(&mut file, image::ImageFormat::Png).expect("write PNG");
+        for loader in [decode, decode_map] {
+            let decoded = loader(file.get_ref()).expect("import PNG");
+            assert_eq!(decoded, expected);
+            let options = Options::default();
+            let pixels = prepare(&decoded, options).expect("prepare PNG");
+            assert_eq!(pixels, expected);
+            let uploaded = encode(&pixels, options).expect("encode PNG upload");
+            assert_eq!(crate::decode_j2k(&uploaded, 0).expect("read uploaded texture"), expected);
+        }
+    }
+
+    #[test]
+    fn grayscale_png_uploads_expand_luminance_and_preserve_alpha() {
+        let gray = image::GrayImage::from_fn(4, 4, |x, y| image::Luma([(x * 60 + y * 5) as u8]));
+        let rgb = gray.pixels().flat_map(|p| [p[0]; 3]).collect();
+        assert_png_upload(image::DynamicImage::ImageLuma8(gray), 3, rgb);
+
+        let gray_alpha = image::GrayAlphaImage::from_fn(4, 4, |x, y| image::LumaA([(x * 60 + y * 5) as u8, (y * 85) as u8]));
+        let rgba = gray_alpha.pixels().flat_map(|p| [p[0], p[0], p[0], p[1]]).collect();
+        assert_png_upload(image::DynamicImage::ImageLumaA8(gray_alpha), 4, rgba);
+    }
+
+    #[test]
+    fn sixteen_bit_png_uploads_keep_high_bytes_like_legacy() {
+        // Include values where scaling by 257 differs from png_set_strip_16.
+        let samples = [0x00ff_u16, 0x0100, 0x7fff, 0x8000, 0xfeff, 0xffff];
+        let high_bytes = [0_u8, 1, 127, 128, 254, 255];
+        for components in 1..=4 {
+            let data: Vec<u16> = (0..16 * components).map(|i| samples[i % samples.len()]).collect();
+            let bytes: Vec<u8> = (0..data.len()).map(|i| high_bytes[i % high_bytes.len()]).collect();
+            let expected = match components {
+                1 => bytes.iter().flat_map(|v| [*v; 3]).collect(),
+                2 => bytes.as_chunks::<2>().0.iter().flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
+                _ => bytes,
+            };
+            let source = match components {
+                1 => image::DynamicImage::ImageLuma16(image::ImageBuffer::from_raw(4, 4, data).expect("gray pixels")),
+                2 => image::DynamicImage::ImageLumaA16(image::ImageBuffer::from_raw(4, 4, data).expect("gray/alpha pixels")),
+                3 => image::DynamicImage::ImageRgb16(image::ImageBuffer::from_raw(4, 4, data).expect("RGB pixels")),
+                _ => image::DynamicImage::ImageRgba16(image::ImageBuffer::from_raw(4, 4, data).expect("RGBA pixels")),
+            };
+            assert_png_upload(source, if components % 2 == 0 { 4 } else { 3 }, expected);
+        }
+    }
+
     #[test]
     fn scaling_matches_firestorm_threshold_and_preserves_large_source_ratio() {
         assert_eq!(biased_dimension(224, 2048), 128);

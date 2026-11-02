@@ -453,10 +453,9 @@ impl DayEditorUi {
             ui.label(RichText::new(aurora_i18n::tr!("ui-day-editor-name")).size(12.0).color(p.ink));
             // refresh: renaming needs modify rights and an item
             let enabled = self.rights.modify && self.rights.save && self.item.is_some();
-            let r = ui.add_enabled(
-                enabled,
-                egui::TextEdit::singleline(&mut self.name).desired_width(320.0).char_limit(63),
-            );
+            let r = crate::ui::widgets::text_field(ui, enabled, &mut self.name, |b, _| {
+                egui::TextEdit::singleline(b).desired_width(320.0).char_limit(63)
+            });
             if r.changed()
                 && let Some(doc) = &mut self.doc
             {

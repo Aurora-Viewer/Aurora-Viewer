@@ -6,6 +6,10 @@ use super::*;
 /// back, facing the default camera).
 const OWN_PRIM: Vec3 = Vec3::ZERO;
 
+/// `worn-own-mesh`: a point of the synthetic chest mesh on our back, inside
+/// our box but off the classic body, where only the mesh is drawn.
+const OWN_MESH: Vec3 = Vec3::new(-0.12, 0.0, 0.0);
+
 /// `worn-other-link`: the child prim, without a script, of a worn linkset
 /// whose root holds the touch script.
 const WORN_CHILD: u32 = 988;
@@ -19,6 +23,13 @@ impl App {
     pub(super) fn world_click_demo_steps(&mut self) {
         let Some(spec) = mode().filter(|_| self.demo) else { return };
         let mode = spec.strip_suffix("-keep-camera").unwrap_or(spec);
+        // `-held`: the touch is held and the cursor slides over the
+        // attachment, as a script reading the touch position expects
+        // (LLToolGrabBase)
+        let (mode, held) = mode.strip_suffix("-held").map_or((mode, false), |m| (m, true));
+        // `-moving`: the wearer moves between the press and the GPU's
+        // answer, as an animated avatar does
+        let (mode, moving) = mode.strip_suffix("-moving").map_or((mode, false), |m| (m, true));
         let drag = mode.ends_with("-drag");
         if mode.starts_with("avatar") || spec.ends_with("-keep-camera") {
             // Camera comparisons need a stationary subject even when another
@@ -45,6 +56,32 @@ impl App {
                 self.settings.camera.click_avatar_keeps_camera = spec.ends_with("-keep-camera");
             }
             self.world_click_fixture(mode);
+            if moving
+                && let Some(o) = self
+                    .world
+                    .objects
+                    .index_of_uuid(&crate::demo::action_id(975))
+                    .and_then(|idx| self.world.objects.get_mut(idx))
+            {
+                // a small clicker, which a few frames of motion take off
+                // the cursor's ray
+                o.scale = Vec3::splat(0.1);
+            }
+        }
+        if moving && (701..=705).contains(&self.frame_count) {
+            let wearer = self
+                .world
+                .objects
+                .index_of_uuid(&crate::demo::action_id(975))
+                .and_then(|idx| self.world.objects.get(idx))
+                .and_then(|o| self.world.objects.parent_of(o));
+            if let Some(o) = wearer.and_then(|idx| self.world.objects.get_mut(idx)) {
+                o.position.x += 0.08;
+            }
+        }
+        if held && (710..=760).contains(&self.frame_count) {
+            self.cursor_pos.0 += 1.0;
+            self.cursor_pos.1 += 0.5;
         }
         if mode == "mouselook-touch" && self.frame_count == 690 {
             // a touchable panel right under the crosshair
@@ -73,10 +110,7 @@ impl App {
                     .and_then(|(idx, _)| Scene::object_transform(&self.world, idx, Instant::now(), 0))
                     .and_then(|(pos, _, _)| self.build.cam.project_px(pos + Vec3::Z * 0.4))
             } else if mode.starts_with("photo-hud") {
-                self.scene
-                    .lists
-                    .hud_view
-                    .map(|view| (view.width * 0.5 - 0.18 * view.height, view.height * 0.5 - 0.028 * view.height))
+                self.scene.lists.hud_view.map(|view| view.pixel(Vec3::new(0.0, 0.18, 0.028)).into())
             } else if mode == "ground" {
                 // the plaza's floor, below the avatar
                 self.gfx.as_ref().map(|g| {
@@ -114,7 +148,13 @@ impl App {
                         let pose = *self.world.avatar_poses.get(&avatar.full_id)?.get(joint)?;
                         let rest = self.world.avatar_lib.attach_points.get(&1)?.skel_position;
                         let (pos, rot, _) = Scene::object_transform(&self.world, wearer, Instant::now(), 0)?;
-                        let offset = if mode == "worn-mesh" { Vec3::new(0.30, 0.0, 0.0) } else { OWN_PRIM };
+                        let offset = if mode == "worn-mesh" {
+                            Vec3::new(0.30, 0.0, 0.0)
+                        } else if mode.starts_with("worn-own-mesh") {
+                            OWN_MESH
+                        } else {
+                            OWN_PRIM
+                        };
                         pos + rot * (pose.transform_point3(rest + offset) - self.world.avatar_lib.pelvis)
                     } else {
                         Scene::object_transform(&self.world, idx, Instant::now(), 0)?.0
@@ -147,14 +187,14 @@ impl App {
         if drag && (710..=760).contains(&self.frame_count) {
             self.camera_mouse_delta(6.0, 0.0);
         }
-        if self.frame_count == if drag { 761 } else { 701 } {
+        if self.frame_count == if drag || held { 761 } else { 701 } {
             self.mouse_input(MouseButton::Left, false, false);
             // Release modifiers before the deferred pick finishes: its
             // captured press must still choose the original gesture.
             self.ctrl = false;
             self.shift = false;
         }
-        if self.frame_count == if drag { 820 } else { 740 } {
+        if self.frame_count == if drag || held { 820 } else { 740 } {
             self.alt = false;
             self.ctrl = false;
             self.world_click_camera_note("after", spec);
@@ -314,7 +354,9 @@ impl App {
                     &self.settings.camera,
                 );
             }
-            let mut events = if mode == "worn-mesh" {
+            // `worn-own-mesh`: the scripted rigged mesh on our own chest
+            let own_mesh = mode.starts_with("worn-own-mesh");
+            let mut events = if mode == "worn-mesh" || own_mesh {
                 if let Some(g) = self.gfx.as_mut() {
                     self.scene.install_demo_animesh(&mut g.renderer);
                 }
@@ -338,7 +380,7 @@ impl App {
                         if mode == "worn-prim" {
                             o.scale = Vec3::splat(0.5);
                         }
-                        if own || mode.starts_with("worn-other") {
+                        if (own && !own_mesh) || mode.starts_with("worn-other") {
                             // on the body, inside the wearer's box
                             o.position = OWN_PRIM;
                             o.scale = Vec3::splat(if inside {
@@ -348,6 +390,13 @@ impl App {
                             } else {
                                 0.6
                             });
+                        }
+                        if own_mesh && let Some(te) = o.texture_entry.as_mut() {
+                            // opaque: the press depth is then the mesh, inside
+                            // our box whatever the pose, not the floor behind
+                            for f in &mut std::sync::Arc::make_mut(te).faces {
+                                f.texture = aurora_prim::te::BLANK_TEXTURE;
+                            }
                         }
                         if hidden && let Some(te) = o.texture_entry.as_mut() {
                             for f in &mut std::sync::Arc::make_mut(te).faces {
@@ -442,8 +491,9 @@ impl App {
             crate::demo::action_overlay(976, pos, rotation)
         } else {
             let alpha = match mode {
-                "camera-glass" => "blend-half",
-                "camera-mask" => "mask-zero",
+                m if m.starts_with("camera-faint") => "blend-faint",
+                m if m.starts_with("camera-glass") => "blend-half",
+                m if m.starts_with("camera-mask") => "mask-zero",
                 _ => "blend-zero",
             };
             crate::demo::alpha_click_overlay(alpha, pos, rotation)

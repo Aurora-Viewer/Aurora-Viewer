@@ -610,7 +610,7 @@ impl ListingsUi {
                 if !filter.is_empty() && !it.name.to_lowercase().contains(filter) {
                     continue;
                 }
-                let icon = super::inventory::item_icon(it.asset_type, it.inv_type, it.flags);
+                let (icon, tint) = super::inventory::inventory_item_icon(inv, it, p);
                 let mut label = tree::name(&it.name, p);
                 if let Some(permissions) = super::inventory::permissions::Permissions::inventory(inv, item) {
                     permissions.append_suffix(ui, &mut label, p);
@@ -620,13 +620,7 @@ impl ListingsUi {
                 let response = ui
                     .horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
-                        tree::icon(
-                            ui,
-                            icons,
-                            icon,
-                            p,
-                            Some(super::inventory::item_icon_color(it.asset_type, it.inv_type, p)),
-                        );
+                        tree::icon(ui, icons, icon, p, Some(tint));
                         renaming = panel.rename(ui, p, inv, item);
                         if renaming {
                             ui.response()
@@ -1145,17 +1139,25 @@ mod tests {
             })
         ));
         ui.confirm = None;
+        // a lock no longer closes a folder to moves (#1728, rule B): what the
+        // confirmation still re-checks is a locked entry, which cannot move
         ui.paste_inventory(
             &inv,
             &worn,
-            &HashSet::from([demo::HOODIE_V2]),
-            demo::HOODIE_V2,
+            &HashSet::from([item]),
+            demo::HOODIE_V1,
             &[item],
             false,
             true,
             &mut actions,
         );
         assert!(actions.iter().all(|action| !matches!(action, Action::Paste { .. })));
+        actions.clear();
+        ui.paste_inventory(&inv, &worn, &HashSet::new(), demo::HOODIE_V1, &[item], false, true, &mut actions);
+        assert!(
+            matches!(actions.as_slice(), [Action::Paste { cut: true, .. }]),
+            "the same cut without the lock"
+        );
         actions.clear();
         ui.paste_inventory(&inv, &worn, &HashSet::new(), demo::HOODIE_V1, &[item], true, false, &mut actions);
         assert!(matches!(actions.as_slice(), [Action::Paste { cut: false, .. }]));

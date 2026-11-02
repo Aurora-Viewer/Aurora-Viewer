@@ -271,7 +271,7 @@ fn inventory_drag_ctrl_selection_moves_both_textures_once_without_changing_the_m
 
 #[test]
 fn inventory_drag_rejects_the_whole_batch_when_a_source_or_destination_is_protected_or_busy() {
-    for rejection in 0..4 {
+    for rejection in [0, 2, 3] {
         let mut f = Fixture::new();
         f.click(100, false);
         f.click(101, true);
@@ -281,9 +281,6 @@ fn inventory_drag_rejects_the_whole_batch_when_a_source_or_destination_is_protec
         match rejection {
             0 => {
                 f.prefs.protected.insert(id(101));
-            }
-            1 => {
-                f.prefs.protected.insert(id(20));
             }
             2 => {
                 f.state.pending = Some(id(999));
@@ -298,6 +295,18 @@ fn inventory_drag_rejects_the_whole_batch_when_a_source_or_destination_is_protec
         assert!(f.actions.is_empty(), "a rejected row must not fall through to the enclosing root");
         assert!(!f.state.message.is_empty());
     }
+}
+
+#[test]
+fn inventory_drag_can_move_items_into_a_protected_folder() {
+    let mut f = Fixture::new();
+    f.click(100, false);
+    f.start(100);
+    let to = f.row(20);
+    f.prefs.protected.insert(id(20));
+    assert_eq!(f.hover(to), egui::CursorIcon::Move);
+    f.button(to, false, false);
+    assert_eq!(f.actions.len(), 1);
 }
 
 #[test]
@@ -333,6 +342,40 @@ fn inventory_drag_moves_no_copy_items_and_links_without_copying_or_resolving_the
     f.button(to, false, false);
     assert_eq!(f.moved(), vec![(id(100), id(20)), (id(101), id(20))]);
     assert_eq!(f.inv.items[&id(102)].parent, id(10));
+}
+
+#[test]
+fn inventory_drag_moves_saved_outfits_into_my_outfits_groups() {
+    let mut f = Fixture::new();
+    f.inv.created_folders(
+        [
+            (700, 1, "My Outfits", 48),
+            (740, 700, "Wardrobe", -1),
+            (744, 700, "Saved outfit", 47),
+        ]
+        .map(|(n, parent, name, kind)| aurora_net::inventory::InvFolder {
+            id: id(n),
+            parent: id(parent),
+            name: name.into(),
+            type_default: kind,
+            ..Default::default()
+        })
+        .to_vec(),
+    );
+    for folder in f.inv.folders.values_mut() {
+        folder.state = FetchState::Fetched;
+    }
+    f.state.reveal_path.insert(id(700));
+    f.settle();
+    f.start(744);
+    assert_eq!(
+        egui::DragAndDrop::payload::<FolderDrag>(&f.ctx).expect("outfit folder cargo").0,
+        id(744)
+    );
+    let to = f.row(740);
+    assert_ne!(f.hover(to), egui::CursorIcon::NotAllowed);
+    f.button(to, false, false);
+    assert_eq!(f.moved(), vec![(id(744), id(740))]);
 }
 
 #[test]

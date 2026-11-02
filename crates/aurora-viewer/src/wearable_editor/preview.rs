@@ -58,6 +58,11 @@ pub struct Preview {
     pub error: bool,
 }
 impl Preview {
+    #[cfg(test)]
+    pub(crate) fn test_generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
+    }
+
     pub fn invalidate(&mut self) {
         self.generation.fetch_add(1, Ordering::Relaxed);
         self.changed = Some(Instant::now());
@@ -116,6 +121,11 @@ impl Preview {
             .filter(|link| !link.folder)
             .filter_map(|link| world.inventory.items.get(&link.target))
             .filter(|item| matches!(item.asset_type, 5 | 13))
+            .filter(|item| {
+                super::affected_bakes((item.flags & 0xff) as u8)
+                    .iter()
+                    .any(|te| super::affected_bakes(draft.edited.kind).contains(te))
+            })
             .cloned()
             .collect();
         let inputs: Vec<_> = worn.iter().map(|item| (item.id, item.asset_id)).collect();
@@ -178,10 +188,8 @@ impl Preview {
             scene.textures.note_usage(&texture, f32::MAX);
             self.wanted.insert(texture);
             let source = scene.textures.preview_source(&texture);
-            if source.local.is_some() {
-                revisions.insert(texture, source.revision());
-            }
-            if source.decoded.is_none_or(|level| level != 0) && !source.procedural {
+            revisions.insert(texture, source.bake_revision());
+            if !source.bake_ready(texture) {
                 available = false;
             }
             sources.insert(texture, source);
@@ -352,7 +360,7 @@ fn prepare(
         .into_par_iter()
         .map(|(id, source)| {
             source
-                .inspector_image(id)
+                .bake_image(id)
                 .map(|image| (id, image))
                 .ok_or_else(|| format!("texture {id} is unavailable"))
         })
@@ -417,6 +425,45 @@ fn prepare(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_unrelated_bodypart_cannot_block_a_live_clothing_texture() {
+        let (mut world, mut state, _) = super::super::tests::fixture(4);
+        let texture = Uuid::from_u128(1378003);
+        world.local_assets.insert(texture, ("shirt.png".into(), false));
+        assert!(state.set_texture(&world, 1, texture));
+        let mut missing_eyes = false;
+        for item in world.inventory.items.values().filter(|item| matches!(item.asset_type, 5 | 13)) {
+            if item.flags & 0xff == 3 {
+                missing_eyes = true;
+                continue;
+            }
+            let bytes = crate::world::inventory::wearable::create((item.flags & 0xff) as u8, &item.name, world.agent_id).expect("wearable");
+            state.preview.cache(item.id, item.asset_id, Wearable::parse(&bytes).expect("asset"));
+        }
+        assert!(missing_eyes);
+        let mut scene = Scene::new(
+            std::env::temp_dir().join(format!("aurora-shirt-preview-{}", Uuid::new_v4())),
+            world.avatar_lib.clone(),
+        );
+        scene.textures.register_local(texture, 0);
+        scene.textures.set_local_pixels(
+            texture,
+            Arc::new(aurora_render::preview::Image {
+                size: [1, 1],
+                rgba: vec![255, 0, 0, 255].into(),
+            }),
+        );
+        let commands = state.preview.update(&world, &mut scene, state.draft.as_ref().expect("draft"));
+        assert!(
+            commands.is_empty(),
+            "an unrelated eye asset must not be requested by the shirt preview"
+        );
+        assert!(
+            state.preview.wanted.contains(&texture),
+            "the shirt reaches texture preparation despite missing eyes"
+        );
+    }
 
     #[test]
     fn local_tattoo_reload_invalidates_the_bake_and_cancel_restores_server_appearance() {

@@ -338,7 +338,9 @@ impl ReportAbuseUi {
         ui.horizontal(|ui| {
             // abuser_name_edit is disabled: filled by the pick or "Choose"
             let mut name = self.form.abuser_name.clone();
-            ui.add_enabled(false, egui::TextEdit::singleline(&mut name).desired_width(width - 120.0));
+            crate::ui::widgets::text_field(ui, false, &mut name, |b, _| {
+                egui::TextEdit::singleline(b).desired_width(width - 120.0)
+            });
             if flat_button(ui, p, aurora_i18n::tr!("report-abuse-choose"))
                 .on_hover_text(aurora_i18n::tr!("report-abuse-choose-tooltip"))
                 .clicked()

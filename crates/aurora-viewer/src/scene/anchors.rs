@@ -525,6 +525,10 @@ impl Scene {
         for range in moved {
             renderer.set_palette_range(&self.palettes, range);
         }
+        if !self.palette_fresh.is_empty() {
+            renderer.seed_palette_slots(&self.palettes, &self.palette_fresh, PALETTE_JOINTS);
+            self.palette_fresh.clear();
+        }
         posed.clear();
         self.posed_slots = posed;
 

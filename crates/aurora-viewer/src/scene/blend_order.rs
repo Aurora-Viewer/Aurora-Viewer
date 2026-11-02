@@ -127,6 +127,8 @@ pub struct BlendEntry {
     pub cmd: DrawCmd,
     /// The face has glow (drawn into the glow right after it).
     pub glow: bool,
+    /// glTF doubleSided, retained alongside the face through sorting.
+    pub double_sided: bool,
     /// The face belongs to a rigged mesh.
     pub rigged: bool,
     /// Its object (index in the scene's slab), whose faces share one
@@ -313,6 +315,22 @@ pub fn each_object(entries: &[BlendEntry], n: usize, out: &mut Vec<u32>) {
     }
 }
 
+/// Which side of the water a blended object is drawn on, by its bounding
+/// sphere (centre height, radius) against `plane`, the agent region's water
+/// height, given only while the camera is above it: `(after, before)` the
+/// water. A group reaching above the plane goes after it
+/// (POOL_ALPHA_POST_WATER), one reaching below it before
+/// (POOL_ALPHA_PRE_WATER), one crossing it in both, each draw clipped to its
+/// side (LLDrawPoolAlpha::renderPostDeferred, lldrawpoolalpha.cpp, and
+/// waterClip in deferredUtil.glsl). Without a plane (camera under water, no
+/// region) everything goes after, as before.
+pub fn water_sides(center_z: f32, radius: f32, plane: Option<f32>) -> (bool, bool) {
+    match plane {
+        Some(h) => (center_z + radius >= h, center_z - radius < h),
+        None => (true, false),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,6 +346,7 @@ mod tests {
                 bounds: [0.0; 4],
             },
             glow: false,
+            double_sided: false,
             rigged,
             object: record,
             face: 0,
@@ -364,6 +383,16 @@ mod tests {
 
     fn records(e: &[BlendEntry]) -> Vec<u32> {
         e.iter().map(|e| e.cmd.record).collect()
+    }
+
+    #[test]
+    fn blended_material_sidedness_follows_faces_without_changing_sort_order() {
+        let mut faces = [entry(1, 2.0, false), entry(2, 3.0, false), entry(3, 1.0, false)];
+        faces[1].double_sided = true;
+        faces[2].double_sided = true;
+        sort(&mut faces, false);
+        assert_eq!(records(&faces), [2, 1, 3]);
+        assert_eq!(faces.map(|face| face.double_sided), [true, false, true]);
     }
 
     /// Mesh hair centred on the head (farther) and eyelashes in front of the
@@ -575,5 +604,14 @@ mod tests {
         let mut e = [entry(1, 2.0, false), entry(2, 4.0, false)];
         assert_eq!(sort(&mut e, true), 0);
         assert_eq!(records(&e), [2, 1]);
+    }
+
+    #[test]
+    fn water_sides_follow_the_legacy_pools() {
+        let h = Some(20.0);
+        assert_eq!(water_sides(30.0, 2.0, h), (true, false), "above: after the water only");
+        assert_eq!(water_sides(10.0, 2.0, h), (false, true), "below: before the water only");
+        assert_eq!(water_sides(20.5, 2.0, h), (true, true), "crossing: both, clipped");
+        assert_eq!(water_sides(10.0, 2.0, None), (true, false), "camera under water: as before");
     }
 }

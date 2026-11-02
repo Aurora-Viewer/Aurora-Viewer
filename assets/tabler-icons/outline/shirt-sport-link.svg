@@ -1,0 +1,26 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  class="icon icon-tabler icons-tabler-outline icon-tabler-shirt-sport"
+>
+  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+  <path d="M15 4l6 2v5h-3v8a1 1 0 0 1 -1 1h-10a1 1 0 0 1 -1 -1v-8h-3v-5l6 -2a3 3 0 0 0 6 0" />
+  <path d="M10.5 11h2.5l-1.5 5" />
+<g xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     inkscape:groupmode="layer"
+     id="layer3"
+     inkscape:label="shortcut"><path
+       fill="#ffffff"
+       stroke="#202222"
+       stroke-width="0.267044"
+       stroke-linejoin="round"
+       d="m 0.40847535,23.751788 v -1.982789 c 0,-1.143281 0.93587905,-2.082204 2.10152605,-2.082204 h 0.8406115 v -1.667974 l 2.790827,2.247896 -2.790827,2.115345 V 21.255353 H 2.5100014 c -0.4875543,0 -0.6220516,0.281675 -0.6220516,0.673816 v 1.822619 z"
+       id="path1-4" /></g>
+</svg>

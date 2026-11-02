@@ -236,3 +236,57 @@ fn the_check_is_cached_until_ctrl_the_inventory_or_the_rights_change() {
     w.inventory.consume_item(id(OBJECT));
     assert_eq!(check.check(&w, &ids, child, true, Target::World), Err("rez-incomplete"));
 }
+
+#[test]
+fn dropped_scripts_send_the_active_group_without_replacing_the_items_permission_group() {
+    let (mut w, _, child) = world();
+    for event in crate::demo::demo_reply(&aurora_net::NetCommand::RequestGroups) {
+        w.apply(event);
+    }
+    let land = w.groups.groups[0].id;
+    w.parcel = Some(Arc::new(aurora_net::ParcelInfo {
+        group_id: land,
+        ..Default::default()
+    }));
+    let source_group = id(8802);
+    w.inventory.items.get_mut(&id(SCRIPT)).unwrap().group_id = source_group;
+    for active in [id(8800), id(8801), Uuid::nil()] {
+        w.apply(aurora_net::NetEvent::ActiveGroup {
+            id: active,
+            name: "Active group".into(),
+            title: "Builder".into(),
+        });
+        assert_eq!(w.group_for_rez(true), land);
+        for target in [Target::World, Target::Panel] {
+            for ctrl in [false, true] {
+                let drops = plan(&w, &[id(SCRIPT)], child, ctrl, target).unwrap();
+                assert_eq!(drops.len(), 1);
+                let BuildCmd::RezScript {
+                    local_id,
+                    enabled,
+                    group_id,
+                    item,
+                    ..
+                } = &drops[0].command
+                else {
+                    panic!("expected a script drop");
+                };
+                assert_eq!(*group_id, active);
+                assert_eq!(*enabled, !ctrl);
+                let into = if matches!(target, Target::World) {
+                    super::linkset(&w, child).unwrap().0
+                } else {
+                    child
+                };
+                let object = w.objects.get(into).unwrap();
+                assert_eq!((*local_id, item.parent_id), (object.key.local_id, object.full_id));
+                let source = &w.inventory.items[&id(SCRIPT)];
+                assert_eq!(
+                    (item.item_id, item.asset_id, item.group_id, item.owner_mask),
+                    (source.id, source.asset_id, source_group, source.owner_mask)
+                );
+                assert!(drops[0].consume.is_none());
+            }
+        }
+    }
+}

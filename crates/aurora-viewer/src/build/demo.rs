@@ -59,6 +59,7 @@ pub enum Step {
     Face(usize, u8, bool),
     /// Materials, Local tab.
     TexturePicker(bool, bool),
+    BomPicker(Option<usize>),
     CloseView,
     CloseEditor,
     CreateAt(Vec3),
@@ -343,6 +344,15 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     let Some(frame) = (frame + 215).checked_sub(base) else {
         return Vec::new();
     };
+    if matches!(parts[0], "pbr-bom" | "bp-bom") {
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
+            220 => object.into_iter().map(Step::Select).collect(),
+            227 => vec![Step::Focus(true)],
+            250 => vec![Step::BomPicker((parts[0] == "pbr-bom").then(|| num(h).unwrap_or(0.0) as usize % 4))],
+            _ => Vec::new(),
+        };
+    }
     if parts[0] == "create-preview" {
         return match frame {
             215 => vec![Step::Open(Tool::Create, EditMode::Move, 6)],

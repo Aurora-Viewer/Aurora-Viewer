@@ -1,7 +1,7 @@
 ﻿<#
 .SYNOPSIS
-    Creates (or updates) the labels on GitHub: types, for PRs only, and
-    areas, for PRs and issues. The nature of an issue is its issue type (Bug,
+    Creates (or updates) the labels on GitHub: types, for PRs only, areas,
+    for PRs and issues, and on-hold, for PRs only. The nature of an issue is its issue type (Bug,
     Feature, Task, Epic; AGENTS.md section 15). Keeps the other labels and
     their history. A
     label still under its former French name (Was) is renamed, so the PRs
@@ -41,7 +41,9 @@ $labels = @(
     @{ Name = 'contact-group'; Color = 'C3C33F'; Desc = 'Contact Groups/Sets and related features' },
     @{ Name = 'inventory'; Color = 'AAAAAA'; Desc = 'Inventory window, folders and items' },
     @{ Name = 'build-tools'; Was = 'construction'; Color = 'FCD34D'; Desc = 'In-world building and editing tools' },
-    @{ Name = 'tooling'; Was = 'outillage'; Color = '6F7BA0'; Desc = 'GitHub repository, CI, scripts and development environment' }
+    @{ Name = 'tooling'; Was = 'outillage'; Color = '6F7BA0'; Desc = 'GitHub repository, CI, scripts and development environment' },
+    # state of a PR (AGENTS.md section 9): hidden from the Aurora Tools PR panel
+    @{ Name = 'on-hold'; Color = '94A3B8'; Desc = 'PR paused by a maintainer: not reviewed nor merged until the label is removed' }
 )
 
 $existing = @(gh label list --repo $repo --limit 500 --json name --jq '.[].name')

@@ -108,9 +108,13 @@ impl Gate {
     }
 
     fn observer(center: Vec3, position: Vec3, now: Instant) -> Self {
+        let armed = position.distance(center) > 3.0;
         Self {
-            armed: position.distance(center) > 3.0,
-            clearance: 3.5,
+            armed,
+            // The wider anti-drop clearance is only needed on appearance.
+            // Once approached from outside, a refused crossing must permit
+            // an ordinary retry without retreating another 3.5 metres.
+            clearance: if armed { CLEARANCE } else { 3.5 },
             ready_at: now + Duration::from_millis(600),
             ..Self::new(center, position, now)
         }
@@ -127,11 +131,15 @@ impl Gate {
             // Reject this segment, but do not make an already distant observer
             // walk farther away after a frame stall or a server correction.
             self.armed = position.is_finite() && position.distance(center) >= self.clearance;
+            if self.armed {
+                self.clearance = CLEARANCE;
+            }
             return false;
         }
         if !self.armed {
             if position.distance(center) >= self.clearance {
                 self.armed = true;
+                self.clearance = CLEARANCE;
             }
             return false;
         }
@@ -201,7 +209,7 @@ pub struct State {
 
 impl State {
     pub fn sync(&mut self, world: &World, endpoint: Option<Uuid>, now: u64) {
-        if self.agent != world.agent_id || self.region != world.main_region || world.teleporting {
+        if self.agent != world.agent_id || self.region != world.main_region {
             *self = Self {
                 agent: world.agent_id,
                 region: world.main_region,
@@ -662,6 +670,17 @@ impl State {
             .collect();
         for request in expired {
             self.reply(request, &Err(String::new()), now);
+        }
+        if world.teleporting {
+            // The source bridge can still deliver private grants until the
+            // actual region change. Keep those exchanges, but consume no
+            // movement during transit or on the first arrival sample.
+            for entry in &mut self.entries {
+                entry.gate.previous = world.agent.position;
+                entry.gate.armed = false;
+                entry.gate.last_sample = now;
+            }
+            return None;
         }
         let mut crossed = None;
         for entry in &mut self.entries {

@@ -26,6 +26,35 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-11-02 — Aurora 0.8.5 : son immersif et VR, tous deux expérimentaux
+Les sons du monde s'assourdissent derrière un mur ou dans une boîte fermée, passent derrière votre tête au casque (HRTF), et résonnent comme le lieu où vous êtes : secs en plein air, une longue traîne douce dans une grande salle. Trois interrupteurs dans Préférences › Son ; HRTF et réverbération sont désactivés par défaut. Avec un casque OpenXR, le bouton casque de la barre du bas montre le monde en relief, depuis les yeux de l'avatar ou la caméra. Visite seulement pour l'instant : Échap ramène le bureau.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.5)
+
+## 2026-11-02 — Des démarrages rapides, des lieux bondés plus fluides
+Aurora garde son propre cache des pipelines graphiques compilés : un démarrage n'attend plus vingt secondes devant une fenêtre noire quand le pilote a vidé le sien. Sur un écran 4K, l'occlusion ambiante coûte environ un tiers de ce qu'elle coûtait, les textures restent nettes après une téléportation dans une région chargée, une fenêtre du viewer en arrière-plan rend sa mémoire vidéo à celle de devant, et les cartes rapides retrouvent les FPS de la 0.8.3 dans les lieux bondés.
+
+## 2026-11-02 — Étoiles, portails et construction
+Choisissez d'où sur Terre le vrai ciel nocturne est vu, et l'éclat de ses étoiles. Glissez un lieu des Favoris, des Lieux, de l'historique des téléportations ou de la recherche dans le monde pour ouvrir un portail. Un rectangle de sélection ne prend que ce qu'il entoure, les objets se créent avec votre groupe actif, les textures BOM vont dans toutes les maps PBR, et les PNG en niveaux de gris s'importent. Une expérience autorisée peut maintenant changer votre ciel et votre eau.
+
+## 2026-11-02 — Tenues, achats et Linux
+Sélectionnez plusieurs articles d'une tenue ou de Porté pour les mettre ou les retirer d'un coup ; Retirer de la tenue actuelle marche sur n'importe quel dossier. Les vendeurs vendent en un clic, et un solde insuffisant ouvre Acheter des L$. Videz l'historique des notifications, voyez un ami se connecter ou partir dans sa conversation ouverte, et attribuez les boutons de la manette en les pressant. Sous Linux, un second viewer garde les pages web du premier, et les graphismes de secours sont proposés après un souci de GPU.
+
+## 2026-11-02 — Plus stable
+Vos logs et réglages survivent à un arrêt brutal du PC, À propos du terrain enregistre ses listes d'accès et de bannis, l'eau ne devient plus blanche sous certains ciels de région, et les photos attendent une carte graphique occupée au lieu d'échouer. Merci à anne-skydancer, circuskid, Gaalrauch, KanikaBreed, lambskin, Marakiinfinity, Odessa-Draekavik, vexxbyte, voidel, wolfosbournesl et zdub0is.
+
+## 2026-10-31 — Aurora 0.8.4 : tout copier, construire dans la foule
+Cliquez sur un nom dans un profil pour le copier, et sélectionnez le texte d'un champ grisé pour le copier aussi : le nom d'un objet non modifiable, l'adresse média d'une parcelle. Les tenues copient les noms de leurs articles et les crédits des créateurs. Dans une sandbox bondée, les outils de construction peuvent ne sélectionner que vos objets, ou ceux que vous pouvez déplacer, et l'éditeur a une disposition Legacy. Ctrl+Maj+H vous ramène chez vous.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.4)
+
+## 2026-10-31 — De la lumière pour les photos, LiveMesh pour Blender 3
+Un bouton lumière au-dessus du déclencheur du viseur ouvre l'éclairage personnel, et le ciel, l'eau et le cycle du jour peuvent changer pour la photo seulement, ou rester après. LiveMesh synchronise les textures dans les espaces colorimétriques de Blender 3.x, et les accessoires riggés sur un kit de développement Avastar se placent comme après un upload.
+
+## 2026-10-31 — Inventaire, Mac et Linux
+Les objets reçus peuvent être acceptés automatiquement, avec un accusé de réception. Les dossiers de l'inventaire ont leurs propres commandes et une ligne de recherche à part, et les groupes de contacts du Legacy Viewer s'importent. Sur Mac, Commande fait office de Contrôle et les raccourcis s'affichent ⌘ ⌥ ⇧. Ctrl+H ouvre le chat local et Ctrl+Maj+W ferme toutes les fenêtres. Sous Linux, les liens secondlife:// s'ouvrent dans le viewer déjà lancé.
+
+## 2026-10-31 — Plus stable
+Une réinitialisation de la carte graphique ferme le viewer proprement, les photos ne le figent plus quand la mémoire vidéo manque, et la mémoire des textures reste sous contrôle dans les lieux bondés. Plus de décollage dans une parcelle interdite au vol, et la parcelle quittée ne prête plus ses règles après une téléportation. Les animesh portés tiennent droit. Merci à Gaalrauch, Marakiinfinity, circuskid, Aznlilly, DarlCat, voidel et seilimited-ship-it.
+
 ## 2026-10-29 — Aurora 0.8.3 tourne nativement sur Mac
 Aurora tourne désormais nativement sur les Mac Apple Silicon, avec un rendu Metal : chaque release contient une application macOS à glisser dans Applications. Les pages web et les vidéos du monde y fonctionnent aussi : la première fois qu'il en a besoin, le viewer télécharge lui-même ses plugins média. Le guide d'installation est dans docs/MACOS.md.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.3)

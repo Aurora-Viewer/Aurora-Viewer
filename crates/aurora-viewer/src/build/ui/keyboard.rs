@@ -138,7 +138,7 @@ impl Shortcut {
             Self::GridOptions => tool.ui.grid_options_open = !tool.ui.grid_options_open,
             Self::Close => tool.close(world, settings),
             Self::Delete => tool.delete(world),
-            Self::Duplicate => tool.duplicate(world, Vec3::new(0.5, 0.5, 0.0), true),
+            Self::Duplicate => tool.duplicate(world, settings, Vec3::new(0.5, 0.5, 0.0), true),
             Self::Link => tool.link(world),
             Self::Unlink => tool.unlink(world),
             Self::EditLinked => {
@@ -158,6 +158,85 @@ mod tests {
     use super::*;
     use crate::gestures::keys;
 
+    #[test]
+    fn ctrl_d_uses_the_current_rez_group_preference() {
+        use aurora_net::{NetCommand, NetEvent, build::BuildCmd};
+        use std::sync::Arc;
+        use uuid::Uuid;
+
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::selection_cycle_events()) {
+            world.apply(event);
+        }
+        for event in crate::demo::demo_reply(&NetCommand::RequestGroups) {
+            world.apply(event);
+        }
+        let land = world.groups.groups[0].id;
+        let active = Uuid::from_u128(8800);
+        let nil = Uuid::nil();
+        let source = world.objects.index_of_uuid(&crate::demo::action_id(99610)).unwrap();
+        let mut tool = BuildTool::default();
+        tool.open_build(Tool::Edit);
+        let mut settings = BuildSettings::default();
+        let shortcut = Shortcut::from_key(
+            Key::D,
+            Mods {
+                ctrl: true,
+                ..Default::default()
+            },
+            true,
+        )
+        .unwrap();
+        assert_eq!(shortcut, Shortcut::Duplicate);
+        for (active, parcel, under_land, expected) in [
+            (active, Some(land), true, land),
+            (active, Some(land), false, active),
+            (active, Some(Uuid::from_u128(8899)), true, active),
+            (active, Some(nil), true, active),
+            (active, None, true, active),
+            (nil, Some(land), true, land),
+            (nil, Some(land), false, nil),
+            (nil, None, true, nil),
+        ] {
+            world.apply(NetEvent::ActiveGroup {
+                id: active,
+                name: "Active group".into(),
+                title: "Builder".into(),
+            });
+            world.parcel = parcel.map(|group_id| {
+                Arc::new(aurora_net::ParcelInfo {
+                    group_id,
+                    ..Default::default()
+                })
+            });
+            settings.rez_under_land_group = under_land;
+            tool.click_select(&mut world, &settings, Some(source), false);
+            tool.out.clear();
+            shortcut.run(&mut tool, &mut world, &mut settings);
+            let copies: Vec<_> = tool
+                .out
+                .iter()
+                .filter_map(|command| match command {
+                    NetCommand::Build(BuildCmd::Duplicate {
+                        group_id,
+                        local_ids,
+                        offset,
+                        flags,
+                        ..
+                    }) => Some((*group_id, local_ids, *offset, *flags)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(copies.len(), 1);
+            let (group, ids, offset, flags) = copies[0];
+            assert_eq!(group, expected);
+            assert_eq!(ids, &[99610]);
+            assert_eq!(offset, Vec3::new(0.5, 0.5, 0.0));
+            assert_eq!(flags, crate::build::FLAGS_CREATE_SELECTED);
+            assert!(tool.selection.is_empty(), "the simulator selects the new copy");
+        }
+    }
+
     /// Every gesture shortcut the editor offers that a build shortcut keeps,
     /// as the Legacy Viewer's menus keep them (#915): Undo / Redo only while
     /// the build tools are open, Build and its tools always.
@@ -170,14 +249,26 @@ mod tests {
                 .map(|(key, mask)| keys::shortcut(key, mask))
                 .collect()
         };
-        assert_eq!(taken(false), ["Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5", "Ctrl+B"]);
+        let ctrl = |key: &str| format!("{}{key}", keys::shortcut_prefix(1));
+        assert_eq!(taken(false), [ctrl("1"), ctrl("2"), ctrl("3"), ctrl("4"), ctrl("5"), ctrl("B")]);
         let mut building = taken(true);
         building.sort();
         let shift = aurora_i18n::tr!("keybinds-shift-2");
         let mut expected: Vec<String> = [
-            "Ctrl+,", "Ctrl+.", "Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5", "Ctrl+B", "Ctrl+D", "Ctrl+L", "Ctrl+Y", "Ctrl+Z", "G",
+            ctrl(","),
+            ctrl("."),
+            ctrl("1"),
+            ctrl("2"),
+            ctrl("3"),
+            ctrl("4"),
+            ctrl("5"),
+            ctrl("B"),
+            ctrl("D"),
+            ctrl("L"),
+            ctrl("Y"),
+            ctrl("Z"),
+            "G".into(),
         ]
-        .map(String::from)
         .into_iter()
         .chain([format!("{shift}G"), format!("{shift}X"), keys::label(0x86), keys::label(0x88)])
         .collect();

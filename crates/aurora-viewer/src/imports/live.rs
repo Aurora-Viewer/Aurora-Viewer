@@ -75,7 +75,6 @@ impl Imports {
         let id = Uuid::new_v4();
         self.pending_files = Some(request);
         self.open(Choice::Mesh);
-        self.choose_files_on_open = false;
         self.active = Some(id);
         for entry in &mut self.entries {
             entry.selected = false;

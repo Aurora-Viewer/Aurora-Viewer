@@ -349,13 +349,7 @@ impl App {
                 }
                 if start {
                     self.record_library_asset(asset, 20);
-                    self.inventory_ui.preview = self
-                        .world
-                        .inventory
-                        .items
-                        .values()
-                        .find(|it| it.asset_type == 20 && it.asset_id == asset)
-                        .map(|it| it.id);
+                    self.inventory_ui.open_animation(&self.egui_ctx, &self.world.inventory, asset);
                     if local || self.demo {
                         self.world.preview_animation(asset, true);
                     }
@@ -889,18 +883,30 @@ impl App {
             crate::world::appearance::Action::Save(Some(_)) | crate::world::appearance::Action::SaveIn(..)
         );
         let attachments = crate::world::appearance::attachments_for_action(&self.world.inventory, self.world.agent_id, &action);
-        match crate::world::appearance::plan(&self.world.inventory, action, &self.world.worn_attachment_points()) {
+        match crate::world::appearance::plan(&self.world.inventory, action, &self.world.outfit_attachment_points()) {
             Ok((change, sync)) => {
                 let request = uuid::Uuid::new_v4();
                 self.appearance_ui.pending = Some((request, sync));
                 self.appearance_ui.pending_actor = actor;
                 self.appearance_ui.attachments = attachments;
+                self.appearance_ui.worn_before = self.world.outfit_attachment_items();
                 self.appearance_ui.message.clear();
                 let mut command = NetCommand::UpdateOutfit { request, change };
-                self.world.rlva_prepare_outfit(&mut command, actor);
+                // An attachment the outfit write left out must not reach the
+                // rez that follows: RLVa would refuse it as a whole.
+                let dropped = self.world.rlva_prepare_outfit(&mut command, actor);
+                self.appearance_ui.attachments.retain(|a| !dropped.contains(&a.item_id));
                 if !self.world.rlva_allows_command(&command, actor) {
                     self.appearance_ui.pending = None;
                     self.appearance_ui.attachments.clear();
+                } else if let NetCommand::UpdateOutfit { change, .. } = &mut command {
+                    crate::world::appearance::defer_attachment_links(
+                        &self.world.inventory,
+                        change,
+                        &self.appearance_ui.worn_before,
+                        &mut self.appearance_ui.attachments,
+                        self.world.agent_id,
+                    );
                 }
                 self.send_from(command, actor);
             }
@@ -916,9 +922,28 @@ impl App {
     /// outfits and their missing link targets (`AppearanceUi::reload`):
     /// "still loading" lasts until they arrive, not for the session.
     fn reload_outfit(&mut self) {
-        let worn = self.world.worn_attachment_items();
+        let worn = self.world.outfit_attachment_items();
         for command in self.appearance_ui.reload(&mut self.world.inventory, self.world.agent_id, &worn) {
             self.send(command);
+        }
+    }
+
+    /// Ctrl+C, Ctrl+X or Ctrl+V of Appearance, on the inventory's clipboard:
+    /// a paste goes through the inventory's paste, outfit rules included.
+    pub(super) fn appearance_clipboard(&mut self, ctx: &egui::Context, request: ui::appearance::ClipboardRequest) {
+        let facts = ui::inventory::Facts::from_world(&self.world, self.appearance_ui.pending.is_some());
+        self.inventory_ui.message.clear();
+        let actions = ui::inventory::appearance_clipboard(
+            ctx,
+            &self.world.inventory,
+            &mut self.inventory_ui,
+            &self.settings.inventory,
+            &facts,
+            request,
+        );
+        self.appearance_ui.message.clone_from(&self.inventory_ui.message);
+        for action in actions {
+            self.apply_inventory_action(action);
         }
     }
 }

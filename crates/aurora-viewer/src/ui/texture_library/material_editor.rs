@@ -433,11 +433,13 @@ impl Editor {
         world: &mut World,
         images: &HashMap<Uuid, egui::TextureHandle>,
     ) -> HashSet<Uuid> {
-        if let Some(asset) = self.picker.show(ctx, p, world, images)
-            && let Some(slot) = self.map_slot.take()
+        if let Some(asset) = self.picker.show_live(ctx, p, world, images)
+            && let Some(slot) = self.map_slot
             && self.saving.is_none()
         {
-            let allowed = asset.is_nil()
+            let allowed = self.picker.cancelled()
+                || asset.is_nil()
+                || crate::scene::avatar::bake_slot_for(&asset).is_some()
                 || [aurora_prim::te::BLANK_TEXTURE, aurora_prim::te::TRANSPARENT_TEXTURE].contains(&asset)
                 || world.inventory.items.values().any(|it| it.asset_id == asset && map_source(it));
             if allowed {
@@ -447,6 +449,9 @@ impl Editor {
             } else {
                 self.message = aurora_i18n::tr!("resource-preview-map-rights").into();
             }
+        }
+        if !self.picker.open {
+            self.map_slot = None;
         }
         std::mem::take(&mut self.picker.wanted_images)
     }
@@ -504,6 +509,77 @@ fn map_mut(value: &mut PbrMaterial, slot: usize) -> &mut Option<Uuid> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pbr_bom_choices_preview_cancel_and_save_the_magic_uuid_in_every_map() {
+        for slot in 0..4 {
+            let mut ui = crate::ui::texture_picker::tests::PickerUi::new();
+            let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let mut editor = Editor::new(Uuid::from_u128(1), Arc::new(PbrMaterial::default()));
+            let magic = crate::scene::avatar::BAKES[0].2;
+            for cancel in [true, false] {
+                editor.open_map(slot, None);
+                ui.settle(|ctx, p| {
+                    editor.show_picker(ctx, p, &mut world, &HashMap::new());
+                });
+                for label in [aurora_i18n::tr!("picker-bom"), aurora_i18n::tr!("picker-bom-head")] {
+                    ui.click(label, |ctx, p| {
+                        editor.show_picker(ctx, p, &mut world, &HashMap::new());
+                    });
+                    ui.settle(|ctx, p| {
+                        editor.show_picker(ctx, p, &mut world, &HashMap::new());
+                    });
+                }
+                assert_eq!(*map_mut(Arc::make_mut(&mut editor.draft), slot), Some(magic));
+                assert!(editor.picker.open);
+                assert!(editor.message.is_empty());
+                ui.click(
+                    if cancel {
+                        aurora_i18n::tr!("common-cancel")
+                    } else {
+                        aurora_i18n::tr!("common-ok")
+                    },
+                    |ctx, p| {
+                        editor.show_picker(ctx, p, &mut world, &HashMap::new());
+                    },
+                );
+                assert_eq!(*map_mut(Arc::make_mut(&mut editor.draft), slot), (!cancel).then_some(magic));
+            }
+        }
+    }
+
+    #[test]
+    fn live_picker_edits_the_same_map_repeatedly_and_cancel_restores_an_unlisted_original() {
+        let mut ui = crate::ui::texture_picker::tests::PickerUi::new();
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let original = Uuid::from_u128(77);
+        let mut editor = Editor::new(
+            Uuid::from_u128(1),
+            Arc::new(PbrMaterial {
+                normal_texture: Some(original),
+                ..Default::default()
+            }),
+        );
+        editor.open_map(1, Some(original));
+        ui.settle(|ctx, p| {
+            editor.show_picker(ctx, p, &mut world, &HashMap::new());
+        });
+        ui.click(aurora_i18n::tr!("common-blank"), |ctx, p| {
+            editor.show_picker(ctx, p, &mut world, &HashMap::new());
+        });
+        assert_eq!(editor.draft.normal_texture, Some(aurora_prim::te::BLANK_TEXTURE));
+        assert!(editor.picker.open);
+        ui.click(aurora_i18n::tr!("common-none-2"), |ctx, p| {
+            editor.show_picker(ctx, p, &mut world, &HashMap::new());
+        });
+        assert_eq!(editor.draft.normal_texture, None);
+        Arc::make_mut(&mut editor.draft).roughness_factor = 0.25;
+        ui.click(aurora_i18n::tr!("common-cancel"), |ctx, p| {
+            editor.show_picker(ctx, p, &mut world, &HashMap::new());
+        });
+        assert_eq!(editor.draft.normal_texture, Some(original));
+        assert_eq!(editor.draft.roughness_factor, 0.25);
+        assert_eq!(editor.map_slot, None);
+    }
     #[test]
     fn drafts_are_independent_and_failed_saves_retain_every_parameter() {
         let source = Arc::new(PbrMaterial::default());

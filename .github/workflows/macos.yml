@@ -51,16 +51,13 @@ jobs:
         run: |
           rustup update stable --no-self-update
           rustup component add clippy
-      # caches are written from main only (see ci.yml); one key for the two
-      # macOS jobs, written by this one. Its name is not the job's: the key
-      # would otherwise be the one of the old cache (clippy's output only),
-      # and main, finding it, would never build the tests into it
-      - uses: Swatinem/rust-cache@v2
+      # caches are written from main only (see ci.yml); one cache for the
+      # two macOS jobs, written by this one
+      - uses: ./.github/actions/rust-cache
         id: cache
         if: steps.changes.outputs.code == 'true'
         with:
-          shared-key: macos-tests
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          name: macos-tests
       # dead code is the Windows job's: Windows-only helpers build here
       # without their callers, as on Linux. Not in the queue: the pull
       # request ran it, and the tests below build the combined code anyway
@@ -75,6 +72,11 @@ jobs:
         run: |
           cargo test --profile ci --workspace --locked --no-run
           cargo build --profile ci --locked -p aurora-viewer
+      - name: Save the Rust cache
+        if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/rust-cache/save
+        with:
+          key: ${{ steps.cache.outputs.key }}
       - name: Tests (rest)
         if: steps.changes.outputs.code == 'true' && github.event_name == 'merge_group'
         # every failure of the run at once: the Apple GPU is reached here only
@@ -134,11 +136,10 @@ jobs:
       - name: Rust stable
         if: steps.changes.outputs.code == 'true'
         run: rustup update stable --no-self-update
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-cache
         if: steps.changes.outputs.code == 'true'
         with:
-          shared-key: macos-tests
-          save-if: false
+          name: macos-tests
       - name: Tests (interface)
         if: steps.changes.outputs.code == 'true'
         run: |

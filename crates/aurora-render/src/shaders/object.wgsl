@@ -2,6 +2,8 @@
 
 // Alpha-masked faces use alpha-to-coverage with MSAA, an alpha test otherwise.
 override ALPHA_TO_COVERAGE: bool = true;
+// Only left-button pipelines enable the world Blend transparency rule.
+override WORLD_LEFT_PICK: bool = false;
 
 // Evaluated after skinning/attachment placement, in every surface/depth pass.
 // Outside the actual ellipse, even geometry beyond the plane stays visible.
@@ -219,6 +221,46 @@ fn placed_model(rec: DrawRecord, in: VsIn, eye: vec3<f32>) -> mat4x4<f32> {
         return from_eye(palettes[rec.flags.y], eye) * rec.model;
     }
     return from_eye(rec.model, eye);
+}
+
+// placed_model as the last frame drew it (motion_history.rs): its
+// palettes and the record's matrix of then.
+fn prev_joint_matrix(rec: DrawRecord, j: u32) -> mat4x4<f32> {
+    let b = skin_binds[rec.flags.z + j];
+    return prev_palettes[rec.flags.y + b.joint.x] * b.inverse_bind;
+}
+
+fn prev_skin_matrix(rec: DrawRecord, j: vec4<u32>, w: vec4<f32>) -> mat4x4<f32> {
+    let ws = max(w.x + w.y + w.z + w.w, 1e-4);
+    var m = prev_joint_matrix(rec, j.x) * w.x;
+    if (w.y > 0.0) { m += prev_joint_matrix(rec, j.y) * w.y; }
+    if (w.z > 0.0) { m += prev_joint_matrix(rec, j.z) * w.z; }
+    if (w.w > 0.0) { m += prev_joint_matrix(rec, j.w) * w.w; }
+    return m * (1.0 / ws);
+}
+
+fn prev_placed_model(rec: DrawRecord, in: VsIn, eye: vec3<f32>) -> mat4x4<f32> {
+    let model = prev_models[in.instance];
+    if ((rec.flags.x & FLAG_SKINNED) != 0u) {
+        let skin = prev_skin_matrix(rec, in.joints, in.weights);
+        if ((rec.flags.x & FLAG_ANCHORED) != 0u) {
+            return from_eye(prev_palettes[rec.flags.y + SKELETON_ANCHOR], eye) * skin;
+        }
+        return from_eye(model, eye) * skin;
+    }
+    if ((rec.flags.x & FLAG_ANCHORED) != 0u) {
+        return from_eye(prev_palettes[rec.flags.y], eye) * model;
+    }
+    return from_eye(model, eye);
+}
+
+// The clip positions of a vertex for its motion, without the TAA jitter:
+// this frame's (`ep`, placed relative to the eye) and the last frame's,
+// placed as it was then. Its live morphs (lip_delta) count as they are now:
+// their motion is left out.
+fn motion_clips(rec: DrawRecord, in: VsIn, ep: vec4<f32>) -> mat2x4<f32> {
+    let prev = prev_placed_model(rec, in, frame.eye.xyz) * vec4<f32>(vertex_position(rec, in), 1.0);
+    return mat2x4<f32>(frame.motion_vp * ep, frame.motion_prev_vp * prev);
 }
 
 // World matrix of a vertex.
@@ -637,10 +679,12 @@ fn fs_depth_mask(in: VsOut) {
 // the position of vs_depth and the vertices' smooth normal, the shading's
 // without its normal map. A normal taken from the depth is the flat
 // triangle's, and showed the facets of low-poly meshes in the occlusion
-// (#993).
+// (#993). The same target takes the motion of each pixel (screen_motion).
 struct DepthNormalOut {
     @invariant @builtin(position) clip: vec4<f32>,
     @location(0) normal: vec3<f32>,
+    @location(1) motion_cur: vec4<f32>,
+    @location(2) motion_prev: vec4<f32>,
 };
 
 @vertex
@@ -651,39 +695,71 @@ fn vs_depth_normal(in: VsIn) -> DepthNormalOut {
     var out: DepthNormalOut;
     out.clip = frame.eye_view_proj * ep;
     out.normal = cofactor(model) * vertex_normal(rec, in);
+    let motion = motion_clips(rec, in, ep);
+    out.motion_cur = motion[0];
+    out.motion_prev = motion[1];
+    return out;
+}
+
+// What the masked, portal-clipped and contact faces of that prepass need:
+// vs_depth_normal's, with the diffuse coordinates and the region position.
+struct DepthMaskOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) record: u32,
+    @location(4) motion_cur: vec4<f32>,
+    @location(5) motion_prev: vec4<f32>,
+};
+
+@vertex
+fn vs_depth_mask_normal(in: VsIn) -> DepthMaskOut {
+    let rec = records[in.instance];
+    let model = eye_model(rec, in);
+    let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
+    var out: DepthMaskOut;
+    out.clip = frame.eye_view_proj * ep;
+    out.world_pos = ep.xyz + frame.eye.xyz;
+    out.normal = cofactor(model) * vertex_normal(rec, in);
+    out.uv = diffuse_uv(face_st(in, rec), rec, frame.anim_clock.zw);
+    out.record = in.instance;
+    let motion = motion_clips(rec, in, ep);
+    out.motion_cur = motion[0];
+    out.motion_prev = motion[1];
     return out;
 }
 
 // The world normal facing the side drawn (eval_material), octahedral as in
-// the G-buffer.
-fn depth_normal(n: vec3<f32>, front: bool) -> vec4<f32> {
+// the G-buffer, then the pixel's motion.
+fn depth_normal(n: vec3<f32>, front: bool, motion_cur: vec4<f32>, motion_prev: vec4<f32>) -> vec4<f32> {
     let m = normalize(select(-n, n, front));
-    return vec4<f32>(oct_encode(m), 0.0, 0.0);
+    return vec4<f32>(oct_encode(m), screen_motion(motion_cur, motion_prev));
 }
 
 @fragment
 fn fs_depth_normal(in: DepthNormalOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return depth_normal(in.normal, front);
+    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev);
 }
 
 // Only selected while an avatar intersects a portal. The ordinary normal
 // prepass keeps its compact vertex output without a record/position fetch.
 @fragment
-fn fs_depth_portal_normal(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+fn fs_depth_portal_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     portal_clip(records[in.record], in.world_pos);
-    return depth_normal(in.normal, front);
+    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev);
 }
 
 // fs_depth_mask with the normal.
 @fragment
-fn fs_depth_mask_normal(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+fn fs_depth_mask_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
     let a = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
     if (a < rec.params.w) {
         discard;
     }
-    return depth_normal(in.normal, front);
+    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev);
 }
 
 // Alpha from which fs_depth_contact writes depth: half covered; 1/255 for
@@ -691,33 +767,59 @@ fn fs_depth_mask_normal(in: VsOut, @builtin(front_facing) front: bool) -> @locat
 // Viewer's MINIMUM_ALPHA.
 override DEPTH_CONTACT_ALPHA: f32 = 0.5;
 
+// The blended faces' side of the water (waterClip, deferredUtil.glsl): 1
+// keeps the camera's side (drawn after the water), 2 the other side (drawn
+// before it, POOL_ALPHA_PRE_WATER); 0, every other use, keeps all. A face
+// crossing the surface is drawn in both lists, each half here. Only while
+// the camera is above the water, as the lists are split
+// (blend_order::water_sides); under it nothing is clipped, as before. The
+// flat region water height (`frame.params.y`, main_water_height), the one
+// the lists are split at, as LLDrawPoolAlpha uses getWaterHeight for both;
+// not enhanced water's displaced level at the camera (`cam_up.w`), or a
+// face within the waves would lose a slice, or be drawn twice unclipped.
+override WATER_CLIP: u32 = 0u;
+
+fn water_clip(world_pos: vec3<f32>) {
+    let h = frame.params.y;
+    if (WATER_CLIP == 0u || frame.camera_pos.z < h) {
+        return;
+    }
+    let above = world_pos.z >= h;
+    if ((WATER_CLIP == 1u) != above) {
+        discard;
+    }
+}
+
 // Depth of the blended faces opaque enough to cast contact shadows (half
 // covered, as the impostor pictures keep them), drawn over a copy of the
 // prepass (contact_shadows.rs).
-fn depth_contact(in: VsOut) {
-    let rec = records[in.record];
+fn depth_contact(record: u32, uv: vec2<f32>, world_pos: vec3<f32>) {
+    let rec = records[record];
     if ((rec.flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         // Its solid core occludes through the same opening; the decorative
         // quad corners/corona must never add a rectangular occluder.
-        if (length((in.uv * 2.0 - vec2<f32>(1.0)) * PORTAL_SURFACE_SCALE) > 1.0) { discard; }
+        if (length((uv * 2.0 - vec2<f32>(1.0)) * PORTAL_SURFACE_SCALE) > 1.0) { discard; }
         return;
     }
-    portal_clip(rec, in.world_pos);
-    if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < DEPTH_CONTACT_ALPHA) {
+    portal_clip(rec, world_pos);
+    water_clip(world_pos);
+    if (sample_tex(rec.tex.x, uv).a * rec.base_color.a < DEPTH_CONTACT_ALPHA) {
         discard;
     }
 }
 
 @fragment
-fn fs_depth_contact(in: VsOut) {
-    depth_contact(in);
+fn fs_depth_contact(in: VsOut, @builtin(front_facing) front: bool) {
+    if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
+    depth_contact(in.record, in.uv, in.world_pos);
 }
 
 // fs_depth_contact with the normal, into the occlusion's depth.
 @fragment
-fn fs_depth_contact_normal(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    depth_contact(in);
-    return depth_normal(in.normal, front);
+fn fs_depth_contact_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
+    depth_contact(in.record, in.uv, in.world_pos);
+    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev);
 }
 
 // Depth of the rigged blended faces nearly opaque, before any of their
@@ -725,9 +827,11 @@ fn fs_depth_contact_normal(in: VsOut, @builtin(front_facing) front: bool) -> @lo
 // shows through it by 5 % at most, while a fainter one, a soft strand edge,
 // must not hide the strands drawn after it (#935).
 @fragment
-fn fs_depth_opaque(in: VsOut) {
+fn fs_depth_opaque(in: VsOut, @builtin(front_facing) front: bool) {
     let rec = records[in.record];
+    if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
     portal_clip(rec, in.world_pos);
+    water_clip(in.world_pos);
     if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < 0.95) {
         discard;
     }
@@ -1456,6 +1560,9 @@ override BLEND_SPLIT: u32 = 0u;
 
 @fragment
 fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    // The batch mixes material sidedness: reject single-sided backs before
+    // texture samples, keeping glTF doubleSided backs and their flipped normals.
+    if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
     let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
     if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         let surface = portal_surface(records[in.record], in.uv, portal_aa);
@@ -1463,6 +1570,11 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
         let color = apply_fog(surface.color * frame.sky_cloud_pd2.w, in.world_pos);
         return vec4<f32>(color * surface.alpha, surface.alpha);
     }
+    // (not the portal surfaces above: they are not split by the water, and
+    // stay drawn whole after it, as before. The ban lines are clipped to the
+    // camera's side: the Legacy Viewer draws them after the scene, behind
+    // the water's depth)
+    water_clip(in.world_pos);
     // RiggedBlendDepth::Split: the texels at least half covered, then the
     // fainter ones, by the alpha of fs_depth_contact (the occlusion's depth
     // holds the same ones); tested before the material, which the other
@@ -1511,6 +1623,7 @@ fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
+    water_clip(in.world_pos);
     if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) {
         discard;
     }
@@ -1657,7 +1770,11 @@ fn fs_pick_overlay(in: PickOut) -> @location(0) vec4<u32> {
 fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
-    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u) {
+    let world_left = WORLD_LEFT_PICK && (rec.flags.w & FLAG_WORLD_BLEND_PICK) != 0u;
+    if (world_left && sample_tex(rec.tex.x, in.uv).a <= 0.0) {
+        discard;
+    }
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && !world_left) {
         // (the level the scene samples: each texel of the target is a
         // pixel of the screen)
         let a = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
@@ -1679,7 +1796,9 @@ fn fs_pick_visible(in: PickOut) -> @location(0) vec4<u32> {
     // An emissive mask uses texture alpha for lighting, not opacity
     // (eval_material): its visible surface must remain a camera target.
     let terrain_pbr = (rec.flags.x & (FLAG_TERRAIN | FLAG_PBR)) == (FLAG_TERRAIN | FLAG_PBR);
-    let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(select(rec.tex.x, 0u, terrain_pbr), in.uv).a <= 32.0 / 255.0;
+    let world_blend = WORLD_LEFT_PICK && (rec.flags.w & FLAG_WORLD_BLEND_PICK) != 0u;
+    let cutoff = select(32.0 / 255.0, 0.0, world_blend);
+    let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(select(rec.tex.x, 0u, terrain_pbr), in.uv).a <= cutoff;
     // An opaque glTF material ignores its base color alpha (FaceDraw::
     // fully_transparent): drawn, it stays a target.
     let gltf_opaque = (rec.flags.x & FLAG_PBR) != 0u && (rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) == 0u;
@@ -1868,7 +1987,7 @@ fn fs_particle(in: PartOut) -> @location(0) vec4<f32> {
 // their picture, refreshed now and then (LLVOAvatar impostors). The pictures
 // live in an atlas of square tiles.
 
-@group(3) @binding(4) var impostor_atlas: texture_2d<f32>;
+@group(3) @binding(4) var impostor_atlas: texture_2d_array<f32>;
 @group(3) @binding(5) var impostor_sampler: sampler;
 
 override impostor_tiles_per_row: f32 = 8.0;
@@ -1884,6 +2003,7 @@ struct SpriteIn {
 // High bit of a card's tile: its picture is all fullbright (the silhouette
 // of an avatar over the complexity limit).
 const IMPOSTOR_FULLBRIGHT: u32 = 0x80000000u;
+const IMPOSTOR_PENDING: u32 = 0x40000000u;
 
 struct SpriteOut {
     @builtin(position) clip: vec4<f32>,
@@ -1891,6 +2011,7 @@ struct SpriteOut {
     @location(1) world_pos: vec3<f32>,
     @location(2) normal: vec3<f32>,
     @location(3) @interpolate(flat) fullbright: u32,
+    @location(4) @interpolate(flat) tile: u32,
 };
 
 @vertex
@@ -1902,7 +2023,7 @@ fn vs_impostor(in: SpriteIn) -> SpriteOut {
     let c = corners[in.vid % 6u];
     let p = in.center + in.right * c.x + in.up * c.y;
     let per = u32(impostor_tiles_per_row);
-    let tile = in.tile & ~IMPOSTOR_FULLBRIGHT;
+    let tile = (in.tile & ~(IMPOSTOR_FULLBRIGHT | IMPOSTOR_PENDING)) % (per * per);
     let origin = vec2<f32>(f32(tile % per), f32(tile / per));
     var out: SpriteOut;
     out.clip = frame.view_proj * vec4<f32>(p, 1.0);
@@ -1910,11 +2031,26 @@ fn vs_impostor(in: SpriteIn) -> SpriteOut {
     out.world_pos = p;
     out.normal = normalize(cross(in.right, in.up));
     out.fullbright = in.tile & IMPOSTOR_FULLBRIGHT;
+    out.tile = in.tile;
     return out;
 }
 
+// Bounded capture work and memory must never make a resident disappear.
+// A neutral silhouette card costs no skeleton or attachment draws while waiting.
+fn impostor_sample(in: SpriteOut) -> vec4<f32> {
+    if ((in.tile & IMPOSTOR_PENDING) != 0u) {
+        let p = fract(in.uv * impostor_tiles_per_row) * 2.0 - 1.0;
+        let head = length((p - vec2<f32>(0.0, -0.48)) / vec2<f32>(0.14, 0.16));
+        let body = length((p - vec2<f32>(0.0, 0.10)) / vec2<f32>(0.23, 0.45));
+        return vec4<f32>(vec3<f32>(0.35), select(0.0, 1.0, min(head, body) < 1.0));
+    }
+    let per = u32(impostor_tiles_per_row);
+    let layer = i32((in.tile & ~IMPOSTOR_FULLBRIGHT) / (per * per));
+    return textureSampleLevel(impostor_atlas, impostor_sampler, in.uv, layer, 0.0);
+}
+
 fn impostor_color(in: SpriteOut) -> vec4<f32> {
-    let t = textureSample(impostor_atlas, impostor_sampler, in.uv);
+    let t = impostor_sample(in);
     if (t.a < 0.5) {
         discard;
     }
@@ -1936,7 +2072,7 @@ fn impostor_color(in: SpriteOut) -> vec4<f32> {
 // The card's depth alone (contact shadows): where its picture is covered.
 @fragment
 fn fs_impostor_depth(in: SpriteOut) {
-    if (textureSample(impostor_atlas, impostor_sampler, in.uv).a < 0.5) {
+    if (impostor_sample(in).a < 0.5) {
         discard;
     }
 }

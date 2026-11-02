@@ -475,6 +475,12 @@ impl crate::world::World {
                 .observe(im, notification, self.rlva.preferences.allow_shared_offers)
     }
 
+    /// isGiveToRLVOffer: retain consent even when shared filing is disabled
+    /// or its bounded queue is full.
+    pub(crate) fn rlva_inventory_offer_needs_confirmation(&self, im: &InstantMessage) -> bool {
+        self.rlva.enabled() && im.binary_bucket.first().copied() == Some(8) && name(im, im.dialog == im::TASK_INVENTORY_OFFERED).is_some()
+    }
+
     pub(crate) fn rlva_shared_offer_answer(&mut self, notification: u64, commands: &mut [NetCommand]) {
         let allow = self.rlva.enabled() && self.rlva.preferences.allow_shared_offers;
         self.rlva.offers.answer(

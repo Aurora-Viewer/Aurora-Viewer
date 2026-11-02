@@ -226,6 +226,7 @@ impl Inventory {
 
     pub fn apply(&mut self, contents: Vec<FolderContents>) {
         self.generation += 1;
+        let mut refreshed: HashMap<Uuid, HashSet<Uuid>> = HashMap::new();
         for mut c in contents {
             // Inventory versions advance as copies arrive (Firestorm's
             // LLInventoryModel::accountForUpdate). A delayed pre-copy HTTP
@@ -272,6 +273,9 @@ impl Inventory {
             item_ids.extend(self.repaired_parents.iter().filter_map(|(item, parent)| {
                 (*parent == c.folder_id && self.items.get(item).is_some_and(|it| it.parent == *parent)).then_some(*item)
             }));
+            if c.version >= 0 {
+                refreshed.insert(c.folder_id, item_ids.iter().copied().collect());
+            }
             if let Some(f) = self.folders.get_mut(&c.folder_id) {
                 f.children = child_ids;
                 f.items = item_ids;
@@ -281,6 +285,25 @@ impl Inventory {
             self.repair_item_parents(&mut c.items, parents::ItemSource::Snapshot);
             self.add_items_inner(c.items);
             self.sort_children(c.folder_id);
+        }
+        if !refreshed.is_empty() {
+            // AIS SlamFolder replaces link UUIDs. Like AISUpdate::doUpdate's
+            // onObjectDeletedFromServer (indra/newview/llaisapi.cpp), retire
+            // the old records as well as folder membership: inventory views
+            // index items by parent, so forgotten links stay visible (#1515).
+            // Reconcile once per batch, including links already absent from
+            // the child lists; originals and other folders remain untouched.
+            self.items.retain(|id, item| {
+                !matches!(item.asset_type, 24 | 25) || refreshed.get(&item.parent).is_none_or(|listed| listed.contains(id))
+            });
+            for id in refreshed.keys() {
+                if let Some(folder) = self.folders.get_mut(id) {
+                    folder.items.retain(|item| self.items.contains_key(item));
+                }
+            }
+            self.repaired_parents.retain(|id, _| self.items.contains_key(id));
+            self.pending_parent_repairs.retain(|id| self.repaired_parents.contains_key(id));
+            self.deferred_parents.retain(|id, _| self.items.contains_key(id));
         }
     }
 
@@ -792,6 +815,47 @@ mod tests {
             assert_eq!(inv.items[&original.id].parent, original.parent, "linked target is retained");
             assert_eq!(inv.folders[&inv.root].items.iter().filter(|id| **id == original.id).count(), 1);
         }
+    }
+
+    #[test]
+    fn folder_readback_removes_obsolete_links_only_after_an_accepted_snapshot() {
+        let mut inv = fixture();
+        let folder = Uuid::from_u128(704);
+        let links = inv.folders[&folder].items.clone();
+        let original = inv.items[&inv.items[&links[0]].asset_id].clone();
+        let others = inv.folders[&Uuid::from_u128(701)].items.clone();
+        let snapshot = FolderContents {
+            folder_id: folder,
+            owner_id: Uuid::from_u128(1),
+            version: 10,
+            folders: Vec::new(),
+            items: links.iter().map(|id| inv.items[id].clone()).chain([original.clone()]).collect(),
+        };
+        inv.apply(vec![snapshot.clone()]);
+        inv.apply(vec![FolderContents {
+            version: 9,
+            items: Vec::new(),
+            ..snapshot.clone()
+        }]);
+        assert!(links.iter().all(|id| inv.items.contains_key(id)), "ignore older readback");
+        inv.apply(vec![FolderContents {
+            version: 11,
+            items: Vec::new(),
+            ..snapshot
+        }]);
+        assert!(
+            links.iter().all(|id| !inv.items.contains_key(id)),
+            "remove the obsolete link records"
+        );
+        assert!(inv.folders[&folder].items.is_empty());
+        assert_eq!(
+            inv.items[&original.id].parent, original.parent,
+            "keep linked originals in their own folder"
+        );
+        assert!(
+            others.iter().all(|id| inv.items.contains_key(id)),
+            "keep other outfits' links to the same originals"
+        );
     }
 
     #[test]

@@ -65,6 +65,7 @@ impl App {
                     crate::ao::Account {
                         selected,
                         enabled: std::env::var("AURORA_DEMO_MOVELOCK").is_ok_and(|mode| mode != "native-missing"),
+                        ..Default::default()
                     },
                 );
             }

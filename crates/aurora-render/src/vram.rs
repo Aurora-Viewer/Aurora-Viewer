@@ -22,6 +22,20 @@
 //! and the viewer could stay past the budget with its textures lowered.
 //! They now give their memory back as they go, and the texture budget
 //! counts `usage` (scene/texture_budget.rs in the viewer).
+//!
+//! The budget given out is the lowest the driver reported over the last
+//! minute ([`BudgetFloor`]): a drop counts at once, a rise once it has held
+//! for [`BUDGET_WINDOW`]. The driver's figure follows the viewer's own
+//! usage: on the grid (RTX 5070, 12 GB, a busy region) it read 10.3 GB
+//! while the textures were loaded and 11.2 GB as soon as they were lowered
+//! (8.4 and 11.2 GB with a second viewer open), so the texture target swung
+//! between 2.7 and 4.9 GB, the pressure went 0 -> 1 -> 0 every few seconds
+//! to minutes, and thousands of textures were lowered and loaded again each
+//! time (10,219 in 40 s, #1557).
+//!
+//! Past the budget the viewer has only its textures to give back: two
+//! viewers on that card, 6.6 and 5.9 GB, overfilled it, and Windows moved
+//! memory to system RAM (GPU frames of 1 s, then a device lost).
 
 #[cfg(not(target_os = "macos"))]
 use ash::vk;
@@ -47,6 +61,36 @@ fn forced_budget() -> Option<u64> {
     })
 }
 
+/// How long a higher budget must hold before it is given out (module).
+pub const BUDGET_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The lowest budget of the last [`BUDGET_WINDOW`]: the readings that could
+/// still be the lowest, oldest first, each lower than the next (a sliding
+/// minimum, constant time per reading).
+#[derive(Debug, Default)]
+pub struct BudgetFloor {
+    readings: std::collections::VecDeque<(std::time::Instant, u64)>,
+}
+
+impl BudgetFloor {
+    /// Take the driver's figure of `now`; the budget to give out.
+    pub fn update(&mut self, raw: u64, now: std::time::Instant) -> u64 {
+        while self.readings.back().is_some_and(|&(_, b)| b >= raw) {
+            self.readings.pop_back();
+        }
+        self.readings.push_back((now, raw));
+        while self
+            .readings
+            .front()
+            .is_some_and(|&(t, _)| now.saturating_duration_since(t) > BUDGET_WINDOW)
+        {
+            self.readings.pop_front();
+        }
+        // (the reading just pushed is always there)
+        self.readings.front().map_or(raw, |&(_, b)| b)
+    }
+}
+
 /// Reads [`VideoMemory`] from the adapter. A physical device query: it takes
 /// no lock of the device and may run while the render thread draws.
 pub struct VideoMemoryProbe {
@@ -54,7 +98,12 @@ pub struct VideoMemoryProbe {
     /// Index of the largest device-local heap, when the driver reports
     /// budgets.
     heap: Option<usize>,
+    /// The budget given out, and the last one logged.
+    floor: parking_lot::Mutex<(BudgetFloor, u64)>,
 }
+
+/// A change of the budget given out worth a log line.
+const BUDGET_LOG_STEP: u64 = 256 << 20;
 
 /// Where the figures come from, for the log.
 #[cfg(not(target_os = "macos"))]
@@ -73,12 +122,32 @@ impl VideoMemoryProbe {
             ),
             None => log::info!("GPU memory budget: not reported by the driver (texture memory follows its setting only)"),
         }
-        VideoMemoryProbe { adapter, heap }
+        VideoMemoryProbe {
+            adapter,
+            heap,
+            floor: parking_lot::Mutex::new((BudgetFloor::default(), 0)),
+        }
     }
 
-    /// The figures of the moment; None when the driver does not report them.
+    /// The figures of the moment, the budget the lowest of the last minute
+    /// (module); None when the driver does not report them.
     pub fn read(&self, device: &wgpu::Device) -> Option<VideoMemory> {
-        let (budget, usage) = Self::query(&self.adapter, self.heap?)?;
+        let (raw, usage) = Self::query(&self.adapter, self.heap?)?;
+        let budget = {
+            let mut floor = self.floor.lock();
+            let budget = floor.0.update(raw, std::time::Instant::now());
+            if budget.abs_diff(floor.1) >= BUDGET_LOG_STEP {
+                floor.1 = budget;
+                log::info!(
+                    "GPU memory budget: {} MB given out, the lowest of the last {} s ({} MB reported now, {} MB used)",
+                    budget >> 20,
+                    BUDGET_WINDOW.as_secs(),
+                    raw >> 20,
+                    usage >> 20
+                );
+            }
+            budget
+        };
         let budget = forced_budget().unwrap_or(budget);
         // (wgpu's counters: a few atomics, no lock; every buffer counts,
         // those in system memory too, a few hundred MB at most)
@@ -158,5 +227,59 @@ impl VideoMemoryProbe {
         let device = hal.raw_device();
         let budget = device.recommendedMaxWorkingSetSize();
         (budget > 0).then_some((budget, device.currentAllocatedSize() as u64))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    const MB: u64 = 1 << 20;
+
+    #[test]
+    fn a_drop_counts_at_once_and_a_rise_once_it_has_held_a_minute() {
+        let t0 = Instant::now();
+        let at = |s: u64| t0 + Duration::from_secs(s);
+        let mut f = BudgetFloor::default();
+        assert_eq!(f.update(11_174 * MB, at(0)), 11_174 * MB);
+        // a second viewer comes: at once
+        assert_eq!(f.update(8_385 * MB, at(1)), 8_385 * MB);
+        assert_eq!(f.update(3_835 * MB, at(2)), 3_835 * MB);
+        // it leaves: the low figure holds for the window
+        assert_eq!(f.update(11_174 * MB, at(3)), 3_835 * MB);
+        assert_eq!(f.update(11_174 * MB, at(62)), 3_835 * MB);
+        // a minute after the last low reading, the higher one
+        assert_eq!(f.update(11_174 * MB, at(63)), 11_174 * MB);
+    }
+
+    #[test]
+    fn a_budget_swinging_every_few_seconds_gives_out_its_low_side() {
+        // the grid's figures with a second viewer open: 8.4 GB with the
+        // textures loaded, 11.2 GB once they are lowered, every 5 s
+        let t0 = Instant::now();
+        let mut f = BudgetFloor::default();
+        let mut given = Vec::new();
+        for i in 0..120u64 {
+            let raw = if (i / 5) % 2 == 0 { 8_385 * MB } else { 11_174 * MB };
+            given.push(f.update(raw, t0 + Duration::from_secs(i)));
+        }
+        assert!(given.iter().all(|&b| b == 8_385 * MB), "{given:?}");
+    }
+
+    #[test]
+    fn the_floor_follows_the_lowest_reading_still_in_the_window() {
+        let t0 = Instant::now();
+        let at = |s: u64| t0 + Duration::from_secs(s);
+        let mut f = BudgetFloor::default();
+        f.update(9_000 * MB, at(0));
+        f.update(7_000 * MB, at(10));
+        f.update(8_000 * MB, at(20));
+        assert_eq!(f.update(10_000 * MB, at(30)), 7_000 * MB);
+        // 7 GB out of the window: the 8 GB of t = 20 is the lowest left
+        assert_eq!(f.update(10_000 * MB, at(71)), 8_000 * MB);
+        assert_eq!(f.update(10_000 * MB, at(81)), 10_000 * MB);
+        // the readings kept stay few: each lower than the next
+        assert!(f.readings.len() <= 2, "{:?}", f.readings);
     }
 }

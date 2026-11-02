@@ -10,7 +10,7 @@ pub(super) fn allowed(inv: &Inventory, ids: &[Uuid], prefs: &InventoryPreference
     }
     let holds_worn = rules::worn_ancestors(inv, &facts.worn);
     ids.iter()
-        .all(|id| rules::movable(inv, *id, &prefs.protected) && !holds_worn.contains(id))
+        .all(|id| rules::removable(inv, *id, &prefs.protected) && !holds_worn.contains(id))
 }
 
 pub(super) fn request(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, facts: &Facts) {

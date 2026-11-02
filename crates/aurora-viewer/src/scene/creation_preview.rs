@@ -223,7 +223,7 @@ mod tests {
         }
         let settings = BuildSettings::default();
         assert!(Placement::new(&world, &settings, Vec3::NAN).is_none());
-        // unlimited by default; LimitSelectDistance refuses a far surface
+        // LimitSelectDistance refuses a far surface
         let far = point + Vec3::X * (crate::build::MAX_SELECT_DISTANCE + 10.0);
         let limited = BuildSettings {
             limit_select_distance: true,

@@ -129,8 +129,8 @@ windows-sys = { version = "0.61.2", features = ["Win32_UI_Input", "Win32_UI_Inpu
 windows = { version = "0.62.2", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications", "Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_System_Com", "Win32_System_Ole", "Win32_System_Registry", "Win32_System_Variant", "Win32_System_WinRT", "Win32_System_Wmi"] }
 
 [target.'cfg(unix)'.dependencies]
-# getenv without allocating, for the allocator's choice (allocator.rs); already
-# in the tree
+# getenv without allocating, for the allocator's choice (allocator.rs), and
+# the signals that end a session on Linux (crash/native.rs); already in the tree
 libc = "0.2.190"
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -143,6 +143,12 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std"
 # The freedesktop notification service (system_notify.rs), over the session
 # bus; already in the tree through keyring's Secret Service store
 zbus = "5.19.0"
+# The keyboard layout (keybinds/layout/linux.rs): the XKB keymap of the
+# Wayland compositor or the X server. All three already in the tree through
+# winit, with its features (MIT, MIT / Apache-2.0, MIT)
+wayland-client = "0.31.15"
+x11rb = { version = "0.13.2", features = ["allow-unsafe-code", "dl-libxcb"] }
+xkbcommon-dl = { version = "0.4.2", features = ["x11"] }
 
 # icon and version block of aurora-viewer.exe (build.rs; runs rc.exe of the
 # Windows SDK). Without `toml`: nothing is read from Cargo.toml.
@@ -150,6 +156,11 @@ zbus = "5.19.0"
 # the bundled dictionaries, compressed into the exe (build.rs)
 flate2 = "1.1.10"
 winresource = { version = "0.1.34", default-features = false }
+
+[features]
+# The Khronos OpenXR loader built into the exe (needs CMake): the published
+# Windows viewer (release.yml); local builds load the runtime's loader.
+xr-static-loader = ["aurora-render/xr-static-loader"]
 
 [lints]
 workspace = true

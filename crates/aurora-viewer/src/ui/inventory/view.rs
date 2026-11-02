@@ -292,6 +292,7 @@ pub struct InventoryPreferences {
     pub upload_folders: [Uuid; 5],
     pub sort: Sort,
     pub received_sort: Sort,
+    pub recent_sort: Sort,
     pub search_field: SearchField,
     pub search_trash: bool,
     pub search_library: bool,
@@ -328,6 +329,10 @@ impl Default for InventoryPreferences {
             protected: HashSet::new(),
             upload_folders: [Uuid::nil(); 5],
             sort: Sort::default(),
+            recent_sort: Sort {
+                folders_by_name: false,
+                ..Sort::default()
+            },
             received_sort: Sort {
                 folders_by_name: false,
                 ..Sort::default()
@@ -385,11 +390,13 @@ impl Default for ExplorerPreferences {
 
 impl InventoryPreferences {
     // LLPanelMainInventory::setSortBy saves the active panel's order
-    // (indra/newview/llpanelmaininventory.cpp). Received has its own order;
-    // the other tabs retain Aurora's shared main-inventory preference.
+    // (indra/newview/llpanelmaininventory.cpp). Recent and Received each
+    // keep their own order; other tabs share the main-inventory preference.
     pub(super) fn sort_for(&self, tab: usize) -> Sort {
         if tab == super::RECEIVED_TAB {
             self.received_sort
+        } else if tab == 2 {
+            self.recent_sort
         } else {
             self.sort
         }
@@ -398,6 +405,8 @@ impl InventoryPreferences {
     pub(super) fn sort_for_mut(&mut self, tab: usize) -> &mut Sort {
         if tab == super::RECEIVED_TAB {
             &mut self.received_sort
+        } else if tab == 2 {
+            &mut self.recent_sort
         } else {
             &mut self.sort
         }
@@ -1077,8 +1086,10 @@ pub(super) fn within(inv: &Inventory, roots: &[Uuid]) -> IdSet {
 
 fn compare(a: &Entry, b: &Entry, sort: Sort) -> Ordering {
     // Viewer support folders stay discoverable above system categories,
-    // including in date order, as for Firestorm's support folder.
-    let support = |e: &Entry| e.folder && !e.library && matches!(e.name.as_str(), "#aurora" | "#firestorm");
+    // including in date order, as for Firestorm's support folder. #RLV
+    // joins them like the Legacy Viewer's FT_RLV (LLFolderBridge::getSortGroup
+    // with FSSortFSFoldersToTop, llinventorybridge.cpp).
+    let support = |e: &Entry| e.folder && !e.library && matches!(e.name.as_str(), "#aurora" | "#firestorm" | "#rlv");
     let pinned = support(b).cmp(&support(a));
     if pinned != Ordering::Equal {
         return pinned;
@@ -1188,6 +1199,82 @@ mod tests {
             ..Default::default()
         }
     }
+
+    #[test]
+    fn outfit_readback_replaces_visible_links_across_repeated_attach_detach_cycles() {
+        use crate::world::appearance;
+        use aurora_net::inventory::FolderContents;
+
+        let (mut inv, _) = fixture();
+        let agent = id(99);
+        appearance::seed_demo(&mut inv, agent);
+        let cof = appearance::cof(&inv).expect("COF");
+        let target = id(717);
+        let saved = inv.folders[&id(704)].items.clone();
+        // An older viewer has already lost these links from the folder's
+        // child list, while the visible inventory still indexes their parent.
+        let old = inv.folders[&cof]
+            .items
+            .iter()
+            .find_map(|id| inv.items.get(id).filter(|it| it.asset_id == target))
+            .expect("worn attachment link")
+            .clone();
+        for _ in 0..2 {
+            let ghost = InvItem {
+                id: Uuid::new_v4(),
+                ..old.clone()
+            };
+            inv.items.insert(ghost.id, ghost);
+        }
+        let mut view = ViewCache::default();
+        for worn in [false, true, false, true, false, true] {
+            let action = if worn {
+                appearance::Action::Add(target)
+            } else {
+                appearance::Action::Remove(target)
+            };
+            let (change, _) = appearance::plan(&inv, action, &HashMap::new()).expect("outfit action");
+            // Real AIS readback replaces link UUIDs. Do not use demo_replace,
+            // which used to delete the old records before applying the reply.
+            let items = change
+                .links
+                .iter()
+                .map(|link| InvItem {
+                    id: Uuid::new_v4(),
+                    parent: cof,
+                    name: link.name.clone(),
+                    desc: link.desc.clone(),
+                    asset_type: if link.folder { 25 } else { 24 },
+                    inv_type: link.inv_type,
+                    asset_id: link.target,
+                    owner: agent,
+                    ..Default::default()
+                })
+                .collect();
+            inv.apply(vec![FolderContents {
+                folder_id: cof,
+                owner_id: agent,
+                version: inv.folders[&cof].info.version + 1,
+                folders: Vec::new(),
+                items,
+            }]);
+            view.prepare(&inv, Sort::default());
+            let rows: Vec<_> = view.children_iter(cof, true, inv.lib_root).collect();
+            assert_eq!(
+                rows.len(),
+                inv.folders[&cof].items.len(),
+                "the tree must reflect the current readback"
+            );
+            assert_eq!(
+                rows.iter().filter(|id| inv.items[*id].asset_id == target).count(),
+                usize::from(worn)
+            );
+            assert!(inv.items.contains_key(&target), "keep the inventory original");
+            assert_eq!(inv.folders[&id(704)].items, saved, "keep the saved outfit");
+            assert!(saved.iter().all(|id| inv.items.contains_key(id)));
+        }
+    }
+
     fn fixture() -> (Inventory, Facts) {
         let mut inv = Inventory {
             root: id(1),
@@ -1347,6 +1434,7 @@ mod tests {
         let root = inv.root;
         folder(&mut inv, 30, root, -1, "#Aurora");
         folder(&mut inv, 31, root, -1, "#Firestorm");
+        folder(&mut inv, 32, root, -1, "#RLV");
         for by_date in [false, true] {
             for system_first in [false, true] {
                 let prefs = InventoryPreferences {
@@ -1359,7 +1447,7 @@ mod tests {
                 };
                 let mut cache = ViewCache::default();
                 cache.prepare(&inv, prefs.sort);
-                assert_eq!(&cache.children(root, &prefs, inv.lib_root)[..2], &[id(30), id(31)]);
+                assert_eq!(&cache.children(root, &prefs, inv.lib_root)[..3], &[id(30), id(31), id(32)]);
             }
         }
     }
@@ -1715,6 +1803,13 @@ mod tests {
             serde_json::from_str(r#"{"protected":["00000000-0000-0000-0000-000000000002"]}"#).expect("old preferences");
         assert!(prefs.protected.contains(&id(2)));
         assert_eq!(prefs.sort, Sort::default());
+        assert_eq!(
+            prefs.recent_sort,
+            Sort {
+                folders_by_name: false,
+                ..Sort::default()
+            }
+        );
         assert!(prefs.received_sort.by_date);
         assert!(!prefs.received_sort.folders_by_name);
         assert!(prefs.received_sort.system_first);
@@ -1766,6 +1861,65 @@ mod tests {
                 system_first: true
             }
         );
+    }
+
+    #[test]
+    fn recent_sort_is_independent_and_survives_reload() {
+        let mut prefs: InventoryPreferences =
+            serde_json::from_str(r#"{"sort":{"by_date":false,"folders_by_name":false,"system_first":false}}"#).expect("old preferences");
+        assert_eq!(
+            prefs.recent_sort,
+            Sort {
+                folders_by_name: false,
+                ..Sort::default()
+            }
+        );
+        let main = prefs.sort;
+        let received = prefs.received_sort;
+        *prefs.sort_for_mut(2) = Sort {
+            by_date: false,
+            folders_by_name: true,
+            system_first: false,
+        };
+        let saved = serde_json::to_string(&prefs).expect("save");
+        let restored: InventoryPreferences = serde_json::from_str(&saved).expect("reload");
+        assert_eq!(restored, prefs);
+        assert_eq!(restored.sort_for(2), prefs.recent_sort);
+        assert_eq!(restored.sort, main);
+        assert_eq!(restored.received_sort, received);
+    }
+
+    #[test]
+    fn recent_sort_refreshes_results_without_changing_other_views() {
+        let (inv, facts) = fixture();
+        let mut prefs = InventoryPreferences {
+            last_logout: 1,
+            ..Default::default()
+        };
+        let mut cache = ViewCache::default();
+        let run = |cache: &mut ViewCache, prefs: &InventoryPreferences, tab| {
+            cache.search(&inv, inv.root, "", prefs, &Filters::default(), tab, None, &facts, facts.agent, 1000);
+            cache
+                .results
+                .iter()
+                .copied()
+                .filter(|id| [self::id(10), self::id(11)].contains(id))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(run(&mut cache, &prefs, 2), [id(11), id(10)]);
+        prefs.recent_sort.by_date = false;
+        assert_eq!(run(&mut cache, &prefs, 2), [id(10), id(11)]);
+        assert_eq!(run(&mut cache, &prefs, 0), [id(11), id(10)]);
+        let built = cache.built;
+        prefs.recent_sort.system_first = false;
+        assert_eq!(run(&mut cache, &prefs, 0), [id(11), id(10)]);
+        assert_eq!(cache.built, built, "Recent changes do not rebuild All");
+        assert_eq!(run(&mut cache, &prefs, 2), [id(10), id(11)]);
+        let built = cache.built;
+        prefs.sort.by_date = false;
+        prefs.received_sort.by_date = false;
+        assert_eq!(run(&mut cache, &prefs, 2), [id(10), id(11)]);
+        assert_eq!(cache.built, built, "other tabs do not rebuild Recent");
     }
 
     #[test]

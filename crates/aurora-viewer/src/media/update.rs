@@ -208,7 +208,6 @@ impl MediaManager {
             e.idx = idx;
         }
         self.slot_ids.insert(idx, o.full_id);
-        e.owner = o.owner_id;
         e.hud = hud(idx);
         e.on_other_avatar = on_other_avatar;
         e.on_own_avatar = on_own_avatar;
@@ -280,6 +279,13 @@ impl MediaManager {
                 continue;
             }
             let from_self = om.changed_by == world.agent_id && !om.changed_by.is_nil();
+            // LLVOVolume::hasMediaPermission / LLViewerObject::permYouOwner:
+            // use the root's simulator flag. ObjectUpdate.OwnerID is only
+            // reliable for sounds/particles and may be null on owned HUDs.
+            let you_own = world
+                .objects
+                .get(crate::build::root_of(world, om.idx))
+                .is_some_and(|o| o.update_flags & crate::ui::context::flags::OBJECT_YOU_OWNER != 0);
             for (fi, entry) in data.faces.iter().enumerate() {
                 let Some(entry) = entry else {
                     continue;
@@ -292,7 +298,7 @@ impl MediaManager {
                     face: fi as u8,
                 };
                 desired.insert(key);
-                let may_navigate = entry.may_navigate(om.owner == world.agent_id);
+                let may_navigate = entry.may_navigate(you_own);
                 if let Some(m) = self.impls.iter_mut().find(|m| m.key == key) {
                     m.may_navigate = may_navigate;
                     if m.entry.as_ref() != Some(entry) {
@@ -538,7 +544,7 @@ impl MediaManager {
                     continue;
                 };
                 self.last_create = now;
-                match MediaPlugin::launch(paths, plugin_name, m.width, m.height, &browser, "") {
+                match MediaPlugin::launch_in_world(paths, plugin_name, m.width, m.height, &browser, "") {
                     Ok(mut p) => {
                         p.set_auto_scale(m.auto_scale);
                         p.set_loop(m.looping);
@@ -989,6 +995,105 @@ mod tests {
 
     fn track(m: &mut MediaManager, w: &mut World) {
         m.track_objects(w, &|_| false, m.last_refresh);
+    }
+
+    fn reconcile(m: &mut MediaManager, w: &World) {
+        let view = CullView::new(Mat4::IDENTITY, Vec3::ZERO, 720.0, 1.0);
+        let settings = MediaSettings::default();
+        m.reconcile_prims(
+            w,
+            &MediaFrame {
+                view: &view,
+                camera: Vec3::ZERO,
+                settings: &settings,
+                autoplay: true,
+                channel_volume: 1.0,
+                agent_speed: 0.0,
+                window_focused: true,
+                net: None,
+                cache_dir: std::path::Path::new(""),
+                language: "en",
+            },
+        );
+    }
+
+    #[test]
+    fn prim_media_owner_navigation_uses_simulator_rights_not_owner_uuid_or_controls() {
+        use crate::ui::context::flags::OBJECT_YOU_OWNER;
+
+        let (mut w, screen) = world();
+        w.agent_id = crate::demo::DEMO_AGENT;
+        let idx = w.objects.index_of_uuid(&screen).expect("screen");
+        let key = MediaKey::Prim { object: screen, face: 0 };
+        let mut m = MediaManager::default();
+        for owned in [true, false] {
+            for owner in [Uuid::nil(), w.agent_id, Uuid::from_u128(42)] {
+                let o = w.objects.get_mut(idx).expect("screen");
+                o.owner_id = owner;
+                o.update_flags = if owned { OBJECT_YOU_OWNER } else { 0 };
+                for (interact, expected) in [(entry::PERM_OWNER, owned), (entry::PERM_ANYONE, true), (0, false)] {
+                    for controls in [0, 7] {
+                        m.set_object_media(
+                            screen,
+                            ObjectMediaData {
+                                version: 1,
+                                faces: vec![Some(MediaEntry {
+                                    current_url: "https://example.invalid/home".into(),
+                                    perms_interact: interact,
+                                    perms_control: controls,
+                                    ..Default::default()
+                                })],
+                            },
+                            true,
+                        );
+                        track(&mut m, &mut w);
+                        reconcile(&mut m, &w);
+                        assert_eq!(
+                            m.find(&key).expect("media").may_navigate,
+                            expected,
+                            "owned={owned}, owner={owner}, interact={interact}, controls={controls}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prim_media_child_navigation_follows_current_root_rights_without_media_updates() {
+        use crate::ui::context::flags::OBJECT_YOU_OWNER;
+
+        let (mut w, screen) = world();
+        w.agent_id = crate::demo::DEMO_AGENT;
+        let idx = w.objects.index_of_uuid(&screen).expect("screen");
+        let (root, _) = plain(&w);
+        let own_avatar = w.objects.index_of_uuid(&w.agent_id).expect("our avatar");
+        let own_local = w.objects.get(own_avatar).expect("our avatar").key.local_id;
+        let root_local = w.objects.get(root).expect("root").key.local_id;
+        let key = MediaKey::Prim { object: screen, face: 0 };
+        let mut m = MediaManager::default();
+        m.demo_entry(screen, 0, "https://example.invalid/home");
+        let data = m.local_entries.get_mut(&screen).expect("local data");
+        let entry = data.faces[0].as_mut().expect("media entry");
+        entry.perms_interact = entry::PERM_OWNER;
+        entry.perms_control = 0;
+        let child = w.objects.get_mut(idx).expect("screen");
+        child.parent_id = root_local;
+        child.owner_id = Uuid::nil();
+        child.update_flags = 0;
+        w.objects.get_mut(own_avatar).expect("our avatar").update_flags = OBJECT_YOU_OWNER;
+        for worn in [false, true] {
+            w.objects.get_mut(root).expect("root").parent_id = if worn { own_local } else { 0 };
+            for owned in [true, false, true] {
+                let o = w.objects.get_mut(root).expect("root");
+                o.owner_id = Uuid::nil();
+                o.update_flags = if owned { OBJECT_YOU_OWNER } else { 0 };
+                w.objects.get_mut(idx).expect("screen").update_flags = if owned { 0 } else { OBJECT_YOU_OWNER };
+                track(&mut m, &mut w);
+                reconcile(&mut m, &w);
+                assert_eq!(m.find(&key).expect("media").may_navigate, owned, "worn={worn}, owned={owned}");
+            }
+        }
     }
 
     /// A demo object without media faces.

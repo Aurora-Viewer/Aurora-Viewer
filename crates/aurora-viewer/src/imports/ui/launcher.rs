@@ -1,140 +1,133 @@
-//! Compact type chooser requested for the configurable import shortcut.
-//! File filters and uploads keep the Firestorm llviewermenufile.cpp paths
-//! already implemented by Imports; the chooser is an Aurora UI extension.
+//! Compact import entry point. Typed pickers follow llviewermenufile.cpp;
+//! the movable icon strip and shared upload queue are Aurora additions.
 
 use super::*;
 
-#[cfg(test)]
-mod tests;
-
 pub(crate) const WINDOW: &str = "import_launcher";
-const SETTINGS: &str = "import_settings";
 
-pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, prefs: &mut Preferences) {
-    if !imports.launcher_open && !imports.settings_open {
+/// Icon-only actions retain the shared button's styling and accessible name.
+fn button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, kind: ActionKind, enabled: bool) -> egui::Response {
+    let response = action_button_if(ui, p, icon, "", kind, Vec2::splat(32.0), enabled);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    response
+}
+
+pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, actions: &mut Vec<Action>) {
+    if !imports.launcher_open || widgets::interface_hidden(ctx) {
         return;
     }
-    if (imports.settings_open || imports.launcher_open)
-        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-    {
-        if imports.settings_open {
-            imports.settings_open = false;
-        } else {
-            imports.launcher_open = false;
-        }
+    if !imports.any_window_open() && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        imports.launcher_open = false;
+        return;
     }
     let mut open = imports.launcher_open;
     let mut picked = None;
     let mut settings = false;
-    // the hidden interface hides the strip too (it stays open)
-    if open && !widgets::interface_hidden(ctx) {
-        let work = crate::ui::layout::work_area(ctx);
-        let room = crate::ui::layout::move_area(ctx);
-        let top = egui::pos2(room.center().x, work.top() + crate::ui::layout::GAP);
-        widgets::toolstrip(ctx, WINDOW, egui::Align2::CENTER_TOP, top, |ui| {
+    let work = crate::ui::layout::work_area(ctx);
+    let room = crate::ui::layout::move_area(ctx);
+    let top = egui::pos2(room.center().x, work.top() + crate::ui::layout::GAP);
+    let visible = imports.open && !widgets::floater_minimized(ctx, super::WINDOW);
+    widgets::toolstrip(ctx, WINDOW, egui::Align2::CENTER_TOP, top, |ui| {
+        widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let (grip, response) = ui.allocate_exact_size(Vec2::new(16.0, 32.0), egui::Sense::hover());
+                widgets::paint_glyph(ui.painter(), "grip-vertical", grip.center(), 14.0, p.muted_dim);
+                response
+                    .on_hover_cursor(egui::CursorIcon::Grab)
+                    .on_hover_text(aurora_i18n::tr!("import-icon-bar"));
                 for (choice, icon, formats) in [
                     (Choice::Texture, "photo-filled", "PNG · JPG · TGA · BMP · JPEG 2000"),
                     (Choice::Sound, "file-music-filled", "WAV"),
                     (Choice::Animation, "run", "BVH · ANIM"),
                     (Choice::Material, "droplet-filled", "glTF · GLB"),
                     (Choice::Mesh, "cube-3d-sphere", "DAE · glTF · GLB"),
-                    (Choice::Bulk, "files-filled", ""),
+                    (Choice::Bulk, "folder-open-filled", ""),
                     (Choice::Local, "eye-filled", ""),
                 ] {
-                    let response = widgets::glass_action_icon(ui, p, icon, choice.label(), Vec2::splat(36.0), p.violet_light);
-                    let tip = if formats.is_empty() {
-                        choice.label().to_owned()
+                    if choice == Choice::Bulk {
+                        ui.add_space(6.0);
+                    }
+                    let enabled = choice != Choice::Bulk || (!imports.busy() && imports.pending_files.is_none() && !imports.confirm);
+                    let label = if choice == Choice::Bulk {
+                        aurora_i18n::tr!("import-launcher-folder")
                     } else {
-                        format!("{}\n{formats}", choice.label())
+                        choice.label()
+                    };
+                    let shown = imports.window_open(choice) && !widgets::floater_minimized(ctx, choice.window_id());
+                    let kind = if shown && (choice != Choice::Bulk || imports.tab != Tab::Permissions) {
+                        ActionKind::Primary
+                    } else {
+                        ActionKind::Flat
+                    };
+                    let response = button(ui, p, icon, label, kind, enabled);
+                    #[cfg(test)]
+                    ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("import_launcher_choice", choice as usize)), response.rect));
+                    let tip = if formats.is_empty() {
+                        label.to_owned()
+                    } else {
+                        format!("{label}\n{formats}")
                     };
                     if response.on_hover_text(tip).clicked() {
                         picked = Some(choice);
                     }
                 }
-                settings = widgets::glass_action_icon(
-                    ui,
-                    p,
-                    "settings-filled",
-                    aurora_i18n::tr!("import-launcher-settings"),
-                    Vec2::splat(36.0),
-                    p.muted,
-                )
-                .on_hover_text(aurora_i18n::tr!("import-settings-title"))
-                .clicked();
-                if widgets::close_button(ui, p).clicked() {
+                ui.add_space(6.0);
+                let kind = if visible && imports.tab == Tab::Permissions {
+                    ActionKind::Primary
+                } else {
+                    ActionKind::Flat
+                };
+                settings = button(ui, p, "settings-filled", aurora_i18n::tr!("import-launcher-settings"), kind, true)
+                    .on_hover_text(aurora_i18n::tr!("import-settings-title"))
+                    .clicked();
+                if button(ui, p, "x", aurora_i18n::tr!("common-close"), ActionKind::FlatDanger, true)
+                    .on_hover_text(aurora_i18n::tr!("common-close"))
+                    .clicked()
+                {
                     open = false;
                 }
             });
         });
-    }
+    });
     imports.launcher_open = open;
     if let Some(choice) = picked {
-        if imports.open && imports.window_choice() == choice {
-            imports.open = false;
-            imports.choose_files_on_open = false;
+        if choice == Choice::Bulk {
+            imports.select_type(Choice::Bulk);
+            imports.type_filters = [true; 5];
+            imports.tab = Tab::Batch;
+            imports.open_window(ctx);
+            actions.push(Action::Folder);
         } else {
-            let has_files = imports.entries.iter().any(|entry| choice.accepts(entry));
-            if has_files {
-                imports.open(choice);
-                imports.choose_files_on_open = false;
-            } else {
-                imports.open_file_picker(choice);
+            imports.open_type_window(ctx, choice);
+            if !imports.busy()
+                && imports.pending_files.is_none()
+                && !imports.confirm
+                && !imports.entries.iter().any(|entry| choice.accepts(entry))
+            {
+                actions.push(Action::Choose(choice));
             }
-            widgets::open_floater(ctx, choice.window_id(), &mut imports.open);
-            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(choice.window_id())));
         }
     }
     if settings {
-        if imports.settings_open {
-            imports.settings_open = false;
-        } else {
-            widgets::open_floater(ctx, SETTINGS, &mut imports.settings_open);
-        }
-    }
-    show_settings(ctx, p, imports, prefs);
-    if imports.launcher_open && imports.settings_open {
-        keep_accessible(ctx, SETTINGS);
+        imports.tab = Tab::Permissions;
+        imports.open_window(ctx);
     }
 }
 
-pub(super) fn keep_accessible(ctx: &egui::Context, window: &str) {
-    if bounds(ctx, WINDOW)
-        .zip(bounds(ctx, window))
-        .is_some_and(|(bar, other)| bar.intersects(other))
+pub(super) fn keep_accessible(ctx: &egui::Context, imports: &Imports) {
+    if imports.launcher_open
+        && ctx.memory(|memory| {
+            memory.area_rect(egui::Id::unique(WINDOW)).is_some_and(|bar| {
+                std::iter::once(Choice::Bulk).chain(windows::TYPES).any(|choice| {
+                    imports.window_open(choice)
+                        && memory
+                            .area_rect(egui::Id::unique(choice.window_id()))
+                            .is_some_and(|window| bar.intersects(window))
+                })
+            })
+        })
     {
-        // On a narrow viewport there may be no room beside the bar: its
-        // type buttons, toggle and close action must remain reachable.
         ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(WINDOW)));
     }
-}
-
-fn bounds(ctx: &egui::Context, id: &str) -> Option<egui::Rect> {
-    let state = egui::AreaState::load(ctx, egui::Id::unique(id))?;
-    Some(egui::Rect::from_min_size(state.left_top_pos(), state.size?))
-}
-
-fn show_settings(ctx: &egui::Context, p: &Palette, imports: &mut Imports, prefs: &mut Preferences) {
-    if !imports.settings_open {
-        return;
-    }
-    let mut open = imports.settings_open;
-    let mut floater = Floater::new(
-        SETTINGS,
-        aurora_i18n::tr!("import-settings-title"),
-        IMPORT_POSITION,
-        Vec2::new(620.0, 470.0),
-    );
-    floater.min_size = Vec2::new(600.0, 430.0);
-    floater.show(ctx, p, &mut open, |ui| {
-        egui::ScrollArea::vertical()
-            .id_salt("import_defaults")
-            .max_height(ui.available_height())
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                permission_panel::show(ui, p, prefs);
-            });
-    });
-    imports.settings_open = open;
 }

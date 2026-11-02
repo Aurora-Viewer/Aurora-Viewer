@@ -291,7 +291,7 @@ impl ThumbnailUi {
                                     items.sort_by_key(|it| order.rank(it.id));
                                     for it in items.into_iter().take(500) {
                                         ui.horizontal(|ui| {
-                                            item_type_icon(ui, icons, it, p);
+                                            resolved_item_type_icon(ui, icons, &world.inventory, it, p);
                                             if ui.selectable_label(self.selected == Some(it.asset_id), &it.name).clicked() {
                                                 self.selected = Some(it.asset_id);
                                             }
@@ -343,7 +343,7 @@ pub(super) fn image(inv: &Inventory, item: Uuid) -> Uuid {
 }
 pub(super) fn type_name(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &Inventory, item: Uuid) {
     match inv.items.get(&item) {
-        Some(it) => item_type_icon(ui, icons, it, p),
+        Some(it) => resolved_item_type_icon(ui, icons, inv, it, p),
         None => icon(ui, icons, "Inv_FolderClosed", p),
     }
     ui.label(RichText::new(rules::name(inv, item)).color(p.ink));
@@ -452,7 +452,7 @@ fn picker_folder(
                     && usable(inv, it)
                 {
                     ui.horizontal(|ui| {
-                        item_type_icon(ui, icons, it, p);
+                        resolved_item_type_icon(ui, icons, inv, it, p);
                         if ui.selectable_label(*selected == Some(it.asset_id), &it.name).clicked() {
                             *selected = Some(it.asset_id);
                         }

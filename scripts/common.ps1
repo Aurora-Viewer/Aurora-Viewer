@@ -91,22 +91,45 @@ function Sync-BuildCache([string]$Root) {
 # Several agents running check.ps1 at once each take every core, and all of
 # them end up slower than one after the other. A heavy build takes one of
 # AURORA_BUILD_SLOTS slots (2 by default) and waits for a free one. A slot is
-# a named mutex: Windows frees it if the script dies.
+# a named mutex: the OS frees it if the script dies.
+#
+# Windows waits on every slot at once. PowerShell 7 on Linux and macOS cannot:
+# WaitAny of several named mutexes throws PlatformNotSupportedException.
+# Each slot is waited on its own there (WaitOne), with the same names.
 
 function Enter-BuildSlot {
     $count = 2
     if ($env:AURORA_BUILD_SLOTS -match '^\d+$' -and [int]$env:AURORA_BUILD_SLOTS -ge 1) { $count = [int]$env:AURORA_BUILD_SLOTS }
     $slots = [Threading.Mutex[]](1..$count | ForEach-Object { New-Object Threading.Mutex($false, "Local\AuroraViewerBuildSlot$_") })
+    # $IsWindows is unset on Windows PowerShell 5.1; that edition is Windows.
+    $waitAny = ($PSVersionTable.PSEdition -eq 'Desktop') -or $IsWindows
     $waited = [Diagnostics.Stopwatch]::StartNew()
     $taken = -1
     $timeout = 0
     while ($taken -lt 0) {
         try {
-            # short waits: Ctrl+C still stops the script between two
-            $i = [Threading.WaitHandle]::WaitAny($slots, $timeout)
-            if ($i -ne [Threading.WaitHandle]::WaitTimeout) { $taken = $i }
+            if ($waitAny) {
+                # short waits: Ctrl+C still stops the script between two
+                $i = [Threading.WaitHandle]::WaitAny($slots, $timeout)
+                if ($i -ne [Threading.WaitHandle]::WaitTimeout) { $taken = $i }
+            } else {
+                $slice = 0
+                if ($timeout -gt 0) { $slice = [Math]::Max(1, [int][Math]::Floor($timeout / $slots.Count)) }
+                for ($i = 0; $i -lt $slots.Count; $i++) {
+                    try {
+                        if ($slots[$i].WaitOne($slice)) { $taken = $i; break }
+                    } catch {
+                        # this slot's holder died: it is now ours
+                        $e = $_.Exception
+                        while ($e -and -not ($e -is [Threading.AbandonedMutexException])) { $e = $e.InnerException }
+                        if (-not $e) { throw }
+                        $taken = $i
+                        break
+                    }
+                }
+            }
         } catch {
-            # a slot whose holder died: it is now ours
+            # a slot whose holder died during WaitAny: it is now ours
             $e = $_.Exception
             while ($e -and -not ($e -is [Threading.AbandonedMutexException])) { $e = $e.InnerException }
             if (-not $e) { throw }

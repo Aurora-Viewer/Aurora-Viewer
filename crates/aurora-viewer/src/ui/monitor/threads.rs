@@ -29,15 +29,20 @@ fn role(group: &str) -> &'static str {
         "aurora-cache" => tr!("monitor-thread-cache"),
         "aurora-trash" => tr!("monitor-thread-trash"),
         "aurora-inventory-cache" => tr!("monitor-thread-inventory"),
-        "aurora-chatlog" | "aurora-transcript" | "aurora-notification-history" => tr!("monitor-thread-logs"),
+        "aurora-chatlog" | "aurora-transcript" | "aurora-notification-history" | "aurora-experience-log" => tr!("monitor-thread-logs"),
         "aurora-monitor" | "aurora-probe" => tr!("monitor-thread-monitor"),
         "unnamed" => tr!("monitor-thread-unnamed"),
         _ => "",
     }
 }
 
-/// A Windows thread priority (`THREAD_PRIORITY_*`) in words.
-fn priority(p: Option<i32>) -> &'static str {
+/// A thread priority in words: Windows' levels (`THREAD_PRIORITY_*`); on
+/// Linux the nice value itself (-20 to 19, higher gives way), whose
+/// weights do not map onto Windows' levels.
+fn priority(p: Option<i32>) -> std::borrow::Cow<'static, str> {
+    if cfg!(target_os = "linux") {
+        return p.map_or("–".into(), |n| tr!("monitor-priority-nice", value = i64::from(n)).into());
+    }
     match p {
         Some(-15) => tr!("monitor-priority-idle"),
         Some(-2) => tr!("monitor-priority-lowest"),
@@ -48,6 +53,7 @@ fn priority(p: Option<i32>) -> &'static str {
         Some(15) => tr!("monitor-priority-time-critical"),
         _ => "–",
     }
+    .into()
 }
 
 pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &Snapshot) {
@@ -141,7 +147,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &Snapshot) {
                         "–".into()
                     };
                     draw::cell_text(ui, r[3], cy, &busy, true, p.muted, draw::BODY);
-                    draw::cell_text(ui, r[4], cy, priority(g.priority), false, p.muted, draw::BODY);
+                    draw::cell_text(ui, r[4], cy, &priority(g.priority), false, p.muted, draw::BODY);
                     draw::cell_text(ui, r[5], cy, role(&g.group), false, p.muted, draw::BODY);
                 }
             });

@@ -194,9 +194,7 @@ struct TextureSnapshot {
 
 impl State {
     pub fn open_item(&mut self, world: &mut World, item: Uuid) -> Option<NetCommand> {
-        if self.finish_picker(world, None) {
-            self.changed(world);
-        }
+        self.dismiss_picker();
         if self.draft.as_ref().is_some_and(|draft| draft.pending.is_some() || draft.dirty()) {
             self.open = true;
             self.close_confirmation = true;
@@ -390,13 +388,13 @@ impl State {
         true
     }
 
-    /// Match the build editor's picker transaction: every selection previews,
-    /// OK keeps it, and Cancel or the close button restores this one slot.
-    pub fn open_picker(&mut self, world: &World, slot: u32) -> bool {
-        let changed = self.finish_picker(world, None);
-        let Some(draft) = &self.draft else { return changed };
+    /// Each choice previews; closing or switching slots keeps it in the
+    /// unsaved draft. Only the picker's explicit Cancel restores the slot.
+    pub fn open_picker(&mut self, world: &World, slot: u32) {
+        self.dismiss_picker();
+        let Some(draft) = &self.draft else { return };
         if draft.pending.is_some() || !draft.can_modify(world) || !slots(draft.edited.kind).contains(&slot) {
-            return changed;
+            return;
         }
         let texture = draft.edited.textures.get(&slot).copied();
         self.picker_before = Some(TextureSnapshot {
@@ -413,7 +411,12 @@ impl State {
             matches!(draft.edited.kind, 1 | 13 | 14 | 16),
         );
         self.picker.allow_local = true;
-        changed
+    }
+
+    pub fn dismiss_picker(&mut self) {
+        self.picker.open = false;
+        self.picker_slot = None;
+        self.picker_before = None;
     }
 
     pub fn preview_picker(&mut self, world: &World, texture: Uuid) -> bool {

@@ -56,6 +56,8 @@ pub mod settings;
 pub mod shape;
 mod shown_bakes;
 mod skin_binds;
+pub mod sound_occlusion;
+pub mod sound_reverb;
 pub mod sounds;
 pub mod still_check;
 mod sync_check;
@@ -987,6 +989,10 @@ pub struct Scene {
     object_signals: FastMap<Uuid, animesh::Signals>,
     /// World and interface sounds.
     pub sounds: sounds::SoundManager,
+    /// How muffled each world sound is behind walls (sound_occlusion.rs).
+    sound_occlusion: sound_occlusion::SoundOcclusion,
+    /// The reverb of the surroundings (sound_reverb.rs).
+    sound_reverb: sound_reverb::SoundReverb,
     /// Environment settings assets (the EEP default day).
     pub settings: settings::SettingsStreamer,
     /// Landmark asset fetches done, for `World::landmarks` (the app passes
@@ -994,6 +1000,9 @@ pub struct Scene {
     pub landmark_results: Vec<aurora_net::FetchResult>,
     palette_slots: FastMap<Uuid, u32>,
     palette_free: Vec<u32>,
+    /// Palette slots handed out since the last upload: their first pose is
+    /// also their previous one (`Renderer::seed_palette_slots`).
+    palette_fresh: Vec<usize>,
     palette_count: u32,
     palettes: Vec<[[f32; 4]; 4]>,
     pub live_morphs: live_morphs::LiveMorphs,
@@ -1201,23 +1210,22 @@ fn te_record_base(model: Mat4, f: &TextureFace) -> DrawRecord {
 
 /// Texture animation fields of face `fi` of `o`, if it is animated.
 ///
-/// Face selection as LLVOVolume::animateTextures: the animation's face, or
-/// every face for ALL_SIDES (-1) and out-of-range faces. The animation
-/// combines with the texture entry's transform (`tf`).
+/// Face selection as LLVolumeGeometryManager::rebuildGeom
+/// (indra/newview/llvovolume.cpp): only faces in the TEXTURE_ANIM state use
+/// the animation matrix, and that state goes to every face for ALL_SIDES
+/// (-1), else to the animation's face alone. A face the object does not have
+/// animates nothing, so its other faces stay still. The animation combines
+/// with the texture entry's transform (`tf`).
 fn tex_anim_record(
     o: &Object,
     fi: usize,
-    face_count: usize,
     tf: &TextureFace,
     pbr: bool,
     clock: aurora_render::tex_anim::AnimClock,
 ) -> Option<aurora_render::tex_anim::RecordAnim> {
     use aurora_render::tex_anim::{TexAnimParams, TexXform, record_anim};
     let ta = o.tex_anim?;
-    if let Ok(face) = usize::try_from(ta.face)
-        && face < face_count
-        && face != fi
-    {
+    if !tex_anim_targets(ta.face, fi) {
         return None;
     }
     // At rate 0 Firestorm bakes the first frame into the texture entry
@@ -1240,6 +1248,15 @@ fn tex_anim_record(
         offset: [tf.offset_s, tf.offset_t],
     };
     record_anim(&params, clock.ms(o.tex_anim_clock.start), o.tex_anim_clock.phase, &te)
+}
+
+/// Whether a texture animation set on `anim_face` (-1 = ALL_SIDES) moves
+/// face `fi`: see [`tex_anim_record`].
+fn tex_anim_targets(anim_face: i8, fi: usize) -> bool {
+    match usize::try_from(anim_face) {
+        Ok(face) => face == fi,
+        Err(_) => true,
+    }
 }
 
 impl Scene {
@@ -1520,12 +1537,15 @@ impl Scene {
             last_origin: None,
             blend_tmp: Vec::new(),
             sounds: sounds::SoundManager::new(cache_dir_anim.clone()),
+            sound_occlusion: Default::default(),
+            sound_reverb: Default::default(),
             settings: settings::SettingsStreamer::new(cache_dir_anim.clone()),
             landmark_results: Vec::new(),
             anims,
             object_signals: Default::default(),
             palette_slots: Default::default(),
             palette_free: Vec::new(),
+            palette_fresh: Vec::new(),
             palette_count: lips.slots,
             palettes: lips.matrices.clone(),
             live_morphs: lips,
@@ -2076,6 +2096,7 @@ impl Scene {
         self.palette_slots.clear();
         self.motions.clear();
         self.palette_free.clear();
+        self.palette_fresh.clear();
         self.palette_count = self.live_morphs.slots;
         self.live_morphs.uploaded = false;
     }
@@ -2546,6 +2567,7 @@ impl Scene {
                 }
             }
             self.last_origin = origin;
+            renderer.cut_motion_history();
             for (idx, o) in world.objects.slots.iter_mut().enumerate() {
                 if let Some(o) = o {
                     o.render.needs_records = true;
@@ -2611,6 +2633,9 @@ impl Scene {
                     .is_some_and(|g| self.mat_changes.stale(&g.material_ids, g.mat_generation, mat_gen))
                 {
                     self.sets.dirty.insert(idx);
+                    if let Some((_, wearer)) = Self::wearer_avatar(world, idx) {
+                        self.bom_stale.insert(wearer);
+                    }
                 }
             }
         }
@@ -3491,6 +3516,7 @@ impl Scene {
             self.palette_count - 1
         });
         self.palette_slots.insert(owner, slot);
+        self.palette_fresh.push(slot as usize);
         slot * anim::PALETTE_JOINTS as u32
     }
 
@@ -3607,23 +3633,22 @@ impl Scene {
                 rec.spec_color = so(te_);
                 rec.legacy = [tn.rotation, tmr.rotation, te_.rotation, 0.0];
                 base_tex = m.base_color_texture.unwrap_or(Uuid::nil());
-                let mut slot_of = |id: Option<Uuid>, default: u32, g: &mut ObjGpu, s: &mut Self| -> u32 {
+                let mut slot_of = |id: Option<Uuid>, default: u32, g: &mut ObjGpu, s: &mut Self| -> (Uuid, u32) {
                     match id {
                         Some(id) if !id.is_nil() => {
+                            let (id, source) = s.face_texture(renderer, world, id, bake_wearer);
+                            if id.is_nil() {
+                                return (id, default);
+                            }
                             g.tex_ids.push(id);
-                            s.textures.acquire(renderer, id, TexSource::Asset)
+                            (id, s.textures.acquire(renderer, id, source))
                         }
-                        _ => default,
+                        _ => (Uuid::nil(), default),
                     }
                 };
-                aux_tex = [
-                    m.normal_texture.unwrap_or_default(),
-                    m.metallic_roughness_texture.unwrap_or_default(),
-                    m.emissive_texture.unwrap_or_default(),
-                ];
-                rec.tex[1] = slot_of(m.normal_texture, aurora_render::textures::FLAT_NORMAL, &mut g, self);
-                rec.tex[2] = slot_of(m.metallic_roughness_texture, aurora_render::textures::WHITE, &mut g, self);
-                rec.tex[3] = slot_of(m.emissive_texture, aurora_render::textures::WHITE, &mut g, self);
+                (aux_tex[0], rec.tex[1]) = slot_of(m.normal_texture, aurora_render::textures::FLAT_NORMAL, &mut g, self);
+                (aux_tex[1], rec.tex[2]) = slot_of(m.metallic_roughness_texture, aurora_render::textures::WHITE, &mut g, self);
+                (aux_tex[2], rec.tex[3]) = slot_of(m.emissive_texture, aurora_render::textures::WHITE, &mut g, self);
                 pbr_alpha = Some(match m.alpha_mode {
                     aurora_assets::AlphaMode::Opaque => 0,
                     aurora_assets::AlphaMode::Blend => 1,
@@ -3684,18 +3709,8 @@ impl Scene {
             }
             // texture (with bake-on-mesh redirection); without a bake wearer
             // the placeholder stays, an ordinary texture asset
-            let mut source = TexSource::Asset;
-            if let Some((bake_te, bake)) = avatar::bake_slot_for(&base_tex)
-                && let Some((aid, a)) = bake_wearer
-            {
-                match self.shown_bake(renderer, world, a, bake_te) {
-                    Some(tid) => {
-                        base_tex = tid;
-                        source = world.bake_source(aid, bake, tid);
-                    }
-                    None => base_tex = Uuid::nil(),
-                }
-            }
+            let (texture, mut source) = self.face_texture(renderer, world, base_tex, bake_wearer);
+            base_tex = texture;
             // media replaces the diffuse texture (LLViewerMediaTexture::switchTexture)
             if let Some(media_tex) = world.media.face_texture(&o.full_id, fi as u8, &base_tex) {
                 base_tex = media_tex;
@@ -3720,7 +3735,7 @@ impl Scene {
             // texture animation: written once, evaluated by the vertex shaders
             let pbr = rec.flags[0] & flags::PBR != 0;
             if plant.is_none()
-                && let Some(a) = tex_anim_record(o, fi, geom.faces.len(), &tf, pbr, renderer.anim_clock())
+                && let Some(a) = tex_anim_record(o, fi, &tf, pbr, renderer.anim_clock())
             {
                 rec.flags[0] |= flags::TEX_ANIM;
                 rec.flags[3] = a.packed;
@@ -3737,6 +3752,12 @@ impl Scene {
                 }
             }
             rec.set_hud_zoom(hud_zoom);
+            rec.set_world_blend_pick(
+                !g.hud
+                    && wearer.is_none()
+                    && matches!(pbr_alpha, None | Some(1))
+                    && matches!(legacy_alpha, None | Some(legacy_mat::alpha_mode::BLEND)),
+            );
             rec.set_anchor(anchor.map(|a| a.matrix));
             let record = renderer.records.alloc(rec);
             g.faces.push(FaceDraw {
@@ -3846,17 +3867,44 @@ impl Scene {
     }
 
     /// Bake slots (texture-entry index bits) shown by the avatar's attachments
-    /// and their child prims.
-    pub(crate) fn bom_mask(world: &World, avatar_idx: usize) -> u64 {
+    /// and their child prims. Preserve the texture-entry rule of
+    /// LLVOAvatar::updateMeshVisibility and also count rendered PBR maps so
+    /// a body using only PBR BOM does not overlap the system body.
+    pub(crate) fn bom_mask(&self, world: &World, avatar_idx: usize) -> u64 {
         let Some(av) = world.objects.get(avatar_idx) else {
             return 0;
         };
         let mut mask = 0u64;
         let mut scan = |i: usize| {
-            if let Some(te) = world.objects.get(i).and_then(|o| o.te.as_ref()) {
-                for f in &te.faces {
-                    if let Some((slot, _)) = avatar::bake_slot_for(&f.texture) {
-                        mask |= 1u64 << slot.min(63);
+            if let Some(o) = world.objects.get(i)
+                && let Some(te) = &o.te
+            {
+                for (fi, _) in te.faces.iter().enumerate() {
+                    let mut maps = [Some(o.visual_texture_face(fi).texture), None, None, None, None];
+                    if let Some(mid) = o.visual_material(fi) {
+                        let ov = world
+                            .gltf_overrides
+                            .get(&o.key)
+                            .and_then(|s| s.iter().rev().find(|(face, _)| *face as usize == fi))
+                            .map(|(_, ov)| ov)
+                            .filter(|_| o.local_appearance(fi).is_none());
+                        let status = self
+                            .materials
+                            .peek(&mid)
+                            .map_or(meshes::MaterialStatus::Pending, meshes::MaterialStatus::Loaded);
+                        let m = meshes::render_material(&status, ov);
+                        maps = [
+                            maps[0],
+                            m.base_color_texture,
+                            m.normal_texture,
+                            m.metallic_roughness_texture,
+                            m.emissive_texture,
+                        ];
+                    }
+                    for id in maps.into_iter().flatten() {
+                        if let Some((slot, _)) = avatar::bake_slot_for(&id) {
+                            mask |= 1u64 << slot.min(63);
+                        }
                     }
                 }
             }
@@ -3898,7 +3946,7 @@ impl Scene {
         // BOM_SWEEP_FRAMES in case (each time it walks every prim worn)
         let bom_mask =
             if !self.gpu[idx].is_avatar || self.bom_stale.remove(&idx) || (self.frame as usize + idx).is_multiple_of(BOM_SWEEP_FRAMES) {
-                Self::bom_mask(world, idx)
+                self.bom_mask(world, idx)
             } else {
                 self.gpu[idx].bom_mask
             };
@@ -4363,6 +4411,9 @@ impl Scene {
         let selection_faces = &self.selection_faces;
         let photo_marks = &self.photo_marks;
         let give_marks = &self.give_marks.1;
+        // the water's plane while the camera is above it: the blended
+        // faces under it are drawn before the water (blend_order::water_sides)
+        let under_water_plane = self.water.height.filter(|h| view.eye.z >= *h);
         struct Local {
             water_exclusion: Vec<DrawCmd>,
             opaque: Vec<DrawCmd>,
@@ -4370,6 +4421,8 @@ impl Scene {
             mask: Vec<DrawCmd>,
             mask2: Vec<DrawCmd>,
             blend: Vec<blend_order::BlendEntry>,
+            /// Blended faces under the water, drawn before it.
+            blend_under: Vec<blend_order::BlendEntry>,
             glow: Vec<DrawCmd>,
             glow_alpha: Vec<DrawCmd>,
             /// Draws of the avatars pictured for their impostor: (capture slot, draw, blended).
@@ -4394,6 +4447,7 @@ impl Scene {
             mask: Vec::new(),
             mask2: Vec::new(),
             blend: Vec::new(),
+            blend_under: Vec::new(),
             glow: Vec::new(),
             glow_alpha: Vec::new(),
             impostor: Vec::new(),
@@ -4588,15 +4642,25 @@ impl Scene {
                     continue;
                 }
                 match pass {
-                    Pass::Blend => l.blend.push(blend_order::BlendEntry {
-                        distance: blend_d,
-                        cmd,
-                        glow: f.glow,
-                        rigged: g.rigged,
-                        object: idx as u32,
-                        face: f.te_index,
-                        rig,
-                    }),
+                    Pass::Blend => {
+                        let entry = blend_order::BlendEntry {
+                            distance: blend_d,
+                            cmd,
+                            glow: f.glow,
+                            double_sided: f.two_sided,
+                            rigged: g.rigged,
+                            object: idx as u32,
+                            face: f.te_index,
+                            rig,
+                        };
+                        let (after, before) = blend_order::water_sides(sc.z, sr, under_water_plane);
+                        if before {
+                            l.blend_under.push(entry);
+                        }
+                        if after {
+                            l.blend.push(entry);
+                        }
+                    }
                     _ if !full => {}
                     Pass::Opaque => l.opaque.push(cmd),
                     Pass::OpaqueTwoSided => l.opaque2.push(cmd),
@@ -4615,6 +4679,7 @@ impl Scene {
             a.mask.append(&mut b.mask);
             a.mask2.append(&mut b.mask2);
             a.blend.append(&mut b.blend);
+            a.blend_under.append(&mut b.blend_under);
             a.glow.append(&mut b.glow);
             a.glow_alpha.append(&mut b.glow_alpha);
             a.impostor.append(&mut b.impostor);
@@ -4641,19 +4706,23 @@ impl Scene {
         self.lists.mask_two_sided = result.mask2;
         self.blend_tmp = result.blend;
         self.blend_tmp.extend(
-            [(self.banlines.cmds.as_slice(), false), (self.portals.cmds.as_slice(), true)]
-                .into_iter()
-                .flat_map(|(cmds, glow)| {
-                    cmds.iter().map(move |(d, c)| blend_order::BlendEntry {
-                        distance: *d,
-                        cmd: *c,
-                        glow,
-                        rigged: false,
-                        object: u32::MAX,
-                        face: 0,
-                        rig: None,
-                    })
-                }),
+            [
+                (self.banlines.cmds.as_slice(), false, false),
+                (self.portals.cmds.as_slice(), true, true),
+            ]
+            .into_iter()
+            .flat_map(|(cmds, glow, double_sided)| {
+                cmds.iter().map(move |(d, c)| blend_order::BlendEntry {
+                    distance: *d,
+                    cmd: *c,
+                    glow,
+                    double_sided,
+                    rigged: false,
+                    object: u32::MAX,
+                    face: 0,
+                    rig: None,
+                })
+            }),
         );
         self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
         self.lists.blend_depth_mode = blend_order::depth_mode();
@@ -4664,7 +4733,15 @@ impl Scene {
         };
         runs(&self.blend_tmp, self.lists.blend_depth, &mut self.lists.blend_depth_runs);
         self.lists.blend.extend(self.blend_tmp.iter().map(|e| e.cmd));
+        // under the water: back to front, the rigged first
+        // (LLDrawPoolAlpha::renderPostDeferred: forwardRender(true), then
+        // forwardRender()), all writing depth and without glow
+        let mut under = result.blend_under;
+        blend_order::sort(&mut under, true);
+        self.lists.blend_under_water.extend(under.iter().map(|e| e.cmd));
+        self.lists.blend_under_double_sided.extend(under.iter().map(|e| e.double_sided));
         self.lists.blend_glow.extend(self.blend_tmp.iter().map(|e| e.glow));
+        self.lists.blend_double_sided.extend(self.blend_tmp.iter().map(|e| e.double_sided));
         self.lists.shadow_casters.extend(result.casters);
         self.lists.reflection = result.refl;
         self.lists.probe = result.probe;
@@ -5679,6 +5756,18 @@ mod tests {
     use aurora_net::NetEvent;
 
     #[test]
+    fn texture_animation_moves_its_face_or_every_face_for_all_sides() {
+        // ALL_SIDES (and any negative face) animates every face.
+        assert!((0..8).all(|fi| tex_anim_targets(-1, fi)));
+        // A face in range animates that face alone.
+        assert!(tex_anim_targets(2, 2));
+        assert!(!tex_anim_targets(2, 0));
+        // A face the object does not have (face 2 on a one-face mesh)
+        // animates nothing: face 0 stays still, as in the Legacy Viewer.
+        assert!((0..1).all(|fi| !tex_anim_targets(2, fi)));
+    }
+
+    #[test]
     fn bakes_replace_placeholders_only_on_worn_non_hud_non_animesh_objects() {
         let mut w = World::new(Arc::new(AvatarLibrary::load()));
         for e in crate::demo::events().into_iter().chain(crate::demo::animesh_events()) {
@@ -5708,6 +5797,54 @@ mod tests {
             .map(|(i, _)| i)
             .expect("ground object");
         assert_eq!(Scene::bake_wearer(&w, ground, false), None);
+    }
+
+    #[test]
+    fn pbr_bom_mask_uses_material_maps_and_face_overrides() {
+        let avatars = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(avatars.clone());
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let att = world.objects.iter().find(|(_, o)| o.key.local_id == 9100).map(|(i, _)| i).unwrap();
+        let (_, avatar) = Scene::wearer_avatar(&world, att).unwrap();
+        let asset = Uuid::from_u128(1793);
+        let object = world.objects.get_mut(att).unwrap();
+        object.extra.render_materials = (0..aurora_prim::te::MAX_TES).map(|face| (face as u8, asset)).collect();
+        let mut te = object.te.as_deref().unwrap().clone();
+        for face in &mut te.faces {
+            face.texture = avatar::BAKES[3].2;
+        }
+        object.te = Some(Arc::new(te));
+        let key = object.key;
+        let mut scene = Scene::new(std::env::temp_dir(), avatars);
+        let maps = [avatar::BAKES[0], avatar::BAKES[1], avatar::BAKES[2], avatar::BAKES[8]];
+        scene.materials.insert(
+            asset,
+            aurora_assets::PbrMaterial {
+                base_color_texture: Some(maps[0].2),
+                normal_texture: Some(maps[1].2),
+                metallic_roughness_texture: Some(maps[2].2),
+                emissive_texture: Some(maps[3].2),
+                ..Default::default()
+            },
+        );
+        let legacy_mask = 1u64 << avatar::BAKES[3].0;
+        let expected = maps.iter().fold(legacy_mask, |mask, (slot, _, _)| mask | (1u64 << slot));
+        assert_eq!(scene.bom_mask(&world, avatar), expected);
+        let override_ = aurora_assets::material::PbrOverride {
+            textures: [aurora_assets::material::OVERRIDE_NULL_UUID; 4],
+            ..Default::default()
+        };
+        let faces = world.objects.get(att).unwrap().te.as_ref().unwrap().faces.len();
+        world
+            .gltf_overrides
+            .insert(key, (0..faces).map(|face| (face as u8, override_.clone())).collect());
+        assert_eq!(
+            scene.bom_mask(&world, avatar),
+            legacy_mask,
+            "removed PBR maps preserve the legacy texture-entry visibility"
+        );
     }
 
     #[test]

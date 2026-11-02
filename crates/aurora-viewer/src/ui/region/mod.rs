@@ -434,7 +434,12 @@ impl RegionUi {
         if let Some(asset) = self.texture.show(ctx, p, world, images) {
             manage::picked_texture(self, &view, world, asset);
         } else if !self.texture.open {
-            surface::cancel_picker(self, &view, world);
+            if self.texture.cancelled() {
+                surface::cancel_picker(self, &view, world);
+            } else {
+                self.manage.picking = None;
+                self.surface.pick_before = None;
+            }
         } else if let Some(asset) = self.texture.take_preview() {
             surface::picker_choice(self, &view, world, asset, false);
         }

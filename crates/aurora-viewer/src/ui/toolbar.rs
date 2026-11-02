@@ -124,6 +124,8 @@ pub struct ToolbarSettings {
     /// keeps an empty toolbar.
     pub buttons: Option<Vec<ToolButton>>,
     pub locked: bool,
+    /// One-time discovery of the new command; later manual removal is retained.
+    pub vr_button_migrated: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub left: Vec<ToolButton>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -134,6 +136,29 @@ pub struct ToolbarSettings {
 }
 
 impl ToolbarSettings {
+    pub fn migrate_vr_button(&mut self) -> bool {
+        if self.vr_button_migrated {
+            return false;
+        }
+        self.vr_button_migrated = true;
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        if !self.left.iter().chain(&self.right).any(|b| b.command == "vr_view")
+            && let Some(buttons) = &mut self.buttons
+            && !buttons.is_empty()
+            && !buttons.iter().any(|b| b.command == "vr_view")
+        {
+            let at = buttons.iter().position(|b| b.command == "view").map_or(buttons.len(), |i| i + 1);
+            buttons.insert(
+                at,
+                ToolButton {
+                    command: "vr_view".into(),
+                    icon: "device-vision-pro-filled".into(),
+                    tooltip: String::new(),
+                },
+            );
+        }
+        true
+    }
     pub fn buttons<'a>(&'a self, layout: &'a Layout) -> &'a [ToolButton] {
         self.buttons.as_deref().unwrap_or(&layout.toolbar)
     }
@@ -302,7 +327,8 @@ impl ToolbarUi {
     /// Firestorm's (menu_toolbars_horizontal.xml, _vertical.xml), with
     /// Aurora's microphone options and favourites access.
     pub fn context(&mut self, response: &Response, p: &Palette, bar: Bar, style: Style, button: Option<&ToolButton>, locked: bool) {
-        menu::context_menu(response, p, |ui| {
+        // Buttons such as Favorites also own a left-click dropdown.
+        menu::context_menu_of_button(response, p, |ui| {
             if !locked && let Some(button) = button {
                 if menu::item(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-remove")) {
                     self.pending = Some(Edit::Remove(button.command.clone()));

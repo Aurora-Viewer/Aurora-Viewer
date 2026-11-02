@@ -37,10 +37,6 @@ pub mod dialog {
     pub const SESSION_LEAVE: u8 = 18;
 }
 
-/// Largest IM text (MAX_MSG_BUF_SIZE - 1): longer messages are split
-/// (FIRE-787).
-const MAX_IM_BYTES: usize = 1023;
-
 #[derive(Debug, Clone, Default)]
 pub struct SessionInfo {
     pub name: String,
@@ -84,6 +80,10 @@ pub struct GroupChats {
     /// Our active group (AgentDataUpdate; nil = none) and its title.
     pub active: Uuid,
     pub active_title: String,
+    /// The group list (AgentGroupDataUpdate) and the active group
+    /// (AgentDataUpdate) arrived this session.
+    pub list_received: bool,
+    pub active_received: bool,
     /// Pinned groups, listed first (FSFavoriteGroups).
     pub favorites: HashSet<Uuid>,
     favorites_path: Option<PathBuf>,
@@ -223,29 +223,19 @@ fn line(from: String, text: String, kind: ChatKind, source: Uuid, time: SystemTi
     }
 }
 
-/// Split a message at character boundaries into IM-sized pieces.
-pub fn split_im(text: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut rest = text;
-    while rest.len() > MAX_IM_BYTES {
-        let mut cut = MAX_IM_BYTES;
-        while !rest.is_char_boundary(cut) {
-            cut -= 1;
-        }
-        // prefer a space near the end
-        if let Some(sp) = rest[..cut].rfind(' ').filter(|&i| i > cut / 2) {
-            cut = sp + 1;
-        }
-        out.push(&rest[..cut]);
-        rest = &rest[cut..];
-    }
-    if !rest.is_empty() {
-        out.push(rest);
-    }
-    out
-}
-
 impl World {
+    /// Group used by LLToolPlacer::addObject, LLToolDragAndDrop::dropObject
+    /// and cmdline_rezplat: FSCommon::getGroupForRezzing
+    /// (indra/newview/fscommon.cpp, originally LGPL 2.1).
+    pub fn group_for_rez(&self, under_land: bool) -> Uuid {
+        self.parcel
+            .as_ref()
+            .filter(|_| under_land)
+            .map(|p| p.group_id)
+            .filter(|id| !id.is_nil() && self.groups.is_member(id))
+            .unwrap_or(self.groups.active)
+    }
+
     /// The current count shared by group profiles and search results.
     pub fn group_member_count(&self, id: Uuid) -> Option<i64> {
         self.group_data.member_count(id, self.search.groups.get(&id))
@@ -297,7 +287,7 @@ impl World {
         self.conversation_push(session, l, unread);
     }
 
-    fn session_system(&mut self, session: Uuid, text: impl Into<String>) {
+    pub(super) fn session_system(&mut self, session: Uuid, text: impl Into<String>) {
         self.session_push(
             session,
             line(String::new(), text.into(), ChatKind::System, Uuid::nil(), SystemTime::now()),
@@ -348,7 +338,8 @@ impl World {
     pub fn send_session_im(&mut self, session: Uuid, text: &str) {
         let text = self.rlva_outgoing_im_text(session, true, text).into_owned();
         let me = self.own_name();
-        for part in split_im(&text) {
+        // longer than one IM: several in a row (aurora_net::message_split)
+        for part in aurora_net::message_split::message_parts(&text) {
             self.groups.im(session, dialog::SESSION_SEND, session, part.to_owned());
         }
         let l = line(me, text, ChatKind::OWN, Uuid::nil(), SystemTime::now());
@@ -492,12 +483,14 @@ impl World {
                         None => self.groups.groups.push(g),
                     }
                 }
+                self.groups.list_received = true;
                 log::info!("groups: {}", self.groups.groups.len());
             }
             NetEvent::ActiveGroup { id, name, title } => {
                 log::info!("active group: {}", if id.is_nil() { "none" } else { &name });
                 self.groups.active = id;
                 self.groups.active_title = title;
+                self.groups.active_received = true;
             }
             NetEvent::GroupDropped(id) => {
                 self.groups.groups.retain(|g| g.id != id);
@@ -1101,18 +1094,5 @@ mod tests {
         assert!(w.on_group_event(reply(true)).is_none());
         assert_eq!(lines(&w), Some(2), "the session no longer exists");
         assert!(w.groups.sessions[&group].closed);
-    }
-
-    #[test]
-    fn splitting() {
-        assert_eq!(split_im("hello"), vec!["hello"]);
-        let long = "é".repeat(700);
-        let parts = split_im(&long);
-        assert!(parts.iter().all(|p| p.len() <= MAX_IM_BYTES));
-        assert_eq!(parts.concat(), long);
-        let words = "mot ".repeat(400);
-        let parts = split_im(&words);
-        assert!(parts[0].ends_with(' '));
-        assert_eq!(parts.concat(), words);
     }
 }

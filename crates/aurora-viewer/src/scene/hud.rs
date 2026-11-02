@@ -34,8 +34,7 @@ impl Scene {
                     if corner & 4 == 0 { -1.0 } else { 1.0 },
                 );
                 let p = center + rot * (size * sign * 0.5);
-                let x = view.width * 0.5 - p.y * view.height * view.zoom;
-                let y = view.height * 0.5 - p.z * view.height * view.zoom;
+                let [x, y] = view.pixel(p);
                 bounds[0] = bounds[0].min(x);
                 bounds[1] = bounds[1].min(y);
                 bounds[2] = bounds[2].max(x);
@@ -125,7 +124,7 @@ impl Scene {
             }
         }
         if min_x.is_finite() && max_x.is_finite() {
-            self.lists.hud_view = Some(HudView::new(size, world.hud_zoom, min_x, max_x));
+            self.lists.hud_view = Some(world.hud_view(size, min_x, max_x));
         }
         blend.sort_by(|a, b| b.0.total_cmp(&a.0));
         self.lists.hud_blend.extend(blend.into_iter().map(|(_, cmd)| cmd));

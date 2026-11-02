@@ -1,6 +1,8 @@
 # Build output (one target per worktree, never committed)
 /target/
 **/target/
+# The macOS bundle scripts/package-macos.ps1 builds (docs/MACOS.md)
+/Aurora Viewer.app/
 
 # Agent worktrees, scratch space and release builds (they live outside the
 # repository, this is a safety net)

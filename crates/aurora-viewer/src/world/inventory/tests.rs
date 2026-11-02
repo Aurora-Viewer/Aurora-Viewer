@@ -312,6 +312,139 @@ fn protected_system_worn_and_unknown_elements_cannot_be_deleted() {
 }
 
 #[test]
+fn protected_folder_cannot_move_but_its_contents_can_move_in_and_out() {
+    let inv = fixture();
+    let locked = id(8000);
+    let protected = HashSet::from([locked]);
+    let trash = system(&inv, 14).expect("trash");
+
+    let (sub, item) = (id(8001), id(8100));
+    let none = HashSet::new();
+
+    // the folder itself: held in place, not renamed, not deleted
+    assert!(!movable(&inv, locked, &protected));
+    assert!(!move_relocatable(&inv, locked, &protected));
+    assert!(!renameable(&inv, locked, &protected));
+    assert!(!removable(&inv, locked, &protected));
+    assert!(!destination(&inv, locked, &protected));
+    assert!(move_destination(&inv, locked));
+    assert!(move_selection(&inv, &[locked], inv.root, &protected, &none).is_err());
+    assert!(move_selection(&inv, &[locked], trash, &protected, &none).is_err());
+
+    // its contents, a subfolder's included, move out and in
+    for entry in [item, sub] {
+        assert!(move_relocatable(&inv, entry, &protected), "{entry}");
+        assert!(move_selection(&inv, &[entry], inv.root, &protected, &none).is_ok(), "{entry}");
+    }
+    assert!(move_selection(&inv, &[item], locked, &protected, &none).is_ok());
+    assert!(move_destination(&inv, sub));
+    assert!(move_selection(&inv, &[item], sub, &protected, &none).is_ok());
+
+    // rule B (#1728): nothing under a locked folder goes to the Trash, by a
+    // drag as by Delete (`removable`)
+    for entry in [item, sub] {
+        assert!(!removable(&inv, entry, &protected), "{entry}");
+        assert!(move_selection(&inv, &[entry], trash, &protected, &none).is_err(), "{entry}");
+        assert!(!paste_allowed(&inv, &[entry], trash, true, false, &protected, &none), "{entry}");
+    }
+}
+
+#[test]
+fn a_folder_holding_a_locked_folder_does_not_go_to_the_trash() {
+    let inv = fixture();
+    let (outer, locked) = (id(8000), id(8001));
+    let protected = HashSet::from([locked]);
+    let none = HashSet::new();
+    let trash = system(&inv, 14).expect("trash");
+    // deleting the parent would take the locked folder with it
+    assert!(!removable(&inv, outer, &protected));
+    assert!(move_selection(&inv, &[outer], trash, &protected, &none).is_err());
+    assert!(!paste_allowed(&inv, &[outer], trash, true, false, &protected, &none));
+    // without the lock below it, the same folder goes to the Trash
+    assert!(removable(&inv, outer, &none));
+    // and it may still move elsewhere, the locked folder with it
+    assert!(move_selection(&inv, &[outer], inv.root, &protected, &none).is_ok());
+}
+
+#[test]
+fn cut_and_paste_move_a_locked_folders_contents_out_and_in() {
+    use aurora_net::inventory::operations::Operation;
+    let mut inv = fixture();
+    let (locked, sub, inside) = (id(8000), id(8001), id(8100));
+    let protected = HashSet::from([locked]);
+    let none = HashSet::new();
+    let outside = id(8900);
+    inv.add_items(vec![InvItem {
+        id: outside,
+        parent: inv.root,
+        asset_type: 6,
+        owner_mask: COPY | MODIFY | TRANSFER,
+        ..Default::default()
+    }]);
+    let moves = |ops: &[Operation], what: Uuid, to: Uuid| matches!(ops, [Operation::Patch { id, body, .. }] if *id == what && body["parent_id"].as_uuid() == to);
+
+    // Cut in the locked folder, Paste elsewhere
+    assert!(paste_allowed(&inv, &[inside], inv.root, true, false, &protected, &none));
+    let change = paste(&inv, &[inside], inv.root, true, false, &protected, &none).expect("cut out");
+    assert!(moves(&change.operations, inside, inv.root));
+
+    // Cut elsewhere, Paste into the locked folder and into its subfolder
+    for to in [locked, sub] {
+        assert!(paste_allowed(&inv, &[outside], to, true, false, &protected, &none), "{to}");
+        let change = paste(&inv, &[outside], to, true, false, &protected, &none).expect("cut in");
+        assert!(moves(&change.operations, outside, to), "{to}");
+        // a copy may come in too
+        assert!(paste_allowed(&inv, &[outside], to, false, false, &protected, &none), "{to}");
+    }
+
+    // the locked folder itself still cannot be cut away
+    assert!(!paste_allowed(&inv, &[locked], inv.root, true, false, &protected, &none));
+    assert!(paste(&inv, &[locked], inv.root, true, false, &protected, &none).is_err());
+}
+
+#[test]
+fn root_support_folders_stay_in_place_but_can_still_be_deleted() {
+    let mut inv = fixture();
+    let trash = system(&inv, 14).expect("trash");
+    let none = HashSet::new();
+    let folder = |id: Uuid, parent: Uuid, name: &str| InvFolder {
+        id,
+        parent,
+        name: name.into(),
+        type_default: -1,
+        ..Default::default()
+    };
+    inv.created_folders(vec![
+        folder(id(9100), inv.root, "#RLV"),
+        folder(id(9101), id(8001), "#RLV"),
+        folder(id(9102), inv.root, "#Firestorm"),
+        folder(id(9103), inv.root, "#rlv"),
+        InvFolder {
+            type_default: 48,
+            ..folder(id(9104), inv.root, "My Outfits")
+        },
+        folder(id(9105), inv.root, "Outfit"),
+    ]);
+    assert!(move_selection(&inv, &[id(9105)], id(9104), &none, &none).is_ok());
+    for pinned_id in [id(9100), id(9102)] {
+        assert!(pinned(&inv, pinned_id));
+        assert!(!relocatable(&inv, pinned_id, &none));
+        assert!(move_selection(&inv, &[pinned_id], id(8001), &none, &none).is_err());
+        assert!(move_selection(&inv, &[pinned_id], id(9104), &none, &none).is_err());
+        assert!(ungroup(&inv, pinned_id, &none, &none).is_err());
+        assert!(!paste_allowed(&inv, &[pinned_id], id(8001), true, false, &none, &none));
+        assert!(
+            move_selection(&inv, &[pinned_id], trash, &none, &none).is_ok(),
+            "delete stays allowed"
+        );
+        assert!(renameable(&inv, pinned_id, &none));
+    }
+    // A misplaced #RLV goes back to the root; names match exactly, as RLVa's.
+    assert!(move_selection(&inv, &[id(9101)], inv.root, &none, &none).is_ok());
+    assert!(relocatable(&inv, id(9103), &none));
+}
+
+#[test]
 fn selected_parent_and_child_are_moved_once_and_cycles_are_refused() {
     let inv = fixture();
     assert_eq!(roots(&inv, &[id(8100), id(8000), id(8100)]), vec![id(8000)]);

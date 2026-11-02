@@ -29,6 +29,7 @@ pub fn page(cx: &mut Cx) {
         );
         // the order of the Received tab, chosen in its own preferences
         cx.track(&field!(inventory.received_sort));
+        cx.track(&field!(inventory.recent_sort));
     });
     cx.group(tr!("common-display"), |cx| {
         cx.toggle(tr!("ui-inventory-controls-show-library"), "", &field!(inventory.show_library));
@@ -78,6 +79,23 @@ pub fn page(cx: &mut Cx) {
         cx.toggle(tr!("ui-inventory-controls-outfit-folders"), "", &field!(inventory.search_outfits));
     });
     cx.group(tr!("received-filing-title"), |cx| {
+        cx.toggle(
+            tr!("received-auto-accept"),
+            tr!("received-auto-accept-help"),
+            &field!(auto_accept_inventory),
+        );
+        cx.subs(!cx.s.auto_accept_inventory, |cx| {
+            cx.toggle(
+                tr!("received-auto-accept-chat"),
+                tr!("received-auto-accept-chat-help"),
+                &field!(auto_accept_inventory_chat),
+            );
+            cx.toggle(
+                tr!("received-auto-accept-notify"),
+                tr!("received-auto-accept-notify-help"),
+                &field!(auto_accept_inventory_notify),
+            );
+        });
         // ShowInInventory ("Automatically show newly accepted items in
         // inventory", panel_preferences_privacy.xml)
         cx.toggle(
@@ -99,5 +117,13 @@ pub fn page(cx: &mut Cx) {
             cx.s.received_items_since = crate::ui::inventory::view::now();
         }
         cx.track(&field!(received_items_since));
+    });
+    cx.group(tr!("import-window-title"), |cx| {
+        cx.choice(
+            tr!("import-entry-point"),
+            tr!("import-entry-point-help"),
+            &field!(imports.icon_bar),
+            &[(false, tr!("import-entry-window"), false), (true, tr!("import-icon-bar"), false)],
+        );
     });
 }

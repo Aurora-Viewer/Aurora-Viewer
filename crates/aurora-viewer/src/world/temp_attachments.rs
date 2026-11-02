@@ -82,6 +82,36 @@ pub fn is_temp_attachment(id: Uuid, attach_item: Option<Uuid>) -> bool {
 }
 
 impl World {
+    /// Inventory-backed attachments for Current Outfit operations. Keep real
+    /// items whose metadata is still loading, but never fetch/link/detach a
+    /// temporary object's task ID as an inventory item (LLAttachmentsMgr::
+    /// linkRecentlyArrivedAttachments, indra/newview/llattachmentsmgr.cpp).
+    fn outfit_attachments(&self) -> impl Iterator<Item = (Uuid, u8)> + '_ {
+        self.objects
+            .index_of_uuid(&self.agent_id)
+            .and_then(|i| self.objects.get(i))
+            .into_iter()
+            .flat_map(|me| self.objects.children_of(&me.key))
+            .filter_map(|i| self.objects.get(*i))
+            .filter_map(|o| {
+                let item = o.attachment_item_id().filter(|id| !id.is_nil())?;
+                // Some offline fixtures use the same object and item UUID;
+                // a known inventory item remains an ordinary attachment.
+                if is_temp_attachment(o.full_id, Some(item)) && !self.inventory.items.contains_key(&item) {
+                    return None;
+                }
+                Some((item, o.attachment_point()))
+            })
+    }
+
+    pub fn outfit_attachment_items(&self) -> HashSet<Uuid> {
+        self.outfit_attachments().map(|(item, _)| item).collect()
+    }
+
+    pub fn outfit_attachment_points(&self) -> HashMap<Uuid, u8> {
+        self.outfit_attachments().collect()
+    }
+
     /// LLAgentWearables::getTempAttachments, by attachment point.
     pub fn temp_attachments(&self) -> Vec<TempAttachment> {
         let Some(me) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {

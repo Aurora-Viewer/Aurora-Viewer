@@ -170,6 +170,19 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     "",
                 );
             });
+            // the headset's starting viewpoint (app.rs, toggle_vr)
+            cx.group(tr!("ui-options-camera-vr"), |cx| {
+                use crate::camera::VrView;
+                cx.unfolded().choice(
+                    tr!("ui-options-camera-vr-view"),
+                    tr!("ui-options-camera-vr-view-help"),
+                    &field!(camera.vr_view),
+                    &[
+                        (VrView::FirstPerson, tr!("ui-options-camera-vr-view-first-person"), false),
+                        (VrView::DesktopCamera, tr!("ui-options-camera-vr-view-desktop-camera"), false),
+                    ],
+                );
+            });
         }
         1 => {
             cx.group(tr!("common-behavior"), |cx| {

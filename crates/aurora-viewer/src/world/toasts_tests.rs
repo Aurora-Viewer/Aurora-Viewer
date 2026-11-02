@@ -126,6 +126,38 @@ fn a_friend_online_is_a_toast_that_never_enters_the_bell() {
 }
 
 #[test]
+fn a_friend_online_or_offline_is_a_line_of_their_open_conversation_only() {
+    let mut w = world();
+    w.social.form_friendship(JANE);
+    w.social.form_friendship(TOM);
+    receive(&mut w, JANE, JANE, "hi", ImKind::Private, true);
+    w.social.session_mut(JANE).unread = 0;
+    let system = |w: &World, who: Uuid| -> Vec<String> {
+        w.social
+            .ims
+            .iter()
+            .filter(|s| s.other == who)
+            .flat_map(|s| s.lines.iter())
+            .filter(|l| l.kind == ChatKind::System)
+            .map(|l| l.text.clone())
+            .collect()
+    };
+    w.social.set_online(&[JANE], true);
+    w.flush_online_notices();
+    w.social.set_online(&[JANE], false);
+    w.flush_online_notices();
+    let lines = system(&w, JANE);
+    assert_eq!(lines.len(), 2);
+    assert!(lines.iter().all(|l| l.contains("Jane Doe")));
+    // an announcement, not a message to read
+    assert_eq!(w.social.total_unread(), 0);
+    // no conversation is opened for a friend we were not talking to
+    w.social.set_online(&[TOM], true);
+    w.flush_online_notices();
+    assert!(!w.social.has_session(&TOM));
+}
+
+#[test]
 fn friends_announced_during_login_get_no_toast_but_keep_their_line() {
     let mut w = world();
     w.notifications.toasts.presence_in_chat = true;

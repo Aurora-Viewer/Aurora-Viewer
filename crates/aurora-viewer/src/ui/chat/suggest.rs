@@ -235,7 +235,7 @@ fn mention_at(chars: &[char], cursor: usize) -> Option<(usize, String)> {
         return None;
     }
     let start = chars[..cursor].iter().rposition(|c| c.is_whitespace()).map_or(0, |i| i + 1);
-    (chars.get(start) == Some(&'@')).then(|| (start, chars[start + 1..cursor].iter().collect()))
+    (start < cursor && chars.get(start) == Some(&'@')).then(|| (start, chars[start + 1..cursor].iter().collect()))
 }
 
 /// The residents whose display or user name starts with `typed` (or one of

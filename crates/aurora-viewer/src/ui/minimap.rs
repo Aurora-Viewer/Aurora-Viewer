@@ -394,7 +394,15 @@ impl MiniMap {
         if !*open {
             return actions;
         }
-        super::sound_cues::floater_shown(ctx, egui::Id::unique("minimap"));
+        let id = egui::Id::unique("minimap");
+        // File › Close All Windows. Ctrl+W does not pick it: no title bar,
+        // so it is not in the frontmost floater list.
+        if super::close_key::take(ctx, id) {
+            *open = false;
+            return actions;
+        }
+        super::close_key::shown_extra(ctx, id);
+        super::sound_cues::floater_shown(ctx, id);
         // floater_map.xml: no header nor border, DkGray background at
         // FSMiniMapOpacity (0.66); dragged anywhere, resized by its corner
         let default = default_rect(super::layout::work_area(ctx));

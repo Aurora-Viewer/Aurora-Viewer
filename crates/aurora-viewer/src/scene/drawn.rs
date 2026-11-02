@@ -6,7 +6,11 @@
 //! (`Renderer::request_drawn`, aurora-render/src/drawn_pick.rs), and the
 //! objects the CPU cannot find where they are shown are designated from
 //! that answer: animated objects (animesh), rigged meshes worn by an
-//! avatar, and worn meshes in general.
+//! avatar, and worn meshes in general. A left click also takes a worn prim
+//! with a touch script or a click action from it: the CPU places a worn
+//! prim at the pose of the frame the answer comes in, a few frames after
+//! the click, and a small clicker on an animated avatar is off the ray by
+//! then.
 //!
 //! **Wanted difference from Firestorm.** There, a rigged mesh is only
 //! reached when `pick_rigged` is set: the right click
@@ -26,13 +30,15 @@
 //! Except that a left click on one with nothing to do with it (no touch
 //! script, no click action) goes on to what is behind, as in the Legacy
 //! Viewer: the scripted prims worn under a mesh body or rigged clothing
-//! stay touchable (`touch_passes_through`, `touch_depth`).
+//! stay touchable (`touch_passes_through`, `touch_depth`). A rigged mesh
+//! worn by our own avatar lets a left click through even when scripted, as
+//! in the Legacy Viewer: a press on our mesh body steers our avatar.
 //!
 //! Camera clicks (Alt + click, Focus tool) use the visible-surface mode of
 //! that pass directly: no CPU rest-pose or invisible touch-surface search.
 //!
-//! [`reaches`] is that rule, alone and tested. Blend faces intercept a
-//! press regardless of their texel opacity or the presence of an action.
+//! [`reaches`] is that rule, alone and tested. Worn Blend faces intercept a
+//! press regardless of texel opacity; world Blend left picks skip alpha zero.
 
 use super::*;
 use aurora_net::TouchSurface;
@@ -57,6 +63,11 @@ pub struct Status {
     pub posed_by_gpu: bool,
     /// Worn by an avatar.
     pub worn: bool,
+    /// A touch script or a click action (`interaction::target`).
+    pub actionable: bool,
+    /// A rigged mesh worn by our avatar: a left click passes through it
+    /// even when it has an action, so that a press on our body steers it.
+    pub own_rigged: bool,
     pub avatar: bool,
     /// CLICK_ACTION_IGNORE.
     pub ignored: bool,
@@ -74,7 +85,10 @@ pub fn reaches(gesture: Gesture, s: Status, build_open: bool) -> bool {
         return false;
     }
     match gesture {
-        Gesture::Touch => s.posed_by_gpu && !s.avatar,
+        // a worn prim with something to do with the click as well: the CPU
+        // places it a frame or more after the one clicked, and a small
+        // clicker on an animated avatar moves out of the click's reach
+        Gesture::Touch => !s.avatar && (s.posed_by_gpu || (s.worn && s.actionable)),
         // the menu of what is shown (pick_transparent, pick_rigged): the
         // attachment in front of an avatar rather than the avatar
         Gesture::Menu => s.posed_by_gpu || s.worn || s.avatar,
@@ -115,6 +129,12 @@ impl Scene {
         Status {
             posed_by_gpu: !g.hud && !g.is_avatar && (g.rigged || (worn && o.visual_volume().is_mesh())),
             worn: worn && !g.hud,
+            actionable: crate::interaction::target(world, idx, &HashMap::new()).is_some(),
+            own_rigged: !g.hud
+                && g.rigged
+                && g.owner_avatar
+                    .and_then(|a| world.objects.get(a))
+                    .is_some_and(|a| a.full_id == world.agent_id),
             avatar: g.is_avatar,
             ignored: o.click_action == crate::interaction::code::IGNORE,
             selectable: crate::build::selectable(world, idx),
@@ -125,10 +145,13 @@ impl Scene {
     /// to do with a click, no touch script and no click action, lets it
     /// through, as the Legacy Viewer's left click does with every rigged
     /// mesh: a mesh body or rigged clothing does not hide the scripted prims
-    /// worn under it (#488).
+    /// worn under it (#488). A rigged mesh we wear lets it through even with
+    /// a touch script: like LLToolPie::handleMouseDown (`pick_rigged =
+    /// false`), a press on our mesh body steers our avatar
+    /// (LLToolCamera::mMouseSteering) instead of touching the body.
     pub fn touch_passes_through(&self, world: &World, idx: usize) -> bool {
         let s = self.drawn_status(world, idx);
-        s.posed_by_gpu && !s.avatar && crate::interaction::target(world, idx, &HashMap::new()).is_none()
+        s.posed_by_gpu && !s.avatar && (s.own_rigged || !s.actionable)
     }
 
     /// The depth a left click searches from: the GPU's, or, when the
@@ -179,24 +202,30 @@ impl Scene {
         const SAME: f32 = 0.05;
         let along = |p: Vec3| ray.map_or(0.0, |(o, d)| (p - o).dot(d));
         let limit = found.filter(|p| Some(*p) != depth).map_or(f32::INFINITY, |p| along(p) + SAME);
-        [(drawn.blend, true), (drawn.opaque, false)].into_iter().find_map(|(hit, blend)| {
-            let hit = hit?;
-            let (idx, face) = self.record_object(hit.record)?;
+        for (hit, blend) in [(drawn.blend, true), (drawn.opaque, false)] {
+            let Some(hit) = hit else { continue };
+            let Some((idx, face)) = self.record_object(hit.record) else {
+                continue;
+            };
             if world
                 .objects
                 .get(idx)
                 .is_some_and(|o| o.is_client_preview() && !o.is_editable_preview())
             {
+                continue;
+            }
+            let status = self.drawn_status(world, idx);
+            let through = gesture == Gesture::Touch && !build_open && self.touch_passes_through(world, idx);
+            if along(hit.point) <= limit && reaches(gesture, status, build_open) && !through {
+                return Some(DrawnObject { idx, face, blend, hit });
+            }
+            // a worn Blend prim with nothing to do still stops the press
+            // (picking.rs, `blend_hit`): the search on the CPU speaks for it
+            if blend && gesture == Gesture::Touch && status.worn && !status.posed_by_gpu && !status.ignored {
                 return None;
             }
-            let through = gesture == Gesture::Touch && !build_open && self.touch_passes_through(world, idx);
-            (along(hit.point) <= limit && reaches(gesture, self.drawn_status(world, idx), build_open) && !through).then_some(DrawnObject {
-                idx,
-                face,
-                blend,
-                hit,
-            })
-        })
+        }
+        None
     }
 
     /// The surface information of a touch on a drawn face (ObjectGrab's
@@ -228,6 +257,8 @@ mod tests {
     const RIGGED: Status = Status {
         posed_by_gpu: true,
         worn: false,
+        actionable: false,
+        own_rigged: false,
         avatar: false,
         ignored: false,
         selectable: true,
@@ -275,8 +306,8 @@ mod tests {
         for gesture in [Gesture::Touch, Gesture::Menu, Gesture::Build] {
             assert!(!reaches(gesture, prim, false), "{gesture:?}");
         }
-        // a worn prim and an avatar: only the menu takes them from what is
-        // drawn (the attachment in front of its wearer)
+        // a worn prim without an action and an avatar: only the menu takes
+        // them from what is drawn (the attachment in front of its wearer)
         let worn_prim = Status {
             worn: true,
             ..Status::default()
@@ -298,7 +329,12 @@ mod tests {
     #[test]
     fn a_touch_goes_through_a_rigged_mesh_without_an_action() {
         let (mut world, mut scene, clothing, prim) = super::super::picking::tests::scene_with_two_objects();
-        let wearer = world.objects.avatars().next().map(|(idx, _)| idx);
+        // another resident wears it: a rigged mesh we wear never takes the touch
+        let wearer = world
+            .objects
+            .avatars()
+            .find(|(_, a)| a.full_id != world.agent_id)
+            .map(|(idx, _)| idx);
         // the clothing's face at x = 2.5, the prim's 10 cm behind it
         world.objects.get_mut(prim).unwrap().position = Vec3::new(3.1, 0.0, 50.0);
         for (idx, flags) in [(clothing, 0), (prim, crate::ui::context::flags::HANDLE_TOUCH)] {
@@ -367,6 +403,30 @@ mod tests {
             scene.touch_depth(&world, &drawn, Some(ray), Some(on_clothing), 100.0),
             Some(on_clothing)
         );
+
+        // ...unless we wear it: the press goes on to our avatar (to steer
+        // it), or to the scripted prim worn just under it
+        world.agent_id = world.objects.get(wearer.unwrap()).unwrap().full_id;
+        assert!(scene.touch_passes_through(&world, clothing));
+        assert_eq!(designated(&scene, &world, Gesture::Touch), None);
+        assert_eq!(designated(&scene, &world, Gesture::Menu), Some(clothing));
+        world.objects.get_mut(prim).unwrap().position = Vec3::new(3.1, 0.0, 50.0);
+        let depth = scene
+            .touch_depth(&world, &drawn, Some(ray), Some(on_clothing), 100.0)
+            .expect("a depth");
+        assert_eq!(scene.interaction_at_ray(&world, depth, ray, true), Some(prim));
+        // the build tools still reach it, as with the build floater open in
+        // the Legacy Viewer (LLVOVolume::lineSegmentIntersect)
+        let built = scene.designated(
+            &world,
+            Gesture::Touch,
+            &drawn,
+            Some(ray),
+            Some(on_clothing),
+            Some(on_clothing),
+            true,
+        );
+        assert_eq!(built.map(|d| d.idx), Some(clothing));
     }
 
     /// #1241: an invisible clicker (every face at alpha 0, no draw record)
@@ -423,5 +483,79 @@ mod tests {
         o.click_action = crate::interaction::code::NONE;
         o.update_flags = 0;
         assert_eq!(scene.touch_depth(&world, &drawn, Some(ray), Some(on_body), 100.0), Some(on_body));
+    }
+
+    /// A scripted prim worn by an animated avatar: the CPU places it a few
+    /// frames after the one clicked, out of the click's ray, while the GPU
+    /// drew it under the cursor. The touch is designated from what was
+    /// drawn; a worn prim with nothing to do is not, and a worn Blend prim
+    /// without an action in front leaves the press to the CPU's search.
+    #[test]
+    fn a_touch_reaches_a_scripted_worn_prim_where_it_was_drawn() {
+        let (mut world, mut scene, front, prim) = super::super::picking::tests::scene_with_two_objects();
+        let wearer = world.objects.avatars().next().map(|(idx, _)| idx);
+        // drawn at x = 2.5 when clicked; the CPU now has it aside, off the
+        // ray (and the other object out of the way)
+        world.objects.get_mut(front).unwrap().position = Vec3::new(3.0, -3.0, 50.0);
+        let o = world.objects.get_mut(prim).unwrap();
+        o.position = Vec3::new(3.0, 1.5, 50.0);
+        o.click_action = crate::interaction::code::TOUCH;
+        o.update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        scene.gpu[prim].owner_avatar = wearer;
+        scene.gpu[prim].faces[0].record = 1;
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let on_prim = Vec3::new(2.5, 0.0, 50.0);
+        let face = |record| DrawnFace {
+            record,
+            point: on_prim,
+            st: glam::Vec2::splat(0.5),
+            normal: -Vec3::X,
+            binormal: Vec3::Z,
+        };
+        let drawn = Drawn {
+            opaque: Some(face(1)),
+            ..Default::default()
+        };
+        assert_eq!(scene.interaction_at_ray(&world, on_prim, ray, true), None, "the CPU misses it");
+        let designated = |scene: &Scene, world: &World, drawn: &Drawn| {
+            scene
+                .designated(world, Gesture::Touch, drawn, Some(ray), Some(on_prim), Some(on_prim), false)
+                .map(|d| d.idx)
+        };
+        assert_eq!(designated(&scene, &world, &drawn), Some(prim));
+
+        // a worn Blend prim without an action in front stops the press
+        let o = world.objects.get_mut(front).unwrap();
+        o.click_action = crate::interaction::code::NONE;
+        o.update_flags = 0;
+        scene.gpu[front].owner_avatar = wearer;
+        let covered = Drawn {
+            blend: Some(face(0)),
+            ..drawn
+        };
+        assert_eq!(designated(&scene, &world, &covered), None);
+
+        // nothing to do: the CPU's search speaks for it, as before
+        let o = world.objects.get_mut(prim).unwrap();
+        o.click_action = crate::interaction::code::NONE;
+        o.update_flags = 0;
+        assert_eq!(designated(&scene, &world, &drawn), None);
+    }
+
+    #[test]
+    fn a_touch_reaches_a_worn_prim_only_with_an_action() {
+        let worn_prim = Status {
+            worn: true,
+            ..Status::default()
+        };
+        assert!(!reaches(Gesture::Touch, worn_prim, false));
+        let scripted = Status {
+            actionable: true,
+            ..worn_prim
+        };
+        assert!(reaches(Gesture::Touch, scripted, false));
+        assert!(!reaches(Gesture::Build, scripted, false));
+        // an avatar is never touched from what is drawn
+        assert!(!reaches(Gesture::Touch, Status { avatar: true, ..scripted }, false));
     }
 }

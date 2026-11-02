@@ -957,8 +957,9 @@ impl Controller {
 
     /// Follow the server's animation list (LLVOAvatar::processAnimationStateChanges).
     /// `get` gives an animation once it has loaded.
-    /// Return timed stops once, at the start of ease-out, like
-    /// LLMotionController::updateMotionsByType -> requestStopMotion.
+    /// Return timed stops once, like LLMotionController::updateMotionsByType
+    /// -> requestStopMotion: at ease-out, or the authored end when the
+    /// scheduled ease-out overlaps ease-in.
     pub fn sync(&mut self, playing: &[PlayingAnimation], now: Instant, mut get: impl FnMut(&Uuid) -> Option<Arc<BoundAnim>>) -> Vec<Uuid> {
         let mut completed = Vec::new();
         let frozen = self.paused_at;
@@ -1049,10 +1050,20 @@ impl Controller {
         // weights (LLMotionController::updateMotionsByType)
         self.motions.retain_mut(|m| {
             let a = &m.anim.anim;
-            // a non-looping motion stops itself before its end to ease out
-            // (activateMotionInstance: mSendStopTimestamp)
+            // LLMotionController::updateMotionsByType does not request a
+            // timed stop during ease-in. If mSendStopTimestamp falls there,
+            // LLKeyframeMotion::onUpdate runs to the authored end instead.
+            // In particular, the stock pre-jump must last 0.333333 s, not
+            // duration - ease_out = 0.133333 s (#1637).
             if m.stop.is_none() && !a.looping && a.duration > 0.0 {
-                let end = m.activation + Duration::from_secs_f64((f64::from(a.duration) - f64::from(a.ease_out)).max(0.0));
+                let duration = f64::from(a.duration);
+                let ease_out_start = (duration - f64::from(a.ease_out)).max(0.0);
+                let finish = if ease_out_start < f64::from(a.ease_in) {
+                    duration
+                } else {
+                    ease_out_start
+                };
+                let end = m.activation + Duration::from_secs_f64(finish);
                 if now >= end {
                     m.stop_at(end);
                     if !m.internal && !preview.is_some_and(|(target, _)| target.is_none_or(|id| id == m.id)) {
@@ -2502,11 +2513,83 @@ mod tests {
     }
 
     #[test]
+    fn pre_jump_plays_through_overlapping_eases_before_notifying_the_simulator() {
+        let rig = rig();
+        let id = uuid::uuid!("7a4e87fe-de39-6fcb-6223-024b00893244");
+        let mut animation = bend(&rig, 0.7, 0.0).anim.clone();
+        // The stock pre-jump asset: its scheduled ease-out (0.133333 s)
+        // falls inside ease-in. LLKeyframeMotion::onUpdate finishes it at
+        // its authored duration instead (indra/llcharacter).
+        animation.looping = false;
+        animation.duration = 0.333333;
+        animation.ease_in = 0.3;
+        animation.ease_out = 0.2;
+        let anim = Arc::new(BoundAnim::bind(animation, &rig));
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        for synchronized in [false, true] {
+            let mut controller = Controller::default();
+            controller.set_synchronized(synchronized);
+            let playing = [signal(id, 1, t0)];
+            let mut agent = crate::agent::AgentState::default();
+            agent.record_jump_input(t0);
+            for time in [0.0, 0.14, 0.25, 0.31, 0.333] {
+                assert!(
+                    controller.sync(&playing, at(time), |_| Some(anim.clone())).is_empty(),
+                    "early stop at {time}"
+                );
+                assert!(controller.motions[0].stop.is_none());
+                if time > 0.0 {
+                    assert!(controller.motions[0].weight > 0.0, "the crouch must remain visible");
+                }
+            }
+            assert_eq!(controller.motions[0].weight, 1.0);
+            assert_eq!(controller.sync(&playing, at(0.334), |_| Some(anim.clone())), vec![id]);
+            // Both a released tap and a held jump stop the stock animation
+            // once; only the released tap additionally needs FINISH_ANIM.
+            assert_eq!(agent.animation_stop_flags(id, false, at(0.334)), aurora_net::control::FINISH_ANIM);
+            assert_eq!(agent.animation_stop_flags(id, true, at(0.334)), 0);
+            assert!(controller.motions[0].weight > 0.9, "ease-out starts from the completed crouch");
+            assert!(controller.sync(&playing, at(0.4), |_| Some(anim.clone())).is_empty());
+            assert!(controller.motions[0].weight > 0.0);
+            assert!(controller.sync(&playing, at(0.54), |_| Some(anim.clone())).is_empty());
+            assert!(controller.motions.is_empty());
+            assert!(controller.sync(&playing, at(1.0), |_| Some(anim.clone())).is_empty());
+        }
+    }
+
+    #[test]
+    fn one_shot_without_overlapping_eases_notifies_at_the_start_of_ease_out() {
+        let rig = rig();
+        let id = Uuid::from_u128(502);
+        let mut animation = bend(&rig, 0.7, 0.2).anim.clone();
+        animation.looping = false;
+        let anim = Arc::new(BoundAnim::bind(animation, &rig));
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        for synchronized in [false, true] {
+            let mut controller = Controller::default();
+            controller.set_synchronized(synchronized);
+            let playing = [signal(id, 1, t0)];
+            assert!(controller.sync(&playing, t0, |_| Some(anim.clone())).is_empty());
+            assert!(controller.sync(&playing, at(0.79), |_| Some(anim.clone())).is_empty());
+            assert_eq!(controller.sync(&playing, at(0.81), |_| Some(anim.clone())), vec![id]);
+            assert!(controller.motions[0].weight > 0.9);
+            assert!(controller.sync(&playing, at(0.9), |_| Some(anim.clone())).is_empty());
+            assert!(controller.sync(&playing, at(1.01), |_| Some(anim.clone())).is_empty());
+            assert!(controller.motions.is_empty());
+        }
+    }
+
+    #[test]
     fn pre_jump_catches_up_after_asset_load_and_notifies_simulator_once() {
         let rig = rig();
         let id = uuid::uuid!("7a4e87fe-de39-6fcb-6223-024b00893244");
         let mut bound = BoundAnim::bind(bend(&rig, 0.7, 0.25).anim.clone(), &rig);
         bound.anim.looping = false;
+        bound.anim.duration = 0.333333;
+        bound.anim.ease_in = 0.3;
+        bound.anim.ease_out = 0.2;
         let anim = Arc::new(bound);
         let t0 = Instant::now();
         let at = |s| t0 + Duration::from_secs_f64(s);

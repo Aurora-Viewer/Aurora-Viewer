@@ -4,7 +4,7 @@
 //! Light settings follow LLSettingsSky::calculateLightSettings (Second Life
 //! viewer, Copyright (C) Linden Research, Inc., originally LGPL 2.1).
 
-use super::eep::{SkyFrame, WaterFrame};
+use super::eep::{self, SkyFrame, WaterFrame};
 use aurora_render::{SkyParams, WaterParams};
 use glam::Vec3;
 use std::time::{Duration, Instant};
@@ -96,6 +96,32 @@ pub fn midday_sun() -> Vec3 {
     Vec3::new(0.35, 0.25, 0.9).normalize()
 }
 
+/// The sky ambient lightened by the cloud shadow (calculateLightSettings
+/// tmpAmbient).
+fn sky_tmp_ambient(sky: &SkyFrame) -> Vec3 {
+    sky.ambient + (Vec3::ONE - sky.ambient) * sky.cloud_shadow * 0.5
+}
+
+/// Whether the colored sky ambient is on, the setting being `on`.
+/// AURORA_COLORED_AMBIENT forces it for a launch: `0` off, `1` on, `alt` one
+/// second each, for an A/B on a still scene.
+pub fn colored_ambient_now(on: bool) -> bool {
+    static MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let mode = MODE.get_or_init(|| std::env::var("AURORA_COLORED_AMBIENT").ok().map(|v| v.trim().to_owned()));
+    let secs = START.get_or_init(Instant::now).elapsed().as_secs();
+    colored_ambient(mode.as_deref(), on, secs)
+}
+
+fn colored_ambient(mode: Option<&str>, on: bool, secs: u64) -> bool {
+    match mode {
+        Some("0") => false,
+        Some("1") => true,
+        Some("alt") => secs.is_multiple_of(2),
+        _ => on,
+    }
+}
+
 /// Whether a sky of this reflection probe ambiance is tone mapped: a classic
 /// sky (ambiance 0) is not, whatever the tone mapper chosen (no_post in
 /// LLPipeline::tonemap). Preferences grey the tone mapper choice then.
@@ -120,6 +146,23 @@ impl Environment {
     /// cloud offset (LLEnvironment::mCloudScrollDelta).
     pub fn from_eep(sky: &SkyFrame, water: &WaterFrame, cloud_scroll: glam::Vec2, draw_distance: f32) -> Environment {
         Self::build(sky, water, cloud_scroll, draw_distance)
+    }
+
+    /// The experimental colored sky ambient (Settings::colored_sky_ambient):
+    /// the first PBR release lit with the sky's ambient colour x
+    /// RenderSkyAmbientScale 0.7, made linear (atmosphericsFuncs.glsl
+    /// calcAtmosphericVarsLinear and settings.xml, tag
+    /// Second_Life_Release#843866d-DRTVWR-559), where the Legacy Viewer now
+    /// lights with the grey luminance of a softened ambient. The HDR skies
+    /// take it in their hemisphere colours here; the shaders do the classic
+    /// and linear ones (SkyParams::colored_ambient).
+    pub fn with_colored_ambient(mut self, sky: &SkyFrame, on: bool) -> Environment {
+        self.sky.colored_ambient = on;
+        if on && tone_mapped(sky.probe_ambiance) {
+            let amblit = srgb_to_linear(sky_tmp_ambient(sky).max(Vec3::ZERO) * 0.7);
+            (self.zenith, self.horizon, self.ground) = (amblit, amblit, amblit);
+        }
+        self
     }
 
     fn build(sky: &SkyFrame, water: &WaterFrame, scroll: glam::Vec2, draw_distance: f32) -> Environment {
@@ -152,7 +195,7 @@ impl Environment {
         }
         let lighty = lighty.max(limit);
         let sun_diffuse = sky.sunlight * exp3(-light_atten * lighty) * transmittance;
-        let tmp_ambient = sky.ambient + (Vec3::ONE - sky.ambient) * sky.cloud_shadow * 0.5;
+        let tmp_ambient = sky_tmp_ambient(sky);
         let moon_brightness = if moon_up { sky.moon_brightness } else { 0.001 };
         let moon_diffuse = sky.sunlight * exp3(-light_atten * lighty) * transmittance * moon_brightness;
 
@@ -242,11 +285,16 @@ impl Environment {
             // SL-13084: the x scroll is negated (custom cloud textures are flipped)
             cloud_pos_density1: sky.cloud_pos_density1 + Vec3::new(-scroll.x, scroll.y, 0.0),
             cloud_pos_density2: sky.cloud_pos_density2,
-            dome_offset: sky.dome_offset,
-            dome_radius: sky.dome_radius,
+            // LLSettingsSky::getDomeOffset / getDomeRadius return DOME_OFFSET
+            // and DOME_RADIUS, never the sky's own values: a smaller dome moves
+            // the haze glow (skyF's +50 m) below the sun, and the water then
+            // reflects it away from the sun's glint.
+            dome_offset: eep::LEGACY_DOME_OFFSET,
+            dome_radius: eep::LEGACY_DOME_RADIUS,
             hdr_scale,
             classic: sky.can_auto_adjust,
             no_post: !tone_mapped(sky.probe_ambiance),
+            colored_ambient: false,
             sun_dir: sun,
             moon_dir: moon,
             sun_scale: sky.sun_scale,
@@ -264,6 +312,8 @@ impl Environment {
             ice_level: if sun_up || moon_up { sky.ice_level } else { 0.0 },
             rainbow_texture: 0,
             halo_texture: 0,
+            // set by the caller from the preferences (world/night_sky.rs)
+            stars: Default::default(),
         };
         let water_params = WaterParams {
             fog_color: water.fog_color,
@@ -342,7 +392,8 @@ impl Environment {
             concat!(
                 "sky frame: classic {} probe ambiance {} gamma {} sun elevation {:.1} deg, ",
                 "sunlight {:.3?} (objects {:.3?}), ambient {:.3?}, cloud shadow {:.3}, ",
-                "haze {:.3} / {:.3}, density x {:.6}, distance x {:.3}"
+                "haze {:.3} / {:.3}, density x {:.6}, distance x {:.3}, ",
+                "sun texture {} x {:.2}, dome {} x {} (drawn {} x {})"
             ),
             sky.can_auto_adjust,
             sky.probe_ambiance,
@@ -356,6 +407,12 @@ impl Environment {
             sky.haze_density,
             sky.density_multiplier,
             sky.distance_multiplier,
+            sky.sun_id,
+            sky.sun_scale,
+            sky.dome_offset,
+            sky.dome_radius,
+            eep::LEGACY_DOME_OFFSET,
+            eep::LEGACY_DOME_RADIUS,
         )
     }
 }
@@ -475,5 +532,49 @@ mod tests {
         let dim = Vec3::new(0.7342, 0.7815, 0.8999);
         assert_eq!(normalized_light(dim), dim);
         assert_eq!(normalized_light(Vec3::new(-0.5, 0.2, 0.3)), Vec3::new(0.0, 0.2, 0.3));
+    }
+
+    #[test]
+    fn colored_ambient_follows_the_setting_unless_forced_and_lights_hdr_skies_in_color() {
+        assert!(!colored_ambient(None, false, 0));
+        assert!(colored_ambient(None, true, 1));
+        assert!(!colored_ambient(Some("0"), true, 0));
+        assert!(colored_ambient(Some("1"), false, 1));
+        assert!(colored_ambient(Some("alt"), false, 4));
+        assert!(!colored_ambient(Some("alt"), true, 5));
+        // a warm HDR sky: the ambient x 0.7 made linear, its tint kept
+        let sky = SkyFrame {
+            probe_ambiance: 1.0,
+            ambient: Vec3::new(0.9, 0.6, 0.5),
+            cloud_shadow: 0.0,
+            ..SkyFrame::with_sun(midday_sun())
+        };
+        let grey = Environment::from_eep(&sky, &WaterFrame::default(), glam::Vec2::ZERO, 96.0);
+        let colored = grey.with_colored_ambient(&sky, true);
+        let expected = srgb_to_linear(Vec3::new(0.9, 0.6, 0.5) * 0.7);
+        for c in [colored.zenith, colored.horizon, colored.ground] {
+            assert!((c - expected).length() < 1e-5, "{c:?}");
+        }
+        assert!(colored.sky.colored_ambient);
+        assert!(colored.zenith.x > colored.zenith.z && grey.zenith.x == grey.zenith.z);
+        // off: unchanged
+        let off = grey.with_colored_ambient(&sky, false);
+        assert_eq!(off.zenith, grey.zenith);
+        // classic and linear skies: the shaders take it, the hemisphere
+        // colours (their IBL fallback, the water) stay as they are
+        for (can_auto_adjust, probe_ambiance) in [(true, 0.0), (false, 0.0)] {
+            let sky = SkyFrame {
+                can_auto_adjust,
+                probe_ambiance,
+                ..sky
+            };
+            let plain = Environment::from_eep(&sky, &WaterFrame::default(), glam::Vec2::ZERO, 96.0);
+            let colored = plain.with_colored_ambient(&sky, true);
+            assert!(colored.sky.colored_ambient);
+            assert_eq!(
+                (colored.zenith, colored.horizon, colored.ground),
+                (plain.zenith, plain.horizon, plain.ground)
+            );
+        }
     }
 }
