@@ -7871,6 +7871,14 @@ for them (`5 to look up`), as a cold inventory cache.
 **`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder`**
 — opens Appearance with four synthetic outfits:
 
+In My Outfits, double-click an unworn attachment or clothing item to add it
+beside the current outfit; double-click a worn one to take it off. Worn and
+the outfit editor also remove a worn item on double-click. Worn body parts
+stay; an unworn body part replaces the current one. Ctrl/Cmd/Shift-clicks
+keep selecting, and RLVa locks still apply. In Worn, a temporary attachment
+also detaches on double-click without creating an inventory item. The
+gallery's double-click continues to open the outfit's contents.
+
 - `gallery`: the gallery (the right click includes rename, favourites, image
   choice, save to the chosen outfit and move to the Trash);
   in both `gallery` and `outfits`, right-click a single outfit and choose
