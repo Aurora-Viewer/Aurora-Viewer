@@ -541,7 +541,10 @@ impl Bridge {
         if self.phase != Phase::Failed {
             self.enter(Phase::Failed, now);
         }
-        self.error = Some(aurora_i18n::tr!("bridge-disabled").into());
+        let reason = aurora_i18n::tr!("bridge-disabled");
+        if self.error.as_deref() != Some(reason) {
+            self.error = Some(reason.into());
+        }
     }
     /// Detach our own worn bridge, found by its exact name in `#Aurora`,
     /// each worn object once: wearing it again while off detaches it again.
