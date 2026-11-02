@@ -279,6 +279,7 @@ const GROUPS: &[(&str, RowId)] = &[
     ("aurora-chatlog", RowId::SvcLogs),
     ("aurora-transcript", RowId::SvcLogs),
     ("aurora-notification-history", RowId::SvcLogs),
+    ("aurora-experience-log", RowId::SvcLogs),
     ("aurora-favorites", RowId::Services),
     ("aurora-web-profile", RowId::Services),
     ("aurora-cache", RowId::CacheUpkeep),
@@ -290,6 +291,7 @@ const GROUPS: &[(&str, RowId)] = &[
     ("aurora-hud-scales", RowId::Interface),
     ("aurora-local-previews", RowId::Interface),
     ("aurora-photo-save", RowId::Interface),
+    ("aurora-open-wait", RowId::Interface),
     ("aurora-geometry-needs", RowId::Meshes),
     ("aurora-hover-height", RowId::Avatars),
 ];

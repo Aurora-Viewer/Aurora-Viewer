@@ -979,7 +979,7 @@ impl Session<'_> {
                     }
                 }
                 Ok(resp) => log::info!("ExtEnvironment: HTTP {}", resp.status()),
-                Err(e) => log::info!("ExtEnvironment failed: {e}"),
+                Err(e) => log::info!("ExtEnvironment failed: {}", e.without_url()),
             }
         });
     }
@@ -1527,18 +1527,14 @@ impl Session<'_> {
                 channel,
                 chat_type,
             } => {
-                // SL limits chat to 1023 bytes; split longer messages. The
-                // typing notices are empty lines, sent whole
-                // (send_chat_from_viewer: "Don't break null messages").
-                let mut rest = message.as_str();
-                let mut notice = matches!(chat_type, ChatType::StartTyping | ChatType::StopTyping);
-                while !rest.is_empty() || std::mem::take(&mut notice) {
-                    let mut cut = rest.len().min(1000);
-                    while !rest.is_char_boundary(cut) {
-                        cut -= 1;
-                    }
-                    let (part, r) = rest.split_at(cut);
-                    rest = r;
+                // SL limits chat to 1023 bytes; longer lines leave in parts
+                // (message_split). The typing notices are empty lines, sent
+                // whole (send_chat_from_viewer: "Don't break null messages").
+                let mut parts = crate::message_split::message_parts(&message);
+                if parts.is_empty() && matches!(chat_type, ChatType::StartTyping | ChatType::StopTyping) {
+                    parts.push("");
+                }
+                for part in parts {
                     // really_send_chat_from_viewer (fsnearbychathub.cpp): an
                     // avatar cannot speak on a negative channel, the
                     // simulator drops such a ChatFromViewer. The line goes
@@ -1743,6 +1739,7 @@ impl Session<'_> {
             }
             NetCommand::ExperienceInfo(ids) => self.request_experiences(ids),
             NetCommand::GroupExperiences(group) => self.request_group_experiences(group),
+            NetCommand::MyExperiences => self.request_my_experiences(),
             NetCommand::ExperiencePermission { experience, change } => self.experience_permission(experience, change),
             NetCommand::Touch { local_id } => {
                 // a click is a grab immediately followed by a release (LLToolGrab)
@@ -1891,7 +1888,7 @@ impl Session<'_> {
                                     }
                                 }
                                 Ok(resp) => log::debug!("AgentProfile {id}: HTTP {}", resp.status()),
-                                Err(e) => log::debug!("AgentProfile {id}: {e}"),
+                                Err(e) => log::debug!("AgentProfile {id}: {}", e.without_url()),
                             }
                         });
                     }
@@ -2096,7 +2093,12 @@ impl Session<'_> {
                     self.send_main(&packet, true);
                 }
             }
-            NetCommand::SendIm { to, message } => self.send_im(to, &message, 0),
+            NetCommand::SendIm { to, message } => {
+                // longer than one IM: several in a row (LLIMModel::sendMessage)
+                for part in crate::message_split::message_parts(&message) {
+                    self.send_im(to, part, 0);
+                }
+            }
             NetCommand::OfferTeleport { to, message } => {
                 let mut m = StartLure::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -2399,7 +2401,7 @@ impl Session<'_> {
                                 let reason = r.status().canonical_reason().unwrap_or("").to_owned();
                                 crate::slm::merchant_status(r.status().as_u16(), &reason)
                             }
-                            Err(e) => crate::slm::MerchantStatus::ConnectionFailure(e.to_string()),
+                            Err(e) => crate::slm::MerchantStatus::ConnectionFailure(e.without_url().to_string()),
                         },
                     };
                     let _ = events.send(NetEvent::MerchantStatus(status));
@@ -2888,7 +2890,7 @@ impl Session<'_> {
                         NetEvent::DisplayNamesFailed(ids)
                     }
                     Err(e) => {
-                        log::warn!("GetDisplayNames: {e}");
+                        log::warn!("GetDisplayNames: {}", e.without_url());
                         NetEvent::DisplayNamesFailed(ids)
                     }
                 };
@@ -2934,7 +2936,7 @@ impl Session<'_> {
             let failed = match resp {
                 Ok(r) if r.status().is_success() => None,
                 Ok(r) => Some((r.status().as_u16() as i32, r.status().to_string())),
-                Err(e) => Some((0, e.to_string())),
+                Err(e) => Some((0, e.without_url().to_string())),
             };
             if let Some((status, reason)) = failed {
                 log::warn!("SetDisplayName failed: {reason}");
@@ -2988,7 +2990,7 @@ impl Session<'_> {
             let reason = match resp {
                 Ok(r) if r.status().is_success() => return,
                 Ok(r) => format!("HTTP {}", r.status().as_u16()),
-                Err(e) => e.to_string(),
+                Err(e) => e.without_url().to_string(),
             };
             log::warn!("AgentProfile PUT {target}: {reason}");
             let _ = events.send(NetEvent::ProfileSaveFailed { target, reason });
@@ -3224,6 +3226,29 @@ impl Session<'_> {
         });
     }
 
+    /// LLFloaterExperiences::refreshContents: the lists of every tab, each
+    /// on its own task so that one slow capability does not hold the others.
+    fn request_my_experiences(&self) {
+        use crate::experience::{ExperienceListKind as K, fetch_lists};
+        for caps in [
+            (&[K::Allowed, K::Blocked][..], "GetExperiences"),
+            (&[K::Admin][..], "GetAdminExperiences"),
+            (&[K::Contributor][..], "GetCreatorExperiences"),
+            (&[K::Owned][..], "AgentExperiences"),
+        ] {
+            let (kinds, name) = caps;
+            let cap = self.main_cap(name);
+            let http = self.sh.caps_http.clone();
+            let events = self.sh.events.clone();
+            let kinds = kinds.to_vec();
+            tokio::spawn(async move {
+                for (kind, ids) in fetch_lists(&http, cap.as_deref(), &kinds).await {
+                    let _ = events.send(NetEvent::ExperienceList { kind, ids });
+                }
+            });
+        }
+    }
+
     /// LLExperienceCache::get / set / forgetExperiencePermission.
     fn experience_permission(&self, experience: Uuid, change: crate::experience::ExperiencePermissionChange) {
         let cap = self.main_cap("ExperiencePreferences");
@@ -3384,7 +3409,7 @@ impl Session<'_> {
                     }
                 }
                 Err(e) => {
-                    log::warn!("appearance request failed: {e}");
+                    log::warn!("appearance request failed: {}", e.without_url());
                     (false, None)
                 }
             };
@@ -3427,7 +3452,7 @@ impl Session<'_> {
                         }
                     }
                     Ok(resp) => Err(format!("HTTP {}", resp.status().as_u16())),
-                    Err(e) => Err(e.to_string()),
+                    Err(e) => Err(e.without_url().to_string()),
                 };
                 match reply {
                     Ok(v) => {
@@ -6590,6 +6615,46 @@ mod script_dialog_tests {
                     (channel, message.to_owned())
                 );
             }
+        }
+
+        // A line or an IM longer than 1023 bytes leaves as several messages
+        // cut between words (LLIMModel::sendMessage), never truncated (#1925).
+        let words = "word ".repeat(520);
+        let words = words.trim_end();
+        let friend = Uuid::from_u128(77);
+        let mut large = [0; 4096];
+        for im in [false, true] {
+            session.on_command(if im {
+                NetCommand::SendIm {
+                    to: friend,
+                    message: words.into(),
+                }
+            } else {
+                NetCommand::Chat {
+                    message: words.into(),
+                    channel: 0,
+                    chat_type: ChatType::Normal,
+                }
+            });
+            let mut parts = Vec::new();
+            for _ in 0..3 {
+                let (size, _) = tokio::time::timeout(Duration::from_secs(2), main.recv_from(&mut large))
+                    .await
+                    .expect("message part reaches main")
+                    .expect("message part packet");
+                let packet = parse_packet(&large[..size]).expect("message part datagram");
+                parts.push(if im {
+                    let m: ImprovedInstantMessage = packet.decode().expect("IM part");
+                    assert_eq!((m.message_block.to_agent_id, m.message_block.dialog), (friend, 0));
+                    field_str(&m.message_block.message)
+                } else {
+                    let m: ChatFromViewer = packet.decode().expect("chat part");
+                    field_str(&m.chat_data.message)
+                });
+            }
+            assert!(parts.iter().all(|p| p.len() <= 1023 && p.ends_with("word")), "{im}");
+            assert_eq!(parts.join(" "), words);
+            assert!(main.try_recv_from(&mut large).is_err(), "three parts only");
         }
     }
 }

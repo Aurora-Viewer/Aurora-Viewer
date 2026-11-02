@@ -333,6 +333,40 @@ fn every_tile_of_a_photo_shows_the_instant_of_its_first() {
 }
 
 #[test]
+fn only_a_tiled_photo_with_occlusion_draws_its_context_first() {
+    // a quarter of each side, rounded up
+    assert_eq!(ContextPass::plan((7680, 4320), 6, true), ContextPass::Pending((1920, 1080)));
+    assert_eq!(ContextPass::plan((3003, 1801), 4, true), ContextPass::Pending((751, 451)));
+    assert_eq!(ContextPass::plan((7680, 4320), 1, true), ContextPass::None, "one pass");
+    assert_eq!(ContextPass::plan((7680, 4320), 6, false), ContextPass::None, "no occlusion");
+    // never a target smaller than a few texels
+    assert_eq!(ContextPass::plan((40, 20), 2, true), ContextPass::Pending((16, 16)));
+}
+
+#[test]
+fn the_context_is_the_first_part_and_its_tiles_keep_its_instant() {
+    let t0 = std::time::Instant::now();
+    let at = |ms: u64| Hold {
+        at: t0 + std::time::Duration::from_millis(ms),
+        clock: ms as f32,
+        later: false,
+    };
+    let tiles = 3;
+    let mut kept = None;
+    let (part, parts) = ContextPass::Pending((960, 540)).part(0, tiles);
+    assert_eq!((part, parts), (0, 4));
+    assert_eq!(Hold::for_part(parts, part, &mut kept, at(16)), Some(at(16)));
+    // the first tile is a later part: it shows the context's instant
+    for next in 0..tiles {
+        let (part, parts) = ContextPass::Drawn.part(next, tiles);
+        assert_eq!((part, parts), (next + 1, 4));
+        let hold = Hold::for_part(parts, part, &mut kept, at(33 + next as u64 * 16));
+        assert_eq!(hold, Some(Hold { later: true, ..at(16) }), "tile {next}");
+    }
+    assert_eq!(ContextPass::None.part(2, tiles), (2, 3));
+}
+
+#[test]
 fn focal_length_and_field_of_view_agree() {
     // 50 mm on full frame: 27 degrees vertically
     assert!((fov_of_focal(50.0).to_degrees() - 26.99).abs() < 0.05);

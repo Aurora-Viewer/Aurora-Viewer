@@ -662,6 +662,7 @@ fn poser_subject_menu_queues_consent_actions_for_the_app_and_waits_for_the_bridg
         (QueryState::Silent, Some("poser-bridge-silent")),
         (QueryState::Failed, Some("poser-bridge-failed")),
         (QueryState::Detached, Some("poser-bridge-needed")),
+        (QueryState::Off, Some("poser-bridge-disabled")),
         (QueryState::Ready, None),
     ] {
         editor.poser.requests.clear();
@@ -682,6 +683,7 @@ fn poser_subject_menu_queues_consent_actions_for_the_app_and_waits_for_the_bridg
             "poser-bridge-silent",
             "poser-bridge-failed",
             "poser-bridge-needed",
+            "poser-bridge-disabled",
         ] {
             assert_eq!(
                 texts.iter().any(|t| t.source == aurora_i18n::text(key)),

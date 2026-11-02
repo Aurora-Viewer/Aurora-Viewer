@@ -27,6 +27,7 @@ use crate::gpu_cull::{
 use crate::helpers::Helpers;
 use crate::light_tiles::{self, LightCulling, LightSets};
 use crate::packet::{Capture, FramePacket, FrameResult, SceneGpu, Spent, SurfaceState};
+use crate::pipeline_cache::CachedPipelines;
 use crate::types::*;
 use crate::ui_frame::EguiFrame;
 use crate::upload::FrameUploads;
@@ -158,6 +159,10 @@ struct FrameU {
     motion_vp: [[f32; 4]; 4],
     motion_prev_vp: [[f32; 4]; 4],
     motion_reproj: [[f32; 4]; 4],
+    /// The main view of a photo tile: its part of the photo
+    /// ([`photo_part`]); zero otherwise. The screen-space reflections fade
+    /// at the photo's edges, not the tile's.
+    photo: [f32; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -714,6 +719,21 @@ pub enum RenderError {
     Device(String),
     #[error("surface error: {0}")]
     Surface(String),
+    #[error("the graphics driver lost the device while the viewer was starting (see the log)")]
+    DeviceLost,
+}
+
+/// A device lost while the backend is being made: the error, before the next
+/// `create_buffer_init`, whose mapping panics on a buffer that could not be
+/// made ("water effects" on Intel Iris Xe, #1892). Nothing fails before that:
+/// a lost device takes every other call without a word. As in `Backend`'s
+/// `Drop` (#1650), the surface is left to the process.
+fn lost_at_start(lost: &crate::device_lost::DeviceLost, surface: &Arc<wgpu::Surface<'static>>) -> Result<(), RenderError> {
+    if !lost.get() {
+        return Ok(());
+    }
+    std::mem::forget(surface.clone());
+    Err(RenderError::DeviceLost)
 }
 
 /// A planar reflection render target.
@@ -1932,7 +1952,7 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
         constants: d.constants,
         ..Default::default()
     };
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
         label: Some(d.label),
         layout: Some(layout),
         vertex: wgpu::VertexState {
@@ -2994,8 +3014,10 @@ impl Backend {
         );
         let ssao = Self::make_ssao(&device);
         let gtao = crate::gtao::Gtao::new(&device);
+        lost_at_start(&lost, &surface)?;
         let water_effects = crate::water_effects::WaterGpu::new(&device, 1);
         let contact = crate::contact_shadows::ContactShadows::new(&device);
+        lost_at_start(&lost, &surface)?;
         let glow = Glow::new(&device, &post_layout);
         let smaa = Smaa::new(&device, &queue, [&post_layout, &bloom.post_layout], format);
         let targets = Self::make_targets(
@@ -3015,6 +3037,7 @@ impl Backend {
         exposure.bind(&device, &targets.color, &targets.depth_ss, &glow.views[1]);
         let mut histogram = crate::histogram::Histogram::new(&device);
         histogram.bind(&device, &targets.color);
+        lost_at_start(&lost, &surface)?;
         let stars = wgpu::util::DeviceExt::create_buffer_init(
             &device,
             &wgpu::util::BufferInitDescriptor {
@@ -3046,6 +3069,7 @@ impl Backend {
         let depth_pick = crate::pick::DepthPick::new(&device);
         let drawn_pick = crate::drawn_pick::DrawnPick::new(&device, DEPTH_FORMAT);
         let label_depth = crate::label_depth::LabelDepth::new(&device, format);
+        lost_at_start(&lost, &surface)?;
         let occlusion = crate::occlusion::Occlusion::new(&device);
         let cull = GpuCull::new(&device);
         let motion_history = crate::motion_history::MotionHistory::new(&device);
@@ -5295,6 +5319,7 @@ impl Backend {
         self.snapshot_window = Some((self.config.width, self.config.height));
         self.config.width = s.width;
         self.config.height = s.height;
+        self.gtao.photo = Some(s.photo);
         self.rebuild_targets();
     }
 
@@ -5316,6 +5341,7 @@ impl Backend {
         );
         self.config.width = w;
         self.config.height = h;
+        self.gtao.photo = None;
         self.rebuild_targets();
         true
     }
@@ -5461,6 +5487,7 @@ impl Backend {
             p.params.fov_y = 2.0 * (1.0 / eye.projection.y_axis.y).atan();
             p.params.photo_tile = Mat4::IDENTITY;
             p.params.photo_scale = 1.0;
+            p.params.photo_context = crate::types::PhotoContext::None;
             p.surface.width = world.session.width;
             p.surface.height = world.session.height;
             if let Some(gpu) = &mut p.lists.gpu {
@@ -5588,6 +5615,11 @@ impl Backend {
             self.apply_settings(settings);
         }
         stats.settings = Some(self.settings);
+        // the tiled photo is done: its context goes with the targets that
+        // bind it
+        if params.photo_context == crate::types::PhotoContext::None && self.gtao.drop_context() {
+            self.rebuild_targets();
+        }
         let snapshot = match wanted {
             Some(Capture::Snapshot(s)) if s.width > 0 && s.height > 0 => Some(s),
             _ => None,
@@ -5820,6 +5852,9 @@ impl Backend {
         self.motion_cut |= self.gtao_normals_now && !self.motion_kept;
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.cam_up[3] = camera_water_level;
+        if f.photo_tile != Mat4::IDENTITY {
+            main.photo = photo_part(f.photo_tile);
+        }
         {
             // after the scene moved as a whole, the last frame's camera is
             // in the old coordinates: the frame counts as still
@@ -6250,7 +6285,10 @@ impl Backend {
             };
             let normals = self.gtao_normals_now.then_some(f.view);
             let reproj = crate::gtao::reprojection(f.view, prev);
-            self.gtao.write(&self.queue, t, f.proj, reproj, intensity, frame, normals);
+            let photo = (f.photo_tile != Mat4::IDENTITY).then(|| photo_part(f.photo_tile));
+            let context = f.photo_context == crate::types::PhotoContext::Use;
+            self.gtao
+                .write(&self.queue, t, f.proj, reproj, intensity, frame, normals, photo, context);
         } else if self.targets.ao.is_some() {
             let samples = if self.settings.ssao >= 2 { 16.0 } else { 8.0 };
             let u = SsaoU {
@@ -7044,6 +7082,9 @@ impl Backend {
         // ---- SSAO
         if let (true, Some(t)) = (self.targets.gtao_shown, &self.targets.gtao) {
             self.gtao.encode(&mut encoder, t, indirect_now);
+            if f.photo_context == crate::types::PhotoContext::Record {
+                self.gtao.record_context(&self.device, &mut encoder, t);
+            }
         } else if let (Some((raw, blurred, _, _)), Some((bg_ssao, bg_blur))) = (&self.targets.ao, &self.ssao_groups) {
             for (view, pipe, bg, label) in [
                 (raw, &self.ssao.ssao, bg_ssao, "ssao"),
@@ -9081,7 +9122,7 @@ mod tests {
         });
         // depth only, like the prepass of the multisampled depth
         let pipeline = |vs: &str| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
                 label: Some(vs),
                 layout: None,
                 vertex: wgpu::VertexState {
@@ -9324,7 +9365,7 @@ mod tests {
                 .into(),
             ),
         });
-        let compare_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let compare_pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some("compare"),
             layout: None,
             vertex: wgpu::VertexState {

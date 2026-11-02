@@ -153,7 +153,7 @@ impl DemoSim {
                 group_mask: 0,
                 everyone_mask: 0,
                 next_owner_mask: perm::MOVE | perm::TRANSFER | perm::COPY | perm::MODIFY,
-                sale_type: 0,
+                sale_type: crate::demo::action_sale_type(id),
                 sale_price: 10,
                 category: 0,
                 inventory_serial: 1,

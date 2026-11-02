@@ -5,8 +5,9 @@
 //! "Only friends and groups can call or IM me" and the objects' messages
 //! from elsewhere (`world/object_im_filter.rs`), what we send of where we
 //! look (the Legacy Viewer's "Privacy › LookAt"), whether our photos are
-//! heard around ("Quiet snapshots"), what the scripts learn of us and the
-//! content we see.
+//! heard around ("Quiet snapshots"), what the scripts learn of us, the
+//! content we see and whether the login screen offers our favourite
+//! landmarks.
 
 use super::super::cx::{Cx, Nothing, field};
 use super::super::{maturity_choice, toggle};
@@ -126,9 +127,31 @@ fn account_group(cx: &mut Cx) {
     });
 }
 
+/// "Show my Favorite Landmarks at Login" (favorites_on_login_check of
+/// panel_preferences_privacy.xml, ShowFavoritesOnLogin): kept per account,
+/// so it waits for a login, as in the Legacy Viewer.
+fn login_favorites_row(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    let p = cx.p;
+    let state = cx.st.login_favorites;
+    let mut shown = state.unwrap_or(true);
+    let hint = if state.is_some() {
+        tr!("ui-options-login-favorites-hint")
+    } else {
+        tr!("ui-options-login-favorites-login")
+    };
+    cx.row_with(tr!("ui-options-login-favorites"), hint, &Nothing, |ui, _, _, r| {
+        if ui.add_enabled_ui(state.is_some(), |ui| toggle(ui, &p, &mut shown)).inner {
+            r.login_favorites = Some(shown);
+        }
+        false
+    });
+}
+
 pub(super) fn page(cx: &mut Cx) {
     use aurora_i18n::tr;
     account_group(cx);
+    login_favorites_row(cx);
     cx.choice(
         tr!("poser-privacy"),
         tr!("poser-privacy-hint"),

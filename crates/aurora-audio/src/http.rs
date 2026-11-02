@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+use rustls_platform_verifier::BuilderVerifierExt;
 use url::{Host, Url};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -218,14 +219,16 @@ fn tls_config() -> Result<Arc<rustls::ClientConfig>, HttpError> {
     static CONFIG: OnceLock<Result<Arc<rustls::ClientConfig>, String>> = OnceLock::new();
     CONFIG
         .get_or_init(|| {
-            let mut roots = rustls::RootCertStore::empty();
-            roots.add_parsable_certificates(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned());
             // Explicit provider: the workspace may enable several rustls
             // crypto backends, which makes the implicit default ambiguous.
             let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
             rustls::ClientConfig::builder_with_provider(provider)
                 .with_safe_default_protocol_versions()
-                .map(|b| Arc::new(b.with_root_certificates(roots).with_no_client_auth()))
+                // Some stations omit their intermediate certificate (#1628).
+                // The Windows/macOS verifier can build the missing chain;
+                // certificate trust and the server name are still checked.
+                .and_then(|b| b.with_platform_verifier())
+                .map(|b| Arc::new(b.with_no_client_auth()))
                 .map_err(|e| e.to_string())
         })
         .clone()
@@ -381,6 +384,43 @@ pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, Ht
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn https_rejects_an_untrusted_certificate() {
+        let rcgen::CertifiedKey { cert, signing_key } = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).unwrap();
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        let config = rustls::ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![cert.der().clone()],
+                rustls::pki_types::PrivatePkcs8KeyDer::from(signing_key.serialize_der()).into(),
+            )
+            .unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("https://{}/stream", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            sock.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut tls = rustls::ServerConnection::new(Arc::new(config)).unwrap();
+            let _ = tls.complete_io(&mut sock);
+        });
+        let stop = Arc::new(AtomicBool::new(false));
+        let error = open(&url, &stop).err().expect("a self-signed station must be rejected");
+        server.join().unwrap();
+        let HttpError::Io(error) = error else {
+            panic!("expected a TLS handshake error: {error}");
+        };
+        assert!(
+            matches!(
+                error.get_ref().and_then(|e| e.downcast_ref::<rustls::Error>()),
+                Some(rustls::Error::InvalidCertificate(_))
+            ),
+            "{error:?}"
+        );
+    }
 
     #[test]
     fn status_lines() {

@@ -4,6 +4,7 @@
 //! Screen-space passes run after post processing to avoid TAA trails and keep
 //! the material untouched once the pulse ends. No work without selected faces.
 
+use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 #[cfg(test)]
 mod tests;
@@ -116,7 +117,7 @@ impl Overlay {
             immediate_size: 0,
         });
         let pipeline = |label, entry, format, blend| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {

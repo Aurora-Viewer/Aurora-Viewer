@@ -11,6 +11,7 @@
 //! skeleton with its first pose, and grown buffers keep or restart theirs.
 
 use crate::packet::SceneGpu;
+use crate::pipeline_cache::CachedPipelines;
 
 pub(crate) struct MotionHistory {
     pipeline: wgpu::ComputePipeline,
@@ -47,7 +48,7 @@ impl MotionHistory {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
             label: Some("motion history"),
             layout: Some(&pl),
             module: &module,

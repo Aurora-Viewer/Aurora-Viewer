@@ -349,6 +349,58 @@ mod tests {
     }
 
     #[test]
+    fn an_interactive_attachment_is_linked_only_after_its_simulator_arrival() {
+        let (mut world, object, item) = fixture();
+        let now = Instant::now();
+        world.apply(NetEvent::ObjectsKilled {
+            handle: 1,
+            local_ids: vec![object.local_id],
+        });
+        world.inventory.add_items(vec![item.clone()]);
+        let action = appearance::Action::Add(item.id);
+        let (mut change, _) = appearance::plan(&world.inventory, action.clone(), &world.outfit_attachment_points()).expect("add");
+        let mut attachments = appearance::attachments_for_action(&world.inventory, world.agent_id, &action);
+        appearance::defer_attachment_links(
+            &world.inventory,
+            &mut change,
+            &world.outfit_attachment_items(),
+            &mut attachments,
+            world.agent_id,
+        );
+        appearance::demo_mutate(&mut world.inventory, world.agent_id, &change).expect("COF readback");
+        let cof = appearance::cof(&world.inventory).expect("COF");
+        assert!(!super::super::outfit::cof_objects(&world.inventory, cof).contains(&item.id));
+        world.apply(NetEvent::Alert {
+            message: "Cannot exceed limit on attached animated objects.".into(),
+        });
+        assert!(
+            world.update_attachment_inventory(now, true).is_empty(),
+            "a refusal is not an arrival"
+        );
+        assert!(!super::super::outfit::cof_objects(&world.inventory, cof).contains(&item.id));
+
+        // A later successful attempt registers through the same arrival
+        // path used by script-attached objects, once, after AIS readback.
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![object],
+        });
+        let commands = world.update_attachment_inventory(now + RETRY_GAP, true);
+        let [NetCommand::EditInventory { request, change }] = &commands[..] else {
+            panic!("register confirmed attachment: {commands:?}")
+        };
+        assert!(matches!(&change.operations[..], [Operation::Links { parent, links }]
+            if *parent == cof && links.len() == 1 && links[0].target == item.id));
+        assert!(
+            !super::super::outfit::cof_objects(&world.inventory, cof).contains(&item.id),
+            "wait for AIS"
+        );
+        world.attachment_inventory_result(*request, Ok(linked_reply(&world, &item)));
+        assert!(super::super::outfit::cof_objects(&world.inventory, cof).contains(&item.id));
+        assert!(world.update_attachment_inventory(now + RETRY_GAP * 2, true).is_empty());
+    }
+
+    #[test]
     fn attachment_inventory_recovers_an_unexpected_item_and_registers_it_once() {
         let (mut world, object, item) = fixture();
         let now = Instant::now();

@@ -4,6 +4,7 @@
 //! without GTAO's mesh normals, which carry them), the camera's motion
 //! alone, from `FrameU::motion_reproj`.
 
+use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 
@@ -66,7 +67,7 @@ impl MotionDebug {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some("motion debug"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {

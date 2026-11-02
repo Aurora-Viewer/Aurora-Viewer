@@ -64,6 +64,8 @@ pub enum BarAction {
     /// (World.SetHomeLocation).
     SetHome,
     ToggleFly,
+    /// The toolbar's Snapshot to disk (File.TakeSnapshotToDisk).
+    PhotoToDisk,
     ToggleMoveLock,
     /// Me › Quickjump (Self.toggleIgnorePreJump, FSIgnoreFinishAnimation).
     ToggleQuickjump,
@@ -141,7 +143,11 @@ pub enum BarAction {
     FpsCap(bool),
     CameraPreset(crate::camera::CameraPreset),
     GraphicsPreferences,
-    CameraControls,
+    /// The camera or movement controls (`ui::controls::request`).
+    Controls {
+        movement: bool,
+        toggle: bool,
+    },
     /// Performance on its Network section (`perf::show_network`).
     NetworkGraph,
     /// The toolbar's "Toolbar buttons" window.
@@ -677,6 +683,16 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::check(ui, p, "receipt-filled", tracker, panels.money_tracker, true) {
             super::money_tracker::toggle(ui.ctx(), &mut panels.money_tracker);
         }
+        // menu_viewer.xml: Me › Experiences (Picks, before it there, has
+        // no entry in this menu)
+        flip_window(
+            ui,
+            p,
+            "flask-filled",
+            aurora_i18n::tr!("ui-experiences-title"),
+            super::experiences::WINDOW,
+            &mut panels.experiences,
+        );
         menu::separator(ui, p);
         if menu::item(ui, p, "home-filled", aurora_i18n::tr!("common-go-home")) {
             *action = BarAction::TeleportHome;
@@ -902,7 +918,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             flip_window(
                 ui,
                 p,
-                "radar-filled",
+                "bulb-filled",
                 aurora_i18n::tr!("beacons-title"),
                 super::beacons::WINDOW,
                 &mut panels.beacons,
@@ -1084,10 +1100,16 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         // Firestorm's View › Camera Controls and Movement Controls
         let camera = crate::keybinds::chord_label("KeyC", true, false, true);
         if menu::item_keys(ui, p, "video-filled", aurora_i18n::tr!("controls-camera-title"), &camera) {
-            panels.camera_controls = true;
+            *action = BarAction::Controls {
+                movement: false,
+                toggle: false,
+            };
         }
         if menu::item(ui, p, "walk", aurora_i18n::tr!("controls-movement-title")) {
-            panels.movement_controls = true;
+            *action = BarAction::Controls {
+                movement: true,
+                toggle: false,
+            };
         }
         if menu::item(ui, p, "eye-filled", aurora_i18n::tr!("common-mouselook-m")) {
             *action = BarAction::ToggleMouselook;
@@ -2004,13 +2026,28 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "areasearch" => toggle(super::area_search::WINDOW, &mut panels.area_search),
         "soundexplorer" => toggle(super::sound_explorer::WINDOW, &mut panels.sound_explorer),
         "assetblacklist" => toggle(super::blacklist::WINDOW, &mut panels.asset_blacklist),
+        "group_titles" => toggle(super::group_titles::WINDOW, &mut panels.group_titles),
         "gridstatus" => toggle(super::grid_status::WINDOW, &mut panels.grid_status),
         "performance" => toggle("perf", &mut panels.perf),
         "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
+        // File.TakeSnapshotToDisk: a photo saved with the last settings,
+        // without the window (the keyboard's Save to disk)
+        "snapshot_to_disk" => return BarAction::PhotoToDisk,
+        "beacons" => toggle(super::beacons::WINDOW, &mut panels.beacons),
         "preferences" => toggle("options", &mut panels.settings),
         // Firestorm's Move and View buttons open the controls
-        "move" => panels.movement_controls = !panels.movement_controls,
-        "view" => panels.camera_controls = !panels.camera_controls,
+        "move" => {
+            return BarAction::Controls {
+                movement: true,
+                toggle: true,
+            };
+        }
+        "view" => {
+            return BarAction::Controls {
+                movement: false,
+                toggle: true,
+            };
+        }
         "fly" => return BarAction::ToggleFly,
         "movelock" | "move_lock" => return BarAction::ToggleMoveLock,
         "water_walk" => return BarAction::ToggleWaterWalk,
@@ -2074,9 +2111,11 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "areasearch" => panels.area_search,
         "soundexplorer" => panels.sound_explorer,
         "assetblacklist" => panels.asset_blacklist,
+        "group_titles" => panels.group_titles,
         "gridstatus" => panels.grid_status,
         "performance" => panels.perf,
         "snapshot" => panels.snapshot,
+        "beacons" => panels.beacons,
         "preferences" => panels.settings,
         "move" => panels.movement_controls,
         "view" => panels.camera_controls,
@@ -3479,7 +3518,9 @@ mod tests {
             ("areasearch", super::super::area_search::WINDOW, |p| p.area_search),
             ("soundexplorer", super::super::sound_explorer::WINDOW, |p| p.sound_explorer),
             ("assetblacklist", super::super::blacklist::WINDOW, |p| p.asset_blacklist),
+            ("group_titles", super::super::group_titles::WINDOW, |p| p.group_titles),
             ("gridstatus", super::super::grid_status::WINDOW, |p| p.grid_status),
+            ("beacons", super::super::beacons::WINDOW, |p| p.beacons),
         ] {
             run_command(&ctx, cmd, &mut panels);
             if !open(&panels) {
@@ -3504,6 +3545,16 @@ mod tests {
         assert!(matches!(run_command(&ctx, "movement", &mut panels), BarAction::ToggleSwimming));
         assert!(matches!(run_command(&ctx, "water_walk", &mut panels), BarAction::ToggleWaterWalk));
         assert!(!panels.ao);
+    }
+
+    #[test]
+    fn snapshot_to_disk_saves_without_opening_the_snapshot_window() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        panels.snapshot = false;
+        assert!(super::super::toolbar::ready("snapshot_to_disk"));
+        assert!(matches!(run_command(&ctx, "snapshot_to_disk", &mut panels), BarAction::PhotoToDisk));
+        assert!(!panels.snapshot);
     }
 
     #[test]

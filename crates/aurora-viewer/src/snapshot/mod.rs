@@ -417,9 +417,10 @@ pub struct TilePass {
 /// contact shadows' rays (60 pixels). A tile drawn alone had no scene past
 /// its border, and GTAO took the border row it read again beyond it for a
 /// wall: a dark line along the seams. GTAO's radius (0.73 m) spans fewer
-/// pixels than the band beyond 9 m in a photo 1,800 pixels high, and its
-/// farthest samples weigh the least; the band costs 128 pixels of a side of
-/// 4,096 or more in the photos that need tiles. The bloom, the depth of
+/// pixels than the band beyond 9 m in a photo 1,800 pixels high; nearer,
+/// its samples past the band read the whole photo's depth ([`ContextPass`]).
+/// The band costs 128 pixels of a side of 4,096 or more in the photos that
+/// need tiles. The bloom, the depth of
 /// field and the contact shadows of a photo larger than the viewfinder
 /// (their rays as much longer, [`viewfinder_scale`]) reach farther and
 /// widen it while they are on (`aurora_render::bloom_tile_reach`,
@@ -713,6 +714,48 @@ impl Hold {
                 *kept = Some(first);
                 Some(first)
             }
+        }
+    }
+}
+
+/// A tiled photo's frame of the whole photo at a fraction of its size,
+/// drawn before its tiles: GTAO keeps its depth, which the tiles' samples
+/// past their border read (`aurora_render::PhotoContext`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextPass {
+    /// A photo in one pass, or without ambient occlusion.
+    None,
+    /// To draw, at this size.
+    Pending((u32, u32)),
+    Drawn,
+}
+
+/// How many times smaller, on each side, the context is than the photo:
+/// GTAO's samples past a tile's guard band are 128 pixels or more away,
+/// where they read depth levels of 16 photo pixels or coarser; the
+/// context's first level is 4 of them (8 when GTAO runs at half
+/// resolution).
+const CONTEXT_DIVISOR: u32 = 4;
+
+impl ContextPass {
+    /// What a photo of `size` drawn in `tiles` passes needs, with the
+    /// ambient occlusion on or not.
+    pub fn plan(size: (u32, u32), tiles: usize, occlusion: bool) -> Self {
+        if tiles > 1 && occlusion {
+            ContextPass::Pending((size.0.div_ceil(CONTEXT_DIVISOR).max(16), size.1.div_ceil(CONTEXT_DIVISOR).max(16)))
+        } else {
+            ContextPass::None
+        }
+    }
+
+    /// The part drawn while part `next` of `tiles` is the next tile, and
+    /// how many parts: the context counts as the first, so that it shows
+    /// the tiles' instant (`Hold::for_part`).
+    pub fn part(self, next: usize, tiles: usize) -> (usize, usize) {
+        match self {
+            ContextPass::None => (next, tiles),
+            ContextPass::Pending(_) => (0, tiles + 1),
+            ContextPass::Drawn => (next + 1, tiles + 1),
         }
     }
 }

@@ -580,6 +580,22 @@ pub fn colon_emote(text: &mut String) {
     text.replace_range(..1, with);
 }
 
+/// A channel-0 local line as the Legacy Viewer sends it: the MU* pose and the
+/// gesture replacement apply first (`triggerAndReviseString`, llgesturemgr.cpp),
+/// then the channel is read from the text really sent (FSNearbyChat::sendChatFromViewer
+/// → stripChannelNumber, fsnearbychathub.cpp, llfloaterimnearbychat.cpp). A
+/// replacement opening with "/1" therefore speaks on channel 1 (#1916). The
+/// gesture id is returned to be played, as triggerAndReviseString does.
+pub fn prepare_local_line(manager: &mut crate::gestures::Manager, text: &str, pose: bool) -> (i32, String, Option<uuid::Uuid>) {
+    let mut text = text.to_owned();
+    if pose {
+        colon_emote(&mut text);
+    }
+    let (revised, gesture) = manager.revise(&text);
+    let (channel, message) = parse_channel(&revised);
+    (channel, message, gesture)
+}
+
 fn color_for(kind: ChatKind, p: &Palette) -> Color32 {
     match kind {
         ChatKind::Own(_) => p.violet_pale,
@@ -652,7 +668,7 @@ fn date_marker(ui: &mut egui::Ui, p: &Palette, year: i64, month: i64, day: i64) 
     );
     ui.add_space(4.0);
     ui.vertical_centered(|ui| {
-        ui.label(RichText::new(text).size(11.0).color(p.muted_dim));
+        ui.label(RichText::new(text).size(super::fonts::chat_size(ui.ctx(), 11.0)).color(p.muted_dim));
     });
 }
 
@@ -1777,7 +1793,7 @@ fn send_button(ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, enab
 /// The time at the right of a message header, laid out before the names so
 /// that they know the room it takes.
 fn header_time(ui: &egui::Ui, p: &Palette, time: String) -> std::sync::Arc<egui::Galley> {
-    let text = RichText::new(time).size(11.5).color(p.muted);
+    let text = RichText::new(time).size(super::fonts::chat_size(ui.ctx(), 11.5)).color(p.muted);
     egui::WidgetText::from(text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body)
 }
 
@@ -1793,7 +1809,14 @@ const USERNAME_MIN_W: f32 = 36.0;
 /// of the name, clickable.
 fn header_names(ui: &mut egui::Ui, p: &Palette, name: &str, username: Option<&str>, col: Color32, reserve: f32) -> egui::Response {
     let room = ui.available_width() - reserve;
-    let label = super::widgets::elided_label(ui, RichText::new(name).size(13.0).strong().color(col), room);
+    let label = super::widgets::elided_label(
+        ui,
+        RichText::new(name)
+            .size(super::fonts::chat_size(ui.ctx(), 13.0))
+            .strong()
+            .color(col),
+        room,
+    );
     let r = ui.add(label.sense(egui::Sense::click()));
     let Some(u) = username else {
         return r;
@@ -1802,7 +1825,9 @@ fn header_names(ui: &mut egui::Ui, p: &Palette, name: &str, username: Option<&st
     if room < USERNAME_MIN_W {
         return r.on_hover_text(u);
     }
-    let text = RichText::new(format!("- {u}")).size(11.5).color(p.indigo_light);
+    let text = RichText::new(format!("- {u}"))
+        .size(super::fonts::chat_size(ui.ctx(), 11.5))
+        .color(p.indigo_light);
     ui.add(super::widgets::elided_label(ui, text, room));
     r
 }
@@ -2345,7 +2370,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
             world,
             env.want_names,
             &line.text,
-            12.5,
+            super::fonts::chat_size(ui.ctx(), 12.5),
             tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
             true,
             mark,
@@ -2441,7 +2466,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     world,
                     env.want_names,
                     &visible,
-                    13.5,
+                    super::fonts::chat_size(ui.ctx(), 13.5),
                     tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
                     message_emphasis(line.kind, italics),
                     mark,
@@ -3155,10 +3180,13 @@ fn classic_pane(
     let strip_top = ui.min_rect().bottom();
     ui.add_space(4.0);
     // input + emoji
-    let hint = match st.selected {
-        None => aurora_i18n::tr!("ui-chat-to-local-chat").to_owned(),
-        Some(id) => aurora_i18n::tr!("ui-chat-at", value0 = world.session_title(&id).to_string()),
-    };
+    let hint = input::hint(
+        ui,
+        match st.selected {
+            None => aurora_i18n::tr!("ui-chat-to-local-chat").to_owned(),
+            Some(id) => aurora_i18n::tr!("ui-chat-at", value0 = world.session_title(&id).to_string()),
+        },
+    );
     let mut emoji_btn = None;
     let mut send_clicked = false;
     let mut draft = std::mem::take(st.draft_mut(st.selected));
@@ -3491,9 +3519,9 @@ pub fn toasts(
             // the islands' pills: the mockup's 12 px text, 9 × 4 margins and
             // 4 px between two lines
             let (size, margin, gap) = if pills {
-                (12.0, egui::Margin::symmetric(9, 4), 4.0)
+                (super::fonts::chat_size(ui.ctx(), 12.0), egui::Margin::symmetric(9, 4), 4.0)
             } else {
-                (13.0, egui::Margin::symmetric(6, 2), 2.0)
+                (super::fonts::chat_size(ui.ctx(), 13.0), egui::Margin::symmetric(6, 2), 2.0)
             };
             let family = pills.then(|| super::fonts::semibold(ui.ctx()));
             if pills {
@@ -4645,6 +4673,48 @@ mod tests {
         assert_eq!(parse_channel("/5-3"), (5, "-3".into()), "the sign only before the digits");
         assert_eq!(parse_channel("/-"), (0, "/-".into()));
         assert_eq!(parse_channel("/--5 x"), (0, "/--5 x".into()));
+    }
+
+    /// A gesture's replacement may itself open with a channel: the Legacy
+    /// Viewer reads it from the revised line, so "/cap" replaced by
+    /// "/1capture" speaks on channel 1 (#1916).
+    #[test]
+    fn gesture_replacement_channel_is_read_from_the_revised_line() {
+        let mut manager = crate::gestures::Manager::default();
+        let id = uuid::Uuid::from_u128(1);
+        manager.entries.insert(
+            id,
+            crate::gestures::Entry {
+                asset: uuid::Uuid::nil(),
+                definition: aurora_assets::gesture::Gesture {
+                    trigger: "/cap".into(),
+                    replacement: "/1capture".into(),
+                    ..Default::default()
+                },
+            },
+        );
+        manager.active.insert(id);
+        assert_eq!(prepare_local_line(&mut manager, "/cap", false), (1, "capture".into(), Some(id)));
+        // only a leading channel is read: further in the line it stays text
+        assert_eq!(
+            prepare_local_line(&mut manager, "say /cap", false),
+            (0, "say /1capture".into(), Some(id))
+        );
+        // the same channel forms as parse_channel
+        if let Some(entry) = manager.entries.get_mut(&id) {
+            entry.definition.replacement = "/-4242 ping".into();
+        }
+        assert_eq!(prepare_local_line(&mut manager, "/cap", false), (-4242, "ping".into(), Some(id)));
+        if let Some(entry) = manager.entries.get_mut(&id) {
+            entry.definition.replacement = "/5 test".into();
+        }
+        assert_eq!(prepare_local_line(&mut manager, "/cap", false), (5, "test".into(), Some(id)));
+        // no gesture: the MU* pose alone, and only when asked for
+        assert_eq!(prepare_local_line(&mut manager, ":waves", true), (0, "/me waves".into(), None));
+        assert_eq!(prepare_local_line(&mut manager, ":waves", false), (0, ":waves".into(), None));
+        // disabled gestures leave the line untouched
+        manager.enabled = false;
+        assert_eq!(prepare_local_line(&mut manager, "/cap", false), (0, "/cap".into(), None));
     }
 
     /// ":" as "/me" (FSCommon::applyMuPose): poses and possessives become

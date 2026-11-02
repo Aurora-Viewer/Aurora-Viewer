@@ -32,34 +32,59 @@ fn environment(agent: Uuid, expected: Uuid, invoice: Uuid, parameters: &[&[u8]])
     })
 }
 
-fn attachment(agent: Uuid, expected: Uuid, invoice: Uuid, parameters: &[&[u8]]) -> Option<NetEvent> {
+/// An ExperienceEvent message, its document read once: the event for the log
+/// and, when an object attached something, the event for the RLVa controller
+/// policy.
+fn experience_event(agent: Uuid, expected: Uuid, invoice: Uuid, parameters: &[&[u8]]) -> Option<(ExperienceLogEvent, Option<NetEvent>)> {
     if expected.is_nil() || agent != expected || invoice.is_nil() {
         return None;
     }
     let document = document(parameters.first()?)?;
-    if document["Permission"].as_i32() != 4 {
-        return None;
-    }
-    let name = parameters.get(1)?;
-    if name.len() > 1024 {
-        return None;
-    }
-    let object_name = field_str(name);
-    (!object_name.is_empty()).then_some(NetEvent::ExperienceAttachment {
+    let text = |index: usize| {
+        parameters
+            .get(index)
+            .filter(|bytes| bytes.len() <= 1024)
+            .map(|bytes| field_str(bytes))
+            .unwrap_or_default()
+    };
+    let event = ExperienceLogEvent {
         experience: invoice,
-        object_name,
-    })
+        permission: document["Permission"].as_i32(),
+        owner: document["OwnerID"].as_uuid(),
+        object_name: text(1),
+        parcel_name: text(2),
+        attachment: document["IsAttachment"].as_bool(),
+    };
+    let attachment = (event.permission == 4 && parameters.get(1).is_some_and(|name| name.len() <= 1024) && !event.object_name.is_empty())
+        .then(|| NetEvent::ExperienceAttachment {
+            experience: invoice,
+            object_name: event.object_name.clone(),
+        });
+    Some((event, attachment))
 }
 
 impl Session<'_> {
     pub(super) fn on_experience_generic(&self, agent: Uuid, method: &[u8], invoice: Uuid, parameters: &[&[u8]]) {
-        let event = match field_str(method).as_str() {
-            "ExperienceEvent" => attachment(agent, self.agent_id(), invoice, parameters),
-            "PushExpEnvironment" => environment(agent, self.agent_id(), invoice, parameters),
-            _ => None,
-        };
-        if let Some(event) = event {
-            emit(self.sh, event);
+        match field_str(method).as_str() {
+            "ExperienceEvent" => match experience_event(agent, self.agent_id(), invoice, parameters) {
+                Some((event, attachment)) => {
+                    emit(self.sh, NetEvent::ExperienceLog(event));
+                    if let Some(attachment) = attachment {
+                        emit(self.sh, attachment);
+                    }
+                }
+                None => log::warn!(
+                    "ExperienceEvent not logged: agent {agent} (ours {}), invoice {invoice}, {} parameter(s)",
+                    self.agent_id(),
+                    parameters.len()
+                ),
+            },
+            "PushExpEnvironment" => {
+                if let Some(event) = environment(agent, self.agent_id(), invoice, parameters) {
+                    emit(self.sh, event);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -93,6 +118,32 @@ impl Session<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn attachment(agent: Uuid, expected: Uuid, invoice: Uuid, parameters: &[&[u8]]) -> Option<NetEvent> {
+        experience_event(agent, expected, invoice, parameters).and_then(|(_, attachment)| attachment)
+    }
+
+    #[test]
+    fn an_experience_event_is_logged_with_its_object_and_parcel() {
+        let agent = Uuid::from_u128(1);
+        let experience = Uuid::from_u128(2);
+        let document = b"{'Permission':i11,'OwnerID':u00000000-0000-0000-0000-000000000003,'IsAttachment':0}";
+        let (event, attachment) = experience_event(agent, agent, experience, &[document, b"Door\0", b"Plaza\0"]).expect("logged");
+        assert_eq!(
+            (
+                event.experience,
+                event.permission,
+                event.owner,
+                event.object_name.as_str(),
+                event.parcel_name.as_str()
+            ),
+            (experience, 11, Uuid::from_u128(3), "Door", "Plaza")
+        );
+        assert!(attachment.is_none());
+        assert!(experience_event(Uuid::nil(), agent, experience, &[document]).is_none());
+        assert!(experience_event(agent, agent, Uuid::nil(), &[document]).is_none());
+    }
+
     #[test]
     fn experience_environment_push_keeps_its_invoice_and_rejects_foreign_or_unknown_actions() {
         let agent = Uuid::from_u128(1);

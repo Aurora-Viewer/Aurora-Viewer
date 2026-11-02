@@ -963,6 +963,7 @@ pub mod proc_text {
         "aurora-audio-stream",
         "aurora-inventory-cache",
         "aurora-notification-history",
+        "aurora-experience-log",
         "aurora-transcript",
         "aurora-favorites",
         "aurora-web-profile",
@@ -971,6 +972,7 @@ pub mod proc_text {
         "aurora-hud-scales",
         "aurora-local-previews",
         "aurora-photo-save",
+        "aurora-open-wait",
         "aurora-geometry-needs",
         "aurora-hover-height",
     ];

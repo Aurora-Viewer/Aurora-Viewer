@@ -1,4 +1,5 @@
 //! Rasterize both windings through the production blend/depth fragment cuts.
+use crate::pipeline_cache::CachedPipelines;
 use crate::types::flags;
 use wgpu::util::DeviceExt;
 
@@ -124,7 +125,7 @@ fn depth_normal(n:vec3<f32>,front:bool,cur:vec4<f32>,prev:vec4<f32>)->vec4<f32> 
         let entry = ["colour", "contact", "normal", "opaque"][row % 4];
         let water_clip = (row / 8) as f64;
         let pipelines = [false, true].map(|double_sided| {
-            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
                 label: Some(entry),
                 layout: None,
                 vertex: wgpu::VertexState {
