@@ -566,6 +566,9 @@ mod tests {
             worn_kinds: vec![(1, Uuid::from_u128(2))],
             baked: [(8, Uuid::from_u128(8))].into_iter().collect(),
             sent: Some(HashMap::new()),
+            sent_inputs: Some(worn.clone()),
+            queried: true,
+            serial: 4,
             tries: 2,
             ..Default::default()
         };
@@ -582,6 +585,8 @@ mod tests {
         assert!(bakes.baked.is_empty() && bakes.sent.is_none() && bakes.dirty.is_none());
         assert_eq!(bakes.tries, 0);
         assert_ne!(bakes.inputs, worn);
+        assert!(bakes.sent_inputs.is_none(), "a server bake asked at the next login is not skipped");
+        assert!(!bakes.queried && bakes.query.is_none(), "the next region is asked what it keeps");
     }
 
     #[test]
