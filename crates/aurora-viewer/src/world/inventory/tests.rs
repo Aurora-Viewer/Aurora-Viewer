@@ -689,3 +689,67 @@ fn names_are_trimmed_bounded_and_cannot_inject_legacy_asset_headers() {
     assert!(clean_name("A|B").is_err());
     assert_eq!(clean_name(&"é".repeat(90)).expect("bounded name").chars().count(), 63);
 }
+
+#[test]
+fn a_link_can_be_pasted_into_an_outfit_folder_but_a_copy_cannot() {
+    let mut inv = fixture();
+    let original = id(8109);
+    inv.created_folders(vec![
+        InvFolder {
+            id: id(9700),
+            parent: inv.root,
+            name: "My Outfits".into(),
+            type_default: 48,
+            ..Default::default()
+        },
+        InvFolder {
+            id: id(9701),
+            parent: id(9700),
+            name: "Outfit".into(),
+            type_default: 47,
+            ..Default::default()
+        },
+    ]);
+    let none = HashSet::new();
+    for outfit in [id(9700), id(9701)] {
+        assert!(paste_allowed(&inv, &[original], outfit, false, true, &none, &none), "{outfit}");
+        assert!(!paste_allowed(&inv, &[original], outfit, false, false, &none, &none), "{outfit}");
+    }
+    assert!(paste(&inv, &[original], id(9701), false, true, &none, &none).is_ok());
+    assert!(paste(&inv, &[original], id(9701), false, false, &none, &none).is_err());
+
+    // can_move_to_outfit: only what can be worn is linked into an outfit;
+    // a notecard, a texture, a coalesced object and a folder are skipped
+    let item = |n: u128, inv_type: i32, asset_type: i32, flags: u32| InvItem {
+        id: id(n),
+        parent: inv.root,
+        inv_type,
+        asset_type,
+        flags,
+        ..Default::default()
+    };
+    inv.add_items(vec![
+        item(9710, 18, 13, 0),
+        item(9711, 7, 7, 0),
+        item(9712, 0, 0, 0),
+        item(9713, 6, 6, crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS),
+    ]);
+    let folder = id(9720);
+    inv.created_folders(vec![InvFolder {
+        id: folder,
+        parent: inv.root,
+        name: "Loose".into(),
+        type_default: -1,
+        ..Default::default()
+    }]);
+    for refused in [id(9711), id(9712), id(9713), folder] {
+        assert!(!paste_allowed(&inv, &[refused], id(9701), false, true, &none, &none), "{refused}");
+        assert!(paste(&inv, &[refused], id(9701), false, true, &none, &none).is_err(), "{refused}");
+        // elsewhere the link is still allowed
+        assert!(paste_allowed(&inv, &[refused], id(8000), false, true, &none, &none), "{refused}");
+    }
+    let mixed = [id(9710), id(9711), folder];
+    assert!(paste_allowed(&inv, &mixed, id(9701), false, true, &none, &none));
+    let change = paste(&inv, &mixed, id(9701), false, true, &none, &none).expect("the wearable is linked");
+    assert_eq!(change.operations.len(), 1, "only the wearable");
+}

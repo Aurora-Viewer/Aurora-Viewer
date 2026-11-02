@@ -4734,6 +4734,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
 | `AURORA_DEMO_REGION=overview\|manage\|people[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
 | `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
+| `AURORA_DEMO_GROUPS=many` | More than 50 group memberships for the Conversations group picker |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
 | `AURORA_DEMO_GROUP_REGION=1\|still` | Group titles window with region rules; `1` teleports to a region with its own title and back |
 | `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set", "Block particles" and calling card |
@@ -4744,7 +4745,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
 | `AURORA_DEMO_SEARCH=<tab>[:text]` | "Search" on a tab (or Aurora's "all" chip), search done |
-| `AURORA_DEMO_SEARCH_WEB=<page>` | Page loaded by the Web tab of "Search" in demo |
+| `AURORA_DEMO_SEARCH_WEB=<page>` | Page loaded by the Web tab of "Search" in demo; `teleport` opens the offline link test |
 | `AURORA_DEMO_GRID_HELP=<page>` | Help › Knowledge base shown, opening this page |
 | `AURORA_DEMO_MARKETPLACE=<page>` | Marketplace window open at start on this page |
 | `AURORA_DEMO_MARKETPLACE_LISTINGS=<mode>` | Marketplace listings window open on a simulated SLM server |
@@ -7499,6 +7500,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   then the guest's view) and, in Preferences › Aurora › Profiles, the
   classic window with its "Members and roles", "Notices", "Land and L$"
   and "Experiences" sections.
+- **`AURORA_DEMO_GROUPS=many`**: with `AURORA_DEMO=1`, the simulated
+  `RequestGroups` response adds 64 named memberships (67 total). Combine it
+  with `AURORA_DEMO_CONV=aurora:new`, then open Start group in the Conversations
+  column to inspect the scrollable picker and reach the last entry.
 - **`AURORA_DEMO_GROUP_REGION=1|still`**: the Group titles window (the
   toolbar's Group titles command, Contacts › Groups › Titles) opens at frame
   600, with every title of the three demo groups and three region rules:
@@ -7633,7 +7638,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `xyz` finds nothing ("'xyz' not found").
 - **`AURORA_DEMO_SEARCH_WEB=<page>`**: the address the Web tab loads in
   demo (a local `file:///…` page is enough to try back, forward,
-  reload and the address). Without it the Web tab of the demo loads
+  reload and the address). Set it to `teleport` for the bundled offline
+  test page; its button should open the viewer's teleport confirmation.
+  Programmatic navigation to a SLURL must not trigger an action. Without it
+  the Web tab of the demo loads
   nothing: the search page of the grid is only opened once
   connected.
 - **`AURORA_DEMO_GRID_HELP=<page>`**: Help › Knowledge base shows in demo
