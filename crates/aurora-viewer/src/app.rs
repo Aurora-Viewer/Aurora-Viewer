@@ -1576,7 +1576,7 @@ impl App {
             }
             crate::demo::experience::Reply::Say(text) => self.world.system_message(text),
             crate::demo::experience::Reply::SayLogged(text, event) => {
-                self.world.apply(event);
+                self.world.apply(*event);
                 self.world.system_message(text);
             }
             crate::demo::experience::Reply::Nothing => {}

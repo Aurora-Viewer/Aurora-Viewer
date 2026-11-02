@@ -114,7 +114,7 @@ pub enum Reply {
     /// A message of the object's script in the local chat.
     Say(String),
     /// A message of the script, and the event it gave the experience log.
-    SayLogged(String, NetEvent),
+    SayLogged(String, Box<NetEvent>),
     /// Nothing visible (logged).
     Nothing,
 }
@@ -302,7 +302,7 @@ impl ExperienceDemo {
         } else if environment {
             Reply::Events(vec![logged, self::environment(source.experience)])
         } else {
-            Reply::SayLogged(aurora_i18n::tr!("demo-experience-greeter-done").into(), logged)
+            Reply::SayLogged(aurora_i18n::tr!("demo-experience-greeter-done").into(), Box::new(logged))
         }
     }
 }
