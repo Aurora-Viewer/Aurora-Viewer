@@ -113,6 +113,7 @@ mod script_clicks;
 mod scripts;
 mod settings_backup;
 mod shape_editor;
+mod shortcuts;
 mod snapshot;
 mod social_menu_demo;
 mod stream_list;
@@ -901,11 +902,10 @@ fn ui_font(settings: &Settings) -> String {
         .unwrap_or_else(|| settings.font.clone())
 }
 
-/// The login screen keeps one shortcut of the viewer: the preferences
-/// (Ctrl+P unless rebound), as the Legacy Viewer's login menu does
-/// (menu_login.xml, "Preferences..." on control|P).
+/// The shortcuts of the login screen's menu (menu_login.xml): Preferences
+/// (Ctrl+P) and Exit (Ctrl+Q).
 fn login_shortcut(screen: &Screen, action: Option<Action>) -> bool {
-    matches!(screen, Screen::Login) && action == Some(Action::Preferences)
+    matches!(screen, Screen::Login) && matches!(action, Some(Action::Preferences | Action::Quit))
 }
 
 /// A Ctrl / Alt shortcut of the viewer still works while a text field has
@@ -4084,7 +4084,11 @@ impl App {
             self.walk_tap(group, pressed && action.is_none());
         }
         if pressed && login_shortcut(&self.screen, action) {
-            ui::widgets::toggle_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
+            if action == Some(Action::Quit) {
+                self.request_exit();
+            } else {
+                ui::widgets::toggle_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
+            }
             return;
         }
         if !pressed || !self.in_world() {
@@ -4140,6 +4144,9 @@ impl App {
                     self.reset_camera_view();
                 }
             }
+            Action::ResetCameraAngles => self.reset_camera_angles(),
+            Action::FocusSelection => self.look_at_selection(false),
+            Action::ZoomSelection => self.look_at_selection(true),
             Action::Chat => self.chat_ui.focus_request = true,
             Action::ToggleMic => self.toggle_mic(),
             // the shortcuts of the windows, like their toolbar buttons: a
@@ -4150,7 +4157,13 @@ impl App {
                 ui::widgets::toggle_floater(&self.egui_ctx, "people", &mut self.panels.people);
                 self.panels.people_tab = 0;
             }
+            Action::Friends => self.people_tab_shortcut(ui::people::TAB_FRIENDS),
+            Action::Groups => self.people_tab_shortcut(ui::people::TAB_GROUPS),
+            Action::ContactSets => self.people_tab_shortcut(ui::people::TAB_SETS),
             Action::Inventory => ui::widgets::toggle_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory),
+            Action::NewInventoryWindow => self.inventory_ui.open_additional_window(&self.egui_ctx),
+            Action::Appearance => ui::widgets::toggle_floater(&self.egui_ctx, "appearance", &mut self.panels.appearance),
+            Action::Quit => self.request_exit(),
             Action::TextureLibrary => ui::widgets::toggle_floater(
                 &self.egui_ctx,
                 self.settings.texture_library.presentation.window(),
@@ -4199,6 +4212,9 @@ impl App {
                     aurora_i18n::tr!("app-show-transparency-disabled")
                 });
             }
+            Action::SelectionOutlines => self.toggle_selection_outlines(),
+            Action::MuteAll => self.toggle_master_mute(),
+            Action::DoubleClickTeleport => self.toggle_double_click_teleport(),
             Action::Rebake => self.rebake(),
             Action::StopAnimations => self.stop_animations(false),
             Action::ResyncAnimations => self.scene.resync_animations(Instant::now()),
@@ -12450,12 +12466,7 @@ impl App {
             }
             BarAction::ToggleFly => self.toggle_fly(),
             BarAction::SetDoubleClick(choice) => {
-                // like the "Double-click teleport enabled / disabled" line
-                // Firestorm writes to the nearby chat
-                self.settings.double_click = choice;
-                self.settings.save();
-                self.world
-                    .system_message(aurora_i18n::tr!("app-double-click-ground-set", action = choice.label().to_string()));
+                self.set_double_click(choice);
             }
             BarAction::ToggleMouselook => self.toggle_mouselook(),
             BarAction::SitGround => self.toggle_ground_sit(),

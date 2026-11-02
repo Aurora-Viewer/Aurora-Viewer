@@ -337,6 +337,14 @@ pub enum Action {
     SitGround,
     Mouselook,
     ResetCamera,
+    /// View › Reset Camera Angles (handle_reset_camera_angles, Shift+Esc):
+    /// the view reset, and the offsets the Ctrl / Shift wheel moves back to
+    /// the rear view's.
+    ResetCameraAngles,
+    /// Build › Focus on Selection / Zoom to Selection
+    /// (handle_look_at_selection, H and Shift+H).
+    FocusSelection,
+    ZoomSelection,
     /// LLViewerJoystick::toggleFlycam (menu_viewer.xml, Alt+Shift+F).
     Flycam,
     /// The Controls window, on its Camera tab (Firestorm's View › Camera
@@ -366,7 +374,20 @@ pub enum Action {
     /// `use_mac_ctrl="true"`, Floater.ToggleOrBringToFront `fs_nearby_chat`).
     NearbyChat,
     People,
+    /// Communicate › Friends, Groups and Contact Sets
+    /// (SideTray.PanelPeopleTab: Ctrl+Shift+F, Ctrl+Shift+G,
+    /// Ctrl+Alt+Shift+C): People on that tab, closed when it shows.
+    Friends,
+    Groups,
+    ContactSets,
     Inventory,
+    /// Me › New Inventory Window (Inventory.NewWindow, Ctrl+Shift+I): the
+    /// additional inventory window.
+    NewInventoryWindow,
+    /// Me › Outfits (CustomizeAvatar, Ctrl+O): the Appearance window.
+    Appearance,
+    /// Me › Exit (File.Quit, Ctrl+Q).
+    Quit,
     Gestures,
     Minimap,
     WorldMap,
@@ -399,6 +420,15 @@ pub enum Action {
     ShowHuds,
     /// "Show transparency" (Firestorm Ctrl+Alt+T).
     ShowTransparency,
+    /// Build › Options › Show Selection Outlines (RenderHighlightSelections,
+    /// Ctrl+Alt+H).
+    SelectionOutlines,
+    /// World › Sound › Mute / unmute sound (World.ToggleMasterAudio,
+    /// Ctrl+Alt+Shift+M).
+    MuteAll,
+    /// Advanced › Shortcuts › DoubleClick Teleport
+    /// (Advanced.SetDoubleClickAction, Ctrl+Shift+D).
+    DoubleClickTeleport,
     Beacons,
     PropertyLines,
     LandOwners,
@@ -502,6 +532,9 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 vec![
                     (Action::Mouselook, aurora_i18n::tr!("common-mouselook")),
                     (Action::ResetCamera, aurora_i18n::tr!("keybinds-return-to-avatar")),
+                    (Action::ResetCameraAngles, aurora_i18n::tr!("keybinds-reset-camera-angles")),
+                    (Action::FocusSelection, aurora_i18n::tr!("keybinds-focus-selection")),
+                    (Action::ZoomSelection, aurora_i18n::tr!("keybinds-zoom-selection")),
                     (Action::Flycam, aurora_i18n::tr!("joystick-flycam")),
                     (Action::CameraControls, aurora_i18n::tr!("controls-camera-title")),
                     (Action::LensZoomIn, aurora_i18n::tr!("keybinds-lens-zoom-in")),
@@ -533,7 +566,12 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::NearbyChat, aurora_i18n::tr!("common-nearby-chat")),
                     (Action::Conversations, aurora_i18n::tr!("common-conversations")),
                     (Action::People, aurora_i18n::tr!("common-people")),
+                    (Action::Friends, aurora_i18n::tr!("common-friends")),
+                    (Action::Groups, aurora_i18n::tr!("common-groups")),
+                    (Action::ContactSets, aurora_i18n::tr!("ui-contacts-contact-sets")),
                     (Action::Inventory, aurora_i18n::tr!("common-inventory")),
+                    (Action::NewInventoryWindow, aurora_i18n::tr!("inventory-additional-window")),
+                    (Action::Appearance, aurora_i18n::tr!("common-appearance")),
                     (Action::TextureLibrary, aurora_i18n::tr!("texture-library-title")),
                     (Action::IkEdit, aurora_i18n::tr!("ik-edit-title")),
                     (Action::Gestures, aurora_i18n::tr!("gesture-title")),
@@ -548,6 +586,9 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::ToggleInterface, aurora_i18n::tr!("keybinds-hide-interface")),
                     (Action::HoverTips, aurora_i18n::tr!("ui-options-hover-tips")),
                     (Action::Import, aurora_i18n::tr!("keybinds-import-files")),
+                    (Action::MuteAll, aurora_i18n::tr!("keybinds-mute-all-sound")),
+                    (Action::DoubleClickTeleport, aurora_i18n::tr!("keybinds-double-click-teleport")),
+                    (Action::Quit, aurora_i18n::tr!("ui-bars-quit-aurora-viewer")),
                 ],
             ),
             (
@@ -588,6 +629,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 vec![
                     (Action::DevToolbox, aurora_i18n::tr!("dev-toolbox-title")),
                     (Action::ShowTransparency, aurora_i18n::tr!("common-show-transparency")),
+                    (Action::SelectionOutlines, aurora_i18n::tr!("keybinds-selection-outlines")),
                     (Action::Beacons, aurora_i18n::tr!("beacons-title")),
                     (Action::PropertyLines, aurora_i18n::tr!("world-property-lines")),
                     (Action::LandOwners, aurora_i18n::tr!("world-land-owners")),
@@ -710,6 +752,11 @@ impl KeyBindings {
             (Action::SitGround, [kalt(K::KeyS, false, true), None]),
             (Action::Mouselook, [k(K::KeyM), None]),
             (Action::ResetCamera, [k(K::Escape), None]),
+            // menu_viewer.xml: Reset Camera Angles, shortcut="shift|Esc"
+            (Action::ResetCameraAngles, [kmod(K::Escape, false, true), None]),
+            // menu_viewer.xml: Focus on / Zoom to Selection, H and shift|H
+            (Action::FocusSelection, [k(K::KeyH), None]),
+            (Action::ZoomSelection, [kmod(K::KeyH, false, true), None]),
             (Action::Flycam, [kalt(K::KeyF, false, true), None]),
             (Action::CameraControls, [kmod(K::KeyC, true, true), None]),
             (Action::LensZoomIn, [kmod(K::Digit0, true, false), kmod(K::Numpad0, true, false)]),
@@ -742,7 +789,15 @@ impl KeyBindings {
             (Action::ToggleMic, [None, None]),
             (Action::Conversations, [kmod(K::KeyT, true, false), None]),
             (Action::People, [kmod(K::KeyA, true, true), None]),
+            // menu_viewer.xml: Friends, Groups, Contact Sets
+            (Action::Friends, [kmod(K::KeyF, true, true), None]),
+            (Action::Groups, [kmod(K::KeyG, true, true), None]),
+            (Action::ContactSets, [kalt(K::KeyC, true, true), None]),
             (Action::Inventory, [kmod(K::KeyI, true, false), None]),
+            // menu_viewer.xml: New Inventory Window, Outfits, Exit
+            (Action::NewInventoryWindow, [kmod(K::KeyI, true, true), None]),
+            (Action::Appearance, [kmod(K::KeyO, true, false), None]),
+            (Action::Quit, [kmod(K::KeyQ, true, false), None]),
             (Action::TextureLibrary, [kmod(K::Space, true, false), None]),
             (Action::IkEdit, [kmod(K::KeyK, true, false), None]),
             (Action::Gestures, [kmod(K::KeyG, true, false), None]),
@@ -783,6 +838,11 @@ impl KeyBindings {
             // menu_viewer.xml: Show Tips, shortcut="control|shift|T"
             (Action::HoverTips, [kmod(K::KeyT, true, true), None]),
             (Action::Import, [kmod(K::KeyU, true, false), None]),
+            // menu_viewer.xml: Mute/unmute sound, DoubleClick Teleport, Show
+            // Selection Outlines
+            (Action::MuteAll, [kalt(K::KeyM, true, true), None]),
+            (Action::DoubleClickTeleport, [kmod(K::KeyD, true, true), None]),
+            (Action::SelectionOutlines, [kalt(K::KeyH, true, false), None]),
             (
                 Action::Beacons,
                 [
@@ -1608,6 +1668,49 @@ mod tests {
     }
 
     #[test]
+    fn the_legacy_menu_chords_aurora_lacked_run_their_actions() {
+        // menu_viewer.xml accelerators (US QWERTY places)
+        let kb = KeyBindings::us_places([KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD]);
+        let m = |ctrl, shift, alt| Mods { ctrl, shift, alt };
+        for (code, mods, action) in [
+            (KeyCode::KeyQ, m(true, false, false), Action::Quit),
+            (KeyCode::KeyO, m(true, false, false), Action::Appearance),
+            (KeyCode::KeyF, m(true, true, false), Action::Friends),
+            (KeyCode::KeyG, m(true, true, false), Action::Groups),
+            (KeyCode::KeyC, m(true, true, true), Action::ContactSets),
+            (KeyCode::KeyI, m(true, true, false), Action::NewInventoryWindow),
+            (KeyCode::KeyM, m(true, true, true), Action::MuteAll),
+            (KeyCode::KeyD, m(true, true, false), Action::DoubleClickTeleport),
+            (KeyCode::KeyH, m(true, false, true), Action::SelectionOutlines),
+            (KeyCode::Escape, m(false, true, false), Action::ResetCameraAngles),
+            (KeyCode::KeyH, m(false, false, false), Action::FocusSelection),
+            (KeyCode::KeyH, m(false, true, false), Action::ZoomSelection),
+        ] {
+            assert_eq!(kb.triggered(&Input::key(code), mods), Some(action), "{code:?} {mods:?}");
+            assert_eq!(
+                kb.users(&kb.get(action)[0].clone().expect("bound")),
+                vec![action],
+                "{action:?} alone on its keys"
+            );
+        }
+        // plain Esc still resets the view
+        assert_eq!(
+            kb.triggered(&Input::key(KeyCode::Escape), Mods::default()),
+            Some(Action::ResetCamera)
+        );
+        // a settings file from before them gets them
+        let mut old = kb.clone();
+        old.map
+            .retain(|(a, _)| !matches!(a, Action::Quit | Action::Friends | Action::ResetCameraAngles));
+        let old = old.sanitized();
+        assert_eq!(old.triggered(&Input::key(KeyCode::KeyQ), m(true, false, false)), Some(Action::Quit));
+        assert_eq!(
+            old.triggered(&Input::key(KeyCode::Escape), m(false, true, false)),
+            Some(Action::ResetCameraAngles)
+        );
+    }
+
+    #[test]
     fn nearby_chat_is_ctrl_h_and_keeps_the_other_h_chords() {
         let kb = KeyBindings::default();
         let h = Input::key(KeyCode::KeyH);
@@ -1627,7 +1730,14 @@ mod tests {
         assert_eq!(kb.triggered(&h, ctrl), Some(Action::NearbyChat));
         assert_eq!(kb.triggered(&h, alt), Some(Action::TeleportHistory));
         assert_eq!(kb.triggered(&h, alt_shift), Some(Action::ShowHuds));
-        assert_eq!(kb.triggered(&h, Mods::default()), None);
+        // H and Shift+H are Build › Focus on / Zoom to Selection, not a
+        // Nearby Chat without its Ctrl
+        assert_eq!(kb.triggered(&h, Mods::default()), Some(Action::FocusSelection));
+        let shift = Mods {
+            shift: true,
+            ..Default::default()
+        };
+        assert_eq!(kb.triggered(&h, shift), Some(Action::ZoomSelection));
         assert!(!text_field_keeps(KeyCode::KeyH, ctrl), "Nearby Chat runs while a field is focused");
         let binding = kb.get(Action::NearbyChat)[0].clone().expect("default binding");
         assert_eq!(binding.label_on(true), "⌃H");
