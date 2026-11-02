@@ -16,6 +16,7 @@ use std::{
 };
 use uuid::Uuid;
 pub mod arrival;
+mod returns;
 
 pub const WIDTH: f32 = aurora_render::PORTAL_HALF_WIDTH;
 pub const HEIGHT: f32 = aurora_render::PORTAL_HALF_HEIGHT;
@@ -64,17 +65,31 @@ pub struct Entry {
     relays: Vec<Uuid>,
     shared: bool,
     created: bool,
+    return_pass: bool,
 }
 
 impl Entry {
+    fn shared_announcement(&self) -> Announcement {
+        let mut announcement = self.portal.clone();
+        if !self.created {
+            announcement.creator = Some(self.owner);
+        }
+        announcement
+    }
+
     pub fn label_owner(&self) -> Uuid {
-        self.owner
+        // A relayed creator is a routing hint, not proof of identity.
+        if self.return_pass || self.created || self.relays.contains(&self.owner) {
+            self.owner
+        } else {
+            self.relays.first().copied().unwrap_or(self.owner)
+        }
     }
 
     pub fn allowed(&self, world: &World) -> bool {
-        self.details
-            .as_ref()
-            .is_some_and(|details| !world.mutes.is_muted_id(&self.owner) && allowed(world, self.owner, details.access))
+        self.details.as_ref().is_some_and(|details| {
+            !world.mutes.is_muted_id(&self.owner) && (self.return_pass || allowed(world, self.owner, details.access))
+        })
     }
 
     fn resolved(&self) -> Option<Portal> {
@@ -98,6 +113,10 @@ impl Entry {
     pub fn ready_to_cross(&self, now: Instant) -> bool {
         self.gate.armed && now >= self.gate.ready_at
     }
+
+    pub fn reveals_arrival(&self) -> bool {
+        self.return_pass && self.gate.arriving
+    }
 }
 
 struct Gate {
@@ -106,6 +125,7 @@ struct Gate {
     last_sample: Instant,
     clearance: f32,
     ready_at: Instant,
+    arriving: bool,
 }
 
 impl Gate {
@@ -116,12 +136,22 @@ impl Gate {
             last_sample: now,
             clearance: INITIAL_CLEARANCE,
             ready_at: now,
+            arriving: false,
         }
     }
 
     fn observer(center: Vec3, position: Vec3, now: Instant) -> Self {
         Self {
             ready_at: now + Duration::from_millis(600),
+            ..Self::new(center, position, now)
+        }
+    }
+
+    fn arrival(center: Vec3, position: Vec3, now: Instant) -> Self {
+        Self {
+            armed: position.distance(center) >= CLEARANCE,
+            clearance: CLEARANCE,
+            arriving: position.distance(center) < CLEARANCE,
             ..Self::new(center, position, now)
         }
     }
@@ -140,6 +170,7 @@ impl Gate {
             // Reject this segment, but do not make an already distant observer
             // walk farther away after a frame stall or a server correction.
             self.armed = position.is_finite() && position.distance(center) >= self.clearance;
+            self.arriving = false;
             if self.armed {
                 self.clearance = CLEARANCE;
             }
@@ -149,6 +180,7 @@ impl Gate {
             if position.distance(center) >= self.clearance {
                 self.armed = true;
                 self.clearance = CLEARANCE;
+                self.arriving = false;
             }
             return false;
         }
@@ -168,6 +200,7 @@ impl Gate {
             // Consume even a refused or involuntary crossing; no delayed TP.
             self.armed = false;
             self.clearance = CLEARANCE;
+            self.arriving = false;
         }
         inside && voluntary
     }
@@ -231,7 +264,7 @@ impl State {
         if !from.is_finite() || !to.is_finite() || from.distance_squared(to) < 0.5 * 0.5 {
             return false;
         }
-        self.entries.iter().any(|entry| {
+        self.apertures().any(|entry| {
             let portal = &entry.portal;
             if portal.region != region || now >= entry.expires_at {
                 return false;
@@ -305,7 +338,7 @@ impl State {
     /// The invitation, crossing guards and posed body cuts remain live.
     pub fn visible<'a>(&'a self, world: &'a World) -> impl Iterator<Item = &'a Entry> {
         let shown = !world.photo_isolation.applied();
-        self.entries.iter().filter(move |entry| shown && entry.portal.creator.is_none())
+        self.apertures().filter(move |_| shown)
     }
 
     /// One fresh server-backed member list per group portal, shared by all
@@ -354,6 +387,7 @@ impl State {
             relays: Vec::new(),
             shared: true,
             created: true,
+            return_pass: false,
         });
         true
     }
@@ -428,11 +462,6 @@ impl State {
                 }
             }
             Message::Open(portal) => {
-                // Legacy return invitations are no longer materialized or
-                // traversable. Arrivals use the one-shot presentation message.
-                if portal.creator.is_some() {
-                    return;
-                }
                 let creator = portal.creator.unwrap_or(owner);
                 if !portal.live(unix)
                     || world.mutes.is_muted_id(&creator)
@@ -459,6 +488,7 @@ impl State {
                 }
                 if self.entries.len() >= LIMIT
                     || (portal.creator.is_none() && self.entries.iter().any(|e| e.owner == owner && e.portal.creator.is_none()))
+                    || (portal.creator.is_some() && self.entries.iter().any(|e| returns::overlaps(&e.portal, &portal)))
                 {
                     return;
                 }
@@ -474,6 +504,7 @@ impl State {
                     relays: vec![owner],
                     shared: false,
                     created: false,
+                    return_pass: false,
                 });
             }
             Message::Close { id, .. } => {
@@ -501,7 +532,7 @@ impl State {
                     return;
                 }
                 self.discoveries.insert(owner, now);
-                let shared: Vec<_> = self.entries.iter().filter(|e| e.shared).map(|e| e.portal.clone()).collect();
+                let shared: Vec<_> = self.entries.iter().filter(|e| e.shared).map(Entry::shared_announcement).collect();
                 for portal in shared {
                     self.queue(owner, Message::Open(portal));
                 }
@@ -681,15 +712,17 @@ impl State {
             for entry in &mut self.entries {
                 entry.gate.previous = world.agent.position;
                 entry.gate.armed = false;
+                entry.gate.arriving = false;
                 entry.gate.last_sample = now;
             }
             return None;
         }
         let mut crossed = None;
-        for entry in &mut self.entries {
-            if entry.portal.creator.is_some() {
+        for index in 0..self.entries.len() {
+            if !self.materialized(&self.entries[index]) {
                 continue;
             }
+            let entry = &mut self.entries[index];
             let travel = world.agent.position - entry.gate.previous;
             let can_enter = intent.is_finite() && travel.dot(intent) > 1e-5 && entry.allowed(world);
             if entry.gate.sample(&entry.portal, world.agent.position, can_enter, now) && crossed.is_none() {
@@ -779,7 +812,8 @@ impl State {
                 return;
             }
             if let Message::Open(portal) = action {
-                self.entries.retain(|entry| !entry.shared || entry.portal.id != portal.id);
+                self.entries
+                    .retain(|entry| !entry.shared || entry.portal.id != portal.id || entry.return_pass);
             }
             self.failed = true;
         }

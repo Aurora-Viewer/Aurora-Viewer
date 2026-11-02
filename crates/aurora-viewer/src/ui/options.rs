@@ -281,6 +281,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "recent" | "recent-period" => row(Page::Inventory, 0, tr!("ui-inventory-recent-period")),
         "auto-accept" => row(Page::Inventory, 0, tr!("received-auto-accept")),
         "animations" | "animations-sync" => row(Page::Aurora, 2, tr!("ui-options-aurora-animation-clock")),
+        "portals" => row(Page::Aurora, 2, tr!("ui-options-portal-returns")),
         _ => None,
     };
     let audio = match what {

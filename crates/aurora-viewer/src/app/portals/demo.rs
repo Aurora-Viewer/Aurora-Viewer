@@ -31,6 +31,7 @@ impl App {
             self.panels.inventory = false;
             self.panels.appearance = false;
             self.settings.reduce_motion = false;
+            self.settings.portal_returns = mode.contains("return");
             self.always_run = true;
             let position = self.world.agent.position;
             let ahead = self.world.agent.forward();
@@ -47,6 +48,28 @@ impl App {
                 expires: unix_time() + LIFETIME,
             };
             self.world.portals.create(portal, position, Instant::now(), unix_time());
+            if mode.ends_with("busy") {
+                let occupied = Portal {
+                    id: uuid::Uuid::new_v4(),
+                    region: self.world.main_region.unwrap_or(256),
+                    center: position.to_array(),
+                    yaw: self.world.agent.yaw,
+                    destination: "Occupied destination".into(),
+                    position: [128.0, 128.0, position.z],
+                    access: Access::Friends,
+                    expires: unix_time() + LIFETIME,
+                };
+                if let Some(wire) = aurora_net::bridge::portal::Message::Open(occupied.announcement()).encode() {
+                    let mut state = std::mem::take(&mut self.world.portals);
+                    state.receive(
+                        &self.world,
+                        &format!("<auroraPortal>{}|{wire}</auroraPortal>", uuid::Uuid::from_u128(19)),
+                        Instant::now(),
+                        unix_time(),
+                    );
+                    self.world.portals = state;
+                }
+            }
         }
         if mode.ends_with("late")
             && self.world.portals.arrivals.contains_key(&self.world.agent_id)
@@ -79,6 +102,70 @@ impl App {
                 self.world.portals.arrivals.len(),
                 clipped,
                 self.world.agent.position
+            );
+        }
+        true
+    }
+
+    pub(in crate::app) fn crowded_return_demo(&mut self, mode: &str) -> bool {
+        if mode != "returns-crowd" {
+            return false;
+        }
+        if !self.portal_ui.demo_seeded && self.frame_count >= 660 {
+            self.portal_ui.demo_seeded = true;
+            self.portal_ui.open = false;
+            self.panels.people = false;
+            self.panels.inventory = false;
+            self.panels.appearance = false;
+            self.settings.portal_returns = true;
+            let root = self.world.agent.position + self.world.agent.forward() * 4.0;
+            let portal = Portal {
+                id: uuid::Uuid::from_u128(40),
+                region: self.world.main_region.unwrap_or(256),
+                center: root.to_array(),
+                yaw: self.world.agent.yaw,
+                destination: "Demo departure".into(),
+                position: [128.0, 128.0, root.z],
+                access: Access::Everyone,
+                expires: unix_time() + LIFETIME,
+            };
+            let now = Instant::now();
+            let unix = unix_time();
+            let mut state = std::mem::take(&mut self.world.portals);
+            let creator = uuid::Uuid::from_u128(20);
+            for i in 0..20 {
+                let mut next = portal.clone();
+                next.id = uuid::Uuid::from_u128(40 + i);
+                state.share_return(next, creator, self.world.agent.position, now, unix);
+            }
+            for i in 0..20 {
+                let mut next = portal.announcement();
+                next.id = uuid::Uuid::from_u128(100 + i);
+                next.creator = Some(uuid::Uuid::from_u128(200 + i));
+                if let Some(destination) = &mut next.destination {
+                    destination.position[0] += 20.0;
+                }
+                let Some(wire) = aurora_net::bridge::portal::Message::Open(next).encode() else {
+                    continue;
+                };
+                state.receive(
+                    &self.world,
+                    &format!("<auroraPortal>{}|{wire}</auroraPortal>", uuid::Uuid::from_u128(300 + i)),
+                    now,
+                    unix,
+                );
+            }
+            log::info!(
+                "portal crowded return demo: entries {}, apertures {}",
+                state.entries.len(),
+                state.apertures().count()
+            );
+            self.world.portals = state;
+            self.camera.set_view(
+                root + Vec3::new(-4.0, -5.0, 2.0),
+                root,
+                &mut self.world.agent,
+                &self.settings.camera,
             );
         }
         true

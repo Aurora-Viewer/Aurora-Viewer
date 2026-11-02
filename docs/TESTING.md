@@ -231,6 +231,22 @@ invitations throughout and zero effects at 840. `arrival-platform` adds a solid
 platform 3 m above terrain: support must come from the object, not the terrain.
 `arrival-sky` starts 3.01 m above support and must create no aperture or fall.
 `arrival-static` checks reduced motion without visual drop or input pause.
+Preferences > Aurora > Behavior > Keep a return portal on arrival is off by
+default. Enabling it leaves a vertical, traversable return until the original
+invitation expires (at most two minutes). A nearby return to the same departure
+place is reused, including after recreating the source; its position and expiry
+must not change. A different doorway already occupying the area prevents a new
+return and uses the temporary horizontal arrival instead. Existing returns
+remain visible and usable with the preference off. Use `repeat-local-return`
+for successive real local arrivals with held run: two entries (source and return),
+no one-shot arrivals, no immediate bounce and no growing entry count.
+`repeat-local-return-busy` adds an unrelated private doorway at the landing:
+returns must be refused and the horizontal effect must still complete.
+`returns-crowd` combines twenty recreated sources and twenty received,
+conflicting returns at one position: exactly one aperture must be shown.
+Capture the preference through `AURORA_DEMO_OPTIONS=aurora/2:portals`. Human grid checks: both
+same-region and cross-region round trips, multiple travelers from a recreated
+source, conflicting origins at one landing, expiry, Friends and Group access.
 `arrival-own` shows the same emergence on our own avatar, including skinned
 and rigid attachments, through the normal third-person camera. Capture 660,
 680, 700, 710, 720, 730, 740, 760, 780 and 840: the eye stays beneath the

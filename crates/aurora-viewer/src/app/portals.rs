@@ -4,6 +4,8 @@ use aurora_net::bridge::portal::{Access, LIFETIME, Portal};
 pub(super) mod demo;
 pub(super) mod landmark;
 pub(super) struct Journey {
+    creator: uuid::Uuid,
+    origin: aurora_net::bridge::portal::Destination,
     agent: uuid::Uuid,
     source: Portal,
     arrival_region: String,
@@ -30,14 +32,36 @@ impl Journey {
             && self.source.live(unix)
             && !world.tp_failed
     }
-    fn new(world: &World, _creator: uuid::Uuid, source: &Portal, now: Instant) -> Self {
+    fn new(world: &World, creator: uuid::Uuid, source: &Portal, now: Instant) -> Self {
+        let normal = Vec3::new(source.yaw.cos(), source.yaw.sin(), 0.0);
         Self {
+            creator,
+            origin: aurora_net::bridge::portal::Destination {
+                region: world.region_name(),
+                position: (Vec3::from(source.center) - normal * 0.15)
+                    .with_z(world.agent.position.z)
+                    .to_array(),
+            },
             agent: world.agent_id,
             source: source.clone(),
             arrival_region: source.destination.clone(),
             started: now,
             arrived: false,
             landing: None,
+        }
+    }
+
+    fn return_portal(&self, region: u64, position: Vec3) -> Portal {
+        let normal = Vec3::new(self.source.yaw.cos(), self.source.yaw.sin(), 0.0);
+        Portal {
+            id: uuid::Uuid::from_u128(self.source.id.as_u128() ^ 1),
+            region,
+            center: (position - normal * 0.15).to_array(),
+            yaw: (-normal.y).atan2(-normal.x),
+            destination: self.origin.region.clone(),
+            position: self.origin.position,
+            access: self.source.access,
+            expires: self.source.expires,
         }
     }
 }
@@ -63,45 +87,57 @@ impl App {
             && journey.arrival_region.eq_ignore_ascii_case(&self.world.region_name())
             && let Some(region) = self.world.main_region
         {
-            let (anchor, at) = *journey.landing.get_or_insert((self.world.agent.position, now));
-            let floor = self.scene.preview_floor(&self.world, anchor, anchor.z);
-            let terrain_ready = self.world.main().is_some_and(|r| {
-                anchor.x >= 0.0
-                    && anchor.y >= 0.0
-                    && anchor.x < r.heightmap.size_x as f32
-                    && anchor.y < r.heightmap.size_y as f32
-                    && r.heightmap
-                        .patch_received
-                        .get((anchor.y as u32 / 16 * r.heightmap.patches_x + anchor.x as u32 / 16) as usize)
-                        .copied()
-                        .unwrap_or(false)
-            });
-            // An unreceived terrain patch is initialized to zero, not a
-            // verified floor. A distinct solid-object hit is already usable.
-            let floor = floor.filter(|height| {
-                terrain_ready
-                    || self
-                        .world
-                        .ground_height(anchor)
-                        .is_none_or(|terrain| (height - terrain).abs() > 0.001)
-            });
-            let close = floor.is_some_and(|floor| (0.0..=2.0).contains(&(anchor.z - floor)));
-            if !close && !terrain_ready && now.saturating_duration_since(at) < Duration::from_secs(1) {
-                self.portal_journey = Some(journey);
-            } else {
-                let root = self.world.agent.position;
-                let height = self
-                    .world
-                    .objects
-                    .index_of_uuid(&self.world.agent_id)
-                    .and_then(|i| self.world.objects.get(i))
-                    .map_or(1.7, |o| o.scale.z.clamp(0.5, 8.0));
-                let opened = close && floor.is_some_and(|floor| state.begin_arrival(root, floor, height, now));
-                if opened {
-                    self.world.agent.flying = false;
-                }
+            let returned = self.settings.portal_returns
+                && self.world.main().is_some_and(|r| {
+                    let portal = journey.return_portal(region, self.world.agent.position);
+                    crate::world::portals::fits_region(Vec3::from(portal.center), [r.heightmap.size_x, r.heightmap.size_y])
+                        && state.share_return(portal, journey.creator, self.world.agent.position, now, unix)
+                });
+            if returned {
                 if self.demo {
-                    log::info!("portal demo one-way arrival: region {region}, opened {opened}, floor {floor:?}, root {root:?}");
+                    log::info!("portal demo persistent arrival: entries {}, region {region}", state.entries.len());
+                }
+            } else {
+                let (anchor, at) = *journey.landing.get_or_insert((self.world.agent.position, now));
+                let floor = self.scene.preview_floor(&self.world, anchor, anchor.z);
+                let terrain_ready = self.world.main().is_some_and(|r| {
+                    anchor.x >= 0.0
+                        && anchor.y >= 0.0
+                        && anchor.x < r.heightmap.size_x as f32
+                        && anchor.y < r.heightmap.size_y as f32
+                        && r.heightmap
+                            .patch_received
+                            .get((anchor.y as u32 / 16 * r.heightmap.patches_x + anchor.x as u32 / 16) as usize)
+                            .copied()
+                            .unwrap_or(false)
+                });
+                // An unreceived terrain patch is initialized to zero, not a
+                // verified floor. A distinct solid-object hit is already usable.
+                let floor = floor.filter(|height| {
+                    terrain_ready
+                        || self
+                            .world
+                            .ground_height(anchor)
+                            .is_none_or(|terrain| (height - terrain).abs() > 0.001)
+                });
+                let close = floor.is_some_and(|floor| (0.0..=2.0).contains(&(anchor.z - floor)));
+                if !close && !terrain_ready && now.saturating_duration_since(at) < Duration::from_secs(1) {
+                    self.portal_journey = Some(journey);
+                } else {
+                    let root = self.world.agent.position;
+                    let height = self
+                        .world
+                        .objects
+                        .index_of_uuid(&self.world.agent_id)
+                        .and_then(|i| self.world.objects.get(i))
+                        .map_or(1.7, |o| o.scale.z.clamp(0.5, 8.0));
+                    let opened = close && floor.is_some_and(|floor| state.begin_arrival(root, floor, height, now));
+                    if opened {
+                        self.world.agent.flying = false;
+                    }
+                    if self.demo {
+                        log::info!("portal demo one-way arrival: region {region}, opened {opened}, floor {floor:?}, root {root:?}");
+                    }
                 }
             }
         }
@@ -163,7 +199,7 @@ impl App {
         self.exchange_portal_demo();
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_PORTALS")
-            && (self.arrival_portal_demo(&mode) || self.repeat_portal_demo(&mode))
+            && (self.arrival_portal_demo(&mode) || self.repeat_portal_demo(&mode) || self.crowded_return_demo(&mode))
         {
             return;
         }
@@ -586,6 +622,36 @@ fn movement_intent(input: &MoveInput, yaw: f32, vertical: bool) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn return_journeys_keep_the_departure_place_height_permissions_and_expiry() {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        world.agent.position.z = 26.4;
+        let source = Portal {
+            id: uuid::Uuid::from_u128(7),
+            region: world.main_region.unwrap(),
+            center: [10.0, 10.0, 27.0],
+            yaw: 0.0,
+            destination: "Other destination".into(),
+            position: [128.0, 128.0, 30.0],
+            access: Access::Friends,
+            expires: unix_time() + LIFETIME,
+        };
+        let creator = uuid::Uuid::from_u128(9);
+        let journey = Journey::new(&world, creator, &source, Instant::now());
+        let exit = journey.return_portal(512, Vec3::new(130.0, 131.0, 31.0));
+        assert_eq!(journey.creator, creator);
+        assert_eq!(exit.region, 512);
+        assert_eq!(exit.destination, world.region_name());
+        assert_eq!(exit.position, [9.85, 10.0, 26.4]);
+        assert_eq!(exit.center, [129.85, 131.0, 31.0]);
+        assert_eq!(exit.access, source.access);
+        assert_eq!(exit.expires, source.expires);
+        assert!((Vec3::new(exit.yaw.cos(), exit.yaw.sin(), 0.0) + Vec3::X).length() < 1e-5);
+    }
 
     #[test]
     fn only_the_live_same_region_portal_journey_requests_the_arrival_camera() {

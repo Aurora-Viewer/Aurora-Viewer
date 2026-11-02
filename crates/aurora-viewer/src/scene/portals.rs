@@ -343,14 +343,13 @@ impl super::Scene {
         } else {
             let portals: Vec<_> = world
                 .portals
-                .entries
-                .iter()
-                .filter(|entry| entry.portal.creator.is_none())
+                .apertures()
                 .map(|entry| clipping::Aperture {
                     key: clipping::Key(entry.owner, entry.portal.id, entry.portal.region),
                     center: Vec3::from(entry.portal.center),
                     normal: Vec3::new(entry.portal.yaw.cos(), entry.portal.yaw.sin(), 0.0),
-                    local_ready: entry.allowed(world) && (world.portals.departure == Some(entry.portal.id) || entry.ready_to_cross(now)),
+                    local_ready: entry.allowed(world)
+                        && (world.portals.departure == Some(entry.portal.id) || entry.ready_to_cross(now) || entry.reveals_arrival()),
                 })
                 .collect();
             let mut avatars = Vec::new();

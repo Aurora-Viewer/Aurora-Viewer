@@ -392,6 +392,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     ],
                 );
             });
+            cx.group(tr!("portal-title"), |cx| {
+                cx.toggle(
+                    tr!("ui-options-portal-returns"),
+                    tr!("ui-options-portal-returns-help"),
+                    &field!(portal_returns),
+                );
+            });
             cx.group(tr!("ui-options-aurora-animations"), |cx| {
                 let help = warned(
                     tr!("ui-options-aurora-animation-clock-help"),

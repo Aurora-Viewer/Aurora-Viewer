@@ -40,13 +40,13 @@ pub(super) fn fixture() -> (World, State) {
 }
 
 #[test]
-fn legacy_return_announcements_are_neither_shown_nor_traversable() {
+fn return_announcements_are_visible_without_enabling_our_own_return_preference() {
     let (world, mut state) = fixture();
     let mut p = portal().announcement();
     p.creator = Some(Uuid::from_u128(2));
     state.receive(&world, &wire(Uuid::from_u128(3), Message::Open(p)), Instant::now(), 1000);
-    assert!(state.entries.is_empty());
-    assert_eq!(state.visible(&world).count(), 0);
+    assert_eq!(state.entries.len(), 1);
+    assert_eq!(state.visible(&world).count(), 1);
 }
 
 #[test]
