@@ -36,6 +36,7 @@
 //! the same image with the light on or off. `AURORA_SSIL=0|1|alt`
 //! overrides the setting (`alt`: on every other second).
 
+use crate::pipeline_cache::CachedPipelines;
 use crate::types::AoMethod;
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
@@ -652,7 +653,7 @@ impl Gtao {
                 bind_group_layouts: &[Some(&layout)],
                 immediate_size: 0,
             });
-            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&pl),
                 module: &module,

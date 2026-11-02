@@ -1,4 +1,5 @@
 //! One-eye desktop mirror: reuse a submitted eye image, never draw the world again.
+use crate::pipeline_cache::CachedPipelines;
 use std::time::{Duration, Instant};
 
 pub(crate) struct Mirror {
@@ -31,7 +32,7 @@ struct Vertex { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f3
                 .into(),
             ),
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some("VR mirror blit"),
             layout: None,
             vertex: wgpu::VertexState {

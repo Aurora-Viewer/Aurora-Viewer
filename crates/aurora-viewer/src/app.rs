@@ -16222,6 +16222,9 @@ impl ApplicationHandler for App {
         // the GPU of Preferences › Graphics; AURORA_GPU=<number|name|auto>
         // overrides it for this launch (adapter_choice.rs)
         let gpu = std::env::var("AURORA_GPU").unwrap_or_else(|_| self.settings.gpu_adapter.clone());
+        // the pipelines the driver compiled at the earlier starts, kept in
+        // the cache folder (aurora-render's pipeline_cache.rs)
+        aurora_render::pipeline_cache::configure(crate::settings::cache_dir().join("pipelines"), aurora_version::version());
         // AURORA_GPU_START_FAIL=1: as if no card could draw, to see the
         // message the user gets then (graphics_start.rs)
         let created = if std::env::var_os("AURORA_GPU_START_FAIL").is_some() {

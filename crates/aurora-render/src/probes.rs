@@ -11,6 +11,7 @@
 //!   (reflectionmipF), which the radiance pass filters into the probe's slot;
 //! - the probe list the scene shaders read (binding 9 of the frame group).
 
+use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 
@@ -362,7 +363,7 @@ impl Probes {
                 immediate_size: 0,
             });
             let flag = |on: bool| if on { 1.0 } else { 0.0 };
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&pl),
                 module: &module,

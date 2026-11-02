@@ -2,6 +2,7 @@
 //! the modal and higher layers are painted afterwards at full resolution.
 //! This presentation is an explicit Aurora UI choice, requested by the user.
 
+use crate::pipeline_cache::CachedPipelines;
 use std::sync::Arc;
 
 struct Boundary;
@@ -181,7 +182,7 @@ impl Blur {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some("UI backdrop"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {

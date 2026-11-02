@@ -23,6 +23,7 @@
 //! casts (before the blended faces and the cards were added), `shell`: the
 //! occluders are Bend's thin shell instead of [`OCCLUDER_DEPTH`] deep.
 
+use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 
@@ -510,7 +511,7 @@ impl Filter {
             immediate_size: 0,
         });
         let make = |entry: &'static str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
                 label: Some("contact shadows filter"),
                 layout: Some(&pl),
                 module: &module,
@@ -621,7 +622,7 @@ impl ContactShadows {
             immediate_size: 0,
         });
         let make = |entry: &'static str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
                 label: Some("contact shadows"),
                 layout: Some(&pl),
                 module: &module,
@@ -667,7 +668,7 @@ impl ContactShadows {
             label: Some("contact shadows (photo)"),
             source: wgpu::ShaderSource::Wgsl(shader_source(count, hard).into()),
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
             label: Some("contact shadows (photo)"),
             layout: Some(&self.pipeline_layout),
             module: &module,
@@ -1118,7 +1119,7 @@ mod tests {
                 .into(),
             ),
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some("test depth"),
             layout: None,
             vertex: wgpu::VertexState {

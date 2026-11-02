@@ -2,6 +2,7 @@
 //! only the render thread uploads, draws and registers their textures. The
 //! UI gets an image in the same frame without a readback or a GPU wait.
 
+use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 use std::{
@@ -337,7 +338,7 @@ impl Pipelines {
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/preview.wgsl").into()),
         });
         let pipeline = |topology, entry, depth_write| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
                 label: Some("Asset preview"),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
