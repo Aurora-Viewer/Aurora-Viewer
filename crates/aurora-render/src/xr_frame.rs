@@ -47,20 +47,24 @@ pub(crate) struct Session {
     started: Option<std::time::Instant>,
     requested_stop: bool,
     stop_wanted: bool,
+    /// The eyes drawn in the viewer's format when the runtime's images are
+    /// in its sRGB twin; copied into those images at `end`.
+    staging: Option<[wgpu::Texture; 2]>,
+    /// The swapchain image acquired for each eye in `begin`.
+    acquired: [usize; 2],
     device: wgpu::Device,
-    #[cfg(target_os = "macos")]
-    _queue: wgpu::Queue,
+    queue: wgpu::Queue,
 }
 impl Session {
     pub fn new(
         instance: &xr::Instance,
         system: xr::SystemId,
         device: &wgpu::Device,
-        _queue: &wgpu::Queue,
+        queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
     ) -> Result<Self> {
         #[cfg(not(target_os = "macos"))]
-        let (session, waiter, stream, format_raw) = {
+        let (session, waiter, stream) = {
             // SAFETY: Borrow live Vulkan handles; session retains the device for its full lifetime.
             let h = unsafe { device.as_hal::<hal::api::Vulkan>() }.ok_or("Not a Vulkan device")?;
             let vi = h.shared_instance().raw_instance();
@@ -79,23 +83,32 @@ impl Session {
                     )
                     .map_err(|e| format!("xrCreateSession: {e}"))?
             };
-            let format_raw = match format {
-                wgpu::TextureFormat::Bgra8Unorm => vk::Format::B8G8R8A8_UNORM,
-                wgpu::TextureFormat::Rgba8Unorm => vk::Format::R8G8B8A8_UNORM,
-                wgpu::TextureFormat::Bgra8UnormSrgb => vk::Format::B8G8R8A8_SRGB,
-                wgpu::TextureFormat::Rgba8UnormSrgb => vk::Format::R8G8B8A8_SRGB,
-                _ => return Err("Unsupported eye output format".into()),
-            };
-            (session, waiter, stream, format_raw.as_raw() as u32)
+            (session, waiter, stream)
         };
         #[cfg(target_os = "macos")]
-        let (session, waiter, stream, format_raw) = {
-            let (session, waiter, stream) = crate::xr_device::create_session(instance, system, _queue)?;
-            (session, waiter, stream, crate::xr_device::image_format(format)?)
+        let (session, waiter, stream) = crate::xr_device::create_session(instance, system, queue)?;
+        // The eyes are drawn in the viewer's output format. A runtime that
+        // offers only its sRGB twin, or the reverse (SteamVR on Linux with a
+        // Vive Pro, 2026-11-01, had no B8G8R8A8_UNORM), gets the same bytes
+        // copied into its images each frame: the same layout, already encoded
+        // for the display, so the picture is unchanged.
+        let offered = session.enumerate_swapchain_formats()?;
+        let twin = if format.is_srgb() {
+            format.remove_srgb_suffix()
+        } else {
+            format.add_srgb_suffix()
         };
-        if !session.enumerate_swapchain_formats()?.contains(&format_raw) {
+        let eye_format = if offered.contains(&raw_format(format)?) {
+            format
+        } else if twin != format && offered.contains(&raw_format(twin)?) {
+            log::info!("XR world: the runtime has no {format:?} images, drawing in {format:?} and copying into {twin:?}");
+            twin
+        } else {
+            log::warn!("XR world: the runtime offers only these image formats: {offered:?}");
             return Err("Runtime does not support the viewer output format".into());
-        }
+        };
+        let format_raw = raw_format(eye_format)?;
+        let copied = eye_format != format;
         let views = instance.enumerate_view_configuration_views(system, VIEWS)?;
         if views.len() != 2 {
             return Err("Expected stereo views".into());
@@ -114,14 +127,19 @@ impl Session {
             .min(1600);
         let local = session.create_reference_space(xr::ReferenceSpaceType::LOCAL, xr::Posef::IDENTITY)?;
         let head = session.create_reference_space(xr::ReferenceSpaceType::VIEW, xr::Posef::IDENTITY)?;
+        let mut swap_usage =
+            xr::SwapchainUsageFlags::COLOR_ATTACHMENT | xr::SwapchainUsageFlags::TRANSFER_SRC | xr::SwapchainUsageFlags::SAMPLED;
+        let mut eye_usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING;
+        if copied {
+            swap_usage |= xr::SwapchainUsageFlags::TRANSFER_DST;
+            eye_usage |= wgpu::TextureUsages::COPY_DST;
+        }
         let mut swaps = Vec::new();
         let mut images = Vec::new();
         for _ in 0..2 {
             let swap = session.create_swapchain(&xr::SwapchainCreateInfo {
                 create_flags: xr::SwapchainCreateFlags::EMPTY,
-                usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT
-                    | xr::SwapchainUsageFlags::TRANSFER_SRC
-                    | xr::SwapchainUsageFlags::SAMPLED,
+                usage_flags: swap_usage,
                 format: format_raw,
                 sample_count: 1,
                 width,
@@ -140,8 +158,8 @@ impl Session {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING,
+                format: eye_format,
+                usage: eye_usage,
                 view_formats: &[],
             };
             let mut imported = Vec::new();
@@ -156,8 +174,15 @@ impl Session {
                         mip_level_count: 1,
                         sample_count: 1,
                         dimension: desc.dimension,
-                        format,
-                        usage: wgpu::TextureUses::COLOR_TARGET | wgpu::TextureUses::COPY_SRC | wgpu::TextureUses::RESOURCE,
+                        format: eye_format,
+                        usage: wgpu::TextureUses::COLOR_TARGET
+                            | wgpu::TextureUses::COPY_SRC
+                            | wgpu::TextureUses::RESOURCE
+                            | if copied {
+                                wgpu::TextureUses::COPY_DST
+                            } else {
+                                wgpu::TextureUses::empty()
+                            },
                         memory_flags: hal::MemoryFlags::empty(),
                         view_formats: vec![],
                     };
@@ -182,6 +207,23 @@ impl Session {
             swaps.push(swap);
             images.push(imported);
         }
+        let staging = copied.then(|| {
+            let desc = wgpu::TextureDescriptor {
+                label: Some("XR world eye, copied to the runtime"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            };
+            [device.create_texture(&desc), device.create_texture(&desc)]
+        });
         Ok(Self {
             session,
             waiter,
@@ -200,9 +242,10 @@ impl Session {
             started: None,
             requested_stop: false,
             stop_wanted: false,
+            staging,
+            acquired: [0; 2],
             device: device.clone(),
-            #[cfg(target_os = "macos")]
-            _queue: _queue.clone(),
+            queue: queue.clone(),
         })
     }
     pub fn request_stop(&mut self) {
@@ -350,9 +393,13 @@ impl Session {
         let cameras = [camera(0)?, camera(1)?];
         let mut output = Vec::new();
         for i in 0..2 {
-            let index = self.swaps[i].acquire_image()?;
+            let index = self.swaps[i].acquire_image()? as usize;
             self.swaps[i].wait_image(xr::Duration::INFINITE)?;
-            output.push(self.images[i][index as usize].clone());
+            self.acquired[i] = index;
+            output.push(match &self.staging {
+                Some(staging) => staging[i].clone(),
+                None => self.images[i][index].clone(),
+            });
         }
         self.frame = Some((frame.predicted_display_time, views));
         Ok(Some(Eyes {
@@ -362,6 +409,43 @@ impl Session {
     }
     pub fn end(&mut self) -> Result<()> {
         let (time, views) = self.frame.take().ok_or("No acquired XR frame")?;
+        if let Some(staging) = &self.staging {
+            // after the eyes' drawing on the same queue, before the release
+            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("XR world eye copy"),
+            });
+            for (i, eye) in staging.iter().enumerate() {
+                encoder.copy_texture_to_texture(
+                    eye.as_image_copy(),
+                    self.images[i][self.acquired[i]].as_image_copy(),
+                    wgpu::Extent3d {
+                        width: self.width,
+                        height: self.height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
+            // OpenXR takes the image back in the colour attachment layout; the
+            // copy left it as a transfer destination. An empty pass that keeps
+            // its content moves it there.
+            for (i, eyes) in self.images.iter().enumerate() {
+                let view = eyes[self.acquired[i]].create_view(&wgpu::TextureViewDescriptor::default());
+                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("XR world eye layout"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    ..Default::default()
+                });
+            }
+            self.queue.submit([encoder.finish()]);
+        }
         for swap in &mut self.swaps {
             swap.release_image()?;
         }
@@ -398,6 +482,22 @@ impl Drop for Session {
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
         self.images.clear();
     }
+}
+/// The runtime's image format code for an eye format.
+#[cfg(not(target_os = "macos"))]
+fn raw_format(format: wgpu::TextureFormat) -> Result<u32> {
+    let raw = match format {
+        wgpu::TextureFormat::Bgra8Unorm => vk::Format::B8G8R8A8_UNORM,
+        wgpu::TextureFormat::Rgba8Unorm => vk::Format::R8G8B8A8_UNORM,
+        wgpu::TextureFormat::Bgra8UnormSrgb => vk::Format::B8G8R8A8_SRGB,
+        wgpu::TextureFormat::Rgba8UnormSrgb => vk::Format::R8G8B8A8_SRGB,
+        _ => return Err("Unsupported eye output format".into()),
+    };
+    Ok(raw.as_raw() as u32)
+}
+#[cfg(target_os = "macos")]
+fn raw_format(format: wgpu::TextureFormat) -> Result<u32> {
+    crate::xr_device::image_format(format)
 }
 fn pose(p: xr::Posef) -> Pose {
     Pose {
