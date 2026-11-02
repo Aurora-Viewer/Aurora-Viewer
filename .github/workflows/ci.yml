@@ -153,6 +153,34 @@ jobs:
         if: steps.changes.outputs.needed == 'true' && github.event_name != 'pull_request'
         run: cargo test --profile ci --workspace --locked
 
+  windows-runner:
+    # The runner of the interface part below, in the merge queue only: the
+    # team's self-hosted runner (label aurora-mini, 10 cores, its build
+    # folder kept between runs) when it is online and idle, GitHub's
+    # otherwise, so that the queue never waits for a machine that is off.
+    # Never on pull requests: they could run anyone's code on it. Listing
+    # the runners needs the Administration permission, which GITHUB_TOKEN
+    # cannot have: RUNNERS_TOKEN is a fine-grained token with Administration
+    # read on this repository only. Without it, GitHub's runner.
+    name: pick the Windows runner
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    outputs:
+      interface: ${{ steps.pick.outputs.interface }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ secrets.RUNNERS_TOKEN }}
+        run: |
+          runner='"windows-latest"'
+          if [ -n "$GH_TOKEN" ] &&
+             free=$(gh api "repos/${{ github.repository }}/actions/runners" --jq '[.runners[] | select(.status == "online" and (.busy | not) and any(.labels[]; .name == "aurora-mini"))] | length') &&
+             [ "$free" -gt 0 ]; then
+            runner='["self-hosted", "aurora-mini"]'
+          fi
+          echo "interface: $runner"
+          echo "interface=$runner" >> "$GITHUB_OUTPUT"
+
   tests:
     # Not on pull requests: the agent ran them locally (check.ps1) and the
     # merge queue runs them on the combined code before anything lands.
@@ -164,10 +192,14 @@ jobs:
     # everything else (about 3 minutes). Filters and `--skip` are exact
     # complements, so every test of every binary runs in one part and only
     # one, whatever modules are added later; a new module only moves the
-    # balance.
+    # balance. The interface part may run on the self-hosted runner (see
+    # windows-runner); main's cache builds stay on GitHub's runners.
     name: tests (Windows, ${{ matrix.part }})
-    if: github.event_name != 'pull_request'
-    runs-on: windows-latest
+    needs: windows-runner
+    # windows-runner is skipped outside the queue: run anyway
+    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    runs-on: ${{ matrix.part == 'interface' && needs.windows-runner.outputs.interface && fromJSON(needs.windows-runner.outputs.interface) || 'windows-latest' }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -191,10 +223,26 @@ jobs:
         run: |
           ./.github/drop-extra-targets.ps1
           rustup update stable --no-self-update
+      # self-hosted: the build folder stays between runs, outside the
+      # checkout (which `git clean` empties), and takes no cache; it is
+      # emptied when the disk runs low
+      - name: Build folder (self-hosted)
+        if: steps.changes.outputs.code == 'true' && runner.environment == 'self-hosted'
+        # PowerShell 7 named: Windows PowerShell's >> writes UTF-16, which
+        # GITHUB_ENV does not read
+        shell: pwsh
+        run: |
+          $target = Join-Path (Split-Path $env:RUNNER_WORKSPACE) 'aurora-target'
+          $drive = Get-PSDrive (Split-Path $target -Qualifier).TrimEnd(':')
+          if ($drive.Free -lt 40GB) {
+            Write-Host "Less than 40 GB free: emptying $target"
+            Remove-Item $target -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          "CARGO_TARGET_DIR=$target" >> $env:GITHUB_ENV
       # the parts share one cache, written by the interface part on main
       - uses: ./.github/actions/rust-cache
         id: cache
-        if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || matrix.part == 'interface')
+        if: steps.changes.outputs.code == 'true' && runner.environment == 'github-hosted' && (github.event_name != 'push' || matrix.part == 'interface')
         with:
           name: tests
       - name: Tests (${{ matrix.part }})
