@@ -18,6 +18,9 @@ pub struct Profiles {
     requested: HashSet<Uuid>,
     /// Requests sent whose reply has not arrived yet.
     in_flight: HashSet<Uuid>,
+    /// Profiles asked again whose first AvatarGroupsReply replaces the
+    /// groups known; the next packets of the same reply add to them.
+    groups_reset: HashSet<Uuid>,
     /// Pick details (PickInfoReply), by pick id.
     pub picks: HashMap<Uuid, PickInfo>,
     /// Classifieds of each avatar (AvatarClassifiedReply).
@@ -54,6 +57,7 @@ impl Profiles {
         let v: Vec<Uuid> = self.pending.drain().collect();
         self.requested.extend(v.iter().copied());
         self.in_flight.extend(v.iter().copied());
+        self.groups_reset.extend(v.iter().copied());
         v
     }
 
@@ -73,8 +77,20 @@ impl Profiles {
         self.entry(target).notes = Some(notes);
     }
 
+    /// A long group list comes in several AvatarGroupsReply packets: each
+    /// adds its groups (LLPanelProfileSecondLife::processGroupProperties).
     pub fn merge_groups(&mut self, avatar: Uuid, groups: Vec<aurora_net::profile::ProfileGroup>) {
-        self.entry(avatar).groups = groups;
+        let reset = self.groups_reset.remove(&avatar);
+        let known = &mut self.entry(avatar).groups;
+        if reset {
+            known.clear();
+        }
+        for g in groups {
+            match known.iter_mut().find(|k| k.id == g.id) {
+                Some(k) => *k = g,
+                None => known.push(g),
+            }
+        }
     }
 
     fn entry(&mut self, id: Uuid) -> &mut AvatarProfile {
@@ -87,6 +103,10 @@ impl Profiles {
 
     pub fn insert(&mut self, p: AvatarProfile) {
         self.in_flight.remove(&p.id);
+        if !p.legacy {
+            // AgentProfile carries the groups: no AvatarGroupsReply follows
+            self.groups_reset.remove(&p.id);
+        }
         let old = self.map.get(&p.id);
         // AvatarPropertiesReply carries no picks nor groups: those that came
         // in their own message stay
@@ -714,10 +734,31 @@ mod legacy_merge_tests {
         for profiles in [&before, &after] {
             let p = profiles.get(&id).expect("profile");
             assert_eq!(p.sl_about, "About");
-            assert_eq!(p.picks, [pick.clone()]);
+            assert_eq!(p.picks, std::slice::from_ref(&pick));
             assert_eq!(p.groups, [group()]);
             assert_eq!(p.notes.as_deref(), Some("a friend"));
         }
+    }
+
+    #[test]
+    fn a_group_list_in_several_packets_is_kept_whole() {
+        let id = Uuid::from_u128(1);
+        let other = aurora_net::profile::ProfileGroup {
+            id: Uuid::from_u128(6),
+            name: "Sailors".into(),
+            insignia: Uuid::nil(),
+        };
+        let mut profiles = Profiles::default();
+        profiles.refresh(id);
+        profiles.take_requests();
+        profiles.merge_groups(id, vec![group()]);
+        profiles.merge_groups(id, vec![other.clone(), group()]);
+        assert_eq!(profiles.get(&id).expect("profile").groups, [group(), other.clone()]);
+        // asked again: the new reply replaces the list, a group left is gone
+        profiles.refresh(id);
+        profiles.take_requests();
+        profiles.merge_groups(id, vec![other.clone()]);
+        assert_eq!(profiles.get(&id).expect("profile").groups, [other]);
     }
 
     #[test]
