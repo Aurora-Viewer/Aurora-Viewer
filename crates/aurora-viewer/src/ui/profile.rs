@@ -381,6 +381,8 @@ impl ProfileUi {
         if let Some(w) = self.windows.iter_mut().find(|w| w.id == me && w.open) {
             if w.tab == TAB_PICKS && !widgets::floater_minimized(ctx, &win_id) {
                 close_or_confirm(w, false);
+                // unsaved edits: the profile comes forward with its question
+                w.raise |= w.confirm_close;
             } else {
                 w.tab = TAB_PICKS;
                 w.raise = true;
@@ -2419,6 +2421,13 @@ mod tests {
             // shown on Picks: a second press closes it
             ui.toggle_picks(&ctx, &mut world, classic);
             assert!(!ui.picks_shown(me) && !ui.windows[0].open, "classic {classic}: closes");
+            // unsaved edits: the profile stays, raised with its question
+            ui.toggle_picks(&ctx, &mut world, classic);
+            ui.windows[0].raise = false;
+            ui.windows[0].notes.text = "edited".into();
+            ui.toggle_picks(&ctx, &mut world, classic);
+            let w = &ui.windows[0];
+            assert!(w.open && w.confirm_close && w.raise, "classic {classic}: asks, in front");
         }
     }
 

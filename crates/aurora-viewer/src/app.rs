@@ -14105,7 +14105,7 @@ impl App {
                     classic: classic_bars,
                     mouselook: self.camera.mouselook(),
                     show_in_mouselook: self.settings.camera.show_interface_in_mouselook,
-                    chat_active: self.chat_ui.has_focus || self.chat_ui.focus_request || !self.chat_ui.input.trim().is_empty(),
+                    chat_active: self.chat_ui.in_use(),
                     // AURORA_DEMO_BARS=peek: the pointer at the top edge
                     pointer: if demo_hidden == Some(true) {
                         Some(egui::pos2(screen_rect.center().x, screen_rect.top()))
@@ -15771,6 +15771,8 @@ impl App {
                 );
                 self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
                 self.toolbar_ui.chat_bar_active = self.chat_ui.bar_shown();
+                let pointer_busy = ctx.input(|i| i.pointer.any_down() || i.pointer.any_released());
+                self.chat_ui.note_frame(pointer_busy);
                 for pa in acts {
                     match pa {
                         ui::profile::ProfileAction::Im(id) => a.ctx_action = Some(ui::context::CtxAction::Im(id)),
