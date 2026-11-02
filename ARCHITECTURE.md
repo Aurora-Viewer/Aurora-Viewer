@@ -176,6 +176,13 @@ The return sentinel is translated locally; genuine repairs use reliable parent
 moves. Missing destination folders defer filing until their actual metadata
 arrives. `AURORA_DEMO_INVENTORY=lost` exercises this startup path offline.
 
+Interactive outfit changes defer new unworn object links in their COF write
+(`world/appearance.rs::defer_attachment_links`), retaining explicit rez requests
+and saved-outfit contents. Simulator-arrived objects use the registration below;
+an Animesh refused at the account limit leaves no link to retry at login (#1623).
+`sync_with_attachments` protects requested objects that arrive during COF readback
+from the intermediate detach list and preserves explicit attachment points/modes.
+
 `world/attachment_inventory.rs` fetches missing inventory records for ordinary
 attachments independently of open floaters, with bounded retries. Once login
 restoration and interactive outfit changes finish, it adds missing Current Outfit
