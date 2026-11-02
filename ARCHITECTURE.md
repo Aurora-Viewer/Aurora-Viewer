@@ -2075,7 +2075,10 @@ The first account entering the world after the update supplies its former
 per-account layout; an existing shared layout always wins. Legacy layouts
 survive pre-login saves until migration. Without an override the skin's live
 bottom layout remains authoritative. Edits save only on release or an
-explicit action, and an empty override stays empty. `ui/bars/side.rs` draws
+explicit action, and an empty override stays empty. The empty Aurora dock
+is drawn only during an unlocked toolbar drag, matching
+LLToolBarView::draw; nearby chat retains its independent island (#1631).
+`ui/bars/side.rs` draws
 the left and right toolbars (glass islands with the islands, full-height
 panels with Firestorm's bars) and the windows' room beside them;
 `ui/bars/sizing.rs` lays out a toolbar's buttons by mode and layout style on
