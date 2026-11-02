@@ -15,6 +15,7 @@ mod gestures;
 mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
+mod inventory_udp;
 mod inventory_updates;
 mod inventory_upload;
 mod object_actions;
@@ -228,6 +229,7 @@ struct Session<'a> {
     caps_tx: CapsSender,
     notecard_copy_tx: mpsc::UnboundedSender<(u32, Result<(), String>)>,
     inventory_move_tx: mpsc::UnboundedSender<inventory_moves::Request>,
+    inventory_udp_tx: mpsc::UnboundedSender<inventory_udp::Request>,
     notecard_copies: HashMap<u32, (Uuid, Uuid, bool)>,
     /// When an AgentUpdate leaves (agent_update.rs).
     agent_update: AgentUpdateRule,
@@ -403,6 +405,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
     let (caps_tx, mut caps_rx) = mpsc::unbounded_channel();
     let (notecard_copy_tx, mut notecard_copy_rx) = mpsc::unbounded_channel();
     let (inventory_move_tx, mut inventory_move_rx) = mpsc::unbounded_channel();
+    let (inventory_udp_tx, mut inventory_udp_rx) = mpsc::unbounded_channel();
     let (object_cache, mut object_cache_rx) = object_cache::ObjectCaches::new(sh.object_cache_dir.lock().clone());
     let mut s = Session {
         sh,
@@ -444,6 +447,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         attach_queue: Default::default(),
         notecard_copy_tx,
         inventory_move_tx,
+        inventory_udp_tx,
         notecard_copies: HashMap::new(),
         inventory_merchant_pending: false,
         next_inventory_callback: 0,
@@ -508,6 +512,10 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
             Some(request) = inventory_move_rx.recv() => {
                 woke = Instant::now();
                 s.inventory_move(request);
+            }
+            Some(request) = inventory_udp_rx.recv() => {
+                woke = Instant::now();
+                s.inventory_udp(request);
             }
             Some(file) = object_cache_rx.recv() => {
                 woke = Instant::now();
@@ -2248,6 +2256,32 @@ impl Session<'_> {
                     emit(self.sh, NetEvent::InventoryEdited { request, result });
                     return;
                 }
+                // Without AIS, once the seed has answered: the capabilities
+                // arrive together, so the fetch service without AIS is no
+                // grid still logging in (AISAPI::isAvailable).
+                if let Some(fetch_cap) = self.fetch_without_ais() {
+                    let http = self.sh.caps_http.clone();
+                    let events = self.sh.events.clone();
+                    let owner = self.agent_id();
+                    let moves = self.inventory_move_tx.clone();
+                    let edits = self.inventory_udp_tx.clone();
+                    tokio::spawn(async move {
+                        let result = crate::inventory::operations::mutate_udp(
+                            &http,
+                            &fetch_cap,
+                            owner,
+                            change,
+                            |movement| inventory_moves::submit(moves.clone(), movement),
+                            |edit| inventory_udp::submit(edits.clone(), edit),
+                            |progress| {
+                                let _ = events.send(NetEvent::InventoryProgress { request, progress });
+                            },
+                        )
+                        .await;
+                        let _ = events.send(NetEvent::InventoryEdited { request, result });
+                    });
+                    return;
+                }
                 let folder_creation = (change.defer_folder_contents || !change.copies.is_empty())
                     && change
                         .operations
@@ -2680,6 +2714,16 @@ impl Session<'_> {
                 }
             }
             NetCommand::SetInventoryFavorite { item, favorite } => {
+                if self.fetch_without_ais().is_some() {
+                    emit(
+                        self.sh,
+                        NetEvent::InventoryFavoriteUpdated {
+                            item,
+                            result: Err(aurora_i18n::tr!("session-inventory-change-not-supported-on-this-grid").into()),
+                        },
+                    );
+                    return;
+                }
                 let caps = self.main_cap("InventoryAPIv3").zip(self.main_cap("FetchInventory2"));
                 let Some((cap, fetch_cap)) = caps else {
                     emit(
@@ -2700,6 +2744,26 @@ impl Session<'_> {
                 });
             }
             NetCommand::UpdateOutfitCategory { request, change } => {
+                if let Some(fetch_cap) = self.fetch_without_ais() {
+                    let http = self.sh.caps_http.clone();
+                    let events = self.sh.events.clone();
+                    let owner = self.agent_id();
+                    let moves = self.inventory_move_tx.clone();
+                    let edits = self.inventory_udp_tx.clone();
+                    tokio::spawn(async move {
+                        let result = crate::outfits::categories::mutate_udp(
+                            &http,
+                            &fetch_cap,
+                            owner,
+                            change,
+                            |movement| inventory_moves::submit(moves, movement),
+                            |edit| inventory_udp::submit(edits, edit),
+                        )
+                        .await;
+                        let _ = events.send(NetEvent::OutfitUpdated { request, result });
+                    });
+                    return;
+                }
                 let caps = self.main_cap("InventoryAPIv3").zip(self.main_cap("FetchInventoryDescendents2"));
                 let Some((cap, fetch_cap)) = caps else {
                     emit(
@@ -2724,6 +2788,19 @@ impl Session<'_> {
                 });
             }
             NetCommand::UpdateOutfit { request, change } => {
+                if let Some(fetch_cap) = self.fetch_without_ais() {
+                    let http = self.sh.caps_http.clone();
+                    let events = self.sh.events.clone();
+                    let owner = self.agent_id();
+                    let edits = self.inventory_udp_tx.clone();
+                    tokio::spawn(async move {
+                        let result =
+                            crate::outfits::mutate_udp(&http, &fetch_cap, owner, change, |edit| inventory_udp::submit(edits.clone(), edit))
+                                .await;
+                        let _ = events.send(NetEvent::OutfitUpdated { request, result });
+                    });
+                    return;
+                }
                 let caps = self.main_cap("InventoryAPIv3").zip(self.main_cap("FetchInventoryDescendents2"));
                 let Some((cap, fetch_cap)) = caps else {
                     emit(
@@ -5436,6 +5513,13 @@ mod reset_skeleton_tests {
 }
 
 impl Session<'_> {
+    /// The fetch service, on a grid that has it and no AIS (OpenSim). `None`
+    /// on a grid with AIS, and until the region's capabilities have come.
+    fn fetch_without_ais(&self) -> Option<String> {
+        self.main_cap("FetchInventoryDescendents2")
+            .filter(|_| self.main_cap("InventoryAPIv3").is_none())
+    }
+
     fn inventory_callback(&mut self, created: bool) -> u32 {
         loop {
             self.next_inventory_callback = self.next_inventory_callback.wrapping_add(1).max(1);
@@ -5895,6 +5979,7 @@ mod event_queue_tests {
         let (caps_tx, _) = mpsc::unbounded_channel();
         let (notecard_copy_tx, _) = mpsc::unbounded_channel();
         let (inventory_move_tx, _) = mpsc::unbounded_channel();
+        let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         Session {
             sh,
             sock,
@@ -5905,6 +5990,7 @@ mod event_queue_tests {
             caps_tx,
             notecard_copy_tx,
             inventory_move_tx,
+            inventory_udp_tx,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
@@ -6156,11 +6242,14 @@ mod event_queue_tests {
         assert!(session.sims[&neighbour_addr].caps_again_task.is_some());
         assert_eq!(session.main_cap("ViewerAsset").as_deref(), Some("http://127.0.0.1:9/ViewerAsset"));
         assert_eq!(session.main_cap("InventoryAPIv3"), None);
+        // the seed has not answered: no reason to think the grid lacks AIS
+        assert_eq!(session.fetch_without_ais(), None);
 
         // the second answer grants more: it takes the place of the first;
         // a smaller or failed one afterwards changes nothing
         session.on_caps(neighbour_addr, &seed, Ok(agent.clone()));
         assert!(session.main_cap("InventoryAPIv3").is_some());
+        assert_eq!(session.fetch_without_ais(), None);
         session.on_caps(neighbour_addr, &seed, Ok(child));
         session.on_caps(neighbour_addr, &seed, Err("status 503".into()));
         assert_eq!(session.sims[&neighbour_addr].caps.len(), 4);
@@ -6176,6 +6265,7 @@ mod event_queue_tests {
         assert!(session.sims[&neighbour_addr].caps.is_empty());
         session.on_caps(neighbour_addr, &new_seed, Ok(agent));
         assert!(session.main_cap("InventoryAPIv3").is_some());
+        assert_eq!(session.fetch_without_ais(), None);
         assert_eq!(caps_events(&received), [(20, 4)]);
     }
 }
@@ -6228,6 +6318,7 @@ mod script_dialog_tests {
         let (caps_tx, _) = mpsc::unbounded_channel();
         let (notecard_copy_tx, _) = mpsc::unbounded_channel();
         let (inventory_move_tx, _) = mpsc::unbounded_channel();
+        let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         Session {
             sh,
             sock,
@@ -6238,6 +6329,7 @@ mod script_dialog_tests {
             caps_tx,
             notecard_copy_tx,
             inventory_move_tx,
+            inventory_udp_tx,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,

@@ -3664,6 +3664,7 @@ session-inventory-upload-the-server-rejected-the-new-clothing-asset = サーバ�
 outfits-the-server-rejected-the-operation-http = { "サーバーが操作を拒否しました（ＨＴＴＰ" }{ $value0 }）。
 outfits-the-inventory-server-is-not-responding-refresh-before-trying = 持ち物サーバーから応答がありません。再試行する前に更新してください。
 session-the-inventory-server-is-not-available-yet = 持ち物サーバーはまだ利用できません。
+session-inventory-change-not-supported-on-this-grid = このグリッドはそのインベントリ変更に対応していません。
 ui-people-the-server-did-not-respond-using-the-local-list = サーバーから応答がありません。ローカルリストのコピーを使用します。
 session-the-server-does-not-support-uploading-inventory-images = サーバーは持ち物画像のアップロードに対応していません。
 outfits-the-server-did-not-confirm-outfit-creation-refresh-inventory = サーバーがアウトフィットの作成を確認しませんでした。持ち物を更新してから、もう一度お試しください。

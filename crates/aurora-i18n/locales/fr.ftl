@@ -3667,6 +3667,7 @@ session-inventory-upload-the-server-rejected-the-new-clothing-asset = Le serveur
 outfits-the-server-rejected-the-operation-http = { "Le serveur a refusé l’opération (HTTP " }{ $value0 }).
 outfits-the-inventory-server-is-not-responding-refresh-before-trying = Le serveur d’inventaire ne répond pas. Actualisez avant de réessayer.
 session-the-inventory-server-is-not-available-yet = Le serveur d’inventaire n’est pas encore disponible.
+session-inventory-change-not-supported-on-this-grid = Cette grille ne prend pas en charge cette modification de l’inventaire.
 ui-people-the-server-did-not-respond-using-the-local-list = Le serveur n'a pas répondu : copie locale de la liste.
 session-the-server-does-not-support-uploading-inventory-images = Le serveur ne permet pas le chargement des images d’inventaire.
 outfits-the-server-did-not-confirm-outfit-creation-refresh-inventory = Le serveur n’a pas confirmé la création de la tenue. Actualisez l’inventaire avant de réessayer.

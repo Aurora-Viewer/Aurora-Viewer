@@ -1162,16 +1162,49 @@ impl World {
     }
 
     /// Cached inventory can precede arrival and the login seed's services.
-    /// Match Session::EditInventory's metadata-write/readback preconditions.
+    /// Match Session::EditInventory's metadata-write/readback preconditions:
+    /// the fetch service alone, as a grid without AIS edits over the circuit.
     pub fn inventory_writable(&self) -> bool {
         self.movement_complete
             && !self.teleporting
             && self.inventory.held.is_none()
-            && self.main().is_some_and(|region| {
-                ["InventoryAPIv3", "FetchInventoryDescendents2"] // gitleaks:allow -- public protocol capability names
-                    .iter()
-                    .all(|name| region.caps.get(*name).is_some_and(|url| !url.is_empty()))
-            })
+            && self
+                .main()
+                .is_some_and(|region| region.caps.get("FetchInventoryDescendents2").is_some_and(|url| !url.is_empty()))
+    }
+
+    /// `inventory_writable` on a grid with AIS, for what must stay away from
+    /// the others (the bridge: FSLSLBridge does not create itself on OpenSim).
+    pub fn inventory_writable_with_ais(&self) -> bool {
+        self.inventory_writable()
+            && self
+                .main()
+                .is_some_and(|region| region.caps.get("InventoryAPIv3").is_some_and(|url| !url.is_empty()))
+    }
+
+    /// What a grid without AIS needs of the local inventory to carry out a
+    /// command (operations.rs `Known`), as it leaves for the session.
+    pub fn prepare_inventory_command(&self, cmd: &mut aurora_net::NetCommand) {
+        match cmd {
+            aurora_net::NetCommand::EditInventory { change, .. } => {
+                for op in &change.operations {
+                    let aurora_net::inventory::operations::Operation::Patch { id, folder, .. } = op else {
+                        continue;
+                    };
+                    if *folder {
+                        if let Some(known) = self.inventory.folders.get(id) {
+                            change.known.folders.insert(*id, known.info.clone());
+                        }
+                    } else if let Some(known) = self.inventory.items.get(id) {
+                        change.known.items.insert(*id, known.clone());
+                    }
+                }
+            }
+            aurora_net::NetCommand::UpdateOutfitCategory { change, .. } => {
+                change.type_default = self.inventory.folders.get(&change.folder).map(|known| known.info.type_default);
+            }
+            _ => {}
+        }
     }
 
     pub fn main_water_height(&self) -> f32 {

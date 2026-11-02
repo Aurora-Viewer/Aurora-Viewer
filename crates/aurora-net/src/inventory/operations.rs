@@ -48,12 +48,130 @@ pub enum Operation {
     Purge(Uuid),
 }
 
+/// What the viewer holds of the items and folders a mutation patches. UDP
+/// updates carry the whole record, and the simulator keeps what it is told
+/// (`HandleUpdateInventoryFolder`, OpenSim's Scene.PacketHandlers.cs): the
+/// session must not guess a parent or a type.
+#[derive(Debug, Clone, Default)]
+pub struct Known {
+    pub items: HashMap<Uuid, super::InvItem>,
+    pub folders: HashMap<Uuid, super::InvFolder>,
+}
+
+/// One inventory change over the reliable circuit, for grids without AIS,
+/// as the Legacy Viewer's `[UDP-Msg]` paths in llviewerinventory.cpp send it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum UdpEdit {
+    CreateFolder {
+        id: Uuid,
+        parent: Uuid,
+        name: String,
+        type_default: i8,
+    },
+    UpdateFolder {
+        id: Uuid,
+        parent: Uuid,
+        name: String,
+        type_default: i8,
+    },
+    UpdateItem(Box<super::InvItem>),
+    Link {
+        parent: Uuid,
+        target: Uuid,
+        name: String,
+        desc: String,
+        folder: bool,
+        inv_type: i8,
+    },
+    RemoveItem(Uuid),
+    RemoveFolder(Uuid),
+    Purge(Uuid),
+}
+
+fn not_on_this_grid() -> String {
+    aurora_i18n::tr!("session-inventory-change-not-supported-on-this-grid").into()
+}
+
+/// The UDP messages of an operation, moves apart. AIS metadata (favorites,
+/// thumbnails) has no message: such a change fails rather than half apply.
+pub(crate) fn udp_edits(op: &Operation, known: &Known) -> Result<Vec<UdpEdit>, String> {
+    Ok(match op {
+        Operation::Folder {
+            id,
+            parent,
+            name,
+            type_default,
+        } => vec![UdpEdit::CreateFolder {
+            id: *id,
+            parent: *parent,
+            name: folder_name(name),
+            type_default: *type_default as i8,
+        }],
+        Operation::Patch { id, folder, body } => {
+            let Some(fields) = body.as_map() else {
+                return Err(not_on_this_grid());
+            };
+            if fields.keys().any(|key| !matches!(key.as_str(), "parent_id" | "name" | "desc")) {
+                return Err(not_on_this_grid());
+            }
+            if !fields.keys().any(|key| key != "parent_id") {
+                return Ok(Vec::new());
+            }
+            // the move comes after this update: send the parent it will have
+            let parent = fields.contains_key("parent_id").then(|| body["parent_id"].as_uuid());
+            let name = fields.contains_key("name").then(|| body["name"].to_string_value());
+            if *folder {
+                let Some(known) = known.folders.get(id) else {
+                    return Err(not_on_this_grid());
+                };
+                vec![UdpEdit::UpdateFolder {
+                    id: *id,
+                    parent: parent.unwrap_or(known.parent),
+                    name: name.unwrap_or_else(|| known.name.clone()),
+                    type_default: known.type_default as i8,
+                }]
+            } else {
+                let Some(known) = known.items.get(id) else {
+                    return Err(not_on_this_grid());
+                };
+                let mut item = known.clone();
+                if let Some(parent) = parent {
+                    item.parent = parent;
+                }
+                if let Some(name) = name {
+                    item.name = name;
+                }
+                if fields.contains_key("desc") {
+                    item.desc = body["desc"].to_string_value();
+                }
+                vec![UdpEdit::UpdateItem(Box::new(item))]
+            }
+        }
+        Operation::Links { parent, links } => links
+            .iter()
+            .map(|link| UdpEdit::Link {
+                parent: *parent,
+                target: link.target,
+                name: link.name.clone(),
+                desc: link.desc.clone(),
+                folder: link.folder,
+                inv_type: link.inv_type as i8,
+            })
+            .collect(),
+        Operation::Delete { id, folder: true } => vec![UdpEdit::RemoveFolder(*id)],
+        Operation::Delete { id, folder: false } => vec![UdpEdit::RemoveItem(*id)],
+        Operation::Purge(id) => vec![UdpEdit::Purge(*id)],
+    })
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Mutation {
     pub operations: Vec<Operation>,
     pub copies: Vec<CopyItem>,
     pub refresh: Vec<Uuid>,
     pub removed: Vec<Uuid>,
+    /// Filled by the viewer as the command leaves, for grids without AIS.
+    pub known: Known,
     /// Interactive inventory commands can display AIS-created folders before
     /// fetching their contents. Dependent construction jobs keep readback.
     pub defer_folder_contents: bool,
@@ -149,12 +267,55 @@ pub(crate) async fn mutate_with_progress<F, Fut, P>(
     fetch_cap: &str,
     owner: Uuid,
     change: Mutation,
+    send_move: F,
+    progress: P,
+) -> Result<Reply, String>
+where
+    F: FnMut(InventoryMove) -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+    P: FnMut(Progress),
+{
+    let no_udp: Option<fn(UdpEdit) -> std::future::Ready<Result<(), String>>> = None;
+    apply(http, cap, fetch_cap, owner, change, send_move, no_udp, progress).await
+}
+
+/// The same on a grid without AIS: the changes go over the circuit, and the
+/// fetch service confirms them as it does for AIS.
+pub(crate) async fn mutate_udp<F, Fut, E, EFut, P>(
+    http: &reqwest::Client,
+    fetch_cap: &str,
+    owner: Uuid,
+    change: Mutation,
+    send_move: F,
+    send_edit: E,
+    progress: P,
+) -> Result<Reply, String>
+where
+    F: FnMut(InventoryMove) -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+    E: FnMut(UdpEdit) -> EFut,
+    EFut: std::future::Future<Output = Result<(), String>>,
+    P: FnMut(Progress),
+{
+    apply(http, "", fetch_cap, owner, change, send_move, Some(send_edit), progress).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn apply<F, Fut, E, EFut, P>(
+    http: &reqwest::Client,
+    cap: &str,
+    fetch_cap: &str,
+    owner: Uuid,
+    change: Mutation,
     mut send_move: F,
+    mut udp: Option<E>,
     mut progress: P,
 ) -> Result<Reply, String>
 where
     F: FnMut(InventoryMove) -> Fut,
     Fut: std::future::Future<Output = Result<(), String>>,
+    E: FnMut(UdpEdit) -> EFut,
+    EFut: std::future::Future<Output = Result<(), String>>,
     P: FnMut(Progress),
 {
     if change.operations.len() > 2048 || change.copies.len() > 2048 || change.refresh.is_empty() {
@@ -171,6 +332,45 @@ where
             completed: index,
             total: change.operations.len(),
         });
+        if let Some(send_edit) = udp.as_mut() {
+            for edit in udp_edits(op, &change.known)? {
+                send_edit(edit).await?;
+            }
+            match op {
+                // the simulator keeps the id a viewer gives a new folder
+                Operation::Folder {
+                    id,
+                    parent,
+                    name,
+                    type_default,
+                } => {
+                    created.insert(*id, *id);
+                    folders.push(super::InvFolder {
+                        id: *id,
+                        parent: *parent,
+                        name: folder_name(name),
+                        type_default: *type_default,
+                        version: 1,
+                        ..Default::default()
+                    });
+                }
+                Operation::Patch { id, folder, body } if body.has("parent_id") => {
+                    let parent = body["parent_id"].as_uuid();
+                    if id.is_nil() || parent.is_nil() {
+                        return Err(aurora_i18n::tr!("inventory-move-invalid-target").into());
+                    }
+                    send_move(InventoryMove {
+                        id: *id,
+                        parent,
+                        folder: *folder,
+                    })
+                    .await?;
+                    moved = true;
+                }
+                _ => {}
+            }
+            continue;
+        }
         match op {
             Operation::Folder {
                 id,
@@ -280,7 +480,8 @@ where
         .operations
         .iter()
         .any(|op| matches!(op, Operation::Patch { body, .. } if body.has("thumbnail")));
-    let retries = if moved || !created.is_empty() || favorite_changed || thumbnail_changed {
+    // (no answer comes on the circuit: a read shows when a change landed)
+    let retries = if udp.is_some() || moved || !created.is_empty() || favorite_changed || thumbnail_changed {
         5
     } else {
         0
@@ -1791,5 +1992,149 @@ mod tests {
         };
         assert!(mutate(&reqwest::Client::new(), &url, &url, id(2), change).await.is_err());
         assert_eq!(task.await.expect("requests").len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod udp_tests {
+    use super::*;
+    use crate::inventory::{InvFolder, InvItem};
+    use aurora_llsd::llsd_map;
+
+    fn id(n: u128) -> Uuid {
+        Uuid::from_u128(n)
+    }
+
+    fn known() -> Known {
+        let item = InvItem {
+            id: id(1),
+            parent: id(2),
+            name: "Old".into(),
+            desc: "Kept".into(),
+            asset_id: id(3),
+            owner_mask: 0x7fff_ffff,
+            sale_price: 25,
+            ..Default::default()
+        };
+        let folder = InvFolder {
+            id: id(4),
+            parent: id(5),
+            name: "Outfits".into(),
+            type_default: 47,
+            ..Default::default()
+        };
+        Known {
+            items: HashMap::from([(item.id, item)]),
+            folders: HashMap::from([(folder.id, folder)]),
+        }
+    }
+
+    fn patch(id: Uuid, folder: bool, body: Llsd) -> Operation {
+        Operation::Patch { id, folder, body }
+    }
+
+    #[test]
+    fn a_rename_keeps_every_other_field_of_the_item() {
+        let edits = udp_edits(&patch(id(1), false, llsd_map! { "name" => "New" }), &known()).unwrap();
+        let [UdpEdit::UpdateItem(item)] = edits.as_slice() else {
+            panic!("{edits:?}");
+        };
+        assert_eq!(item.name, "New");
+        let expected = InvItem {
+            name: "New".into(),
+            ..known().items[&id(1)].clone()
+        };
+        assert_eq!(**item, expected);
+    }
+
+    #[test]
+    fn a_folder_update_sends_the_parent_and_type_it_has() {
+        let edits = udp_edits(&patch(id(4), true, llsd_map! { "name" => "Looks" }), &known()).unwrap();
+        assert_eq!(
+            edits,
+            [UdpEdit::UpdateFolder {
+                id: id(4),
+                parent: id(5),
+                name: "Looks".into(),
+                type_default: 47,
+            }]
+        );
+    }
+
+    #[test]
+    fn nothing_is_guessed_for_an_item_or_folder_the_viewer_does_not_hold() {
+        for folder in [false, true] {
+            assert!(udp_edits(&patch(id(9), folder, llsd_map! { "name" => "New" }), &Known::default()).is_err());
+        }
+    }
+
+    #[test]
+    fn what_only_ais_stores_fails_rather_than_half_applies() {
+        for body in [
+            metadata_favorite(true),
+            metadata_thumbnail(id(7)),
+            llsd_map! { "name" => "New", "favorite" => llsd_map! { "toggled" => true } },
+        ] {
+            assert!(udp_edits(&patch(id(1), false, body), &known()).is_err());
+        }
+    }
+
+    #[test]
+    fn a_rename_with_a_move_sends_the_new_parent_and_a_lone_move_sends_no_update() {
+        let body = llsd_map! { "name" => "New", "parent_id" => id(8) };
+        let edits = udp_edits(&patch(id(1), false, body), &known()).unwrap();
+        let [UdpEdit::UpdateItem(item)] = edits.as_slice() else {
+            panic!("{edits:?}");
+        };
+        assert_eq!(item.parent, id(8));
+        let lone = llsd_map! { "parent_id" => id(8) };
+        assert!(udp_edits(&patch(id(1), false, lone), &known()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn folders_links_and_removals_become_their_messages() {
+        let folder = Operation::Folder {
+            id: id(1),
+            parent: id(2),
+            name: "New".into(),
+            type_default: -1,
+        };
+        assert_eq!(
+            udp_edits(&folder, &Known::default()).unwrap(),
+            [UdpEdit::CreateFolder {
+                id: id(1),
+                parent: id(2),
+                name: "New".into(),
+                type_default: -1,
+            }]
+        );
+        let links = Operation::Links {
+            parent: id(2),
+            links: vec![crate::outfits::OutfitLink {
+                target: id(3),
+                name: "Hair".into(),
+                desc: String::new(),
+                folder: false,
+                inv_type: 18,
+            }],
+        };
+        assert_eq!(
+            udp_edits(&links, &Known::default()).unwrap(),
+            [UdpEdit::Link {
+                parent: id(2),
+                target: id(3),
+                name: "Hair".into(),
+                desc: String::new(),
+                folder: false,
+                inv_type: 18,
+            }]
+        );
+        let delete = |folder| Operation::Delete { id: id(1), folder };
+        assert_eq!(udp_edits(&delete(false), &Known::default()).unwrap(), [UdpEdit::RemoveItem(id(1))]);
+        assert_eq!(udp_edits(&delete(true), &Known::default()).unwrap(), [UdpEdit::RemoveFolder(id(1))]);
+        assert_eq!(
+            udp_edits(&Operation::Purge(id(1)), &Known::default()).unwrap(),
+            [UdpEdit::Purge(id(1))]
+        );
     }
 }

@@ -853,6 +853,7 @@ pub fn category_plan(
         folder: id,
         parent: inv.folders.get(&id).map(|f| f.info.parent).unwrap_or_default(),
         update,
+        type_default: None,
     })
 }
 

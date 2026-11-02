@@ -1,10 +1,14 @@
 //! Port of AISAPI::CreateInventory / SlamFolder (indra/newview/llaisapi.cpp,
 //! originally LGPL 2.1). Outfits contain links, never copies of their assets.
 
+use crate::inventory::operations::UdpEdit;
 use crate::inventory::{FolderContents, InvFolder};
 use aurora_llsd::{Llsd, llsd_map};
 use uuid::Uuid;
 pub mod categories;
+
+/// LLFolderType::FT_OUTFIT.
+const OUTFIT_FOLDER: i8 = 47;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutfitLink {
@@ -92,6 +96,97 @@ pub async fn mutate(
         return Err(aurora_i18n::tr!("outfits-the-outfit-is-incomplete-refresh-before-trying-again").into());
     }
     Ok(contents)
+}
+
+/// `mutate` on a grid without AIS, which has no call that replaces a folder's
+/// links: as slam_inventory_folder falls back to (llviewerinventory.cpp),
+/// remove_folder_contents, then link_inventory_array. Links only: the folder's
+/// other content stays.
+pub(crate) async fn mutate_udp<E, EFut>(
+    http: &reqwest::Client,
+    fetch_cap: &str,
+    owner: Uuid,
+    change: OutfitMutation,
+    mut send_edit: E,
+) -> Result<Vec<FolderContents>, String>
+where
+    E: FnMut(UdpEdit) -> EFut,
+    EFut: std::future::Future<Output = Result<(), String>>,
+{
+    let fetch = |folders: Vec<Uuid>| async move {
+        let body = crate::inventory::fetch_request_body(&folders, owner);
+        crate::caps::post_llsd(http, fetch_cap, &body)
+            .await
+            .map(|doc| crate::inventory::parse_fetch_response(&doc))
+            .map_err(|_| aurora_i18n::tr!("outfits-the-outfit-was-sent-but-could-not-be-read").to_owned())
+    };
+    let mut refresh = vec![change.folder];
+    if let Some(cat) = &change.create {
+        // the simulator keeps the id a viewer gives a new folder
+        send_edit(UdpEdit::CreateFolder {
+            id: change.folder,
+            parent: cat.parent,
+            name: cat.name.clone(),
+            type_default: OUTFIT_FOLDER,
+        })
+        .await?;
+        refresh = vec![cat.parent, change.folder];
+    }
+    let mut slams = vec![(change.folder, &change.links)];
+    if let Some((cof, links)) = &change.cof {
+        slams.push((*cof, links));
+        refresh.push(*cof);
+    }
+    for (folder, links) in &slams {
+        if change.create.is_none() || *folder != change.folder {
+            for content in fetch(vec![*folder]).await? {
+                for item in content.items.iter().filter(|item| is_link(item.asset_type)) {
+                    send_edit(UdpEdit::RemoveItem(item.id)).await?;
+                }
+            }
+        }
+        for link in links.iter() {
+            send_edit(UdpEdit::Link {
+                parent: *folder,
+                target: link.target,
+                name: link.name.clone(),
+                desc: link.desc.clone(),
+                folder: link.folder,
+                inv_type: link.inv_type as i8,
+            })
+            .await?;
+        }
+    }
+    // no answer comes on the circuit: a read shows when the links landed
+    const RETRIES: u32 = 5;
+    for attempt in 0..=RETRIES {
+        let mut contents = fetch(refresh.clone()).await?;
+        let linked = slams.iter().all(|(folder, links)| {
+            links.iter().all(|link| {
+                contents
+                    .iter()
+                    .filter(|c| c.folder_id == *folder)
+                    .flat_map(|c| &c.items)
+                    .any(|item| item.asset_id == link.target && is_link(item.asset_type))
+            })
+        });
+        let complete = refresh
+            .iter()
+            .all(|id| contents.iter().any(|c| c.folder_id == *id && c.version >= 0));
+        if linked && complete {
+            contents.sort_by_key(|c| refresh.iter().position(|id| *id == c.folder_id).unwrap_or(usize::MAX));
+            return Ok(contents);
+        }
+        if attempt < RETRIES {
+            tokio::time::sleep(std::time::Duration::from_millis(200 << attempt.min(3))).await;
+        }
+    }
+    Err(aurora_i18n::tr!("outfits-the-outfit-is-incomplete-refresh-before-trying-again").into())
+}
+
+/// LLAssetType::AT_LINK and AT_LINK_FOLDER.
+fn is_link(asset_type: i32) -> bool {
+    matches!(asset_type, 24 | 25)
 }
 
 async fn request(http: &reqwest::Client, url: &str, body: &Llsd, put: bool) -> Result<Llsd, String> {
