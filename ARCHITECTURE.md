@@ -428,6 +428,12 @@ wearables cannot block the edited region. It pins the server bakes for cancellat
 GPU slots. `wearable_editor/masks.rs` embeds the original character masks;
 preview textures never enter the inventory or replace server appearance.
 Local imports share their worker-prepared RGBA images with `PreviewSource`.
+`local_bakes.rs` uses the same compositor for our own bakes on a region that
+does not bake (OpenSim: `UploadBakedTexture` without `UpdateAvatarAppearance`):
+it watches the Current Outfit folder, asks the region for the bakes it keeps
+(AgentCachedTexture), composes and encodes the others on the scene's workers,
+uploads them and sends AgentSetAppearance; `aurora-net/src/local_bakes.rs`
+holds the protocol (cache keys, the message, the two-step upload).
 Closing a wearable's texture picker retains the applied choice in its draft;
 explicit Cancel restores the slot. Closing the editor retains the unsaved
 Save/Discard/Cancel confirmation, including when its picker was still open.
