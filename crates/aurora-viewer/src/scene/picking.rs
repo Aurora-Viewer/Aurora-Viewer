@@ -783,7 +783,7 @@ impl Scene {
                 return None;
             }
             let hidden = o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004);
-            if only_hidden && !hidden && !self.face_undrawn(g, face) {
+            if only_hidden && !hidden && !Self::face_undrawn(g, face) {
                 return None;
             }
             if !include_hidden && super::plants::plant_face(o).is_none() && hidden && !(g.hud && mode == FacePick::Surface) {
@@ -1016,7 +1016,7 @@ impl Scene {
                 continue;
             }
             let hidden = o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004);
-            if only_hidden && !hidden && !self.face_undrawn(g, face) {
+            if only_hidden && !hidden && !Self::face_undrawn(g, face) {
                 continue;
             }
             if !include_hidden && super::plants::plant_face(o).is_none() && hidden {
@@ -1441,21 +1441,14 @@ impl Scene {
             && crate::interaction::target(world, idx, &HashMap::new()).is_some()
     }
 
-    /// Whether face `face` of `g` is built but never drawn: Pass::Hidden,
-    /// the transparent texture or a fully clear Mask, its alpha left at 1.
-    /// A worn mesh hidden that way is a clicker the GPU does not show, like
-    /// one at alpha 0; the Legacy Viewer's transparent pick reaches every
-    /// face (LLVOVolume::lineSegmentIntersect, `pick_transparent`).
-    fn face_undrawn(&self, g: &ObjGpu, face: usize) -> bool {
-        g.faces.iter().filter(|f| usize::from(f.te_index) == face).any(|f| {
-            let alpha = self
-                .textures
-                .alpha_by_slot
-                .get(f.base_slot as usize)
-                .copied()
-                .unwrap_or(AlphaKind::Opaque);
-            classify(f, alpha) == Pass::Hidden
-        })
+    /// Whether face `face` of `g` is built but never drawn (Pass::Hidden):
+    /// the transparent texture, its alpha left at 1. A worn mesh hidden that
+    /// way is a clicker the GPU does not show, like one at alpha 0; the
+    /// Legacy Viewer's transparent pick reaches every face
+    /// (LLVOVolume::lineSegmentIntersect, `pick_transparent`). A texture of
+    /// its own that is clear everywhere is drawn (Mask) and not covered.
+    fn face_undrawn(g: &ObjGpu, face: usize) -> bool {
+        g.faces.iter().any(|f| usize::from(f.te_index) == face && f.pass == Pass::Hidden)
     }
 
     /// Whether an object has a face `transparent_action_point` looks at:
@@ -1831,6 +1824,9 @@ pub(super) mod tests {
         for f in &mut scene.gpu[front].faces {
             f.tex_id = aurora_prim::te::TRANSPARENT_TEXTURE;
             f.base_slot = aurora_render::textures::TRANSPARENT;
+            // as rebuild_faces classifies it
+            f.pass = super::classify(f, AlphaKind::Opaque);
+            assert_eq!(f.pass, Pass::Hidden);
         }
         assert!(scene.face_hit(&world, front, ray, Instant::now(), false).is_none());
         assert!(scene.face_hit(&world, front, ray, Instant::now(), true).is_some());
