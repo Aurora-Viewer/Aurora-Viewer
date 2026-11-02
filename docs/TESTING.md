@@ -4464,6 +4464,9 @@ dragged from it between the mini-map and Sit), `side` (the same toolbars
 without the window; `sidemenu`: Radar's right click at frame 650, the
 vertical toolbar's menu), `right` (them in the right toolbar), `labels` (the
 dock in icons and labels, the left toolbar in labels). Capture at frame 780.
+`empty-left` / `empty-right` move all bottom buttons to that side for this
+run only, without opening the editor. With Aurora bars, the empty bottom
+dock must be invisible while nearby chat remains available (#1631).
 
 `AURORA_DEMO_TEXTURE_LIBRARY`: `preview-controls` opens a 620 × 720 texture inspector and material
 editor side by side (use `AURORA_WINDOW_SIZE=1600,1000`, capture after frame 740).
