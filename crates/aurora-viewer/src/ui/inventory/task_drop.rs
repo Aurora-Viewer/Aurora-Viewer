@@ -96,25 +96,38 @@ pub fn source(ui: &mut egui::Ui, r: &egui::Response, world: &World, object: Uuid
     begin(ui, r, object, items, access);
 }
 
-/// What a drag of the object's root "Contents" folder carries: every item of
-/// the object, or none (LLTaskCategoryBridge::startDrag,
-/// indra/newview/llpanelobjectinventory.cpp, only starts when
-/// move_inv_category_world_to_agent(object, null, drop = false) accepts the
-/// whole contents; indra/newview/llinventorybridge.cpp). An empty object is
-/// refused. A no-copy item of an object you own makes it a move. The Legacy
-/// Viewer's check stops at the first refused item only while no earlier item
-/// was accepted, then lets the simulator drop the refused ones one by one; here
-/// one refused item refuses the drag and its tooltip names it, the same rule
-/// as the window's full copy and as a multiple selection.
-pub fn root_kind(world: &World, object: Uuid, items: &[TaskItem], owned: bool) -> Result<TransferKind, String> {
-    let transfer = task_inventory::contents_transfer(world, object, items, owned)?;
-    Ok(if transfer.moved.is_empty() {
-        TransferKind::Copy
-    } else {
-        TransferKind::Move {
-            scripted: transfer.scripted,
+/// What a drag of the object's root "Contents" folder carries, in contents
+/// order: every item that can be taken (LLTaskCategoryBridge::startDrag,
+/// indra/newview/llpanelobjectinventory.cpp, then
+/// move_inv_category_world_to_agent, indra/newview/llinventorybridge.cpp).
+/// The Legacy Viewer sends every item and the simulator leaves the refused
+/// ones (someone else's no-copy item, a no-copy item of a worn object) in the
+/// object, silently; its check never resets its `accept` flag, so whether the
+/// drag starts depends on the item order. Here each item is decided on its
+/// own: the refused ones are left out (same outcome, silent too), and the
+/// drag is refused only when nothing can be taken, an empty object included.
+/// A no-copy item of an object you own makes it a move.
+pub fn root_drag(world: &World, object: Uuid, items: &[TaskItem], owned: bool) -> Result<(Vec<TaskItem>, TransferKind), String> {
+    let mut kind = TransferKind::Copy;
+    let mut taken = Vec::new();
+    for item in items.iter().filter(|item| !item.is_folder) {
+        match task_inventory::kind(world, object, item, owned) {
+            Ok(TransferKind::Copy) => {}
+            Ok(TransferKind::Move { scripted }) => {
+                kind = TransferKind::Move { scripted };
+            }
+            Err(_) => continue,
         }
-    })
+        taken.push(item.clone());
+    }
+    if taken.is_empty() {
+        return Err(aurora_i18n::tr!("contents-copy-nothing").into());
+    }
+    // the scripted warning when the object holds a script (warn_move_inventory)
+    if let TransferKind::Move { scripted } = &mut kind {
+        *scripted |= items.iter().any(|item| item.asset_type == 10);
+    }
+    Ok((taken, kind))
 }
 
 /// The root "Contents" row as a drag source. `items` is the whole contents
@@ -127,8 +140,10 @@ pub fn root_source(ui: &mut egui::Ui, r: &egui::Response, world: &World, object:
     if !(r.hovered() || r.drag_started() || r.dragged()) {
         return;
     }
-    let items: Vec<TaskItem> = items.iter().filter(|item| !item.is_folder).cloned().collect();
-    begin(ui, r, object, &items, root_kind(world, object, &items, owned).map(Some));
+    match root_drag(world, object, items, owned) {
+        Ok((taken, kind)) => begin(ui, r, object, &taken, Ok::<_, String>(Some(kind))),
+        Err(error) => begin(ui, r, object, &[], Err(error)),
+    }
 }
 
 /// The payload of a drag that `access` allows, one request per item in
@@ -470,34 +485,43 @@ mod tests {
     }
 
     #[test]
-    fn the_root_folder_takes_every_item_or_none() {
+    fn the_root_folder_takes_every_item_it_can_and_refuses_only_when_none() {
         let (world, request) = fixture();
         let object = request.object;
         let items = contents(&request);
+        let ids = |drag: &(Vec<TaskItem>, TransferKind)| drag.0.iter().map(|item| item.item_id.as_u128()).collect::<Vec<_>>();
         let nothing = Err(aurora_i18n::tr!("contents-copy-nothing").to_owned());
-        assert_eq!(root_kind(&world, object, &[], true), nothing, "an empty object");
-        assert_eq!(root_kind(&world, object, &items[..1], true), nothing, "its root entry only");
+        assert_eq!(root_drag(&world, object, &[], true), nothing, "an empty object");
+        assert_eq!(root_drag(&world, object, &items[..1], true), nothing, "its root entry only");
         assert_eq!(
-            root_kind(&world, object, &[items[1].clone(), items[3].clone()], false),
-            Ok(TransferKind::Copy)
+            root_drag(&world, object, &[items[0].clone(), items[2].clone()], false),
+            nothing,
+            "every item refused"
         );
         // move_inv_category_world_to_agent: a no-copy item of an object you own is moved
+        let ours = root_drag(&world, object, &items, true).expect("ours");
+        assert_eq!(ids(&ours), [99101, 99102, 99103], "contents order, the root entry left out");
         assert_eq!(
-            root_kind(&world, object, &items, true),
-            Ok(TransferKind::Move { scripted: true }),
+            ours.1,
+            TransferKind::Move { scripted: true },
             "the script makes it the scripted warning"
         );
+        let plain = root_drag(&world, object, &items[..3], true).expect("ours, no script");
+        assert_eq!(plain.1, TransferKind::Move { scripted: false });
+        // someone else's: the no-copy item stays in the object, the rest is copied,
+        // whatever the item order (the Legacy Viewer's check depends on it)
+        let theirs = root_drag(&world, object, &items, false).expect("theirs");
+        assert_eq!(ids(&theirs), [99101, 99103]);
+        assert_eq!(theirs.1, TransferKind::Copy);
+        let spare_first = [items[2].clone(), items[1].clone(), items[3].clone()];
         assert_eq!(
-            root_kind(&world, object, &items[..3], true),
-            Ok(TransferKind::Move { scripted: false })
+            ids(&root_drag(&world, object, &spare_first, false).expect("spare first")),
+            [99101, 99103]
         );
-        // ...and refuses the whole drag from someone else's, naming the item
-        let refused = root_kind(&world, object, &items, false).expect_err("not ours");
-        assert!(refused.contains("Spare"), "{refused}");
     }
 
     #[test]
-    fn a_real_drag_of_the_root_row_drops_every_item_into_the_folder() {
+    fn a_real_drag_of_the_root_row_drops_every_takeable_item_into_the_folder() {
         for owned in [true, false] {
             let (world, request) = fixture();
             let items = contents(&request);
@@ -539,26 +563,27 @@ mod tests {
             frame(Vec::new());
             frame(vec![egui::Event::PointerMoved(start), button(start, true)]);
             frame(vec![egui::Event::PointerMoved(egui::pos2(100.0, 32.0))]);
-            assert_eq!(egui::DragAndDrop::has_payload_of_type::<TaskDrag>(&ctx), owned);
+            assert!(egui::DragAndDrop::has_payload_of_type::<TaskDrag>(&ctx));
             let over = frame(vec![egui::Event::PointerMoved(end)]);
             frame(vec![button(end, false)]);
-            if !owned {
-                assert!(actions.is_empty(), "the no-copy item of someone else's object refuses the drag");
-                continue;
-            }
-            assert_eq!(over, egui::CursorIcon::Move, "the no-copy item leaves the object");
             let taken: Vec<_> = actions
                 .iter()
                 .map(|action| match action {
-                    InvAction::TakeTask(req) if req.folder == folder && req.object == request.object => req.item.item_id,
+                    InvAction::TakeTask(req) if req.folder == folder && req.object == request.object => req.item.item_id.as_u128(),
                     _ => panic!("one TakeTask into the folder itself per item"),
                 })
                 .collect();
-            assert_eq!(
-                taken,
-                [99101, 99102, 99103].map(Uuid::from_u128),
-                "every item in contents order, the root entry left out"
-            );
+            if owned {
+                assert_eq!(over, egui::CursorIcon::Move, "the no-copy item leaves the object");
+                assert_eq!(
+                    taken,
+                    [99101, 99102, 99103],
+                    "every item in contents order, the root entry left out"
+                );
+            } else {
+                assert_eq!(over, egui::CursorIcon::Copy);
+                assert_eq!(taken, [99101, 99103], "someone else's no-copy item stays in the object");
+            }
         }
     }
 
