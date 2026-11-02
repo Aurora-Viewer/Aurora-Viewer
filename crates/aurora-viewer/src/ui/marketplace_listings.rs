@@ -1321,7 +1321,7 @@ mod tests {
         let at = egui::pos2(50.0, 20.0);
         let frame = |events: Vec<egui::Event>| {
             let mut seen = None;
-            let _ = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(200.0, 100.0))),
                     events,
@@ -1333,6 +1333,8 @@ mod tests {
                     seen = cargo.map(|id| (id, released(&r)));
                 },
             );
+            // no renderer applies the font texture here
+            output.textures_delta.clear();
             seen
         };
         frame(vec![egui::Event::PointerMoved(at)]);
