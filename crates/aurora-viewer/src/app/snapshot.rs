@@ -311,8 +311,8 @@ struct DemoPhoto {
     light: bool,
     /// AURORA_DEMO_SNAPSHOT=windlight[-keep]: the library's "Coastal
     /// Sunset" sky and "Murky Water" with the sun turned low in the east,
-    /// the Light section in view; `-keep` keeps that light (frame 900) and
-    /// closes the window (960).
+    /// in the viewfinder with its light panel open; `-keep` keeps that
+    /// light (frame 900) and leaves the photo mode (960).
     windlight: Option<bool>,
 }
 
@@ -1999,7 +1999,7 @@ LUT_3D_SIZE {n}
             let message = self.snapshots.message.clone();
             let last_saved = self.snapshots.last_saved.clone();
             let gallery = self.snapshots.gallery.clone();
-            // (lent to the drawer's Light section while the viewfinder draws)
+            // (lent to the light panel while the viewfinder draws)
             self.photo_env_lists(ctx);
             let env_ui = std::mem::take(&mut self.env_ui);
             let view = crate::ui::snapshot::View {
@@ -2040,7 +2040,6 @@ LUT_3D_SIZE {n}
             let profile = (self.snapshots.ui.destination == Destination::Profile).then(|| self.photo_profile_view(window));
             let email = (self.snapshots.ui.destination == Destination::Email).then(|| self.photo_email_view(window));
             let mut state = std::mem::take(&mut self.snapshots.ui);
-            self.photo_env_lists(ctx);
             let tiles = self.photo_tiles(renderer, photo).len();
             let s = &self.snapshots;
             let busy = if let Some(t) = s.detail_wait {
@@ -2554,7 +2553,9 @@ LUT_3D_SIZE {n}
                 }
             });
             let words: Vec<&str> = kind.split('-').collect();
-            let viewfinder = (words[0] == "viewfinder").then(|| {
+            // (windlight: the photo's light lives in the viewfinder's panel)
+            let windlight = words[0] == "windlight";
+            let viewfinder = (words[0] == "viewfinder" || windlight).then(|| {
                 use crate::snapshot::viewfinder::Display;
                 let has = |w: &str| words.contains(&w);
                 DemoViewfinder {
@@ -2568,7 +2569,7 @@ LUT_3D_SIZE {n}
                     menu: has("menu"),
                     help: has("help"),
                     drawer: has("drawer"),
-                    light: has("light"),
+                    light: has("light") || windlight,
                     focus_mode: if has("mf") {
                         Some(crate::dof::PhotoFocus::Manual)
                     } else if has("afc") {
@@ -2728,10 +2729,6 @@ LUT_3D_SIZE {n}
                     crate::ui::widgets::open_floater(&self.egui_ctx, "poser", &mut self.ik_editor.open);
                 }
             }
-        }
-        // (once the window has its layout)
-        if demo.windlight.is_some() && self.frame_count == 660 {
-            self.snapshots.ui.reveal_light = true;
         }
         if demo.windlight == Some(true) {
             if self.frame_count == 900 {

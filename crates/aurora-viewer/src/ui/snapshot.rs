@@ -41,10 +41,9 @@ pub struct SnapshotUi {
     pub caption: String,
     /// The e-mail of a postcard (not kept either).
     pub postcard: PostcardForm,
-    /// The quick light, for the photo only (never saved).
+    /// The quick light, for the photo only (never saved), set in the
+    /// viewfinder's light panel (`light_only`).
     pub light: crate::snapshot::light::PhotoLight,
-    /// Scroll the panel to the Light section on the next frame (demo).
-    pub reveal_light: bool,
     /// The free camera's switch and flight (never saved).
     pub free: crate::camera::free::FreeSettings,
     /// The looks editor's state (`ui::looks_editor`).
@@ -265,7 +264,6 @@ impl SnapshotUi {
         }
 
         let before = s.clone();
-        let light_before = self.light;
         // the settings scroll between the preview and the shutter, which
         // stay in sight on a short screen
         let room = (ui.ctx().content_rect().height() - 470.0).max(150.0);
@@ -277,9 +275,6 @@ impl SnapshotUi {
         self.actions(ui, p, view, out);
 
         changed(s, &before, out);
-        if self.light != light_before && !out.contains(&Action::Changed) {
-            out.push(Action::Changed);
-        }
     }
 
     /// The viewfinder's drawer: every setting of the panel, its shutter,
@@ -299,7 +294,6 @@ impl SnapshotUi {
     ) {
         ui.spacing_mut().item_spacing.y = 6.0;
         let before = s.clone();
-        let light_before = self.light;
         let freeze = self.freeze;
         egui::ScrollArea::vertical()
             .id_salt("photo_drawer")
@@ -307,13 +301,13 @@ impl SnapshotUi {
             .show(ui, |ui| self.settings(ui, p, s, fov, default_fov, view, out));
         self.actions(ui, p, view, out);
         changed(s, &before, out);
-        if (self.light != light_before || self.freeze != freeze) && !out.contains(&Action::Changed) {
+        if self.freeze != freeze && !out.contains(&Action::Changed) {
             out.push(Action::Changed);
         }
     }
 
-    /// The viewfinder's light panel: the Light section alone, the dock's
-    /// shortcut to the drawer's section of the same name.
+    /// The viewfinder's light panel, opened by the dock's sun button: the
+    /// only place of the photo's light.
     pub fn light_only(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Vec<Action>) {
         ui.spacing_mut().item_spacing.y = 6.0;
         let before = self.light;
@@ -726,13 +720,7 @@ impl SnapshotUi {
 
         section(ui, p, "focus-centered", aurora_i18n::tr!("photo-section-dof"));
         dof_rows(ui, p, &mut s.dof);
-
-        let light = ui.cursor();
-        section(ui, p, "sun-filled", aurora_i18n::tr!("photo-section-light"));
-        light_rows(ui, p, &mut self.light, view.exposure, view.hdr, &view.env, out);
-        if std::mem::take(&mut self.reveal_light) {
-            ui.scroll_to_rect(light.with_max_y(ui.cursor().top()), Some(egui::Align::Center));
-        }
+        // (the photo's light: the viewfinder dock's sun button, `light_only`)
 
         let filter = ui.cursor();
         section(ui, p, "color-filter", aurora_i18n::tr!("photo-looks"));
@@ -1040,10 +1028,10 @@ fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
     });
 }
 
-/// The window's quick light (Phototools' Quick Environments, the sky, water
+/// The photo's quick light (Phototools' Quick Environments, the sky, water
 /// and day cycle lists of its Env tab, Pause Clouds, Attached Lights and
-/// Exposure, and the sun of "Personal lighting"), for the photo only: the
-/// window gives the user's own back when it closes, unless "Keep this
+/// Exposure, and the sun of "Personal lighting"), for the photo only: closing
+/// the photo mode gives the user's own back, unless "Keep this
 /// light".
 fn light_rows(
     ui: &mut egui::Ui,
