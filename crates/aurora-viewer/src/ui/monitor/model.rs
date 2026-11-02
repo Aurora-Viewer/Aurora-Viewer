@@ -279,6 +279,7 @@ const GROUPS: &[(&str, RowId)] = &[
     ("aurora-chatlog", RowId::SvcLogs),
     ("aurora-transcript", RowId::SvcLogs),
     ("aurora-notification-history", RowId::SvcLogs),
+    ("aurora-experience-log", RowId::SvcLogs),
     ("aurora-favorites", RowId::Services),
     ("aurora-web-profile", RowId::Services),
     ("aurora-cache", RowId::CacheUpkeep),

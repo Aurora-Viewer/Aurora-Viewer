@@ -488,6 +488,9 @@ pub struct Land {
     /// Experience picker search: the query and its results (None while
     /// searching, Some(None) when it failed).
     pub experience_search: Option<(String, Option<Option<Vec<land::FoundExperience>>>)>,
+    /// The Experiences window's search, the same request kept apart: the
+    /// land and estate pickers clear and reuse theirs.
+    pub window_experience_search: Option<(String, Option<Option<Vec<land::FoundExperience>>>)>,
     /// Objects the simulator asked to highlight (ForceObjectSelect after
     /// "Show"): LLSelectMgr's highlighted objects, by region and local ID.
     pub highlight: HashSet<(RegionHandle, u32)>,
@@ -671,6 +674,13 @@ impl Land {
         self.send(LandCommand::ExperienceSearch { query, page: 1 });
     }
 
+    /// The same search for the Experiences window (`window_experience_search`).
+    pub fn search_experiences_for_window(&mut self, query: &str) {
+        let query = query.trim().to_owned();
+        self.window_experience_search = Some((query.clone(), None));
+        self.send(LandCommand::ExperienceSearch { query, page: 1 });
+    }
+
     /// LLPanelLandExperiences::experienceAdded: the experience takes `kind`
     /// (EXPERIENCE_KEY_TYPE_*: it leaves the other list) and the list of that
     /// kind goes out, as sendParcelAccessListUpdate(access_type).
@@ -850,6 +860,11 @@ impl Land {
             LandEvent::ExperienceSearch { query, results } => {
                 if let Some(list) = results.as_ref() {
                     self.experience_names.extend(list.iter().map(|e| (e.id, e.name.clone())));
+                }
+                if let Some((q, r)) = self.window_experience_search.as_mut()
+                    && *q == query
+                {
+                    *r = Some(results.clone());
                 }
                 if let Some((q, r)) = self.experience_search.as_mut()
                     && *q == query
