@@ -61,6 +61,7 @@ mod dev_toolbox;
 mod folders;
 use folders::chat_log_root;
 mod contents_drop_demo;
+mod contents_folder_drag_demo;
 mod dof;
 mod double_click;
 mod driver_check;
@@ -9683,6 +9684,7 @@ impl App {
             self.portal_demo_input(&mut raw);
             self.give_demo_input(&mut raw, vp, (w, h));
             self.contents_drop_demo_input(&mut raw, vp, (w, h));
+            self.contents_folder_drag_demo_input(&mut raw);
             if self.frame_count == 420
                 && std::env::var("AURORA_DEMO_ACTIONS").as_deref() == Ok("open-multi")
                 && let Some(c) = &self.interactions.contents

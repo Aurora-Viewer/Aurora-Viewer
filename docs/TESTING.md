@@ -2017,6 +2017,20 @@ No real L$ and no connection to a grid.
   an unconfirmed copy with two of three items received, then clears after
   five seconds. This fixture changes neither real-grid transfers nor their
   60-second deadline. The move warning still requires confirmation at 480.
+- `open-folder`, `open-folder-drop`: after `open`, the inventory opens at
+  frame 540 and a real pointer drag takes the Open window's root
+  "Contents (3 items)" row from frame 620 onto the inventory's Objects
+  folder, held there from frame 640 (the folder is outlined and the cursor
+  says move, the spare cube being no copy). `-drop` releases at frame 720:
+  the notecard and the script go straight into Objects (no new folder; its
+  count goes from 5 to 7) and the move warning lists the spare cube, with
+  the scripted object's line; Move takes it out of the cube. The log has
+  `demo contents folder drag: over the inventory folder`, then `released`.
+  Capture at frame 700 (hover) or 780 (warning) with
+  `AURORA_FPS_LIMIT=60`. Manually, with `open`: drag the "Contents" row of
+  the Open window, or of the Build tools' Contents tab
+  (`AURORA_DEMO_BUILD=move,object:976`, `AURORA_DEMO_BUILD_TAB=contents`),
+  onto any inventory folder.
 - `play` starts a local HTML page; `pause` and `open-media-playing`
   inject a simulated playback state before the click; `open-media` simulates
   the opening of the external browser.

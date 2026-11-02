@@ -7504,6 +7504,7 @@ contents-count = { $count ->
     [one] 中身（{ $count }個のアイテム）
    *[other] 中身（{ $count }個のアイテム）
     }
+contents-root-drag-tip = 持ち物のフォルダへドラッグすると、オブジェクトのアイテムをすべてそのフォルダへ取り出します
 face-count = { $count ->
     [one] { $count }面
    *[other] { $count }面
