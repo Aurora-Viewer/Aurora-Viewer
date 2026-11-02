@@ -3278,6 +3278,13 @@ swimming/water walking and the manager button. Check Escape, click-away and repe
 Existing movement preferences and the full manager must reflect the same
 choices. The other menus/commands still open the full manager directly.
 
+For #1394 on the grid, turn automatic cycling off, choose a non-first stand
+from the manager and then from the quick arrows, and check it after logout/login
+and a full viewer restart. Repeat with another set/account and an independent
+track. Reordering retains the animation identity; deleting that choice falls
+back to the first available entry. With cycling on, the remembered animation
+plays first and the configured cycle resumes after its interval.
+
 `interface` opens General; `interface-sitting` selects Sitting in the same
 category. `interface-running` opens Ground with Running selected;
 `interface-jumping`, `interface-flight` and `interface-swim` open the other
@@ -6967,6 +6974,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   how odd names sit beside the region: accents, emoji, other scripts,
   letters from a fallback font, a trailing line break. The parcel's name
   and the region text must share one baseline.
+- **Favorites toolbar regression (#1394)**: place the Favorites button in
+  the bottom, left and right toolbar in each look. Left click opens Favorites;
+  right click shows only the toolbar menu, including usable Remove and Toolbar
+  buttons entries, also while the Favorites grid was already open.
 - **`AURORA_DEMO_BARS=<words>`**: the states of the top and bottom bars
   for the comparisons with the bars mockup, for this run only (nothing is
   saved), with the mockup's long parcel name and, with the islands, its

@@ -17650,6 +17650,7 @@ impl ApplicationHandler for App {
                     crate::ao::Account {
                         enabled: mode != "off",
                         selected,
+                        ..Default::default()
                     },
                 );
                 self.panels.ao = true;

@@ -1,5 +1,11 @@
 # Aurora Viewer architecture
 
+AO account settings retain the last animation link/group UUID per state or track
+folder (`ao::Account::animations`). `ao/runtime.rs` restores cursor positions by
+identity and reports changed selections; `app/ao.rs` saves them through the existing
+background settings writer after playback changes and AO UI choices. Inventory
+ordering, cycle options, and the source animations remain independent.
+
 Blended material batches retain their sorted order and per-face sidedness in
 `DrawLists::blend_double_sided` and `blend_under_double_sided`, including
 frame-packet reuse. The renderer splits consecutive runs at sidedness changes
