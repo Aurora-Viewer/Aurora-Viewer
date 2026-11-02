@@ -674,6 +674,8 @@ pub struct App {
     crash_state_at: Option<Instant>,
     /// Swapchain recreations of the last seconds, for the same state.
     crash_swapchain: crash_state::SwapchainRecent,
+    /// The state kept for the report once the GPU is lost.
+    crash_kept: crash_state::KeptState,
     /// The graphics card stopped finishing frames (app/gpu_stall.rs).
     gpu_stall: gpu_stall::GpuStall,
     /// The Down key's latch (FSCrouchToggle).
@@ -1436,6 +1438,7 @@ impl App {
             minimized_mute: audio_mute::MinimizedMute::default(),
             crash_state_at: None,
             crash_swapchain: Default::default(),
+            crash_kept: Default::default(),
             gpu_stall: Default::default(),
             crouch_toggle: Default::default(),
             music_parcel_url: String::new(),
@@ -17650,6 +17653,7 @@ impl ApplicationHandler for App {
                     crate::ao::Account {
                         enabled: mode != "off",
                         selected,
+                        ..Default::default()
                     },
                 );
                 self.panels.ao = true;

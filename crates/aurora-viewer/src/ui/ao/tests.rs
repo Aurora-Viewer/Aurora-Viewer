@@ -32,6 +32,7 @@ impl Fixture {
             account: Account {
                 enabled: false,
                 selected: id,
+                ..Default::default()
             },
             state: AoUi::default(),
             movement: Default::default(),
