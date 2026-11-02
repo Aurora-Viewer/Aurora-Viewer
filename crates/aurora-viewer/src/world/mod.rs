@@ -2207,7 +2207,17 @@ impl World {
             }
             NetEvent::RegionHandshake(info) => {
                 self.tp_history.name_current(info.handle, &info.name);
-                let r = self.ensure_region(info.handle, (info.size_x, info.size_y));
+                let size = (info.size_x.max(256), info.size_y.max(256));
+                let r = self.ensure_region(info.handle, size);
+                if (r.heightmap.size_x, r.heightmap.size_y) != size {
+                    // The region was made before its handshake (set_main_region,
+                    // capabilities, simulator features) with the 256 m default:
+                    // a variable-size region (OpenSim) takes its real size here,
+                    // or its terrain past 256 m is dropped and never drawn.
+                    r.heightmap = r.heightmap.resized(size.0, size.1);
+                    r.dirty_chunks.extend(0..r.heightmap.chunk_count());
+                    r.terrain_revision += 1;
+                }
                 r.name = info.name.clone();
                 if r.info.as_ref().is_some_and(|old| {
                     old.terrain_start_height != info.terrain_start_height || old.terrain_height_range != info.terrain_height_range

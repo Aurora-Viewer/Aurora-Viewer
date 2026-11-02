@@ -64,6 +64,24 @@ impl Heightmap {
         }
     }
 
+    /// The same terrain in a map of another size: heights and received
+    /// patches are kept where both maps overlap, the rest starts flat.
+    pub fn resized(&self, size_x: u32, size_y: u32) -> Heightmap {
+        let mut out = Heightmap::new(size_x, size_y);
+        for y in 0..self.size_y.min(size_y) {
+            for x in 0..self.size_x.min(size_x) {
+                out.heights[(y * size_x + x) as usize] = self.heights[(y * self.size_x + x) as usize];
+            }
+        }
+        let rows = self.patch_received.len() as u32 / self.patches_x.max(1);
+        for py in 0..rows.min(size_y / 16) {
+            for px in 0..self.patches_x.min(out.patches_x) {
+                out.patch_received[(py * out.patches_x + px) as usize] = self.patch_received[(py * self.patches_x + px) as usize];
+            }
+        }
+        out
+    }
+
     /// Write a patch; returns the chunk indices that became dirty.
     pub fn apply_patch(&mut self, px: u32, py: u32, size: u32, data: &[f32]) -> Vec<u32> {
         let x0 = px * size;
@@ -298,6 +316,28 @@ fn terrain_frames(vertices: &mut [Vertex], normals: &[Vec3], indices: &[u16], re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_placeholder_map_grows_to_a_variable_size_region_and_keeps_its_patches() {
+        let mut hm = Heightmap::new(256, 256);
+        hm.apply_patch(1, 2, 16, &[5.0; 256]);
+        let big = hm.resized(1024, 512);
+        assert_eq!((big.size_x, big.size_y, big.patches_x), (1024, 512, 64));
+        assert_eq!(big.chunk_count(), 32 * 16);
+        assert_eq!(
+            big.heights[(32 * 1024 + 16) as usize],
+            5.0,
+            "a height already received stays in place"
+        );
+        assert!(big.patch_received[(2 * 64 + 1) as usize]);
+        assert!(
+            !big.patch_received[(2 * 64 + 40) as usize],
+            "the new area waits for its own patches"
+        );
+        // patches past 256 m, dropped by the placeholder, now land
+        assert!(!big.clone().apply_patch(50, 20, 16, &[1.0; 256]).is_empty());
+        assert!(hm.apply_patch(50, 20, 16, &[1.0; 256]).is_empty());
+    }
 
     #[test]
     fn chunk_builds() {
