@@ -16513,7 +16513,7 @@ impl ApplicationHandler for App {
                         let uri = self.settings.login_uri();
                         self.login_form.favorites = crate::login_favorites::demo_store(&uri);
                         if favorites == crate::login_favorites::Demo::Pick {
-                            let key = crate::login_favorites::key(&uri, "Example 1");
+                            let key = crate::login_favorites::key(&uri, "Example 2");
                             self.login_form.start_favorite =
                                 self.login_form.favorites.favorites(&key).get(1).map(|f| (key.clone(), f.item));
                         }

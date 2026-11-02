@@ -341,7 +341,7 @@ pub fn merge(stored: &[Favorite], current: Vec<Current>) -> Vec<Favorite> {
 }
 
 /// AURORA_DEMO_LOGIN_FAVORITES=1|open|pick, with AURORA_DEMO_LOGIN=cards:
-/// stored favourites for the first and third demo accounts (the second
+/// stored favourites for the second (selected) and third demo accounts (the first
 /// was never logged in here: Home and Last only); `open` opens the
 /// selected card's start menu once, `pick` chooses its second favourite
 /// (Log in then writes the start URI to the log).
@@ -378,7 +378,7 @@ pub fn demo_store(uri: &str) -> Store {
     };
     Store::seeded([
         (
-            key(uri, "Example 1"),
+            key(uri, "Example 2"),
             vec![
                 fav(1, tr!("common-aurora-plaza"), tr!("common-aurora-demo"), [128.0, 128.0, 25.0]),
                 fav(2, tr!("demo-place-aurora-lagoon"), tr!("common-boreal-lagoon"), [60.0, 200.0, 22.0]),
@@ -547,10 +547,10 @@ mod tests {
     }
 
     #[test]
-    fn the_demo_store_has_favorites_for_two_of_the_demo_accounts() {
+    fn the_demo_store_has_favorites_for_the_selected_and_the_third_demo_accounts() {
         let store = demo_store("synthetic-grid");
-        assert_eq!(store.favorites(&key("synthetic-grid", "Example 1")).len(), 5);
-        assert!(store.favorites(&key("synthetic-grid", "Example 2")).is_empty());
+        assert!(store.favorites(&key("synthetic-grid", "Example 1")).is_empty());
+        assert_eq!(store.favorites(&key("synthetic-grid", "Example 2")).len(), 5);
         assert_eq!(store.favorites(&key("synthetic-grid", "Example 3")).len(), 1);
     }
 }

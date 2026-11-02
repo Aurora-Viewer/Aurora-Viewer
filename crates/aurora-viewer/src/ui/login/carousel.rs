@@ -80,13 +80,7 @@ pub(super) fn controls(
     }
     ui.horizontal(|ui| {
         ui.add_sized(label_size, egui::Label::new(aurora_i18n::tr!("ui-login-start")));
-        // AURORA_DEMO_LOGIN_FAVORITES=open: the menu open once, for captures
-        if !favorites.list.is_empty() && crate::login_favorites::demo() == Some(crate::login_favorites::Demo::Open) {
-            static OPENED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-            if !OPENED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                egui::Popup::open_id(ui.ctx(), ui.make_persistent_id(egui::IdSalt::new("accounts_start")).with("popup"));
-            }
-        }
+        super::demo_open_start_menu(ui, "accounts_start", favorites);
         let combo = egui::ComboBox::from_id_salt("accounts_start")
             .width(ui.available_width())
             .truncate();
