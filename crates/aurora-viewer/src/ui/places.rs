@@ -246,11 +246,8 @@ fn slurl_at(world: &World, global: DVec3, title: &str) -> Option<String> {
         .map(|(_, s)| s.name.clone())
         .or_else(|| title.rsplit(", ").next().map(str::to_owned))
         .filter(|r| !r.is_empty())?;
-    let pos = glam::Vec3::new(
-        global.x.rem_euclid(256.0) as f32,
-        global.y.rem_euclid(256.0) as f32,
-        global.z as f32,
-    );
+    let (x, y) = world.map.local_xy(global.x, global.y);
+    let pos = glam::Vec3::new(x as f32, y as f32, global.z as f32);
     Some(crate::slurl::make(&region, pos))
 }
 
