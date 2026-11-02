@@ -341,7 +341,15 @@ import-local-mesh-selection = Sélectionnez un prim ou un mesh dans le monde ava
 import-local-mesh-scale = Utiliser les dimensions importées dans l’aperçu
 import-local-meters = Considérer les unités comme des mètres
 import-local-mesh-rez-hint = Cliquez dans le monde pour créer le prim qui portera cet aperçu local.
-import-voxel-resolution = Résolution en voxels
+import-voxel-resolution = Résolution
+import-physics-resolution-low = Basse
+import-physics-resolution-normal = Normale
+import-physics-resolution-high = Élevée
+import-physics-resolution-very-high = Très élevée
+import-physics-resolution-ultra = Ultra
+import-physics-resolution-maximum = Maximale
+import-physics-resolution-custom = Personnalisée
+import-physics-resolution-help = Précision de la grille 3D utilisée pour analyser les collisions ({ $voxels } voxels). Une résolution élevée peut préserver des détails plus fins, au prix de davantage de temps de calcul et de mémoire.
 import-max-hulls = Nombre maximal d’enveloppes
 import-hull-vertices = Sommets par enveloppe
 import-error-tolerance = Tolérance d’erreur
@@ -543,7 +551,12 @@ import-preview-physics-fill = Surface physique
 import-preview-physics-edges = Arêtes physiques
 import-preview-degenerate-fill = Surface des triangles dégénérés
 import-preview-degenerate-edges = Arêtes des triangles dégénérés
-import-degenerate-physics = Mesh de physique : { $count } triangles dégénérés. Analysez ou simplifiez avant de demander un devis.
+import-degenerate-physics = { $count ->
+    [one] Physique à corriger : { $count } triangle trop petit, trop fin ou de surface nulle.
+   *[other] Physique à corriger : { $count } triangles trop petits, trop fins ou de surface nulle.
+    }
+import-physics-convex-repair = Créer des enveloppes de collision convexes
+import-physics-convex-help = Les enveloppes convexes approchent la forme des collisions et peuvent combler des ouvertures. Les LOD visuels restent inchangés. Vérifiez l’aperçu physique avant de demander un devis.
 import-max-size = Limiter la taille à 1024 × 1024
 import-texture-size = Taille à l’envoi : { $width } × { $height } px
 import-lossless = Compression sans perte
@@ -11342,8 +11355,9 @@ texture-library-open-hint = Double-clic pour ouvrir. Glisser dans le contenu d�
 import-preview-settings = Options de l’aperçu
 import-section-avatar = Avatar
 import-section-journal = Journal
-import-collision-step-source = Étape 1 : Niveau de détail
-import-collision-step-hulls = Étape 2 : Convertir en enveloppes convexes (facultatif)
+import-collision-step-source = Niveau de détail
+import-collision-step-hulls = Créer des enveloppes convexes
+import-collision-use-triangles = Revenir au maillage triangulé
 import-collision-results = Résultats — Triangles : { $triangles } · Sommets : { $vertices } · Enveloppes : { $hulls }
 import-collision-results-pending = Résultats — Triangles : N/A · Sommets : N/A · Enveloppes : N/A
 import-avatar-joints = Articulations :
@@ -11368,6 +11382,7 @@ import-log-lod-ready = LOD{ $level } : { $triangles } triangles préparés.
 import-log-model-detail = Modèle { $model }, LOD{ $level } : { $vertices } sommets, { $faces } faces.
 
 import-collision-analyze = Analyser
+import-collision-analyzing = Analyse en cours…
 
 import-fill-mode = Mode de remplissage
 
