@@ -326,7 +326,13 @@ impl App {
             // `worn-other-hidden*`: every face of the scripted attachment at
             // alpha 0, the invisible clickers of a headpat or a slapper
             let hidden = mode.starts_with("worn-other-hidden");
-            let unrigged_mesh = matches!(mode, "worn-other-mesh" | "worn-other-hidden-mesh" | "worn-other-hidden-mesh-under");
+            // `worn-other-clear-mesh`: hidden by the transparent texture
+            // instead, its alpha left at 1 (a slapper's mesh cheeks)
+            let clear = mode == "worn-other-clear-mesh";
+            let unrigged_mesh = matches!(
+                mode,
+                "worn-other-mesh" | "worn-other-hidden-mesh" | "worn-other-hidden-mesh-under" | "worn-other-clear-mesh"
+            );
             if unrigged_mesh && let Some(g) = self.gfx.as_mut() {
                 // a mesh without a skin, placed by its attachment point
                 self.scene.install_demo_unrigged_cube(&mut g.renderer);
@@ -401,6 +407,11 @@ impl App {
                         if hidden && let Some(te) = o.texture_entry.as_mut() {
                             for f in &mut std::sync::Arc::make_mut(te).faces {
                                 f.color[3] = 0.0;
+                            }
+                        }
+                        if clear && let Some(te) = o.texture_entry.as_mut() {
+                            for f in &mut std::sync::Arc::make_mut(te).faces {
+                                f.texture = aurora_prim::te::TRANSPARENT_TEXTURE;
                             }
                         }
                         if unrigged_mesh {
