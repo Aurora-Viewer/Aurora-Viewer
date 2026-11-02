@@ -3278,6 +3278,13 @@ swimming/water walking and the manager button. Check Escape, click-away and repe
 Existing movement preferences and the full manager must reflect the same
 choices. The other menus/commands still open the full manager directly.
 
+For #1394 on the grid, turn automatic cycling off, choose a non-first stand
+from the manager and then from the quick arrows, and check it after logout/login
+and a full viewer restart. Repeat with another set/account and an independent
+track. Reordering retains the animation identity; deleting that choice falls
+back to the first available entry. With cycling on, the remembered animation
+plays first and the configured cycle resumes after its interval.
+
 `interface` opens General; `interface-sitting` selects Sitting in the same
 category. `interface-running` opens Ground with Running selected;
 `interface-jumping`, `interface-flight` and `interface-swim` open the other
@@ -4625,7 +4632,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_USERINFO=hidden\|liaison\|opensim\|fail\|savefail` | Preferences › Privacy › Visibility, the account settings the grid keeps |
 | `AURORA_DEMO_SLURLS=1\|offer` | Place links with their region rating badges, one region looked up |
 | `AURORA_DEMO_APPLINKS=1\|actions\|preview\|<command>[:restore]` | URI examples, visible action markers, their previews or a minimize/reopen scenario |
-| `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival |
+| `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival; also fills Me › Experiences |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
@@ -6843,6 +6850,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   environment (PushExpEnvironment, PushPartialEnvironment): over 3 s the sky
   fades to a violet sunset and the water fog turns red. The profile's Forget
   fades it back over 1 s, Block at once (ENV_PUSH, `world/eep_push.rs`).
+  The Me › Experiences window lists them: the club's experience is
+  Administered, the plaza's Contributed, and Allowed or Blocked follows your
+  answers (the tab moves when you Allow, Block or Forget in the profile).
+  Each allowed script that acts (the door's teleport, the greeter) adds an
+  entry to the Events tab; Search finds the demo's experiences by name.
 - **`AURORA_DEMO_LURE=offer|request|god|answers|reject|offer-card|request-card|card-answered|notification-answered|legacy|exceeded|exceeded-continue|blocked`**:
   teleports received from Tess Touch (issue #280, parts B1 and B2). Each
   offer and request opens her conversation (unread) with its card and has
@@ -6964,6 +6976,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   how odd names sit beside the region: accents, emoji, other scripts,
   letters from a fallback font, a trailing line break. The parcel's name
   and the region text must share one baseline.
+- **Favorites toolbar regression (#1394)**: place the Favorites button in
+  the bottom, left and right toolbar in each look. Left click opens Favorites;
+  right click shows only the toolbar menu, including usable Remove and Toolbar
+  buttons entries, also while the Favorites grid was already open.
 - **`AURORA_DEMO_BARS=<words>`**: the states of the top and bottom bars
   for the comparisons with the bars mockup, for this run only (nothing is
   saved), with the mockup's long parcel name and, with the islands, its
@@ -8669,6 +8685,15 @@ What the inventory must show with these scenarios:
   replaced when these two values change.
 - **`AURORA_DEMO_MUSIC`**: `1` designates an unreachable dummy address; the
   music waits for the radio button.
+  For #1628, use `https://stream.electroradio.fm/320k` and enable the parcel
+  radio: music should play and the stream title should update. Stop and
+  restart the radio, then check another HTTP/ICY station. The explicit
+  `cargo test --workspace --locked issue_1628_live_probe -- --ignored --nocapture`
+  test checks this public HTTPS station without a grid or an audio device;
+  it is skipped by default because it needs internet access.
+  Windows/macOS use the system's certificate verifier, which can complete
+  missing intermediate chains. Linux uses the system CA bundle and still
+  needs the intermediates from the server or its trust store.
 - **`AURORA_DEMO_MEDIA_FILTER`**: turns the media filter on for the run.
   `ask` (or `1`) starts a parcel media on `media.example.com`, which the
   filter asks about (the question is up from the first frames; nothing
