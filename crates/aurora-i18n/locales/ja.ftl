@@ -1756,6 +1756,9 @@ ui-land-access-allow-temporary-access-to-this-parcel = この区画への一時�
 ui-profile-allow-to = { $name }{ "に以下を許可：" }
 ui-land-options-other = その他
 ui-login-other-grid = その他のグリッド…
+ui-login-grid-link-title = ログインするグリッドを変更しますか？
+ui-login-grid-link-text = Aurora の外から開いたリンクが、別のグリッドへのログインを求めています。パスワードはログイン先のグリッドに送られます。信頼できるグリッドの場合のみ変更してください。
+ui-login-grid-link-switch = グリッドを変更
 
 grids-manage = グリッドの管理
 grids-remove-question = { $name }をグリッドのリストから削除してもよろしいですか？

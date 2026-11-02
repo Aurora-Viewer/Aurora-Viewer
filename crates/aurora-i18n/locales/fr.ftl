@@ -1759,6 +1759,9 @@ ui-land-access-allow-temporary-access-to-this-parcel = Autoriser un accès tempo
 ui-profile-allow-to = { "Autoriser " }{ $name }{ " à :" }
 ui-land-options-other = Autre
 ui-login-other-grid = Autre grille…
+ui-login-grid-link-title = Changer de grille de connexion ?
+ui-login-grid-link-text = Un lien ouvert depuis l'extérieur d'Aurora demande de se connecter à une autre grille. Votre mot de passe est envoyé à la grille où vous vous connectez : ne changez que si vous lui faites confiance.
+ui-login-grid-link-switch = Changer de grille
 
 grids-manage = Gérer les grilles
 grids-remove-question = Supprimer { $name } de la liste des grilles ?

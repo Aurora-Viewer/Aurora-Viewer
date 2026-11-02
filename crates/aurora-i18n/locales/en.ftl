@@ -1756,6 +1756,9 @@ ui-land-access-allow-temporary-access-to-this-parcel = Allow temporary access to
 ui-profile-allow-to = { "Allow " }{ $name }{ " to:" }
 ui-land-options-other = Other
 ui-login-other-grid = Other grid…
+ui-login-grid-link-title = Change the login grid?
+ui-login-grid-link-text = A link opened from outside Aurora asks to log in to another grid. Your password goes to the grid you log in to: only switch if you trust this one.
+ui-login-grid-link-switch = Switch grid
 
 grids-manage = Manage grids
 grids-remove-question = Remove { $name } from the grid list?
