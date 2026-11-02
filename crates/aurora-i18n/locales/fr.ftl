@@ -10516,6 +10516,7 @@ gesture-demo-sound-name = Carillon de démonstration
 gesture-demo-clap-name = Applaudissements de démonstration
 gesture-demo-hug-name = Câlin de démonstration
 gesture-demo-channel-name = Commande de canal de démonstration
+gesture-demo-channel-replace-name = Remplacement de canal de démonstration
 demo-channel-listener-name = Écouteur de démonstration
 demo-channel-listener-heard = Entendu sur le canal { $channel } : { $message }
 gesture-demo-finished = L’animation du geste est terminée.

@@ -10520,6 +10520,7 @@ gesture-demo-sound-name = Demo chime
 gesture-demo-clap-name = Demo clap
 gesture-demo-hug-name = Demo hug
 gesture-demo-channel-name = Demo channel command
+gesture-demo-channel-replace-name = Demo channel replacement
 demo-channel-listener-name = Demo listener
 demo-channel-listener-heard = Heard on channel { $channel }: { $message }
 gesture-demo-finished = The gesture animation has finished.

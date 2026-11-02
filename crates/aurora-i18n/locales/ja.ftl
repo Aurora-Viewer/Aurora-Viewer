@@ -10514,6 +10514,7 @@ gesture-demo-sound-name = デモチャイム
 gesture-demo-clap-name = デモ拍手
 gesture-demo-hug-name = デモハグ
 gesture-demo-channel-name = デモチャンネルコマンド
+gesture-demo-channel-replace-name = デモチャンネル置換
 demo-channel-listener-name = デモリスナー
 demo-channel-listener-heard = チャンネル{ $channel }で受信：{ $message }
 gesture-demo-finished = ジェスチャーのアニメーションが終わりました。
