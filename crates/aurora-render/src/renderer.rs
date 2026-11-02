@@ -856,7 +856,8 @@ struct Pipelines {
     /// and their depth into the single-sampled scene depth.
     blend_under: SidedPipelines,
     blend_under_depth_ss: SidedPipelines,
-    particles: wgpu::RenderPipeline,
+    particles: [wgpu::RenderPipeline; crate::particles::BLEND_COUNT],
+    particle_glow: wgpu::RenderPipeline,
     water_particles: wgpu::RenderPipeline,
     water_particles_under: wgpu::RenderPipeline,
     glow: wgpu::RenderPipeline,
@@ -1746,43 +1747,11 @@ fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
-fn particle_layout() -> wgpu::VertexBufferLayout<'static> {
-    const ATTRS: [wgpu::VertexAttribute; 7] = [
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x3,
-            offset: 0,
-            shader_location: 0,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Uint32,
-            offset: 12,
-            shader_location: 1,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x2,
-            offset: 16,
-            shader_location: 2,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Uint32,
-            offset: 24,
-            shader_location: 3,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Unorm8x4,
-            offset: 28,
-            shader_location: 4,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x3,
-            offset: 32,
-            shader_location: 5,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32,
-            offset: 44,
-            shader_location: 6,
-        },
+pub(crate) fn particle_layout() -> wgpu::VertexBufferLayout<'static> {
+    const ATTRS: [wgpu::VertexAttribute; 12] = wgpu::vertex_attr_array![
+        0 => Float32x3, 1 => Uint32, 2 => Float32x2, 3 => Uint32,
+        4 => Unorm8x4, 5 => Float32x3, 6 => Float32,
+        7 => Float32x3, 8 => Float32, 9 => Float32x3, 10 => Float32, 11 => Unorm8x4
     ];
     wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<ParticleInstance>() as u64,
@@ -3530,14 +3499,34 @@ impl Backend {
             constants: &[("DEPTH_CONTACT_ALPHA", 0.004), ("WATER_CLIP", 1.0)],
             ..base("blend rigged fringe depth", "vs_main", "fs_blend")
         });
-        let particles = pipe(PipeDesc {
+        let particles = std::array::from_fn(|index| {
+            pipe(PipeDesc {
+                vb: Vb::Particle,
+                cull: None,
+                blend: Some(crate::particles::blend_state(index)),
+                write_mask: wgpu::ColorWrites::ALL,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Greater,
+                ..base("particles", "vs_particle", "fs_particle")
+            })
+        });
+        // LLDrawPoolAlpha::renderEmissives: colour untouched, texture alpha
+        // times per-vertex glow accumulated in the scene alpha for bloom.
+        let particle_glow = pipe(PipeDesc {
             vb: Vb::Particle,
             cull: None,
-            blend: Some(suppress),
-            write_mask: wgpu::ColorWrites::ALL,
+            blend: Some(wgpu::BlendState {
+                color: wgpu::BlendComponent::REPLACE,
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            }),
+            write_mask: wgpu::ColorWrites::ALPHA,
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Greater,
-            ..base("particles", "vs_particle", "fs_particle")
+            ..base("particle glow", "vs_particle", "fs_particle_glow")
         });
         let water_particles = pipe(PipeDesc {
             vb: Vb::None,
@@ -4040,6 +4029,7 @@ impl Backend {
             blend_under,
             blend_under_depth_ss,
             particles,
+            particle_glow,
             water_particles,
             water_particles_under,
             glow,
@@ -5234,7 +5224,7 @@ impl Backend {
         ];
         let right = inv_view.transform_vector3(Vec3::X).normalize_or(Vec3::X);
         let up = inv_view.transform_vector3(Vec3::Y).normalize_or(Vec3::Z);
-        u.cam_right = right.extend(0.5).to_array();
+        u.cam_right = right.extend(if self.settings.soft_particles { 0.5 } else { 0.0 }).to_array();
         u.cam_up = up.extend(f.water_height).to_array();
         // water
         let w = &f.water;
@@ -7813,9 +7803,15 @@ impl Backend {
             }
             // particles last: they rebind vertex buffer 0
             if n_particles > 0 {
-                pass.set_pipeline(&self.pipelines.particles);
                 pass.set_vertex_buffer(0, self.particle_buffer.slice(..));
-                pass.draw(0..6, 0..n_particles);
+                for batch in crate::particles::batches(&lists.particles, glow_on) {
+                    pass.set_pipeline(&self.pipelines.particles[batch.blend]);
+                    pass.draw(0..6, batch.instances.clone());
+                    if batch.glow {
+                        pass.set_pipeline(&self.pipelines.particle_glow);
+                        pass.draw(0..6, batch.instances);
+                    }
+                }
             }
         };
         {

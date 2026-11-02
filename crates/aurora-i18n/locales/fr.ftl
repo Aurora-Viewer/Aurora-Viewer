@@ -12950,3 +12950,7 @@ ui-options-camera-vr-view-first-person = Première personne
 ui-options-camera-vr-view-desktop-camera = Position de la caméra
 
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
+
+ui-options-particle-intersections = Intersection des particules
+ui-options-particle-intersections-help = Aurora estompe les particules près des surfaces. Le mode Legacy les coupe à la surface sans fondu.
+ui-options-particle-intersections-legacy = Legacy

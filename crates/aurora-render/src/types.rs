@@ -812,7 +812,7 @@ impl DrawLists {
     }
 }
 
-/// One camera-facing particle quad (instance data, 48 bytes).
+/// One particle quad, retaining both independent ribbon endpoints (88 bytes).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable, Default)]
 pub struct ParticleInstance {
@@ -824,17 +824,24 @@ pub struct ParticleInstance {
     pub flags: u32,
     /// Straight RGBA, sRGB encoded.
     pub color: [u8; 4],
-    /// Orientation axis for ribbons / velocity-aligned particles.
+    /// Ribbon child width axis, or velocity of a velocity-aligned billboard.
     pub axis: [f32; 3],
     pub glow: f32,
+    pub end_pos: [f32; 3],
+    pub end_glow: f32,
+    pub end_axis: [f32; 3],
+    pub end_width: f32,
+    pub end_color: [u8; 4],
+    /// Index of a supported source/destination blend pair; zero is ordinary alpha.
+    pub blend: u32,
 }
 
 pub mod particle_flags {
     /// Not lit by the environment.
     pub const EMISSIVE: u32 = 1;
-    /// Additive blending (destination factor ONE).
-    pub const ADDITIVE: u32 = 2;
-    /// Quad stretched along its world-space `axis` (ribbons).
+    /// Custom blend pairs without SOURCE_ALPHA may affect zero-alpha texels.
+    pub const KEEP_ZERO_ALPHA: u32 = 2;
+    /// Ribbon with independently positioned, oriented and shaded endpoints.
     pub const AXIS: u32 = 4;
     /// Velocity-oriented billboard: project its axis onto the viewing plane.
     pub const FOLLOW_VELOCITY: u32 = 8;
@@ -994,6 +1001,8 @@ pub struct RenderSettings {
     /// Percentage of the window resolution used by the world; UI stays native.
     pub render_scale_percent: u32,
     pub water_effects: crate::WaterEffects,
+    /// Fade scripted particles where they intersect opaque scene depth.
+    pub soft_particles: bool,
     pub aa: AntiAliasing,
     pub tonemapper: Tonemapper,
     /// "HDR and Emissive" (RenderDisableVintageMode, which drives
@@ -1040,6 +1049,7 @@ impl Default for RenderSettings {
         RenderSettings {
             render_scale_percent: 100,
             water_effects: crate::WaterEffects::default(),
+            soft_particles: true,
             // the state `Renderer::new` builds its pipelines and targets
             // for, not the viewer's default (SMAA, in its own settings)
             aa: AntiAliasing::Msaa(4),

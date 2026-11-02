@@ -4150,3 +4150,15 @@ array atlas from one to four 64-tile pages (32 to 128 MiB), preserving existing
 pictures by GPU copy. The two-capture frame budget and full-avatar limit remain
 independent. Pending or over-budget avatars draw neutral silhouette cards rather
 than disappearing; cards have a dynamically sized instance buffer.
+
+Scripted particle rendering retains both ribbon endpoints in `ParticleInstance`:
+position, width axis, width, sRGB colour and glow. `scene/particles.rs` builds
+those records, uses the reference projected-area texture demand and picks the
+actual ribbon triangles. `aurora-render/src/particles.rs` maps supported wire
+blend pairs to pipeline states and forms contiguous depth-ordered batches;
+particle glow enters the existing scene-alpha bloom path after each batch.
+`Settings::classic_particle_intersections` is the persisted Aurora preference;
+`RenderSettings::soft_particles` controls only the optional intersection fade.
+`particle_tests.rs` renders production shader coverage and blend outputs against
+reference equations. `AURORA_DEMO_PARTICLES=parity|parity-legacy` exercises the
+changes offline. Transparent scene ordering remains separate (#1937).

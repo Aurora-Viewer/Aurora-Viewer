@@ -12934,3 +12934,7 @@ ui-options-camera-vr-view-first-person = 一人称
 ui-options-camera-vr-view-desktop-camera = カメラの位置
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
+
+ui-options-particle-intersections = パーティクルの交差
+ui-options-particle-intersections-help = Auroraでは面の近くでパーティクルをフェードします。レガシーではフェードせずに面で切り取ります。
+ui-options-particle-intersections-legacy = レガシー

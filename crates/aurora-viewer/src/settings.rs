@@ -1182,6 +1182,8 @@ pub struct Settings {
     pub background_fps_limit: u32,
     /// Maximum live particles (0 = particles off).
     pub max_particles: u32,
+    /// Hard particle intersections like the Legacy Viewer; Aurora fades by default.
+    pub classic_particle_intersections: bool,
     /// Avatars drawn (the nearest ones).
     pub max_avatars: u32,
     /// Ambient occlusion: 0 off, 1 low, 2 high (the levels of the Legacy
@@ -1957,6 +1959,7 @@ impl Default for Settings {
             background_fps_cap: true,
             background_fps_limit: 15,
             max_particles: 4096,
+            classic_particle_intersections: false,
             max_avatars: 16,
             ssao: 1,
             ao_method: 0,
@@ -2757,6 +2760,7 @@ impl Settings {
         aurora_render::RenderSettings {
             render_scale_percent: self.render_scale_percent.clamp(50, 100),
             water_effects,
+            soft_particles: !self.classic_particle_intersections,
             aa: match self.antialiasing {
                 0 => AntiAliasing::None,
                 1 => AntiAliasing::Fxaa,

@@ -3616,7 +3616,7 @@ both open states and the selection count. Capture at frame 620.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_PARCEL_VISIBILITY=<mode>` | Parcel content isolation and same-owner neighbours |
-| `AURORA_DEMO_PARTICLES=<mode>` | Wind and smoke particles, region wind comparison, a leash chain, or particle load |
+| `AURORA_DEMO_PARTICLES=<mode>` | Particle rendering parity, wind comparison, a leash chain, or particle load |
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` (or `alpha`) | GLTF material override (`alpha`: overrides with a zero base color alpha) |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
@@ -3724,6 +3724,19 @@ both open states and the selection count. Capture at frame 620.
   billboards (#1049). Its texture is a band of links along u: the chain
   must be one unbroken line, a row of short crossbars (dashes) is the
   texture turned 90° on each segment (#1924).
+  `parity` / `parity-legacy`: six fixed rendering fixtures, automatically
+  framed after the loading-camera reset at frame 600, with other windows
+  closed. The lower row, from increasing world Y,
+  contains a lit particle intersected by a rotated slab, a fullbright
+  particle of the same colour, and a ZERO / SOURCE_ALPHA destination mask
+  (its red tint must not be added). The upper row contains a faint cyan
+  particle with strong glow, a glowing particle, and a rotating ribbon
+  tapering from cyan to pink. Capture at frame 700. `parity` selects Aurora's
+  soft intersections; `parity-legacy` selects hard clipping. The same choice
+  is live in Preferences > Aurora > World and interface > Particle
+  intersections; old preferences retain Aurora by default. Glow follows the
+  ordinary Graphics glow switch. The ribbon UV rotation from
+  PR #2024 is retained; these fixtures also exercise endpoint geometry.
   `load`: instead, 32 more fountains in a circle around the plaza,
   that is about 4,000 live particles, to measure the `p_part_*` parts
   of the profile (combine with `AURORA_DEMO_STREAM=<n>` for the
