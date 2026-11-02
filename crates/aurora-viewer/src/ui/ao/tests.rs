@@ -145,6 +145,94 @@ impl Fixture {
 }
 
 #[test]
+fn ao_manager_at_reduced_ui_scale_keeps_its_size() {
+    for zoom in [0.9, 0.8, 0.85, 0.95, 1.1] {
+        let mut f = Fixture::new();
+        if zoom == 0.95 {
+            let set = f
+                .catalog
+                .sets
+                .iter_mut()
+                .find(|s| s.id == f.account.selected)
+                .expect("selected set");
+            set.states.get_mut(&State::Standing).expect("standing").steps[0].name = super::super::widgets::elide_tests::LONG.repeat(4);
+        }
+        f.ctx.set_zoom_factor(zoom);
+        super::super::widgets::place_floater(&f.ctx, "ao", egui::pos2(40.0, 40.0), egui::vec2(560.0, 760.0));
+        let mut rects = Vec::new();
+        for _ in 0..120 {
+            f.draw(Vec::new());
+            rects.push(f.ctx.memory(|m| m.area_rect(egui::Id::unique("ao"))).expect("AO shown"));
+        }
+        assert!(
+            rects[15..].iter().all(|r| *r == rects[15]),
+            "AO at scale {zoom} keeps growing: first {:?}, frame 15 {:?}, last {:?}",
+            rects[0],
+            rects[15],
+            rects[119]
+        );
+        let before = rects[119];
+        super::super::widgets::place_floater(&f.ctx, "ao", before.min, egui::vec2(440.0, 560.0));
+        rects.clear();
+        for _ in 0..30 {
+            f.draw(Vec::new());
+            rects.push(f.ctx.memory(|m| m.area_rect(egui::Id::unique("ao"))).expect("AO shown"));
+        }
+        assert!(
+            rects[15..].iter().all(|r| *r == rects[15]),
+            "AO at scale {zoom} grows after resizing"
+        );
+        assert!(rects[29].width() < before.width() - 40.0, "AO at scale {zoom} can be made narrower");
+        let texture = super::super::icons::global("trash-filled").expect("remove icon").id();
+        let mut icons = Vec::new();
+        fn collect(shape: &egui::Shape, texture: egui::TextureId, icons: &mut Vec<egui::Rect>) {
+            match shape {
+                egui::Shape::Mesh(mesh) if mesh.texture_id == texture => icons.push(mesh.calc_bounds()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, texture, icons)),
+                _ => {}
+            }
+        }
+        for shape in f.draw(Vec::new()).1 {
+            collect(&shape.shape, texture, &mut icons);
+        }
+        assert_eq!(icons.len(), 3, "set and both animation removal buttons");
+        assert!(
+            icons.iter().all(|r| rects[29].contains_rect(*r)),
+            "AO at scale {zoom}: removal icons stay in the window"
+        );
+        let first = f.catalog.selected(f.account.selected).expect("set").states[&State::Standing].steps[0].id;
+        f.click_at(icons[1].center());
+        assert_eq!(f.state.remove, Some(first), "the first animation's removal button is accessible");
+    }
+}
+
+#[test]
+fn ao_manager_keeps_its_size_across_frames() {
+    super::super::widgets::steady_tests::assert_window_steady(
+        "ao",
+        &[egui::vec2(560.0, 760.0), egui::vec2(440.0, 560.0)],
+        aurora_i18n::tr!("ao-add"),
+        Fixture::new,
+        |f, ctx, p| {
+            show(
+                ctx,
+                p,
+                &mut f.inv,
+                &f.catalog,
+                &mut f.runtime,
+                &mut f.account,
+                &mut f.state,
+                &mut f.manager_open,
+                &mut f.movement,
+                &mut f.movement_prefs,
+                &f.keys,
+                "",
+            );
+        },
+    );
+}
+
+#[test]
 fn enable_label_and_pause_change_runtime_without_inventory_writes() {
     let mut f = Fixture::new();
     let out = f.click(aurora_i18n::tr!("ao-enabled"));
