@@ -10,6 +10,10 @@ const OWN_PRIM: Vec3 = Vec3::ZERO;
 /// our box but off the classic body, where only the mesh is drawn.
 const OWN_MESH: Vec3 = Vec3::new(-0.12, 0.0, 0.0);
 
+/// `worn-own-animesh`: a point of the same mesh posed by the animesh's own
+/// skeleton, out to the side of our body where nothing else is drawn.
+const OWN_ANIMESH: Vec3 = Vec3::new(-0.12, 0.5, 0.0);
+
 /// `worn-other-link`: the child prim, without a script, of a worn linkset
 /// whose root holds the touch script.
 const WORN_CHILD: u32 = 988;
@@ -150,6 +154,8 @@ impl App {
                         let (pos, rot, _) = Scene::object_transform(&self.world, wearer, Instant::now(), 0)?;
                         let offset = if mode == "worn-mesh" {
                             Vec3::new(0.30, 0.0, 0.0)
+                        } else if mode == "worn-own-animesh" {
+                            OWN_ANIMESH
                         } else if mode.starts_with("worn-own-mesh") {
                             OWN_MESH
                         } else {
@@ -354,8 +360,11 @@ impl App {
                     &self.settings.camera,
                 );
             }
-            // `worn-own-mesh`: the scripted rigged mesh on our own chest
-            let own_mesh = mode.starts_with("worn-own-mesh");
+            // `worn-own-mesh`: the scripted rigged mesh on our own chest;
+            // `worn-own-animesh`: the same mesh as an animesh we wear, with
+            // a skeleton of its own (a pet on the head)
+            let own_animesh = mode == "worn-own-animesh";
+            let own_mesh = mode.starts_with("worn-own-mesh") || own_animesh;
             let mut events = if mode == "worn-mesh" || own_mesh {
                 if let Some(g) = self.gfx.as_mut() {
                     self.scene.install_demo_animesh(&mut g.renderer);
@@ -390,6 +399,9 @@ impl App {
                             } else {
                                 0.6
                             });
+                        }
+                        if own_animesh {
+                            o.extra.extended_mesh_flags = Some(aurora_prim::extra::EXTENDED_MESH_ANIMATED);
                         }
                         if own_mesh && let Some(te) = o.texture_entry.as_mut() {
                             // opaque: the press depth is then the mesh, inside
