@@ -126,6 +126,15 @@ impl LocalBakes {
         true
     }
 
+    /// Logout: nothing of this session's outfit is kept. The next login
+    /// wears the same items, which would otherwise look unchanged and
+    /// never be baked (#1985). A job still composing stops; the textures
+    /// held go with the scene, cleared on the way to the login screen.
+    pub fn end_session(&mut self) {
+        self.cancel();
+        *self = Self::default();
+    }
+
     fn cancel(&mut self) {
         self.generation.fetch_add(1, Ordering::Relaxed);
         self.job = None;
@@ -417,6 +426,26 @@ mod tests {
             ..Default::default()
         };
         bakes.appearance(vec![1, 2, 3], 1.8)
+    }
+
+    #[test]
+    fn a_new_session_bakes_the_same_outfit_again() {
+        let worn = vec![(Uuid::from_u128(1), Uuid::from_u128(2))];
+        let mut bakes = LocalBakes {
+            inputs: worn.clone(),
+            worn_kinds: vec![(1, Uuid::from_u128(2))],
+            baked: [(8, Uuid::from_u128(8))].into_iter().collect(),
+            sent: Some(HashMap::new()),
+            tries: 2,
+            ..Default::default()
+        };
+        let running = bakes.generation.clone();
+        bakes.end_session();
+        assert_ne!(running.load(Ordering::Relaxed), 0, "the job of the session left stops");
+        assert!(bakes.inputs.is_empty(), "the same items count as a change at the next login");
+        assert!(bakes.baked.is_empty() && bakes.sent.is_none() && bakes.dirty.is_none());
+        assert_eq!(bakes.tries, 0);
+        assert_ne!(bakes.inputs, worn);
     }
 
     #[test]

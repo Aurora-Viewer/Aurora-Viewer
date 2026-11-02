@@ -2715,6 +2715,7 @@ impl App {
         self.shape_camera = None;
         self.physics_ui = Default::default();
         self.wearable_ui = Default::default();
+        self.local_bakes.end_session();
         self.reset_avatar_health();
         self.interactions = Default::default();
         self.screen = Screen::Login;
