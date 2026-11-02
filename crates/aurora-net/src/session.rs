@@ -230,6 +230,9 @@ struct Session<'a> {
     notecard_copy_tx: mpsc::UnboundedSender<(u32, Result<(), String>)>,
     inventory_move_tx: mpsc::UnboundedSender<inventory_moves::Request>,
     inventory_udp_tx: mpsc::UnboundedSender<inventory_udp::Request>,
+    /// Our profile as last received (AvatarPropertiesReply), which a grid
+    /// without `AgentProfile` needs whole to save a change.
+    own_profile: Option<crate::profile::OwnProfile>,
     notecard_copies: HashMap<u32, (Uuid, Uuid, bool)>,
     /// When an AgentUpdate leaves (agent_update.rs).
     agent_update: AgentUpdateRule,
@@ -448,6 +451,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         notecard_copy_tx,
         inventory_move_tx,
         inventory_udp_tx,
+        own_profile: None,
         notecard_copies: HashMap::new(),
         inventory_merchant_pending: false,
         next_inventory_callback: 0,
@@ -3026,14 +3030,33 @@ impl Session<'_> {
     }
 
     /// LLPanelProfileTab saveAgentUserInfoCoro: PUT <AgentProfile>/<target>;
-    /// without the capability only the notes have a UDP message
-    /// (AvatarNotesUpdate).
+    /// without the capability (OpenSim), the notes are an AvatarNotesUpdate
+    /// and our own profile an AvatarPropertiesUpdate.
     fn update_profile(&mut self, target: uuid::Uuid, data: Llsd) {
         let cap = self
             .main
             .and_then(|a| self.sims.get(&a))
             .and_then(|s| s.caps.get("AgentProfile").cloned());
         let Some(url) = cap else {
+            let own = (target == self.agent_id()).then_some(self.own_profile.as_ref()).flatten();
+            if !data.has("notes")
+                && let Some(profile) = own.and_then(|own| own.with_change(&data))
+            {
+                let mut m = AvatarPropertiesUpdate::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.properties_data.image_id = profile.sl_image;
+                m.properties_data.fl_image_id = profile.fl_image;
+                m.properties_data.about_text = str_field(&profile.sl_about);
+                m.properties_data.fl_about_text = str_field(&profile.fl_about);
+                m.properties_data.allow_publish = profile.allow_publish;
+                // a profile is never mature (sendAvatarPropertiesUpdate)
+                m.properties_data.mature_publish = false;
+                m.properties_data.profile_url = str_field(&profile.profile_url);
+                self.send_main(&m, true);
+                self.own_profile = Some(profile);
+                return;
+            }
             if data.has("notes") {
                 let mut m = AvatarNotesUpdate::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -4269,6 +4292,16 @@ impl Session<'_> {
             let pd = &m.properties_data;
             // processAvatarPropertiesReply: no groups, picks nor notes here
             let (caption_index, caption_text) = crate::profile::parse_charter_member(&pd.charter_member);
+            if m.agent_data.avatar_id == self.agent_id() {
+                self.own_profile = Some(crate::profile::OwnProfile {
+                    sl_image: pd.image_id,
+                    fl_image: pd.fl_image_id,
+                    sl_about: field_str(&pd.about_text),
+                    fl_about: field_str(&pd.fl_about_text),
+                    allow_publish: pd.flags & crate::profile::flags::ALLOW_PUBLISH != 0,
+                    profile_url: field_str(&pd.profile_url),
+                });
+            }
             let p = crate::AvatarProfile {
                 id: m.agent_data.avatar_id,
                 sl_image: pd.image_id,
@@ -6017,6 +6050,7 @@ mod event_queue_tests {
             notecard_copy_tx,
             inventory_move_tx,
             inventory_udp_tx,
+            own_profile: None,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
@@ -6356,6 +6390,7 @@ mod script_dialog_tests {
             notecard_copy_tx,
             inventory_move_tx,
             inventory_udp_tx,
+            own_profile: None,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,

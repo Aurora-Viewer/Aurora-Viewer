@@ -338,6 +338,7 @@ mod tests {
             notecard_copy_tx,
             inventory_move_tx,
             inventory_udp_tx,
+            own_profile: None,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
