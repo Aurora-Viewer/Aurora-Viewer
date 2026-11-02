@@ -75,7 +75,7 @@ pub const COMMANDS: &[Command] = commands![
     "avatar", "user-circle", "toolbar-command-avatar", false;
     "destinations", "map-2", "toolbar-command-destinations", false;
     "howto", "Command_HowTo_Icon", "toolbar-command-howto", false;
-    "picks", "heart-filled", "toolbar-command-picks", false;
+    "picks", "heart-filled", "toolbar-command-picks", true;
     "poser", "wand", "toolbar-command-poser", true;
     "flickr", "brand-flickr", "toolbar-command-flickr", false;
     "primfeed", "rss", "toolbar-command-primfeed", false;
@@ -84,10 +84,10 @@ pub const COMMANDS: &[Command] = commands![
     "voice", "Command_Voice_Icon", "toolbar-command-voice", false;
     "quickprefs", "adjustments-filled", "toolbar-command-quickprefs", false;
     "webbrowser", "world-filled", "toolbar-command-web-browser", false;
-    "defaultchatbar", "message-filled", "toolbar-command-chat-bar", false;
+    "defaultchatbar", "message-filled", "toolbar-command-chat-bar", true;
     "areasearch", "zoom-scan-filled", "toolbar-command-area-search", true;
     "settings_debug", "terminal-2", "toolbar-command-debug-settings", false;
-    "statistics", "statistics", "toolbar-command-statistics", false;
+    "statistics", "statistics", "toolbar-command-statistics", true;
     "soundexplorer", "music", "toolbar-command-sound-explorer", true;
     "assetblacklist", "shield-off", "toolbar-command-asset-blacklist", true;
     "phototools", "camera-cog", "toolbar-command-phototools", false;

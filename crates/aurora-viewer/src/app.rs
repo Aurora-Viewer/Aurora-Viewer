@@ -8865,8 +8865,14 @@ impl App {
                 ctrl: self.ctrl,
                 alt: self.alt,
             };
-            self.build
-                .update(&mut self.world, &self.settings.build, self.cursor_pos, over_ui, mods);
+            self.build.update(
+                &mut self.world,
+                &self.settings.build,
+                Some(&self.scene),
+                self.cursor_pos,
+                over_ui,
+                mods,
+            );
             let mut selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
             // another avatar's attachment the open menu is about, outlined
             // like a child prim of a selection (it cannot be selected)
@@ -12413,6 +12419,11 @@ impl App {
                 let me = self.world.agent_id;
                 self.profile_ui.open(&mut self.world, me);
             }
+            BarAction::MyPicks => {
+                self.profile_ui
+                    .toggle_picks(&self.egui_ctx, &mut self.world, self.settings.classic_profiles);
+            }
+            BarAction::ToggleChatBar => self.chat_ui.toggle_bar(),
             BarAction::BuyCurrency => self.open_buy_currency(),
             BarAction::Marketplace => self.marketplace_ui.open(None),
             BarAction::MarketplaceListings => self.open_marketplace_listings(),
@@ -14100,7 +14111,7 @@ impl App {
                     classic: classic_bars,
                     mouselook: self.camera.mouselook(),
                     show_in_mouselook: self.settings.camera.show_interface_in_mouselook,
-                    chat_active: self.chat_ui.has_focus || self.chat_ui.focus_request || !self.chat_ui.input.trim().is_empty(),
+                    chat_active: self.chat_ui.in_use(),
                     // AURORA_DEMO_BARS=peek: the pointer at the top edge
                     pointer: if demo_hidden == Some(true) {
                         Some(egui::pos2(screen_rect.center().x, screen_rect.top()))
@@ -15764,6 +15775,10 @@ impl App {
                     self.settings.classic_profiles,
                     self.settings.profile_rights,
                 );
+                self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
+                self.toolbar_ui.chat_bar_active = self.chat_ui.bar_shown();
+                let pointer_busy = ctx.input(|i| i.pointer.any_down() || i.pointer.any_released());
+                self.chat_ui.note_frame(pointer_busy);
                 for pa in acts {
                     match pa {
                         ui::profile::ProfileAction::Im(id) => a.ctx_action = Some(ui::context::CtxAction::Im(id)),

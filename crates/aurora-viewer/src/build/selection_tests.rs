@@ -33,7 +33,7 @@ fn hud_edit_zoom_resets_on_world_body_empty_selection_and_close() {
         world.hud_scales.set_offset(hud_id, Vec3::Y * 0.2);
         let position = world.objects.get(hud).unwrap().position;
         tool.click_select(&mut world, &settings, Some(hud), false);
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         world.hud_zoom = 0.4;
         let next = world
             .objects
@@ -42,16 +42,16 @@ fn hud_edit_zoom_resets_on_world_body_empty_selection_and_close() {
             .unwrap()
             .0;
         tool.click_select(&mut world, &settings, Some(next), false);
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         assert_eq!(world.hud_zoom, if target == SelectType::Hud { 0.4 } else { 1.0 });
         tool.click_select(&mut world, &settings, Some(hud), false);
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         world.hud_zoom = 0.3;
         tool.deselect_all(&world);
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         assert_eq!(world.hud_zoom, 1.0);
         tool.click_select(&mut world, &settings, Some(hud), false);
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         world.hud_zoom = 0.2;
         tool.close(&mut world, &mut settings);
         assert_eq!(world.hud_zoom, 1.0);
@@ -60,7 +60,7 @@ fn hud_edit_zoom_resets_on_world_body_empty_selection_and_close() {
         assert_eq!(world.objects.get(hud).unwrap().position, position);
         // The explicit World > HUDs zoom remains usable outside HUD editing.
         world.hud_zoom = 0.5;
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         assert_eq!(world.hud_zoom, 0.5);
     }
 }
@@ -70,13 +70,13 @@ fn removed_hud_selection_restores_view_zoom() {
     let (mut world, mut tool, settings) = seated_fixture(false);
     let hud = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
     tool.click_select(&mut world, &settings, Some(hud), false);
-    tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+    tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
     world.hud_zoom = 0.1;
     world.apply(NetEvent::ObjectsKilled {
         handle: world.objects.get(hud).unwrap().key.region,
         local_ids: vec![world.objects.get(hud).unwrap().key.local_id],
     });
-    tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+    tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
     assert_eq!(world.hud_zoom, 1.0);
 }
 
@@ -131,7 +131,14 @@ fn transparent_selection_keeps_its_outline_during_a_real_move_drag() {
     let handle = position + Vec3::Z * tool.cam.meters_for_pixels(position, 50.0) * 0.9;
     let cursor = tool.cam.project_px(handle).unwrap();
     assert!(tool.mouse_down(&mut world, &mut settings, None, None, None, cursor, Mods::default()));
-    tool.update(&mut world, &settings, (cursor.0 + 30.0, cursor.1 - 30.0), false, Mods::default());
+    tool.update(
+        &mut world,
+        &settings,
+        None,
+        (cursor.0 + 30.0, cursor.1 - 30.0),
+        false,
+        Mods::default(),
+    );
     assert!(tool.manip.dragging(), "The regression must exercise an active manipulation");
     assert_eq!(tool.outlined(&world, &settings), before);
     settings.show_highlight = false;

@@ -1522,6 +1522,12 @@ pub struct RenderStats {
     /// The world pixels of the frame `gpu_ms` measures (a photo frame's are
     /// the photo's).
     pub gpu_pixels: u64,
+    /// Video memory the render targets that follow the image's size take
+    /// for each of its pixels, with the MSAA samples, the effects and the
+    /// TAA history of the current settings: measured with wgpu's counters
+    /// when they were last made. A photo pass needs as much for each of its
+    /// pixels, besides its output and readback.
+    pub target_bytes_per_pixel: Option<f32>,
     /// CPU time the main thread spent on the frame's rendering (ms): the
     /// whole encoding when the renderer runs on it, only the frame packet
     /// with a render thread.

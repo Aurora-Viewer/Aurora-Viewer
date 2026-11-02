@@ -73,10 +73,13 @@ fn mutable_content(inv: &Inventory, id: Uuid, inbox: Option<Uuid>) -> bool {
 /// (indra/newview/llinventorybridge.cpp, originally LGPL 2.1): Received
 /// contents move out (no inbox check there; the inbox itself is a system
 /// folder), and a locked folder (LLFolderBridge::isProtected, #1728) stays
-/// in place while its contents are ordinary entries.
+/// in place while its contents are ordinary entries. A listed listing and
+/// its version folder stay too, like every listing folder before the SLM
+/// data loads (`marketplace::Holds`).
 pub fn movable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
     mutable_content(inv, id, None)
         && !protected.contains(&id)
+        && !inv.listing_holds.holds(inv, id)
         && inv.folders.get(&id).is_none_or(|f| matches!(f.info.type_default, -1 | 47 | 54))
 }
 /// get_is_item_removable / get_is_category_removable
@@ -318,13 +321,16 @@ pub fn move_selection(
         holds_worn.extend(ancestors(inv, current));
     }
     for id in roots(inv, ids) {
-        // the Trash is a delete: a locked folder's contents may move but
-        // not go there (`removable` checks the ancestors, like Delete)
+        // the Trash is a delete, checked like Delete
         let allowed = if to_trash {
             removable(inv, id, protected)
         } else {
             relocatable(inv, id, protected)
         };
+        if inv.listing_holds.active.contains(&id) {
+            // TooltipOutboxDragActive (LLFolderBridge::dragCategoryIntoFolder)
+            return Err(aurora_i18n::tr!("marketplace-reason-drag-active").into());
+        }
         if !allowed || holds_worn.contains(&id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-protected-system-or-worn-item").into());
         }

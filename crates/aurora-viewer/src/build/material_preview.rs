@@ -82,7 +82,7 @@ mod tests {
     }
 
     fn tick(tool: &mut BuildTool, world: &mut World, settings: &BuildSettings) {
-        tool.update(world, settings, (0.0, 0.0), true, Mods::default());
+        tool.update(world, settings, None, (0.0, 0.0), true, Mods::default());
     }
 
     #[test]

@@ -970,7 +970,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
     }
     extra::build(&mut c, inv, id, st, prefs, facts, all);
     if !all {
-        super::listings::restrict(&mut c, inv, id, st);
+        super::listings::restrict(&mut c, inv, id);
     }
     c
 }

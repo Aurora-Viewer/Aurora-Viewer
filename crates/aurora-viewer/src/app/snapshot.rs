@@ -32,13 +32,6 @@ const SETTLE: Duration = Duration::from_millis(250);
 /// the frame before (a pipeline made for the photo quality, a slow part)
 /// before the photo is given up: far past any frame, short of forever.
 const PHOTO_WAIT: Duration = Duration::from_secs(30);
-/// Bytes of video memory a pixel of a photo takes while it is drawn (its
-/// render targets and readback), besides those per MSAA sample. Measured on
-/// 2026-10-14 (demo, full-resolution reflections): about 54 bytes with MSAA
-/// 4x, 150 with MSAA 8x; with some room. The photo is tiled when the free
-/// memory cannot hold it.
-const TARGET_BYTES_PER_PIXEL: u64 = 16;
-const TARGET_BYTES_PER_SAMPLE: u64 = snapshot::quality::BYTES_PER_SAMPLE;
 /// Bytes a photo may take when the driver does not report its memory.
 const DEFAULT_TARGET_BYTES: u64 = 1_600_000_000;
 
@@ -207,6 +200,9 @@ pub(super) struct Snapshots {
     fit_note: bool,
     /// What a pixel costs the GPU: the pixels of a photo pass.
     gpu_cost: snapshot::GpuCost,
+    /// What a pixel's render targets take in video memory, as the renderer
+    /// last measured them (`RenderStats::target_bytes_per_pixel`).
+    target_bytes: Option<f32>,
     /// The world frozen by the photo mode (`SnapshotUi::freeze_world`):
     /// the instant and the shaders' clock it shows.
     world_freeze: Option<snapshot::Hold>,
@@ -398,6 +394,7 @@ impl Default for Snapshots {
             fit: None,
             fit_note: false,
             gpu_cost: Default::default(),
+            target_bytes: None,
             world_freeze: None,
             free_flying: false,
             free_opened_controls: false,
@@ -573,9 +570,12 @@ impl App {
     }
 
     /// The GPU time of a frame just reported, which plans the photo's
-    /// passes (`snapshot::GpuCost`).
+    /// passes (`snapshot::GpuCost`), and the video memory its targets take.
     pub(super) fn photo_gpu_time(&mut self, stats: &aurora_render::RenderStats) {
         self.snapshots.gpu_cost.note(stats.gpu_ms, stats.gpu_pixels);
+        if stats.target_bytes_per_pixel.is_some() {
+            self.snapshots.target_bytes = stats.target_bytes_per_pixel;
+        }
     }
 
     /// After a frame was drawn: the part of the photo it carried.
@@ -1005,11 +1005,17 @@ impl App {
         let tiles = self.photo_tiles(renderer, size);
         if purpose != Purpose::Preview {
             log::info!(
-                "photo: {} x {} planned in {} part(s), at most {} Mpx a pass (memory and GPU time)",
+                "photo: {} x {} planned in {} part(s), at most {} Mpx a pass (memory and GPU time; {} bytes a pixel, {})",
                 size.0,
                 size.1,
                 tiles.len(),
-                self.photo_max_pixels(renderer) / 1_000_000
+                self.photo_max_pixels(renderer) / 1_000_000,
+                snapshot::pass_bytes_per_pixel(self.snapshots.target_bytes, self.msaa_samples(renderer)),
+                if self.snapshots.target_bytes.is_some() {
+                    "measured"
+                } else {
+                    "estimated"
+                }
             );
         }
         let interface = s.interface && snapshot::same_proportions(full, window);
@@ -1129,7 +1135,7 @@ impl App {
         } else {
             snapshot::PASS_GPU_MS
         };
-        let per_pixel = TARGET_BYTES_PER_PIXEL + TARGET_BYTES_PER_SAMPLE * u64::from(self.msaa_samples(renderer));
+        let per_pixel = snapshot::pass_bytes_per_pixel(self.snapshots.target_bytes, self.msaa_samples(renderer));
         let free = renderer
             .video_memory
             .read(&renderer.device)

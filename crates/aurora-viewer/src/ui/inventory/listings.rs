@@ -13,45 +13,47 @@ pub(crate) struct Panel<'a> {
     pub actions: Vec<InvAction>,
 }
 
-pub(super) fn restrict(c: &mut context_catalog::Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi) {
+/// The menu of anything in the listings, in every inventory window like the
+/// Legacy Viewer (the isMarketplaceListingsFolder branches of the bridges'
+/// buildContextMenu, llinventorybridge.cpp): the listing commands,
+/// Properties and the clipboard entries, never Wear, Add or Share.
+pub(super) fn restrict(c: &mut context_catalog::Catalog, inv: &Inventory, id: Uuid) {
     let Some(root) = crate::world::marketplace::root(inv).filter(|root| rules::under(inv, id, *root)) else {
         return;
     };
-    if st.ui_id == PANEL {
-        c.entries.retain(|entry| {
-            entry.id.starts_with("listing")
-                || entry.id.starts_with("separator:")
-                || matches!(
-                    entry.id.as_str(),
-                    "lock"
-                        | "new"
-                        | "new-folder"
-                        | "properties"
-                        | "rename"
-                        | "image"
-                        | "copy"
-                        | "cut"
-                        | "paste"
-                        | "favorite"
-                        | "favorite-add"
-                        | "favorite-remove"
-                        | "organize"
-                        | "move"
-                        | "default-folder"
-                        | "group-selection"
-                        | "find-links"
-                        | "paste-link"
-                        | "replace-links"
-                        | "protect-folder"
-                        | "reload"
-                        | "show-window"
-                        | "delete"
-                        | "copy-name"
-                        | "folder-uuid"
-                        | "show-main"
-                )
-        });
-    }
+    c.entries.retain(|entry| {
+        entry.id.starts_with("listing")
+            || entry.id.starts_with("separator:")
+            || matches!(
+                entry.id.as_str(),
+                "lock"
+                    | "new"
+                    | "new-folder"
+                    | "properties"
+                    | "rename"
+                    | "image"
+                    | "copy"
+                    | "cut"
+                    | "paste"
+                    | "favorite"
+                    | "favorite-add"
+                    | "favorite-remove"
+                    | "organize"
+                    | "move"
+                    | "default-folder"
+                    | "group-selection"
+                    | "find-links"
+                    | "paste-link"
+                    | "replace-links"
+                    | "protect-folder"
+                    | "reload"
+                    | "show-window"
+                    | "delete"
+                    | "copy-name"
+                    | "folder-uuid"
+                    | "show-main"
+            )
+    });
     let to = inv.folders.contains_key(&id).then_some(id).or_else(|| rules::parent(inv, id));
     for entry in &mut c.entries {
         if entry.id == "new-folder" {
@@ -122,6 +124,12 @@ impl Panel<'_> {
     pub fn rename(&mut self, ui: &mut egui::Ui, p: &Palette, inv: &Inventory, id: Uuid) -> bool {
         self.state.visible.push(id);
         rename_row(ui, p, inv, id, self.state, &mut self.actions)
+    }
+
+    /// Start a drag like an inventory row: the whole selection when the row
+    /// is part of one (LLFolderView's drag of every selected item).
+    pub fn drag_source(&mut self, ui: &egui::Ui, id: Uuid, folder: bool, response: &egui::Response) {
+        super::drag::source(ui, response, id, folder, self.state);
     }
 
     pub fn interact(&mut self, ui: &egui::Ui, inv: &Inventory, id: Uuid, response: &egui::Response) {
