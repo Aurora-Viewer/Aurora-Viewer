@@ -30,7 +30,9 @@ impl App {
             return;
         }
         let drop = std::env::var("AURORA_DEMO_ACTIONS").is_ok_and(|mode| mode.ends_with("-drop"));
-        let Some(root) = ui::object_actions::contents_demo_root(&ctx) else { return };
+        let Some(root) = ui::object_actions::contents_demo_root(&ctx) else {
+            return;
+        };
         let to = destination(&self.world.inventory).and_then(|folder| ui::inventory::task_drop::demo_target(&ctx, folder));
         let start = root.left_center() + egui::vec2(30.0, 0.0);
         let (pos, pressed) = match self.frame_count {

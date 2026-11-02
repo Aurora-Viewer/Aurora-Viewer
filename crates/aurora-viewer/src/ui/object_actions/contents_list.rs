@@ -140,7 +140,14 @@ fn root_row(ui: &mut egui::Ui, p: &Palette, icons: &Icons, object: Uuid, items: 
         .on_hover_text(aurora_i18n::tr!("contents-root-drag-tip"));
     if r.hovered() || r.drag_started() || r.dragged() {
         let all: Vec<_> = items.iter().map(|item| task_inventory::from_inventory(object, item)).collect();
-        inventory::task_drop::root_source(ui, &r, world, object, &all, task_inventory::owned(world, object, build.props.get(&object)));
+        inventory::task_drop::root_source(
+            ui,
+            &r,
+            world,
+            object,
+            &all,
+            task_inventory::owned(world, object, build.props.get(&object)),
+        );
     }
     if cfg!(test) || inventory::task_drop::demo_enabled() {
         ui.ctx().data_mut(|d| d.insert_temp(root_id(), r.rect));

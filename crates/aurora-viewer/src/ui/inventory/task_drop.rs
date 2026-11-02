@@ -133,13 +133,7 @@ pub fn root_source(ui: &mut egui::Ui, r: &egui::Response, world: &World, object:
 
 /// The payload of a drag that `access` allows, one request per item in
 /// order; `Ok(None)` carries nothing.
-fn begin<E: AsRef<str>>(
-    ui: &mut egui::Ui,
-    r: &egui::Response,
-    object: Uuid,
-    items: &[TaskItem],
-    access: Result<Option<TransferKind>, E>,
-) {
+fn begin<E: AsRef<str>>(ui: &mut egui::Ui, r: &egui::Response, object: Uuid, items: &[TaskItem], access: Result<Option<TransferKind>, E>) {
     if let Err(error) = &access {
         r.clone().on_hover_text(error.as_ref());
     }
@@ -177,7 +171,9 @@ pub fn target(
         // the folder's own row comes before the zones enclosing it
         let pass = ui.ctx().cumulative_pass_nr();
         ui.ctx().data_mut(|d| {
-            if d.get_temp::<(u64, egui::Rect)>(demo_target_id(folder)).is_none_or(|(at, _)| at != pass) {
+            if d.get_temp::<(u64, egui::Rect)>(demo_target_id(folder))
+                .is_none_or(|(at, _)| at != pass)
+            {
                 d.insert_temp(demo_target_id(folder), (pass, r.rect));
             }
         });
@@ -481,7 +477,10 @@ mod tests {
         let nothing = Err(aurora_i18n::tr!("contents-copy-nothing").to_owned());
         assert_eq!(root_kind(&world, object, &[], true), nothing, "an empty object");
         assert_eq!(root_kind(&world, object, &items[..1], true), nothing, "its root entry only");
-        assert_eq!(root_kind(&world, object, &[items[1].clone(), items[3].clone()], false), Ok(TransferKind::Copy));
+        assert_eq!(
+            root_kind(&world, object, &[items[1].clone(), items[3].clone()], false),
+            Ok(TransferKind::Copy)
+        );
         // move_inv_category_world_to_agent: a no-copy item of an object you own is moved
         assert_eq!(
             root_kind(&world, object, &items, true),
