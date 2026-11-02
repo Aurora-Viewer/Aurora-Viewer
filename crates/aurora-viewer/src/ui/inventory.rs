@@ -1037,7 +1037,7 @@ fn item_row(
             .filter(|_| super::widgets::faux_bold_offset(ui).is_some())
             .map(|_| ui.painter().layout_no_wrap(it.name.clone(), font_id, p.ink));
         // The same worn tag as Aurora's rows and Appearance, before the rights.
-        let tag = worn.map(|worn| (p, worn, super::widgets::reserve_row_tag(ui, &mut label, worn, p)));
+        let tag = worn.map(|worn| (p, worn, super::widgets::reserve_row_tag(ui, &mut label, worn, p), true));
         let permissions = permissions::Permissions::inventory(inv, *id).map(|permissions| permissions.with_next_owner(st.show_next_owner));
         if let Some(permissions) = permissions {
             // Keep each item's rights next to its name: a very long sibling
@@ -1134,15 +1134,14 @@ fn folder_row(
         } else {
             egui::Sense::click()
         };
-        let r = tree::label(ui, tree::name(&label, p), state.selection.contains(&id), sense, None);
-        if prefs.protected.contains(&id) {
-            // the " (Protected) " suffix of LLFolderViewItem::drawLabel
-            // (indra/llui/llfolderviewitem.cpp), as the rows' tag
+        let mut job = tree::name(&label, p);
+        // the " (Protected) " suffix of LLFolderViewItem::drawLabel
+        // (indra/llui/llfolderviewitem.cpp), as the rows' tag
+        let tag = prefs.protected.contains(&id).then(|| {
             let text = aurora_i18n::tr!("inventory-pill-protected");
-            ui.add_space(2.0);
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(super::widgets::row_tag_width(ui, text), 18.0), egui::Sense::hover());
-            super::widgets::paint_row_tag(ui, p, text, false, rect.left(), rect.center().y);
-        }
+            (p, text, super::widgets::reserve_row_tag(ui, &mut job, text, p), false)
+        });
+        let r = super::widgets::inventory_item_label_tagged(ui, job, state.selection.contains(&id), sense, None, tag);
         if folder_response(ui, p, inv, id, r, Some(resp.rect), open, state, prefs, facts, actions).double_clicked() {
             *open = !*open;
         }
@@ -1508,7 +1507,17 @@ fn search_rows(
         // vertically, so the horizontal range doesn't vanish with a long label.
         // A rebuilt tree clears it; the viewport width itself is never retained.
         if st.aurora.is_none() {
-            let width = row_width(ui, p, inv, facts, row.id, row.folder, row.depth, st.show_next_owner);
+            let width = row_width(
+                ui,
+                p,
+                inv,
+                facts,
+                row.id,
+                row.folder,
+                prefs.protected.contains(&row.id),
+                row.depth,
+                st.show_next_owner,
+            );
             st.result_width = st.result_width.max(width);
         }
         ui.horizontal(|ui| {
@@ -1538,6 +1547,7 @@ fn row_width(
     facts: &Facts,
     id: Uuid,
     folder: bool,
+    locked: bool,
     depth: usize,
     show_next_owner: bool,
 ) -> f32 {
@@ -1553,6 +1563,9 @@ fn row_width(
     let mut label = super::widgets::name_with_suffix(&label, "", egui::FontId::proportional(13.0), p.ink);
     if !folder && let Some(worn) = facts.worn_label(inv, id) {
         super::widgets::reserve_row_tag(ui, &mut label, worn, p);
+    }
+    if folder && locked {
+        super::widgets::reserve_row_tag(ui, &mut label, aurora_i18n::tr!("inventory-pill-protected"), p);
     }
     if !folder && let Some(permissions) = permissions::Permissions::inventory(inv, id) {
         permissions.with_next_owner(show_next_owner).append_suffix(ui, &mut label, p);

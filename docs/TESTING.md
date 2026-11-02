@@ -5340,6 +5340,11 @@ failure. Grid validation and any paid upload are performed by the human.
   Regression filter `inventory_hover_cache` exercises 1,000 successive images,
   real egui handle release, active/recent retention, expiry, shared world/UI
   source references, bounded workers and replies arriving after cancellation.
+- **`AURORA_DEMO_INVENTORY=locked|aurora-locked`**: locks the demo folder
+  holding the demo object, in the Legacy or Aurora inventory. Check its
+  "Locked" tag after the name; the folder itself refuses Delete, Cut and a
+  drag but keeps Rename, while its contents rename, delete and move like any
+  entry (Legacy Viewer parity).
 - **`AURORA_DEMO_INVENTORY=default-permissions|aurora-default-permissions`**:
   opens the shared Default permissions window over the Legacy or Aurora
   inventory. The final New-menu entry opens the same window. Check creation
