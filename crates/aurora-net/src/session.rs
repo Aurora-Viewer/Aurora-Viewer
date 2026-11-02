@@ -80,6 +80,17 @@ const SIM_TIMEOUT: Duration = Duration::from_secs(100);
 /// DEFAULT_FIELD_OF_VIEW (60°): the camera's angle until the viewer gives its own.
 const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_3;
 const PING_INTERVAL: Duration = Duration::from_secs(5);
+
+/// The largest region side a grid can announce (Constants.MaximumRegionSize,
+/// OpenSim). The viewer sizes the region's land and parcel grids from it: a
+/// broken or hostile simulator must not make it allocate gigabytes.
+pub(crate) const MAX_REGION_SIDE: u32 = 4096;
+
+/// A region side announced by the grid, held to 256..=[`MAX_REGION_SIDE`].
+pub(crate) fn region_side(n: u32) -> u32 {
+    n.clamp(256, MAX_REGION_SIDE)
+}
+
 /// Diagnostic: the RegionHandshake of a region the agent arrived in should
 /// come along with AgentMovementComplete; without it the simulator never
 /// sends terrain or objects (it waits for RegionHandshakeReply).
@@ -3603,7 +3614,7 @@ impl Session<'_> {
                         continue;
                     };
                     let port = info["Port"].as_i32() as u16;
-                    let size = (info["RegionSizeX"].as_u32().max(256), info["RegionSizeY"].as_u32().max(256));
+                    let size = (region_side(info["RegionSizeX"].as_u32()), region_side(info["RegionSizeY"].as_u32()));
                     let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
                     // process_enable_simulator (llworld.cpp): no circuit to a
                     // neighbour; the simulator keeps its child agent
@@ -3661,7 +3672,7 @@ impl Session<'_> {
                     ip_from_llsd(&info["SimIP"]),
                     info["SimPort"].as_i32() as u16,
                     info["SeedCapability"].as_str().to_owned(),
-                    (info["RegionSizeX"].as_u32().max(256), info["RegionSizeY"].as_u32().max(256)),
+                    (region_side(info["RegionSizeX"].as_u32()), region_side(info["RegionSizeY"].as_u32())),
                 );
             }
             "CrossedRegion" => {
@@ -3676,7 +3687,7 @@ impl Session<'_> {
                     ip_from_llsd(&rd["SimIP"]),
                     rd["SimPort"].as_i32() as u16,
                     rd["SeedCapability"].as_str().to_owned(),
-                    (rd["RegionSizeX"].as_u32().max(256), rd["RegionSizeY"].as_u32().max(256)),
+                    (region_side(rd["RegionSizeX"].as_u32()), region_side(rd["RegionSizeY"].as_u32())),
                 );
             }
             "ParcelProperties" => {
@@ -5226,6 +5237,20 @@ fn follow_cam_event(pkt: &IncomingPacket, handle: RegionHandle) -> Result<Option
         }))
     } else {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod region_side_tests {
+    use super::*;
+
+    #[test]
+    fn announced_region_sides_are_held_to_the_grid_limits() {
+        assert_eq!(region_side(0), 256);
+        assert_eq!(region_side(256), 256);
+        assert_eq!(region_side(1024), 1024);
+        assert_eq!(region_side(MAX_REGION_SIDE), MAX_REGION_SIDE);
+        assert_eq!(region_side(u32::MAX), MAX_REGION_SIDE);
     }
 }
 

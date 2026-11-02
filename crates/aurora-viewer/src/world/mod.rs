@@ -1847,6 +1847,8 @@ impl World {
     /// made a large OpenSim region 256 x 256 for good, its land past that
     /// dropped. LLWorld::addRegion is told the size from the start.
     fn ensure_region(&mut self, h: RegionHandle, size: (u32, u32)) -> &mut Region {
+        // the network layer already holds the sizes; this keeps every caller safe
+        let size = (size.0.clamp(256, MAX_REGION_SIZE), size.1.clamp(256, MAX_REGION_SIZE));
         if let Some(region) = self.regions.get_mut(&h)
             && region.heightmap.grow(size.0, size.1)
         {
