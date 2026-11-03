@@ -161,6 +161,33 @@ mod tests {
     }
 
     #[test]
+    fn what_a_hidden_avatar_looks_like_comes_back_with_it() {
+        let (mut world, _) = demo_world();
+        let wolf = crate::demo::DEMO_LOUP;
+        // the wolf's AvatarAppearance (shape and bakes) is held by id
+        let look = crate::demo::classic_events(&world.avatar_lib.shape_params)
+            .into_iter()
+            .nth(1)
+            .expect("wolf look");
+        let _ = world.apply(look);
+        let seen = |w: &crate::world::World| {
+            let idx = w.objects.index_of_uuid(&wolf).expect("wolf");
+            (
+                w.appearance_generation(&wolf),
+                w.visual_params(&wolf).map(<[u8]>::to_vec),
+                w.bake_texture(idx, 8),
+            )
+        };
+        let before = seen(&world);
+        assert!(before.1.is_some() && before.2.is_some(), "the wolf has an appearance");
+        world.set_friends_only(true);
+        assert!(!present(&world, &wolf));
+        assert!(world.visual_params(&wolf).is_some(), "kept while it is hidden");
+        world.set_friends_only(false);
+        assert_eq!(seen(&world), before, "the same look at once, nothing to wait for");
+    }
+
+    #[test]
     fn a_friend_stays_when_it_is_switched_on() {
         let (mut world, _) = demo_world();
         let wolf = crate::demo::DEMO_LOUP;

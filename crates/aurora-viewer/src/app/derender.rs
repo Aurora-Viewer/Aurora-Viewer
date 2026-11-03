@@ -167,6 +167,13 @@ impl App {
         let wolf = crate::demo::DEMO_LOUP;
         let friend = mode.trim() == "friend";
         match self.frame_count {
+            // its look (shape and bakes), as an avatar of the grid has: it
+            // must come back dressed (the plain demo's wolf has none)
+            5 => {
+                if let Some(look) = crate::demo::classic_events(&self.world.avatar_lib.shape_params).into_iter().nth(1) {
+                    let _ = self.world.apply(look);
+                }
+            }
             // (the wolf is a friend: it stays, until the friendship ends)
             650 if friend => self.world.social.form_friendship(wolf),
             700 => self.world.set_friends_only(true),
