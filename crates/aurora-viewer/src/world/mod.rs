@@ -4745,14 +4745,14 @@ impl World {
         self.main().is_some_and(|r| r.caps.contains_key(name))
     }
 
-    /// The status feed and page the agent's region names for its OpenSim
-    /// grid (LFSimFeatureHandler::gridStatusRSS, gridStatusURL).
     /// The currency helper the agent's region names in place of the grid's
     /// (LFSimFeatureHandler::helperUriOverride); None when it names none.
     pub fn currency_base_uri(&self) -> Option<&str> {
         self.main().map(|r| r.currency_base_uri.as_str()).filter(|uri| !uri.is_empty())
     }
 
+    /// The status feed and page the agent's region names for its OpenSim
+    /// grid (LFSimFeatureHandler::gridStatusRSS, gridStatusURL).
     pub fn grid_status_extras(&self) -> Option<(&str, &str)> {
         self.main().map(|r| (r.grid_status.0.as_str(), r.grid_status.1.as_str()))
     }

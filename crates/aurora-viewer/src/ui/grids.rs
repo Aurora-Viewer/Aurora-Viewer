@@ -130,8 +130,7 @@ impl Manager {
         // Like the account manager, this dialog owns input and uses login glass
         // over the account cards. Its editor scrolls independently of the list.
         let width = (ctx.content_rect().width() - 64.0).clamp(320.0, 860.0);
-        // the web pages tab whole: eight fields
-        let height = (ctx.content_rect().height() - 260.0).clamp(140.0, 447.0);
+        let height = (ctx.content_rect().height() - 260.0).clamp(140.0, 390.0);
         let editable = can_edit && self.result.is_none();
         let mut close = false;
         let dialog = widgets::Modal::new(egui::Id::unique("grid_manager"))

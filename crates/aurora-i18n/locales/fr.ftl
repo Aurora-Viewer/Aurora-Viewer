@@ -10280,6 +10280,8 @@ group-ability-experience-contributor-help = Les membres dotés d’un rôle avec
 
 ## Achat de L$
 currency-title = Acheter des L$
+currency-region-helper = Cette région utilise son propre service monétaire, sur { $host }. Un achat fait ici se passe entre vous et ce service, qui reçoit aussi votre session (et votre mot de passe s'il le demande) : n'achetez que si vous lui faites confiance.
+currency-service = Service monétaire : { $host }
 currency-menu = Acheter des L$…
 money-tracker-title = Suivi des L$
 money-tracker-legacy-title = Suivi des transactions

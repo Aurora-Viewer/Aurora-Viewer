@@ -74,6 +74,9 @@ pub struct BuyCurrencyUi {
     focus: bool,
     /// AURORA_DEMO_BUY_CURRENCY: open the confirmation once the estimate is in.
     demo_confirm: bool,
+    /// OpenSim: the helper's host is shown, so the resident sees who sells
+    /// (a region may name its own).
+    show_service: bool,
 }
 
 impl Default for BuyCurrencyUi {
@@ -93,8 +96,22 @@ impl Default for BuyCurrencyUi {
             error: None,
             focus: false,
             demo_confirm: false,
+            show_service: false,
         }
     }
+}
+
+/// The host a helper page is on, as the resident is shown it.
+pub fn helper_host(page: &str) -> String {
+    reqwest::Url::parse(page)
+        .ok()
+        .and_then(|url| {
+            url.host_str().map(|host| match url.port() {
+                Some(port) => format!("{host}:{port}"),
+                None => host.to_owned(),
+            })
+        })
+        .unwrap_or_else(|| page.to_owned())
 }
 
 fn money(amount: i64) -> String {
@@ -141,6 +158,7 @@ impl BuyCurrencyUi {
         };
         *self = BuyCurrencyUi {
             open: true,
+            show_service: !second_life,
             helper,
             stage,
             opened: Some(Instant::now()),
@@ -417,6 +435,17 @@ impl BuyCurrencyUi {
                 ui.label(RichText::new(total.map_or_else(|| "—".to_owned(), money)).strong().color(p.ink));
             });
         });
+        if self.show_service
+            && let Some(page) = self.helper.as_deref().filter(|page| page.starts_with("http"))
+        {
+            ui.add_space(6.0);
+            wrapped(
+                ui,
+                RichText::new(aurora_i18n::tr!("currency-service", host = helper_host(page)))
+                    .size(11.5)
+                    .color(p.muted),
+            );
+        }
         if let Some(error) = &self.error {
             ui.add_space(8.0);
             ui.horizontal_top(|ui| {

@@ -620,6 +620,9 @@ pub struct App {
     /// The login's re-read of the OpenSim grid's get_grid_info: its
     /// service and currency helper (`refresh_grid_helper`).
     grid_helper_refresh: Option<crossbeam_channel::Receiver<Result<(String, String), crate::grids::Error>>>,
+    /// The currency helper the agent's region last named, told once per
+    /// change (`notice_region_helper`).
+    region_helper_seen: Option<String>,
     /// The Pay window of a resident or a group (`ui/pay.rs`).
     pay_ui: ui::pay::PayUi,
     /// "Money tracker" (Me menu): the L$ received and paid.
@@ -1407,6 +1410,7 @@ impl App {
             stream_title_ui: Default::default(),
             buy_currency_ui: Default::default(),
             grid_helper_refresh: None,
+            region_helper_seen: None,
             pay_ui: Default::default(),
             money_tracker_ui: Default::default(),
             experiences_ui: Default::default(),
@@ -15703,6 +15707,7 @@ impl App {
                     ui::widgets::open_floater(&ctx, "worldmap", &mut self.panels.world_map);
                 }
                 self.poll_grid_helper();
+                self.notice_region_helper();
                 a.currency = self.buy_currency_ui.show(&ctx, &p, &self.world);
                 a.currency.extend(self.show_buy_land(&ctx, &p));
                 // links and names clicked anywhere (LLAgentHandler)
