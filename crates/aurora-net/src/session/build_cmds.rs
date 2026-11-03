@@ -194,16 +194,21 @@ impl Session<'_> {
                     .collect();
                 self.send(addr, &m, true);
             }
-            BuildCmd::SetName { handle, local_id, name } => {
+            BuildCmd::SetName { handle, local_ids, name } => {
                 let Some(addr) = self.sim_for_handle(handle) else { return };
-                let mut m = ObjectName::default();
-                m.agent_data.agent_id = agent_id;
-                m.agent_data.session_id = session_id;
-                m.object_data = vec![object_name::ObjectData {
-                    local_id,
-                    name: str_field(&name),
-                }];
-                self.send(addr, &m, true);
+                for chunk in local_ids.chunks(MAX_PER_PACKET) {
+                    let mut m = ObjectName::default();
+                    m.agent_data.agent_id = agent_id;
+                    m.agent_data.session_id = session_id;
+                    m.object_data = chunk
+                        .iter()
+                        .map(|&local_id| object_name::ObjectData {
+                            local_id,
+                            name: str_field(&name),
+                        })
+                        .collect();
+                    self.send(addr, &m, true);
+                }
             }
             BuildCmd::SetDescription {
                 handle,

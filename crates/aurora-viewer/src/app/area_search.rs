@@ -243,7 +243,7 @@ impl App {
             };
             self.send(NetCommand::Build(BuildCmd::SetName {
                 handle: key.region,
-                local_id: key.local_id,
+                local_ids: vec![key.local_id],
                 name: name.into(),
             }));
             self.send(NetCommand::Build(BuildCmd::SetDescription {
