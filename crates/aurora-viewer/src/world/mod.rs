@@ -343,6 +343,11 @@ pub struct World {
     /// announcement (FSAnnounceIncomingIM, `im_announce.rs`), given every
     /// frame by the app.
     pub announce_incoming_im: bool,
+    /// Fly override (the Legacy Viewer's FSAlwaysFly, read by LLAgent::canFly
+    /// in indra/newview/llagent.cpp): the parcel's and the region's no-fly
+    /// no longer stop a takeoff nor land the avatar. Never saved, off at
+    /// every launch; kept across a relog, like the Legacy setting.
+    pub fly_override: bool,
     /// What the notices of the nearby chat are about, for their icon.
     pub notice_topics: notice_topics::Topics,
     /// Conversation transcripts of the account logged in.
@@ -714,6 +719,7 @@ impl World {
             chat_badge: 0,
             quiet_automated_chat: false,
             announce_incoming_im: false,
+            fly_override: false,
             notice_topics: Default::default(),
             chat_log: Default::default(),
             nearby_history: Default::default(),
@@ -867,10 +873,12 @@ impl World {
         chat_log.logout();
         // a setting, not the session's: the arrival's lines follow it too
         let quiet = self.quiet_automated_chat;
+        let fly_override = self.fly_override;
         *self = World::new(lib);
         self.chat_log = chat_log;
         self.cache_dir = cache_dir;
         self.quiet_automated_chat = quiet;
+        self.fly_override = fly_override;
     }
 
     /// LLTeleportHistory::onTeleportFinished → LLTeleportHistoryStorage:
@@ -1583,9 +1591,11 @@ impl World {
     /// A region that blocks flying lands our avatar when it arrives there or
     /// when the region's flags change (process_agent_movement_complete and
     /// process_region_info, indra/newview/llviewermessage.cpp): a flight
-    /// restored at login, or carried into a no-fly region, ends.
+    /// restored at login, or carried into a no-fly region, ends. Not under
+    /// the fly override: setFlying(canFly()) keeps the flight there.
     fn land_if_fly_blocked(&mut self, handle: RegionHandle) {
-        let blocked = Some(handle) == self.main_region
+        let blocked = !self.fly_override
+            && Some(handle) == self.main_region
             && self
                 .regions
                 .get(&handle)
