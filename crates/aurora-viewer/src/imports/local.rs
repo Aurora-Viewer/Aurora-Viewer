@@ -247,6 +247,18 @@ fn prepare(
     Ok(prepared)
 }
 impl Imports {
+    /// Local assets whose source changed after they were published need the
+    /// same stable local ID republished so existing appearance targets update.
+    pub fn stale_local_publications(&self) -> Vec<Uuid> {
+        self.entries
+            .iter()
+            .filter(|entry| {
+                entry.local && entry.local_published && !entry.local_pending && entry.local_generation != entry.preview_generation
+            })
+            .map(|entry| entry.id)
+            .collect()
+    }
+
     pub fn target_local(&mut self, entry_id: Uuid, object: Uuid, faces: &[u8], use_scale: bool) {
         use crate::world::objects::LocalAppearance;
         let Some(entry) = self.entries.iter().find(|entry| entry.id == entry_id) else {
@@ -414,6 +426,47 @@ impl Imports {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changed_published_local_texture_is_queued_without_changing_its_mesh_face_binding() {
+        let mut entry = Entry::new(
+            "mesh-face.png".into(),
+            Ok(Source::Texture(Arc::new(DecodedImage {
+                width: 1,
+                height: 1,
+                components: 4,
+                data: vec![255; 4],
+                discard: 0,
+            }))),
+            Default::default(),
+        );
+        entry.local = true;
+        entry.local_published = true;
+        entry.local_generation = 4;
+        entry.preview_generation = 5;
+        let id = entry.id;
+        let mut imports = Imports {
+            entries: vec![entry],
+            ..Default::default()
+        };
+        let object = Uuid::new_v4();
+        imports.target_local(id, object, &[], false);
+        let binding = imports.local_appearance_targets.clone();
+
+        assert_eq!(imports.stale_local_publications(), [id]);
+        assert_eq!(
+            imports.local_appearance_targets, binding,
+            "republishing keeps the face bound to the same local ID"
+        );
+        imports.entries[0].local_pending = true;
+        assert!(imports.stale_local_publications().is_empty(), "only one replacement may be pending");
+        imports.entries[0].local_pending = false;
+        imports.entries[0].local_generation = imports.entries[0].preview_generation;
+        assert!(
+            imports.stale_local_publications().is_empty(),
+            "current local pixels need no replacement"
+        );
+    }
 
     #[test]
     fn local_appearance_applies_selected_faces_and_restores_latest_server_state() {
