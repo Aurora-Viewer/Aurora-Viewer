@@ -6563,7 +6563,9 @@ failure. Grid validation and any paid upload are performed by the human.
   later the process ends itself with exit code 1, as Task Manager's End task
   would. The window then says "Frozen, then ended" and `public-report.md`
   holds `| Crash | Freeze |`, `| Window | not answering for the last … s |`,
-  the main and render threads' stacks and the "Last state" table. `oom`
+  the main and render threads' stacks and the "Last state" table (on Linux
+  too: there the window is taken for frozen when the main loop makes no
+  pass for 5 s). `oom`
   asks for 64 TB at start: the allocator's failure path writes `oom.txt`
   and the process fails fast (`0xC0000409`); the report says
   `| Crash | Out of memory (70368744177664 bytes) |` with the allocation's
@@ -6698,9 +6700,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   stays as it was). After 6 s the native box "the graphics card is not
   responding" shows; Yes keeps waiting (shown again a minute later if still
   stuck), No closes the viewer in at most a few seconds, logged out, and the
-  crash session holds `gpu-stall.txt` (on Windows with the render thread's
-  stack, and the report says `| Crash | GPU not responding |`; elsewhere
-  the stall's length alone), and the next start offers the safe graphics.
+  crash session holds `gpu-stall.txt` (on Windows and Linux with the render
+  thread's stack, and the report says `| Crash | GPU not responding |`;
+  elsewhere the stall's length alone), and the next start offers the safe
+  graphics.
   When the frame ends the box goes away by itself and drawing resumes
   (`the graphics card answered again`).
   With `AURORA_FPS_LIMIT=60`, frame 600 comes about 10 s after the start.

@@ -140,6 +140,12 @@ fn system_pill(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLi
                     );
                 });
             });
+        // its time under it, as a group's under its last bubble
+        // (FSChatHistory::appendMessage stamps the system's lines too, #1999)
+        let time = hhmm(line.time);
+        if !time.is_empty() {
+            ui.label(RichText::new(time).size(chat_size(ui.ctx(), 10.5)).color(p.muted_dim));
+        }
     });
     ui.add_space(3.0);
 }
