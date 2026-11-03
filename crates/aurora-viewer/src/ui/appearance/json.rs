@@ -212,8 +212,13 @@ pub(super) fn confirmation(ctx: &egui::Context, p: &Palette, world: &World, st: 
     let mut close = false;
     let response = widgets::Modal::new(egui::Id::unique("outfit_json_import")).show(ctx, |ui| {
         ui.set_width(420.0);
-        ui.heading(aurora_i18n::tr!("outfit-json-import"));
-        ui.add_space(8.0);
+        ui.label(
+            RichText::new(aurora_i18n::tr!("outfit-json-import"))
+                .size(17.0)
+                .strong()
+                .color(p.ink),
+        );
+        ui.add_space(6.0);
         ui.label(aurora_i18n::tr!("outfit-json-confirm", name = pending.backup.name.as_str()));
         ui.label(aurora_i18n::tr!("outfit-json-name"));
         let response = ui.add(
@@ -256,13 +261,14 @@ pub(super) fn confirmation(ctx: &egui::Context, p: &Palette, world: &World, st: 
             if pending.resolved.links.is_empty() {
                 ui.label(aurora_i18n::tr!("outfit-json-none-found"));
             }
+        } else if pending.resolved.links.is_empty() {
+            ui.add_space(8.0);
+            ui.label(RichText::new(aurora_i18n::tr!("outfit-json-empty")).color(p.warn));
         }
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let valid = pending.ready
-                && outfit_backup::valid_name(&pending.name)
-                && st.pending.is_none()
-                && (missing.is_empty() || !pending.resolved.links.is_empty());
+            let valid =
+                pending.ready && outfit_backup::valid_name(&pending.name) && st.pending.is_none() && !pending.resolved.links.is_empty();
             let label = if missing.is_empty() {
                 aurora_i18n::tr!("outfit-json-create-wear")
             } else {
@@ -408,6 +414,26 @@ mod tests {
         let actions = click(&ctx, &world, &mut st, aurora_i18n::tr!("outfit-json-import-partial"));
         assert!(matches!(&actions[..], [Action::ImportJson { name, partial: true, .. }] if name == "Renamed import"));
         assert!(!st.json.has_confirmation());
+    }
+
+    #[test]
+    fn outfit_json_confirmation_never_offers_to_wear_an_empty_backup() {
+        let (ctx, world, mut st) = fixture();
+        let pending = st.json.pending.as_mut().expect("confirmation");
+        pending.backup.items.clear();
+        pending.resolved = pending.backup.resolve(&world.inventory, world.agent_id);
+        for _ in 0..3 {
+            frame(&ctx, &world, &mut st, vec![]);
+        }
+        let (_, shapes) = frame(&ctx, &world, &mut st, vec![]);
+        let empty = aurora_i18n::tr!("outfit-json-empty");
+        assert!(
+            shapes
+                .iter()
+                .any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == empty))
+        );
+        assert!(click(&ctx, &world, &mut st, aurora_i18n::tr!("outfit-json-create-wear")).is_empty());
+        assert!(st.json.has_confirmation());
     }
 
     #[test]

@@ -5247,6 +5247,7 @@ outfit-json-checking = インベントリ内のアウトフィットのアイテ
 outfit-json-missing = インベントリで{ $count }個のアイテムが見つからないか確認できませんでした。そのうち{ $attachments }個は装着オブジェクトです。
 outfit-json-partial-help = 利用できるアイテムで一部のアウトフィットをインポートするか、キャンセルできます。見つからない身体のパーツは現在着用中のものを維持します。
 outfit-json-none-found = バックアップのアイテムはすべて利用できません。インポートできません。
+outfit-json-empty = このバックアップにはアウトフィットのアイテムが含まれていません。インポートできません。
 outfit-json-missing-changed = アウトフィットの一部のアイテムを利用できません。もう一度インポートして、見つからないアイテムを確認し、一部をインポートするか選択してください。
 outfit-json-create-wear = 作成して着用
 outfit-json-import-partial = 一部をインポート

@@ -5254,6 +5254,7 @@ outfit-json-missing = { $count ->
     Attachments affected: { $attachments }.
 outfit-json-partial-help = You can import the available items as a partial outfit, or cancel. Missing body parts keep their currently worn replacements.
 outfit-json-none-found = None of the backed-up items are available. Import is unavailable.
+outfit-json-empty = This backup contains no outfit items. Import is unavailable.
 outfit-json-missing-changed = Some outfit items are unavailable. Import again to review the missing items and choose whether to import a partial outfit.
 outfit-json-create-wear = Create and wear
 outfit-json-import-partial = Import partial outfit

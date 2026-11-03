@@ -9,6 +9,9 @@ use uuid::Uuid;
 
 pub const MAX_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_ITEMS: usize = 1024;
+/// Inventory descriptions hold at most 127 bytes on the server
+/// (DB_INV_ITEM_DESC_STR_LEN, indra/llmessage/lldbstrings.h).
+const MAX_DESC_BYTES: usize = 127;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Backup {
@@ -169,7 +172,7 @@ impl Backup {
                 found.links.push(OutfitLink {
                     target: item.id,
                     name: item.name.clone(),
-                    desc: saved.description.clone(),
+                    desc: link_description(&saved.description),
                     folder: false,
                     inv_type: item.inv_type,
                 });
@@ -191,6 +194,12 @@ impl Backup {
             })
             .collect()
     }
+}
+
+/// The JSON may hold a longer, hand-edited description: cut it on a UTF-8
+/// character boundary so the link the server stores is never refused.
+fn link_description(desc: &str) -> String {
+    desc[..desc.floor_char_boundary(MAX_DESC_BYTES)].to_owned()
 }
 
 pub fn valid_name(name: &str) -> bool {

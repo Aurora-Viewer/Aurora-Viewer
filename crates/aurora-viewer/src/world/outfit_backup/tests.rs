@@ -181,3 +181,40 @@ fn outfit_json_import_applies_saved_layer_order_even_after_inventory_order_chang
         );
     }
 }
+
+#[test]
+fn outfit_json_with_no_items_never_wears_an_empty_outfit() {
+    let (inv, agent, mut backup) = fixture();
+    backup.items.clear();
+    let backup = Backup::parse(&backup.bytes().expect("bytes")).expect("an empty list is still a readable file");
+    for partial in [false, true] {
+        let action = appearance::Action::ImportJson {
+            backup: Box::new(backup.clone()),
+            name: "Empty".into(),
+            partial,
+        };
+        assert!(appearance::attachments_for_action(&inv, agent, &action).is_empty());
+        assert_eq!(
+            appearance::plan(&inv, action, &HashMap::new()).err().as_deref(),
+            Some(aurora_i18n::tr!("outfit-json-empty"))
+        );
+    }
+}
+
+#[test]
+fn outfit_json_link_descriptions_fit_the_server_limit_on_a_char_boundary() {
+    let (inv, agent, mut backup) = fixture();
+    let long = format!("ab{}", "é".repeat(100));
+    for item in &mut backup.items {
+        item.description = long.clone();
+    }
+    let links = backup.resolve(&inv, agent).links;
+    assert!(!links.is_empty());
+    for link in links {
+        // Byte 127 falls inside a two-byte "é": the cut keeps the one before.
+        assert_eq!(link.desc.len(), 126);
+        assert!(long.starts_with(&link.desc));
+    }
+    backup.items[0].description = "@1402".into();
+    assert!(backup.resolve(&inv, agent).links.iter().any(|link| link.desc == "@1402"));
+}

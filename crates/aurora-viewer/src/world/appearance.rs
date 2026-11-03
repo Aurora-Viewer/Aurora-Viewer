@@ -518,8 +518,15 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             if !partial && !resolved.missing.is_empty() {
                 return Err(aurora_i18n::tr!("outfit-json-missing-changed").into());
             }
-            if resolved.links.is_empty() && !resolved.missing.is_empty() {
-                return Err(aurora_i18n::tr!("outfit-json-none-found").into());
+            // Wearing zero links would take off every clothing item and
+            // attachment, so an empty backup is refused like an unavailable one.
+            if resolved.links.is_empty() {
+                return Err(if resolved.missing.is_empty() {
+                    aurora_i18n::tr!("outfit-json-empty")
+                } else {
+                    aurora_i18n::tr!("outfit-json-none-found")
+                }
+                .into());
             }
             let mut links = resolved.links;
             // As updateCOF does, keep the current required body part whenever
