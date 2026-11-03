@@ -5640,19 +5640,20 @@ impl App {
         }
     }
 
-    fn teleport_to_location(&mut self, region: String, pos: Vec3) {
-        self.teleport_to_location_looking(region, pos, Vec3::X);
+    /// Whether the teleport started (false: refused or not found).
+    fn teleport_to_location(&mut self, region: String, pos: Vec3) -> bool {
+        self.teleport_to_location_looking(region, pos, Vec3::X)
     }
 
-    fn teleport_to_location_looking(&mut self, region: String, pos: Vec3, look_at: Vec3) {
+    fn teleport_to_location_looking(&mut self, region: String, pos: Vec3, look_at: Vec3) -> bool {
         let Some(region) = self.grid_region(&region) else {
-            return;
+            return false;
         };
         let here = self.world.region_name();
         let local = region.eq_ignore_ascii_case(&here);
         let command = if local {
             let Some(handle) = self.world.main_region else {
-                return;
+                return false;
             };
             NetCommand::TeleportTo {
                 handle,
@@ -5668,7 +5669,7 @@ impl App {
             }
         };
         if !self.user_teleport_allowed(&command) {
-            return;
+            return false;
         }
         self.begin_teleport(format!("{} ({:.0}, {:.0}, {:.0})", region, pos.x, pos.y, pos.z), !local);
         if local {
@@ -5685,6 +5686,7 @@ impl App {
         } else {
             self.send(command);
         }
+        true
     }
 
     /// Radar of the People window: one sweep a second (also with the
@@ -6630,10 +6632,15 @@ impl App {
                 aurora_i18n::tr!("app-teleporting-to-2", value0 = e.region.to_string()),
                 crate::world::notice_topics::Topic::Teleport,
             );
-            // a place of another grid: its handle means nothing here
+            // a place of another grid: its handle means nothing here; a
+            // teleport that never left (RLVa, an unknown region) leaves the
+            // history where it was, as the same-grid path does below
             if let Some(grid) = e.grid.as_deref()
-                && self.teleport_other_grid(grid, &e.region, e.position)
+                && let Some(started) = self.teleport_other_grid(grid, &e.region, e.position)
             {
+                if !started {
+                    self.world.tp_history.failed();
+                }
                 return;
             }
             if !self.request_user_teleport(
@@ -6654,17 +6661,17 @@ impl App {
     /// Hypergrid teleport): its region through that grid's gatekeeper, as
     /// LLTeleportHistory::goToItem / LLTeleportHistoryStorage::goToItem do
     /// (sendNamedRegionRequest of "gatekeeper:region", then the teleport).
-    /// False when the place is on this grid: the caller teleports as usual.
-    fn teleport_other_grid(&mut self, grid: &str, region: &str, pos: Vec3) -> bool {
+    /// None when the place is on this grid: the caller teleports as usual;
+    /// else whether the teleport started.
+    fn teleport_other_grid(&mut self, grid: &str, region: &str, pos: Vec3) -> Option<bool> {
         let here = crate::grids::here(self.world.home_grid.as_deref(), self.world.opensim_extras());
         if here
             .as_deref()
             .is_none_or(|here| crate::grids::same_grid(&self.settings, here, grid))
         {
-            return false;
+            return None;
         }
-        self.teleport_to_location(crate::grids::target(grid, region), pos);
-        true
+        Some(self.teleport_to_location(crate::grids::target(grid, region), pos))
     }
 
     /// A saved place of the Places window or the map's history, by its
@@ -6678,7 +6685,7 @@ impl App {
             .and_then(|item| crate::slurl::parse_hypergrid(&item.slurl));
         if let Some(place) = other
             && let Some(grid) = place.grid.as_deref()
-            && self.teleport_other_grid(grid, &place.region, place.pos)
+            && self.teleport_other_grid(grid, &place.region, place.pos).is_some()
         {
             // its global position is another grid's: nothing to track here
             self.world.map.track = None;

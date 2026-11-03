@@ -281,7 +281,6 @@ impl HistoryStorage {
         self.save();
     }
 
-    /// "Remove from history" (removeItem + save).
     /// The newest place at `global` gets the SLURL that names its grid,
     /// when that came after it was saved.
     pub fn set_slurl(&mut self, global: DVec3, slurl: String) {
@@ -296,6 +295,7 @@ impl HistoryStorage {
         }
     }
 
+    /// "Remove from history" (removeItem + save).
     pub fn remove(&mut self, index: usize) {
         if index < self.items.len() {
             self.items.remove(index);
@@ -400,6 +400,25 @@ mod tests {
             at: 0,
             grid: None,
         }
+    }
+
+    #[test]
+    fn a_back_that_never_left_keeps_the_history_as_it_was() {
+        let mut h = TeleportHistory::default();
+        for place in ["Home", "Plaza", "Store"] {
+            h.arrived(e(place));
+        }
+        let mut away = e("Wright Plaza");
+        away.grid = Some("hg.osgrid.org:80".into());
+        h.arrived(away);
+        assert_eq!(h.go_back().map(|t| t.region), Some("Store".into()));
+        // refused (RLVa, a region not found): the app says so
+        h.failed();
+        // the next arrival, a lure for instance, comes after where we are:
+        // Store is not overwritten
+        h.arrived(e("Beach"));
+        let regions: Vec<_> = h.items.iter().map(|t| t.region.as_str()).collect();
+        assert_eq!(regions, ["Home", "Plaza", "Store", "Wright Plaza", "Beach"]);
     }
 
     #[test]
