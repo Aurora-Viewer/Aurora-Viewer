@@ -6,6 +6,7 @@
 use crate::snapshot::reel::{self, Photo, Place};
 use crate::theme::Palette;
 use crate::ui::snapshot::Destination;
+use crate::ui::viewfinder::{DOCK_SIDE, dock_face, dock_frame, icon as vf_icon};
 use crate::ui::widgets::{self, ActionKind, DialogButton};
 use egui::{Align2, Color32, Id, Key, Order, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 use std::collections::HashMap;
@@ -70,25 +71,27 @@ pub fn picture(painter: &egui::Painter, p: &Palette, rect: Rect, radius: egui::C
     }
 }
 
-/// The viewfinder's tray: the stack's square, the folder's button under it,
-/// the gap between its places.
-const TRAY_STACK: f32 = 44.0;
-const TRAY_FOLDER: f32 = 24.0;
-const TRAY_GAP: f32 = 6.0;
+/// The viewfinder's tray, in the dock's tiles: the stack's and the folder's
+/// squares (the dock's buttons' side), the dock's gap between them, the
+/// room between a photo tile's edge and its picture.
+const TRAY_STACK: f32 = DOCK_SIDE;
+const TRAY_GAP: f32 = 10.0;
+const TRAY_PAD: f32 = 5.0;
 
-/// A photo's place in the tray: as tall as the stack and its button, 3:2
-/// like the card's picture.
+/// A photo's tile in the tray: as tall as the stack and the folder's
+/// button, its picture 3:2 like the card's.
 fn tray_thumb() -> Vec2 {
-    let h = TRAY_STACK + TRAY_GAP + TRAY_FOLDER;
-    Vec2::new(h * 1.5, h)
+    let h = TRAY_STACK * 2.0 + TRAY_GAP;
+    let picture = h - 2.0 * TRAY_PAD;
+    Vec2::new(picture * 1.5 + 2.0 * TRAY_PAD, h)
 }
 
 /// The viewfinder's tray: the stack of the older photos with the folder's
 /// button under it, then the two newest, the newest on the right; a click
-/// opens the quick view on that photo.
+/// opens the quick view on that photo. Each on a tile of the dock.
 pub fn tray(ui: &mut egui::Ui, p: &Palette, view: &ReelView, out: &mut Vec<ReelAction>) {
     let photos = &view.photos[usize::from(view.arriving).min(view.photos.len())..];
-    let radius = ui.visuals().window_corner_radius;
+    let radius = widgets::inner_radius(ui.visuals());
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing = Vec2::splat(TRAY_GAP);
         ui.vertical(|ui| {
@@ -98,7 +101,13 @@ pub fn tray(ui: &mut egui::Ui, p: &Palette, view: &ReelView, out: &mut Vec<ReelA
                     arriving: false,
                     ..*view
                 };
-                let resp = stack(ui, p, &older, TRAY_STACK, photos.len());
+                let (rect, resp) = ui.allocate_exact_size(Vec2::splat(TRAY_STACK), Sense::click());
+                dock_face(ui.painter(), p, rect, resp.hovered(), false, 1.0);
+                // the front photo down and to the left, the two behind
+                // peeking up and to the right inside the tile
+                let front = Rect::from_min_size(rect.left_bottom() + Vec2::new(6.0, -36.0), Vec2::splat(30.0));
+                paint_stack(ui.painter(), p, &older, front, photos.len());
+                let resp = resp.on_hover_text(aurora_i18n::tr!("photo-reel-tip"));
                 if resp.clicked() {
                     resp.surrender_focus();
                     out.push(ReelAction::Show(photos[2].id));
@@ -107,29 +116,24 @@ pub fn tray(ui: &mut egui::Ui, p: &Palette, view: &ReelView, out: &mut Vec<ReelA
                 // (the button stays under the stack's place)
                 ui.add_space(TRAY_STACK);
             }
-            let folder = widgets::action_button(
-                ui,
-                p,
+            let (rect, resp) = ui.allocate_exact_size(Vec2::splat(TRAY_STACK), Sense::click());
+            dock_face(ui.painter(), p, rect, resp.hovered(), false, 1.0);
+            vf_icon(
+                ui.painter(),
                 "folder-open-filled",
-                "",
-                ActionKind::Flat,
-                Vec2::new(TRAY_STACK, TRAY_FOLDER),
-            )
-            .on_hover_text(aurora_i18n::tr!("photo-open-folder"));
-            if folder.clicked() {
-                folder.surrender_focus();
+                Rect::from_center_size(rect.center(), Vec2::splat(20.0)),
+                p.ink,
+            );
+            let resp = resp.on_hover_text(aurora_i18n::tr!("photo-open-folder"));
+            if resp.clicked() {
+                resp.surrender_focus();
                 out.push(ReelAction::OpenFolder);
             }
         });
         for photo in photos.iter().take(2).rev() {
             let (rect, resp) = ui.allocate_exact_size(tray_thumb(), Sense::click());
-            picture(ui.painter(), p, rect, radius, view.thumbs.get(&photo.id));
-            let edge = if resp.hovered() {
-                p.teal.gamma_multiply(0.8)
-            } else {
-                p.ink.gamma_multiply(0.5)
-            };
-            ui.painter().rect_stroke(rect, radius, Stroke::new(1.5, edge), StrokeKind::Inside);
+            dock_face(ui.painter(), p, rect, resp.hovered(), false, 1.0);
+            picture(ui.painter(), p, rect.shrink(TRAY_PAD), radius, view.thumbs.get(&photo.id));
             let resp = resp.on_hover_text(places_text(photo));
             if resp.clicked() {
                 resp.surrender_focus();
@@ -139,15 +143,15 @@ pub fn tray(ui: &mut egui::Ui, p: &Palette, view: &ReelView, out: &mut Vec<ReelA
     });
 }
 
-/// Where the tray puts its newest photo once the reel holds `len`, its
-/// places starting at `origin` (their top left): the card's photo flies
-/// there.
+/// Where the tray puts its newest photo's picture once the reel holds
+/// `len`, its tiles starting at `origin` (their top left): the card's
+/// photo flies there.
 pub fn tray_slot(origin: Pos2, len: usize) -> Rect {
     let mut x = origin.x + TRAY_STACK + TRAY_GAP;
     if len > 1 {
         x += tray_thumb().x + TRAY_GAP;
     }
-    Rect::from_min_size(Pos2::new(x, origin.y), tray_thumb())
+    Rect::from_min_size(Pos2::new(x, origin.y), tray_thumb()).shrink(TRAY_PAD)
 }
 
 /// The tray's top left on `screen`: where it was moved (`at`, fractions of
@@ -184,38 +188,79 @@ pub fn arc_point(from: Pos2, to: Pos2, t: f32) -> Pos2 {
 pub fn stack(ui: &mut egui::Ui, p: &Palette, view: &ReelView, side: f32, count: usize) -> egui::Response {
     let sense = if view.photos.is_empty() { Sense::hover() } else { Sense::click() };
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(side), sense);
-    let shown: Vec<&Photo> = view.photos.iter().skip(usize::from(view.arriving)).take(3).collect();
-    if shown.is_empty() {
+    if !paint_stack(ui.painter(), p, view, rect, count) {
         return resp;
     }
-    let radius = ui.visuals().window_corner_radius;
-    let painter = ui.painter();
+    if resp.hovered() {
+        let radius = ui.visuals().window_corner_radius;
+        ui.painter()
+            .rect_stroke(rect, radius, Stroke::new(1.5, p.teal.gamma_multiply(0.8)), StrokeKind::Inside);
+    }
+    resp.on_hover_text(aurora_i18n::tr!("photo-reel-tip"))
+}
+
+/// A button of the quick view on a tile of the dock, as tall as its
+/// buttons: an icon and its label, red for a deletion, faded when it
+/// cannot be used.
+fn tile_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, danger: bool, enabled: bool) -> egui::Response {
+    const ICON: f32 = 18.0;
+    const GAP: f32 = 8.0;
+    const PAD: f32 = 14.0;
+    let ink = if danger { p.danger } else { p.ink };
+    let alpha = if enabled { 1.0 } else { 0.45 };
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), egui::FontId::proportional(13.0), ink.gamma_multiply(alpha));
+    let size = Vec2::new(PAD + ICON + GAP + galley.size().x + PAD, DOCK_SIDE);
+    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let (rect, resp) = ui.allocate_exact_size(size, sense);
+    dock_face(ui.painter(), p, rect, enabled && resp.hovered(), false, 1.0);
+    let left = rect.left() + PAD;
+    vf_icon(
+        ui.painter(),
+        icon,
+        Rect::from_center_size(Pos2::new(left + ICON / 2.0, rect.center().y), Vec2::splat(ICON)),
+        ink.gamma_multiply(alpha),
+    );
+    let text_at = Pos2::new(left + ICON + GAP, rect.center().y - galley.size().y / 2.0);
+    ui.painter().galley(text_at, galley, ink);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    if enabled {
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        resp
+    }
+}
+
+/// The stack's photos, the front one on `front`, with the count; false
+/// when there is none to show.
+fn paint_stack(painter: &egui::Painter, p: &Palette, view: &ReelView, front: Rect, count: usize) -> bool {
+    let shown: Vec<&Photo> = view.photos.iter().skip(usize::from(view.arriving)).take(3).collect();
+    if shown.is_empty() {
+        return false;
+    }
+    let radius = widgets::inner_radius(&painter.ctx().global_style().visuals);
     // the cards behind, up and to the right, darker
-    let step = (side * 0.1).round().max(2.0);
+    let step = (front.width() * 0.1).round().max(2.0);
     for (i, photo) in shown.iter().enumerate().skip(1).rev() {
-        let r = rect.translate(Vec2::new(step, -step) * i as f32).shrink(step * i as f32 * 0.25);
+        let r = front.translate(Vec2::new(step, -step) * i as f32).shrink(step * i as f32 * 0.25);
         picture(painter, p, r, radius, view.thumbs.get(&photo.id));
         painter.rect_filled(r, radius, p.navy.gamma_multiply(0.35 + 0.15 * i as f32));
         painter.rect_stroke(r, radius, Stroke::new(1.0, p.ink.gamma_multiply(0.25)), StrokeKind::Inside);
     }
-    picture(painter, p, rect, radius, view.thumbs.get(&shown[0].id));
-    let edge = if resp.hovered() {
-        p.teal.gamma_multiply(0.8)
-    } else {
-        p.ink.gamma_multiply(0.5)
-    };
-    painter.rect_stroke(rect, radius, Stroke::new(1.5, edge), StrokeKind::Inside);
+    picture(painter, p, front, radius, view.thumbs.get(&shown[0].id));
+    painter.rect_stroke(front, radius, Stroke::new(1.0, p.ink.gamma_multiply(0.5)), StrokeKind::Inside);
     // the count, on a violet pill at the bottom right
     if count > 1 {
         let font = egui::FontId::proportional(10.5);
         let text = painter.layout_no_wrap(count.to_string(), font, p.on_accent);
         // over the corner, 3 points out: a row of thumbnails leaves room
         let size = Vec2::new((text.size().x + 8.0).max(16.0), 16.0);
-        let pill = Rect::from_min_size(rect.right_bottom() + Vec2::splat(3.0) - size, size);
+        let pill = Rect::from_min_size(front.right_bottom() + Vec2::splat(3.0) - size, size);
         painter.rect_filled(pill, radius, p.violet);
         painter.galley(pill.center() - text.size() / 2.0, text, p.on_accent);
     }
-    resp.on_hover_text(aurora_i18n::tr!("photo-reel-tip"))
+    true
 }
 
 /// The photo window's row: the photos of the reel after the first `skip`,
@@ -435,16 +480,8 @@ impl QuickView {
                 _ => (0.0, 1.0),
             };
             photo_rect = Rect::from_center_size(room.center() + Vec2::new(dx, 0.0), shown);
-            // the frame: the dock's face and edge, a mat around the photo
-            let frame = photo_rect.expand(MAT);
-            let radius = ctx.global_style().visuals.window_corner_radius;
-            painter.rect_filled(frame, radius, p.panel.gamma_multiply(alpha));
-            painter.rect_stroke(
-                frame,
-                radius,
-                Stroke::new(1.0, p.ink.gamma_multiply(0.16 * alpha)),
-                StrokeKind::Inside,
-            );
+            // the frame: a tile of the dock, a mat around the photo
+            dock_face(&painter, p, photo_rect.expand(MAT), false, false, alpha);
             let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
             // a cut-out photo over the field, its transparency in sight
             if photo.cutout {
@@ -462,19 +499,21 @@ impl QuickView {
             .pivot(Align2::CENTER_TOP)
             .fixed_pos(Pos2::new(screen.center().x, screen.top() + 16.0))
             .show(ctx, |ui| {
-                widgets::overlay(ui, p, egui::Margin::symmetric(12, 6), |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 10.0;
-                        let index = aurora_i18n::tr!("photo-reel-index", index = len - cursor, count = len);
-                        ui.label(egui::RichText::new(index).strong().color(p.ink));
-                        ui.label(egui::RichText::new((view.time)(photo.taken)).color(p.muted));
-                        ui.label(egui::RichText::new(places_text(photo)).color(p.muted));
-                        if widgets::icon_button(ui, p, "x", aurora_i18n::tr!("common-close"), true) {
-                            self.close();
-                            out.push(ReelAction::Close);
-                        }
+                dock_frame(p, ui.visuals(), 0)
+                    .inner_margin(egui::Margin::symmetric(14, 8))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 10.0;
+                            let index = aurora_i18n::tr!("photo-reel-index", index = len - cursor, count = len);
+                            ui.label(egui::RichText::new(index).strong().color(p.ink));
+                            ui.label(egui::RichText::new((view.time)(photo.taken)).color(p.muted));
+                            ui.label(egui::RichText::new(places_text(photo)).color(p.muted));
+                            if widgets::icon_button(ui, p, "x", aurora_i18n::tr!("common-close"), true) {
+                                self.close();
+                                out.push(ReelAction::Close);
+                            }
+                        });
                     });
-                });
             });
         ctx.move_to_top(top.response.layer_id);
         over_bars |= top.response.hovered();
@@ -499,7 +538,10 @@ impl QuickView {
                 .pivot(if side < 0.0 { Align2::LEFT_CENTER } else { Align2::RIGHT_CENTER })
                 .fixed_pos(Pos2::new(x, room.center().y))
                 .show(ctx, |ui| {
-                    widgets::overlay(ui, p, egui::Margin::same(4), |ui| widgets::icon_button(ui, p, icon, tip, true)).inner
+                    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(DOCK_SIDE), Sense::click());
+                    dock_face(ui.painter(), p, rect, resp.hovered(), false, 1.0);
+                    vf_icon(ui.painter(), icon, Rect::from_center_size(rect.center(), Vec2::splat(20.0)), p.ink);
+                    resp.on_hover_text(tip).clicked()
                 });
             ctx.move_to_top(arrow.response.layer_id);
             over_bars |= arrow.response.hovered();
@@ -515,7 +557,7 @@ impl QuickView {
             .pivot(Align2::CENTER_BOTTOM)
             .fixed_pos(Pos2::new(screen.center().x, screen.bottom() - 16.0))
             .show(ctx, |ui| {
-                widgets::overlay(ui, p, egui::Margin::same(10), |ui| self.filmstrip(ui, p, view, cursor, now, out));
+                dock_frame(p, ui.visuals(), 8).show(ui, |ui| self.filmstrip(ui, p, view, cursor, now, out));
             });
         let buttons = egui::Area::new(Id::unique("photo_reel_actions"))
             .order(Order::Foreground)
@@ -564,15 +606,12 @@ impl QuickView {
         });
     }
 
-    /// Send it again, show where it went, delete it: each button on its
-    /// own glass, apart from the frame and from one another.
+    /// Send it again, show where it went, delete it: each button a tile of
+    /// the dock, apart from the frame and from one another.
     fn actions(&mut self, ui: &mut egui::Ui, p: &Palette, view: &ReelView, photo: &Photo, out: &mut Vec<ReelAction>) {
         let ready = photo.file.is_some();
         let button = |ui: &mut egui::Ui, icon: &str, label: &str, kind: ActionKind, enabled: bool| {
-            widgets::overlay(ui, p, egui::Margin::same(3), |ui| {
-                widgets::action_button_if(ui, p, icon, label, kind, Vec2::new(0.0, 32.0), enabled)
-            })
-            .inner
+            tile_button(ui, p, icon, label, matches!(kind, ActionKind::FlatDanger), enabled)
         };
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
@@ -583,7 +622,7 @@ impl QuickView {
                 let resp = if ready {
                     resp
                 } else {
-                    resp.on_disabled_hover_text(aurora_i18n::tr!("photo-reel-preparing"))
+                    resp.on_hover_text(aurora_i18n::tr!("photo-reel-preparing"))
                 };
                 if resp.clicked() && enabled {
                     out.push(ReelAction::Send(photo.id, d));
@@ -761,11 +800,14 @@ mod tests {
         let o = Pos2::new(10.0, 20.0);
         let column = TRAY_STACK + TRAY_GAP;
         let thumb = tray_thumb();
-        // the stack's column first, kept for the folder's button
-        assert_eq!(tray_slot(o, 1).min, Pos2::new(o.x + column, o.y));
-        assert_eq!(tray_slot(o, 2).min.x, o.x + column + thumb.x + TRAY_GAP);
+        // the stack's column first, kept for the folder's button; the
+        // picture inside its tile
+        assert_eq!(tray_slot(o, 1).min, Pos2::new(o.x + column + TRAY_PAD, o.y + TRAY_PAD));
+        assert_eq!(tray_slot(o, 2).min.x, o.x + column + thumb.x + TRAY_GAP + TRAY_PAD);
         assert_eq!(tray_slot(o, 5).min.x, tray_slot(o, 2).min.x);
-        assert_eq!(tray_slot(o, 5).size(), thumb);
+        assert_eq!(tray_slot(o, 5).size(), thumb - Vec2::splat(2.0 * TRAY_PAD));
+        // 3:2 like the card's picture
+        assert!((tray_slot(o, 5).aspect_ratio() - 1.5).abs() < 1e-4);
     }
 
     #[test]

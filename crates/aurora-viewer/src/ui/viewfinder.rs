@@ -252,7 +252,7 @@ fn gradient(painter: &egui::Painter, rect: Rect, top: Color32, bottom: Color32) 
     painter.add(egui::Shape::mesh(mesh));
 }
 
-fn icon(painter: &egui::Painter, name: &str, rect: Rect, tint: Color32) {
+pub(crate) fn icon(painter: &egui::Painter, name: &str, rect: Rect, tint: Color32) {
     if let Some(t) = crate::ui::icons::global(name) {
         painter.image(t.id(), rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), tint);
     }
@@ -1643,12 +1643,9 @@ impl Viewfinder {
     #[allow(clippy::too_many_arguments)]
     fn reel_tray(&mut self, ctx: &egui::Context, p: &Palette, screen: Rect, s: &mut Settings, f: &Frame, bottom: f32, out: &mut Vec<Out>) {
         use crate::ui::photo_reel::{tray_fraction, tray_place, tray_slot};
-        const MARGIN: i8 = 6;
-        // (room above for the photos peeking out of the stack)
-        let margin = egui::Margin {
-            top: 2 * MARGIN,
-            ..egui::Margin::same(MARGIN)
-        };
+        // no surface of its own, like the dock: its tiles on the world, a
+        // clear edge around them to take it by
+        let margin = egui::Margin::same(6);
         let reel = crate::ui::photo_reel::ReelView {
             arriving: (f.now < self.review_until && f.review.is_some()) || self.fly.is_some(),
             ..*f.reel
@@ -1674,7 +1671,9 @@ impl Viewfinder {
             .movable(true)
             .current_pos(pos)
             .show(ctx, |ui| {
-                widgets::overlay(ui, p, margin, |ui| crate::ui::photo_reel::tray(ui, p, &reel, &mut asked))
+                egui::Frame::new()
+                    .inner_margin(margin)
+                    .show(ui, |ui| crate::ui::photo_reel::tray(ui, p, &reel, &mut asked))
             });
         out.extend(asked.into_iter().map(Out::Reel));
         // moved: followed live, kept once let go (not every frame of the
@@ -2097,18 +2096,13 @@ fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, bottom: f32
         .fixed_pos(Pos2::new(screen.center().x, screen.bottom() - bottom))
         .show(ctx, |ui| {
             // the dock's face and edge (`dock_button`)
-            egui::Frame::new()
-                .fill(p.navy.gamma_multiply(0.55))
-                .stroke(Stroke::new(1.0, p.ink.gamma_multiply(0.16)))
-                .corner_radius(ui.visuals().window_corner_radius)
-                .inner_margin(egui::Margin::same(8))
-                .show(ui, |ui| {
-                    let (rect, _) = ui.allocate_exact_size(Vec2::new(150.0, 100.0), Sense::hover());
-                    // the photo covering the card's picture
-                    let radius = widgets::inner_radius(ui.visuals());
-                    crate::ui::photo_reel::picture(ui.painter(), p, rect, radius, Some(texture));
-                    picture = Some(rect);
-                });
+            dock_frame(p, ui.visuals(), 8).show(ui, |ui| {
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(150.0, 100.0), Sense::hover());
+                // the photo covering the card's picture
+                let radius = widgets::inner_radius(ui.visuals());
+                crate::ui::photo_reel::picture(ui.painter(), p, rect, radius, Some(texture));
+                picture = Some(rect);
+            });
         });
     picture
 }
@@ -2119,22 +2113,43 @@ enum Face<'a> {
     Text(&'a str),
 }
 
-/// A 44-point button of the dock; true when clicked.
-fn dock_button(ui: &mut egui::Ui, p: &Palette, face: Face, tip: &str, on: bool) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(44.0), Sense::click());
-    let radius = ui.visuals().window_corner_radius;
-    let fill = if resp.hovered() || on {
+/// The side of a dock button.
+pub(crate) const DOCK_SIDE: f32 = 44.0;
+
+/// The face of the dock's buttons, shared by everything of photo mode that
+/// sits over the world like them (the reel's tray, its quick view): the
+/// night's blue let through, lighter under the pointer or when on, a thin
+/// edge, teal when on. `alpha` fades it.
+pub(crate) fn dock_face(painter: &egui::Painter, p: &Palette, rect: Rect, lit: bool, on: bool, alpha: f32) {
+    let radius = painter.ctx().global_style().visuals.window_corner_radius;
+    let fill = if lit || on {
         p.panel.gamma_multiply(0.85)
     } else {
         p.navy.gamma_multiply(0.55)
     };
-    ui.painter().rect_filled(rect, radius, fill);
+    painter.rect_filled(rect, radius, fill.gamma_multiply(alpha));
     let edge = if on {
         p.teal.gamma_multiply(0.7)
     } else {
         p.ink.gamma_multiply(0.16)
     };
-    ui.painter().rect_stroke(rect, radius, Stroke::new(1.0, edge), StrokeKind::Inside);
+    painter.rect_stroke(rect, radius, Stroke::new(1.0, edge.gamma_multiply(alpha)), StrokeKind::Inside);
+}
+
+/// The dock's face as a frame, for a panel of photo mode that holds
+/// widgets (the card, the quick view's bars).
+pub(crate) fn dock_frame(p: &Palette, visuals: &egui::Visuals, margin: i8) -> egui::Frame {
+    egui::Frame::new()
+        .fill(p.navy.gamma_multiply(0.55))
+        .stroke(Stroke::new(1.0, p.ink.gamma_multiply(0.16)))
+        .corner_radius(visuals.window_corner_radius)
+        .inner_margin(egui::Margin::same(margin))
+}
+
+/// A 44-point button of the dock; true when clicked.
+fn dock_button(ui: &mut egui::Ui, p: &Palette, face: Face, tip: &str, on: bool) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(DOCK_SIDE), Sense::click());
+    dock_face(ui.painter(), p, rect, resp.hovered(), on, 1.0);
     match face {
         Face::Icon(name) => icon(ui.painter(), name, Rect::from_center_size(rect.center(), Vec2::splat(20.0)), p.ink),
         Face::Text(text) => {
