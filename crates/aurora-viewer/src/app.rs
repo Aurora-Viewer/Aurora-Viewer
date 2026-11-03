@@ -2757,6 +2757,8 @@ impl App {
         // the next session signs in with its own cookie (the browser stops)
         self.marketplace_ui = Default::default();
         self.web_browser_ui = Default::default();
+        // closed, or the next session would open the home page by itself
+        self.panels.web_browser = false;
         // the listings belong to the account (LLMarketplaceData)
         self.listings_ui = Default::default();
         self.demo_slm = None;

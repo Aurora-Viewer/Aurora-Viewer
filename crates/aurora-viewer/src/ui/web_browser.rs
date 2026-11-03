@@ -7,9 +7,14 @@
 //! with the load progress. The button opens the home page (the
 //! `FSBrowserHomePage` setting) and closes the window when it is shown.
 //!
-//! Links clicked in a page keep Aurora's routing (SLURLs in the viewer,
-//! other addresses through the link checks to the system browser): the
-//! Legacy Viewer's PreferredBrowserBehavior is not ported.
+//! Links clicked in a page are those of the shared `WebView`: an http(s)
+//! link opens in this window, a SLURL or app link (`secondlife://`) acts in
+//! the viewer, any other scheme is refused (`link_trust::refused_scheme`);
+//! a link asking for a new window (`target="_blank"`, the plugin's
+//! `click_href`) does nothing, as in the other web windows. The Legacy
+//! Viewer's PreferredBrowserBehavior is not ported. Only a web page is
+//! handed to the system browser ("Open in browser", `external_address`),
+//! through the checks of a clicked link.
 
 use super::web_view::WebView;
 use super::widgets::{self, ActionKind, Floater};
@@ -27,9 +32,10 @@ const MIN_SIZE: Vec2 = Vec2::new(500.0, 400.0);
 
 /// What the address field sends to the browser. LLFloaterWebContent::
 /// onEnterAddress navigates to the trimmed text as it is; the browser engine
-/// wants a scheme, so a bare host gets `https://`. Only web pages (and local
-/// `file:` pages and `about:blank`) are accepted: a `javascript:` or `data:`
-/// address typed or pasted here goes nowhere. None for an empty field.
+/// wants a scheme, so a bare host gets `https://`. Only web pages with a
+/// host (and local `file:` pages and `about:blank`) are accepted: a
+/// `javascript:` or `data:` address typed or pasted here, `https://` alone
+/// or an address with a space goes nowhere. None for an empty field.
 pub fn normalize_address(input: &str) -> Option<String> {
     let text = input.trim();
     if text.is_empty() {
@@ -39,22 +45,61 @@ pub fn normalize_address(input: &str) -> Option<String> {
     if lower == "about:blank" || lower.starts_with("file://") {
         return Some(text.to_owned());
     }
-    if lower.starts_with("https://") || lower.starts_with("http://") {
-        return Some(text.to_owned());
-    }
-    // `name:` followed by something that is not a port is another scheme
-    // (javascript:, data:, mailto:…); `localhost:8080` and `host:443/path` are hosts
-    if let Some((scheme, rest)) = text.split_once(':')
-        && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
-        && !scheme.is_empty()
-        && !rest.chars().next().is_some_and(|c| c.is_ascii_digit())
-    {
+    let url = if lower.starts_with("https://") || lower.starts_with("http://") {
+        text.to_owned()
+    } else {
+        // `name:` followed by something that is not a port is another scheme
+        // (javascript:, data:, mailto:…); `localhost:8080` and `host:443/path` are hosts
+        if let Some((scheme, rest)) = text.split_once(':')
+            && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+            && !scheme.is_empty()
+            && !rest.chars().next().is_some_and(|c| c.is_ascii_digit())
+        {
+            return None;
+        }
+        format!("https://{text}")
+    };
+    if url.chars().any(char::is_whitespace) || web_host(&url).is_none() {
         return None;
     }
-    if text.chars().any(char::is_whitespace) {
+    Some(url)
+}
+
+/// The host of an `http(s)://` address, None when it has none (`https://`,
+/// `https:///path`, `https://:80`) or a port that is not a number. The
+/// authority ends where link_trust's ends (`/`, `\`, `?`, `#`).
+fn web_host(url: &str) -> Option<&str> {
+    let (scheme, rest) = url.split_once("://")?;
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
         return None;
     }
-    Some(format!("https://{text}"))
+    let authority = rest.split(['/', '\\', '?', '#']).next().unwrap_or("");
+    let host_port = authority.rsplit('@').next().unwrap_or("");
+    let (host, port) = match host_port.strip_prefix('[') {
+        // [IPv6]:port
+        Some(v6) => {
+            let (host, after) = v6.split_once(']')?;
+            match after {
+                "" => (host, None),
+                after => (host, Some(after.strip_prefix(':')?)),
+            }
+        }
+        None => match host_port.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (host_port, None),
+        },
+    };
+    let port_ok = port.is_none_or(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    (host.chars().any(|c| c.is_alphanumeric()) && port_ok).then_some(host)
+}
+
+/// What "Open in browser" hands to the system: a web page only, by the rule
+/// of the links of a text (`link_trust::refused_scheme`: http and https), so
+/// a local `file:` page or `about:blank` shown here never leaves the viewer.
+/// None greys the button out.
+pub fn external_address(shown: &str) -> Option<String> {
+    let url = shown.trim();
+    (crate::link_trust::refused_scheme(url).is_none() && web_host(url).is_some()).then(|| url.to_owned())
 }
 
 /// The page the button opens: the setting, or the Legacy default when it is
@@ -79,8 +124,11 @@ pub struct BrowserWeb<'a> {
 
 #[derive(Default)]
 pub struct WebBrowserUi {
-    /// The browser keeps the shared profile (cookies, sign-ins), like the
-    /// Marketplace's and the Legacy Viewer's.
+    /// Not a private browser: its profile sits in the shared CEF cache, which
+    /// is emptied at every start (`media/cef_cache.rs`), and each browser
+    /// process has a profile of its own there. A sign-in lasts while the
+    /// window stays open; closing the window, logging out or a new start
+    /// forgets it.
     web: WebView,
     /// The home page was sent to the running browser.
     started: bool,
@@ -227,42 +275,44 @@ impl WebBrowserUi {
                 }
                 self.edit = None;
             }
-            if widgets::action_button(ui, p, "external-link-filled", label, ActionKind::Flat, external).clicked() {
-                // the page itself, in the system browser (loadURLExternal)
-                if let Some(url) = normalize_address(&shown) {
-                    ui.ctx().open_url(egui::OpenUrl::new_tab(url));
-                }
+            // the page itself, in the system browser (loadURLExternal): a web
+            // page only, then the checks of a clicked link (a dangerous or
+            // unknown site asks first, as in Search's web tab)
+            let outside = external_address(&shown);
+            if widgets::action_button_if(ui, p, "external-link-filled", label, ActionKind::Flat, external, outside.is_some()).clicked()
+                && let Some(url) = outside
+            {
+                super::context::request(ui.ctx(), super::context::CtxAction::OpenUrl(url));
             }
         });
         ui.add_space(4.0);
-        // The status line takes a fixed strip at the bottom and the page the
-        // rest: a row taller than its share would make the window grow, frame
-        // after frame, until it covered the bars.
-        const STATUS_H: f32 = 20.0;
-        let size = Vec2::new(
-            ui.available_width(),
-            (ui.available_height() - STATUS_H - 2.0 - 2.0 * ui.spacing().item_spacing.y).max(120.0),
-        );
-        self.web.show(ui, p, env.paths, env.browser, None, size);
-        ui.add_space(2.0);
-        let (strip, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), STATUS_H), egui::Sense::hover());
-        let layout = egui::Layout::left_to_right(egui::Align::Center);
-        ui.scope_builder(egui::UiBuilder::new().max_rect(strip).layout(layout), |ui| {
-            let loading = self.web.loading;
-            let text = if self.web.status.is_empty() {
-                if loading {
-                    aurora_i18n::tr!("web-browser-loading").to_string()
-                } else {
-                    String::new()
-                }
-            } else {
-                self.web.status.clone()
-            };
-            if loading {
-                widgets::progress(ui, p, "web_browser_load", self.web.progress as f32 / 100.0, 120.0, "", None);
-            }
-            ui.add(egui::Label::new(RichText::new(text).size(11.5).color(p.muted)).truncate());
+        // the status line under the page, measured: the page takes the room
+        // it leaves (a guessed strip made the window grow once the line
+        // measured more)
+        let (mut page, foot) = widgets::above_footer(ui);
+        let size = Vec2::new(page.available_width(), page.available_height().max(60.0));
+        self.web.show(&mut page, p, env.paths, env.browser, None, size);
+        foot.show(ui, |ui| {
+            ui.horizontal(|ui| self.status_line(ui, p));
         });
+    }
+
+    /// The load bar and the status text (the link under the pointer).
+    fn status_line(&self, ui: &mut egui::Ui, p: &Palette) {
+        let loading = self.web.loading;
+        let text = if self.web.status.is_empty() {
+            if loading {
+                aurora_i18n::tr!("web-browser-loading").to_string()
+            } else {
+                String::new()
+            }
+        } else {
+            self.web.status.clone()
+        };
+        if loading {
+            widgets::progress(ui, p, "web_browser_load", self.web.progress as f32 / 100.0, 120.0, "", None);
+        }
+        ui.add(egui::Label::new(RichText::new(text).size(11.5).color(p.muted)).truncate());
     }
 }
 
@@ -308,6 +358,57 @@ mod tests {
         }
     }
 
+    /// A web address needs a host, and no space anywhere: the browser would
+    /// otherwise be sent an address it cannot load.
+    #[test]
+    fn a_web_address_without_a_host_is_not_navigated_to() {
+        for bad in [
+            "https://",
+            "http://",
+            "https:///path",
+            "https://:8080/x",
+            "https://user@",
+            "https://example.org:/x",
+            "https://example.org:80a",
+            "https://[::1",
+            "https://two words",
+            "https://example.org/a b",
+            "example.org/a b",
+        ] {
+            assert_eq!(normalize_address(bad), None, "{bad}");
+        }
+        for good in [
+            "https://example.org",
+            "https://example.org:8443/x?a=b#c",
+            "http://localhost",
+            "https://[::1]:8080/",
+            "https://bücher.example",
+        ] {
+            assert_eq!(normalize_address(good).as_deref(), Some(good), "{good}");
+        }
+    }
+
+    /// "Open in browser" hands the system web pages only, by the rule of a
+    /// text's links: never a local page, a script or another scheme.
+    #[test]
+    fn only_web_pages_are_opened_in_the_system_browser() {
+        assert_eq!(external_address("https://example.org/a").as_deref(), Some("https://example.org/a"));
+        assert_eq!(external_address(" HTTP://example.org ").as_deref(), Some("HTTP://example.org"));
+        for refused in [
+            "file:///C:/page.html",
+            "file://server/share/x.exe",
+            "about:blank",
+            "javascript:alert(1)",
+            "data:text/html,hi",
+            "secondlife:///app/x",
+            "C:\\Windows\\notepad.exe",
+            "https://",
+            "",
+        ] {
+            assert_eq!(external_address(refused), None, "{refused:?}");
+        }
+    }
+
     #[test]
     fn only_https_pages_get_the_padlock() {
         assert!(is_secure("https://example.org"));
@@ -317,8 +418,34 @@ mod tests {
         assert!(!is_secure(""));
     }
 
-    /// The window opens inside the work area, with its status line, and does
-    /// not grow from one frame to the next (a defect once covered the bars).
+    /// The window keeps its size at every scale and text size, its status
+    /// line drawn inside it (a guessed status strip once made it grow until
+    /// it covered the bars).
+    #[test]
+    fn the_window_keeps_its_size() {
+        let browser = aurora_media::BrowserSettings::default();
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            WINDOW,
+            &[DEFAULT_SIZE, MIN_SIZE],
+            "Status line",
+            || {
+                let mut ui = WebBrowserUi::default();
+                ui.web.status = "Status line".to_owned();
+                ui
+            },
+            |ui, ctx, p| {
+                let env = BrowserWeb {
+                    paths: None,
+                    browser: &browser,
+                    home: DEFAULT_HOME,
+                };
+                ui.show(ctx, p, &mut true, &env);
+            },
+        );
+    }
+
+    /// The window opens inside the work area and does not grow from one
+    /// frame to the next.
     #[test]
     fn the_window_stays_between_the_bars_and_does_not_grow() {
         let mut frames = widgets::elide_tests::Frames::new();
