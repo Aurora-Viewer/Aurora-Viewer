@@ -12092,6 +12092,7 @@ rlva-im-blocked-send = *** ＩＭは送信者のビューアによってブロ�
 rlva-im-blocked-receive-remote = メッセージを送った住人は現在、あなたのインスタントメッセージを読めない状態です。後でもう一度お試しください。
 rlva-im-blocked-teleport-remote = その住人は現在、受け入れられない状態です。後でもう一度お試しください。
 rlva-blocked-script-dialog = ＲＬＶａの制限により、スクリプトによるダイアログやテキストボックスは表示できません。
+rlva-blocked-autopilot = ＲＬＶａの制限により、オートパイロットは使用できません。
 rlva-hidden-generic = （非表示）
 rlva-experience-maturity = コントローラーの体験の最低レーティング
 rlva-experience-maturity-hint = 「なし」はすべての体験のコントローラーを拒否します。デフォルトはModerateとAdultの体験を受け付けます。

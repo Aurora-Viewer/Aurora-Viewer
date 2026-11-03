@@ -12109,6 +12109,7 @@ rlva-im-blocked-send = *** Message privé bloqué par le viewer de l’expédite
 rlva-im-blocked-receive-remote = Le résident ne peut actuellement pas lire vos messages privés. Veuillez réessayer plus tard.
 rlva-im-blocked-teleport-remote = Le résident ne peut actuellement pas accepter cette demande. Veuillez réessayer plus tard.
 rlva-blocked-script-dialog = Impossible d'afficher une boîte de dialogue ou de texte de script en raison de restrictions RLVa.
+rlva-blocked-autopilot = Impossible d'utiliser le pilote automatique en raison des restrictions RLVa.
 rlva-hidden-generic = (Masqué)
 rlva-experience-maturity = Classification minimale des expériences de contrôle
 rlva-experience-maturity-hint = Aucune refuse tous les contrôleurs d’expériences. Par défaut, les expériences Modéré et Adulte sont acceptées.
