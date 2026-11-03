@@ -689,6 +689,28 @@ impl Scene {
         Some((self.drawn_model(g, o, world.visual_scale_at(idx, now), Some(key), pos, rot), geom))
     }
 
+    /// The world triangles object `idx` shows: its drawn faces, without those
+    /// at alpha 0 or under the transparent texture (`face_undrawn`). For the
+    /// build tools' snap to objects; None while it loads, and for a rigged
+    /// mesh, as `drawn_geometry`.
+    pub fn visible_triangles(&self, world: &World, idx: usize, now: Instant) -> Option<Vec<[Vec3; 3]>> {
+        let g = self.gpu.get(idx)?;
+        let (model, geom) = self.drawn_geometry(world, idx, now)?;
+        let mut out = Vec::new();
+        for (face, f) in geom.pick_faces.iter().enumerate() {
+            let Some(f) = f.as_ref().filter(|_| !Self::face_undrawn(g, face)) else {
+                continue;
+            };
+            for t in f.indices.chunks_exact(3) {
+                let v = |k: u16| f.positions.get(k as usize).map(|p| model.transform_point3(Vec3::from(*p)));
+                if let (Some(a), Some(b), Some(c)) = (v(t[0]), v(t[1]), v(t[2])) {
+                    out.push([a, b, c]);
+                }
+            }
+        }
+        Some(out)
+    }
+
     /// What undoes the bind shape of the geometry `g` draws: a skinned mesh
     /// drawn without a skeleton (`sync_plan`'s placement).
     fn unbind_of(&self, g: &ObjGpu) -> Option<Mat4> {

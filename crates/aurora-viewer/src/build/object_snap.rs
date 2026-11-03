@@ -55,6 +55,8 @@ const CONTACT_EPS: f32 = 0.001;
 /// Faces count this much smaller in the sweep (m): a selection resting on a
 /// face slides along it, and stops exactly on it.
 const SKIN: f32 = 0.0005;
+/// The pad drawn on a surface under the selection, times its footprint.
+const PAD_SCALE: f32 = 1.25;
 /// A selection face this parallel to a target face (cosine) can be flush
 /// with it or line up with its centre; otherwise only a contact snaps (a
 /// corner resting on a slope), not the endless plane of a tilted face.
@@ -480,11 +482,50 @@ pub fn stop(sel: &Bounds, by: Vec3, boxes: &[Bounds], surfaces: &[Surface], c: C
     (moved_by, hit)
 }
 
+/// The box of what the selection shows, turned like `like` (its edit box):
+/// the visible triangles of the `moving` prims, so an invisible root prim
+/// or an empty part of a mesh's box does not hold it off a floor. A prim not
+/// drawn yet counts as its box; None when nothing is drawn.
+pub fn shown_bounds(world: &World, scene: &Scene, moving: &HashSet<usize>, like: &Bounds, now: Instant) -> Option<Bounds> {
+    let inv = like.rotation.inverse();
+    let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    let mut add = |v: Vec3| {
+        let q = inv * v;
+        lo = lo.min(q);
+        hi = hi.max(q);
+    };
+    for &idx in moving {
+        match scene.visible_triangles(world, idx, now) {
+            Some(tris) => tris.iter().flatten().for_each(|v| add(*v)),
+            None => {
+                let Some((p, r, _)) = Scene::object_transform(world, idx, now, 0) else {
+                    continue;
+                };
+                let h = world.visual_scale_at(idx, now) * 0.5;
+                for c in 0..8 {
+                    let s = Vec3::new(
+                        if c & 1 != 0 { 1.0 } else { -1.0 },
+                        if c & 2 != 0 { 1.0 } else { -1.0 },
+                        if c & 4 != 0 { 1.0 } else { -1.0 },
+                    );
+                    add(p + r * (h * s));
+                }
+            }
+        }
+    }
+    (lo.x <= hi.x && (hi - lo).is_finite()).then(|| Bounds {
+        center: like.rotation * ((lo + hi) * 0.5),
+        rotation: like.rotation,
+        half: ((hi - lo) * 0.5).max(Vec3::splat(0.0005)),
+    })
+}
+
 /// The prims a drag can snap to: shown in the world (not worn, not an
 /// avatar, not a reflection probe's invisible volume), not moved by the
 /// drag (`moving`), nearest first, within `RADIUS` of `around`. With the
-/// scene, a prim that is not a plain box is its drawn surface, or nothing
-/// until it is drawn; without it (tests), every prim is its box.
+/// scene, a prim that is not a plain box is its visible surface, a prim
+/// with nothing visible (an invisible root, a clicker) is left out, and a
+/// prim not drawn yet waits; without it (tests), every prim is its box.
 pub fn collect(world: &World, scene: Option<&Scene>, moving: &HashSet<usize>, around: &Bounds, now: Instant) -> Targets {
     let reach = around.half.length() + RADIUS;
     let mut near: Vec<(f32, usize, Bounds)> = Vec::new();
@@ -524,21 +565,16 @@ pub fn collect(world: &World, scene: Option<&Scene>, moving: &HashSet<usize>, ar
     };
     let mut triangles = 0;
     for (_, idx, b) in near {
-        let Some(scene) = scene.filter(|_| world.objects.get(idx).is_some_and(|o| !is_box(&o.volume))) else {
+        let Some(scene) = scene else {
             targets.boxes.push(b);
             continue;
         };
-        let Some((model, geom)) = scene.drawn_geometry(world, idx, now) else {
+        let Some(tris) = scene.visible_triangles(world, idx, now).filter(|t| !t.is_empty()) else {
             continue;
         };
-        let mut tris = Vec::new();
-        for face in geom.pick_faces.iter().flatten() {
-            for t in face.indices.chunks_exact(3) {
-                let v = |k: u16| face.positions.get(k as usize).map(|p| model.transform_point3(Vec3::from(*p)));
-                if let (Some(a), Some(b), Some(c)) = (v(t[0]), v(t[1]), v(t[2])) {
-                    tris.push([a, b, c]);
-                }
-            }
+        if world.objects.get(idx).is_some_and(|o| is_box(&o.volume)) {
+            targets.boxes.push(b);
+            continue;
         }
         triangles += tris.len();
         if triangles > MAX_TRIANGLES {
@@ -588,19 +624,32 @@ fn sel_mark(sel: &Bounds, toward: Vec3) -> Vec<Vec3> {
     }
 }
 
-/// The triangle met and the selection's side on it.
+/// A contact with a surface: the selection's face (or corner) and, around
+/// it on the surface's plane, a pad a little larger than its footprint. The
+/// triangle itself is not drawn: meshes cut their floors into long thin
+/// triangles that have nothing to do with where the selection stands.
 fn surface_guide(sel: &Bounds, tri: &[Vec3; 3]) -> Guide {
     let n = (tri[1] - tri[0]).cross(tri[2] - tri[0]).normalize_or_zero();
     let mid = (tri[0] + tri[1] + tri[2]) / 3.0;
     let up = if (sel.center - mid).dot(n) >= 0.0 { n } else { -n };
     let sel_face = sel_mark(sel, -up);
     let mark = sel_face.iter().copied().sum::<Vec3>() / sel_face.len() as f32;
+    let flat = |v: Vec3| v - up * (v - mid).dot(up);
+    let at = flat(mark);
+    let pad = if sel_face.len() > 1 {
+        sel_face.iter().map(|v| at + (flat(*v) - at) * PAD_SCALE).collect()
+    } else {
+        // a corner on a slope: a small square around where it rests
+        let e1 = up.any_orthonormal_vector();
+        let (e1, e2) = (e1 * sel.half.min_element() * 0.6, up.cross(e1) * sel.half.min_element() * 0.6);
+        vec![at - e1 - e2, at + e1 - e2, at + e1 + e2, at - e1 + e2]
+    };
     Guide {
         kind: Kind::Touch,
         contact: true,
-        target_face: tri.to_vec(),
+        target_face: pad,
         sel_face,
-        link: (mark, mark - up * (mark - mid).dot(up)),
+        link: (mark, at),
     }
 }
 
@@ -943,7 +992,11 @@ mod tests {
             if let Some(snap) = snap {
                 assert!(snap.offset.abs_diff_eq(-Vec3::Z * above, 1e-4), "{snap:?}");
                 let guide = &guides(&moved(&sel, snap.offset), &[], &snap)[0];
-                assert_eq!(guide.target_face.len(), 3);
+                // a pad on the floor around the cube's footprint, not the triangle
+                assert_eq!(guide.target_face.len(), 4);
+                assert!(guide.target_face.iter().all(|v| v.z.abs() < 1e-4));
+                let pad = guide.target_face.iter().fold(0f32, |m, v| m.max((v.x - 0.2).abs()));
+                assert!((pad - 0.5 * PAD_SCALE).abs() < 1e-4, "{pad}");
                 assert_eq!(guide.sel_face.len(), 4, "the cube's bottom face");
                 assert!(guide.sel_face.iter().all(|v| v.z.abs() < 1e-4));
             }

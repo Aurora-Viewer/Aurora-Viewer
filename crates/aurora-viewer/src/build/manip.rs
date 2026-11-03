@@ -164,6 +164,9 @@ pub struct Drag {
     snap_targets: Option<(object_snap::Targets, Instant)>,
     /// Guides of the object snap applied this frame.
     snap_guides: Vec<object_snap::Guide>,
+    /// The selection's box for the object snap, from what it shows, where
+    /// the drag began (`object_snap::shown_bounds`; `bounds` without a scene).
+    snap_box: Option<Bounds>,
     // rotate
     radius: f32,
     down_vec: Vec3,
@@ -444,6 +447,7 @@ impl Manip {
             moving: super::highlighted_of(world, sel, linked).into_iter().map(|(i, _)| i).collect(),
             snap_targets: None,
             snap_guides: Vec::new(),
+            snap_box: None,
             radius: 1.0,
             down_vec: Vec3::X,
             edge_on: false,
@@ -1667,7 +1671,13 @@ fn snap_to_objects(
     if s.snap_mode() != super::SnapMode::Objects || cam.hud.is_some() {
         return None;
     }
-    let sel = object_snap::moved(&d.bounds, want);
+    // what the selection shows, taken once; the world has it moved by `prev`
+    let base = *d.snap_box.get_or_insert_with(|| {
+        scene
+            .and_then(|scene| object_snap::shown_bounds(world, scene, &d.moving, &d.bounds, now))
+            .map_or(d.bounds, |b| object_snap::moved(&b, -prev))
+    });
+    let sel = object_snap::moved(&base, want);
     // collected again as the selection travels, and now and then for the
     // prims rezzed meanwhile (a Shift-drag's copy)
     let stale = d.snap_targets.as_ref().is_none_or(|(t, at)| {
@@ -1684,18 +1694,12 @@ fn snap_to_objects(
     };
     let snap = object_snap::find(&sel, &targets.boxes, &targets.surfaces, c, &px);
     let goal = want + snap.as_ref().map_or(Vec3::ZERO, |snap| snap.offset);
-    let (allowed, blocked) = object_snap::stop(
-        &object_snap::moved(&d.bounds, prev),
-        goal - prev,
-        &targets.boxes,
-        &targets.surfaces,
-        c,
-    );
+    let (allowed, blocked) = object_snap::stop(&object_snap::moved(&base, prev), goal - prev, &targets.boxes, &targets.surfaces, c);
     if snap.is_none() && blocked.is_none() {
         return None;
     }
     let delta = prev + allowed;
-    let at = object_snap::moved(&d.bounds, delta);
+    let at = object_snap::moved(&base, delta);
     d.snap_guides = match (blocked, snap) {
         (Some(hit), _) => object_snap::guides(
             &at,
