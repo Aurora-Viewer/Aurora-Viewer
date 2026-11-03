@@ -401,14 +401,12 @@ impl App {
     }
 
     /// Our profile on its feed, where the photos posted show; the quick
-    /// view closed (it covers the windows), and the viewfinder left (it
-    /// hides them; its Exit, the reel kept).
+    /// view closed (it covers the windows) and photo mode left, the reel
+    /// kept.
     pub(super) fn photo_reel_action_show_profile(&mut self) {
         self.snapshots.reel.quick.close();
         self.snapshots.reel.mail = None;
-        if self.viewfinder_on() {
-            self.panels.snapshot = false;
-        }
+        self.panels.snapshot = false;
         self.profile_ui.open_feed(&mut self.world);
     }
 
