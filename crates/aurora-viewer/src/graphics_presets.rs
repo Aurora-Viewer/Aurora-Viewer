@@ -644,7 +644,8 @@ impl Values {
         s.glow = self.glow;
         s.avatar_physics_detail = self.avatar_physics_detail;
         s.hdr_emissive = self.hdr_emissive;
-        s.max_texture_resolution = self.max_texture_resolution;
+        // (a saved profile edited by hand: the nearest choice of the combo)
+        s.max_texture_resolution = crate::settings::max_texture_resolution_choice(self.max_texture_resolution);
         s.bloom = self.effects.bloom;
         s.bloom_strength = self.effects.bloom_strength;
         s.contact_shadows = self.effects.contact_shadows;
@@ -831,6 +832,11 @@ mod tests {
         json.as_object_mut().expect("an object").remove("max_texture_resolution");
         let read: Values = serde_json::from_value(json).expect("backup without the field");
         assert_eq!(read.max_texture_resolution, 2048);
+        // an odd value in a saved profile: one of the choices once applied
+        let mut odd = Preset::Medium.values();
+        odd.max_texture_resolution = 700;
+        odd.write(&mut s);
+        assert_eq!(s.max_texture_resolution, 512);
     }
 
     #[test]
