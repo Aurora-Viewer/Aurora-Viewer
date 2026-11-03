@@ -4016,6 +4016,7 @@ impl App {
                 self.world.eep.edit_personal(crate::demo::env::edit_lighting);
             }
             Step::OpenList(kind) => self.env_ui.open_list = Some(kind),
+            Step::Search(kind, text) => self.env_ui.search_list = Some((kind, text)),
         }
     }
 

@@ -40,6 +40,8 @@ const APPROXIMATELY_ZERO: f32 = 0.00001;
 
 const LABEL_W: f32 = 74.0;
 const COMBO_W: f32 = 216.0;
+/// Height of a list's entries under its search field.
+const LIST_H: f32 = 420.0;
 
 #[derive(Default)]
 pub struct EnvironmentUi {
@@ -59,6 +61,8 @@ pub struct EnvironmentUi {
     pub night: Option<NightSkyPick>,
     /// Open this list's drop-down on the next frame (demo captures).
     pub open_list: Option<SettingsKind>,
+    /// Type this into an open list's search field (demo captures).
+    pub search_list: Option<(SettingsKind, &'static str)>,
 }
 
 impl EnvironmentUi {
@@ -224,6 +228,12 @@ impl EnvironmentUi {
             self.open_list = None;
             let id = ui.make_persistent_id(egui::IdSalt::new(salt));
             egui::Popup::open_id(ui.ctx(), id.with("popup"));
+        }
+        if let Some((k, text)) = self.search_list
+            && k == kind
+        {
+            self.search_list = None;
+            ui.data_mut(|d| d.insert_temp(search_seed_id(&salt), text.to_owned()));
         }
         settings_list(ui, p, &self.catalog, kind, shown, salt, COMBO_W).map(|id| EnvAction::Pick(kind, id))
     }
@@ -587,29 +597,78 @@ pub fn settings_list(
     let size = Vec2::new(width, ui.spacing().interact_size.y);
     ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.set_max_width(width);
+        // the search text lives with the list; a list that opens starts it
+        // empty, with the field focused so typing filters at once
+        let combo_id = ui.make_persistent_id(egui::IdSalt::new(&salt));
+        let query_id = combo_id.with("search");
+        let opening = !egui::ComboBox::is_open(ui.ctx(), combo_id);
+        if opening {
+            ui.data_mut(|d| d.remove_temp::<String>(query_id));
+        }
+        let mut query: String = ui.data_mut(|d| d.get_temp(query_id)).unwrap_or_default();
+        if let Some(seed) = ui.data_mut(|d| d.remove_temp::<String>(search_seed_id(&salt))) {
+            query = seed;
+        }
         egui::ComboBox::from_id_salt(salt)
             .width(width)
-            .height(420.0)
+            .height(LIST_H + 40.0)
             .selected_text(RichText::new(text).size(12.0).color(p.ink))
             .truncate()
+            // a click in the search field must not close the list
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show_ui(ui, |ui| {
-                // the two fixed entries show the state; they cannot be picked
-                // (setDefaultPresetsEnabled(false))
-                for (i, label) in [aurora_i18n::tr!("ui-environment-shared-environment"), second]
-                    .into_iter()
-                    .enumerate()
-                {
-                    let on = env_select::shown_index(list, shown) == i && !matches!(shown, Shown::Preset(_) | Shown::Personal);
-                    ui.add_enabled(false, egui::Button::selectable(on, RichText::new(label).size(12.0)));
+                // Aurora addition: the Legacy Viewer's lists only jump to
+                // the first name starting with a typed letter
+                let search = widgets::search_field(
+                    ui,
+                    &mut query,
+                    aurora_i18n::tr!("ui-environment-search-by-name"),
+                    ui.available_width(),
+                );
+                if opening {
+                    search.request_focus();
                 }
-                widgets::divider(ui, p);
-                for c in list {
-                    let on = shown == Shown::Item(c.asset);
-                    if ui.selectable_label(on, RichText::new(&c.name).size(12.0)).clicked() && !on {
+                let matches = env_select::matching(list, &query);
+                // Enter takes the first match
+                let enter = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if enter && let Some(c) = matches.first() {
+                    if shown != Shown::Item(c.asset) {
                         picked = Some(c.asset);
                     }
+                    ui.close();
                 }
+                // the search stays put above its own scrolling list
+                egui::ScrollArea::vertical().max_height(LIST_H).show(ui, |ui| {
+                    if query.trim().is_empty() {
+                        // the two fixed entries show the state; they cannot be
+                        // picked (setDefaultPresetsEnabled(false))
+                        for (i, label) in [aurora_i18n::tr!("ui-environment-shared-environment"), second]
+                            .into_iter()
+                            .enumerate()
+                        {
+                            let on = env_select::shown_index(list, shown) == i && !matches!(shown, Shown::Preset(_) | Shown::Personal);
+                            ui.add_enabled(false, egui::Button::selectable(on, RichText::new(label).size(12.0)));
+                        }
+                        widgets::divider(ui, p);
+                    } else if matches.is_empty() {
+                        ui.label(
+                            RichText::new(aurora_i18n::tr!("ui-environment-no-match", query = query.trim().to_string()))
+                                .size(12.0)
+                                .color(p.muted),
+                        );
+                    }
+                    for c in matches {
+                        let on = shown == Shown::Item(c.asset);
+                        if ui.selectable_label(on, RichText::new(&c.name).size(12.0)).clicked() {
+                            if !on {
+                                picked = Some(c.asset);
+                            }
+                            ui.close();
+                        }
+                    }
+                });
             });
+        ui.data_mut(|d| d.insert_temp(query_id, query));
     });
     if widgets::icon_button(ui, p, "caret-left-filled", aurora_i18n::tr!("common-previous"), !list.is_empty()) {
         picked = env_select::step(list, env_select::shown_index(list, shown), false);
@@ -618,6 +677,11 @@ pub fn settings_list(
         picked = env_select::step(list, env_select::shown_index(list, shown), true);
     }
     picked
+}
+
+/// Where a list's search text is handed in from outside its frame (demo).
+fn search_seed_id(salt: &(impl std::hash::Hash + std::fmt::Debug)) -> egui::Id {
+    egui::Id::unique("env_list_search_seed").with(salt)
 }
 
 /// Azimuth and elevation (degrees) of a sun or moon rotation
