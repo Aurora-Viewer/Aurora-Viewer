@@ -4062,6 +4062,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
 | `AURORA_GPU_OOM=<mb>` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails |
+| `AURORA_DEMO_VRAM_DROP=<seconds>[,<mb>]` | The driver's video memory budget falls under what the viewer holds, as when another program takes the card |
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
 
 ### Details
@@ -4314,6 +4315,24 @@ both open states and the selection count. Capture at frame 620.
   `gpu_cull_growth_keeps_working_buffers_after_oom` as separate filtered
   workspace test processes with `AURORA_GPU_OOM=0`; unset it before the
   normal growth tests.
+- **`AURORA_DEMO_VRAM_DROP=<seconds>[,<mb>]`**, with `AURORA_DEMO=1`: from
+  that many seconds after the start, the budget read from the driver is
+  `mb` megabytes (half of what the viewer holds then, if not given), under
+  the viewer's usage, as when another program takes the card: on the
+  tester's PC two viewers on a 16 GB card put each past its budget, the
+  driver moved memory out and every GPU pass ran 70 times slower (GPU
+  frames of 350 ms for 12 s; #2072). The log says once per drop
+  `the video memory budget fell under what the viewer holds (<n> MB
+  short …)`, in the same frame as the sample; the pressure then climbs a
+  step every budget pass (250 ms) instead of once a second or every 3 s
+  (`texture memory: pressure 1 -> 2 …`), until the pages are under the
+  target. With `AURORA_DEMO_STREAM=3000,3000`, `AURORA_PROFILE=1` and
+  `AURORA_DEMO_VRAM_DROP=30`: the drop comes once the textures are loaded,
+  `texture_mb` in `perf summary` falls within 2 s, and the crash report of
+  a session ended after it would show the headroom row negative
+  (`Video memory headroom, tightest in 60 s (MB)`, docs/BUG_REPORTING.md).
+  Without the variable nothing changes: the budget pass reads the sampling
+  thread's last figures every frame (a copy, no driver query).
 - **`AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]`**:
   once the loading screen is gone, our avatar and the camera behind it
   turn at that rate (180 if the value is not a number) for the first

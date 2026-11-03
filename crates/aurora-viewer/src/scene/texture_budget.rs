@@ -227,7 +227,45 @@ pub struct Reading {
     /// Bytes the pages would hold one step below (the textures load again
     /// what that step gives back).
     pub below: u64,
+    /// The driver's budget is under what it counts for the viewer: the
+    /// card is crowded now, the driver may already be moving memory out
+    /// ([`Crowding`]).
+    pub crowded: bool,
 }
+
+/// Whether the driver's budget has fallen under what the viewer holds,
+/// and when that begins. Past the budget Windows moves allocations to
+/// system memory and every pass of the frame slows down together: in
+/// demo, with a second viewer holding 7.2 GB of the same 16 GB card, GPU
+/// frames of 350 ms for 12 s, 70 times their usual time (#2072; on the
+/// grid, GPU frames of 1 s then a device lost, #1808). So the budget pass
+/// runs at the first such sample instead of waiting its next turn, and the
+/// pressure rises at once ([`Pressure::update`]).
+#[derive(Debug, Default)]
+pub struct Crowding {
+    crowded: bool,
+}
+
+impl Crowding {
+    /// The reading of now: the bytes the viewer is past the budget by, at
+    /// the first sample that finds it past (a new drop), None otherwise.
+    pub fn update(&mut self, video: Option<VideoMemory>) -> Option<u64> {
+        let now = video.is_some_and(|v| v.usage > v.budget);
+        let began = now && !self.crowded;
+        self.crowded = now;
+        began.then(|| video.map_or(0, |v| v.usage - v.budget))
+    }
+
+    pub fn crowded(&self) -> bool {
+        self.crowded
+    }
+}
+
+/// A step up every this long while the card is crowded ([`Crowding`]):
+/// not the second above the target nor the step before done, the driver is
+/// already moving memory out; a pass apart, so each step's reductions
+/// start before the next.
+const CROWDED_RAISE_AFTER: Duration = Duration::from_millis(250);
 
 /// LLViewerTexture::updateClass: how long the window stays in the background
 /// (not in front) or minimised before its textures go
@@ -343,7 +381,8 @@ impl Pressure {
     /// The step for this reading. Up: at once from none (textures only come
     /// down to their size on screen), then one step each time the memory is
     /// still above the target a second after the step was fully applied,
-    /// or [`RAISE_UNSETTLED_AFTER`] after it if it never is. Down: under
+    /// or [`RAISE_UNSETTLED_AFTER`] after it if it never is; a pass apart
+    /// while the card is crowded ([`CROWDED_RAISE_AFTER`]). Down: under
     /// 90 % of the target for a while, and only if the textures would still
     /// fit there one step below.
     pub fn update(&mut self, now: Instant, r: Reading) -> u8 {
@@ -356,7 +395,8 @@ impl Pressure {
             let at_step = now.duration_since(self.changed);
             let waited = now.duration_since(since) >= RAISE_AFTER && at_step >= RAISE_AFTER;
             let done = r.settled || at_step >= RAISE_UNSETTLED_AFTER;
-            if self.step == 0 || (self.step < MAX_PRESSURE && done && waited) {
+            let crowded = r.crowded && at_step >= CROWDED_RAISE_AFTER;
+            if self.step == 0 || (self.step < MAX_PRESSURE && (crowded || (done && waited))) {
                 self.step += 1;
                 self.changed = now;
             }
@@ -514,7 +554,49 @@ mod tests {
             target: 1000,
             settled,
             below,
+            crowded: false,
         }
+    }
+
+    #[test]
+    fn a_crowded_card_raises_the_pressure_a_pass_apart() {
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        let mut p = Pressure::new(t0);
+        let crowded = |used| Reading {
+            crowded: true,
+            ..reading(used, false, used)
+        };
+        assert_eq!(p.update(t0, crowded(1200)), 1);
+        // not the second nor the step done: the next pass
+        assert_eq!(p.update(t0 + ms(100), crowded(1200)), 1);
+        assert_eq!(p.update(t0 + ms(250), crowded(1200)), 2);
+        assert_eq!(p.update(t0 + ms(500), crowded(1200)), 3);
+        // no longer crowded, still above the target: the usual waits
+        assert_eq!(p.update(t0 + ms(750), reading(1200, true, 1200)), 3);
+        assert_eq!(p.update(t0 + ms(1500), reading(1200, true, 1200)), 4);
+        // under the target: never up, crowded or not
+        assert_eq!(p.update(t0 + ms(1750), crowded(900)), 4);
+    }
+
+    #[test]
+    fn crowding_is_told_once_per_drop() {
+        let mut c = Crowding::default();
+        assert_eq!(c.update(video(8 * GB, 6 * GB)), None);
+        assert!(!c.crowded());
+        // another program takes the card: the budget under the usage
+        assert_eq!(c.update(video(5 * GB, 6 * GB)), Some(GB));
+        assert!(c.crowded());
+        // still past it: not told again
+        assert_eq!(c.update(video(5 * GB, 6 * GB)), None);
+        assert_eq!(c.update(video(5 * GB, 5 * GB + GB / 2)), None);
+        // back under, then past again: a new drop
+        assert_eq!(c.update(video(8 * GB, 5 * GB)), None);
+        assert!(!c.crowded());
+        assert_eq!(c.update(video(4 * GB, 5 * GB)), Some(GB));
+        // no figures: never crowded
+        assert_eq!(c.update(None), None);
+        assert!(!c.crowded());
     }
 
     #[test]
