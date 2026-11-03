@@ -9437,10 +9437,14 @@ impl App {
         env.sky.halo_texture = slots[5];
         env.sky.stars = crate::world::night_sky::star_frame(
             self.settings.night_sky,
-            self.settings.night_sky_latitude,
+            crate::world::night_sky::Observer {
+                latitude: self.settings.night_sky_latitude,
+                longitude: self.settings.night_sky_longitude,
+                hour: self.settings.night_sky_hour,
+            },
             self.settings.night_sky_gain,
             env.sky.sun_dir,
-            crate::world::night_sky::unix_days_now(),
+            crate::demo::night_sky::instant().unwrap_or_else(crate::world::night_sky::unix_days_now),
             self.start.elapsed().as_secs_f64(),
         );
         t_part = self.scene.parts.lap(Part::ParamsEnv, t_part);
@@ -16854,6 +16858,16 @@ impl ApplicationHandler for App {
                 if let Some(gain) = gain {
                     self.settings.night_sky_gain = gain;
                 }
+                self.settings.sync_night_sky();
+            }
+            // AURORA_DEMO_NIGHT_SKY_CLOCK: the real time at this longitude
+            if let Some(longitude) = crate::demo::night_sky::clock_longitude() {
+                if self.settings.night_sky_place != crate::world::night_sky::SkyPlace::Custom {
+                    // keep the preset's latitude, as Custom
+                    self.settings.night_sky_place = crate::world::night_sky::SkyPlace::Custom;
+                }
+                self.settings.night_sky_longitude = longitude;
+                self.settings.night_sky_hour = crate::world::night_sky::StarHour::RealTime;
                 self.settings.sync_night_sky();
             }
             if let Some(t) = std::env::var("AURORA_DEMO_TOD").ok().and_then(|v| v.parse::<u8>().ok()) {

@@ -35,14 +35,30 @@ const STAR_CELL_TABLE: u32 = 3460u; // stars.rs CELL_TABLE
 const STAR_MARGIN: f32 = 0.025;     // stars.rs MARGIN (radians)
 // a cell holds about 6 stars, up to a few dozen in the Milky Way
 const STAR_MAX_PER_CELL: u32 = 96u;
+// the Milky Way's light at its brightest, and the size of its points
+// (sigma, pixels)
+const MW_GLOW: f32 = 0.12;
+const MW_GRAIN_SIGMA: f32 = 0.6;
+// the band's light left as a haze, the rest in points; points per lattice
+// cell at the band's brightest; the floor of the points' mean (see milky_way)
+const MW_HAZE: f32 = 0.45;
+const MW_POINTS: f32 = 2.0;
+const MW_POINT_MEAN_MIN: f32 = 0.6;
 
 struct GpuStar {
     pos: vec4<f32>,   // unit direction, peak intensity
     color: vec4<f32>, // linear colour, point size (pixels)
 };
 
+// The Milky Way map (stars.rs MILKY_WAY_*): galactic longitude -180° to
+// 180° across, latitude -MW_REACH to +MW_REACH down.
+const MW_WIDTH: u32 = 2048u;
+const MW_HEIGHT: u32 = 512u;
+const MW_REACH: f32 = 0.785398163; // 45°
+
 struct StarSky {
     cells: array<u32, 6920>, // 2 * STAR_CELL_TABLE: real sky, then the Legacy Viewer's
+    milky_way: array<u32, 1048576>, // MW_WIDTH * MW_HEIGHT
     stars: array<GpuStar>,
 };
 
@@ -122,89 +138,102 @@ fn pcg3(v0: vec3<u32>) -> vec3<u32> {
     return v;
 }
 
-fn lattice_gradient(i: vec3<f32>) -> vec3<f32> {
-    let h = pcg3(vec3<u32>(vec3<i32>(i) + vec3<i32>(4096)));
-    return normalize(vec3<f32>(h & vec3<u32>(0xffffu)) / 32767.5 - 1.0 + vec3<f32>(1e-4));
+// One texel of the Milky Way map: glow (square root of the light), grain
+// (stars of V 6.5 to 9.5 per texel, x 16) and B-V colour (x 100), 0..255.
+fn mw_texel(x: i32, y: i32) -> vec3<f32> {
+    let xi = u32((x + i32(MW_WIDTH)) % i32(MW_WIDTH));
+    let yi = u32(clamp(y, 0, i32(MW_HEIGHT) - 1));
+    let t = star_sky.milky_way[yi * MW_WIDTH + xi];
+    return vec3<f32>(f32(t & 255u), f32((t >> 8u) & 255u), f32((t >> 16u) & 255u));
 }
 
-fn corner(i: vec3<f32>, f: vec3<f32>, o: vec3<f32>) -> f32 {
-    return dot(lattice_gradient(i + o), f - o);
-}
-
-// Gradient noise in 0..1, quintic fade: no facets along the lattice (the
-// value noise it replaces drew straight edges across the Milky Way).
-fn gradient_noise(p: vec3<f32>) -> f32 {
-    let i = floor(p);
-    let f = fract(p);
-    let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-    let x00 = mix(corner(i, f, vec3<f32>(0.0, 0.0, 0.0)), corner(i, f, vec3<f32>(1.0, 0.0, 0.0)), u.x);
-    let x10 = mix(corner(i, f, vec3<f32>(0.0, 1.0, 0.0)), corner(i, f, vec3<f32>(1.0, 1.0, 0.0)), u.x);
-    let x01 = mix(corner(i, f, vec3<f32>(0.0, 0.0, 1.0)), corner(i, f, vec3<f32>(1.0, 0.0, 1.0)), u.x);
-    let x11 = mix(corner(i, f, vec3<f32>(0.0, 1.0, 1.0)), corner(i, f, vec3<f32>(1.0, 1.0, 1.0)), u.x);
-    let n = mix(mix(x00, x10, u.y), mix(x01, x11, u.y), u.z);
-    return clamp(0.5 + 0.75 * n, 0.0, 1.0);
-}
-
-// `octaves` octaves, each turned by a fixed rotation so that the lattices
-// do not line up from one octave to the next.
-fn fbm3(p: vec3<f32>, octaves: i32) -> f32 {
-    let turn = mat3x3<f32>(
-        vec3<f32>(0.00, 0.80, 0.60),
-        vec3<f32>(-0.80, 0.36, -0.48),
-        vec3<f32>(-0.60, -0.48, 0.64),
-    );
-    var sum = 0.0;
-    var amp = 0.5;
-    var total = 0.0;
-    var q = turn * p;
-    for (var i = 0; i < octaves; i++) {
-        sum += gradient_noise(q) * amp;
-        total += amp;
-        q = turn * q * 2.03 + vec3<f32>(1.7, 9.2, 5.3);
-        amp *= 0.5;
-    }
-    return sum / total;
-}
-
-// The Milky Way at catalogue direction `q` (J2000 equatorial), linear.
-// Procedural, laid on the real galactic plane: a band a few degrees wide,
-// brighter and wider towards the centre (Sagittarius, l = 0), faint
-// towards the anticentre (Auriga), with the dark Great Rift from Cygnus to
-// Sagittarius just north of the plane, and mottling.
-fn milky_way(q: vec3<f32>) -> vec3<f32> {
-    // J2000 equatorial to galactic (IAU 1958, Hipparcos values)
-    let g = vec3<f32>(
-        dot(vec3<f32>(-0.0548756, -0.8734371, -0.4838350), q),
-        dot(vec3<f32>(0.4941094, -0.4448296, 0.7469822), q),
-        dot(vec3<f32>(-0.8676661, -0.1980764, 0.4559838), q),
-    );
-    let l = atan2(g.y, g.x);
+// The Milky Way at catalogue direction `q` (J2000 equatorial), linear,
+// from the map of the real stars too faint for the naked eye (stars.rs,
+// Tycho-2): their glow, with its clouds and dark lanes, and their grain,
+// faint points scattered as densely as the counted stars, fixed in the
+// sky. `ax`, `ay`: the pixel's footprint across and down (catalogue
+// frame), `pixel` its angle (radians).
+fn milky_way(q: vec3<f32>, ax: vec3<f32>, ay: vec3<f32>, pixel: f32) -> vec3<f32> {
+    // J2000 equatorial to galactic (IAU 1958, Hipparcos values; the same
+    // rows as scripts/generate-star-catalog.py)
+    let m0 = vec3<f32>(-0.0548756, -0.8734371, -0.4838350);
+    let m1 = vec3<f32>(0.4941094, -0.4448296, 0.7469822);
+    let m2 = vec3<f32>(-0.8676661, -0.1980764, 0.4559838);
+    let g = vec3<f32>(dot(m0, q), dot(m1, q), dot(m2, q));
     let b = asin(clamp(g.z, -1.0, 1.0));
-    let centre = exp(-l * l / (0.5 * 0.5));
-    let width = 0.075 + 0.1 * centre;
-    let along = 0.3 + 0.7 * (0.5 + 0.5 * cos(l));
-    let band = exp(-(b * b) / (width * width)) * along;
-    let bulge = exp(-(l * l + 2.4 * b * b) / (0.2 * 0.2));
-    // most of the sky is far from the band: no noise there
-    if (band + bulge < 0.004) {
+    if (abs(b) >= MW_REACH) {
         return vec3<f32>(0.0);
     }
-    let coarse = fbm3(g * 5.0, 4);
-    let fine = fbm3(g * 21.0 + vec3<f32>(7.1, 3.3, 1.9), 3);
-    // star clouds: the band is patchy, not a smooth stripe
-    let clouds = smoothstep(0.3, 0.75, coarse) * (0.45 + 0.75 * fine);
-    var light = band * (0.15 + 1.2 * clouds) + bulge * (0.6 + 0.6 * fine);
-    // the Great Rift: l from -10° to 90°, centred a little north of the plane
-    // (1 - smoothstep: reversed edges are undefined in SPIR-V's and
-    // Metal's smoothstep)
-    let rift_l = smoothstep(-0.35, -0.1, l) * (1.0 - smoothstep(1.3, 1.75, l));
-    let rift_b = (b - 0.025 - 0.02 * sin(l * 3.0)) / 0.035;
-    let rift_shape = exp(-rift_b * rift_b) * rift_l;
-    if (rift_shape > 0.01) {
-        light *= 1.0 - 0.8 * rift_shape * (0.55 + 0.45 * fbm3(g * 13.0 + vec3<f32>(2.0), 3));
+    let l = atan2(g.y, g.x);
+    // texel coordinates, centres on the integers
+    let uv = vec2<f32>((l / 6.28318531 + 0.5) * f32(MW_WIDTH), (b / MW_REACH * 0.5 + 0.5) * f32(MW_HEIGHT)) - 0.5;
+    let i = vec2<i32>(floor(uv));
+    let f = uv - floor(uv);
+    let t = mix(mix(mw_texel(i.x, i.y), mw_texel(i.x + 1, i.y), f.x), mix(mw_texel(i.x, i.y + 1), mw_texel(i.x + 1, i.y + 1), f.x), f.y);
+    if (t.x + t.y < 0.5) {
+        return vec3<f32>(0.0);
     }
-    let tint = mix(vec3<f32>(0.80, 0.86, 1.0), vec3<f32>(1.0, 0.86, 0.68), clamp(centre * 0.7 + bulge, 0.0, 1.0));
-    return tint * light * 0.09;
+    let glow = (t.x / 255.0) * (t.x / 255.0);
+    // dust reddens the light towards the centre; the eye sees little colour
+    let warm = clamp((t.z / 100.0 - 0.45) / 0.9, 0.0, 1.0);
+    let tint = mix(vec3<f32>(0.82, 0.88, 1.0), vec3<f32>(1.0, 0.87, 0.70), warm);
+    let light = tint * glow * MW_GLOW;
+
+    // The band is made of stars: part of its light stays a haze (the stars
+    // too faint to tell apart), the rest is gathered into faint points on a
+    // lattice fixed in the sky, two cells per texel each way, each holding a
+    // star or none, as many as the map's light and its counted stars say.
+    // The points keep the band's mean light; where a pixel covers more than
+    // a cell (wide views, reflection probes) they would shimmer, and give
+    // way to that mean.
+    let cell = MW_REACH * 2.0 / f32(MW_HEIGHT * 2u);
+    let sparkle = 1.0 - smoothstep(0.8 * cell, 1.6 * cell, pixel);
+    let p = 1.0 - exp(-(glow * MW_POINTS + t.y / 16.0 / 4.0));
+    if (sparkle <= 0.0 || p < 0.002) {
+        return light;
+    }
+    // the pixel's footprint along longitude (east) and latitude (north),
+    // and back: a point's offset in pixels
+    let east = vec3<f32>(-sin(l), cos(l), 0.0);
+    let north = vec3<f32>(-sin(b) * cos(l), -sin(b) * sin(l), cos(b));
+    let gx = vec3<f32>(dot(m0, ax), dot(m1, ax), dot(m2, ax));
+    let gy = vec3<f32>(dot(m0, ay), dot(m1, ay), dot(m2, ay));
+    let j = mat2x2<f32>(vec2<f32>(dot(east, gx), dot(north, gx)), vec2<f32>(dot(east, gy), dot(north, gy)));
+    let det = j[0].x * j[1].y - j[1].x * j[0].y;
+    if (abs(det) < 1e-20) {
+        return light;
+    }
+    let inv = mat2x2<f32>(vec2<f32>(j[1].y, -j[0].y), vec2<f32>(-j[1].x, j[0].x)) * (1.0 / det);
+    let c = uv * 2.0 + 0.5; // cell coordinates
+    let base = vec2<i32>(floor(c - 0.5));
+    var field = vec3<f32>(0.0);
+    for (var k = 0; k < 4; k++) {
+        let ci = base + vec2<i32>(k & 1, k >> 1);
+        let h = pcg3(vec3<u32>(u32((ci.x + i32(MW_WIDTH * 2u)) % i32(MW_WIDTH * 2u)), u32(ci.y + 4), 0x5717u));
+        let r = vec3<f32>(h & vec3<u32>(0xffffu)) / 65535.0;
+        if (r.z >= p) {
+            continue;
+        }
+        let d = (vec2<f32>(ci) + r.xy - c) * vec2<f32>(cell * cos(b), cell);
+        let px = inv * d;
+        let r2 = dot(px, px) / (MW_GRAIN_SIGMA * MW_GRAIN_SIGMA);
+        if (r2 < 9.0) {
+            // brightness: the faint ones the more numerous (star counts
+            // grow about 2.5 times a magnitude over three magnitudes), mean 1
+            let u = mix(0.0316, 1.0, f32(h.z >> 16u) / 65535.0);
+            let w = 0.518 * pow(u, -0.6);
+            // a little colour of its own, bluer or redder than the band
+            let hue = f32((h.x >> 16u) & 255u) / 255.0 - 0.5;
+            field += w * exp(-0.5 * r2) * (vec3<f32>(1.0) + vec3<f32>(0.12, 0.0, -0.12) * hue);
+        }
+    }
+    // the field's mean over a pixel: occupied cells per pixel times a
+    // point's area; not below a floor, so that zooming in shows separate
+    // points rather than ever brighter ones
+    let cells = pixel * pixel / (cell * cell * max(cos(b), 0.1));
+    let mean = max(p * 6.2831853 * MW_GRAIN_SIGMA * MW_GRAIN_SIGMA * cells, MW_POINT_MEAN_MIN);
+    let points = mix(vec3<f32>(1.0), field / mean, sparkle);
+    return light * (MW_HAZE + (1.0 - MW_HAZE) * points);
 }
 
 // Stars and Milky Way in region direction `d` (unit), linear, before the
@@ -275,7 +304,7 @@ fn sky_stars(d: vec3<f32>, background: vec3<f32>, foot: SkyFootprint) -> vec3<f3
     // Preferences › "Star brightness" (1 for the Legacy Viewer's stars)
     var col = sum * max(frame.sky_stars[2].w, 0.0);
     if (frame.sky_stars[1].w > 0.0) {
-        col += milky_way(q) * frame.sky_stars[1].w;
+        col += milky_way(q, ax, ay, pixel) * frame.sky_stars[1].w;
     }
     return col * gain * extinction * glare;
 }
