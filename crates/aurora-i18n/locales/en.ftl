@@ -5221,6 +5221,27 @@ ui-options-cascaded-shadow-resolution-and-distance = Cascaded shadow resolution 
 cmdline-dice-total-result-for-d = { "Total result for " }{ $dice }d{ $faces }{ $modifier_text }{ ": " }{ $result }.
 ui-options-restore = Restore
 ui-appearance-restore-saved-outfit = Restore saved outfit
+outfit-json-export = Export to JSON
+outfit-json-import = Import from JSON
+outfit-json-title = Outfit backup
+outfit-json-file-type = Outfit JSON (*.json)
+outfit-json-invalid = This is not a supported outfit backup, or the file is invalid or too large.
+outfit-json-failed = The outfit backup could not be read or written. Please try again.
+outfit-json-saved = Outfit exported to { $file }
+outfit-json-confirm = Do you want to create and wear a new outfit called “{ $name }”? You can rename it below.
+outfit-json-name = Outfit name
+outfit-json-references-only = This file contains inventory references, not copies of assets. The items must still be available in your inventory.
+outfit-json-checking = Checking the outfit items in your inventory…
+outfit-json-missing = { $count ->
+    [one] One item could not be found or verified in your inventory.
+   *[other] { $count } items could not be found or verified in your inventory.
+    }
+    Attachments affected: { $attachments }.
+outfit-json-partial-help = You can import the available items as a partial outfit, or cancel. Missing body parts keep their currently worn replacements.
+outfit-json-none-found = None of the backed-up items are available. Import is unavailable.
+outfit-json-missing-changed = Some outfit items are unavailable. Import again to review the missing items and choose whether to import a partial outfit.
+outfit-json-create-wear = Create and wear
+outfit-json-import-partial = Import partial outfit
 common-unmute = Unmute
 ui-options-restore-default-shortcuts = Restore default shortcuts
 ui-options-restore-the-local-environment-selected-sky-water-and-day = Restore the local environment (selected sky, water and day cycle) at the next login

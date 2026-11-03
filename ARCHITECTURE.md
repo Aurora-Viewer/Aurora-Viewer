@@ -1,5 +1,16 @@
 # Aurora Viewer architecture
 
+`world/outfit_backup.rs` defines versioned, pretty-printed JSON outfit recipes:
+inventory item UUIDs, clothing link descriptions (layer order), item types and
+attachment points, without assets or permissions. `ui/appearance/json.rs` shares
+native cross-platform file dialogs with the other exports and runs bounded reads,
+parsing and atomic writes on a worker. Import checks missing originals through
+the existing inventory reader, reports unavailable items/attachments and asks
+for an editable name and explicit partial-import consent. The ordinary
+`appearance::Action::ImportJson` creates a new saved outfit and updates the COF
+through acknowledged inventory mutations, retaining required current body parts
+when absent and the existing attachment limits and RLVa command guards.
+
 Avatar gait playback resolves standard walk/run signals to the modern male or
 female assets selected by LLVOAvatar::remapMotionID with its default settings
 (#1720, related #1770). `scene/default_motions.rs::walk_run_asset` changes only the

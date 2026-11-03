@@ -12426,6 +12426,12 @@ impl App {
             }
         }
         self.poll_stream_list();
+        for command in self.appearance_ui.json.poll(&self.egui_ctx, &mut self.world) {
+            self.send(command);
+        }
+        if self.appearance_ui.json.has_confirmation() {
+            self.panels.appearance = true;
+        }
         match a.bar {
             BarAction::ImportStreamList => self.import_stream_list(),
             BarAction::ExportStreamList => self.export_stream_list(),
@@ -17976,6 +17982,10 @@ impl ApplicationHandler for App {
                 );
                 if view == "save" {
                     self.appearance_ui.begin_save_as(&self.world.inventory);
+                }
+                if matches!(view.as_str(), "json-import" | "json-partial") {
+                    self.appearance_ui.open(2, false);
+                    ui::appearance::json::demo(&self.world, &mut self.appearance_ui, view == "json-partial");
                 }
                 if matches!(view.as_str(), "multi-gallery" | "multi-outfits") {
                     self.appearance_ui.demo_multiselection();
