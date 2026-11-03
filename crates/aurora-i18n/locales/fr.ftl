@@ -12922,6 +12922,15 @@ keybinds-lens-zoom-out = Élargir l’angle de vue
 keybinds-lens-zoom-default = Réinitialiser l’angle de vue
 inventory-hover-pictures = Afficher les images au survol
 inventory-hover-pictures-help = Affiche les photos et les vignettes des objets ou dossiers après un court survol.
+inventory-folder-colors = Couleurs des dossiers
+inventory-folder-colors-help = Ajoute « Couleur du dossier… » au menu d'un dossier, pour donner à son icône la couleur de votre choix. Les couleurs restent dans cette visionneuse : personne d'autre ne les voit.
+inventory-folder-color = Couleur du dossier…
+inventory-folder-color-title = Couleur du dossier
+inventory-folder-color-custom = Couleur personnalisée
+inventory-folder-color-restore = Rétablir par défaut
+inventory-folder-color-private = Ces couleurs ne sont visibles que par vous.
+inventory-folder-color-many = { $count } dossiers
+inventory-folder-color-none = Sélectionnez un dossier pour le colorer.
 
 area-search-group = Groupe
 area-search-last-owner = Dernier propriétaire

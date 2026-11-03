@@ -10204,6 +10204,7 @@ impl App {
             raw.events
                 .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
             ui::inventory::aurora_demo(&ctx, self.frame_count);
+            ui::inventory::folder_colors_demo_frame(&ctx, &mut self.inventory_ui, &self.settings.inventory, self.frame_count);
             ui::inventory::bulk_permissions_demo(self.frame_count, &mut self.inventory_ui);
             if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "show-original" | "aurora-show-original")) {
                 match self.frame_count {
@@ -18540,6 +18541,10 @@ impl ApplicationHandler for App {
                         | "smart"
                         | "aurora-smart"
                         | "aurora-smart-wide"
+                        | "folder-colors"
+                        | "aurora-folder-colors"
+                        | "aurora-folder-colors-behind"
+                        | "aurora-folder-colors-follow"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(
@@ -18555,6 +18560,9 @@ impl ApplicationHandler for App {
                         self.inventory_ui
                             .show_original(&self.world.inventory, crate::world::inventory::demo::LOST_FOLDER);
                         self.inventory_ui.expand_all = Some(true);
+                    }
+                    if view.contains("folder-colors") {
+                        ui::inventory::folder_colors_demo(&mut self.inventory_ui, &mut self.settings.inventory);
                     }
                     self.inventory_ui.filters_open = view == "filters";
                     self.inventory_ui.preferences_open = view == "preferences";
