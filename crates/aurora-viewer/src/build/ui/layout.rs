@@ -113,8 +113,7 @@ pub(super) fn row(
         34.0
     } else if matches!(item, Item::Manipulators | Item::Actions) {
         28.0
-    } else if item == Item::Snap && !organizing {
-        // the snap choice, then Place on surface and its alignment
+    } else if item == Item::Snap && !organizing && s.snap_mode() == crate::build::SnapMode::Objects {
         SNAP_ROWS_HEIGHT
     } else {
         24.0
@@ -214,12 +213,13 @@ pub(super) fn row(
     }
 }
 
-/// The Snap item's three lines (`snap_mode`).
-const SNAP_ROWS_HEIGHT: f32 = 74.0;
+/// The Snap item's two lines in Objects mode, Place on surface under the
+/// choice (`snap_mode`).
+const SNAP_ROWS_HEIGHT: f32 = 50.0;
 
 /// "Snap": off, to the grid or to objects, one at a time
-/// (`BuildSettings::snap_mode`); under it, "Place on surface" with the side
-/// put against the surface and "Align to surface" (`build/place.rs`).
+/// (`BuildSettings::snap_mode`); under it in Objects mode, "Place on
+/// surface" with the side put against the surface (`build/place.rs`).
 fn snap_mode(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, s: &mut BuildSettings) {
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
@@ -247,6 +247,10 @@ fn snap_rows(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World
             }
         },
     );
+    // Place on surface goes with the object snap
+    if s.snap_mode() != crate::build::SnapMode::Objects {
+        return;
+    }
     ui.allocate_ui_with_layout(
         Vec2::new(ui.available_width(), 24.0),
         egui::Layout::left_to_right(egui::Align::Center),
@@ -274,22 +278,13 @@ fn snap_rows(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World
             let sides: Vec<(&str, crate::build::place::Side)> =
                 crate::build::place::Side::ALL.iter().map(|side| (side.label(), *side)).collect();
             ui.add_space((ui.available_width() - 126.0).max(4.0));
-            if let Some(side) = common::combo(ui, "place-side", Some(s.place_side), &sides, 120.0, true) {
-                s.place_side = side;
-            }
-        },
-    );
-    ui.allocate_ui_with_layout(
-        Vec2::new(ui.available_width(), 22.0),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            widgets::checkbox(
-                ui,
-                p,
-                &mut s.place_align,
-                RichText::new(aurora_i18n::tr!("build-place-align")).size(common::BODY),
-            )
-            .on_hover_text(aurora_i18n::tr!("build-place-align-tip"));
+            ui.scope(|ui| {
+                if let Some(side) = common::combo(ui, "place-side", Some(s.place_side), &sides, 120.0, true) {
+                    s.place_side = side;
+                }
+            })
+            .response
+            .on_hover_text(aurora_i18n::tr!("build-place-side-tip"));
         },
     );
 }

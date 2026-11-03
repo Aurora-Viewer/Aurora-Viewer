@@ -24,7 +24,12 @@ pub enum Shortcut {
     Snap,
     SelectionGrid,
     SnapXy,
-    SelectPart { next: bool, include: bool },
+    /// "Place on surface" on or off.
+    Place,
+    SelectPart {
+        next: bool,
+        include: bool,
+    },
 }
 
 impl Shortcut {
@@ -53,6 +58,7 @@ impl Shortcut {
             (Key::G, false, false) => Self::Snap,
             (Key::G, false, true) => Self::SelectionGrid,
             (Key::X, false, true) => Self::SnapXy,
+            (Key::P, false, false) => Self::Place,
             (Key::Period, true, include) => Self::SelectPart { next: true, include },
             (Key::Comma, true, include) => Self::SelectPart { next: false, include },
             _ => return None,
@@ -154,6 +160,7 @@ impl Shortcut {
             }),
             Self::SelectionGrid => tool.use_selection_for_grid(world, settings),
             Self::SnapXy => tool.snap_xy_to_grid(world, settings),
+            Self::Place => tool.toggle_place(world),
             Self::SelectPart { next, include } => tool.select_next_part(world, settings, next, include),
         }
     }
@@ -274,6 +281,7 @@ mod tests {
             ctrl("Y"),
             ctrl("Z"),
             "G".into(),
+            "P".into(),
         ]
         .into_iter()
         .chain([format!("{shift}G"), format!("{shift}X"), keys::label(0x86), keys::label(0x88)])

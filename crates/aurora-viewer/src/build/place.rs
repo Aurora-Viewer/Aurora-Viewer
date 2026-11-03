@@ -1,6 +1,12 @@
-//! "Place on surface": with the button on, the surface under the cursor
-//! shows where the selection would go, and a click puts it there, a chosen
-//! side against the surface, centred on the point clicked.
+//! "Place on surface": with the button (or P) on, the surface under the
+//! cursor shows where the selection would go, and a click puts it there, a
+//! chosen side against the surface, centred on the point clicked; the tool
+//! then turns off.
+//!
+//! Creators turn their root prims any way, so a side is not one of the
+//! object's own axes: it is read from how the selection sits when the tool
+//! turns on (`Reference`). Bottom is the side pointing down then, Front the
+//! side facing the camera, and they stay those sides while it turns.
 //!
 //! An Aurora feature, beside its snap to objects (`object_snap.rs`); no
 //! Legacy Viewer has it. The surfaces are those the snap uses: what objects
@@ -12,24 +18,25 @@ use super::object_snap::{self, support};
 use super::{Bounds, BuildSettings, BuildTool, EditMode, SelectType, Tool, draw::Painter3d, draw::fade};
 use crate::scene::Scene;
 use crate::world::World;
+use crate::world::objects::ObjKey;
 use aurora_net::build::{BuildCmd, TransformUpdate};
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-/// The side of the selection put against the surface, in its own axes.
+/// The side of the selection put against the surface, as it sat when the
+/// tool turned on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Side {
-    /// The side already facing the surface: nothing turns unless "Align to
-    /// surface" is on.
+    /// As it is: nothing turns, the side facing the surface meets it.
     #[default]
     Auto,
     Bottom,
+    Back,
     Top,
     Front,
-    Back,
     Left,
     Right,
 }
@@ -38,23 +45,25 @@ impl Side {
     pub const ALL: [Side; 7] = [
         Side::Auto,
         Side::Bottom,
+        Side::Back,
         Side::Top,
         Side::Front,
-        Side::Back,
         Side::Left,
         Side::Right,
     ];
 
-    /// Its outward direction in the object's frame (SL: X forward, Y left).
-    fn local(self) -> Option<Vec3> {
+    /// Where it pointed when it was read: `forward` is the camera's view
+    /// along the ground.
+    fn seen(self, forward: Vec3) -> Option<Vec3> {
+        let left = Vec3::Z.cross(forward);
         Some(match self {
             Side::Auto => return None,
             Side::Bottom => -Vec3::Z,
             Side::Top => Vec3::Z,
-            Side::Front => Vec3::X,
-            Side::Back => -Vec3::X,
-            Side::Left => Vec3::Y,
-            Side::Right => -Vec3::Y,
+            Side::Front => -forward,
+            Side::Back => forward,
+            Side::Left => left,
+            Side::Right => -left,
         })
     }
 
@@ -62,13 +71,31 @@ impl Side {
         match self {
             Side::Auto => aurora_i18n::tr!("build-place-side-auto"),
             Side::Bottom => aurora_i18n::tr!("build-place-side-bottom"),
+            Side::Back => aurora_i18n::tr!("build-place-side-back"),
             Side::Top => aurora_i18n::tr!("build-place-side-top"),
             Side::Front => aurora_i18n::tr!("build-place-side-front"),
-            Side::Back => aurora_i18n::tr!("build-place-side-back"),
             Side::Left => aurora_i18n::tr!("build-place-side-left"),
             Side::Right => aurora_i18n::tr!("build-place-side-right"),
         }
     }
+}
+
+/// How the selection sat when the tool turned on: its box axis for `side`
+/// (in the box's frame), the one that pointed most that way.
+pub fn side_axis(box_rotation: Quat, camera_at: Vec3, side: Side) -> Option<Vec3> {
+    let forward = Vec3::new(camera_at.x, camera_at.y, 0.0).normalize_or(Vec3::X);
+    let want = side.seen(forward)?;
+    (0..3)
+        .flat_map(|i| [1.0, -1.0].map(|s| unit(i) * s))
+        .max_by(|a, b| (box_rotation * *a).dot(want).total_cmp(&(box_rotation * *b).dot(want)))
+}
+
+/// The selection and the view the sides were read with.
+#[derive(Debug, Clone)]
+struct Reference {
+    selection: Vec<ObjKey>,
+    rotation: Quat,
+    camera_at: Vec3,
 }
 
 /// Where a click would put the selection.
@@ -89,29 +116,16 @@ pub struct Landing {
 pub struct Place {
     pub active: bool,
     pub preview: Option<Landing>,
+    reference: Option<Reference>,
 }
 
-/// Where the selection's box `sel` goes on the surface at `point`: the
-/// `side` against it (or, for Auto, the side already facing it), turned
-/// flat on it when a side is chosen or `align` is on; resting on the plane,
+/// Where the selection's box `sel` goes on the surface at `point`: the side
+/// `against` (an axis of the box's frame) turned flat against it, or, with
+/// None, as it is, the side facing the surface on it; resting on the plane,
 /// its centre over the point.
-pub fn landing(sel: &Bounds, point: Vec3, normal: Vec3, side: Side, align: bool) -> Landing {
+pub fn landing(sel: &Bounds, point: Vec3, normal: Vec3, against: Option<Vec3>) -> Landing {
     let n = normal.normalize_or(Vec3::Z);
-    let facing = || {
-        (0..3)
-            .flat_map(|i| [1.0, -1.0].map(|s| sel.rotation * (unit(i) * s)))
-            .min_by(|a, b| a.dot(n).total_cmp(&b.dot(n)))
-            .unwrap_or(-n)
-    };
-    let (against, turns) = match side.local() {
-        Some(l) => (sel.rotation * l, true),
-        None => (facing(), align),
-    };
-    let turn = if turns {
-        Quat::from_rotation_arc(against, -n)
-    } else {
-        Quat::IDENTITY
-    };
+    let turn = against.map_or(Quat::IDENTITY, |a| Quat::from_rotation_arc(sel.rotation * a, -n));
     let mut to = Bounds {
         center: point,
         rotation: (turn * sel.rotation).normalize(),
@@ -125,6 +139,14 @@ pub fn landing(sel: &Bounds, point: Vec3, normal: Vec3, side: Side, align: bool)
         to,
         turn,
     }
+}
+
+/// The box axis nearest `v` (a turned axis, read back in the box's frame).
+fn snap_axis(v: Vec3) -> Vec3 {
+    (0..3)
+        .flat_map(|i| [1.0, -1.0].map(|s| unit(i) * s))
+        .max_by(|a, b| a.dot(v).total_cmp(&b.dot(v)))
+        .unwrap_or(-Vec3::Z)
 }
 
 fn unit(i: usize) -> Vec3 {
@@ -151,9 +173,11 @@ impl BuildTool {
             && super::manip::can_transform_selection(world, &self.selection, false, EditMode::Move)
     }
 
+    /// The button and P: on (the sides read again), or off.
     pub fn toggle_place(&mut self, world: &World) {
         self.place.active = !self.place.active && self.can_place(world);
         self.place.preview = None;
+        self.place.reference = None;
     }
 
     /// The landing under the cursor, every frame while the button is on.
@@ -177,6 +201,14 @@ impl BuildTool {
         let sel = scene
             .and_then(|scene| object_snap::shown_bounds(world, scene, &moving, &edit_box, now))
             .unwrap_or(edit_box);
+        // the sides as the selection sits now, kept while it stays selected
+        if self.place.reference.as_ref().is_none_or(|r| r.selection != self.selection) {
+            self.place.reference = Some(Reference {
+                selection: self.selection.clone(),
+                rotation: edit_box.rotation,
+                camera_at: self.cam.at,
+            });
+        }
         let ray = self.cam.ray(cursor.0, cursor.1);
         // the first object surface along the ray, past the selection
         let object = scene.and_then(|scene| {
@@ -198,13 +230,19 @@ impl BuildTool {
         let Some((point, normal)) = nearest else { return };
         // the side the camera sees
         let normal = if normal.dot(ray.1) > 0.0 { -normal } else { normal };
-        self.place.preview = Some(landing(&sel, point, normal, s.place_side, s.place_align));
+        // the side read then, in the box's frame now: the box turns with the
+        // selection, so it is the same side after a turn
+        let against = self.place.reference.as_ref().and_then(|r| {
+            let axis = side_axis(r.rotation, r.camera_at, s.place_side)?;
+            Some(sel.rotation.inverse() * (r.rotation * axis))
+        });
+        self.place.preview = Some(landing(&sel, point, normal, against.map(|a| snap_axis(a))));
     }
 
     /// A click while the button is on: put the selection where the preview
-    /// shows, root by root (the Align tool's way). The button stays on with
-    /// Shift.
-    pub(super) fn place_click(&mut self, world: &mut World, keep: bool) {
+    /// shows, root by root (the Align tool's way); the button turns off (P
+    /// places again).
+    pub(super) fn place_click(&mut self, world: &mut World) {
         let Some(l) = self.place.preview.take() else { return };
         let now = Instant::now();
         let mut by_region: HashMap<aurora_net::RegionHandle, Vec<TransformUpdate>> = HashMap::new();
@@ -233,7 +271,7 @@ impl BuildTool {
         for (handle, updates) in by_region {
             self.send(BuildCmd::Transform { handle, updates });
         }
-        self.place.active = keep;
+        self.place.active = false;
     }
 
     /// The preview: a pad on the surface under the landing, and the
@@ -284,49 +322,66 @@ mod tests {
     }
 
     #[test]
-    fn auto_puts_the_side_facing_the_surface_on_it_without_turning() {
+    fn as_it_is_puts_the_side_facing_the_surface_on_it_without_turning() {
         let sel = cube(Vec3::new(5.0, 5.0, 9.0), Vec3::new(0.5, 0.3, 0.2), Quat::from_rotation_z(0.4));
         // on a floor: its bottom, centred over the point
-        let l = landing(&sel, Vec3::new(1.0, 2.0, 3.0), Vec3::Z, Side::Auto, false);
+        let l = landing(&sel, Vec3::new(1.0, 2.0, 3.0), Vec3::Z, None);
         assert_eq!(l.turn, Quat::IDENTITY);
         assert!(l.to.center.abs_diff_eq(Vec3::new(1.0, 2.0, 3.2), 1e-5), "{:?}", l.to);
         // on a wall facing +X: its side toward the wall
-        let l = landing(&sel, Vec3::new(1.0, 2.0, 3.0), Vec3::X, Side::Auto, false);
+        let l = landing(&sel, Vec3::new(1.0, 2.0, 3.0), Vec3::X, None);
         assert!((l.to.center.x - (1.0 + support(&sel, Vec3::X))).abs() < 1e-5);
         assert_eq!((l.to.center.y, l.to.center.z), (2.0, 3.0));
+        // a tilted one rests on its corner
+        let tilted = cube(Vec3::ZERO, Vec3::splat(0.5), Quat::from_rotation_x(0.3));
+        let l = landing(&tilted, Vec3::ZERO, Vec3::Z, None);
+        assert_eq!(l.to.rotation, tilted.rotation);
+        assert!(l.to.center.z > 0.5);
     }
 
     #[test]
-    fn a_tilted_selection_rests_its_corner_unless_aligned() {
-        let tilted = Quat::from_rotation_x(0.3);
-        let sel = cube(Vec3::ZERO, Vec3::splat(0.5), tilted);
-        let l = landing(&sel, Vec3::ZERO, Vec3::Z, Side::Auto, false);
-        assert_eq!(l.to.rotation, tilted);
-        assert!(l.to.center.z > 0.5, "on its corner, higher than flat");
-        let flat = landing(&sel, Vec3::ZERO, Vec3::Z, Side::Auto, true);
-        assert!((flat.to.rotation * -Vec3::Z).abs_diff_eq(-Vec3::Z, 1e-5), "its bottom down");
-        assert!((flat.to.center.z - 0.5).abs() < 1e-5);
+    fn sides_are_read_from_how_it_sits_not_from_the_creators_axes() {
+        // a root prim turned on its side by its creator: its local +Y points down
+        let rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+        assert!((rot * Vec3::Y).abs_diff_eq(Vec3::Z, 1e-5));
+        let at = Vec3::new(0.0, 1.0, -0.3); // the camera looks along +Y, a little down
+        let axis = |side| side_axis(rot, at, side).unwrap();
+        assert!((rot * axis(Side::Bottom)).abs_diff_eq(-Vec3::Z, 1e-5));
+        assert!((rot * axis(Side::Top)).abs_diff_eq(Vec3::Z, 1e-5));
+        assert!((rot * axis(Side::Back)).abs_diff_eq(Vec3::Y, 1e-5), "away from the camera");
+        assert!((rot * axis(Side::Front)).abs_diff_eq(-Vec3::Y, 1e-5), "toward it");
+        assert!((rot * axis(Side::Left)).abs_diff_eq(-Vec3::X, 1e-5), "on the camera's left");
+        assert_eq!(side_axis(rot, at, Side::Auto), None);
     }
 
     #[test]
     fn a_chosen_side_turns_flat_against_the_surface() {
         let sel = cube(Vec3::ZERO, Vec3::new(0.1, 0.6, 0.4), Quat::IDENTITY);
-        // a picture: its back against a wall facing -Y, slanted 10°
+        // a picture: its back (-X here) against a wall facing -Y, slanted 10°
         let wall = (Quat::from_rotation_x(0.17) * -Vec3::Y).normalize();
-        let l = landing(&sel, Vec3::new(3.0, 8.0, 2.0), wall, Side::Back, false);
+        let l = landing(&sel, Vec3::new(3.0, 8.0, 2.0), wall, Some(-Vec3::X));
         assert!((l.to.rotation * -Vec3::X).abs_diff_eq(-wall, 1e-5), "its back on the wall");
-        // half its depth off the wall, centred on the point
         assert!((l.to.center - Vec3::new(3.0, 8.0, 2.0)).abs_diff_eq(wall * 0.1, 1e-5));
-        // its top on a ceiling facing down
-        let up = landing(&sel, Vec3::new(0.0, 0.0, 4.0), -Vec3::Z, Side::Top, false);
+        // its top against a ceiling facing down
+        let up = landing(&sel, Vec3::new(0.0, 0.0, 4.0), -Vec3::Z, Some(Vec3::Z));
         assert!((up.to.rotation * Vec3::Z).abs_diff_eq(Vec3::Z, 1e-5));
         assert!((up.to.center.z - 3.6).abs() < 1e-5);
     }
 
     #[test]
-    fn sides_and_settings_keep_their_names() {
+    fn the_side_read_stays_that_side_after_the_object_turns() {
+        let first = Quat::from_rotation_y(0.7);
+        let bottom = side_axis(first, Vec3::X, Side::Bottom).unwrap();
+        // placed on a wall, turned a quarter: the same box axis is its bottom
+        let turned = Quat::from_rotation_z(1.2) * first;
+        let again = snap_axis(turned.inverse() * (first * bottom));
+        assert!((turned.inverse() * (turned * again)).abs_diff_eq(bottom, 1e-5));
+    }
+
+    #[test]
+    fn sides_keep_their_names() {
         assert_eq!(serde_json::to_string(&Side::Bottom).unwrap(), "\"bottom\"");
         let s: BuildSettings = serde_json::from_str("{}").unwrap();
-        assert_eq!((s.place_side, s.place_align), (Side::Auto, false));
+        assert_eq!(s.place_side, Side::Auto);
     }
 }

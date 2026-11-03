@@ -139,10 +139,9 @@ pub struct BuildSettings {
     /// with `snap` (`snap_mode`); off by default, so moving behaves as the
     /// Legacy Viewer's until it is chosen.
     pub object_snap: bool,
-    /// "Place on surface": the selection's side put against the surface,
-    /// and whether it turns flat on it (`place.rs`; Aurora's own).
+    /// "Place on surface": the selection's side put against the surface
+    /// (`place.rs`; Aurora's own).
     pub place_side: place::Side,
-    pub place_align: bool,
     /// RotationStep (degrees) outside the snap ring.
     pub rotation_step: f32,
     /// EditLinkedParts.
@@ -561,7 +560,6 @@ impl Default for BuildSettings {
             snap: true,
             object_snap: false,
             place_side: place::Side::Auto,
-            place_align: false,
             rotation_step: 1.0,
             edit_linked: false,
             scale_uniform: false,
@@ -1964,7 +1962,7 @@ impl BuildTool {
                 true
             }
             Tool::Edit if self.place.active => {
-                self.place_click(world, mods.shift);
+                self.place_click(world);
                 true
             }
             Tool::Edit => {
