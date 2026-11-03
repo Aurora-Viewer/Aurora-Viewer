@@ -4708,6 +4708,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized\|emote` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card, emotes |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
+| `AURORA_DEMO_IM_ANNOUNCE=1\|prefs` | Residents start typing IMs to us, then send them: the conversation announced before the message, and the unread count in the window title |
 | `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object\|group-notice\|legacy-group-notice\|group-notice-saved\|purchase\|purchase-open` | Notification center: cards, burst, paused bell, history, Legacy toasts, object inventory offers, group notices and a delivered purchase |
@@ -5821,6 +5822,17 @@ failure. Grid validation and any paid upload are performed by the human.
   Chat on the group (it shows the saved settings, not the run's). `prefs`
   keeps the settings of Preferences › Chat › Keyword alerts, to try them by
   hand, and sends the same five lines again every 1200 frames.
+- **`AURORA_DEMO_IM_ANNOUNCE=1|prefs`**: from frame 700, every 600 frames
+  (about ten seconds at 60 fps), Nova then Tess in turn start typing an IM
+  to us (IM_TYPING_START), and send it 300 frames later. `1` turns on
+  Preferences › Chat › "Announce incoming IMs as soon as the sender starts
+  typing" and "Show the number of unread IMs in the window title" for the
+  run (never saved): the conversation opens with "Incoming message from
+  Nova Exemple" before her message, the log says `incoming IM announced`,
+  and the window title (the taskbar's too) reads `(1) Aurora Viewer …`,
+  then `(2)` with her message, until the conversation is read. A
+  conversation closed is announced again at its resident's next turn.
+  `prefs` leaves both switches to Preferences › Chat, to try them by hand.
 - **`AURORA_DEMO_ATTENTION=1|front|capture`**: the window goes to the
   taskbar at frame 700, then an IM (760), a mention in nearby chat (820), a
   mention in a group chat (880), an object's message (940), a teleport offer

@@ -41,6 +41,7 @@ pub mod home;
 pub mod hover_height;
 pub mod hud_lock;
 pub mod hud_scale;
+mod im_announce;
 pub mod inventory;
 pub mod inventory_offers;
 pub mod land;
@@ -338,6 +339,10 @@ pub struct World {
     /// Lines not sent by a person neither count as unread nor alert
     /// (Preferences › Chat, #741, off), given every frame by the app.
     pub quiet_automated_chat: bool,
+    /// A resident starting to type to us opens the conversation with an
+    /// announcement (FSAnnounceIncomingIM, `im_announce.rs`), given every
+    /// frame by the app.
+    pub announce_incoming_im: bool,
     /// What the notices of the nearby chat are about, for their icon.
     pub notice_topics: notice_topics::Topics,
     /// Conversation transcripts of the account logged in.
@@ -708,6 +713,7 @@ impl World {
             nearby_news: false,
             chat_badge: 0,
             quiet_automated_chat: false,
+            announce_incoming_im: false,
             notice_topics: Default::default(),
             chat_log: Default::default(),
             nearby_history: Default::default(),
@@ -4052,6 +4058,9 @@ impl World {
         // Stop): "is typing" in their conversation, never a line
         if matches!(im.dialog, IM_TYPING_START | IM_TYPING_STOP) {
             if !im.from_agent_id.is_nil() {
+                if im.dialog == IM_TYPING_START {
+                    self.announce_typing(&im);
+                }
                 self.social.set_typing(im.from_agent_id, im.dialog == IM_TYPING_START);
             }
             return;

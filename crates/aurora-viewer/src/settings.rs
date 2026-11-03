@@ -784,6 +784,13 @@ pub struct Settings {
     /// closed (FSNotifyNearbyChatFlash, on); the button's right-click menu
     /// turns it off, IMs and group chats keep flashing.
     pub flash_conversations_nearby: bool,
+    /// A resident starting to type an IM to us, with no conversation open
+    /// yet, opens it with "Incoming message from <name>"
+    /// (FSAnnounceIncomingIM, off).
+    pub announce_incoming_im: bool,
+    /// "(<unread>) " before the window title while IMs, group chats or
+    /// conferences wait unread (FSShowMessageCountInWindowTitle, off).
+    pub unread_ims_in_window_title: bool,
     /// The thumbnails of the open conversations, with their unread count
     /// (the Legacy Viewer's IM chiclets, #1134): where, or none.
     pub chat_thumbnails: ChatThumbnails,
@@ -1859,6 +1866,8 @@ impl Default for Settings {
             flash_unread_conversations: true,
             flash_conversations_button: true,
             flash_conversations_nearby: true,
+            announce_incoming_im: false,
+            unread_ims_in_window_title: false,
             chat_thumbnails: ChatThumbnails::ChatBar,
             chat_thumbnails_flash: true,
             flash_on_message: true,
