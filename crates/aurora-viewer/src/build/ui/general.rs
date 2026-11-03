@@ -90,7 +90,7 @@ fn item_lets_export(item: &aurora_net::inventory::InvItem, agent: Uuid) -> bool 
 /// each face's texture is a standard one or has an item of the agent that
 /// lets it be exported (`item_lets_export`). Every prim of the linksets is
 /// looked at, not only the root as in the Legacy Viewer.
-fn export_settable(tool: &BuildTool, world: &World, props: &[ObjectProps]) -> bool {
+fn export_settable(tool: &mut BuildTool, world: &World, props: &[ObjectProps]) -> bool {
     let own_work = !props.is_empty()
         && props.iter().all(|x| {
             x.owner_id == world.agent_id && x.creator_id == x.owner_id && can_set_export(x.base_mask, x.owner_mask, x.next_owner_mask)
@@ -108,22 +108,42 @@ fn export_settable(tool: &BuildTool, world: &World, props: &[ObjectProps]) -> bo
         return false;
     }
     // is_asset_exportable: a null texture needs no check
-    let mut textures: std::collections::HashSet<Uuid> = tool
+    let textures: std::collections::HashSet<Uuid> = tool
         .linkset_prims(world)
         .into_iter()
         .filter_map(|i| world.objects.get(i).and_then(|o| o.te.clone()))
         .flat_map(|te| te.faces.iter().map(|f| f.texture).collect::<Vec<_>>())
         .filter(|id| !standard_texture(*id))
         .collect();
-    for item in world.inventory.items.values() {
-        if textures.is_empty() {
-            break;
-        }
-        if item_lets_export(item, world.agent_id) {
-            textures.remove(&item.asset_id);
-        }
+    if textures.is_empty() {
+        return true;
     }
-    textures.is_empty()
+    let exportable = exportable_assets(tool, world);
+    textures.iter().all(|id| exportable.contains(id))
+}
+
+/// The asset ids an item of ours lets be exported (`item_lets_export`),
+/// read again only when the inventory or the agent changed.
+fn exportable_assets<'a>(tool: &'a mut BuildTool, world: &World) -> &'a std::collections::HashSet<Uuid> {
+    let generation = world.inventory.generation;
+    let stale = tool
+        .export_assets
+        .as_ref()
+        .is_none_or(|(g, agent, _)| *g != generation || *agent != world.agent_id);
+    if stale {
+        let set = world
+            .inventory
+            .items
+            .values()
+            .filter(|item| item_lets_export(item, world.agent_id))
+            .map(|item| item.asset_id)
+            .collect();
+        tool.export_assets = Some((generation, world.agent_id, set));
+    }
+    &tool
+        .export_assets
+        .get_or_insert_with(|| (generation, world.agent_id, Default::default()))
+        .2
 }
 
 /// (value, tentative) of one bit.
@@ -730,6 +750,32 @@ mod tests {
         assert!(allows_export(full, perm::EXPORT));
         assert!(!allows_export(full, perm::COPY), "Everyone's bit decides");
         assert!(!allows_export(perm::UNRESTRICTED, perm::EXPORT), "base without Export");
+    }
+
+    #[test]
+    fn the_exportable_assets_are_read_once_per_inventory_change() {
+        use aurora_net::inventory::InvItem;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        let full = perm::UNRESTRICTED | perm::MOVE | perm::EXPORT;
+        let upload = |id: u128, asset: u128| InvItem {
+            id: Uuid::from_u128(id),
+            asset_id: Uuid::from_u128(asset),
+            creator: Uuid::from_u128(1),
+            base_mask: full,
+            owner_mask: full,
+            ..Default::default()
+        };
+        world.inventory.add_items(vec![upload(10, 100)]);
+        let mut tool = BuildTool::default();
+        assert!(exportable_assets(&mut tool, &world).contains(&Uuid::from_u128(100)));
+        // the same generation: the set is not read again
+        world.inventory.items.insert(Uuid::from_u128(11), upload(11, 101));
+        assert!(!exportable_assets(&mut tool, &world).contains(&Uuid::from_u128(101)));
+        // a change of the inventory: read again
+        world.inventory.add_items(vec![upload(12, 102)]);
+        let set = exportable_assets(&mut tool, &world);
+        assert!(set.contains(&Uuid::from_u128(101)) && set.contains(&Uuid::from_u128(102)));
     }
 
     #[test]
