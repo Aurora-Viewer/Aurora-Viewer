@@ -890,7 +890,7 @@ pub fn category_plan(
     require_outfit(inv, id)?;
     match &mut update {
         Update::Rename(name) => {
-            crate::text_validation::require(crate::text_validation::Policy::Ascii, name)?;
+            crate::text_validation::require_edit(crate::text_validation::Policy::Ascii, &inv.folders[&id].info.name, name)?;
             *name = name.trim().into();
             if name.is_empty() || name.chars().count() > 63 || name.chars().any(char::is_control) {
                 return Err(aurora_i18n::tr!("world-appearance-choose-a-name-of-1-to-63-characters").into());

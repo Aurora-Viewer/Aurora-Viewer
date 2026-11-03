@@ -24,8 +24,17 @@ pub fn optional(
 struct Buffer<'a> {
     text: &'a mut String,
     policy: Policy,
+    before: Option<String>,
     deleted: Option<(String, Range<CharIndex>)>,
     rejected: Option<Range<CharIndex>>,
+}
+
+impl Buffer<'_> {
+    fn remember(&mut self) {
+        if self.before.is_none() {
+            self.before = Some(self.text.clone());
+        }
+    }
 }
 
 impl TextBuffer for Buffer<'_> {
@@ -39,6 +48,7 @@ impl TextBuffer for Buffer<'_> {
         self.text
     }
     fn insert_text(&mut self, text: &str, at: CharIndex) -> usize {
+        self.remember();
         if !self.policy.accepts(text) {
             let range = if let Some((before, range)) = self.deleted.take() {
                 *self.text = before;
@@ -53,12 +63,14 @@ impl TextBuffer for Buffer<'_> {
         self.text.insert_text(text, at)
     }
     fn delete_char_range(&mut self, range: Range<CharIndex>) {
+        self.remember();
         self.deleted = Some((self.text.clone(), range.clone()));
         self.text.delete_char_range(range);
     }
     // Undo/redo restores a previously accepted value. Existing grid text
     // remains readable and undoable even when it predates the restriction.
     fn replace_with(&mut self, text: &str) {
+        self.remember();
         self.text.replace_with(text);
     }
     fn insert_text_at(&mut self, cursor: &mut CCursor, text: &str, limit: usize) {
@@ -104,11 +116,9 @@ pub fn show(
         output.response.flags.remove(egui::response::Flags::CHANGED);
         return output;
     }
-    let before = text.clone();
-    let state_before = ui
-        .memory(|m| m.focused())
-        .and_then(|id| egui::TextEdit::load_state(ui.ctx(), id).map(|state| (id, state.clone(), state.undoer())));
-    let (preedit, invalid_commit) = ui.input(|i| {
+    let id_key = ui.next_auto_id().with("restricted_text_id");
+    let previous_id = ui.ctx().data(|d| d.get_temp::<egui::Id>(id_key));
+    let (preedit, invalid_commit, invalid_insertion) = ui.input(|i| {
         let commit = i.events.iter().any(|e| matches!(e, egui::Event::Ime(egui::ImeEvent::Commit(_))));
         (
             !commit
@@ -118,15 +128,29 @@ pub fn show(
             i.events
                 .iter()
                 .any(|e| matches!(e, egui::Event::Ime(egui::ImeEvent::Commit(text)) if !policy.accepts(text))),
+            i.events
+                .iter()
+                .any(|e| matches!(e, egui::Event::Text(text) | egui::Event::Paste(text) if !policy.accepts(text))),
         )
     });
+    // An idle field needs no rollback copy. In particular, do not copy the
+    // chat editor's undo history once for every visible restricted field.
+    let state_before = if preedit || invalid_commit || invalid_insertion {
+        previous_id
+            .filter(|id| ui.memory(|m| m.has_focus(*id)))
+            .and_then(|id| egui::TextEdit::load_state(ui.ctx(), id).map(|state| (id, state.clone(), state.undoer())))
+    } else {
+        None
+    };
     let mut buffer = Buffer {
         text,
         policy,
+        before: None,
         deleted: None,
         rejected: None,
     };
     let mut output = make(&mut buffer, ui).show(ui);
+    ui.ctx().data_mut(|d| d.insert_temp(id_key, output.response.id));
     // The OS may compose ASCII romaji before offering a Japanese candidate.
     // Provisional text must never become the model's fallback on rejection.
     // Retain the original selection until an allowed composition commits.
@@ -134,7 +158,9 @@ pub fn show(
         && let Some((id, state, undoer)) = state_before.as_ref()
         && *id == output.response.id
     {
-        *buffer.text = before;
+        if let Some(before) = buffer.before.take() {
+            *buffer.text = before;
+        }
         output.state = state.clone();
         output.state.set_undoer(undoer.clone());
         output.cursor_range = output.state.cursor.char_range();
@@ -153,7 +179,7 @@ pub fn show(
             .cursor
             .set_char_range(Some(CCursorRange::two(CCursor::new(range.start.0), CCursor::new(range.end.0))));
         output.state.clone().store(ui.ctx(), output.response.id);
-        if *buffer.text == before {
+        if buffer.before.as_ref().is_some_and(|before| buffer.text.as_str() == before.as_str()) {
             output.response.flags.remove(egui::response::Flags::CHANGED);
             // egui records cursor as well as text in its undo checkpoints.
             // Restoring text alone leaves a spurious undo step for the

@@ -4172,6 +4172,7 @@ mod tests {
             let mut inv = Inventory::default();
             crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
             let id = Uuid::from_u128(8100);
+            inv.items.get_mut(&id).expect("demo object").name = "Objet de démonstration 桜".into();
             let mut st = InventoryUi::default();
             st.begin_rename(&inv, id);
             rename_frame(&ctx, &inv, &mut st, Vec::new());

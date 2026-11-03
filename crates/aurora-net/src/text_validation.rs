@@ -18,14 +18,18 @@ pub enum Policy {
 
 impl Policy {
     pub fn accepts(self, text: &str) -> bool {
-        text.chars().all(|c| match self {
+        text.chars().all(|c| self.accepts_char(c))
+    }
+
+    pub fn accepts_char(self, c: char) -> bool {
+        match self {
             Self::Ascii => (' '..='\u{7f}').contains(&c),
             Self::PrintableNoPipe => (' '..='~').contains(&c) && c != '|',
             Self::MultilineNoPipe => (c == '\n' || (' '..='\u{7f}').contains(&c)) && c != '|',
             Self::AoName => (' '..='~').contains(&c) && !matches!(c, '|' | ':'),
             Self::Digits => c.is_ascii_digit(),
             Self::Decimal => c.is_ascii_digit() || matches!(c, '-' | '.' | ',' | ' '),
-        })
+        }
     }
 }
 

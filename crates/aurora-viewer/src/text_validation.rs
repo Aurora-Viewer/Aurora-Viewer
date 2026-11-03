@@ -16,6 +16,40 @@ pub fn require(policy: Policy, text: &str) -> Result<(), String> {
     if policy.accepts(text) { Ok(()) } else { Err(reason(policy).into()) }
 }
 
+/// Prevalidate new input while retaining characters already received from
+/// the server. Existing unsupported characters may remain or be deleted;
+/// adding, duplicating or reordering them is still refused. Linear, without
+/// allocating a diff, including several ASCII edits around a Unicode name.
+pub fn require_edit(policy: Policy, before: &str, after: &str) -> Result<(), String> {
+    let mut existing = before.chars().filter(|&c| !policy.accepts_char(c));
+    for c in after.chars().filter(|&c| !policy.accepts_char(c)) {
+        if !existing.any(|old| old == c) {
+            return Err(reason(policy).into());
+        }
+    }
+    Ok(())
+}
+
+/// LLFloaterNameDesc::postBuild (indra/newview/llfloaternamedesc.cpp):
+/// generated upload labels replace unsupported UTF-8 bytes with '?', remove
+/// controls, then trim. The local path itself is never modified.
+pub fn generated_name(name: &str, limit: usize) -> String {
+    name.bytes()
+        .map(|b| {
+            if b == b'|' || (b as i8) < 32 && b != b'\n' {
+                '?'
+            } else {
+                char::from(b)
+            }
+        })
+        .filter(|c| (' '..='~').contains(c))
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(limit)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::world::{
@@ -37,13 +71,30 @@ mod tests {
             desc: "Existing 龙".into(),
             ..Default::default()
         }]);
-        assert!(actions::patch(&inv, id, llsd_map! { "name" => "New 桜" }).is_err());
-        assert!(actions::patch(&inv, id, llsd_map! { "desc" => "New 龙" }).is_err());
+        assert!(actions::patch(&inv, id, llsd_map! { "name" => "New 龙" }).is_err());
+        assert!(actions::patch(&inv, id, llsd_map! { "desc" => "New 桜" }).is_err());
+        assert!(actions::patch(&inv, id, llsd_map! { "name" => "Renamed 桜 ASCII", "desc" => "Edited 龙 ASCII" }).is_ok());
+        assert!(actions::patch(&inv, id, llsd_map! { "name" => "Existing 桜桜" }).is_err());
         assert!(actions::patch(&inv, id, llsd_map! { "name" => "Existing 桜", "desc" => "Existing 龙" }).is_ok());
         assert!(actions::patch(&inv, id, llsd_map! { "desc" => "First\nSecond" }).is_ok());
-        assert!(actions::clean_name("桜").is_err());
+        assert_eq!(actions::clean_name("桜").expect("received name"), "桜");
         assert!(actions::clean_name("A|B").is_err());
         assert_eq!(actions::clean_name(" ASCII (test) ").expect("name"), "ASCII (test)");
+    }
+
+    #[test]
+    fn restricted_text_generated_folder_labels_are_cleaned_without_rejecting_creation() {
+        for language in ["en", "fr", "ja"] {
+            let name = aurora_i18n::text_in(language, "common-new-folder");
+            let change = actions::create_folder(Uuid::from_u128(1), name).expect("localized folder");
+            assert!(
+                matches!(&change.operations[..], [aurora_net::inventory::operations::Operation::Folder { name, .. }] if !name.is_empty() && super::Policy::PrintableNoPipe.accepts(name))
+            );
+        }
+        let object_name = crate::build::task_inventory::contents_folder_name("★ Gift box");
+        assert!(!object_name.is_empty());
+        assert!(super::Policy::PrintableNoPipe.accepts(&object_name));
+        assert!(actions::create_folder(Uuid::from_u128(1), &object_name).is_ok());
     }
 
     #[test]

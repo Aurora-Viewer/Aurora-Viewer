@@ -353,7 +353,7 @@ impl AppearanceUi {
             .and_then(|id| inv.folders.get(&id))
             .map(|f| aurora_i18n::tr!("status-new", value0 = f.info.name.to_string()))
             .unwrap_or_else(|| aurora_i18n::tr!("ui-appearance-new-outfit").into());
-        self.save_as = Some(name.chars().take(63).collect());
+        self.save_as = Some(crate::text_validation::generated_name(&name, 63));
         self.select_name = true;
         // beside the outfit it comes from: a variant goes in the same group
         self.save_in = model::base(inv)

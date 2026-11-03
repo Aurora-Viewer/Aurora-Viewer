@@ -185,7 +185,9 @@ fn field(
                     ui.visuals_mut().weak_text_color = Some(p.ink);
                 }
                 let hidden = remembered || password.as_deref().is_some_and(|show| !*show);
-                let resp = widgets::text_field_with_policy(ui, ui.is_enabled(), text, restriction, |b, ui| {
+                // Interactivity comes from the disabled UI and TextEdit.
+                // Keep this form's explicit ink color while it is disabled.
+                let resp = widgets::text_field_with_policy(ui, true, text, restriction, |b, ui| {
                     TextEdit::singleline(b)
                         .id(id)
                         .interactive(ui.is_enabled())

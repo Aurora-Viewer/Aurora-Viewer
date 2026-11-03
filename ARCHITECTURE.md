@@ -35,6 +35,11 @@ input, preserves selected text and provides immediate localized feedback.
 Restricted numeric widgets filter input only while their own editor has focus;
 expression-enabled construction controls keep their input language. Existing
 grid text remains readable; unrestricted prose and local paths keep Unicode.
+Mutation guards allow retained server characters while checking newly added
+input. Generated upload/destination labels are cleaned separately from local
+paths; the shared structural inventory-name helper also serves RLVa paths and
+does not impose an ASCII policy. Rollback text is copied lazily on mutation;
+undo history is copied only for input needing rollback in the owning field.
 
 Avatar gait playback resolves standard walk/run signals to the modern male or
 female assets selected by LLVOAvatar::remapMotionID with its default settings

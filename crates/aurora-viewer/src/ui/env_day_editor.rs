@@ -223,7 +223,7 @@ impl DayEditorUi {
 
     /// "Save As" confirmed by the app: the name prompt.
     pub fn ask_save_as(&mut self) {
-        self.save_as = Some(self.name.clone());
+        self.save_as = Some(crate::text_validation::generated_name(&self.name, 63));
     }
 
     /// Import over the current day (loadSettingFromFile: no item, the

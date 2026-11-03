@@ -145,7 +145,7 @@ impl EnvEditorUi {
 
     /// "SaveSettingAs": the name prompt, filled with the settings' name.
     pub fn ask_save_as(&mut self) {
-        self.save_as = Some(self.name.clone());
+        self.save_as = Some(crate::text_validation::generated_name(&self.name, 63));
     }
 
     /// The tab shown (sky: Atmosphere & Lighting, Clouds, Sun & Moon).

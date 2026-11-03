@@ -72,9 +72,9 @@ fn maturity_of(parcel: Option<&ParcelSummary>) -> Option<&'static str> {
 /// LLPanelProfileClassified::isValidName: a name, starting with a letter
 /// from A to Z or a digit (isalnum of its first byte).
 pub(super) fn classified_name_error(name: &str) -> Option<&'static str> {
-    if !crate::text_validation::Policy::Ascii.accepts(name) {
-        return Some(crate::text_validation::reason(crate::text_validation::Policy::Ascii));
-    }
+    // LLPanelProfileClassified::isValidName checks only the first byte on
+    // Save. The field prevalidates new insertions separately; received
+    // Unicode elsewhere in an existing title must not block other edits.
     match name.bytes().next() {
         None => Some(aurora_i18n::tr!("ui-profile-aurora-classified-blank-name")),
         Some(b) if !b.is_ascii_alphanumeric() => Some(aurora_i18n::tr!("ui-profile-aurora-classified-alphanumeric")),
@@ -1887,7 +1887,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_classified_name_like_firestorm() {
+    fn a_classified_name_like_the_legacy_viewer() {
         assert!(classified_name_error("").is_some());
         assert!(classified_name_error("« Atelier »").is_some(), "punctuation first");
         assert!(
@@ -1896,6 +1896,10 @@ mod tests {
         );
         assert!(classified_name_error("Atelier ouvert").is_none());
         assert!(classified_name_error("3 chalets").is_none());
+        assert!(
+            classified_name_error("A 桜龍 Été").is_none(),
+            "existing titles are checked by their first byte on Save"
+        );
         // 30 bytes at most, never through a character
         let mut s = "Cours de construction du samedi".to_owned();
         clip_bytes(&mut s, 30);

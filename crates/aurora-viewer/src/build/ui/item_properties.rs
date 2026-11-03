@@ -119,10 +119,21 @@ impl BuildTool {
         if !editable(self, world, state.object, &item) {
             return false;
         }
-        let Ok(name) = crate::world::inventory::actions::clean_name(&state.edit.name) else {
-            return false;
+        let name = if state.edit.name == item.name {
+            item.name.clone()
+        } else {
+            if crate::text_validation::require_edit(crate::text_validation::Policy::PrintableNoPipe, &item.name, &state.edit.name).is_err()
+            {
+                return false;
+            }
+            let Ok(name) = crate::world::inventory::actions::clean_name(&state.edit.name) else {
+                return false;
+            };
+            name
         };
-        if item.description != state.edit.desc && !crate::text_validation::Policy::MultilineNoPipe.accepts(&state.edit.desc) {
+        if crate::text_validation::require_edit(crate::text_validation::Policy::MultilineNoPipe, &item.description, &state.edit.desc)
+            .is_err()
+        {
             return false;
         }
         if item.owner_mask & perm::MODIFY != 0 {

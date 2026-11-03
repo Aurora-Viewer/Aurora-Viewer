@@ -401,7 +401,7 @@ impl Entry {
         Self {
             id: Uuid::new_v4(),
             load_choice: None,
-            name: path.file_stem().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
+            name: crate::text_validation::generated_name(&path.file_stem().unwrap_or_default().to_string_lossy(), 63),
             path,
             from_live: false,
             description: String::new(),

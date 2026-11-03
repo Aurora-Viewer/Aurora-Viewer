@@ -633,7 +633,7 @@ impl App {
         let Some(editor) = self.gesture_state.ui.editors.get_mut(&item) else {
             return;
         };
-        if it.desc != description && !crate::text_validation::Policy::PrintableNoPipe.accepts(&description) {
+        if crate::text_validation::require_edit(crate::text_validation::Policy::PrintableNoPipe, &it.desc, &description).is_err() {
             editor.message = crate::text_validation::reason(crate::text_validation::Policy::PrintableNoPipe).into();
             return;
         }

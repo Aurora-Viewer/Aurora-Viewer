@@ -58,7 +58,12 @@ pub(super) fn show(
         actions.push(InvAction::Profile(resident));
     }
     if let Some(edit) = response.edit {
-        let body = llsd_map! { "name" => rules::clean_name(&edit.name).unwrap_or_else(|_| it.name.clone()), "desc" => edit.desc.clone(),
+        let name = if edit.name == it.name {
+            it.name.clone()
+        } else {
+            rules::clean_name(&edit.name).unwrap_or_else(|_| it.name.clone())
+        };
+        let body = llsd_map! { "name" => name, "desc" => edit.desc.clone(),
         "permissions" => llsd_map! { "next_owner_mask" => edit.next as i32, "group_mask" => edit.group as i32, "everyone_mask" => edit.everyone as i32 },
         "sale_info" => llsd_map! { "sale_type" => i32::from(edit.sale_type), "sale_price" => edit.price } };
         match rules::patch(inv, id, body) {
@@ -578,6 +583,7 @@ mod tests {
         let mut inv = Inventory::default();
         crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
         let id = Uuid::from_u128(8102);
+        inv.items.get_mut(&id).expect("demo object").name = "Objet de démonstration".into();
         let mut st = InventoryUi::default();
         for _ in 0..3 {
             frame(&ctx, &inv, &mut st, vec![]);

@@ -689,7 +689,7 @@ fn names_are_trimmed_bounded_and_cannot_inject_legacy_asset_headers() {
     assert!(clean_name("A|B").is_err());
     assert_eq!(clean_name(&"a".repeat(90)).expect("bounded name").len(), 63);
     for name in ["Café", "桜", "龙", "Name 桜龙"] {
-        assert!(clean_name(name).is_err());
+        assert_eq!(clean_name(name).expect("received name"), name);
     }
 }
 

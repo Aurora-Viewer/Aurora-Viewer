@@ -537,16 +537,20 @@ impl BuildTool {
 
     /// Name / description of the property targets (ObjectName / ObjectDescription).
     pub fn set_name(&mut self, world: &World, name: &str, description: bool) {
-        if let Err(reason) = crate::text_validation::require(crate::text_validation::Policy::PrintableNoPipe, name) {
-            self.status = reason;
-            return;
-        }
         let targets = self.prop_targets(world);
         for idx in targets {
             if !self.can_modify(world, idx) {
                 continue;
             }
             let Some(o) = world.objects.get(idx) else { continue };
+            let before = self
+                .props
+                .get(&o.full_id)
+                .map_or("", |p| if description { p.description.as_str() } else { p.name.as_str() });
+            if let Err(reason) = crate::text_validation::require_edit(crate::text_validation::Policy::PrintableNoPipe, before, name) {
+                self.status = reason;
+                continue;
+            }
             if let Some(p) = self.props.get_mut(&o.full_id) {
                 if description {
                     p.description = name.to_owned();
