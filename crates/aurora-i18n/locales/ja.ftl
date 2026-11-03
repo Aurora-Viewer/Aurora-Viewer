@@ -13082,3 +13082,24 @@ ui-options-camera-vr-view-first-person = 一人称
 ui-options-camera-vr-view-desktop-camera = カメラの位置
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
+
+wearable-favorites-all = すべてのお気に入り
+wearable-favorites-new-folder = 新しいフォルダ
+wearable-favorites-rename-folder = フォルダ名を変更
+wearable-favorites-delete-folder = フォルダを削除
+wearable-favorites-delete-confirm = フォルダ「{ $name }」を削除しますか？ { $count }件のお気に入りがフォルダから外れますが、アイテムはインベントリに残ります。
+wearable-favorites-invalid-name = フォルダ名「{ $name }」にスラッシュは使用できません。
+wearable-favorites-filter = お気に入りを絞り込む
+wearable-favorites-sort = 並べ替え
+wearable-favorites-sort-name = 名前順
+wearable-favorites-sort-recent = 新しい順
+wearable-favorites-sort-type = 種類と名前順
+wearable-favorites-remove = お気に入りから外す
+wearable-favorites-empty = お気に入りはまだありません。インベントリから衣類、身体部位、オブジェクトをここにドラッグしてください。
+wearable-favorites-no-match = この絞り込みに一致するお気に入りはありません。
+wearable-favorites-assign = フォルダに割り当て
+wearable-favorites-loading = インベントリを読み込んでいます。
+wearable-favorites-sync = Legacy Viewerから同期
+wearable-favorites-sync-tip = #Firestorm/#Wearable Favorites のお気に入りをこの一覧に追加します。サブフォルダは名前で照合します。削除は行わず、Legacy Viewer のフォルダも変更しません。
+wearable-favorites-synced = { $count }件のお気に入りを追加しました。
+wearable-favorites-synced-none = すでに同期済みです。

@@ -129,6 +129,7 @@ pub mod update;
 pub mod viewfinder;
 pub mod voice_tag;
 pub mod wearable;
+pub mod wearable_favorites;
 pub mod web_browser;
 pub mod web_view;
 pub mod widgets;
@@ -198,6 +199,7 @@ pub struct Panels {
     pub grid_status: bool,
     /// The built-in web browser (toolbar `webbrowser`).
     pub web_browser: bool,
+    pub wearable_favorites: bool,
     /// "Quick preferences" (toolbar `quickprefs`).
     pub quick_prefs: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
@@ -263,6 +265,7 @@ impl Panels {
             bumps: false,
             grid_status: false,
             web_browser: false,
+            wearable_favorites: false,
             quick_prefs: false,
             voice_controls: false,
             about: false,

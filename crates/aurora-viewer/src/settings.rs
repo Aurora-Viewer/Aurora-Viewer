@@ -695,6 +695,8 @@ pub struct Settings {
     /// The times of the conversations' lines, private and group
     /// (FSShowTimestampsIM, on; Preferences › Chat › Conversations).
     pub chat_timestamps_im: bool,
+    /// The Favorite wearables list's order (FSWearableFavoritesSortOrder).
+    pub wearable_favorites_sort: crate::world::wearable_favorites::Sort,
     /// The former single switch, read once: its choice goes to both.
     #[serde(rename = "chat_timestamps", skip_serializing)]
     pub(crate) former_chat_timestamps: Option<bool>,
@@ -1851,6 +1853,7 @@ impl Default for Settings {
             chat_font_scale: 1.0,
             chat_timestamps_nearby: true,
             chat_timestamps_im: true,
+            wearable_favorites_sort: Default::default(),
             former_chat_timestamps: None,
             show_chat_channel: false,
             script_errors_in_chat: true,
