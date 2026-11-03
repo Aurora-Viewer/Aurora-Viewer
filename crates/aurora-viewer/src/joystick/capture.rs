@@ -43,7 +43,7 @@ impl AxisCapture {
 
     pub fn poll(&mut self, snapshot: &Snapshot, settings: &Settings, now: Instant) -> Result<Option<i8>, ()> {
         let device = snapshot
-            .selected(settings)
+            .selected_joystick(settings)
             .filter(|d| {
                 d.id == self.device
                     && d.axis_count.min(AXES) == self.axis_count

@@ -11,26 +11,15 @@ pub struct State {
     backend: Backend,
     pub(super) snapshot: Snapshot,
     controller: Controller,
+    gamepad_controller: Controller,
     pub(super) motion: Motion,
     pub active: bool,
+    flycam_gamepad: bool,
     pub(super) running: bool,
     demo_started: bool,
-    binding_device: Option<String>,
 }
 
 impl App {
-    pub(super) fn joystick_gamepad_selected(&self) -> bool {
-        let s = &self.settings.joystick;
-        let selected = if s.enabled {
-            self.joystick.snapshot.selected(s)
-        } else if s.automatic_gamepad {
-            self.joystick.snapshot.selected_gamepad(s)
-        } else {
-            None
-        };
-        selected.is_some_and(|device| device.is_gamepad)
-    }
-
     pub(super) fn joystick_status(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
         if !self.joystick.active {
             return;
@@ -60,28 +49,37 @@ impl App {
     }
 
     pub(super) fn toggle_joystick_flycam(&mut self) {
-        let selected = if self.settings.joystick.enabled {
-            self.joystick.snapshot.selected(&self.settings.joystick)
-        } else if self.settings.joystick.automatic_gamepad {
-            self.joystick.snapshot.selected_gamepad(&self.settings.joystick)
+        let raw_available = self.settings.joystick.enabled
+            && self.settings.joystick.flycam_enabled
+            && self.joystick.snapshot.selected_joystick(&self.settings.joystick).is_some();
+        let pad_available = self.settings.gamepad.enabled && self.joystick.snapshot.selected_gamepad(&self.settings.gamepad).is_some();
+        self.toggle_flycam_from_input(!raw_available && pad_available);
+    }
+
+    pub(super) fn toggle_flycam_from_input(&mut self, gamepad: bool) {
+        let (profile, selected) = if gamepad {
+            (
+                &self.settings.gamepad,
+                self.joystick.snapshot.selected_gamepad(&self.settings.gamepad),
+            )
         } else {
-            None
+            (
+                &self.settings.joystick,
+                self.joystick.snapshot.selected_joystick(&self.settings.joystick),
+            )
         };
         if !self.joystick.active {
-            if !self.in_world()
-                || !(self.settings.joystick.enabled || self.settings.joystick.automatic_gamepad)
-                || !self.settings.joystick.flycam_enabled
-                || selected.is_none()
-            {
+            if !self.in_world() || !profile.enabled || !profile.flycam_enabled || selected.is_none() {
                 return;
             }
+            self.joystick.flycam_gamepad = gamepad;
             let was_mouselook = self.camera.mouselook();
             self.stop_autopilot(true);
             self.camera.change_to_default(&mut self.world.agent, &self.settings.camera);
             self.camera.end_free(&self.settings.camera);
             self.snapshots.ui.free.on = false;
             self.photo_free_camera();
-            self.camera.start_flycam(&self.settings.camera, was_mouselook);
+            self.camera.start_flycam(&self.settings.camera, gamepad && was_mouselook);
             if was_mouselook {
                 self.set_mouselook_grab(false);
             }
@@ -107,8 +105,8 @@ impl App {
         } else if !self.camera.mouselook() && self.settings.camera.enable_mouselook {
             self.stop_autopilot(true);
             self.toggle_mouselook();
-        } else if self.settings.joystick.flycam_enabled {
-            self.toggle_joystick_flycam();
+        } else if self.settings.gamepad.flycam_enabled {
+            self.toggle_flycam_from_input(true);
         } else {
             self.reset_camera_view();
         }
@@ -120,22 +118,11 @@ impl App {
             self.options_ui.cancel_joystick_capture();
         }
         let capturing = self.options_ui.joystick_capturing();
-        let capturing_gamepad = capturing
-            && self
-                .joystick
-                .snapshot
-                .selected(&self.settings.joystick)
-                .is_some_and(|d| d.is_gamepad);
-        let mode = if self.settings.joystick.enabled || (capturing && !capturing_gamepad) {
+        let mode = if self.settings.joystick.enabled || capturing {
             Use::On
-        } else if self.panels.settings
-            && self.options_ui.page == crate::ui::options::Page::Controls
-            && self.options_ui.tab == 1
-            && !capturing_gamepad
-        {
-            // The joystick tab lists the devices to choose from.
+        } else if self.panels.settings && self.options_ui.page == crate::ui::options::Page::Controls && self.options_ui.tab != 0 {
             Use::List
-        } else if self.settings.joystick.automatic_gamepad || capturing_gamepad {
+        } else if self.settings.gamepad.enabled || (self.panels.settings && self.options_ui.page == crate::ui::options::Page::Gamepad) {
             Use::Gamepad
         } else {
             Use::Off
@@ -145,42 +132,54 @@ impl App {
         if self.camera.flycam.is_none() {
             self.joystick.active = false;
         }
-        let selected = if self.settings.joystick.enabled {
-            self.joystick.snapshot.selected(&self.settings.joystick)
-        } else if self.settings.joystick.automatic_gamepad {
-            self.joystick.snapshot.selected_gamepad(&self.settings.joystick)
+        let joystick = &self.settings.joystick;
+        let gamepad = &self.settings.gamepad;
+        let snapshot = &self.joystick.snapshot;
+        let raw_device = snapshot.selected_joystick(joystick).filter(|_| joystick.enabled);
+        let pad_device = snapshot.selected_gamepad(gamepad).filter(|_| gamepad.enabled);
+        let available = self.in_world() && snapshot.updated.is_some_and(|at| at.elapsed().as_millis() < 250);
+        let pad_flycam = self.joystick.flycam_gamepad;
+        let flycam_available = if pad_flycam {
+            gamepad.flycam_enabled && pad_device.is_some()
         } else {
-            None
+            joystick.flycam_enabled && raw_device.is_some()
         };
-        if let Some(device) = selected.filter(|d| d.is_gamepad) {
-            if self.joystick.binding_device.as_deref() != Some(device.id.as_str()) {
-                if self.settings.joystick.reconcile_avatar_camera_defaults(device) {
-                    self.settings.save();
-                }
-                self.joystick.binding_device = Some(device.id.clone());
-            }
-        } else {
-            self.joystick.binding_device = None;
-        }
-        let available =
-            self.in_world() && selected.is_some() && self.joystick.snapshot.updated.is_some_and(|at| at.elapsed().as_millis() < 250);
-        if !available || !self.settings.joystick.flycam_enabled {
+        if self.joystick.active && (!available || !flycam_available) {
             self.camera.clear_flycam();
             self.joystick.active = false;
         }
-        let motion = self.joystick.controller.sample_view(
-            &self.joystick.snapshot,
-            &self.settings.joystick,
-            (self.focused || self.joystick.demo_started) && available && !capturing,
-            self.joystick.active,
-            self.camera.mouselook(),
+        let flycam = self.joystick.active;
+        let active = available && (self.focused || self.joystick.demo_started) && !capturing;
+        let first_person = self.camera.mouselook();
+        let raw = self.joystick.controller.sample_device(
+            raw_device.filter(|_| active && (!flycam || !pad_flycam)),
+            joystick,
+            flycam,
+            first_person,
             dt,
         );
+        let pad = self.joystick.gamepad_controller.sample_device(
+            pad_device.filter(|_| active && (!flycam || pad_flycam)),
+            gamepad,
+            flycam,
+            first_person,
+            dt,
+        );
+        // Use one source per frame. Flycam keeps the source that entered it,
+        // while an idle gamepad leaves ordinary movement to the joystick.
+        let motion = if (flycam && pad_flycam) || pad.moving() || pad.toggle_flycam {
+            pad
+        } else {
+            raw
+        };
+        let profile = if motion.gamepad { gamepad } else { joystick };
+        let run_threshold = profile.run_threshold.clamp(0.1, 1.0);
+        let avatar_enabled = profile.avatar_enabled;
         if motion.toggle_flycam {
-            if self.joystick_gamepad_selected() {
+            if motion.gamepad {
                 self.cycle_gamepad_view();
             } else {
-                self.toggle_joystick_flycam();
+                self.toggle_flycam_from_input(false);
             }
         }
         self.joystick.motion = if motion.toggle_flycam { Motion::default() } else { motion };
@@ -194,9 +193,9 @@ impl App {
         let axes = self.joystick.motion.axes;
         let running = self.focused
             && !self.joystick.active
-            && self.settings.joystick.avatar_enabled
+            && avatar_enabled
             && !self.world.rlva.has("temprun")
-            && axes[0].hypot(axes[1]) > self.settings.joystick.run_threshold.clamp(0.1, 1.0);
+            && axes[0].hypot(axes[1]) > run_threshold;
         if running != self.joystick.running {
             self.joystick.running = running;
             if !self.always_run && self.temp_run.is_none() {
@@ -215,14 +214,18 @@ impl App {
         m.apply_avatar(i);
         // A console gamepad orbits the idle third-person camera with the
         // right stick; while translating, that same stick steers the avatar.
-        if self.joystick_gamepad_selected()
+        if m.gamepad
             && !self.camera.mouselook()
             && self.mouse_mode != crate::app::MouseMode::FocusOrbit
             && !(i.forward || i.back || i.turn_left || i.turn_right || i.strafe_left || i.strafe_right)
         {
             i.joystick_yaw = 0.0;
         }
-        i.joystick_mouselook_yaw = self.settings.joystick.mouselook_yaw;
+        i.joystick_mouselook_yaw = if m.gamepad {
+            self.settings.gamepad.mouselook_yaw
+        } else {
+            self.settings.joystick.mouselook_yaw
+        };
         if m.jump_pressed && self.world.agent.flying {
             self.toggle_fly();
         } else if m.jump {
@@ -244,10 +247,15 @@ impl App {
             }
             let mut axes = m.axes;
             axes[2] += (f32::from(u8::from(m.rise)) - f32::from(u8::from(m.fall))) * 2.0;
-            if let Some(multiplier) = m.flycam_speed {
-                cam.step_with_speed(axes, &self.settings.joystick, dt, multiplier);
+            let profile = if self.joystick.flycam_gamepad {
+                &self.settings.gamepad
             } else {
-                cam.step(axes, &self.settings.joystick, dt);
+                &self.settings.joystick
+            };
+            if let Some(multiplier) = m.flycam_speed {
+                cam.step_with_speed(axes, profile, dt, multiplier);
+            } else {
+                cam.step(axes, profile, dt);
             }
         }
         self.input = MoveInput::default();
@@ -354,12 +362,17 @@ impl App {
             ) {
                 self.settings.joystick = Default::default();
             }
-            self.settings.joystick.enabled = mode != "gamepad-preferences";
-            if mode == "gamepad-preferences" {
-                self.settings.joystick.automatic_gamepad = true;
-                // Let a plugged-in controller win over the scenario's fallback.
-                self.settings.joystick.device.clear();
+            if matches!(
+                mode.as_str(),
+                "gamepad-preferences" | "avatar-camera" | "view-modes" | "gamepad-defaults" | "avatar-orbit"
+            ) {
+                self.settings.gamepad = crate::joystick::Settings::gamepad_defaults();
+                self.settings.gamepad.enabled = true;
+                if mode != "gamepad-preferences" {
+                    self.settings.gamepad.device = "demo-joystick".into();
+                }
             } else {
+                self.settings.joystick.enabled = true;
                 self.settings.joystick.device = "demo-joystick".into();
             }
             if mode == "roll" {
