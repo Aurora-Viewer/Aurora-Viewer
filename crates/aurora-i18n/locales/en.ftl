@@ -3877,7 +3877,7 @@ ui-options-stream-title-announce = Send the title to a channel
 ui-options-stream-title-announce-help = Also whisper the title on this channel, for the scripts listening to it
 ui-options-stream-title-channel = Channel
 ui-options-mute-when-minimized = Mute when minimised
-ui-options-mute-when-minimized-help = No sound at all while the viewer is minimised to the taskbar (losing the focus is not enough)
+ui-options-mute-when-minimized-help = No sound at all while the viewer is minimised to the taskbar (losing the focus is not enough). Not on Wayland, which does not tell a window that it is minimised
 ui-audio-play-parcel-media = Play parcel media
 ui-options-camera-smoothing = Smoothing
 build-land-smooth = Smooth
@@ -9264,6 +9264,15 @@ search-aurora-remind = Remind me
 ui-context-do-not-show-again = Do not show again
 ui-options-confirm-teleports = Confirm teleports
 ui-options-ask-before-teleporting-to-a-landmark-a-history-entry = Ask before teleporting to a landmark, a history entry or a teleport link
+ui-options-warn-hypergrid-suitcase = Warn about worn items left behind
+ui-options-warn-hypergrid-suitcase-help = Before a Hypergrid teleport, name the worn items that are not in My Suitcase: the other grid cannot load them
+ui-hypergrid-suitcase-title = Some of what you wear stays here
+ui-hypergrid-suitcase-text = { $count ->
+    [one] One worn item is not in My Suitcase, so { $grid } cannot load it:
+   *[other] { $count } worn items are not in My Suitcase, so { $grid } cannot load them:
+}
+ui-hypergrid-suitcase-go = Teleport anyway
+ui-hypergrid-suitcase-hint = Put them in My Suitcase (or a folder inside it) to take them with you.
 ui-options-confirm-no-transfer-settings = Confirm no-transfer settings
 ui-options-confirm-no-transfer-settings-help = Ask before a no-transfer sky, water or track loaded into a day cycle makes it no-transfer
 ui-options-objects = Objects

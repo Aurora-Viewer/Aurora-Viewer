@@ -138,8 +138,10 @@ worktree, branch, `target` folder and logs.
   `--release` only to measure performance: it rebuilds everything a second
   time (about 3 GB more). For a `--release` exe of `main`, the human has
   `scripts/build-release.ps1`.
-- `new-task.ps1` frees, on its way, the `target/` of the tasks whose PR is
-  merged or that have built nothing for 7 days (the code stays).
+- `new-task.ps1` frees, on its way, the `incremental/` caches of the tasks
+  that have built nothing for 24 hours, and the whole `target/` of the tasks
+  whose PR is merged or that have built nothing for 2 days (the code stays).
+  A task that resumes rebuilds: its dependencies come from sccache.
 - To see the space taken by builds and free some: `./scripts/clean.ps1`
   (deletes nothing without `-Apply`).
 - `aurora-tools.cmd` (repository root) is the humans' menu: do not launch it,

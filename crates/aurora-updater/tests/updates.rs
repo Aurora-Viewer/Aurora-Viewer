@@ -467,6 +467,38 @@ fn media_pack_programs_stay_executable_without_setuid() {
     assert_eq!(mode("llplugin/media_plugin_cef.dll") & 0o111, 0);
 }
 
+/// A viewer still running holds a shared lock on `.in-use-<version>`: its pack
+/// is neither removed nor replaced under it, on Linux and macOS as well,
+/// where nothing refuses to rename a folder in use.
+#[test]
+fn media_pack_of_a_running_viewer_stays_whole() {
+    let bytes = pack_zip(true);
+    let pack = pack(&bytes, digest(&bytes));
+    let temp = Temp::new();
+    let root = temp.0.join("media-plugins");
+    let older = root.join(os("1/llplugin/SLPlugin.exe"));
+    fs::create_dir_all(older.parent().expect("folder")).expect("older pack");
+    fs::write(&older, b"old").expect("older pack");
+    let damaged = root.join(os("2/llplugin/SLPlugin.exe"));
+    fs::create_dir_all(damaged.parent().expect("folder")).expect("damaged pack");
+    fs::write(&damaged, b"damaged").expect("damaged pack");
+    let in_use = |version: &str| {
+        let file = fs::File::create(root.join(format!(".in-use-{version}"))).expect("lock file");
+        file.try_lock_shared().expect("running viewer");
+        file
+    };
+    let (older_viewer, same_viewer) = (in_use("1"), in_use("2"));
+    let server = Server::new(HashMap::from([(pack_route(), bytes)]));
+    let outcome = run(media_pack::install(&server.source(), &pack, &root, &Cancel::default(), |_| {}));
+    assert!(matches!(outcome, Err(Failure::Package)), "install outcome: {outcome:?}");
+    assert_eq!(fs::read(&damaged).expect("kept"), b"damaged", "a pack in use is not replaced");
+    drop(same_viewer);
+    let dir = run(media_pack::install(&server.source(), &pack, &root, &Cancel::default(), |_| {})).expect("installed pack");
+    assert_eq!(fs::read(dir.join(os("llplugin/SLPlugin.exe"))).expect("launcher"), b"launcher");
+    assert_eq!(fs::read(&older).expect("kept"), b"old", "an older viewer keeps its pack");
+    drop(older_viewer);
+}
+
 #[test]
 fn media_pack_is_refused_when_altered_incomplete_or_being_installed() {
     let bytes = pack_zip(true);
