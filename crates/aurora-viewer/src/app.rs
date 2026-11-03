@@ -134,11 +134,17 @@ enum Screen {
     World,
 }
 
+/// What a held Hypergrid teleport does once accepted.
+enum SuitcaseGo {
+    /// A named destination (navigation bar, links, history), resolved again.
+    Named { destination: String, pos: Vec3, look_at: Vec3 },
+    /// The world map's teleport to its tracked spot, sent as it was.
+    Map { command: NetCommand, label: String, show: bool },
+}
+
 /// A Hypergrid teleport waiting for its question (`App::suitcase_held`).
 struct SuitcaseAsk {
-    destination: String,
-    pos: Vec3,
-    look_at: Vec3,
+    go: SuitcaseGo,
     grid: String,
     names: Vec<String>,
     dont_ask: bool,
@@ -5694,12 +5700,41 @@ impl App {
     /// while worn items are outside My Suitcase: held for the question,
     /// once per teleport.
     fn suitcase_held(&mut self, asked: &str, resolved: &str, pos: Vec3, look_at: Vec3) -> bool {
-        if std::mem::take(&mut self.suitcase_passed) || !self.settings.warn_hypergrid_suitcase || self.demo_suitcase_off() {
+        if std::mem::take(&mut self.suitcase_passed) {
             return false;
         }
         let Some((grid, _)) = resolved.rsplit_once(':') else {
             return false;
         };
+        let go = SuitcaseGo::Named {
+            destination: asked.to_owned(),
+            pos,
+            look_at,
+        };
+        self.suitcase_ask_for(grid, go)
+    }
+
+    /// The world map's teleport to a spot it tracks under a `hop://` label
+    /// (an address typed in its search): another grid's region, reached by
+    /// handle, so the grid comes from that label.
+    fn suitcase_held_map(&mut self, command: &NetCommand, label: &str, show: bool) -> bool {
+        let Some(grid) = crate::slurl::parse_hypergrid(label).and_then(|place| place.grid) else {
+            return false;
+        };
+        let go = SuitcaseGo::Map {
+            command: command.clone(),
+            label: label.to_owned(),
+            show,
+        };
+        self.suitcase_ask_for(&grid, go)
+    }
+
+    /// The question for a teleport to `grid`, when it leaves worn items
+    /// behind; true when the teleport is held for it.
+    fn suitcase_ask_for(&mut self, grid: &str, go: SuitcaseGo) -> bool {
+        if !self.settings.warn_hypergrid_suitcase || self.demo_suitcase_off() {
+            return false;
+        }
         let extras = self.world.opensim_extras();
         let at_home = crate::grids::current(&self.settings, extras)
             .zip(crate::grids::home(&self.settings))
@@ -5723,9 +5758,7 @@ impl App {
             names.len()
         );
         self.suitcase_ask = Some(SuitcaseAsk {
-            destination: asked.to_owned(),
-            pos,
-            look_at,
+            go,
             grid: grid.to_owned(),
             names,
             dont_ask: false,
@@ -7933,6 +7966,9 @@ impl App {
                     && let Some(avatar) = flight_target
                 {
                     self.request_friend_join_teleport(c, avatar, self.world.agent.flying, false)
+                } else if self.suitcase_held_map(&c, &dest, show) {
+                    // held for its question (worn items left behind)
+                    false
                 } else {
                     self.request_user_teleport(c, dest, show)
                 };
@@ -15574,9 +15610,11 @@ impl App {
                 // from the plaza would ask it (docs/TESTING.md)
                 if self.demo && self.frame_count == 300 && std::env::var_os("AURORA_DEMO_SUITCASE").is_some() {
                     self.suitcase_ask = Some(SuitcaseAsk {
-                        destination: "hop://hg.osgrid.org:80/Wright%20Plaza/128/128/25".into(),
-                        pos: Vec3::new(128.0, 128.0, 25.0),
-                        look_at: Vec3::X,
+                        go: SuitcaseGo::Named {
+                            destination: "hop://hg.osgrid.org:80/Wright%20Plaza/128/128/25".into(),
+                            pos: Vec3::new(128.0, 128.0, 25.0),
+                            look_at: Vec3::X,
+                        },
                         grid: "hg.osgrid.org:80".into(),
                         names: [
                             "Ash Hair",
@@ -15600,8 +15638,15 @@ impl App {
                         self.settings.save();
                     }
                     log::info!("hypergrid: teleport accepted with worn items left behind");
-                    self.suitcase_passed = true;
-                    self.teleport_to_location_looking(ask.destination, ask.pos, ask.look_at);
+                    match ask.go {
+                        SuitcaseGo::Named { destination, pos, look_at } => {
+                            self.suitcase_passed = true;
+                            self.teleport_to_location_looking(destination, pos, look_at);
+                        }
+                        SuitcaseGo::Map { command, label, show } => {
+                            self.request_user_teleport(command, label, show);
+                        }
+                    }
                 }
                 if let Some((url, dont_warn, danger)) = self.url_confirm.as_mut()
                     && let Some(yes) = ui::context::external_link_confirm(&ctx, &p, url, dont_warn, *danger)
