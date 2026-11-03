@@ -4048,6 +4048,7 @@ impl App {
                 self.world.eep.edit_personal(crate::demo::env::edit_lighting);
             }
             Step::OpenList(kind) => self.env_ui.open_list = Some(kind),
+            Step::Search(kind, text) => self.env_ui.search_list = Some((kind, text)),
         }
     }
 
@@ -9518,6 +9519,26 @@ impl App {
             };
             self.scene.creation_preview.update(&mut gfx.renderer, preview);
             self.scene.creation_preview.append(&mut self.scene.lists);
+            // the build tools' holograms: where Place on surface would put
+            // the selection, or a move's (scene/build_hologram.rs)
+            {
+                use crate::build::MoveHologram;
+                use crate::scene::build_hologram::Ghost;
+                let landing = self.build.place.active.then_some(self.build.place.preview).flatten();
+                let moving = self.build.move_hologram(&self.world, &self.settings.build);
+                let now = moving.as_ref().map(|(_, m)| crate::build::Bounds {
+                    center: m.start.center + m.delta,
+                    ..m.start
+                });
+                let (copies, in_place) = match (&landing, &moving, &now) {
+                    (Some(l), _, _) => (Some((self.build.place.moving.as_slice(), Ghost::landing(l))), None),
+                    (None, Some((MoveHologram::Start, m)), _) => (Some((m.prims.as_slice(), Ghost::start(&m.start, m.delta))), None),
+                    (None, Some((_, m)), Some(now)) => (None, Some((m.prims.as_slice(), now))),
+                    _ => (None, None),
+                };
+                self.scene.update_build_hologram(&mut gfx.renderer, copies, in_place);
+            }
+            self.scene.build_hologram.append(&mut self.scene.lists);
             let physics = crate::scene::physics_shapes::selection(&self.build, &self.world, &self.settings.build);
             self.scene
                 .physics_shapes
@@ -12019,6 +12040,7 @@ impl App {
                         self.build.edit_mode = m;
                         crate::build::demo::apply_tab(&mut self.build);
                         crate::build::demo::apply_handle_size(&mut self.settings.build);
+                        crate::build::demo::apply_object_snap(&mut self.settings.build);
                         self.settings.build.land_action = land;
                     }
                     crate::build::demo::Step::Cursor(x, y) => self.cursor_pos = (x, y),
@@ -12250,6 +12272,19 @@ impl App {
                             );
                             self.panels.inventory = false;
                             self.panels.chat = false;
+                        }
+                    }
+                    crate::build::demo::Step::PlaceRotate(side) => {
+                        self.settings.build.place_rotate = true;
+                        self.settings.build.place_side = side;
+                    }
+                    crate::build::demo::Step::Place(on) => {
+                        // its button and P go with the object snap
+                        if on {
+                            self.settings.build.set_snap_mode(crate::build::SnapMode::Objects);
+                        }
+                        if self.build.place.active != on {
+                            self.build.toggle_place(&self.world);
                         }
                     }
                     crate::build::demo::Step::Linked(on) => {
@@ -12805,6 +12840,11 @@ impl App {
             BarAction::ReportBug => self.open_issue_chooser(),
             BarAction::CopyVersion => self.copy_version(),
             BarAction::ReportAbuse => self.open_report_abuse(crate::report_abuse::ReportTarget::Nothing),
+            BarAction::ToggleReportAbuse => {
+                if ui::widgets::toggle_floater_closing(&self.egui_ctx, "report_abuse", self.report_abuse.open) {
+                    self.open_report_abuse(crate::report_abuse::ReportTarget::Nothing);
+                }
+            }
             BarAction::ServerReleaseNotes => self.send(NetCommand::ServerReleaseNotes),
             // FSCommon::report_to_nearby_chat(gAgent.mMOTD)
             BarAction::MessageOfTheDay => self.world.system_message(self.world.motd.clone()),
@@ -12825,6 +12865,15 @@ impl App {
             BarAction::Poser => {
                 self.ik_editor.open_poser();
                 ui::widgets::open_floater(&self.egui_ctx, "poser", &mut self.ik_editor.open);
+            }
+            // a minimized poser expands, a shown one closes as its cross
+            // does (FSFloaterPoser::onClose)
+            BarAction::TogglePoser => {
+                if self.ik_editor.open && self.ik_editor.posing() && ui::widgets::floater_minimized(&self.egui_ctx, "poser") {
+                    ui::widgets::expand_floater(&self.egui_ctx, "poser");
+                } else if self.ik_editor.toggle_poser() {
+                    ui::widgets::open_floater(&self.egui_ctx, "poser", &mut self.ik_editor.open);
+                }
             }
             BarAction::Portals => {
                 ui::widgets::open_floater(&self.egui_ctx, "portals", &mut self.portal_ui.open);
@@ -12917,6 +12966,10 @@ impl App {
                 let me = self.world.agent_id;
                 self.profile_ui.open(&mut self.world, me);
             }
+            BarAction::ToggleMyProfile => {
+                self.profile_ui
+                    .toggle_mine(&self.egui_ctx, &mut self.world, self.settings.classic_profiles);
+            }
             BarAction::MyPicks => {
                 self.profile_ui
                     .toggle_picks(&self.egui_ctx, &mut self.world, self.settings.classic_profiles);
@@ -12929,6 +12982,12 @@ impl App {
             BarAction::BuyCurrency => self.open_buy_currency(),
             BarAction::Marketplace => self.marketplace_ui.open(None),
             BarAction::MarketplaceListings => self.open_marketplace_listings(),
+            BarAction::ToggleMarketplaceListings => {
+                let window = ui::marketplace_listings::WINDOW;
+                if ui::widgets::toggle_floater_closing(&self.egui_ctx, window, self.listings_ui.open) {
+                    self.open_marketplace_listings();
+                }
+            }
             BarAction::ChatPrefs => {
                 self.panels.settings = true;
                 self.options_ui.open(ui::options::Page::Chat, 0);
@@ -13724,6 +13783,15 @@ impl App {
                     message,
                     item,
                 } => {
+                    if let Err(reason) = crate::text_validation::require(crate::text_validation::Policy::Ascii, &subject) {
+                        self.world.notifications.push(
+                            crate::world::notifications::Kind::Alert,
+                            aurora_i18n::tr!("input-restricted-title"),
+                            reason,
+                            crate::world::notifications::Data::None,
+                        );
+                        continue;
+                    }
                     // send_group_notice: an instant message to the group
                     let (text, bucket) = aurora_net::groups::notice_to_send(&subject, &message, item);
                     self.send(NetCommand::SendImDialog {
@@ -13795,10 +13863,11 @@ impl App {
     }
 
     /// toggleTeleportHistory (llviewermenu.cpp) without the standalone
-    /// history floater: hide Places when shown, else open it on the history.
+    /// history floater: a minimized Places expands, a shown one hides on
+    /// any tab, else it opens on the history.
     fn toggle_teleport_history(&mut self) {
         if self.panels.places {
-            self.panels.places = false;
+            ui::widgets::toggle_floater(&self.egui_ctx, "places", &mut self.panels.places);
         } else {
             self.world.place_details.close_panel();
             self.places_ui.open_tab(ui::places::TAB_HISTORY);
@@ -16389,6 +16458,14 @@ impl App {
                     self.settings.profile_rights,
                 );
                 self.toolbar_ui.picks_active = self.profile_ui.picks_shown(self.world.agent_id);
+                self.toolbar_ui.shown = ui::toolbar::Shown {
+                    profile: self.profile_ui.mine_shown(self.world.agent_id),
+                    build: self.build.open,
+                    poser: self.ik_editor.open && self.ik_editor.posing(),
+                    report_abuse: self.report_abuse.open,
+                    marketplace_listings: self.listings_ui.open,
+                    teleport_history: self.panels.places && self.places_ui.history_shown(self.settings.classic_places),
+                };
                 self.toolbar_ui.chat_bar_active = self.chat_ui.bar_shown();
                 self.toolbar_ui.friends_only_active = self.world.friends_only();
                 let pointer_busy = ctx.input(|i| i.pointer.any_down() || i.pointer.any_released());

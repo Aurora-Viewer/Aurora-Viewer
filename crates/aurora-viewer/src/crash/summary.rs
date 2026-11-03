@@ -148,6 +148,11 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
     // aurora-render's device lost callback (main_thread.rs).
     if device_lost_in(&tail) {
         rows.push(("GPU device lost", "yes (driver reset or GPU removed)".into()));
+        // the work the GPU had in hand: a hang or a fault (aurora-render
+        // device_lost.rs), rebuilt from the renderer's own newest line
+        if let Some(work) = gpu_work_in(&tail) {
+            rows.push(("GPU work at the loss", work));
+        }
     }
     if let Some(seconds) = text("gpu-stall.txt").lines().next().and_then(|line| {
         line.strip_prefix("GPU stall: no frame for ")?
@@ -562,6 +567,59 @@ fn device_lost_in(tail: &str) -> bool {
     tail.lines().any(|line| line.contains("] GPU device lost ("))
 }
 
+/// The "GPU work at the loss" row: the newest line the device-lost
+/// callback logged (`[… ERROR aurora_render::main_thread] GPU work at the
+/// loss: …`; the last one when a recovered session was lost again),
+/// rebuilt by [`gpu_work_row`]. A line of any other module or level is
+/// left out: a name logged elsewhere could carry the marker.
+fn gpu_work_in(tail: &str) -> Option<String> {
+    tail.lines().rev().find_map(|line| {
+        let (head, text) = line.split_once("] GPU work at the loss: ")?;
+        if !head.ends_with(" ERROR aurora_render::main_thread") {
+            return None;
+        }
+        gpu_work_row(text)
+    })
+}
+
+/// The row rebuilt from the line's frame numbers, ages (`d.ddd`) and one
+/// of the fixed endings of aurora-render's `hang_or_fault`; a line that
+/// does not parse whole gives nothing, so that no text of the log is
+/// published as it is.
+fn gpu_work_row(text: &str) -> Option<String> {
+    let text = text.trim();
+    if text == aurora_render::GPU_WORK_NONE {
+        return Some(text.to_owned());
+    }
+    let rest = text.strip_prefix("last submission frame ")?;
+    let (frame, rest) = rest.split_once(", ")?;
+    let frame: u64 = frame.parse().ok()?;
+    let (age, rest) = rest.split_once(" s before, ")?;
+    let age = seconds(age)?;
+    let (state, rest) = ["not finished", "finished"]
+        .iter()
+        .find_map(|state| rest.strip_prefix(&format!("{state}, ")).map(|rest| (*state, rest)))?;
+    let (last, verdict) = match rest.strip_prefix("none finished yet, ") {
+        Some(verdict) => ("none finished yet".to_owned(), verdict),
+        None => {
+            let rest = rest.strip_prefix("frame ")?;
+            let (finished, rest) = rest.split_once(" finished ")?;
+            let finished: u64 = finished.parse().ok()?;
+            let (finished_age, verdict) = rest.split_once(" s before, ")?;
+            (format!("frame {finished} finished {} s before", seconds(finished_age)?), verdict)
+        }
+    };
+    let verdict = aurora_render::GPU_WORK_VERDICTS.iter().find(|v| **v == verdict)?;
+    Some(format!("last submission frame {frame}, {age} s before, {state}, {last}, {verdict}"))
+}
+
+/// An age as the line writes it: digits, a point, three digits.
+fn seconds(text: &str) -> Option<&str> {
+    let (whole, frac) = text.split_once('.')?;
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    (digits(whole) && frac.len() == 3 && digits(frac)).then_some(text)
+}
+
 /// The session's log says its GPU device was lost.
 pub(super) fn device_lost(dir: &Path) -> bool {
     device_lost_in(&log(&dir.join("session.log")).1)
@@ -682,6 +740,64 @@ mod tests {
         // a loss in a running session stays the plain kind
         std::fs::write(dir.join("gpu-lost.txt"), "").unwrap();
         assert_eq!(build(&record, &dir).title, "Crash: GPU device lost (0.7.1+3.gabcdef)");
+        // the work the GPU had in hand (aurora-render device_lost.rs): a row
+        std::fs::write(
+            dir.join("session.log"),
+            format!(
+                "{NOTICE}\n[t ERROR aurora_render::main_thread] GPU device lost (Unknown): reset\n[t ERROR aurora_render::main_thread] GPU work at the loss: last submission frame 601, 1.101 s before, not finished, frame 599 finished 1.103 s before, a hang (the driver reset the card while that frame ran)\n"
+            ),
+        )
+        .unwrap();
+        let body = build(&record, &dir).body;
+        assert!(
+            body.contains("| GPU work at the loss | last submission frame 601, 1.101 s before, not finished, frame 599 finished 1.103 s before, a hang (the driver reset the card while that frame ran) |"),
+            "{body}"
+        );
+    }
+
+    /// The row comes from the renderer's own line only, rebuilt from its
+    /// numbers and fixed words: a name logged by another module that
+    /// carries the marker publishes nothing, a line that does not parse
+    /// whole neither; of a session recovered then lost again, the last
+    /// loss's line is the row.
+    #[test]
+    fn the_gpu_work_row_is_rebuilt_from_the_renderer_s_newest_line() {
+        const HANG: &str = "last submission frame 601, 1.101 s before, not finished, frame 599 finished 1.103 s before, a hang (the driver reset the card while that frame ran)";
+        const FAULT: &str = "last submission frame 12, 0.008 s before, not finished, frame 11 finished 0.009 s before, a fault in the work of that frame (not a hang)";
+        let own = |text: &str| format!("[t ERROR aurora_render::main_thread] GPU work at the loss: {text}\n");
+        // another module's line carrying the marker in a name: nothing
+        let injected = format!(
+            "[t WARN  aurora_viewer::world::object_im_filtered] object named \"x] GPU work at the loss: {HANG}\" in a private region\n"
+        );
+        assert_eq!(gpu_work_in(&injected), None);
+        assert_eq!(
+            gpu_work_in(&format!("[t INFO  aurora_render::main_thread] GPU work at the loss: {HANG}\n")),
+            None
+        );
+        // the renderer's line, rebuilt as it is
+        assert_eq!(gpu_work_in(&own(HANG)).as_deref(), Some(HANG));
+        assert_eq!(gpu_work_in(&own(FAULT)).as_deref(), Some(FAULT));
+        assert_eq!(
+            gpu_work_in(&own("last submission frame 0, 3.000 s before, not finished, none finished yet, a hang (the driver reset the card while that frame ran)")).as_deref(),
+            Some("last submission frame 0, 3.000 s before, not finished, none finished yet, a hang (the driver reset the card while that frame ran)")
+        );
+        assert_eq!(
+            gpu_work_in(&own("nothing submitted yet (lost while starting)")).as_deref(),
+            Some("nothing submitted yet (lost while starting)")
+        );
+        // anything else in the line: nothing published
+        for bad in [
+            "last submission frame 601, 1.101 s before, not finished, frame 599 finished 1.103 s before, a hang in a private region",
+            "last submission frame 601, 1.101 s before, not finished, frame 599 finished 1.103 s before, a hang (the driver reset the card while that frame ran) at a private region",
+            "last submission frame six, 1.101 s before, not finished, none finished yet, a hang (the driver reset the card while that frame ran)",
+            "last submission frame 601, 1.1 s before, not finished, none finished yet, a hang (the driver reset the card while that frame ran)",
+            "a private region",
+        ] {
+            assert_eq!(gpu_work_in(&own(bad)), None, "{bad}");
+        }
+        // a recovered loss, then the fatal one: the last line
+        let twice = format!("{}{}", own(FAULT), own(HANG));
+        assert_eq!(gpu_work_in(&twice).as_deref(), Some(HANG));
     }
 
     #[test]

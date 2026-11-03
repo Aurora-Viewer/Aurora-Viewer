@@ -242,18 +242,30 @@ fn metadata_controls(ui: &mut egui::Ui, entry: &mut Entry) {
         .spacing(Vec2::new(12.0, 8.0))
         .show(ui, |ui| {
             ui.label(aurora_i18n::tr!("common-name"));
-            ui.add(
-                egui::TextEdit::singleline(&mut entry.name)
-                    .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
-                    .char_limit(63),
+            crate::ui::widgets::restricted_text_field(
+                ui,
+                true,
+                &mut entry.name,
+                crate::ui::widgets::TextPolicy::PrintableNoPipe,
+                |b, ui| {
+                    egui::TextEdit::singleline(b)
+                        .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
+                        .char_limit(63)
+                },
             );
             ui.end_row();
             if !entry.local {
                 ui.label(aurora_i18n::tr!("common-description"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut entry.description)
-                        .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
-                        .char_limit(127),
+                crate::ui::widgets::restricted_text_field(
+                    ui,
+                    true,
+                    &mut entry.description,
+                    crate::ui::widgets::TextPolicy::PrintableNoPipe,
+                    |b, ui| {
+                        egui::TextEdit::singleline(b)
+                            .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
+                            .char_limit(127)
+                    },
                 );
                 ui.end_row();
             }

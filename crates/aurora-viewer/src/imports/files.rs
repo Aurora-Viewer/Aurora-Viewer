@@ -445,7 +445,10 @@ pub(super) fn load(
                     }),
                     options,
                 );
-                entry.name = format!("{} ({})", path.file_stem().unwrap_or_default().to_string_lossy(), material.name);
+                entry.name = crate::text_validation::generated_name(
+                    &format!("{} ({})", path.file_stem().unwrap_or_default().to_string_lossy(), material.name),
+                    63,
+                );
                 entry.material_index = index;
                 entry.selected = choice != Choice::Material || index == 0;
                 entry.local = choice == Choice::Local;

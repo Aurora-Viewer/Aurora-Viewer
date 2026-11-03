@@ -19,6 +19,7 @@ use super::icons::Icons;
 use super::widgets::{Floater, keycap};
 use crate::settings::Settings;
 use crate::theme::Palette;
+use crate::ui::widgets;
 use cx::{Counts, Cx, Mode};
 use egui::{Rect, RichText, Sense, Vec2, pos2, vec2};
 use std::collections::{HashMap, HashSet};
@@ -682,26 +683,28 @@ fn media_pack_error(failure: aurora_updater::Failure) -> &'static str {
 
 fn slider<T: egui::emath::Numeric>(ui: &mut egui::Ui, v: &mut T, range: std::ops::RangeInclusive<T>, suffix: &str) -> bool {
     ui.spacing_mut().slider_width = SLIDER_W;
-    ui.add(
+    ui.add(widgets::restricted_number(
         egui::Slider::new(v, range)
             .suffix(suffix)
             .custom_parser(aurora_i18n::parse_number)
             .trailing_fill(true),
-    )
+        widgets::TextPolicy::Decimal,
+    ))
     .changed()
 }
 
 /// Slider of whole values (the Legacy Viewer's decimal_digits="0").
 fn slider_whole(ui: &mut egui::Ui, v: &mut f32, range: std::ops::RangeInclusive<f32>, suffix: &str) -> bool {
     ui.spacing_mut().slider_width = SLIDER_W;
-    ui.add(
+    ui.add(widgets::restricted_number(
         egui::Slider::new(v, range)
             .suffix(suffix)
             .custom_parser(aurora_i18n::parse_number)
             .fixed_decimals(0)
             .step_by(1.0)
             .trailing_fill(true),
-    )
+        widgets::TextPolicy::Decimal,
+    ))
     .changed()
 }
 
