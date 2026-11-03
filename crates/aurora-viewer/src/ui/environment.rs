@@ -104,14 +104,15 @@ impl EnvironmentUi {
         .fixed()
         .help(aurora_i18n::tr!("ui-environment-choose-a-sky-water-or-day-cycle-from-your"))
         .show(ctx, p, open, |ui| {
-            self.selector_body(ui, p, view, loading, Some(time_of_day), lighting, &mut out);
+            self.selector_body(ui, p, view, loading, Some(time_of_day), LABEL_W, lighting, &mut out);
         });
         out
     }
 
     /// The lists, "Personal lighting…", the reset button and (with
     /// `time_of_day`) the time presets, shared by the Environment window and
-    /// the Quick preferences window (the Legacy Viewer's has no presets).
+    /// the Quick preferences window (the Legacy Viewer's has no presets);
+    /// `label_w` is the width of the labels' column.
     #[allow(clippy::too_many_arguments)]
     pub fn selector_body(
         &mut self,
@@ -120,6 +121,7 @@ impl EnvironmentUi {
         view: LocalView,
         loading: bool,
         time_of_day: Option<u8>,
+        label_w: f32,
         lighting: &mut bool,
         out: &mut Vec<EnvAction>,
     ) {
@@ -148,7 +150,7 @@ impl EnvironmentUi {
             widgets::surface(ui, p, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
+                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(label_w, 20.0), egui::Sense::hover());
                     ui.painter().text(
                         rect.left_center(),
                         egui::Align2::LEFT_CENTER,
@@ -166,7 +168,7 @@ impl EnvironmentUi {
         ui.add_space(6.0);
         widgets::divider(ui, p);
         ui.horizontal(|ui| {
-            ui.add_space(LABEL_W + 4.0);
+            ui.add_space(label_w + 4.0);
             if widgets::flat_button(ui, p, aurora_i18n::tr!("common-personal-lighting"))
                 .on_hover_text(aurora_i18n::tr!("ui-environment-adjust-the-current-sky-for-your-view-only"))
                 .clicked()
@@ -188,7 +190,7 @@ impl EnvironmentUi {
         if let Some(time_of_day) = time_of_day {
             widgets::divider(ui, p);
             ui.horizontal(|ui| {
-                let (rect, _) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(label_w, 20.0), egui::Sense::hover());
                 ui.painter().text(
                     rect.left_center(),
                     egui::Align2::LEFT_CENTER,

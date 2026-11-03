@@ -32,8 +32,11 @@ use std::ops::RangeInclusive;
 /// The window's id (Floater.Toggle "quickprefs").
 pub const WINDOW: &str = "quickprefs";
 
-const LABEL_W: f32 = 132.0;
-const WIDTH: f32 = 432.0;
+/// The labels' column, for the rows and the environment block alike: wide
+/// enough for the longest label (French "Complexité maximale des avatars").
+const LABEL_W: f32 = 212.0;
+const WIDTH: f32 = 540.0;
+const SLIDER_W: f32 = 180.0;
 
 /// A numeric row, bound to the setting of the same name in Preferences.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -91,17 +94,20 @@ impl Slot {
         }
     }
 
-    /// The slider's increment: the one of Preferences when it has one, else
-    /// the quick_preferences.xml / floater_quickprefs.xml one.
-    pub fn step(self) -> f64 {
+    /// The slider's increment, the one of the Preferences row (none: free).
+    pub fn step(self) -> Option<f64> {
         match self {
-            Slot::DrawDistance => 8.0,
-            Slot::Particles => 256.0,
-            Slot::PhysicsDetail => 0.05,
-            Slot::Lod => 0.125,
-            Slot::Avatars => 1.0,
-            Slot::Bandwidth => 50.0,
+            Slot::DrawDistance | Slot::Avatars => None,
+            Slot::Particles => Some(256.0),
+            Slot::PhysicsDetail => Some(0.05),
+            Slot::Lod => Some(0.125),
+            Slot::Bandwidth => Some(50.0),
         }
+    }
+
+    /// Fixed decimals of the Preferences row's value box (none: egui's).
+    pub fn decimals(self) -> Option<usize> {
+        (self == Slot::PhysicsDetail).then_some(2)
     }
 
     pub fn suffix(self) -> &'static str {
@@ -112,6 +118,7 @@ impl Slot {
         }
     }
 
+    #[cfg(test)]
     pub fn get(self, s: &Settings) -> f64 {
         match self {
             Slot::DrawDistance => f64::from(s.draw_distance),
@@ -247,7 +254,7 @@ impl QuickPrefsUi {
                 out.changed |= slot_row(ui, p, settings, Slot::Bandwidth);
                 out.changed |= complexity_row(ui, p, settings);
                 widgets::divider(ui, p);
-                env.selector_body(ui, p, view, loading, None, lighting, &mut out.env);
+                env.selector_body(ui, p, view, loading, None, LABEL_W, lighting, &mut out.env);
             });
         // saved once the button is released, not at every frame of a drag
         self.unsaved |= out.changed;
@@ -277,7 +284,7 @@ impl QuickPrefsUi {
         ui.horizontal(|ui| {
             label(ui, p, aurora_i18n::tr!("ui-context-hover-height"), tip);
             ui.add_enabled_ui(enabled, |ui| {
-                ui.spacing_mut().slider_width = 150.0;
+                ui.spacing_mut().slider_width = SLIDER_W - 14.0;
                 let mut value = height.value();
                 let response = widgets::height_slider(ui, p, &mut value, hover_height::MIN..=hover_height::MAX, settings.auto_hover_height)
                     .on_hover_text(tip);
@@ -304,26 +311,47 @@ fn label(ui: &mut egui::Ui, p: &Palette, text: &str, tip: &str) {
     response.on_hover_text(tip);
 }
 
-/// One numeric row: its label and a slider that edits its setting.
+/// One numeric row: its label and a slider of the setting's own type, drawn
+/// as the Preferences row draws it (same increment, decimals and suffix).
 fn slot_row(ui: &mut egui::Ui, p: &Palette, settings: &mut Settings, slot: Slot) -> bool {
-    let mut changed = false;
+    fn add<T: egui::emath::Numeric>(ui: &mut egui::Ui, v: &mut T, slot: Slot) -> bool {
+        let range = *slot.range().start()..=*slot.range().end();
+        let mut slider = egui::Slider::new(v, T::from_f64(*range.start())..=T::from_f64(*range.end()))
+            .custom_parser(aurora_i18n::parse_number)
+            .suffix(slot.suffix())
+            .trailing_fill(true);
+        if let Some(step) = slot.step() {
+            slider = slider.step_by(step);
+        }
+        if let Some(decimals) = slot.decimals() {
+            slider = slider.fixed_decimals(decimals);
+        }
+        ui.add(slider).changed()
+    }
     ui.horizontal(|ui| {
         label(ui, p, slot.label(), slot.tip());
-        ui.spacing_mut().slider_width = 190.0;
-        let mut value = slot.get(settings);
-        let response = ui.add(
-            egui::Slider::new(&mut value, slot.range())
-                .custom_parser(aurora_i18n::parse_number)
-                .step_by(slot.step())
-                .suffix(slot.suffix())
-                .trailing_fill(true),
-        );
-        if response.changed() {
-            slot.set(settings, value);
-            changed = true;
+        ui.spacing_mut().slider_width = SLIDER_W;
+        // the value is written through `set`, bounded like Preferences' field
+        macro_rules! edit {
+            ($field:ident) => {{
+                let mut value = settings.$field;
+                let changed = add(ui, &mut value, slot);
+                if changed {
+                    slot.set(settings, f64::from(value));
+                }
+                changed
+            }};
         }
-    });
-    changed
+        match slot {
+            Slot::DrawDistance => edit!(draw_distance),
+            Slot::Particles => edit!(max_particles),
+            Slot::PhysicsDetail => edit!(avatar_physics_detail),
+            Slot::Lod => edit!(lod_factor),
+            Slot::Avatars => edit!(max_avatars),
+            Slot::Bandwidth => edit!(bandwidth_kbps),
+        }
+    })
+    .inner
 }
 
 /// IndirectMaxComplexity with its "No Limit" text.
@@ -337,7 +365,7 @@ fn complexity_row(ui: &mut egui::Ui, p: &Palette, settings: &mut Settings) -> bo
             aurora_i18n::tr!("ui-options-maximum-avatar-complexity"),
             aurora_i18n::tr!("ui-options-above-this-limit-the-avatar-appears-as-a-gray"),
         );
-        ui.spacing_mut().slider_width = 190.0;
+        ui.spacing_mut().slider_width = SLIDER_W;
         let mut position = complexity_position(settings);
         let text = |v: f64| {
             let limit = slider::to_limit(v.round() as u32);
