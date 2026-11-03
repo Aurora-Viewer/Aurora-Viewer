@@ -5725,8 +5725,15 @@ impl App {
             }
             _ => None,
         };
-        log::info!("hypergrid: map teleport, label {label:?}, region {sim:?}");
-        let Some(grid) = crate::slurl::parse_hypergrid(label).and_then(|place| place.grid) else {
+        // the link region's map name, else the label without the
+        // " (x, y, z)" the map adds
+        let typed = label.rsplit_once(" (").map_or(label, |(text, _)| text);
+        let grid = sim
+            .as_deref()
+            .and_then(crate::grids::link_grid)
+            .or_else(|| crate::slurl::parse_hypergrid(typed).and_then(|place| place.grid));
+        log::info!("hypergrid: map teleport to {grid:?} (region {sim:?})");
+        let Some(grid) = grid else {
             return false;
         };
         let go = SuitcaseGo::Map {
