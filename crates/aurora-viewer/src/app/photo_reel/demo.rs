@@ -1,9 +1,10 @@
-//! AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send]: the reel filled with
+//! AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:moved]: the reel filled with
 //! `n` real photos of the plaza, saved to a folder of the cache (never the
 //! Pictures folder), the focal length changed between them so that they
 //! differ. `quick` then opens the quick view on the newest, `delete` asks
 //! to delete it, `send` sends it again to the inventory (held, the
-//! viewfinder's drawer opened on its price). From AURORA_DEMO_SNAPSHOT_FRAME
+//! viewfinder's drawer opened on its price). `moved` puts the tray at the middle
+//! of the screen: the photos fly to it there. From AURORA_DEMO_SNAPSHOT_FRAME
 //! (700 by default); the photo mode's look follows AURORA_DEMO_SNAPSHOT.
 
 use super::super::App;
@@ -21,6 +22,8 @@ pub(in crate::app) struct Demo {
     quick: bool,
     delete: bool,
     send: bool,
+    /// The tray moved to the middle of the screen, the flights following it.
+    moved: bool,
     start: u64,
     taken: usize,
     /// The frame of the last step.
@@ -45,6 +48,7 @@ impl Demo {
             quick: words.iter().any(|w| matches!(*w, "quick" | "delete" | "send")),
             delete: words.contains(&"delete"),
             send: words.contains(&"send"),
+            moved: words.contains(&"moved"),
             start,
             ..Demo::default()
         })
@@ -62,6 +66,9 @@ impl App {
                 return;
             };
             log::info!("photo reel demo: {} photos from frame {}", demo.count, demo.start);
+            if demo.moved {
+                self.settings.snapshot.viewfinder.reel_at = Some([0.55, 0.3]);
+            }
             self.snapshots.reel.demo = Some(demo);
         }
         let frame = self.frame_count;

@@ -235,9 +235,6 @@ pub(super) struct Snapshots {
     /// The field of view before the viewfinder opened: its focal length
     /// is the photo's, the view gets this back when it closes.
     pub(super) fov_before: Option<f32>,
-    /// The last photo's card in the viewfinder: what it says and offers
-    /// (its thumbnail is the reel's).
-    review: Option<(String, crate::ui::viewfinder::Review)>,
     /// The session's photos (`app::photo_reel`).
     pub(super) reel: super::photo_reel::ReelState,
     /// Choosing for the isolation (`app::photo_isolate`): the points asked
@@ -428,7 +425,6 @@ impl Default for Snapshots {
             vf_tick_slot: None,
             vf_free_up: 0.0,
             fov_before: None,
-            review: None,
             reel: Default::default(),
             isolate_picks: Vec::new(),
             isolate_point: None,
@@ -993,10 +989,7 @@ impl App {
                 log::info!("photo: postcard sent");
                 s.reel.done(Some(Place::Email), None);
                 s.message = Some((aurora_i18n::tr!("photo-email-sent").to_owned(), false));
-                self.photo_review_show(
-                    aurora_i18n::tr!("photo-destination-email").to_owned(),
-                    crate::ui::viewfinder::Review::Email,
-                );
+                self.photo_review_show();
             }
             Err(e) => {
                 log::warn!("photo: postcard not sent: {e}");
@@ -1377,10 +1370,7 @@ impl App {
                 self.snapshots.message_item = Some(id);
                 self.snapshots.reel.done(Some(Place::Inventory(id)), None);
                 self.snapshots.message_profile = false;
-                self.photo_review_show(
-                    aurora_i18n::tr!("photo-destination-inventory").to_owned(),
-                    crate::ui::viewfinder::Review::Inventory,
-                );
+                self.photo_review_show();
             }
             Err(e) => {
                 log::warn!("photo: upload failed: {e}");
@@ -1425,10 +1415,7 @@ impl App {
                 s.reel.done(Some(Place::Profile), None);
                 s.message = Some((aurora_i18n::tr!("photo-profile-posted").to_owned(), false));
                 s.message_profile = true;
-                self.photo_review_show(
-                    aurora_i18n::tr!("photo-destination-profile").to_owned(),
-                    crate::ui::viewfinder::Review::Profile,
-                );
+                self.photo_review_show();
             }
             Err(e) => {
                 log::warn!("photo: not posted to the profile feed: {e}");
@@ -1540,10 +1527,6 @@ impl App {
                     s.gallery.retain(|(p, _)| *p != saved.path);
                     s.gallery.insert(0, (saved.path.clone(), Some(tex.clone())));
                     s.reel.done(Some(Place::Disk(saved.path.clone())), Some(tex));
-                    s.review = Some((
-                        format!("{} · {name}", aurora_i18n::tr!("photo-destination-disk")),
-                        crate::ui::viewfinder::Review::Disk(saved.path.clone()),
-                    ));
                     if viewfinder {
                         s.vf.review_until = self.egui_ctx.input(|i| i.time) + 4.8;
                     }
@@ -2038,17 +2021,9 @@ LUT_3D_SIZE {n}
             .is_some_and(|d| d.viewfinder.as_ref().is_some_and(|v| v.group) && self.frame_count == d.frame + 40)
     }
 
-    /// The last photo's card of the viewfinder: its thumbnail, what it
-    /// says, what it offers.
-    pub(super) fn photo_review(&self) -> Option<(egui::TextureHandle, String, crate::ui::viewfinder::Review)> {
-        let s = &self.snapshots;
-        let (label, kind) = s.review.clone()?;
-        Some((self.photo_reel_card()?, label, kind))
-    }
-
-    /// The card shows a photo sent to the inventory or the profile feed.
-    fn photo_review_show(&mut self, label: String, kind: crate::ui::viewfinder::Review) {
-        self.snapshots.review = Some((label, kind));
+    /// The card shows a photo sent to the inventory, the profile feed or by
+    /// e-mail (its picture is the reel's card photo).
+    fn photo_review_show(&mut self) {
         if self.viewfinder_on() {
             self.snapshots.vf.review_until = self.egui_ctx.input(|i| i.time) + 4.8;
         }

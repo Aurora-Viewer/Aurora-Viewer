@@ -114,6 +114,8 @@ pub struct Viewfinder {
     /// its photo flies from one to the other (started then, from there).
     card_rect: Option<Rect>,
     reel_slot: Option<Rect>,
+    /// The reel's tray being dragged: where it is (kept once let go).
+    reel_drag: Option<Pos2>,
     fly: Option<(f64, Rect)>,
 }
 
@@ -148,8 +150,8 @@ pub struct Frame<'a> {
     /// The camera's pitch (degrees, positive up).
     pub pitch: f32,
     pub histogram: Option<&'a [u32; vf::HISTOGRAM_BINS]>,
-    /// The last photo: its thumbnail and what the card says of it.
-    pub review: Option<(&'a egui::TextureHandle, String, Review)>,
+    /// The last photo's picture, for its card.
+    pub review: Option<&'a egui::TextureHandle>,
     pub first_person: bool,
     /// Preferences allow the first person view (EnableMouselook).
     pub first_person_allowed: bool,
@@ -177,19 +179,6 @@ pub struct Keys<'a> {
     pub menu: &'a str,
     pub af_mode: &'a str,
     pub first_person: Option<&'a str>,
-}
-
-/// What the last photo's card offers.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Review {
-    /// On disk: open it, show its folder.
-    Disk(std::path::PathBuf),
-    /// In the Photo Album.
-    Inventory,
-    /// On the profile feed.
-    Profile,
-    /// Sent by e-mail.
-    Email,
 }
 
 /// What the viewfinder asks of the app.
@@ -548,7 +537,9 @@ impl Viewfinder {
             self.top_bar(ctx, p, &back, screen, s, panel, f, &mut out);
         }
         self.af_point(ctx, p, &front, s, f);
-        if shows && !self.hinted && !self.menu && !self.help {
+        // (the last photo's card takes its place while it shows)
+        let card = f.now < self.review_until && f.review.is_some();
+        if shows && !self.hinted && !self.menu && !self.help && !card {
             hint(ctx, p, screen, if ctl { 156.0 } else { 128.0 }, ctl && !pad);
         }
         if let Some((text, error, until)) = &self.message {
@@ -582,13 +573,14 @@ impl Viewfinder {
         } else {
             self.pad = Pad::default();
         }
-        // the session's photos bottom left (over the camera pad when it
-        // shows), the last photo's card bottom right, left of the dock
+        // the session's photos where they were moved (bottom left at first,
+        // over the camera pad when it shows); the last photo's card centred
+        // over the lens and aperture controls
         if shows && !self.menu {
-            self.reel_tray(ctx, p, screen, f, if pad { 300.0 } else { 132.0 }, &mut out);
+            self.reel_tray(ctx, p, screen, s, f, if pad { 300.0 } else { 132.0 }, &mut out);
         }
         if f.now < self.review_until && !self.menu {
-            self.card_rect = review(ctx, p, screen, f, &mut out);
+            self.card_rect = review(ctx, p, screen, f, if ctl { 156.0 } else { 128.0 });
         } else if let Some(from) = self.card_rect.take()
             && f.now >= self.review_until
             && shows
@@ -1644,37 +1636,61 @@ impl Viewfinder {
             });
     }
 
-    /// The session's photos, bottom left (`ui::photo_reel::tray`), the
-    /// photo just taken joining them once it has flown from its card.
-    fn reel_tray(&mut self, ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, bottom: f32, out: &mut Vec<Out>) {
+    /// The session's photos (`ui::photo_reel::tray`), floating: dragged by
+    /// their background anywhere on the screen, kept there between sessions
+    /// (bottom left at first, `bottom` points up); the photo just taken
+    /// joins them once it has flown from its card, wherever they are.
+    #[allow(clippy::too_many_arguments)]
+    fn reel_tray(&mut self, ctx: &egui::Context, p: &Palette, screen: Rect, s: &mut Settings, f: &Frame, bottom: f32, out: &mut Vec<Out>) {
+        use crate::ui::photo_reel::{tray_fraction, tray_place, tray_slot};
         const MARGIN: i8 = 6;
+        // (room above for the photos peeking out of the stack)
+        let margin = egui::Margin {
+            top: 2 * MARGIN,
+            ..egui::Margin::same(MARGIN)
+        };
         let reel = crate::ui::photo_reel::ReelView {
             arriving: (f.now < self.review_until && f.review.is_some()) || self.fly.is_some(),
             ..*f.reel
         };
+        let id = Id::unique("vf_reel_tray");
+        let size = ctx.memory(|m| m.area_rect(id)).map_or(Vec2::new(250.0, 92.0), |r| r.size());
+        let default = Pos2::new(screen.left() + GAP, screen.bottom() - bottom - size.y);
+        let pos = match self.reel_drag {
+            Some(dragged) => tray_place(None, screen, size, dragged),
+            None => tray_place(s.viewfinder.reel_at, screen, size, default),
+        };
         // where the photo just taken lands: the tray's last place, once it
         // holds it
-        let origin = Pos2::new(screen.left() + GAP, screen.bottom() - bottom);
-        let inner = origin + Vec2::new(f32::from(MARGIN), -f32::from(MARGIN) - crate::ui::photo_reel::TRAY_HEIGHT);
-        self.reel_slot = Some(crate::ui::photo_reel::tray_slot(inner, f.reel.photos.len()));
+        let inner = pos + Vec2::new(f32::from(margin.left), f32::from(margin.top));
+        self.reel_slot = Some(tray_slot(inner, f.reel.photos.len()));
         if reel.photos.len() <= usize::from(reel.arriving) {
             return;
         }
         let mut asked = Vec::new();
-        egui::Area::new(Id::unique("vf_reel_tray"))
+        let area = egui::Area::new(id)
             .order(Order::Foreground)
             .fade_in(false)
-            .pivot(Align2::LEFT_BOTTOM)
-            .fixed_pos(origin)
+            .movable(true)
+            .current_pos(pos)
             .show(ctx, |ui| {
-                // (room above for the photos peeking out of the stack)
-                let margin = egui::Margin {
-                    top: 2 * MARGIN,
-                    ..egui::Margin::same(MARGIN)
-                };
                 widgets::overlay(ui, p, margin, |ui| crate::ui::photo_reel::tray(ui, p, &reel, &mut asked))
             });
         out.extend(asked.into_iter().map(Out::Reel));
+        // moved: followed live, kept once let go (not every frame of the
+        // drag: the settings are saved when they change)
+        let resp = &area.response;
+        if resp.dragged() {
+            self.reel_drag = Some(pos + resp.drag_delta());
+            ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+        } else if resp.hovered() {
+            ctx.set_cursor_icon(egui::CursorIcon::Grab);
+        }
+        if resp.drag_stopped()
+            && let Some(dragged) = self.reel_drag.take()
+        {
+            s.viewfinder.reel_at = Some(tray_fraction(tray_place(None, screen, size, dragged), screen));
+        }
     }
 
     /// The card's photo on its way to the tray, across the bottom of the
@@ -1685,7 +1701,7 @@ impl Viewfinder {
         let Some((t0, from)) = self.fly else {
             return;
         };
-        let (Some(to), Some((tex, _, _))) = (self.reel_slot, &f.review) else {
+        let (Some(to), Some(tex)) = (self.reel_slot, f.review) else {
             self.fly = None;
             return;
         };
@@ -2068,60 +2084,31 @@ fn ghost_disp(ctx: &egui::Context, p: &Palette, screen: Rect) -> bool {
     clicked
 }
 
-/// The card of the photo just taken, bottom right, left of the dock (the
-/// reel's tray has the bottom left); where its picture is.
-fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, out: &mut Vec<Out>) -> Option<Rect> {
-    let (texture, label, kind) = f.review.as_ref()?;
+/// The card of the photo just taken: its picture alone, centred over the
+/// lens and aperture controls (where the first hint was), framed like the
+/// dock's buttons; where its picture is.
+fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, bottom: f32) -> Option<Rect> {
+    let texture = f.review?;
     let mut picture = None;
     egui::Area::new(Id::unique("vf_review"))
         .order(Order::Foreground)
         .fade_in(false)
-        .pivot(Align2::RIGHT_BOTTOM)
-        .fixed_pos(Pos2::new(screen.right() - 84.0, screen.bottom() - 132.0))
+        .pivot(Align2::CENTER_BOTTOM)
+        .fixed_pos(Pos2::new(screen.center().x, screen.bottom() - bottom))
         .show(ctx, |ui| {
-            widgets::overlay(ui, p, egui::Margin::same(8), |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 12.0;
+            // the dock's face and edge (`dock_button`)
+            egui::Frame::new()
+                .fill(p.navy.gamma_multiply(0.55))
+                .stroke(Stroke::new(1.0, p.ink.gamma_multiply(0.16)))
+                .corner_radius(ui.visuals().window_corner_radius)
+                .inner_margin(egui::Margin::same(8))
+                .show(ui, |ui| {
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(150.0, 100.0), Sense::hover());
                     // the photo covering the card's picture
-                    let uv = crate::ui::photo_reel::cover_uv(texture.size_vec2(), 1.5);
-                    ui.painter().image(texture.id(), rect, uv, widgets::PICTURE_TINT);
+                    let radius = widgets::inner_radius(ui.visuals());
+                    crate::ui::photo_reel::picture(ui.painter(), p, rect, radius, Some(texture));
                     picture = Some(rect);
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 6.0;
-                        let title = match kind {
-                            Review::Disk(_) => aurora_i18n::tr!("photo-vf-saved"),
-                            Review::Inventory => aurora_i18n::tr!("photo-uploaded"),
-                            Review::Profile => aurora_i18n::tr!("photo-profile-posted"),
-                            Review::Email => aurora_i18n::tr!("photo-email-sent"),
-                        };
-                        // one line each, like the message at the top
-                        ui.add(egui::Label::new(egui::RichText::new(title).font(bold(ctx, 13.0)).color(p.ink)).extend());
-                        ui.add(egui::Label::new(egui::RichText::new(label).size(12.0).color(p.muted)).extend());
-                        ui.horizontal(|ui| match kind {
-                            Review::Disk(path) => {
-                                if widgets::flat_button(ui, p, aurora_i18n::tr!("photo-open")).clicked() {
-                                    out.push(Out::Panel(Action::OpenPhoto(path.clone())));
-                                }
-                                if widgets::flat_button(ui, p, aurora_i18n::tr!("photo-vf-folder")).clicked() {
-                                    out.push(Out::Panel(Action::OpenFolder));
-                                }
-                            }
-                            Review::Inventory => {
-                                if widgets::flat_button(ui, p, aurora_i18n::tr!("photo-show-in-inventory")).clicked() {
-                                    out.push(Out::Panel(Action::ShowItem));
-                                }
-                            }
-                            Review::Profile => {
-                                if widgets::flat_button(ui, p, aurora_i18n::tr!("photo-profile-show")).clicked() {
-                                    out.push(Out::Panel(Action::ShowProfile));
-                                }
-                            }
-                            Review::Email => {}
-                        });
-                    });
                 });
-            });
         });
     picture
 }
