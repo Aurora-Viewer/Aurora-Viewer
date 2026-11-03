@@ -22,7 +22,7 @@ pub(super) fn show(
     };
     if let EditDialog::Share(ids, resident) = &dialog {
         let picture = facts.pictures.get(resident);
-        if !share(ctx, p, icons, inv, facts, picture, st.ui_id, ids, *resident, actions) {
+        if !share(ctx, p, icons, inv, prefs, facts, picture, st.ui_id, ids, *resident, actions) {
             st.dialog = Some(dialog);
         }
         return;
@@ -343,6 +343,8 @@ fn share(
     p: &Palette,
     icons: &Icons,
     inv: &Inventory,
+    // the folder colors of the list
+    prefs: &InventoryPreferences,
     facts: &Facts,
     picture: Option<&egui::TextureHandle>,
     ui_id: Uuid,
@@ -359,7 +361,8 @@ fn share(
             let icon = item.map_or_else(
                 || {
                     let kind = inv.folders.get(id).map_or(-1, |f| f.info.type_default);
-                    (super::tree::folder_icon(kind, false), p.muted)
+                    let tint = super::folder_colors::tint(prefs, *id).unwrap_or(p.muted);
+                    (super::tree::folder_icon(kind, false), tint)
                 },
                 |it| inventory_item_icon(inv, it, p),
             );

@@ -38,6 +38,13 @@ pub fn page(cx: &mut Cx) {
             tr!("inventory-hover-pictures-help"),
             &field!(inventory.thumbnail_tooltips),
         );
+        cx.toggle(
+            tr!("inventory-folder-colors"),
+            tr!("inventory-folder-colors-help"),
+            &field!(inventory.folder_colors_enabled),
+        );
+        // the colors themselves, given from a folder's menu
+        cx.track(&field!(inventory.folder_colors));
         cx.toggle(tr!("ui-inventory-controls-recent-tab"), "", &field!(inventory.show_recent));
         let off = !cx.s.inventory.show_recent;
         cx.subs(off, |cx| {
