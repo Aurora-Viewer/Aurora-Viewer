@@ -109,71 +109,93 @@ impl EnvironmentUi {
         .fixed()
         .help(aurora_i18n::tr!("ui-environment-choose-a-sky-water-or-day-cycle-from-your"))
         .show(ctx, p, open, |ui| {
-            ui.spacing_mut().item_spacing = Vec2::new(4.0, 6.0);
-            let rows = [
-                (
-                    SettingsKind::Sky,
-                    aurora_i18n::tr!("ui-environment-sky-environment"),
-                    aurora_i18n::tr!("ui-environment-sky-settings"),
-                    view.sky,
-                ),
-                (
-                    SettingsKind::Water,
-                    aurora_i18n::tr!("ui-environment-water-environment"),
-                    aurora_i18n::tr!("ui-environment-water-settings"),
-                    view.water,
-                ),
-                (
-                    SettingsKind::Day,
-                    aurora_i18n::tr!("extra-day-night"),
-                    aurora_i18n::tr!("ui-environment-day-cycle-settings"),
-                    view.day,
-                ),
-            ];
-            for (kind, label, tip, shown) in rows {
-                widgets::surface(ui, p, |ui| {
-                    ui.set_min_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        let (rect, resp) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
-                        ui.painter().text(
-                            rect.left_center(),
-                            egui::Align2::LEFT_CENTER,
-                            label,
-                            egui::FontId::proportional(12.5),
-                            p.ink,
-                        );
-                        resp.on_hover_text(tip);
-                        if let Some(a) = self.list_row(ui, p, kind, shown) {
-                            out.push(a);
-                        }
-                    });
-                });
-            }
-            ui.add_space(6.0);
-            widgets::divider(ui, p);
-            ui.horizontal(|ui| {
-                ui.add_space(LABEL_W + 4.0);
-                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-personal-lighting"))
-                    .on_hover_text(aurora_i18n::tr!("ui-environment-adjust-the-current-sky-for-your-view-only"))
-                    .clicked()
-                {
-                    *lighting = !*lighting;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::icon_button(
-                        ui,
-                        p,
-                        "restore",
-                        aurora_i18n::tr!("ui-environment-return-to-shared-environment"),
-                        true,
-                    ) {
-                        out.push(EnvAction::Shared);
+            self.selector_body(ui, p, view, loading, Some(time_of_day), LABEL_W, lighting, &mut out);
+        });
+        out
+    }
+
+    /// The lists, "Personal lighting…", the reset button and (with
+    /// `time_of_day`) the time presets, shared by the Environment window and
+    /// the Quick preferences window (the Legacy Viewer's has no presets);
+    /// `label_w` is the width of the labels' column.
+    #[allow(clippy::too_many_arguments)]
+    pub fn selector_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        view: LocalView,
+        loading: bool,
+        time_of_day: Option<u8>,
+        label_w: f32,
+        lighting: &mut bool,
+        out: &mut Vec<EnvAction>,
+    ) {
+        ui.spacing_mut().item_spacing = Vec2::new(4.0, 6.0);
+        let rows = [
+            (
+                SettingsKind::Sky,
+                aurora_i18n::tr!("ui-environment-sky-environment"),
+                aurora_i18n::tr!("ui-environment-sky-settings"),
+                view.sky,
+            ),
+            (
+                SettingsKind::Water,
+                aurora_i18n::tr!("ui-environment-water-environment"),
+                aurora_i18n::tr!("ui-environment-water-settings"),
+                view.water,
+            ),
+            (
+                SettingsKind::Day,
+                aurora_i18n::tr!("extra-day-night"),
+                aurora_i18n::tr!("ui-environment-day-cycle-settings"),
+                view.day,
+            ),
+        ];
+        for (kind, label, tip, shown) in rows {
+            widgets::surface(ui, p, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(label_w, 20.0), egui::Sense::hover());
+                    ui.painter().text(
+                        rect.left_center(),
+                        egui::Align2::LEFT_CENTER,
+                        label,
+                        egui::FontId::proportional(12.5),
+                        p.ink,
+                    );
+                    resp.on_hover_text(tip);
+                    if let Some(a) = self.list_row(ui, p, kind, shown) {
+                        out.push(a);
                     }
                 });
             });
+        }
+        ui.add_space(6.0);
+        widgets::divider(ui, p);
+        ui.horizontal(|ui| {
+            ui.add_space(label_w + 4.0);
+            if widgets::flat_button(ui, p, aurora_i18n::tr!("common-personal-lighting"))
+                .on_hover_text(aurora_i18n::tr!("ui-environment-adjust-the-current-sky-for-your-view-only"))
+                .clicked()
+            {
+                *lighting = !*lighting;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if widgets::icon_button(
+                    ui,
+                    p,
+                    "restore",
+                    aurora_i18n::tr!("ui-environment-return-to-shared-environment"),
+                    true,
+                ) {
+                    out.push(EnvAction::Shared);
+                }
+            });
+        });
+        if let Some(time_of_day) = time_of_day {
             widgets::divider(ui, p);
             ui.horizontal(|ui| {
-                let (rect, _) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(label_w, 20.0), egui::Sense::hover());
                 ui.painter().text(
                     rect.left_center(),
                     egui::Align2::LEFT_CENTER,
@@ -204,22 +226,21 @@ impl EnvironmentUi {
                     }
                 }
             });
-            let status = if self.scan_left > 0 {
-                aurora_i18n::tr!("ui-environment-loading-inventory-folders", value0 = format!("{}", self.scan_left))
-            } else if loading {
-                aurora_i18n::tr!("ui-environment-loading-settings").to_owned()
-            } else {
-                let c = &self.catalog;
-                aurora_i18n::tr!(
-                    "ui-environment-skies-waters-day-cycles",
-                    value0 = format!("{}", c.sky.len()),
-                    value1 = format!("{}", c.water.len()),
-                    value2 = format!("{}", c.day.len())
-                )
-            };
-            ui.label(RichText::new(status).size(11.0).color(p.muted_dim));
-        });
-        out
+        }
+        let status = if self.scan_left > 0 {
+            aurora_i18n::tr!("ui-environment-loading-inventory-folders", value0 = format!("{}", self.scan_left))
+        } else if loading {
+            aurora_i18n::tr!("ui-environment-loading-settings").to_owned()
+        } else {
+            let c = &self.catalog;
+            aurora_i18n::tr!(
+                "ui-environment-skies-waters-day-cycles",
+                value0 = format!("{}", c.sky.len()),
+                value1 = format!("{}", c.water.len()),
+                value2 = format!("{}", c.day.len())
+            )
+        };
+        ui.label(RichText::new(status).size(11.0).color(p.muted_dim));
     }
 
     /// One list with its < > arrows.
