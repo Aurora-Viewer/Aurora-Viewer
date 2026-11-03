@@ -302,6 +302,18 @@ impl ShapeParams {
         }
     }
 
+    /// Shape sex without expanding all visual-parameter drivers each frame.
+    pub(super) fn is_male(&self, values: &[u8]) -> bool {
+        let Some(param) = self.params.get(&PARAM_MALE) else { return false };
+        let weight = self
+            .transmitted
+            .binary_search(&PARAM_MALE)
+            .ok()
+            .and_then(|index| values.get(index))
+            .map_or(param.default, |value| u8_to_f32(*value, param.min, param.max));
+        weight > 0.5
+    }
+
     /// Weights of every parameter from the AvatarAppearance values (empty:
     /// defaults).
     pub fn weights(&self, values: &[u8]) -> HashMap<i32, f32> {
@@ -486,6 +498,22 @@ mod tests {
         let rig = Rig::new(&sk);
         let p = ShapeParams::parse(&std::fs::read(format!("{dir}avatar_lad.xml")).unwrap(), &sk, &rig);
         (sk, rig, p)
+    }
+
+    #[test]
+    fn gait_sex_matches_the_shape_for_partial_and_complete_appearances() {
+        let (_, rig, p) = load();
+        assert!(!ShapeParams::default().is_male(&[]));
+        assert_eq!(p.is_male(&[]), p.shape(&[], &rig).male);
+        let index = p.transmitted.binary_search(&PARAM_MALE).expect("male parameter");
+        let mut values = p.values_with(&[]);
+        for weight in [0, 127, 128, 255] {
+            values[index] = weight;
+            for len in [0, index, index + 1, values.len()] {
+                let values = &values[..len];
+                assert_eq!(p.is_male(values), p.shape(values, &rig).male);
+            }
+        }
     }
 
     #[test]
