@@ -230,7 +230,9 @@ pub fn save_gpu_stall(dir: &Path, seconds: u64) {
 /// thread held in the driver may take up to half a second to refuse: the
 /// header is written at once (all the next start's safe graphics offer
 /// needs), the stack by a thread of its own, the main thread going on.
-/// Kept only while the stall is (`crash::gpu_answered` removes the file).
+/// Kept only while the stall is (`crash::gpu_answered` removes the file):
+/// the stacks replace the header only if it is still there once read, so a
+/// GPU that answered during the reading leaves no stall behind.
 #[cfg(target_os = "linux")]
 pub fn save_gpu_stall(dir: &Path, seconds: u64) {
     let header = format!("GPU stall: no frame for {seconds} s");
@@ -240,8 +242,9 @@ pub fn save_gpu_stall(dir: &Path, seconds: u64) {
     }
     let dir = dir.to_owned();
     let _ = std::thread::Builder::new().name("aurora-crash-stall".into()).spawn(move || {
+        let out = stacks(&header, None);
         if dir.join("gpu-stall.txt").exists() {
-            save_stacks(&dir, "gpu-stall", &header, None);
+            write_stacks(&dir, "gpu-stall", out);
         }
     });
 }
@@ -260,6 +263,11 @@ pub fn save_gpu_stall(dir: &Path, seconds: u64) {
 /// those of [`THREADS`].
 #[cfg(any(windows, target_os = "linux"))]
 fn save_stacks(dir: &Path, name: &str, header: &str, main: Option<&super::native::Thread>) {
+    write_stacks(dir, name, stacks(header, main));
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn stacks(header: &str, main: Option<&super::native::Thread>) -> Vec<u8> {
     let mut out = format!("{header}\n").into_bytes();
     if let Some(main) = main {
         out.extend_from_slice(b"Thread: main\n");
@@ -273,6 +281,11 @@ fn save_stacks(dir: &Path, name: &str, header: &str, main: Option<&super::native
             thread.write_stack(&mut out);
         }
     }
+    out
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn write_stacks(dir: &Path, name: &str, out: Vec<u8>) {
     let pending = dir.join(format!("{name}.pending"));
     if std::fs::write(&pending, out).is_ok() {
         let _ = std::fs::rename(pending, dir.join(format!("{name}.txt")));
