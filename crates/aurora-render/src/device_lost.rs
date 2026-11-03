@@ -161,18 +161,23 @@ impl DeviceLost {
     }
 }
 
-/// A loss that comes this long after a submission the GPU never finished
-/// is the driver's watchdog (a Windows TDR resets the GPU after 2 s).
-const WATCHDOG: Duration = Duration::from_millis(1500);
+/// A submission the GPU had not finished this long after it, when the
+/// loss came, hung: the driver's watchdog reset the card. Measured, not
+/// the 2 s of the Windows TDR setting: an RTX 5070 Ti (driver 621.01)
+/// declared `AURORA_DEMO_GPU_HANG`'s submission lost 1.101 s after it.
+const HANG_AFTER: Duration = Duration::from_millis(500);
+/// A loss this soon after a submission the GPU had not finished is a fault
+/// the driver found in that work (an invalid access on NVIDIA:
+/// VK_ERROR_DEVICE_LOST at once, well within a frame).
+const FAULT_WITHIN: Duration = Duration::from_millis(100);
 
 /// Hang or fault: the line the device-lost callback logs, from the newest
 /// submission and the newest finished one, each with its age at the loss.
-/// A submission the GPU had not finished after the watchdog's delay is a
-/// hang (a pass that never ends, or too long); a loss with the last
-/// submission finished, or right after it, is a fault the driver found in
-/// that work (an invalid access on NVIDIA: VK_ERROR_DEVICE_LOST at once).
-/// The crash reports showed neither: the main thread's own stall warning
-/// (STALL_AFTER, 2 s like the watchdog) comes too late for most hangs.
+/// A loss with the last submission finished is a fault found after it; one
+/// with it not finished is a hang past [`HANG_AFTER`], a fault within
+/// [`FAULT_WITHIN`], and left undecided between the two (a frame that slow
+/// may have faulted, or hung). The crash reports showed neither: the main
+/// thread's own stall warning (STALL_AFTER, 2 s) comes too late for a hang.
 fn hang_or_fault(submitted: Option<(u64, Duration)>, finished: Option<(u64, Duration)>) -> String {
     let secs = |d: Duration| format!("{:.3} s", d.as_secs_f64());
     let Some((frame, age)) = submitted else {
@@ -187,10 +192,12 @@ fn hang_or_fault(submitted: Option<(u64, Duration)>, finished: Option<(u64, Dura
     // the line as it is, aurora-viewer crash/summary.rs `label`)
     let verdict = if done {
         "a fault found after that frame ended (not a hang)"
-    } else if age >= WATCHDOG {
-        "a hang (the watchdog of the driver reset the card while that frame ran)"
-    } else {
+    } else if age >= HANG_AFTER {
+        "a hang (the driver reset the card while that frame ran)"
+    } else if age < FAULT_WITHIN {
         "a fault in the work of that frame (not a hang)"
+    } else {
+        "undecided (a slow frame that faulted, or a hang)"
     };
     format!(
         "last submission frame {frame}, {} before, {}, {last}, {verdict}",
@@ -331,23 +338,30 @@ mod tests {
         assert!(!in_guarded_poll());
     }
 
-    /// The line of the loss tells a watchdog reset (the last frame not
-    /// finished after the watchdog's delay) from a fault (the last frame
-    /// finished, or lost right after its submission).
+    /// The line of the loss tells a hang (the last frame not finished after
+    /// `HANG_AFTER`: the real hang of `AURORA_DEMO_GPU_HANG` on an RTX 5070
+    /// Ti was declared lost 1.101 s after its submission) from a fault (the
+    /// last frame finished, or lost within `FAULT_WITHIN` of its
+    /// submission), and leaves the band between undecided.
     #[test]
     fn the_loss_names_a_hang_or_a_fault_from_the_work_in_hand() {
         let ms = Duration::from_millis;
         assert_eq!(hang_or_fault(None, None), "nothing submitted yet (lost while starting)");
-        let hang = hang_or_fault(Some((812, ms(2040))), Some((811, ms(2055))));
+        let hang = hang_or_fault(Some((601, ms(1101))), Some((599, ms(1103))));
         assert_eq!(
             hang,
-            "last submission frame 812, 2.040 s before, not finished, frame 811 finished 2.055 s before, \
-             a hang (the watchdog of the driver reset the card while that frame ran)"
+            "last submission frame 601, 1.101 s before, not finished, frame 599 finished 1.103 s before, \
+             a hang (the driver reset the card while that frame ran)"
+        );
+        assert!(
+            hang_or_fault(Some((812, ms(500))), Some((811, ms(510)))).ends_with("a hang (the driver reset the card while that frame ran)")
         );
         let fault = hang_or_fault(Some((812, ms(9))), Some((812, ms(1))));
         assert!(fault.ends_with("a fault found after that frame ended (not a hang)"), "{fault}");
-        let early = hang_or_fault(Some((812, ms(120))), Some((811, ms(130))));
+        let early = hang_or_fault(Some((812, ms(8))), Some((811, ms(9))));
         assert!(early.ends_with("a fault in the work of that frame (not a hang)"), "{early}");
+        let slow = hang_or_fault(Some((812, ms(120))), Some((811, ms(130))));
+        assert!(slow.ends_with("undecided (a slow frame that faulted, or a hang)"), "{slow}");
         let first = hang_or_fault(Some((0, ms(3000))), None);
         assert!(first.contains("none finished yet") && first.contains("a hang"), "{first}");
         // the shared copies see the same work

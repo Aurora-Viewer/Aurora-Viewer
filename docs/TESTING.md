@@ -6694,9 +6694,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   out, and the crash session holds `gpu-lost.txt`: the report says
   `| Crash | GPU device lost |`, `| GPU device lost | yes … |` and
   `| GPU work at the loss | last submission frame …, finished …, a fault …
-  |` (a real loss tells a hang, the last frame not finished after the
-  watchdog's 2 s, from a fault; `AURORA_DEMO_GPU_HANG` shows the hang's
-  wording), and the next start offers the safe graphics. The window's close button closes at
+  |` (a real loss tells a hang, the last frame not finished 0.5 s or more
+  after its submission, from a fault, within 0.1 s or after the frame ended,
+  or says "undecided" between the two; `AURORA_DEMO_GPU_HANG` shows the
+  hang's wording, "… 1.101 s before, not finished, …, a hang (the driver
+  reset the card while that frame ran)" on an RTX 5070 Ti), and the next
+  start offers the safe graphics. The window's close button closes at
   once too. A real loss cannot be caused here: the flag is set as the
   callback would set it, wgpu's own device stays alive. A list
   (`600,600,600`) gives one frame to each renderer of the run, the start's

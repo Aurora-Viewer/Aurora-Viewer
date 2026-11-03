@@ -691,13 +691,13 @@ mod tests {
         std::fs::write(
             dir.join("session.log"),
             format!(
-                "{NOTICE}\n[t ERROR aurora_render::main_thread] GPU device lost (Unknown): reset\n[t ERROR aurora_render::main_thread] GPU work at the loss: last submission frame 812, 2.040 s before, not finished, frame 811 finished 2.055 s before, a hang (the watchdog of the driver reset the card while that frame ran)\n"
+                "{NOTICE}\n[t ERROR aurora_render::main_thread] GPU device lost (Unknown): reset\n[t ERROR aurora_render::main_thread] GPU work at the loss: last submission frame 601, 1.101 s before, not finished, frame 599 finished 1.103 s before, a hang (the driver reset the card while that frame ran)\n"
             ),
         )
         .unwrap();
         let body = build(&record, &dir).body;
         assert!(
-            body.contains("| GPU work at the loss | last submission frame 812, 2.040 s before, not finished, frame 811 finished 2.055 s before, a hang (the watchdog of the driver reset the card while that frame ran) |"),
+            body.contains("| GPU work at the loss | last submission frame 601, 1.101 s before, not finished, frame 599 finished 1.103 s before, a hang (the driver reset the card while that frame ran) |"),
             "{body}"
         );
     }
