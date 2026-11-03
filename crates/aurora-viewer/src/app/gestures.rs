@@ -324,7 +324,10 @@ impl App {
                 Effect::Sound(asset) => self.send_sound_trigger(asset),
                 Effect::Chat(text) => {
                     let (channel, message) = crate::ui::chat::parse_channel(&text);
-                    if !message.is_empty() && (channel != 0 || !self.chat_command(&message)) {
+                    // A bare "/-1234" says an empty line to the scripts on
+                    // that channel (#2095), as send_chat_from_viewer does
+                    // ("Don't break null messages", fsnearbychathub.cpp).
+                    if channel != 0 || (!message.is_empty() && !self.chat_command(&message)) {
                         self.send(NetCommand::Chat {
                             message: crate::ui::emoji::expand_shortcodes(&message),
                             channel,
@@ -1044,7 +1047,7 @@ fn demo_channel_gesture() -> Gesture {
     };
     Gesture {
         trigger: "/hudping".into(),
-        steps: vec![chat("/-4242 ping"), chat("/5 test"), chat("/5test")],
+        steps: vec![chat("/-4242 ping"), chat("/5 test"), chat("/5test"), chat("/-4242")],
         ..Default::default()
     }
 }
@@ -1132,7 +1135,15 @@ mod tests {
                 other => panic!("unexpected {other:?}"),
             })
             .collect();
-        assert_eq!(sent, [(-4242, "ping".into()), (5, "test".into()), (5, "test".into())]);
+        assert_eq!(
+            sent,
+            [
+                (-4242, "ping".into()),
+                (5, "test".into()),
+                (5, "test".into()),
+                (-4242, String::new())
+            ]
+        );
         assert!(!manager.is_playing(id));
     }
 
