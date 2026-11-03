@@ -2043,6 +2043,12 @@ inventory operation/progress path. Library, protected, foreign-owned items and
 links are excluded. Its controls and type filters are shared with
 `build/ui/contents_permissions.rs`.
 
+`ui/inventory/folder_colors.rs` keeps the user's folder icon colors in the
+inventory preferences, keyed by folder id and never sent to the grid. On by
+default (off hides the menu entry and the tints); a folder's menu opens its palette window, and the plain tree,
+Aurora's rows, sidebar and details card, Move to, the Share list and the
+thumbnail picker tint the folder's icon.
+
 `creation_permissions.rs` stores independent creation defaults and resolves them
 before asynchronous uploads, including new scripts in object contents. The
 inventory's New menu opens `ui/inventory/default_permissions.rs`, which edits

@@ -12897,6 +12897,15 @@ keybinds-lens-zoom-out = 視野角を広げる
 keybinds-lens-zoom-default = 視野角をリセット
 inventory-hover-pictures = ホバーで画像を表示
 inventory-hover-pictures-help = 写真や保存したアイテム、フォルダ内の画像に、しばらくカーソルを合わせるとプレビュー表示されるようにします。
+inventory-folder-colors = フォルダの色
+inventory-folder-colors-help = フォルダのメニューに「フォルダの色…」を追加し、アイコンを好きな色にできるようにします。色はこのビューアにだけ保存され、ほかの人には表示されません。
+inventory-folder-color = フォルダの色…
+inventory-folder-color-title = フォルダの色
+inventory-folder-color-custom = カスタムカラー
+inventory-folder-color-restore = デフォルトに戻す
+inventory-folder-color-private = この色はあなたにだけ表示されます。
+inventory-folder-color-many = { $count }個のフォルダ
+inventory-folder-color-none = 色を付けるフォルダを選択してください。
 
 area-search-group = グループ
 area-search-last-owner = 前のオーナー
