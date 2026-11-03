@@ -1599,6 +1599,19 @@ impl ObjectStore {
     /// Put back an object taken by [`Self::park_region`], as a new arrival
     /// for the scene and every feed. None when an object came under its key
     /// or its UUID in the meantime: that one is newer.
+    /// After a GPU recovery (app/gpu_recovery.rs) the scene emptied its
+    /// particle sources: every object with a system hands it over again, as
+    /// a restored object does.
+    pub fn particles_again(&mut self) {
+        let with: Vec<usize> = self.iter().filter(|(_, o)| o.particles.is_some()).map(|(i, _)| i).collect();
+        for i in with {
+            if let Some(o) = self.get_mut(i) {
+                o.particle_update = o.particles.clone().map(ParticleUpdate::Set);
+            }
+            self.touch(i);
+        }
+    }
+
     pub fn restore(&mut self, mut obj: Object) -> Option<usize> {
         if self.by_key.contains_key(&obj.key) || self.by_uuid.contains_key(&obj.full_id) {
             return None;

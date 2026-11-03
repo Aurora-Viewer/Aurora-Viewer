@@ -100,12 +100,33 @@ impl App {
     fn forget_gpu_scene(&mut self, old: &mut Renderer) {
         self.scene.forget_gpu(old);
         self.probes.reset();
+        self.forget_gpu_requests();
+    }
+
+    /// Answers the lost renderer will never give: a click's picks, the
+    /// viewfinder's and the photo isolation's, a grab's hover, a photo under
+    /// way. The new renderer numbers its tickets from the start again, so an
+    /// old ticket could be answered with another request's result.
+    fn forget_gpu_requests(&mut self) {
+        self.clicks.forget_pending();
+        self.snapshots.vf.pick = None;
+        self.snapshots.isolate_picks.clear();
+        if let Some(held) = self.interactions.held.as_mut() {
+            held.drawn = None;
+        }
+        self.snapshots.gpu_lost();
     }
 
     /// On the new renderer: the textures get its slots, and what `clear`
     /// emptied that the world does not send again comes back.
     fn adopt_gpu_scene(&mut self, new: &mut Renderer) {
         self.scene.adopt_gpu(new);
+        // what `clear` emptied that the world does not send again
+        self.world.objects.particles_again();
+        for region in self.world.regions.values_mut() {
+            region.terrain_surface.gpu_reset();
+        }
+        self.media.gpu_reset();
     }
 
     /// After a GPU device loss: a new window and renderer, the session and
