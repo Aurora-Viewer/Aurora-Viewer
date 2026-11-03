@@ -4692,6 +4692,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_COLORS=accent:<hex>,surface:<hex>,text:<hex>` | Interface colours of this run (Preferences › Appearance › Skin), never saved |
 | `AURORA_DEMO_PERF=compact`, `full`, `network` or `monitor-<section>` | Opens the Performance window: compact, the resource monitor, or one of its sections |
 | `AURORA_DEMO_SUITCASE=1` | The question before a Hypergrid teleport that leaves worn items behind |
+| `AURORA_DEMO_QUICKPREFS=1` | Opens the Quick preferences window (toolbar `quickprefs`) |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_CURRENCY=<symbol>` | An OpenSim grid's own money symbol (KC, OS$…) shown in place of L$ |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
@@ -4978,6 +4979,16 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   stranger's L$20 shows nowhere. `off`: the same with "Open a conversation for a
   friend's payment" off: no conversation opens. Capture after frame 400, with `--language fr`
   and `--language en`.
+- **`AURORA_DEMO_QUICKPREFS=1`**: opens Quick preferences at the first
+  frame, as the toolbar's button does. Top to bottom: Draw distance, Particles,
+  Avatar physics detail, Level of detail, Fully rendered avatars, Avatar name
+  tags (Off / On / Briefly), Show look-at targets; a line; Hover Height
+  (greyed in demo: the plaza region offers no height adjustment), Maximum
+  bandwidth, Maximum avatar complexity ("Unlimited" at the right end); a
+  line; Sky, Water and Day/Night lists with their arrows, Personal lighting
+  and the return to the shared environment. Moving a slider changes the same
+  setting in Preferences (open both to compare) and is saved on release.
+  Capture after frame 300, with `--language fr` and `--language en`.
 - **`AURORA_DEMO_SUITCASE=1`**: at frame 300, the question a Hypergrid
   teleport from the home grid asks when worn items are not in My Suitcase:
   seven invented items, an invented grid as the destination. "Teleport anyway" goes
