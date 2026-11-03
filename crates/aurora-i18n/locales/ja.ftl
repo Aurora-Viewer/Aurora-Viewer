@@ -1773,6 +1773,8 @@ ui-login-other-grid = その他のグリッド…
 ui-login-grid-link-title = ログインするグリッドを変更しますか？
 ui-login-grid-link-text = Aurora の外から開いたリンクが、別のグリッドへのログインを求めています。パスワードはログイン先のグリッドに送られます。信頼できるグリッドの場合のみ変更してください。
 ui-login-grid-link-switch = グリッドを変更
+ui-login-grid-link-add = グリッド管理に追加…
+ui-login-grid-link-add-hint = httpでしか応答しないグリッドにはリンクから接続できません。グリッド管理で一度追加してから、もう一度リンクを開いてください。
 
 grids-manage = グリッドの管理
 grids-remove-question = { $name }をグリッドのリストから削除してもよろしいですか？
@@ -1798,6 +1800,7 @@ grids-help = ヘルプ
 grids-about = Webサイト
 grids-search = 検索ＵＲＬ（[QUERY]、[LANGUAGE]、[MATURITY]）
 grids-profile = WebプロフィールのＵＲＬ
+grids-helper = 通貨ヘルパーのＵＲＬ（L$の購入）
 grids-fetch = グリッド情報を取得
 grids-fetching = グリッド情報を取得しています…
 grids-error-address = 認証情報を含まない有効なＨＴＴＰまたはＨＴＴＰＳのアドレスを入力してください。
@@ -10316,6 +10319,8 @@ group-ability-experience-contributor-help = この能力を持つ役割のメン
 
 ## Buying L$
 currency-title = L$ の購入
+currency-region-helper = このリージョンは独自の通貨サービス（{ $host }）を使っています。ここでの購入はあなたとそのサービスとの取引で、そのサービスにはセッション（求められた場合はパスワードも）が送られます。信頼できる場合のみ購入してください。
+currency-service = 通貨サービス: { $host }
 currency-menu = L$ の購入…
 money-tracker-title = 取引ログ
 money-tracker-legacy-title = 取引ログ
