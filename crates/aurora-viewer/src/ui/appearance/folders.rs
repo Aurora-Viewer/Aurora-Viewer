@@ -244,7 +244,9 @@ pub(super) fn dialogs(ctx: &egui::Context, p: &Palette, world: &World, st: &mut 
         ui.add_space(8.0);
         let mut valid = true;
         if let Some(name) = name {
-            let r = ui.add(egui::TextEdit::singleline(name).char_limit(63).desired_width(f32::INFINITY));
+            let r = widgets::restricted_text_field(ui, true, name, widgets::TextPolicy::PrintableNoPipe, |b, _| {
+                egui::TextEdit::singleline(b).char_limit(63).desired_width(f32::INFINITY)
+            });
             if st.folders.focus {
                 r.request_focus();
                 if let Some(mut state) = egui::TextEdit::load_state(ctx, r.id) {

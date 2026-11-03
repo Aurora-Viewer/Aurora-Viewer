@@ -345,6 +345,7 @@ impl Catalog {
 }
 
 pub fn valid_name(name: &str) -> Result<String, String> {
+    crate::text_validation::require(crate::text_validation::Policy::AoName, name)?;
     let name = name.trim();
     if name.is_empty() || name.len() > 63 || name.contains(':') || name.chars().any(char::is_control) {
         return Err(aurora_i18n::tr!("ao-invalid-name").into());

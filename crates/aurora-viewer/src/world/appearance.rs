@@ -594,6 +594,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             }
             let links: Vec<_> = current.iter().filter(|l| !l.folder).cloned().collect();
             if let Some(name) = name {
+                crate::text_validation::require(crate::text_validation::Policy::Ascii, &name)?;
                 let name = name.trim();
                 if name.is_empty() || name.chars().count() > 63 {
                     return Err(aurora_i18n::tr!("world-appearance-choose-a-name-of-1-to-63-characters").into());
@@ -885,6 +886,11 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             return Err(aurora_i18n::tr!("world-appearance-this-action-does-not-change-the-current-outfit").into());
         }
     }
+    // Every new-outfit entry point (including imports) must satisfy the
+    // destination-name policy before any inventory requests are prepared.
+    if let Some(created) = &change.create {
+        crate::text_validation::require(crate::text_validation::Policy::Ascii, &created.name)?;
+    }
     if change.folder == cof {
         drop_coalesced(inv, &mut change.links);
     }
@@ -953,6 +959,7 @@ pub fn category_plan(
     require_outfit(inv, id)?;
     match &mut update {
         Update::Rename(name) => {
+            crate::text_validation::require_edit(crate::text_validation::Policy::Ascii, &inv.folders[&id].info.name, name)?;
             *name = name.trim().into();
             if name.is_empty() || name.chars().count() > 63 || name.chars().any(char::is_control) {
                 return Err(aurora_i18n::tr!("world-appearance-choose-a-name-of-1-to-63-characters").into());

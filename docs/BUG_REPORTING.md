@@ -86,6 +86,13 @@ What each part tells the one who fixes it:
 - **Window**: answering until the end, or not answering for the last N s.
 - **GPU device lost**: the renderer's device-lost callback fired (driver
   reset, GPU removed).
+- **GPU work at the loss**: the frame last submitted to the card and the
+  last one it finished, each with its age at the loss, and what that says:
+  a hang (the last frame not finished 0.5 s or more after its submission:
+  the driver reset the card; a real hang on an RTX 5070 Ti was declared
+  1.1 s after), a fault the driver found in a frame's work (the loss within
+  0.1 s of the submission, or after the frame ended), or undecided between
+  the two. Frame numbers and ages only.
 - **GPU recoveries**: the graphics card resets the viewer recovered from
   during the session (`AURORA_GPU_RECOVERY=1`), how many, and for the first
   five when in the session, how long the recovery took and whether it came
