@@ -1361,7 +1361,7 @@ pub(crate) const TONEMAP_MIX: f32 = 0.7;
 /// an S32 of seconds).
 pub(crate) const GROUP_SNOOZE_MAX_MINUTES: u32 = i32::MAX as u32 / 60;
 
-const SETTINGS_VERSION: u32 = 30;
+const SETTINGS_VERSION: u32 = 31;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -2515,6 +2515,23 @@ impl Settings {
         } else {
             0.0
         };
+        if self.settings_version < 31 && !self.joystick.enabled && self.joystick.device.is_empty() && self.joystick.untouched_raw_layout() {
+            // Existing untouched profiles get the plug-and-play pad map;
+            // customized axis layouts remain as saved.
+            self.joystick.gamepad();
+        }
+        if self.settings_version < 31 {
+            // Released profiles used fixed button numbers for these defaults.
+            // Semantic aliases keep them on A/B across native backend orders;
+            // explicit non-default assignments remain unchanged.
+            if self.joystick.flycam_button == 0 {
+                self.joystick.flycam_button = crate::joystick::AUTO_SOUTH;
+            }
+            if self.joystick.jump_button == 1 {
+                self.joystick.jump_button = crate::joystick::AUTO_EAST;
+            }
+        }
+        self.joystick.gamepad_flycam_speedup_speed = self.joystick.gamepad_flycam_speedup_speed.clamp(1.0, 50.0);
         self.settings_version = SETTINGS_VERSION;
         self.max_particles = self.max_particles.min(8192);
         self.max_avatars = self.max_avatars.clamp(1, 100);
@@ -2964,6 +2981,37 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn joystick_settings_upgrade_only_inactive_untouched_profiles() {
+        let mut old = super::Settings {
+            settings_version: 30,
+            ..Default::default()
+        };
+        old.joystick.spacemouse();
+        let converted = old.clone().sanitized();
+        assert_eq!(converted.joystick.avatar, crate::joystick::Settings::default().avatar);
+        assert_eq!(converted.joystick.gamepad_move_stick, crate::joystick::GamepadStick::Left);
+        for customized in [false, true] {
+            let mut configured = old.clone();
+            if customized {
+                configured.joystick.avatar.gain[5] = 0.7;
+                configured.joystick.device = "configured-controller".into();
+            } else {
+                configured.joystick.enabled = true;
+            }
+            let expected = configured.joystick.clone();
+            configured.joystick.gamepad_flycam_speedup_speed = 100.0;
+            let loaded = configured.sanitized();
+            assert_eq!(loaded.joystick.avatar, expected.avatar);
+            assert_eq!(loaded.joystick.mapping, expected.mapping);
+            assert_eq!(loaded.joystick.gamepad_move_stick, expected.gamepad_move_stick);
+            assert_eq!(loaded.joystick.gamepad_flycam_speedup_speed, 50.0);
+            let saved = serde_json::to_string(&loaded).expect("save controller profile");
+            let roundtrip: super::Settings = serde_json::from_str(&saved).expect("reload profile");
+            assert_eq!(roundtrip.sanitized().joystick, loaded.joystick);
+        }
+    }
+
     #[test]
     fn auto_accept_inventory_defaults_off_and_preserves_saved_choices() {
         assert!(!super::Settings::default().auto_accept_inventory);

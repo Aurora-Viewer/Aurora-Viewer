@@ -42,16 +42,30 @@ impl Flycam {
     }
 
     pub fn step(&mut self, axes: [f32; 7], settings: &super::Settings, dt: f32) {
+        self.step_with_speed(axes, settings, dt, 1.0);
+    }
+
+    pub fn step_with_speed(&mut self, axes: [f32; 7], settings: &super::Settings, dt: f32, multiplier: f32) {
         let dt = super::finite(dt, 0.0).clamp(0.0, 0.2);
         let a = axes.map(|v| super::finite(v, 0.0).clamp(-20.0, 20.0));
-        self.position += self.rotation * Vec3::new(a[0], a[1], a[2]) * dt;
+        let travel_speed = super::finite(settings.flycam_speed, 2.5).clamp(0.1, 5.0);
+        // Apply travel scaling after clamping device input, so high speed
+        // endpoints cannot be silently capped by the native axis safety limit.
+        let multiplier = super::finite(multiplier, 1.0).clamp(0.01, 1000.0);
+        self.position += self.rotation * Vec3::new(a[0], a[1], a[2]) * dt * travel_speed * multiplier;
         self.rotation =
             (self.rotation * Quat::from_rotation_z(a[5] * dt) * Quat::from_rotation_y(-a[4] * dt) * Quat::from_rotation_x(a[3] * dt))
                 .normalize();
-        if settings.auto_level {
+        {
             let leveled = Self::from_view(self.position, self.position + self.forward(), Vec3::Z, self.fov);
             let feather = super::finite(settings.flycam.feather, 5.0).clamp(0.0, 32.0);
-            let blend = if feather == 0.0 { 1.0 } else { (dt * feather).min(1.0) };
+            // Keep level locks the horizon; otherwise the existing feathered
+            // correction allows a gentle bank and returns it toward center.
+            let blend = if settings.auto_level || feather == 0.0 {
+                1.0
+            } else {
+                (dt * feather).min(1.0)
+            };
             self.rotation = self.rotation.slerp(leveled.rotation, blend);
         }
         if settings.absolute_zoom() {
@@ -78,20 +92,57 @@ mod tests {
     use super::*;
 
     #[test]
-    fn joystick_flycam_moves_in_its_own_frame_and_caps_long_frames() {
-        let s = super::super::Settings {
+    fn joystick_flycam_travel_endpoints_survive_axis_limits() {
+        let s = super::super::Settings::default();
+        for endpoint in [0.05, 0.1, 2.5, 20.0, 50.0] {
+            let mut cam = Flycam::from_view(Vec3::ZERO, Vec3::X, Vec3::Z, 1.0);
+            cam.step_with_speed([2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], &s, 0.1, endpoint / s.flycam_speed);
+            assert!((cam.position.x - 0.2 * endpoint).abs() < 1e-5, "endpoint {endpoint}");
+        }
+    }
+
+    #[test]
+    fn joystick_flycam_level_switch_selects_locked_or_gently_returning_horizon() {
+        let mut s = super::super::Settings {
             auto_level: false,
             ..Default::default()
         };
+        let mut cam = Flycam::from_view(Vec3::ZERO, Vec3::X, Quat::from_rotation_x(0.7) * Vec3::Z, 1.0);
+        cam.step([0.0; 7], &s, 0.1);
+        assert!(
+            (cam.roll().abs() - 0.35).abs() < 1e-5,
+            "unlocked bank returns gradually using feather"
+        );
+        for _ in 0..30 {
+            cam.step([0.0; 7], &s, 0.1);
+        }
+        assert!(cam.roll().abs() < 1e-5, "released controls return the bank to center");
+        cam.rotation = Quat::from_rotation_x(0.7);
+        s.auto_level = true;
+        cam.step([0.0; 7], &s, 0.1);
+        assert!(cam.roll().abs() < 1e-5, "keep level holds a strict horizon immediately");
+        for _ in 0..30 {
+            cam.step([0.0, 0.0, 0.0, 0.0, 0.8, 0.7, 0.0], &s, 0.016);
+            assert!(cam.roll().abs() < 1e-4, "keep level prevents roll during combined pitch and yaw");
+        }
+    }
+
+    #[test]
+    fn joystick_flycam_moves_in_its_own_frame_and_caps_long_frames() {
+        let mut s = super::super::Settings {
+            auto_level: false,
+            ..Default::default()
+        };
+        s.flycam.feather = 1.0;
         let mut cam = Flycam::from_view(Vec3::new(1.0, 2.0, 3.0), Vec3::new(1.0, 3.0, 3.0), Vec3::Z, 1.0);
         cam.step([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], &s, 5.0);
-        assert!(cam.position.distance(Vec3::new(1.0, 2.2, 3.0)) < 1e-5);
+        assert!(cam.position.distance(Vec3::new(1.0, 2.5, 3.0)) < 1e-5);
         cam.step([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], &s, 0.2);
-        assert!(cam.roll().abs() > 0.19);
+        assert!(cam.roll().abs() > 0.15);
         let before = cam.position;
         let up = cam.up();
         cam.step([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0], &s, 0.1);
-        assert!((cam.position - before).distance(up * 0.1) < 1e-5);
+        assert!((cam.position - before).distance(up * 0.25) < 1e-5);
         cam.step([f32::NAN; 7], &s, f32::INFINITY);
         assert!(cam.position.is_finite() && cam.rotation.is_finite());
     }
