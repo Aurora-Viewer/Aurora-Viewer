@@ -217,9 +217,12 @@ fn letter_glyph(name: &str, c: char) -> bool {
 mod tests {
     use super::*;
 
-    /// Embedded fonts written as files, as system fonts are read.
-    fn font_files() -> Vec<SystemFont> {
-        let dir = std::env::temp_dir().join(format!("aurora-font-previews-{}", std::process::id()));
+    /// Embedded fonts written as files, as system fonts are read, in a
+    /// folder of the test's own: the tests run in parallel, and a file
+    /// another test has mapped cannot be rewritten (Windows refuses it,
+    /// Linux may kill the mapping test with SIGBUS).
+    fn font_files(test: &str) -> Vec<SystemFont> {
+        let dir = std::env::temp_dir().join(format!("aurora-font-previews-{}-{test}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temporary folder");
         [
             ("Inter", super::super::INTER_TTF),
@@ -263,7 +266,7 @@ mod tests {
 
     #[test]
     fn faces_past_the_cap_are_loaded_again_only_once_egui_dropped_them() {
-        let fonts = font_files();
+        let fonts = font_files("cap");
         let [a, b, c] = [&fonts[0], &fonts[1], &fonts[2]];
         let ctx = egui::Context::default();
         super::super::install(&ctx, super::super::definitions_for(super::super::DEFAULT, &[]));
@@ -281,7 +284,7 @@ mod tests {
 
     #[test]
     fn a_font_change_in_the_frame_of_a_batch_drops_the_older_faces() {
-        let fonts = font_files();
+        let fonts = font_files("change");
         let [a, b, c] = [&fonts[0], &fonts[1], &fonts[2]];
         let ctx = egui::Context::default();
         super::super::install(&ctx, super::super::definitions_for(super::super::DEFAULT, &[]));
@@ -300,7 +303,7 @@ mod tests {
 
     #[test]
     fn a_first_batch_larger_than_the_cap_still_loads() {
-        let fonts = font_files();
+        let fonts = font_files("first");
         let shown: Vec<&SystemFont> = fonts.iter().collect();
         let ctx = egui::Context::default();
         super::super::install(&ctx, super::super::definitions_for(super::super::DEFAULT, &[]));

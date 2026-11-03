@@ -6,12 +6,13 @@
 use super::super::cx::{Cx, F, Nothing, field, fields};
 use super::super::{COMBO_W, swatch, toggle};
 
+use crate::ui::fonts;
+use egui::RichText;
+
 /// Size of the system font list's rows, under its search field (about
 /// the width the list took when it sized itself to the longest name).
 const FONT_LIST_W: f32 = 360.0;
 const FONT_LIST_H: f32 = 280.0;
-use crate::ui::fonts;
-use egui::RichText;
 
 pub fn page(cx: &mut Cx, tab: usize) {
     match tab {
