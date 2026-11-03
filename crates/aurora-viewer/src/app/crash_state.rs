@@ -127,6 +127,7 @@ impl App {
             },
             vram_used_mb: video.map(|v| v.usage >> 20),
             vram_budget_mb: video.map(|v| v.budget >> 20),
+            vram_headroom_min_mb: renderer.video_memory.tightest_headroom().map(|b| b >> 20),
             texture_pressure: (
                 u32::from(self.scene.textures.stats.pressure),
                 u32::from(crate::scene::texture_budget::MAX_PRESSURE),

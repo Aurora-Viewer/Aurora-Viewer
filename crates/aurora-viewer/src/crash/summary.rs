@@ -275,6 +275,7 @@ const STATE_ROWS: &[(&str, &str)] = &[
     ("preset", "Graphics preset"),
     ("ram_mb", "Memory (MB)"),
     ("vram_mb", "Video memory used / budget (MB)"),
+    ("vram_headroom_60s_mb", "Video memory headroom, tightest in 60 s (MB)"),
     ("texture_pressure", "Texture memory pressure"),
     ("objects", "Objects"),
     ("avatars", "Avatars"),
@@ -282,11 +283,15 @@ const STATE_ROWS: &[(&str, &str)] = &[
     ("swapchain_10s", "Swapchain recreations in 10 s (up to a GPU loss)"),
 ];
 
-/// A state value as the watchdog writes it: a number, `n/m`, `WxH` or one
-/// of the fixed names; anything else is not published.
+/// A state value as the watchdog writes it: a number (a `-` before it for
+/// a headroom gone negative), `n/m`, `WxH` or one of the fixed names;
+/// anything else is not published.
 fn state_value(value: &str) -> Option<String> {
     let names = ["login", "loading", "world", "potato", "low", "medium", "high", "deluxe", "custom"];
-    let numeric = |v: &str| !v.is_empty() && v.len() <= 12 && v.bytes().all(|b| b.is_ascii_digit() || b == b'.');
+    let numeric = |v: &str| {
+        let digits = v.strip_prefix('-').unwrap_or(v);
+        !digits.is_empty() && v.len() <= 12 && digits.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+    };
     let ok = names.contains(&value) || numeric(value) || value.split_once(['/', 'x']).is_some_and(|(a, b)| numeric(a) && numeric(b));
     ok.then(|| value.to_owned())
 }
@@ -854,7 +859,7 @@ mod tests {
         std::fs::write(dir.join("stopped-unix.txt"), "1100").unwrap();
         std::fs::write(
             dir.join("alive.txt"),
-            "tick=1098\nresponsive=1075\nram_mb=5120\nscreen=world\nfps=0.4\nwindow=1920x1080\npreset=high\nvram_mb=5800/6000\ntexture_pressure=7/7\nobjects=4200\nswapchain_10s=37\nregion_name=Private Place\n",
+            "tick=1098\nresponsive=1075\nram_mb=5120\nscreen=world\nfps=0.4\nwindow=1920x1080\npreset=high\nvram_mb=5800/6000\nvram_headroom_60s_mb=-512\ntexture_pressure=7/7\nobjects=4200\nswapchain_10s=37\nregion_name=Private Place\n",
         )
         .unwrap();
         let summary = build_at(&record, &dir, Some(10));
@@ -868,6 +873,7 @@ mod tests {
             "### Stack\n\n```text\n00 ntdll+0x9d0e4\n01 aurora_viewer+0x5000\n```",
             "### Stack (aurora-render thread)\n\n```text\n00 nvoglv64+0x9abc\n01 aurora_viewer+0x7000\n```",
             "| Video memory used / budget (MB) | 5800/6000 |",
+            "| Video memory headroom, tightest in 60 s (MB) | -512 |",
             "| Texture memory pressure | 7/7 |",
             "| Window size | 1920x1080 |",
             "| Screen | world |",
