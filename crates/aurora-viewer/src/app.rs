@@ -995,13 +995,23 @@ fn shortcut_claims_focus(
     if mods.ctrl && !shift && !alt && letter("f") && ui::find_shortcut::window_takes_it(ctx) {
         return false;
     }
-    if mods.ctrl && (letter("k") || (letter("s") && !shift && !alt)) && ui::scripts::editor_focused(ctx) {
+    if mods.ctrl && script_editor_keeps(logical, shift, alt) && ui::scripts::editor_focused(ctx) {
         return false;
     }
     if mods.ctrl && !shift && !alt && letter("s") && ui::inventory::document_save_focused(ctx) {
         return false;
     }
     true
+}
+
+/// The Ctrl chords a focused script editor keeps over the viewer's
+/// shortcuts: the comment toggles on Ctrl+K and Ctrl+Shift+K
+/// (ui/scripts/editing.rs), and its Save, Goto and Open on plain
+/// Ctrl+S, Ctrl+G and Ctrl+O (ui/scripts/view.rs), before Gestures (Ctrl+G)
+/// and Appearance (Ctrl+O). The letter is the one egui reads.
+fn script_editor_keeps(logical: &winit::keyboard::Key, shift: bool, alt: bool) -> bool {
+    matches!(logical, winit::keyboard::Key::Character(c)
+        if c.eq_ignore_ascii_case("k") || (["s", "g", "o"].iter().any(|l| c.eq_ignore_ascii_case(l)) && !shift && !alt))
 }
 
 /// The interface scale, or AURORA_UI_SCALE for this launch (brought into
@@ -19705,8 +19715,7 @@ impl ApplicationHandler for App {
                         pressed && mods.ctrl && !self.shift && !self.alt && find_key && ui::find_shortcut::window_takes_it(&self.egui_ctx);
                     let script_command = pressed
                         && mods.ctrl
-                        && matches!(&ke.logical_key, winit::keyboard::Key::Character(c)
-                            if c.eq_ignore_ascii_case("k") || (c.eq_ignore_ascii_case("s") && !self.shift && !self.alt))
+                        && script_editor_keeps(&ke.logical_key, self.shift, self.alt)
                         && ui::scripts::editor_focused(&self.egui_ctx);
                     let document_save = pressed
                         && mods.ctrl
@@ -20013,6 +20022,31 @@ mod tests {
                 since: std::time::Instant::now()
             },
             action
+        ));
+    }
+
+    /// Ctrl+O (Appearance) and Ctrl+G (Gestures) open the focused script
+    /// editor's Open and Goto, as Ctrl+S is its Save; with Shift (People on
+    /// Groups is Ctrl+Shift+G) the viewer's shortcut runs.
+    #[test]
+    fn the_script_editor_keeps_its_own_ctrl_letters() {
+        use super::script_editor_keeps;
+        let key = |s: &str| winit::keyboard::Key::Character(s.into());
+        for letter in ["s", "g", "o", "O", "k"] {
+            assert!(script_editor_keeps(&key(letter), false, false), "Ctrl+{letter}");
+        }
+        assert!(script_editor_keeps(&key("k"), true, false), "Ctrl+Shift+K comments a block");
+        for letter in ["s", "g", "o"] {
+            assert!(!script_editor_keeps(&key(letter), true, false), "Ctrl+Shift+{letter}");
+            assert!(!script_editor_keeps(&key(letter), false, true), "Ctrl+Alt+{letter}");
+        }
+        for letter in ["p", "q", "i"] {
+            assert!(!script_editor_keeps(&key(letter), false, false), "Ctrl+{letter} is the viewer's");
+        }
+        assert!(!script_editor_keeps(
+            &winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape),
+            false,
+            false
         ));
     }
 

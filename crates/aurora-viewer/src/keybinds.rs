@@ -1725,12 +1725,17 @@ mod tests {
             kb.triggered(&Input::key(KeyCode::Escape), Mods::default()),
             Some(Action::ResetCamera)
         );
-        // a settings file from before them gets them
+        // a settings file from before them gets them, on the keys of the
+        // active layout (`KeyBindings::default`: Ctrl+Q is KeyA on AZERTY)
         let mut old = kb.clone();
         old.map
             .retain(|(a, _)| !matches!(a, Action::Quit | Action::Friends | Action::ResetCameraAngles));
         let old = old.sanitized();
-        assert_eq!(old.triggered(&Input::key(KeyCode::KeyQ), m(true, false, false)), Some(Action::Quit));
+        let defaults = KeyBindings::default();
+        for action in [Action::Quit, Action::Friends, Action::ResetCameraAngles] {
+            assert!(old.get(action)[0].is_some(), "{action:?} bound");
+            assert_eq!(old.get(action), defaults.get(action), "{action:?}");
+        }
         assert_eq!(
             old.triggered(&Input::key(KeyCode::Escape), m(false, true, false)),
             Some(Action::ResetCameraAngles)
