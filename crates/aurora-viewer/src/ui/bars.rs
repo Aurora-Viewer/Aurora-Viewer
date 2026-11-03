@@ -111,6 +111,15 @@ pub enum BarAction {
     ChatPrefs,
     /// Me > Profile.
     MyProfile,
+    /// The toolbar's Profile: our profile, or closed when it is shown
+    /// (Avatar.ToggleMyProfile, llviewermenu.cpp).
+    ToggleMyProfile,
+    /// The toolbar's Poser, Report abuse and Marketplace listings: the
+    /// window, or closed when it is shown (Floater.Toggle,
+    /// Floater.ToggleOrBringToFront, Marketplace.Toggle; commands.xml).
+    TogglePoser,
+    ToggleReportAbuse,
+    ToggleMarketplaceListings,
     /// World › Environment › Use shared environments
     /// (setSharedEnvironment: drops every local choice).
     SharedEnvironment,
@@ -2133,12 +2142,12 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         }
         "build" => return BarAction::Build(0),
         "ik_edit" => return BarAction::IkEdit,
-        "poser" => return BarAction::Poser,
-        "profile" => return BarAction::MyProfile,
-        "reporter" => return BarAction::ReportAbuse,
+        "poser" => return BarAction::TogglePoser,
+        "profile" => return BarAction::ToggleMyProfile,
+        "reporter" => return BarAction::ToggleReportAbuse,
         "teleport_history" => return BarAction::TeleportHistory,
         "landmark_here" => return BarAction::CreateLandmark,
-        "marketplacelistings" => return BarAction::MarketplaceListings,
+        "marketplacelistings" => return BarAction::ToggleMarketplaceListings,
         "stop_animations" => return BarAction::StopAnimations,
         "resync_animations" => return BarAction::ResyncAnimations,
         "vr_view" => return BarAction::ToggleVr,
@@ -2889,6 +2898,8 @@ pub(crate) fn toolbar_row(
             ui.ctx()
                 .data(|data| data.get_temp::<bool>(egui::Id::unique("vr-active")))
                 .unwrap_or(false)
+        } else if let Some(lit) = toolbar.shown.lit(&b.command) {
+            lit
         } else {
             command_active(&b.command, panels, row.flying, row.seated, row.mouselook)
         };
@@ -3647,6 +3658,48 @@ mod tests {
         assert!(command_active("performance", &panels, false, false, false));
         assert!(matches!(run_command(&ctx, "picks", &mut panels), BarAction::MyPicks));
         assert!(matches!(run_command(&ctx, "defaultchatbar", &mut panels), BarAction::ToggleChatBar));
+    }
+
+    /// Issue #2143: these buttons toggle their window (commands.xml), while
+    /// the menus' entries still only open it, and they light while it is
+    /// open.
+    #[test]
+    fn window_toolbar_commands_toggle_and_light_while_open() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(matches!(run_command(&ctx, "profile", &mut panels), BarAction::ToggleMyProfile));
+        assert!(matches!(run_command(&ctx, "poser", &mut panels), BarAction::TogglePoser));
+        assert!(matches!(run_command(&ctx, "reporter", &mut panels), BarAction::ToggleReportAbuse));
+        assert!(matches!(
+            run_command(&ctx, "marketplacelistings", &mut panels),
+            BarAction::ToggleMarketplaceListings
+        ));
+        assert!(matches!(
+            run_command(&ctx, "teleport_history", &mut panels),
+            BarAction::TeleportHistory
+        ));
+        assert!(matches!(run_command(&ctx, "build", &mut panels), BarAction::Build(0)));
+        // World › Landmark this place is no toggle there either
+        assert!(matches!(run_command(&ctx, "landmark_here", &mut panels), BarAction::CreateLandmark));
+        let commands = ["profile", "build", "poser", "reporter", "marketplacelistings", "teleport_history"];
+        let none = super::super::toolbar::Shown::default();
+        for cmd in commands {
+            assert!(super::super::toolbar::ready(cmd), "{cmd}");
+            assert_eq!(none.lit(cmd), Some(false), "{cmd}");
+        }
+        let all = super::super::toolbar::Shown {
+            profile: true,
+            build: true,
+            poser: true,
+            report_abuse: true,
+            marketplace_listings: true,
+            teleport_history: true,
+        };
+        for cmd in commands {
+            assert_eq!(all.lit(cmd), Some(true), "{cmd}");
+        }
+        assert_eq!(all.lit("landmark_here"), None);
+        assert_eq!(all.lit("inventory"), None);
     }
 
     #[test]
