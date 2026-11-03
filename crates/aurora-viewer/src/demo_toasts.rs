@@ -77,7 +77,10 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
             "Tess Touch",
             17,
             DEMO_GROUP1,
-            &said(aurora_i18n::tr!("demo-toast-group-message"), aurora_i18n::tr!("demo-toast-group-emote")),
+            &said(
+                aurora_i18n::tr!("demo-toast-group-message"),
+                aurora_i18n::tr!("demo-toast-group-emote"),
+            ),
             b"Aurora Builders\0",
         )],
         _ => Vec::new(),
