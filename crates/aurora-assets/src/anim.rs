@@ -92,18 +92,34 @@ fn cstring(r: &mut ByteReader) -> Result<String, AssetError> {
 }
 
 pub fn parse_animation(data: &[u8]) -> Result<Animation, AssetError> {
-    parse(data, false)
+    parse(data, false).map(|(animation, _)| animation)
 }
 
 /// Validate the entire native file before paying for its upload. Playback
 /// tolerates old files without constraints; imports retain and validate them.
 pub fn parse_animation_upload(data: &[u8]) -> Result<Animation, AssetError> {
+    parse_upload(data).map(|(animation, _)| animation)
+}
+
+/// The animation of a native file and the bytes to upload. The upload path
+/// sends what LLKeyframeMotion::deserialize read back through dumpToFile, so
+/// it never holds a priority above 6 nor anything past the last constraint.
+pub fn prepare_animation_upload(data: &[u8]) -> Result<(Animation, Vec<u8>), AssetError> {
+    let (animation, length) = parse_upload(data)?;
+    let mut bytes = data[..length].to_vec();
+    bytes[4..8].copy_from_slice(&animation.base_priority.to_le_bytes());
+    Ok((animation, bytes))
+}
+
+fn parse_upload(data: &[u8]) -> Result<(Animation, usize), AssetError> {
     if data.len() > 64 * 1024 * 1024 {
         return Err(AssetError::TooLarge("animation file"));
     }
     parse(data, true)
 }
-fn parse(data: &[u8], upload: bool) -> Result<Animation, AssetError> {
+
+/// The animation and the number of bytes it was read from.
+fn parse(data: &[u8], upload: bool) -> Result<(Animation, usize), AssetError> {
     let mut r = ByteReader::new(data);
     let version = r.u16("version")?;
     let sub_version = r.u16("sub_version")?;
@@ -113,7 +129,9 @@ fn parse(data: &[u8], upload: bool) -> Result<Animation, AssetError> {
         _ => return Err(AssetError::Unsupported(format!("anim version {version}.{sub_version}"))),
     };
     let priority = r.i32("base_priority")?;
-    if upload && !(-1..=6).contains(&priority) {
+    // LLKeyframeMotion::deserialize lowers a priority above 6 and refuses only
+    // those under USE_MOTION_PRIORITY (-1).
+    if upload && priority < -1 {
         return Err(AssetError::invalid("animation priority"));
     }
     let base_priority = priority.clamp(-1, 6);
@@ -244,11 +262,8 @@ fn parse(data: &[u8], upload: bool) -> Result<Animation, AssetError> {
                 }
             }
         }
-        if r.remaining() != 0 {
-            return Err(AssetError::invalid("trailing animation bytes"));
-        }
     }
-    Ok(Animation {
+    let animation = Animation {
         base_priority,
         duration,
         emote_name,
@@ -259,7 +274,8 @@ fn parse(data: &[u8], upload: bool) -> Result<Animation, AssetError> {
         ease_out: ease_out.max(0.0),
         hand_pose,
         joints,
-    })
+    };
+    Ok((animation, data.len() - r.remaining()))
 }
 
 impl Animation {
@@ -446,6 +462,29 @@ mod tests {
         let last = constrained.len() - 4;
         constrained[last..].copy_from_slice(&f32::NAN.to_le_bytes());
         assert!(parse_animation_upload(&constrained).is_err());
+    }
+
+    #[test]
+    fn native_uploads_are_prepared_as_the_legacy_loader_reads_them() {
+        let valid = build();
+        let (_, bytes) = prepare_animation_upload(&valid).expect("valid file");
+        assert_eq!(bytes, valid);
+
+        let mut high = valid.clone();
+        high[4..8].copy_from_slice(&7i32.to_le_bytes());
+        high.extend([1, 2, 3, 4, 5]);
+        let (animation, bytes) = prepare_animation_upload(&high).expect("high priority and trailing bytes");
+        assert_eq!(animation.base_priority, 6);
+        let mut expected = valid.clone();
+        expected[4..8].copy_from_slice(&6i32.to_le_bytes());
+        assert_eq!(bytes, expected);
+        assert_eq!(prepare_animation_upload(&bytes).expect("stable").1, bytes);
+
+        let mut low = valid.clone();
+        low[4..8].copy_from_slice(&(-1i32).to_le_bytes());
+        assert_eq!(prepare_animation_upload(&low).expect("motion priority").1, low);
+        low[4..8].copy_from_slice(&(-2i32).to_le_bytes());
+        assert!(prepare_animation_upload(&low).is_err());
     }
 
     #[test]

@@ -814,7 +814,7 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
         RichText::new(aurora_i18n::tr!(
             "import-animation-frames",
             frames = bvh.frames,
-            rate = format!("{:.2}", 1.0 / bvh.frame_time)
+            rate = format!("{:.2}", if bvh.frame_time > 0.0 { 1.0 / bvh.frame_time } else { 0.0 })
         ))
         .small()
         .color(p.muted),
@@ -894,7 +894,11 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
                     {
                         *value = percent / 100.0 * animation.duration;
                     }
-                    let mut frame = (*value / bvh.frame_time).round() as usize;
+                    let mut frame = if bvh.frame_time > 0.0 {
+                        (*value / bvh.frame_time).round() as usize
+                    } else {
+                        0
+                    };
                     if ui
                         .add_sized(
                             Vec2::new(52.0, 26.0),
