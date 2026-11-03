@@ -12269,6 +12269,10 @@ impl App {
                         self.settings.build.place_side = side;
                     }
                     crate::build::demo::Step::Place(on) => {
+                        // its button and P go with the object snap
+                        if on {
+                            self.settings.build.set_snap_mode(crate::build::SnapMode::Objects);
+                        }
                         if self.build.place.active != on {
                             self.build.toggle_place(&self.world);
                         }

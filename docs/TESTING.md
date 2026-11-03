@@ -1507,8 +1507,9 @@ visible surface: the yellow cube stops at the room's inner walls, never at
 its outer box. `on` also chooses Objects for a build script, for example
 `AURORA_DEMO_BUILD=move,object:87701,z,0,40`.
 
-`AURORA_DEMO_BUILD=place,object:87701,87702` turns "Place on surface" (P) on
-with the blue cube selected and holds the cursor over the orange cube's top:
+`AURORA_DEMO_BUILD=place,object:87701,87702` chooses Snap › Objects (the
+button and P go with it) and turns "Place on surface" on with the blue cube
+selected and holds the cursor over the orange cube's top:
 a pad in the accent there and a hologram of the blue cube resting on it.
 `,click` clicks, and the blue cube sits on the orange one; `,rotate:<side>`
 chooses Auto rotate with that side

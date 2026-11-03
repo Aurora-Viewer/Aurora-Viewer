@@ -260,7 +260,9 @@ impl BuildTool {
     /// The landing under the cursor, every frame while the button is on.
     pub(super) fn place_hover(&mut self, world: &World, s: &BuildSettings, scene: Option<&Scene>, cursor: (f32, f32), over_ui: bool) {
         self.place.preview = None;
-        if !self.can_place(world) {
+        // off with the selection or the tool it needs, and with the object
+        // snap its button goes with
+        if !self.can_place(world) || s.snap_mode() != super::SnapMode::Objects {
             self.place.active = false;
             return;
         }
