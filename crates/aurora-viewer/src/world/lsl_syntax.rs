@@ -78,6 +78,7 @@ mod tests {
             lsl_syntax_id: id,
             grid_status_feed: String::new(),
             grid_status_page: String::new(),
+            currency_base_uri: String::new(),
             opensim: Default::default(),
         });
         w

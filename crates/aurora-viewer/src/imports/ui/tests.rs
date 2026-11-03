@@ -833,11 +833,9 @@ fn mixed_batch_exposes_the_mesh_fee_button() {
     let theme = crate::theme::Theme::default();
     theme.apply(&ctx, 1.0);
     let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-    let entry = Entry::new(
-        "mesh.dae".into(),
-        Ok(Source::Mesh(Box::new(crate::imports::tests::mesh_fixture()))),
-        Default::default(),
-    );
+    let mut draft = crate::imports::tests::mesh_fixture();
+    draft.prepared = Some(Arc::new(mesh::prepare(&draft).expect("ready mesh")));
+    let entry = Entry::new("mesh.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
     let id = entry.id;
     let mut imports = Imports {
         open: true,
@@ -895,6 +893,55 @@ fn mixed_batch_exposes_the_mesh_fee_button() {
         },
     ]);
     assert!(matches!(actions.as_slice(), [Action::Quote(entry)] if *entry == id));
+}
+
+#[test]
+fn mesh_physics_warning_keeps_analyze_and_repair_visible_in_the_full_window() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let mut draft = crate::imports::tests::invalid_physics_fixture();
+    draft.prepared = Some(Arc::new(mesh::prepare(&draft).expect("validated physics")));
+    let entry = Entry::new("physics.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
+    let id = entry.id;
+    let mut imports = Imports {
+        open: true,
+        demo_started: true,
+        choice: Choice::Mesh,
+        active: Some(id),
+        entries: vec![entry],
+        ..Default::default()
+    };
+    ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("mesh_section", id)), 1usize));
+    for _ in 0..4 {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1440.0, 900.0))),
+                ..Default::default()
+            },
+            |ui| {
+                show(
+                    ui.ctx(),
+                    &theme.palette(),
+                    &mut imports,
+                    &mut Preferences::default(),
+                    &world,
+                    &Default::default(),
+                );
+            },
+        );
+        output.textures_delta.clear();
+    }
+    for key in ["import_physics_analyze_action", "import_mesh_repair_action"] {
+        let (rect, clip) = ctx
+            .data(|data| data.get_temp::<(egui::Rect, egui::Rect)>(egui::Id::unique(key)))
+            .expect("visible physics action");
+        assert!(
+            rect.height() >= 20.0 && clip.contains_rect(rect),
+            "{key} must remain visible and clickable"
+        );
+    }
 }
 
 #[test]

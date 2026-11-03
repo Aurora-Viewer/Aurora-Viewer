@@ -93,22 +93,10 @@ pub enum Action {
     Revert,
 }
 
-/// LLInventoryModel::findCategoryUUIDForTypeInRoot (llinventorymodel.cpp):
-/// a system folder is a child of the root, the smallest id when the server
-/// left two. Every inventory rule asks this for each entry it checks, so it
-/// reads the root's few children instead of every folder (#1580); the whole
-/// inventory is only scanned when the root does not list one.
+/// LLInventoryModel::findCategoryUUIDForTypeInRoot (llinventorymodel.cpp),
+/// indexed across inventory and Appearance rules until the inventory changes.
 pub fn system_folder(inv: &Inventory, kind: i32) -> Option<Uuid> {
-    let is_system = |f: &super::inventory::Folder| f.info.type_default == kind && !f.library;
-    inv.folders
-        .get(&inv.root)
-        .into_iter()
-        .flat_map(|root| &root.children)
-        .filter_map(|id| inv.folders.get(id))
-        .filter(|f| f.info.parent == inv.root && is_system(f))
-        .map(|f| f.info.id)
-        .min()
-        .or_else(|| inv.folders.values().find(|f| is_system(f)).map(|f| f.info.id))
+    inv.system_folder(kind)
 }
 
 pub fn cof(inv: &Inventory) -> Option<Uuid> {
@@ -853,6 +841,7 @@ pub fn category_plan(
         folder: id,
         parent: inv.folders.get(&id).map(|f| f.info.parent).unwrap_or_default(),
         update,
+        type_default: None,
     })
 }
 

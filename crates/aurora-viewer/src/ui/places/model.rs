@@ -75,9 +75,11 @@ impl Place {
     }
 
     /// The position in the region, for "Region (x, y, z)".
-    pub fn region_pos(&self) -> Option<Vec3> {
-        self.global
-            .map(|g| Vec3::new(g.x.rem_euclid(256.0) as f32, g.y.rem_euclid(256.0) as f32, g.z as f32))
+    pub fn region_pos(&self, map: &WorldMap) -> Option<Vec3> {
+        self.global.map(|g| {
+            let (x, y) = map.local_xy(g.x, g.y);
+            Vec3::new(x as f32, y as f32, g.z as f32)
+        })
     }
 
     /// The text the filter looks in: name, region and notes.
@@ -501,7 +503,7 @@ mod tests {
         let plage = cat.landmark(id(1003)).expect("plage");
         assert_eq!((plage.item, plage.favorite, plage.folder), (Some(id(201)), Some(id(201)), None));
         assert_eq!(plage.region, "Brumevale");
-        assert_eq!(plage.region_pos(), Some(Vec3::new(240.0, 20.0, 22.0)));
+        assert_eq!(plage.region_pos(&WorldMap::default()), Some(Vec3::new(240.0, 20.0, 22.0)));
     }
 
     #[test]

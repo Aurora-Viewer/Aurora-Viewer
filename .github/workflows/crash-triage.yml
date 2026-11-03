@@ -33,7 +33,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && contains(github.event.issue.body, '<!-- aurora-crash v1 -->'))
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Triage
         shell: pwsh
         env:
@@ -45,7 +45,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fixture tests
         shell: pwsh
         run: ./scripts/test-crash-triage.ps1

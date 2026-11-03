@@ -1843,8 +1843,8 @@ impl WorldMapUi {
                 let label = track.as_ref().map(|t| t.label.clone()).unwrap_or_default();
                 world.map.track_location(x, y, z, false);
                 let name = world.map.sim_at_global(x, y).map(|(_, s)| s.name.clone());
+                let (lx, ly) = world.map.local_xy(x, y);
                 if let (Some(t), Some(n)) = (world.map.track.as_mut(), name) {
-                    let (lx, ly) = (x.rem_euclid(256.0), y.rem_euclid(256.0));
                     t.label = if label.starts_with(&n) {
                         location_label(&n, lx, ly, z)
                     } else {

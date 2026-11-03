@@ -955,6 +955,29 @@ impl Controller {
         self.preview_start = clock;
     }
 
+    /// Avatar playback follows LLVOAvatar::remapMotionID while retaining the
+    /// original signal identities for AO state, stops and diagnostics.
+    pub(super) fn sync_avatar(
+        &mut self,
+        playing: &[PlayingAnimation],
+        male: bool,
+        now: Instant,
+        mut get: impl FnMut(&Uuid) -> Option<Arc<BoundAnim>>,
+    ) -> Vec<Uuid> {
+        // A shape's sex may change while its gait stays signalled. Swap the
+        // loaded asset without restarting its clock or easing; while the new
+        // variant downloads, retain the previous modern variant.
+        for motion in &mut self.motions {
+            let asset = default_motions::walk_run_asset(motion.id, male);
+            if asset != motion.id
+                && let Some(anim) = get(&asset)
+            {
+                motion.anim = anim;
+            }
+        }
+        self.sync(playing, now, |id| get(&default_motions::walk_run_asset(*id, male)))
+    }
+
     /// Follow the server's animation list (LLVOAvatar::processAnimationStateChanges).
     /// `get` gives an animation once it has loaded.
     /// Return timed stops once, like LLMotionController::updateMotionsByType
@@ -2091,6 +2114,166 @@ mod tests {
     fn rig() -> Rig {
         let xml = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/character/avatar_skeleton.xml")).expect("skeleton");
         Rig::new(&Skeleton::parse(&xml).expect("parse"))
+    }
+
+    fn gait_clip(rig: &Rig, priority: i32, angle: f32) -> Arc<BoundAnim> {
+        let mut animation = bend(rig, angle, 0.0).anim.clone();
+        animation.base_priority = 0;
+        animation.joints[0].joint_name = "mKneeLeft".into();
+        animation.joints[0].priority = priority;
+        Arc::new(BoundAnim::bind(animation, rig))
+    }
+
+    #[test]
+    fn native_gaits_do_not_cover_low_priority_hud_animations_on_start_or_restart() {
+        use crate::own_motion::{ANIM_RUN, ANIM_WALK};
+        let rig = rig();
+        let knee = rig.names["mKneeLeft"];
+        let old = gait_clip(&rig, 3, -0.7);
+        let modern = gait_clip(&rig, 0, -0.7);
+        let epoch = Instant::now();
+        let at = |seconds| epoch + Duration::from_secs(seconds);
+        let hud_id = Uuid::from_u128(99001);
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        for (stock, male, asset) in [
+            (ANIM_WALK, false, uuid::uuid!("d60c41d2-7c24-7074-d3fa-6101cea22a51")),
+            (ANIM_WALK, true, uuid::uuid!("33339176-7ddc-9397-94a4-bf3403cbc8f5")),
+            (ANIM_RUN, false, uuid::uuid!("85995026-eade-5d78-d364-94a64512cb66")),
+            (ANIM_RUN, true, uuid::uuid!("1ab1b236-cd08-21e6-0cbc-0d923fc6eca2")),
+        ] {
+            for priority in [1, 2, 3] {
+                let hud = gait_clip(&rig, priority, 0.4);
+                let get = |id: &Uuid| {
+                    Some(if *id == stock {
+                        old.clone()
+                    } else if *id == asset {
+                        modern.clone()
+                    } else {
+                        assert_eq!(*id, hud_id);
+                        hud.clone()
+                    })
+                };
+                let hud_signal = signal(hud_id, 1, epoch);
+                // The old priority-three gait reproduces the loss of the HUD
+                // pose, including an equal-priority HUD when stock starts last.
+                let mut baseline = synchronized_controller();
+                baseline.sync(&[hud_signal], epoch, get);
+                baseline.sync(&[hud_signal, signal(stock, 2, at(1))], at(1), get);
+                baseline.evaluate(&rig, at(1), None, &mut out);
+                assert!(baseline.rot[knee].angle_between(Quat::from_rotation_z(-0.7)) < 1e-5);
+
+                let mut controller = synchronized_controller();
+                controller.sync_avatar(&[hud_signal], male, epoch, get);
+                for sequence in 2..=4 {
+                    let now = at(sequence as u64);
+                    let native = signal(stock, sequence, now);
+                    assert!(controller.sync_avatar(&[hud_signal, native], male, now, get).is_empty());
+                    controller.evaluate(&rig, now, None, &mut out);
+                    assert!(controller.rot[knee].angle_between(Quat::from_rotation_z(0.4)) < 1e-5);
+                    assert_eq!(controller.signals[&stock], native, "keep the protocol UUID and clocks");
+                    assert!(
+                        controller
+                            .motions
+                            .iter()
+                            .any(|motion| motion.id == stock && Arc::ptr_eq(&motion.anim, &modern))
+                    );
+                    controller.sync_avatar(&[hud_signal], male, now + Duration::from_millis(100), get);
+                }
+                // Cycling the HUD does not allow the native gait to return.
+                let next_hud = signal(Uuid::from_u128(99002), 5, at(5));
+                controller.sync_avatar(&[signal(stock, 6, at(5)), next_hud], male, at(5), |id| {
+                    assert_ne!(*id, stock, "never fetch the old priority-three asset");
+                    Some(if *id == asset { modern.clone() } else { hud.clone() })
+                });
+                controller.evaluate(&rig, at(5), None, &mut out);
+                assert!(controller.rot[knee].angle_between(Quat::from_rotation_z(0.4)) < 1e-5);
+            }
+        }
+    }
+
+    #[test]
+    fn bundled_native_gaits_are_ready_offline_and_leave_hud_legs_in_charge() {
+        use crate::own_motion::{ANIM_RUN, ANIM_WALK};
+        let rig = rig();
+        let knee = rig.names["mKneeLeft"];
+        let mut streamer = AnimStreamer::new(PathBuf::new());
+        default_motions::register(&mut streamer, &rig);
+        let hud_id = Uuid::from_u128(99003);
+        streamer.insert(hud_id, gait_clip(&rig, 1, 0.4));
+        let epoch = Instant::now();
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        for stock in [ANIM_WALK, ANIM_RUN] {
+            for male in [false, true] {
+                let asset = default_motions::walk_run_asset(stock, male);
+                assert!(streamer.asset_settled(&asset), "native motion ready before any fetch");
+                let clip = streamer.peek(&asset).expect("bundled gait");
+                assert!(clip.anim.looping);
+                assert_eq!(clip.anim.base_priority, 0);
+                for joint in [
+                    "mPelvis",
+                    "mHipLeft",
+                    "mKneeLeft",
+                    "mAnkleLeft",
+                    "mHipRight",
+                    "mKneeRight",
+                    "mAnkleRight",
+                ] {
+                    let track = clip.anim.joints.iter().find(|track| track.joint_name == joint).expect("leg track");
+                    assert_eq!(track.priority, 0, "{asset}: {joint}");
+                    assert!(!track.rot_keys.is_empty());
+                }
+                let mut controller = synchronized_controller();
+                let signals = [signal(hud_id, 1, epoch), signal(stock, 2, epoch)];
+                controller.sync_avatar(&signals, male, epoch, |id| streamer.get(id));
+                let now = epoch + Duration::from_secs(1);
+                controller.sync_avatar(&signals, male, now, |id| streamer.get(id));
+                controller.evaluate(&rig, now, None, &mut out);
+                assert!(controller.rot[knee].angle_between(Quat::from_rotation_z(0.4)) < 1e-5);
+            }
+        }
+    }
+
+    #[test]
+    fn native_gaits_wait_for_modern_assets_and_change_sex_without_restarting() {
+        use crate::own_motion::ANIM_RUN;
+        let rig = rig();
+        let female = default_motions::walk_run_asset(ANIM_RUN, false);
+        let male = default_motions::walk_run_asset(ANIM_RUN, true);
+        let female_clip = gait_clip(&rig, 0, 0.3);
+        let male_clip = gait_clip(&rig, 0, -0.3);
+        let epoch = Instant::now();
+        let at = |seconds| epoch + Duration::from_secs(seconds);
+        let playing = [signal(ANIM_RUN, 7, epoch)];
+        let mut controller = synchronized_controller();
+        controller.sync_avatar(&playing, false, epoch, |id| {
+            assert_eq!(*id, female, "no old-asset fallback while loading");
+            None
+        });
+        assert!(controller.motions.is_empty());
+        controller.sync_avatar(&playing, false, at(1), |_| Some(female_clip.clone()));
+        let activation = controller.motions[0].continuous_activation;
+        controller.sync_avatar(&playing, true, at(2), |id| {
+            assert_eq!(*id, male);
+            None
+        });
+        assert!(Arc::ptr_eq(&controller.motions[0].anim, &female_clip));
+        controller.sync_avatar(&playing, true, at(3), |id| {
+            assert_eq!(*id, male);
+            Some(male_clip.clone())
+        });
+        assert_eq!(controller.motions.len(), 1);
+        assert!(Arc::ptr_eq(&controller.motions[0].anim, &male_clip));
+        assert_eq!(controller.motions[0].continuous_activation, activation);
+        assert_eq!(controller.motions[0].weight, 1.0);
+        assert_eq!(controller.signals[&ANIM_RUN], playing[0]);
+        // Control avatars keep the exact animation requested, even when it is
+        // a stock UUID. Their caller uses sync, not avatar remapping.
+        let mut control = Controller::for_control_avatar();
+        control.sync(&playing, at(3), |id| {
+            assert_eq!(*id, ANIM_RUN);
+            Some(female_clip.clone())
+        });
+        assert_eq!(control.motions[0].id, ANIM_RUN);
     }
 
     /// The elbow swings from 0 to 1 rad and back over 2 s, in a loop.

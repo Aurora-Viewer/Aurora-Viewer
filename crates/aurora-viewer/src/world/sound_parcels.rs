@@ -148,9 +148,9 @@ mod tests {
             assert!(!world.can_hear_sound(pos));
         }
         Arc::make_mut(world.parcel.as_mut().unwrap()).flags = 0;
-        let mut overlay = vec![0; 2048];
-        overlay[i + 1 - 4096] = SOUND_LOCAL;
-        world.map.apply_overlay(handle, (512, 256), 2, &overlay);
+        let mut overlay = vec![0; 1024];
+        overlay[(i + 1) % 1024] = SOUND_LOCAL;
+        world.map.apply_overlay(handle, (512, 256), ((i + 1) / 1024) as i32, &overlay);
         assert!(!world.can_hear_sound(Vec3::new(404.0, 132.0, 30.0)));
     }
 }

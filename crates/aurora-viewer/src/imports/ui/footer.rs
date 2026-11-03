@@ -7,7 +7,6 @@ pub(super) fn show(
     imports: &mut Imports,
     prefs: &Preferences,
     world: &crate::world::World,
-    inventory_prefs: &crate::ui::inventory::InventoryPreferences,
     prices: &Prices,
     actions: &mut Vec<Action>,
 ) -> f32 {
@@ -25,6 +24,13 @@ pub(super) fn show(
                 ui.label(RichText::new(&imports.message).color(p.danger));
             });
     }
+    if let Some(entry) = imports.active.and_then(|id| imports.entries.iter().find(|entry| entry.id == id))
+        && !entry.local
+        && let Some(Source::Mesh(draft)) = &entry.source
+        && let Some(error) = draft.prepared.as_ref().and_then(|prepared| prepared.physics_error())
+    {
+        ui.add(egui::Label::new(RichText::new(error).color(p.warn)).wrap());
+    }
     if prefs.show_payment && imports.spent > 0 {
         ui.label(RichText::new(aurora_i18n::tr!("import-paid", cost = imports.spent)).color(p.success));
     }
@@ -40,7 +46,7 @@ pub(super) fn show(
             && !mesh_blocked(imports, connected, world.agent_id)
             && !busy
             && imports.pending_files.is_none()
-            && imports.folder_plan_valid(world, inventory_prefs)
+            && imports.folder_plan_valid(world)
             && selected
             && total.is_some_and(|cost| cost == 0 || world.balance.is_some_and(|b| b >= cost));
         // a wrapping row: the buttons stay in its layout
@@ -95,21 +101,66 @@ pub(super) fn show(
                 actions.push(Action::StageLocalUploads);
             }
         } else {
+            if let Some(entry) = imports
+                .active
+                .and_then(|id| imports.entries.iter_mut().find(|entry| entry.id == id))
+                && !entry.local
+                && let Some(Source::Mesh(draft)) = &mut entry.source
+                && draft.prepared.as_ref().is_some_and(|prepared| prepared.degenerate_triangles > 0)
+            {
+                let repair = action_button_if(
+                    ui,
+                    p,
+                    "cube-3d-sphere",
+                    aurora_i18n::tr!("import-physics-convex-repair"),
+                    ActionKind::Flat,
+                    size,
+                    !busy && draft.pending.is_none(),
+                )
+                .on_hover_text(aurora_i18n::tr!("import-physics-convex-help"));
+                #[cfg(test)]
+                ctx.data_mut(|data| data.insert_temp(egui::Id::unique("import_mesh_repair_action"), (repair.rect, ui.clip_rect())));
+                if repair.clicked() {
+                    // This is an explicit collision-only approximation, not removal of
+                    // rejected triangles (which could open holes in the original mesh).
+                    draft.options.decompose = true;
+                    draft.preview_physics = true;
+                    draft.invalidate();
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(egui::Id::unique(("mesh_section", entry.id)), 1usize));
+                    entry.invalidate_preview();
+                }
+            }
             if matches!(imports.choice, Choice::Mesh | Choice::Bulk)
                 && let Some(entry) = imports.active.and_then(|id| imports.entries.iter().find(|e| e.id == id))
                 && let Some(Source::Mesh(draft)) = &entry.source
-                && action_button_if(
+            {
+                let can_quote = !busy
+                    && draft.pending.is_none()
+                    && draft.prepared.as_ref().is_some_and(|prepared| prepared.degenerate_triangles == 0)
+                    && imports.folder_plan_valid(world);
+                let mut quote = action_button_if(
                     ui,
                     p,
                     "coin-filled",
                     aurora_i18n::tr!("import-calculate-fee"),
                     ActionKind::Flat,
                     size,
-                    !busy && draft.pending.is_none() && imports.folder_plan_valid(world, inventory_prefs),
-                )
-                .clicked()
-            {
-                actions.push(Action::Quote(entry.id));
+                    can_quote,
+                );
+                if let Some(error) = draft.prepared.as_ref().and_then(|prepared| prepared.physics_error()) {
+                    quote = quote.on_disabled_hover_text(error);
+                }
+                #[cfg(test)]
+                ctx.data_mut(|data| {
+                    data.insert_temp(
+                        egui::Id::unique("import_mesh_quote_action"),
+                        (quote.rect, ui.clip_rect(), can_quote),
+                    )
+                });
+                if quote.clicked() {
+                    actions.push(Action::Quote(entry.id));
+                }
             }
             let upload = aurora_i18n::tr!("import-upload");
             let upload = action_button_if(ui, p, "file-upload-filled", upload, ActionKind::Primary, size, can_upload);

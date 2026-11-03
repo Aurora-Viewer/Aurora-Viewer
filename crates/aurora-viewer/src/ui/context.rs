@@ -1331,6 +1331,80 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
     answer
 }
 
+/// The answer to a place link naming another grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GridLinkAnswer {
+    Switch,
+    /// An unknown grid, added by hand in the grid manager: the link itself
+    /// reaches it over https only, a grid on plain http is added there.
+    Add,
+    Cancel,
+}
+
+/// A link opened from outside the viewer names another grid than the login
+/// screen's: switch to `address` (`name`: the grid manager's name for it)?
+/// `Switch` on "Switch grid", `Add` on "Add in the grid manager…" (an
+/// unknown grid only), `Cancel` on "Cancel" or a click outside.
+pub fn grid_link_confirm(ctx: &egui::Context, p: &Palette, address: &str, name: Option<&str>) -> Option<GridLinkAnswer> {
+    use egui::RichText;
+    let mut answer = None;
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("grid_link_confirm")).show(ctx, |ui| {
+        ui.set_width(380.0);
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+            if let Some(t) = super::icons::global("alert-triangle-filled") {
+                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                ui.painter().image(t.id(), rect, uv, p.amber);
+            }
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-login-grid-link-title"))
+                    .size(15.0)
+                    .strong()
+                    .color(p.ink),
+            );
+        });
+        ui.add_space(6.0);
+        ui.label(RichText::new(aurora_i18n::tr!("ui-login-grid-link-text")).size(12.5).color(p.muted));
+        ui.add_space(6.0);
+        if let Some(name) = name {
+            ui.label(RichText::new(name).size(12.5).strong().color(p.ink));
+        }
+        ui.add(
+            egui::Label::new(RichText::new(address).size(12.0).monospace().color(p.ink))
+                .wrap()
+                .selectable(true),
+        );
+        ui.add_space(8.0);
+        // the action, then "Cancel", like the other confirmations
+        ui.horizontal(|ui| {
+            if super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-login-grid-link-switch")).clicked() {
+                answer = Some(GridLinkAnswer::Switch);
+            }
+            if name.is_none() && super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-login-grid-link-add")).clicked() {
+                answer = Some(GridLinkAnswer::Add);
+            }
+            if super::widgets::default_button(super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel"))).clicked() {
+                answer = Some(GridLinkAnswer::Cancel);
+            }
+        });
+        if name.is_none() {
+            ui.add_space(4.0);
+            ui.add(
+                egui::Label::new(
+                    RichText::new(aurora_i18n::tr!("ui-login-grid-link-add-hint"))
+                        .size(11.5)
+                        .color(p.muted),
+                )
+                .wrap(),
+            );
+        }
+    });
+    if modal.should_close() && answer.is_none() {
+        answer = Some(GridLinkAnswer::Cancel);
+    }
+    answer
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

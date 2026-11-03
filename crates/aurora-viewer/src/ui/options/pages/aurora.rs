@@ -373,6 +373,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
             });
         }
         _ => {
+            cx.group(tr!("ui-options-aurora-bridge"), |cx| {
+                cx.toggle(
+                    tr!("ui-options-aurora-use-bridge"),
+                    tr!("ui-options-aurora-use-bridge-help"),
+                    &field!(use_bridge),
+                );
+            });
             cx.group(tr!("ui-options-aurora-gaze"), |cx| {
                 cx.wide().choice(
                     tr!("ui-options-aurora-aim"),

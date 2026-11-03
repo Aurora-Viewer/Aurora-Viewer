@@ -1155,6 +1155,22 @@ mod tests {
             files.load("texture-demo.png", Choice::Texture)[0].source,
             Some(Source::Texture(_))
         ));
+        let rgba = image::RgbaImage::from_fn(4, 4, |x, y| image::Rgba([(x * 60) as u8, (y * 50) as u8, 30, (y * 70) as u8]));
+        let mut tga = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(rgba.clone())
+            .write_to(&mut tga, image::ImageFormat::Tga)
+            .expect("TGA fixture");
+        std::fs::write(files.0.join("texture-demo.TGA"), tga.into_inner()).expect("write TGA");
+        for choice in [Choice::Texture, Choice::Bulk, Choice::Local] {
+            let entry = files.load("texture-demo.TGA", choice).remove(0);
+            let Some(Source::Texture(pixels)) = &entry.source else {
+                panic!("TGA texture in {choice:?}")
+            };
+            assert_eq!((pixels.width, pixels.height, pixels.components), (4, 4, 4));
+            assert_eq!(pixels.data, rgba.as_raw().as_slice());
+            let bytes = encode(entry.source.as_ref().expect("texture"), entry.options, entry.sound.options).expect("encode TGA upload");
+            assert_eq!(aurora_assets::decode_j2k(&bytes, 0).expect("decode TGA upload"), **pixels);
+        }
         assert!(matches!(
             files.load("sound-demo.wav", Choice::Sound)[0].source,
             Some(Source::Sound(_))
