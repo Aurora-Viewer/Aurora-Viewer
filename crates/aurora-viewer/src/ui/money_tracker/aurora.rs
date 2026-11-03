@@ -20,7 +20,7 @@ const UNDO_SECONDS: f64 = 8.0;
 /// "+L$ 1,000" / "−L$ 450".
 fn signed_money(x: &Payment) -> String {
     let sign = if x.received { '+' } else { '−' };
-    format!("{sign}L$ {}", aurora_i18n::integer(i64::from(x.amount)))
+    format!("{sign}{} {}", aurora_i18n::currency(), aurora_i18n::integer(i64::from(x.amount)))
 }
 
 /// A total of the head: "+1,825", "−630".

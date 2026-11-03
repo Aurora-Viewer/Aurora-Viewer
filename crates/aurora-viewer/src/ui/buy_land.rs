@@ -977,7 +977,7 @@ impl BuyLandUi {
                             .char_limit(10)
                             .align(egui::Align2::RIGHT_TOP)
                     });
-                    ui.label(RichText::new("L$").size(12.0).color(p.muted));
+                    ui.label(RichText::new(aurora_i18n::currency()).size(12.0).color(p.muted));
                     if field.changed() {
                         self.typed(Instant::now());
                     }

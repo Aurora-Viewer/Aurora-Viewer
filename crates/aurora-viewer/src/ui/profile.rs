@@ -2148,7 +2148,11 @@ fn classified_detail(
         aurora_i18n::tr!("ui-profile-creation-date"),
         &profiles::slt_date(info.creation_date),
     );
-    row(ui, aurora_i18n::tr!("ui-profile-listing-cost"), &format!("L${}", info.price));
+    row(
+        ui,
+        aurora_i18n::tr!("ui-profile-listing-cost"),
+        &format!("{}{}", aurora_i18n::currency(), info.price),
+    );
     if c.own {
         let renew = info.flags & aurora_net::profile::classified_flags::AUTO_RENEW != 0;
         row(
