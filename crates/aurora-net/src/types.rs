@@ -623,6 +623,9 @@ pub enum NetEvent {
         currency_base_uri: String,
         /// The rest of an OpenSim region's "OpenSimExtras" this viewer uses.
         opensim: OpenSimExtras,
+        /// "OpenSimExtras" "currency": the region's own money symbol
+        /// (mCurrencySymbolOverride); empty when not given.
+        currency_symbol: String,
     },
     HoverHeightUpdated {
         region: RegionHandle,

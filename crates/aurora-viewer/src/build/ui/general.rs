@@ -453,7 +453,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                     }
                 });
                 ui.horizontal(|ui| {
-                    label(ui, p, "L$");
+                    label(ui, p, aurora_i18n::currency());
                     ui.add_enabled_ui(sale_ok && can_transfer && for_sale && !sale_mixed, |ui| {
                         let e = spin_i(ui, &mut price, 0..=999_999_999, 100.0);
                         if e.changed {

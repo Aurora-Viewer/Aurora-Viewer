@@ -27,6 +27,16 @@ fn region_page(region: Option<&str>, settings: &crate::settings::Settings) -> Op
     .helper_page()
 }
 
+/// LLStartUp's opensim currency support: the login's `currency`, else OS$
+/// on an OpenSim grid that names none, L$ on Second Life.
+pub(super) fn grid_currency(login: &aurora_llsd::Llsd, opensim: bool) -> String {
+    match login["currency"].to_string_value().trim() {
+        symbol if !symbol.is_empty() && opensim => symbol.to_owned(),
+        _ if opensim => "OS$".into(),
+        _ => "L$".into(),
+    }
+}
+
 /// LLGridManager::getHelperURI: the region's currency-base-uri first
 /// (LFSimFeatureHandler::helperUriOverride), then the grid's helper.
 fn helper_page(region: Option<&str>, settings: &crate::settings::Settings) -> Option<String> {
@@ -49,6 +59,12 @@ impl App {
             return Some(DEMO_HELPER.into());
         }
         helper_page(self.world.currency_base_uri(), &self.settings)
+    }
+
+    /// Each frame: the symbol shown for L$ follows the agent's region
+    /// (Tea::setRegionCurrency, LFSimFeatureHandler::updateCurrencySymbols).
+    pub(super) fn follow_currency_symbol(&self) {
+        aurora_i18n::set_currency(self.world.currency_symbol());
     }
 
     /// LLStatusBar::onClickBuyCurrency.
@@ -145,6 +161,10 @@ impl App {
     /// AURORA_DEMO_BUY_CURRENCY: a balance, and the window in the state its
     /// mode names (docs/TESTING.md).
     pub(super) fn demo_buy_currency(&mut self) {
+        // AURORA_DEMO_CURRENCY=<symbol>: an OpenSim grid's own money symbol
+        if let Ok(symbol) = std::env::var("AURORA_DEMO_CURRENCY") {
+            self.world.grid_currency = symbol;
+        }
         let Ok(mode) = std::env::var("AURORA_DEMO_BUY_CURRENCY") else {
             return;
         };
@@ -222,6 +242,15 @@ mod tests {
         }
         assert_eq!(ui::buy_currency::helper_host("https://money.example/helper/"), "money.example");
         assert_eq!(ui::buy_currency::helper_host("http://money.example:8008/"), "money.example:8008");
+    }
+
+    #[test]
+    fn the_symbol_comes_from_the_login_on_opensim_only() {
+        let login = |currency: &str| aurora_llsd::llsd_map! { "currency" => currency };
+        assert_eq!(grid_currency(&login("KC"), true), "KC");
+        assert_eq!(grid_currency(&login(" "), true), "OS$", "the Legacy Viewer's OpenSim default");
+        assert_eq!(grid_currency(&aurora_llsd::Llsd::Undef, true), "OS$");
+        assert_eq!(grid_currency(&login("KC"), false), "L$", "Second Life is always L$");
     }
 
     #[test]
