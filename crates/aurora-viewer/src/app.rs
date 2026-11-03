@@ -99,6 +99,7 @@ mod object_menu_demo;
 mod own_motion;
 mod pay;
 mod photo_isolate;
+mod photo_reel;
 mod physics_editor;
 mod plate_click;
 mod pointing;
@@ -2676,6 +2677,8 @@ impl App {
         }
         self.scene.jobs.discard(imports);
         self.record_inventory_logout();
+        // the session's photo reel and its copies
+        self.photo_reel_end();
         if !self.demo {
             self.settings.release_hover_account();
         }

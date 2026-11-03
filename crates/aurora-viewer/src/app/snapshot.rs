@@ -11,6 +11,7 @@
 use super::App;
 use crate::snapshot::looks::{self, Placement, Resolved};
 use crate::snapshot::luts::{Imported, LutLibrary};
+use crate::snapshot::reel::Place;
 use crate::snapshot::{self, ContextPass, TilePass, gallery, inventory, profile, save};
 use crate::ui::snapshot::{Action, Destination, EmailView, InventoryView, ProfileView};
 use crate::ui_sound::UiSound;
@@ -234,12 +235,11 @@ pub(super) struct Snapshots {
     /// The field of view before the viewfinder opened: its focal length
     /// is the photo's, the view gets this back when it closes.
     pub(super) fov_before: Option<f32>,
-    /// The last photo's card in the viewfinder: what it says, what it
-    /// offers, its thumbnail (made on a worker for the inventory and the
-    /// profile feed).
+    /// The last photo's card in the viewfinder: what it says and offers
+    /// (its thumbnail is the reel's).
     review: Option<(String, crate::ui::viewfinder::Review)>,
-    review_tex: Option<egui::TextureHandle>,
-    review_rx: Option<crossbeam_channel::Receiver<(u32, u32, Vec<u8>)>>,
+    /// The session's photos (`app::photo_reel`).
+    pub(super) reel: super::photo_reel::ReelState,
     /// Choosing for the isolation (`app::photo_isolate`): the points asked
     /// of the renderer, this frame's point (window pixels), and the avatar
     /// or linkset under the pointer.
@@ -416,8 +416,7 @@ impl Default for Snapshots {
             vf_free_up: 0.0,
             fov_before: None,
             review: None,
-            review_tex: None,
-            review_rx: None,
+            reel: Default::default(),
             isolate_picks: Vec::new(),
             isolate_point: None,
             isolate_hover: None,
@@ -717,9 +716,9 @@ impl App {
                 self.photo_shutter();
             }
             Purpose::Save(path) => self.photo_save(job.size, job.pixels, path, job.cutout),
-            Purpose::Inventory(cost) => self.photo_encode(job.size, job.pixels, cost),
-            Purpose::Profile => self.photo_post(job.size, job.pixels),
-            Purpose::Postcard => self.photo_postcard(job.size, job.pixels),
+            Purpose::Inventory(cost) => self.photo_encode(job.size, job.pixels, cost, job.cutout),
+            Purpose::Profile => self.photo_post(job.size, job.pixels, job.cutout),
+            Purpose::Postcard => self.photo_postcard(job.size, job.pixels, job.cutout),
         }
     }
 
@@ -778,8 +777,8 @@ impl App {
             return;
         }
         if let Some(held) = &self.snapshots.held {
-            let (size, rgba) = ((held.width, held.height), held.rgba.clone());
-            self.photo_post(size, rgba);
+            let (size, rgba, cutout) = ((held.width, held.height), held.rgba.clone(), held.cutout);
+            self.photo_post(size, rgba, cutout);
             return;
         }
         self.photo_job(Purpose::Profile, renderer);
@@ -787,12 +786,12 @@ impl App {
 
     /// Encode the PNG and post it, off the main thread: the session cookie
     /// of the web profile first when it is not known for this login.
-    fn photo_post(&mut self, size: (u32, u32), rgba: Vec<u8>) {
+    fn photo_post(&mut self, size: (u32, u32), rgba: Vec<u8>, cutout: bool) {
         let Some(web) = self.photo_profile_web() else {
             self.snapshots.message = Some((aurora_i18n::tr!("photo-profile-not-ready").to_owned(), true));
             return;
         };
-        self.photo_review_thumb(size, &rgba);
+        self.snapshots.reel.start(size, Some(&rgba), cutout);
         let caption: String = self.snapshots.ui.caption.chars().take(profile::MAX_CAPTION).collect();
         let add_location = self.settings.snapshot.profile_location;
         let auth = self.snapshots.web_auth.clone();
@@ -857,8 +856,8 @@ impl App {
             return;
         }
         if let Some(held) = &self.snapshots.held {
-            let (size, rgba) = ((held.width, held.height), held.rgba.clone());
-            self.photo_postcard(size, rgba);
+            let (size, rgba, cutout) = ((held.width, held.height), held.rgba.clone(), held.cutout);
+            self.photo_postcard(size, rgba, cutout);
             return;
         }
         self.photo_job(Purpose::Postcard, renderer);
@@ -902,13 +901,13 @@ impl App {
     /// Encode the JPEG and send the postcard, off the main thread; the
     /// demo has no simulator and answers itself (AURORA_DEMO_SNAPSHOT=
     /// postcard-fail: refused).
-    fn photo_postcard(&mut self, size: (u32, u32), rgba: Vec<u8>) {
+    fn photo_postcard(&mut self, size: (u32, u32), rgba: Vec<u8>, cutout: bool) {
         let url = self.world.main().and_then(|r| r.caps.get("SendPostcard").cloned());
         if url.is_none() && !self.demo {
             self.snapshots.message = Some((aurora_i18n::tr!("photo-email-unavailable").to_owned(), true));
             return;
         }
-        self.photo_review_thumb(size, &rgba);
+        self.snapshots.reel.start(size, Some(&rgba), cutout);
         let postcard = self.photo_postcard_fields();
         let quality = self.settings.snapshot.jpeg_quality;
         let demo_fail = self.demo && std::env::var("AURORA_DEMO_SNAPSHOT").is_ok_and(|m| m == "postcard-fail");
@@ -960,6 +959,7 @@ impl App {
         match result {
             Ok(()) => {
                 log::info!("photo: postcard sent");
+                s.reel.done(Some(Place::Email), None);
                 s.message = Some((aurora_i18n::tr!("photo-email-sent").to_owned(), false));
                 self.photo_review_show(
                     aurora_i18n::tr!("photo-destination-email").to_owned(),
@@ -968,6 +968,7 @@ impl App {
             }
             Err(e) => {
                 log::warn!("photo: postcard not sent: {e}");
+                s.reel.done(None, None);
                 // CannotUploadSnapshotEmailTooBig
                 let text = match e {
                     aurora_net::postcard::Error::TooBig => aurora_i18n::tr!("photo-email-too-big"),
@@ -1176,6 +1177,7 @@ impl App {
         };
         self.snapshots.message_item = None;
         self.snapshots.message_profile = false;
+        self.snapshots.reel.start(size, None, cutout);
         self.snapshots.saving = Some(save::Saving::start(save::Job {
             width: size.0,
             height: size.1,
@@ -1246,8 +1248,8 @@ impl App {
             return;
         }
         if let Some(held) = &self.snapshots.held {
-            let (size, rgba) = ((held.width, held.height), held.rgba.clone());
-            self.photo_encode(size, rgba, cost);
+            let (size, rgba, cutout) = ((held.width, held.height), held.rgba.clone(), held.cutout);
+            self.photo_encode(size, rgba, cost, cutout);
             return;
         }
         self.photo_job(Purpose::Inventory(cost), renderer);
@@ -1255,8 +1257,8 @@ impl App {
 
     /// Scale and encode the texture on a worker; the shutter sounds as the
     /// upload starts, like saveTexture's playSnapshotAnimAndSound.
-    fn photo_encode(&mut self, size: (u32, u32), rgba: Vec<u8>, cost: i32) {
-        self.photo_review_thumb(size, &rgba);
+    fn photo_encode(&mut self, size: (u32, u32), rgba: Vec<u8>, cost: i32, cutout: bool) {
+        self.snapshots.reel.start(size, Some(&rgba), cutout);
         let texture = inventory::texture_size(size);
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || {
@@ -1335,6 +1337,7 @@ impl App {
                 self.inventory_ui.show_original(&self.world.inventory, id);
                 self.snapshots.message = Some((aurora_i18n::tr!("photo-uploaded").to_owned(), false));
                 self.snapshots.message_item = Some(id);
+                self.snapshots.reel.done(Some(Place::Inventory(id)), None);
                 self.snapshots.message_profile = false;
                 self.photo_review_show(
                     aurora_i18n::tr!("photo-destination-inventory").to_owned(),
@@ -1343,6 +1346,7 @@ impl App {
             }
             Err(e) => {
                 log::warn!("photo: upload failed: {e}");
+                self.snapshots.reel.done(None, None);
                 let text = match e {
                     upload::Error::PriceChanged(Some(cost)) => aurora_i18n::tr!("photo-upload-price-changed", cost = cost).to_owned(),
                     upload::Error::Unknown | upload::Error::Uncertain(_) | upload::Error::Verification => {
@@ -1380,6 +1384,7 @@ impl App {
         match result {
             Ok(()) => {
                 log::info!("photo: posted to the profile feed");
+                s.reel.done(Some(Place::Profile), None);
                 s.message = Some((aurora_i18n::tr!("photo-profile-posted").to_owned(), false));
                 s.message_profile = true;
                 self.photo_review_show(
@@ -1389,6 +1394,7 @@ impl App {
             }
             Err(e) => {
                 log::warn!("photo: not posted to the profile feed: {e}");
+                s.reel.done(None, None);
                 // CannotUploadSnapshotWebTooBig when the PNG is over the limit
                 let text = if too_big {
                     aurora_i18n::tr!("photo-profile-too-big")
@@ -1465,6 +1471,7 @@ impl App {
                 Ok(data) => self.photo_upload(data, cost),
                 Err(e) => {
                     log::warn!("photo: texture not encoded: {e}");
+                    self.snapshots.reel.done(None, None);
                     self.snapshots.upload = None;
                     self.snapshots.message = Some((aurora_i18n::tr!("photo-upload-failed", error = e.as_str()).to_owned(), true));
                 }
@@ -1472,6 +1479,7 @@ impl App {
         }
         self.photo_profile_poll();
         self.photo_postcard_poll();
+        self.photo_reel_update();
         let viewfinder = self.viewfinder_on();
         let s = &mut self.snapshots;
         // the save on its worker
@@ -1492,7 +1500,7 @@ impl App {
                     let tex = self.egui_ctx.load_texture("photo_thumb", image, egui::TextureOptions::LINEAR);
                     s.gallery.retain(|(p, _)| *p != saved.path);
                     s.gallery.insert(0, (saved.path.clone(), Some(tex.clone())));
-                    s.review_tex = Some(tex);
+                    s.reel.done(Some(Place::Disk(saved.path.clone())), Some(tex));
                     s.review = Some((
                         format!("{} · {name}", aurora_i18n::tr!("photo-destination-disk")),
                         crate::ui::viewfinder::Review::Disk(saved.path.clone()),
@@ -1513,6 +1521,7 @@ impl App {
                 }
                 Err(e) => {
                     log::warn!("photo: not saved: {e}");
+                    s.reel.done(None, None);
                     let text = aurora_i18n::tr!("photo-failed", error = e.as_str()).to_owned();
                     let now = self.egui_ctx.input(|i| i.time);
                     s.vf.say(text.clone(), true, now);
@@ -1541,14 +1550,6 @@ impl App {
                 let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &px);
                 slot.1 = Some(self.egui_ctx.load_texture("photo_thumb", image, egui::TextureOptions::LINEAR));
             }
-        }
-        // the last photo's thumbnail, made on a worker
-        if let Some(rx) = &s.review_rx
-            && let Ok((w, h, px)) = rx.try_recv()
-        {
-            s.review_rx = None;
-            let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &px);
-            s.review_tex = Some(self.egui_ctx.load_texture("photo_review", image, egui::TextureOptions::LINEAR));
         }
         // the held photo, reduced for the screen
         if let Some(rx) = &s.held_view
@@ -1728,6 +1729,7 @@ impl App {
             Action::Freeze(on) => {
                 self.snapshots.held = None;
                 self.snapshots.held_view = None;
+                self.snapshots.reel.held = None;
                 if on {
                     self.photo_job(Purpose::Hold, renderer);
                 } else {
@@ -2001,7 +2003,7 @@ LUT_3D_SIZE {n}
     pub(super) fn photo_review(&self) -> Option<(egui::TextureHandle, String, crate::ui::viewfinder::Review)> {
         let s = &self.snapshots;
         let (label, kind) = s.review.clone()?;
-        Some((s.review_tex.clone()?, label, kind))
+        Some((self.photo_reel_card()?, label, kind))
     }
 
     /// The card shows a photo sent to the inventory or the profile feed.
@@ -2010,21 +2012,6 @@ LUT_3D_SIZE {n}
         if self.viewfinder_on() {
             self.snapshots.vf.review_until = self.egui_ctx.input(|i| i.time) + 4.8;
         }
-    }
-
-    /// The card's thumbnail of a photo that is not saved to disk, reduced
-    /// on a worker.
-    fn photo_review_thumb(&mut self, size: (u32, u32), rgba: &[u8]) {
-        if !self.viewfinder_on() {
-            return;
-        }
-        let (tx, rx) = crossbeam_channel::bounded(1);
-        let rgba = rgba.to_vec();
-        std::thread::spawn(move || {
-            let _ = tx.send(save::downscale(size.0, size.1, &rgba, 300));
-        });
-        self.snapshots.review_tex = None;
-        self.snapshots.review_rx = Some(rx);
     }
 
     /// An upload's error, on the viewfinder's line too.
@@ -2190,6 +2177,7 @@ LUT_3D_SIZE {n}
             self.snapshots.ui.full_frame = false;
             if self.snapshots.held.take().is_some() {
                 self.snapshots.ui.freeze = false;
+                self.snapshots.reel.held = None;
             }
         }
     }

@@ -89,6 +89,7 @@ pub mod parcel_icons;
 pub mod pay;
 pub mod people;
 pub mod perf;
+pub mod photo_reel;
 pub mod physics;
 pub mod place_card;
 pub mod place_details;
