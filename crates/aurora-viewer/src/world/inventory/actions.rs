@@ -221,6 +221,14 @@ pub fn set_favorites(inv: &Inventory, ids: &[Uuid], favorite: bool) -> Result<Mu
 }
 
 pub fn patch(inv: &Inventory, id: Uuid, body: Llsd) -> Result<Mutation, String> {
+    // Metadata edits can also originate in previews/imports, without the
+    // inventory properties field's prevalidation.
+    if body.has("name") && body["name"].to_string_value() != name(inv, id) {
+        crate::text_validation::require(crate::text_validation::Policy::PrintableNoPipe, &body["name"].to_string_value())?;
+    }
+    if body.has("desc") && inv.items.get(&id).is_none_or(|item| body["desc"].to_string_value() != item.desc) {
+        crate::text_validation::require(crate::text_validation::Policy::MultilineNoPipe, &body["desc"].to_string_value())?;
+    }
     let old = parent(inv, id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
     let mut refresh = vec![old];
     if body.has("parent_id") {
@@ -244,6 +252,7 @@ pub fn name(inv: &Inventory, id: Uuid) -> String {
         .unwrap_or_default()
 }
 pub fn clean_name(name: &str) -> Result<String, String> {
+    crate::text_validation::require(crate::text_validation::Policy::PrintableNoPipe, name)?;
     let name = name.trim();
     if name.is_empty() || name.chars().any(|c| c.is_control() || c == '|') {
         return Err(aurora_i18n::tr!("world-inventory-actions-enter-a-valid-name").into());

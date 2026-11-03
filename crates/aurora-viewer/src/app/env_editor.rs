@@ -207,6 +207,12 @@ impl App {
         let Some(mut doc) = self.env_editor.doc.clone() else {
             return;
         };
+        if let Err(reason) =
+            crate::text_validation::require(crate::text_validation::Policy::Ascii, new_name.as_deref().unwrap_or(doc.name()))
+        {
+            self.env_editor.message = Some((reason, true));
+            return;
+        }
         if self.env_editor.saving.is_some() {
             return;
         }

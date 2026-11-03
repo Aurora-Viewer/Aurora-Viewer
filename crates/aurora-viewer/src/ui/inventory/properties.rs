@@ -173,9 +173,13 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
             } else {
                 ui.add_space(16.0);
             }
-            let name = crate::ui::widgets::text_field(ui, can_describe, &mut edit.name, |b, ui| {
-                egui::TextEdit::singleline(b).char_limit(63).desired_width(ui.available_width())
-            });
+            let name = crate::ui::widgets::restricted_text_field(
+                ui,
+                can_describe,
+                &mut edit.name,
+                crate::ui::widgets::TextPolicy::PrintableNoPipe,
+                |b, ui| egui::TextEdit::singleline(b).char_limit(63).desired_width(ui.available_width()),
+            );
             // LLFloaterProperties::onCommitName / onCommitDescription
             // (indra/newview/llfloaterproperties.cpp): text commits on focus
             // loss; permission and sale controls commit on each change.
@@ -235,17 +239,22 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
             });
         });
         ui.label(aurora_i18n::tr!("common-description"));
-        let description = crate::ui::widgets::text_field(ui, can_describe, &mut edit.desc, |b, ui| {
-            egui::TextEdit::multiline(b)
-                .char_limit(127)
-                .desired_rows(2)
-                .desired_width(ui.available_width())
-        });
+        let description = crate::ui::widgets::restricted_text_field(
+            ui,
+            can_describe,
+            &mut edit.desc,
+            crate::ui::widgets::TextPolicy::MultilineNoPipe,
+            |b, ui| {
+                egui::TextEdit::multiline(b)
+                    .char_limit(127)
+                    .desired_rows(2)
+                    .desired_width(ui.available_width())
+            },
+        );
         edit.commit_desc |= description.lost_focus();
         if can_describe && edit.commit_desc && !ui.input(|input| input.pointer.any_down()) {
             edit.commit_desc = false;
             if edit.desc != it.desc {
-                edit.desc = edit.desc.chars().filter(|c| *c != '|').take(127).collect();
                 response.edit.get_or_insert_with(|| PropertyEdit::from(it)).desc = edit.desc.clone();
             }
         }

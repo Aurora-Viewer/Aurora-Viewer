@@ -13627,6 +13627,15 @@ impl App {
                     message,
                     item,
                 } => {
+                    if let Err(reason) = crate::text_validation::require(crate::text_validation::Policy::Ascii, &subject) {
+                        self.world.notifications.push(
+                            crate::world::notifications::Kind::Alert,
+                            aurora_i18n::tr!("input-restricted-title"),
+                            reason,
+                            crate::world::notifications::Data::None,
+                        );
+                        continue;
+                    }
                     // send_group_notice: an instant message to the group
                     let (text, bucket) = aurora_net::groups::notice_to_send(&subject, &message, item);
                     self.send(NetCommand::SendImDialog {

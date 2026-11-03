@@ -178,14 +178,14 @@ fn stats(
 fn contribution(st: &mut GroupProfileUi, ui: &mut egui::Ui, v: &View, me: &GroupMembership, actions: &mut Vec<GroupAction>) {
     let stored = me.contribution;
     let mut text = st.land.contribution.clone().unwrap_or_else(|| stored.to_string());
-    let resp = ui
-        .add(egui::TextEdit::singleline(&mut text).char_limit(10).desired_width(64.0))
-        .on_hover_text(aurora_i18n::tr!(
-            "ui-group-land-contribution-tip",
-            max = aurora_i18n::integer(i64::from(st.land.max))
-        ));
+    let resp = crate::ui::widgets::restricted_text_field(ui, true, &mut text, crate::ui::widgets::TextPolicy::Digits, |b, _| {
+        egui::TextEdit::singleline(b).char_limit(10).desired_width(64.0)
+    })
+    .on_hover_text(aurora_i18n::tr!(
+        "ui-group-land-contribution-tip",
+        max = aurora_i18n::integer(i64::from(st.land.max))
+    ));
     if resp.has_focus() {
-        text.retain(|ch| ch.is_ascii_digit());
         st.land.contribution = Some(text.clone());
     }
     if resp.lost_focus() {

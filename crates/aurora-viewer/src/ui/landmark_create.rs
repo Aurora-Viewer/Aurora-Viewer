@@ -155,6 +155,9 @@ pub fn folders(inv: &Inventory) -> Vec<(Uuid, String)> {
 pub fn save_change(inv: &Inventory, item: Uuid, title: &str, notes: &str, folder: Uuid) -> Option<Mutation> {
     let it = inv.items.get(&item)?;
     let (title, notes) = (title.trim(), notes.trim());
+    if !widgets::TextPolicy::Ascii.accepts(title) || !widgets::TextPolicy::MultilineNoPipe.accepts(notes) {
+        return None;
+    }
     let mut body = Llsd::new_map();
     if let Ok(name) = crate::world::inventory::actions::clean_name(title)
         && (it.name != name || it.desc != notes)
@@ -393,11 +396,9 @@ impl CreateLandmarkUi {
             );
             ui.add_space(8.0);
             label(ui, aurora_i18n::tr!("landmark-create-name"));
-            ui.add(
-                egui::TextEdit::singleline(&mut self.title)
-                    .char_limit(63)
-                    .desired_width(f32::INFINITY),
-            );
+            widgets::restricted_text_field(ui, true, &mut self.title, widgets::TextPolicy::Ascii, |b, _| {
+                egui::TextEdit::singleline(b).char_limit(63).desired_width(f32::INFINITY)
+            });
             ui.add_space(6.0);
             label(ui, aurora_i18n::tr!("landmark-create-folder"));
             let selected = list.iter().find(|(id, _)| *id == self.folder).map_or("", |(_, n)| n.as_str());
@@ -425,10 +426,9 @@ impl CreateLandmarkUi {
             }
             ui.add_space(6.0);
             label(ui, aurora_i18n::tr!("landmark-create-notes"));
-            let mut notes = egui::TextEdit::multiline(&mut self.notes)
-                .desired_rows(4)
-                .desired_width(f32::INFINITY)
-                .show(ui);
+            let mut notes = widgets::restricted_text_edit(ui, true, &mut self.notes, widgets::TextPolicy::MultilineNoPipe, |b, _| {
+                egui::TextEdit::multiline(b).desired_rows(4).desired_width(f32::INFINITY)
+            });
             // spell checked, as floater_create_landmark.xml
             crate::ui::spelling::field(ui, p, &mut notes, &mut self.notes, false);
             ui.add_space(10.0);
@@ -460,7 +460,9 @@ impl CreateLandmarkUi {
                         .color(p.ink),
                 );
                 ui.add_space(6.0);
-                let r = ui.add(egui::TextEdit::singleline(name).desired_width(f32::INFINITY));
+                let r = widgets::restricted_text_field(ui, true, name, widgets::TextPolicy::Ascii, |b, _| {
+                    egui::TextEdit::singleline(b).desired_width(f32::INFINITY)
+                });
                 r.request_focus();
                 if r.lost_focus() && widgets::enter_pressed(ui) {
                     done = Some(true);

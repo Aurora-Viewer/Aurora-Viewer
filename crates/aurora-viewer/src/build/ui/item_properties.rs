@@ -122,6 +122,9 @@ impl BuildTool {
         let Ok(name) = crate::world::inventory::actions::clean_name(&state.edit.name) else {
             return false;
         };
+        if item.description != state.edit.desc && !crate::text_validation::Policy::MultilineNoPipe.accepts(&state.edit.desc) {
+            return false;
+        }
         if item.owner_mask & perm::MODIFY != 0 {
             item.name = name;
             item.description = state.edit.desc.chars().filter(|c| *c != '|').take(127).collect();

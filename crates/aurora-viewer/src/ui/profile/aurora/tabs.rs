@@ -72,6 +72,9 @@ fn maturity_of(parcel: Option<&ParcelSummary>) -> Option<&'static str> {
 /// LLPanelProfileClassified::isValidName: a name, starting with a letter
 /// from A to Z or a digit (isalnum of its first byte).
 pub(super) fn classified_name_error(name: &str) -> Option<&'static str> {
+    if !crate::text_validation::Policy::Ascii.accepts(name) {
+        return Some(crate::text_validation::reason(crate::text_validation::Policy::Ascii));
+    }
     match name.bytes().next() {
         None => Some(aurora_i18n::tr!("ui-profile-aurora-classified-blank-name")),
         Some(b) if !b.is_ascii_alphanumeric() => Some(aurora_i18n::tr!("ui-profile-aurora-classified-alphanumeric")),
@@ -956,7 +959,9 @@ fn publish_strip(ui: &mut egui::Ui, p: &Palette, publish: &mut Publish, name: &s
                         .font(semibold(ui, 12.0))
                         .color(p.amber),
                 );
-                ui.add(egui::TextEdit::singleline(&mut publish.price).desired_width(56.0).char_limit(9));
+                widgets::restricted_text_field(ui, true, &mut publish.price, widgets::TextPolicy::Digits, |b, _| {
+                    egui::TextEdit::singleline(b).desired_width(56.0).char_limit(9)
+                });
                 ui.label(RichText::new(aurora_i18n::currency()).font(semibold(ui, 12.0)).color(p.amber));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let size = Vec2::new(0.0, 24.0);
@@ -1316,11 +1321,11 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             field(ui, p, aurora_i18n::tr!("ui-profile-aurora-title"), |ui| {
-                let typed = ui.add(
-                    egui::TextEdit::singleline(&mut e.name)
+                let typed = widgets::restricted_text_field(ui, true, &mut e.name, widgets::TextPolicy::Ascii, |b, ui| {
+                    egui::TextEdit::singleline(b)
                         .desired_width(ui.available_width())
-                        .font(semibold(ui, 12.5)),
-                );
+                        .font(semibold(ui, 12.5))
+                });
                 if typed.changed() {
                     clip_bytes(&mut e.name, CLASSIFIED_NAME_BYTES);
                 }

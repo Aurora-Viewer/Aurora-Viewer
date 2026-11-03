@@ -537,6 +537,10 @@ impl BuildTool {
 
     /// Name / description of the property targets (ObjectName / ObjectDescription).
     pub fn set_name(&mut self, world: &World, name: &str, description: bool) {
+        if let Err(reason) = crate::text_validation::require(crate::text_validation::Policy::PrintableNoPipe, name) {
+            self.status = reason;
+            return;
+        }
         let targets = self.prop_targets(world);
         for idx in targets {
             if !self.can_modify(world, idx) {

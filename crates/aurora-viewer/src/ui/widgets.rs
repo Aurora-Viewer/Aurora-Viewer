@@ -28,6 +28,14 @@ pub(crate) mod keycap;
 mod modal_keys;
 pub(crate) mod pills;
 mod resize;
+mod restricted_text;
+#[cfg(test)]
+mod restricted_text_tests;
+pub use crate::text_validation::Policy as TextPolicy;
+pub use restricted_text::field as restricted_text_field;
+pub use restricted_text::number as restricted_number;
+pub use restricted_text::optional as text_field_with_policy;
+pub use restricted_text::show as restricted_text_edit;
 pub(crate) mod scroll_offset;
 #[cfg(test)]
 pub(crate) mod steady_tests;

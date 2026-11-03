@@ -1,6 +1,7 @@
 //! Inventory window: lazily fetched folder tree, type icons, search.
 
 use super::icons::Icons;
+use super::widgets;
 use crate::theme::Palette;
 use crate::world::inventory::{FetchState, Inventory};
 use crate::world::{World, inventory::actions as rules};
@@ -1603,14 +1604,15 @@ fn rename_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, id: Uuid, st: &mu
     if !rules::renameable(inv, id) {
         return false;
     }
-    let r = ui.add_sized(
-        [ui.available_width(), 20.0],
-        egui::TextEdit::singleline(&mut edit.name)
+    let r = widgets::restricted_text_field(ui, true, &mut edit.name, widgets::TextPolicy::PrintableNoPipe, |b, ui| {
+        egui::TextEdit::singleline(b)
             .id(ui.make_persistent_id(("inventory_rename", id)))
             .font(egui::FontId::proportional(13.0))
             .text_color(p.ink)
-            .char_limit(63),
-    );
+            .char_limit(63)
+            .desired_width(ui.available_width())
+            .min_size(egui::vec2(0.0, 20.0))
+    });
     if st.reveal == Some(id) {
         scroll_to_row(ui, &r, egui::Align::Center);
         st.reveal = None;
@@ -4150,13 +4152,17 @@ mod tests {
         let mut st = InventoryUi::default();
         st.begin_rename(&inv, id);
         rename_frame(&ctx, &inv, &mut st, Vec::new());
-        rename_frame(&ctx, &inv, &mut st, vec![egui::Event::Text("Objet renommé".into())]);
+        for input in [egui::Event::Text("桜".into()), egui::Event::Paste("Objet renommé".into())] {
+            assert!(rename_frame(&ctx, &inv, &mut st, vec![input]).is_empty());
+            assert_eq!(st.rename.as_ref().expect("rename remains open").name, old);
+        }
+        rename_frame(&ctx, &inv, &mut st, vec![egui::Event::Text("Renamed object".into())]);
         let actions = rename_frame(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
         assert!(st.rename.is_none());
         assert!(st.dialog.is_none());
         assert_eq!(inv.items[&id].name, old);
         assert!(matches!(&actions[..], [InvAction::Edit(change)] if matches!(&change.operations[..],
-            [aurora_net::inventory::operations::Operation::Patch { id: target, body, .. }] if *target == id && body["name"].as_str() == "Objet renommé")));
+            [aurora_net::inventory::operations::Operation::Patch { id: target, body, .. }] if *target == id && body["name"].as_str() == "Renamed object")));
     }
 
     #[test]

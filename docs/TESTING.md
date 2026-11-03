@@ -8058,6 +8058,17 @@ for them (`5 to look up`), as a cold inventory cache.
 **`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder`**
 — opens Appearance with four synthetic outfits:
 
+For restricted text input (#2119), use `save` or rename an outfit in `gallery`.
+Select the current name and type or paste `Test 桜龙`: the entire attempted
+replacement is rejected, the old text and selection remain, and an immediate
+localized "Unsupported characters" tooltip explains the ASCII restriction.
+Check typing, paste, IME commit, undo/redo and a valid ASCII replacement. Repeat
+with inventory names/descriptions, landmark notes (ASCII line breaks allowed),
+environment names and numeric fields (reject letters/full-width digits). Parcel
+descriptions, chat, notice bodies and local filenames continue to accept Unicode.
+The same rules apply in both interface styles. The agent uses demo mode only;
+the human verifies actual saved inventory names on the grid.
+
 In My Outfits, double-click an unworn attachment or clothing item to add it
 beside the current outfit; double-click a worn one to take it off. Worn and
 the outfit editor also remove a worn item on double-click. Worn body parts

@@ -1895,7 +1895,9 @@ pub fn show(
             ui.add_space(6.0);
             ui.label(aurora_i18n::tr!("ui-appearance-save-what-i-am-wearing-as-a-new-outfit"));
             ui.add_space(8.0);
-            let r = ui.add(egui::TextEdit::singleline(&mut name).desired_width(f32::INFINITY).char_limit(63));
+            let r = widgets::restricted_text_field(ui, true, &mut name, widgets::TextPolicy::Ascii, |b, _| {
+                egui::TextEdit::singleline(b).desired_width(f32::INFINITY).char_limit(63)
+            });
             if st.select_name {
                 r.request_focus();
                 if let Some(mut state) = egui::TextEdit::load_state(ctx, r.id) {
