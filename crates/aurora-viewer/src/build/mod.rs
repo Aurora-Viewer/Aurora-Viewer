@@ -146,6 +146,10 @@ pub struct BuildSettings {
     pub place_side: place::Side,
     /// Its distance off the surface (metres, into it when negative).
     pub place_offset: f32,
+    /// Aurora: a hologram while the move handles drag the selection (the
+    /// selection itself, or where it began); Preferences › Aurora. Off by
+    /// default: a move looks as the Legacy Viewer's.
+    pub move_hologram: MoveHologram,
     /// RotationStep (degrees) outside the snap ring.
     pub rotation_step: f32,
     /// EditLinkedParts.
@@ -221,6 +225,18 @@ pub struct BuildSettings {
     /// handles) and of their pick areas, as a factor of the Legacy Viewer's
     /// fixed screen sizes, which it has no setting for (#1328).
     pub gizmo_scale: f32,
+}
+
+/// The hologram of a move (`BuildSettings::move_hologram`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MoveHologram {
+    #[default]
+    Off,
+    /// The prims moved are drawn as a hologram until released.
+    Moving,
+    /// A hologram of them stays where the move began.
+    Start,
 }
 
 /// What the move handles snap to: one at a time.
@@ -566,6 +582,7 @@ impl Default for BuildSettings {
             place_rotate: false,
             place_side: place::Side::Bottom,
             place_offset: 0.0,
+            move_hologram: MoveHologram::Off,
             rotation_step: 1.0,
             edit_linked: false,
             scale_uniform: false,
@@ -2341,6 +2358,15 @@ impl BuildTool {
             && s.create_shape < shapes::shapes().len()
             && !over_ui
             && !(mods.shift || mods.ctrl || mods.alt)
+    }
+
+    /// The move under way and its hologram's kind, when the preference asks
+    /// for one: in the world only (a HUD has its own space).
+    pub fn move_hologram(&self, world: &World, s: &BuildSettings) -> Option<(MoveHologram, manip::MoveGhost)> {
+        if s.move_hologram == MoveHologram::Off || self.select_type(world) != SelectType::World {
+            return None;
+        }
+        Some((s.move_hologram, self.manip.move_ghost()?))
     }
 
     fn face_mode(&self) -> bool {

@@ -232,8 +232,9 @@ fn snap_rows(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World
     use crate::build::SnapMode;
     const MODES: [SnapMode; 3] = [SnapMode::Off, SnapMode::Grid, SnapMode::Objects];
     let options = [
-        (aurora_i18n::tr!("build-snap-off"), true),
-        (aurora_i18n::tr!("build-snap-grid"), true),
+        // (the accent for Aurora's own choice, as everywhere)
+        (aurora_i18n::tr!("build-snap-off"), false),
+        (aurora_i18n::tr!("build-snap-grid"), false),
         (aurora_i18n::tr!("build-snap-objects"), true),
     ];
     let mut selected = MODES.iter().position(|m| *m == s.snap_mode()).unwrap_or(0);

@@ -12,6 +12,7 @@ pub mod banlines;
 pub mod blend_order;
 mod blender_live;
 pub mod body_physics;
+pub mod build_hologram;
 pub mod complexity;
 pub mod creation_preview;
 pub(crate) mod default_motions;
@@ -46,7 +47,6 @@ pub mod particles;
 pub mod physics_shapes;
 mod pick_accel;
 pub mod picking;
-pub mod place_preview;
 mod plants;
 pub mod portals;
 pub mod probes;
@@ -966,7 +966,7 @@ pub struct Scene {
     rlva_render_state: (Option<Uuid>, bool, bool),
     pub lists: DrawLists,
     pub creation_preview: creation_preview::CreationPreview,
-    pub place_preview: place_preview::PlacePreview,
+    pub build_hologram: build_hologram::BuildHologram,
     pub physics_shapes: physics_shapes::PhysicsShapes,
     pub stats: SceneStats,
     /// AURORA_STILL_CHECK: what changes while the picture should stand still.
@@ -1525,7 +1525,7 @@ impl Scene {
             rlva_render_state: (None, false, false),
             lists: DrawLists::default(),
             creation_preview: creation_preview::CreationPreview::default(),
-            place_preview: place_preview::PlacePreview::default(),
+            build_hologram: build_hologram::BuildHologram::default(),
             physics_shapes: physics_shapes::PhysicsShapes::default(),
             stats: SceneStats::default(),
             still: still_check::StillCheck::from_env(),
@@ -2071,7 +2071,7 @@ impl Scene {
         self.banlines.clear(renderer);
         self.portals.clear(renderer);
         self.creation_preview.clear(renderer);
-        self.place_preview.clear(renderer);
+        self.build_hologram.clear(renderer);
         self.physics_shapes.clear(renderer);
         self.land_overlays.clear(renderer);
         self.particles.clear(&mut self.textures);

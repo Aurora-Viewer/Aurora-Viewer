@@ -267,9 +267,32 @@ pub(super) fn frame(
     })
 }
 
+/// A move of the handles under way, for its hologram
+/// (`BuildSettings::move_hologram`).
+#[derive(Debug, Clone)]
+pub struct MoveGhost {
+    /// The prims moved, in a steady order (the hologram's faces are drawn in it).
+    pub prims: Vec<usize>,
+    /// The selection's box where the move began, and how far it went.
+    pub start: Bounds,
+    pub delta: Vec3,
+}
+
 impl Manip {
     pub fn dragging(&self) -> bool {
         self.drag.as_ref().is_some_and(|d| d.started)
+    }
+
+    /// The move the handles are dragging, once it has started.
+    pub fn move_ghost(&self) -> Option<MoveGhost> {
+        let d = self.drag.as_ref().filter(|d| d.started && d.mode == EditMode::Move)?;
+        let mut prims: Vec<usize> = d.moving.iter().copied().collect();
+        prims.sort_unstable();
+        Some(MoveGhost {
+            prims,
+            start: d.bounds,
+            delta: d.delta,
+        })
     }
 
     pub fn camera_pan(&mut self, s: &BuildSettings, cam: &Cam, cursor: (f32, f32), dt: f32) -> Vec3 {
@@ -1684,7 +1707,9 @@ fn snap_to_objects(
         t.around.distance(sel.center) > object_snap::RADIUS * 0.5 || now.duration_since(*at) > Duration::from_millis(500)
     });
     if stale {
-        d.snap_targets = Some((object_snap::collect(world, scene, &d.moving, &sel, now), now));
+        // (the prims that have not moved keep what was read of them)
+        let previous = d.snap_targets.take().map(|(t, _)| t);
+        d.snap_targets = Some((object_snap::collect(world, scene, &d.moving, &sel, now, previous), now));
     }
     let targets = &d.snap_targets.as_ref()?.0;
     let px = |from: Vec3, by: Vec3| {

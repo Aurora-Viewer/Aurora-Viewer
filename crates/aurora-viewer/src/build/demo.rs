@@ -179,6 +179,12 @@ pub fn apply_object_snap(s: &mut BuildSettings) {
     if std::env::var("AURORA_DEMO_OBJECT_SNAP").is_ok_and(|v| v.trim() == "on") {
         s.set_snap_mode(super::SnapMode::Objects);
     }
+    // AURORA_DEMO_MOVE_HOLOGRAM=moving|start: the hologram of a move
+    match std::env::var("AURORA_DEMO_MOVE_HOLOGRAM").as_deref().map(str::trim) {
+        Ok("moving") => s.move_hologram = super::MoveHologram::Moving,
+        Ok("start") => s.move_hologram = super::MoveHologram::Start,
+        _ => {}
+    }
 }
 
 /// AURORA_DEMO_BUILD_TAB: the floater tab (and texture sub-tab) to show.

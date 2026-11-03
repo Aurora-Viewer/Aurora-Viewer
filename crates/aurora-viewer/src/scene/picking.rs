@@ -1677,7 +1677,7 @@ impl Scene {
 }
 
 #[cfg(test)]
-pub(super) mod tests {
+pub(crate) mod tests {
     use super::*;
     /// LimitSelectDistance on, at the Legacy Viewer's default distance.
     const LIMIT: Option<f32> = Some(crate::build::MAX_SELECT_DISTANCE);
@@ -2018,7 +2018,7 @@ pub(super) mod tests {
         assert_eq!(scene.selection_pick(&world, Some(side), None, false, false, 100.0).1, Some(front));
     }
 
-    pub(in crate::scene) fn scene_with_two_objects() -> (World, Scene, usize, usize) {
+    pub(crate) fn scene_with_two_objects() -> (World, Scene, usize, usize) {
         let lib = Arc::new(AvatarLibrary::load());
         let mut world = World::new(lib.clone());
         for ev in crate::demo::events().into_iter().chain(crate::demo::action_events()) {

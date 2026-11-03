@@ -19,7 +19,7 @@
 //! the Align tool's (`TransformUpdate` per linkset root), so only the
 //! selection's move right counts.
 
-use super::object_snap::{self, support};
+use super::object_snap::{self, same_box, support};
 use super::{Bounds, BuildSettings, BuildTool, EditMode, SelectType, Tool, draw::Painter3d, draw::fade};
 use crate::scene::Scene;
 use crate::world::World;
@@ -169,6 +169,9 @@ pub struct Place {
     /// The prims of the preview, for its hologram.
     pub moving: Vec<usize>,
     truths: HashMap<Vec<ObjKey>, Truth>,
+    /// The selection's shown box, kept while its edit box stays put: it
+    /// goes through every visible triangle (a complex mesh's many).
+    shown: Option<(Vec<ObjKey>, Bounds, Bounds)>,
 }
 
 /// Where the selection's box `sel` goes on the surface at `point`, turned by
@@ -216,7 +219,11 @@ impl Place {
             camera_at,
             last: now,
         };
-        let t = self.truths.entry(selection.to_vec()).or_insert(fresh);
+        // (no key copied while it is known: this runs every frame)
+        let t = match self.truths.get_mut(selection) {
+            Some(t) => t,
+            None => self.truths.entry(selection.to_vec()).or_insert(fresh),
+        };
         if t.last.angle_between(now) > TURNED {
             *t = fresh;
         }
@@ -240,6 +247,7 @@ impl BuildTool {
     pub fn toggle_place(&mut self, world: &World) {
         self.place.active = !self.place.active && self.can_place(world);
         self.place.preview = None;
+        self.place.shown = None;
     }
 
     /// The landing under the cursor, every frame while the button is on.
@@ -262,9 +270,16 @@ impl BuildTool {
             .into_iter()
             .map(|(i, _)| i)
             .collect();
-        let sel = scene
-            .and_then(|scene| object_snap::shown_bounds(world, scene, &moving, &edit_box, now))
-            .unwrap_or(edit_box);
+        let sel = match &self.place.shown {
+            Some((keys, at, shown)) if *keys == self.selection && same_box(at, &edit_box) => *shown,
+            _ => {
+                let shown = scene
+                    .and_then(|scene| object_snap::shown_bounds(world, scene, &moving, &edit_box, now))
+                    .unwrap_or(edit_box);
+                self.place.shown = Some((self.selection.clone(), edit_box, shown));
+                shown
+            }
+        };
         let ray = self.cam.ray(cursor.0, cursor.1);
         // the first object surface along the ray, past the selection
         let object = scene.and_then(|scene| {
@@ -339,7 +354,7 @@ impl BuildTool {
     }
 
     /// The preview's pad on the surface, in the accent; the selection itself
-    /// shows there as a hologram (`scene/place_preview.rs`).
+    /// shows there as a hologram (`scene/build_hologram.rs`).
     pub(super) fn place_draw(&self, p: &mut Painter3d) {
         let Some(l) = self.place.preview else { return };
         let pal = p.pal;

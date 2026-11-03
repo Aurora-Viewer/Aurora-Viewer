@@ -342,7 +342,7 @@ fn the_moved_selection_and_worn_objects_are_never_targets() {
     let now = Instant::now();
     let around = bounds_of(&w, &[sel], false, now).unwrap();
     let moving: HashSet<usize> = [blue].into();
-    let targets = object_snap::collect(&w, None, &moving, &around, now);
+    let targets = object_snap::collect(&w, None, &moving, &around, now, None);
     let has = |idx: usize| {
         let p = w.objects.get(idx).unwrap().position;
         targets.boxes.iter().any(|b| b.center == p)
@@ -355,4 +355,63 @@ fn the_moved_selection_and_worn_objects_are_never_targets() {
             panic!("worn object {idx} is a target");
         }
     }
+}
+
+/// A drag collects its targets again as it goes: a prim that has not moved
+/// keeps what was read of it (its triangles are not read again), a prim
+/// that moved is read again.
+#[test]
+fn collected_again_a_prim_that_has_not_moved_is_not_read_again() {
+    let (mut w, mut scene, front, back) = crate::scene::picking::tests::scene_with_two_objects();
+    let now = Instant::now();
+    let around = Bounds {
+        center: Vec3::new(5.0, 0.0, 50.0),
+        rotation: Quat::IDENTITY,
+        half: Vec3::splat(0.5),
+    };
+    let none = HashSet::new();
+    let count = |t: &object_snap::Targets| t.boxes.len() + t.surfaces.len();
+    let first = object_snap::collect(&w, Some(&scene), &none, &around, now, None);
+    assert_eq!(count(&first), 2, "both prims show a face");
+    // their faces no longer drawn: unmoved, they are kept as they were read
+    for idx in [front, back] {
+        for f in &mut scene.gpu[idx].faces {
+            f.pass = crate::scene::Pass::Hidden;
+        }
+    }
+    let again = object_snap::collect(&w, Some(&scene), &none, &around, now, Some(first.clone()));
+    assert_eq!(count(&again), 2);
+    // moved, a prim is read again (and shows nothing now)
+    w.objects.get_mut(front).unwrap().position.y += 0.5;
+    let moved = object_snap::collect(&w, Some(&scene), &none, &around, now, Some(again));
+    assert_eq!(count(&moved), 1);
+    // and with nothing before, nothing is assumed
+    assert_eq!(count(&object_snap::collect(&w, Some(&scene), &none, &around, now, None)), 0);
+}
+
+/// The move hologram is off by default (a move looks as the Legacy
+/// Viewer's), and once a move has started it has the prims moved, the box
+/// where it began and how far it went.
+#[test]
+fn a_move_gives_its_hologram_what_it_moves_and_from_where() {
+    let s = BuildSettings::default();
+    assert_eq!(s.move_hologram, super::super::MoveHologram::Off);
+    assert_eq!(serde_json::to_string(&super::super::MoveHologram::Start).unwrap(), "\"start\"");
+    let mut w = world(None);
+    let (blue, sel) = key(&w, BLUE);
+    let start = w.objects.get(blue).unwrap().position;
+    let cam = camera(start);
+    let mut manip = Manip::default();
+    assert!(manip.move_ghost().is_none(), "no move");
+    let Some(_) = grab(&mut manip, &mut w, &s, &cam, sel, Part::Arrow(0)) else {
+        panic!("the X arrow is in view");
+    };
+    let cursor = along(&cam, &manip, Vec3::X * 1.5);
+    drag(&mut manip, &mut w, &s, &cam, sel, cursor);
+    let ghost = manip.move_ghost().expect("a move under way");
+    assert_eq!(ghost.prims, vec![blue]);
+    assert!(ghost.start.center.abs_diff_eq(start, 1e-4), "the box where it began");
+    let now = w.objects.get(blue).unwrap().position;
+    assert!((now - start).abs_diff_eq(ghost.delta, 1e-4), "how far it went");
+    assert!(ghost.delta.x > 1.0);
 }

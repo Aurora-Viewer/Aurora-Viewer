@@ -31,7 +31,7 @@ use crate::world::World;
 use aurora_prim::VolumeParams;
 use aurora_prim::params::{LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE};
 use glam::Vec3;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 /// A snap applies when it moves the selection by this many pixels or fewer.
@@ -128,6 +128,23 @@ pub struct Targets {
     pub boxes: Vec<Bounds>,
     pub surfaces: Vec<Surface>,
     pub around: Vec3,
+    /// What each prim was, at its box then: collected again, a prim that
+    /// has not moved keeps it (its triangles are not read again).
+    seen: HashMap<usize, (Bounds, Seen)>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Seen {
+    Box,
+    /// Its index in `surfaces`.
+    Surface(usize),
+    /// Nothing drawn.
+    Hidden,
+}
+
+/// Whether two boxes are the same, to a hundredth of a millimetre.
+pub(super) fn same_box(a: &Bounds, b: &Bounds) -> bool {
+    a.center.abs_diff_eq(b.center, 1e-5) && a.half.abs_diff_eq(b.half, 1e-5) && a.rotation.abs_diff_eq(b.rotation, 1e-6)
 }
 
 /// A prim that fills its box: the default box shape, unsculpted.
@@ -527,7 +544,17 @@ pub fn shown_bounds(world: &World, scene: &Scene, moving: &HashSet<usize>, like:
 /// scene, a prim that is not a plain box is its visible surface, a prim
 /// with nothing visible (an invisible root, a clicker) is left out, and a
 /// prim not drawn yet waits; without it (tests), every prim is its box.
-pub fn collect(world: &World, scene: Option<&Scene>, moving: &HashSet<usize>, around: &Bounds, now: Instant) -> Targets {
+/// The prims around `around` to snap to; `previous`, the targets collected
+/// before in the same drag, gives back those that have not moved.
+pub fn collect(
+    world: &World,
+    scene: Option<&Scene>,
+    moving: &HashSet<usize>,
+    around: &Bounds,
+    now: Instant,
+    previous: Option<Targets>,
+) -> Targets {
+    let (mut kept, seen) = previous.map_or_else(Default::default, |p| (p.surfaces.into_iter().map(Some).collect::<Vec<_>>(), p.seen));
     let reach = around.half.length() + RADIUS;
     let mut near: Vec<(f32, usize, Bounds)> = Vec::new();
     for (idx, o) in world.objects.iter() {
@@ -570,20 +597,35 @@ pub fn collect(world: &World, scene: Option<&Scene>, moving: &HashSet<usize>, ar
             targets.boxes.push(b);
             continue;
         };
-        let Some(tris) = scene.visible_triangles(world, idx, now).filter(|t| !t.is_empty()) else {
+        let before = seen.get(&idx).filter(|(at, _)| same_box(at, &b)).map(|(_, s)| *s);
+        let surface = match before {
+            Some(Seen::Hidden) => None,
+            Some(Seen::Box) => {
+                targets.boxes.push(b);
+                targets.seen.insert(idx, (b, Seen::Box));
+                continue;
+            }
+            Some(Seen::Surface(i)) => kept.get_mut(i).and_then(Option::take),
+            // a box prim with something drawn counts as its box
+            None => match scene.visible_triangles(world, idx, now).filter(|t| !t.is_empty()) {
+                Some(_) if world.objects.get(idx).is_some_and(|o| is_box(&o.volume)) => {
+                    targets.boxes.push(b);
+                    targets.seen.insert(idx, (b, Seen::Box));
+                    continue;
+                }
+                tris => tris.map(Surface::new),
+            },
+        };
+        let Some(surface) = surface else {
+            targets.seen.insert(idx, (b, Seen::Hidden));
             continue;
         };
-        if world.objects.get(idx).is_some_and(|o| is_box(&o.volume)) {
-            targets.boxes.push(b);
-            continue;
-        }
-        triangles += tris.len();
+        triangles += surface.tris.len();
         if triangles > MAX_TRIANGLES {
             break;
         }
-        if !tris.is_empty() {
-            targets.surfaces.push(Surface::new(tris));
-        }
+        targets.seen.insert(idx, (b, Seen::Surface(targets.surfaces.len())));
+        targets.surfaces.push(surface);
     }
     targets
 }
