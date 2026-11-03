@@ -43,6 +43,14 @@ pub enum WearMode {
     ReplaceItems,
 }
 
+/// One item of a `Action::Force` batch, with its own mode and point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WearRequest {
+    pub item: Uuid,
+    pub replace: bool,
+    pub point: u8,
+}
+
 #[derive(Clone, Debug)]
 pub enum Action {
     Wear(Uuid, bool),
@@ -68,6 +76,13 @@ pub enum Action {
         items: Vec<Uuid>,
         replace: bool,
         point: u8,
+    },
+    /// The removals and wears of RLVa force commands in one COF update,
+    /// each wear with its own mode and point (RlvForceWear::done,
+    /// rlvhelper.cpp). Removals apply first, then the wears in order.
+    Force {
+        remove: Vec<Uuid>,
+        wear: Vec<WearRequest>,
     },
     ReplaceWearable {
         old: Uuid,
@@ -344,6 +359,87 @@ fn base_link(inv: &Inventory, id: Uuid) -> OutfitLink {
     }
 }
 
+/// Take items off the planned COF: clothing and attachments only, a body
+/// part is replaced, never removed.
+fn remove_links(inv: &Inventory, current: &mut Vec<OutfitLink>, ids: Vec<Uuid>) -> Result<(), String> {
+    let mut removable = HashSet::new();
+    for id in ids {
+        let id = super::inventory::actions::original(inv, id).ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
+        let it = inv
+            .items
+            .get(&id)
+            .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
+        if it.asset_type == 13 {
+            return Err(aurora_i18n::tr!("world-appearance-a-body-part-must-be-replaced-it-cannot-be").into());
+        }
+        if !matches!(it.asset_type, 5 | 6 | 21) {
+            return Err(aurora_i18n::tr!("world-appearance-this-item-cannot-be-taken-off").into());
+        }
+        removable.insert(id);
+    }
+    current.retain(|l| l.folder || !removable.contains(&l.target));
+    Ok(())
+}
+
+/// Put one item on the planned COF. A body part always replaces its type;
+/// `replace_layer` clears the item's clothing layer first; `replace` sends
+/// an attachment to its point instead of adding it there.
+fn wear_link(
+    inv: &Inventory,
+    current: &mut Vec<OutfitLink>,
+    worn: &HashMap<Uuid, u8>,
+    seen: &mut HashSet<Uuid>,
+    request: WearRequest,
+    replace_layer: bool,
+) -> Result<(), String> {
+    let id =
+        super::inventory::actions::original(inv, request.item).ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
+    if !seen.insert(id) {
+        return Ok(());
+    }
+    let it = inv
+        .items
+        .get(&id)
+        .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
+    if !matches!(it.asset_type, 5 | 6 | 13 | 21)
+        || super::inventory::actions::library(inv, id)
+        || super::inventory::actions::in_type(inv, id, 14)
+    {
+        return Err(aurora_i18n::tr!("world-appearance-this-item-cannot-be-worn").into());
+    }
+    if it.asset_type == 13 || (replace_layer && it.asset_type == 5) {
+        current.retain(|l| {
+            l.folder
+                || inv
+                    .items
+                    .get(&l.target)
+                    .is_none_or(|old| old.asset_type != it.asset_type || old.flags & 0xff != it.flags & 0xff)
+        });
+    }
+    if request.replace && it.asset_type == 6 {
+        // Point zero uses the last saved point (LLObjectBridge::mAttachPt).
+        let point = if request.point == 0 {
+            (it.flags & 0xff) as u8
+        } else {
+            request.point
+        };
+        if point != 0 {
+            current.retain(|l| {
+                l.folder
+                    || l.target == id
+                    || inv
+                        .items
+                        .get(&l.target)
+                        .is_none_or(|old| old.asset_type != 6 || worn.get(&l.target).copied().unwrap_or((old.flags & 0xff) as u8) != point)
+            });
+        }
+    }
+    if !current.iter().any(|l| l.target == id) {
+        current.push(item_link(it));
+    }
+    Ok(())
+}
+
 /// Produces one acknowledged AIS operation. No optimistic inventory mutation.
 pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result<(OutfitMutation, bool), String> {
     // DeleteFromOutfit removes the saved links, never the originals or the worn items.
@@ -379,6 +475,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
         Action::Add(_)
             | Action::WearItem { .. }
             | Action::WearItems { .. }
+            | Action::Force { .. }
             | Action::Remove(_)
             | Action::RemoveItems(_)
             | Action::RemoveOutfit(_)
@@ -597,23 +694,17 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 Action::RemoveItems(ids) => ids,
                 _ => unreachable!(),
             };
-            let mut removable = HashSet::new();
-            for id in ids {
-                let id = super::inventory::actions::original(inv, id)
-                    .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
-                let it = inv
-                    .items
-                    .get(&id)
-                    .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
-                if it.asset_type == 13 {
-                    return Err(aurora_i18n::tr!("world-appearance-a-body-part-must-be-replaced-it-cannot-be").into());
-                }
-                if !matches!(it.asset_type, 5 | 6 | 21) {
-                    return Err(aurora_i18n::tr!("world-appearance-this-item-cannot-be-taken-off").into());
-                }
-                removable.insert(id);
+            remove_links(inv, &mut current, ids)?;
+            change.links = current;
+        }
+        Action::Force { remove, wear } => {
+            remove_links(inv, &mut current, remove)?;
+            let mut seen = HashSet::new();
+            for request in wear {
+                // RLVa already chose replace or add per item (the first
+                // clothing of a layer replaces, the next ones add).
+                wear_link(inv, &mut current, worn, &mut seen, request, request.replace)?;
             }
-            current.retain(|l| l.folder || !removable.contains(&l.target));
             change.links = current;
         }
         Action::RemoveOutfit(_) | Action::RemoveOutfits(_) => {
@@ -651,46 +742,19 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             let mut seen = HashSet::new();
             let mut replaced_clothing = HashSet::new();
             for id in ids {
-                let id = super::inventory::actions::original(inv, id)
-                    .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
-                if !seen.insert(id) {
-                    continue;
-                }
-                let it = inv
-                    .items
-                    .get(&id)
-                    .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
-                if !matches!(it.asset_type, 5 | 6 | 13 | 21)
-                    || super::inventory::actions::library(inv, id)
-                    || super::inventory::actions::in_type(inv, id, 14)
-                {
-                    return Err(aurora_i18n::tr!("world-appearance-this-item-cannot-be-worn").into());
-                }
-                if it.asset_type == 13 || (replace && it.asset_type == 5 && replaced_clothing.insert(it.flags & 0xff)) {
-                    current.retain(|l| {
-                        l.folder
-                            || inv
-                                .items
-                                .get(&l.target)
-                                .is_none_or(|old| old.asset_type != it.asset_type || old.flags & 0xff != it.flags & 0xff)
-                    });
-                }
-                if replace && it.asset_type == 6 {
-                    // Point zero uses the last saved point (LLObjectBridge::mAttachPt).
-                    let point = if point == 0 { (it.flags & 0xff) as u8 } else { point };
-                    if point != 0 {
-                        current.retain(|l| {
-                            l.folder
-                                || l.target == id
-                                || inv.items.get(&l.target).is_none_or(|old| {
-                                    old.asset_type != 6 || worn.get(&l.target).copied().unwrap_or((old.flags & 0xff) as u8) != point
-                                })
-                        });
-                    }
-                }
-                if !current.iter().any(|l| l.target == id) {
-                    current.push(item_link(it));
-                }
+                let layer = super::inventory::actions::original(inv, id)
+                    .and_then(|id| inv.items.get(&id))
+                    .map(|it| (it.asset_type, it.flags & 0xff));
+                // The first clothing of a layer replaces, the next ones add.
+                let replace_layer = replace && layer.is_some_and(|(kind, layer)| kind != 5 || replaced_clothing.insert(layer));
+                wear_link(
+                    inv,
+                    &mut current,
+                    worn,
+                    &mut seen,
+                    WearRequest { item: id, replace, point },
+                    replace_layer,
+                )?;
             }
             change.links = current;
         }
@@ -1065,23 +1129,39 @@ pub fn sync_commands(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<
 /// They are sent only after the COF update has been acknowledged. Objects
 /// are linked on arrival, so "Add" also needs its explicit rez request.
 pub fn attachments_for_action(inv: &Inventory, agent: Uuid, action: &Action) -> Vec<AttachRequest> {
-    let (items, point, replace) = match action {
-        Action::WearItem { item, point, replace } => (std::slice::from_ref(item), *point, *replace),
-        Action::WearItems { items, point, replace } => (items.as_slice(), *point, *replace),
-        Action::Add(item) => (std::slice::from_ref(item), 0, false),
+    let requests: Vec<WearRequest> = match action {
+        Action::WearItem { item, point, replace } => vec![WearRequest {
+            item: *item,
+            replace: *replace,
+            point: *point,
+        }],
+        Action::WearItems { items, point, replace } => items
+            .iter()
+            .map(|item| WearRequest {
+                item: *item,
+                replace: *replace,
+                point: *point,
+            })
+            .collect(),
+        Action::Force { wear, .. } => wear.clone(),
+        Action::Add(item) => vec![WearRequest {
+            item: *item,
+            replace: false,
+            point: 0,
+        }],
         _ => return Vec::new(),
     };
     let mut seen = HashSet::new();
-    items
-        .iter()
-        .filter_map(|id| super::inventory::actions::original(inv, *id))
-        .filter(|id| seen.insert(*id))
-        .filter_map(|id| inv.items.get(&id).filter(|it| it.asset_type == 6))
-        .map(|it| AttachRequest {
+    requests
+        .into_iter()
+        .filter_map(|request| super::inventory::actions::original(inv, request.item).map(|id| (id, request)))
+        .filter(|(id, _)| seen.insert(*id))
+        .filter_map(|(id, request)| inv.items.get(&id).filter(|it| it.asset_type == 6).map(|it| (it, request)))
+        .map(|(it, request)| AttachRequest {
             item_id: it.id,
             owner_id: if it.owner.is_nil() { agent } else { it.owner },
-            point,
-            add: !replace,
+            point: request.point,
+            add: !request.replace,
             flags: it.flags,
             group_mask: it.group_mask,
             everyone_mask: it.everyone_mask,
