@@ -346,7 +346,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_FREEZE_WORLD=1` | With `AURORA_DEMO_SNAPSHOT=viewfinder-frozen`: a prop derezzed and particles started while the world is frozen |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora or a LUT), the chosen one's strength and settings, the before / after line, the filter panel |
-| `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|compact-move\|classic\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, or driving the photo window's free camera |
+| `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|classic\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, or driving the photo window's free camera |
 | `AURORA_DEMO_CAMERA_PRESETS=save\|apply\|object\|pick[-…]` | The viewfinder's camera presets: saved on the avatar, a place and an object, applied, or the object chosen in the scene |
 
 `AURORA_DEMO_RENDER_TEXTURE`: with demo mode and `AURORA_CAPTURE`, the capture
@@ -624,19 +624,30 @@ textures are pressed: the MSAA first (8x, 4x, 2x, then the user's own
 anti-aliasing), then the draw distance (384, 256, 128 m, then the
 user's), then the shadows, then everything else, never below the user's
 own settings (`snapshot::quality::plan`), and the textures in view are no
-longer forced to full resolution. The panel shows "Quality reduced: video
-memory almost full" under the Resolution section (the viewfinder says it
-once at the top), and the log gives `photo quality: on (…, lowered for the video
-memory)` then `photo quality: step <k> of <n> for the video memory, about
-<x> MB beyond the user's settings (…)`. What the driver counts grows
-by more than the estimate when the render targets are rebuilt (the free
-room of the allocator's blocks), so the first step often settles one or
-two lower (the default: step 3 of 7, then 5). The window stays open and the
-memory is read again every second: `quality-tight:2000:100` starts with
-the whole boost and lowers it at frame 700 (`photo quality: lowered`),
-`quality-tight:100:3000` starts lowered and climbs back one step every
-five seconds (`photo quality: raised`), the line gone at step 0. With
-enough room (`quality-tight:5000`) nothing changes from `quality`.
+longer forced to full resolution. It never jumps to a step the estimate
+alone says fits: it comes on at the first step that fits with its cost
+doubled (the estimate leaves out the levels of detail, the avatars and the
+full-resolution textures), then climbs a step every two seconds while the
+driver's readings leave room for the next one, what it replaces (the
+render targets of another MSAA, the shadow atlas) and some to spare; the
+whole boost (step 0) counts double. The log gives `photo quality: on (…,
+climbing as the video memory allows)`, `photo quality: step <k> of <n>
+for the video memory, about <x> MB beyond the user's settings (…)`, a
+`raised` line for each step, then `photo quality: climbed to step <k>`
+with the figures it stopped on: the default climbs from the user's own
+settings (step 7 of 7) to 6, `quality-tight:2000` from 3 to 1 (MSAA 2x,
+then 4x). Only then does the panel show "Quality reduced: video memory
+almost full" under the Resolution section (the viewfinder says it once at
+the top). A photo taken while it climbs waits for it (`photo quality:
+waiting for <n> textures, the boost climbing`, at most 20 s): with
+`save-quality:1920x1080`, `AURORA_VRAM_BUDGET_MB=3400` and
+`AURORA_DEMO_SNAPSHOT_FRAME=640`, the photo is taken at MSAA 4x after
+about six seconds. The window stays open and the memory is read again
+every second: `quality-tight:2000:100` lowers it at frame 700 (`photo
+quality: lowered`), `quality-tight:100:3000` starts lowered and climbs back
+one step every five seconds once its first climb is over (`photo quality:
+raised`), the line gone at step 0. With enough room (`quality-tight:5000`)
+the whole boost comes on at once, as with `quality`.
 `light` opens the window with its quick light set: sunset, exposure 1.6,
 the clouds still and the worn lights off (the log gives `photo light:
 PhotoChoice { … time: Some(3) … }`); the saved `time_of_day` and
@@ -717,9 +728,10 @@ Controls window's.
 
 `AURORA_DEMO_CONTROLS` opens the Controls window at frame 600: `camera` on
 its Camera tab (joysticks, zoom, the four views, object view, mouselook,
-reset, saved positions), `movement` on its Movement tab
+reset, saved positions), `roll` on the same tab with a 15° camera roll
+(the hold-to-roll buttons and the angle button that levels the camera), `movement` on its Movement tab
 (the eight buttons with the keys of the keyboard's layout, walk / run / fly),
-`compact` the window in its compact view (its joysticks and zoom only),
+`compact` the window in its compact view (its joysticks, zoom and roll controls),
 `compact-move` the same, then at frame 640 the toolbar's Move pressed on it
 (#1815: it expands on its Movement tab; capture at 700),
 `classic` Firestorm's camera and movement windows (Preferences › Aurora,
@@ -5262,6 +5274,53 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 
 ### Import inspector layout
 
+TGA texture imports: use `AURORA_DEMO_IMPORTS=type-texture` and
+`AURORA_DEMO_IMPORT_FILE` with a local `.tga`, including RLE files without a
+TGA 2.0 footer. The file must load with the right colours, orientation and alpha,
+show its dimensions and reach the normal confirmation flow. The `tga_imports`
+regressions cover raw/RLE RGB/RGBA, all four origins, lossless upload round trips,
+truncation and pixel limits; the file-routing regression covers Texture, Bulk
+and Local with an uppercase extension.
+
+Enlarged previews: with only `AURORA_DEMO_IMPORTS=type-mesh` open, click the
+loupe beside the thumbnail. The separate preview must remain open while the
+unified importer is closed. `type-mesh-zoom` exercises the same window lifetime
+without a pointer script. Check Local Mesh too; material-map loupes must retain
+their loaded texture until closed by Escape or by closing the last importer.
+The `import_zoom` regression filter covers the actual Mesh/Local loupe clicks
+and the material-map lifecycle without requiring a grid.
+
+Collision repair: run `AURORA_DEMO_IMPORTS=mesh-degenerate` and check that
+the warning and convex-conversion action appear before Calculate fees is pressed.
+The fee action stays disabled until preparation completes with valid physics.
+The source row shows Level of detail, its selector, retention slider, percentage
+and collision-triangle label on one line. Neither collision section has a
+numbered step prefix. File/preset controls occupy a separate row when needed;
+the convex-hull heading is plain text and Analyze works without a checkbox.
+While collision analysis is queued or running, Analyze itself shows a live
+spinner and an Analyzing label and cannot be clicked again. Completion or an
+error restores its ordinary label; camera-only preview changes must not show
+another analysis when cached hulls are already available.
+Analyze or Create convex collision hulls opens the physics preview and builds
+hulls on the worker. The warning disappears after completion and Calculate fees
+becomes available. Use triangle mesh restores the original collision triangles
+and their warning; choosing a different source also resets the analysis.
+Use `AURORA_DEMO_IMPORTS=mesh-physics` with `AURORA_DEMO_IMPORT_FILE` to check
+a local dense/thin mesh. Visual LODs, materials and source files must stay intact;
+review the approximated collisions, particularly openings, before quoting.
+The `mesh_physics` regression filter covers the fee guard, worker result,
+pointer actions and collision-only conversion.
+The convex section exposes Analyze and five VHACD parameters. Adjust Vertices
+per hull before analysis to control the hull budget. There is no separate
+Simplify action or target-percentage field. Statistics, preview and encoded
+fee resources use the analyzed hulls.
+Analyze aligns at the right of the settings inputs, including while its busy
+state is shown. Resolution offers Low / Normal / High / Very high / Ultra /
+Maximum, with the Legacy voxel budgets 200k / 400k / 800k / 1.2m / 1.6m / 2m.
+Normal remains the 400k default. Hover Resolution to see the current budget and
+its precision/time/memory explanation. A pre-existing non-preset value is shown
+as Custom and retained until a preset is selected.
+
 Mesh importer parity regressions use the `mesh_import_parity` test filter
 with `cargo test --workspace mesh_import_parity`. They cover a DAE larger than
 64 MiB, a GLB with a 129 MiB embedded buffer, dense/redundant geometry,
@@ -7664,6 +7723,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   at start on it, the menu entry shows, and a link to an address under it
   opens in the window instead of the system browser. Without it the demo
   has no Marketplace (the entry is hidden, as on a grid without one).
+  For keyboard regression checks (#1725, #1968), use a local HTML page with
+  an input and a textarea. Click the input, type letters and AltGr characters,
+  edit with arrows/Backspace/Delete, select all, and Tab to the textarea.
+  The page must receive the keys without opening chat, triggering gestures or
+  moving the avatar. Clicking outside, minimizing or closing releases focus;
+  clicking the page again restores it. Repeat text entry in Search's Web tab.
 - **`AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit|menu-listing|menu-version|menu-item`**:
   Me › Marketplace listings open at start, answered by an SLM server
   simulated in the viewer (nothing is sent). `merchant` (any other

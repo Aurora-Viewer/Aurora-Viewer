@@ -355,10 +355,7 @@ fn parse_success(v: Llsd) -> Result<LoginResponse, LoginError> {
     let sim_ip: Ipv4Addr = v["sim_ip"].as_str().parse().map_err(|_| LoginError::Malformed("sim_ip"))?;
     let sim_port = u16::try_from(v["sim_port"].as_i32()).map_err(|_| LoginError::Malformed("sim_port"))?;
     let inventory_root = v["inventory-root"][0]["folder_id"].as_uuid();
-    let size = |k: &str| match v[k].as_i32() {
-        n if n >= 256 => n as u32,
-        _ => 256,
-    };
+    let size = |k: &str| crate::session::region_side(u32::try_from(v[k].as_i32()).unwrap_or(256));
     Ok(LoginResponse {
         agent_id,
         session_id: uuid("session_id"),

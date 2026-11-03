@@ -609,6 +609,17 @@ pub struct Settings {
     pub confirm_return_to_owner: bool,
     pub confirm_attachment_drop: bool,
     pub confirm_script_modify: bool,
+    /// The Marketplace listings ask before a move from the inventory
+    /// (ConfirmMerchantMoveInventory), a change to an active listing
+    /// (ConfirmMerchantActiveChange), a version folder leaving its place
+    /// (ConfirmMerchantClearVersion), a listing folder moved or deleted
+    /// (ConfirmListingCutOrDelete) and an unlist (ConfirmMerchantUnlist);
+    /// their "ignore" boxes turn these off. All on by default.
+    pub confirm_merchant_move: bool,
+    pub confirm_merchant_active_change: bool,
+    pub confirm_merchant_clear_version: bool,
+    pub confirm_merchant_listing_delete: bool,
+    pub confirm_merchant_unlist: bool,
     /// RegionCheckTextureHeights: Region / Estate asks before sending
     /// elevation ranges whose low end is above the high one ("Don't ask"
     /// turns it off; on by default).
@@ -1757,6 +1768,11 @@ impl Default for Settings {
             confirm_return_to_owner: true,
             confirm_attachment_drop: true,
             confirm_script_modify: true,
+            confirm_merchant_move: true,
+            confirm_merchant_active_change: true,
+            confirm_merchant_clear_version: true,
+            confirm_merchant_listing_delete: true,
+            confirm_merchant_unlist: true,
             region_check_texture_heights: true,
             confirm_payments: true,
             payment_confirm_threshold: 200,

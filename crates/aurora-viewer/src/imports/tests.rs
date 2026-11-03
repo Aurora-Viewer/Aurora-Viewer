@@ -521,6 +521,74 @@ pub(super) fn mesh_fixture() -> mesh::Draft {
     mesh::Draft::new(scene, HashMap::new())
 }
 
+pub(super) fn invalid_physics_fixture() -> mesh::Draft {
+    let mut draft = mesh_fixture();
+    for lod in &mut draft.lods[..3] {
+        lod.source = mesh::LodSource::Above;
+    }
+    let face = &mut Arc::make_mut(&mut draft.scene).models[0].faces[0];
+    let start = face.vertices.len() as u32;
+    let prototype = face.vertices[0].clone();
+    for position in [[0.0, 0.0, 0.0], [0.00001, 0.0, 0.0], [0.0, 0.00001, 0.0]] {
+        face.vertices.push(aurora_assets::import_mesh::Vertex {
+            position,
+            ..prototype.clone()
+        });
+    }
+    face.indices.extend([start, start + 1, start + 2]);
+    draft.options.physics_source = 3;
+    draft.options.resolution = 1000;
+    draft
+}
+
+#[test]
+fn mesh_physics_invalid_fee_preparation_keeps_geometry_for_repair_without_network_requests() {
+    let ctx = egui::Context::default();
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    let entry = Entry::new(
+        "physics.dae".into(),
+        Ok(Source::Mesh(Box::new(invalid_physics_fixture()))),
+        Default::default(),
+    );
+    let id = entry.id;
+    let mut imports = Imports {
+        choice: Choice::Mesh,
+        active: Some(id),
+        entries: vec![entry],
+        message: "Unrelated warning".into(),
+        ..Default::default()
+    };
+    imports.quote_mesh(id, &ctx, &jobs, &world, &Default::default(), Permissions::default());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let commands = imports.poll(&ctx, &jobs, &world, &Default::default());
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, aurora_net::NetCommand::QuoteMesh { .. }))
+        );
+        let Some(Source::Mesh(draft)) = &imports.entries[0].source else {
+            panic!("mesh")
+        };
+        if draft.pending.is_none() {
+            assert_eq!(draft.prepared.as_ref().expect("geometry retained").degenerate_triangles, 1);
+            assert!(draft.quote.is_none());
+            assert!(
+                draft
+                    .inspector
+                    .log
+                    .contains(&aurora_i18n::tr!("import-degenerate-physics", count = 1))
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline, "physics worker did not complete");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(imports.message, "Unrelated warning");
+    assert!(imports.queue.is_empty() && imports.current.is_none());
+}
+
 #[test]
 fn mesh_multi_object_file_preserves_instances_through_preparation_and_fee_payload() {
     let scene = aurora_assets::import_mesh::collada::parse(demo::multiple_dae().as_bytes(), &aurora_assets::Skeleton::default())

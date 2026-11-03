@@ -19,6 +19,7 @@ use crate::ui::widgets::ActionKind;
 use crate::ui::{menu, widgets};
 use crate::world::World;
 use crate::world::profiles;
+use crate::world::worldmap::WorldMap;
 use aurora_llsd::llsd_map;
 use aurora_net::profile::{ClassifiedClick, MINIMUM_PRICE_FOR_LISTING, classified_flags};
 use aurora_net::{ClassifiedInfo, NetCommand, ParcelSummary};
@@ -42,15 +43,15 @@ const NOTES_MAX: usize = 65_530;
 
 /// "Place, Region (x, y, z)" of the mock-up: the parts known, then the
 /// position in the region.
-fn place_line(parcel: &str, sim: &str, pos: DVec3) -> String {
+fn place_line(parcel: &str, sim: &str, pos: DVec3, map: &WorldMap) -> String {
     let names: Vec<&str> = [parcel, sim].into_iter().filter(|s| !s.trim().is_empty()).collect();
     let mut s = names.join(" · ");
     if pos != DVec3::ZERO {
-        let local = |v: f64| (v.rem_euclid(256.0)).round() as i64;
+        let (x, y) = map.local_xy(pos.x, pos.y);
         if !s.is_empty() {
             s.push(' ');
         }
-        s.push_str(&format!("({}, {}, {})", local(pos.x), local(pos.y), pos.z.round() as i64));
+        s.push_str(&format!("({}, {}, {})", x.round() as i64, y.round() as i64, pos.z.round() as i64));
     }
     s
 }
@@ -272,7 +273,7 @@ fn pick_view(env: &mut Env, w: &mut Window, id: Uuid) -> Option<PickView> {
         let parcel = info.and_then(|i| world.profiles.parcels.get(&i.parcel));
         let place = match (&e.location, info) {
             (Some(l), _) => l.clone(),
-            (None, Some(i)) => place_line(parcel.map_or("", |p| p.name.as_str()), &i.sim_name, e.pos),
+            (None, Some(i)) => place_line(parcel.map_or("", |p| p.name.as_str()), &i.sim_name, e.pos, &env.world.map),
             (None, None) => String::new(),
         };
         return Some(PickView {
@@ -300,7 +301,12 @@ fn pick_view(env: &mut Env, w: &mut Window, id: Uuid) -> Option<PickView> {
         desc: info.desc.clone(),
         snapshot: info.snapshot,
         pos: info.pos_global,
-        place: place_line(parcel.map_or("", |p| p.name.as_str()), &info.sim_name, info.pos_global),
+        place: place_line(
+            parcel.map_or("", |p| p.name.as_str()),
+            &info.sim_name,
+            info.pos_global,
+            &env.world.map,
+        ),
         sim: info.sim_name.clone(),
         maturity: maturity_of(parcel),
     })
@@ -544,7 +550,7 @@ fn pick_buttons(ui: &mut egui::Ui, env: &mut Env, pos: DVec3, region: &str) {
         if widgets::action_button_if(ui, p, "map", aurora_i18n::tr!("common-map"), ActionKind::Flat, size, has_pos).clicked() {
             env.actions.push(ProfileAction::ShowOnMap(pos));
         }
-        if let Some(slurl) = slurl(region, pos)
+        if let Some(slurl) = slurl(region, pos, &env.world.map)
             && widgets::action_button(ui, p, "copy-filled", "", ActionKind::Flat, Vec2::new(30.0, 28.0))
                 .on_hover_text(aurora_i18n::tr!("ui-profile-aurora-copy-slurl"))
                 .clicked()
@@ -555,16 +561,16 @@ fn pick_buttons(ui: &mut egui::Ui, env: &mut Env, pos: DVec3, region: &str) {
 }
 
 /// The place link of a position in a region (LLSLURL's maps address).
-fn slurl(region: &str, pos: DVec3) -> Option<String> {
+fn slurl(region: &str, pos: DVec3, map: &WorldMap) -> Option<String> {
     if pos == DVec3::ZERO || region.trim().is_empty() {
         return None;
     }
-    let local = |v: f64| v.rem_euclid(256.0).round() as i64;
+    let (x, y) = map.local_xy(pos.x, pos.y);
     Some(format!(
         "http://maps.secondlife.com/secondlife/{}/{}/{}/{}",
         region.trim().replace(' ', "%20"),
-        local(pos.x),
-        local(pos.y),
+        x.round() as i64,
+        y.round() as i64,
         pos.z.round() as i64
     ))
 }
@@ -1085,7 +1091,7 @@ fn classified_head(ui: &mut egui::Ui, env: &mut Env, c: &ClassifiedInfo, compact
                 let (r, _) = ui.allocate_exact_size(Vec2::new(12.0, 16.0), Sense::hover());
                 paint_icon(ui, "map-pin-filled", r.center(), 11.0, p.muted);
                 ui.label(
-                    RichText::new(world.rlva_filter_text(&place_line(&c.parcel_name, &c.sim_name, c.pos_global)))
+                    RichText::new(world.rlva_filter_text(&place_line(&c.parcel_name, &c.sim_name, c.pos_global, &world.map)))
                         .size(11.5)
                         .color(p.muted),
                 );
@@ -1414,7 +1420,10 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
     );
     e.category = category;
     e.mature = mature;
-    let place = e.location.clone().unwrap_or_else(|| place_line(&e.parcel_name, &e.sim_name, e.pos));
+    let place = e
+        .location
+        .clone()
+        .unwrap_or_else(|| place_line(&e.parcel_name, &e.sim_name, e.pos, &env.world.map));
     let place = world.rlva_filter_text(&place);
     let mut here = false;
     let mut renew = e.auto_renew;
@@ -1904,13 +1913,14 @@ mod tests {
 
     #[test]
     fn a_place_line_like_the_mockup() {
+        let map = WorldMap::default();
         let pos = DVec3::new(256_000.0 + 140.2, 256_000.0 + 119.6, 25.4);
         assert_eq!(
-            place_line("Place d'Aurora", "Aurora Démo", pos),
+            place_line("Place d'Aurora", "Aurora Démo", pos, &map),
             "Place d'Aurora · Aurora Démo (140, 120, 25)"
         );
-        assert_eq!(place_line("", "Sablière", pos), "Sablière (140, 120, 25)");
-        assert_eq!(place_line("", "Sablière", DVec3::ZERO), "Sablière");
+        assert_eq!(place_line("", "Sablière", pos, &map), "Sablière (140, 120, 25)");
+        assert_eq!(place_line("", "Sablière", DVec3::ZERO, &map), "Sablière");
     }
 
     #[test]
