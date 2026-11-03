@@ -2,7 +2,8 @@
 //! then the place (rating, parcel, region and position, the parcel's
 //! rights) and the landmark star. A click on the place opens its menu
 //! (SLURL, destination, rights, About Land, history, home, Places, recent
-//! places), replacing the location field Firestorm edits in place
+//! places), the destination field ready to type or paste into, replacing
+//! the location field Firestorm edits in place
 //! (LLLocationInputCtrl, LLNavigationBar). The island stretches to the
 //! account island, or takes the width of its content
 //! (`Settings::place_bar_stretch`); what it shows follows the room it has
@@ -27,6 +28,8 @@ const BADGE: f32 = 15.0;
 const RIGHT_GAP: f32 = 2.0;
 const NAME_AFTER: f32 = 6.0;
 const NAME_SIZE: f32 = 11.5;
+/// Set once the destination field of the open place menu took the focus.
+const DEST_FOCUSED: &str = "bars_place_destination_focused";
 
 /// How much the place island says, from the most to the least: every right
 /// named, the forbidden ones named, the position, the parcel and the region
@@ -424,6 +427,10 @@ fn place(
     }
 
     demo_open(ui.ctx(), &resp, super::demo::Open::Place);
+    if !open {
+        // the next opening gives the destination field the keyboard again
+        ui.ctx().data_mut(|d| d.remove::<bool>(Id::unique(DEST_FOCUSED)));
+    }
     menu::dropdown_placed(
         &resp,
         p,
@@ -552,7 +559,20 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
     ui.add_space(6.0);
     // a destination: SLURL, Region/x/y/z or a region's name, then Enter
     let dest_id = Id::unique("bars_place_destination");
+    let (field_key, picker_key) = (dest_id.with("field"), dest_id.with("picker"));
     let mut text = ui.ctx().data_mut(|d| d.get_temp::<String>(dest_id)).unwrap_or_default();
+    if super::demo::get().locations && ui.ctx().cumulative_frame_nr() == super::location_suggest::DEMO_FRAME {
+        text = super::location_suggest::DEMO_TYPED.to_owned();
+    }
+    // the landmarks and places the text names (hidden with the location)
+    let mut picker = super::location_suggest::Picker::load(ui.ctx(), picker_key);
+    picker.refresh(&st.landmarks, st.tp_session.items, &text, !st.location_hidden);
+    // the arrows and Enter go to the list before the field takes them
+    let field_id = ui.ctx().data(|d| d.get_temp::<Id>(field_key));
+    let (mut take, moved) = match field_id {
+        Some(id) if ui.memory(|m| m.has_focus(id)) => picker.keys(ui, id),
+        _ => (None, false),
+    };
     let dest = &mut text;
     let field = ui
         .horizontal(|ui| {
@@ -566,13 +586,39 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
             )
         })
         .inner;
-    if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+    // the field takes the keyboard as the menu opens: a click on the place,
+    // paste, Enter teleports, as the Legacy Viewer's location field does
+    // (LLLocationInputCtrl, #1569); once only, so a click elsewhere in the
+    // menu keeps its focus
+    let focused_id = Id::unique(DEST_FOCUSED);
+    if !ui.ctx().data(|d| d.get_temp::<bool>(focused_id)).unwrap_or(false) {
+        field.request_focus();
+        if field.has_focus() {
+            ui.ctx().data_mut(|d| d.insert_temp(focused_id, true));
+        }
+    }
+    picker.refresh(&st.landmarks, st.tp_session.items, dest, !st.location_hidden);
+    // what the text names, under the field; Enter or a click takes a row
+    if !picker.list().is_empty() {
+        ui.add_space(4.0);
+        if let Some(i) = super::location_suggest::rows(ui, p, picker.list(), picker.chosen(), moved) {
+            take = picker.list().get(i).cloned();
+        }
+    }
+    if let Some(s) = take {
+        action = Some(s.action());
+        dest.clear();
+    } else if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
         let typed = std::mem::take(dest);
         if !typed.trim().is_empty() {
             action = Some(BarAction::TeleportTo(typed));
         }
     }
-    ui.ctx().data_mut(|d| d.insert_temp(dest_id, text));
+    picker.store(ui.ctx(), picker_key);
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(dest_id, text);
+        d.insert_temp(field_key, field.id);
+    });
     // the rights, in words
     menu::heading(ui, p, aurora_i18n::tr!("ui-bars-parcel-rights"));
     for it in &st.parcel_icons {

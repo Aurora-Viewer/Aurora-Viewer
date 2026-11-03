@@ -15,6 +15,10 @@ const TRUSTED: &[&str] = &[
     "secondlife.com",
     "lindenlab.com",
     "tilia-inc.com",
+    // CasperTech (CasperVend, CasperLet), a Linden Lab company since 2022
+    "casperdns.com",
+    "casperpanel.com",
+    "casperlet.com",
     "secondlifegrid.net",
     "secondlife.io",
     "secondlife-status.statuspage.io",
@@ -62,6 +66,9 @@ const TRUSTED: &[&str] = &[
     // (media*.giphy.com, static*.klipy.com)
     "giphy.com",
     "klipy.com",
+    // the other GIF service most shared in chat (#1551): its pages
+    // (tenor.com/view/...) and media servers (media.tenor.com, c.tenor.com)
+    "tenor.com",
 ];
 
 /// URL shorteners and link hubs: the real destination is hidden.
@@ -106,6 +113,7 @@ const THROWAWAY_HOSTING: &[&str] = &[
     "glitch.me",
     "repl.co",
     "workers.dev",
+    "herokuapp.com",
 ];
 
 /// Names a fake site borrows to look official (compared without dots and
@@ -291,6 +299,28 @@ fn classify_with(url: &str, sites: &TrustedSites) -> Trust {
     Trust::Unknown
 }
 
+/// The scheme of a link the viewer must not hand to the system, or `None`
+/// for an http(s) one. Only web pages leave the viewer, as the links of a
+/// notification: any other scheme (or none, read by the system as a file
+/// path) could start a local program. `secondlife://` and app links have
+/// their own handling and never get here. The scheme is returned in a form
+/// fit for a log (letters, digits, `+-.`, at most 16 characters), never the
+/// rest of the link.
+pub fn refused_scheme(url: &str) -> Option<String> {
+    let url = url.trim();
+    match url.split_once("://") {
+        Some((scheme, _)) if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") => None,
+        _ => {
+            let scheme = url.split(':').next().unwrap_or("");
+            let fit = !scheme.is_empty()
+                && scheme.len() <= 16
+                && scheme.len() < url.len()
+                && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+            Some(if fit { scheme.to_ascii_lowercase() } else { "(none)".to_owned() })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,6 +332,9 @@ mod tests {
             "http://community.secondlife.com/forums",
             "https://marketplace.secondlife.com:443/p/x",
             "https://WWW.LindenLab.com",
+            "https://www.casperdns.com/",
+            "https://www.casperpanel.com/",
+            "https://casperlet.com/",
             "https://aurora-viewer.org",
             "https://www.aurora-viewer.org/downloads",
             "https://github.com/Aurora-Viewer/Aurora-Viewer/pulls",
@@ -322,6 +355,10 @@ mod tests {
             "https://image.prntscr.com/image/Dm0Aur0raExample.png",
             "https://i.gyazo.com/0a1b2c3d4e5f60718293a4b5c6d7e8f9.png",
             "https://i.imgur.com/DemoAb1.jpeg",
+            // the GIF services (#932, #1551)
+            "https://media.giphy.com/media/demo/giphy.gif",
+            "https://tenor.com/view/demo-wave-gif-12345678",
+            "https://media.tenor.com/DemoAb1cD2eAAAAC/demo-wave.gif",
         ] {
             assert_eq!(classify(url), Trust::Trusted, "{url}");
         }
@@ -334,6 +371,7 @@ mod tests {
             "https://github.io",
             "https://raw.githubusercontent.com/x",
             "https://notgithub.com",
+            "https://nottenor.com/view/x",
             "https://docs.google.com/forms/x",
             "https://www.dropbox.com/s/x",
             "ftp://secondlife.com/x",
@@ -358,6 +396,7 @@ mod tests {
             "https://bit.ly/abc",
             "https://linktr.ee/x",
             "https://abc.ngrok-free.app/login",
+            "https://sl-login-demo.herokuapp.com/",
             "http://192.168.1.10/login",
             "http://[2001:db8::1]/x",
             "https://xn--secndlife-x9a.com",
@@ -434,6 +473,36 @@ mod tests {
             ("", None),
         ] {
             assert_eq!(normalize(typed).as_deref(), expected, "{typed:?}");
+        }
+    }
+
+    #[test]
+    fn only_web_pages_leave_the_viewer() {
+        for url in [
+            "https://example.org/a?b",
+            "http://example.org",
+            "HTTPS://Example.org",
+            " https://example.org ",
+        ] {
+            assert_eq!(refused_scheme(url), None, "{url:?}");
+        }
+        for (url, scheme) in [
+            ("file:///C:/Windows/System32/calc.exe", "file"),
+            ("FILE://server/share/x.exe", "file"),
+            ("ms-settings:privacy", "ms-settings"),
+            ("javascript:alert(1)", "javascript"),
+            ("mailto:someone@example.org", "mailto"),
+            ("search-ms:query=x", "search-ms"),
+            ("C:\\Windows\\notepad.exe", "c"),
+            // no scheme at all: the system would read a path
+            ("example.org/page", "(none)"),
+            ("\\\\server\\share\\x.exe", "(none)"),
+            ("", "(none)"),
+            // nothing of the rest of the link reaches the log
+            ("weird scheme://secret/token", "(none)"),
+            ("averyveryverylongscheme://x", "(none)"),
+        ] {
+            assert_eq!(refused_scheme(url).as_deref(), Some(scheme), "{url:?}");
         }
     }
 }

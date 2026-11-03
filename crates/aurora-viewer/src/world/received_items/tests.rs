@@ -197,6 +197,39 @@ fn received_filing_scripted_accept_uses_owner_legacy_name_and_exact_destination(
 }
 
 #[test]
+fn auto_accept_inventory_keeps_received_filing_and_its_delayed_scripted_reply() {
+    for task in [false, true] {
+        let mut w = world();
+        w.inventory_offers.auto_accept = true;
+        w.inventory_offers.auto_accept_chat = false;
+        w.inventory_offers.auto_accept_notify = false;
+        w.social.avatar_names.on_legacy(GIVER, "Test", "Resident");
+        if !task {
+            item(&mut w, 6);
+        }
+        w.apply(NetEvent::InstantMessage(offer(task, 6)));
+        assert!(w.notifications.list.is_empty());
+        assert!(w.inventory_offers.list.is_empty());
+        let mut commands = w.take_social_commands();
+        assert!(!commands.iter().any(|c| matches!(c, NetCommand::SendImDialog { .. })));
+        commands.extend(run(&mut w));
+        let destination = child(&w.inventory, root(&w.inventory).expect("received root"), "Test Resident").expect("sender folder");
+        let expected = if task {
+            im::TASK_INVENTORY_ACCEPTED
+        } else {
+            im::INVENTORY_ACCEPTED
+        };
+        assert!(commands.iter().any(|c| matches!(c,
+            NetCommand::SendImDialog { to: GIVER, dialog, bucket, .. }
+            if *dialog == expected && bucket == destination.as_bytes()
+        )));
+        if !task {
+            assert_eq!(w.inventory.items[&ITEM].parent, destination);
+        }
+    }
+}
+
+#[test]
 fn received_filing_disable_and_timeout_preserve_scripted_acceptance() {
     for disable in [false, true] {
         let mut w = world();

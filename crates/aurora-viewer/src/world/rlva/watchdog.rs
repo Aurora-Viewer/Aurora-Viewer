@@ -244,7 +244,8 @@ impl super::super::World {
                     })
                     .and_then(|i| self.objects.get(i))
                 {
-                    self.rlva.watchdog.requested_detach(&[object.full_id], now);
+                    let item = object.attachment_item_id().filter(|id| !id.is_nil()).unwrap_or(object.full_id);
+                    self.rlva.watchdog.requested_detach(&[item], now);
                 }
             }
             aurora_net::NetCommand::DetachAttachments(items) => self.rlva.watchdog.requested_detach(items, now),
@@ -278,8 +279,16 @@ impl super::super::World {
     }
 
     pub fn rlva_watchdog_tick(&mut self, now: Instant) {
+        // Changes noted while RLVa was on are still written after it is
+        // turned off.
+        self.rlva.last_points.save_due(now);
         if !self.rlva.enabled() || !self.movement_complete {
             return;
+        }
+        // The point each object is seen on, for the wear menus: an
+        // inventory item often carries no saved point.
+        for (item, point) in self.rlva_worn_attachment_points() {
+            self.rlva.last_points.note(item, point, now);
         }
         let current = self.rlva_attachment_snapshot();
         let bindings: Vec<_> = self

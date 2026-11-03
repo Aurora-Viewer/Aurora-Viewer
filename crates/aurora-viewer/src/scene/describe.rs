@@ -47,6 +47,19 @@ impl DescribeScope {
         self.selected.is_empty() && self.avatars.is_empty()
     }
 
+    /// The first line of a press: what it details (`me`: our agent, the
+    /// Dev Toolbox's "My avatar" target).
+    pub fn summary(&self, me: Uuid) -> String {
+        if self.selected.is_empty() && self.avatars == [me] {
+            return "describe: our own avatar, detailed face by face".to_string();
+        }
+        format!(
+            "describe: {} selected linksets, {} avatars within {DETAIL_RADIUS} m detailed face by face",
+            self.selected.len(),
+            self.avatars.len()
+        )
+    }
+
     /// Roots of the linksets the press details.
     pub fn roots(&self, world: &World) -> Vec<usize> {
         let mut out = self.selected.clone();
@@ -223,14 +236,14 @@ impl Scene {
     /// the attachments of the avatars of `scope` face by face; with an empty
     /// scope, those of the avatars within [`WORN_RADIUS`] summed up.
     pub fn describe_worn(&self, world: &World, renderer: &Renderer, scope: &DescribeScope, names: Names) {
-        log::info!(
-            "describe: {} selected linksets, {} avatars within {DETAIL_RADIUS} m detailed face by face",
-            scope.selected.len(),
-            scope.avatars.len()
-        );
+        log::info!("{}", scope.summary(world.agent_id));
         let mut budget = PRIMS_PER_PRESS;
         for &root in &scope.selected {
             self.log_selected(world, renderer, root, names, &mut budget);
+        }
+        // the Dev Toolbox's "My avatar": ours, which `avatars_near` leaves out
+        if scope.avatars.contains(&world.agent_id) {
+            self.log_attachments(world, world.agent_id, renderer, names, Some(&mut budget));
         }
         for (_, id) in Self::avatars_near(world, WORN_RADIUS) {
             let detail = scope.avatars.contains(&id);
@@ -984,6 +997,32 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_summary_names_our_own_avatar() {
+        let me = Uuid::from_u128(1);
+        let mine = DescribeScope {
+            selected: Vec::new(),
+            avatars: vec![me],
+        };
+        assert_eq!(mine.summary(me), "describe: our own avatar, detailed face by face");
+        let near = DescribeScope {
+            selected: Vec::new(),
+            avatars: vec![Uuid::from_u128(2)],
+        };
+        assert_eq!(
+            near.summary(me),
+            "describe: 0 selected linksets, 1 avatars within 3 m detailed face by face"
+        );
+        let selected = DescribeScope {
+            selected: vec![4, 5],
+            avatars: Vec::new(),
+        };
+        assert_eq!(
+            selected.summary(me),
+            "describe: 2 selected linksets, 0 avatars within 3 m detailed face by face"
+        );
+    }
 
     #[test]
     fn index_ranges_join_neighbours() {

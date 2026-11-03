@@ -4,8 +4,10 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+pub mod area_search;
 pub mod backup;
 mod hover_height;
+mod saver;
 pub mod stream_list;
 
 /// How the Conversations window looks (Preferences › Aurora): Aurora's
@@ -28,6 +30,16 @@ impl ChatStyle {
     pub fn workspace(self) -> bool {
         matches!(self, ChatStyle::Aurora | ChatStyle::Compact)
     }
+}
+
+/// Nearby chat belongs to the layout, unlike account-specific IM sessions.
+/// Hidden keeps its detached window available to the nearby-chat button.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum NearbyChatWindow {
+    #[default]
+    Docked,
+    Detached,
+    Hidden,
 }
 
 /// Where the thumbnails of the open conversations stand (Preferences ›
@@ -247,6 +259,19 @@ impl PlateClick {
 /// It becomes a public GitHub issue in the tester's name, hence Ask by
 /// default where the Legacy Viewer always sends to its own server
 /// (llcrashlogger.cpp, CrashSubmitBehavior).
+/// How many asset downloads may be under way at once (`aurora_net::AssetConnections`).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DownloadConnections {
+    /// Adaptive, or limited when a network adapter known to lose its link
+    /// under many connections is present (`net_adapters::needs_limited`).
+    #[default]
+    Automatic,
+    /// Always follow the link (`fetch_pace.rs`), Aurora's fast default.
+    Adaptive,
+    /// Always the Legacy Viewer's bounded connections.
+    Limited,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CrashReports {
     #[default]
@@ -401,6 +426,7 @@ pub struct Settings {
     /// (Preferences › Language and updates).
     pub update_channel: aurora_updater::feed::Channel,
     pub ignored_update: String,
+    pub area_search: area_search::AreaSearch,
     pub crash_reports: CrashReports,
     /// Firestorm Language: default follows the OS.
     pub language: String,
@@ -501,6 +527,16 @@ pub struct Settings {
     /// Keep the local environment from one session to the next (Firestorm
     /// EnvironmentPersistAcrossLogin, on).
     pub env_persist: bool,
+    /// Which stars the night sky shows: the real sky over Paris (Aurora's
+    /// default) or the Legacy Viewer's random stars (world/night_sky.rs).
+    pub night_sky: crate::world::night_sky::NightSky,
+    /// Where on Earth the real sky is seen from (Paris by default).
+    pub night_sky_place: crate::world::night_sky::SkyPlace,
+    /// Its latitude (degrees north): the preset's, or the one typed for
+    /// Custom.
+    pub night_sky_latitude: f32,
+    /// Brightness of the real stars, 0.5 to 4 times the catalogue's.
+    pub night_sky_gain: f32,
     pub exposure: f32,
     /// Contrast adaptive sharpening (Firestorm RenderCASSharpness, 0.4).
     pub sharpen: f32,
@@ -544,6 +580,11 @@ pub struct Settings {
     /// turned since (`ui::StartupWindows`).
     pub show_chat: bool,
     pub show_minimap: bool,
+    /// Nearby-chat docking and visibility; geometry stays in ui_layout.ron.
+    pub nearby_chat_window: NearbyChatWindow,
+    /// LLFloaterCamera / LLFloaterMove save_visibility (their floater XML).
+    pub show_camera_controls: bool,
+    pub show_movement_controls: bool,
     /// FSUseStandalonePlaceDetailsFloater: landmarks, place links and history
     /// entries open in their own window instead of the Places window.
     pub standalone_place_details: bool,
@@ -556,6 +597,11 @@ pub struct Settings {
     /// box "Do not show again" of the confirmation turns it off). Firestorm
     /// keeps one "ignore" per notification: one setting here for the three.
     pub confirm_teleports: bool,
+    /// Ask before a Hypergrid teleport that leaves worn items behind: with
+    /// OpenSim's suitcase, another grid loads only what is in My Suitcase
+    /// (`world::suitcase`). Not a Legacy Viewer setting; its box "Do not
+    /// show again" turns it off.
+    pub warn_hypergrid_suitcase: bool,
     /// SettingsMakeNoTrans is asked (its "ignore" box turns it off; shown
     /// by default like the notification).
     pub confirm_no_transfer_settings: bool,
@@ -568,6 +614,17 @@ pub struct Settings {
     pub confirm_return_to_owner: bool,
     pub confirm_attachment_drop: bool,
     pub confirm_script_modify: bool,
+    /// The Marketplace listings ask before a move from the inventory
+    /// (ConfirmMerchantMoveInventory), a change to an active listing
+    /// (ConfirmMerchantActiveChange), a version folder leaving its place
+    /// (ConfirmMerchantClearVersion), a listing folder moved or deleted
+    /// (ConfirmListingCutOrDelete) and an unlist (ConfirmMerchantUnlist);
+    /// their "ignore" boxes turn these off. All on by default.
+    pub confirm_merchant_move: bool,
+    pub confirm_merchant_active_change: bool,
+    pub confirm_merchant_clear_version: bool,
+    pub confirm_merchant_listing_delete: bool,
+    pub confirm_merchant_unlist: bool,
     /// RegionCheckTextureHeights: Region / Estate asks before sending
     /// elevation ranges whose low end is above the high one ("Don't ask"
     /// turns it off; on by default).
@@ -584,6 +641,10 @@ pub struct Settings {
     /// their conversation on its card (#1198); a payment from anyone else
     /// shows there only when it is open. On by default.
     pub payment_opens_conversation: bool,
+    /// Preferences › Chat › Conversations: our own direct payment to a
+    /// resident opens their conversation on its card (#1198); otherwise it
+    /// shows there only when it is open. Off by default.
+    pub payment_sent_opens_conversation: bool,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
     /// "Search": last tab, rating boxes and land limits.
@@ -612,6 +673,12 @@ pub struct Settings {
     pub mfa_hash: String,
     pub font: String,
     pub font_scale: f32,
+    /// Text size of the conversations, independent of `font_scale`
+    /// (ChatFontSize, Preferences › Chat; 1.0 is the Legacy Viewer's Medium):
+    /// their messages, names and times, the chat lines over the world and
+    /// the chat fields. A multiplier in the limits of the interface's text
+    /// size rather than the Legacy Viewer's four steps.
+    pub chat_font_scale: f32,
     pub chat_timestamps: bool,
     /// The channel selector of the nearby chat's field (FSShowChatChannel,
     /// off by default; Preferences > Chat). "/n" before the text works
@@ -737,6 +804,11 @@ pub struct Settings {
     /// addition the Legacy Viewer does not have: its toast stays one switch
     /// away).
     pub friend_request_prompt: bool,
+    /// A message to the whole region shows as a card in the middle of the
+    /// screen instead of a toast (`ui::region_message_prompt`, #1404; on,
+    /// an Aurora addition: off gives back the Legacy Viewer's GodMessage
+    /// toast). Its line of nearby chat stays either way.
+    pub region_message_prompt: bool,
     /// Toast of an IM or conference message out of sight (EnableIMChatPopups, on).
     pub toast_im: bool,
     /// Toast of a group chat message (EnableGroupChatPopups, off).
@@ -791,7 +863,10 @@ pub struct Settings {
     pub script_count_alert: bool,
     pub script_count_threshold: u32,
     /// A notice when the region runs another simulator version than the
-    /// last one (FSShowServerVersionChangeNotice, on).
+    /// last one (FSShowServerVersionChangeNotice). Off, unlike the Legacy
+    /// Viewer's on: it came at nearly every teleport and region crossing
+    /// and told the user nothing they could act on (human choice,
+    /// 2026-10-30).
     pub sim_version_alert: bool,
     /// Object messages from elsewhere dropped (Preferences › Privacy, #623).
     pub object_im_filter: crate::world::object_im_filter::Settings,
@@ -918,6 +993,9 @@ pub struct Settings {
     /// elapsed time, including late loading and edit release. Off by default:
     /// the Legacy Viewer starts at asset activation and suspends during edits.
     pub synchronize_animations: bool,
+    /// Preferences › Aurora › Behavior: make, wear and use the Aurora bridge
+    /// (`world/bridge.rs`). On by default, as the Legacy Viewer's UseLSLBridge.
+    pub use_bridge: bool,
     /// Experimental filing of new deliveries by the sender's legacy name.
     pub sort_received_items: bool,
     pub received_items_since: i64,
@@ -925,6 +1003,13 @@ pub struct Settings {
     /// Marketplace delivery (Aurora only, the Legacy Viewer just marks the
     /// inbox new; #752). On by default: nothing else tells about a gift.
     pub notify_deliveries: bool,
+    /// AutoAcceptNewInventory: accept new resident/object inventory offers
+    /// without a prompt. Off by default; give-to-RLVa offers still ask.
+    pub auto_accept_inventory: bool,
+    /// FSLogAutoAcceptInventoryToChat / FSShowAutoAcceptInventoryInNotifications:
+    /// independent receipt feedback, both on by default as in the Legacy Viewer.
+    pub auto_accept_inventory_chat: bool,
+    pub auto_accept_inventory_notify: bool,
     /// Preferences › Inventory › Received items: keeping an offer opens the
     /// inventory on what it gave (ShowInInventory, off by default as in the
     /// Legacy Viewer).
@@ -1074,11 +1159,21 @@ pub struct Settings {
     /// default, RenderFSAAType 2 of Firestorm's High to Ultra levels in
     /// featuretable.txt)
     pub antialiasing: u8,
+    /// World resolution as a percentage of the window; HUDs and UI stay native.
+    pub render_scale_percent: u32,
     /// Geometric specular anti-aliasing (common.wgsl `specular_aa_roughness`):
     /// highlights widened where the shading normal turns faster than a
     /// pixel, so they stop shimmering as the camera moves. An Aurora
     /// improvement, on by default.
     pub specular_aa: bool,
+    /// The sky ambient keeps its colour at full strength (x 0.7), as the
+    /// first PBR release lit it (tag Second_Life_Release#843866d-DRTVWR-559),
+    /// instead of a softened ambient (pow 0.9, x 0.57) turned grey under
+    /// linear and HDR skies (Environment::with_colored_ambient): warm or
+    /// tinted skies colour the interiors again. Classic skies keep their
+    /// colour either way and only take the 0.7 curve, a little brighter. An
+    /// experimental setting, off by default.
+    pub colored_sky_ambient: bool,
     /// 0 Khronos PBR Neutral, 1 ACES (RenderTonemapType: ACES by default,
     /// like the Legacy Viewer)
     pub tonemapper: u8,
@@ -1093,6 +1188,10 @@ pub struct Settings {
     /// Optional frame rate cap (on by default at 120 images per second).
     pub fps_cap: bool,
     pub fps_limit: u32,
+    /// Named graphics quality snapshots (#1218), independent of frame pacing.
+    pub graphics_saved: std::collections::BTreeMap<String, crate::graphics_presets::saved::Saved>,
+    /// The explicitly selected profile, retained while its quality is edited.
+    pub graphics_saved_active: Option<String>,
     /// Lower cap while the window is not focused (on by default, as
     /// Firestorm yields BackgroundYieldTime every frame in the background).
     pub background_fps_cap: bool,
@@ -1184,6 +1283,11 @@ pub struct Settings {
     /// (Firestorm's ThrottleBandwidthKBPS; the default and the top of the
     /// range are Aurora's, `aurora_net::throttle::DEFAULT_KBPS`).
     pub bandwidth_kbps: u32,
+    /// How many asset downloads may be under way at once (Preferences ›
+    /// Network and cache): automatic follows the link, or stays limited
+    /// when a network adapter known to drop under it is present
+    /// (`net_adapters.rs`). Read when the network starts.
+    pub download_connections: DownloadConnections,
     /// Connect only to the region we are in (the Legacy Viewer's
     /// FSDisableNeighbourRegionConnections, off): the neighbours are not
     /// shown, and crossings on foot or in vehicles are less reliable.
@@ -1262,7 +1366,7 @@ pub(crate) const TONEMAP_MIX: f32 = 0.7;
 /// an S32 of seconds).
 pub(crate) const GROUP_SNOOZE_MAX_MINUTES: u32 = i32::MAX as u32 / 60;
 
-const SETTINGS_VERSION: u32 = 28;
+const SETTINGS_VERSION: u32 = 30;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1472,6 +1576,16 @@ pub struct AudioSettings {
     pub collision_sounds: bool,
     /// Sounds of other avatars' gestures (EnableGestureSounds, on).
     pub gesture_sounds: bool,
+    /// World sounds muffled behind walls and objects (Aurora's own, on;
+    /// off: heard unobstructed, as in the Legacy Viewer).
+    pub sound_occlusion: bool,
+    /// World sounds rendered binaurally, for headphones (Aurora's own,
+    /// off: on speakers it sounds wrong; off pans them, as in the Legacy
+    /// Viewer).
+    pub sound_hrtf: bool,
+    /// World sounds reverberated by the surroundings: a room, a hall, the
+    /// open air (Aurora's own, off; off: dry, as in the Legacy Viewer).
+    pub sound_reverb: bool,
     /// Interface sounds (IM, money, teleport, windows, menus, typing...;
     /// Firestorm's PlayModeUISnd* defaults).
     pub ui_sounds: bool,
@@ -1521,6 +1635,9 @@ impl Default for AudioSettings {
             mic_gain: 1.0,
             collision_sounds: true,
             gesture_sounds: true,
+            sound_occlusion: true,
+            sound_hrtf: false,
+            sound_reverb: false,
             ui_sounds: true,
             ui: Default::default(),
             saved_streams: Vec::new(),
@@ -1558,6 +1675,7 @@ impl Default for Settings {
             update_mode: crate::updater::Mode::Ask,
             update_channel: aurora_updater::feed::Channel::Stable,
             ignored_update: String::new(),
+            area_search: Default::default(),
             crash_reports: CrashReports::Ask,
             language: "default".into(),
             language_is_public: true,
@@ -1606,6 +1724,10 @@ impl Default for Settings {
             time_of_day: 0,
             env_manual_transition: 0.0,
             env_persist: true,
+            night_sky: Default::default(),
+            night_sky_place: Default::default(),
+            night_sky_latitude: crate::world::night_sky::LATITUDE as f32,
+            night_sky_gain: crate::world::night_sky::DEFAULT_GAIN,
             exposure: 1.0,
             sharpen: 0.4,
             glow: true,
@@ -1631,20 +1753,30 @@ impl Default for Settings {
             show_perf: false,
             show_chat: true,
             show_minimap: true,
+            nearby_chat_window: NearbyChatWindow::Docked,
+            show_camera_controls: false,
+            show_movement_controls: false,
             standalone_place_details: false,
             inspect_columns: crate::ui::inspect::ALL_COLUMNS,
             landmarks_by_date: true,
             confirm_teleports: true,
+            warn_hypergrid_suitcase: true,
             confirm_no_transfer_settings: true,
             confirm_object_bonus: true,
             confirm_return_to_owner: true,
             confirm_attachment_drop: true,
             confirm_script_modify: true,
+            confirm_merchant_move: true,
+            confirm_merchant_active_change: true,
+            confirm_merchant_clear_version: true,
+            confirm_merchant_listing_delete: true,
+            confirm_merchant_unlist: true,
             region_check_texture_heights: true,
             confirm_payments: true,
             payment_confirm_threshold: 200,
             always_track_payments: false,
             payment_opens_conversation: true,
+            payment_sent_opens_conversation: false,
             maps: MapSettings::default(),
             search: Default::default(),
             show_people: true,
@@ -1668,6 +1800,7 @@ impl Default for Settings {
             mfa_hash: String::new(),
             font: crate::ui::fonts::DEFAULT.into(),
             font_scale: 1.0,
+            chat_font_scale: 1.0,
             chat_timestamps: true,
             show_chat_channel: false,
             script_errors_in_chat: true,
@@ -1707,6 +1840,7 @@ impl Default for Settings {
             friends_online_in_chat: false,
             presence_position: PresencePosition::TopRight,
             friend_request_prompt: true,
+            region_message_prompt: true,
             toast_im: true,
             toast_group_im: false,
             ims_in_notification_center: false,
@@ -1727,7 +1861,7 @@ impl Default for Settings {
             show_joined_group_invitations: false,
             script_count_alert: false,
             script_count_threshold: 100,
-            sim_version_alert: true,
+            sim_version_alert: false,
             object_im_filter: Default::default(),
             anti_spam: Default::default(),
             rlva_enabled: false,
@@ -1769,9 +1903,13 @@ impl Default for Settings {
             classic_hover_tips: false,
             predict_own_motion: false,
             synchronize_animations: false,
+            use_bridge: true,
             sort_received_items: false,
             received_items_since: 0,
             notify_deliveries: true,
+            auto_accept_inventory: false,
+            auto_accept_inventory_chat: true,
+            auto_accept_inventory_notify: true,
             show_accepted_in_inventory: false,
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
@@ -1828,12 +1966,16 @@ impl Default for Settings {
             projector_shadows: true,
             contact_shadows: false,
             antialiasing: 6,
+            render_scale_percent: 100,
             specular_aa: true,
+            colored_sky_ambient: false,
             tonemapper: 1,
             tonemap_mix: TONEMAP_MIX,
             hdr_emissive: true,
             fps_cap: true,
             fps_limit: 120,
+            graphics_saved: Default::default(),
+            graphics_saved_active: None,
             background_fps_cap: true,
             background_fps_limit: 15,
             max_particles: 4096,
@@ -1871,6 +2013,7 @@ impl Default for Settings {
             cache_location: String::new(),
             chat_log_location: String::new(),
             bandwidth_kbps: aurora_net::throttle::DEFAULT_KBPS as u32,
+            download_connections: DownloadConnections::Automatic,
             no_neighbour_regions: false,
             parcel_visibility: Default::default(),
             chat_bar_width: 0.0,
@@ -2136,7 +2279,31 @@ impl Settings {
         s
     }
 
-    fn sanitized(mut self) -> Settings {
+    /// The night sky's place and latitude agree (a preset gives its own
+    /// latitude, Custom keeps the one typed), within range; the stars'
+    /// brightness within 0.5 to 4.
+    pub(crate) fn sync_night_sky(&mut self) {
+        use crate::world::night_sky::{DEFAULT_GAIN, GAIN_RANGE, LATITUDE};
+        self.night_sky_latitude = match self.night_sky_place.latitude() {
+            Some(latitude) => latitude,
+            None if self.night_sky_latitude.is_finite() => self.night_sky_latitude.clamp(-90.0, 90.0),
+            None => LATITUDE as f32,
+        };
+        self.night_sky_gain = if self.night_sky_gain.is_finite() {
+            self.night_sky_gain.clamp(*GAIN_RANGE.start(), *GAIN_RANGE.end())
+        } else {
+            DEFAULT_GAIN
+        };
+    }
+
+    pub(crate) fn sanitized(mut self) -> Settings {
+        if self
+            .graphics_saved_active
+            .as_ref()
+            .is_some_and(|name| !self.graphics_saved.contains_key(name))
+        {
+            self.graphics_saved_active = None;
+        }
         for profile in self.world_context_menus.profiles.values_mut() {
             profile.locked = true;
         }
@@ -2149,6 +2316,7 @@ impl Settings {
         if self.audio.ui.play.remove("Snapshot") == Some(false) {
             self.snapshot.sound = false;
         }
+        self.sync_night_sky();
         if self.settings_version < 2 {
             // new defaults: 96 m draw distance, LOD factor 2
             self.draw_distance = 96.0;
@@ -2332,6 +2500,17 @@ impl Settings {
             // on Potato or Low turns it off, any other keeps it on
             crate::graphics_presets::upgrade_hdr_emissive(&mut self);
         }
+        if self.settings_version < 29 {
+            // new default: no simulator version notice (every earlier file
+            // wrote the former default, on)
+            self.sim_version_alert = false;
+        }
+        if self.settings_version < 30 {
+            // LimitSelectDistance is on again, like the Legacy Viewer: off,
+            // a rectangle drawn from a skybox took the ground's objects far
+            // below. Every earlier file wrote the former default, off
+            self.build.limit_select_distance = true;
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -2410,6 +2589,11 @@ impl Settings {
         self.mouse_sensitivity = self.mouse_sensitivity.clamp(0.1, 5.0);
         self.texture_budget_mb = self.texture_budget_mb.clamp(256, 32768);
         self.font_scale = self.font_scale.clamp(FONT_SCALE_MIN, FONT_SCALE_MAX);
+        self.chat_font_scale = if self.chat_font_scale.is_finite() {
+            self.chat_font_scale.clamp(FONT_SCALE_MIN, FONT_SCALE_MAX)
+        } else {
+            1.0
+        };
         self.hover_tips.delay = if self.hover_tips.delay.is_finite() {
             self.hover_tips.delay.clamp(0.0, MAX_HOVER_TIP_DELAY)
         } else {
@@ -2417,6 +2601,7 @@ impl Settings {
         };
         self.shadow_quality = self.shadow_quality.min(4);
         self.antialiasing = self.antialiasing.min(6);
+        self.render_scale_percent = self.render_scale_percent.clamp(50, 100);
         self.reflection_probes = self.reflection_probes.min(3);
         self.probe_count = self.probe_count.clamp(8, 64);
         self.tonemapper = self.tonemapper.min(1);
@@ -2450,6 +2635,9 @@ impl Settings {
             self.toolbar = Some(self.legacy_toolbars.remove(&account).unwrap_or_default());
             changed = true;
         }
+        if let Some(toolbar) = &mut self.toolbar {
+            changed |= toolbar.migrate_vr_button();
+        }
         if !self.legacy_toolbars.is_empty() {
             self.legacy_toolbars.clear();
             changed = true;
@@ -2476,6 +2664,8 @@ impl Settings {
             window_maximized: old.window_maximized,
             // a newer build's own values are not this build's to reset
             newer_file: old.newer_file,
+            // Named profiles are user content, like separate preset files.
+            graphics_saved: old.graphics_saved,
             // Reset this avatar's hover options while keeping other accounts.
             hover_height_accounts: old.hover_height_accounts,
             hover_height_account: old.hover_height_account,
@@ -2483,13 +2673,28 @@ impl Settings {
         };
     }
 
+    /// The settings as they are now, written by the save thread
+    /// (settings/saver.rs): the frame thread does not wait for the disk.
     pub fn save(&self) {
-        let dir = config_dir();
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            log::warn!("cannot create config dir: {e}");
-            return;
+        let copy = self.to_saved();
+        let path = Self::path();
+        saver::get().queue(Box::new(move || {
+            if let Some(dir) = path.parent()
+                && let Err(e) = std::fs::create_dir_all(dir)
+            {
+                log::warn!("cannot create config dir: {e}");
+                return;
+            }
+            copy.write_saved(&path);
+        }));
+    }
+
+    /// Until the saves asked for are written, `timeout` at most: before
+    /// the viewer ends.
+    pub fn wait_saved(timeout: std::time::Duration) {
+        if !saver::get().wait(timeout) {
+            log::warn!("settings: the last save was not written within {timeout:?}");
         }
-        self.save_to(&Self::path());
     }
 
     /// What is written to the file: the user's own graphics values while
@@ -2508,15 +2713,20 @@ impl Settings {
         copy
     }
 
+    #[cfg(test)]
     fn save_to(&self, path: &Path) {
-        let copy = self.to_saved();
+        self.to_saved().write_saved(path);
+    }
+
+    /// Write `self`, a copy from `to_saved`, as the file at `path`.
+    fn write_saved(&self, path: &Path) {
         // Over a newer build's file, write ours over theirs: what this build
         // does not know, and what it could not read and left unchanged, stay.
-        let bytes = match &copy.newer_file {
-            Some(newer) => serde_json::to_value(&copy)
+        let bytes = match &self.newer_file {
+            Some(newer) => serde_json::to_value(self)
                 .map(|ours| crate::tolerant::merge_over_newer(&newer.theirs, ours, &newer.loaded, &newer.kept))
                 .and_then(|merged| serde_json::to_vec_pretty(&merged)),
-            None => serde_json::to_vec_pretty(&copy),
+            None => serde_json::to_vec_pretty(self),
         };
         match bytes {
             Ok(b) => {
@@ -2548,7 +2758,12 @@ impl Settings {
 
     /// (resolution, distance) for the shadow quality step.
     pub fn shadow_params(&self) -> (u32, f32) {
-        match self.shadow_quality {
+        Self::shadow_params_of(self.shadow_quality)
+    }
+
+    /// (resolution, distance) of a shadow quality step.
+    pub fn shadow_params_of(quality: u8) -> (u32, f32) {
+        match quality {
             0 => (0, 0.0),
             1 => (1024, 48.0),
             2 => (2048, 96.0),
@@ -2562,6 +2777,7 @@ impl Settings {
         let mut water_effects = self.water_effects.render();
         water_effects.particle_budget = self.max_particles;
         aurora_render::RenderSettings {
+            render_scale_percent: self.render_scale_percent.clamp(50, 100),
             water_effects,
             aa: match self.antialiasing {
                 0 => AntiAliasing::None,
@@ -2634,6 +2850,10 @@ pub struct MapSettings {
     pub mini_collision: bool,
     /// MiniMapAutoCenter.
     pub mini_auto_center: bool,
+    /// The mini-map window can neither be moved nor resized, and a plain
+    /// drag pans the map (not in the Legacy Viewer, where only Shift + drag
+    /// pans).
+    pub mini_locked: bool,
     /// FSNetMapDoubleClickAction: 0 nothing, 1 world map, 2 teleport.
     pub mini_double_click: u8,
     /// MapScale: world map pixels per region.
@@ -2672,6 +2892,7 @@ impl Default for MapSettings {
             mini_for_sale: false,
             mini_collision: true,
             mini_auto_center: true,
+            mini_locked: false,
             mini_double_click: 2,
             world_scale: 128.0,
             world_people: true,
@@ -2749,6 +2970,48 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn auto_accept_inventory_defaults_off_and_preserves_saved_choices() {
+        assert!(!super::Settings::default().auto_accept_inventory);
+        let old: super::Settings = serde_json::from_str("{}").expect("older preferences");
+        assert!(!old.auto_accept_inventory);
+        assert!(old.auto_accept_inventory_chat && old.auto_accept_inventory_notify);
+        for enabled in [false, true] {
+            for chat in [false, true] {
+                for notify in [false, true] {
+                    let settings = super::Settings {
+                        auto_accept_inventory: enabled,
+                        auto_accept_inventory_chat: chat,
+                        auto_accept_inventory_notify: notify,
+                        ..Default::default()
+                    };
+                    let bytes = serde_json::to_vec(&settings).expect("saved preferences");
+                    let loaded: super::Settings = serde_json::from_slice(&bytes).expect("restored preferences");
+                    assert_eq!(
+                        (
+                            loaded.auto_accept_inventory,
+                            loaded.auto_accept_inventory_chat,
+                            loaded.auto_accept_inventory_notify
+                        ),
+                        (enabled, chat, notify)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn render_scale_defaults_native_and_survives_profile_round_trip() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.render_settings().render_scale_percent, 100);
+        settings.render_scale_percent = 67;
+        let saved = serde_json::to_vec(&settings).expect("settings JSON");
+        let loaded: Settings = serde_json::from_slice(&saved).expect("settings JSON");
+        assert_eq!(loaded.render_settings().render_scale_percent, 67);
+        settings.render_scale_percent = 0;
+        assert_eq!(settings.sanitized().render_settings().render_scale_percent, 50);
+    }
+
     #[test]
     fn automatic_flight_preferences_default_on_and_keep_independent_saved_choices() {
         use super::Settings;
@@ -3697,6 +3960,59 @@ mod tests {
         let mut off = Settings::default();
         off.colors.relation_names = false;
         assert!(!off.sanitized().colors.relation_names);
+    }
+
+    #[test]
+    fn the_simulator_version_notice_is_off_by_default_and_for_earlier_files() {
+        assert!(!Settings::default().sanitized().sim_version_alert);
+        // a file that wrote the former default, on
+        let old = Settings {
+            settings_version: 28,
+            sim_version_alert: true,
+            ..Settings::default()
+        };
+        assert!(!old.sanitized().sim_version_alert);
+        // switched on after the migration: kept
+        let on = Settings {
+            sim_version_alert: true,
+            ..Settings::default()
+        };
+        assert!(on.sanitized().sim_version_alert);
+    }
+
+    #[test]
+    fn the_select_distance_limit_is_on_by_default_and_for_earlier_files() {
+        assert!(Settings::default().sanitized().build.limit_select_distance);
+        // a file that wrote the former default, off
+        let mut old = Settings {
+            settings_version: 29,
+            ..Settings::default()
+        };
+        old.build.limit_select_distance = false;
+        assert!(old.sanitized().build.limit_select_distance);
+        // switched off after the migration: kept
+        let mut off = Settings::default();
+        off.build.limit_select_distance = false;
+        assert!(!off.sanitized().build.limit_select_distance);
+    }
+
+    #[test]
+    fn download_connections_stay_automatic_for_earlier_files() {
+        assert_eq!(Settings::default().download_connections, DownloadConnections::Automatic);
+        // a file written before the setting existed: automatic, the fast
+        // adaptive pace unless an adapter known to drop is present
+        let mut value = serde_json::to_value(Settings::default()).expect("settings JSON");
+        value.as_object_mut().expect("object").remove("download_connections");
+        let loaded: Settings = serde_json::from_value(value).expect("settings JSON");
+        assert_eq!(loaded.download_connections, DownloadConnections::Automatic);
+        // a choice made by hand is kept
+        let limited = Settings {
+            download_connections: DownloadConnections::Limited,
+            ..Settings::default()
+        };
+        let saved = serde_json::to_string(&limited).expect("settings JSON");
+        let loaded: Settings = serde_json::from_str(&saved).expect("settings JSON");
+        assert_eq!(loaded.download_connections, DownloadConnections::Limited);
     }
 
     #[test]

@@ -9,6 +9,7 @@ mod gesture_tests;
 pub mod mesh_upload;
 pub mod notecard;
 pub mod operations;
+pub mod orphans;
 pub mod rez;
 pub mod thumbnail;
 pub mod upload;
@@ -177,13 +178,27 @@ pub fn item_from_llsd(v: &Llsd) -> Option<InvItem> {
             Uuid::from_u128(shadow.as_u128() ^ 0x3c115e51_04f4_523c_9fa6_98aff1034730)
         }
     };
+    let asset_type = int_or_name(&v["type"], asset_type_from_name);
+    let inv_type = if v.has("inv_type") {
+        int_or_name(&v["inv_type"], inv_type_from_name)
+    } else {
+        -1
+    };
+    // LLInventoryItem::fromLLSD / LLInventoryType::defaultForAssetType:
+    // Recover an omitted inventory type from its asset type, as the reader
+    // of a newly received inventory record does in the reference.
+    let inv_type = if inv_type >= 0 {
+        inv_type
+    } else {
+        default_inventory_type(asset_type)
+    };
     Some(InvItem {
         id,
         parent: v["parent_id"].as_uuid(),
         name: v["name"].to_string_value(),
         desc: v["desc"].to_string_value(),
-        asset_type: int_or_name(&v["type"], asset_type_from_name),
-        inv_type: int_or_name(&v["inv_type"], inv_type_from_name),
+        asset_type,
+        inv_type,
         asset_id,
         flags: v["flags"].as_u32(),
         favorite: v["favorite"]["toggled"].as_bool(),
@@ -208,6 +223,27 @@ pub fn item_from_llsd(v: &Llsd) -> Option<InvItem> {
         everyone_mask: v["permissions"]["everyone_mask"].as_u32(),
         next_owner_mask: v["permissions"]["next_owner_mask"].as_u32(),
     })
+}
+
+fn default_inventory_type(asset_type: i32) -> i32 {
+    match asset_type {
+        0 | 12 => 0,
+        1 | 17 => 1,
+        2 | 3 | 6 | 7 => asset_type,
+        4 | 10 | 11 => 10,
+        5 | 13 => 18,
+        8 | 14..=16 => 8,
+        20 => 19,
+        21 => 20,
+        40 => 23,
+        45 => 24,
+        49 => 22,
+        56 => 25,
+        57 => 26,
+        58 => 27,
+        59 => 28,
+        _ => -1,
+    }
 }
 
 /// Parse the login "inventory-skeleton" / "inventory-skel-lib" arrays.
@@ -241,6 +277,33 @@ pub fn parse_items_response(v: &Llsd) -> Vec<InvItem> {
     v["items"].as_array().iter().filter_map(legacy_item).collect()
 }
 
+/// A `FetchInventory2` answer to `asked`: an item absent from a valid answer
+/// does not exist; a 200-with-error answer
+/// (LLInventoryModel::FetchItemHttpHandler::onCompleted) proves nothing.
+pub fn item_reads(v: &Llsd, asked: &[Uuid]) -> ais::ItemReads {
+    if !v.is_map() || v.has("error") {
+        return ais::ItemReads {
+            failed: asked.to_vec(),
+            ..Default::default()
+        };
+    }
+    let answered: std::collections::HashSet<_> = v["items"].as_array().iter().map(|it| it["item_id"].as_uuid()).collect();
+    let items = parse_items_response(v);
+    let read: std::collections::HashSet<_> = items.iter().map(|it| it.id).collect();
+    let mut reads = ais::ItemReads {
+        items,
+        ..Default::default()
+    };
+    for id in asked {
+        if !answered.contains(id) {
+            reads.missing.push(*id);
+        } else if !read.contains(id) {
+            reads.failed.push(*id);
+        }
+    }
+    reads
+}
+
 fn legacy_item(v: &Llsd) -> Option<InvItem> {
     let mut item = item_from_llsd(v)?;
     item.favorite_known = item.favorite;
@@ -272,6 +335,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn omitted_inventory_types_follow_asset_defaults_and_explicit_attachment_types_stay() {
+        for (asset, inventory) in [(6, 6), (5, 18), (13, 18), (20, 19), (21, 20), (56, 25), (57, 26)] {
+            let doc = llsd_map! { "item_id" => Uuid::from_u128(1), "type" => asset };
+            assert_eq!(item_from_llsd(&doc).expect("item").inv_type, inventory);
+        }
+        let doc = llsd_map! { "item_id" => Uuid::from_u128(1), "type" => 6, "inv_type" => 17 };
+        assert_eq!(item_from_llsd(&doc).expect("attachment").inv_type, 17);
+    }
+
+    #[test]
     fn parses_fetch_response() {
         let doc = br#"<llsd><map><key>folders</key><array><map>
             <key>folder_id</key><uuid>00000000-0000-0000-0000-000000000001</uuid>
@@ -298,5 +371,24 @@ mod tests {
         assert_eq!(r[0].folders[0].name, "Objects");
         assert_eq!(r[0].items[0].asset_type, 3);
         assert_eq!(r[0].items[0].asset_id, Uuid::from_u128(5));
+    }
+
+    #[test]
+    fn fetch_inventory2_answers_tell_missing_items_from_failures() {
+        let asked = [Uuid::from_u128(4), Uuid::from_u128(6)];
+        let found = llsd_map! {
+            "item_id" => Uuid::from_u128(4), "parent_id" => Uuid::from_u128(1), "name" => "Shirt", "type" => 5, "inv_type" => 18,
+        };
+        let reply = llsd_map! { "agent_id" => Uuid::from_u128(2), "items" => Llsd::Array(vec![found]) };
+        let reads = item_reads(&reply, &asked);
+        assert_eq!(reads.items.iter().map(|it| it.id).collect::<Vec<_>>(), [asked[0]]);
+        assert_eq!(reads.missing, [asked[1]], "absent from a valid answer: deleted");
+        assert!(reads.failed.is_empty());
+        // 200-with-error and malformed answers prove nothing
+        for bad in [llsd_map! { "error" => llsd_map! { "message" => "busy" } }, Llsd::Undef] {
+            let reads = item_reads(&bad, &asked);
+            assert_eq!(reads.failed, asked);
+            assert!(reads.items.is_empty() && reads.missing.is_empty());
+        }
     }
 }

@@ -65,13 +65,15 @@ impl PluginProcess {
     }
 
     /// Bind the listening socket and launch `launcher` (SLPlugin) with the
-    /// port as its only argument, in `plugin_dir`.
-    pub fn launch(launcher: &Path, plugin_dir: &Path, plugin_file: &Path) -> std::io::Result<PluginProcess> {
+    /// port as its only argument, in `plugin_dir`, with `env` added to its
+    /// environment.
+    pub fn launch(launcher: &Path, plugin_dir: &Path, plugin_file: &Path, env: &[(String, String)]) -> std::io::Result<PluginProcess> {
         let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))?;
         listener.set_nonblocking(true)?;
         let port = listener.local_addr()?.port();
         let mut cmd = Command::new(launcher);
         cmd.arg(port.to_string()).current_dir(plugin_dir);
+        cmd.envs(env.iter().map(|(name, value)| (name, value)));
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -79,16 +81,12 @@ impl PluginProcess {
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
         // Linux: CEF's host process (dullahan_host, started by CEF with this
-        // environment) has no rpath that finds libcef.so next to it; the
-        // Legacy Viewer's wrapper.sh sets LD_LIBRARY_PATH on its lib folder
-        // the same way.
+        // environment) has no rpath that finds libcef.so; see
+        // `plugin_library_path`.
         #[cfg(target_os = "linux")]
         if let Some(dir) = launcher.parent() {
-            let mut paths = vec![dir.to_path_buf()];
-            if let Some(old) = std::env::var_os("LD_LIBRARY_PATH") {
-                paths.extend(std::env::split_paths(&old));
-            }
-            if let Ok(joined) = std::env::join_paths(paths) {
+            let inherited = std::env::var_os("LD_LIBRARY_PATH");
+            if let Ok(joined) = std::env::join_paths(plugin_library_path(dir, inherited.as_deref())) {
                 cmd.env("LD_LIBRARY_PATH", joined);
             }
         }
@@ -396,6 +394,29 @@ impl Drop for PluginProcess {
     }
 }
 
+/// `LD_LIBRARY_PATH` of the plugin process on Linux: SLPlugin's folder
+/// (Aurora's pack keeps libcef.so there, in `llplugin/`), then the `lib`
+/// folder beside it when there is one (a Legacy Viewer install chosen as the
+/// plugins folder: `bin/SLPlugin`, `lib/libcef.so`; its wrapper.sh puts
+/// `lib` first in LD_LIBRARY_PATH, indra/newview/linux_tools/wrapper.sh),
+/// then the inherited value. The folder is resolved first, as wrapper.sh
+/// resolves its own path with `readlink -f`: `lib` sits beside the real
+/// `bin`, not beside a link to it. Empty entries are dropped: the loader
+/// reads one as the current folder, which wrapper.sh adds when
+/// LD_LIBRARY_PATH was unset or empty.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn plugin_library_path(launcher_dir: &Path, inherited: Option<&std::ffi::OsStr>) -> Vec<PathBuf> {
+    let dir = launcher_dir.canonicalize().unwrap_or_else(|_| launcher_dir.to_path_buf());
+    let mut paths = vec![dir.clone()];
+    if let Some(lib) = dir.parent().map(|p| p.join("lib")).filter(|lib| lib.is_dir()) {
+        paths.push(lib);
+    }
+    if let Some(old) = inherited {
+        paths.extend(std::env::split_paths(old).filter(|p| !p.as_os_str().is_empty()));
+    }
+    paths
+}
+
 /// File names of the launcher: `SLPlugin.exe` on Windows, `SLPlugin`
 /// elsewhere.
 const LAUNCHERS: &[&str] = if cfg!(windows) {
@@ -413,11 +434,13 @@ pub struct PluginPaths {
 
 impl PluginPaths {
     /// Path of a plugin library (`media_plugin_cef`, `media_plugin_libvlc`,
-    /// `media_plugin_gstreamer`): `<name>.dll` on Windows, `lib<name>.so`
-    /// elsewhere.
+    /// `media_plugin_gstreamer`): `<name>.dll` on Windows, `<name>.dylib` on
+    /// macOS (LLDir_Mac::getLLPluginFilename), `lib<name>.so` elsewhere.
     pub fn plugin_file(&self, basename: &str) -> PathBuf {
         let file = if cfg!(windows) {
             format!("{basename}.dll")
+        } else if cfg!(target_os = "macos") {
+            format!("{basename}.dylib")
         } else {
             format!("lib{basename}.so")
         };
@@ -429,8 +452,12 @@ impl PluginPaths {
     }
 
     /// A folder holding `llplugin\` and SLPlugin (either inside `llplugin\`,
-    /// as in Aurora's pack, or next to it, as in a Firestorm / SL install).
+    /// as in Aurora's pack, or next to it, as in a Firestorm / SL install);
+    /// on macOS, a folder holding SLPlugin.app ([`Self::bundle_in`]).
     pub fn in_dir(dir: &Path) -> Option<PluginPaths> {
+        if cfg!(target_os = "macos") {
+            return Self::bundle_in(dir);
+        }
         let plugin_dir = dir.join("llplugin");
         if !plugin_dir.is_dir() {
             return None;
@@ -449,14 +476,48 @@ impl PluginPaths {
         None
     }
 
+    /// macOS: SLPlugin.app laid out as in the Legacy Viewer's application
+    /// (indra/llfilesystem/lldir_mac.cpp: the launcher in its Contents/MacOS,
+    /// the plugins, CEF's framework and helpers and LibVLC in its
+    /// Contents/Frameworks, the folder SLPlugin runs in). Found in
+    /// `llplugin/` (Aurora's pack), in the folder itself, or in the
+    /// Contents/Resources of an application chosen as the folder (an
+    /// installed Legacy Viewer's .app).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    fn bundle_in(dir: &Path) -> Option<PluginPaths> {
+        [dir.join("llplugin"), dir.to_path_buf(), dir.join("Contents").join("Resources")]
+            .into_iter()
+            .map(|base| base.join("SLPlugin.app"))
+            .find_map(|app| {
+                let contents = app.join("Contents");
+                let launcher = contents.join("MacOS").join("SLPlugin");
+                launcher.is_file().then(|| PluginPaths {
+                    launcher,
+                    plugin_dir: contents.join("Frameworks"),
+                })
+            })
+    }
+
     /// Search order: the folder chosen by the user, the viewer's own folder,
     /// then Aurora's media plugins pack. The plugins of another program are
     /// only used when the user names its folder: an installed Firestorm or
     /// Second Life viewer is not looked for.
+    ///
+    /// A relative folder is made absolute against the viewer's current folder
+    /// first: SLPlugin is started in `plugin_dir`, so a relative launcher
+    /// (Unix), `LD_LIBRARY_PATH` (Linux) or plugin file and folder sent in
+    /// `load_plugin` would then be looked for from there and never found.
+    /// `std::path::absolute`, not `canonicalize`, so that Windows paths keep
+    /// no `\\?\` prefix and links stay as the user chose them. A folder that
+    /// cannot be made absolute (current folder deleted) is skipped.
     pub fn discover(explicit: Option<&Path>, pack: Option<&Path>) -> Option<PluginPaths> {
         let own = std::env::current_exe().ok();
         let own = own.as_deref().and_then(Path::parent);
-        [explicit, own, pack].into_iter().flatten().find_map(PluginPaths::in_dir)
+        [explicit, own, pack]
+            .into_iter()
+            .flatten()
+            .filter_map(|dir| std::path::absolute(dir).ok())
+            .find_map(|dir| PluginPaths::in_dir(&dir))
     }
 }
 
@@ -472,6 +533,8 @@ mod tests {
         dir
     }
 
+    // (macOS looks for SLPlugin.app instead: the test below)
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn the_chosen_folder_comes_before_the_pack_and_nothing_else_is_searched() {
         let root = std::env::temp_dir().join(format!("aurora-media-paths-{}", std::process::id()));
@@ -499,5 +562,88 @@ mod tests {
         assert!(PluginPaths::discover(Some(&empty), None).is_none());
         assert!(PluginPaths::discover(None, None).is_none());
         std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn plugin_library_path_adds_the_lib_folder_beside_slplugin_and_drops_empty_entries() {
+        let root = std::env::temp_dir().join(format!("aurora-media-ldpath-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // a Legacy Viewer install: bin/SLPlugin, lib/libcef.so
+        let bin = root.join("legacy").join("bin");
+        let lib = root.join("legacy").join("lib");
+        std::fs::create_dir_all(&bin).expect("fixture");
+        std::fs::create_dir_all(&lib).expect("fixture");
+        // Aurora's pack: llplugin/SLPlugin, nothing beside llplugin
+        let pack = root.join("pack").join("llplugin");
+        std::fs::create_dir_all(&pack).expect("fixture");
+        // the paths come back resolved (macOS' temp folder is a link,
+        // Windows' gets its `\\?\` prefix)
+        let (bin, lib, pack) = (
+            bin.canonicalize().expect("fixture"),
+            lib.canonicalize().expect("fixture"),
+            pack.canonicalize().expect("fixture"),
+        );
+        let sep = if cfg!(windows) { ";" } else { ":" };
+
+        assert_eq!(plugin_library_path(&bin, None), vec![bin.clone(), lib.clone()]);
+        assert_eq!(plugin_library_path(&pack, None), vec![pack.clone()]);
+        let inherited = std::ffi::OsString::from(format!("/usr/local/lib{sep}{sep}/opt/x"));
+        assert_eq!(
+            plugin_library_path(&pack, Some(&inherited)),
+            vec![pack.clone(), PathBuf::from("/usr/local/lib"), PathBuf::from("/opt/x")]
+        );
+        // set but empty: no trailing empty entry (the current folder)
+        assert_eq!(
+            plugin_library_path(&bin, Some(std::ffi::OsStr::new(""))),
+            vec![bin.clone(), lib.clone()]
+        );
+        // a link to the install's bin: lib is found beside the real folder
+        #[cfg(unix)]
+        {
+            let link = root.join("link-to-bin");
+            std::os::unix::fs::symlink(&bin, &link).expect("fixture");
+            assert_eq!(plugin_library_path(&link, None), vec![bin.clone(), lib]);
+        }
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn macos_finds_slplugin_app_in_the_pack_a_folder_or_an_application() {
+        let root = std::env::temp_dir().join(format!("aurora-media-bundle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bundle = |base: &Path| {
+            let macos = base.join("SLPlugin.app").join("Contents").join("MacOS");
+            std::fs::create_dir_all(&macos).expect("fixture");
+            std::fs::write(macos.join("SLPlugin"), b"").expect("fixture");
+            base.join("SLPlugin.app").join("Contents")
+        };
+        let pack = root.join("pack");
+        let pack_contents = bundle(&pack.join("llplugin"));
+        let legacy = root.join("Legacy.app");
+        let legacy_contents = bundle(&legacy.join("Contents").join("Resources"));
+        let found = PluginPaths::bundle_in(&pack).expect("pack");
+        assert_eq!(found.launcher, pack_contents.join("MacOS").join("SLPlugin"));
+        assert_eq!(found.plugin_dir, pack_contents.join("Frameworks"));
+        let found = PluginPaths::bundle_in(&legacy).expect("an application");
+        assert_eq!(found.plugin_dir, legacy_contents.join("Frameworks"));
+        assert!(PluginPaths::bundle_in(&root).is_none(), "nothing directly in the root");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // (macOS looks for SLPlugin.app instead)
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_relative_folder_gives_an_absolute_launcher_and_plugin_dir() {
+        // relative to the test's current folder, as a folder typed in the
+        // preferences is relative to the viewer's
+        let rel = PathBuf::from(format!("aurora-media-relative-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&rel);
+        folder(Path::new("."), rel.to_str().expect("ascii name"), false);
+        let found = PluginPaths::discover(Some(&rel), None).expect("relative folder");
+        let abs = std::env::current_dir().expect("current folder").join(&rel);
+        std::fs::remove_dir_all(&rel).expect("cleanup");
+        assert!(found.launcher.is_absolute(), "{}", found.launcher.display());
+        assert_eq!(found.launcher, abs.join(LAUNCHERS[0]));
+        assert_eq!(found.plugin_dir, abs.join("llplugin"));
     }
 }

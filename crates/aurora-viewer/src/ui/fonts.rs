@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub mod fallback;
+pub mod preview;
 
 pub const INTER: &str = "Inter";
 pub const NOTO: &str = "Noto Sans";
@@ -225,6 +226,28 @@ pub fn set_scale(ctx: &egui::Context, scale: f32) {
     install(ctx, definitions.as_deref().cloned().unwrap_or_default());
 }
 
+const CHAT_ID: &str = "aurora-chat-text-ratio";
+
+/// Size the conversations' text on their own (Preferences › Chat › Text
+/// size): `chat_scale` replaces the interface's `text_scale` for them, the
+/// skin's scale kept. The faces stay scaled for the interface, so the
+/// conversations ask `chat_size` for every size they draw.
+pub fn set_chat_scale(ctx: &egui::Context, chat_scale: f32, text_scale: f32) {
+    let ratio = chat_ratio(chat_scale, text_scale);
+    ctx.data_mut(|data| data.insert_temp(egui::Id::unique(CHAT_ID), ratio));
+}
+
+fn chat_ratio(chat_scale: f32, text_scale: f32) -> f32 {
+    let ratio = chat_scale / text_scale;
+    if ratio.is_finite() && ratio > 0.0 { ratio } else { 1.0 }
+}
+
+/// A text size of the conversations, once the faces' scale is applied
+/// the size the chat's own text size asks for.
+pub fn chat_size(ctx: &egui::Context, size: f32) -> f32 {
+    size * ctx.data(|data| data.get_temp(egui::Id::unique(CHAT_ID))).unwrap_or(1.0)
+}
+
 /// Keep the unscaled faces so live changes never compound their scale and
 /// late system fallbacks or a font change inherit the current preference.
 fn install(ctx: &egui::Context, definitions: egui::FontDefinitions) {
@@ -305,6 +328,44 @@ pub fn semibold_format(family: &egui::FontFamily, size: f32, color: egui::Color3
     let mut format = egui::TextFormat::simple(egui::FontId::new(size, family.clone()), color);
     format.coords = egui::epaint::text::VariationCoords::new([(b"wght", 600.0)]);
     format
+}
+
+/// Emphasis shared by plain text, emoji runs and laid-out chat cards.
+/// `RichText::strong` changes the colour only; weight needs our font face
+/// and the variable-font axis, as in `semibold_format`.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct TextEmphasis {
+    pub italics: bool,
+    pub strong: bool,
+}
+
+impl From<bool> for TextEmphasis {
+    fn from(italics: bool) -> Self {
+        Self { italics, strong: false }
+    }
+}
+
+impl TextEmphasis {
+    pub fn rich_text(self, ctx: &egui::Context, text: impl Into<String>, size: f32, color: egui::Color32) -> egui::RichText {
+        let mut text = egui::RichText::new(text).size(size).color(color);
+        if self.strong {
+            text = text.family(semibold(ctx)).variation(b"wght", 600.0);
+        }
+        if self.italics {
+            text = text.italics();
+        }
+        text
+    }
+
+    pub fn format(self, ctx: &egui::Context, size: f32, color: egui::Color32) -> egui::TextFormat {
+        let mut format = if self.strong {
+            semibold_format(&semibold(ctx), size, color)
+        } else {
+            egui::TextFormat::simple(egui::FontId::proportional(size), color)
+        };
+        format.italics = self.italics;
+        format
+    }
 }
 
 /// Does `semibold_format` draw heavier than the regular text? Yes with an
@@ -470,6 +531,39 @@ mod tests {
         assert_eq!(egui::TextStyle::Body.resolve(&ctx.style_of(ctx.theme())).size, size);
         let (scaled, _) = measure(&ctx, family, size, f32::INFINITY);
         assert!((scaled.x / base.x - 1.32).abs() < 0.03);
+    }
+
+    #[test]
+    fn chat_text_follows_its_own_size_whatever_the_interface_text_size() {
+        let ctx = egui::Context::default();
+        let mut theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        install(&ctx, definitions_for(INTER, &[]));
+        let family = egui::FontFamily::Proportional;
+        // no chat size set yet: the conversations draw as the interface
+        assert_eq!(chat_size(&ctx, 13.5), 13.5);
+        let (base, _) = measure(&ctx, family.clone(), 13.5, f32::INFINITY);
+        // the same chat text at 1.5×, the interface's text small or large
+        for text in [0.8, 1.0, 2.0] {
+            theme.apply(&ctx, text);
+            set_chat_scale(&ctx, 1.5, text);
+            let (chat, _) = measure(&ctx, family.clone(), chat_size(&ctx, 13.5), f32::INFINITY);
+            assert!((chat.x / base.x - 1.5).abs() < 0.03, "text {text}: {}", chat.x / base.x);
+        }
+        // the skin's own scale stays on the chat too
+        theme.font_scale = 1.2;
+        theme.apply(&ctx, 2.0);
+        set_chat_scale(&ctx, 1.0, 2.0);
+        let (chat, _) = measure(&ctx, family, chat_size(&ctx, 13.5), f32::INFINITY);
+        assert!((chat.x / base.x - 1.2).abs() < 0.03);
+    }
+
+    #[test]
+    fn chat_ratio_never_breaks_the_text() {
+        assert_eq!(chat_ratio(1.5, 1.0), 1.5);
+        assert_eq!(chat_ratio(1.0, 2.0), 0.5);
+        assert_eq!(chat_ratio(1.0, 0.0), 1.0);
+        assert_eq!(chat_ratio(f32::NAN, 1.0), 1.0);
     }
 
     #[test]

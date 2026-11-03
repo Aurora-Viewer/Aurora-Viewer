@@ -8,9 +8,14 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 if ($PSVersionTable.PSEdition -ne 'Desktop') {
-    # under PowerShell 7: run this check again in Windows PowerShell
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath
-    exit $LASTEXITCODE
+    if ($IsWindows) {
+        # under PowerShell 7 on Windows: run this check again in Windows PowerShell
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath
+        exit $LASTEXITCODE
+    }
+    # Linux and macOS have no Windows PowerShell: parse with this one, which
+    # catches most errors; CI parses again with 5.1 on every pull request.
+    Write-Host 'No Windows PowerShell here: parsing with PowerShell 7 (CI checks 5.1).' -ForegroundColor Yellow
 }
 $failed = 0
 foreach ($f in Get-ChildItem -LiteralPath (Join-Path $root 'scripts') -Recurse -Filter *.ps1) {

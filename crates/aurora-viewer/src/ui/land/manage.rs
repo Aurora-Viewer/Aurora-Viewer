@@ -409,7 +409,7 @@ fn access(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut 
                     egui::DragValue::new(&mut price)
                         .custom_parser(aurora_i18n::parse_number)
                         .range(0..=500)
-                        .suffix(" L$"),
+                        .suffix(format!(" {}", aurora_i18n::currency())),
                 );
                 let active = r.dragged() || r.has_focus() || r2.dragged() || r2.has_focus();
                 if active {
@@ -1321,7 +1321,7 @@ fn parcel_media(
             s.dialog = Some(Dialog::MediaUrl(parcel.media_url.clone()));
         }
         let mut url = parcel.media_url.clone();
-        ui.add_enabled(false, egui::TextEdit::singleline(&mut url).desired_width(260.0));
+        crate::ui::widgets::text_field(ui, false, &mut url, |b, _| egui::TextEdit::singleline(b).desired_width(260.0));
     });
     line(ui, p);
     srow(

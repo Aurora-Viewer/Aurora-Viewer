@@ -9,6 +9,16 @@ use aurora_assets::{
 use sha2::{Digest, Sha256};
 use std::{fs::File, io::Read, path::Path};
 
+mod folder;
+mod lods;
+pub(super) use folder::load as load_folder;
+
+enum Selection {
+    Files,
+    Folder,
+    Paths(Vec<PathBuf>),
+}
+
 pub(super) fn read(path: &Path) -> Result<Vec<u8>, AssetError> {
     if path
         .extension()
@@ -222,7 +232,7 @@ pub(super) fn load(
         Choice::Mesh => matches!(extension.as_str(), "dae" | "gltf" | "glb"),
         Choice::Bulk => matches!(
             extension.as_str(),
-            "png" | "jpg" | "jpeg" | "bmp" | "tga" | "j2c" | "j2k" | "jp2" | "wav" | "anim" | "dae" | "gltf" | "glb"
+            "png" | "jpg" | "jpeg" | "bmp" | "tga" | "j2c" | "j2k" | "jp2" | "wav" | "bvh" | "anim" | "dae" | "gltf" | "glb"
         ),
         Choice::Local => matches!(
             extension.as_str(),
@@ -272,19 +282,7 @@ pub(super) fn load(
                     lod.source = mesh::LodSource::Reliable;
                 }
             }
-            let stem = path.file_stem().unwrap_or_default().to_string_lossy();
-            let high_suffix = format!("_{}", prefs.mesh_suffixes[3]);
-            let stem = if prefs.mesh_suffixes[3].is_empty() {
-                stem.as_ref()
-            } else {
-                stem.strip_suffix(&high_suffix).unwrap_or(stem.as_ref())
-            };
-            for level in [2, 1, 0, 4] {
-                let suffix = &prefs.mesh_suffixes[level];
-                if suffix.is_empty() || suffix.contains(['/', '\\', ':']) {
-                    continue;
-                }
-                let candidate = path.with_file_name(format!("{stem}_{suffix}.{extension}"));
+            for (level, candidate) in lods::candidates(path, prefs) {
                 if candidate.is_file() {
                     match read(&candidate)
                         .and_then(|data| mesh_scene(&candidate, &data, local && prefs.local_assume_meters, None, prefs.mesh_model_limit))
@@ -313,7 +311,7 @@ pub(super) fn load(
             bytes: Arc::new(data),
             bvh: None,
         },
-        "bvh" if choice != Choice::Bulk => {
+        "bvh" => {
             let skeleton = aurora_assets::Skeleton::parse(include_bytes!("../../assets/character/avatar_skeleton.xml"))?;
             let bvh = import_animation::parse_bvh(&data, &skeleton)?;
             Source::Animation {
@@ -325,7 +323,6 @@ pub(super) fn load(
                 animation: Arc::new(bvh.animation),
             }
         }
-        "bvh" => return Err(AssetError::Unsupported("BVH requires its animation import window".into())),
         "gltf" | "glb" if choice != Choice::Mesh => {
             let root = path
                 .parent()
@@ -473,6 +470,50 @@ pub(super) fn load(
         entry.watch = Some(local::Watch::new(vec![path.to_owned()]));
     }
     Ok(vec![entry])
+}
+
+/// Paid mixed-file imports use the type choices captured when Add files opens.
+/// Explicit type windows and local previews retain their dedicated loaders.
+fn load_selected(
+    path: &Path,
+    choice: Choice,
+    options: import_texture::Options,
+    sound_limit: u32,
+    prefs: &Preferences,
+    local: bool,
+    filters: [bool; 5],
+) -> Result<Vec<Entry>, AssetError> {
+    if choice != Choice::Bulk
+        || !path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("gltf") || ext.eq_ignore_ascii_case("glb"))
+    {
+        return load(path, choice, options, sound_limit, prefs, local);
+    }
+    match (filters[3], filters[4]) {
+        (false, false) => Ok(Vec::new()),
+        (true, false) => load(path, Choice::Material, options, sound_limit, prefs, local),
+        (false, true) => load(path, Choice::Mesh, options, sound_limit, prefs, local),
+        (true, true) => {
+            let mut entries = load(path, Choice::Bulk, options, sound_limit, prefs, local)?;
+            // The mesh decoder appends a fallback beyond declared materials.
+            if entries
+                .iter()
+                .any(|entry| matches!(&entry.source, Some(Source::Mesh(draft)) if draft.scene.materials.len() > 1))
+            {
+                match load(path, Choice::Material, options, sound_limit, prefs, local) {
+                    Ok(mut materials) => {
+                        for material in &mut materials {
+                            material.selected = true;
+                        }
+                        entries.extend(materials);
+                    }
+                    Err(error) => entries.push(Entry::new(path.to_owned(), Err(error.to_string()), options)),
+                }
+            }
+            Ok(entries)
+        }
+    }
 }
 
 pub(super) fn localize(entries: &mut [Entry], prefs: &Preferences) {
@@ -689,10 +730,27 @@ impl Imports {
         });
     }
     pub fn choose_files(&mut self, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, options: import_texture::Options) {
+        self.choose_type_files(jobs, ctx, options, self.choice);
+    }
+
+    pub fn choose_type_files(
+        &mut self,
+        jobs: &crate::scene::jobs::Jobs,
+        ctx: &egui::Context,
+        options: import_texture::Options,
+        choice: Choice,
+    ) {
         if self.busy() {
             return;
         }
-        self.load_files(jobs, ctx, options, self.choice, self.choice == Choice::Local, None);
+        self.load_files(jobs, ctx, options, choice, choice == Choice::Local, Selection::Files);
+    }
+    pub fn choose_folder(&mut self, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, options: import_texture::Options) {
+        if self.busy() || self.pending_files.is_some() {
+            return;
+        }
+        self.select_type(Choice::Bulk);
+        self.load_files(jobs, ctx, options, Choice::Bulk, false, Selection::Folder);
     }
     /// The texture picker's Local tab "Add" (LLFloaterTexturePicker::onBtnAdd,
     /// indra/newview/lltexturectrl.cpp): images, or the materials of glTF
@@ -709,7 +767,7 @@ impl Imports {
             return;
         }
         let choice = if materials { Choice::Material } else { Choice::Texture };
-        self.load_files(jobs, ctx, options, choice, true, None);
+        self.load_files(jobs, ctx, options, choice, true, Selection::Files);
         self.picker_files = true;
     }
     /// The Local tab's "Upload" (onBtnUpload): the importer opens on the
@@ -727,7 +785,7 @@ impl Imports {
         let path = entry.path.clone();
         self.open(choice);
         if !self.busy() {
-            self.load_files(jobs, ctx, options, choice, false, Some(vec![path]));
+            self.load_files(jobs, ctx, options, choice, false, Selection::Paths(vec![path]));
         }
     }
     /// Loads `paths`, or the files chosen in a dialog filtered on `choice`.
@@ -738,7 +796,7 @@ impl Imports {
         options: import_texture::Options,
         choice: Choice,
         local: bool,
-        paths: Option<Vec<PathBuf>>,
+        selection: Selection,
     ) {
         if self.pending_files.is_some() {
             return;
@@ -746,6 +804,7 @@ impl Imports {
         let request = Uuid::new_v4();
         self.pending_files = Some(request);
         self.picker_files = false;
+        self.pending_file_choice = Some(if local { Choice::Local } else { choice });
         let sound_limit = self.sound_limit;
         let prefs = self.load_preferences.clone();
         let mut retained = self
@@ -756,34 +815,49 @@ impl Imports {
             .map(Source::retained_bytes)
             .sum::<usize>();
         let existing = self.entries.len();
+        let filters = self.type_filters;
         let tx = self.tx.clone();
         let wake = ctx.clone();
         jobs.execute(move || {
-            let paths = paths.unwrap_or_else(|| {
-                let filter: &[&str] = match choice {
-                    Choice::Texture => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2"],
-                    Choice::Sound => &["wav"],
-                    Choice::Animation => &["bvh", "anim"],
-                    Choice::Material => &["gltf", "glb"],
-                    Choice::Mesh => &["dae", "gltf", "glb"],
-                    Choice::Bulk => &[
-                        "tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "wav", "anim", "dae", "gltf", "glb",
-                    ],
-                    Choice::Local => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "dae", "gltf", "glb"],
-                };
-                rfd::FileDialog::new()
-                    .set_title(aurora_i18n::tr!("import-title"))
-                    .add_filter(choice.label(), filter)
-                    .pick_files()
-                    .unwrap_or_default()
-            });
+            let paths = match selection {
+                Selection::Paths(paths) => paths,
+                Selection::Folder => rfd::FileDialog::new()
+                    .set_title(aurora_i18n::tr!("import-choose-folder"))
+                    .pick_folder()
+                    .into_iter()
+                    .collect(),
+                Selection::Files => {
+                    let filter: &[&str] = match choice {
+                        Choice::Texture => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2"],
+                        Choice::Sound => &["wav"],
+                        Choice::Animation => &["bvh", "anim"],
+                        Choice::Material => &["gltf", "glb"],
+                        Choice::Mesh => &["dae", "gltf", "glb"],
+                        Choice::Bulk => &[
+                            "tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "wav", "bvh", "anim", "dae", "gltf", "glb",
+                        ],
+                        Choice::Local => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "dae", "gltf", "glb"],
+                    };
+                    rfd::FileDialog::new()
+                        .set_title(aurora_i18n::tr!("import-title"))
+                        .add_filter(choice.label(), filter)
+                        .pick_files()
+                        .unwrap_or_default()
+                }
+            };
+            if paths.len() == 1 && paths[0].is_dir() {
+                let entries = load_folder(&paths[0], &prefs, options, sound_limit, existing, retained);
+                let _ = tx.send(Worker::Loaded(request, entries));
+                wake.request_repaint();
+                return;
+            }
             let mut entries = Vec::new();
             for (index, path) in paths.into_iter().enumerate() {
                 if index >= 256 || existing + entries.len() >= 512 {
                     entries.push(Entry::new(path, Err(aurora_i18n::tr!("import-batch-limit").into()), options));
                     break;
                 }
-                match load(&path, choice, options, sound_limit, &prefs, local) {
+                match load_selected(&path, choice, options, sound_limit, &prefs, local, filters) {
                     Ok(mut loaded) => {
                         let size = loaded
                             .iter()
@@ -817,6 +891,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn add_files_gltf_respects_material_and_mesh_choices_and_explicit_windows() {
+        let root = std::env::temp_dir().join(format!("aurora-file-types-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("preview.glb");
+        std::fs::write(&path, include_bytes!("../../../../assets/models/aurora-3d.glb")).unwrap();
+        let prefs = Preferences::default();
+        for (material, mesh) in [(true, false), (false, true), (true, true), (false, false)] {
+            let mut filters = [true; 5];
+            filters[3] = material;
+            filters[4] = mesh;
+            let entries = load_selected(&path, Choice::Bulk, prefs.texture(), 30, &prefs, false, filters).unwrap();
+            assert_eq!(
+                entries.iter().any(|entry| matches!(entry.source, Some(Source::Material { .. }))),
+                material
+            );
+            assert_eq!(entries.iter().any(|entry| matches!(entry.source, Some(Source::Mesh(_)))), mesh);
+            assert!(entries.iter().all(|entry| entry.source.is_some()));
+        }
+        for choice in [Choice::Material, Choice::Mesh] {
+            let entries = load_selected(&path, choice, prefs.texture(), 30, &prefs, false, [false; 5]).unwrap();
+            assert!(!entries.is_empty());
+            assert!(entries.iter().all(|entry| Imports::type_choice(entry) == choice));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn batch_loads_collada_and_detects_glb_meshes_without_changing_material_extraction() {
         let root = std::env::temp_dir().join(format!("aurora-batch-{}", Uuid::new_v4()));
         super::super::demo::fixtures(&root).expect("fixtures");
@@ -836,7 +937,7 @@ mod tests {
         }
         let entries = load(&model, Choice::Material, prefs.texture(), 30, &prefs, false).expect("extract material");
         assert!(matches!(entries[0].source, Some(Source::Material { .. })));
-        assert!(load(&root.join("animation-demo.bvh"), Choice::Bulk, prefs.texture(), 30, &prefs, false).is_err());
+        assert!(load(&root.join("animation-demo.bvh"), Choice::Bulk, prefs.texture(), 30, &prefs, false).is_ok());
         std::fs::remove_dir_all(root).expect("remove own fixtures");
     }
 
@@ -925,7 +1026,7 @@ mod tests {
                                 let mut player = super::super::animation::Player::default();
                                 player.bound = Some(bound);
                                 player.seek(animation.duration * 0.5);
-                                player.tick(entry.id, &rig, &mut crate::scene::anim::AnimStreamer::new(PathBuf::new()));
+                                player.tick(entry.id, &rig, &mut crate::scene::anim::AnimStreamer::new(PathBuf::new()), None);
                                 assert!(player.pose.expect("sampled pose").iter().flatten().flatten().all(|v| v.is_finite()));
                                 3
                             }
@@ -1054,6 +1155,22 @@ mod tests {
             files.load("texture-demo.png", Choice::Texture)[0].source,
             Some(Source::Texture(_))
         ));
+        let rgba = image::RgbaImage::from_fn(4, 4, |x, y| image::Rgba([(x * 60) as u8, (y * 50) as u8, 30, (y * 70) as u8]));
+        let mut tga = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(rgba.clone())
+            .write_to(&mut tga, image::ImageFormat::Tga)
+            .expect("TGA fixture");
+        std::fs::write(files.0.join("texture-demo.TGA"), tga.into_inner()).expect("write TGA");
+        for choice in [Choice::Texture, Choice::Bulk, Choice::Local] {
+            let entry = files.load("texture-demo.TGA", choice).remove(0);
+            let Some(Source::Texture(pixels)) = &entry.source else {
+                panic!("TGA texture in {choice:?}")
+            };
+            assert_eq!((pixels.width, pixels.height, pixels.components), (4, 4, 4));
+            assert_eq!(pixels.data, rgba.as_raw().as_slice());
+            let bytes = encode(entry.source.as_ref().expect("texture"), entry.options, entry.sound.options).expect("encode TGA upload");
+            assert_eq!(aurora_assets::decode_j2k(&bytes, 0).expect("decode TGA upload"), **pixels);
+        }
         assert!(matches!(
             files.load("sound-demo.wav", Choice::Sound)[0].source,
             Some(Source::Sound(_))
@@ -1076,7 +1193,7 @@ mod tests {
                 &Preferences::default(),
                 false
             )
-            .is_err()
+            .is_ok()
         );
         assert!(
             load(

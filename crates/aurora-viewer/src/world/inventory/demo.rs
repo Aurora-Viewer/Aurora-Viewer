@@ -2,6 +2,75 @@
 
 use super::*;
 
+pub const LOST_FOLDER: Uuid = Uuid::from_u128(50_016);
+
+/// Explicit offline startup-recovery fixture. No account inventory is read.
+pub fn seed_lost(inv: &mut Inventory, agent: Uuid) {
+    inv.owner = agent;
+    inv.hierarchy_repaired = false;
+    for (id, parent, kind, name) in [
+        (LOST_FOLDER, inv.root, 16, aurora_i18n::tr!("common-lost-and-found").to_owned()),
+        (
+            Uuid::from_u128(50_014),
+            Uuid::from_u128(50_099),
+            -1,
+            format!("{} 1", aurora_i18n::tr!("world-inventory-demo-subfolder")),
+        ),
+        (
+            Uuid::from_u128(50_015),
+            Uuid::from_u128(50_014),
+            -1,
+            format!("{} 2", aurora_i18n::tr!("world-inventory-demo-subfolder")),
+        ),
+    ] {
+        inv.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent,
+                    name,
+                    type_default: kind,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(folder) = inv.folders.get_mut(&parent) {
+            folder.children.push(id);
+        }
+    }
+    inv.generation += 1;
+}
+
+pub fn lost_reply(agent: Uuid) -> aurora_net::inventory::orphans::Contents {
+    aurora_net::inventory::orphans::Contents {
+        folders: Vec::new(),
+        items: [
+            (50_020, Uuid::nil()),
+            (50_021, Uuid::from_u128(0x10)),
+            (50_022, Uuid::from_u128(50_099)),
+        ]
+        .into_iter()
+        .map(|(n, parent)| InvItem {
+            id: Uuid::from_u128(n),
+            parent,
+            owner: agent,
+            creator: agent,
+            name: format!("{} {n}", aurora_i18n::tr!("common-demo-object")),
+            asset_type: 6,
+            inv_type: 6,
+            owner_mask: 0x7fffffff,
+            ..Default::default()
+        })
+        .collect(),
+    }
+}
+
 pub fn seed(inv: &mut Inventory, agent: Uuid) {
     super::super::appearance::seed_demo(inv, agent);
     if inv.lib_root.is_nil() {
@@ -131,6 +200,77 @@ pub fn seed(inv: &mut Inventory, agent: Uuid) {
         owner_mask: 0x7fffffff,
         ..Default::default()
     }]);
+    // A calling card made by a viewer (create_inventory_callingcard): ours,
+    // naming the wolf by key in its description. Opening it shows his profile,
+    // named Orion Example by the demo's name service.
+    inv.add_items(vec![InvItem {
+        id: Uuid::from_u128(8114),
+        parent: personal,
+        name: aurora_i18n::tr!("demo-orion-example").into(),
+        desc: crate::demo::DEMO_LOUP.to_string(),
+        asset_type: 2,
+        inv_type: 2,
+        creator: agent,
+        owner: agent,
+        created_at: now,
+        base_mask: actions::MOVE | actions::TRANSFER,
+        owner_mask: actions::MOVE | actions::TRANSFER,
+        ..Default::default()
+    }]);
+    if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "link-icons" | "aurora-link-icons")) {
+        for (kind, &name) in super::super::appearance::wearables().iter().enumerate() {
+            inv.add_items(vec![InvItem {
+                id: Uuid::from_u128(82_000 + kind as u128),
+                parent: personal,
+                name: name.into(),
+                asset_type: if kind < 4 { 13 } else { 5 },
+                inv_type: 18,
+                flags: kind as u32,
+                owner: agent,
+                ..Default::default()
+            }]);
+        }
+        let mut targets: Vec<_> = inv
+            .items
+            .values()
+            .filter(|it| it.parent == personal && !matches!(it.asset_type, 24 | 25))
+            .cloned()
+            .collect();
+        targets.sort_by_key(|it| it.id);
+        let mut links: Vec<_> = targets
+            .into_iter()
+            .enumerate()
+            .map(|(n, it)| InvItem {
+                id: Uuid::from_u128(83_000 + n as u128),
+                parent: personal,
+                name: aurora_i18n::tr!("inventory-kind-link-to", kind = &it.name),
+                asset_type: 24,
+                asset_id: it.id,
+                inv_type: it.inv_type,
+                owner: agent,
+                ..Default::default()
+            })
+            .collect();
+        links.push(InvItem {
+            id: Uuid::from_u128(84_000),
+            parent: personal,
+            name: aurora_i18n::tr!("inventory-kind-folder-link").into(),
+            asset_type: 25,
+            asset_id: Uuid::from_u128(8001),
+            owner: agent,
+            ..Default::default()
+        });
+        links.push(InvItem {
+            id: Uuid::from_u128(84_001),
+            parent: personal,
+            name: aurora_i18n::tr!("inventory-kind-broken-link").into(),
+            asset_type: 24,
+            asset_id: Uuid::from_u128(84_999),
+            owner: agent,
+            ..Default::default()
+        });
+        inv.add_items(links);
+    }
     inv.queue.clear();
     inv.sort_all();
 }
@@ -343,7 +483,9 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "new-note"
         | "folder-window"
         | "move-folder"
-        | "folder-window-search" => 8000,
+        | "folder-window-search"
+        | "image-layout-folder"
+        | "image-layout-folder-wide" => 8000,
         "move-item" | "move-multi" | "move-filter" | "move-window" | "move-menu" => 8100,
         "uuid" | "uuid-restricted" | "uuid-missing" | "uuid-multi" => 8104,
         "landmark" | "aurora-landmark" => 8120,
@@ -365,9 +507,21 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "clipboard-progress"
         | "clipboard-window"
         | "keyboard"
+        | "keyboard-fold"
         | "aurora-keyboard"
+        | "aurora-keyboard-fold"
         | "aurora-keyboard-wide" => 8100,
-        "animation" | "animation-open" | "animation-properties" | "image" | "image-photo" | "image-picker" | "image-photo-save" => 8101,
+        "animation"
+        | "animation-open"
+        | "animation-play-local"
+        | "animation-play-world"
+        | "animation-properties"
+        | "image"
+        | "image-photo"
+        | "image-picker"
+        | "image-photo-save"
+        | "image-layout"
+        | "image-layout-wide" => 8101,
         "script" => 8102,
         "note" | "note-open" | "note-edit" | "note-save" | "note-close" | "note-error" | "note-readonly" | "note-embedded" | "note-new"
         | "note-task" | "note-task-save" | "note-task-error" | "note-task-readonly" | "note-drop" | "note-image" | "note-landmark"
@@ -376,6 +530,7 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         "nocopy" => 8109,
         "notransfer" => 8110,
         "link" => 8113,
+        "link-icons" | "aurora-link-icons" => 83_000,
         _ => return None,
     }))
 }

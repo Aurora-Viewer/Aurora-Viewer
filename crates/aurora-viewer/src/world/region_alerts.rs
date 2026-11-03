@@ -5,7 +5,8 @@
 //!   nearby chat;
 //! - the region we arrived in runs another simulator version than the last
 //!   one (FSShowServerVersionChangeNotice, process_agent_movement_complete),
-//!   told in a notice.
+//!   told in a notice; off by default in Aurora, on in the Legacy Viewer
+//!   (it came at nearly every teleport, human choice of 2026-10-30).
 
 use super::World;
 use super::notifications::{Data, Kind};
@@ -24,7 +25,7 @@ impl Default for Config {
         Config {
             script_count: false,
             script_threshold: 100,
-            version: true,
+            version: false,
         }
     }
 }
@@ -114,8 +115,30 @@ mod tests {
     }
 
     #[test]
+    fn the_version_notice_reaches_the_notifications_only_when_on() {
+        use crate::scene::avatar::AvatarLibrary;
+        let mut w = World::new(std::sync::Arc::new(AvatarLibrary::load()));
+        let title = aurora_i18n::tr!("world-region-alerts-version-title");
+        let told = |w: &World| w.notifications.list.iter().filter(|n| n.title == title).count();
+        w.on_sim_version_alert("Server 1");
+        w.on_sim_version_alert("Server 2");
+        assert_eq!(told(&w), 0, "off by default: no notice");
+        w.region_alerts.cfg.version = true;
+        w.on_sim_version_alert("Server 3");
+        assert_eq!(told(&w), 1, "on: one notice");
+    }
+
+    #[test]
+    fn a_new_version_is_not_told_by_default() {
+        let mut a = RegionAlerts::default();
+        assert_eq!(a.version_change("Server 1"), None, "login");
+        assert_eq!(a.version_change("Server 2"), None, "off by default");
+    }
+
+    #[test]
     fn a_new_version_is_told_after_the_first_region() {
         let mut a = RegionAlerts::default();
+        a.cfg.version = true;
         assert_eq!(a.version_change("Server 1"), None, "login");
         assert_eq!(a.version_change("Server 1"), None);
         assert_eq!(a.version_change("Server 2").as_deref(), Some("Server 1"));

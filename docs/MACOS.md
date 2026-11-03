@@ -49,10 +49,34 @@ in **System Settings › Privacy & Security › Microphone**).
 
 ## Keyboard
 
-The viewer's shortcuts are those of Windows and Linux, with the **Control**
-key (Ctrl+S, Ctrl+Shift+I…), as in the Legacy Viewer. Text fields follow
-macOS (Cmd+C, Cmd+V, Cmd+A, Cmd+arrows). **Cmd+Q** asks before quitting, like
-the close button of the window.
+Keyboard shortcuts follow the Legacy Viewer. **Command and Control both
+trigger them** (Command+S and Control+S; Command+W and Control+W close the
+front window; Command+Shift+W and Control+Shift+W close every window).
+The mouse keeps the two keys apart: Control-click is not Command-click,
+and Command does not change the camera wheel.
+
+A few shortcuts are labeled with the Control key (⌃), the same list as the
+Legacy Viewer: Nearby Chat (⌃H), Conversations (⌃T), the World Map (⌃M),
+Highlight Transparent (⌃⌥T), Snapshot to Disk (⌃`). Command runs those too,
+except Nearby Chat. Command+H hides the application, as it does in the
+Legacy Viewer, and Control+H opens Nearby Chat (or brings it forward, or
+closes it when it is already in front). The others are labeled with
+Command (⌘), then Option (⌥) and Shift (⇧).
+Text fields accept both keys for copy, paste, undo and the rest.
+Select All is Command+A (or Control+A). Command+Shift+A still opens People,
+as in the Legacy Viewer, even while a field is focused.
+**Command+Q** asks before quitting, like the close button of the window.
+macOS takes Command+Q and Command+H before the viewer sees them. The Quit
+item is answered here; Command+H stays Hide.
+
+## Web pages and video
+
+Web pages and video in the world need the media plugins, which are not part
+of the application: the first time they are needed, the viewer downloads
+Aurora's media plugins pack (about 335 MB) into the `media-plugins` folder of
+its settings (table below), once. A Legacy Viewer installed on the Mac can
+lend its plugins instead: in **Preferences › Media**, type the path of its
+application (its `.app` in `/Applications`) as the plugins folder.
 
 ## Updates
 
@@ -72,7 +96,6 @@ paste the path.
 
 ## Not on macOS yet
 
-- Web pages and video in the world (the media plugins).
 - Automatic installation of updates (above).
 - Opening `secondlife://` links from a web browser.
 - The crash report window.
@@ -93,7 +116,8 @@ cargo build --release --locked -p aurora-viewer
 `AURORA_DEMO=1 ./target/release/aurora-viewer` starts the offline demo,
 without the network. To build the application itself as the release does,
 run `pwsh ./scripts/package-macos.ps1 -Exe target/release/aurora-viewer -Out "Aurora Viewer.app"`
-(PowerShell 7: `brew install powershell`).
+(PowerShell 7: `brew install powershell`). The same PowerShell runs the local
+checks: `pwsh -File ./scripts/check.ps1` (formatting, clippy, tests).
 
 ## Signing (for the maintainers)
 

@@ -897,7 +897,7 @@ impl SearchUi {
                 } else {
                     parcel.filter(|d| !d.sim_name.is_empty()).map_or_else(
                         || aurora_i18n::tr!("common-loading-2").to_owned(),
-                        |d| crate::ui::place_details::region_name_pos(&d.sim_name, glam::Vec3::ZERO, d.global),
+                        |d| crate::ui::place_details::region_name_pos(&d.sim_name, glam::Vec3::ZERO, d.global, &world.map),
                     )
                 };
                 let card = place_card::Row {
@@ -1054,6 +1054,7 @@ impl SearchUi {
             }
             _ => return,
         };
+        let resp = super::place_drag_source(resp, c, tab, row);
         if resp.clicked() && !selected {
             self.aurora.selected = Some((tab, row.key));
             actions.push(SearchAction::Select(tab, row.key));

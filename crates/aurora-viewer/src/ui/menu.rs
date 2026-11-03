@@ -8,6 +8,11 @@
 //! Menus are egui popups (`Popup` / `SubMenu`): a menu closes when an
 //! enabled entry is clicked, on Escape, or on a click outside; clicking a
 //! greyed entry or a separator keeps it open, as in Firestorm.
+//!
+//! A menu wrapped in [`searchable`] (the wolf menu) starts with a search
+//! field: while it holds a query, every row checks itself against it, and
+//! the sub-menus list their matching entries in place, under their path;
+//! the arrow keys select among them and Enter clicks the selected one.
 
 use crate::theme::Palette;
 use egui::{Color32, FontId, Id, LayerId, Popup, PopupAnchor, PopupCloseBehavior, PopupKind, Sense, Stroke, Ui, Vec2};
@@ -420,6 +425,10 @@ fn row_lead(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, en
 
 #[allow(clippy::too_many_arguments)]
 fn row_lead_sensed(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, end: End, open: bool, sense: Sense) -> egui::Response {
+    if !filter_row(ui, p, label) {
+        return hidden(ui);
+    }
+    let keyed = if enabled && sense.senses_click() { keyboard_row() } else { None };
     let font = FontId::proportional(12.5);
     let ink = if enabled { p.ink } else { p.muted_dim };
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
@@ -448,8 +457,23 @@ fn row_lead_sensed(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: b
     // a whole number of points: a font with a tall line (OpenDyslexic)
     // makes the row taller than ROW_H, and a fractional height left its
     // letters 0.6 px off its middle at 1.25
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, ROW_H.max((text_height + 6.0).ceil())), sense);
-    let hot = enabled && (resp.hovered() || open);
+    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(w, ROW_H.max((text_height + 6.0).ceil())), sense);
+    // a filtered row lights up when the arrow keys or the pointer select it,
+    // so that only one row is lit; Enter clicks the row it was lit on, never
+    // also the one the pointer reaches in the same frame
+    let hot = match keyed {
+        Some(k) => {
+            let selected = k.selected || (resp.hovered() && ui.input(|i| i.pointer.delta() != Vec2::ZERO) && point_row(k.index));
+            if selected && k.scroll {
+                resp.scroll_to_me(None);
+            }
+            if k.selected && k.activate {
+                resp.flags.insert(egui::response::Flags::FAKE_PRIMARY_CLICKED);
+            }
+            selected || open
+        }
+        None => enabled && (resp.hovered() || open),
+    };
     track(ui, hot && resp.hovered());
     if !ui.is_rect_visible(rect) {
         return resp;
@@ -749,6 +773,9 @@ pub fn item_tag(ui: &mut Ui, p: &Palette, icon: &str, label: &str, tag: &str) ->
 
 /// The title of a group of entries: small capitals, muted.
 pub fn section(ui: &mut Ui, p: &Palette, title: &str) {
+    if filtering() {
+        return;
+    }
     let galley = ui.painter().layout_no_wrap(
         title.to_uppercase(),
         FontId::new(10.5, super::fonts::semibold(ui.ctx())),
@@ -876,6 +903,13 @@ pub fn submenu(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool,
 /// [`submenu`] that returns its own row, for a heading that is also an
 /// action when clicked (the import menu).
 pub fn submenu_heading(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, body: impl FnOnce(&mut Ui)) -> egui::Response {
+    // a search lists the entries of an available sub-menu in place
+    if enabled && filtering() {
+        FILTER.with_borrow_mut(|f| f.as_mut().map(|f| f.path.push(label.to_owned())));
+        body(ui);
+        FILTER.with_borrow_mut(|f| f.as_mut().map(|f| f.path.pop()));
+        return hidden(ui);
+    }
     let id = ui.next_auto_id();
     let open = enabled && Popup::is_id_open(ui.ctx(), egui::containers::menu::SubMenu::id_from_widget_id(id));
     let resp = row(ui, p, icon, label, enabled, End::Caret, open);
@@ -1039,6 +1073,9 @@ pub(crate) fn clicks_kept_row(ctx: &egui::Context, popup: Id) -> bool {
 
 /// Thin line between groups of entries.
 pub fn separator(ui: &mut Ui, p: &Palette) {
+    if filtering() {
+        return;
+    }
     let w = if ui.is_sizing_pass() { MIN_W } else { ui.available_width() };
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 7.0), Sense::hover());
     ui.painter()
@@ -1077,6 +1114,9 @@ fn info_line(
     icon_color: Color32,
     color: Color32,
 ) -> egui::Response {
+    if filtering() {
+        return hidden(ui);
+    }
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
     let natural = (PAD + ICON + PAD + galley.size().x + PAD).max(MIN_W);
     let w = if ui.is_sizing_pass() {
@@ -1094,6 +1134,12 @@ fn info_line(
 /// The title of a group of rows, in small capitals (the parcel's rights,
 /// the recent places of the place menu).
 pub fn heading(ui: &mut Ui, p: &Palette, text: &str) {
+    if !filtering() {
+        heading_line(ui, p, text);
+    }
+}
+
+fn heading_line(ui: &mut Ui, p: &Palette, text: &str) {
     let font = FontId::new(10.5, super::fonts::semibold(ui.ctx()));
     let galley = ui.painter().layout_no_wrap(text.to_uppercase(), font, p.muted_dim);
     let natural = (PAD + galley.size().x + PAD).max(MIN_W);
@@ -1110,10 +1156,345 @@ pub fn heading(ui: &mut Ui, p: &Palette, text: &str) {
     );
 }
 
+/// The query of the [`searchable`] menu being drawn, and where its rows
+/// stand: the sub-menus they are in, the path whose entries were drawn
+/// last, the paths whose heading was drawn, the entries shown; then the
+/// keyboard selection: the rows that can be selected so far, the selected
+/// one, the one the pointer moved onto, and whether Enter clicks it or the
+/// arrows moved it this frame.
+struct Filter {
+    words: Vec<String>,
+    path: Vec<String>,
+    shown: Option<Vec<String>>,
+    headed: Vec<Vec<String>>,
+    matches: usize,
+    selectable: usize,
+    selected: usize,
+    pointed: Option<usize>,
+    activate: bool,
+    scroll: bool,
+}
+
+/// A filtered row that the arrow keys can select.
+#[derive(Clone, Copy)]
+struct KeyRow {
+    index: usize,
+    selected: bool,
+    activate: bool,
+    scroll: bool,
+}
+
+/// The next selectable row of the filtered menu, `None` when not filtering.
+fn keyboard_row() -> Option<KeyRow> {
+    FILTER.with_borrow_mut(|f| {
+        let f = f.as_mut()?;
+        let index = f.selectable;
+        f.selectable += 1;
+        Some(KeyRow {
+            index,
+            selected: index == f.selected,
+            activate: f.activate,
+            scroll: f.scroll,
+        })
+    })
+}
+
+/// The pointer moved onto the row `index`: it becomes the selected one.
+fn point_row(index: usize) -> bool {
+    FILTER.with_borrow_mut(|f| f.as_mut().map(|f| f.pointed = Some(index)));
+    true
+}
+
+/// The selection after the arrow keys, over `count` rows, wrapping around
+/// at both ends.
+fn step_selection(selected: usize, count: usize, down: bool, up: bool) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    let selected = selected.min(count - 1);
+    match (down, up) {
+        (true, false) => (selected + 1) % count,
+        (false, true) => (selected + count - 1) % count,
+        _ => selected,
+    }
+}
+
+/// What a [`searchable`] menu keeps between frames.
+#[derive(Clone, Default)]
+struct SearchState {
+    query: String,
+    frame: u64,
+    selected: usize,
+    /// Selectable rows drawn on the last frame.
+    count: usize,
+    /// The search field, whose focus the keys need.
+    field: Option<Id>,
+}
+
+thread_local! {
+    static FILTER: std::cell::RefCell<Option<Filter>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A [`searchable`] menu is being filtered: its rows not matching, its
+/// separators and its titles are not drawn.
+fn filtering() -> bool {
+    FILTER.with_borrow(Option::is_some)
+}
+
+/// The words of a query, lower case.
+fn query_words(query: &str) -> Vec<String> {
+    query.split_whitespace().map(str::to_lowercase).collect()
+}
+
+/// Every word of the query is in the entry's label or in the name of one of
+/// the sub-menus it is in ("home" finds Go Home and Set Home to Here, "world
+/// map" the Map of World).
+fn entry_matches(words: &[String], path: &[String], label: &str) -> bool {
+    let label = label.to_lowercase();
+    let path: Vec<String> = path.iter().map(|s| s.to_lowercase()).collect();
+    words
+        .iter()
+        .all(|w| label.contains(w.as_str()) || path.iter().any(|s| s.contains(w.as_str())))
+}
+
+/// What goes above an entry found by a search.
+#[derive(Debug, PartialEq)]
+enum Above {
+    /// Under the entries drawn just before it.
+    Nothing,
+    /// The first entry of its path: the path as a heading.
+    Heading(String),
+    /// Back in a path already headed (Me after Me › Avatar health), or at
+    /// the top level after a sub-menu: a divider, the heading is not
+    /// repeated.
+    Divider,
+}
+
+/// The lead of an entry of `path`, the previous one having been drawn
+/// under `shown` (`None`: the first entry), and the paths already headed.
+fn above(path: &[String], shown: &mut Option<Vec<String>>, headed: &mut Vec<Vec<String>>) -> Above {
+    if shown.as_deref() == Some(path) {
+        return Above::Nothing;
+    }
+    let first = shown.replace(path.to_vec()).is_none();
+    if path.is_empty() {
+        return if first { Above::Nothing } else { Above::Divider };
+    }
+    if headed.iter().any(|h| h == path) {
+        return Above::Divider;
+    }
+    headed.push(path.to_vec());
+    Above::Heading(path.join(" › "))
+}
+
+/// Whether the row `label` is drawn; while filtering, the heading of its
+/// path is drawn before the first entry found under it.
+fn filter_row(ui: &mut Ui, p: &Palette, label: &str) -> bool {
+    let lead = FILTER.with_borrow_mut(|f| {
+        let Some(f) = f.as_mut() else {
+            return Some(Above::Nothing);
+        };
+        if !entry_matches(&f.words, &f.path, label) {
+            return None;
+        }
+        f.matches += 1;
+        Some(above(&f.path, &mut f.shown, &mut f.headed))
+    });
+    match lead {
+        None => false,
+        Some(Above::Nothing) => true,
+        Some(Above::Heading(path)) => {
+            heading_line(ui, p, &path);
+            true
+        }
+        Some(Above::Divider) => {
+            let w = if ui.is_sizing_pass() { MIN_W } else { ui.available_width() };
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 7.0), Sense::hover());
+            ui.painter()
+                .hline(rect.x_range().shrink(4.0), rect.center().y, super::widgets::divider_stroke(p));
+            true
+        }
+    }
+}
+
+/// The response of a row a search hides: it takes no room and is never
+/// clicked.
+fn hidden(ui: &mut Ui) -> egui::Response {
+    ui.allocate_exact_size(Vec2::ZERO, Sense::hover()).1
+}
+
+/// A menu with a search field at its top (the wolf menu): typing filters its
+/// entries, those of the sub-menus listed in place under their path ("Me ›
+/// Avatar health"); a long list scrolls under the field. The field takes the keyboard when the menu opens and starts
+/// empty each time; a click in it leaves a menu that closes on any click
+/// open. While it filters, the first entry found is selected, the up and
+/// down arrows move the selection (wrapping around) and Enter clicks it.
+/// Aurora's own: the Legacy Viewer's menus have no search.
+pub fn searchable(ui: &mut Ui, p: &Palette, body: impl FnOnce(&mut Ui)) {
+    let id = ui.layer_id().id.with("aurora_menu_search");
+    let frame = ui.ctx().cumulative_frame_nr();
+    let mut state = ui.data(|d| d.get_temp::<SearchState>(id)).unwrap_or_default();
+    let opened = state.frame + 1 < frame;
+    if opened {
+        state = SearchState::default();
+    }
+    // taken before the field sees them, and only while it has the keyboard
+    // (Tab onto its clear button leaves Enter to that button): a one-line
+    // field has no use for the arrows, and Enter, even with nothing found,
+    // would only drop its focus
+    let focused = state.field.is_some_and(|f| ui.memory(|m| m.has_focus(f)));
+    let (down, up, enter) = if !focused || query_words(&state.query).is_empty() {
+        (false, false, false)
+    } else {
+        ui.input_mut(|i| {
+            let down = i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
+            let up = i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
+            let enter = i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) && state.count > 0;
+            (down, up, enter)
+        })
+    };
+    let before = state.query.clone();
+    let w = if ui.is_sizing_pass() { MIN_W } else { ui.available_width() };
+    let field = ui.horizontal(|ui| super::widgets::clearable_search_box(ui, p, &mut state.query, aurora_i18n::tr!("common-search"), w));
+    if opened {
+        field.inner.request_focus();
+    }
+    state.field = Some(field.inner.id);
+    state.selected = if state.query == before {
+        step_selection(state.selected, state.count, down, up)
+    } else {
+        0
+    };
+    state.frame = frame;
+    let (key, rect) = (keep_open_id(ui.layer_id()), field.response.rect);
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(key, (frame, rect));
+        d.insert_temp(id, state.clone());
+    });
+    ui.add_space(4.0);
+    let words = query_words(&state.query);
+    if words.is_empty() {
+        body(ui);
+        return;
+    }
+    FILTER.set(Some(Filter {
+        words,
+        path: Vec::new(),
+        shown: None,
+        headed: Vec::new(),
+        matches: 0,
+        selectable: 0,
+        selected: state.selected,
+        pointed: None,
+        activate: enter,
+        scroll: down || up,
+    }));
+    // a broad query lists more entries than the window holds: they scroll
+    // and the field stays in place (the popup, sized on the last frame,
+    // would otherwise hold them to the height of the unfiltered menu)
+    let room = (ui.ctx().content_rect().bottom() - ui.cursor().top() - 12.0).max(120.0);
+    egui::ScrollArea::vertical()
+        .max_height(room)
+        .min_scrolled_height(room)
+        .show(ui, body);
+    let filter = FILTER.take();
+    let found = filter.as_ref().is_some_and(|f| f.matches > 0);
+    if let Some(f) = filter {
+        state.count = f.selectable;
+        state.selected = f.pointed.unwrap_or(state.selected);
+        ui.ctx().data_mut(|d| d.insert_temp(id, state.clone()));
+    }
+    if !found {
+        let text = aurora_i18n::tr!("ui-bars-menu-no-match", query = state.query.trim().to_string());
+        info(ui, p, "search-filled", &text);
+    }
+}
+
+/// `AURORA_DEMO_MENU_SEARCH=<query>`: the wolf menu of the islands (the
+/// default bars) clicked at frames 540–541 and `query` typed in its search
+/// field at 560; capture frame 620.
+pub fn search_demo_events(frame: u64) -> Vec<egui::Event> {
+    static QUERY: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let Some(query) = QUERY.get_or_init(|| std::env::var("AURORA_DEMO_MENU_SEARCH").ok()) else {
+        return Vec::new();
+    };
+    let wolf = egui::pos2(30.0, 30.0);
+    let click = |pressed| egui::Event::PointerButton {
+        pos: wolf,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    match frame {
+        540 => vec![egui::Event::PointerMoved(wolf), click(true)],
+        541 => vec![click(false)],
+        // off the menu, so that no row is hovered
+        550 => vec![egui::Event::PointerMoved(egui::pos2(600.0, 400.0))],
+        560 => vec![egui::Event::Text(query.clone())],
+        _ => Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ui::widgets::{Floater, elide_tests::Frames};
+
+    fn words(q: &str) -> Vec<String> {
+        query_words(q)
+    }
+
+    #[test]
+    fn search_finds_every_entry_with_the_word() {
+        let me = ["Me".to_owned()];
+        assert!(entry_matches(&words("home"), &me, "Go Home"));
+        assert!(entry_matches(&words("HOME"), &[], "Set Home to Here"));
+        assert!(!entry_matches(&words("home"), &me, "Sit on ground"));
+    }
+
+    #[test]
+    fn search_needs_every_word_in_the_label_or_the_path() {
+        let world = ["World".to_owned()];
+        assert!(entry_matches(&words("world map"), &world, "Map"));
+        assert!(!entry_matches(&words("world map"), &world, "Search"));
+        assert!(entry_matches(&words("  mini   map "), &world, "Mini-map"));
+        assert!(!entry_matches(&words("teleport home"), &[], "Go Home"));
+    }
+
+    #[test]
+    fn search_arrows_wrap_around_the_entries_found() {
+        assert_eq!(step_selection(0, 3, true, false), 1);
+        assert_eq!(step_selection(2, 3, true, false), 0);
+        assert_eq!(step_selection(0, 3, false, true), 2);
+        assert_eq!(step_selection(1, 3, false, false), 1);
+        // fewer entries since the last frame: back onto the last one
+        assert_eq!(step_selection(5, 3, false, false), 2);
+        assert_eq!(step_selection(4, 0, true, false), 0);
+    }
+
+    #[test]
+    fn search_query_splits_on_whitespace() {
+        assert!(words("   ").is_empty());
+        assert_eq!(words("Go  HOME"), ["go", "home"]);
+    }
+
+    #[test]
+    fn search_heads_each_path_once() {
+        let path = |s: &str| -> Vec<String> { s.split('/').filter(|w| !w.is_empty()).map(String::from).collect() };
+        let (mut shown, mut headed) = (None, Vec::new());
+        let mut next = |s: &str| above(&path(s), &mut shown, &mut headed);
+        // Me, Me › Health, back in Me, then the top level
+        assert_eq!(next("Me"), Above::Heading("Me".into()));
+        assert_eq!(next("Me"), Above::Nothing);
+        assert_eq!(next("Me/Health"), Above::Heading("Me › Health".into()));
+        assert_eq!(next("Me"), Above::Divider);
+        assert_eq!(next("Me"), Above::Nothing);
+        assert_eq!(next(""), Above::Divider);
+        assert_eq!(next("World"), Above::Heading("World".into()));
+        // a top-level entry found first has nothing above it
+        let (mut shown, mut headed) = (None, Vec::new());
+        assert_eq!(above(&[], &mut shown, &mut headed), Above::Nothing);
+    }
 
     struct Menus {
         frames: Frames,
@@ -1150,6 +1531,7 @@ mod tests {
                             egui::Frame::window(&ctx.global_style()),
                             egui::Rect::from_min_size(egui::pos2(600.0, 200.0), egui::vec2(400.0, 300.0)),
                             egui::vec2(220.0, 120.0),
+                            false,
                             |_| {},
                         );
                     } else {

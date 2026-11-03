@@ -1596,6 +1596,19 @@ impl ObjectStore {
         out
     }
 
+    /// After a GPU recovery (app/gpu_recovery.rs) the scene emptied its
+    /// particle sources: every object with a system hands it over again, as
+    /// a restored object does.
+    pub fn particles_again(&mut self) {
+        let with: Vec<usize> = self.iter().filter(|(_, o)| o.particles.is_some()).map(|(i, _)| i).collect();
+        for i in with {
+            if let Some(o) = self.get_mut(i) {
+                o.particle_update = o.particles.clone().map(ParticleUpdate::Set);
+            }
+            self.touch(i);
+        }
+    }
+
     /// Put back an object taken by [`Self::park_region`], as a new arrival
     /// for the scene and every feed. None when an object came under its key
     /// or its UUID in the meantime: that one is newer.
@@ -1603,11 +1616,12 @@ impl ObjectStore {
         if self.by_key.contains_key(&obj.key) || self.by_uuid.contains_key(&obj.full_id) {
             return None;
         }
-        // nothing of it is on the GPU any more; local previews are kept
+        // Nothing of it is on the GPU any more. Appearance applications are
+        // reinstalled from the import bindings: a parked copy may have expired
+        // or been removed while it was out of reach.
         obj.render = RenderState {
             local_volume: obj.render.local_volume.take(),
             local_scale: obj.render.local_scale,
-            local_appearance: std::mem::take(&mut obj.render.local_appearance),
             needs_records: true,
             ..Default::default()
         };

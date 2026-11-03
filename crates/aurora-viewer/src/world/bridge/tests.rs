@@ -16,6 +16,7 @@ struct Simulator {
     detaches: usize,
     hello_versions: [Option<&'static str>; 3],
     unready_edits: usize,
+    script_rez_groups: Vec<(String, Uuid)>,
 }
 impl Simulator {
     fn new() -> Self {
@@ -44,6 +45,7 @@ impl Simulator {
             detaches: 0,
             hello_versions: [None; 3],
             unready_edits: 0,
+            script_rez_groups: Vec::new(),
         }
     }
     fn event(&mut self, mut event: NetEvent) {
@@ -126,6 +128,10 @@ impl Simulator {
                         });
                     }
                     _ => {
+                        if let NetCommand::Build(BuildCmd::RezScript { group_id, item, .. }) = &command {
+                            assert_eq!(*group_id, self.world.groups.active);
+                            self.script_rez_groups.push((item.name.clone(), *group_id));
+                        }
                         if let NetCommand::DetachAttachments(items) = &command {
                             self.detaches += usize::from(items.contains(&self.bridge.item));
                         }
@@ -341,7 +347,7 @@ fn an_old_version_in_any_bridge_service_is_updated_then_saved_once() {
         let uploads = (sim.uploads, sim.query_uploads, sim.ik_uploads);
         let detaches = sim.detaches;
         let attaches = sim.attaches;
-        sim.hello_versions[service] = Some("1.37");
+        sim.hello_versions[service] = Some("1.39");
         sim.bridge = Bridge::default();
         sim.world.hand_contacts.relay = None;
         for _ in 0..200 {
@@ -2245,4 +2251,94 @@ fn ordinary_object_updates_keep_the_network_receive_time_through_the_bridge() {
     let (predicted, _) = object.predicted(sim.now + Duration::from_secs(5), clock);
     assert!((predicted.x - position.x - (clock - expected) as f32).abs() < 1e-4);
     assert!(predicted.x > position.x + 0.19, "the buffered 200 ms must be retained");
+}
+
+#[test]
+fn bridge_script_installation_and_repair_use_the_current_active_group() {
+    let mut sim = Simulator::new();
+    for event in crate::demo::demo_reply(&NetCommand::RequestGroups) {
+        sim.world.apply(event);
+    }
+    let land = sim.world.groups.groups[0].id;
+    sim.world.parcel = Some(Arc::new(aurora_net::ParcelInfo {
+        group_id: land,
+        ..Default::default()
+    }));
+    let active = Uuid::from_u128(8800);
+    sim.world.groups.active = active;
+    assert_eq!(sim.world.group_for_rez(true), land);
+    sim.ready();
+    let mut expected: Vec<_> = [NAME, QUERY_NAME, ik::NAME]
+        .into_iter()
+        .map(|name| (name.to_owned(), active))
+        .collect();
+    expected.sort();
+    sim.script_rez_groups.sort();
+    assert_eq!(sim.script_rez_groups, expected);
+    for active in [Uuid::nil(), Uuid::from_u128(8801)] {
+        sim.world.apply(NetEvent::ActiveGroup {
+            id: active,
+            name: "Active group".into(),
+            title: "Builder".into(),
+        });
+        sim.script_rez_groups.clear();
+        sim.demo.forget_script(QUERY_NAME);
+        sim.bridge.retry(sim.now);
+        sim.ready();
+        assert_eq!(sim.script_rez_groups, vec![(QUERY_NAME.into(), active)]);
+    }
+}
+
+#[test]
+fn turning_the_bridge_off_unlocks_and_detaches_it_and_turning_it_on_wears_it_again() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    let item = sim.bridge.item;
+    let hello = sim.demo.query_handshake(&sim.bridge, &sim.world).expect("query hello");
+    sim.bridge.set_enabled(false, sim.now);
+    assert!(
+        sim.bridge
+            .commands
+            .iter()
+            .any(|c| matches!(c, NetCommand::Bridge { command, .. } if !command.enabled)),
+        "the worn bridge is unlocked before it is taken off"
+    );
+    // The factory's save already detached and wore it once.
+    let detaches = sim.detaches + 1;
+    for _ in 0..20 {
+        sim.step();
+    }
+    assert_eq!(sim.detaches, detaches, "detached once");
+    assert!(sim.world.worn_attachment(&item).is_none());
+    assert!(!sim.bridge.ready() && !sim.bridge.user_detached);
+    assert_eq!(sim.bridge.query_state(sim.now), QueryState::Off);
+    assert_eq!(sim.bridge.diagnostic(), Some(aurora_i18n::tr!("bridge-disabled")));
+    assert!(sim.prefs.enabled, "the position lock selection is kept for the way back");
+    let before = sim.world.chat.len();
+    assert!(sim.bridge.receive(&mut sim.world, hello, sim.now, sim.now).is_none());
+    assert_eq!(sim.world.chat.len(), before, "a late hello stays out of chat");
+    assert_eq!(sim.bridge.query_state(sim.now), QueryState::Off);
+    // Repair and the features that retry a failed bridge leave it off.
+    sim.bridge.retry(sim.now);
+    let attaches = sim.attaches;
+    for _ in 0..40 {
+        sim.step();
+    }
+    assert_eq!((sim.attaches, sim.detaches), (attaches, detaches));
+    assert_eq!(sim.bridge.query_state(sim.now), QueryState::Off);
+    sim.bridge.set_enabled(true, sim.now);
+    sim.ready();
+    assert_eq!(sim.bridge.item, item, "the kept inventory item is worn again");
+    assert_eq!(sim.copies, 1);
+}
+
+#[test]
+fn a_bridge_turned_off_at_login_is_never_made() {
+    let mut sim = Simulator::new();
+    sim.bridge.set_enabled(false, sim.now);
+    for _ in 0..80 {
+        sim.step();
+    }
+    assert_eq!((sim.copies, sim.uploads, sim.attaches), (0, 0, 0));
+    assert!(sim.world.inventory.items.values().all(|i| i.name != NAME));
 }

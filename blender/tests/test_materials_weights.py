@@ -164,6 +164,7 @@ class MaterialWeightTests(unittest.TestCase):
             image.image.pixels.foreach_set([0, 1, 0, 1] * 4)
             image.image.update()
             aurora_live._last_capture = 0
+            aurora_live._last_change = 0
             aurora_live._tick()
             self.assertEqual(len(submitted), 3)
             self.assertNotEqual(submitted[0]["images"][0]["rgba"], submitted[-1]["images"][0]["rgba"])
@@ -229,6 +230,53 @@ class MaterialWeightTests(unittest.TestCase):
         self.assertEqual(color[0], 188, "linear 0.5 must be sRGB encoded")
         self.assertIn(orm[1], (127,128), "float data buffers stay linear")
         self.assertAlmostEqual(mat["metallic"], 0.2126)
+
+    def spaced_image(self, name, spaces):
+        """Base colour image in the first space this OCIO config has, or None."""
+        image = bpy.data.images.new(name, width=2, height=2, alpha=True)
+        for space in spaces:
+            try:
+                # Before the pixels: a new space can regenerate a generated image.
+                image.colorspace_settings.name = space
+            except TypeError:
+                continue
+            image.pixels.foreach_set([0.5, 0.5, 0.5, 1] * 4)
+            image.update()
+            node = self.material.node_tree.nodes.new("ShaderNodeTexImage")
+            node.image = image
+            self.material.node_tree.links.new(node.outputs["Color"], self.shader.inputs["Base Color"])
+            return node
+        bpy.data.images.remove(image)
+        return None
+
+    def test_linear_and_data_spaces_of_every_blender_generation_are_read(self):
+        # Blender 3.x tags data "Raw" and linear "Linear" (#1455).
+        tested = 0
+        for space in ("Raw", "Linear", "Linear Rec.709", "Non-Color"):
+            node = self.spaced_image(space, (space,))
+            if node is None:
+                continue
+            value = self.capture()
+            raw = base64.b64decode(value["images"][value["meshes"][0]["faces"][0]["material"]["textures"][0]]["rgba"])
+            self.assertEqual(raw[0], 188, space + " values are linear and must be sRGB encoded")
+            self.material.node_tree.nodes.remove(node)
+            tested += 1
+        self.assertGreaterEqual(tested, 2)
+
+    def test_unreadable_texture_keeps_the_live_mesh_in_its_plain_color(self):
+        if self.spaced_image("Log encoded", ("Filmic Log", "AgX Log", "XYZ")) is None:
+            self.skipTest("no log color space in this OCIO config")
+        self.material.diffuse_color = (0.2, 0.4, 0.6, 1)
+        with self.assertRaisesRegex(ValueError, "color spaces"):
+            self.capture()
+        errors, warnings = {}, {}
+        value = exporter.snapshot([self.mesh], self.names, 1, errors=errors, warnings=warnings)
+        face = value["meshes"][0]["faces"][0]
+        self.assertFalse(errors)
+        self.assertIn("color spaces", warnings[self.mesh.as_pointer()])
+        self.assertEqual(value["images"], [])
+        self.assertEqual(face["material"]["textures"], [None] * 4)
+        self.assertAlmostEqual(face["color"][2], 0.6, places=5)
 
     def test_float_alpha_buffers_are_unpremultiplied_when_the_alpha_output_is_used(self):
         image = bpy.data.images.new("Premultiplied float", width=2, height=2, float_buffer=True)

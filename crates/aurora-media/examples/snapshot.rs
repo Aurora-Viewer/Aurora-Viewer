@@ -18,7 +18,7 @@ fn main() {
     let plugin = plugin_for_mime(&mime);
     let cache = std::env::temp_dir().join("aurora_media_test_cache");
     let browser = BrowserSettings {
-        cache_path: format!("{}\\", cache.display()),
+        cache_path: format!("{}{}", cache.display(), std::path::MAIN_SEPARATOR),
         ..Default::default()
     };
     let mut m = MediaPlugin::launch(&paths, plugin, 0, 0, &browser, "").expect("launch");

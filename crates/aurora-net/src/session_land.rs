@@ -102,6 +102,11 @@ impl Session<'_> {
                 };
                 let transaction = Uuid::new_v4();
                 let (sections, chunks) = land::access_list_chunks(&entries);
+                log::debug!(
+                    "ParcelAccessListUpdate: parcel {local_id}, kind {flags:#x}, {} entries in {} message(s), to {addr}",
+                    entries.len(),
+                    chunks.len()
+                );
                 for (i, chunk) in chunks.iter().enumerate() {
                     let mut m = ParcelAccessListUpdate::default();
                     m.agent_data.agent_id = agent;
@@ -405,7 +410,7 @@ impl Session<'_> {
                             .filter(|t| !t.is_empty())
                             .unwrap_or_else(|| "none/none".into()),
                         Err(e) => {
-                            log::info!("media type of {url}: {e}");
+                            log::info!("media type of {url}: {}", e.without_url());
                             "none/none".into()
                         }
                     };
@@ -442,7 +447,7 @@ impl Session<'_> {
                 {
                     Ok(r) if r.status().is_success() => log::info!("parcel {local_id}: properties sent"),
                     Ok(r) => log::warn!("parcel {local_id}: properties update HTTP {}", r.status().as_u16()),
-                    Err(e) => log::warn!("parcel {local_id}: properties update failed: {e}"),
+                    Err(e) => log::warn!("parcel {local_id}: properties update failed: {}", e.without_url()),
                 }
             });
             return;
@@ -514,6 +519,14 @@ impl Session<'_> {
         let events = self.sh.events.clone();
         tokio::spawn(async move {
             let result = post_remote_parcel(&http, &url, &body).await;
+            if let Err(e) = result {
+                // the slot asked, to tell a wrong handle from a missing parcel
+                log::warn!(
+                    "RemoteParcelRequest for region {}, {} at {position}: {e:?}",
+                    (handle >> 32) / 256,
+                    (handle & 0xffff_ffff) / 256
+                );
+            }
             let _ = events.send(NetEvent::RemoteParcel { handle, position, result });
         });
     }
@@ -547,7 +560,7 @@ impl Session<'_> {
                     None => Err(aurora_i18n::tr!("session-land-unreadable-response").to_owned()),
                 },
                 Ok(r) => Err(format!("HTTP {}", r.status().as_u16())),
-                Err(e) => Err(e.to_string()),
+                Err(e) => Err(e.without_url().to_string()),
             };
             if let Err(e) = &result {
                 log::warn!("parcel {local_id} environment: {e}");
@@ -579,7 +592,7 @@ impl Session<'_> {
                         }
                     }
                     Ok(r) => log::warn!("GetExperienceInfo: HTTP {}", r.status().as_u16()),
-                    Err(e) => log::warn!("GetExperienceInfo failed: {e}"),
+                    Err(e) => log::warn!("GetExperienceInfo failed: {}", e.without_url()),
                 }
             }
         });
@@ -613,7 +626,7 @@ impl Session<'_> {
                     None
                 }
                 Err(e) => {
-                    log::warn!("LandResources failed: {e}");
+                    log::warn!("LandResources failed: {}", e.without_url());
                     None
                 }
             };
@@ -633,7 +646,7 @@ impl Session<'_> {
                             .and_then(|b| aurora_llsd::from_xml(&b).ok())
                             .ok_or_else(|| aurora_i18n::tr!("session-land-unreadable-response").to_owned()),
                         Ok(r) => Err(format!("HTTP {}", r.status().as_u16())),
-                        Err(e) => Err(e.to_string()),
+                        Err(e) => Err(e.without_url().to_string()),
                     }
                 }
             };
@@ -683,7 +696,7 @@ impl Session<'_> {
                     .map(|v| (land::parse_script_summary(&v), land::parse_attachment_scripts(&v)))
                     .ok_or_else(|| aurora_i18n::tr!("session-land-unreadable-response").to_owned()),
                 Ok(r) => Err(format!("HTTP {}", r.status().as_u16())),
-                Err(e) => Err(e.to_string()),
+                Err(e) => Err(e.without_url().to_string()),
             };
             let _ = events.send(NetEvent::Land(LandEvent::AttachmentScripts(result)));
         });
@@ -714,7 +727,7 @@ impl Session<'_> {
                     None
                 }
                 Err(e) => {
-                    log::warn!("FindExperienceByName failed: {e}");
+                    log::warn!("FindExperienceByName failed: {}", e.without_url());
                     None
                 }
             };
@@ -759,7 +772,7 @@ impl Session<'_> {
                     None
                 }
                 Err(e) => {
-                    log::warn!("AvatarPickerSearch failed: {e}");
+                    log::warn!("AvatarPickerSearch failed: {}", e.without_url());
                     None
                 }
             };
@@ -772,6 +785,12 @@ impl Session<'_> {
         let id = pkt.id;
         if id == ParcelAccessListReply::ID {
             let m: ParcelAccessListReply = pkt.decode()?;
+            log::debug!(
+                "ParcelAccessListReply: parcel {}, kind {:#x}, {} entries, from {from}",
+                m.data.local_id,
+                m.data.flags,
+                m.list.iter().filter(|e| !e.id.is_nil()).count()
+            );
             let entries = m
                 .list
                 .iter()

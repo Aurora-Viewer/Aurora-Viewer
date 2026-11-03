@@ -526,7 +526,7 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     ui.item_if(
         "paperclip",
         aurora_i18n::tr!("common-detach"),
-        f.object.attachment_item.is_some(),
+        f.object.detach,
         CtxAction::Detach(key),
     );
     save_as_submenu(ui);
@@ -650,14 +650,26 @@ fn avatar_social_items(ui: &mut Builder, f: &Facts, id: Uuid) {
         CtxAction::AddFriend(id),
     );
     contact_set_entries(ui, f, id);
-    ui.item("message-circle-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
+    // RLVa @startim: greyed instead of refused after the click
+    // (LLAvatarActions::startIM / startCall refuse both).
+    ui.item_if(
+        "message-circle-filled",
+        aurora_i18n::tr!("ui-context-send-im"),
+        !f.im_blocked,
+        CtxAction::Im(id),
+    );
     // Avatar.GiveCard (enabled like RLV.CanShowName: always here)
     ui.item(
         "id-filled",
         aurora_i18n::tr!("ui-context-give-my-calling-card"),
         CtxAction::GiveCallingCard(id),
     );
-    ui.item_if("phone-filled", aurora_i18n::tr!("common-voice-call"), f.voice, CtxAction::Call(id));
+    ui.item_if(
+        "phone-filled",
+        aurora_i18n::tr!("common-voice-call"),
+        f.voice && !f.im_blocked,
+        CtxAction::Call(id),
+    );
     // Avatar.InviteToGroup (enabled like RLV.CanShowName: always here)
     ui.item(
         "users-plus",
@@ -792,6 +804,15 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
             f.blocked,
             true,
             CtxAction::ToggleBlock(id),
+        );
+        // Local mute of their nearby/call voice only (flagVoiceChat), same as
+        // People › Block voice and the menu volume row — not land moderation.
+        ui.check(
+            "microphone-off",
+            aurora_i18n::tr!("ui-people-block-voice"),
+            f.voice_blocked,
+            f.can_block_voice,
+            CtxAction::ToggleVoiceMute(id),
         );
         ui.separator();
         if let Some(object) = attachment {
@@ -1736,6 +1757,10 @@ mod tests {
         f.object.drop = true;
         let drop = row(menu(&f), "ui-context-drop");
         assert!(drop.enabled && matches!(drop.kind, Kind::Action(CtxAction::Drop(k)) if k == key));
+        // enable_detach: greyed while an RLVa remove lock holds it
+        assert!(!row(menu(&f), "common-detach").enabled);
+        f.object.detach = true;
+        assert!(row(menu(&f), "common-detach").enabled);
         // the favorite row, once the item is known: the one that applies
         f.object.attachment_item = Some(item);
         f.object.favorite = Some(false);
@@ -1813,6 +1838,18 @@ mod tests {
             assert!(row.enabled);
             assert_eq!(row.checked, Some(blocked));
             assert!(matches!(row.kind, Kind::Action(CtxAction::ToggleOwnerParticleFilter(i)) if i == id));
+        }
+        // Disturbance › Block voice: mute list voice flag, greyed for Lindens
+        for (voice_blocked, can_block_voice) in [(false, true), (true, true), (false, false)] {
+            let f = Facts {
+                voice_blocked,
+                can_block_voice,
+                ..Facts::default()
+            };
+            let row = find(world_menu(&target, &f, Vec3::ZERO), "ui-people-block-voice");
+            assert_eq!(row.enabled, can_block_voice);
+            assert_eq!(row.checked, Some(voice_blocked));
+            assert!(matches!(row.kind, Kind::Action(CtxAction::ToggleVoiceMute(i)) if i == id));
         }
     }
 }

@@ -69,8 +69,11 @@ impl App {
             self.send_blender_shape(action);
         }
         let choose = std::mem::take(&mut self.blender_live.installer_choose);
-        if std::mem::take(&mut self.blender_live.installer_scan) || choose {
-            self.blender_live.installer.scan(&self.scene.jobs, ctx, choose);
+        let scan = std::mem::take(&mut self.blender_live.installer_scan);
+        if choose {
+            self.blender_live.installer.choose(&self.scene.jobs, ctx);
+        } else if scan {
+            self.blender_live.installer.scan(&self.scene.jobs, ctx);
         }
         if let Some(executable) = self.blender_live.installer_target.take() {
             self.blender_live.installer.install(executable, &self.scene.jobs, ctx);
@@ -210,6 +213,10 @@ impl App {
                 renderer.staging_pool(),
             );
             let mode = std::env::var("AURORA_DEMO_BLENDER_LIVE").unwrap_or_default();
+            if mode == "plugins" || mode.starts_with("installer-") {
+                self.blender_live.tab = crate::blender_live::Tab::Plugins;
+            }
+            self.blender_live.installer.demo(&mode);
             if mode.starts_with("shape") {
                 self.demo_blender_shape(mode == "shape-readonly");
             }

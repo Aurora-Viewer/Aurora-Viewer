@@ -8,6 +8,8 @@ import struct
 import threading
 import time
 import unittest
+from unittest.mock import patch
+import zlib
 
 spec = importlib.util.spec_from_file_location("aurora_client", Path(__file__).resolve().parents[1] / "aurora_live" / "client.py")
 module = importlib.util.module_from_spec(spec)
@@ -36,6 +38,103 @@ def snapshot(connection):
 
 
 class ClientTests(unittest.TestCase):
+    def test_detached_buffers_support_packed_and_older_peers_without_mutation(self):
+        vertex = struct.pack("<8f4B4f", 1, 2, 3, 0, 0, 1, 0.25, 0.75, 0, 0, 0, 0, 1, 0, 0, 0)
+        value = {"protocol": 1, "revision": 1, "meshes": [{"name": "Detached capture", "source_id": "source",
+                 "faces": [{"color": [1, 1, 1, 1], "_buffers": (vertex, struct.pack("<3I", 0, 0, 0))}]}]}
+        packed = module.wire_snapshot(value, ["pbr-materials", "source-ids", "packed-geometry"])
+        self.assertEqual(module.base64.b64decode(packed["meshes"][0]["faces"][0]["packed"]["vertices"]), vertex)
+        plain = module.wire_snapshot(value, ["pbr-materials", "source-ids"])
+        face = plain["meshes"][0]["faces"][0]
+        self.assertEqual(face["vertices"][0]["position"], [1, 2, 3])
+        self.assertEqual(face["vertices"][0]["weights"], [1, 0, 0, 0])
+        self.assertEqual(face["indices"], [0, 0, 0])
+        self.assertIn("_buffers", value["meshes"][0]["faces"][0])
+        self.assertNotIn("_buffers", face)
+
+    def test_packed_geometry_uses_the_same_f32_values_and_preserves_the_capture(self):
+        vertex = {"position": [0.123456789, -2, 3], "normal": [0, 1, 0], "uv": [0.25, 0.75],
+                  "joints": [1, 2, 3, 0], "weights": [0.17, 0.28, 0.55, 0]}
+        value = {"protocol": 1, "revision": 1, "meshes": [{"name": "Packed source", "source_id": "source",
+                 "faces": [{"color": [1, 1, 1, 1], "vertices": [vertex], "indices": [0, 0, 0]}]}]}
+        original = json.dumps(value)
+        packed = module.wire_snapshot(value, ["pbr-materials", "source-ids", "packed-geometry"])
+        face = packed["meshes"][0]["faces"][0]
+        expected = struct.pack("<8f4B4f", *vertex["position"], *vertex["normal"], *vertex["uv"], *vertex["joints"], *vertex["weights"])
+        self.assertEqual(module.base64.b64decode(face["packed"]["vertices"]), expected)
+        self.assertEqual(module.base64.b64decode(face["packed"]["indices"]), struct.pack("<3I", 0, 0, 0))
+        self.assertNotIn("vertices", face)
+        self.assertEqual(original, json.dumps(value))
+        self.assertEqual(module.wire_snapshot(value, ["pbr-materials", "source-ids"]), value)
+
+    def test_compressed_snapshots_preserve_all_data_and_require_negotiation(self):
+        value = {"protocol": 1, "revision": 4, "meshes": [{"name": "Detailed source", "faces": [], "padding": "mesh data " * 2000}]}
+        original = json.dumps(value, separators=(",", ":")).encode()
+        with patch.object(module, "MAX_BYTES", 2048):
+            payload, errors = module.prepare_frame(value, {"features": ["pbr-materials", "compressed-snapshots"]})
+            self.assertTrue(payload.startswith(b"ZLIB"))
+            self.assertEqual(json.loads(zlib.decompress(payload[4:])), value)
+            self.assertFalse(errors)
+            self.assertGreater(len(original), module.MAX_BYTES)
+            self.assertLess(len(payload), module.MAX_BYTES)
+            plain, errors = module.prepare_frame(value, {"features": ["pbr-materials"]})
+            self.assertFalse(json.loads(plain)["meshes"])
+            self.assertIn("Update Aurora", errors["Detailed source"])
+
+    def test_oversized_source_is_omitted_with_images_and_links_repaired(self):
+        big = {"name": "Too large", "source_id": "root", "faces": [], "padding": "x" * 4096}
+        small = {"name": "Valid child", "source_id": "child", "link": {"parent": "root", "offset": [0, 0, 0]},
+                 "faces": [{"material": {"textures": [1, None, None, None]}, "vertices": [], "indices": []}]}
+        value = {"protocol": 1, "revision": 1, "meshes": [big, small], "images": ["unused" * 200, "used"]}
+        with patch.object(module, "MAX_BYTES", 1024):
+            payload, errors = module.prepare_frame(value, {"features": ["pbr-materials", "source-ids", "object-links"]})
+        sent = json.loads(payload)
+        self.assertEqual(set(errors), {"root"})
+        self.assertEqual([mesh["source_id"] for mesh in sent["meshes"]], ["child"])
+        self.assertNotIn("link", sent["meshes"][0])
+        self.assertEqual(sent["images"], ["used"])
+        self.assertEqual(sent["meshes"][0]["faces"][0]["material"]["textures"], [0, None, None, None])
+        self.assertIn("link", small)
+        self.assertEqual(small["faces"][0]["material"]["textures"][0], 1)
+
+    def test_decoded_budget_is_enforced_even_when_compression_is_small(self):
+        value = {"protocol": 1, "revision": 1, "meshes": [{"name": "Over decoded budget", "padding": "x" * 8000}]}
+        hello_value = {"features": ["pbr-materials", "compressed-snapshots"], "max_bytes": 1024, "max_decoded_bytes": 4096}
+        payload, errors = module.prepare_frame(value, hello_value)
+        self.assertFalse(json.loads(payload)["meshes"])
+        self.assertIn("transfer limit", errors["Over decoded budget"])
+
+    def test_socket_sends_compressed_frames_then_recovers_from_an_oversized_source(self):
+        received = []
+        first = threading.Event()
+        complete = threading.Event()
+
+        def server(listener):
+            with listener.accept()[0] as connection:
+                connection.settimeout(5)
+                self.assertEqual(receive(connection, 8), module.MAGIC)
+                connection.sendall(b'{"protocol":1,"joints":["mPelvis"],"max_bytes":1024,"max_decoded_bytes":4096,"features":["pbr-materials","compressed-snapshots"]}\n')
+                received.append(snapshot(connection))
+                connection.sendall(b'{"ok":true,"revision":1}\n')
+                first.set()
+                length = struct.unpack("<I", receive(connection, 4))[0]
+                data = receive(connection, length)
+                self.assertTrue(data.startswith(b"ZLIB"))
+                received.append(json.loads(zlib.decompress(data[4:])))
+                connection.sendall(b'{"ok":true,"revision":2}\n')
+                complete.set()
+
+        client, thread, failures = self.serve(server)
+        client.submit({"protocol": 1, "revision": 1, "meshes": [{"name": "Too large", "padding": "x" * 8000}]})
+        self.assertTrue(first.wait(3))
+        self.assertIn("Too large", client.issues()[1])
+        client.submit({"protocol": 1, "revision": 2, "meshes": [{"name": "Repaired", "padding": "x" * 3000}]})
+        self.assertTrue(complete.wait(3))
+        self.assertFalse(client.issues()[1])
+        self.finish(client, thread, failures)
+        self.assertFalse(received[0]["meshes"])
+        self.assertEqual(received[1]["meshes"][0]["name"], "Repaired")
+
     def test_import_request_and_binary_result_are_independent_of_live_revisions(self):
         identity = {"id": "00000000-0000-0000-0000-000000000123", "source": "00000000-0000-0000-0000-000000000456"}
         received = []

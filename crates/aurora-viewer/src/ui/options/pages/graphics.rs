@@ -1,7 +1,7 @@
 //! Preferences › Graphics (panel_preferences_graphics1.xml and its
 //! advanced floater): the level of the whole, then quality, light, the sky,
 //! reflections and Aurora's water, the image (anti-aliasing, tone mapping,
-//! depth of field) and smoothness.
+//! depth of field), smoothness and parcel visibility.
 
 use super::super::cx::{Cx, Nothing, field};
 use super::super::{COMBO_W, preset_choice, stepped, toggle};
@@ -46,6 +46,27 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     .changed()
                 },
             );
+            // the stars' sky (world/night_sky.rs)
+            {
+                use crate::world::night_sky::NightSky;
+                cx.unfolded().choice(
+                    tr!("ui-options-night-sky"),
+                    tr!("ui-options-night-sky-help"),
+                    &field!(night_sky),
+                    &[
+                        (NightSky::Real, tr!("ui-options-night-sky-real"), false),
+                        (NightSky::Legacy, tr!("ui-options-night-sky-legacy"), false),
+                    ],
+                );
+                let legacy = cx.s.night_sky != NightSky::Real;
+                cx.subs(legacy, night_sky_rows);
+            }
+            // an Aurora difference, also listed in Preferences › Aurora
+            cx.experimental().toggle(
+                tr!("ui-options-colored-sky-ambient"),
+                tr!("ui-options-colored-sky-ambient-help"),
+                &field!(colored_sky_ambient),
+            );
             cx.toggle(
                 tr!("ui-options-keep-environment"),
                 tr!("ui-options-restore-the-local-environment-selected-sky-water-and-day"),
@@ -61,17 +82,56 @@ pub fn page(cx: &mut Cx, tab: usize) {
         }),
         3 => reflections_and_water(cx),
         4 => image(cx),
-        _ => {
+        5 => {
             frames_per_second(cx);
             graphics_card(cx);
             overlays(cx);
         }
+        6 => parcels(cx),
+        _ => {}
     }
 }
 
 /// The GPU the viewer draws with (#894): automatic (discrete first) or one
 /// by name; the renderer opens it at startup, so the choice applies at the
 /// next start. `AURORA_GPU` overrides it.
+/// The real sky's rows (world/night_sky.rs): where it is seen from, its
+/// latitude (set by a preset, typed for Custom; moving it makes the place
+/// Custom) and the stars' brightness.
+fn night_sky_rows(cx: &mut Cx) {
+    use crate::world::night_sky::{GAIN_RANGE, SkyPlace};
+    let places: Vec<(SkyPlace, &str)> = SkyPlace::ALL.iter().map(|p| (*p, p.label())).collect();
+    if cx.combo(
+        aurora_i18n::tr!("ui-options-night-sky-place"),
+        aurora_i18n::tr!("ui-options-night-sky-place-help"),
+        &field!(night_sky_place),
+        &places,
+    ) {
+        cx.s.sync_night_sky();
+    }
+    cx.greyed(cx.s.night_sky_place != SkyPlace::Custom);
+    if cx.slider(
+        aurora_i18n::tr!("ui-options-night-sky-latitude"),
+        aurora_i18n::tr!("ui-options-night-sky-latitude-help"),
+        &field!(night_sky_latitude),
+        -90.0..=90.0,
+        "°",
+    ) {
+        cx.s.night_sky_place = SkyPlace::Custom;
+        cx.s.sync_night_sky();
+    }
+    cx.greyed(false);
+    if cx.slider(
+        aurora_i18n::tr!("ui-options-night-sky-brightness"),
+        aurora_i18n::tr!("ui-options-night-sky-brightness-help"),
+        &field!(night_sky_gain),
+        GAIN_RANGE,
+        "×",
+    ) {
+        cx.s.sync_night_sky();
+    }
+}
+
 fn graphics_card(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-graphics-card"), |cx| {
@@ -122,6 +182,13 @@ fn overlays(cx: &mut Cx) {
 fn frames_per_second(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-frames-per-second"), |cx| {
+        cx.slider(
+            tr!("ui-options-render-scale"),
+            tr!("ui-options-render-scale-help"),
+            &field!(render_scale_percent),
+            50..=100,
+            "%",
+        );
         // across, its switch in line with those of the limits below
         cx.wide().toggle(
             tr!("ui-options-vertical-synchronization"),
@@ -157,26 +224,9 @@ fn frames_per_second(cx: &mut Cx) {
     });
 }
 
-fn quality(cx: &mut Cx) {
+fn parcels(cx: &mut Cx) {
     use aurora_i18n::tr;
-    cx.group(tr!("ui-options-presets"), |cx| {
-        let p = cx.p;
-        cx.wide().keywords(tr!("ui-options-preset-custom")).row(
-            tr!("ui-options-preset-level"),
-            tr!("ui-options-preset-level-help"),
-            // a level writes the page's settings: they are the rows below
-            &Nothing,
-            |ui, s| preset_choice(ui, &p, s),
-        );
-    });
-    cx.group(tr!("ui-options-distance-and-detail"), |cx| {
-        cx.slider(
-            tr!("common-draw-distance"),
-            tr!("ui-options-objects-beyond-this-distance-are-not-drawn-96-m"),
-            &field!(draw_distance),
-            32.0..=512.0,
-            " m",
-        );
+    cx.group(tr!("parcel-visibility-filter"), |cx| {
         cx.combo(
             tr!("parcel-visibility-mode"),
             tr!("parcel-visibility-help"),
@@ -198,6 +248,8 @@ fn quality(cx: &mut Cx) {
             tr!("parcel-visibility-same-group-help"),
             &field!(parcel_visibility.same_group),
         );
+    });
+    cx.group(tr!("parcel-visibility-parcels"), |cx| {
         parcel_list(
             cx,
             tr!("parcel-visibility-parcels"),
@@ -205,12 +257,41 @@ fn quality(cx: &mut Cx) {
             &field!(parcel_visibility.parcels),
             false,
         );
+    });
+    cx.group(tr!("parcel-visibility-always-visible"), |cx| {
         parcel_list(
             cx,
             tr!("parcel-visibility-always-visible"),
             tr!("parcel-visibility-always-visible-help"),
             &field!(parcel_visibility.always_visible),
             true,
+        );
+    });
+}
+
+fn quality(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-options-presets"), |cx| {
+        let p = cx.p;
+        cx.wide().keywords(tr!("ui-options-preset-custom")).row(
+            tr!("ui-options-preset-level"),
+            tr!("ui-options-preset-level-help"),
+            // a level writes the page's settings: they are the rows below
+            &Nothing,
+            |ui, s| preset_choice(ui, &p, s),
+        );
+        cx.below()
+            .row_with(tr!("graphics-saved-title"), tr!("graphics-saved-help"), &Nothing, |ui, s, st, _| {
+                super::super::saved_graphics::controls(ui, &p, s, st)
+            });
+    });
+    cx.group(tr!("ui-options-distance-and-detail"), |cx| {
+        cx.slider(
+            tr!("common-draw-distance"),
+            tr!("ui-options-objects-beyond-this-distance-are-not-drawn-96-m"),
+            &field!(draw_distance),
+            32.0..=512.0,
+            " m",
         );
         cx.row(
             tr!("ui-options-level-of-detail-lod"),
@@ -827,7 +908,7 @@ fn parcel_list(
     use aurora_i18n::tr;
     let p = cx.p;
     let get = field.get_mut;
-    cx.below().row_with(label, hint, field, |ui, s, st, _| {
+    cx.section_body().row_with(label, hint, field, |ui, s, st, _| {
         let entries = get(s);
         let mut changed = false;
         ui.vertical(|ui| {

@@ -50,11 +50,10 @@ impl App {
             .filter(|n| !n.is_empty())
     }
 
-    /// A press: `selected` (the scene slots of the target; empty: the
-    /// avatars within 3 m) is taken now, the names missing are asked, the
-    /// lines follow in `finish_describe`.
-    pub(super) fn start_describe(&mut self, tool: &'static str, selected: Vec<usize>) {
-        let scope = self.scene.describe_scope(&self.world, &selected);
+    /// A press: `scope` (what the target details; empty: the avatars
+    /// within 3 m) is taken now, the names missing are asked, the lines
+    /// follow in `finish_describe`.
+    pub(super) fn start_describe(&mut self, tool: &'static str, scope: crate::scene::describe::DescribeScope) {
         let mut asked = 0;
         for root in scope.roots(&self.world) {
             if asked == NAMES_PER_PRESS {
@@ -91,7 +90,8 @@ impl App {
             crate::ui::widgets::open_floater(&self.egui_ctx, crate::ui::dev_toolbox::WINDOW, &mut self.panels.dev_toolbox);
             self.dev_toolbox.selected = tool;
             self.toolbox.begin(tool);
-            self.start_describe(tool, Vec::new());
+            let scope = self.scene.describe_scope(&self.world, &[]);
+            self.start_describe(tool, scope);
         }
         if self.describe.as_ref().is_none_or(|p| Instant::now() < p.at) {
             return;

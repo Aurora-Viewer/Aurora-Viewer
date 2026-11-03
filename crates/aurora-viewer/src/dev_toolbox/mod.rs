@@ -11,6 +11,8 @@ pub mod anonymize;
 pub mod legend;
 pub mod tools;
 
+use uuid::Uuid;
+
 /// GitHub refuses a comment longer than this (characters): a longer copy
 /// is offered as a .txt file instead.
 pub const GITHUB_COMMENT_LIMIT: usize = 65_536;
@@ -25,10 +27,16 @@ pub enum Target {
     Selection,
     /// The surface under the cursor, frozen by a click.
     UnderCursor,
+    /// Our own avatar and what it wears: a tester wearing the item that
+    /// renders wrong runs the tools on themselves.
+    MyAvatar,
 }
 
 impl Target {
-    pub const ALL: [Target; 3] = [Target::Nearest, Target::Selection, Target::UnderCursor];
+    /// In the order of `AURORA_DEMO_TOOLBOX`'s target numbers (0 to 3).
+    pub const ALL: [Target; 4] = [Target::Nearest, Target::Selection, Target::UnderCursor, Target::MyAvatar];
+    /// The target bar's order: the two avatars, then the objects.
+    pub const BAR: [Target; 4] = [Target::Nearest, Target::MyAvatar, Target::Selection, Target::UnderCursor];
 
     /// Its name in the header of a copy (English, like the log).
     pub fn code(self) -> &'static str {
@@ -36,7 +44,19 @@ impl Target {
             Target::Nearest => "nearest avatar",
             Target::Selection => "selection",
             Target::UnderCursor => "under cursor",
+            Target::MyAvatar => "my avatar",
         }
+    }
+}
+
+/// The avatar a per-target tool describes: `me` for my avatar, the nearest
+/// other one within 3 m, or the wearer of the selected or pointed-at object
+/// (`wearer`, that avatar itself when an avatar is the object).
+pub fn target_avatar(target: Target, me: Uuid, nearest: Option<Uuid>, wearer: Option<Uuid>) -> Option<Uuid> {
+    match target {
+        Target::MyAvatar => (!me.is_nil()).then_some(me),
+        Target::Nearest => nearest,
+        Target::Selection | Target::UnderCursor => wearer,
     }
 }
 
@@ -75,6 +95,32 @@ mod tests {
             "Aurora 0.7.2+12.g1a2b3c · J2 · target: nearest avatar · names hidden"
         );
         assert_eq!(header("0.7.2", "J4", None, false), "Aurora 0.7.2 · J4");
+    }
+
+    #[test]
+    fn my_avatar_is_the_target_without_anything_else() {
+        let me = Uuid::from_u128(1);
+        let other = Uuid::from_u128(2);
+        assert_eq!(target_avatar(Target::MyAvatar, me, None, None), Some(me));
+        assert_eq!(target_avatar(Target::MyAvatar, me, Some(other), Some(other)), Some(me));
+        assert_eq!(target_avatar(Target::MyAvatar, Uuid::nil(), None, None), None, "before login");
+        assert_eq!(target_avatar(Target::Nearest, me, Some(other), None), Some(other));
+        assert_eq!(target_avatar(Target::Nearest, me, None, Some(other)), None);
+        assert_eq!(target_avatar(Target::Selection, me, Some(other), None), None);
+        assert_eq!(
+            header("0.8.3", "J9", Some(Target::MyAvatar), true),
+            "Aurora 0.8.3 · J9 · target: my avatar · names hidden"
+        );
+    }
+
+    #[test]
+    fn the_demo_target_numbers_keep_their_meaning() {
+        assert_eq!(Target::ALL[0], Target::Nearest);
+        assert_eq!(Target::ALL[1], Target::Selection);
+        assert_eq!(Target::ALL[2], Target::UnderCursor);
+        assert_eq!(Target::ALL[3], Target::MyAvatar);
+        assert_eq!(Target::default(), Target::Nearest);
+        assert!(Target::ALL.iter().all(|t| Target::BAR.contains(t)));
     }
 
     #[test]

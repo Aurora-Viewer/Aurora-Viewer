@@ -25,18 +25,26 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const MAGIC: &[u8; 4] = b"AUTX";
 /// Bumped when the layout, the encoder profile or its quality check change:
-/// older files are ignored (and rewritten by the next decode). 2: the
+/// incompatible files are rewritten by the next decode. 2: the
 /// colour of the mips is the plain average of the texels (`build_mips`). 3:
 /// the ends of alpha stay exact (`aurora_render::bc7::encode_chain`).
-const VERSION: u8 = 3;
+/// 4: retain the legacy pick mask and an exact alpha > 0 plane together.
+const VERSION: u8 = 4;
 const KIND_KEEP_RGBA: u8 = 0;
 const KIND_BC7: u8 = 1;
 /// Fixed part of the header, then 8 bytes per level.
 const HEADER: usize = 32;
 const MAX_LEVELS: usize = 16;
 const MAX_DIM: u32 = 16384;
-/// A pick mask is one bit per 2 × 2 texels.
-const MAX_MASK_BYTES: usize = (MAX_DIM as usize / 2) * (MAX_DIM as usize / 2) / 8;
+/// Legacy 2 × 2 mask plus one bit per texel for world Blend left clicks.
+const MAX_MASK_BYTES: usize = (MAX_DIM as usize / 2) * (MAX_DIM as usize / 2) / 8 + MAX_DIM as usize * MAX_DIM as usize / 8;
+
+pub(super) fn pick_mask_bytes(width: u32, height: u32) -> Option<usize> {
+    if width == 0 || height == 0 || width > MAX_DIM || height > MAX_DIM {
+        return None;
+    }
+    Some((width.div_ceil(2) as usize * height.div_ceil(2) as usize).div_ceil(8) + (width as usize * height as usize).div_ceil(8))
+}
 
 /// Files waiting to be written may hold this much; past it, new ones are
 /// dropped (their texture is decoded again next time).
@@ -85,7 +93,7 @@ impl Writer {
     }
 }
 
-/// A pick mask as stored: (width, height, bits).
+/// A pick mask: full texel dimensions, then legacy and exact bit planes.
 pub type MaskParts = (u32, u32, Vec<u8>);
 
 /// What a decode leaves in the cache besides the levels.
@@ -254,7 +262,7 @@ enum Parsed {
 /// The header checked against the length of the file, and where to read
 /// the levels from `want` on.
 fn parse(head: &[u8], file_len: u64, want: u8) -> Option<Parsed> {
-    if head.get(..4)? != MAGIC || *head.get(4)? != VERSION {
+    if head.get(..4)? != MAGIC || !matches!(*head.get(4)?, 3 | VERSION) {
         return None;
     }
     let kind = head[5];
@@ -282,7 +290,9 @@ fn parse(head: &[u8], file_len: u64, want: u8) -> Option<Parsed> {
         return None;
     }
     let (mw, mh, mlen) = (u32_at(head, 20)?, u32_at(head, 24)?, u32_at(head, 28)? as usize);
-    if mlen > MAX_MASK_BYTES || (mlen > 0 && (mw as usize * mh as usize).div_ceil(8) != mlen) {
+    // Opaque version-3 chains remain usable. Alpha masks need a fresh decode
+    // once to supply the exact bit plane rather than guessing transparency.
+    if mlen > MAX_MASK_BYTES || (mlen > 0 && (head[4] != VERSION || pick_mask_bytes(mw, mh) != Some(mlen))) {
         return None;
     }
     let mut sizes = Vec::with_capacity(count);
@@ -362,7 +372,7 @@ mod tests {
 
     #[test]
     fn a_chain_comes_back_whole_at_its_level() {
-        let mask = vec![0b1010_1010u8; 4];
+        let mask = vec![0b1010_1010u8; pick_mask_bytes(8, 4).unwrap()];
         let bytes = encode(&meta(2), Some((8, 4, &mask)), &chain()).expect("file");
         let path = file("whole.bc7", &bytes);
         let Some(Transcoded::Bc7(c)) = read(&path, 2) else {
@@ -398,8 +408,23 @@ mod tests {
     }
 
     #[test]
+    fn old_opaque_chains_survive_but_old_alpha_masks_are_decoded_again() {
+        let opaque_meta = Meta {
+            alpha: AlphaKind::Opaque,
+            ..meta(0)
+        };
+        let mut opaque = encode(&opaque_meta, None, &chain()).unwrap();
+        opaque[4] = 3;
+        assert!(matches!(read(&file("old-opaque.bc7", &opaque), 0), Some(Transcoded::Bc7(_))));
+        let mut masked = encode(&meta(0), Some((8, 4, &[0; 5])), &chain()).unwrap();
+        masked[4] = 3;
+        assert_eq!(read(&file("old-mask.bc7", &masked), 0), None);
+        assert_eq!(pick_mask_bytes(u32::MAX, u32::MAX), None);
+    }
+
+    #[test]
     fn damaged_files_are_ignored() {
-        let good = encode(&meta(0), Some((8, 4, &[0u8; 4])), &chain()).expect("file");
+        let good = encode(&meta(0), Some((8, 4, &[0u8; 5])), &chain()).expect("file");
         let check = |name: &str, change: &dyn Fn(&mut Vec<u8>)| {
             let mut bytes = good.clone();
             change(&mut bytes);
@@ -417,7 +442,7 @@ mod tests {
         check("short", &|b| b.truncate(b.len() - 1));
         check("long", &|b| b.push(0));
         check("header-only", &|b| b.truncate(20));
-        check("mask-size", &|b| b[28] = 5);
+        check("mask-size", &|b| b[28] = 6);
         check("level-size", &|b| b[HEADER + 8] = 9);
         check("odd-size", &|b| b[HEADER] = 18);
         check("huge", &|b| b[HEADER + 2] = 0xFF);

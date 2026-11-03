@@ -382,13 +382,12 @@ impl LibraryUi {
                 );
                 foot.show(ui, |ui| {
                     let description = window.description.get_or_insert_with(|| item.desc.clone());
-                    let response = ui.add_enabled(
-                        material_editor::can_edit(world, &item),
-                        egui::TextEdit::singleline(description)
+                    let response = crate::ui::widgets::text_field(ui, material_editor::can_edit(world, &item), description, |b, ui| {
+                        egui::TextEdit::singleline(b)
                             .hint_text(aurora_i18n::tr!("common-description"))
                             .char_limit(127)
-                            .desired_width(ui.available_width()),
-                    );
+                            .desired_width(ui.available_width())
+                    });
                     if response.lost_focus() && *description != item.desc && material_editor::can_edit(world, &item) {
                         actions.push(Action::Change(Mutation {
                             operations: vec![Operation::Patch {

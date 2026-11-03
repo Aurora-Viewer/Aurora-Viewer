@@ -56,6 +56,7 @@ struct Window {
     images: HashMap<uuid::Uuid, egui::TextureHandle>,
     wanted_images: HashSet<uuid::Uuid>,
     shapes: Vec<egui::epaint::ClippedShape>,
+    location_drop: Option<crate::ui::places::drag::LocationDrag>,
 }
 
 impl Window {
@@ -74,6 +75,7 @@ impl Window {
             images: HashMap::new(),
             wanted_images: HashSet::new(),
             shapes: Vec::new(),
+            location_drop: None,
         }
     }
 
@@ -114,6 +116,8 @@ impl Window {
                     self.st
                         .show(ui.ctx(), &mut c, &pics, &mut self.settings, &web, self.classic, &mut open),
                 );
+                self.location_drop = crate::ui::places::drag::location_world_drag(ui.ctx());
+                crate::ui::places::drag::ghost(ui.ctx(), &p);
             },
         );
         output.textures_delta.clear();
@@ -168,6 +172,87 @@ impl Window {
 
 fn has(texts: &Texts, text: &str) -> bool {
     texts.iter().any(|(_, t)| t == text)
+}
+
+#[test]
+fn search_places_drag_to_the_world_before_details_load_in_both_styles_and_all() {
+    use crate::ui::places::drag::{PlaceDrag, Target};
+    for (classic, tab, all) in [
+        (false, Tab::Places, false),
+        (true, Tab::Places, false),
+        (false, Tab::Places, true),
+        (false, Tab::Land, false),
+        (true, Tab::Land, false),
+        (false, Tab::People, false),
+        (true, Tab::People, false),
+        (false, Tab::Groups, false),
+        (true, Tab::Groups, false),
+    ] {
+        let mut world = world();
+        let mut w = Window::new("aurora");
+        w.classic = classic;
+        if !all {
+            w.st.open_tab(tab);
+        }
+        w.st.set_text(tab, "aurora");
+        let requests = if classic {
+            w.st.request(tab, &w.settings).into_iter().collect()
+        } else {
+            w.st.aurora_requests(&w.settings)
+        };
+        apply(&mut world, requests.into_iter().map(SearchAction::Find).collect());
+        world.profiles.parcels.clear();
+        let list = world.search.list(tab).expect("directory reply");
+        let row = list.sorted()[0].clone();
+        let selected = list.selected;
+        let mut texts = Vec::new();
+        // Deliberately withhold ParcelInfoReply throughout the gesture.
+        for _ in 0..4 {
+            texts = w.frame(&world, Vec::new()).0;
+        }
+        let start = texts.iter().find(|(_, t)| *t == row.name).expect("visible row").0;
+        let button = |pos, pressed, modifiers| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers,
+        };
+        let (_, mut actions) = w.frame(
+            &world,
+            vec![egui::Event::PointerMoved(start), button(start, true, Default::default())],
+        );
+        actions.extend(w.frame(&world, vec![egui::Event::PointerMoved(start + egui::vec2(16.0, 0.0))]).1);
+        if !matches!(tab, Tab::Places | Tab::Land) {
+            assert!(egui::DragAndDrop::payload::<PlaceDrag>(&w.ctx).is_none(), "non-place row: {tab:?}");
+            continue;
+        }
+        let Key::Id(id) = row.key else { panic!("parcel identity") };
+        let cargo = egui::DragAndDrop::payload::<PlaceDrag>(&w.ctx).expect("drag from result without parcel details");
+        assert_eq!(cargo.target, Target::Parcel(id));
+        assert_eq!(cargo.name, row.name);
+        assert!(cargo.favorite.is_none() && cargo.thumbnail.is_none());
+        assert_eq!(cargo.target.item(), None, "directory places are not inventory cargo");
+        let end = egui::pos2(1370.0, 850.0);
+        w.frame(&world, vec![egui::Event::PointerMoved(end)]);
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        actions.extend(
+            w.frame(&world, vec![egui::Event::ModifiersChanged(shift), button(end, false, shift)])
+                .1,
+        );
+        let drop = w.location_drop.take().expect("world receives the release");
+        assert_eq!(drop.target, Target::Parcel(id));
+        assert!(drop.released && drop.shift);
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, SearchAction::Select(..) | SearchAction::Teleport(..)))
+        );
+        assert_eq!(world.search.list(tab).expect("list").selected, selected);
+        assert!(world.inventory.items.is_empty() && world.profiles.parcels.is_empty());
+    }
 }
 
 fn groups_window(world: &mut World, classic: bool) -> Window {

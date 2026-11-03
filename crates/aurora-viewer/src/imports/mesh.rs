@@ -110,6 +110,11 @@ pub struct Prepared {
     pub hulls: Vec<process::Physics>,
     pub degenerate_triangles: usize,
 }
+impl Prepared {
+    pub fn physics_error(&self) -> Option<String> {
+        (self.degenerate_triangles > 0).then(|| aurora_i18n::tr!("import-degenerate-physics", count = self.degenerate_triangles))
+    }
+}
 impl Draft {
     /// LLModelPreview::rebuildUploadData: per-prim scale and whole-scene span
     /// both constrain the upload factor (64 m prims, 240 m linkset span on SL).
@@ -572,11 +577,8 @@ pub fn request(
     if name.trim().is_empty() || name.len() > 63 || description.len() > 127 || name.contains('\0') || description.contains('\0') {
         return Err(AssetError::invalid("mesh name or description"));
     }
-    if prepared.degenerate_triangles > 0 {
-        return Err(AssetError::invalid(aurora_i18n::tr!(
-            "import-degenerate-physics",
-            count = prepared.degenerate_triangles
-        )));
+    if let Some(error) = prepared.physics_error() {
+        return Err(AssetError::invalid(error));
     }
     let meshes = prepared
         .lods
@@ -708,6 +710,21 @@ impl Imports {
         prefs: &crate::ui::inventory::InventoryPreferences,
         rights: Permissions,
     ) {
+        if !self.with_choice(Choice::Mesh, |imports| imports.folder_plan_valid(world)) {
+            self.message = aurora_i18n::tr!("import-invalid-request").into();
+            return;
+        }
+        let planned_folder = if self.folders.active() {
+            self.entries
+                .iter()
+                .find(|entry| entry.id == id)
+                .and_then(|entry| entry.upload_path.as_ref())
+                .and_then(|path| self.folders.resolved(path, &world.inventory))
+                .or(Some(self.folders.destination))
+        } else {
+            None
+        };
+        let shared_destination = self.folders.active() || !self.load_preferences.use_default_folders;
         let textures = Self::default_folder(world, prefs, Kind::Texture);
         let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && !e.reloading) else {
             return;
@@ -727,7 +744,8 @@ impl Imports {
         let generation = entry.preview_generation;
         draft.pending = Some((request_id, generation));
         let draft = draft.clone();
-        let folder = entry.folder;
+        let folder = planned_folder.unwrap_or(entry.folder);
+        let textures = if shared_destination { folder } else { textures };
         let name = entry.name.clone();
         let description = entry.description.clone();
         let options = entry.options;
@@ -739,7 +757,14 @@ impl Imports {
                 .as_ref()
                 .map_or_else(|| prepare(&draft).map(Arc::new), |prepared| Ok(prepared.clone()))
                 .and_then(|prepared| {
-                    request(&draft, &prepared, folder, textures, &name, &description, rights, options).map(|request| (prepared, request))
+                    // Preserve the geometry for the repair action, including when
+                    // a batch requests its fee before its preview has completed.
+                    if prepared.degenerate_triangles > 0 {
+                        Ok((prepared, None))
+                    } else {
+                        request(&draft, &prepared, folder, textures, &name, &description, rights, options)
+                            .map(|request| (prepared, Some(request)))
+                    }
                 })
                 .map_err(|e| e.to_string());
             let _ = tx.send(Worker::MeshPrepared(id, request_id, generation, result));

@@ -157,6 +157,7 @@ mod tests {
                 );
                 socket.write_all(header.as_bytes()).await.expect("response header");
                 socket.write_all(&body).await.expect("response body");
+                crate::test_http::finish(socket);
             }
             requests
         });

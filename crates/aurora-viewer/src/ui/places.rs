@@ -18,6 +18,7 @@
 //! tabs back.
 
 pub mod aurora;
+pub(crate) mod drag;
 pub mod model;
 
 use super::place_details::{self, Ctx};
@@ -245,11 +246,8 @@ fn slurl_at(world: &World, global: DVec3, title: &str) -> Option<String> {
         .map(|(_, s)| s.name.clone())
         .or_else(|| title.rsplit(", ").next().map(str::to_owned))
         .filter(|r| !r.is_empty())?;
-    let pos = glam::Vec3::new(
-        global.x.rem_euclid(256.0) as f32,
-        global.y.rem_euclid(256.0) as f32,
-        global.z as f32,
-    );
+    let (x, y) = world.map.local_xy(global.x, global.y);
+    let pos = glam::Vec3::new(x as f32, y as f32, global.z as f32);
     Some(crate::slurl::make(&region, pos))
 }
 
@@ -322,6 +320,7 @@ impl PlacesUi {
         let mut actions = Vec::new();
         self.show_confirm(ctx, c.p, confirm_teleports, &mut actions);
         if !*open {
+            self.aurora.pending_click = None;
             return actions;
         }
         if std::mem::take(&mut self.raise) {
@@ -350,6 +349,7 @@ impl PlacesUi {
             });
             return actions;
         }
+        self.aurora.pending_click = None;
         floater.show(ctx, c.p, open, |ui| {
             let body = egui::Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
             ui.allocate_rect(body, Sense::hover());
@@ -587,6 +587,14 @@ impl PlacesUi {
                 self.selected == Some(sel),
                 false,
             );
+            if row.folder.is_none() {
+                drag::source(&r.response, || drag::PlaceDrag {
+                    target: drag::Target::Landmark(row.id),
+                    favorite: (self.tab == TAB_FAVORITES).then_some(row.id),
+                    name: row.name.clone(),
+                    thumbnail: None,
+                });
+            }
             if r.response.clicked() || r.response.secondary_clicked() {
                 self.selected = Some(sel);
                 if let Some(it) = world.inventory.items.get(&row.id) {
@@ -873,6 +881,12 @@ impl PlacesUi {
                     self.selected == Some(Sel::History(i)),
                     true,
                 );
+                drag::source(&r.response, || drag::PlaceDrag {
+                    target: drag::Target::History(it.global),
+                    favorite: None,
+                    name: it.title.clone(),
+                    thumbnail: None,
+                });
                 if r.response.clicked() || r.response.secondary_clicked() {
                     self.selected = Some(Sel::History(i));
                 }
@@ -1153,7 +1167,12 @@ fn list_row(
     info_button: bool,
 ) -> RowResponse {
     let w = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(w, 20.0), Sense::click());
+    let sense = if folder.is_none() {
+        Sense::click_and_drag()
+    } else {
+        Sense::click()
+    };
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(w, 20.0), sense);
     let painter = ui.painter();
     if selected {
         painter.rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.28));

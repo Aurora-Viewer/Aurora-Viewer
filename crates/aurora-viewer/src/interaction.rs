@@ -97,6 +97,10 @@ pub struct Target {
     pub key: ObjKey,
     pub object: Uuid,
     pub root: Uuid,
+    /// Chosen from a menu (`menu_target`), not by the click action: the
+    /// purchase is rechecked against the menu's rules, whatever the click
+    /// action (LLFloaterBuy buys the selection).
+    pub menu: bool,
 }
 
 /// Attachments and avatars do not expose these one-click actions. A child's
@@ -137,6 +141,7 @@ pub fn target(world: &World, idx: usize, props: &HashMap<Uuid, ObjectProps>) -> 
         key: object.key,
         object: object.full_id,
         root: root.full_id,
+        menu: false,
     })
 }
 
@@ -159,6 +164,7 @@ pub fn menu_target(world: &World, idx: usize, action: Action) -> Option<Target> 
         key: object.key,
         object: object.full_id,
         root: root.full_id,
+        menu: true,
     })
 }
 
@@ -205,6 +211,9 @@ pub struct Interactions {
     pub held: Option<Held>,
     pub media_url: Option<String>,
     last_amount: i32,
+    /// L$ missing for the last confirmed payment or purchase: the app opens
+    /// Buy L$ for them (`take_shortfall`).
+    shortfall: Option<i32>,
 }
 
 pub struct Contents {
@@ -217,16 +226,30 @@ pub struct Held {
     pub offset: glam::Vec3,
     pub position: glam::Vec3,
     pub surface: aurora_net::TouchSurface,
-    /// The surface was read from the faces the GPU drew (a rigged mesh,
-    /// scene/drawn.rs): the CPU cannot follow the cursor on it, the
-    /// touch keeps the surface of its press.
+    /// The surface was read from the faces the GPU drew (a rigged mesh, a
+    /// worn mesh, a worn prim with an action: scene/drawn.rs): the CPU
+    /// cannot follow the cursor on it, so the faces drawn under the cursor
+    /// are asked for again while it is held (`drawn`, `latest`).
     pub shown: bool,
+    /// The request for the faces drawn under the cursor and the cursor it
+    /// was made at, while the answer is on its way.
+    pub drawn: Option<(u64, (f32, f32))>,
+    /// When the faces drawn were last asked for.
+    pub asked: Instant,
+    /// The surface the newest answer gave and the cursor it was asked at
+    /// (the press until the first answer).
+    pub latest: (aurora_net::TouchSurface, (f32, f32)),
     pub cursor: (f32, f32),
     pub last: Instant,
     pub physical: bool,
 }
 
 impl Interactions {
+    /// The L$ a refused confirmation was missing, once.
+    pub fn take_shortfall(&mut self) -> Option<i32> {
+        self.shortfall.take()
+    }
+
     pub fn on_purchase_inventory(&mut self, object: Uuid, result: &Result<Vec<TaskItem>, String>) {
         if let Some(d) = &mut self.dialog
             && d.target.action == Action::Buy
@@ -330,9 +353,10 @@ impl Interactions {
             return None;
         }
         // LLFloaterPay::give pays the selected prim regardless of its normal
-        // click action. A menu payment must recheck payment eligibility itself.
-        let current = if d.target.action == Action::Pay {
-            menu_target(world, idx, Action::Pay)?
+        // click action, and LLFloaterBuy buys the selection: a payment, or a
+        // purchase chosen from a menu, rechecks its eligibility itself.
+        let current = if d.target.action == Action::Pay || d.target.menu {
+            menu_target(world, idx, d.target.action)?
         } else {
             target(world, idx, &self.props)?
         };
@@ -355,8 +379,12 @@ impl Interactions {
         if price < 0 || (d.target.action == Action::Pay && (price == 0 || d.prices.is_none())) {
             return None;
         }
-        if world.balance.is_none_or(|b| price > b) {
-            d.error = Some(aurora_i18n::tr!("common-insufficient-or-unknown-balance").into());
+        // give_money / can_afford_transaction: short of L$, the Buy L$ window
+        // opens for what is missing (an unknown balance counts as 0, like
+        // the status bar's); the dialog stays open to try again
+        let balance = world.balance.unwrap_or(0);
+        if price > balance {
+            self.shortfall = Some(price - balance.max(0));
             return None;
         }
         let out = if d.target.action == Action::Buy {
@@ -733,6 +761,74 @@ mod tests {
         w.objects.get_mut(child).unwrap().click_action = code::DISABLED;
         assert!(state.confirm(&w, None).is_none());
     }
+    /// LLFloaterBuy buys the selection: Buy from the menu, the hover tip or
+    /// Area Search completes whatever the click action (a boxed product
+    /// keeps the default Touch), still rechecking identity and sale.
+    #[test]
+    fn menu_purchases_do_not_require_a_buy_click_action() {
+        let mut w = world();
+        let root = w.objects.index_of_uuid(&crate::demo::action_id(971)).unwrap();
+        let child = w.objects.index_of_uuid(&crate::demo::action_id(974)).unwrap();
+        for action in [code::TOUCH, code::SIT, code::PAY, code::OPEN, code::DISABLED] {
+            w.objects.get_mut(root).unwrap().click_action = action;
+            w.objects.get_mut(child).unwrap().click_action = action;
+            let mut state = Interactions::default();
+            let t = menu_target(&w, child, Action::Buy).unwrap();
+            assert_eq!(t.object, crate::demo::action_id(971));
+            state.open(t);
+            let props = ObjectProps {
+                object_id: t.root,
+                sale_type: 2,
+                sale_price: 10,
+                ..Default::default()
+            };
+            state.on_properties(std::slice::from_ref(&props));
+            assert!(
+                matches!(
+                    state.confirm(&w, None),
+                    Some(NetCommand::BuyObject {
+                        local_id: 971,
+                        price: 10,
+                        ..
+                    })
+                ),
+                "menu purchase with click action {action}"
+            );
+            // the price changed since the dialog opened
+            state.open(t);
+            state.on_properties(std::slice::from_ref(&props));
+            state.on_properties(&[ObjectProps { sale_price: 20, ..props }]);
+            assert!(state.confirm(&w, None).is_none());
+        }
+    }
+
+    /// give_money / can_afford_transaction: short of L$, nothing is sent
+    /// and the missing amount is handed to Buy L$, once.
+    #[test]
+    fn a_short_balance_asks_for_the_missing_l() {
+        let mut w = world();
+        let idx = w.objects.index_of_uuid(&crate::demo::action_id(974)).unwrap();
+        for (balance, missing) in [(Some(4), 6), (Some(-3), 10), (None, 10)] {
+            w.balance = balance;
+            let mut state = Interactions::default();
+            let t = target(&w, idx, &state.props).unwrap();
+            state.open(t);
+            state.on_properties(&[ObjectProps {
+                object_id: t.root,
+                sale_type: 2,
+                sale_price: 10,
+                ..Default::default()
+            }]);
+            assert!(state.confirm(&w, None).is_none());
+            assert_eq!(state.take_shortfall(), Some(missing), "balance {balance:?}");
+            assert_eq!(state.take_shortfall(), None);
+            assert!(state.dialog.is_some());
+            w.balance = Some(10);
+            assert!(matches!(state.confirm(&w, None), Some(NetCommand::BuyObject { price: 10, .. })));
+            assert_eq!(state.take_shortfall(), None);
+        }
+    }
+
     #[test]
     fn confirms_original_copy_to_objects_and_contents_to_inventory_root() {
         let w = world();

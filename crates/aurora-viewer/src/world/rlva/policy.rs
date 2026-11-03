@@ -174,6 +174,9 @@ impl World {
             NetCommand::SendImDialog { to, dialog: 0, .. } => self.rlva_allows_im("sendim", *to),
             NetCommand::SendImDialog { to, dialog: 17, .. } => self.rlva_can_send_session(*to),
             NetCommand::SendImDialog { to, dialog: 4, .. } => r.allows("share", &to.to_string()),
+            // A dialog shown before @sendchat (process_script_dialog_response,
+            // llviewermessage.cpp): its public-chat answer is not sent.
+            NetCommand::ScriptDialogReply { channel: 0, .. } => !r.has("sendchat"),
             NetCommand::ActivateGroup(group) => {
                 !blocked("setgroup") || (actor == super::groups::ACTOR && r.has("setgroup") && r.groups.restore_allowed(*group))
             }
@@ -268,7 +271,11 @@ impl World {
                 })
                 .and_then(|i| self.objects.get(i))
                 .is_some_and(|object| {
-                    self.rlva_temporary_attachment(object.full_id) == Some(object.key) && self.rlva_can_remove(object.full_id, actor)
+                    self.rlva_own_attachment_root(object.full_id) == Some(object.full_id)
+                        && self.rlva_can_remove(
+                            object.attachment_item_id().filter(|id| !id.is_nil()).unwrap_or(object.full_id),
+                            actor,
+                        )
                 }),
             // Rez is sent as ADD while RLVa is enabled. The watchdog replaces
             // only removable predecessors once the actual point is known.
@@ -407,7 +414,14 @@ impl World {
                 if !self.rlva_inventory_force(source, &c) {
                     self.rlva.pending.push((source, c));
                 }
-                if !self.rlva.pending.is_empty() || !self.rlva.appearance.is_empty() {
+                // The next force command of the same object joins this one's
+                // COF update (RlvForceWear::done runs once per batch); any
+                // other command waits for the update, as before.
+                let joins = pending
+                    .as_slice()
+                    .first()
+                    .is_some_and(|(next, c)| *next == source && super::inventory::force_kind(&c.behaviour).is_some());
+                if !self.rlva.pending.is_empty() || (!self.rlva.appearance.is_empty() && !joins) {
                     self.rlva.pending.extend(pending);
                     break;
                 }

@@ -504,7 +504,7 @@ pub fn layout(level: Level, m: &Metrics, text: &TextSize, badges: usize) -> Layo
 }
 
 /// `layout`, with room for a tag `lead` points wide floating over the top
-/// edge from the text's left (the "Aurora Viewer" tag): the plate is at
+/// edge from the text's left (the "Aurora Team" tag): the plate is at
 /// least as wide, and on a full plate its floating badges start past it.
 pub fn layout_with(level: Level, m: &Metrics, text: &TextSize, badges: usize, lead: f32) -> Layout {
     let s = m.scale;

@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 pub use binary::{from_binary, to_binary};
 pub use notation::{from_notation, to_notation};
-pub use xml_llsd::{from_xml, from_xml_element, to_pretty_xml_string, to_xml, to_xml_string};
+pub use xml_llsd::{from_xml, from_xml_element, to_pretty_xml_string, to_serialized_xml, to_xml, to_xml_string};
 
 #[derive(Debug, thiserror::Error)]
 pub enum LlsdError {

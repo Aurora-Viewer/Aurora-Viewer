@@ -154,6 +154,17 @@ fn set_pills(ui: &mut egui::Ui, c: &mut Ctx, set: &str) {
         let mutable = !ContactSets::is_internal(set);
         let contacts = &mut *c.contacts;
         menu::dropdown(&gear, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+            if menu::item_tip(
+                ui,
+                p,
+                "file-import",
+                aurora_i18n::tr!("contacts-import"),
+                contacts.can_import_contact_sets(),
+                aurora_i18n::tr!("contacts-import-hint"),
+            ) {
+                contacts.import_contact_sets(ui.ctx(), world.agent_id);
+            }
+            menu::separator(ui, p);
             if menu::item_if(
                 ui,
                 p,
@@ -419,5 +430,61 @@ mod tests {
             assert_eq!(name.galley.job.sections[0].format.color, expected);
             assert!(st.wanted_pics.contains(&id), "modern members always request their picture");
         }
+    }
+}
+
+#[cfg(test)]
+mod import_tests {
+    use super::*;
+    use crate::ui::widgets::elide_tests::Frames;
+
+    #[test]
+    fn contact_set_import_is_available_in_the_empty_people_list() {
+        let world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let p = crate::theme::Theme::default().palette();
+        let mut contacts = crate::ui::contacts::ContactsUi::default();
+        let mut friends = super::super::FriendsSettings::default();
+        let images = std::collections::HashMap::new();
+        let mut actions = Vec::new();
+        let mut frames = Frames::new();
+        let gear = std::cell::Cell::new(egui::Pos2::ZERO);
+        let mut show = |ui: &mut egui::Ui| {
+            ui.set_width(400.0);
+            let new_w = widgets::filter_pill_width(ui, "plus", aurora_i18n::tr!("people-sets-new"));
+            gear.set(ui.cursor().min + egui::vec2(new_w + 5.0 + (rows::TOOLBAR_H - 2.0) * 0.5, (rows::TOOLBAR_H - 2.0) * 0.5));
+            let mut c = Ctx {
+                p: &p,
+                world: &world,
+                contacts: &mut contacts,
+                friends: &mut friends,
+                images: &images,
+                actions: &mut actions,
+                embedded_contacts: false,
+                contact_sheet_on_click: false,
+            };
+            set_pills(ui, &mut c, contact_sets::ALL_SETS);
+        };
+        for _ in 0..3 {
+            frames.run(Vec::new(), &mut show);
+        }
+        for pressed in [true, false] {
+            frames.run(
+                vec![
+                    egui::Event::PointerMoved(gear.get()),
+                    egui::Event::PointerButton {
+                        pos: gear.get(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                &mut show,
+            );
+        }
+        let texts = frames.run(Vec::new(), &mut show);
+        assert!(
+            texts.iter().any(|text| text.source == aurora_i18n::tr!("contacts-import")),
+            "the migration action is visible even before any set exists"
+        );
     }
 }

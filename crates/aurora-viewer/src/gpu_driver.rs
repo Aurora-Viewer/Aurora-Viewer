@@ -22,6 +22,13 @@ pub const NVIDIA_MINIMUM: (u32, u32) = (572, 16);
 /// Kepler cards (GeForce 600 / 700 series) stopped at the 470 branch; its
 /// last security update is 474.89 (2024).
 pub const NVIDIA_KEPLER_MINIMUM: (u32, u32) = (474, 89);
+/// The same on Linux, whose driver branches are numbered on their own (a
+/// Linux 570 is as recent as a Windows 572): 570.86.16, of the same day, is
+/// the first Linux driver with the RTX 5090 / 5080
+/// (https://www.nvidia.com/en-us/drivers/unix/).
+pub const NVIDIA_LINUX_MINIMUM: (u32, u32) = (570, 86);
+/// Kepler's last Linux driver: 470.256.02 (2024).
+pub const NVIDIA_LINUX_KEPLER_MINIMUM: (u32, u32) = (470, 256);
 /// Any driver, any vendor, installed more than this many months ago.
 pub const MAX_AGE_MONTHS: u32 = 24;
 
@@ -76,8 +83,12 @@ pub struct Input {
     pub vendor_id: u32,
     pub gpu: String,
     /// The Vulkan driver's name and information (`NVIDIA 582.78`,
-    /// `AMD proprietary driver 25.20.42.14 (LLPC)`).
+    /// `NVIDIA 570.86.16` on Linux, `AMD proprietary driver 25.20.42.14
+    /// (LLPC)`).
     pub driver: String,
+    /// The driver is NVIDIA's Linux one, whose versions follow their own
+    /// branches (`NVIDIA_LINUX_MINIMUM`).
+    pub linux: bool,
     pub installed: Option<Installed>,
     pub today: (i32, u32, u32),
 }
@@ -113,10 +124,11 @@ pub fn check(input: &Input) -> Option<Notice> {
     if vendor == Vendor::Nvidia {
         let version = nvidia_version(&input.driver).or_else(|| input.installed.as_ref().and_then(|i| nvidia_from_windows(&i.version)));
         if let Some(found) = version {
-            let minimum = if kepler(&input.gpu) {
-                NVIDIA_KEPLER_MINIMUM
-            } else {
-                NVIDIA_MINIMUM
+            let minimum = match (input.linux, kepler(&input.gpu)) {
+                (false, false) => NVIDIA_MINIMUM,
+                (false, true) => NVIDIA_KEPLER_MINIMUM,
+                (true, false) => NVIDIA_LINUX_MINIMUM,
+                (true, true) => NVIDIA_LINUX_KEPLER_MINIMUM,
             };
             if found < minimum {
                 return Some(notice(Reason::Version {
@@ -132,11 +144,17 @@ pub fn check(input: &Input) -> Option<Notice> {
     (months > MAX_AGE_MONTHS && !(vendor == Vendor::Nvidia && kepler(&input.gpu))).then(|| notice(Reason::Age { date, months }))
 }
 
-/// `NVIDIA 582.78` → (582, 78).
+/// `NVIDIA 582.78` → (582, 78); Linux's third number is left out
+/// (`NVIDIA 570.86.16` → (570, 86)).
 pub fn nvidia_version(driver: &str) -> Option<(u32, u32)> {
     let rest = driver.trim().strip_prefix("NVIDIA")?.trim();
-    let (major, minor) = rest.split_whitespace().next()?.split_once('.')?;
-    Some((major.parse().ok()?, minor.parse().ok()?))
+    let mut parts = rest.split_whitespace().next()?.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    if parts.next().is_some_and(|patch| patch.parse::<u32>().is_err()) || parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor))
 }
 
 /// Windows writes NVIDIA's version in its last five digits:
@@ -245,30 +263,35 @@ pub fn installed(_gpu: &str) -> Option<Installed> {
     None
 }
 
-/// `AURORA_DEMO_GPU_DRIVER=old|aged`: a GeForce GTX 1060 on an NVIDIA
-/// driver of 2023 (`old`, under the minimum), or an AMD card whose driver
-/// was installed three years ago (`aged`).
+/// `AURORA_DEMO_GPU_DRIVER=old|old-linux|aged`: a GeForce GTX 1060 on an
+/// NVIDIA driver of 2023 (`old`, under the minimum), the same card on a
+/// Linux driver of 2024 (`old-linux`, under the Linux minimum), or an AMD
+/// card whose driver was installed three years ago (`aged`).
 pub fn demo_input() -> Option<Input> {
     std::env::var_os("AURORA_DEMO")?;
     let today = today();
-    let (vendor_id, gpu, driver, installed) = match std::env::var("AURORA_DEMO_GPU_DRIVER").ok()?.as_str() {
+    let (vendor_id, gpu, driver, installed, linux) = match std::env::var("AURORA_DEMO_GPU_DRIVER").ok()?.as_str() {
         "old" => (
             0x10DE,
             "NVIDIA GeForce GTX 1060 6GB",
             "NVIDIA 546.33",
-            Installed {
+            Some(Installed {
                 date: (2023, 12, 12),
                 version: "31.0.15.4633".into(),
-            },
+            }),
+            false,
         ),
+        // Linux has no installation date to read
+        "old-linux" => (0x10DE, "NVIDIA GeForce GTX 1060 6GB", "NVIDIA 565.57.01", None, true),
         "aged" => (
             0x1002,
             "AMD Radeon RX 6700 XT",
             "AMD proprietary driver 23.10.2",
-            Installed {
+            Some(Installed {
                 date: (today.0 - 3, today.1, 1),
                 version: "31.0.22011.4008".into(),
-            },
+            }),
+            false,
         ),
         _ => return None,
     };
@@ -276,7 +299,8 @@ pub fn demo_input() -> Option<Input> {
         vendor_id,
         gpu: gpu.into(),
         driver: driver.into(),
-        installed: Some(installed),
+        linux,
+        installed,
         today,
     })
 }
@@ -290,6 +314,7 @@ mod tests {
             vendor_id,
             gpu: gpu.into(),
             driver: driver.into(),
+            linux: false,
             installed: installed.map(|(date, version)| Installed {
                 date,
                 version: version.into(),
@@ -383,6 +408,41 @@ mod tests {
             )),
             None
         );
+    }
+
+    #[test]
+    fn linux_versions_have_three_numbers_or_two() {
+        assert_eq!(nvidia_version("NVIDIA 615.78.08"), Some((615, 78)));
+        assert_eq!(nvidia_version("NVIDIA 550.54.14"), Some((550, 54)));
+        assert_eq!(nvidia_version("NVIDIA 470.256.02"), Some((470, 256)));
+        assert_eq!(nvidia_version("NVIDIA 570.144"), Some((570, 144)));
+        assert_eq!(nvidia_version("NVIDIA 570.86.x"), None);
+        assert_eq!(nvidia_version("NVIDIA 1.2.3.4"), None);
+    }
+
+    #[test]
+    fn linux_drivers_are_held_to_the_linux_branches() {
+        let linux = |gpu: &str, driver: &str| Input {
+            linux: true,
+            ..input(0x10DE, gpu, driver, None)
+        };
+        // the first Linux drivers of the RTX 50 are recent enough, though
+        // under the Windows number
+        assert_eq!(check(&linux("NVIDIA GeForce RTX 5090", "NVIDIA 570.86.16")), None);
+        assert_eq!(check(&linux("NVIDIA GeForce RTX 4070", "NVIDIA 570.144")), None);
+        assert_eq!(check(&linux("NVIDIA GeForce RTX 4070", "NVIDIA 615.78.08")), None);
+        let old = check(&linux("NVIDIA GeForce GTX 1060 6GB", "NVIDIA 565.57.01")).expect("old");
+        assert_eq!(
+            old.reason,
+            Reason::Version {
+                found: "565.57".into(),
+                minimum: "570.86".into()
+            }
+        );
+        assert_eq!(old.key, "NVIDIA 565.57.01");
+        // Kepler's last Linux driver, and one before it
+        assert_eq!(check(&linux("NVIDIA GeForce GTX 780 Ti", "NVIDIA 470.256.02")), None);
+        assert!(check(&linux("NVIDIA GeForce GTX 680", "NVIDIA 470.199.02")).is_some());
     }
 
     #[test]

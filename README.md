@@ -4,12 +4,12 @@
 
 # Aurora Viewer
 
-**A modern Second Life viewer, written from scratch in Rust.**<br>
+**A modern Second Life viewer, written in Rust.**<br>
 A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 [![Download](docs/readme/button-download.svg)](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/latest)&nbsp;
 [![Download for Linux](docs/readme/button-download-linux.svg)](docs/LINUX.md)&nbsp;
-[![Download for macOS](docs/readme/button-download-macos.svg)](docs/MACOS.md)&nbsp;
+[![Download for macOS (experimental)](docs/readme/button-download-macos.svg)](docs/MACOS.md)&nbsp;
 [![Discord](docs/readme/button-discord.svg)](https://discord.gg/TK4nbMGmKt)&nbsp;
 [![Website](docs/readme/button-website.svg)](https://aurora-viewer.org)
 
@@ -18,6 +18,8 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-4F46E5)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-5EEAD4?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-070B1F)](#build)
+
+<sub>This software is not provided or supported by Linden Lab, the makers of Second Life.</sub>
 
 [Why Aurora](#why-aurora) · [Creator tools](#creator-tools) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing)
 
@@ -75,10 +77,12 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 </details>
 
 
-Aurora Viewer is a Second Life client built from scratch in Rust, with a
-modern GPU renderer (wgpu on Vulkan) and a clean, flat interface. It follows
-the behaviour of the Legacy Viewer — same protocol,
-same rules, same defaults — while rethinking the user interface.
+Aurora Viewer is a Second Life client written in Rust, with a modern GPU
+renderer (wgpu on Vulkan) and a clean, flat interface. It is a new codebase,
+not a fork: many of its parts are Rust ports of code from the Second Life
+viewer and the Legacy Viewer, credited file by file ([NOTICE.md](NOTICE.md)). It follows the
+behaviour of the Legacy Viewer — same protocol, same rules, same defaults —
+while rethinking the user interface.
 
 > **Status:** early development (0.x). Usable for exploring, chatting and
 > testing. Some implemented features still await live-grid validation — see
@@ -103,6 +107,41 @@ same rules, same defaults — while rethinking the user interface.
     <td width="25%" align="center" valign="top">
       <h3>Vulkan</h3>
       a renderer built for today's graphics cards
+    </td>
+  </tr>
+</table>
+
+### New in 0.8.5 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>Immersive sound <img src="docs/readme/pill-experimental.svg" alt="Experimental" height="18" align="absmiddle"></h3>
+      World sounds go dull and quiet behind a wall or inside a closed box,
+      pass behind your head with headphones (HRTF), and ring like the place
+      you stand in: dry in the open air, a long soft tail in a large hall.
+      Three switches in Preferences › Sound.
+    </td>
+    <td width="50%" valign="top">
+      <h3>VR headset viewing <img src="docs/readme/pill-experimental.svg" alt="Experimental" height="18" align="absmiddle"></h3>
+      Put on an OpenXR headset, click the headset button and look around the
+      world in stereo, from your avatar's eyes or where the camera stands.
+      Viewing only for now; Esc brings the desktop back
+      (<a href="docs/VR.md">setup and limits</a>).
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h3>A start without the wait</h3>
+      Aurora keeps its own cache of compiled graphics pipelines: a start no
+      longer sits for twenty seconds on a black window when the graphics
+      driver has emptied its shader cache.
+    </td>
+    <td valign="top">
+      <h3>Smoother where it was heavy</h3>
+      Ambient occlusion at about a third of its cost on 4K screens, sharp
+      textures that hold after a teleport, and a viewer window behind that
+      gives its video memory back to the one in front.
     </td>
   </tr>
 </table>
@@ -147,6 +186,18 @@ are planned or in progress: they are not in the viewer yet.
   in Preferences, from the login screen on.
 - **Fast with a huge wardrobe**: the Appearance window stays smooth with
   thousands of outfits.
+- **Quick starts, every time**: Aurora keeps the graphics pipelines it
+  compiled, so a start no longer depends on the driver's own shader cache
+  still holding them.
+- **Light on a 4K screen**: on large scenes, ambient occlusion is computed
+  at half resolution and brought back along the depth, for the same image
+  at about a third of the cost.
+- **Sharp after a teleport**: in a busy region, texture memory comes down
+  once and holds, instead of blurring and sharpening again every few
+  seconds.
+- **Two viewers on one card**: a window in the background gives its video
+  memory back, and pauses its 3D drawing when the card is full, so the one
+  in front keeps its frame rate.
 - <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **AMD FSR upscaling** and its native anti-aliasing, on every brand of
   graphics card.
 
@@ -166,9 +217,16 @@ are planned or in progress: they are not in the viewer yet.
 - **Graphics levels matched to your machine**, chosen at first launch: GTAO
   from Medium up, contact shadows from High, screen-space indirect light
   (experimental) in Deluxe with a 192 m draw distance; per-section resets
-  when you want to start over.
+  when you want to start over. Save your own settings as named graphics
+  profiles and switch between them from Preferences or the FPS counter.
 - **HDR, or the older look**: the Legacy Viewer's HDR and Emissive switch,
   on by default, in Preferences › Graphics › Image.
+- **A real night sky**: the 8,920 stars you can see with the naked eye, in
+  their true places and colours, and the Milky Way, turning with the
+  region's day and following today's season. Choose where on Earth you look
+  up from (Paris, Tokyo, Sydney… or your own latitude) and how bright the
+  stars shine, in Preferences or Personal Lighting; the Legacy Viewer's
+  random stars stay one click away.
 
 ### The Second Life you know
 
@@ -210,6 +268,12 @@ are planned or in progress: they are not in the viewer yet.
   folder, or wear them straight away, replacing your outfit or adding to it.
 - **Sound Explorer**: find which object plays a sound, preview it, stop it or
   block it.
+- **Experiences that set the scene**: an experience you allow can change
+  your sky and water, as its creator meant; Forget or Block puts the shared
+  environment back, and so does leaving the region.
+- **Shopping in one click**: a vendor sells on a click on its price, a short
+  balance opens Buy L$ instead of greying the button, and Buy works from the
+  menu of any object for sale.
 - **Run your land**: a complete Region / Estate window (people and bans,
   interventions, scripts and physics with Top scripts / Top colliders,
   environment, experiences, covenant, telehub and terrain), in the Aurora
@@ -220,7 +284,7 @@ are planned or in progress: they are not in the viewer yet.
   underwater.
 - **RLVa, when you want it**: the restrictions, exceptions and commands that
   scripted outfits, furniture and experiences rely on (RLV 3.4.3 /
-  RLVa 2.4.2). Off by default: turn it on in Preferences › Protections;
+  RLVa 2.4.2). Off by default: turn it on in Preferences › RLVa;
   turning it off releases every restriction at once ([details](docs/RLVA.md)).
 - **PBR terrain**: regions whose ground uses PBR materials render with them,
   as in the Legacy Viewer, and estate managers preview a ground-cover change
@@ -245,6 +309,13 @@ are planned or in progress: they are not in the viewer yet.
   on-screen camera pad, and a 2 s or 10 s self-timer to get into your pose.
 - **Up to 8K**: 4K by default, in PNG, JPEG or BMP, to disk, inventory or the
   profile feed ([how to use it](#photos)).
+- **Group photos, sharp**: Shift + click adds every avatar of a group shot
+  to the focus, while the background keeps its blur.
+- **Pose without leaving the shot**: your HUDs answer clicks in the
+  viewfinder, and its Poser button poses the avatar over the shot.
+- **Light the shot**: a light button above the shutter opens personal
+  lighting, and the sky, water and day cycle can change for the photo only,
+  or stay after it.
 - **Freeze the world**: every avatar, animation and moving thing holds still
   while your camera stays free, to line up the perfect angle on a pose.
 - **Camera presets**: save a whole shot by name and bring it back in one
@@ -274,13 +345,16 @@ are planned or in progress: they are not in the viewer yet.
   you can place on the ground, move, rotate, resize, attach to your body or
   HUD and detach. The Blender plug-in ships with the viewer and installs
   itself, with an SL / Bento starter rig, rigging tools and an import with
-  its LODs prepared ([details](docs/BLENDER_LIVE.md)).
+  its LODs prepared ([details](docs/BLENDER_LIVE.md)). Preview an animation
+  on a saved local model, to see Bento tails and wings move. Textures in
+  Blender 3.x colour spaces sync, and accessories rigged to an Avastar body
+  dev kit sit where an upload puts them.
 - **A poser for photos**: pose yourself, your own animesh, or nearby avatars
   who agree to it, joint by joint: body, face, hands, other bones and
   physics, with a Left / Right / Mirror side choice, a finger grid and
   whole-pose actions. Save poses to a library, export them as BVH or import
-  them as an animation. The pose is seen by you only
-  ([details](docs/POSER.md)).
+  them as an animation, with Ctrl+Z / Ctrl+Y as you go. The pose is seen by
+  you only ([details](docs/POSER.md)).
 - **An IK workbench**: reusable pose projects that keep chosen bones on their
   targets, with contacts that compatible viewers apply to nearby avatars
   ([details](docs/IK_EDIT.md)).
@@ -289,7 +363,12 @@ are planned or in progress: they are not in the viewer yet.
   of the prim you are about to create, outlines that stay visible while you
   move transparent objects, edit handles you can make bigger, and parcel
   boundary shortcuts in the terrain menus. Default permissions (Inventory ›
-  New) apply to everything you create or import.
+  New) apply to everything you create or import. In a busy sandbox, select
+  only your own objects, or only the ones you may move; prefer the classic
+  editor? Its Legacy layout is one switch away. A selection rectangle takes
+  only what it wholly surrounds (one switch to take all it touches), objects
+  rez and copy with your active group, BOM textures go in all four PBR maps,
+  and grayscale or 16-bit PNG textures upload as they are.
 - **Area search**: find the objects rezzed around you from World › Area
   search or a toolbar button. Search their name, description, owner,
   creator, group or UUID as you type, keep to the current parcel or reach
@@ -306,7 +385,8 @@ are planned or in progress: they are not in the viewer yet.
 ### An interface made for today
 
 - **Flat, calm and readable**: glass island bars, a notification center with
-  history, the Inter font throughout and a redesigned performance window.
+  history you can clear (finished script menus no longer pile up in it), the
+  Inter font throughout and a redesigned performance window.
 - **In English, French and Japanese (日本語)**: the whole interface follows
   your system language or your choice, applied at once. Japanese uses Second
   Life's official Japanese terms (インベントリ, 区画, フレンド…), Japanese
@@ -316,7 +396,7 @@ are planned or in progress: they are not in the viewer yet.
   picture. Unread conversations flash softly, three dots bounce on the
   picture of a resident typing to you, and an item
   someone gives you appears as a card in their conversation, like the L$ they
-  pay you, with their message. A thumbnail per
+  pay you and the L$ you pay them, with the message. A thumbnail per
   open conversation waits beside the chat bar with its unread count, and
   nearby chat can also rise in bubbles above the speakers' heads (off by
   default).
@@ -339,6 +419,10 @@ are planned or in progress: they are not in the viewer yet.
   in nearby chat to find and play a gesture. Ctrl+Shift+Enter starts a new
   line, and pasted paragraphs keep their shape. Arabic and Hebrew read right
   to left, in name tags, bubbles, floating text and conversations.
+- **Messages that matter, in front of you**: a message an estate manager
+  sends to the region shows as a card in the middle of the screen, like a
+  friendship offer, and a group notice shows its group, its insignia and
+  its attachment, ready to save.
 - **Script errors where you look**: your own objects' errors show in red in
   the nearby chat instead of popping a window, and can also go to a chat
   channel for your logger script.
@@ -374,12 +458,18 @@ are planned or in progress: they are not in the viewer yet.
   type, and a CMT button that shows your rights, the next owner's, or both.
   A second inventory window opens beside the first to sort between faraway
   folders, and folders opened in their own window get the same layout. The
-  Recent tab can cover a set period, such as the last week.
+  Recent tab can cover a set period, such as the last week. Hover an item to
+  preview its picture, and build an advanced search from visual rules
+  ("objects or scripts, but not no-copy ones"), saved for later, or ask for
+  items similar to one.
 - **Outfits at hand**: the outfit menu on the outfit folders, and a
   double-click in the inventory to put something on or take it off. Group
   your outfits in folders right from Appearance, in the list and the
   gallery. Drag your tattoo, alpha or universal layers into the order you
   want, and see (and remove) what a script attached to you for a while.
+  Pick several items in an outfit or in Worn with Ctrl- and Shift-click and
+  wear, add or take them off at once; Remove from current outfit works on
+  any folder, a demo or a delivery as well as a saved outfit.
 - **One search for everything**: type once and residents, places, events,
   groups and classifieds come back together, with type chips, filters on
   one line and the details beside the results.
@@ -402,7 +492,14 @@ are planned or in progress: they are not in the viewer yet.
 - **Ready for your keyboard**: movement keys adapt to the keyboard layout on
   first launch (WASD or ZQSD), and letter shortcuts use the key that carries
   their letter (M is M on AZERTY too). Search Preferences › Shortcuts by
-  action, category or key.
+  action, category or key. On the Mac, Command works as Control and
+  shortcuts read ⌘ ⌥ ⇧, as macOS users expect. A gamepad's buttons,
+  triggers and sticks are assigned by simply pressing them, and the flycam
+  gets its own zoom controls.
+- **Copy what you need**: click a name in a profile to copy it, select and
+  copy the text of a greyed-out field (a no-modify object's name, a
+  parcel's media address), and copy an outfit's item names and creator
+  credits.
 - **Made for every eye**: an Accessibility page gathers the settings that
   help (interface scale, text size up to twice the normal size, reduce
   motion, sounds…), with a button on the login screen. A high-contrast palette, the OpenDyslexic font, and
@@ -418,13 +515,24 @@ are planned or in progress: they are not in the viewer yet.
   downloads it in the background, checks it against its published hash,
   installs it and restarts your session, and rolls back if anything goes
   wrong. Before you agree, it tells you whether your cache and settings are
-  kept. On Linux it shows the new release instead
+  kept. On Linux and macOS it shows the new release instead
   ([details](docs/UPDATES.md)).
 
 ### Only in Aurora
 
-- **Portals to walk through**: open a portal to a place, or drop a landmark
-  into the world, and walk, run or fly through it to teleport. Other Aurora
+- <img src="docs/readme/pill-experimental.svg" alt="Experimental" height="18" align="absmiddle"> **Immersive sound**: world sounds muffled behind walls, hills
+  and inside closed boxes, heard in front, behind, above or below with
+  headphones (HRTF), and given the reverb of the place around you, changing
+  as you walk through a door. Each part has its own switch in Preferences ›
+  Sound; HRTF and reverb are off by default.
+- <img src="docs/readme/pill-experimental.svg" alt="Experimental" height="18" align="absmiddle"> **VR headset viewing**: look around the world in stereo with an
+  OpenXR headset, tested on Windows and Linux (the macOS path awaits its
+  first headset), from your avatar's
+  eyes or the desktop camera. Viewing only: exit with Esc to chat, build or
+  move ([setup and limits](docs/VR.md)).
+- **Portals to walk through**: open a portal to a place, drop a landmark
+  into the world, or drag a place there from Favorites, Places, the teleport
+  history or search results, and walk, run or fly through it to teleport. Other Aurora
   users see it too: your friends by default, everyone if you choose, and a
   portal that appears on someone never pulls them in.
 - **Just your parcel, if you like**: hide what stands outside the current
@@ -458,11 +566,16 @@ are planned or in progress: they are not in the viewer yet.
 
 ### Open
 
-- **Free software (GPLv3)**, written from scratch: it is not a fork.
+- **Free software (GPLv3)**, a new codebase in Rust, not a fork; the parts
+  ported from the Second Life viewer and the Legacy Viewer are credited in
+  [NOTICE.md](NOTICE.md).
 - **Windows, Linux and macOS**: every release has a Linux build
-  ([install guide](docs/LINUX.md)) and a macOS application for Apple
-  Silicon, drawn through Metal ([install guide](docs/MACOS.md); new, web
-  pages and video in the world are not there yet).
+  ([install guide](docs/LINUX.md)), with its sound through PulseAudio or
+  PipeWire, the desktop's notifications, the keyboard layout read from the
+  desktop, the resource monitor and web pages from a Legacy Viewer install's
+  plugins, and a macOS application for
+  Apple Silicon, drawn through Metal, with web pages and video in the world
+  ([install guide](docs/MACOS.md)).
 
 ## Performance
 
@@ -496,7 +609,8 @@ The texture memory budget is set automatically from the detected VRAM.
   occlusion, sun contact shadows, specular anti-aliasing, reflection probes,
   water, glow, particles, rainbows, 22° halos and depth of field;
   screen-space indirect light, GPU occlusion and enhanced water effects (all
-  experimental), graphics presets and per-section resets.
+  experimental), graphics presets and per-section resets; headset viewing
+  through OpenXR (experimental, view only).
 - **Avatars** — skeleton and Bento animations blended like the Legacy Viewer,
   server bakes, rigged mesh, complexity limits, impostors and look-at;
   a shape editor with textured mesh previews, skin, hair, eyes, tattoo,
@@ -516,7 +630,9 @@ The texture memory budget is set automatically from the detected VRAM.
   consenting nearby avatars, with a pose library, BVH export and animation
   import; an [IK workbench](docs/IK_EDIT.md) with shared contact profiles.
 - **World** — prims, sculpts, mesh with LOD, classic and PBR terrain, EEP environment,
-  sky, water and day-cycle editors, world sounds, parcel music and media
+  sky, water and day-cycle editors, experience environments, world sounds
+  with occlusion, headphone HRTF and room reverb (experimental), parcel
+  music and media
   on prims, with Aurora's downloadable media plugins pack; an area search
   for the objects rezzed around you, with filters and sortable results;
   a Sound Explorer with local previews, source camera and sound blocking;
@@ -526,8 +642,8 @@ The texture memory budget is set automatically from the detected VRAM.
   editor.
 - **Photos and camera** — a full-screen viewfinder with face autofocus, lens
   rings, focus peaking, a live histogram, exposure lock and a self-timer;
-  snapshots up to 8K to disk, inventory or
-  the profile feed; isolation of your avatar or chosen subjects on a
+  group focus, HUDs and the poser in the viewfinder; snapshots up to 8K to
+  disk, inventory or the profile feed; isolation of your avatar or chosen subjects on a
   transparent background; 66 stackable filters and effects with their own
   sliders, and your `.cube` LUTs; camera presets, a frozen world, quiet
   snapshots; depth of field, a maximum-quality photo mode with 8× MSAA,
@@ -536,7 +652,9 @@ The texture memory budget is set automatically from the detected VRAM.
 - **Social** — local chat as cards or classic lines, messenger-style IMs and
   group conversations with a Contacts tab, resident profiles, the People
   window, contact sets, blocking, notifications
-  with history and friend/IM alerts, inventory offers in the conversation,
+  with history and friend/IM alerts, region messages in the middle of the
+  screen, group notices with their insignia and attachment, inventory offers
+  and L$ payments in the conversation,
   a filter for object messages from elsewhere, conversations popped out into
   their own windows, conversation thumbnails beside the chat bar, optional
   chat bubbles above heads, picture, post and video link previews, a GIF
@@ -556,7 +674,8 @@ The texture memory budget is set automatically from the detected VRAM.
   environments, experience permission prompts and region restart alerts.
 - **Inventory and commerce** — Aurora's inventory window (tree, explorer and
   details) or the Legacy one, fetched whole in the background at login, a
-  second inventory window, resizable columns, giving by dropping on a
+  second inventory window, resizable columns, advanced searches from visual
+  rules and saved searches, picture previews on hover, giving by dropping on a
   profile or an avatar, copying or wearing an object's contents, inventory
   tools, dedicated Marketplace and
   listings windows, compact import launcher and per-type editors; sound
@@ -584,8 +703,7 @@ completed work from features awaiting that validation.
 **Not there yet**
 
 - Depth exports and 360° snapshots.
-- Web pages and video in the world on macOS (the media plugins), and its
-  automatic updates.
+- Automatic updates on macOS (the viewer points to the new release).
 - Automatic installation of updates on Linux (the viewer points to the
   new release instead).
 
@@ -599,7 +717,8 @@ Voice is WebRTC only; Vivox is not supported.
 - Compression for the textures that fast BC7 encoding would harm (they
   stay uncompressed and are decoded at each visit).
 - The water effects out of their experimental stage.
-- Maybe a VR mode with controller support.
+- Immersive sound out of its experimental stage.
+- VR beyond viewing: controllers, menus and moving around in the headset.
 
 The detailed list of what is done, in progress and to do is in
 [TASKS.md](TASKS.md).
@@ -659,7 +778,7 @@ while keeping their saved local sizes.
 
 ### RLVa
 
-RLVa is off by default. Turn it on in **Preferences › Protections › Enable
+RLVa is off by default. Turn it on in **Preferences › RLVa › Enable
 RLVa**: scripted outfits, furniture and experiences can then restrict and
 drive your viewer with the RLV 3.4.3 / RLVa 2.4.2 commands. Turning it off
 releases every restriction of the session and drops the queued commands;
@@ -674,6 +793,8 @@ cycle button between them, the AO switch, and swimming or water walking. The
 run and flight boosts are in Settings › Movement. Its **Settings** button
 opens the full Animation Overrider, with its movement editor and the
 animation lists by category (General, Ground, Jumping, Flying, Swimming).
+Each account remembers its last animation in every list and independent track
+after reconnecting; automatic cycling continues according to the set's options.
 Swimming has its own lists at the surface and underwater. Sets are kept under `#Aurora/Aurora AO`; at first
 start, the sets of a Legacy Viewer `#Firestorm/#AO` folder are brought over.
 Import a ZHAO notecard from the same folder as its animations. The AO is off at first, as in the Legacy Viewer. `cao on` /
@@ -840,6 +961,10 @@ trace" and "Open report folder" in the same window give the technical
 details: the full trace may contain personal paths, review it before sharing.
 The bar button can be hidden in Preferences › Interface.
 
+Ideas and feature requests go to the
+[feedback board](https://feedback.aurora-viewer.org), where everyone can vote
+for them.
+
 ### Where your files are
 
 Logs are in `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`; each
@@ -855,8 +980,9 @@ files never leave the machine and are never attached to a bug report.
 
 **What it is**
 
-- A Second Life viewer written from scratch in Rust; it is not a fork of
-  an existing viewer's codebase.
+- A Second Life viewer written in Rust; it is not a fork of an existing
+  viewer's codebase, but many parts are Rust ports of the Second Life viewer
+  and the Legacy Viewer, credited file by file in [NOTICE.md](NOTICE.md).
 - It speaks the same protocol as the Legacy Viewer (same messages, capabilities,
   request rates and defaults), so the servers see a well-behaved, familiar
   client.
@@ -943,6 +1069,13 @@ workflow (`.github/workflows/macos.yml`) checks every pull request with
 clippy on a Mac, and the merge queue runs the tests and draws a demo frame on
 an Apple GPU.
 
+Preferences › Graphics › Smoothness offers a 50–100% **3D render scale**.
+At lower scales, the world is reconstructed with a nine-tap Catmull-Rom spatial
+upscaler; controls, HUDs and world labels retain the window's native resolution.
+Saved photos render at their requested resolution. The default remains 100%.
+Bindless texture pages use the adapter's binding-array limit rather than its
+ordinary sampled-texture limit, avoiding the former 79-page ceiling on Metal.
+
 ### Versions
 
 The **Git tag is the reference for the viewer's version**: `v0.2.0` gives
@@ -960,6 +1093,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 |---|---|
 | `--title <text>` | Names the window "Aurora Viewer <version> - <text> (Dev)" and its log file |
 | `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
+| `--vr` | Enters VR once the world shows, with a headset connected (Windows and Linux) |
 | `--language <code>` | Forces the language of this instance (`en`, `fr`, `ja`, or another language added to the catalogues), without changing the saved choice |
 | `--grid <name>` | Selects the login grid: `agni`, `aditi`, a saved grid name/nickname or a login URI (`--loginuri <uri>` too) |
 | `--login <first> <last> <password>` | Logs in with this account as soon as the login screen opens |
@@ -971,6 +1105,8 @@ exe before publishing; the local build also writes it to `version.txt`.
   file is `aurora-<text>.log` (`aurora-demo-<text>.log` in demo mode).
 - `--fps-limit`: applies an extra limit to this process, including captures
   and online sessions; a lower user preference remains effective.
+- `--vr`: what the VR button's "Restart in VR" passes when the headset was
+  connected after the viewer started (VR is set up at startup).
 - `--language`: also accepts `--language=fr`. An unavailable language falls
   back to English; the argument is meant for demos and screenshots.
 - `<slurl>`: `secondlife://Region/x/y/z`, `hop://grid:port/Region/x/y/z`,
@@ -981,9 +1117,11 @@ exe before publishing; the local build also writes it to `version.txt`.
   (the saved choice stays); in the world it opens the place's details; a
   command runs once in the world. When a viewer already runs (same demo
   mode and `--title`), the link goes to it and the new process stops.
-  Preferences › Language and updates › "Open SLURL and Hypergrid links in Aurora"
-  registers all three schemes for the current Windows user. Manage saved grids
-  from the login grid menu or Preferences › Network and cache › Manage grids.
+  Preferences › Language and updates › "Open SLURL and Hypergrid links in
+  Aurora" registers all three schemes for the current user (the registry on
+  Windows, a desktop entry and `mimeapps.list` on Linux, see
+  [docs/LINUX.md](docs/LINUX.md#second-life-links)). Manage saved grids from
+  the login grid menu or Preferences › Network and cache › Manage grids.
 - `--login`: the account follows the usual "remember" choices; a single
   user name is written `<name> Resident`. `--grid` alone selects the grid of
   a new account's form.
@@ -1091,3 +1229,5 @@ from the Second Life viewer and Firestorm (originally LGPL 2.1); see
 
 Aurora Viewer is not affiliated with Linden Lab or the Firestorm project.
 Second Life® is a trademark of Linden Research, Inc.
+
+Experimental headset viewing: [cross-platform VR setup and limitations](docs/VR.md).

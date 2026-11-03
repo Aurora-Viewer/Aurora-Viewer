@@ -108,6 +108,7 @@ pub enum AppLink {
         category: String,
         query: String,
     },
+    AreaSearch(Box<crate::settings::area_search::Filters>),
     Blocked(Blocked),
     /// Any other command, or one whose arguments are wrong: the Legacy
     /// Viewer says UnsupportedCommandSLURL.
@@ -134,7 +135,7 @@ pub fn unescape(text: &str) -> String {
 }
 
 /// The value of `key` in a `a=1&b=2` query, unescaped (LLURI::queryMap).
-fn query_value(query: &str, key: &str) -> Option<String> {
+pub(crate) fn query_value(query: &str, key: &str) -> Option<String> {
     query
         .split('&')
         .filter_map(|kv| kv.split_once('=').or(Some((kv, ""))))
@@ -159,6 +160,9 @@ pub fn parse(url: &str) -> Option<AppLink> {
     let tokens: Vec<&str> = path.split('/').filter(|t| !t.is_empty()).collect();
     let token = |i: usize| tokens.get(i).copied().unwrap_or("");
     let link = match token(0).to_ascii_lowercase().as_str() {
+        "openfloater" if tokens.len() == 2 && token(1) == "area_search" => {
+            crate::settings::area_search::Filters::from_query(query).map(|f| AppLink::AreaSearch(Box::new(f)))
+        }
         "agent" => agent(&tokens[1..]),
         "group" => match (id(token(1)), token(2)) {
             (Some(g), "about" | "inspect") => Some(AppLink::Group(g)),

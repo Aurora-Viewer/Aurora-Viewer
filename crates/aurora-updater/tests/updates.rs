@@ -298,6 +298,18 @@ fn os(path: &str) -> String {
             .replace("SLPlugin.exe", "SLPlugin")
             .replace("media_plugin_libvlc.dll", "libmedia_plugin_gstreamer.so")
             .replace("media_plugin_cef.dll", "libmedia_plugin_cef.so")
+    } else if cfg!(target_os = "macos") {
+        // SLPlugin.app, its plugins in its Contents/Frameworks
+        path.replace("windows-x64", "macos-universal")
+            .replace("llplugin/SLPlugin.exe", "llplugin/SLPlugin.app/Contents/MacOS/SLPlugin")
+            .replace(
+                "llplugin/media_plugin_libvlc.dll",
+                "llplugin/SLPlugin.app/Contents/Frameworks/media_plugin_libvlc.dylib",
+            )
+            .replace(
+                "llplugin/media_plugin_cef.dll",
+                "llplugin/SLPlugin.app/Contents/Frameworks/media_plugin_cef.dylib",
+            )
     } else {
         path.to_string()
     }
@@ -354,8 +366,9 @@ fn media_pack_installs_once_and_replaces_what_older_viewers_left() {
     let server = Server::new(HashMap::from([(pack_route(), bytes)]));
     let temp = Temp::new();
     let root = temp.0.join("media-plugins");
-    fs::create_dir_all(root.join("1/llplugin")).expect("older pack");
-    fs::write(root.join(os("1/llplugin/SLPlugin.exe")), b"old").expect("older pack");
+    let older = root.join(os("1/llplugin/SLPlugin.exe"));
+    fs::create_dir_all(older.parent().expect("folder")).expect("older pack");
+    fs::write(older, b"old").expect("older pack");
     fs::create_dir_all(root.join(".staging-interrupted")).expect("leftover");
     fs::write(root.join(".staging-interrupted/download.zip"), b"partial").expect("leftover");
     assert!(media_pack::installed(&root, &pack).is_none());
@@ -452,6 +465,38 @@ fn media_pack_programs_stay_executable_without_setuid() {
     assert_eq!(mode("llplugin/SLPlugin.exe"), 0o755);
     assert_eq!(mode("llplugin/chrome-sandbox"), 0o755, "never setuid from an archive");
     assert_eq!(mode("llplugin/media_plugin_cef.dll") & 0o111, 0);
+}
+
+/// A viewer still running holds a shared lock on `.in-use-<version>`: its pack
+/// is neither removed nor replaced under it, on Linux and macOS as well,
+/// where nothing refuses to rename a folder in use.
+#[test]
+fn media_pack_of_a_running_viewer_stays_whole() {
+    let bytes = pack_zip(true);
+    let pack = pack(&bytes, digest(&bytes));
+    let temp = Temp::new();
+    let root = temp.0.join("media-plugins");
+    let older = root.join(os("1/llplugin/SLPlugin.exe"));
+    fs::create_dir_all(older.parent().expect("folder")).expect("older pack");
+    fs::write(&older, b"old").expect("older pack");
+    let damaged = root.join(os("2/llplugin/SLPlugin.exe"));
+    fs::create_dir_all(damaged.parent().expect("folder")).expect("damaged pack");
+    fs::write(&damaged, b"damaged").expect("damaged pack");
+    let in_use = |version: &str| {
+        let file = fs::File::create(root.join(format!(".in-use-{version}"))).expect("lock file");
+        file.try_lock_shared().expect("running viewer");
+        file
+    };
+    let (older_viewer, same_viewer) = (in_use("1"), in_use("2"));
+    let server = Server::new(HashMap::from([(pack_route(), bytes)]));
+    let outcome = run(media_pack::install(&server.source(), &pack, &root, &Cancel::default(), |_| {}));
+    assert!(matches!(outcome, Err(Failure::Package)), "install outcome: {outcome:?}");
+    assert_eq!(fs::read(&damaged).expect("kept"), b"damaged", "a pack in use is not replaced");
+    drop(same_viewer);
+    let dir = run(media_pack::install(&server.source(), &pack, &root, &Cancel::default(), |_| {})).expect("installed pack");
+    assert_eq!(fs::read(dir.join(os("llplugin/SLPlugin.exe"))).expect("launcher"), b"launcher");
+    assert_eq!(fs::read(&older).expect("kept"), b"old", "an older viewer keeps its pack");
+    drop(older_viewer);
 }
 
 #[test]

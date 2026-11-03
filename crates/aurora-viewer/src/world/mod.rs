@@ -3,6 +3,7 @@
 pub mod animation_log;
 pub mod anti_spam;
 pub mod appearance;
+pub mod attachment_inventory;
 pub mod attention;
 pub mod blocking;
 pub mod body;
@@ -19,12 +20,15 @@ pub mod derender;
 pub mod edit_echo;
 pub mod eep;
 pub mod eep_env;
+pub mod eep_photo;
+pub mod eep_push;
 pub mod env;
 pub mod env_apply;
 pub mod env_day_edit;
 pub mod env_edit;
 pub mod env_select;
 pub mod estate;
+pub mod experience_log;
 pub mod experiences;
 pub mod favorites;
 pub mod flying_at_exit;
@@ -51,6 +55,7 @@ pub mod maturity;
 pub mod motion;
 pub mod mutes;
 pub mod names;
+pub mod night_sky;
 pub mod notice_topics;
 pub mod notification_history;
 pub mod notifications;
@@ -59,6 +64,7 @@ pub mod objects;
 pub mod open_ims;
 pub mod outfit;
 pub mod outfit_folders;
+pub mod outfit_paste;
 pub mod parcel_visibility;
 pub mod parked;
 pub mod particle_filters;
@@ -73,7 +79,9 @@ pub mod radar;
 pub mod received_items;
 pub mod recent;
 pub mod region_alerts;
+pub mod region_messages;
 pub mod region_restart;
+pub mod region_titles;
 pub mod rig_graph;
 pub mod rig_targets;
 pub mod rlva;
@@ -84,6 +92,8 @@ pub mod social;
 pub mod sound_parcels;
 pub mod staff;
 pub mod status;
+pub mod suitcase;
+pub mod system_messages;
 pub mod teleport_invites;
 pub mod temp_attachments;
 pub mod terrain;
@@ -143,6 +153,15 @@ pub struct Region {
     /// An OpenSim grid's status feed and page (SimulatorFeatures'
     /// OpenSimExtras GridStatusRSS, GridStatus); empty when not given.
     pub grid_status: (String, String),
+    /// OpenSimExtras' currency-base-uri: this region's currency helper.
+    pub currency_base_uri: String,
+    /// What an OpenSim region says of its grid (GridURL, search and map
+    /// servers): after a Hypergrid teleport, the grid we are on now.
+    pub opensim: aurora_net::OpenSimExtras,
+    /// OpenSimExtras' currency: this region's money symbol.
+    pub currency_symbol: String,
+    /// OpenSimExtras' ExportSupported: the export permission applies here.
+    pub export_supported: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,12 +196,12 @@ impl ChatKind {
         matches!(self, ChatKind::Own(_))
     }
 
-    /// How loud a resident's line was said, ours included (LLChat's
+    /// How loud a resident's or object's line was said, ours included (LLChat's
     /// mChatType): whispered and shouted lines read the same whoever said
     /// them (FSChatHistory::appendMessage).
     pub fn volume(self) -> Option<ChatType> {
         match self {
-            ChatKind::Local(t) | ChatKind::Own(t) => Some(t),
+            ChatKind::Local(t) | ChatKind::Own(t) | ChatKind::Object(t) => Some(t),
             _ => None,
         }
     }
@@ -274,6 +293,9 @@ pub enum LocalAssetRequest {
 pub struct World {
     /// mScreen's Y scale (LLVOAvatarSelf::updateCharacter).
     pub hud_aspect: f32,
+    /// Where the HUDs are laid out in the window (left, top, right, bottom
+    /// pixels; `None`: the whole window). `hud_aspect` is its aspect.
+    pub hud_area: Option<[f32; 4]>,
     /// HUD zoom is local to the current session (LLAgentCamera).
     pub hud_zoom: f32,
     pub hud_scales: hud_scale::HudScales,
@@ -342,6 +364,10 @@ pub struct World {
     bake_refreshes: HashMap<Uuid, u64>,
     shape_preview: Option<Vec<u8>>,
     preview_bakes: HashMap<usize, Uuid>,
+    /// Our own bakes as last sent (local_bakes.rs). The region does not send
+    /// our appearance back after a change (OpenSim sends it to the others),
+    /// so ours shows them as LLVOAvatarSelf shows its own composites.
+    local_bakes: HashMap<usize, Uuid>,
     shape_preview_generation: u64,
     pub alerts: VecDeque<String>,
     /// The announced restart of the agent's region (region_restart.rs).
@@ -386,6 +412,8 @@ pub struct World {
     /// Message of the day writes it again to the nearby chat.
     pub motd: String,
     pub balance: Option<i32>,
+    /// The grid's money symbol, from the login (`app::buy_currency::grid_currency`).
+    pub grid_currency: String,
     /// m² of land the account holds (MoneyBalanceReply SquareMetersCommitted,
     /// LLStatusBar::getSquareMetersCommitted).
     pub land_committed: i32,
@@ -456,6 +484,7 @@ pub struct World {
     inventory_background: inventory::background::BackgroundFetch,
     /// Inventory changes outside the inventory window (`take_inventory_edits`).
     inventory_edits: Vec<aurora_net::inventory::operations::Mutation>,
+    pub attachment_inventory: attachment_inventory::AttachmentInventory,
     pub received_items: received_items::ReceivedItems,
     /// Playing animations per avatar / animesh.
     pub animations: HashMap<Uuid, Vec<PlayingAnimation>>,
@@ -537,6 +566,13 @@ pub struct World {
     /// `tp_storage` (LLViewerParcelMgr's teleport finished signal): global
     /// position and when it happened.
     tp_record: Option<(glam::DVec3, Instant)>,
+    /// A saved place whose grid was not known yet: its global position and
+    /// region, given its `hop://` SLURL when the region's SimulatorFeatures
+    /// come.
+    tp_slurl_pending: Option<(glam::DVec3, String, Vec3)>,
+    /// On an OpenSim grid, the login grid as a Hypergrid address
+    /// (`grids::home`, set by the app); None on Second Life.
+    pub home_grid: Option<String>,
     /// Between the change of region of a border crossing and its arrival.
     crossing: bool,
     /// The last arrival was a border crossing: the agent was not placed.
@@ -562,6 +598,9 @@ pub struct World {
     /// Members, roles, titles and notices of the groups whose profile is
     /// open (LLGroupMgr).
     pub group_data: group_data::GroupMgr,
+    /// The group title worn by region, and every group's titles for the
+    /// Group titles window (FSGroupTitleRegionMgr).
+    pub region_titles: region_titles::RegionTitles,
     /// The parcels and accounts of the group whose "Land and L$" tab shows.
     pub group_money: group_money::GroupMoney,
     arrived_once: bool,
@@ -576,11 +615,11 @@ pub struct World {
     pub collisions: collisions::Collisions,
     /// Always fly after a teleport (FSFlyAfterTeleport, from the settings).
     pub fly_after_teleport: bool,
-    /// The account's list of open private conversations (open_ims.rs).
+    /// The account's list of open private and group conversations (open_ims.rs).
     open_ims_path: Option<std::path::PathBuf>,
     /// Conversations of the last session, read at login, that the app
     /// reopens when the setting asks for it.
-    pub reopen_ims: Vec<Uuid>,
+    pub reopen_ims: Vec<open_ims::Conversation>,
     /// Disk cache root (inventory cache).
     pub cache_dir: Option<std::path::PathBuf>,
 }
@@ -613,6 +652,10 @@ fn saved_prefix(timestamp: u32) -> String {
     ) + " "
 }
 
+/// The largest region a grid can have (Constants.MaximumRegionSize,
+/// OpenSim): a corrupt patch number must not make a land grid of gigabytes.
+const MAX_REGION_SIZE: u32 = 4096;
+
 impl World {
     pub fn water_visual_dz(&self, id: &Uuid) -> f32 {
         if *id == self.agent_id && !self.teleporting && self.movement_complete && !self.agent.is_sitting() {
@@ -636,6 +679,7 @@ impl World {
     pub fn new(avatar_lib: Arc<AvatarLibrary>) -> World {
         World {
             hud_aspect: 1.0,
+            hud_area: None,
             hud_zoom: 1.0,
             hud_scales: Default::default(),
             hud_locks: Default::default(),
@@ -689,6 +733,7 @@ impl World {
             bake_refreshes: HashMap::new(),
             shape_preview: None,
             preview_bakes: HashMap::new(),
+            local_bakes: HashMap::new(),
             shape_preview_generation: 0,
             alerts: VecDeque::new(),
             region_restart: Default::default(),
@@ -705,6 +750,7 @@ impl World {
             events_this_frame: 0,
             motd: String::new(),
             balance: None,
+            grid_currency: "L$".into(),
             land_committed: 0,
             land_credit: 0,
             upload_cost: None,
@@ -737,6 +783,7 @@ impl World {
             inventory_cache: None,
             inventory_background: Default::default(),
             inventory_edits: Vec::new(),
+            attachment_inventory: Default::default(),
             received_items: Default::default(),
             animations: HashMap::new(),
             ao_pose: None,
@@ -765,6 +812,8 @@ impl World {
             tp_history: tphistory::TeleportHistory::default(),
             tp_storage: Default::default(),
             tp_record: None,
+            tp_slurl_pending: None,
+            home_grid: None,
             crossing: false,
             arrived_by_crossing: false,
             inventory_retried: HashSet::new(),
@@ -776,6 +825,7 @@ impl World {
             place_snapshots: Default::default(),
             search: Default::default(),
             group_data: Default::default(),
+            region_titles: Default::default(),
             group_money: Default::default(),
             notifications: notifications::Notifications::default(),
             teleport_invites: teleport_invites::TeleportInvites::default(),
@@ -817,14 +867,6 @@ impl World {
         self.quiet_automated_chat = quiet;
     }
 
-    /// saveOpenIMs, when the session ends (quit, logout or disconnection).
-    pub fn save_open_ims(&self) {
-        if let Some(path) = &self.open_ims_path {
-            let others: Vec<Uuid> = self.social.ims.iter().map(|s| s.other).collect();
-            open_ims::save(path, &others);
-        }
-    }
-
     /// LLTeleportHistory::onTeleportFinished → LLTeleportHistoryStorage:
     /// the arrival is saved once the parcel of the new place is known.
     fn record_arrival(&mut self) {
@@ -848,7 +890,32 @@ impl World {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0.0, |d| d.as_secs_f64());
-        self.tp_storage.add(&title, global, now);
+        // OpenSim: the SLURL names the place's grid, for going back to it
+        // after a Hypergrid teleport (LLTeleportHistoryPersistentItem::mSLURL)
+        let local = self
+            .main_region
+            .map(|h| {
+                let (ox, oy) = aurora_net::handle_to_origin(h);
+                Vec3::new((global.x - ox as f64) as f32, (global.y - oy as f64) as f32, global.z as f32)
+            })
+            .unwrap_or(Vec3::ZERO);
+        let grid = self.main_region.and_then(|h| self.grid_of(h));
+        let slurl = match &grid {
+            Some(grid) => crate::slurl::make_on(Some(grid), &region, local),
+            None => String::new(),
+        };
+        self.tp_slurl_pending = (grid.is_none() && self.home_grid.is_some()).then(|| (global, region.clone(), local));
+        self.tp_storage.add(&title, global, now, slurl);
+    }
+
+    /// On an OpenSim grid, the grid a region is on (`grids::here`): its
+    /// GridURL, else the login grid. None on Second Life, or until the
+    /// region's SimulatorFeatures came.
+    pub fn grid_of(&self, handle: RegionHandle) -> Option<String> {
+        let home = self.home_grid.as_deref()?;
+        let region = self.regions.get(&handle)?;
+        region.lsl_syntax_id?;
+        crate::grids::here(Some(home), Some(&region.opensim))
     }
 
     /// An arrival whose parcel did not come within a few seconds is saved
@@ -992,6 +1059,11 @@ impl World {
             return false;
         }
         self.region_left = old;
+        // LLEnvironment::onRegionChange: experience environments do not
+        // survive a teleport or a region crossing
+        if old.is_some() {
+            self.eep.clear_experience(Uuid::nil(), eep_env::TRANSITION_DEFAULT);
+        }
         self.objects.clear_material_previews();
         self.inventory_retried.clear();
         if let Some(old) = old {
@@ -1145,16 +1217,62 @@ impl World {
     }
 
     /// Cached inventory can precede arrival and the login seed's services.
-    /// Match Session::EditInventory's metadata-write/readback preconditions.
+    /// Match Session::EditInventory's metadata-write/readback preconditions:
+    /// the fetch service alone, as a grid without AIS edits over the circuit.
     pub fn inventory_writable(&self) -> bool {
         self.movement_complete
             && !self.teleporting
             && self.inventory.held.is_none()
-            && self.main().is_some_and(|region| {
-                ["InventoryAPIv3", "FetchInventoryDescendents2"] // gitleaks:allow -- public protocol capability names
-                    .iter()
-                    .all(|name| region.caps.get(*name).is_some_and(|url| !url.is_empty()))
-            })
+            && self
+                .main()
+                .is_some_and(|region| region.caps.get("FetchInventoryDescendents2").is_some_and(|url| !url.is_empty()))
+    }
+
+    /// Whether we bake our own avatar: the region does not
+    /// (`UpdateAvatarAppearance`) but takes our bakes (`UploadBakedTexture`).
+    /// Only on the region's full answer: a neighbour's first seed answer can
+    /// stand for the main region's for a while after a crossing (#750), and
+    /// a partial one must never make a region that bakes get our own bakes.
+    pub fn bakes_locally(&self) -> bool {
+        self.main().is_some_and(|region| {
+            region.caps.contains_key("UploadBakedTexture")
+                && region.caps.contains_key("FetchInventoryDescendents2")
+                && !region.caps.contains_key("UpdateAvatarAppearance")
+        })
+    }
+
+    /// `inventory_writable` on a grid with AIS, for what must stay away from
+    /// the others (the bridge: FSLSLBridge does not create itself on OpenSim).
+    pub fn inventory_writable_with_ais(&self) -> bool {
+        self.inventory_writable()
+            && self
+                .main()
+                .is_some_and(|region| region.caps.get("InventoryAPIv3").is_some_and(|url| !url.is_empty()))
+    }
+
+    /// What a grid without AIS needs of the local inventory to carry out a
+    /// command (operations.rs `Known`), as it leaves for the session.
+    pub fn prepare_inventory_command(&self, cmd: &mut aurora_net::NetCommand) {
+        match cmd {
+            aurora_net::NetCommand::EditInventory { change, .. } => {
+                for op in &change.operations {
+                    let aurora_net::inventory::operations::Operation::Patch { id, folder, .. } = op else {
+                        continue;
+                    };
+                    if *folder {
+                        if let Some(known) = self.inventory.folders.get(id) {
+                            change.known.folders.insert(*id, known.info.clone());
+                        }
+                    } else if let Some(known) = self.inventory.items.get(id) {
+                        change.known.items.insert(*id, known.clone());
+                    }
+                }
+            }
+            aurora_net::NetCommand::UpdateOutfitCategory { change, .. } => {
+                change.type_default = self.inventory.folders.get(&change.folder).map(|known| known.info.type_default);
+            }
+            _ => {}
+        }
     }
 
     pub fn main_water_height(&self) -> f32 {
@@ -1196,6 +1314,10 @@ impl World {
             return Vec::new();
         }
         self.inventory_background.start(&self.inventory);
+        self.inventory.repair_lost_hierarchy();
+        // OpenSim has no AIS: FetchInventoryDescendents2 reads one level
+        self.inventory_background
+            .set_legacy(!self.main_has_cap("InventoryAPIv3"), !self.main_has_cap("LibraryAPIv3"));
         self.inventory_background.pump(&mut self.inventory, self.agent_id)
     }
 
@@ -1753,6 +1875,25 @@ impl World {
         self.profiles.group_insignia(group, insignia);
     }
 
+    /// LLExperienceLog::notify (the ExperienceEvent notification).
+    pub fn notify_experience_event(&mut self, entry: &experience_log::LogEntry) {
+        let experience = self
+            .experiences
+            .details
+            .get(&entry.experience)
+            .filter(|d| !d.invalid() && !d.name.trim().is_empty())
+            .map_or_else(|| entry.experience.to_string(), |d| d.name.trim().to_owned());
+        let what = experience_log::permission_long(entry.permission);
+        let text = aurora_i18n::tr!(
+            "ui-experiences-log-notice",
+            what = what,
+            experience = experience,
+            object = entry.object_name.clone(),
+            parcel = entry.parcel_name.clone()
+        );
+        self.system_message(text.to_string());
+    }
+
     pub fn system_message(&mut self, text: impl Into<String>) {
         self.system_notice(text, notice_topics::Topic::Info);
     }
@@ -1787,7 +1928,20 @@ impl World {
         self.conversation_push(session, line, false);
     }
 
+    /// The region, made at `size` or grown to it. Grown, because events can
+    /// come before the handshake that gives the size: arrival and early land
+    /// made a large OpenSim region 256 x 256 for good, its land past that
+    /// dropped. LLWorld::addRegion is told the size from the start.
     fn ensure_region(&mut self, h: RegionHandle, size: (u32, u32)) -> &mut Region {
+        // the network layer already holds the sizes; this keeps every caller safe
+        let size = (size.0.clamp(256, MAX_REGION_SIZE), size.1.clamp(256, MAX_REGION_SIZE));
+        if let Some(region) = self.regions.get_mut(&h)
+            && region.heightmap.grow(size.0, size.1)
+        {
+            region.dirty_chunks.extend(0..region.heightmap.chunk_count());
+            region.terrain_revision += 1;
+            region.terrain_surface.applied = None;
+        }
         self.regions.entry(h).or_insert_with(|| Region {
             handle: h,
             name: String::new(),
@@ -1804,6 +1958,10 @@ impl World {
             materials_limits: Default::default(),
             max_tasks: 0,
             grid_status: Default::default(),
+            currency_base_uri: String::new(),
+            opensim: Default::default(),
+            currency_symbol: String::new(),
+            export_supported: false,
         })
     }
 
@@ -1954,7 +2112,7 @@ impl World {
             .as_ref()
             .is_some_and(|l| l.raw["login-flags"].at(0)["ever_logged_in"].as_str() == "N");
         let inputs = outfit::OutfitInputs {
-            worn: self.worn_attachment_items(),
+            worn: self.outfit_attachment_items(),
             received_cof_version: self.appearance_cof_version(&self.agent_id),
             inventory: &mut self.inventory,
             agent: self.agent_id,
@@ -1969,7 +2127,10 @@ impl World {
     /// purpose (a detach sent by the resident, a script or RLVa).
     pub fn note_outfit_command(&mut self, command: &aurora_net::NetCommand) {
         match command {
-            aurora_net::NetCommand::DetachAttachments(items) => self.outfit.on_detach_requested(items),
+            aurora_net::NetCommand::DetachAttachments(items) => {
+                self.outfit.on_detach_requested(items);
+                self.attachment_inventory.detaching(items);
+            }
             aurora_net::NetCommand::DetachObject { handle, local_id } => {
                 if let Some(item) = self
                     .objects
@@ -1981,6 +2142,7 @@ impl World {
                     .and_then(|o| o.attachment_item_id())
                 {
                     self.outfit.on_detach_requested(&[item]);
+                    self.attachment_inventory.detaching(&[item]);
                 }
             }
             _ => {}
@@ -2026,6 +2188,15 @@ impl World {
 
     /// Publish one complete local editor generation without changing the
     /// authoritative appearance received from the server.
+    /// Show the bakes we just sent on our own avatar.
+    pub fn show_local_bakes(&mut self, bakes: HashMap<usize, Uuid>) {
+        if self.local_bakes != bakes {
+            self.local_bakes = bakes;
+            let agent = self.agent_id;
+            self.refresh_bakes(&agent);
+        }
+    }
+
     pub fn preview_bakes(&mut self, bakes: HashMap<usize, Uuid>) {
         if self.preview_bakes != bakes {
             self.preview_bakes = bakes;
@@ -2038,7 +2209,7 @@ impl World {
     pub fn bake_texture(&self, avatar_idx: usize, te_index: usize) -> Option<Uuid> {
         let o = self.objects.get(avatar_idx)?;
         if o.full_id == self.agent_id
-            && let Some(id) = self.preview_bakes.get(&te_index)
+            && let Some(id) = self.preview_bakes.get(&te_index).or_else(|| self.local_bakes.get(&te_index))
         {
             return Some(*id);
         }
@@ -2114,6 +2285,7 @@ impl World {
                     log::info!("invisible: hidden again from {hidden} friend(s) the login still showed us to");
                 }
                 let open = account.join(open_ims::FILE);
+                self.experiences.log = experience_log::ExperienceLog::load(account.join(experience_log::FILE), &experience_log::now().0);
                 self.reopen_ims = open_ims::load(&open);
                 self.open_ims_path = Some(open);
                 self.calls.load_volumes(account.join(calls::VOLUMES_FILE));
@@ -2125,6 +2297,7 @@ impl World {
                 self.aliases_synced = u64::MAX;
                 self.sync_contact_aliases();
                 self.inventory = inventory::Inventory::from_login(&l.raw);
+                self.inventory.owner = self.agent_id;
                 self.inventory_background = Default::default();
                 // read off the main thread; until `poll_inventory_cache`
                 // applies it, folder requests wait (the root's included)
@@ -2142,6 +2315,14 @@ impl World {
                 if self.set_main_region(handle) {
                     // no agent update before the new region completes the move
                     self.movement_complete = false;
+                    // LLViewerParcelMgr::onTeleportFinished: the new region's
+                    // parcel is awaited; the one left must not lend its rules
+                    // (flight, build, the bar's icons) in the meantime. The
+                    // session sends it after this event, never before.
+                    if self.parcel.take().is_some() {
+                        log::info!("agent parcel: cleared, region {handle:x} entered");
+                    }
+                    self.parcel_name.clear();
                 }
                 // back in a region left moments ago: its objects first, its
                 // simulator only sends what changed since
@@ -2180,13 +2361,31 @@ impl World {
                 lsl_syntax_id,
                 grid_status_feed,
                 grid_status_page,
+                currency_base_uri,
+                opensim,
+                currency_symbol,
+                export_supported,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
                 r.lsl_syntax_id = Some(lsl_syntax_id);
                 r.grid_status = (grid_status_feed, grid_status_page);
+                r.currency_base_uri = currency_base_uri;
+                r.opensim = opensim;
+                r.currency_symbol = currency_symbol;
+                r.export_supported = export_supported;
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
+                // the place we arrived at learns its grid
+                if Some(handle) == self.main_region
+                    && let Some(grid) = self.grid_of(handle)
+                {
+                    self.tp_history.set_grid(handle, Some(grid.clone()));
+                    if let Some((global, region, local)) = self.tp_slurl_pending.take() {
+                        self.tp_storage
+                            .set_slurl(global, crate::slurl::make_on(Some(&grid), &region, local));
+                    }
+                }
                 None
             }
             NetEvent::HoverHeightUpdated { region, request, success } => {
@@ -2281,12 +2480,14 @@ impl World {
                     let at = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_or(0, |d| d.as_secs() as i64);
+                    let grid = self.grid_of(handle);
                     self.tp_history.arrived(tphistory::TpEntry {
                         region,
                         handle,
                         position,
                         parcel: String::new(),
                         at,
+                        grid,
                     });
                     // LLViewerParcelMgr::onTeleportFinished: a local teleport keeps
                     // the agent parcel (the simulator only sends ParcelProperties
@@ -2457,7 +2658,14 @@ impl World {
                 None
             }
             NetEvent::Terrain { handle, patches } => {
-                let r = self.ensure_region(handle, (256, 256));
+                // land can come before the handshake: its own place says
+                // the region reaches at least that far
+                let reach = |axis: fn(&aurora_net::terrain::TerrainPatch) -> u32| {
+                    let end = patches.iter().map(|p| (axis(p) + 1).saturating_mul(p.size)).max().unwrap_or(0);
+                    end.min(MAX_REGION_SIZE).next_multiple_of(256).max(256)
+                };
+                let size = (reach(|p| p.x), reach(|p| p.y));
+                let r = self.ensure_region(handle, size);
                 for p in patches {
                     let dirty = r.heightmap.apply_patch(p.x, p.y, p.size, &p.heights);
                     r.dirty_chunks.extend(dirty);
@@ -2745,6 +2953,13 @@ impl World {
             NetEvent::ScriptDialog {
                 object_id, object_name, ..
             } if self.object_blocked(&object_id, &object_name) => None,
+            // RLVa @sendchat (LLScriptHandler::processNotification,
+            // llnotificationscripthandler.cpp): a dialog or text box whose
+            // answer would be said on public chat is not shown at all.
+            NetEvent::ScriptDialog { channel: 0, .. } if self.rlva.has("sendchat") => {
+                self.system_notice(aurora_i18n::tr!("rlva-blocked-script-dialog"), notice_topics::Topic::Warning);
+                None
+            }
             // process_script_question drops only the questions of a blocked
             // object (LLMuteList::isMuted(taskid)): not those of a blocked
             // owner, nor on any other condition (no click needed, object out
@@ -2861,6 +3076,15 @@ impl World {
                 }
                 None
             }
+            NetEvent::ExperienceLog(event) => {
+                let (day, time) = experience_log::now();
+                let entry = self.experiences.log.record(&event, &day, &time).clone();
+                if self.experiences.log.notify {
+                    self.experiences.want(entry.experience);
+                    self.notify_experience_event(&entry);
+                }
+                None
+            }
             NetEvent::ExperienceAttachment { experience, object_name } => {
                 if self.rlva.enabled() {
                     self.rlva.controllers.attachment(experience, object_name, Instant::now());
@@ -2870,6 +3094,17 @@ impl World {
             }
             NetEvent::ExperiencePermission { experience, result, .. } => {
                 self.experiences.permission(experience, result);
+                for (experience, transition) in std::mem::take(&mut self.experiences.env_clears) {
+                    self.eep.clear_experience(experience, transition);
+                }
+                None
+            }
+            NetEvent::ExperienceEnvironment { experience, message } => {
+                self.eep.push_experience(experience, &message);
+                None
+            }
+            NetEvent::ExperienceList { kind, ids } => {
+                self.experiences.list_arrived(kind, ids);
                 None
             }
             NetEvent::GroupExperiences { group, ids } => {
@@ -3000,6 +3235,9 @@ impl World {
             } => {
                 let answer = eep::EnvAnswer::from_llsd(&environment);
                 let parcel_id = answer.parcel_id;
+                for w in eep::water_out_of_range(&environment) {
+                    log::info!("water values out of the Legacy ranges, clamped: {w:?}");
+                }
                 match answer.day.as_ref().filter(|d| d.is_valid()) {
                     Some(d) => {
                         log::info!(
@@ -3020,6 +3258,22 @@ impl World {
                                 s.blue_horizon,
                                 s.haze_horizon,
                                 s.haze_density
+                            );
+                        }
+                        // the region's water (in the Legacy ranges; the
+                        // values it sent out of them are logged on reading):
+                        // what a report of odd water needs
+                        if let Some(w) = d.water.first().map(|k| &k.1) {
+                            log::info!(
+                                "water: fog {:?} density {} underwater mod {} fresnel scale {} offset {} blur {} normal scale {:?} normal map {}",
+                                w.fog_color,
+                                w.fog_density,
+                                w.underwater_fog_mod,
+                                w.fresnel_scale,
+                                w.fresnel_offset,
+                                w.blur_multiplier,
+                                w.normal_scale,
+                                w.normal_map
                             );
                         }
                     }
@@ -3182,6 +3436,20 @@ impl World {
                 None
             }
             NetEvent::AgentParcel(info) => {
+                // one line per parcel entered, or when its flight rule changes
+                let fly = info.flags & aurora_net::parcel_flags::ALLOW_FLY != 0;
+                if self
+                    .parcel
+                    .as_ref()
+                    .is_none_or(|p| p.local_id != info.local_id || (p.flags & aurora_net::parcel_flags::ALLOW_FLY != 0) != fly)
+                {
+                    log::info!(
+                        "agent parcel: local id {} in region {:x}, flight {}",
+                        info.local_id,
+                        self.main_region.unwrap_or(0),
+                        if fly { "allowed" } else { "forbidden" }
+                    );
+                }
                 self.parcel_name = info.name.clone();
                 if !info.is_group_owned {
                     self.social.want_name(info.owner_id);
@@ -3228,6 +3496,18 @@ impl World {
                 self.profiles.picks.insert(p.id, *p);
                 None
             }
+            NetEvent::AvatarPicks { target, picks } => {
+                self.profiles.merge_picks(target, picks);
+                None
+            }
+            NetEvent::AvatarNotes { target, notes } => {
+                self.profiles.merge_notes(target, notes);
+                None
+            }
+            NetEvent::AvatarGroups { avatar, groups } => {
+                self.profiles.merge_groups(avatar, groups);
+                None
+            }
             NetEvent::AvatarClassifieds { target, list } => {
                 // replies come in several messages: merge
                 let l = self.profiles.classified_lists.entry(target).or_default();
@@ -3249,7 +3529,7 @@ impl World {
                 None
             }
             NetEvent::ParcelInfo(p) => {
-                self.place_details.parcel_known(p.id, p.global);
+                self.place_details.parcel_known(p.id, p.global, &self.map);
                 self.profiles.parcels.insert(p.id, *p);
                 None
             }
@@ -3276,6 +3556,13 @@ impl World {
             | NetEvent::GroupTitles { .. }
             | NetEvent::GroupNotices { .. }
             | NetEvent::GroupBanList { .. }) => {
+                // the Group titles window's own requests
+                if let NetEvent::GroupTitles { group, request, titles } = &ev {
+                    let name = self.groups.group(group).map(|g| g.name.clone()).unwrap_or_default();
+                    if self.region_titles.on_titles(*group, *request, titles, &name) {
+                        return None;
+                    }
+                }
                 self.group_data.on_event(&ev);
                 if matches!(ev, NetEvent::GroupMembers(_)) {
                     self.search.refresh_group_counts(&self.group_data);
@@ -3421,6 +3708,29 @@ impl World {
                 self.inventory.add_items(items);
                 None
             }
+            NetEvent::AttachmentInventoryItems(items) => {
+                self.inventory.add_attachment_items(items);
+                None
+            }
+            NetEvent::InventoryOrphansFetched { request, owner, result } => {
+                if owner == self.agent_id && self.inventory_background.on_orphans_reply(request, result.is_ok()) {
+                    match result {
+                        Ok(contents) => {
+                            self.inventory.server_updated(contents.folders, Vec::new());
+                            self.inventory.repair_lost_folders();
+                            let (attachments, orphans): (Vec<_>, Vec<_>) = contents.items.into_iter().partition(|item| {
+                                self.worn_attachment(&item.id).and_then(|i| self.objects.get(i)).is_some_and(|o| {
+                                    o.attachment_point() != 0 && !temp_attachments::is_temp_attachment(o.full_id, Some(item.id))
+                                })
+                            });
+                            self.inventory.add_attachment_items(attachments);
+                            self.inventory.add_orphan_items(orphans);
+                        }
+                        Err(reason) => log::warn!("lost inventory recovery failed: {reason}"),
+                    }
+                }
+                None
+            }
             NetEvent::AttachmentAssetSaved(item) => {
                 if self.rlva.enabled() {
                     self.rlva.watchdog.saved(item, Instant::now());
@@ -3454,6 +3764,12 @@ impl World {
             }
             NetEvent::InventoryItemsFailed { items } => {
                 log::warn!("{} inventory items could not be fetched", items.len());
+                self.inventory.items_failed(&items);
+                None
+            }
+            NetEvent::InventoryItemsMissing { items } => {
+                log::warn!("{} inventory items do not exist (broken links)", items.len());
+                self.inventory.items_missing(items);
                 None
             }
             NetEvent::AppearanceRequestResult {
@@ -3498,13 +3814,17 @@ impl World {
                 self.map.apply_collision(handle, kind, use_pass, bitmap);
                 None
             }
-            NetEvent::ParcelOverlay { handle, sequence, data } => {
+            NetEvent::ParcelOverlay {
+                handle,
+                size,
+                sequence,
+                data,
+            } => {
                 self.parcel_visibility.invalidate(handle);
-                let size = self
-                    .regions
-                    .get(&handle)
-                    .map(|r| (r.heightmap.size_x, r.heightmap.size_y))
-                    .unwrap_or((256, 256));
+                // handle 0: a simulator we have no circuit to; no region for it
+                if handle != 0 {
+                    self.ensure_region(handle, size);
+                }
                 self.map.apply_overlay(handle, size, sequence, &data);
                 None
             }
@@ -3705,6 +4025,14 @@ impl World {
     }
 
     fn on_im(&mut self, mut im: InstantMessage) {
+        // a message to the whole region, before the rules of conversations
+        // (region_messages.rs)
+        if region_messages::is_region_message(&im) {
+            if !self.anti_spam_im(&im) {
+                self.on_region_message(&im);
+            }
+            return;
+        }
         if self.im_blocked(&im) {
             return;
         }
@@ -3782,6 +4110,12 @@ impl World {
             }
             return;
         }
+        // the grid's own message: a notice, not a line from "System"
+        // (system_messages.rs)
+        if system_messages::is_system_im(&im) {
+            self.on_system_im(&im.message);
+            return;
+        }
         // dialog 19 = MessageFromObject
         if self.object_im_filtered(&im) {
             return;
@@ -3799,8 +4133,7 @@ impl World {
             im.message
         };
         // an object's message by FSFlashOnObjectIM, told like an IM by its
-        // name (GrowlManager::onNearbyChatMessage); a message without a
-        // sender ("System") is a SystemMessage
+        // name (GrowlManager::onNearbyChatMessage)
         let cause = if im.dialog == 19 {
             attention::Cause::ObjectIm
         } else {
@@ -3861,9 +4194,12 @@ impl World {
                     },
                 );
             }
-            d::TASK_INVENTORY_OFFERED => self.on_task_inventory_offer(im, &from),
+            d::TASK_INVENTORY_OFFERED => {
+                if self.on_task_inventory_offer(im, &from) {
+                    return true;
+                }
+            }
             d::INVENTORY_OFFERED => {
-                self.ui_sounds.push(UiSound::InventoryOffer);
                 let asset_type = im.binary_bucket.first().map(|b| *b as i8).unwrap_or(-1);
                 // A resident's offer is in our inventory before we answer:
                 // prefetch it (inventory_offer_handler, llimprocessing.cpp),
@@ -3898,10 +4234,12 @@ impl World {
                         task_offer: None,
                     },
                 );
-                self.on_inventory_offer_card(im, &from, asset_type, entry);
-                if !self.rlva_inventory_offer(im, entry) {
-                    self.received_items.offer(im, entry);
+                n.link_name(entry, from.clone(), notifications::NameTarget::Avatar(im.from_agent_id));
+                if self.receive_inventory_offer(im, entry) {
+                    return true;
                 }
+                self.ui_sounds.push(UiSound::InventoryOffer);
+                self.on_inventory_offer_card(im, &from, asset_type, entry);
             }
             // FSShowJoinedGroupInvitations (FIRE-20385): an invitation to a
             // group we are already in is dropped unless asked for
@@ -4390,6 +4728,9 @@ impl World {
         // LGPL 2.1): temporary attachments have no inventory item, but their
         // root and linked scripts still own motions that must be stopped.
         self.stop_linkset_motions(idx);
+        if let Some(item) = item {
+            self.attachment_inventory.detached(item);
+        }
         if let Some(item) = item
             && self.outfit.keeps_cof_link(item)
         {
@@ -4419,6 +4760,13 @@ impl World {
             // FIRE-2731 (on_avatar_name_cache_notify)
             self.ui_sounds
                 .push(if online { UiSound::FriendOnline } else { UiSound::FriendOffline });
+            // the line of an open conversation with them, so a message is not
+            // written to someone who just left
+            // (LLIMModel::proccessOnlineOfflineNotification, llimview.cpp):
+            // never opens one
+            if self.social.has_session(&id) {
+                self.session_system(id, n.clone());
+            }
             // the toast of LLNotificationTipHandler (ChatOnlineNotification),
             // never during login, in do not disturb nor for a blocked resident
             if self.notifications.toasts.presence && self.notifications.started && !self.status.dnd && !self.mutes.is_muted_id(&id) {
@@ -4564,10 +4912,44 @@ impl World {
         self.main().is_some_and(|r| r.caps.contains_key(name))
     }
 
+    /// The currency helper the agent's region names in place of the grid's
+    /// (LFSimFeatureHandler::helperUriOverride); None when it names none.
+    pub fn currency_base_uri(&self) -> Option<&str> {
+        self.main().map(|r| r.currency_base_uri.as_str()).filter(|uri| !uri.is_empty())
+    }
+
+    /// Tea::getCurrency: the agent's region's own symbol, else the grid's
+    /// (`grid_currency`).
+    pub fn currency_symbol(&self) -> &str {
+        self.main()
+            .map(|r| r.currency_symbol.trim())
+            .filter(|symbol| !symbol.is_empty())
+            .unwrap_or(&self.grid_currency)
+    }
+
+    /// The agent's region honours OpenSim's export permission
+    /// (LFSimFeatureHandler::simSupportsExport).
+    pub fn export_supported(&self) -> bool {
+        self.main().is_some_and(|r| r.export_supported)
+    }
+
     /// The status feed and page the agent's region names for its OpenSim
     /// grid (LFSimFeatureHandler::gridStatusRSS, gridStatusURL).
     pub fn grid_status_extras(&self) -> Option<(&str, &str)> {
         self.main().map(|r| (r.grid_status.0.as_str(), r.grid_status.1.as_str()))
+    }
+
+    /// The sizes a prim may take on the agent's region (its OpenSimExtras,
+    /// else Second Life's limits).
+    pub fn prim_limits(&self) -> crate::build::PrimLimits {
+        crate::build::PrimLimits::from_extras(self.opensim_extras())
+    }
+
+    /// The agent's region's own word on its OpenSim grid (GridURL, search
+    /// and map servers), None before the first region; empty fields until
+    /// its SimulatorFeatures came.
+    pub fn opensim_extras(&self) -> Option<&aurora_net::OpenSimExtras> {
+        self.main().map(|r| &r.opensim)
     }
 
     /// `id` talked with us now (LLRecentPeople::add), here.
@@ -5117,6 +5499,33 @@ mod parcel_voice_tests {
         world.parcel = None;
         world.apply(event(7, 42, true, Some(true)));
         assert!(world.parcel.is_none(), "voice alone cannot locate the agent parcel");
+    }
+}
+
+#[cfg(test)]
+mod experience_environment_tests {
+    use super::*;
+
+    /// LLEnvironment::onRegionChange: a pushed environment stays in its
+    /// region and goes with a teleport or a crossing.
+    #[test]
+    fn a_pushed_environment_does_not_survive_a_region_change() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        world.set_main_region(7);
+        world.apply(NetEvent::ExperienceEnvironment {
+            experience: Uuid::from_u128(9),
+            message: aurora_llsd::llsd_map! {
+                "action" => "PushPartialEnvironment",
+                "action_data" => aurora_llsd::llsd_map! {
+                    "settings" => aurora_llsd::llsd_map! { "sky" => aurora_llsd::llsd_map! { "gamma" => 3.0 } },
+                },
+            },
+        });
+        assert_eq!(world.eep.pushing_experiences(), vec![Uuid::from_u128(9)]);
+        world.set_main_region(7);
+        assert_eq!(world.eep.pushing_experiences().len(), 1, "the same region keeps it");
+        world.set_main_region(8);
+        assert!(world.eep.pushing_experiences().is_empty());
     }
 }
 
@@ -7500,6 +7909,10 @@ mod motion_tests {
                 lsl_syntax_id: Uuid::nil(),
                 grid_status_feed: String::new(),
                 grid_status_page: String::new(),
+                currency_base_uri: String::new(),
+                opensim: Default::default(),
+                currency_symbol: String::new(),
+                export_supported: false,
             };
             world.apply(features(true));
             assert!(world.hover_height_available());
@@ -7900,5 +8313,58 @@ mod group_insignia_tests {
             ..Default::default()
         })));
         assert_eq!(world.groups.group(&group).map(|g| g.insignia), Some(Uuid::nil()));
+    }
+}
+
+#[cfg(test)]
+mod region_size_order_tests {
+    use super::*;
+    use aurora_net::terrain::TerrainPatch;
+
+    fn world() -> World {
+        World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()))
+    }
+
+    fn patch(x: u32, y: u32) -> TerrainPatch {
+        TerrainPatch {
+            x,
+            y,
+            size: 16,
+            heights: vec![5.0; 256],
+        }
+    }
+
+    #[test]
+    fn a_region_made_before_its_size_is_known_grows_to_it() {
+        let mut world = world();
+        world.set_main_region(1);
+        assert_eq!(world.regions[&1].heightmap.size_x, 256);
+        let region = world.ensure_region(1, (1024, 768));
+        assert_eq!((region.heightmap.size_x, region.heightmap.size_y), (1024, 768));
+        assert_eq!(region.dirty_chunks.len() as u32, region.heightmap.chunk_count());
+    }
+
+    #[test]
+    fn land_before_the_handshake_keeps_its_place_on_a_large_region() {
+        let mut world = world();
+        world.set_main_region(1);
+        world.apply(NetEvent::Terrain {
+            handle: 1,
+            patches: vec![patch(53, 41)],
+        });
+        let map = &world.regions[&1].heightmap;
+        assert_eq!((map.size_x, map.size_y), (1024, 768));
+        assert_eq!(map.heights[(41 * 16 * 1024 + 53 * 16) as usize], 5.0);
+    }
+
+    #[test]
+    fn a_corrupt_patch_number_stays_within_the_largest_region() {
+        let mut world = world();
+        world.apply(NetEvent::Terrain {
+            handle: 1,
+            patches: vec![patch(0xFFFF, 0xFFFF)],
+        });
+        let map = &world.regions[&1].heightmap;
+        assert_eq!((map.size_x, map.size_y), (MAX_REGION_SIZE, MAX_REGION_SIZE));
     }
 }

@@ -131,13 +131,20 @@ class LodTests(unittest.TestCase):
             self.prepare()
         self.assertEqual((set(bpy.data.objects), set(bpy.data.meshes)), before)
 
-    def test_invalid_existing_weights_do_not_silently_generate_a_replacement(self):
+    def test_unweighted_existing_lod_is_completed_without_generating_a_replacement(self):
         low = self.clone("Garment_low")
         low.vertex_groups.clear()
         self.entry.low.mode = "FALLBACK"
         before = set(bpy.data.objects), set(bpy.data.meshes)
-        with self.assertRaises(ValueError):
-            self.prepare()
+        bundle = self.prepare()
+        level = bundle["levels"][1]
+        self.assertEqual(level["origin"], low.name)
+        palette = level["mesh"]["joints"]
+        for face in level["mesh"]["faces"]:
+            for vertex in face["vertices"]:
+                self.assertEqual(palette[vertex["joints"][0]], "mPelvis")
+                self.assertEqual(vertex["weights"], [1.0, 0.0, 0.0, 0.0])
+        self.assertEqual(len(low.vertex_groups), 0)
         self.assertEqual((set(bpy.data.objects), set(bpy.data.meshes)), before)
 
     def test_material_order_mapping_tracks_original_materials(self):

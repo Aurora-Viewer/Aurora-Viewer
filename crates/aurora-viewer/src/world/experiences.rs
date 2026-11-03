@@ -7,7 +7,7 @@
 //! LLFloaterExperienceProfile reads and changes the permission.
 
 use aurora_net::NetCommand;
-use aurora_net::experience::{ExperienceDetails, ExperiencePermission, ExperiencePermissionChange};
+use aurora_net::experience::{ExperienceDetails, ExperienceListKind, ExperiencePermission, ExperiencePermissionChange};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
@@ -41,7 +41,16 @@ pub struct Experiences {
     /// The experiences each group owns (LLPanelGroupExperiences), None
     /// while asked.
     pub groups: HashMap<Uuid, Option<Vec<Uuid>>>,
+    /// The tabs of the My Experiences window: absent while asked, None when
+    /// the list could not be read.
+    pub lists: HashMap<ExperienceListKind, Option<Vec<Uuid>>>,
+    /// The Experience Log tab's events and settings.
+    pub log: super::experience_log::ExperienceLog,
     out: Vec<NetCommand>,
+    /// Forget / Block sent, with the crossfade of the environment they end.
+    clearing: HashMap<Uuid, f32>,
+    /// Experiences whose pushed environment goes, once the server agreed.
+    pub env_clears: Vec<(Uuid, f32)>,
 }
 
 impl Experiences {
@@ -82,15 +91,30 @@ impl Experiences {
     pub fn change(&mut self, experience: Uuid, change: ExperiencePermissionChange) {
         self.busy.insert(experience);
         self.errors.remove(&experience);
+        // the experience pump: Forget fades fast, Block is instant
+        match change {
+            ExperiencePermissionChange::Forget => {
+                self.clearing.insert(experience, 1.0);
+            }
+            ExperiencePermissionChange::Block => {
+                self.clearing.insert(experience, 0.0);
+            }
+            _ => {}
+        }
         self.out.push(NetCommand::ExperiencePermission { experience, change });
     }
 
     /// The server's answer to `change`.
     pub fn permission(&mut self, experience: Uuid, result: Result<ExperiencePermission, String>) {
         self.busy.remove(&experience);
+        let clearing = self.clearing.remove(&experience);
         match result {
             Ok(p) => {
                 self.permissions.insert(experience, p);
+                if let Some(transition) = clearing {
+                    self.env_clears.push((experience, transition));
+                }
+                self.move_between_lists(experience, p);
             }
             Err(e) => {
                 self.errors.insert(experience, e);
@@ -130,6 +154,45 @@ impl Experiences {
             self.out.push(NetCommand::ExperienceInfo(missing));
         }
         self.groups.insert(group, Some(ids));
+    }
+
+    /// LLFloaterExperiences::refreshContents: every tab asked again, the
+    /// previous lists kept until the answers.
+    pub fn request_lists(&mut self) {
+        self.out.push(NetCommand::MyExperiences);
+    }
+
+    /// retrieveExperienceListCoro's answer for a tab, with the details of
+    /// the experiences it names (the rows are sorted by name).
+    pub fn list_arrived(&mut self, kind: ExperienceListKind, ids: Option<Vec<Uuid>>) {
+        if let Some(ids) = &ids {
+            let missing: Vec<Uuid> = ids
+                .iter()
+                .copied()
+                .filter(|id| !self.details.contains_key(id) && self.requested.insert(*id))
+                .collect();
+            if !missing.is_empty() {
+                self.out.push(NetCommand::ExperienceInfo(missing));
+            }
+        }
+        self.lists.insert(kind, ids);
+    }
+
+    /// LLFloaterExperiences::updatePermissions: a changed permission moves
+    /// the experience between the Allowed and Blocked tabs.
+    fn move_between_lists(&mut self, experience: Uuid, permission: ExperiencePermission) {
+        for (kind, wanted) in [
+            (ExperienceListKind::Allowed, permission == ExperiencePermission::Allowed),
+            (ExperienceListKind::Blocked, permission == ExperiencePermission::Blocked),
+        ] {
+            let Some(Some(list)) = self.lists.get_mut(&kind) else {
+                continue;
+            };
+            list.retain(|id| *id != experience);
+            if wanted {
+                list.push(experience);
+            }
+        }
     }
 
     pub fn take_commands(&mut self) -> Vec<NetCommand> {
@@ -176,6 +239,22 @@ mod tests {
         // known now: the next question is ready at once, without a request
         assert!(xp.question(question(id)).is_some());
         assert!(xp.take_commands().is_empty());
+    }
+
+    #[test]
+    fn a_changed_permission_moves_the_experience_between_tabs() {
+        let mut xp = Experiences::default();
+        let id = Uuid::from_u128(0xD);
+        xp.list_arrived(ExperienceListKind::Allowed, Some(vec![id]));
+        xp.list_arrived(ExperienceListKind::Blocked, Some(vec![]));
+        assert!(matches!(&xp.take_commands()[..], [NetCommand::ExperienceInfo(ids)] if ids == &vec![id]));
+        xp.permission(id, Ok(ExperiencePermission::Blocked));
+        assert_eq!(xp.lists[&ExperienceListKind::Allowed], Some(vec![]));
+        assert_eq!(xp.lists[&ExperienceListKind::Blocked], Some(vec![id]));
+        xp.permission(id, Ok(ExperiencePermission::Unset));
+        assert_eq!(xp.lists[&ExperienceListKind::Blocked], Some(vec![]));
+        xp.permission(id, Ok(ExperiencePermission::Allowed));
+        assert_eq!(xp.lists[&ExperienceListKind::Allowed], Some(vec![id]));
     }
 
     #[test]

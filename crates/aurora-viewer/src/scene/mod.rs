@@ -5,6 +5,7 @@ pub mod anchors;
 pub mod anim;
 mod anim_box;
 pub mod animesh;
+pub mod animesh_report;
 mod auto_hover;
 pub mod avatar;
 pub mod banlines;
@@ -55,6 +56,8 @@ pub mod settings;
 pub mod shape;
 mod shown_bakes;
 mod skin_binds;
+pub mod sound_occlusion;
+pub mod sound_reverb;
 pub mod sounds;
 pub mod still_check;
 mod sync_check;
@@ -523,9 +526,26 @@ impl ObjGpu {
 
 /// Pass of a face and whether its glow goes to LL's alpha pool, from the
 /// alpha class and alpha channel of its base texture.
-fn face_mode(f: &FaceDraw, alpha: &[AlphaKind], channel: &[bool]) -> (Pass, bool) {
+///
+/// `object_auto_mask`: when false, a texture that looks binary is still
+/// blended. Matches `LLFace::canRenderAsMask` (indra/newview/llface.cpp):
+/// never auto alpha-mask a rigged face or a HUD attachment. Soft genital
+/// and hair alphas stay visible; an explicit MASK material / PBR mask is
+/// unchanged.
+fn face_mode(f: &FaceDraw, alpha: &[AlphaKind], channel: &[bool], object_auto_mask: bool) -> (Pass, bool) {
     let tex_alpha = alpha.get(f.base_slot as usize).copied().unwrap_or(AlphaKind::Opaque);
-    let pass = classify(f, tex_alpha);
+    let mut pass = classify(f, tex_alpha);
+    // LLFace::canRenderAsMask: never auto-mask rigged faces, HUD, or glow.
+    // Creator MASK / PBR mask and system body parts keep their pass.
+    let auto = object_auto_mask && !f.glow;
+    if !auto
+        && matches!(pass, Pass::Mask | Pass::MaskTwoSided)
+        && f.pbr_alpha.is_none()
+        && !matches!(f.legacy_alpha, Some(legacy_mat::alpha_mode::MASK))
+        && f.system.is_none()
+    {
+        pass = Pass::Blend;
+    }
     // LLPipeline::getPoolTypeFromTE + canRenderAsMask: a glowing face whose
     // texture has an alpha channel goes to the alpha pool unless its
     // material says none / mask / emissive
@@ -969,6 +989,10 @@ pub struct Scene {
     object_signals: FastMap<Uuid, animesh::Signals>,
     /// World and interface sounds.
     pub sounds: sounds::SoundManager,
+    /// How muffled each world sound is behind walls (sound_occlusion.rs).
+    sound_occlusion: sound_occlusion::SoundOcclusion,
+    /// The reverb of the surroundings (sound_reverb.rs).
+    sound_reverb: sound_reverb::SoundReverb,
     /// Environment settings assets (the EEP default day).
     pub settings: settings::SettingsStreamer,
     /// Landmark asset fetches done, for `World::landmarks` (the app passes
@@ -976,6 +1000,9 @@ pub struct Scene {
     pub landmark_results: Vec<aurora_net::FetchResult>,
     palette_slots: FastMap<Uuid, u32>,
     palette_free: Vec<u32>,
+    /// Palette slots handed out since the last upload: their first pose is
+    /// also their previous one (`Renderer::seed_palette_slots`).
+    palette_fresh: Vec<usize>,
     palette_count: u32,
     palettes: Vec<[[f32; 4]; 4]>,
     pub live_morphs: live_morphs::LiveMorphs,
@@ -1165,7 +1192,9 @@ fn te_record_base(model: Mat4, f: &TextureFace) -> DrawRecord {
         base_color: f.color,
         emissive: [0.0, 0.0, 0.0, f.glow],
         uv_st: [f.scale_s, f.scale_t, f.offset_s, f.offset_t],
-        params: [f.rotation, 0.0, roughness, 0.5],
+        // Without a material, LL uses 0.33 for PASS_ALPHA_MASK (not grass's
+        // 0.5): LLVolumeGeometryManager::updateGeometry, llvovolume.cpp.
+        params: [f.rotation, 0.0, roughness, 0.33],
         tex: [
             aurora_render::textures::WHITE,
             aurora_render::textures::FLAT_NORMAL,
@@ -1181,23 +1210,22 @@ fn te_record_base(model: Mat4, f: &TextureFace) -> DrawRecord {
 
 /// Texture animation fields of face `fi` of `o`, if it is animated.
 ///
-/// Face selection as LLVOVolume::animateTextures: the animation's face, or
-/// every face for ALL_SIDES (-1) and out-of-range faces. The animation
-/// combines with the texture entry's transform (`tf`).
+/// Face selection as LLVolumeGeometryManager::rebuildGeom
+/// (indra/newview/llvovolume.cpp): only faces in the TEXTURE_ANIM state use
+/// the animation matrix, and that state goes to every face for ALL_SIDES
+/// (-1), else to the animation's face alone. A face the object does not have
+/// animates nothing, so its other faces stay still. The animation combines
+/// with the texture entry's transform (`tf`).
 fn tex_anim_record(
     o: &Object,
     fi: usize,
-    face_count: usize,
     tf: &TextureFace,
     pbr: bool,
     clock: aurora_render::tex_anim::AnimClock,
 ) -> Option<aurora_render::tex_anim::RecordAnim> {
     use aurora_render::tex_anim::{TexAnimParams, TexXform, record_anim};
     let ta = o.tex_anim?;
-    if let Ok(face) = usize::try_from(ta.face)
-        && face < face_count
-        && face != fi
-    {
+    if !tex_anim_targets(ta.face, fi) {
         return None;
     }
     // At rate 0 Firestorm bakes the first frame into the texture entry
@@ -1220,6 +1248,15 @@ fn tex_anim_record(
         offset: [tf.offset_s, tf.offset_t],
     };
     record_anim(&params, clock.ms(o.tex_anim_clock.start), o.tex_anim_clock.phase, &te)
+}
+
+/// Whether a texture animation set on `anim_face` (-1 = ALL_SIDES) moves
+/// face `fi`: see [`tex_anim_record`].
+fn tex_anim_targets(anim_face: i8, fi: usize) -> bool {
+    match usize::try_from(anim_face) {
+        Ok(face) => face == fi,
+        Err(_) => true,
+    }
 }
 
 impl Scene {
@@ -1500,12 +1537,15 @@ impl Scene {
             last_origin: None,
             blend_tmp: Vec::new(),
             sounds: sounds::SoundManager::new(cache_dir_anim.clone()),
+            sound_occlusion: Default::default(),
+            sound_reverb: Default::default(),
             settings: settings::SettingsStreamer::new(cache_dir_anim.clone()),
             landmark_results: Vec::new(),
             anims,
             object_signals: Default::default(),
             palette_slots: Default::default(),
             palette_free: Vec::new(),
+            palette_fresh: Vec::new(),
             palette_count: lips.slots,
             palettes: lips.matrices.clone(),
             live_morphs: lips,
@@ -1803,24 +1843,7 @@ impl Scene {
         // what the jobs staged so far becomes copyable (once a frame, before
         // the geometry here and the textures in `stream`)
         renderer.prepare_uploads();
-        if self.staging.is_none() {
-            let pool = renderer.staging_pool();
-            self.textures.staging = Some(pool.clone());
-            // (AURORA_TEXTURE_BC7=0: every texture stays RGBA8, to compare)
-            let wanted = std::env::var("AURORA_TEXTURE_BC7").map_or(true, |v| v != "0");
-            self.textures.bc7 = wanted && renderer.textures.bc7();
-            // (AURORA_TEXTURE_BC7_CACHE=0: BC7 without its disk cache, every
-            // texture decoded from its JPEG 2000 data as before)
-            let cached = std::env::var("AURORA_TEXTURE_BC7_CACHE").map_or(true, |v| v != "0");
-            self.textures.bc7_cache = self.textures.bc7 && cached;
-            log::info!(
-                "textures: BC7 compression {} (GPU support: {})",
-                if self.textures.bc7 { "on" } else { "off" },
-                renderer.textures.bc7()
-            );
-            self.meshes.staging = Some(pool.clone());
-            self.staging = Some(pool);
-        }
+        self.take_staging(renderer);
         // Three kinds of results share the budget, each with a part of it so
         // that none starves the others, and each at least one a frame:
         // geometry whose staging chunk became copyable (the first half),
@@ -1876,6 +1899,9 @@ impl Scene {
                 Part::Decoded
             };
             match r {
+                // staged in the pool of a GPU device lost since (`forget_gpu`):
+                // dropped, the next sync asks for it again
+                JobResult::Geometry { geom, .. } if !geom.staged_in(self.staging.as_deref()) => {}
                 JobResult::Geometry { key, geom, area } => self.finish_geometry(renderer, key, geom, area),
                 JobResult::GeometryFailed { key } => {
                     if let GeomKey::Mesh { id, lod } = key {
@@ -2056,8 +2082,80 @@ impl Scene {
         self.palette_slots.clear();
         self.motions.clear();
         self.palette_free.clear();
+        self.palette_fresh.clear();
         self.palette_count = self.live_morphs.slots;
         self.live_morphs.uploaded = false;
+    }
+
+    /// The GPU device is lost (app/gpu_recovery.rs): what the scene holds on
+    /// `old` is released through `clear`'s bookkeeping (CPU only: nothing
+    /// waits on the lost device), with what a logout keeps besides: the
+    /// geometry cache, the environment and projector textures, the
+    /// impostors. The world stays: `clear` forgets the render origin, whose
+    /// change at the next `sync` marks every object and terrain chunk dirty,
+    /// and all of it is built again on the new renderer ([`Self::adopt_gpu`]).
+    pub fn forget_gpu(&mut self, old: &mut Renderer) {
+        for (id, _) in std::mem::take(&mut self.env_tex) {
+            if !id.is_nil() {
+                self.textures.release(&id);
+            }
+        }
+        for (_, (id, _)) in std::mem::take(&mut self.light_textures) {
+            self.textures.release(&id);
+        }
+        self.clear(old);
+        // every GpuGeom holds allocations of the lost device's arena
+        self.geoms.clear();
+        self.geom_zero.clear();
+        self.geom_pending = 0;
+        self.geom_waiting.clear();
+        self.geom_waiting_spare.clear();
+        self.geom_trash = Default::default();
+        self.joint_boxes = Default::default();
+        self.skin_binds = Default::default();
+        self.sculpt_area.clear();
+        self.grass.clear();
+        self.impostors = Default::default();
+        self.far_avatars.clear();
+        // Blender Live's images: installed again from its snapshot
+        self.preview_images.clear();
+        self.preview_appearances.clear();
+        self.meshes.gpu_reset();
+        // set again from the new renderer at the next `sync`
+        self.staging = None;
+    }
+
+    /// The renderer's staging pool for the streamers' jobs, taken once (and
+    /// again for the renderer of a GPU recovery, `adopt_gpu`).
+    fn take_staging(&mut self, renderer: &mut Renderer) {
+        if self.staging.is_some() {
+            return;
+        }
+        let pool = renderer.staging_pool();
+        self.textures.staging = Some(pool.clone());
+        // (AURORA_TEXTURE_BC7=0: every texture stays RGBA8, to compare)
+        let wanted = std::env::var("AURORA_TEXTURE_BC7").map_or(true, |v| v != "0");
+        self.textures.bc7 = wanted && renderer.textures.bc7();
+        // (AURORA_TEXTURE_BC7_CACHE=0: BC7 without its disk cache, every
+        // texture decoded from its JPEG 2000 data as before)
+        let cached = std::env::var("AURORA_TEXTURE_BC7_CACHE").map_or(true, |v| v != "0");
+        self.textures.bc7_cache = self.textures.bc7 && cached;
+        log::info!(
+            "textures: BC7 compression {} (GPU support: {})",
+            if self.textures.bc7 { "on" } else { "off" },
+            renderer.textures.bc7()
+        );
+        self.meshes.staging = Some(pool.clone());
+        self.staging = Some(pool);
+    }
+
+    /// The new renderer of a GPU recovery: every texture held gets a slot of
+    /// it and is uploaded again from memory or the disk cache, and the jobs
+    /// stage into its pool from now on (the imports published again at once
+    /// need it).
+    pub fn adopt_gpu(&mut self, new: &mut Renderer) {
+        self.textures.gpu_reset(new);
+        self.take_staging(new);
     }
 
     /// The nearest avatar the ray `(origin, dir)` meets before `far`, and
@@ -2526,6 +2624,7 @@ impl Scene {
                 }
             }
             self.last_origin = origin;
+            renderer.cut_motion_history();
             for (idx, o) in world.objects.slots.iter_mut().enumerate() {
                 if let Some(o) = o {
                     o.render.needs_records = true;
@@ -2591,6 +2690,9 @@ impl Scene {
                     .is_some_and(|g| self.mat_changes.stale(&g.material_ids, g.mat_generation, mat_gen))
                 {
                     self.sets.dirty.insert(idx);
+                    if let Some((_, wearer)) = Self::wearer_avatar(world, idx) {
+                        self.bom_stale.insert(wearer);
+                    }
                 }
             }
         }
@@ -2857,12 +2959,14 @@ impl Scene {
                 let Some(g) = self.gpu.get_mut(idx) else {
                     continue;
                 };
+                // LLFace::canRenderAsMask: never auto-mask a rigged mesh or HUD
+                let object_auto_mask = !g.rigged && !g.hud;
                 let mut any = false;
                 for (fi, f) in g.faces.iter_mut().enumerate() {
                     if f.base_slot != slot {
                         continue;
                     }
-                    let (pass, pool) = face_mode(f, alpha, channel);
+                    let (pass, pool) = face_mode(f, alpha, channel, object_auto_mask);
                     if pass == f.pass && pool == f.glow_pool {
                         continue;
                     }
@@ -2892,7 +2996,11 @@ impl Scene {
     /// Classify freshly built faces of object `idx`: pass, record alpha
     /// mode, GPU face entries, `special`; and note the object as a user of
     /// their texture slots.
-    fn finish_faces(&mut self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu) {
+    ///
+    /// `object_auto_mask`: see [`face_mode`]. Pass `rigged_owner.is_none() &&
+    /// !hud` from `rebuild_faces` — `g.rigged` is only updated after that
+    /// rebuild returns.
+    fn finish_faces(&mut self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu, object_auto_mask: bool) {
         // (new faces: what the cursor is over may have changed)
         self.pick.changed(idx);
         self.fresh_usage.insert(idx);
@@ -2911,7 +3019,7 @@ impl Scene {
                 last_slot = Some(f.base_slot);
                 self.slot_users.insert((f.base_slot, idx as u32));
             }
-            let (pass, pool) = face_mode(f, alpha, channel);
+            let (pass, pool) = face_mode(f, alpha, channel, object_auto_mask);
             f.pass = pass;
             f.glow_pool = pool;
             let mode = f.record_flags();
@@ -3465,6 +3573,7 @@ impl Scene {
             self.palette_count - 1
         });
         self.palette_slots.insert(owner, slot);
+        self.palette_fresh.push(slot as usize);
         slot * anim::PALETTE_JOINTS as u32
     }
 
@@ -3528,6 +3637,11 @@ impl Scene {
                 continue;
             }
             let mut rec = te_record_base(model, &tf);
+            // Linden plants cut at 0.5, not the 0.33 of other faces without a
+            // material (LLDrawPoolTree, setMinimumAlpha(0.5))
+            if plant.is_some() {
+                rec.params[3] = 0.5;
+            }
             // LLVOVolume: prims of the "light" material are fullbright
             if o.prim_material == LL_MCODE_LIGHT {
                 rec.flags[0] |= flags::FULLBRIGHT;
@@ -3576,23 +3690,22 @@ impl Scene {
                 rec.spec_color = so(te_);
                 rec.legacy = [tn.rotation, tmr.rotation, te_.rotation, 0.0];
                 base_tex = m.base_color_texture.unwrap_or(Uuid::nil());
-                let mut slot_of = |id: Option<Uuid>, default: u32, g: &mut ObjGpu, s: &mut Self| -> u32 {
+                let mut slot_of = |id: Option<Uuid>, default: u32, g: &mut ObjGpu, s: &mut Self| -> (Uuid, u32) {
                     match id {
                         Some(id) if !id.is_nil() => {
+                            let (id, source) = s.face_texture(renderer, world, id, bake_wearer);
+                            if id.is_nil() {
+                                return (id, default);
+                            }
                             g.tex_ids.push(id);
-                            s.textures.acquire(renderer, id, TexSource::Asset)
+                            (id, s.textures.acquire(renderer, id, source))
                         }
-                        _ => default,
+                        _ => (Uuid::nil(), default),
                     }
                 };
-                aux_tex = [
-                    m.normal_texture.unwrap_or_default(),
-                    m.metallic_roughness_texture.unwrap_or_default(),
-                    m.emissive_texture.unwrap_or_default(),
-                ];
-                rec.tex[1] = slot_of(m.normal_texture, aurora_render::textures::FLAT_NORMAL, &mut g, self);
-                rec.tex[2] = slot_of(m.metallic_roughness_texture, aurora_render::textures::WHITE, &mut g, self);
-                rec.tex[3] = slot_of(m.emissive_texture, aurora_render::textures::WHITE, &mut g, self);
+                (aux_tex[0], rec.tex[1]) = slot_of(m.normal_texture, aurora_render::textures::FLAT_NORMAL, &mut g, self);
+                (aux_tex[1], rec.tex[2]) = slot_of(m.metallic_roughness_texture, aurora_render::textures::WHITE, &mut g, self);
+                (aux_tex[2], rec.tex[3]) = slot_of(m.emissive_texture, aurora_render::textures::WHITE, &mut g, self);
                 pbr_alpha = Some(match m.alpha_mode {
                     aurora_assets::AlphaMode::Opaque => 0,
                     aurora_assets::AlphaMode::Blend => 1,
@@ -3653,18 +3766,8 @@ impl Scene {
             }
             // texture (with bake-on-mesh redirection); without a bake wearer
             // the placeholder stays, an ordinary texture asset
-            let mut source = TexSource::Asset;
-            if let Some((bake_te, bake)) = avatar::bake_slot_for(&base_tex)
-                && let Some((aid, a)) = bake_wearer
-            {
-                match self.shown_bake(renderer, world, a, bake_te) {
-                    Some(tid) => {
-                        base_tex = tid;
-                        source = world.bake_source(aid, bake, tid);
-                    }
-                    None => base_tex = Uuid::nil(),
-                }
-            }
+            let (texture, mut source) = self.face_texture(renderer, world, base_tex, bake_wearer);
+            base_tex = texture;
             // media replaces the diffuse texture (LLViewerMediaTexture::switchTexture)
             if let Some(media_tex) = world.media.face_texture(&o.full_id, fi as u8, &base_tex) {
                 base_tex = media_tex;
@@ -3689,7 +3792,7 @@ impl Scene {
             // texture animation: written once, evaluated by the vertex shaders
             let pbr = rec.flags[0] & flags::PBR != 0;
             if plant.is_none()
-                && let Some(a) = tex_anim_record(o, fi, geom.faces.len(), &tf, pbr, renderer.anim_clock())
+                && let Some(a) = tex_anim_record(o, fi, &tf, pbr, renderer.anim_clock())
             {
                 rec.flags[0] |= flags::TEX_ANIM;
                 rec.flags[3] = a.packed;
@@ -3706,6 +3809,12 @@ impl Scene {
                 }
             }
             rec.set_hud_zoom(hud_zoom);
+            rec.set_world_blend_pick(
+                !g.hud
+                    && wearer.is_none()
+                    && matches!(pbr_alpha, None | Some(1))
+                    && matches!(legacy_alpha, None | Some(legacy_mat::alpha_mode::BLEND)),
+            );
             rec.set_anchor(anchor.map(|a| a.matrix));
             let record = renderer.records.alloc(rec);
             g.faces.push(FaceDraw {
@@ -3740,7 +3849,10 @@ impl Scene {
         g.tex_generation = self.textures.generation;
         g.mat_generation = self.materials.generation;
         g.built_faces = geom.faces.iter().filter(|f| f.is_some()).count();
-        self.finish_faces(renderer, idx, &mut g);
+        // g.rigged is set only after rebuild_faces returns; use the skin we
+        // just bound so the first classify already skips auto-Mask.
+        let object_auto_mask = rigged_owner.is_none() && !g.hud;
+        self.finish_faces(renderer, idx, &mut g, object_auto_mask);
         self.gpu[idx] = g;
     }
 
@@ -3812,17 +3924,44 @@ impl Scene {
     }
 
     /// Bake slots (texture-entry index bits) shown by the avatar's attachments
-    /// and their child prims.
-    pub(crate) fn bom_mask(world: &World, avatar_idx: usize) -> u64 {
+    /// and their child prims. Preserve the texture-entry rule of
+    /// LLVOAvatar::updateMeshVisibility and also count rendered PBR maps so
+    /// a body using only PBR BOM does not overlap the system body.
+    pub(crate) fn bom_mask(&self, world: &World, avatar_idx: usize) -> u64 {
         let Some(av) = world.objects.get(avatar_idx) else {
             return 0;
         };
         let mut mask = 0u64;
         let mut scan = |i: usize| {
-            if let Some(te) = world.objects.get(i).and_then(|o| o.te.as_ref()) {
-                for f in &te.faces {
-                    if let Some((slot, _)) = avatar::bake_slot_for(&f.texture) {
-                        mask |= 1u64 << slot.min(63);
+            if let Some(o) = world.objects.get(i)
+                && let Some(te) = &o.te
+            {
+                for (fi, _) in te.faces.iter().enumerate() {
+                    let mut maps = [Some(o.visual_texture_face(fi).texture), None, None, None, None];
+                    if let Some(mid) = o.visual_material(fi) {
+                        let ov = world
+                            .gltf_overrides
+                            .get(&o.key)
+                            .and_then(|s| s.iter().rev().find(|(face, _)| *face as usize == fi))
+                            .map(|(_, ov)| ov)
+                            .filter(|_| o.local_appearance(fi).is_none());
+                        let status = self
+                            .materials
+                            .peek(&mid)
+                            .map_or(meshes::MaterialStatus::Pending, meshes::MaterialStatus::Loaded);
+                        let m = meshes::render_material(&status, ov);
+                        maps = [
+                            maps[0],
+                            m.base_color_texture,
+                            m.normal_texture,
+                            m.metallic_roughness_texture,
+                            m.emissive_texture,
+                        ];
+                    }
+                    for id in maps.into_iter().flatten() {
+                        if let Some((slot, _)) = avatar::bake_slot_for(&id) {
+                            mask |= 1u64 << slot.min(63);
+                        }
                     }
                 }
             }
@@ -3864,7 +4003,7 @@ impl Scene {
         // BOM_SWEEP_FRAMES in case (each time it walks every prim worn)
         let bom_mask =
             if !self.gpu[idx].is_avatar || self.bom_stale.remove(&idx) || (self.frame as usize + idx).is_multiple_of(BOM_SWEEP_FRAMES) {
-                Self::bom_mask(world, idx)
+                self.bom_mask(world, idx)
             } else {
                 self.gpu[idx].bom_mask
             };
@@ -4015,7 +4154,8 @@ impl Scene {
             g.bom_mask = bom_mask;
             g.jelly = jelly;
             g.rlva_silhouette = rlva_silhouette;
-            self.finish_faces(renderer, idx, &mut g);
+            // System parts set FaceDraw::system; auto-Mask rules do not apply.
+            self.finish_faces(renderer, idx, &mut g, true);
             self.gpu[idx] = g;
         } else {
             // (unchanged records are not uploaded again)
@@ -4328,6 +4468,9 @@ impl Scene {
         let selection_faces = &self.selection_faces;
         let photo_marks = &self.photo_marks;
         let give_marks = &self.give_marks.1;
+        // the water's plane while the camera is above it: the blended
+        // faces under it are drawn before the water (blend_order::water_sides)
+        let under_water_plane = self.water.height.filter(|h| view.eye.z >= *h);
         struct Local {
             water_exclusion: Vec<DrawCmd>,
             opaque: Vec<DrawCmd>,
@@ -4335,6 +4478,8 @@ impl Scene {
             mask: Vec<DrawCmd>,
             mask2: Vec<DrawCmd>,
             blend: Vec<blend_order::BlendEntry>,
+            /// Blended faces under the water, drawn before it.
+            blend_under: Vec<blend_order::BlendEntry>,
             glow: Vec<DrawCmd>,
             glow_alpha: Vec<DrawCmd>,
             /// Draws of the avatars pictured for their impostor: (capture slot, draw, blended).
@@ -4359,6 +4504,7 @@ impl Scene {
             mask: Vec::new(),
             mask2: Vec::new(),
             blend: Vec::new(),
+            blend_under: Vec::new(),
             glow: Vec::new(),
             glow_alpha: Vec::new(),
             impostor: Vec::new(),
@@ -4553,15 +4699,25 @@ impl Scene {
                     continue;
                 }
                 match pass {
-                    Pass::Blend => l.blend.push(blend_order::BlendEntry {
-                        distance: blend_d,
-                        cmd,
-                        glow: f.glow,
-                        rigged: g.rigged,
-                        object: idx as u32,
-                        face: f.te_index,
-                        rig,
-                    }),
+                    Pass::Blend => {
+                        let entry = blend_order::BlendEntry {
+                            distance: blend_d,
+                            cmd,
+                            glow: f.glow,
+                            double_sided: f.two_sided,
+                            rigged: g.rigged,
+                            object: idx as u32,
+                            face: f.te_index,
+                            rig,
+                        };
+                        let (after, before) = blend_order::water_sides(sc.z, sr, under_water_plane);
+                        if before {
+                            l.blend_under.push(entry);
+                        }
+                        if after {
+                            l.blend.push(entry);
+                        }
+                    }
                     _ if !full => {}
                     Pass::Opaque => l.opaque.push(cmd),
                     Pass::OpaqueTwoSided => l.opaque2.push(cmd),
@@ -4580,6 +4736,7 @@ impl Scene {
             a.mask.append(&mut b.mask);
             a.mask2.append(&mut b.mask2);
             a.blend.append(&mut b.blend);
+            a.blend_under.append(&mut b.blend_under);
             a.glow.append(&mut b.glow);
             a.glow_alpha.append(&mut b.glow_alpha);
             a.impostor.append(&mut b.impostor);
@@ -4606,19 +4763,23 @@ impl Scene {
         self.lists.mask_two_sided = result.mask2;
         self.blend_tmp = result.blend;
         self.blend_tmp.extend(
-            [(self.banlines.cmds.as_slice(), false), (self.portals.cmds.as_slice(), true)]
-                .into_iter()
-                .flat_map(|(cmds, glow)| {
-                    cmds.iter().map(move |(d, c)| blend_order::BlendEntry {
-                        distance: *d,
-                        cmd: *c,
-                        glow,
-                        rigged: false,
-                        object: u32::MAX,
-                        face: 0,
-                        rig: None,
-                    })
-                }),
+            [
+                (self.banlines.cmds.as_slice(), false, false),
+                (self.portals.cmds.as_slice(), true, true),
+            ]
+            .into_iter()
+            .flat_map(|(cmds, glow, double_sided)| {
+                cmds.iter().map(move |(d, c)| blend_order::BlendEntry {
+                    distance: *d,
+                    cmd: *c,
+                    glow,
+                    double_sided,
+                    rigged: false,
+                    object: u32::MAX,
+                    face: 0,
+                    rig: None,
+                })
+            }),
         );
         self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
         self.lists.blend_depth_mode = blend_order::depth_mode();
@@ -4629,7 +4790,15 @@ impl Scene {
         };
         runs(&self.blend_tmp, self.lists.blend_depth, &mut self.lists.blend_depth_runs);
         self.lists.blend.extend(self.blend_tmp.iter().map(|e| e.cmd));
+        // under the water: back to front, the rigged first
+        // (LLDrawPoolAlpha::renderPostDeferred: forwardRender(true), then
+        // forwardRender()), all writing depth and without glow
+        let mut under = result.blend_under;
+        blend_order::sort(&mut under, true);
+        self.lists.blend_under_water.extend(under.iter().map(|e| e.cmd));
+        self.lists.blend_under_double_sided.extend(under.iter().map(|e| e.double_sided));
         self.lists.blend_glow.extend(self.blend_tmp.iter().map(|e| e.glow));
+        self.lists.blend_double_sided.extend(self.blend_tmp.iter().map(|e| e.double_sided));
         self.lists.shadow_casters.extend(result.casters);
         self.lists.reflection = result.refl;
         self.lists.probe = result.probe;
@@ -5001,7 +5170,8 @@ impl Scene {
                 } else {
                     world.animations_of(&owner)
                 };
-                let stopped = motions.sync(signals, pose_now, |id| anims.get(id));
+                let male = self.avatar_lib.shape_params.is_male(world.visual_params(&owner).unwrap_or(&[]));
+                let stopped = motions.sync_avatar(signals, male, pose_now, |id| anims.get(id));
                 if owner == world.agent_id {
                     completed.extend(stopped);
                 }
@@ -5644,6 +5814,18 @@ mod tests {
     use aurora_net::NetEvent;
 
     #[test]
+    fn texture_animation_moves_its_face_or_every_face_for_all_sides() {
+        // ALL_SIDES (and any negative face) animates every face.
+        assert!((0..8).all(|fi| tex_anim_targets(-1, fi)));
+        // A face in range animates that face alone.
+        assert!(tex_anim_targets(2, 2));
+        assert!(!tex_anim_targets(2, 0));
+        // A face the object does not have (face 2 on a one-face mesh)
+        // animates nothing: face 0 stays still, as in the Legacy Viewer.
+        assert!((0..1).all(|fi| !tex_anim_targets(2, fi)));
+    }
+
+    #[test]
     fn bakes_replace_placeholders_only_on_worn_non_hud_non_animesh_objects() {
         let mut w = World::new(Arc::new(AvatarLibrary::load()));
         for e in crate::demo::events().into_iter().chain(crate::demo::animesh_events()) {
@@ -5673,6 +5855,54 @@ mod tests {
             .map(|(i, _)| i)
             .expect("ground object");
         assert_eq!(Scene::bake_wearer(&w, ground, false), None);
+    }
+
+    #[test]
+    fn pbr_bom_mask_uses_material_maps_and_face_overrides() {
+        let avatars = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(avatars.clone());
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let att = world.objects.iter().find(|(_, o)| o.key.local_id == 9100).map(|(i, _)| i).unwrap();
+        let (_, avatar) = Scene::wearer_avatar(&world, att).unwrap();
+        let asset = Uuid::from_u128(1793);
+        let object = world.objects.get_mut(att).unwrap();
+        object.extra.render_materials = (0..aurora_prim::te::MAX_TES).map(|face| (face as u8, asset)).collect();
+        let mut te = object.te.as_deref().unwrap().clone();
+        for face in &mut te.faces {
+            face.texture = avatar::BAKES[3].2;
+        }
+        object.te = Some(Arc::new(te));
+        let key = object.key;
+        let mut scene = Scene::new(std::env::temp_dir(), avatars);
+        let maps = [avatar::BAKES[0], avatar::BAKES[1], avatar::BAKES[2], avatar::BAKES[8]];
+        scene.materials.insert(
+            asset,
+            aurora_assets::PbrMaterial {
+                base_color_texture: Some(maps[0].2),
+                normal_texture: Some(maps[1].2),
+                metallic_roughness_texture: Some(maps[2].2),
+                emissive_texture: Some(maps[3].2),
+                ..Default::default()
+            },
+        );
+        let legacy_mask = 1u64 << avatar::BAKES[3].0;
+        let expected = maps.iter().fold(legacy_mask, |mask, (slot, _, _)| mask | (1u64 << slot));
+        assert_eq!(scene.bom_mask(&world, avatar), expected);
+        let override_ = aurora_assets::material::PbrOverride {
+            textures: [aurora_assets::material::OVERRIDE_NULL_UUID; 4],
+            ..Default::default()
+        };
+        let faces = world.objects.get(att).unwrap().te.as_ref().unwrap().faces.len();
+        world
+            .gltf_overrides
+            .insert(key, (0..faces).map(|face| (face as u8, override_.clone())).collect());
+        assert_eq!(
+            scene.bom_mask(&world, avatar),
+            legacy_mask,
+            "removed PBR maps preserve the legacy texture-entry visibility"
+        );
     }
 
     #[test]
@@ -5966,6 +6196,7 @@ mod tests {
                 edit_tracking: None,
                 eye_offset: scene.eyes_offset(&world, &owner),
                 draw_distance: 128.0,
+                region_width: 256.0,
                 aspect: 1.0,
             };
             camera.update(&mut world, &settings, &input);
@@ -6029,6 +6260,7 @@ mod tests {
             edit_tracking: None,
             eye_offset: scene.eyes_offset(&world, &owner),
             draw_distance: 128.0,
+            region_width: 256.0,
             aspect: 1.0,
         };
         camera.update(&mut world, &settings, &input);
@@ -6506,6 +6738,43 @@ mod tests {
             ..test_face(Pass::Blend, false)
         };
         assert_eq!(prim.record_flags(), flags::ALPHA_BLEND);
+    }
+
+    /// LLFace::canRenderAsMask: never auto alpha-mask a rigged face, a HUD
+    /// face, or a glowing face. Soft genital / hair alphas stay Blend. An
+    /// explicit MASK material or PBR mask still Masks.
+    #[test]
+    fn rigged_faces_are_never_auto_alpha_masked() {
+        let alpha = [AlphaKind::Mask];
+        let channel = [true];
+        let face = |glow: bool, legacy: Option<u8>, pbr: Option<u8>| FaceDraw {
+            glow,
+            legacy_alpha: legacy,
+            pbr_alpha: pbr,
+            base_slot: 0,
+            ..test_face(Pass::Hidden, false)
+        };
+        // auto-mask allowed: binary texture → Mask
+        assert_eq!(face_mode(&face(false, None, None), &alpha, &channel, true).0, Pass::Mask);
+        // rigged / HUD (object_auto_mask false): same texture → Blend
+        assert_eq!(face_mode(&face(false, None, None), &alpha, &channel, false).0, Pass::Blend);
+        // glowing face: never auto-mask
+        assert_eq!(face_mode(&face(true, None, None), &alpha, &channel, true).0, Pass::Blend);
+        // creator MASK material still Masks on a rigged mesh
+        assert_eq!(
+            face_mode(&face(false, Some(legacy_mat::alpha_mode::MASK), None), &alpha, &channel, false).0,
+            Pass::Mask
+        );
+        // PBR mask still Masks
+        assert_eq!(face_mode(&face(false, None, Some(2)), &alpha, &channel, false).0, Pass::Mask);
+        // two-sided auto-Mask → Blend when auto-mask is off
+        let two = FaceDraw {
+            two_sided: true,
+            base_slot: 0,
+            ..test_face(Pass::Hidden, false)
+        };
+        assert_eq!(face_mode(&two, &alpha, &channel, false).0, Pass::Blend);
+        assert_eq!(face_mode(&two, &alpha, &channel, true).0, Pass::MaskTwoSided);
     }
 
     /// LLVolumeGeometryManager::rebuildGeom / genDrawInfo: a zero base color

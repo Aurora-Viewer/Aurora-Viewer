@@ -318,7 +318,8 @@ impl ProfileUi {
             };
             let asset = world.profiles.get(&window.id).map_or(Uuid::nil(), |profile| match photo.slot {
                 PictureSlot::FirstLife => profile.fl_image,
-                _ => profile.sl_image,
+                PictureSlot::SecondLife => profile.sl_image,
+                PictureSlot::Pick(_) | PictureSlot::Classified(_) => photo.asset,
             });
             if asset.is_nil() {
                 window.photo = None;
@@ -371,6 +372,35 @@ impl ProfileUi {
         }
     }
 
+    /// The toolbar's Picks (Avatar.TogglePicks, llviewermenu.cpp): our
+    /// profile opens on its Picks tab; a minimized one expands there, and a
+    /// second press with Picks shown closes it (unsaved edits still ask).
+    pub fn toggle_picks(&mut self, ctx: &egui::Context, world: &mut World, classic: bool) {
+        let me = world.agent_id;
+        let win_id = if classic { format!("profile-{me}") } else { aurora::window_id(me) };
+        if let Some(w) = self.windows.iter_mut().find(|w| w.id == me && w.open) {
+            if w.tab == TAB_PICKS && !widgets::floater_minimized(ctx, &win_id) {
+                close_or_confirm(w, false);
+                // unsaved edits: the profile comes forward with its question
+                w.raise |= w.confirm_close;
+            } else {
+                w.tab = TAB_PICKS;
+                w.raise = true;
+            }
+            return;
+        }
+        self.open(world, me);
+        if let Some(w) = self.windows.iter_mut().find(|w| w.id == me) {
+            w.tab = TAB_PICKS;
+        }
+    }
+
+    /// Our profile is open on its Picks tab (Avatar.IsPicksTabOpen,
+    /// LLAvatarActions::myPicksTabVisible).
+    pub fn picks_shown(&self, me: Uuid) -> bool {
+        self.windows.iter().any(|w| w.id == me && w.open && w.tab == TAB_PICKS)
+    }
+
     /// Demo captures of the Aurora window (AURORA_DEMO_PROFILE): `edit` puts
     /// our profile in edit mode, `compact` gives the window the width of
     /// the compact layout, a number shows that tab.
@@ -411,6 +441,14 @@ impl ProfileUi {
         [aurora::window_id(w.id), format!("profile-{}", w.id)]
             .iter()
             .find_map(|id| ctx.memory(|m| m.area_rect(egui::Id::unique(id.as_str()))))
+    }
+
+    /// The "Feed" page that has the keyboard, if any.
+    pub fn web_has_focus(&self) -> bool {
+        self.windows
+            .iter()
+            .find(|w| w.open && w.tab == TAB_FEED && w.web.focused)
+            .is_some_and(|w| w.web.running())
     }
 
     /// The "Feed" page that has the keyboard, if any.
@@ -592,7 +630,7 @@ impl ProfileUi {
             self.picker.open(title, current);
             self.picker_slot = Some(slot);
         }
-        if let Some(asset) = self.picker.show(ctx, p, world, images) {
+        if let Some(asset) = self.picker.show_live(ctx, p, world, images) {
             // a snapshot goes into the edit, saved with it
             match self.picker_slot {
                 Some(PictureSlot::Pick(id)) => {
@@ -681,7 +719,8 @@ fn photo_window(
     let name = aurora::display_name(world, &window.id);
     let caption = match photo.slot {
         PictureSlot::FirstLife => aurora_i18n::tr!("ui-profile-rl-picture"),
-        _ => aurora_i18n::tr!("ui-profile-profile-picture"),
+        PictureSlot::SecondLife => aurora_i18n::tr!("ui-profile-profile-picture"),
+        PictureSlot::Pick(_) | PictureSlot::Classified(_) => aurora_i18n::tr!("ui-profile-aurora-snapshot"),
     };
     let id = format!("profile-photo-{}", window.id);
     let size = Vec2::new(460.0, 520.0);
@@ -2109,7 +2148,11 @@ fn classified_detail(
         aurora_i18n::tr!("ui-profile-creation-date"),
         &profiles::slt_date(info.creation_date),
     );
-    row(ui, aurora_i18n::tr!("ui-profile-listing-cost"), &format!("L${}", info.price));
+    row(
+        ui,
+        aurora_i18n::tr!("ui-profile-listing-cost"),
+        &format!("{}{}", aurora_i18n::currency(), info.price),
+    );
     if c.own {
         let renew = info.flags & aurora_net::profile::classified_flags::AUTO_RENEW != 0;
         row(
@@ -2356,6 +2399,39 @@ mod tests {
                     egui::DragAndDrop::clear_payload(&ctx);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn the_picks_button_opens_our_profile_on_picks_and_closes_it_there() {
+        let ctx = egui::Context::default();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let me = Uuid::from_u128(1);
+        world.agent_id = me;
+        for classic in [false, true] {
+            let win_id = if classic { format!("profile-{me}") } else { aurora::window_id(me) };
+            let mut ui = ProfileUi::default();
+            ui.toggle_picks(&ctx, &mut world, classic);
+            assert!(ui.picks_shown(me), "classic {classic}: opens on Picks");
+            // another tab shown: the button switches to Picks, the window stays
+            ui.windows[0].tab = TAB_SL;
+            ui.toggle_picks(&ctx, &mut world, classic);
+            assert!(ui.picks_shown(me), "classic {classic}: switches to Picks");
+            // minimized on Picks: it expands rather than closes
+            crate::ui::widgets::minimize_floater(&ctx, &win_id);
+            ui.toggle_picks(&ctx, &mut world, classic);
+            assert!(ui.picks_shown(me), "classic {classic}: a minimized profile expands");
+            ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((win_id.as_str(), "minimized")), false));
+            // shown on Picks: a second press closes it
+            ui.toggle_picks(&ctx, &mut world, classic);
+            assert!(!ui.picks_shown(me) && !ui.windows[0].open, "classic {classic}: closes");
+            // unsaved edits: the profile stays, raised with its question
+            ui.toggle_picks(&ctx, &mut world, classic);
+            ui.windows[0].raise = false;
+            ui.windows[0].notes.text = "edited".into();
+            ui.toggle_picks(&ctx, &mut world, classic);
+            let w = &ui.windows[0];
+            assert!(w.open && w.confirm_close && w.raise, "classic {classic}: asks, in front");
         }
     }
 

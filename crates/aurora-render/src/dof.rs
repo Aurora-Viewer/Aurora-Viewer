@@ -6,6 +6,7 @@
 //! Its targets exist only while the effect is on: off, it costs nothing.
 
 use crate::DepthOfField;
+use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 
@@ -141,7 +142,7 @@ impl Dof {
                     })
                 })
                 .collect();
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pl),
                 vertex: wgpu::VertexState {

@@ -193,9 +193,13 @@ impl App {
                     .and_then(|idx| Some((*self.scene.avatar_complexity.get(id)?, self.scene.too_complex.contains(&idx))));
                 f.render = self.settings.render_exception(id);
                 f.blocked = w.is_avatar_blocked(id);
+                let name = w.legacy_name(id).unwrap_or_else(|| w.social.name_of(id));
+                f.voice_blocked = w.voice_blocked(id);
+                f.can_block_voice = !crate::world::mutes::is_linden(&name);
                 f.particles_blocked = self.settings.particle_filters.blocked(*id, true);
                 f.sound_blocks = w.derender.owner_sound_flags(*id);
                 f.contact_sets = w.contact_sets.set_names();
+                f.im_blocked = !w.rlva_can_start_im(*id);
                 f.friend = w.social.friends.iter().any(|fr| fr.id == *id);
                 f.voice_volume = crate::ui::context::voice_volume_of(w, *id);
                 f.worn = !super::inspect::worn_roots(w, id).is_empty();
@@ -274,6 +278,7 @@ impl App {
         f.local_preview = o.is_editable_preview();
         if f.local_preview {
             f.wear = true;
+            f.detach = true;
             f.drop = true;
         }
         f
@@ -809,10 +814,19 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
             }
             CtxAction::TeleportToPlace(region, pos) if self.settings.confirm_teleports => self.place_confirm = Some((region, pos, false)),
-            CtxAction::TeleportToPlace(region, pos) => self.teleport_to_location(region, pos),
+            CtxAction::TeleportToPlace(region, pos) => {
+                self.teleport_to_location(region, pos);
+            }
             CtxAction::AppLink(link) => self.run_app_link(link),
             CtxAction::OpenUrl(url) => {
                 use crate::link_trust::Trust;
+                // only web pages go to the system, as the links of a
+                // notification: a link of a text, a profile or a server reply
+                // must not start a local program (the scheme alone is logged)
+                if let Some(scheme) = crate::link_trust::refused_scheme(&url) {
+                    log::warn!("link not opened: the {scheme} scheme is not a web page");
+                    return;
+                }
                 // LLWeb::loadURLInternal: a Marketplace page opens in the
                 // Marketplace window (Firestorm's default browser choice keeps
                 // the Second Life sites inside the viewer)
@@ -829,7 +843,9 @@ impl App {
                     }
                 }
             }
-            CtxAction::TeleportToPlaceConfirmed(region, pos) => self.teleport_to_location(region, pos),
+            CtxAction::TeleportToPlaceConfirmed(region, pos) => {
+                self.teleport_to_location(region, pos);
+            }
             CtxAction::GrantRights { friend, rights } => {
                 let cmd = NetCommand::GrantUserRights { friend, rights };
                 self.world.profile_command(&cmd);

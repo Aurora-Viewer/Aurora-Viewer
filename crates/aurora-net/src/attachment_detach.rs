@@ -1,6 +1,6 @@
-//! Port of LLViewerObject::detachFromAvatar (llviewerobject.cpp, originally
-//! LGPL 2.1): temporary objects have no inventory item
-//! and need ObjectDetach, addressed to their simulator, rather than AIS/COF.
+//! ObjectDetach following LLSelectMgr::sendDetach (llselectmgr.cpp, LGPL 2.1).
+//! Simulator-local roots can be detached without an inventory record, for
+//! temporary attachments and recovery of ordinary attachments with stale items.
 use aurora_msg::msgs::{ObjectDetach, object_detach};
 use uuid::Uuid;
 

@@ -70,6 +70,7 @@ pub fn legacy_demo() -> bool {
 pub fn aurora_demo_active() -> bool {
     aurora::demo_active()
 }
+pub use clipboard::appearance_request as appearance_clipboard;
 pub use view::InventoryPreferences;
 
 // Keep the existing tab indices: slot 1 was unused after the single-tree layout.
@@ -125,6 +126,9 @@ pub enum InvAction {
     CopyLandmarkSlurl(Uuid),
     ShowLandmarkOnMap(Uuid),
     Edit(Mutation),
+    /// The same change from a drag dropped on a folder: the listings ask
+    /// some questions for a drag only (LLFolderBridge::dragCategoryIntoFolder).
+    Drop(Mutation),
     Create {
         parent: Uuid,
         kind: NewItem,
@@ -219,6 +223,8 @@ pub struct Facts {
     pub pictures: std::collections::HashMap<Uuid, egui::TextureHandle>,
     pub online: HashSet<Uuid>,
     pub parcel_environment: bool,
+    /// What RLVa locks leave of wearing and taking off, for the menus.
+    pub rlva: crate::world::rlva::WearLocks,
 }
 
 impl Facts {
@@ -285,7 +291,22 @@ impl Facts {
                             .is_some_and(|region| region.caps.contains_key("ExtEnvironment")),
                     )
                 }),
+            rlva: world.rlva_wear_locks(),
         }
+    }
+
+    /// RLVa: whether the wear button of `id` does something a lock allows:
+    /// taking it off when worn, else adding it (`add`) or wearing it in
+    /// place of what is worn in its slot.
+    pub fn rlva_allows(&self, inv: &Inventory, id: Uuid, add: bool) -> bool {
+        let Some(item) = rules::original(inv, id) else {
+            return true;
+        };
+        if self.worn.contains(&item) {
+            return self.rlva.can_remove(item);
+        }
+        let wear = self.rlva.wear(inv, item, 0);
+        if add { wear.add } else { wear.replace }
     }
 
     fn worn_label(&self, inv: &Inventory, id: Uuid) -> Option<&str> {
@@ -328,6 +349,11 @@ pub struct PropertyEdit {
     pub everyone: u32,
     pub sale_type: u8,
     pub price: i32,
+    /// Text loses focus on pointer press; commit on release so a clicked
+    /// control can join the same mutation before inventory becomes busy.
+    commit_name: bool,
+    commit_desc: bool,
+    commit_price: bool,
 }
 impl From<&aurora_net::inventory::InvItem> for PropertyEdit {
     fn from(it: &aurora_net::inventory::InvItem) -> Self {
@@ -339,6 +365,9 @@ impl From<&aurora_net::inventory::InvItem> for PropertyEdit {
             everyone: it.everyone_mask,
             sale_type: it.sale_type,
             price: it.sale_price,
+            commit_name: false,
+            commit_desc: false,
+            commit_price: false,
         }
     }
 }
@@ -384,13 +413,15 @@ pub(crate) struct WorldDrag {
 /// Read before egui's end-pass clears released cargo. A dragging widget keeps
 /// wants-pointer set even over the world; only the destination area counts.
 pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
-    let cargo = egui::DragAndDrop::payload::<InvDrag>(ctx)?;
+    let item = egui::DragAndDrop::payload::<InvDrag>(ctx)
+        .map(|cargo| cargo.0)
+        .or_else(|| egui::DragAndDrop::payload::<super::places::drag::PlaceDrag>(ctx).and_then(|cargo| cargo.target.item()))?;
     if ctx.is_pointer_over_egui() {
         return None;
     }
     ctx.input(|i| {
         Some(WorldDrag {
-            item: cargo.0,
+            item,
             position: i.pointer.interact_pos()?,
             released: i.pointer.button_released(egui::PointerButton::Primary),
             ctrl: i.modifiers.ctrl,
@@ -476,7 +507,8 @@ pub struct InventoryUi {
     progress: Option<progress::State>,
     copy_jobs: progress::CopyJobs,
     notice: Option<(String, std::time::Instant)>,
-    contents_notice: Option<progress::ContentsNotice>,
+    contents_notice: Option<progress::Notice>,
+    thumbnail_notice: Option<progress::Notice>,
     pub message: String,
     pub dialog: Option<EditDialog>,
     move_to: Option<move_to::MoveTo>,
@@ -675,9 +707,10 @@ impl InventoryUi {
         self.reveal_item(inv, id);
     }
 
-    /// "Show in inventory" from a notification: like `show_original`, on the
-    /// Received tab for what sits in the Marketplace inbox, which the main
-    /// tab leaves out (#752).
+    /// "Show in inventory" from a notification or an inventory link: like
+    /// `show_original`, on the Received tab for what sits in the
+    /// Marketplace inbox (and the inbox itself), which the main tab leaves
+    /// out (#752, #1604).
     pub fn show_notified(&mut self, inv: &Inventory, id: Uuid) {
         self.show_original(inv, id);
         if crate::world::inventory::actions::system(inv, 50).is_some_and(|inbox| crate::world::inventory::actions::under(inv, id, inbox)) {
@@ -915,6 +948,38 @@ fn wearable_icon(asset_type: i32, flags: u32) -> &'static str {
     }
 }
 
+/// LLItemBridge::getIcon/getIconOverlay (indra/newview/llinventorybridge.cpp):
+/// links retain the original's type, wearable subtype and multi-object flags.
+/// Missing and cyclic targets retain the generic link icon until metadata arrives.
+pub(crate) fn inventory_item_icon(inv: &Inventory, it: &aurora_net::inventory::InvItem, p: &Palette) -> (&'static str, egui::Color32) {
+    if !matches!(it.asset_type, 24 | 25) {
+        return (
+            item_icon(it.asset_type, it.inv_type, it.flags),
+            item_icon_color(it.asset_type, it.inv_type, p),
+        );
+    }
+    if let Some(id) = rules::original(inv, it.id) {
+        if let Some(target) = inv.items.get(&id) {
+            return (
+                super::icons::inventory_link_name(item_icon(target.asset_type, target.inv_type, target.flags)),
+                item_icon_color(target.asset_type, target.inv_type, p),
+            );
+        }
+        if let Some(folder) = inv.folders.get(&id) {
+            return (
+                super::icons::inventory_link_name(tree::folder_icon(folder.info.type_default, false)),
+                p.violet_light,
+            );
+        }
+    }
+    (if it.asset_type == 25 { "Inv_LinkFolder" } else { "Inv_LinkItem" }, p.muted)
+}
+
+fn resolved_item_type_icon(ui: &mut egui::Ui, icons: &Icons, inv: &Inventory, it: &aurora_net::inventory::InvItem, p: &Palette) {
+    let (name, color) = inventory_item_icon(inv, it, p);
+    tree::icon(ui, icons, name, p, Some(color));
+}
+
 /// The height of an item row in Aurora's lists, shared with Appearance.
 pub const AURORA_ROW_HEIGHT: f32 = aurora::rows::HEIGHT;
 
@@ -936,11 +1001,6 @@ pub fn item_icon_color(asset_type: i32, inv_type: i32, p: &Palette) -> egui::Col
 
 fn icon(ui: &mut egui::Ui, icons: &Icons, name: &str, p: &Palette) {
     tree::icon(ui, icons, name, p, None);
-}
-
-fn item_type_icon(ui: &mut egui::Ui, icons: &Icons, it: &aurora_net::inventory::InvItem, p: &Palette) {
-    let color = item_icon_color(it.asset_type, it.inv_type, p);
-    tree::icon(ui, icons, item_icon(it.asset_type, it.inv_type, it.flags), p, Some(color));
 }
 
 fn item_row(
@@ -965,8 +1025,8 @@ fn item_row(
     st.visible.push(*id);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        item_type_icon(ui, icons, it, p);
-        if rename_row(ui, p, inv, *id, st, prefs, actions) {
+        resolved_item_type_icon(ui, icons, inv, it, p);
+        if rename_row(ui, p, inv, *id, st, actions) {
             return;
         }
         let worn = facts.worn_label(inv, *id);
@@ -981,7 +1041,7 @@ fn item_row(
             .filter(|_| super::widgets::faux_bold_offset(ui).is_some())
             .map(|_| ui.painter().layout_no_wrap(it.name.clone(), font_id, p.ink));
         // The same worn tag as Aurora's rows and Appearance, before the rights.
-        let tag = worn.map(|worn| (p, worn, super::widgets::reserve_row_tag(ui, &mut label, worn, p)));
+        let tag = worn.map(|worn| (p, worn, super::widgets::reserve_row_tag(ui, &mut label, worn, p), true));
         let permissions = permissions::Permissions::inventory(inv, *id).map(|permissions| permissions.with_next_owner(st.show_next_owner));
         if let Some(permissions) = permissions {
             // Keep each item's rights next to its name: a very long sibling
@@ -1017,7 +1077,7 @@ fn item_response(
     // interaction overlay used to consume secondary clicks on the label.
     drag::source(ui, &r, it.id, false, st);
     clipboard::demo_row(&r, st, it.id);
-    task_drop::target(ui, p, &r, inv, it.parent, prefs, actions);
+    task_drop::target(ui, p, &r, inv, it.parent, actions);
     drag::target(ui, p, &r, inv, it.parent, st, prefs, facts, actions);
     super::widgets::demo::rez_row(&r, it.id);
     super::widgets::demo::worn_row(&r, it.id);
@@ -1070,7 +1130,7 @@ fn folder_row(
             _ => name.clone(),
         };
         state.visible.push(id);
-        if rename_row(ui, p, inv, id, state, prefs, actions) {
+        if rename_row(ui, p, inv, id, state, actions) {
             return;
         }
         let sense = if folder_draggable(inv, id, prefs) {
@@ -1078,16 +1138,27 @@ fn folder_row(
         } else {
             egui::Sense::click()
         };
-        let r = tree::label(ui, tree::name(&label, p), state.selection.contains(&id), sense, None);
+        let mut job = tree::name(&label, p);
+        // the " (Protected) " suffix of LLFolderViewItem::drawLabel
+        // (indra/llui/llfolderviewitem.cpp), as the rows' tag
+        let tag = prefs.protected.contains(&id).then(|| {
+            let text = aurora_i18n::tr!("inventory-pill-protected");
+            (p, text, super::widgets::reserve_row_tag(ui, &mut job, text, p), false)
+        });
+        let r = super::widgets::inventory_item_label_tagged(ui, job, state.selection.contains(&id), sense, None, tag);
         if folder_response(ui, p, inv, id, r, Some(resp.rect), open, state, prefs, facts, actions).double_clicked() {
             *open = !*open;
         }
     });
 }
 
-/// Personal folders can move within inventory or to Marketplace listings.
+/// Personal folders and saved outfits use the shared move validation on drop.
 fn folder_draggable(inv: &Inventory, id: Uuid, prefs: &InventoryPreferences) -> bool {
-    rules::movable(inv, id, &prefs.protected) && inv.folders.get(&id).is_some_and(|f| f.info.type_default == -1)
+    rules::relocatable(inv, id, &prefs.protected)
+        && inv
+            .folders
+            .get(&id)
+            .is_some_and(|f| f.info.type_default == -1 || crate::world::outfit_folders::in_my_outfits(inv, id))
 }
 
 /// What a folder's row does, whichever window draws it: drag and drop (onto
@@ -1114,7 +1185,7 @@ fn folder_response(
         drag::record_row(ui.ctx(), state.ui_id, id, r.rect);
     }
     clipboard::demo_row(&r, state, id);
-    task_drop::target(ui, p, &r, inv, id, prefs, actions);
+    task_drop::target(ui, p, &r, inv, id, actions);
     // Include the caret and icon while dragging, keeping their normal
     // click gestures independent from selection and drag initiation.
     let mut destination = r.clone();
@@ -1136,7 +1207,7 @@ fn folder_response(
     r
 }
 
-fn folder_name(inv: &Inventory, id: Uuid) -> String {
+pub(crate) fn folder_name(inv: &Inventory, id: Uuid) -> String {
     if id == inv.root {
         aurora_i18n::tr!("common-my-inventory").to_owned()
     } else if id == inv.lib_root {
@@ -1205,7 +1276,7 @@ fn folder_window_contents(
         }
         rows::scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h, root, false);
     });
-    task_drop::target(ui, p, &zone.response, inv, root, prefs, actions);
+    task_drop::target(ui, p, &zone.response, inv, root, actions);
     drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
@@ -1270,15 +1341,7 @@ fn status(
             .or_else(|| st.selected.and_then(|id| rules::parent(inv, id)))
             .unwrap_or(inv.root);
         super::widgets::icon_menu(ui, p, "plus", aurora_i18n::tr!("common-new-folder"), |ui| {
-            context::new_menu(
-                ui,
-                p,
-                to,
-                st.pending.is_none() && rules::destination(inv, to, &prefs.protected),
-                st,
-                prefs,
-                actions,
-            );
+            context::new_menu(ui, p, to, st.pending.is_none() && rules::destination(inv, to), st, prefs, actions);
         });
         additional_button(ui, p, st);
         ui.label(
@@ -1448,7 +1511,17 @@ fn search_rows(
         // vertically, so the horizontal range doesn't vanish with a long label.
         // A rebuilt tree clears it; the viewport width itself is never retained.
         if st.aurora.is_none() {
-            let width = row_width(ui, p, inv, facts, row.id, row.folder, row.depth, st.show_next_owner);
+            let width = row_width(
+                ui,
+                p,
+                inv,
+                facts,
+                row.id,
+                row.folder,
+                prefs.protected.contains(&row.id),
+                row.depth,
+                st.show_next_owner,
+            );
             st.result_width = st.result_width.max(width);
         }
         ui.horizontal(|ui| {
@@ -1478,6 +1551,7 @@ fn row_width(
     facts: &Facts,
     id: Uuid,
     folder: bool,
+    locked: bool,
     depth: usize,
     show_next_owner: bool,
 ) -> f32 {
@@ -1494,6 +1568,9 @@ fn row_width(
     if !folder && let Some(worn) = facts.worn_label(inv, id) {
         super::widgets::reserve_row_tag(ui, &mut label, worn, p);
     }
+    if folder && locked {
+        super::widgets::reserve_row_tag(ui, &mut label, aurora_i18n::tr!("inventory-pill-protected"), p);
+    }
     if !folder && let Some(permissions) = permissions::Permissions::inventory(inv, id) {
         permissions.with_next_owner(show_next_owner).append_suffix(ui, &mut label, p);
     }
@@ -1501,22 +1578,14 @@ fn row_width(
     depth.min(24) as f32 * ui.spacing().indent + label_width + 40.0
 }
 
-fn rename_row(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    inv: &Inventory,
-    id: Uuid,
-    st: &mut InventoryUi,
-    prefs: &InventoryPreferences,
-    actions: &mut Vec<InvAction>,
-) -> bool {
+fn rename_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, id: Uuid, st: &mut InventoryUi, actions: &mut Vec<InvAction>) -> bool {
     if st.rename.is_none()
         && st.selected == Some(id)
         && st.selection.len() == 1
         && st.pending.is_none()
         && !ui.ctx().text_edit_focused()
         && ui.input(|i| i.key_pressed(egui::Key::F2))
-        && rules::renameable(inv, id, &prefs.protected)
+        && rules::renameable(inv, id)
     {
         st.begin_rename(inv, id);
     }
@@ -1527,7 +1596,7 @@ fn rename_row(
         st.rename = Some(edit);
         return false;
     }
-    if !rules::renameable(inv, id, &prefs.protected) {
+    if !rules::renameable(inv, id) {
         return false;
     }
     let r = ui.add_sized(
@@ -1558,18 +1627,18 @@ fn rename_row(
         return true;
     } else if !r.has_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
         st.rename = Some(edit);
-        finish_rename(inv, st, prefs, actions);
+        finish_rename(inv, st, actions);
         return true;
     }
     st.rename = Some(edit);
     true
 }
 
-fn finish_rename(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, actions: &mut Vec<InvAction>) {
+fn finish_rename(inv: &Inventory, st: &mut InventoryUi, actions: &mut Vec<InvAction>) {
     let Some(mut edit) = st.rename.take() else {
         return;
     };
-    if !rules::renameable(inv, edit.id, &prefs.protected) {
+    if !rules::renameable(inv, edit.id) {
         return;
     }
     match rules::clean_name(&edit.name) {
@@ -1589,10 +1658,10 @@ fn finish_rename(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPrefere
     st.rename = Some(edit);
 }
 
-fn finish_hidden_rename(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, actions: &mut Vec<InvAction>) {
+fn finish_hidden_rename(inv: &Inventory, st: &mut InventoryUi, actions: &mut Vec<InvAction>) {
     // Closing the window, filtering or collapsing a parent also ends editing.
     if st.rename.as_ref().is_some_and(|edit| !st.visible.contains(&edit.id)) {
-        finish_rename(inv, st, prefs, actions);
+        finish_rename(inv, st, actions);
         st.rename = None;
     }
 }
@@ -1754,7 +1823,7 @@ fn inventory_contents(
         list(ui, p, icons, inv, st, prefs, facts, actions, list_h, root, filtered, true);
     });
     let target = list_destination(st, root);
-    task_drop::target(ui, p, &zone.response, inv, target, prefs, actions);
+    task_drop::target(ui, p, &zone.response, inv, target, actions);
     drag::target(ui, p, &zone.response, inv, target, st, prefs, facts, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, target, st, prefs, facts, actions);
@@ -1889,7 +1958,7 @@ pub fn show(
     }
     let inv = &mut world.inventory;
     context_catalog::process_deferred(inv, st, prefs, &facts);
-    bulk_permissions::show(ctx, p, inv, st, prefs, world.agent_id, &mut actions);
+    bulk_permissions::show(ctx, p, inv, st, world.agent_id, &mut actions);
     st.visible.clear();
     fetch_whole_inventory(inv, st);
     // Copied folders load their whole tree for the paste; once loaded, they
@@ -1943,7 +2012,7 @@ pub fn show(
     st.hover.show(p, inv, prefs, hover_images, &mut st.wanted_hover_images);
     st.was_open = *open && !super::widgets::floater_minimized(ctx, "inventory");
     controls::dialogs(ctx, p, st, prefs);
-    finish_hidden_rename(inv, st, prefs, &mut actions);
+    finish_hidden_rename(inv, st, &mut actions);
     dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
     move_to::show(ctx, p, icons, inv, st, prefs, &facts, &mut actions);
     dialogs::preview(ctx, p, icons, inv, inv, st, images, prefs, script_settings, &mut actions);
@@ -1987,6 +2056,7 @@ pub fn show(
         w.state.copy_jobs.clone_from(&st.copy_jobs);
         w.state.notice.clone_from(&st.notice);
         w.state.contents_notice.clone_from(&st.contents_notice);
+        w.state.thumbnail_notice.clone_from(&st.thumbnail_notice);
         w.state.merchant = st.merchant;
         w.state.marketplace_commands.clone_from(&st.marketplace_commands);
         w.state.playing = st.playing;
@@ -2071,9 +2141,9 @@ pub fn show(
             w.state.scope = root;
             w.state.view = Default::default();
         }
-        bulk_permissions::show(ctx, p, &mut world.inventory, &mut w.state, prefs, world.agent_id, &mut actions);
+        bulk_permissions::show(ctx, p, &mut world.inventory, &mut w.state, world.agent_id, &mut actions);
         if w.id != listings::PANEL {
-            finish_hidden_rename(&world.inventory, &mut w.state, prefs, &mut actions);
+            finish_hidden_rename(&world.inventory, &mut w.state, &mut actions);
         }
         controls::dialogs(ctx, p, &mut w.state, prefs);
         context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts);
@@ -2153,6 +2223,8 @@ pub fn show(
     actions
 }
 
+#[cfg(test)]
+mod delete_tests;
 #[cfg(test)]
 mod drag_tests;
 #[cfg(test)]
@@ -2496,6 +2568,100 @@ mod tests {
             &Default::default(),
         )
         .expect("replacement can be planned without opening Appearance");
+    }
+
+    #[test]
+    fn inventory_shortcuts_follow_target_metadata_and_handle_broken_chains() {
+        use aurora_net::inventory::InvItem;
+        let p = crate::theme::Theme::default().palette();
+        let mut inv = Inventory::default();
+        let id = Uuid::from_u128;
+        let link = InvItem {
+            id: id(2),
+            asset_type: 24,
+            asset_id: id(1),
+            flags: u32::MAX,
+            ..Default::default()
+        };
+        inv.items.insert(link.id, link.clone());
+        let snapshot_link = InvItem {
+            inv_type: 15,
+            ..link.clone()
+        };
+        assert_eq!(inventory_item_icon(&inv, &snapshot_link, &p), ("Inv_LinkItem", p.muted));
+        assert_eq!(inventory_item_icon(&inv, &link, &p), ("Inv_LinkItem", p.muted));
+        let mut types = vec![
+            (0, 0, 0),
+            (0, 15, 0),
+            (1, 1, 0),
+            (2, 2, 0),
+            (3, 3, 0),
+            (6, 6, 0),
+            (6, 6, OBJECT_HAS_MULTIPLE_ITEMS),
+            (7, 7, 0),
+            (10, 10, 0),
+            (20, 19, 0),
+            (21, 20, 0),
+            (49, 22, 0),
+            (56, 25, 0),
+            (57, 26, 0),
+            (5, 18, 255),
+            (99, 99, 0),
+        ];
+        types.extend((0..=16).map(|kind| (if kind < 4 { 13 } else { 5 }, 18, kind)));
+        for (asset_type, inv_type, flags) in types {
+            let target = InvItem {
+                id: id(1),
+                asset_type,
+                inv_type,
+                flags,
+                ..Default::default()
+            };
+            inv.items.insert(target.id, target.clone());
+            let (name, tint) = inventory_item_icon(&inv, &link, &p);
+            assert_eq!(name, format!("{}_Link", item_icon(asset_type, inv_type, flags)));
+            assert_eq!(tint, item_icon_color(asset_type, inv_type, &p));
+            assert_eq!(
+                inventory_item_icon(&inv, &target, &p),
+                (item_icon(asset_type, inv_type, flags), tint)
+            );
+        }
+        inv.items.insert(
+            id(1),
+            InvItem {
+                id: id(1),
+                asset_type: 24,
+                asset_id: id(3),
+                ..Default::default()
+            },
+        );
+        inv.items.insert(
+            id(3),
+            InvItem {
+                id: id(3),
+                asset_type: 13,
+                flags: 1,
+                ..Default::default()
+            },
+        );
+        assert_eq!(inventory_item_icon(&inv, &link, &p), ("Inv_Skin_Link", p.violet_light));
+        inv.items.get_mut(&id(3)).expect("target").asset_type = 24;
+        inv.items.get_mut(&id(3)).expect("target").asset_id = link.id;
+        assert_eq!(inventory_item_icon(&inv, &link, &p), ("Inv_LinkItem", p.muted));
+        inv.items.remove(&id(1));
+        inv.created_folders(vec![aurora_net::inventory::InvFolder {
+            id: id(1),
+            type_default: -1,
+            ..Default::default()
+        }]);
+        let folder_link = InvItem { asset_type: 25, ..link };
+        inv.items.insert(folder_link.id, folder_link.clone());
+        assert_eq!(
+            inventory_item_icon(&inv, &folder_link, &p),
+            ("Inv_FolderClosed_Link", p.violet_light)
+        );
+        inv.folders.remove(&id(1));
+        assert_eq!(inventory_item_icon(&inv, &folder_link, &p), ("Inv_LinkFolder", p.muted));
     }
 
     #[test]
@@ -4029,7 +4195,7 @@ mod tests {
         rename_frame(&ctx, &inv, &mut st, vec![egui::Event::Text("Nom avant fermeture".into())]);
         st.visible.clear();
         let mut actions = Vec::new();
-        finish_hidden_rename(&inv, &mut st, &InventoryPreferences::default(), &mut actions);
+        finish_hidden_rename(&inv, &mut st, &mut actions);
         assert!(st.rename.is_none());
         assert!(matches!(&actions[..], [InvAction::Edit(change)] if matches!(&change.operations[..],
             [aurora_net::inventory::operations::Operation::Patch { body, .. }] if body["name"].as_str() == "Nom avant fermeture")));

@@ -86,13 +86,16 @@ pub(super) fn label(world: &World, want_names: &mut HashSet<Uuid>, url: &str, li
         // "Region (x, y, z)" (LLUrlEntryParcel::processParcelInfo)
         AppLink::Parcel(id) => match world.profiles.parcels.get(id) {
             Some(d) if !d.name.is_empty() => d.name.clone(),
-            Some(d) if !d.sim_name.is_empty() => format!(
-                "{} ({}, {}, {})",
-                d.sim_name,
-                (d.global.x.round() as i64).rem_euclid(256),
-                (d.global.y.round() as i64).rem_euclid(256),
-                d.global.z.round() as i64
-            ),
+            Some(d) if !d.sim_name.is_empty() => {
+                let (x, y) = world.map.local_xy(d.global.x.round(), d.global.y.round());
+                format!(
+                    "{} ({}, {}, {})",
+                    d.sim_name,
+                    x.round() as i64,
+                    y.round() as i64,
+                    d.global.z.round() as i64
+                )
+            }
             Some(_) => aurora_i18n::tr!("ui-chat-applink-parcel-error").to_owned(),
             None => {
                 want(|w| {
@@ -130,6 +133,7 @@ pub(super) fn label(world: &World, want_names: &mut HashSet<Uuid>, url: &str, li
         AppLink::Blocked(Blocked::WearFolder) => aurora_i18n::tr!("ui-chat-applink-wear-label").to_owned(),
         // Human-requested fallback: an unsupported URI has no destination
         // name to resolve. Keep the actual address in the copy-link menu.
+        AppLink::AreaSearch(_) => aurora_i18n::tr!("toolbar-command-area-search").to_owned(),
         AppLink::Unsupported => aurora_i18n::tr!("ui-chat-applink-unsupported-label").to_owned(),
         _ => unescape(url),
     };
@@ -162,7 +166,7 @@ pub(super) fn tooltip(link: &AppLink) -> &'static str {
         AppLink::Event(_) => aurora_i18n::tr!("ui-chat-applink-event-tip"),
         AppLink::WorldMap { .. } => aurora_i18n::tr!("ui-chat-applink-map-tip"),
         AppLink::Chat { .. } => aurora_i18n::tr!("ui-chat-applink-chat-tip"),
-        AppLink::Search { .. } => aurora_i18n::tr!("ui-chat-applink-search-tip"),
+        AppLink::Search { .. } | AppLink::AreaSearch(_) => aurora_i18n::tr!("ui-chat-applink-search-tip"),
         AppLink::Blocked(_) => aurora_i18n::tr!("ui-chat-applink-blocked-tip"),
         AppLink::Unsupported => aurora_i18n::tr!("ui-chat-applink-unsupported-tip"),
     }
@@ -206,7 +210,8 @@ pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, li
                     && let Some(d) = at
                 {
                     let g = d.global;
-                    let pos = glam::Vec3::new(g.x.rem_euclid(256.0) as f32, g.y.rem_euclid(256.0) as f32, g.z as f32);
+                    let (x, y) = world.map.local_xy(g.x, g.y);
+                    let pos = glam::Vec3::new(x as f32, y as f32, g.z as f32);
                     request(&ctx, CtxAction::ShowPlace(d.sim_name.clone(), pos));
                 }
             }
@@ -287,6 +292,20 @@ pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, li
 /// A command of a wrapping text (conversation, profile…): its label in the
 /// link colour, the command run on a click.
 pub(super) fn link(ui: &mut egui::Ui, p: &Palette, world: &World, url: &str, link: &AppLink, text: &str, size: f32) {
+    link_emphasized(ui, p, world, url, link, text, size, false.into());
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn link_emphasized(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    url: &str,
+    link: &AppLink,
+    text: &str,
+    size: f32,
+    emphasis: crate::ui::fonts::TextEmphasis,
+) {
     let filtered = world.rlva_filter_text(text);
     let text = filtered.as_ref();
     let k = super::super::colors::get();
@@ -295,7 +314,7 @@ pub(super) fn link(ui: &mut egui::Ui, p: &Palette, world: &World, url: &str, lin
     } else {
         super::super::colors::text(k.chat_slurl)
     };
-    let r = super::action_marker::link(ui, super::action_marker::Action::app(link), text, size, color, None);
+    let r = super::action_marker::link(ui, super::action_marker::Action::app(link), text, size, color, None, emphasis);
     menu(&r, p, world, url, link, text);
     if r.on_hover_text(tooltip(link)).clicked() {
         request(ui.ctx(), CtxAction::AppLink(link.clone()));
@@ -361,7 +380,9 @@ mod tests {
                                 );
                             } else {
                                 let shown = ui.scope(|ui| match &target {
-                                    super::super::Link::Agent(id) => super::super::agent_link(ui, &p, &world, *id, "Resident", 14.0),
+                                    super::super::Link::Agent(id) => {
+                                        super::super::agent_link(ui, &p, &world, *id, "Resident", 14.0, false.into())
+                                    }
                                     super::super::Link::App(url, action) => link(ui, &p, &world, url, action, "Resident", 14.0),
                                     _ => unreachable!(),
                                 });

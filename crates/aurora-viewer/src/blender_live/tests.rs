@@ -99,6 +99,109 @@ fn prepare(value: &serde_json::Value) -> Result<protocol::Prepared, String> {
     protocol::prepare(&serde_json::to_vec(value).expect("JSON"), &supported())
 }
 
+fn compressed_snapshot(bytes: &[u8]) -> Vec<u8> {
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(bytes).expect("compress snapshot");
+    let mut payload = b"ZLIB".to_vec();
+    payload.extend(encoder.finish().expect("compressed snapshot"));
+    payload
+}
+
+fn packed_triangle() -> serde_json::Value {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let mut value = triangle();
+    let face = &mut value["meshes"][0]["faces"][0];
+    let mut bytes = Vec::new();
+    for vertex in face["vertices"].as_array().expect("vertices") {
+        for key in ["position", "normal", "uv"] {
+            for number in vertex[key].as_array().expect("vector") {
+                bytes.extend_from_slice(&(number.as_f64().expect("float") as f32).to_le_bytes());
+            }
+        }
+        bytes.extend([0; 4]);
+        for number in vertex["weights"].as_array().expect("weights") {
+            bytes.extend_from_slice(&(number.as_f64().expect("float") as f32).to_le_bytes());
+        }
+    }
+    let indices: Vec<_> = [0u32, 1, 2].into_iter().flat_map(u32::to_le_bytes).collect();
+    face.as_object_mut().expect("surface").remove("vertices");
+    face.as_object_mut().expect("surface").remove("indices");
+    face["packed"] = serde_json::json!({"vertices": STANDARD.encode(bytes), "indices": STANDARD.encode(indices)});
+    value
+}
+
+#[test]
+fn blender_live_packed_geometry_matches_plain_and_compressed_meshes() {
+    let plain = prepare(&triangle()).expect("plain");
+    let value = packed_triangle();
+    let packed = prepare(&value).expect("packed");
+    let compressed =
+        protocol::prepare(&compressed_snapshot(&serde_json::to_vec(&value).expect("JSON")), &supported()).expect("compressed packed");
+    assert_eq!(plain.meshes[0].data, packed.meshes[0].data);
+    assert_eq!(plain.meshes[0].data, compressed.meshes[0].data);
+    assert_eq!(plain.triangles, packed.triangles);
+}
+
+#[test]
+fn blender_live_packed_geometry_rejects_bad_base64_lengths_and_mixed_encodings() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    for case in 0..5 {
+        let mut value = packed_triangle();
+        let face = &mut value["meshes"][0]["faces"][0];
+        match case {
+            0 => face["packed"]["vertices"] = "!invalid!".into(),
+            1 => face["packed"]["vertices"] = STANDARD.encode([0; 51]).into(),
+            2 => face["packed"]["indices"] = STANDARD.encode([0; 3]).into(),
+            3 => face["vertices"] = triangle()["meshes"][0]["faces"][0]["vertices"].clone(),
+            _ => face["packed"]["indices"] = STANDARD.encode(99u32.to_le_bytes()).into(),
+        }
+        assert!(prepare(&value).is_err(), "packed geometry case {case}");
+    }
+}
+
+#[test]
+fn blender_live_compressed_snapshot_preserves_geometry_and_strict_validation() {
+    let bytes = serde_json::to_vec(&triangle()).expect("snapshot");
+    let plain = protocol::prepare(&bytes, &supported()).expect("plain snapshot");
+    let packed = protocol::prepare(&compressed_snapshot(&bytes), &supported()).expect("compressed snapshot");
+    assert_eq!(plain.revision, packed.revision);
+    assert_eq!(plain.triangles, packed.triangles);
+    assert_eq!(plain.meshes[0].data, packed.meshes[0].data);
+    let mut invalid = triangle();
+    invalid["meshes"][0]["faces"][0]["vertices"][0]["weights"] = serde_json::json!([0, 0, 0, 0]);
+    assert!(protocol::prepare(&compressed_snapshot(&serde_json::to_vec(&invalid).expect("JSON")), &supported()).is_err());
+}
+
+#[test]
+fn blender_live_compressed_snapshot_accepts_json_above_the_old_wire_limit() {
+    let mut bytes = serde_json::to_vec(&triangle()).expect("snapshot");
+    bytes.resize(protocol::MAX_BYTES + 1, b' ');
+    assert!(protocol::prepare(&bytes, &supported()).is_err());
+    let compressed = compressed_snapshot(&bytes);
+    assert!(compressed.len() < protocol::MAX_BYTES);
+    let result = protocol::prepare(&compressed, &supported()).expect("large decoded snapshot");
+    assert_eq!(result.triangles, 1);
+}
+
+#[test]
+fn blender_live_inflation_rejects_bombs_truncation_corruption_and_trailing_data() {
+    let original = vec![b'x'; 1024 * 1024];
+    let packed = compressed_snapshot(&original);
+    assert_eq!(protocol::inflate(&packed[4..], original.len()).expect("bounded decode"), original);
+    assert!(protocol::inflate(&packed[4..], 512).is_err());
+    for removed in [1, 4, packed.len() - 4] {
+        assert!(protocol::inflate(&packed[4..packed.len() - removed], original.len()).is_err());
+    }
+    let mut corrupt = packed.clone();
+    *corrupt.last_mut().expect("checksum") ^= 0xff;
+    assert!(protocol::inflate(&corrupt[4..], original.len()).is_err());
+    let mut trailing = packed.clone();
+    trailing.push(0);
+    assert!(protocol::inflate(&trailing[4..], original.len()).is_err());
+    trailing.extend_from_slice(&packed[4..]);
+    assert!(protocol::inflate(&trailing[4..], original.len() * 2).is_err());
+}
+
 fn linked_objects() -> serde_json::Value {
     let mut value = static_triangle();
     let mut child = value["meshes"][0].clone();
@@ -577,10 +680,27 @@ fn blender_live_row_buttons_import_their_own_source_only_when_available() {
             })
             .collect::<Vec<_>>()
     };
+    let readable = |out: &egui::FullOutput, label: &str| {
+        out.shapes.iter().any(|shape| {
+            if let egui::Shape::Text(text) = &shape.shape {
+                text.galley.text() == label && text.galley.job.sections.iter().all(|section| section.format.font_id.size >= 16.0)
+            } else {
+                false
+            }
+        })
+    };
     for _ in 0..6 {
         frame(&mut live, true, vec![]);
     }
     let out = frame(&mut live, true, vec![]);
+    assert!(!live.installer_scan, "opening LiveMesh must wait for an explicit Blender search");
+    assert!(!live.installer.scanned && !live.installer.busy);
+    assert_eq!(live.tab, Tab::Connection);
+    assert!(readable(&out, aurora_i18n::tr!("blender-live-connection")));
+    assert!(
+        positions(&out, aurora_i18n::tr!("blender-live-detect")).is_empty(),
+        "installation controls belong to Plugins"
+    );
     assert!(positions(&out, aurora_i18n::tr!("common-remove")).is_empty());
     let click = |pos, pressed| {
         vec![
@@ -627,6 +747,72 @@ fn blender_live_row_buttons_import_their_own_source_only_when_available() {
             "row import ignores the previous selection"
         );
     }
+    let out = frame(&mut live, true, vec![]);
+    let plugins_tab = positions(&out, aurora_i18n::tr!("blender-live-plugins"))[0];
+    frame(&mut live, true, click(plugins_tab, true));
+    frame(&mut live, true, click(plugins_tab, false));
+    assert_eq!(live.tab, Tab::Plugins);
+    assert!(!live.installer_scan, "opening Plugins must not run discovery");
+    let out = frame(&mut live, true, vec![]);
+    assert!(positions(&out, aurora_i18n::tr!("blender-live-port")).is_empty());
+    assert!(positions(&out, aurora_i18n::tr!("blender-live-upload")).is_empty());
+    assert!(readable(&out, aurora_i18n::tr!("blender-live-detect")));
+    let manual = positions(&out, aurora_i18n::tr!("blender-live-manual-install"))[0];
+    frame(&mut live, true, click(manual, true));
+    frame(&mut live, true, click(manual, false));
+    for _ in 0..12 {
+        frame(&mut live, true, vec![]);
+    }
+    let out = frame(&mut live, true, vec![]);
+    assert!(
+        readable(&out, aurora_i18n::tr!("blender-live-package-extension")),
+        "manual ZIP labels use readable text too"
+    );
+    let search = positions(&out, aurora_i18n::tr!("blender-live-detect"))[0];
+    frame(&mut live, true, click(search, true));
+    frame(&mut live, true, click(search, false));
+    assert!(
+        std::mem::take(&mut live.installer_scan),
+        "the search button requests Blender discovery"
+    );
+    live.open = false;
+    frame(&mut live, true, vec![]);
+    live.open = true;
+    frame(&mut live, true, vec![]);
+    assert!(!live.installer_scan, "reopening LiveMesh must not repeat discovery");
+    assert_eq!(live.tab, Tab::Plugins, "reopening retains the active tab");
+    let out = frame(&mut live, true, vec![]);
+    let choose = positions(&out, aurora_i18n::tr!("blender-live-choose-blender"))[0];
+    frame(&mut live, true, click(choose, true));
+    frame(&mut live, true, click(choose, false));
+    assert!(live.installer_choose, "the picker requests installation in the selected Blender");
+    assert!(!live.installer_scan, "choosing one Blender must not request global discovery");
+    live.installer.demo("installer-done");
+    for index in 0..6 {
+        let mut entry = live.installer.installations[0].clone();
+        entry.executable = format!("Blender-{index}/blender.exe").into();
+        live.installer.installations.push(entry);
+    }
+    let out = frame(&mut live, true, vec![]);
+    let message = aurora_i18n::tr!("blender-live-install-success", version = "5.2.1");
+    let success = positions(&out, &message)[0];
+    let first_installation = positions(&out, "Blender 5.2.1")[0];
+    assert!(
+        success.y < first_installation.y,
+        "completion must stay above a long installation list"
+    );
+    let connection_tab = positions(&out, aurora_i18n::tr!("blender-live-connection"))[0];
+    frame(&mut live, true, click(connection_tab, true));
+    frame(&mut live, true, click(connection_tab, false));
+    assert_eq!(live.tab, Tab::Connection);
+    assert_eq!(live.selected, Some(sources[1]));
+    assert_eq!(live.state(sources[0]), SourceState::Hidden);
+    assert_eq!(live.state(sources[1]), SourceState::Visible);
+    assert!(live.installer.success.is_some(), "changing tabs preserves installer results");
+    assert!(
+        ctx.style_of(egui::Theme::Dark).override_font_id.is_none(),
+        "LiveMesh typography must not affect other windows"
+    );
 }
 
 #[test]
@@ -769,10 +955,16 @@ fn blender_live_transport_handshake_errors_reconnect_and_latest_slot() {
     reader.read_line(&mut line).expect("hello");
     assert!(line.contains("mPelvis"));
     assert!(line.contains("pbr-materials"));
+    assert!(line.contains("compressed-snapshots"));
+    assert!(line.contains("packed-geometry"));
+    assert!(line.contains("max_decoded_bytes"));
     for revision in 1..=3 {
-        let mut value = triangle();
+        let mut value = if revision == 3 { packed_triangle() } else { triangle() };
         value["revision"] = revision.into();
-        let bytes = serde_json::to_vec(&value).expect("snapshot");
+        let mut bytes = serde_json::to_vec(&value).expect("snapshot");
+        if revision == 2 {
+            bytes = compressed_snapshot(&bytes);
+        }
         stream.write_all(&(bytes.len() as u32).to_le_bytes()).expect("length");
         stream.write_all(&bytes).expect("data");
         line.clear();

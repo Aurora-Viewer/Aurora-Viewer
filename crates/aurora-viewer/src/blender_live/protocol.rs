@@ -9,10 +9,12 @@ use std::{collections::HashSet, sync::Arc};
 use uuid::Uuid;
 #[path = "appearance.rs"]
 mod appearance;
+pub use super::geometry::PackedGeometry;
 pub use appearance::{Image, Material, PreparedImage, STAGING_BUSY};
 
 pub const VERSION: u32 = 1;
 pub const MAX_BYTES: usize = 64 * 1024 * 1024;
+pub(super) const MAX_DECODED_BYTES: usize = 256 * 1024 * 1024;
 pub const MAX_OBJECTS: usize = 32;
 pub(super) const MAX_CORNERS: usize = 600_000;
 
@@ -46,8 +48,12 @@ pub struct Surface {
     pub color: [f32; 4],
     #[serde(default)]
     pub material: Option<Material>,
+    #[serde(default)]
     pub vertices: Vec<Corner>,
+    #[serde(default)]
     pub indices: Vec<u32>,
+    #[serde(default)]
+    pub packed: Option<PackedGeometry>,
 }
 
 #[derive(Deserialize)]
@@ -120,8 +126,45 @@ pub fn prepare_staged(
     if bytes.is_empty() || bytes.len() > MAX_BYTES {
         return Err(aurora_i18n::tr!("blender-live-invalid-size").into());
     }
+    let decoded;
+    let bytes = if let Some(compressed) = bytes.strip_prefix(b"ZLIB") {
+        decoded = inflate(compressed, MAX_DECODED_BYTES)?;
+        decoded.as_slice()
+    } else {
+        bytes
+    };
     let snapshot: Snapshot = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
     prepare_snapshot(snapshot, supported, pool, cache)
+}
+
+pub(super) fn inflate(bytes: &[u8], limit: usize) -> Result<Vec<u8>, String> {
+    use flate2::{Decompress, FlushDecompress, Status};
+    let invalid = || aurora_i18n::tr!("blender-live-invalid-compression").to_owned();
+    let mut decoder = Decompress::new(true);
+    let mut decoded = Vec::new();
+    let mut chunk = [0; 64 * 1024];
+    loop {
+        let before_in = decoder.total_in();
+        let before_out = decoder.total_out();
+        let status = decoder
+            .decompress(&bytes[before_in as usize..], &mut chunk, FlushDecompress::Finish)
+            .map_err(|_| invalid())?;
+        let count = (decoder.total_out() - before_out) as usize;
+        if count > limit.saturating_sub(decoded.len()) {
+            return Err(aurora_i18n::tr!("blender-live-invalid-size").into());
+        }
+        decoded.extend_from_slice(&chunk[..count]);
+        if status == Status::StreamEnd {
+            return if decoder.total_in() as usize == bytes.len() {
+                Ok(decoded)
+            } else {
+                Err(invalid())
+            };
+        }
+        if decoder.total_in() == before_in && count == 0 {
+            return Err(invalid());
+        }
+    }
 }
 
 pub(super) fn prepare_snapshot(
@@ -191,7 +234,13 @@ pub(super) fn prepare_snapshot(
         let mut faces = Vec::new();
         let mut colors = Vec::new();
         let mut materials = Vec::new();
-        for surface in mesh.faces {
+        for mut surface in mesh.faces {
+            if let Some(packed) = surface.packed.take() {
+                if !surface.vertices.is_empty() || !surface.indices.is_empty() {
+                    return Err(aurora_i18n::tr!("blender-live-invalid-packed").into());
+                }
+                (surface.vertices, surface.indices) = packed.decode()?;
+            }
             total = total.saturating_add(surface.vertices.len());
             total_indices = total_indices.saturating_add(surface.indices.len());
             if total > MAX_CORNERS || total_indices > MAX_CORNERS * 3 {

@@ -11,6 +11,7 @@ impl App {
             vendor_id: info.vendor_id,
             gpu: info.name.clone(),
             driver: info.driver.clone(),
+            linux: cfg!(target_os = "linux"),
             installed: gpu_driver::installed(&info.name),
             today: gpu_driver::today(),
         });

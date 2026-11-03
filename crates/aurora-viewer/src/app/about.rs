@@ -143,7 +143,11 @@ impl App {
                 }
             };
             let at = self.world.agent.position;
-            let grid = crate::world::chat_log::grid_name(&s.grid, &s.custom_login_uri, self.demo);
+            // On OpenSim, the grid we are on now: after a Hypergrid teleport
+            // the visited one, by its saved name or its address.
+            let grid = crate::grids::current_label(s, self.world.opensim_extras())
+                .filter(|_| !self.demo)
+                .unwrap_or_else(|| crate::world::chat_log::grid_name(&s.grid, &s.custom_login_uri, self.demo));
             sections.push(Section {
                 icon: "map-pin-filled",
                 title: "about-section-location",

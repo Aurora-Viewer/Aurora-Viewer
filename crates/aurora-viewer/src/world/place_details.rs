@@ -323,11 +323,12 @@ impl PlaceDetails {
 
     /// ParcelInfoReply: a profile opened by its parcel learns where it is
     /// (Teleport, Map, its SLURL), as displayParcelInfo would have known.
-    pub fn parcel_known(&mut self, id: Uuid, global: DVec3) {
+    pub fn parcel_known(&mut self, id: Uuid, global: DVec3, map: &WorldMap) {
         for place in self.all() {
             if matches!(place.source, Source::Parcel(p) if p == id) && place.global.is_none() {
                 place.global = Some(global);
-                place.region_pos = region_pos_of(global);
+                let (x, y) = map.local_xy(global.x, global.y);
+                place.region_pos = Vec3::new(x as f32, y as f32, global.z as f32);
             }
         }
     }
@@ -402,6 +403,34 @@ mod tests {
         d.apply_remote_parcel(handle, Vec3::new(140.0, 120.0, 25.0), Ok(parcel));
         assert_eq!(d.windows[0].parcel(), Some(parcel));
         assert!(matches!(&d.take_commands()[..], [NetCommand::ParcelInfoRequest(id)] if *id == parcel));
+    }
+
+    #[test]
+    fn the_name_search_terminator_does_not_move_the_request() {
+        let now = Instant::now();
+        let mut lm = Landmarks::default();
+        let mut d = PlaceDetails::default();
+        let pos = Vec3::new(168.0, 34.0, 21.0);
+        d.open_window(link("alphatribe island", pos), &WorldMap::default(), &mut lm, now);
+        d.take_commands();
+        // the match, then the closing block repeating the requested name
+        // at slot 0, 0 with access 255: the parcel is asked of the match
+        let mut map = map_with("Alphatribe Island", 1000, 1000);
+        map.apply_blocks(vec![MapBlock {
+            x: 0,
+            y: 0,
+            name: "alphatribe island".into(),
+            access: 255,
+            region_flags: 0,
+            water_height: 0,
+            agents: 0,
+            map_image_id: Uuid::nil(),
+            size_x: 256,
+            size_y: 256,
+        }]);
+        d.update(&map, &mut lm, now);
+        let handle = aurora_net::origin_to_handle(256_000, 256_000);
+        assert!(matches!(&d.take_commands()[..], [NetCommand::RemoteParcelRequest { handle: h, .. }] if *h == handle));
     }
 
     #[test]
@@ -540,7 +569,7 @@ mod tests {
         assert_eq!(d.panel.as_ref().and_then(|p| p.parcel()), Some(parcel));
         assert_eq!(d.panel.as_ref().and_then(|p| p.global), None);
         // ParcelInfoReply: where it is, for Teleport and Map
-        d.parcel_known(parcel, DVec3::new(256_140.0, 256_120.0, 25.0));
+        d.parcel_known(parcel, DVec3::new(256_140.0, 256_120.0, 25.0), &WorldMap::default());
         let p = d.panel.as_ref().expect("panel");
         assert_eq!(p.global, Some(DVec3::new(256_140.0, 256_120.0, 25.0)));
         assert_eq!(p.region_pos, Vec3::new(140.0, 120.0, 25.0));

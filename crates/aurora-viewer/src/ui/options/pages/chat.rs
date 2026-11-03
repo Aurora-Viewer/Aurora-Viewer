@@ -14,6 +14,16 @@ pub fn page(cx: &mut Cx, tab: usize) {
     match tab {
         0 => {
             cx.group(tr!("common-nearby-chat"), |cx| {
+                // ChatFontSize (Chat › Visuals, Medium): the nearby chat's
+                // and the conversations' text on its own, apart from
+                // Appearance › Text size
+                cx.slider(
+                    tr!("ui-options-chat-text-size"),
+                    tr!("ui-options-chat-text-size-hint"),
+                    &field!(chat_font_scale),
+                    crate::settings::FONT_SCALE_MIN..=crate::settings::FONT_SCALE_MAX,
+                    "×",
+                );
                 cx.toggle(tr!("ui-options-show-time"), "", &field!(chat_timestamps));
                 // FSShowChatChannel: the "/0" chip of the field (off, as in
                 // the Legacy Viewer)
@@ -136,6 +146,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-payment-opens-conversation"),
                     tr!("ui-options-payment-opens-conversation-hint"),
                     &field!(payment_opens_conversation),
+                );
+                // and our own payment's card in the payee's conversation
+                cx.toggle(
+                    tr!("ui-options-payment-sent-opens-conversation"),
+                    tr!("ui-options-payment-sent-opens-conversation-hint"),
+                    &field!(payment_sent_opens_conversation),
                 );
                 // the tab of a conversation with news flashes
                 // (FSFloaterIMContainer::startFlashingTab), in violet and softly
@@ -658,6 +674,12 @@ fn notifications(cx: &mut Cx) {
             tr!("ui-options-friend-request-prompt-hint"),
             &field!(friend_request_prompt),
         );
+        // #1404: a message to the whole region there too
+        cx.toggle(
+            tr!("ui-options-region-message-prompt"),
+            tr!("ui-options-region-message-prompt-hint"),
+            &field!(region_message_prompt),
+        );
         cx.toggle(tr!("ui-options-toast-im"), tr!("ui-options-toast-im-hint"), &field!(toast_im));
         cx.toggle(tr!("ui-options-toast-group-im"), "", &field!(toast_group_im));
         // only what toasts can stay under the bell
@@ -942,7 +964,11 @@ fn away_and_replies(cx: &mut Cx) {
     }
     cx.group(tr!("ui-options-auto-replies"), |cx| {
         cx.note(tr!("ui-options-enable-these-modes-in-communicate-online-status"));
+        // LLFloaterPreference::refreshEnabledState greys do_not_disturb_response under
+        // RLVa @sendim, and only that response.
+        cx.greyed(cx.st.rlva_sendim_locked);
         text(cx, tr!("ui-options-in-do-not-disturb-mode"), &field!(autoresponse.dnd_text));
+        cx.greyed(false);
         text(
             cx,
             tr!("ui-options-to-everyone-in-auto-reply-mode"),

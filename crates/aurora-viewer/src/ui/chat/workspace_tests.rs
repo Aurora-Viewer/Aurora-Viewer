@@ -243,6 +243,33 @@ fn a_line_is_quoted_from_its_menu() {
     assert!(h.frames.ctx.memory(|m| m.has_focus(egui::Id::unique(("conv_input", Some(JANE))))));
 }
 
+/// A double click on a line selects the word under the pointer, as in the
+/// Legacy Viewer's transcript (LLTextEditor::handleDoubleClick); its second
+/// click no longer just clears the selection.
+#[test]
+fn a_double_click_selects_one_word_of_a_line() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.st.selected = Some(JANE);
+    let texts = h.settle();
+    let text = last(&texts, "hello from Jane");
+    // the middle of "from", the second word of the 15 characters
+    let at = egui::pos2(text.left() + text.width() * 8.0 / 15.0, text.center().y);
+    let button = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame(vec![egui::Event::PointerMoved(at)]);
+    for _ in 0..2 {
+        h.frame(vec![button(true)]);
+        h.frame(vec![button(false)]);
+    }
+    h.settle();
+    let (start, end) = h.st.selection.1.bounds().expect("a word is selected");
+    assert_eq!((start.seq, start.at, end.at), (end.seq, 6, 10), "\"from\" of \"hello from Jane\"");
+}
+
 /// A drag on the head (not the title bar) leaves the window in place.
 #[test]
 fn the_window_does_not_move_from_its_workspace() {

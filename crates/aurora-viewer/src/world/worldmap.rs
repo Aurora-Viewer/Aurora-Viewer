@@ -450,15 +450,34 @@ impl WorldMap {
         self.sim_at((x / 256.0) as u32, (y / 256.0) as u32)
     }
 
+    /// A global position in its region's metres: from the region's own
+    /// corner, so a spot in the east half of a 512 m OpenSim region reads
+    /// 300, not 44. A region not on the map yet falls back to the 256 m slot.
+    pub fn local_xy(&self, x: f64, y: f64) -> (f64, f64) {
+        match self.sim_at_global(x, y) {
+            Some(((sx, sy), _)) => (x - f64::from(sx) * 256.0, y - f64::from(sy) * 256.0),
+            None => (x.rem_euclid(256.0), y.rem_euclid(256.0)),
+        }
+    }
+
     pub fn apply_blocks(&mut self, blocks: Vec<MapBlock>) {
+        // slots of this reply with no region, named or not: a tracked spot
+        // in one of them is invalid (insertRegion)
+        let mut no_region = Vec::new();
         for b in blocks {
             let key = (b.x as u32, b.y as u32);
-            if b.name.is_empty() {
-                // only "non-existent" answers are kept (insertRegion)
-                if b.access == SIM_ACCESS_NONE {
+            // a non-existent slot is never a region (insertRegion), whatever
+            // its name: a name search ends on a block that repeats the
+            // requested name with this access, away from the real region
+            if b.access == SIM_ACCESS_NONE {
+                no_region.push(key);
+                if b.name.is_empty() {
                     self.null_sims.insert(key);
                     self.sims.remove(&key);
                 }
+                continue;
+            }
+            if b.name.is_empty() {
                 continue;
             }
             self.null_sims.remove(&key);
@@ -494,7 +513,7 @@ impl WorldMap {
                     teleport = Some((t.x, t.y, t.z));
                 }
                 t.teleport = false;
-            } else if self.null_sims.contains(&(gx, gy)) {
+            } else if self.null_sims.contains(&(gx, gy)) || no_region.contains(&(gx, gy)) {
                 t.pending = false;
                 t.invalid = true;
                 t.teleport = false;
@@ -911,7 +930,9 @@ impl WorldMap {
         v
     }
 
-    /// LLViewerParcelOverlay::uncompressLandOverlay: store one quarter.
+    /// LLViewerParcelOverlay::uncompressLandOverlay: store one chunk. A chunk
+    /// is 1024 cells whatever the region's size, so 256 m regions have four
+    /// and a 512 m one sixteen.
     pub fn apply_overlay(&mut self, handle: RegionHandle, size: (u32, u32), sequence: i32, data: &[u8]) {
         let (cx, cy) = (size.0 / 4, size.1 / 4);
         let total = (cx * cy) as usize;
@@ -919,13 +940,18 @@ impl WorldMap {
         if e.2.len() != total {
             *e = (cx, cy, vec![0; total]);
         }
-        let part = total / 4;
-        let start = (sequence.clamp(0, 3) as usize) * part;
-        let n = data.len().min(part);
-        e.2[start..start + n].copy_from_slice(&data[..n]);
+        let start = (sequence.max(0) as usize).saturating_mul(OVERLAY_CHUNK);
+        if start < total {
+            let n = data.len().min(OVERLAY_CHUNK).min(total - start);
+            e.2[start..start + n].copy_from_slice(&data[..n]);
+        }
         self.overlay_generation += 1;
     }
 }
+
+/// Cells of a ParcelOverlay message: (128 m / 4 m) squared, the Legacy
+/// Viewer's chunks being the region's area over 128 x 128 m.
+const OVERLAY_CHUNK: usize = 1024;
 
 /// "Region (x, y, z)" (LLFloaterWorldMap::trackLocation).
 pub fn location_label(region: &str, x: f64, y: f64, z: f32) -> String {
@@ -1314,6 +1340,49 @@ mod tests {
     }
 
     #[test]
+    fn the_name_search_terminator_is_not_a_region() {
+        let block = |x, y, name: &str, access| MapBlock {
+            x,
+            y,
+            name: name.into(),
+            access,
+            region_flags: 0,
+            water_height: 20,
+            agents: 0,
+            map_image_id: uuid::Uuid::nil(),
+            size_x: 256,
+            size_y: 256,
+        };
+        let mut m = WorldMap::default();
+        m.track_region("alphatribe island", glam::Vec3::new(168.0, 34.0, 21.0));
+        m.take_commands();
+        // the reply to MapNameRequest: the match, then the closing block
+        // that repeats the requested name with access 255
+        m.apply_blocks(vec![
+            block(1000, 1001, "Alphatribe Island", SIM_ACCESS_PG),
+            block(0, 0, "alphatribe island", SIM_ACCESS_NONE),
+        ]);
+        assert_eq!(m.sims.len(), 1);
+        assert!(!m.sims.contains_key(&(0, 0)));
+        assert!(!m.null_sims.contains(&(0, 0)), "a named block says nothing of its slot");
+        assert_eq!(m.region_by_name("alphatribe island"), Some((1000, 1001)));
+        let t = m.track.as_ref().expect("tracked");
+        assert_eq!((t.x, t.y), (256_168.0, 256_290.0));
+        // nor does it replace a region already known at its slot
+        m.apply_blocks(vec![block(1000, 1001, "alphatribe island", SIM_ACCESS_NONE)]);
+        assert_eq!(m.sims[&(1000, 1001)].access, SIM_ACCESS_PG);
+        // a spot waiting for its slot is invalid when a named block of this
+        // access answers for it, as for an unnamed one
+        m.track_location(2000.0 * 256.0 + 10.0, 2000.0 * 256.0 + 20.0, 30.0, true);
+        m.take_commands();
+        m.apply_blocks(vec![block(2000, 2000, "somewhere", SIM_ACCESS_NONE)]);
+        let t = m.track.as_ref().expect("tracked");
+        assert!(!t.pending && t.invalid);
+        assert!(!t.teleport);
+        assert!(m.take_commands().is_empty(), "no teleport to a missing region");
+    }
+
+    #[test]
     fn a_followed_friend_is_asked_again_and_dropped_by_a_new_track() {
         let friend = Uuid::from_u128(7);
         let mut m = WorldMap::default();
@@ -1516,5 +1585,50 @@ mod tests {
         assert_eq!(o.2[2048], 7);
         assert_eq!(o.2[3071], 7);
         assert_eq!(o.2[3072], 0);
+    }
+}
+
+#[cfg(test)]
+mod overlay_tests {
+    use super::*;
+
+    #[test]
+    fn every_chunk_of_a_large_region_lands_in_its_place() {
+        let mut map = WorldMap::default();
+        for sequence in 0..16u8 {
+            map.apply_overlay(1, (512, 512), i32::from(sequence), &[sequence + 1; 1024]);
+        }
+        let (cx, cy, cells) = &map.overlays[&1];
+        assert_eq!((*cx, *cy, cells.len()), (128, 128, 16384));
+        assert_eq!((cells[0], cells[1024], cells[15 * 1024], cells[16383]), (1, 2, 16, 16));
+    }
+
+    #[test]
+    fn a_place_in_a_large_region_is_measured_from_its_corner() {
+        let mut map = WorldMap::default();
+        map.apply_blocks(vec![MapBlock {
+            x: 1000,
+            y: 1000,
+            name: "Large".into(),
+            access: 13,
+            region_flags: 0,
+            water_height: 20,
+            agents: 0,
+            map_image_id: uuid::Uuid::nil(),
+            size_x: 768,
+            size_y: 512,
+        }]);
+        // the third 256 m slot east, the second north: 600 m and 300 m in
+        assert_eq!(map.local_xy(256_600.0, 256_300.5), (600.0, 300.5));
+        // a region not on the map yet: its 256 m slot, as before
+        assert_eq!(map.local_xy(512_600.0, 512_300.5), (88.0, 44.5));
+    }
+
+    #[test]
+    fn a_chunk_past_the_region_is_ignored() {
+        let mut map = WorldMap::default();
+        map.apply_overlay(1, (256, 256), 4, &[9; 1024]);
+        map.apply_overlay(1, (256, 256), -1, &[7; 1024]);
+        assert!(map.overlays[&1].2[1024..].iter().all(|cell| *cell == 0));
     }
 }

@@ -1,0 +1,29 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  class="icon icon-tabler icons-tabler-outline icon-tabler-jacket"
+>
+  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+  <path d="M16 3l-4 5l-4 -5" />
+  <path d="M12 19a2 2 0 0 1 -2 2h-4a2 2 0 0 1 -2 -2v-8.172a2 2 0 0 1 .586 -1.414l.828 -.828a2 2 0 0 0 .586 -1.414v-2.172a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v2.172a2 2 0 0 0 .586 1.414l.828 .828a2 2 0 0 1 .586 1.414v8.172a2 2 0 0 1 -2 2h-4a2 2 0 0 1 -2 -2" />
+  <path d="M20 13h-3a1 1 0 0 0 -1 1v2a1 1 0 0 0 1 1h3" />
+  <path d="M4 17h3a1 1 0 0 0 1 -1v-2a1 1 0 0 0 -1 -1h-3" />
+  <path d="M12 19v-11" />
+<g xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     inkscape:groupmode="layer"
+     id="layer3"
+     inkscape:label="shortcut"><path
+       fill="#ffffff"
+       stroke="#202222"
+       stroke-width="0.267044"
+       stroke-linejoin="round"
+       d="m 0.40847535,23.751788 v -1.982789 c 0,-1.143281 0.93587905,-2.082204 2.10152605,-2.082204 h 0.8406115 v -1.667974 l 2.790827,2.247896 -2.790827,2.115345 V 21.255353 H 2.5100014 c -0.4875543,0 -0.6220516,0.281675 -0.6220516,0.673816 v 1.822619 z"
+       id="path1-4" /></g>
+</svg>

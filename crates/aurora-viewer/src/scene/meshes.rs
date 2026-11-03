@@ -871,6 +871,16 @@ impl MeshStreamer {
         }
     }
 
+    /// The GPU device is lost: the builds under way stage into the old
+    /// device's pool and are dropped when they come back
+    /// (`Staged::is_from`); the levels are built again when asked.
+    pub fn gpu_reset(&mut self) {
+        self.staging = None;
+        for e in self.entries.values_mut() {
+            e.building.clear();
+        }
+    }
+
     pub fn on_geometry_done(&mut self, id: &Uuid, lod: u8) {
         if let Some(e) = self.entries.get_mut(id) {
             e.building.remove(&lod);

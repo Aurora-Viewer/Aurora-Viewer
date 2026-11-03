@@ -58,7 +58,7 @@ pub fn mode() -> Option<Mode> {
             "legacy" => Some(Mode::Legacy),
             "friends" | "amis" | "friends-symbols" => Some(Mode::Friends),
             "groups" | "groupes" => Some(Mode::Groups),
-            "sets" | "cercles" | "visuals" | "visuals-stack" | "visuals-legacy" => Some(Mode::Sets),
+            "sets" | "sets-import" | "cercles" | "visuals" | "visuals-stack" | "visuals-legacy" => Some(Mode::Sets),
             "recent" | "récent" => Some(Mode::Recent),
             "blocked" | "bloqué" => Some(Mode::Blocked),
             _ => Some(Mode::Rows),
@@ -230,6 +230,32 @@ pub fn seed(world: &mut crate::world::World) {
         );
         sets.move_priority(shop, true);
         sets.set_stack_icons(std::env::var("AURORA_DEMO_PEOPLE").is_ok_and(|v| v == "visuals-stack"));
+    }
+    if std::env::var("AURORA_DEMO_PEOPLE").is_ok_and(|v| v.split(':').next() == Some("sets-import")) {
+        // Synthetic complete account export: an existing set and a new one,
+        // including a resident outside the buddy list. Use the real parser
+        // and merger, retaining the demo's in-memory-only storage.
+        let mut full = aurora_llsd::Llsd::new_map();
+        let mut set = aurora_llsd::Llsd::new_map();
+        let mut members = aurora_llsd::Llsd::new_map();
+        members.insert(DEMO_LOUP.to_string(), "");
+        members.insert(id(11).to_string(), "");
+        set.insert("friends", members);
+        let mut color = aurora_llsd::Llsd::new_array();
+        for component in [0.369, 0.918, 0.831, 1.0] {
+            color.push(component);
+        }
+        set.insert("color", color);
+        full.insert(aurora_i18n::tr!("demo-family"), set.clone());
+        full.insert("Networking", set);
+        match crate::world::contact_sets::importing::ImportData::from_xml(&aurora_llsd::to_xml(&full)) {
+            Ok(data) => {
+                if let Err(e) = sets.merge_import(data, is_friend) {
+                    log::warn!("demo contact import failed: {e}");
+                }
+            }
+            Err(e) => log::warn!("demo contact import invalid: {e}"),
+        }
     }
     world.contact_sets = sets;
     world.groups.favorites.insert(super::DEMO_GROUP1);

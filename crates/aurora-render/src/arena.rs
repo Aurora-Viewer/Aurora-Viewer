@@ -582,6 +582,15 @@ impl<T> Blocks<T> {
 /// when the record is allocated or freed: only object faces set one.
 pub struct RecordStore {
     pub buffer: wgpu::Buffer,
+    /// Each record's model matrix as the last frame drew it (one matrix per
+    /// record slot, the same capacity as `buffer`): the motion vectors
+    /// compare it with the current one. The renderer gathers it from the
+    /// records at the end of each frame (`motion_history.rs`); a record
+    /// handed out (a new slot or a freed one) starts with its own model, so
+    /// it does not seem to come from where the slot's last record was.
+    pub prev_models: wgpu::Buffer,
+    /// Records handed out since the last `flush` (their `prev_models` seed).
+    fresh: Vec<u32>,
     /// GPU culling entry of each record (its face, when it is an object's).
     pub faces: GpuTable<CullFace>,
     mirror: Blocks<DrawRecord>,
@@ -601,6 +610,8 @@ impl RecordStore {
         let cap = 16384usize;
         Self {
             buffer: Self::make(device, cap),
+            prev_models: device.create_buffer(&Self::prev_desc(cap)),
+            fresh: Vec::new(),
             faces: GpuTable::new(device, "cull faces", cap, CullFace::NONE),
             mirror: Blocks::new(),
             free: Vec::new(),
@@ -626,6 +637,16 @@ impl RecordStore {
         }
     }
 
+    fn prev_desc(cap: usize) -> wgpu::BufferDescriptor<'static> {
+        wgpu::BufferDescriptor {
+            label: Some("previous models"),
+            size: (cap * 64) as u64,
+            // COPY_SRC: a grown buffer takes over this one's matrices
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        }
+    }
+
     pub fn live(&self) -> u32 {
         self.live
     }
@@ -640,11 +661,13 @@ impl RecordStore {
         if let Some(id) = self.free.pop() {
             self.set(id, rec);
             self.faces.set(id as usize, CullFace::NONE);
+            self.fresh.push(id);
             return id;
         }
         let id = self.mirror.len() as u32;
         self.mirror.push(rec);
         self.mark(id as usize);
+        self.fresh.push(id);
         id
     }
 
@@ -762,15 +785,19 @@ impl RecordStore {
             // after the copy; the new records are all dirty. Writing the
             // whole mirror again through the queue copied 8 to 32 MB on
             // the main thread each time a region outgrew the buffer.
-            match try_buffer(device, &Self::desc(cap)) {
-                Ok(grown) => {
+            // (the previous models grow with them, or neither does)
+            match try_buffer(device, &Self::desc(cap)).and_then(|grown| try_buffer(device, &Self::prev_desc(cap)).map(|prev| (grown, prev)))
+            {
+                Ok((grown, prev)) => {
                     self.backoff.succeeded();
                     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                         label: Some("grow draw records"),
                     });
                     enc.copy_buffer_to_buffer(&self.buffer, 0, &grown, 0, old_size);
+                    enc.copy_buffer_to_buffer(&self.prev_models, 0, &prev, 0, self.prev_models.size());
                     writes.submit(vec![enc]);
                     self.buffer = grown;
+                    self.prev_models = prev;
                     self.generation += 1;
                 }
                 Err(e) => {
@@ -785,6 +812,7 @@ impl RecordStore {
                 }
             }
         }
+        self.seed_fresh(writes);
         if !self.dirty.any() {
             return;
         }
@@ -806,6 +834,37 @@ impl RecordStore {
             for k in r {
                 self.dirty.mark(k);
             }
+        }
+    }
+
+    /// The previous model of the records handed out since the last flush:
+    /// their model as it is now (placed since `alloc` included), neighbouring
+    /// ids in one write. Those past the buffer wait for its growth.
+    fn seed_fresh(&mut self, writes: &mut GpuWrites) {
+        if self.fresh.is_empty() {
+            return;
+        }
+        let fits = self.prev_models.size() as usize / 64;
+        let mut ids = std::mem::take(&mut self.fresh);
+        ids.sort_unstable();
+        ids.dedup();
+        let mut models: Vec<[[f32; 4]; 4]> = Vec::new();
+        let mut i = 0;
+        while i < ids.len() {
+            let first = ids[i];
+            if first as usize >= fits {
+                self.fresh.push(first);
+                i += 1;
+                continue;
+            }
+            models.clear();
+            let mut next = first;
+            while i < ids.len() && ids[i] == next && (next as usize) < fits {
+                models.push(self.mirror.get(next as usize).map_or([[0.0; 4]; 4], |r| r.model));
+                next += 1;
+                i += 1;
+            }
+            writes.write_buffer(&self.prev_models, first as u64 * 64, bytemuck::cast_slice(&models));
         }
     }
 }

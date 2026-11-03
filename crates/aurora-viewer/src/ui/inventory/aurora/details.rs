@@ -104,6 +104,7 @@ fn can_add(inv: &Inventory, id: Uuid, facts: &Facts, st: &InventoryUi) -> bool {
             && !rules::in_type(inv, it.id, 14)
             && !facts.appearance_busy
             && st.pending.is_none()
+            && facts.rlva_allows(inv, it.id, true)
     })
 }
 
@@ -118,12 +119,12 @@ fn add(inv: &Inventory, id: Uuid, actions: &mut Vec<InvAction>) {
 }
 
 /// "Give": the resident picker, for the selection.
-fn can_give(inv: &Inventory, ids: &[Uuid], st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts) -> bool {
+fn can_give(inv: &Inventory, ids: &[Uuid], st: &InventoryUi, facts: &Facts) -> bool {
     st.pending.is_none()
         && !ids.is_empty()
         && ids
             .iter()
-            .all(|id| rules::mutable(inv, *id, &prefs.protected) && rules::offer(inv, *id, &prefs.protected, &facts.worn).is_ok())
+            .all(|id| rules::mutable(inv, *id) && rules::offer(inv, *id, &facts.worn).is_ok())
 }
 
 fn give(st: &mut InventoryUi, ids: Vec<Uuid>) {
@@ -162,10 +163,7 @@ fn picture(
             let kind = inv.folders.get(&id).map_or(-1, |f| f.info.type_default);
             (tree::folder_icon(kind, false), p.muted_dim)
         },
-        |it| {
-            let color = item_icon_color(it.asset_type, it.inv_type, p);
-            (item_icon(it.asset_type, it.inv_type, it.flags), color)
-        },
+        |it| inventory_item_icon(inv, it, p),
     );
     let size = (rect.height() * 0.42).clamp(20.0, 44.0);
     if let Some(texture) = icons.get(icon) {
@@ -287,7 +285,7 @@ pub(super) fn strip(
                 aurora_i18n::tr!("common-share"),
                 widgets::ActionKind::Flat,
                 Vec2::new(0.0, BUTTON),
-                can_give(inv, &ids, st, prefs, facts),
+                can_give(inv, &ids, st, facts),
             )
             .clicked()
             {
@@ -364,7 +362,8 @@ pub(super) fn strip(
         ui.spacing_mut().item_spacing.x = 6.0;
         if let Some(main) = Main::of(inv, id, facts) {
             let (icon, label) = main.label();
-            let enabled = st.pending.is_none() && !(matches!(main, Main::Wear | Main::TakeOff) && facts.appearance_busy);
+            let enabled = st.pending.is_none()
+                && !(matches!(main, Main::Wear | Main::TakeOff) && (facts.appearance_busy || !facts.rlva_allows(inv, id, false)));
             if widgets::action_button_if(ui, p, icon, label, widgets::ActionKind::Primary, Vec2::new(0.0, BUTTON), enabled).clicked() {
                 main.run(inv, id, st, prefs, facts, actions);
             }
@@ -430,8 +429,8 @@ fn next_mask(it: &aurora_net::inventory::InvItem, bit: u32, on: bool) -> u32 {
 
 /// Whether the next owner's `bit` can be changed (LLSidepanelItemInfo's
 /// checks, as the properties make them).
-fn next_editable(inv: &Inventory, it: &aurora_net::inventory::InvItem, bit: u32, st: &InventoryUi, prefs: &InventoryPreferences) -> bool {
-    rules::mutable(inv, it.id, &prefs.protected)
+fn next_editable(inv: &Inventory, it: &aurora_net::inventory::InvItem, bit: u32, st: &InventoryUi) -> bool {
+    rules::mutable(inv, it.id)
         && !matches!(it.asset_type, 2 | 24 | 25)
         && st.pending.is_none()
         && it.base_mask & bit != 0
@@ -493,7 +492,7 @@ pub(super) fn pane(
                     aurora_i18n::tr!("common-share"),
                     widgets::ActionKind::Flat,
                     Vec2::new(0.0, 28.0),
-                    can_give(inv, &ids, st, prefs, facts),
+                    can_give(inv, &ids, st, facts),
                 )
                 .clicked()
                 {
@@ -507,9 +506,8 @@ pub(super) fn pane(
     // The picture: a click changes it.
     let width = ui.available_width();
     let (picture_rect, _) = ui.allocate_exact_size(Vec2::new(width, 176.0), Sense::hover());
-    let writable = st.pending.is_none()
-        && rules::mutable(inv, id, &prefs.protected)
-        && !inv.items.get(&id).is_some_and(|it| matches!(it.asset_type, 24 | 25));
+    let writable =
+        st.pending.is_none() && rules::mutable(inv, id) && !inv.items.get(&id).is_some_and(|it| matches!(it.asset_type, 24 | 25));
     let response = picture(ui, p, icons, inv, id, picture_rect, images, &mut st.wanted_images);
     if writable {
         let response = response
@@ -526,7 +524,7 @@ pub(super) fn pane(
         rules::name(inv, id)
     };
     ui.horizontal(|ui| {
-        let rename = st.pending.is_none() && rules::renameable(inv, id, &prefs.protected);
+        let rename = st.pending.is_none() && rules::renameable(inv, id);
         let room = ui.available_width() - if rename { 30.0 } else { 0.0 };
         ui.allocate_ui_with_layout(Vec2::new(room, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.add(egui::Label::new(sheet::semibold(ui, &name, 15.0, p.ink)).wrap());
@@ -556,7 +554,7 @@ pub(super) fn pane(
                 st.browse = folder.info.id;
                 set_tab(st, prefs, 0);
             }
-            if can_give(inv, &[id], st, prefs, facts)
+            if can_give(inv, &[id], st, facts)
                 && widgets::action_button(ui, p, "share", "", widgets::ActionKind::Flat, Vec2::splat(28.0))
                     .on_hover_text(aurora_i18n::tr!("common-share"))
                     .clicked()
@@ -607,7 +605,7 @@ pub(super) fn pane(
             "",
             widgets::ActionKind::Flat,
             Vec2::splat(28.0),
-            can_give(inv, &[id], st, prefs, facts),
+            can_give(inv, &[id], st, facts),
         )
         .on_hover_text(aurora_i18n::tr!("common-share"))
         .clicked()
@@ -641,7 +639,7 @@ pub(super) fn pane(
         (rules::MODIFY, aurora_i18n::tr!("common-edit")),
         (rules::TRANSFER, aurora_i18n::tr!("common-transfer")),
     ] {
-        let editable = next_editable(inv, original, bit, st, prefs) && original.id == it.id;
+        let editable = next_editable(inv, original, bit, st) && original.id == it.id;
         ui.horizontal(|ui| {
             ui.set_min_height(22.0);
             ui.label(egui::RichText::new(label).size(12.5).color(if editable { p.ink } else { p.muted }));

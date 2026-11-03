@@ -27,6 +27,11 @@ pub struct DemoSim {
     /// The simulator's undo history of the edited objects (Ctrl+Z /
     /// Ctrl+Y): their placements before each edit, and those undone.
     history: HashMap<Uuid, History>,
+    /// The inventory folder each object rezzed from inventory came from,
+    /// sent back in its ObjectProperties (FolderID) as a simulator does.
+    rezzed_from: HashMap<Uuid, Uuid>,
+    /// Groups supplied by creation requests, including an explicitly empty group.
+    rezzed_groups: HashMap<Uuid, Uuid>,
 }
 
 /// An object's position, rotation and scale.
@@ -101,6 +106,8 @@ impl DemoSim {
         self.running.insert((target.object, target.item), (running, mono));
     }
     fn props_of(&mut self, world: &World, id: Uuid) -> &mut ObjectProps {
+        let folder_id = self.rezzed_from.get(&id).copied().unwrap_or_default();
+        let group = self.rezzed_groups.get(&id).copied();
         self.props.entry(id).or_insert_with(|| {
             let name = world
                 .objects
@@ -132,11 +139,13 @@ impl DemoSim {
                 full: true,
                 creator_id: DEMO_CREATOR,
                 owner_id,
-                group_id: if owner_id == crate::demo::DEMO_AGENT {
-                    crate::demo::DEMO_GROUP1
-                } else {
-                    Uuid::nil()
-                },
+                group_id: group.unwrap_or_else(|| {
+                    if owner_id == crate::demo::DEMO_AGENT {
+                        crate::demo::DEMO_GROUP1
+                    } else {
+                        Uuid::nil()
+                    }
+                }),
                 last_owner_id: DEMO_CREATOR,
                 creation_date: 1_700_000_000_000_000,
                 base_mask: PERM_ALL,
@@ -144,10 +153,11 @@ impl DemoSim {
                 group_mask: 0,
                 everyone_mask: 0,
                 next_owner_mask: perm::MOVE | perm::TRANSFER | perm::COPY | perm::MODIFY,
-                sale_type: 0,
+                sale_type: crate::demo::action_sale_type(id),
                 sale_price: 10,
                 category: 0,
                 inventory_serial: 1,
+                folder_id,
                 name,
                 description: String::new(),
                 touch_name: touch_name.into(),
@@ -234,10 +244,15 @@ impl DemoSim {
 
     pub fn reply(&mut self, world: &World, c: &BuildCmd) -> Vec<NetEvent> {
         match c {
-            BuildCmd::Add(p) => vec![NetEvent::ObjectUpdates {
-                handle: p.handle,
-                objects: vec![crate::demo::build_rez(p)],
-            }],
+            BuildCmd::Add(p) => {
+                let object = crate::demo::build_rez(p);
+                self.rezzed_groups.insert(object.full_id, p.group_id);
+                vec![NetEvent::ObjectUpdates {
+                    handle: p.handle,
+                    objects: vec![object],
+                }]
+            }
+
             BuildCmd::DeRez {
                 handle,
                 local_ids,
@@ -248,6 +263,52 @@ impl DemoSim {
                     handle: *handle,
                     local_ids: local_ids.clone(),
                 }]
+            }
+            // Take / Take Copy: one object item per DeRez in the folder asked
+            // for, coalesced when it holds several objects, as the simulator
+            // does (take separate sends one DeRez per object); a take leaves
+            // the world.
+            BuildCmd::DeRez {
+                handle,
+                local_ids,
+                destination,
+                destination_id,
+                ..
+            } if *destination == aurora_net::build::derez::TAKE_INTO_AGENT_INVENTORY
+                || *destination == aurora_net::build::derez::ACQUIRE_TO_AGENT_INVENTORY =>
+            {
+                let ids = Self::uuids(world, *handle, local_ids);
+                let items = ids
+                    .first()
+                    .map(|id| aurora_net::inventory::InvItem {
+                        id: Uuid::new_v4(),
+                        parent: *destination_id,
+                        name: self.props_of(world, *id).name.clone(),
+                        asset_type: 6,
+                        inv_type: 6,
+                        flags: if ids.len() > 1 {
+                            crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS
+                        } else {
+                            0
+                        },
+                        owner: world.agent_id,
+                        base_mask: PERM_ALL,
+                        owner_mask: PERM_ALL,
+                        ..Default::default()
+                    })
+                    .into_iter()
+                    .collect();
+                let mut events = vec![NetEvent::InventoryUpdated {
+                    folders: Vec::new(),
+                    items,
+                }];
+                if *destination == aurora_net::build::derez::TAKE_INTO_AGENT_INVENTORY {
+                    events.push(NetEvent::ObjectsKilled {
+                        handle: *handle,
+                        local_ids: local_ids.clone(),
+                    });
+                }
+                events
             }
             // worn: it leaves the world (the demo has no inventory item to
             // wear it from)
@@ -448,10 +509,15 @@ impl DemoSim {
                 }
                 events
             }
-            BuildCmd::RezInventory(rez) => vec![NetEvent::ObjectUpdates {
-                handle: rez.handle,
-                objects: vec![crate::demo::inventory_rez(rez)],
-            }],
+            BuildCmd::RezInventory(rez) => {
+                let object = crate::demo::inventory_rez(rez);
+                self.rezzed_from.insert(object.full_id, rez.item.parent);
+                self.rezzed_groups.insert(object.full_id, rez.group);
+                vec![NetEvent::ObjectUpdates {
+                    handle: rez.handle,
+                    objects: vec![object],
+                }]
+            }
             BuildCmd::Select { handle, local_ids } => {
                 let ids = Self::uuids(world, *handle, local_ids);
                 self.reply_props(world, &ids)

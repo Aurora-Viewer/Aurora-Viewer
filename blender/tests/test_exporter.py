@@ -7,6 +7,7 @@ import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import bpy
 import bmesh
@@ -141,6 +142,119 @@ class ExporterTests(unittest.TestCase):
     def capture(self):
         return exporter.snapshot([self.mesh], {"mPelvis", "mChest"}, 1)
 
+    def assert_bulk_matches_legacy(self, supported=None):
+        from aurora_live.client import wire_snapshot
+        supported = supported or {"mPelvis", "mChest"}
+        features = ["pbr-materials", "source-ids", "static-meshes", "object-links", "packed-geometry"]
+        legacy = exporter.snapshot([self.mesh], supported, 1)
+        bulk = exporter.snapshot([self.mesh], supported, 1, packed=True)
+        self.assertEqual(wire_snapshot(legacy, features), wire_snapshot(bulk, features))
+        self.assertTrue(all(isinstance(face["_buffers"][0], bytes) for face in bulk["meshes"][0]["faces"]))
+        return bulk
+
+    def test_bulk_capture_matches_rigged_static_modifiers_and_missing_weights(self):
+        self.assert_bulk_matches_legacy()
+        self.mesh.vertex_groups["mPelvis"].remove([2])
+        self.mesh.vertex_groups.new(name="mChest").add([1], 0.5, "REPLACE")
+        self.assert_bulk_matches_legacy()
+        self.mesh.vertex_groups.clear()
+        self.assert_bulk_matches_legacy()
+        self.mesh.vertex_groups.new(name="mPelvis").add([0, 1, 2], 1e-8, "REPLACE")
+        self.assert_bulk_matches_legacy()
+        self.mesh.modifiers.clear()
+        self.mesh.scale = (-2, 3, 4)
+        modifier = self.mesh.modifiers.new("Bulk solidify", "SOLIDIFY")
+        modifier.thickness = 0.1
+        bpy.context.view_layer.update()
+        self.assert_bulk_matches_legacy()
+
+    def test_bulk_capture_keeps_the_strongest_four_weights_and_tie_order(self):
+        names = ["mPelvis", "mChest", "mHipLeft", "mHipRight", "mKneeLeft", "mKneeRight"]
+        bpy.context.view_layer.objects.active = self.rig
+        bpy.ops.object.mode_set(mode="EDIT")
+        for name in names[2:]:
+            bone = self.rig.data.edit_bones.new(name)
+            bone.head, bone.tail = (0, 0, 1), (0, 0, 1.3)
+        bpy.ops.object.mode_set(mode="OBJECT")
+        self.mesh.vertex_groups.clear()
+        for name, weight in zip(names, [0.3, 0.3, 0.2, 0.1, 0.05, 0.04]):
+            self.mesh.vertex_groups.new(name=name).add([0, 1, 2], weight, "REPLACE")
+        self.assert_bulk_matches_legacy(set(names))
+
+    def test_bulk_capture_preserves_data_shape_keys_and_edit_mode(self):
+        self.mesh.shape_key_add(name="Basis")
+        shape = self.mesh.shape_key_add(name="Authored shape")
+        shape.data[0].co.z += 0.2
+        shape.value = 0.6
+        before_data, before_users = self.mesh.data, self.mesh.data.users
+        self.assert_bulk_matches_legacy()
+        bpy.context.view_layer.objects.active = self.mesh
+        bpy.ops.object.mode_set(mode="EDIT")
+        try:
+            self.assert_bulk_matches_legacy()
+            self.assertEqual(bpy.context.mode, "EDIT_MESH")
+            self.assertEqual(self.mesh.data, before_data)
+            self.assertEqual(self.mesh.data.users, before_users)
+            self.assertAlmostEqual(shape.value, 0.6)
+        finally:
+            bpy.ops.object.mode_set(mode="OBJECT")
+
+    def test_direct_bulk_capture_reads_edit_mesh_without_changing_the_source(self):
+        bpy.context.view_layer.objects.active = self.mesh
+        bpy.ops.object.mode_set(mode="EDIT")
+        try:
+            mesh = bmesh.from_edit_mesh(self.mesh.data)
+            mesh.verts.ensure_lookup_table()
+            mesh.verts[0].co.z += 0.15
+            bmesh.update_edit_mesh(self.mesh.data)
+            before = (len(bpy.data.objects), len(bpy.data.meshes), self.mesh.data.users)
+            self.assert_bulk_matches_legacy()
+            self.assertEqual(bpy.context.mode, "EDIT_MESH")
+            self.assertEqual(before, (len(bpy.data.objects), len(bpy.data.meshes), self.mesh.data.users))
+        finally:
+            bpy.ops.object.mode_set(mode="OBJECT")
+
+    def test_bulk_capture_enforces_the_same_corner_budget_and_cleans_temporary_data(self):
+        before = len(bpy.data.objects), len(bpy.data.meshes)
+        with patch.object(exporter, "MAX_CORNERS", 2):
+            errors = {}
+            value = exporter.snapshot([self.mesh], {"mPelvis", "mChest"}, 1, errors=errors, packed=True)
+        self.assertFalse(value["meshes"])
+        self.assertIn(self.mesh.as_pointer(), errors)
+        self.assertEqual(before, (len(bpy.data.objects), len(bpy.data.meshes)))
+
+    def test_material_refresh_matches_full_capture_and_reuses_geometry(self):
+        from aurora_live.client import wire_snapshot
+        supported = {"mPelvis", "mChest"}
+        ids = {self.mesh.as_pointer(): str(uuid.uuid4())}
+        previous = exporter.snapshot([self.mesh], supported, 1, source_ids=ids, packed=True)
+        material = bpy.data.materials.new("Refreshed material")
+        material.diffuse_color = (0.1, 0.3, 0.8, 1)
+        self.mesh.data.materials.append(material)
+        errors = {}
+        refreshed = exporter.material_snapshot([self.mesh], previous, ids, 2, errors)
+        full = exporter.snapshot([self.mesh], supported, 2, source_ids=ids, packed=True)
+        features = ["source-ids", "packed-geometry", "pbr-materials"]
+        self.assertEqual(wire_snapshot(refreshed, features), wire_snapshot(full, features))
+        self.assertIs(refreshed["meshes"][0]["faces"][0]["_buffers"], previous["meshes"][0]["faces"][0]["_buffers"])
+        self.assertFalse(errors)
+        self.assertIsNone(exporter.material_snapshot([], previous, ids, 3, {}))
+
+    def test_material_refresh_keeps_source_errors_isolated(self):
+        ids = {self.mesh.as_pointer(): str(uuid.uuid4())}
+        previous = exporter.snapshot([self.mesh], {"mPelvis", "mChest"}, 1, source_ids=ids, packed=True)
+        material = bpy.data.materials.new("Broken refresh")
+        material.use_nodes = True
+        output = next(node for node in material.node_tree.nodes if node.type == "OUTPUT_MATERIAL")
+        diffuse = material.node_tree.nodes.new("ShaderNodeBsdfDiffuse")
+        material.node_tree.links.new(diffuse.outputs[0], output.inputs["Surface"])
+        self.mesh.data.materials.append(material)
+        errors = {}
+        value = exporter.material_snapshot([self.mesh], previous, ids, 2, errors)
+        self.assertFalse(value["meshes"])
+        self.assertIn("Principled", errors[self.mesh.as_pointer()])
+        self.assertEqual(len(previous["meshes"]), 1)
+
     def test_rest_pose_uvs_and_source_are_preserved(self):
         before_objects = len(bpy.data.objects)
         before_meshes = len(bpy.data.meshes)
@@ -195,11 +309,98 @@ class ExporterTests(unittest.TestCase):
         self.assertEqual(exporter.snapshot([obj], {"mPelvis"}, 2)["meshes"], [])
 
     def test_failure_cleans_temporary_data(self):
-        self.mesh.vertex_groups.clear()
         before_objects, before_meshes = len(bpy.data.objects), len(bpy.data.meshes)
         with self.assertRaises(ValueError):
-            self.capture()
+            exporter.snapshot([self.mesh], {"mChest"}, 1)
         self.assertEqual((len(bpy.data.objects), len(bpy.data.meshes)), (before_objects, before_meshes))
+
+    def test_live_failure_rolls_back_images_and_keeps_other_sources_valid(self):
+        bad = self.mesh.copy()
+        bad.data = self.mesh.data.copy()
+        bad.name = "Broken material source"
+        bpy.context.collection.objects.link(bad)
+        for obj, broken in ((bad, True), (self.mesh, False)):
+            material = bpy.data.materials.new("Live textured surface")
+            material.use_nodes = True
+            shader = next(node for node in material.node_tree.nodes if node.type == "BSDF_PRINCIPLED")
+            image = bpy.data.images.new("Live rollback texture", 2, 2)
+            image.pixels.foreach_set(([1, 0, 0, 1] if broken else [0, 1, 0, 1]) * 4)
+            texture = material.node_tree.nodes.new("ShaderNodeTexImage")
+            texture.image = image
+            material.node_tree.links.new(texture.outputs["Color"], shader.inputs["Base Color"])
+            if broken:
+                material.node_tree.links.new(texture.outputs["Color"], shader.inputs["Normal"])
+            obj.data.materials.clear()
+            obj.data.materials.append(material)
+        bpy.context.view_layer.update()
+        before = len(bpy.data.objects), len(bpy.data.meshes)
+        errors = {}
+        value = exporter.snapshot([bad, self.mesh], {"mPelvis", "mChest"}, 1, errors=errors)
+        self.assertEqual([mesh["name"] for mesh in value["meshes"]], [self.mesh.name])
+        self.assertIn("Normal Map", errors[bad.as_pointer()])
+        self.assertEqual(len(value["images"]), 1)
+        self.assertEqual(value["meshes"][0]["faces"][0]["material"]["textures"][0], 0)
+        self.assertEqual(before, (len(bpy.data.objects), len(bpy.data.meshes)))
+        with self.assertRaisesRegex(ValueError, "Normal Map"):
+            exporter.snapshot([bad, self.mesh], {"mPelvis", "mChest"}, 2)
+
+    def test_live_unexpected_source_error_does_not_leave_a_dangling_root(self):
+        self.mesh.modifiers.clear()
+        child = self.mesh.copy()
+        child.data = self.mesh.data.copy()
+        child.name = "Valid child"
+        child.parent = self.mesh
+        bpy.context.collection.objects.link(child)
+        bpy.context.view_layer.update()
+        ids = {obj.as_pointer(): str(uuid.uuid4()) for obj in (self.mesh, child)}
+        capture = exporter._mesh
+
+        def fail_root(source, *args):
+            if source == self.mesh:
+                raise TypeError("Test unexpected source error")
+            return capture(source, *args)
+
+        errors = {}
+        with patch.object(exporter, "_mesh", side_effect=fail_root):
+            value = exporter.snapshot([self.mesh, child], set(), 1, source_ids=ids, errors=errors)
+        self.assertEqual(errors, {self.mesh.as_pointer(): "Test unexpected source error"})
+        self.assertEqual([mesh["name"] for mesh in value["meshes"]], [child.name])
+        self.assertNotIn("link", value["meshes"][0])
+
+    def test_unweighted_vertices_inherit_the_nearest_weights_without_changing_source_groups(self):
+        self.mesh.vertex_groups["mPelvis"].remove([1, 2])
+        chest = self.mesh.vertex_groups.new(name="mChest")
+        chest.add([1], 1.0, "REPLACE")
+        self.mesh.vertex_groups.new(name="Non-bone mask").add([2], 1.0, "REPLACE")
+        self.mesh.data.vertices[2].co = (0.19, 0.01, 1)
+        self.mesh.data.update()
+        before = [[(g.group, g.weight) for g in v.groups] for v in self.mesh.data.vertices]
+        mesh = self.capture()["meshes"][0]
+        vertices = [v for face in mesh["faces"] for v in face["vertices"]]
+        missing = next(v for v in vertices if abs(v["position"][0] - 0.19) < 1e-5)
+        self.assertEqual(mesh["joints"][missing["joints"][0]], "mChest")
+        self.assertEqual(missing["weights"], [1.0, 0.0, 0.0, 0.0])
+        self.assertEqual(before, [[(g.group, g.weight) for g in v.groups] for v in self.mesh.data.vertices])
+        self.assertEqual(self.capture()["meshes"], [mesh], "idle completion must be deterministic")
+        json.dumps(mesh, allow_nan=False)
+
+    def test_wholly_unweighted_rigged_mesh_uses_the_pelvis_without_creating_groups(self):
+        self.mesh.vertex_groups.clear()
+        mesh = self.capture()["meshes"][0]
+        self.assertEqual(mesh["joints"], ["mPelvis"])
+        self.assertEqual(len(mesh["inverse_bind"]), 1)
+        self.assertTrue(all(v["weights"] == [1.0, 0.0, 0.0, 0.0] for f in mesh["faces"] for v in f["vertices"]))
+        self.assertEqual(len(self.mesh.vertex_groups), 0)
+
+    def test_unweighted_completion_copies_normalized_top_four_and_rejects_nonfinite_data(self):
+        joints = [0, 2, 4, 3]
+        values = [0.4, 0.3, 0.2, 0.1]
+        weights = {0: (joints, values), 1: ([0] * 4, [0.0] * 4)}
+        exporter._complete_weights(weights, [(0, 0, 0), (1, 1, 1)])
+        self.assertEqual(weights[1], (joints, values))
+        for invalid in (float("inf"), float("nan")):
+            with self.assertRaises(ValueError):
+                exporter.influences([SimpleNamespace(group=0, weight=invalid)], {0: "mPelvis"}, {"mPelvis": 0})
 
     def test_top_four_weights_are_normalized(self):
         groups = [SimpleNamespace(group=i, weight=w) for i,w in enumerate([1.0,0.1,0.8,0.4,0.6])]
@@ -247,6 +448,163 @@ class ExporterTests(unittest.TestCase):
         self.assertEqual(inverse[:4], [0.5,0,0,0])
         self.assertEqual(inverse[12:], [0,0,-2,1])
 
+    def test_avastar_bind_pose_rotation_is_undone_like_its_dae_export(self):
+        # Body dev kits bind the arms in an A-pose; Avastar keeps it in bind_mat (#1455).
+        from mathutils import Matrix
+        bpy.context.view_layer.objects.active = self.rig
+        bpy.ops.object.mode_set(mode="EDIT")
+        self.rig.data.edit_bones["mChest"].parent = self.rig.data.edit_bones["mPelvis"]
+        bpy.ops.object.mode_set(mode="OBJECT")
+        self.mesh.vertex_groups.new(name="mChest").add([1], 1.0, "REPLACE")
+        self.mesh.vertex_groups["mPelvis"].remove([1])
+        rotation = Matrix.Rotation(0.7853981633974483, 4, "X")
+        bind = Matrix.Translation((0, 0, 1)) @ rotation
+        pelvis = self.rig.data.bones["mPelvis"]
+        pelvis["bind_mat"] = [bind[row][column] for column in range(4) for row in range(4)]
+
+        def inverses():
+            value = exporter.snapshot([self.mesh], {"mPelvis", "mChest"}, 1)["meshes"][0]
+            return {name: Matrix([m[i:i + 4] for i in range(0, 16, 4)]).transposed()
+                    for name, m in zip(value["joints"], value["inverse_bind"])}
+
+        def assert_matrix(actual, expected):
+            for row in range(4):
+                for column in range(4):
+                    self.assertAlmostEqual(actual[row][column], expected[row][column], places=5)
+
+        # "No add-on" kits keep bind_mat without Avastar's has_bind_data flag (#2022).
+        for flag in (None, False, True):
+            if flag is not None:
+                self.rig["has_bind_data"] = flag
+            binds = inverses()
+            assert_matrix(binds["mPelvis"], rotation.transposed() @ Matrix.Translation((0, 0, -1)))
+            # A bone without bind data keeps its parent's bind rotation.
+            assert_matrix(binds["mChest"], rotation.transposed() @ Matrix.Translation((-0.2, 0, -1)))
+        # The kit's shape scale is undone too, as the Collada export inverts all of bind_mat.
+        scale = Matrix.Diagonal((1.0, 1.35, 0.94, 1.0))
+        scaled = Matrix.Translation((0, 0, 1)) @ rotation @ scale
+        pelvis["bind_mat"] = [scaled[row][column] for column in range(4) for row in range(4)]
+        binds = inverses()
+        assert_matrix(binds["mPelvis"], scale.inverted() @ rotation.transposed() @ Matrix.Translation((0, 0, -1)))
+        # A child inherits the rotation only: the scale belongs to its parent.
+        assert_matrix(binds["mChest"], rotation.transposed() @ Matrix.Translation((-0.2, 0, -1)))
+        # Nested 4x4 rows (Blender itself stores a Matrix property flat, column-major) read the same.
+        pelvis["bind_mat"] = [list(row) for row in scaled]
+        assert_matrix(inverses()["mPelvis"], binds["mPelvis"])
+        # Stale bind data (rest pose edited since) is ignored.
+        stale = Matrix.Translation((0, 0, 1.5)) @ rotation
+        pelvis["bind_mat"] = [stale[row][column] for column in range(4) for row in range(4)]
+        assert_matrix(inverses()["mPelvis"], Matrix.Translation((0, 0, -1)))
+
+    def test_bind_pose_survives_moving_the_whole_rig(self):
+        # A kit whose rig was nudged a few millimetres after binding (#2022):
+        # every origin is off by the same amount, so the bind pose still holds,
+        # while a bone moved against the others is still stale.
+        from mathutils import Matrix
+        bpy.context.view_layer.objects.active = self.rig
+        bpy.ops.object.mode_set(mode="EDIT")
+        bones = self.rig.data.edit_bones
+        bones["mChest"].parent = bones["mPelvis"]
+        neck = bones.new("mNeck")
+        neck.head, neck.tail = (0.2, 0, 1.4), (0.2, 0, 1.5)
+        neck.parent = bones["mChest"]
+        bpy.ops.object.mode_set(mode="OBJECT")
+        self.mesh.vertex_groups.new(name="mChest").add([1], 1.0, "REPLACE")
+        self.mesh.vertex_groups["mPelvis"].remove([1])
+        rotation = Matrix.Rotation(0.5, 4, "X")
+        shift = Matrix.Translation((-0.003, 0, 0.003))
+        for name, head in (("mPelvis", (0, 0, 1)), ("mChest", (0.2, 0, 1)), ("mNeck", (0.2, 0, 1.4))):
+            bind = shift @ Matrix.Translation(head) @ rotation
+            self.rig.data.bones[name]["bind_mat"] = [bind[row][column] for column in range(4) for row in range(4)]
+
+        def chest():
+            value = exporter.snapshot([self.mesh], {"mPelvis", "mChest"}, 1)["meshes"][0]
+            m = value["inverse_bind"][value["joints"].index("mChest")]
+            return Matrix([m[i:i + 4] for i in range(0, 16, 4)]).transposed()
+
+        def assert_matrix(actual, expected):
+            for row in range(4):
+                for column in range(4):
+                    self.assertAlmostEqual(actual[row][column], expected[row][column], places=5)
+
+        assert_matrix(chest(), rotation.transposed() @ Matrix.Translation((-0.2, 0, -1)))
+        moved = Matrix.Translation((0.2, 0, 1.1)) @ rotation
+        self.rig.data.bones["mChest"]["bind_mat"] = [moved[row][column] for column in range(4) for row in range(4)]
+        # mChest no longer follows its head: its bind data is stale.
+        assert_matrix(chest(), Matrix.Translation((-0.2, 0, -1)))
+        # Two shifted bones cannot tell a rig move from edited bones.
+        del self.rig.data.bones["mPelvis"]["bind_mat"]
+        bind = shift @ Matrix.Translation((0.2, 0, 1)) @ rotation
+        self.rig.data.bones["mChest"]["bind_mat"] = [bind[row][column] for column in range(4) for row in range(4)]
+        assert_matrix(chest(), Matrix.Translation((-0.2, 0, -1)))
+
+    def test_collision_volume_bind_mat_is_not_stacked_on_its_default_axes(self):
+        # A volume's bind_mat already holds its SL rotation and small scale; the
+        # viewer's rest axes for it hold the same, so only one may apply (#2022).
+        from mathutils import Matrix
+        bpy.context.view_layer.objects.active = self.rig
+        bpy.ops.object.mode_set(mode="EDIT")
+        belly = self.rig.data.edit_bones.new("BELLY")
+        belly.head, belly.tail = (0, 0, 1.1), (0, 0, 1.2)
+        belly.parent = self.rig.data.edit_bones["mPelvis"]
+        bpy.ops.object.mode_set(mode="OBJECT")
+        self.mesh.vertex_groups.new(name="BELLY").add([2], 1.0, "REPLACE")
+        self.mesh.vertex_groups["mPelvis"].remove([2])
+        volume = Matrix.Rotation(0.14, 4, "Y") @ Matrix.Diagonal((0.09, 0.13, 0.15, 1.0))
+        bind = Matrix.Translation((0, 0, 1.1)) @ volume
+        self.rig.data.bones["BELLY"]["bind_mat"] = [bind[row][column] for column in range(4) for row in range(4)]
+        axes = volume.inverted()
+        value = exporter.snapshot([self.mesh], {"mPelvis", "BELLY"}, 1,
+                                  rest_axes={"BELLY": [axes[row][column] for column in range(4) for row in range(4)]})["meshes"][0]
+        inverse = Matrix([value["inverse_bind"][value["joints"].index("BELLY")][i:i + 4] for i in range(0, 16, 4)]).transposed()
+        expected = volume.inverted() @ Matrix.Translation((0, 0, -1.1))
+        for row in range(4):
+            for column in range(4):
+                self.assertAlmostEqual(inverse[row][column], expected[row][column], places=4)
+
+    def test_avastar_rig_without_bind_data_binds_from_its_default_rest(self):
+        # Avastar kits with "Use Bind Pose" and no bind_mat (#2022): the A-pose
+        # is the rest matrix against the bone's default one, mat0.
+        from mathutils import Matrix
+        bpy.context.view_layer.objects.active = self.rig
+        bpy.ops.object.mode_set(mode="EDIT")
+        bones = self.rig.data.edit_bones
+        root = bones.new("COG")
+        root.head, root.tail = (0, 0, 0.9), (0, 0, 1.0)
+        bones["mPelvis"].parent = root
+        bones["mChest"].parent = bones["mPelvis"]
+        # mChest's default rest points up; its rest is swung 45 degrees about X.
+        default = bones["mChest"].matrix.copy()
+        bones["mChest"].tail = (0.2, -0.3 * 0.7071067811865476, 1 + 0.3 * 0.7071067811865476)
+        swing = (bones["mChest"].matrix.to_3x3() @ default.to_3x3().inverted()).to_4x4()
+        for bone in bones:
+            bone["mat0"] = default if bone.name == "mChest" else bone.matrix.copy()
+        bpy.ops.object.mode_set(mode="OBJECT")
+        self.mesh.vertex_groups.new(name="mChest").add([1], 1.0, "REPLACE")
+        self.mesh.vertex_groups["mPelvis"].remove([1])
+
+        def inverses():
+            value = exporter.snapshot([self.mesh], {"mPelvis", "mChest"}, 1)["meshes"][0]
+            return {name: Matrix([m[i:i + 4] for i in range(0, 16, 4)]).transposed()
+                    for name, m in zip(value["joints"], value["inverse_bind"])}
+
+        def assert_matrix(actual, expected):
+            for row in range(4):
+                for column in range(4):
+                    self.assertAlmostEqual(actual[row][column], expected[row][column], places=5)
+
+        # Without "Use Bind Pose" Avastar exports the rest heads only.
+        assert_matrix(inverses()["mChest"], Matrix.Translation((-0.2, 0, -1)))
+        self.rig["RigProp"] = {"rig_use_bind_pose": 1}
+        binds = inverses()
+        self.assertGreater(swing.to_quaternion().angle, 0.7)
+        assert_matrix(binds["mChest"], swing.transposed() @ Matrix.Translation((-0.2, 0, -1)))
+        assert_matrix(binds["mPelvis"], Matrix.Translation((0, 0, -1)))
+        # Any bind_mat on the rig takes precedence, as in Avastar's export.
+        self.rig.data.bones["mPelvis"]["bind_mat"] = [float(row == column) + (column == 3 and row == 2)
+                                                      for column in range(4) for row in range(4)]
+        assert_matrix(inverses()["mChest"], Matrix.Translation((-0.2, 0, -1)))
+
     def test_live_handler_captures_edits_and_deletions_without_export_loop(self):
         captures = []
         aurora_live._client = SimpleNamespace(state=lambda: ("Connected", {"mPelvis"}), rest_axes=lambda: {}, take_shape=lambda ready=True, pose=False: None, take_import=lambda ready=True: None,
@@ -263,6 +621,7 @@ class ExporterTests(unittest.TestCase):
             bpy.context.view_layer.update()
             self.assertTrue(aurora_live._dirty)
             aurora_live._last_capture = 0.0
+            aurora_live._last_change = 0.0
             aurora_live._tick()
             self.assertEqual(len(captures), 2)
             self.assertNotEqual(captures[0]["meshes"], captures[1]["meshes"])

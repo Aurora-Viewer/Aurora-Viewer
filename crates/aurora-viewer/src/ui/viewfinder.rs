@@ -17,6 +17,7 @@ use egui::{Align2, Color32, FontId, Id, Order, Pos2, Rect, Sense, Stroke, Stroke
 
 mod controls;
 mod isolate;
+mod light;
 mod looks;
 mod presets;
 pub use controls::{CamMode, Pad, roll_text};
@@ -47,6 +48,8 @@ pub struct Viewfinder {
     pub isolate: bool,
     /// The filter panel (`looks`).
     pub looks: bool,
+    /// The light panel (`light`): the photo's sky, water and sun.
+    pub light: bool,
     /// The camera presets panel (`presets`) and its saving form.
     pub presets: bool,
     pub preset_form: PresetForm,
@@ -585,6 +588,9 @@ impl Viewfinder {
         if self.looks {
             self.looks_panel(ctx, p, screen, s, panel, &mut out);
         }
+        if self.light {
+            self.light_panel(ctx, p, screen, panel, view, &mut out);
+        }
         if self.isolate {
             self.isolate_picking(ctx, p, frame, f, &mut out);
             self.isolate_panel(ctx, p, screen, f, &mut out);
@@ -801,13 +807,13 @@ impl Viewfinder {
                     ui,
                     p,
                     "sun-filled",
-                    time_label(panel.light.time),
+                    time_label(panel.light.env.time),
                     p.ink,
                     aurora_i18n::tr!("photo-vf-time-tip"),
                 )
                 .clicked()
                 {
-                    panel.light.time = next_time(panel.light.time);
+                    panel.light.env.set_time(next_time(panel.light.env.time));
                 }
             });
         y += 24.0;
@@ -830,10 +836,14 @@ impl Viewfinder {
                 Dial::Exposure => aurora_i18n::tr!("photo-vf-dial-exposure"),
                 Dial::Distance => aurora_i18n::tr!("photo-vf-dial-distance"),
             };
-            let rows: [(&str, String); 9] = [
+            let rows: [(&str, String); 10] = [
                 (
                     aurora_i18n::tr!("photo-vf-cheat-click-key"),
                     aurora_i18n::tr!("photo-vf-cheat-click").to_owned(),
+                ),
+                (
+                    aurora_i18n::tr!("photo-vf-cheat-ctrl-click-key"),
+                    aurora_i18n::tr!("photo-vf-cheat-ctrl-click").to_owned(),
                 ),
                 (
                     aurora_i18n::tr!("photo-vf-cheat-shift-click-key"),
@@ -1502,6 +1512,7 @@ impl Viewfinder {
                         self.drawer = !self.drawer;
                         self.looks &= !self.drawer;
                         self.presets &= !self.drawer;
+                        self.light &= !self.drawer;
                         if self.drawer && self.isolate {
                             self.isolate = false;
                             out.push(Out::Isolate(Isolate::Picking(false)));
@@ -1528,7 +1539,18 @@ impl Viewfinder {
                     ) {
                         panel.freeze_world = !panel.freeze_world;
                     }
-                    // five above the shutter, seven under it (the panels of
+                    // the photo's light, next to the shutter
+                    if dock_button(ui, p, Face::Icon("sun-filled"), aurora_i18n::tr!("photo-vf-light-tip"), self.light) {
+                        self.light = !self.light;
+                        self.drawer &= !self.light;
+                        self.looks &= !self.light;
+                        self.presets &= !self.light;
+                        if self.light && self.isolate {
+                            self.isolate = false;
+                            out.push(Out::Isolate(Isolate::Picking(false)));
+                        }
+                    }
+                    // six above the shutter, seven under it (the panels of
                     // the shot together)
                     ui.add_space(6.0);
                     self.shutter_button(ui, p, out);
@@ -1539,6 +1561,7 @@ impl Viewfinder {
                         self.drawer &= !self.isolate;
                         self.looks &= !self.isolate;
                         self.presets &= !self.isolate;
+                        self.light &= !self.isolate;
                         if !self.isolate {
                             out.push(Out::Isolate(Isolate::Picking(false)));
                         }
@@ -1553,6 +1576,7 @@ impl Viewfinder {
                         self.looks = !self.looks;
                         self.drawer &= !self.looks;
                         self.presets &= !self.looks;
+                        self.light &= !self.looks;
                         // opens on the tab of the chosen look
                         if self.looks
                             && let Some(layer) = s.looks.get(panel.looks.selected)
@@ -1574,6 +1598,7 @@ impl Viewfinder {
                         self.presets = !self.presets;
                         self.drawer &= !self.presets;
                         self.looks &= !self.presets;
+                        self.light &= !self.presets;
                         if self.presets && self.isolate {
                             self.isolate = false;
                             out.push(Out::Isolate(Isolate::Picking(false)));
@@ -1718,6 +1743,10 @@ impl Viewfinder {
                                     aurora_i18n::tr!("photo-vf-help-click-text"),
                                 ),
                                 (
+                                    aurora_i18n::tr!("photo-vf-cheat-ctrl-click-key").to_owned(),
+                                    aurora_i18n::tr!("photo-vf-help-ctrl-click-text"),
+                                ),
+                                (
                                     aurora_i18n::tr!("photo-vf-help-shift-click").to_owned(),
                                     aurora_i18n::tr!("photo-vf-help-shift-click-text"),
                                 ),
@@ -1791,28 +1820,33 @@ impl Viewfinder {
                             v
                         }),
                     ];
-                    for (title, rows) in sections {
-                        ui.add_space(6.0);
-                        ui.label(egui::RichText::new(title).font(bold(ctx, 12.0)).color(p.teal));
-                        egui::Grid::new(("vf_help", title))
-                            .num_columns(2)
-                            .spacing(Vec2::new(14.0, 8.0))
-                            .min_col_width(170.0)
-                            .show(ui, |ui| {
-                                for (key, text) in rows {
-                                    ui.label(egui::RichText::new(key).font(bold(ctx, 13.0)).color(p.ink));
-                                    ui.add(egui::Label::new(egui::RichText::new(text).size(13.0).color(p.muted)).wrap());
-                                    ui.end_row();
-                                }
-                            });
-                    }
-                    ui.add_space(8.0);
-                    widgets::divider(ui, p);
-                    ui.label(
-                        egui::RichText::new(aurora_i18n::tr!("photo-vf-help-free-camera"))
-                            .size(12.0)
-                            .color(p.muted),
-                    );
+                    egui::ScrollArea::vertical()
+                        .id_salt("vf_help_scroll")
+                        .max_height((screen.height() - 112.0).max(80.0))
+                        .show(ui, |ui| {
+                            for (title, rows) in sections {
+                                ui.add_space(6.0);
+                                ui.label(egui::RichText::new(title).font(bold(ctx, 12.0)).color(p.teal));
+                                egui::Grid::new(("vf_help", title))
+                                    .num_columns(2)
+                                    .spacing(Vec2::new(14.0, 8.0))
+                                    .min_col_width(170.0)
+                                    .show(ui, |ui| {
+                                        for (key, text) in rows {
+                                            ui.label(egui::RichText::new(key).font(bold(ctx, 13.0)).color(p.ink));
+                                            ui.add(egui::Label::new(egui::RichText::new(text).size(13.0).color(p.muted)).wrap());
+                                            ui.end_row();
+                                        }
+                                    });
+                            }
+                            ui.add_space(8.0);
+                            widgets::divider(ui, p);
+                            ui.label(
+                                egui::RichText::new(aurora_i18n::tr!("photo-vf-help-free-camera"))
+                                    .size(12.0)
+                                    .color(p.muted),
+                            );
+                        });
                 });
             });
     }
@@ -2165,12 +2199,12 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
     ));
     v.push((
         aurora_i18n::tr!("photo-vf-time"),
-        time_label(panel.light.time).replace(
+        time_label(panel.light.env.time).replace(
             aurora_i18n::tr!("photo-vf-sky-current"),
             aurora_i18n::tr!("photo-light-time-current"),
         ),
         Box::new(|_, panel| {
-            panel.light.time = next_time(panel.light.time);
+            panel.light.env.set_time(next_time(panel.light.env.time));
             None
         }),
     ));

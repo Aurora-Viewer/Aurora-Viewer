@@ -16,6 +16,12 @@ impl App {
                 objects: vec![crate::demo::action_avatar(false)],
             });
         }
+        // square-head: our shape's Head Shape slider at 100, which turns the
+        // forehead joints' scale negative on one axis (#1249)
+        if mode == "square-head" && self.frame_count == 300 {
+            let values = self.world.avatar_lib.shape_params.values_with(&[(193, 1.0)]);
+            self.world.preview_shape(Some(values));
+        }
         // bridge-* modes show the subject menu's bridge hints for the same peer.
         let fixture = mode.starts_with("consent-") || mode.starts_with("bridge-");
         if fixture

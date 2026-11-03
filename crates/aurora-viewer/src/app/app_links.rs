@@ -87,8 +87,9 @@ impl App {
             }
             AppLink::Inventory { id, .. } => {
                 // the Legacy Viewer always shows the item
-                // (openInventoryPanelAndSetSelection)
-                self.inventory_ui.show_original(&self.world.inventory, id);
+                // (openInventoryPanelAndSetSelection), on the Received tab
+                // for Received Items and what it holds (#1604)
+                self.inventory_ui.show_notified(&self.world.inventory, id);
                 ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             AppLink::InventoryShow => ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory),
@@ -102,6 +103,10 @@ impl App {
                 chat_type: aurora_net::ChatType::Normal,
             }),
             AppLink::Search { category, query } => self.run_search_link(&category, &query),
+            AppLink::AreaSearch(filters) => {
+                self.area_search_ui.open_filters(*filters);
+                ui::widgets::open_floater(&self.egui_ctx, ui::area_search::WINDOW, &mut self.panels.area_search);
+            }
             // UNTRUSTED_BLOCK from a text received from someone else; the
             // Legacy Viewer says it once per session, Aurora at each click
             // so that a click never seems lost

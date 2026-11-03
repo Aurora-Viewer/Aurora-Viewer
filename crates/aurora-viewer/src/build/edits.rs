@@ -30,6 +30,8 @@ pub const CLICK_ACTION_BUY: u8 = 2;
 pub enum CapPurpose {
     /// GetObjectCost for these objects.
     ObjectCost(Vec<Uuid>),
+    /// GetObjectCost owned by Area Search, with a separate bounded cache.
+    AreaSearchCost,
     /// ResourceCostSelected for the current selection.
     SelectionCost,
     /// GetObjectPhysicsData for these objects.

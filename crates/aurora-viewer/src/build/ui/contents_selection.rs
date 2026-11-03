@@ -88,7 +88,7 @@ pub(super) fn finish_if_hidden_or_blurred(ctx: &egui::Context, tool: &mut BuildT
         return;
     }
     let visible = tool.open
-        && tool.tool == Tool::Edit
+        && (tool.tool == Tool::Edit || (tool.ui.legacy_window && tool.tool != Tool::Land))
         && tool.tab == 4
         && tool
             .contents_target(world)
@@ -181,7 +181,11 @@ pub(super) fn delete_selected(tool: &mut BuildTool, world: &World) {
 /// object shortcuts, and consume repeated presses so none reaches ObjectDelete.
 pub(super) fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &World) -> bool {
     finish_if_hidden_or_blurred(ctx, tool, world);
-    if !tool.open || tool.tool != Tool::Edit || tool.tab != 4 || ctx.text_edit_focused() {
+    if !tool.open
+        || (tool.tool != Tool::Edit && !(tool.ui.legacy_window && tool.tool != Tool::Land))
+        || tool.tab != 4
+        || ctx.text_edit_focused()
+    {
         return false;
     }
     let selection = &tool.ui.contents_selection;

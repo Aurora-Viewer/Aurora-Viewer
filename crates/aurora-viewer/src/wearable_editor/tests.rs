@@ -97,6 +97,144 @@ fn texture_edits_are_dirty_preserve_other_slots_and_require_real_inventory_right
 }
 
 #[test]
+fn local_wearable_textures_preview_without_becoming_server_assets() {
+    for kind in [1, 4, 13, 14, 16] {
+        let (mut world, mut state, _) = fixture(kind);
+        let local = Uuid::new_v4();
+        let material = Uuid::new_v4();
+        world.local_assets.insert(local, ("Local tattoo.png".into(), false));
+        world.local_assets.insert(material, ("Local material.gltf".into(), true));
+        let original = state.draft.as_ref().expect("draft").original.textures.clone();
+        for &slot in slots(kind) {
+            assert!(!state.set_texture(&world, slot, material));
+            assert!(state.set_texture(&world, slot, local));
+        }
+        assert!(state.draft.as_ref().expect("draft").dirty());
+        assert!(state.save(&world, None).is_none());
+        assert!(state.save(&world, Some("Local copy".into())).is_none());
+        assert_eq!(state.message, aurora_i18n::tr!("wearable-local-preview"));
+        assert!(state.draft.as_ref().expect("draft").pending.is_none());
+        if kind == 13 {
+            let slot = slots(kind)[0];
+            state.alpha_previous.insert(slot, local);
+            state
+                .draft
+                .as_mut()
+                .expect("draft")
+                .edited
+                .textures
+                .insert(slot, crate::scene::avatar::IMG_INVISIBLE);
+            state.update(&mut world);
+        }
+        world.local_assets.remove(&local);
+        state.update(&mut world);
+        if kind == 13 {
+            let slot = slots(kind)[0];
+            let previous = state.alpha_previous.remove(&slot).expect("restored alpha map");
+            assert_eq!(previous, original[&slot]);
+            state.draft.as_mut().expect("draft").edited.textures.insert(slot, previous);
+        }
+        assert_eq!(state.draft.as_ref().expect("draft").edited.textures, original);
+        assert!(state.save(&world, None).is_some(), "removing the local file restores savable slots");
+    }
+}
+
+#[test]
+fn removing_a_local_texture_preserves_originally_absent_slots() {
+    for kind in [4, 14] {
+        let (mut world, mut state, _) = fixture(kind);
+        let slot = slots(kind)[0];
+        let draft = state.draft.as_mut().expect("draft");
+        draft.original.textures.remove(&slot);
+        draft.edited.textures.remove(&slot);
+        let local = Uuid::new_v4();
+        world.local_assets.insert(local, ("local.png".into(), false));
+        assert!(state.set_texture(&world, slot, local));
+        world.local_assets.remove(&local);
+        state.update(&mut world);
+        let draft = state.draft.as_ref().expect("draft");
+        assert_eq!(draft.edited.textures, draft.original.textures);
+        assert!(!draft.dirty());
+        assert!(state.save(&world, None).is_some());
+    }
+}
+
+#[test]
+fn picker_rollback_preserves_prior_edits_and_ok_can_save_only_confirmed_inventory_textures() {
+    let (mut world, mut state, id) = fixture(14);
+    let local = Uuid::new_v4();
+    world.local_assets.insert(local, ("local.png".into(), false));
+    let mut image = world.inventory.items[&id].clone();
+    image.id = Uuid::new_v4();
+    image.asset_id = Uuid::new_v4();
+    image.asset_type = 0;
+    let inventory = image.asset_id;
+    world.inventory.add_items(vec![image]);
+    for before in [None, Some(Uuid::nil()), Some(inventory)] {
+        let draft = state.draft.as_mut().expect("draft");
+        if let Some(before) = before {
+            draft.edited.textures.insert(26, before);
+        } else {
+            draft.edited.textures.remove(&26);
+        }
+        state.open_picker(&world, 26);
+        assert!(state.preview_picker(&world, local));
+        assert!(state.save(&world, None).is_none());
+        assert!(state.save(&world, Some("Unconfirmed".into())).is_none());
+        state.draft.as_mut().expect("draft").edited.params.insert(1071, 0.25);
+        assert!(state.finish_picker(&world, None));
+        assert_eq!(state.draft.as_ref().expect("draft").edited.textures.get(&26).copied(), before);
+        assert_eq!(state.draft.as_ref().expect("draft").edited.params[&1071], 0.25);
+    }
+    state.open_picker(&world, 26);
+    assert!(state.preview_picker(&world, inventory));
+    assert!(state.save(&world, None).is_none());
+    assert!(
+        !state.finish_picker(&world, Some(inventory)),
+        "OK keeps the already rendered choice without another bake"
+    );
+    let NetCommand::SaveWearable { data, .. } = state.save(&world, None).expect("confirmed choice saves") else {
+        panic!("save")
+    };
+    assert_eq!(Wearable::parse(&data).expect("asset").textures[&26], inventory);
+}
+
+#[test]
+fn switching_picker_slots_keeps_applied_choices_and_cancel_handles_removed_local_files() {
+    let (mut world, mut state, id) = fixture(14);
+    let first = Uuid::new_v4();
+    let second = Uuid::new_v4();
+    world.local_assets.insert(first, ("first.png".into(), false));
+    world.local_assets.insert(second, ("second.png".into(), false));
+    assert!(state.set_texture(&world, 26, first));
+    state.open_picker(&world, 26);
+    assert!(state.preview_picker(&world, second));
+    state.open_picker(&world, 27);
+    assert_eq!(state.picker_slot, Some(27));
+    assert_eq!(state.draft.as_ref().expect("draft").edited.textures[&26], second);
+    state.finish_picker(&world, None);
+    assert!(state.set_texture(&world, 26, first));
+    state.open_picker(&world, 26);
+    assert!(state.preview_picker(&world, second));
+    world.local_assets.remove(&first);
+    state.update(&mut world);
+    state.finish_picker(&world, None);
+    let draft = state.draft.as_ref().expect("draft");
+    assert_eq!(draft.edited.textures.get(&26), draft.original.textures.get(&26));
+    state.open_picker(&world, 26);
+    assert!(state.preview_picker(&world, second));
+    world.inventory.items.get_mut(&id).expect("tattoo").owner_mask &= !crate::world::inventory::actions::MODIFY;
+    assert!(!state.preview_picker(&world, Uuid::nil()));
+    state.finish_picker(&world, None);
+    let draft = state.draft.as_ref().expect("draft");
+    assert_eq!(
+        draft.edited.textures.get(&26),
+        draft.original.textures.get(&26),
+        "cancellation still works after Modify is lost"
+    );
+}
+
+#[test]
 fn lost_modify_copy_rights_stale_assets_and_removed_layers_cannot_be_saved() {
     let (mut world, mut state, id) = fixture(1);
     world.inventory.items.get_mut(&id).expect("skin").owner_mask &= !crate::world::inventory::actions::MODIFY;

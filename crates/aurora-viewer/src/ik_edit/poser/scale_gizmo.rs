@@ -88,7 +88,8 @@ impl Drag {
             }
             Part::Uniform => factor = Vec3::splat(1.0 + (delta.x - delta.y) / 100.0),
         }
-        Some((self.scale * factor).clamp(Vec3::splat(0.001), Vec3::splat(10.0)))
+        // a drag past the pivot shrinks to the floor, never turns the joint over
+        Some(data::bounded_scale(self.scale * factor.max(Vec3::splat(1e-6))))
     }
 }
 #[derive(Default)]
@@ -153,7 +154,7 @@ impl Editor {
             return;
         }
         self.mirrors.initialize(rig);
-        let scale = scale.clamp(Vec3::splat(0.001), Vec3::splat(10.0));
+        let scale = data::bounded_scale(scale);
         let Some(session) = self
             .poser
             .sessions
@@ -172,8 +173,7 @@ impl Editor {
         if self.symmetry
             && let Some(other) = self.mirrors.counterpart(bone)
         {
-            pose.scales[other] =
-                (session.base.scales[other] * scale / session.base.scales[bone]).clamp(Vec3::splat(0.001), Vec3::splat(10.0));
+            pose.scales[other] = data::bounded_scale(session.base.scales[other] * scale / session.base.scales[bone]);
             pose.locks.remove(&other);
         }
     }

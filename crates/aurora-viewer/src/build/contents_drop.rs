@@ -105,6 +105,15 @@ fn linkset(world: &World, idx: usize) -> Option<(usize, bool)> {
 /// Viewer). With Ctrl the item goes into the contents and the object must
 /// accept it.
 pub fn target_allowed(world: &World, idx: usize, item: &InvItem, ctrl: bool) -> Result<(), &'static str> {
+    surface_allowed(world, idx)?;
+    if ctrl {
+        accepts(world, idx, item)?;
+    }
+    Ok(())
+}
+
+/// A world support, independent of any inventory cargo.
+pub fn surface_allowed(world: &World, idx: usize) -> Result<(), &'static str> {
     let o = world.objects.get(idx).ok_or("rez-no-surface")?;
     if o.is_avatar() || o.is_tree() {
         return Err("rez-no-surface");
@@ -112,9 +121,6 @@ pub fn target_allowed(world: &World, idx: usize, item: &InvItem, ctrl: bool) -> 
     match linkset(world, idx) {
         Some((_, false)) => {}
         _ => return Err("rez-no-surface"),
-    }
-    if ctrl {
-        accepts(world, idx, item)?;
     }
     Ok(())
 }
@@ -233,6 +239,8 @@ fn carried<'a>(world: &'a World, ids: &[Uuid], owned: bool, worn: &Worn) -> Resu
 /// The item put into the prim `idx`: scripts with RezScript, running unless
 /// asked otherwise (dropScript), the rest with UpdateTaskInventory
 /// (dropInventory), with their actual permissions, dated at drop time.
+/// RezScript carries the active group separately from the item's group
+/// (LLViewerObject::saveScript, indra/newview/llviewerobject.cpp).
 pub fn item_drop(world: &World, idx: usize, item: &InvItem, running: bool) -> Option<ContentsDrop> {
     let o = world.objects.get(idx)?;
     let mut task = task_inventory::from_inventory(o.full_id, item);
@@ -244,7 +252,7 @@ pub fn item_drop(world: &World, idx: usize, item: &InvItem, running: bool) -> Op
             handle: o.key.region,
             local_id: o.key.local_id,
             enabled: running,
-            group_id: Uuid::nil(),
+            group_id: world.groups.active,
             item: Box::new(task),
         }
     } else {

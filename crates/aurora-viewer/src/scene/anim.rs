@@ -56,6 +56,28 @@ pub struct Rig {
     pub(crate) skin_points: HashMap<String, (usize, Mat4)>,
 }
 
+/// Joints in depth-first order, parents before children.
+fn depth_first(parent: &[Option<usize>]) -> Vec<usize> {
+    let n = parent.len();
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut roots = Vec::new();
+    for (i, p) in parent.iter().enumerate() {
+        match *p {
+            Some(p) if p < n => children[p].push(i),
+            _ => roots.push(i),
+        }
+    }
+    let mut order = Vec::with_capacity(n);
+    let mut stack: Vec<usize> = roots.into_iter().rev().collect();
+    while let Some(j) = stack.pop() {
+        order.push(j);
+        for c in children[j].iter().rev() {
+            stack.push(*c);
+        }
+    }
+    order
+}
+
 impl Rig {
     pub fn new(sk: &Skeleton) -> Rig {
         let n = sk.joints.len().min(ANCHOR_BASE);
@@ -76,23 +98,7 @@ impl Rig {
             parent_scale.push(j.parent.and_then(|p| sk.joints.get(p)).map(|p| p.scale).unwrap_or(Vec3::ONE));
             scale.push(j.scale);
         }
-        // depth-first order
-        let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
-        let mut roots = Vec::new();
-        for (i, parent) in parent.iter().enumerate().take(n) {
-            match *parent {
-                Some(p) => children[p].push(i),
-                None => roots.push(i),
-            }
-        }
-        let mut order = Vec::with_capacity(n);
-        let mut stack: Vec<usize> = roots.into_iter().rev().collect();
-        while let Some(j) = stack.pop() {
-            order.push(j);
-            for c in children[j].iter().rev() {
-                stack.push(*c);
-            }
-        }
+        let order = depth_first(&parent);
         let pelvis = names.get("mPelvis").copied().unwrap_or(0);
         let skull = names.get("mSkull").copied();
         let mut joint = skull.or_else(|| names.get("mHead").copied());
@@ -124,6 +130,45 @@ impl Rig {
 
     pub fn len(&self) -> usize {
         self.parent.len()
+    }
+
+    /// LLVOAvatar::initAttachmentPoints (indra/newview/llvoavatar.cpp,
+    /// originally LGPL 2.1): every body attachment point is an
+    /// LLViewerJointAttachment, a joint below its bone that
+    /// LLVOAvatar::getJoint finds by name, so meshes are skinned to it and
+    /// animations key it ("attachment can potentially be animated, needs a
+    /// number"); worn animesh rely on it (#1492). `points`: name, bone, the
+    /// point's position and rotation under it (avatar_lad.xml); unit scale.
+    /// A point on mRoot ("Avatar Center"), which this skeleton has not, is a
+    /// root of its own where mRoot rests (the pelvis's rest position: the
+    /// pelvis is zero under mRoot, LLAvatarAppearance::buildCharacter), so
+    /// it stays put while motions move the pelvis. Added while the palette
+    /// has room below its anchors for them and the identity slot; a name
+    /// the skeleton already has keeps its joint.
+    pub(crate) fn add_attachment_points(&mut self, points: &[(String, Option<usize>, Vec3, Quat)]) {
+        for (name, parent, pos, rot) in points {
+            if self.len() + 1 >= ANCHOR_BASE {
+                break;
+            }
+            if self.names.contains_key(name) || parent.is_some_and(|p| p >= self.len()) {
+                continue;
+            }
+            let j = self.len();
+            self.parent.push(*parent);
+            match parent {
+                Some(_) => self.local_pos.push(*pos),
+                None => self.local_pos.push(self.local_pos[self.pelvis] + *pos),
+            }
+            self.local_rot.push(*rot);
+            self.parent_scale.push(parent.map_or(Vec3::ONE, |p| self.scale[p]));
+            self.scale.push(Vec3::ONE);
+            self.names.insert(name.clone(), j);
+            self.canonical_names.push(name.clone());
+        }
+        self.order = depth_first(&self.parent);
+        let rot = self.local_rot.clone();
+        let world = self.world(&rot, Vec3::ZERO);
+        self.default_world_inv = world.iter().map(|m| m.inverse()).collect();
     }
 
     /// The rig joint a mesh skin joint follows, and the inverse bind to
@@ -627,6 +672,22 @@ fn facing(dir: Vec3) -> Option<Quat> {
 }
 
 impl Controller {
+    /// Dev Toolbox J9: the motions playing, newest first, with their local
+    /// time (s) and blend weight.
+    pub(crate) fn playing(&self, now: Instant) -> Vec<(Uuid, Arc<BoundAnim>, f64, f32)> {
+        self.motions
+            .iter()
+            .map(|m| (m.id, m.anim.clone(), m.local_time(now), m.weight))
+            .collect()
+    }
+
+    /// Dev Toolbox J9: the last frame's local rotations, animated position
+    /// offsets from the rest skeleton (empty before the first), and the
+    /// pelvis's animated position under the root (kept apart).
+    pub(crate) fn held_pose(&self) -> (&[Quat], &[Vec3], Option<Vec3>) {
+        (&self.rot, &self.pos_delta, self.pelvis_offset)
+    }
+
     /// Apply Preferences › Aurora › Animations without restarting live loops.
     /// Enabling catches up to the known phase; disabling keeps the current phase
     /// and uses the Legacy Viewer clock for subsequent starts and pauses.
@@ -894,10 +955,34 @@ impl Controller {
         self.preview_start = clock;
     }
 
+    /// Avatar playback follows LLVOAvatar::remapMotionID while retaining the
+    /// original signal identities for AO state, stops and diagnostics.
+    pub(super) fn sync_avatar(
+        &mut self,
+        playing: &[PlayingAnimation],
+        male: bool,
+        now: Instant,
+        mut get: impl FnMut(&Uuid) -> Option<Arc<BoundAnim>>,
+    ) -> Vec<Uuid> {
+        // A shape's sex may change while its gait stays signalled. Swap the
+        // loaded asset without restarting its clock or easing; while the new
+        // variant downloads, retain the previous modern variant.
+        for motion in &mut self.motions {
+            let asset = default_motions::walk_run_asset(motion.id, male);
+            if asset != motion.id
+                && let Some(anim) = get(&asset)
+            {
+                motion.anim = anim;
+            }
+        }
+        self.sync(playing, now, |id| get(&default_motions::walk_run_asset(*id, male)))
+    }
+
     /// Follow the server's animation list (LLVOAvatar::processAnimationStateChanges).
     /// `get` gives an animation once it has loaded.
-    /// Return timed stops once, at the start of ease-out, like
-    /// LLMotionController::updateMotionsByType -> requestStopMotion.
+    /// Return timed stops once, like LLMotionController::updateMotionsByType
+    /// -> requestStopMotion: at ease-out, or the authored end when the
+    /// scheduled ease-out overlaps ease-in.
     pub fn sync(&mut self, playing: &[PlayingAnimation], now: Instant, mut get: impl FnMut(&Uuid) -> Option<Arc<BoundAnim>>) -> Vec<Uuid> {
         let mut completed = Vec::new();
         let frozen = self.paused_at;
@@ -988,10 +1073,20 @@ impl Controller {
         // weights (LLMotionController::updateMotionsByType)
         self.motions.retain_mut(|m| {
             let a = &m.anim.anim;
-            // a non-looping motion stops itself before its end to ease out
-            // (activateMotionInstance: mSendStopTimestamp)
+            // LLMotionController::updateMotionsByType does not request a
+            // timed stop during ease-in. If mSendStopTimestamp falls there,
+            // LLKeyframeMotion::onUpdate runs to the authored end instead.
+            // In particular, the stock pre-jump must last 0.333333 s, not
+            // duration - ease_out = 0.133333 s (#1637).
             if m.stop.is_none() && !a.looping && a.duration > 0.0 {
-                let end = m.activation + Duration::from_secs_f64((f64::from(a.duration) - f64::from(a.ease_out)).max(0.0));
+                let duration = f64::from(a.duration);
+                let ease_out_start = (duration - f64::from(a.ease_out)).max(0.0);
+                let finish = if ease_out_start < f64::from(a.ease_in) {
+                    duration
+                } else {
+                    ease_out_start
+                };
+                let end = m.activation + Duration::from_secs_f64(finish);
                 if now >= end {
                     m.stop_at(end);
                     if !m.internal && !preview.is_some_and(|(target, _)| target.is_none_or(|id| id == m.id)) {
@@ -2021,6 +2116,166 @@ mod tests {
         Rig::new(&Skeleton::parse(&xml).expect("parse"))
     }
 
+    fn gait_clip(rig: &Rig, priority: i32, angle: f32) -> Arc<BoundAnim> {
+        let mut animation = bend(rig, angle, 0.0).anim.clone();
+        animation.base_priority = 0;
+        animation.joints[0].joint_name = "mKneeLeft".into();
+        animation.joints[0].priority = priority;
+        Arc::new(BoundAnim::bind(animation, rig))
+    }
+
+    #[test]
+    fn native_gaits_do_not_cover_low_priority_hud_animations_on_start_or_restart() {
+        use crate::own_motion::{ANIM_RUN, ANIM_WALK};
+        let rig = rig();
+        let knee = rig.names["mKneeLeft"];
+        let old = gait_clip(&rig, 3, -0.7);
+        let modern = gait_clip(&rig, 0, -0.7);
+        let epoch = Instant::now();
+        let at = |seconds| epoch + Duration::from_secs(seconds);
+        let hud_id = Uuid::from_u128(99001);
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        for (stock, male, asset) in [
+            (ANIM_WALK, false, uuid::uuid!("d60c41d2-7c24-7074-d3fa-6101cea22a51")),
+            (ANIM_WALK, true, uuid::uuid!("33339176-7ddc-9397-94a4-bf3403cbc8f5")),
+            (ANIM_RUN, false, uuid::uuid!("85995026-eade-5d78-d364-94a64512cb66")),
+            (ANIM_RUN, true, uuid::uuid!("1ab1b236-cd08-21e6-0cbc-0d923fc6eca2")),
+        ] {
+            for priority in [1, 2, 3] {
+                let hud = gait_clip(&rig, priority, 0.4);
+                let get = |id: &Uuid| {
+                    Some(if *id == stock {
+                        old.clone()
+                    } else if *id == asset {
+                        modern.clone()
+                    } else {
+                        assert_eq!(*id, hud_id);
+                        hud.clone()
+                    })
+                };
+                let hud_signal = signal(hud_id, 1, epoch);
+                // The old priority-three gait reproduces the loss of the HUD
+                // pose, including an equal-priority HUD when stock starts last.
+                let mut baseline = synchronized_controller();
+                baseline.sync(&[hud_signal], epoch, get);
+                baseline.sync(&[hud_signal, signal(stock, 2, at(1))], at(1), get);
+                baseline.evaluate(&rig, at(1), None, &mut out);
+                assert!(baseline.rot[knee].angle_between(Quat::from_rotation_z(-0.7)) < 1e-5);
+
+                let mut controller = synchronized_controller();
+                controller.sync_avatar(&[hud_signal], male, epoch, get);
+                for sequence in 2..=4 {
+                    let now = at(sequence as u64);
+                    let native = signal(stock, sequence, now);
+                    assert!(controller.sync_avatar(&[hud_signal, native], male, now, get).is_empty());
+                    controller.evaluate(&rig, now, None, &mut out);
+                    assert!(controller.rot[knee].angle_between(Quat::from_rotation_z(0.4)) < 1e-5);
+                    assert_eq!(controller.signals[&stock], native, "keep the protocol UUID and clocks");
+                    assert!(
+                        controller
+                            .motions
+                            .iter()
+                            .any(|motion| motion.id == stock && Arc::ptr_eq(&motion.anim, &modern))
+                    );
+                    controller.sync_avatar(&[hud_signal], male, now + Duration::from_millis(100), get);
+                }
+                // Cycling the HUD does not allow the native gait to return.
+                let next_hud = signal(Uuid::from_u128(99002), 5, at(5));
+                controller.sync_avatar(&[signal(stock, 6, at(5)), next_hud], male, at(5), |id| {
+                    assert_ne!(*id, stock, "never fetch the old priority-three asset");
+                    Some(if *id == asset { modern.clone() } else { hud.clone() })
+                });
+                controller.evaluate(&rig, at(5), None, &mut out);
+                assert!(controller.rot[knee].angle_between(Quat::from_rotation_z(0.4)) < 1e-5);
+            }
+        }
+    }
+
+    #[test]
+    fn bundled_native_gaits_are_ready_offline_and_leave_hud_legs_in_charge() {
+        use crate::own_motion::{ANIM_RUN, ANIM_WALK};
+        let rig = rig();
+        let knee = rig.names["mKneeLeft"];
+        let mut streamer = AnimStreamer::new(PathBuf::new());
+        default_motions::register(&mut streamer, &rig);
+        let hud_id = Uuid::from_u128(99003);
+        streamer.insert(hud_id, gait_clip(&rig, 1, 0.4));
+        let epoch = Instant::now();
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        for stock in [ANIM_WALK, ANIM_RUN] {
+            for male in [false, true] {
+                let asset = default_motions::walk_run_asset(stock, male);
+                assert!(streamer.asset_settled(&asset), "native motion ready before any fetch");
+                let clip = streamer.peek(&asset).expect("bundled gait");
+                assert!(clip.anim.looping);
+                assert_eq!(clip.anim.base_priority, 0);
+                for joint in [
+                    "mPelvis",
+                    "mHipLeft",
+                    "mKneeLeft",
+                    "mAnkleLeft",
+                    "mHipRight",
+                    "mKneeRight",
+                    "mAnkleRight",
+                ] {
+                    let track = clip.anim.joints.iter().find(|track| track.joint_name == joint).expect("leg track");
+                    assert_eq!(track.priority, 0, "{asset}: {joint}");
+                    assert!(!track.rot_keys.is_empty());
+                }
+                let mut controller = synchronized_controller();
+                let signals = [signal(hud_id, 1, epoch), signal(stock, 2, epoch)];
+                controller.sync_avatar(&signals, male, epoch, |id| streamer.get(id));
+                let now = epoch + Duration::from_secs(1);
+                controller.sync_avatar(&signals, male, now, |id| streamer.get(id));
+                controller.evaluate(&rig, now, None, &mut out);
+                assert!(controller.rot[knee].angle_between(Quat::from_rotation_z(0.4)) < 1e-5);
+            }
+        }
+    }
+
+    #[test]
+    fn native_gaits_wait_for_modern_assets_and_change_sex_without_restarting() {
+        use crate::own_motion::ANIM_RUN;
+        let rig = rig();
+        let female = default_motions::walk_run_asset(ANIM_RUN, false);
+        let male = default_motions::walk_run_asset(ANIM_RUN, true);
+        let female_clip = gait_clip(&rig, 0, 0.3);
+        let male_clip = gait_clip(&rig, 0, -0.3);
+        let epoch = Instant::now();
+        let at = |seconds| epoch + Duration::from_secs(seconds);
+        let playing = [signal(ANIM_RUN, 7, epoch)];
+        let mut controller = synchronized_controller();
+        controller.sync_avatar(&playing, false, epoch, |id| {
+            assert_eq!(*id, female, "no old-asset fallback while loading");
+            None
+        });
+        assert!(controller.motions.is_empty());
+        controller.sync_avatar(&playing, false, at(1), |_| Some(female_clip.clone()));
+        let activation = controller.motions[0].continuous_activation;
+        controller.sync_avatar(&playing, true, at(2), |id| {
+            assert_eq!(*id, male);
+            None
+        });
+        assert!(Arc::ptr_eq(&controller.motions[0].anim, &female_clip));
+        controller.sync_avatar(&playing, true, at(3), |id| {
+            assert_eq!(*id, male);
+            Some(male_clip.clone())
+        });
+        assert_eq!(controller.motions.len(), 1);
+        assert!(Arc::ptr_eq(&controller.motions[0].anim, &male_clip));
+        assert_eq!(controller.motions[0].continuous_activation, activation);
+        assert_eq!(controller.motions[0].weight, 1.0);
+        assert_eq!(controller.signals[&ANIM_RUN], playing[0]);
+        // Control avatars keep the exact animation requested, even when it is
+        // a stock UUID. Their caller uses sync, not avatar remapping.
+        let mut control = Controller::for_control_avatar();
+        control.sync(&playing, at(3), |id| {
+            assert_eq!(*id, ANIM_RUN);
+            Some(female_clip.clone())
+        });
+        assert_eq!(control.motions[0].id, ANIM_RUN);
+    }
+
     /// The elbow swings from 0 to 1 rad and back over 2 s, in a loop.
     fn swing(rig: &Rig) -> Arc<BoundAnim> {
         let key = |time: f32, angle: f32| aurora_assets::anim::RotKey {
@@ -2441,11 +2696,83 @@ mod tests {
     }
 
     #[test]
+    fn pre_jump_plays_through_overlapping_eases_before_notifying_the_simulator() {
+        let rig = rig();
+        let id = uuid::uuid!("7a4e87fe-de39-6fcb-6223-024b00893244");
+        let mut animation = bend(&rig, 0.7, 0.0).anim.clone();
+        // The stock pre-jump asset: its scheduled ease-out (0.133333 s)
+        // falls inside ease-in. LLKeyframeMotion::onUpdate finishes it at
+        // its authored duration instead (indra/llcharacter).
+        animation.looping = false;
+        animation.duration = 0.333333;
+        animation.ease_in = 0.3;
+        animation.ease_out = 0.2;
+        let anim = Arc::new(BoundAnim::bind(animation, &rig));
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        for synchronized in [false, true] {
+            let mut controller = Controller::default();
+            controller.set_synchronized(synchronized);
+            let playing = [signal(id, 1, t0)];
+            let mut agent = crate::agent::AgentState::default();
+            agent.record_jump_input(t0);
+            for time in [0.0, 0.14, 0.25, 0.31, 0.333] {
+                assert!(
+                    controller.sync(&playing, at(time), |_| Some(anim.clone())).is_empty(),
+                    "early stop at {time}"
+                );
+                assert!(controller.motions[0].stop.is_none());
+                if time > 0.0 {
+                    assert!(controller.motions[0].weight > 0.0, "the crouch must remain visible");
+                }
+            }
+            assert_eq!(controller.motions[0].weight, 1.0);
+            assert_eq!(controller.sync(&playing, at(0.334), |_| Some(anim.clone())), vec![id]);
+            // Both a released tap and a held jump stop the stock animation
+            // once; only the released tap additionally needs FINISH_ANIM.
+            assert_eq!(agent.animation_stop_flags(id, false, at(0.334)), aurora_net::control::FINISH_ANIM);
+            assert_eq!(agent.animation_stop_flags(id, true, at(0.334)), 0);
+            assert!(controller.motions[0].weight > 0.9, "ease-out starts from the completed crouch");
+            assert!(controller.sync(&playing, at(0.4), |_| Some(anim.clone())).is_empty());
+            assert!(controller.motions[0].weight > 0.0);
+            assert!(controller.sync(&playing, at(0.54), |_| Some(anim.clone())).is_empty());
+            assert!(controller.motions.is_empty());
+            assert!(controller.sync(&playing, at(1.0), |_| Some(anim.clone())).is_empty());
+        }
+    }
+
+    #[test]
+    fn one_shot_without_overlapping_eases_notifies_at_the_start_of_ease_out() {
+        let rig = rig();
+        let id = Uuid::from_u128(502);
+        let mut animation = bend(&rig, 0.7, 0.2).anim.clone();
+        animation.looping = false;
+        let anim = Arc::new(BoundAnim::bind(animation, &rig));
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        for synchronized in [false, true] {
+            let mut controller = Controller::default();
+            controller.set_synchronized(synchronized);
+            let playing = [signal(id, 1, t0)];
+            assert!(controller.sync(&playing, t0, |_| Some(anim.clone())).is_empty());
+            assert!(controller.sync(&playing, at(0.79), |_| Some(anim.clone())).is_empty());
+            assert_eq!(controller.sync(&playing, at(0.81), |_| Some(anim.clone())), vec![id]);
+            assert!(controller.motions[0].weight > 0.9);
+            assert!(controller.sync(&playing, at(0.9), |_| Some(anim.clone())).is_empty());
+            assert!(controller.sync(&playing, at(1.01), |_| Some(anim.clone())).is_empty());
+            assert!(controller.motions.is_empty());
+        }
+    }
+
+    #[test]
     fn pre_jump_catches_up_after_asset_load_and_notifies_simulator_once() {
         let rig = rig();
         let id = uuid::uuid!("7a4e87fe-de39-6fcb-6223-024b00893244");
         let mut bound = BoundAnim::bind(bend(&rig, 0.7, 0.25).anim.clone(), &rig);
         bound.anim.looping = false;
+        bound.anim.duration = 0.333333;
+        bound.anim.ease_in = 0.3;
+        bound.anim.ease_out = 0.2;
         let anim = Arc::new(bound);
         let t0 = Instant::now();
         let at = |s| t0 + Duration::from_secs_f64(s);

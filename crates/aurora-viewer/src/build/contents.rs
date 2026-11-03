@@ -156,6 +156,8 @@ impl BuildTool {
 
     /// "New script": RezScript of a default script
     /// (LLPanelContents::onClickNewScript + LLViewerObject::saveScript).
+    /// RezScript uses the active group, independent of the parcel's rez group
+    /// (LLViewerObject::saveScript, indra/newview/llviewerobject.cpp).
     pub fn new_script(&mut self, world: &World, idx: usize) {
         let Some(o) = world.objects.get(idx) else { return };
         let now = now_unix();
@@ -183,7 +185,7 @@ impl BuildTool {
             handle,
             local_id,
             enabled: true,
-            group_id: Uuid::nil(),
+            group_id: world.groups.active,
             item: Box::new(item),
         });
         self.contents_changed(object_id);

@@ -94,15 +94,22 @@ fn private_portal_labels_hide_even_cached_destinations_after_friendship_is_revok
         unix,
     );
     let entry = state.own().unwrap();
-    assert!(label_text(&world, entry).contains(destination));
+    for remaining in [LIFETIME, 1, 0] {
+        let at = unix + LIFETIME - remaining;
+        let timer = aurora_i18n::tr!("portal-expires", seconds = remaining.to_string());
+        assert!(label_text(&world, entry, at).contains(timer.as_str()));
+    }
+    let expired = aurora_i18n::tr!("portal-expires", seconds = "0".to_string());
+    assert!(label_text(&world, entry, unix + LIFETIME + 1).contains(expired.as_str()));
+    assert!(label_text(&world, entry, unix).contains(destination));
     world.agent_id = Uuid::from_u128(2);
-    let hidden = label_text(&world, entry);
+    let hidden = label_text(&world, entry, unix);
     assert!(!hidden.contains(destination) && !hidden.contains("987") && !hidden.contains("654"));
     assert!(hidden.contains(aurora_i18n::tr!("portal-private")));
     assert!(!hidden.contains(aurora_i18n::tr!("poser-resident")));
     assert!(!hidden.contains(aurora_i18n::tr!("portal-friends")));
     world.social.form_friendship(owner);
-    assert!(label_text(&world, entry).contains(destination));
+    assert!(label_text(&world, entry, unix).contains(destination));
     world.social.end_friendship(&owner);
-    assert!(!label_text(&world, entry).contains(destination));
+    assert!(!label_text(&world, entry, unix).contains(destination));
 }

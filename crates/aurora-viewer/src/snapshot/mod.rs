@@ -417,12 +417,30 @@ pub struct TilePass {
 /// contact shadows' rays (60 pixels). A tile drawn alone had no scene past
 /// its border, and GTAO took the border row it read again beyond it for a
 /// wall: a dark line along the seams. GTAO's radius (0.73 m) spans fewer
-/// pixels than the band beyond 9 m in a photo 1,800 pixels high, and its
-/// farthest samples weigh the least; the band costs 128 pixels of a side of
-/// 4,096 or more in the photos that need tiles. The bloom and the depth of
-/// field reach farther and widen it while they are on
-/// (`aurora_render::bloom_tile_reach`, `dof_tile_reach`).
+/// pixels than the band beyond 9 m in a photo 1,800 pixels high; nearer,
+/// its samples past the band read the whole photo's depth ([`ContextPass`]).
+/// The band costs 128 pixels of a side of 4,096 or more in the photos that
+/// need tiles. The bloom, the depth of
+/// field and the contact shadows of a photo larger than the viewfinder
+/// (their rays as much longer, [`viewfinder_scale`]) reach farther and
+/// widen it while they are on (`aurora_render::bloom_tile_reach`,
+/// `dof_tile_reach`, `contact_tile_reach`).
 pub const TILE_GUARD: u32 = 128;
+
+/// How many times taller, in pixels, a photo of `photo` pixels is than the
+/// viewfinder's view of it, in a window of `window` pixels whose 3D is drawn
+/// at `render_percent` of it (50 to 100, as the setting is kept): the
+/// photo's projection keeps the window's
+/// height of view when it is narrower than the window, its width when it is
+/// wider (`Camera::photo_proj`), so the viewfinder shows it `window height`
+/// or `window width / its aspect` pixels high. The contact shadows march
+/// that many times further in the photo (issue #1662). At least 1.
+pub fn viewfinder_scale(photo: (u32, u32), window: (u32, u32), render_percent: u32) -> f32 {
+    let (pw, ph) = (photo.0.max(1) as f32, photo.1.max(1) as f32);
+    let (ww, wh) = (window.0.max(1) as f32, window.1.max(1) as f32);
+    let shown = wh.min(ww * ph / pw) * render_percent.clamp(50, 100) as f32 / 100.0;
+    (ph / shown).max(1.0)
+}
 
 /// The pixel a drawn tile starts on, and the multiple its size is rounded
 /// to (but at the photo's edges): the bloom halves the image six times, so
@@ -430,6 +448,141 @@ pub const TILE_GUARD: u32 = 128;
 /// on those of one pass. Off them, each tile blurred its own grid and the
 /// halos stepped at the seams.
 const TILE_ALIGN: u32 = 64;
+
+/// The most pixels a photo pass may draw: half of the video memory left
+/// under the driver's budget (`free_bytes`), at `per_pixel` bytes each, but
+/// never fewer than the window's frame (LLViewerWindow::rawSnapshot falls
+/// back to tiles of the window's size). A card already over its budget, its
+/// textures under pressure in a busy region, left nothing free: the photo
+/// was drawn in tiles of 32 pixels, thousands of frames with the world held
+/// still, and the viewer looked frozen for minutes.
+pub fn pass_pixels(free_bytes: u64, per_pixel: u64, window: (u32, u32)) -> u64 {
+    let window = u64::from(window.0) * u64::from(window.1);
+    (free_bytes / per_pixel.max(1)).max(window)
+}
+
+/// Bytes a photo pass takes beyond its render targets, for each pixel: its
+/// own output texture (8-bit RGBA) and the buffer it is read back into.
+pub const PASS_OUTPUT_BYTES: u64 = 8;
+
+/// Bytes of render targets a pixel takes when the renderer has not measured
+/// them yet, besides [`FALLBACK_BYTES_PER_SAMPLE`] per MSAA sample: fitted
+/// on 2026-11-02 to the targets measured (87 bytes a pixel without MSAA on
+/// Agni, 187 with 8x in demo), with some room.
+const FALLBACK_BYTES_PER_PIXEL: u64 = 120;
+const FALLBACK_BYTES_PER_SAMPLE: u64 = 12;
+
+/// Bytes of video memory a pixel of a photo pass takes: the render targets
+/// the renderer measured at its last size (`measured`,
+/// `RenderStats::target_bytes_per_pixel`, which follows every effect and
+/// the MSAA of the current settings), or the fallback with `samples`, and
+/// the pass's output. Constants of 16 bytes a pixel and 18 a sample, from
+/// October, counted under half of what the targets took by November
+/// without MSAA (34 bytes for 87, and 8 more for the output): an 8K photo
+/// was planned in one pass of
+/// 31 Mpx on a card with 2.4 GB free, the driver moved memory out to the
+/// system's and the GPU, crawling, was reset after a few seconds.
+pub fn pass_bytes_per_pixel(measured: Option<f32>, samples: u32) -> u64 {
+    let targets = match measured.filter(|b| b.is_finite() && *b > 0.0) {
+        Some(bytes) => bytes.ceil() as u64,
+        None => FALLBACK_BYTES_PER_PIXEL + FALLBACK_BYTES_PER_SAMPLE * u64::from(samples.max(1)),
+    };
+    targets + PASS_OUTPUT_BYTES
+}
+
+/// A pass read back black in every pixel (RGBA, alpha left out): what a
+/// pass the driver ended returns. A lit scene never is.
+pub fn blank(rgba: &[u8]) -> bool {
+    rgba.as_chunks::<4>().0.iter().all(|p| p[..3] == [0, 0, 0])
+}
+
+/// The GPU time a photo pass is planned to take (ms). A driver ends a job
+/// that keeps the GPU past about two seconds: Windows resets the card
+/// (TDR, 2 s by default), Linux's amdgpu resets the ring (measured on a
+/// Radeon 610M: passes of 2.46 s went through, 2.67 s did not). The pass
+/// then reads back black, which was saved as the photo, or the device is
+/// lost and the viewer closes. A quarter of that leaves room for the
+/// estimate (`GpuCost`), which scales a frame of the window to the photo.
+pub const PASS_GPU_MS: f32 = 500.0;
+
+/// The GPU time of a photo that shows the interface or the HUDs (ms):
+/// they are drawn in a single pass only (the window places them on its own
+/// screen), so such a photo is split only past three times
+/// [`PASS_GPU_MS`], still within the driver's limit, the estimate erring
+/// slow.
+pub const OVERLAY_PASS_GPU_MS: f32 = 1500.0;
+
+/// The pixels of a pass when the GPU time is not measured (no timestamp
+/// queries): 4K, which the slowest GPU measured draws in 1.1 s.
+pub const UNTIMED_PASS_PIXELS: u64 = 3840 * 2160;
+
+/// Frames smaller than this tell little of a pixel's cost: their fixed
+/// work (shadow maps, culling) weighs on few pixels. The preview's frames
+/// are 720 pixels high.
+const MIN_TIMED_PIXELS: u64 = 1_000_000;
+
+/// The share of the slowest cost kept from one frame to the next.
+const COST_DECAY: f32 = 0.99;
+
+/// What a pixel of a frame costs the GPU, which bounds the pixels of a
+/// photo pass ([`PASS_GPU_MS`]). The slowest of the recent frames: a new
+/// measure higher than it replaces it, otherwise it falls by
+/// [`COST_DECAY`] a frame (half in about a second). The whole frame's time
+/// over its pixels counts its fixed work as if it grew with them: a large
+/// photo is estimated slower than it is, never faster.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct GpuCost {
+    /// Nanoseconds a pixel.
+    ns: Option<f32>,
+    /// The pixels of a pass the GPU failed to draw, divided by 4: never
+    /// more in one pass for the rest of the photo.
+    ceiling: Option<u64>,
+}
+
+impl GpuCost {
+    /// A frame's GPU time (`RenderStats::gpu_ms`) and its world pixels.
+    pub fn note(&mut self, ms: Option<f32>, pixels: u64) {
+        if let Some(ms) = ms.filter(|ms| ms.is_finite() && *ms > 0.0)
+            && pixels >= MIN_TIMED_PIXELS
+        {
+            let ns = ms * 1e6 / pixels as f32;
+            self.ns = Some(self.ns.map_or(ns, |old| ns.max(old * COST_DECAY)));
+        }
+    }
+
+    /// A new photo: the passes of the one before that came back blank
+    /// bound it no more (a dark scene, a look's black bars, read back as
+    /// black as a pass the driver ended).
+    pub fn new_photo(&mut self) {
+        self.ceiling = None;
+    }
+
+    /// A pass of `pixels` came back blank (the GPU may have been reset
+    /// under it): false when it cannot be split further than the
+    /// `window`'s frame, which is drawn every frame: the black is the
+    /// photo's.
+    pub fn failed(&mut self, pixels: u64, window: (u32, u32)) -> bool {
+        let window = u64::from(window.0) * u64::from(window.1);
+        if pixels <= window.max(u64::from(MIN_SIDE) * u64::from(MIN_SIDE)) {
+            return false;
+        }
+        let ceiling = (pixels / 4).max(window);
+        self.ceiling = Some(self.ceiling.map_or(ceiling, |c| c.min(ceiling)));
+        true
+    }
+
+    /// The most pixels one pass may draw within `ms` ([`PASS_GPU_MS`] or
+    /// [`OVERLAY_PASS_GPU_MS`]), never fewer than the `window`'s frame,
+    /// which is drawn every frame. Unmeasured: [`UNTIMED_PASS_PIXELS`]
+    /// whatever `ms`, the slowest GPU's limit.
+    pub fn pass_pixels(&self, window: (u32, u32), ms: f32) -> u64 {
+        let window = u64::from(window.0) * u64::from(window.1);
+        let timed = self
+            .ns
+            .map_or(UNTIMED_PASS_PIXELS, |ns| (f64::from(ms) * 1e6 / f64::from(ns.max(1e-3))) as u64);
+        timed.min(self.ceiling.unwrap_or(u64::MAX)).max(window)
+    }
+}
 
 /// How a photo of `size` is drawn: one pass when the card holds it (a side
 /// within `max_side`, the pixels within `max_pixels`, the memory its render
@@ -590,6 +743,48 @@ impl Hold {
                 *kept = Some(first);
                 Some(first)
             }
+        }
+    }
+}
+
+/// A tiled photo's frame of the whole photo at a fraction of its size,
+/// drawn before its tiles: GTAO keeps its depth, which the tiles' samples
+/// past their border read (`aurora_render::PhotoContext`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextPass {
+    /// A photo in one pass, or without ambient occlusion.
+    None,
+    /// To draw, at this size.
+    Pending((u32, u32)),
+    Drawn,
+}
+
+/// How many times smaller, on each side, the context is than the photo:
+/// GTAO's samples past a tile's guard band are 128 pixels or more away,
+/// where they read depth levels of 16 photo pixels or coarser; the
+/// context's first level is 4 of them (8 when GTAO runs at half
+/// resolution).
+const CONTEXT_DIVISOR: u32 = 4;
+
+impl ContextPass {
+    /// What a photo of `size` drawn in `tiles` passes needs, with the
+    /// ambient occlusion on or not.
+    pub fn plan(size: (u32, u32), tiles: usize, occlusion: bool) -> Self {
+        if tiles > 1 && occlusion {
+            ContextPass::Pending((size.0.div_ceil(CONTEXT_DIVISOR).max(16), size.1.div_ceil(CONTEXT_DIVISOR).max(16)))
+        } else {
+            ContextPass::None
+        }
+    }
+
+    /// The part drawn while part `next` of `tiles` is the next tile, and
+    /// how many parts: the context counts as the first, so that it shows
+    /// the tiles' instant (`Hold::for_part`).
+    pub fn part(self, next: usize, tiles: usize) -> (usize, usize) {
+        match self {
+            ContextPass::None => (next, tiles),
+            ContextPass::Pending(_) => (0, tiles + 1),
+            ContextPass::Drawn => (next + 1, tiles + 1),
         }
     }
 }

@@ -111,92 +111,98 @@ fn texture_size_switch_updates_both_axes_preview_and_price() {
 #[test]
 fn mesh_inspector_geometry_settles_without_resizing_in_a_short_work_area() {
     let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-    for (work_width, work_height, ppp) in [
-        (960.0, 520.0, 1.125),
-        (1020.0, 580.0, 1.125),
-        (1040.0, 600.0, 1.0),
-        (901.0, 540.0, 1.125),
-        (1023.5, 580.0, 1.125),
-        (1040.0, 650.0, 1.0),
-        (1040.0, 480.0, 1.125),
-    ] {
-        let screen = Vec2::new(1280.0, 800.0);
-        let ctx = egui::Context::default();
-        let theme = crate::theme::Theme::default();
-        ctx.set_pixels_per_point(ppp);
-        theme.apply(&ctx, 1.0);
-        crate::ui::fonts::apply(&ctx, crate::ui::fonts::DEFAULT);
-        let mut draft = crate::imports::tests::mesh_fixture();
-        draft.prepared = Some(Arc::new(mesh::prepare(&draft).expect("prepared fixture")));
-        let entry = Entry::new("mesh.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
-        let id = entry.id;
-        let mut imports = Imports {
-            open: true,
-            choice: Choice::Mesh,
-            active: Some(id),
-            entries: vec![entry],
-            ..Default::default()
-        };
-        ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("mesh_section", id)), 1usize));
-        let mut baseline = None;
-        for frame in 0..240 {
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, screen)),
-                    time: Some(frame as f64 / 60.0),
-                    ..Default::default()
-                },
-                |ui| {
-                    crate::ui::layout::set_work_area(
-                        ui.ctx(),
-                        egui::Rect::from_min_size(egui::pos2(17.333, 40.444), Vec2::new(work_width, work_height)),
-                    );
-                    show(
-                        ui.ctx(),
-                        &theme.palette(),
-                        &mut imports,
-                        &mut Preferences::default(),
-                        &world,
-                        &Default::default(),
-                    );
-                },
-            );
-            output.textures_delta.clear();
-            let size = ctx
-                .data_mut(|d| d.get_persisted::<Vec2>(egui::Id::unique(Choice::Mesh.window_id()).with("expanded_size")))
-                .expect("mesh window size");
-            let positions: Vec<_> = output
-                .shapes
-                .iter()
-                .filter_map(|shape| {
-                    if let egui::Shape::Text(text) = &shape.shape
-                        && [
-                            aurora_i18n::tr!("common-name"),
-                            aurora_i18n::tr!("import-mesh"),
-                            aurora_i18n::tr!("import-mesh-section-physics"),
-                        ]
-                        .contains(&text.galley.text())
-                    {
-                        Some((text.galley.text().to_owned(), text.pos))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            if frame >= 120 {
-                let viewport = ctx
-                    .data(|d| d.get_temp::<(egui::Rect, Vec2)>(egui::Id::unique(("mesh_viewport", id))))
-                    .expect("mesh viewport");
-                assert!(
-                    viewport.1.x <= viewport.0.width().ceil(),
-                    "collision controls fit without horizontal scrolling: {viewport:?}"
+    for window in [Choice::Bulk, Choice::Mesh] {
+        for (work_width, work_height, ppp) in [
+            (960.0, 520.0, 1.125),
+            (1020.0, 580.0, 1.125),
+            (1040.0, 600.0, 1.0),
+            (901.0, 540.0, 1.125),
+            (1023.5, 580.0, 1.125),
+            (1040.0, 650.0, 1.0),
+            (1040.0, 480.0, 1.125),
+        ] {
+            let screen = Vec2::new(1280.0, 800.0);
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            ctx.set_pixels_per_point(ppp);
+            theme.apply(&ctx, 1.0);
+            crate::ui::fonts::apply(&ctx, crate::ui::fonts::DEFAULT);
+            let mut draft = crate::imports::tests::mesh_fixture();
+            draft.prepared = Some(Arc::new(mesh::prepare(&draft).expect("prepared fixture")));
+            let entry = Entry::new("mesh.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
+            let id = entry.id;
+            let mut imports = Imports {
+                open: true,
+                choice: Choice::Mesh,
+                active: Some(id),
+                entries: vec![entry],
+                ..Default::default()
+            };
+            if window == Choice::Mesh {
+                imports.open = false;
+                imports.open_type_window(&ctx, window);
+            }
+            ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("mesh_section", id)), 1usize));
+            let mut baseline = None;
+            for frame in 0..240 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, screen)),
+                        time: Some(frame as f64 / 60.0),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        crate::ui::layout::set_work_area(
+                            ui.ctx(),
+                            egui::Rect::from_min_size(egui::pos2(17.333, 40.444), Vec2::new(work_width, work_height)),
+                        );
+                        show(
+                            ui.ctx(),
+                            &theme.palette(),
+                            &mut imports,
+                            &mut Preferences::default(),
+                            &world,
+                            &Default::default(),
+                        );
+                    },
                 );
-                let geometry = (size, positions, viewport);
-                let expected = baseline.get_or_insert_with(|| geometry.clone());
-                assert_eq!(
-                    &geometry, expected,
-                    "frame {frame}, work {work_width} × {work_height}, pixels per point {ppp}"
-                );
+                output.textures_delta.clear();
+                let size = ctx
+                    .data_mut(|d| d.get_persisted::<Vec2>(egui::Id::unique(window.window_id()).with("expanded_size")))
+                    .expect("mesh window size");
+                let positions: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| {
+                        if let egui::Shape::Text(text) = &shape.shape
+                            && [
+                                aurora_i18n::tr!("common-name"),
+                                aurora_i18n::tr!("import-mesh"),
+                                aurora_i18n::tr!("import-mesh-section-physics"),
+                            ]
+                            .contains(&text.galley.text())
+                        {
+                            Some((text.galley.text().to_owned(), text.pos))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if frame >= 120 {
+                    let viewport = ctx
+                        .data(|d| d.get_temp::<(egui::Rect, Vec2)>(egui::Id::unique(("mesh_viewport", id))))
+                        .expect("mesh viewport");
+                    assert!(
+                        viewport.1.x <= viewport.0.width().ceil(),
+                        "collision controls fit without horizontal scrolling: {viewport:?}"
+                    );
+                    let geometry = (size, positions, viewport);
+                    let expected = baseline.get_or_insert_with(|| geometry.clone());
+                    assert_eq!(
+                        &geometry, expected,
+                        "frame {frame}, work {work_width} × {work_height}, pixels per point {ppp}"
+                    );
+                }
             }
         }
     }
@@ -209,7 +215,8 @@ fn settings_only_show_permissions_and_payment_and_sharing_clicks_are_per_type() 
     theme.apply(&ctx, 1.0);
     let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
     let mut imports = Imports {
-        settings_open: true,
+        open: true,
+        tab: Tab::Permissions,
         ..Default::default()
     };
     let mut prefs = Preferences::default();
@@ -445,20 +452,13 @@ fn an_empty_batch_cannot_be_confirmed_when_local_previews_are_selected() {
         for _ in 0..4 {
             drop(frame(Vec::new(), &mut imports));
         }
-        let output = frame(Vec::new(), &mut imports);
-        let pos = output
-            .shapes
-            .iter()
-            .find_map(|shape| {
-                if let egui::epaint::Shape::Text(text) = &shape.shape
-                    && text.galley.text() == aurora_i18n::tr!("import-upload")
-                {
-                    Some(text.pos + text.galley.size() * 0.5)
-                } else {
-                    None
-                }
-            })
-            .expect("upload button");
+        drop(frame(Vec::new(), &mut imports));
+        let (button, clip, enabled) = ctx
+            .data(|data| data.get_temp::<(egui::Rect, egui::Rect, bool)>(egui::Id::unique("import_upload_action")))
+            .expect("upload action geometry");
+        assert!(clip.contains_rect(button), "upload action stays reachable: {button:?} in {clip:?}");
+        assert_eq!(enabled, has_upload, "only paid upload drafts enable confirmation");
+        let pos = button.center();
         for pressed in [true, false] {
             drop(frame(
                 vec![
@@ -473,7 +473,17 @@ fn an_empty_batch_cannot_be_confirmed_when_local_previews_are_selected() {
                 &mut imports,
             ));
         }
-        assert_eq!(imports.confirm, has_upload);
+        assert_eq!(
+            imports.confirm,
+            has_upload,
+            "choice {:?}, active {:?}, busy {}, folder plan {}, pos {:?}, window {:?}",
+            imports.choice,
+            imports.active,
+            imports.busy(),
+            imports.folders.enabled,
+            pos,
+            ctx.memory(|m| m.area_rect(egui::Id::unique(WINDOW)))
+        );
     }
 }
 
@@ -541,6 +551,8 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
                 ..Default::default()
             },
             |ui| {
+                // Exercise the compact material layout in the shared window.
+                crate::ui::layout::set_work_area(ui.ctx(), egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(820.0, 900.0)));
                 show(ui.ctx(), &theme.palette(), imports, &mut prefs, &world, &Default::default());
             },
         );
@@ -821,11 +833,9 @@ fn mixed_batch_exposes_the_mesh_fee_button() {
     let theme = crate::theme::Theme::default();
     theme.apply(&ctx, 1.0);
     let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-    let entry = Entry::new(
-        "mesh.dae".into(),
-        Ok(Source::Mesh(Box::new(crate::imports::tests::mesh_fixture()))),
-        Default::default(),
-    );
+    let mut draft = crate::imports::tests::mesh_fixture();
+    draft.prepared = Some(Arc::new(mesh::prepare(&draft).expect("ready mesh")));
+    let entry = Entry::new("mesh.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
     let id = entry.id;
     let mut imports = Imports {
         open: true,
@@ -883,6 +893,55 @@ fn mixed_batch_exposes_the_mesh_fee_button() {
         },
     ]);
     assert!(matches!(actions.as_slice(), [Action::Quote(entry)] if *entry == id));
+}
+
+#[test]
+fn mesh_physics_warning_keeps_analyze_and_repair_visible_in_the_full_window() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let mut draft = crate::imports::tests::invalid_physics_fixture();
+    draft.prepared = Some(Arc::new(mesh::prepare(&draft).expect("validated physics")));
+    let entry = Entry::new("physics.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
+    let id = entry.id;
+    let mut imports = Imports {
+        open: true,
+        demo_started: true,
+        choice: Choice::Mesh,
+        active: Some(id),
+        entries: vec![entry],
+        ..Default::default()
+    };
+    ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("mesh_section", id)), 1usize));
+    for _ in 0..4 {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1440.0, 900.0))),
+                ..Default::default()
+            },
+            |ui| {
+                show(
+                    ui.ctx(),
+                    &theme.palette(),
+                    &mut imports,
+                    &mut Preferences::default(),
+                    &world,
+                    &Default::default(),
+                );
+            },
+        );
+        output.textures_delta.clear();
+    }
+    for key in ["import_physics_analyze_action", "import_mesh_repair_action"] {
+        let (rect, clip) = ctx
+            .data(|data| data.get_temp::<(egui::Rect, egui::Rect)>(egui::Id::unique(key)))
+            .expect("visible physics action");
+        assert!(
+            rect.height() >= 20.0 && clip.contains_rect(rect),
+            "{key} must remain visible and clickable"
+        );
+    }
 }
 
 #[test]
@@ -984,237 +1043,6 @@ fn every_local_asset_exposes_the_same_three_actions_without_a_footer_close_butto
             }
         }
     }
-}
-
-#[test]
-fn compact_importers_keep_their_size_and_filtered_files_without_permissions() {
-    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-    for choice in [Choice::Texture, Choice::Mesh, Choice::Material, Choice::Bulk] {
-        let ctx = egui::Context::default();
-        let theme = crate::theme::Theme::default();
-        theme.apply(&ctx, 1.0);
-        let mut prefs = Preferences::default();
-        let mesh = Entry::new(
-            "mesh.dae".into(),
-            Ok(Source::Mesh(Box::new(crate::imports::tests::mesh_fixture()))),
-            Default::default(),
-        );
-        let material = Entry::new(
-            "pbr.gltf".into(),
-            Ok(Source::Material {
-                value: Default::default(),
-                images: Box::new(std::array::from_fn(|_| None)),
-            }),
-            Default::default(),
-        );
-        let texture = Entry::new(
-            "texture.png".into(),
-            Ok(Source::Texture(Arc::new(DecodedImage {
-                width: 1,
-                height: 1,
-                components: 3,
-                data: vec![255; 3],
-                discard: 0,
-            }))),
-            Default::default(),
-        );
-        let active = match choice {
-            Choice::Texture => texture.id,
-            Choice::Material => material.id,
-            _ => mesh.id,
-        };
-        let mut imports = Imports {
-            open: true,
-            choice,
-            active: Some(active),
-            entries: vec![mesh, material, texture],
-            ..Default::default()
-        };
-        let mut frame = |imports: &mut Imports, events| {
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
-                    events,
-                    ..Default::default()
-                },
-                |ui| {
-                    show(ui.ctx(), &theme.palette(), imports, &mut prefs, &world, &Default::default());
-                },
-            );
-            output.textures_delta.clear();
-            output
-        };
-        for _ in 0..60 {
-            drop(frame(&mut imports, Vec::new()));
-        }
-        let window_id = egui::Id::unique(choice.window_id());
-        assert_eq!(
-            egui::AreaState::load(&ctx, window_id).expect("dedicated window").left_top_pos(),
-            egui::pos2(48.0, 80.0),
-            "every first-opened importer has the same top-left corner"
-        );
-        let maximum = inspector::dimensions(choice).0 + Vec2::splat(2.0);
-        let size = ctx
-            .data_mut(|data| data.get_persisted::<Vec2>(window_id.with("expanded_size")))
-            .expect("window size");
-        assert!(
-            size.x <= maximum.x && size.y <= maximum.y,
-            "compact window grew for {}: {size:?}",
-            choice.label()
-        );
-        let output = frame(&mut imports, Vec::new());
-        let positions = [
-            aurora_i18n::tr!("common-name"),
-            aurora_i18n::tr!("common-description"),
-            aurora_i18n::tr!("import-destination"),
-        ]
-        .map(|label| {
-            let positions: Vec<_> = output
-                .shapes
-                .iter()
-                .filter_map(|shape| match &shape.shape {
-                    egui::epaint::Shape::Text(text) if text.galley.text() == label => Some(text.pos),
-                    _ => None,
-                })
-                .collect();
-            assert_eq!(positions.len(), 1, "one shared metadata row for {label}");
-            positions[0]
-        });
-        assert!(positions[0].y < positions[1].y && positions[1].y < positions[2].y);
-        if matches!(choice, Choice::Mesh | Choice::Bulk) {
-            for section in [2, 1, 0] {
-                ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("mesh_section", active)), section));
-                for _ in 0..20 {
-                    drop(frame(&mut imports, Vec::new()));
-                }
-                let size = ctx
-                    .data_mut(|data| data.get_persisted::<Vec2>(window_id.with("expanded_size")))
-                    .expect("mesh section size");
-                assert!(size.x <= maximum.x && size.y <= maximum.y, "mesh section {section} grew: {size:?}");
-                let output = frame(&mut imports, Vec::new());
-                for (index, label) in [
-                    aurora_i18n::tr!("common-name"),
-                    aurora_i18n::tr!("common-description"),
-                    aurora_i18n::tr!("import-destination"),
-                ]
-                .into_iter()
-                .enumerate()
-                {
-                    let rows: Vec<_> = output
-                        .shapes
-                        .iter()
-                        .filter_map(|shape| match &shape.shape {
-                            egui::epaint::Shape::Text(text) if text.galley.text() == label => Some(text.pos),
-                            _ => None,
-                        })
-                        .collect();
-                    assert_eq!(rows, [positions[index]], "metadata stays above every mesh section");
-                }
-            }
-        }
-        assert!(
-            !output.shapes.iter().any(
-                |shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("import-permissions-tab"))
-            ),
-            "rights are edited only in Settings"
-        );
-        for (name, file_type) in [("mesh", Choice::Mesh), ("pbr", Choice::Material), ("texture", Choice::Texture)] {
-            assert_eq!(
-                output
-                    .shapes
-                    .iter()
-                    .any(|shape| matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.text() == name)),
-                choice == Choice::Bulk || choice == file_type,
-                "the file list stays scoped in dedicated windows and complete in Multiple"
-            );
-        }
-        imports.open(choice);
-        assert_eq!(imports.active, Some(active));
-        if choice == Choice::Bulk {
-            let output = frame(&mut imports, Vec::new());
-            let tab = output
-                .shapes
-                .iter()
-                .find_map(|shape| match &shape.shape {
-                    egui::Shape::Text(text) if text.galley.text() == Choice::Texture.label() => Some(text.pos + text.galley.size() * 0.5),
-                    _ => None,
-                })
-                .expect("Texture tab in Multiple");
-            for pressed in [true, false] {
-                drop(frame(
-                    &mut imports,
-                    vec![
-                        egui::Event::PointerMoved(tab),
-                        egui::Event::PointerButton {
-                            pos: tab,
-                            button: egui::PointerButton::Primary,
-                            pressed,
-                            modifiers: egui::Modifiers::NONE,
-                        },
-                    ],
-                ));
-            }
-            assert_eq!(imports.choice, Choice::Texture);
-            assert_eq!(
-                imports.window_choice(),
-                Choice::Bulk,
-                "Multiple remains the complete window after changing a tab"
-            );
-            assert!(!imports.choose_files_on_open);
-            let output = frame(&mut imports, Vec::new());
-            assert!(
-                output
-                    .shapes
-                    .iter()
-                    .any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == Choice::Bulk.label()))
-            );
-        }
-    }
-}
-
-#[test]
-fn menu_file_request_is_emitted_once_and_tab_changes_do_not_reopen_the_picker() {
-    let ctx = egui::Context::default();
-    let theme = crate::theme::Theme::default();
-    theme.apply(&ctx, 1.0);
-    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-    let mut prefs = Preferences::default();
-    let mut imports = Imports {
-        open: true,
-        choice: Choice::Mesh,
-        choose_files_on_open: true,
-        ..Default::default()
-    };
-    let mut frame = |imports: &mut Imports| {
-        let mut actions = Vec::new();
-        let mut output = ctx.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
-                ..Default::default()
-            },
-            |ui| {
-                actions = show(
-                    ui.ctx(),
-                    &theme.palette(),
-                    imports,
-                    &mut prefs,
-                    &world,
-                    &crate::ui::inventory::InventoryPreferences::default(),
-                );
-            },
-        );
-        output.textures_delta.clear();
-        drop(output);
-        actions
-    };
-    assert!(matches!(frame(&mut imports).as_slice(), [Action::Files]));
-    assert!(frame(&mut imports).is_empty());
-    imports.open(Choice::Animation);
-    assert!(frame(&mut imports).is_empty());
-    imports.open_file_picker(Choice::Bulk);
-    assert_eq!(imports.choice, Choice::Bulk);
-    assert!(matches!(frame(&mut imports).as_slice(), [Action::Files]));
-    assert!(frame(&mut imports).is_empty());
 }
 
 #[test]
@@ -1377,6 +1205,97 @@ fn clicking_an_animation_selects_and_restarts_its_preview() {
 }
 
 #[test]
+fn custom_animation_model_buttons_choose_and_restore_without_playing_or_uploading() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let animation = super::super::demo::tail_animation();
+    let entry = Entry::new(
+        "tail.anim".into(),
+        Ok(Source::Animation {
+            bytes: Arc::new(Vec::new()),
+            animation: Arc::new(animation),
+            bvh: None,
+        }),
+        Default::default(),
+    );
+    let id = entry.id;
+    let mut imports = Imports {
+        open: true,
+        choice: Choice::Animation,
+        active: Some(id),
+        entries: vec![entry],
+        ..Default::default()
+    };
+    let mut prefs = Preferences::default();
+    let mut frame = |events, imports: &mut Imports| {
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| actions = show(ui.ctx(), &theme.palette(), imports, &mut prefs, &world, &Default::default()),
+        );
+        output.textures_delta.clear();
+        actions
+    };
+    for _ in 0..3 {
+        assert!(frame(Vec::new(), &mut imports).is_empty());
+    }
+    for (key, enabled) in [("animation_model_choose", true), ("animation_model_reset", false)] {
+        let rect = ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique((key, id))))
+            .expect("model button");
+        let mut actions = Vec::new();
+        for pressed in [true, false] {
+            actions.extend(frame(
+                vec![
+                    egui::Event::PointerMoved(rect.center()),
+                    egui::Event::PointerButton {
+                        pos: rect.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                &mut imports,
+            ));
+        }
+        if enabled {
+            assert!(matches!(actions.as_slice(), [Action::AnimationModel(target)] if *target == id));
+        } else {
+            assert!(actions.is_empty(), "Standard is disabled until a model is selected or loading");
+        }
+    }
+    imports.entries[0].animation_model.pending = true;
+    drop(frame(Vec::new(), &mut imports));
+    let rect = ctx
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("animation_model_reset", id))))
+        .expect("Standard");
+    let mut actions = Vec::new();
+    for pressed in [true, false] {
+        actions.extend(frame(
+            vec![
+                egui::Event::PointerMoved(rect.center()),
+                egui::Event::PointerButton {
+                    pos: rect.center(),
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            &mut imports,
+        ));
+    }
+    assert!(matches!(actions.as_slice(), [Action::DefaultAnimationModel(target)] if *target == id));
+    assert!(!imports.entries[0].player.started);
+    assert!(matches!(imports.entries[0].status, Status::Ready));
+}
+
+#[test]
 fn popup_rows_keep_their_rectangles_when_hover_changes() {
     let ctx = egui::Context::default();
     crate::theme::Theme::default().apply(&ctx, 1.0);
@@ -1409,6 +1328,118 @@ fn popup_rows_keep_their_rectangles_when_hover_changes() {
         }
     }
     assert_eq!(selected, 0);
+}
+
+#[test]
+fn the_saved_animation_model_list_removes_each_row_without_selecting_it() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let id = Uuid::new_v4();
+    let saved = vec![
+        super::super::animation_model::Saved {
+            id: Uuid::new_v4(),
+            name: "Tail fixture with a long name that must leave room for its removal icon".into(),
+            path: "tail.dae".into(),
+        },
+        super::super::animation_model::Saved {
+            id: Uuid::new_v4(),
+            name: "Wing fixture".into(),
+            path: "wings.glb".into(),
+        },
+    ];
+    let mut model = super::super::animation_model::Selection::default();
+    let frame = |events, model: &super::super::animation_model::Selection| {
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(600.0, 500.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                ui.set_width(330.0);
+                animation_model_controls(ui, &theme.palette(), id, model, &saved, &mut actions);
+            },
+        );
+        output.textures_delta.clear();
+        (output, actions)
+    };
+    let click = |pos, pressed| {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    };
+    for _ in 0..3 {
+        drop(frame(Vec::new(), &model));
+    }
+    let list = ctx
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("animation_model_list", id))))
+        .expect("model list");
+    for pressed in [true, false] {
+        drop(frame(click(list.center(), pressed), &model));
+    }
+    let (output, _) = frame(Vec::new(), &model);
+    let wing = output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.text() == "Wing fixture" => Some(text.pos + text.galley.size() * 0.5),
+            _ => None,
+        })
+        .expect("saved model visible in the dropdown");
+    let mut actions = Vec::new();
+    for pressed in [true, false] {
+        actions.extend(frame(click(wing, pressed), &model).1);
+    }
+    assert!(matches!(actions.as_slice(), [Action::SelectAnimationModel(target, selected)] if *target == id && *selected == saved[1].id));
+    model.saved = Some(saved[1].id);
+    drop(frame(Vec::new(), &model));
+    for pressed in [true, false] {
+        drop(frame(click(list.center(), pressed), &model));
+    }
+    drop(frame(Vec::new(), &model));
+    let remove_tail = ctx
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("animation_model_remove", id, saved[0].id))))
+        .expect("unselected model's removal icon");
+    let remove_wing = ctx
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("animation_model_remove", id, saved[1].id))))
+        .expect("selected model's removal icon");
+    let tail_row = ctx
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("animation_model_row", id, saved[0].id))))
+        .expect("long model name");
+    assert!(
+        (remove_tail.right() - remove_wing.right()).abs() < 0.1,
+        "icons align regardless of name length"
+    );
+    assert!(tail_row.right() < remove_tail.left(), "names and removal buttons cannot overlap");
+    let mut actions = Vec::new();
+    for pressed in [true, false] {
+        actions.extend(frame(click(remove_tail.center(), pressed), &model).1);
+    }
+    assert!(matches!(actions.as_slice(), [Action::RemoveAnimationModel(removed)] if *removed == saved[0].id));
+    assert_eq!(model.saved, Some(saved[1].id), "removing another row must not select it");
+    let (output, _) = frame(Vec::new(), &model);
+    assert!(
+        output
+            .shapes
+            .iter()
+            .filter(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == "Wing fixture"))
+            .count()
+            >= 2,
+        "the list stays open after removing a row"
+    );
+    let mut actions = Vec::new();
+    for pressed in [true, false] {
+        actions.extend(frame(click(remove_wing.center(), pressed), &model).1);
+    }
+    assert!(matches!(actions.as_slice(), [Action::RemoveAnimationModel(selected)] if *selected == saved[1].id));
 }
 
 /// The enlarged preview keeps its size, its camera hint wrapped in a narrow

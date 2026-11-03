@@ -2,7 +2,6 @@
 
 use aurora_llsd::Llsd;
 use aurora_net::inventory::{FolderContents, InvFolder, InvItem, parse_skeleton};
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 #[cfg(test)]
@@ -11,7 +10,11 @@ mod action_tests;
 pub mod actions;
 pub mod background;
 pub mod demo;
+pub mod items;
+mod lost;
+mod parents;
 pub mod preview;
+mod system;
 pub mod wearable;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,20 +36,48 @@ pub struct Folder {
 
 #[derive(Default)]
 pub struct Inventory {
+    /// Root/system lookups retained until the inventory changes.
+    pub(crate) system_folders: system::Cache,
     /// Session-only RLVa preview restrictions, shared by every inventory floater.
     pub rlva_preview_mask: u8,
+    pub owner: Uuid,
     pub root: Uuid,
     pub lib_root: Uuid,
     pub lib_owner: Uuid,
     pub folders: HashMap<Uuid, Folder>,
-    pub items: HashMap<Uuid, InvItem>,
+    pub items: items::Items,
     /// Folders waiting to be fetched (id, library).
     pub queue: Vec<(Uuid, bool)>,
     /// Folders asked for while the cache file is being read (`hold_requests`).
     pub held: Option<Vec<Uuid>>,
     /// Bumped whenever folders or items change (cached views rebuild).
     pub generation: u64,
+    /// Link originals the server answered do not exist, or still unreadable
+    /// after `ITEM_FETCH_ATTEMPTS`: broken links, which outfits skip instead
+    /// of waiting for them (LLViewerInventoryItem::getIsBrokenLink).
+    pub missing_items: HashSet<Uuid>,
+    /// Failed item reads (network, server error), by attempt.
+    pub item_failures: HashMap<Uuid, u8>,
+    /// Failed item reads to ask for again (`take_item_retries`).
+    pub item_retries: HashSet<Uuid>,
+    /// The listing folders the Marketplace data holds in place, set by the
+    /// listings every frame (`marketplace::Holds`).
+    pub listing_holds: super::marketplace::Holds,
+    pub(crate) repaired_parents: HashMap<Uuid, Uuid>,
+    pub(crate) pending_parent_repairs: HashSet<Uuid>,
+    pub(crate) deferred_parents: HashMap<Uuid, parents::ItemSource>,
+    pub(crate) parent_retry_generation: u64,
+    pub(crate) repaired_folder_parents: HashMap<Uuid, Uuid>,
+    pub(crate) pending_folder_repairs: HashSet<Uuid>,
+    pub(crate) hierarchy_repaired: bool,
+    pub(crate) deferred_lost_folders: bool,
+    pub(crate) lost_folder_retry_generation: u64,
 }
+
+/// Reads of one item before it counts as a broken link's original. A failed
+/// read proves nothing; the Legacy Viewer treats a link still unresolved once
+/// its background fetch ended as broken (LLAppearanceMgr::updateAppearanceFromCOF).
+pub const ITEM_FETCH_ATTEMPTS: u8 = 3;
 
 fn first_id(v: &Llsd, key: &str) -> Uuid {
     v.at(0)[key].as_uuid()
@@ -80,6 +111,9 @@ impl Inventory {
     /// Touch only its folder, rather than scanning the whole inventory.
     /// A failed rez is restored by the simulator's inventory update.
     pub fn consume_item(&mut self, id: Uuid) {
+        self.repaired_parents.remove(&id);
+        self.pending_parent_repairs.remove(&id);
+        self.deferred_parents.remove(&id);
         if let Some(item) = self.items.remove(&id) {
             if let Some(folder) = self.folders.get_mut(&item.parent) {
                 folder.items.retain(|other| *other != id);
@@ -89,6 +123,7 @@ impl Inventory {
     }
     pub fn from_login(raw: &Llsd) -> Inventory {
         let mut inv = Inventory {
+            owner: raw["agent_id"].as_uuid(),
             root: first_id(&raw["inventory-root"], "folder_id"),
             lib_root: first_id(&raw["inventory-lib-root"], "folder_id"),
             lib_owner: first_id(&raw["inventory-lib-owner"], "agent_id"),
@@ -99,7 +134,7 @@ impl Inventory {
         inv
     }
 
-    fn add_folders(&mut self, list: Vec<InvFolder>, library: bool) {
+    pub(crate) fn add_folders(&mut self, list: Vec<InvFolder>, library: bool) {
         for f in list {
             self.upsert_folder(f, library);
         }
@@ -197,7 +232,8 @@ impl Inventory {
 
     pub fn apply(&mut self, contents: Vec<FolderContents>) {
         self.generation += 1;
-        for c in contents {
+        let mut refreshed: HashMap<Uuid, HashSet<Uuid>> = HashMap::new();
+        for mut c in contents {
             // Inventory versions advance as copies arrive (Firestorm's
             // LLInventoryModel::accountForUpdate). A delayed pre-copy HTTP
             // snapshot must not replace the newer, populated folder.
@@ -210,47 +246,130 @@ impl Inventory {
             }
             let library = self.folders.get(&c.folder_id).map(|f| f.library).unwrap_or(false);
             let child_ids: Vec<Uuid> = c.folders.iter().map(|f| f.id).collect();
-            for f in c.folders {
+            for mut f in c.folders {
+                if let Some(parent) = self.repaired_folder_parents.get(&f.id).copied() {
+                    if f.parent == parent && !self.pending_folder_repairs.contains(&f.id) {
+                        self.repaired_folder_parents.remove(&f.id);
+                    } else {
+                        f.parent = parent;
+                    }
+                }
                 self.upsert_folder(f, library);
             }
-            let item_ids: Vec<Uuid> = c.items.iter().map(|i| i.id).collect();
+            let mut child_ids = child_ids;
+            child_ids.extend(
+                self.repaired_folder_parents
+                    .iter()
+                    .filter_map(|(id, parent)| (*parent == c.folder_id).then_some(*id)),
+            );
+            c.items.retain(|item| {
+                item.parent.is_nil()
+                    || item.parent == parents::LOST_MARKER
+                    || self.repaired_parents.get(&item.id).is_none_or(|parent| *parent == item.parent)
+            });
+            let mut item_ids: Vec<Uuid> = c.items.iter().map(|i| i.id).collect();
+            for item in &c.items {
+                if self.repaired_parents.get(&item.id) == Some(&item.parent) && !self.pending_parent_repairs.contains(&item.id) {
+                    self.repaired_parents.remove(&item.id);
+                    self.pending_parent_repairs.remove(&item.id);
+                }
+            }
+            // A parent read started before its reliable repair can still
+            // omit the item. Retain only those explicitly pending repairs.
+            item_ids.extend(self.repaired_parents.iter().filter_map(|(item, parent)| {
+                (*parent == c.folder_id && self.items.get(item).is_some_and(|it| it.parent == *parent)).then_some(*item)
+            }));
+            if c.version >= 0 {
+                refreshed.insert(c.folder_id, item_ids.iter().copied().collect());
+            }
             if let Some(f) = self.folders.get_mut(&c.folder_id) {
                 f.children = child_ids;
                 f.items = item_ids;
                 f.state = FetchState::Fetched;
                 f.info.version = c.version;
             }
-            self.add_items(c.items);
+            self.repair_item_parents(&mut c.items, parents::ItemSource::Snapshot);
+            self.add_items_inner(c.items);
             self.sort_children(c.folder_id);
+        }
+        if !refreshed.is_empty() {
+            // AIS SlamFolder replaces link UUIDs. Like AISUpdate::doUpdate's
+            // onObjectDeletedFromServer (indra/newview/llaisapi.cpp), retire
+            // the old records as well as folder membership: inventory views
+            // index items by parent, so forgotten links stay visible (#1515).
+            // Reconcile once per batch, including links already absent from
+            // the child lists; originals and other folders remain untouched.
+            // The links come from the parent index, not a scan of every
+            // record: ~6 ms per readback with 220,000 items (#1963).
+            for (folder, listed) in &refreshed {
+                for id in self.items.links_in(*folder) {
+                    if !listed.contains(&id) {
+                        self.items.remove(&id);
+                    }
+                }
+            }
+            for id in refreshed.keys() {
+                if let Some(folder) = self.folders.get_mut(id) {
+                    folder.items.retain(|item| self.items.contains_key(item));
+                }
+            }
+            self.repaired_parents.retain(|id, _| self.items.contains_key(id));
+            self.pending_parent_repairs.retain(|id| self.repaired_parents.contains_key(id));
+            self.deferred_parents.retain(|id, _| self.items.contains_key(id));
         }
     }
 
     /// Items fetched by id (FetchInventory2), listed in their folder when
     /// that folder is loaded.
-    pub fn add_items(&mut self, items: Vec<InvItem>) {
+    ///
+    /// A moved or renamed item is taken out of its old place and inserted at
+    /// its sorted place: a folder is not sorted again for each item, which
+    /// cost ~1 ms per move into a 5,000-item Trash, twice per moved item
+    /// (#1580). Lists stay ordered like `sort_children`'s.
+    pub fn add_items(&mut self, mut items: Vec<InvItem>) {
+        self.repair_item_parents(&mut items, parents::ItemSource::Fetch);
+        self.add_items_inner(items);
+    }
+
+    /// A metadata read recovering a newly script-attached original retains
+    /// LLInventoryModel::updateItem's creation rules across HTTP delays.
+    pub fn add_attachment_items(&mut self, mut items: Vec<InvItem>) {
+        self.repair_item_parents(&mut items, parents::ItemSource::Attachment);
+        self.add_items_inner(items);
+    }
+
+    pub fn add_orphan_items(&mut self, mut items: Vec<InvItem>) {
+        self.repair_item_parents(&mut items, parents::ItemSource::Orphans);
+        self.add_items_inner(items);
+    }
+
+    fn add_items_inner(&mut self, items: Vec<InvItem>) {
         self.generation += 1;
-        let mut changed = HashSet::new();
         for mut it in items {
             self.preserve_favorite(&mut it);
+            calling_card_target(&mut it);
+            if !it.parent.is_nil() && self.repaired_parents.get(&it.id).is_some_and(|parent| *parent != it.parent) {
+                self.repaired_parents.remove(&it.id);
+                self.pending_parent_repairs.remove(&it.id);
+            }
             if let Some(old) = self.items.get(&it.id)
-                && old.parent != it.parent
+                && (old.parent != it.parent || old.name != it.name)
                 && let Some(folder) = self.folders.get_mut(&old.parent)
             {
                 folder.items.retain(|id| *id != it.id);
-                changed.insert(old.parent);
             }
+            let items = &self.items;
             if let Some(f) = self.folders.get_mut(&it.parent)
-                && f.state == FetchState::Fetched
+                && (f.state == FetchState::Fetched || self.repaired_parents.get(&it.id) == Some(&it.parent))
+                && !f.items.contains(&it.id)
             {
-                if !f.items.contains(&it.id) {
-                    f.items.push(it.id);
-                }
-                changed.insert(it.parent);
+                let key = it.name.to_lowercase();
+                let at = f
+                    .items
+                    .partition_point(|other| items.get(other).is_some_and(|o| o.name.to_lowercase() <= key));
+                f.items.insert(at, it.id);
             }
             self.items.insert(it.id, it);
-        }
-        for id in changed {
-            self.sort_children(id);
         }
     }
 
@@ -261,15 +380,26 @@ impl Inventory {
         items.retain(|item| !item.id.is_nil());
         for item in &mut items {
             self.preserve_favorite(item);
+            // before the comparison below: a card's record is otherwise
+            // always "changed"
+            calling_card_target(item);
         }
         let mut changed = HashSet::new();
+        // Folders whose subfolders changed, sorted again below; moved items
+        // take their sorted place in `add_items`.
+        let mut resort = HashSet::new();
         for folder in folders {
             let id = folder.id;
             let parent = folder.parent;
+            if self.repaired_folder_parents.get(&id).is_some_and(|known| *known != parent) {
+                self.repaired_folder_parents.remove(&id);
+                self.pending_folder_repairs.remove(&id);
+            }
             if let Some(old) = self.folders.get(&id) {
                 if old.info.parent != parent || old.info.name != folder.name {
                     changed.insert(old.info.parent);
                     changed.insert(parent);
+                    resort.extend([old.info.parent, parent]);
                 }
                 let old_parent = old.info.parent;
                 if old_parent != parent
@@ -279,6 +409,7 @@ impl Inventory {
                 }
             } else {
                 changed.insert(parent);
+                resort.insert(parent);
             }
             self.upsert_folder(folder, false);
             if let Some(parent) = self.folders.get_mut(&parent)
@@ -287,6 +418,7 @@ impl Inventory {
                 parent.children.push(id);
             }
         }
+        self.repair_item_parents(&mut items, parents::ItemSource::Simulator);
         for item in &items {
             if self.items.get(&item.id) != Some(item) {
                 changed.insert(item.parent);
@@ -303,8 +435,8 @@ impl Inventory {
                 folder.info.version = folder.info.version.saturating_add(1);
             }
         }
-        self.add_items(items);
-        for id in changed {
+        self.add_items_inner(items);
+        for id in resort {
             self.sort_children(id);
         }
         self.generation += 1;
@@ -345,6 +477,42 @@ impl Inventory {
                 folder.state = FetchState::Fetched;
             }
         }
+    }
+
+    /// A broken link's original: confirmed gone, and not received since.
+    pub fn broken(&self, id: &Uuid) -> bool {
+        self.missing_items.contains(id) && !self.items.contains_key(id)
+    }
+
+    /// The server answered that these items do not exist.
+    pub fn items_missing(&mut self, ids: Vec<Uuid>) {
+        self.generation += 1;
+        for id in ids {
+            self.item_failures.remove(&id);
+            self.item_retries.remove(&id);
+            self.missing_items.insert(id);
+        }
+    }
+
+    /// These item reads failed: asked again, up to `ITEM_FETCH_ATTEMPTS`.
+    pub fn items_failed(&mut self, ids: &[Uuid]) {
+        self.generation += 1;
+        for id in ids {
+            let attempts = self.item_failures.entry(*id).or_insert(0);
+            *attempts += 1;
+            if *attempts >= ITEM_FETCH_ATTEMPTS {
+                log::warn!("inventory item {id} still unreadable after {attempts} attempts: treated as a broken link");
+                self.item_retries.remove(id);
+                self.missing_items.insert(*id);
+            } else {
+                self.item_retries.insert(*id);
+            }
+        }
+    }
+
+    /// The failed item reads to send again, once each.
+    pub fn take_item_retries(&mut self) -> HashSet<Uuid> {
+        std::mem::take(&mut self.item_retries)
     }
 
     pub fn failed(&mut self, folders: &[Uuid]) {
@@ -390,6 +558,14 @@ impl Inventory {
             }
         }
         self.items.retain(|id, it| !removed.contains(id) && !removed.contains(&it.parent));
+        self.repaired_parents
+            .retain(|id, parent| self.items.contains_key(id) && !removed.contains(parent));
+        self.pending_parent_repairs.retain(|id| self.repaired_parents.contains_key(id));
+        self.deferred_parents.retain(|id, _| self.items.contains_key(id));
+        self.repaired_folder_parents
+            .retain(|id, parent| !removed.contains(id) && !removed.contains(parent));
+        self.pending_folder_repairs
+            .retain(|id| self.repaired_folder_parents.contains_key(id));
         self.folders.retain(|id, _| !removed.contains(id));
         self.sort_all();
         self.generation += 1;
@@ -475,10 +651,12 @@ impl Inventory {
             cur.info.thumbnail = c.thumbnail;
             cur.state = FetchState::Fetched;
             let mut listed = Vec::with_capacity(c.items.len());
-            for it in c.items {
-                if let Entry::Vacant(slot) = self.items.entry(it.id) {
+            for mut it in c.items {
+                // caches written before the cards' target was read
+                calling_card_target(&mut it);
+                if !self.items.contains_key(&it.id) {
                     listed.push(it.id);
-                    slot.insert(it);
+                    self.items.insert(it.id, it);
                 }
             }
             if let Some(cur) = self.folders.get_mut(&c.id) {
@@ -502,6 +680,22 @@ impl Inventory {
         for id in self.held.take().unwrap_or_default() {
             self.request(id);
         }
+    }
+}
+
+/// LLInventoryModel::updateItem (indra/newview/llinventorymodel.cpp): a
+/// calling card made by a viewer (create_inventory_callingcard, a resident
+/// dragged into the inventory) is created by its owner and names its resident
+/// by key in its description. That key becomes the card's creator, which
+/// every calling card action reads: without it, opening the card showed our
+/// own profile. The friendship cards made by the server have no key there.
+fn calling_card_target(item: &mut InvItem) {
+    // LLUUID::set accepts the 36-character hyphenated form
+    if item.asset_type == 2
+        && item.desc.len() == 36
+        && let Ok(id) = Uuid::try_parse(&item.desc)
+    {
+        item.creator = id;
     }
 }
 
@@ -655,6 +849,47 @@ mod tests {
             assert_eq!(inv.items[&original.id].parent, original.parent, "linked target is retained");
             assert_eq!(inv.folders[&inv.root].items.iter().filter(|id| **id == original.id).count(), 1);
         }
+    }
+
+    #[test]
+    fn folder_readback_removes_obsolete_links_only_after_an_accepted_snapshot() {
+        let mut inv = fixture();
+        let folder = Uuid::from_u128(704);
+        let links = inv.folders[&folder].items.clone();
+        let original = inv.items[&inv.items[&links[0]].asset_id].clone();
+        let others = inv.folders[&Uuid::from_u128(701)].items.clone();
+        let snapshot = FolderContents {
+            folder_id: folder,
+            owner_id: Uuid::from_u128(1),
+            version: 10,
+            folders: Vec::new(),
+            items: links.iter().map(|id| inv.items[id].clone()).chain([original.clone()]).collect(),
+        };
+        inv.apply(vec![snapshot.clone()]);
+        inv.apply(vec![FolderContents {
+            version: 9,
+            items: Vec::new(),
+            ..snapshot.clone()
+        }]);
+        assert!(links.iter().all(|id| inv.items.contains_key(id)), "ignore older readback");
+        inv.apply(vec![FolderContents {
+            version: 11,
+            items: Vec::new(),
+            ..snapshot
+        }]);
+        assert!(
+            links.iter().all(|id| !inv.items.contains_key(id)),
+            "remove the obsolete link records"
+        );
+        assert!(inv.folders[&folder].items.is_empty());
+        assert_eq!(
+            inv.items[&original.id].parent, original.parent,
+            "keep linked originals in their own folder"
+        );
+        assert!(
+            others.iter().all(|id| inv.items.contains_key(id)),
+            "keep other outfits' links to the same originals"
+        );
     }
 
     #[test]

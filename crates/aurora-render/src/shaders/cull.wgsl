@@ -76,7 +76,7 @@ const OBJ_PHOTO_HIDDEN: u32 = 128u;
 const FACE_FIRST_PERSON_HIDDEN: u32 = 16u;
 
 // a skeleton's own anchor, from the first joint of its palette (common.wgsl)
-const SKELETON_ANCHOR: u32 = 160u;
+const SKELETON_ANCHOR: u32 = 208u;
 // a posed sphere beyond these comes from a palette that is not a pose
 const POSED_RADIUS_MAX: f32 = 64.0;
 const POSED_COORD_MAX: f32 = 1.0e6;

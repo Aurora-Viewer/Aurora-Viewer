@@ -100,116 +100,143 @@ pub fn grab_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, mods: Mo
 pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
     ui.vertical(|ui| {
         let cell = Vec2::splat((ui.available_width() - 24.0) / 5.0);
-        egui::Grid::new("shapes")
-            .min_col_width(cell.x)
-            .spacing(Vec2::splat(6.0))
-            .show(ui, |ui| {
-                for i in 0..shapes().len() + 2 {
-                    let sel = s.create_shape == i && !s.copy_selection;
-                    let (rect, resp) = ui.allocate_exact_size(cell, egui::Sense::click());
-                    let fill = if sel {
-                        p.violet
-                    } else if resp.hovered() {
-                        p.raised
-                    } else {
-                        p.field
-                    };
-                    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
-                    let col = if sel { p.on_accent } else { p.ink };
-                    let name = match i {
-                        i if i < shapes().len() => {
-                            let sh = &shapes()[i];
-                            super::object::shape_preview(ui, rect.shrink(3.0), &sh.params(), sh.rotation(), col);
-                            sh.name
-                        }
-                        i if i == shapes().len() => {
-                            tree_icon(ui, rect.shrink(4.0), col, true);
-                            aurora_i18n::tr!("build-ui-tools-tree")
-                        }
-                        _ => {
-                            tree_icon(ui, rect.shrink(4.0), col, false);
-                            aurora_i18n::tr!("build-ui-tools-grass")
-                        }
-                    };
-                    if resp.on_hover_text(name).clicked() {
-                        // LLFloaterTools::setObjectType also unticks "Copy selection"
-                        s.create_shape = i;
-                        s.copy_selection = false;
-                    }
-                    if i % 5 == 4 {
-                        ui.end_row();
-                    }
-                }
-            });
+        create_shapes(ui, p, s, cell);
         ui.add_space(12.0);
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 2.0;
-            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-            if let Some(v) = check(
-                ui,
-                p,
-                s.keep_tool,
-                false,
-                aurora_i18n::tr!("build-ui-tools-keep-selection-tool"),
-                true,
-            ) {
-                s.keep_tool = v;
+        create_options(ui, p, s);
+    });
+}
+
+/// floater_tools.xml: the 5 × 3 shape grid to the left of the rez options.
+pub(super) fn create_legacy_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
+    let rect = ui.max_rect();
+    let middle = rect.left() + rect.width() * 0.5;
+    let mut shapes = super::legacy::pane(
+        ui,
+        egui::Rect::from_min_max(rect.min, egui::pos2(middle - 5.0, rect.bottom())),
+        "legacy-create-shapes",
+    );
+    let cell = Vec2::splat((shapes.available_width() - 24.0) / 5.0);
+    create_shapes(&mut shapes, p, s, cell);
+    let mut options = super::legacy::pane(
+        ui,
+        egui::Rect::from_min_max(egui::pos2(middle + 5.0, rect.top()), rect.max),
+        "legacy-create-options",
+    );
+    create_options(&mut options, p, s);
+}
+
+fn create_shapes(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, cell: Vec2) {
+    egui::Grid::new("shapes")
+        .min_col_width(cell.x)
+        .spacing(Vec2::splat(6.0))
+        .show(ui, |ui| {
+            for i in 0..shapes().len() + 2 {
+                let sel = s.create_shape == i && !s.copy_selection;
+                let (rect, resp) = ui.allocate_exact_size(cell, egui::Sense::click());
+                let fill = if sel {
+                    p.violet
+                } else if resp.hovered() {
+                    p.raised
+                } else {
+                    p.field
+                };
+                ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
+                let col = if sel { p.on_accent } else { p.ink };
+                let name = match i {
+                    i if i < shapes().len() => {
+                        let sh = &shapes()[i];
+                        super::object::shape_preview(ui, rect.shrink(3.0), &sh.params(), sh.rotation(), col);
+                        sh.name
+                    }
+                    i if i == shapes().len() => {
+                        tree_icon(ui, rect.shrink(4.0), col, true);
+                        aurora_i18n::tr!("build-ui-tools-tree")
+                    }
+                    _ => {
+                        tree_icon(ui, rect.shrink(4.0), col, false);
+                        aurora_i18n::tr!("build-ui-tools-grass")
+                    }
+                };
+                if resp.on_hover_text(name).clicked() {
+                    // LLFloaterTools::setObjectType also unticks "Copy selection"
+                    s.create_shape = i;
+                    s.copy_selection = false;
+                }
+                if i % 5 == 4 {
+                    ui.end_row();
+                }
             }
+        });
+}
+
+fn create_options(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+        if let Some(v) = check(
+            ui,
+            p,
+            s.keep_tool,
+            false,
+            aurora_i18n::tr!("build-ui-tools-keep-selection-tool"),
+            true,
+        ) {
+            s.keep_tool = v;
+        }
+        if let Some(v) = check(
+            ui,
+            p,
+            s.copy_selection,
+            false,
+            aurora_i18n::tr!("build-ui-tools-copy-selection"),
+            true,
+        ) {
+            s.copy_selection = v;
+        }
+        ui.indent("copy_opts", |ui| {
             if let Some(v) = check(
                 ui,
                 p,
+                s.copy_centers,
+                false,
+                aurora_i18n::tr!("build-ui-tools-center"),
                 s.copy_selection,
-                false,
-                aurora_i18n::tr!("build-ui-tools-copy-selection"),
-                true,
             ) {
-                s.copy_selection = v;
+                s.copy_centers = v;
             }
-            ui.indent("copy_opts", |ui| {
-                if let Some(v) = check(
-                    ui,
-                    p,
-                    s.copy_centers,
-                    false,
-                    aurora_i18n::tr!("build-ui-tools-center"),
-                    s.copy_selection,
-                ) {
-                    s.copy_centers = v;
-                }
-                if let Some(v) = check(ui, p, s.copy_rotates, false, aurora_i18n::tr!("common-rotate"), s.copy_selection) {
-                    s.copy_rotates = v;
-                }
-            });
-            // tree_grass_combo (FIRE-7802)
-            let tree = s.create_shape == shapes().len();
-            let grass = s.create_shape == shapes().len() + 1;
-            let (list, current): (&[&str], &mut String) = if grass {
-                (&grass_species(), &mut s.last_grass)
-            } else {
-                (&tree_species(), &mut s.last_tree)
-            };
-            ui.add_enabled_ui(tree || grass, |ui| {
-                egui::ComboBox::from_id_salt("tree_grass")
-                    .width(120.0)
-                    .selected_text(if current.is_empty() {
-                        aurora_i18n::tr!("build-ui-tools-random")
-                    } else {
-                        current.as_str()
-                    })
-                    .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_label(current.is_empty(), aurora_i18n::tr!("build-ui-tools-random"))
-                            .clicked()
-                        {
-                            current.clear();
+            if let Some(v) = check(ui, p, s.copy_rotates, false, aurora_i18n::tr!("common-rotate"), s.copy_selection) {
+                s.copy_rotates = v;
+            }
+        });
+        // tree_grass_combo (FIRE-7802)
+        let tree = s.create_shape == shapes().len();
+        let grass = s.create_shape == shapes().len() + 1;
+        let (list, current): (&[&str], &mut String) = if grass {
+            (&grass_species(), &mut s.last_grass)
+        } else {
+            (&tree_species(), &mut s.last_tree)
+        };
+        ui.add_enabled_ui(tree || grass, |ui| {
+            egui::ComboBox::from_id_salt("tree_grass")
+                .width(120.0)
+                .selected_text(if current.is_empty() {
+                    aurora_i18n::tr!("build-ui-tools-random")
+                } else {
+                    current.as_str()
+                })
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(current.is_empty(), aurora_i18n::tr!("build-ui-tools-random"))
+                        .clicked()
+                    {
+                        current.clear();
+                    }
+                    for n in list {
+                        if ui.selectable_label(current == n, *n).clicked() {
+                            *current = (*n).to_owned();
                         }
-                        for n in list {
-                            if ui.selectable_label(current == n, *n).clicked() {
-                                *current = (*n).to_owned();
-                            }
-                        }
-                    });
-            });
+                    }
+                });
         });
     });
 }

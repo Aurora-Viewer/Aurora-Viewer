@@ -305,6 +305,29 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
+    #[test]
+    #[ignore = "contacts the public HTTPS station reported in #1628"]
+    fn issue_1628_live_probe() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let resp = http::open("https://stream.electroradio.fm/320k", &stop).unwrap();
+        eprintln!("content_type={:?} metaint={:?}", resp.content_type, resp.metaint);
+        let title = Arc::new(Mutex::new(None));
+        let reader: Box<dyn Read + Send + Sync> = match resp.metaint {
+            Some(mi) => Box::new(IcyReader::new(resp.body, mi, title.clone())),
+            None => resp.body,
+        };
+        let mut decoder = DecodeStream::open(Box::new(ReadOnlySource::new(reader)), Some("mp3")).unwrap();
+        let mut frames = 0;
+        let mut peak = 0.0_f32;
+        while frames < 44_100 {
+            let chunk = decoder.next_chunk().unwrap().expect("audio chunk");
+            frames += chunk.samples.len() / chunk.channels;
+            peak = chunk.samples.iter().fold(peak, |peak, sample| peak.max(sample.abs()));
+        }
+        eprintln!("decoded frames={frames} peak={peak} title={:?}", *title.lock());
+        assert!(peak > 0.0);
+    }
+
     /// Serves one ICY response on loopback: MP3 frames with in-band metadata.
     fn serve_icy_once(metaint: usize) -> (String, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -313,9 +336,15 @@ mod tests {
             let Ok((mut sock, _)) = listener.accept() else {
                 return;
             };
-            let mut req = [0u8; 1024];
-            let n = sock.read(&mut req).unwrap_or(0);
-            let req = String::from_utf8_lossy(&req[..n]).to_string();
+            let mut req = Vec::new();
+            let mut buf = [0u8; 1024];
+            while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                match sock.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => req.extend_from_slice(&buf[..n]),
+                }
+            }
+            let req = String::from_utf8_lossy(&req).to_string();
             assert!(req.contains("Icy-MetaData: 1"), "{req}");
             let head = format!("ICY 200 OK\r\nicy-name: Loopback FM\r\ncontent-type: audio/mpeg\r\nicy-metaint: {metaint}\r\n\r\n");
             let _ = sock.write_all(head.as_bytes());
@@ -332,6 +361,13 @@ mod tests {
                     let _ = sock.write_all(&block);
                 }
             }
+            // Dropping the socket now can reset the connection and discard
+            // what the client has not read yet, the response head included
+            // (#1422, Windows 11 26H2). End the stream cleanly and keep the
+            // socket until the client hangs up.
+            let _ = sock.shutdown(std::net::Shutdown::Write);
+            let _ = sock.set_read_timeout(Some(Duration::from_secs(10)));
+            while matches!(sock.read(&mut buf), Ok(n) if n > 0) {}
         });
         (format!("http://{addr}/stream"), handle)
     }

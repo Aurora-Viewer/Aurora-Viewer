@@ -1,6 +1,6 @@
 // Aurora bridge IK relay: regional event discovery, no periodic polling.
 // Separate Mono memory from movement and read-only bridge services.
-string VERSION = "1.39";
+string VERSION = "1.40";
 string FOLDER = "__FOLDER__";
 integer HELLO_CHANNEL = -184735219;
 integer CONTROL_CHANNEL = -190018106;

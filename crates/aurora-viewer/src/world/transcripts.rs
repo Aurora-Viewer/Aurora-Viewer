@@ -841,6 +841,48 @@ mod tests {
         clean(&w, &root);
     }
 
+    /// #1198: a payment we made comes back with the conversation's history,
+    /// as one we received does.
+    #[test]
+    fn payments_both_ways_come_back_with_the_history() {
+        let root = temp();
+        let me = Uuid::from_u128(1);
+        let jane = Uuid::from_u128(2);
+        let mut w = world(&root, me);
+        w.social.names.insert(jane, "Jane Doe".into());
+        w.social.session_mut(jane);
+        settle(&mut w);
+        let gift = |n: u128, source, dest, amount, item: &str| aurora_net::NetEvent::MoneyTransaction {
+            id: Uuid::from_u128(n),
+            success: true,
+            kind: 5001,
+            source,
+            source_group: false,
+            dest,
+            dest_group: false,
+            amount,
+            item: item.into(),
+            description: String::new(),
+        };
+        w.payment(&gift(10, jane, me, 75, "Thanks"));
+        w.payment(&gift(11, me, jane, 300, "Rent"));
+        settle(&mut w);
+        w.leave_session(jane);
+        w.social.session_mut(jane);
+        settle(&mut w);
+        settle(&mut w);
+        let history: Vec<&str> = w.social.ims[0]
+            .lines
+            .iter()
+            .filter(|l| l.origin == Origin::Log)
+            .map(|l| l.text.as_str())
+            .collect();
+        assert_eq!(history.len(), 2, "{history:?}");
+        assert!(history[0].contains("75") && history[0].ends_with("Thanks"), "{history:?}");
+        assert!(history[1].contains("300") && history[1].ends_with("Rent"), "{history:?}");
+        clean(&w, &root);
+    }
+
     #[test]
     fn a_conversation_we_open_shows_its_history_before_any_line() {
         let root = temp();

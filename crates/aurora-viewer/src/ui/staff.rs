@@ -1,5 +1,5 @@
 //! The staff's tag after their name in the windows (`world::staff`): the
-//! Aurora team's "Aurora Viewer" and Linden Lab's "Linden Lab", in the
+//! Aurora team's "Aurora Team" and Linden Lab's "Linden Lab", in the
 //! People lists, the chat and the profile, with the light of their mark
 //! over the profile's banner. The plate's tag (`nameplate/mark.rs`) with
 //! the windows' corners: the plates' night tint, the mark's moving border,

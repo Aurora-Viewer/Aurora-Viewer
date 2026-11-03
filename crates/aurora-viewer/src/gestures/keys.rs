@@ -130,12 +130,39 @@ pub fn shortcut(key: u8, mask: u32) -> String {
     if key == 255 {
         return "---".into();
     }
-    let prefix = match mask {
-        1 => "Ctrl+",
-        4 => aurora_i18n::tr!("keybinds-shift-2"),
-        _ => "",
-    };
-    format!("{prefix}{}", label(key))
+    format!("{}{}", shortcut_prefix(mask), label(key))
+}
+
+/// Modifier half of a gesture shortcut. Mask 1 is Control, which the Mac
+/// keyboard reports as Command (LLKeyboard::stringFromAccelerator); the
+/// gesture mask has no `use_mac_ctrl` bit.
+pub fn shortcut_prefix(mask: u32) -> String {
+    match mask {
+        1 => {
+            if cfg!(target_os = "macos") {
+                "⌘".into()
+            } else {
+                "Ctrl+".into()
+            }
+        }
+        4 => aurora_i18n::tr!("keybinds-shift-2").into(),
+        _ => String::new(),
+    }
+}
+
+/// The modifier named in the gesture editor, without the key.
+pub fn modifier_name(mask: u32) -> String {
+    match mask {
+        1 => {
+            if cfg!(target_os = "macos") {
+                "⌘".into()
+            } else {
+                "Ctrl".into()
+            }
+        }
+        4 => aurora_i18n::tr!("keybinds-shift").into(),
+        _ => "---".into(),
+    }
 }
 
 pub fn choices() -> impl Iterator<Item = u8> {

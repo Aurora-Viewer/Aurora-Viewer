@@ -34,7 +34,7 @@ fn authored_native_animation_opens_the_normal_inspector_without_starting_or_char
         animation,
     );
     assert!(imports.open);
-    assert_eq!(imports.inspector, Some(Choice::Animation));
+    assert_eq!(imports.window_choice(), Choice::Bulk);
     assert_eq!(imports.entries.len(), 1);
     let entry = &imports.entries[0];
     assert_eq!(imports.active, Some(entry.id));
@@ -521,6 +521,74 @@ pub(super) fn mesh_fixture() -> mesh::Draft {
     mesh::Draft::new(scene, HashMap::new())
 }
 
+pub(super) fn invalid_physics_fixture() -> mesh::Draft {
+    let mut draft = mesh_fixture();
+    for lod in &mut draft.lods[..3] {
+        lod.source = mesh::LodSource::Above;
+    }
+    let face = &mut Arc::make_mut(&mut draft.scene).models[0].faces[0];
+    let start = face.vertices.len() as u32;
+    let prototype = face.vertices[0].clone();
+    for position in [[0.0, 0.0, 0.0], [0.00001, 0.0, 0.0], [0.0, 0.00001, 0.0]] {
+        face.vertices.push(aurora_assets::import_mesh::Vertex {
+            position,
+            ..prototype.clone()
+        });
+    }
+    face.indices.extend([start, start + 1, start + 2]);
+    draft.options.physics_source = 3;
+    draft.options.resolution = 1000;
+    draft
+}
+
+#[test]
+fn mesh_physics_invalid_fee_preparation_keeps_geometry_for_repair_without_network_requests() {
+    let ctx = egui::Context::default();
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    let entry = Entry::new(
+        "physics.dae".into(),
+        Ok(Source::Mesh(Box::new(invalid_physics_fixture()))),
+        Default::default(),
+    );
+    let id = entry.id;
+    let mut imports = Imports {
+        choice: Choice::Mesh,
+        active: Some(id),
+        entries: vec![entry],
+        message: "Unrelated warning".into(),
+        ..Default::default()
+    };
+    imports.quote_mesh(id, &ctx, &jobs, &world, &Default::default(), Permissions::default());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let commands = imports.poll(&ctx, &jobs, &world, &Default::default());
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, aurora_net::NetCommand::QuoteMesh { .. }))
+        );
+        let Some(Source::Mesh(draft)) = &imports.entries[0].source else {
+            panic!("mesh")
+        };
+        if draft.pending.is_none() {
+            assert_eq!(draft.prepared.as_ref().expect("geometry retained").degenerate_triangles, 1);
+            assert!(draft.quote.is_none());
+            assert!(
+                draft
+                    .inspector
+                    .log
+                    .contains(&aurora_i18n::tr!("import-degenerate-physics", count = 1))
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline, "physics worker did not complete");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(imports.message, "Unrelated warning");
+    assert!(imports.queue.is_empty() && imports.current.is_none());
+}
+
 #[test]
 fn mesh_multi_object_file_preserves_instances_through_preparation_and_fee_payload() {
     let scene = aurora_assets::import_mesh::collada::parse(demo::multiple_dae().as_bytes(), &aurora_assets::Skeleton::default())
@@ -901,10 +969,31 @@ fn shared_material_maps_are_charged_once_with_equivalent_effective_encoding() {
     second.options.max_height = 2048;
     imports.entries.push(second);
     assert_eq!(imports.total(&prices()), Some(10));
+    assert!(imports.has_shared_textures());
+    imports.entries[1].options.lossless_small = !imports.entries[0].options.lossless_small;
+    assert!(!imports.has_shared_textures(), "different effective encodings are separate uploads");
+    imports.entries[1].options.lossless_small = imports.entries[0].options.lossless_small;
     if let Some(Source::Material { images, .. }) = &mut imports.entries[1].source {
         images[0].as_mut().expect("map").asset = Some(Uuid::new_v4());
     }
     imports.entries[0].selected = false;
+    assert_eq!(imports.total(&prices()), Some(0));
+    assert!(!imports.has_shared_textures());
+    let options = imports.entries[1].options;
+    let Some(Source::Material { images, .. }) = &mut imports.entries[1].source else {
+        panic!("material")
+    };
+    let map = images[0].as_mut().unwrap();
+    map.asset = None;
+    let key = map.upload_key(options);
+    imports.uploaded.insert(
+        key,
+        Receipt {
+            item: Default::default(),
+            cost: 10,
+        },
+    );
+    assert!(imports.has_shared_textures(), "an already uploaded shared dependency is reused");
     assert_eq!(imports.total(&prices()), Some(0));
 }
 #[test]

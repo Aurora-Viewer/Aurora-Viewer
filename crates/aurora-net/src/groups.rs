@@ -406,8 +406,10 @@ pub fn notice_text(message: &str) -> (String, String) {
 pub fn notice_to_send(subject: &str, message: &str, item: Option<(Uuid, Uuid)>) -> (String, Vec<u8>) {
     let text = format!("{subject}|{message}");
     let bucket = match item {
-        // the serialized map, without its terminating null
-        Some((item, owner)) => aurora_llsd::to_xml(&llsd_map! { "item_id" => item, "owner_id" => owner }),
+        // send_group_notice (indra/newview/llviewermessage.cpp) uses
+        // LLSDSerialize's format header, without a terminating null. The
+        // HTTP XML declaration alone is rejected as inventory by the sim.
+        Some((item, owner)) => aurora_llsd::to_serialized_xml(&llsd_map! { "item_id" => item, "owner_id" => owner }),
         // EMPTY_BINARY_BUCKET
         None => vec![0],
     };
@@ -872,6 +874,26 @@ mod tests {
         let v = aurora_llsd::from_xml(&bucket).expect("llsd");
         assert_eq!(v["item_id"].as_uuid(), Uuid::from_u128(1));
         assert_eq!(v["owner_id"].as_uuid(), Uuid::from_u128(2));
+    }
+
+    #[test]
+    fn notice_attachment_matches_legacy_serialized_xml() {
+        // send_group_notice uses LLSDSerialize::serialize, not the HTTP XML
+        // formatter. The simulator dispatches on this first line.
+        let (text, bucket) = notice_to_send("Workshop", "Bring the kit.|Thanks", Some((Uuid::from_u128(1), Uuid::from_u128(2))));
+        let expected = concat!(
+            "<? LLSD/XML ?>\n",
+            "<llsd><map>",
+            "<key>item_id</key><uuid>00000000-0000-0000-0000-000000000001</uuid>",
+            "<key>owner_id</key><uuid>00000000-0000-0000-0000-000000000002</uuid>",
+            "</map></llsd>\n",
+        );
+        assert_eq!(text, "Workshop|Bring the kit.|Thanks");
+        assert_eq!(
+            bucket,
+            expected.as_bytes(),
+            "match LLSDSerialize's header, UUID types and transmitted length"
+        );
     }
 
     #[test]

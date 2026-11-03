@@ -263,9 +263,10 @@ fn show_quick(
         match q {
             Quick::Add | Quick::Wear(_) => {
                 let clicked = child
-                    .add_enabled_ui(st.pending.is_none() && !facts.appearance_busy, |ui| {
-                        widgets::action_button(ui, p, "", quick_label(*q), widgets::ActionKind::Flat, rect.size()).clicked()
-                    })
+                    .add_enabled_ui(
+                        st.pending.is_none() && !facts.appearance_busy && facts.rlva_allows(inv, id, *q == Quick::Add),
+                        |ui| widgets::action_button(ui, p, "", quick_label(*q), widgets::ActionKind::Flat, rect.size()).clicked(),
+                    )
                     .inner;
                 if clicked {
                     st.select(ui, id, false);
@@ -359,14 +360,14 @@ pub(in super::super) fn item(
         .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_row_columns", id)), cols));
     let icon_center = Pos2::new(rect.left() + 4.0 + ICON / 2.0, rect.center().y);
     let name_left = icon_center.x + ICON / 2.0 + 8.0;
-    let tint = item_icon_color(it.asset_type, it.inv_type, p);
+    let (icon_name, tint) = inventory_item_icon(inv, it, p);
     // Renaming: the field in place of the name.
     let name_rect = Rect::from_x_y_ranges(name_left..=cols.name_end, rect.y_range().shrink(2.0));
     let mut field = ui.new_child(egui::UiBuilder::new().max_rect(name_rect).id_salt(("inventory_rename_row", id)));
     field.set_clip_rect(Rect::from_x_y_ranges(name_rect.x_range(), rect.y_range()).intersect(ui.clip_rect()));
-    if rename_row(&mut field, p, inv, id, st, prefs, actions) {
+    if rename_row(&mut field, p, inv, id, st, actions) {
         background(ui, p, full, selected);
-        paint_icon(ui, icons, item_icon(it.asset_type, it.inv_type, it.flags), icon_center, tint);
+        paint_icon(ui, icons, icon_name, icon_center, tint);
         ui.advance_cursor_after_rect(rect);
         return;
     }
@@ -375,7 +376,7 @@ pub(in super::super) fn item(
     #[cfg(test)]
     tests::record(ui, id, rect);
     background(ui, p, full, selected);
-    paint_icon(ui, icons, item_icon(it.asset_type, it.inv_type, it.flags), icon_center, tint);
+    paint_icon(ui, icons, icon_name, icon_center, tint);
     let permissions = Permissions::inventory(inv, id);
     let hovered = ui.rect_contains_pointer(full) && ui.ctx().dragged_id().is_none();
     let quick = if hovered {
@@ -487,7 +488,7 @@ pub(in super::super) fn folder(
     let name_rect = Rect::from_x_y_ranges(name_left..=cols.name_end, rect.y_range().shrink(2.0));
     let mut field = ui.new_child(egui::UiBuilder::new().max_rect(name_rect).id_salt(("inventory_rename_row", id)));
     field.set_clip_rect(Rect::from_x_y_ranges(name_rect.x_range(), rect.y_range()).intersect(ui.clip_rect()));
-    if rename_row(&mut field, p, inv, id, st, prefs, actions) {
+    if rename_row(&mut field, p, inv, id, st, actions) {
         background(ui, p, full, selected);
         paint_icon(ui, icons, icon, icon_center, tint);
         ui.advance_cursor_after_rect(rect);
@@ -534,18 +535,26 @@ pub(in super::super) fn folder(
             + 8.0
     });
     let star_w = if folder.info.favorite { 20.0 } else { 0.0 };
+    // the " (Protected) " suffix of LLFolderViewItem::drawLabel
+    // (indra/llui/llfolderviewitem.cpp), as the rows' pill
+    let locked = prefs.protected.contains(&id).then(|| aurora_i18n::tr!("inventory-pill-protected"));
+    let locked_w = locked.map_or(0.0, |text| pill_width(ui, text) + 6.0);
     let job = if selected {
         sheet::semibold(ui, &label, NAME, p.ink)
     } else {
         egui::text::LayoutJob::single_section(label, egui::TextFormat::simple(egui::FontId::proportional(NAME), p.ink))
     };
     let mut job = job;
-    job.wrap = egui::text::TextWrapping::truncate_at_width((cols.name_end - name_left - count_w - star_w).max(24.0));
+    job.wrap = egui::text::TextWrapping::truncate_at_width((cols.name_end - name_left - count_w - star_w - locked_w).max(24.0));
     let galley = ui.painter().layout_job(job);
-    let name_end = name_left + galley.size().x;
+    let mut name_end = name_left + galley.size().x;
     let clip = ui.clip_rect();
     ui.set_clip_rect(clip.intersect(Rect::from_min_max(full.min, Pos2::new(cols.name_end, full.bottom()))));
     widgets::paint_row_text(ui.painter(), galley, name_left, rect.center().y, p.ink);
+    if let Some(text) = locked {
+        name_end += 6.0;
+        name_end += paint_pill(ui, p, text, Tone::Plain, name_end, rect.center().y);
+    }
     if folder.info.favorite {
         widgets::paint_glyph(
             ui.painter(),

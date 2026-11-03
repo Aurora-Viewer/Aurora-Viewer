@@ -28,10 +28,7 @@ impl Pose {
                 .iter()
                 .all(|q| q.is_finite() && (0.99..=1.01).contains(&q.length_squared()))
             && self.positions.iter().all(|p| p.is_finite() && p.abs().max_element() <= 100.0)
-            && self
-                .scales
-                .iter()
-                .all(|s| s.is_finite() && s.min_element() >= 0.001 && s.max_element() <= 100.0)
+            && self.scales.iter().all(|s| scale_valid(*s))
             && self.locks.iter().all(|(b, m)| *b < rig.len() && m.is_finite())
     }
     /// Bake the displayed world locks into skeleton-local channels before I/O.
@@ -57,6 +54,17 @@ impl Pose {
         let pose = self.resolved(rig, model);
         rig.world_with(&pose.rotations, Vec3::ZERO, &pose.positions, &self.scales)
     }
+}
+
+/// A joint scale the poser keeps. Its sign is the shape's: some sliders
+/// mirror a face or pectoral joint on one axis, and refusing those refused
+/// the whole pose of such an avatar (#1249).
+pub(super) fn scale_valid(scale: Vec3) -> bool {
+    scale.is_finite() && scale.abs().min_element() >= 0.001 && scale.abs().max_element() <= 100.0
+}
+/// An edited scale held within the poser's bounds, keeping each axis's sign.
+pub(super) fn bounded_scale(scale: Vec3) -> Vec3 {
+    scale.signum() * scale.abs().clamp(Vec3::splat(0.001), Vec3::splat(10.0))
 }
 
 #[derive(Clone)]

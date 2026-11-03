@@ -17,6 +17,8 @@
 //! with either bars), `balancemenu` (the account island's right click).
 //! The system island: `systip`
 //! (its detailed tooltip shown), `sysmenu` (its right click),
+//! `profiles` (two saved quality fixtures), `fpspresets` (the fixtures and
+//! the FPS hover card, with either bar layout),
 //! `netgraph` (Firestorm's traffic indicator shown), `tplist` (earlier
 //! places in the session, the back arrow's list of them open), `sysperf` /
 //! `sysnet` (Performance opened from the island at frame 300, by its frame
@@ -31,7 +33,10 @@
 //! corner), `immersivetags` (the same, the name tags shown, not saved),
 //! `immersivehuds` (the same, the HUDs hidden, not saved). The chat bar: `autohide` (shown only while it is used, with
 //! either bars), `chatstart` (autohidden, Enter pressed at frame 300 on a
-//! draft: the bar back).
+//! draft: the bar back). The location field's suggestions: `locations`
+//! (the place menu opened at frame 300, "Aur" typed in its destination
+//! field: the landmarks and places it names; with `legacy`, typed in the
+//! location field).
 //! `normal` or nothing
 //! else: the
 //! islands as set. With any word the voice light is the mockup's
@@ -81,6 +86,9 @@ pub struct DemoBars {
     pub click_name: bool,
     /// The system island's detailed tooltip shown.
     pub tip: bool,
+    /// Named quality fixtures; optionally show the FPS hover card.
+    pub graphics_profiles: bool,
+    pub fps_presets: bool,
     /// The traffic indicator shown or hidden, whatever is saved.
     pub net_stats: Option<bool>,
     /// The balance shown or hidden, whatever is saved.
@@ -105,6 +113,9 @@ pub struct DemoBars {
     pub autohide: bool,
     /// Autohidden, Enter pressed at frame 300 on a draft: the bar back.
     pub chat_start: bool,
+    /// "Aur" typed in the place menu's destination field (the location
+    /// field with `legacy`) at frame 300: its suggestions shown.
+    pub locations: bool,
 }
 
 /// How the demo opens Performance from the system island.
@@ -165,8 +176,17 @@ pub fn parse(value: &str) -> DemoBars {
             }
             "chatname" => d.click_name = true,
             "systip" => d.tip = true,
+            "profiles" => d.graphics_profiles = true,
+            "fpspresets" => {
+                d.graphics_profiles = true;
+                d.fps_presets = true;
+            }
             "sysmenu" => d.open = Some(Open::System),
             "tplist" => d.open = Some(Open::TpList),
+            "locations" => {
+                d.open = Some(Open::Place);
+                d.locations = true;
+            }
             "netgraph" => d.net_stats = Some(true),
             "nobalance" => d.show_balance = Some(false),
             "balancemenu" => d.open = Some(Open::Account),
@@ -241,6 +261,8 @@ mod tests {
         assert_eq!(d.rights_text, Some(true));
         assert_eq!(d.open, Some(Open::Place));
         assert_eq!(parse("legacy").classic, Some(true));
+        let typed = parse("locations");
+        assert!(typed.locations && typed.open == Some(Open::Place));
         let clock = parse("clocklocal,noseconds");
         assert_eq!(clock.clock_zone, Some(crate::settings::ClockZone::Local));
         assert_eq!(clock.clock_seconds, Some(false));

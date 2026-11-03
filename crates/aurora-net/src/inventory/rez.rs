@@ -90,6 +90,7 @@ mod tests {
                 parent: Uuid::from_u128(4),
                 asset_type: 6,
                 inv_type: 6,
+                group_id: Uuid::from_u128(99),
                 base_mask: 0x7fff_ffff,
                 owner_mask: 0xa000,
                 group_mask: 0x2000,
@@ -108,6 +109,9 @@ mod tests {
             source_folder: Uuid::nil(),
         };
         let land = r.message(Uuid::from_u128(5), Uuid::nil());
+        assert_eq!(land.agent_data.group_id, r.group);
+        assert_eq!(land.inventory_data.group_id, r.item.group_id);
+        assert_ne!(land.agent_data.group_id, land.inventory_data.group_id);
         assert_eq!(land.rez_data.bypass_raycast, 1);
         assert_eq!(land.rez_data.ray_end, Vec3::new(3.0, 20.0, 10.0));
         assert!(land.rez_data.remove_item && land.rez_data.rez_selected);
@@ -123,6 +127,7 @@ mod tests {
         assert_ne!(land.inventory_data.crc, super::super::operations::checksum(&r.item));
         r.target = Uuid::from_u128(6);
         let object = r.message(Uuid::nil(), Uuid::nil());
+        assert_eq!(object.agent_data.group_id, r.group);
         assert_eq!(object.rez_data.bypass_raycast, 0);
         assert_eq!(object.rez_data.ray_target_id, r.target);
         assert_eq!(object.rez_data.ray_end, Vec3::new(18.0, 10.0, -20.0));

@@ -210,14 +210,6 @@ impl AgentState {
         if quickjump { flags | control::FINISH_ANIM } else { flags }
     }
 
-    /// Use the same simulator transition as Quickjump for a held ground
-    /// jump when automatic takeoff is disabled. Keep UP_POS held so the
-    /// simulator can repeat jumps; its physics still decides when to jump.
-    pub fn immediate_jump_flags(&self, flags: u32, enabled: bool) -> u32 {
-        let jump = enabled && !self.flying && !self.is_sitting() && flags & (control::UP_POS | control::FLY) == control::UP_POS;
-        Self::quickjump_flags(flags, jump)
-    }
-
     /// LLAgent::isSitting: on an object or on the ground.
     pub fn is_sitting(&self) -> bool {
         self.seated || self.ground_sit
@@ -894,42 +886,31 @@ mod tests {
         assert_eq!(AgentState::quickjump_flags(0, true), control::FINISH_ANIM);
     }
 
+    /// With automatic takeoff off the agent never flies from a held Up, and
+    /// only Quickjump puts FINISH_ANIM in the AgentUpdate: the simulator plays
+    /// the pre-jump and repeats the jump while Up stays held, as with the
+    /// Legacy Viewer's AutomaticFly off (agent_jump only calls moveUp).
     #[test]
-    fn automatic_fly_off_starts_ground_jumps_immediately_and_keeps_up_held_for_repeats() {
-        let agent = AgentState::default();
+    fn held_ground_jump_keeps_the_pre_jump_unless_quickjump() {
+        let mut agent = AgentState::default();
+        let now = Instant::now();
         let input = MoveInput {
             up: true,
             forward: true,
             ..Default::default()
         };
+        agent.record_jump_input(now);
         let held = agent.control_flags(&input, false);
-        assert_eq!(agent.immediate_jump_flags(held, false), held, "ordinary automatic-fly timing");
-        let flags = agent.immediate_jump_flags(held, true);
-        assert_eq!(flags, held | control::FINISH_ANIM);
-        assert_ne!(flags & control::UP_POS, 0, "the simulator keeps the repeated jump input");
-        assert_eq!(flags & control::FLY, 0);
-        let released = agent.control_flags(&MoveInput::default(), false);
-        assert_eq!(
-            agent.immediate_jump_flags(released, true),
-            released,
-            "release restores ordinary landing handling"
-        );
-    }
-
-    #[test]
-    fn immediate_jump_never_adds_up_or_skips_a_seated_or_flying_animation() {
-        let mut agent = AgentState::default();
-        for flags in [0, control::UP_NEG, control::AT_POS, control::UP_POS | control::FLY] {
-            assert_eq!(agent.immediate_jump_flags(flags, true), flags);
-        }
-        agent.seated = true;
-        assert_eq!(agent.immediate_jump_flags(control::UP_POS, true), control::UP_POS);
-        agent.seated = false;
-        agent.ground_sit = true;
-        assert_eq!(agent.immediate_jump_flags(control::UP_POS, true), control::UP_POS);
-        agent.ground_sit = false;
-        agent.flying = true;
-        assert_eq!(agent.immediate_jump_flags(control::UP_POS, true), control::UP_POS);
+        assert_ne!(held & control::UP_POS, 0, "the simulator keeps the repeated jump input");
+        assert_eq!(held & (control::FLY | control::FINISH_ANIM), 0);
+        assert_eq!(AgentState::quickjump_flags(held, false), held, "pre-jump kept");
+        assert_eq!(AgentState::quickjump_flags(held, true), held | control::FINISH_ANIM);
+        // LLAgent::onAnimStop: no finish while Up is held, so the next jump
+        // keeps its pre-jump; a released tap finishes it and cannot stall.
+        assert_eq!(agent.animation_stop_flags(PRE_JUMP, true, at(now, 0.4)), 0);
+        assert_eq!(agent.animation_stop_flags(PRE_JUMP, false, at(now, 0.4)), control::FINISH_ANIM);
+        // a landing right after a jump never finishes the next pre-jump
+        assert_eq!(agent.animation_stop_flags(LAND, false, at(now, 0.8)), 0);
     }
 
     #[test]

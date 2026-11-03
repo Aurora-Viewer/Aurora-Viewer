@@ -114,6 +114,15 @@ const BUDGET_EVERY: Duration = Duration::from_millis(250);
 /// them.
 const REDUCTIONS_PER_SECOND: f32 = 3000.0;
 const REDUCTIONS_PER_FRAME: std::ops::RangeInclusive<usize> = 8..=512;
+/// While the 3D drawing is paused behind (texture_budget::Background): the
+/// size on screen divided by this (ten levels: every texture at its last
+/// one, those of a fixed size, HUDs and the interface, left as they are),
+/// and that many reductions a frame. On the grid the window behind still
+/// held 2 GB of textures 8 s into the pause, their size on screen decaying
+/// by half a pass, while the one in front grew by 4 GB in 10 s and lost
+/// its device (#1808).
+const PAUSED_DROPPED: f32 = 1024.0;
+const PAUSED_REDUCTIONS_PER_FRAME: usize = 8192;
 /// Firestorm asks for MAX_IMAGE_DATA_SIZE (indra/llimage/llimage.h) when it
 /// wants the whole file.
 const MAX_IMAGE_DATA_SIZE: u64 = 4096 * 4096 * 8;
@@ -166,6 +175,8 @@ pub enum TexSource {
 /// block, alpha > 32 at its first texel, repeated UVs. Top-left decoded rows
 /// are indexed from the bottom, like world UVs. No OpenGL state or
 /// readback is involved; masks are built by decode workers and retired off-thread.
+/// A second, full-resolution bit plane preserves alpha > 0 for left clicks
+/// on world Blend faces, without changing the legacy mask used by HUDs.
 pub struct PickMask {
     width: u32,
     height: u32,
@@ -180,7 +191,7 @@ impl PickMask {
 
     /// A mask read back from the transcoded cache, if its bits fit its size.
     fn from_parts((width, height, bits): texture_cache::MaskParts) -> Option<Self> {
-        let fits = width > 0 && height > 0 && bits.len() == (width as usize * height as usize).div_ceil(8);
+        let fits = width > 0 && height > 0 && Some(bits.len()) == texture_cache::pick_mask_bytes(width, height);
         fits.then_some(Self { width, height, bits })
     }
 
@@ -190,7 +201,8 @@ impl PickMask {
             return None;
         }
         let (w, h) = (width.div_ceil(2), height.div_ceil(2));
-        let mut bits = vec![0; (w as usize * h as usize).div_ceil(8)];
+        let coarse = (w as usize * h as usize).div_ceil(8);
+        let mut bits = vec![0; coarse + pixels.div_ceil(8)];
         for y in 0..h {
             for x in 0..w {
                 let row = height - 1 - y * 2;
@@ -200,15 +212,32 @@ impl PickMask {
                 }
             }
         }
-        Some(Self { width: w, height: h, bits })
+        for y in 0..height {
+            for x in 0..width {
+                if rgba[(((height - 1 - y) * width + x) as usize) * 4 + 3] != 0 {
+                    let bit = (y * width + x) as usize;
+                    bits[coarse + bit / 8] |= 1 << (bit % 8);
+                }
+            }
+        }
+        Some(Self { width, height, bits })
     }
 
     pub fn hits(&self, uv: glam::Vec2) -> bool {
+        self.hits_plane(uv, self.width.div_ceil(2), self.height.div_ceil(2), 0)
+    }
+
+    pub fn hits_nonzero(&self, uv: glam::Vec2) -> bool {
+        let coarse = (self.width.div_ceil(2) as usize * self.height.div_ceil(2) as usize).div_ceil(8);
+        self.hits_plane(uv, self.width, self.height, coarse)
+    }
+
+    fn hits_plane(&self, uv: glam::Vec2, width: u32, height: u32, offset: usize) -> bool {
         let uv = if uv.is_finite() { uv } else { glam::Vec2::ZERO };
-        let x = (uv.x.rem_euclid(1.0) * self.width as f32) as usize;
-        let y = (uv.y.rem_euclid(1.0) * self.height as f32) as usize;
-        let bit = y.min(self.height as usize - 1) * self.width as usize + x.min(self.width as usize - 1);
-        self.bits[bit / 8] & (1 << (bit % 8)) != 0
+        let x = (uv.x.rem_euclid(1.0) * width as f32) as usize;
+        let y = (uv.y.rem_euclid(1.0) * height as f32) as usize;
+        let bit = y.min(height as usize - 1) * width as usize + x.min(width as usize - 1);
+        self.bits[offset + bit / 8] & (1 << (bit % 8)) != 0
     }
 }
 
@@ -894,6 +923,8 @@ pub struct TextureStreamer {
     cache_dir: PathBuf,
     /// Procedural demo textures: id -> slot.
     local_slots: HashMap<Uuid, u32>,
+    /// Worker-prepared local pixels, shared with avatar baking and UI previews.
+    local_images: HashMap<Uuid, Arc<aurora_render::preview::Image>>,
     /// Bumped whenever a slot's alpha class or alpha channel, or a sculpt
     /// map, changes.
     pub generation: u64,
@@ -908,6 +939,11 @@ pub struct TextureStreamer {
     decodes: usize,
     /// Memory pressure step (texture_budget.rs), decided in `maintain`.
     pressure: Pressure,
+    /// The window in the background long enough to give its textures back
+    /// (texture_budget::Background), and its state (`set_window_state`).
+    background: texture_budget::Background,
+    in_front: bool,
+    minimized: bool,
     last_budget: Instant,
     /// Passes of `recompute_wants` since the step last changed.
     passes_at_step: u32,
@@ -915,6 +951,10 @@ pub struct TextureStreamer {
     /// pass under pressure and done a few per frame, the largest (the
     /// bytes they hold, last of the tuple) first: taken from the end.
     reductions: Vec<(Uuid, u8, u64)>,
+    /// Bytes of textures the reductions should give back, from the last
+    /// budget reading (texture_budget::lowering_goal); no limit until the
+    /// first one.
+    to_lower: u64,
     /// Bytes the textures would hold one pressure step below, from the
     /// last pass.
     bytes_below: u64,
@@ -972,8 +1012,9 @@ pub struct TextureStreamer {
     watch: LoadWatch,
 }
 
-/// Coarse pixels for an isolated appearance preview, decoded on a worker.
+/// Shared image sources for an isolated appearance preview, decoded on a worker.
 pub struct PreviewSource {
+    pub local: Option<Arc<aurora_render::preview::Image>>,
     pub bytes: Arc<Vec<u8>>,
     pub jpeg: PathBuf,
     pub blocks: PathBuf,
@@ -983,9 +1024,64 @@ pub struct PreviewSource {
 }
 pub type PreviewRevision = (usize, Option<u8>, Option<(u32, u32)>, bool);
 impl PreviewSource {
+    /// Appearance editing can use resident pixels immediately and improve
+    /// them as finer levels arrive; export still requires the original data.
+    pub fn bake_ready(&self, id: Uuid) -> bool {
+        self.local.is_some()
+            || self.decoded.is_some()
+            || self.procedural
+            || is_builtin_transparent(&id)
+            || id == aurora_prim::te::BLANK_TEXTURE
+    }
+
+    pub fn bake_revision(&self) -> PreviewRevision {
+        let mut revision = self.revision();
+        if self.local.is_none() {
+            // Download packets do not change pixels until a new resident level
+            // is ready. Invalidating for every packet would starve the worker.
+            revision.0 = 0;
+        }
+        revision
+    }
+
+    pub fn bake_image(self, id: Uuid) -> Option<Arc<aurora_render::preview::Image>> {
+        if is_builtin_transparent(&id) || id == aurora_prim::te::BLANK_TEXTURE {
+            return Some(Arc::new(aurora_render::preview::Image {
+                size: [1, 1],
+                rgba: if is_builtin_transparent(&id) { vec![0; 4] } else { vec![255; 4] }.into(),
+            }));
+        }
+        let blocks = self.blocks.clone();
+        let discard = self.decoded.unwrap_or(0);
+        self.inspector_image(id).or_else(|| {
+            // A texture loaded from BC7 can be fully visible without any JPEG
+            // bytes in memory or on disk. Decode its resident cache level on
+            // the worker, preserving its resolution instead of the UI thumbnail.
+            let texture_cache::Transcoded::Bc7(cached) = texture_cache::read(&blocks, discard)? else {
+                return None;
+            };
+            let (width, height, blocks) = cached.levels.first()?;
+            let mut rgba = aurora_render::bc7::decode_level(blocks, *width, *height)?;
+            if !cached.alpha_channel || cached.alpha == AlphaKind::Opaque {
+                // Opaque BC7 encoders may quantize alpha to 254: the world
+                // ignores that channel, and a layer composite must do so too.
+                for pixel in rgba.as_chunks_mut::<4>().0 {
+                    pixel[3] = 255;
+                }
+            }
+            Some(Arc::new(aurora_render::preview::Image {
+                size: [*width, *height],
+                rgba: rgba.into(),
+            }))
+        })
+    }
+
     /// Inspector pixels at the resident resolution, decoded on a worker.
     /// Exports must wait for discard 0 instead of using the small BC7 preview.
     pub fn inspector_image(self, id: Uuid) -> Option<Arc<aurora_render::preview::Image>> {
+        if let Some(image) = self.local {
+            return Some(image);
+        }
         if let Some((rgba, width, height)) = crate::demo::local_texture(&id) {
             return Some(Arc::new(aurora_render::preview::Image {
                 size: [width, height],
@@ -1005,7 +1101,12 @@ impl PreviewSource {
         }))
     }
     pub fn revision(&self) -> PreviewRevision {
-        (self.bytes.len(), self.decoded, self.size, self.procedural)
+        (
+            self.local.as_ref().map_or(self.bytes.len(), |image| Arc::as_ptr(image) as usize),
+            self.decoded,
+            self.size,
+            self.procedural,
+        )
     }
     /// What `image` depends on: the level it decodes, never finer than
     /// preview_discard, instead of the exact bytes and level held. The
@@ -1013,6 +1114,9 @@ impl PreviewSource {
     /// busy region; small previews built again at each move (the shape
     /// editor's hints) cost a hitch every few hundred milliseconds.
     pub fn image_revision(&self) -> PreviewRevision {
+        if self.local.is_some() {
+            return self.revision();
+        }
         let Some((width, height)) = self.size.filter(|_| self.decoded.is_some()) else {
             return self.revision();
         };
@@ -1020,6 +1124,9 @@ impl PreviewSource {
         (0, Some(level), self.size, self.procedural)
     }
     pub fn image(self, id: Uuid) -> Option<Arc<aurora_render::preview::Image>> {
+        if let Some(image) = self.local {
+            return Some(image);
+        }
         let image = |width, height, rgba: Vec<u8>| {
             Arc::new(aurora_render::preview::Image {
                 size: [width, height],
@@ -1099,7 +1206,7 @@ impl TextureStreamer {
                 let mask = PickMask {
                     width: 1,
                     height: 1,
-                    bits: vec![0],
+                    bits: vec![0; 2],
                 };
                 (id, mask)
             })
@@ -1113,13 +1220,18 @@ impl TextureStreamer {
             alpha_channel_by_slot: Vec::new(),
             cache_dir,
             local_slots: HashMap::new(),
+            local_images: HashMap::new(),
             generation: 0,
             max_decodes: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(2),
             decodes: 0,
             pressure: Pressure::new(Instant::now()),
+            background: texture_budget::Background::default(),
+            in_front: true,
+            minimized: false,
             last_budget: Instant::now(),
             passes_at_step: 0,
             reductions: Vec::new(),
+            to_lower: u64::MAX,
             bytes_below: 0,
             full_resolution: false,
             pending_in_view: 0,
@@ -1195,6 +1307,7 @@ impl TextureStreamer {
     pub fn preview_source(&self, id: &Uuid) -> PreviewSource {
         let entry = self.entries.get(id);
         PreviewSource {
+            local: self.local_images.get(id).cloned(),
             bytes: entry.map(|e| e.data.clone()).unwrap_or_default(),
             jpeg: Self::cache_path(&self.cache_dir, id, true),
             blocks: Self::transcoded_path(&self.cache_dir, id),
@@ -1465,6 +1578,58 @@ impl TextureStreamer {
         true
     }
 
+    /// The GPU device is lost (app/gpu_recovery.rs): the slots of the old
+    /// renderer are gone. Every texture keeps its bytes, its cache state and
+    /// its users, gets a slot of `new` and is uploaded again as it was: from
+    /// the JPEG 2000 data in memory, or read again from the transcoded or the
+    /// disk cache. Nothing is downloaded again and the disk cache stays
+    /// (unlike `refresh`).
+    pub fn gpu_reset(&mut self, new: &mut Renderer) {
+        self.gpu_reset_into(new);
+    }
+
+    fn gpu_reset_into(&mut self, new: &mut impl SlotTable) {
+        // their staged data is in the old device's pool
+        self.uploads = Default::default();
+        self.alpha_by_slot.clear();
+        self.alpha_channel_by_slot.clear();
+        self.alpha_changes.clear();
+        self.first_texels.clear();
+        self.reductions.clear();
+        self.local_slots.clear();
+        self.slotless = 0;
+        self.slotless_unreported = 0;
+        self.staging = None;
+        self.generation = self.generation.wrapping_add(1);
+        let ids: Vec<Uuid> = self.entries.keys().copied().collect();
+        for id in ids {
+            let slot = self.new_slot(new);
+            set_slot_alpha(
+                &mut self.alpha_by_slot,
+                &mut self.generation,
+                &mut self.alpha_changes,
+                slot,
+                AlphaKind::Opaque,
+            );
+            let Some(e) = self.entries.get_mut(&id) else {
+                continue;
+            };
+            e.slot = slot;
+            e.decoded = None;
+            e.gpu_size = (0, 0);
+            e.alpha = AlphaKind::Opaque;
+            if !e.busy() {
+                // 3: shown from the transcoded cache, read it again; 2 with
+                // the data in memory: decoded again from it
+                e.cache_state = if e.cache_state == 3 || e.data.is_empty() { 0 } else { 2 };
+            }
+            if e.unavailable() {
+                self.unavailable.push(id);
+            }
+            Self::settle(&mut self.todo, &mut self.counts, id, e);
+        }
+    }
+
     /// The slot of a texture met for the first time. With the table full,
     /// the textures nothing uses any more give theirs back at once, oldest
     /// release first, instead of after `evict_after`: on arrival in a region
@@ -1564,6 +1729,11 @@ impl TextureStreamer {
 
     pub fn unregister_local(&mut self, id: &Uuid) {
         self.local_slots.remove(id);
+        self.local_images.remove(id);
+    }
+
+    pub fn set_local_pixels(&mut self, id: Uuid, image: Arc<aurora_render::preview::Image>) {
+        self.local_images.insert(id, image);
     }
     pub fn register_local_image(&mut self, id: Uuid, slot: u32, alpha: AlphaKind, has_alpha: bool) {
         set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, &mut self.alpha_changes, slot, alpha);
@@ -1796,7 +1966,15 @@ impl TextureStreamer {
     /// lowered then loaded again as the camera sways).
     pub fn recompute_wants(&mut self) {
         let step = self.pressure.step();
-        let dropped = texture_budget::dropped(step);
+        // (the 3D drawing paused behind: nothing is drawn, every texture
+        // down to its last level at once rather than as its size on screen
+        // decays, the avatars' bakes too, texture_budget::Background::paused)
+        let paused = self.background.paused();
+        let dropped = if paused {
+            (PAUSED_DROPPED, PAUSED_DROPPED)
+        } else {
+            texture_budget::dropped(step)
+        };
         let below = texture_budget::dropped(step.saturating_sub(1));
         // the photo quality: every texture in view at full resolution, while
         // the memory allows it (under pressure the budget decides, as always)
@@ -1847,12 +2025,14 @@ impl TextureStreamer {
                 // (there it would be lowered to `keep`, or loaded up to `want`)
                 bytes_below += bytes_at(e, e.decoded.map_or(want_below, |d| d.clamp(keep_below, want_below)));
                 // (bakes and interface images are left alone, as Firestorm's
-                // boosted textures; unused ones are evicted instead)
+                // boosted textures; unused ones are evicted instead. Paused
+                // behind, the bakes go too: in a crowd they were the 1 GB of
+                // pages the window still held, and nothing is drawn)
                 if let Some(d) = e.decoded
                     && keep > d
                     && e.refs > 0
                     && !e.decoding
-                    && e.source == TexSource::Asset
+                    && (e.source == TexSource::Asset || (paused && matches!(e.source, TexSource::Bake { .. })))
                     && !ui_wanted.contains(id)
                 {
                     reductions.push((*id, keep, bytes_at(e, d)));
@@ -1887,6 +2067,19 @@ impl TextureStreamer {
         // (memory comes back soonest from the largest; the id settles ties,
         // the table has no order of its own)
         reductions.sort_unstable_by_key(|&(id, _, bytes)| (bytes, id));
+        // only what brings the memory back under its goal, the rest kept
+        // as it is: lowering every texture finer than its size on screen
+        // gave back gigabytes for a few megabytes over, loaded again as
+        // soon as the camera moved (texture_budget.rs)
+        let mut freed = 0u64;
+        let mut first = reductions.len();
+        while first > 0 && freed < self.to_lower {
+            first -= 1;
+            let (id, keep, held) = reductions[first];
+            let levels = entries.get(&id).and_then(|e| e.decoded).map_or(0, |d| keep.saturating_sub(d));
+            freed += held - (held >> (2 * levels as u32).min(63));
+        }
+        reductions.drain(..first);
         self.bytes_below = bytes_below;
         self.pending_in_view = pending;
         self.passes_at_step = self.passes_at_step.saturating_add(1);
@@ -2387,10 +2580,23 @@ impl TextureStreamer {
                 sculpt,
             } => {
                 self.decodes = self.decodes.saturating_sub(1);
+                // staged in the pool of a GPU device lost since (`gpu_reset`):
+                // decoded again into the new one
+                let stale = staged
+                    .as_ref()
+                    .is_some_and(|s| self.staging.as_ref().is_none_or(|pool| !s.data.is_from(pool)));
                 let Some(e) = self.entries.get_mut(&id) else {
                     return;
                 };
                 e.decoding = false;
+                if stale {
+                    if e.cache_state == 3 {
+                        // (a transcoded result: read again)
+                        e.cache_state = 0;
+                    }
+                    Self::settle(&mut self.todo, &mut self.counts, id, e);
+                    return;
+                }
                 if sculpt.is_some() {
                     e.sculpt = sculpt;
                     self.generation += 1;
@@ -2763,8 +2969,11 @@ impl TextureStreamer {
     /// layer (`TextureTable::shrink`), nothing is decoded. Each is checked
     /// again, the list may be a few frames old.
     fn reduce(&mut self, renderer: &mut Renderer, frame: Duration) {
-        let most =
-            ((frame.as_secs_f32() * REDUCTIONS_PER_SECOND) as usize).clamp(*REDUCTIONS_PER_FRAME.start(), *REDUCTIONS_PER_FRAME.end());
+        let most = if self.background.paused() {
+            PAUSED_REDUCTIONS_PER_FRAME
+        } else {
+            ((frame.as_secs_f32() * REDUCTIONS_PER_SECOND) as usize).clamp(*REDUCTIONS_PER_FRAME.start(), *REDUCTIONS_PER_FRAME.end())
+        };
         let mut done = 0;
         while done < most {
             let Some((id, keep, _)) = self.reductions.pop() else {
@@ -2787,6 +2996,20 @@ impl TextureStreamer {
         }
     }
 
+    /// The window's state, each frame: whether it has the focus, whether it
+    /// is minimised (`press` gives the textures back behind,
+    /// texture_budget::Background).
+    pub fn set_window_state(&mut self, in_front: bool, minimized: bool) {
+        self.in_front = in_front;
+        self.minimized = minimized;
+    }
+
+    /// The window is behind and the viewer was past the driver's budget
+    /// there: the 3D drawing pauses (texture_budget::Background::paused).
+    pub fn drawing_paused(&self) -> bool {
+        self.background.paused()
+    }
+
     /// Memory budget, a few times a second: what the textures may hold now
     /// and the pressure step for what they hold (texture_budget.rs).
     fn press(&mut self, renderer: &mut Renderer, now: Instant, setting: u64) {
@@ -2798,14 +3021,37 @@ impl TextureStreamer {
         let video = renderer.video_memory.read(&renderer.device);
         let target = texture_budget::forced_target().unwrap_or_else(|| texture_budget::texture_target(setting, used, video));
         let before = self.pressure.step();
-        // one step below, the pages would hold the textures' bytes with
-        // the free room they have now (none taken back from step 1: only
-        // what loads from then on changes)
-        let below = if before > 1 {
-            (self.bytes_below as f64 * (used as f64 / live.max(1) as f64)) as u64
-        } else {
-            used
-        };
+        // a window behind for a minute or minimised for a second gives its
+        // textures back, at once while the memory is short, and takes up
+        // again once in front (LLViewerTexture::updateClass,
+        // texture_budget::Background)
+        let crowded = video.is_some_and(|v| v.usage > v.budget);
+        let away = self.background.update(now, self.in_front, self.minimized, crowded);
+        if away && !self.pressure.held() {
+            self.pressure.hold_max(now);
+            let place = if self.minimized { "minimised" } else { "in the background" };
+            if crowded {
+                log::info!(
+                    "texture memory: the window is {place} with the video memory short, freeing up video memory; the 3D drawing pauses until it is in front"
+                );
+            } else {
+                let after = if self.minimized {
+                    texture_budget::MINIMIZED_AFTER
+                } else {
+                    texture_budget::BACKGROUNDED_AFTER
+                };
+                log::info!(
+                    "texture memory: the window was {place} for {} s, freeing up video memory",
+                    after.as_secs()
+                );
+            }
+        } else if !away && self.pressure.held() {
+            self.pressure.release(now);
+            log::info!("texture memory: the window is in front again, textures load as before");
+        }
+        // what the pages would hold one step below, from step 1 too
+        // (texture_budget::below_estimate)
+        let below = texture_budget::below_estimate(self.bytes_below, used, live);
         let step = self.pressure.update(
             now,
             texture_budget::Reading {
@@ -2815,6 +3061,13 @@ impl TextureStreamer {
                 below,
             },
         );
+        // (behind: everything the highest step allows, not only what brings
+        // the pages under the target)
+        self.to_lower = if self.pressure.held() {
+            u64::MAX
+        } else {
+            texture_budget::lowering_goal(used, live, target)
+        };
         if step != before {
             self.passes_at_step = 0;
             renderer.textures.set_eager_compaction(step > 0);
@@ -3162,8 +3415,96 @@ mod tests {
     use super::*;
 
     #[test]
+    fn wearable_bakes_use_resident_bc7_pixels_without_jpeg_and_upgrade_progressively() {
+        let id = Uuid::new_v4();
+        let path = std::env::temp_dir().join(format!("aurora-bake-{id}.bc7"));
+        let mips = aurora_render::build_mips(512, 512, [25, 100, 200, 255].repeat(512 * 512), 16);
+        let blocks = aurora_render::bc7::encode_chain(&mips, false).expect("compressible image");
+        let meta = texture_cache::Meta {
+            info: aurora_assets::J2kInfo {
+                width: 512,
+                height: 512,
+                components: 4,
+                levels: 10,
+            },
+            discard: 0,
+            alpha: AlphaKind::Opaque,
+            alpha_channel: false,
+        };
+        std::fs::write(&path, texture_cache::encode(&meta, None, &blocks).expect("cache")).expect("write cache");
+        let source = |decoded, bytes| PreviewSource {
+            local: None,
+            bytes: Arc::new(vec![0; bytes]),
+            jpeg: path.with_extension("j2k"),
+            blocks: path.clone(),
+            decoded,
+            size: Some((512, 512)),
+            procedural: false,
+        };
+        assert!(
+            source(Some(1), 0).bake_ready(id),
+            "coarse resident maps must not block all wearables"
+        );
+        let image = source(Some(1), 0).bake_image(id).expect("resident BC7 bake source");
+        assert_eq!(image.size, [256, 256]);
+        assert_eq!(image.rgba[3], 255);
+        let image = source(Some(0), 0).bake_image(id).expect("full resident BC7 source");
+        assert_eq!(
+            image.size,
+            [512, 512],
+            "bakes retain full source resolution above the UI thumbnail limit"
+        );
+        assert_ne!(source(Some(0), 0).bake_revision(), source(Some(1), 0).bake_revision());
+        assert_eq!(
+            source(Some(1), 0).bake_revision(),
+            source(Some(1), 500).bake_revision(),
+            "packets do not restart an unchanged bake"
+        );
+        let transparent = aurora_prim::te::TRANSPARENT_TEXTURE;
+        assert!(source(None, 0).bake_ready(transparent));
+        assert_eq!(
+            source(None, 0).bake_image(transparent).expect("built-in transparent").rgba.as_ref(),
+            &[0; 4]
+        );
+        assert!(!source(None, 0).bake_ready(id));
+        std::fs::remove_file(path).expect("remove own cache fixture");
+    }
+
+    #[test]
+    fn local_pixels_are_shared_refreshed_and_released_without_a_download() {
+        let mut textures = TextureStreamer::new(PathBuf::new());
+        let id = Uuid::new_v4();
+        let image = |color: [u8; 4]| {
+            Arc::new(aurora_render::preview::Image {
+                size: [1, 1],
+                rgba: color.to_vec().into(),
+            })
+        };
+        let first = image([255, 0, 0, 100]);
+        textures.set_local_pixels(id, first.clone());
+        let source = textures.preview_source(&id);
+        let revision = source.image_revision();
+        assert!(Arc::ptr_eq(&source.inspector_image(id).expect("bake pixels"), &first));
+        assert!(Arc::ptr_eq(&textures.preview_source(&id).image(id).expect("UI pixels"), &first));
+        let second = image([0, 0, 255, 200]);
+        textures.set_local_pixels(id, second.clone());
+        assert_ne!(textures.preview_source(&id).image_revision(), revision);
+        assert!(Arc::ptr_eq(
+            &textures.preview_source(&id).inspector_image(id).expect("reloaded pixels"),
+            &second
+        ));
+        textures.unregister_local(&id);
+        assert!(textures.preview_source(&id).local.is_none());
+        assert!(
+            !textures.entries.contains_key(&id),
+            "no asset fetch or disk cache entry for local pixels"
+        );
+    }
+
+    #[test]
     fn preview_images_ignore_the_budget_moving_finer_levels() {
         let source = |bytes: usize, decoded: Option<u8>| PreviewSource {
+            local: None,
             bytes: Arc::new(vec![0; bytes]),
             jpeg: PathBuf::new(),
             blocks: PathBuf::new(),
@@ -3200,6 +3541,27 @@ mod tests {
         assert!(!textures.pick_masks[&super::super::avatar::IMG_INVISIBLE].hits(glam::Vec2::splat(0.5)));
         assert!(!textures.pick_masks[&aurora_prim::te::WATER_EXCLUSION_TEXTURE].hits(glam::Vec2::splat(0.5)));
         assert!(is_builtin_transparent(&aurora_prim::te::WATER_EXCLUSION_TEXTURE));
+    }
+
+    #[test]
+    fn nonzero_pick_mask_preserves_each_texel_and_survives_cache_round_trip() {
+        let mut rgba = vec![255; 3 * 3 * 4];
+        for (pixel, alpha) in [(0, 0), (1, 1), (2, 32), (3, 33), (4, 0), (5, 127), (6, 255), (7, 0), (8, 1)] {
+            rgba[pixel * 4 + 3] = alpha;
+        }
+        let mask = PickMask::from_rgba(3, 3, &rgba).unwrap();
+        let (w, h, bits) = mask.parts();
+        let restored = PickMask::from_parts((w, h, bits.to_vec())).unwrap();
+        for y in 0..3 {
+            for x in 0..3 {
+                let uv = glam::Vec2::new((x as f32 + 0.5) / 3.0, (2.5 - y as f32) / 3.0);
+                let nonzero = rgba[(y * 3 + x) * 4 + 3] != 0;
+                assert_eq!(mask.hits_nonzero(uv), nonzero);
+                assert_eq!(restored.hits_nonzero(uv + glam::Vec2::new(-2.0, 3.0)), nonzero);
+                assert_eq!(restored.hits(uv), mask.hits(uv));
+            }
+        }
+        assert!(PickMask::from_parts((w, h, vec![0])).is_none());
     }
 
     fn rgba(width: u32, height: u32, levels: u32) -> ChainSize {
@@ -3764,6 +4126,25 @@ mod tests {
         assert!(s.bytes_below > 0);
         // the sizes decay for the next pass
         assert_eq!(s.entries[&Uuid::from_u128(1)].need_px, 100.0);
+    }
+
+    #[test]
+    fn pressure_lowers_only_what_brings_the_memory_under_its_goal() {
+        // three 1024 textures loaded whole, 200 px on screen: each would
+        // give back three quarters of its bytes at level 1
+        let mb = 1024 * 1024 * 16 / 3;
+        let lower = |to_lower: u64| {
+            let mut s = pressed(1, (1..=3).map(|id| (id, entry(Some(0), 200.0))).collect());
+            s.to_lower = to_lower;
+            s.recompute_wants();
+            s.reductions.iter().map(|r| r.0.as_u128()).collect::<Vec<_>>()
+        };
+        // a little more than one gives back: two of them, taken from the end
+        assert_eq!(lower(mb), vec![2, 3]);
+        // under the goal: nothing lowered
+        assert!(lower(0).is_empty());
+        // far over it: all of them
+        assert_eq!(lower(10 * mb), vec![1, 2, 3]);
     }
 
     fn pending(id: u128, discard: u8) -> PendingUpload {

@@ -235,6 +235,8 @@ struct Next {
     experimental: bool,
     wide: bool,
     below: bool,
+    /// The enclosing group already names this full-width control.
+    section_body: bool,
     /// Its `subs` always show under it, without a cog.
     unfolded: bool,
     /// Not greyed behind a cog that is off: another setting uses it too.
@@ -390,6 +392,13 @@ impl<'a> Cx<'a> {
         self
     }
 
+    /// A group's single control: keep its label for search and navigation,
+    /// without repeating the section heading on the normal page.
+    pub fn section_body(&mut self) -> &mut Self {
+        self.next.section_body = true;
+        self.below()
+    }
+
     /// The `subs` of the next row always show under it, as behind an open
     /// cog, and it has no cog: for the one value its switch is turned on
     /// to set (a frame rate limit).
@@ -410,6 +419,17 @@ impl<'a> Cx<'a> {
     /// they set means nothing in the state of another setting).
     pub fn greyed(&mut self, off: bool) {
         self.greyed = off;
+    }
+
+    /// Hide an inactive branch on its page, while retaining its settings
+    /// in search, modified views, reset and declaration passes.
+    pub fn conditional(&mut self, visible: bool, body: impl FnOnce(&mut Self)) {
+        if self.mode != Mode::Show || visible {
+            let before = self.greyed;
+            self.greyed |= !visible;
+            body(self);
+            self.greyed = before;
+        }
     }
 
     /// A search is under way: the rows' `keywords` are read (a page skips
@@ -487,6 +507,35 @@ impl<'a> Cx<'a> {
             ui.add(egui::Label::new(egui::RichText::new(text).size(11.5).color(self.p.muted)).wrap());
         });
         self.ui.add_space(4.0);
+    }
+
+    /// A framed notice at the top of an experimental page: the experimental
+    /// mark, then `text`, on the surface of an open cog's block (shown on
+    /// the page only).
+    pub fn experimental_notice(&mut self, text: &str) {
+        if self.mode != Mode::Show || self.pick.is_some() {
+            return;
+        }
+        self.end_block();
+        self.end_line();
+        const PAD: f32 = 12.0;
+        const MARK: f32 = 16.0;
+        let p = self.p;
+        let width = self.ui.available_width();
+        let galley = self.ui.painter().layout(
+            text.to_owned(),
+            egui::FontId::proportional(12.5),
+            p.ink,
+            (width - 3.0 * PAD - MARK).max(1.0),
+        );
+        let height = galley.size().y.max(MARK) + 2.0 * PAD;
+        let (rect, _) = self.ui.allocate_exact_size(vec2(width, height), Sense::hover());
+        self.ui.painter().rect_filled(rect, self.ui.visuals().window_corner_radius, p.field);
+        let mark = Rect::from_min_size(pos2(rect.left() + PAD, rect.top() + PAD), Vec2::splat(MARK));
+        crate::ui::widgets::experimental_mark(self.ui, &p, mark, egui::Id::unique(("preferences-notice", self.page)));
+        let text_top = rect.top() + PAD + (MARK - galley.size().y).max(0.0) / 2.0;
+        self.ui.painter().galley(pos2(mark.right() + PAD, text_top), galley, p.ink);
+        self.ui.add_space(14.0);
     }
 
     /// Settings the page resets without a row of their own (they follow
@@ -684,6 +733,21 @@ impl<'a> Cx<'a> {
         let words: Vec<&str> = choices.iter().map(|(_, l)| *l).collect();
         self.keywords(&words.join(" "));
         self.row(label, hint, f, |ui, s| super::combo(ui, get(s), choices))
+    }
+
+    /// A drop-down list whose choices with a reason are greyed, the reason
+    /// on hover.
+    pub fn combo_blocked<T: PartialEq + Copy + Clone>(
+        &mut self,
+        label: &str,
+        hint: &str,
+        f: &F<T>,
+        choices: &[(T, &str, Option<&str>)],
+    ) -> bool {
+        let get = f.get_mut;
+        let words: Vec<&str> = choices.iter().map(|(_, l, _)| *l).collect();
+        self.keywords(&words.join(" "));
+        self.row(label, hint, f, |ui, s| super::combo_blocked(ui, get(s), choices))
     }
 
     /// A few choices side by side (`accent`: in Aurora's accent); a long
@@ -909,7 +973,8 @@ impl<'a> Cx<'a> {
             .st
             .control_sizes
             .get(&size_key)
-            .copied()
+            .filter(|(width, _)| (*width - cell.width()).abs() <= 0.5)
+            .map(|(_, size)| *size)
             .unwrap_or(vec2((cell.width() * 0.45).min(240.0), 24.0));
         let left = cell.left() + GUTTER;
         let right = cell.right() - 10.0;
@@ -945,9 +1010,11 @@ impl<'a> Cx<'a> {
         }
         job.wrap.max_width = label_w.max(1.0);
         let galley = ctx.fonts_mut(|f| f.layout_job(job));
-        let text_h = galley.size().y;
+        let section_body = next.section_body && self.mode == Mode::Show;
+        let text_h = if section_body { 0.0 } else { galley.size().y };
+        let label_gap = if section_body { 0.0 } else { 6.0 };
         let height = if below {
-            text_h + 6.0 + control.y + 16.0
+            text_h + label_gap + control.y + 16.0
         } else {
             text_h.max(control.y).max(20.0) + 12.0
         }
@@ -957,7 +1024,7 @@ impl<'a> Cx<'a> {
 
         // the control, at the right end of the row (or under the label)
         let control_rect = if below {
-            Rect::from_min_size(pos2(left, row.top() + 8.0 + text_h + 6.0), vec2(right - left, control.y))
+            Rect::from_min_size(pos2(left, row.top() + 8.0 + text_h + label_gap), vec2(right - left, control.y))
         } else {
             Rect::from_min_size(pos2(right - control.x, row.center().y - control.y / 2.0), control)
         };
@@ -982,7 +1049,7 @@ impl<'a> Cx<'a> {
         let used = child.min_rect().size();
         let measured = vec2(used.x.ceil(), used.y.max(20.0).ceil());
         if (measured - control).abs().max_elem() > 0.5 {
-            self.st.control_sizes.insert(size_key, measured);
+            self.st.control_sizes.insert(size_key, (cell.width(), measured));
             ctx.request_discard("preferences row measured");
         }
 
@@ -992,9 +1059,11 @@ impl<'a> Cx<'a> {
         } else {
             pos2(left, row.center().y - text_h / 2.0)
         };
-        let label_rect = Rect::from_min_size(label_pos, galley.size());
+        let label_rect = Rect::from_min_size(label_pos, if section_body { vec2(control.x, 20.0) } else { galley.size() });
         let ink = if parent_off { p.muted } else { p.ink };
-        self.ui.painter().galley(label_pos, galley.clone(), ink);
+        if !section_body {
+            self.ui.painter().galley(label_pos, galley.clone(), ink);
+        }
         if !hint.is_empty() {
             self.ui.interact(label_rect, id.with("label"), Sense::hover()).on_hover_text(hint);
         }

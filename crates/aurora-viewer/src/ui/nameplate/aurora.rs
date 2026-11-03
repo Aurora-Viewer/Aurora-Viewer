@@ -1,7 +1,7 @@
 //! The northern light on the plate of a member of the Aurora team
 //! (`world::staff`): curtains of light rising from behind its top edge, a
 //! border whose colors flow around it over a soft halo, and on the full and
-//! compact plates the "Aurora Viewer" tag over its top left edge. Built every
+//! compact plates the "Aurora Team" tag over its top left edge. Built every
 //! frame, since it moves, for the few plates that have it.
 //!
 //! Aurora's own: the Legacy Viewer has no staff mark but the Linden color
