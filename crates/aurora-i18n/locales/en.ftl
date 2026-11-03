@@ -4170,6 +4170,7 @@ ui-options-same-sounds-and-defaults-as-firestorm-these-are-second = Same sounds 
 ui-land-experiences-any-resident-experience-can-be-blocked-blocked-experiences-cannot = Any resident experience can be blocked. Blocked experiences cannot run on this land.
 build-ui-floaters-anyone = Anyone
 build-ui-general-anyone = Anyone:
+build-ui-general-export = Export
 build-ui-floaters-anyone-can-copy = Anyone can copy
 ui-land-media-web-browser = Web browser
 ui-land-objects-count = Count

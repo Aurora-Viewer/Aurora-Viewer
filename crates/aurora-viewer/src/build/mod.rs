@@ -653,6 +653,10 @@ struct PendingUnlink {
 }
 
 pub struct BuildTool {
+    /// The asset ids our inventory lets be exported, for Build › General's
+    /// Export box, with the inventory generation and agent they were read
+    /// for: rebuilt when the inventory changes, never walked each frame.
+    pub(crate) export_assets: Option<(u64, Uuid, HashSet<Uuid>)>,
     wheel_selection: cycle::Wheel,
     /// Last inspected selection/mode; object display choices live in the world.
     material_preview_selection: HashSet<Uuid>,
@@ -735,6 +739,7 @@ pub struct BuildTool {
 impl Default for BuildTool {
     fn default() -> Self {
         BuildTool {
+            export_assets: None,
             wheel_selection: cycle::Wheel::default(),
             material_preview_selection: HashSet::new(),
             material_preview_mode: None,
