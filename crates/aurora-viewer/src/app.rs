@@ -2424,6 +2424,8 @@ impl App {
             }
             return;
         }
+        let mut cmd = cmd;
+        self.world.prepare_inventory_command(&mut cmd);
         self.net.send(cmd);
     }
 

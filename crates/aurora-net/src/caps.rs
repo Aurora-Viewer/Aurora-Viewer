@@ -23,6 +23,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "ChatSessionRequest",
     "CharacterProperties",
     "CopyInventoryFromNotecard",
+    // a new folder on a grid without AIS (LLInventoryModel::createNewCategory)
+    "CreateInventoryCategory",
     "DeclineFriendship",
     "DeclineGroupInvite",
     // the Region / Estate window (llviewerregion.cpp buildCapabilityNames):

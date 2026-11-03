@@ -929,12 +929,15 @@ impl Bridge {
             self.phase,
             Phase::Inventory | Phase::Folder | Phase::Subfolder | Phase::Move | Phase::Copy
         ) && self.mutation.is_none()
-            && !world.inventory_writable()
+            && !world.inventory_writable_with_ais()
         {
             // A cache hit is not proof that AIS and its readback service are
             // ready. Wait before sending anything, without spending the stage
             // timeout or consuming a rename/create attempt. In-flight edits
-            // retain their own deadline and never get silently replayed.
+            // retain their own deadline and never get silently replayed. On a
+            // grid without AIS the wait lasts: the Legacy Viewer's bridge does
+            // not create itself on OpenSim (FSLSLBridge::recreateBridge,
+            // fslslbridge.cpp), as its object may not be in the Library.
             self.since = Some(now);
             return;
         }
