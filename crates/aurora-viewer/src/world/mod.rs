@@ -3443,7 +3443,7 @@ impl World {
                 None
             }
             NetEvent::ParcelInfo(p) => {
-                self.place_details.parcel_known(p.id, p.global);
+                self.place_details.parcel_known(p.id, p.global, &self.map);
                 self.profiles.parcels.insert(p.id, *p);
                 None
             }
