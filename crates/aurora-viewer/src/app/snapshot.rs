@@ -184,6 +184,9 @@ pub(super) struct Snapshots {
     confirm: Option<i32>,
     /// The price the balance cannot pay.
     short: Option<i32>,
+    /// "Photo quality" was switched on for the first time: held off until
+    /// its warning is answered (`Settings::quality_warned`).
+    quality_ask: bool,
     upload: Option<Upload>,
     /// The message tells of this item, saved to the inventory.
     message_item: Option<Uuid>,
@@ -365,6 +368,8 @@ struct DemoViewfinder {
     tilt: f32,
     /// The poser opened over the viewfinder (the dock's Poser, #1389).
     poser: bool,
+    /// The warning of a first "Photo quality" shown (`qualitywarn`).
+    quality_warning: bool,
 }
 
 /// AURORA_DEMO_SNAPSHOT=inventory…: the photo sent to the inventory.
@@ -403,6 +408,7 @@ impl Default for Snapshots {
             to_disk: false,
             confirm: None,
             short: None,
+            quality_ask: false,
             upload: None,
             message_item: None,
             message_profile: false,
@@ -1680,6 +1686,15 @@ impl App {
                 }
             }
             Action::CloseAfford => self.snapshots.short = None,
+            Action::QualityWarning(yes) => {
+                self.snapshots.quality_ask = false;
+                if yes {
+                    log::info!("photo quality: warning accepted");
+                    self.settings.snapshot.quality = true;
+                    self.settings.snapshot.quality_warned = true;
+                    self.settings.save();
+                }
+            }
             Action::PersonalLighting => self.panels.personal_lighting = true,
             Action::KeepLight => {
                 if self.world.eep.keep_photo() {
@@ -2064,6 +2079,13 @@ LUT_3D_SIZE {n}
         // (the panel shows it in its own line, the viewfinder once at the top)
         let quality_note = std::mem::take(&mut self.snapshots.fit_note) && quality_reduced;
         let mut actions = self.snapshots.ui.dialogs(ctx, p, self.snapshots.confirm, self.snapshots.short);
+        if self.snapshots.quality_ask
+            && let Some(yes) = self.snapshots.ui.quality_warning(ctx, p)
+        {
+            actions.push(Action::QualityWarning(yes));
+        }
+        // every switch of it (panel, viewfinder, its menu) goes through here
+        let quality_before = self.settings.snapshot.quality;
         if self.viewfinder_on() {
             // the held photo under the overlay
             if let Some(t) = self.snapshots.held.as_ref().and_then(|h| h.texture.as_ref()) {
@@ -2194,10 +2216,15 @@ LUT_3D_SIZE {n}
             self.snapshots.ui = state;
             self.panels.snapshot = open;
         }
+        if !quality_before && self.settings.snapshot.quality && !self.settings.snapshot.quality_warned {
+            self.settings.snapshot.quality = false;
+            self.snapshots.quality_ask = true;
+        }
         for a in actions {
             self.photo_action(a, renderer);
         }
         if !self.panels.snapshot {
+            self.snapshots.quality_ask = false;
             self.snapshots.ui.full_frame = false;
             if self.snapshots.held.take().is_some() {
                 self.snapshots.ui.freeze = false;
@@ -2714,6 +2741,7 @@ LUT_3D_SIZE {n}
                         0.0
                     },
                     poser: has("poser"),
+                    quality_warning: has("qualitywarn"),
                 }
             });
             let style = if kind == "classic" {
@@ -2841,6 +2869,7 @@ LUT_3D_SIZE {n}
                 if v.poser && self.ik_editor.toggle_poser() {
                     crate::ui::widgets::open_floater(&self.egui_ctx, "poser", &mut self.ik_editor.open);
                 }
+                self.snapshots.quality_ask = v.quality_warning;
             }
         }
         if demo.windlight == Some(true) {
