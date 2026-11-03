@@ -252,6 +252,41 @@ mod tests {
     }
 
     #[test]
+    fn an_avatar_crossing_regions_comes_back_when_it_is_switched_off() {
+        let (mut world, old_region) = demo_world();
+        let wolf = crate::demo::DEMO_LOUP;
+        let old_key = world
+            .objects
+            .get(world.objects.index_of_uuid(&wolf).expect("wolf"))
+            .expect("wolf")
+            .key;
+        world.set_friends_only(true);
+        // the next region sends the wolf before the old one kills it
+        let next_region = old_region + (256u64 << 32);
+        world.ensure_region(next_region, (256, 256));
+        let mut crossed = world
+            .derender
+            .hidden_updates()
+            .into_iter()
+            .find(|u| u.full_id == wolf)
+            .expect("wolf snapshot");
+        crossed.local_id = 4242;
+        let _ = world.apply(NetEvent::ObjectUpdates {
+            handle: next_region,
+            objects: vec![crossed],
+        });
+        let _ = world.apply(NetEvent::ObjectsKilled {
+            handle: old_region,
+            local_ids: vec![old_key.local_id],
+        });
+        assert!(!present(&world, &wolf));
+        assert!(world.derender.hides_resident(&wolf), "still held under the next region's key");
+        world.set_friends_only(false);
+        let back = world.objects.get(world.objects.index_of_uuid(&wolf).expect("back")).expect("back");
+        assert_eq!(back.key.region, next_region);
+    }
+
+    #[test]
     fn a_friend_stays_when_it_is_switched_on() {
         let (mut world, _) = demo_world();
         let wolf = crate::demo::DEMO_LOUP;

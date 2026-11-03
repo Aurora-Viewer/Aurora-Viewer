@@ -440,11 +440,22 @@ impl Derender {
         }
     }
 
-    /// An avatar's own snapshot leaves `hidden`: its history goes with it.
+    /// Another key of `hidden` still holds this avatar's own snapshot. During
+    /// a region crossing the new region's update can come before the old
+    /// region's kill: the avatar is then held under both keys for a moment.
+    fn still_holds_avatar(&self, id: &Uuid) -> bool {
+        self.hidden
+            .values()
+            .any(|h| h.update.as_ref().is_some_and(|u| u.is_avatar() && u.full_id == *id))
+    }
+
+    /// An avatar's own snapshot leaves `hidden`: its history goes with it,
+    /// unless it is still held under another key.
     fn unkeep(&mut self, h: &Hidden) {
         if let Some(u) = &h.update
             && u.is_avatar()
             && u.full_id == h.by
+            && !self.still_holds_avatar(&u.full_id)
         {
             self.kept.remove(&u.full_id);
         }
@@ -452,13 +463,17 @@ impl Derender {
 
     /// An avatar the simulator killed or whose region left is gone for
     /// good: "Show Friends Only" has nothing of it to bring back either.
+    /// Killed in the region it left while the next one already sent it, it
+    /// is still there: its marks stay, so switching off brings it back.
     fn forget_departed(&mut self, h: &Hidden) {
-        self.unkeep(h);
-        if let Some(u) = &h.update
-            && u.is_avatar()
-        {
-            self.friends_only_hid.remove(&u.full_id);
+        let Some(u) = &h.update else {
+            return;
+        };
+        if !u.is_avatar() || self.still_holds_avatar(&u.full_id) {
+            return;
         }
+        self.unkeep(h);
+        self.friends_only_hid.remove(&u.full_id);
     }
 
     /// A terse update of an object kept out of the world: its snapshot
