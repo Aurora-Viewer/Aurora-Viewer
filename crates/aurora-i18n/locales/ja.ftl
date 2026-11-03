@@ -10385,6 +10385,7 @@ currency-contacting-lindex = LindeXに接続しています…
 currency-cannot-buy = 購入できません
 currency-more-information = 詳細情報
 currency-helper-unreachable = L$購入サービスが応答していません。後でもう一度お試しください。
+currency-password-needs-https = パスワードは送信されませんでした。この購入サービスは安全な接続（https）を使用していません。
 currency-checking-account = アカウントを確認しています…
 currency-unavailable-on-this-grid = このグリッドではビューアからL$を購入できません。
 currency-add-payment-method = リンデンドルを購入してSecond Lifeを最大限に楽しむには、支払い方法を追加してください。
