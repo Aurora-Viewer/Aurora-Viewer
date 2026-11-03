@@ -99,6 +99,9 @@ impl BudgetFloor {
 /// off every frame/UI path; readers only copy the last complete sample.
 pub struct VideoMemoryProbe {
     sampler: BudgetSampler,
+    /// For the card's identity, read once on demand (`card`).
+    #[cfg(not(target_os = "macos"))]
+    adapter: wgpu::Adapter,
 }
 
 const PROBE_INTERVAL: Duration = Duration::from_millis(250);
@@ -164,12 +167,18 @@ const SOURCE: &str = "MTLDevice working set";
 
 impl VideoMemoryProbe {
     pub fn new(adapter: wgpu::Adapter) -> Self {
+        #[cfg(not(target_os = "macos"))]
+        let card = adapter.clone();
         let heap = std::sync::OnceLock::new();
         let sampler = BudgetSampler::new(
             move || Self::query(&adapter, (*heap.get_or_init(|| Self::budget_heap(&adapter)))?),
             PROBE_INTERVAL,
         );
-        VideoMemoryProbe { sampler }
+        VideoMemoryProbe {
+            sampler,
+            #[cfg(not(target_os = "macos"))]
+            adapter: card,
+        }
     }
 
     /// The most recent complete sample, at most one driver query per
@@ -219,7 +228,14 @@ impl VideoMemoryProbe {
                 .raw_instance()
                 .get_physical_device_memory_properties(hal.raw_physical_device())
         };
-        let total = memory.memory_heaps_as_slice().get(self.heap?)?.size;
+        // (the heap budget_heap picks, without its memory_budget condition:
+        // only the size is read here, never the blocking budget query)
+        let total = memory
+            .memory_heaps_as_slice()
+            .iter()
+            .filter(|h| h.flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL))
+            .map(|h| h.size)
+            .max()?;
         Some((u64::from_le_bytes(id.device_luid), total, dedicated))
     }
 
