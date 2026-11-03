@@ -8861,6 +8861,10 @@ ui-options-aurora-rez-effect-classic = Grey (Legacy)
 ui-options-aurora-hover-tips = World tooltips
 ui-options-aurora-hover-tips-help = Aurora: a bubble, a card or a readout with icons and labels (its form in Preferences › Interface). Legacy: the Legacy Viewer's text, with its "i" button.
 ui-options-aurora-hover-tips-legacy = Text (Legacy)
+ui-options-particle-intersections = Particle intersection
+ui-options-particle-intersections-help = Aurora fades particles near surfaces. Legacy clips them at the surface without fading.
+ui-options-particle-intersections-aurora = Faded (Aurora)
+ui-options-particle-intersections-legacy = Clipped (Legacy)
 ui-options-aurora-bridge = Aurora bridge
 ui-options-aurora-use-bridge = Use the Aurora bridge
 ui-options-aurora-use-bridge-help = A small scripted attachment that Aurora makes and wears for you: position lock, avatar heights in the radar, script and object information, pose requests and shared portals. Off, Aurora no longer makes or wears it and takes off a worn one: these features are then unavailable.
@@ -12989,8 +12993,3 @@ ui-options-camera-vr-view-first-person = First person
 ui-options-camera-vr-view-desktop-camera = Camera position
 
 app-vr-leave = Press { $key } to return to desktop mode
-
-ui-options-particle-intersections = Particle intersection
-ui-options-particle-intersections-help = Aurora fades particles near surfaces. Legacy clips them at the surface without fading.
-ui-options-particle-intersections-aurora = Faded (Aurora)
-ui-options-particle-intersections-legacy = Clipped (Legacy)

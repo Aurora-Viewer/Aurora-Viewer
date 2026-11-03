@@ -8852,6 +8852,10 @@ ui-options-aurora-rez-effect-classic = 灰色（レガシー）
 ui-options-aurora-hover-tips = ワールドのツールチップ
 ui-options-aurora-hover-tips-help = Aurora：アイコンとラベル付きの吹き出し、カード、または表示（形式は初期設定 › インターフェース）。レガシー：レガシービューアのテキストと「i」ボタン。
 ui-options-aurora-hover-tips-legacy = テキスト（レガシー）
+ui-options-particle-intersections = パーティクルの交差
+ui-options-particle-intersections-help = Auroraでは面の近くでパーティクルをフェードします。レガシーではフェードせずに面で切り取ります。
+ui-options-particle-intersections-aurora = フェード（Aurora）
+ui-options-particle-intersections-legacy = クリップ（レガシー）
 ui-options-aurora-bridge = Auroraブリッジ
 ui-options-aurora-use-bridge = Auroraブリッジを使用
 ui-options-aurora-use-bridge-help = Auroraが作成して装着する小さなスクリプト付きアタッチメントです：位置のロック、レーダーのアバターの高度、スクリプトとオブジェクトの情報、ポーズのリクエスト、共有ポータル。オフにすると、Auroraはブリッジを作成も装着もせず、装着中のものを取り外します。これらの機能は使えなくなります。
@@ -12966,8 +12970,3 @@ ui-options-camera-vr-view-first-person = 一人称
 ui-options-camera-vr-view-desktop-camera = カメラの位置
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
-
-ui-options-particle-intersections = パーティクルの交差
-ui-options-particle-intersections-help = Auroraでは面の近くでパーティクルをフェードします。レガシーではフェードせずに面で切り取ります。
-ui-options-particle-intersections-aurora = フェード（Aurora）
-ui-options-particle-intersections-legacy = クリップ（Legacy）

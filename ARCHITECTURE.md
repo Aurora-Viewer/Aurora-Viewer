@@ -1,18 +1,5 @@
 # Aurora Viewer architecture
 
-Scripted particle rendering keeps its sorted simulation data independent of
-visibility. `aurora-render/src/particles.rs` retains the original blend/texture
-glow boundaries, conservatively trims invisible ends and coalesces only colour
-groups whose preceding group emits no glow. The main view's exact GPU projection
-includes temporal jitter and photo tiles; ribbon bounds cover both endpoint axes.
-`particle_commands.rs` prepares large ordered direct-draw chunks on two dedicated
-workers and reuses unchanged commands. Ordinary short lists keep direct drawing;
-resource, pipeline and sample-count changes invalidate chunks. No extra GPU
-features or device-generated commands are required. The particle-only glow gate
-includes particle emitters even when no glowing object is visible. `RenderStats`
-and `AURORA_PROFILE` expose separate particle batch/draw, instance and command
-chunk counts instead of relying on the ordinary scene draw counter.
-
 Avatar gait playback resolves standard walk/run signals to the modern male or
 female assets selected by LLVOAvatar::remapMotionID with its default settings
 (#1720, related #1770). `scene/default_motions.rs::walk_run_asset` changes only the
@@ -3416,6 +3403,33 @@ and the memory the main thread gives back (decoded levels, J2C data, picking
 triangles) is freed by a separate thread (`Jobs::discard`): while the tasks
 allocate on all the cores, freeing it in place cost several milliseconds.
 
+### Scripted particles
+
+Scripted particle rendering retains both ribbon endpoints in `ParticleInstance`:
+position, width axis, width, sRGB colour and glow. `scene/particles.rs` builds
+those records, uses the reference projected-area texture demand and picks the
+actual ribbon triangles. `aurora-render/src/particles.rs` maps supported wire
+blend pairs to pipeline states and forms contiguous depth-ordered batches;
+particle glow enters the existing scene-alpha bloom path after each batch.
+`Settings::classic_particle_intersections` is the persisted Aurora preference;
+`RenderSettings::soft_particles` controls only the optional intersection fade.
+`particle_tests.rs` renders production shader coverage and blend outputs against
+reference equations. `AURORA_DEMO_PARTICLES=parity|parity-legacy` exercises the
+changes offline. Transparent scene ordering remains separate (#1937).
+
+Scripted particle rendering keeps its sorted simulation data independent of
+visibility. `aurora-render/src/particles.rs` retains the original blend/texture
+glow boundaries, conservatively trims invisible ends and coalesces only colour
+groups whose preceding group emits no glow. The main view's exact GPU projection
+includes temporal jitter and photo tiles; ribbon bounds cover both endpoint axes.
+`particle_commands.rs` prepares large ordered direct-draw chunks on two dedicated
+workers and reuses unchanged commands. Ordinary short lists keep direct drawing;
+resource, pipeline and sample-count changes invalidate chunks. No extra GPU
+features or device-generated commands are required. The particle-only glow gate
+includes particle emitters even when no glowing object is visible. `RenderStats`
+and `AURORA_PROFILE` expose separate particle batch/draw, instance and command
+chunk counts instead of relying on the ordinary scene draw counter.
+
 ## Threads and data ownership
 
 A frame costs the longer of the two threads, not their sum: the main thread
@@ -4197,15 +4211,3 @@ array atlas from one to four 64-tile pages (32 to 128 MiB), preserving existing
 pictures by GPU copy. The two-capture frame budget and full-avatar limit remain
 independent. Pending or over-budget avatars draw neutral silhouette cards rather
 than disappearing; cards have a dynamically sized instance buffer.
-
-Scripted particle rendering retains both ribbon endpoints in `ParticleInstance`:
-position, width axis, width, sRGB colour and glow. `scene/particles.rs` builds
-those records, uses the reference projected-area texture demand and picks the
-actual ribbon triangles. `aurora-render/src/particles.rs` maps supported wire
-blend pairs to pipeline states and forms contiguous depth-ordered batches;
-particle glow enters the existing scene-alpha bloom path after each batch.
-`Settings::classic_particle_intersections` is the persisted Aurora preference;
-`RenderSettings::soft_particles` controls only the optional intersection fade.
-`particle_tests.rs` renders production shader coverage and blend outputs against
-reference equations. `AURORA_DEMO_PARTICLES=parity|parity-legacy` exercises the
-changes offline. Transparent scene ordering remains separate (#1937).

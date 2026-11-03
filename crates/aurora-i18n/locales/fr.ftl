@@ -8854,6 +8854,10 @@ ui-options-aurora-rez-effect-classic = Gris (Legacy)
 ui-options-aurora-hover-tips = Infobulles du monde
 ui-options-aurora-hover-tips-help = Aurora : bulle, carte ou bandeau avec icônes et étiquettes (sa forme dans Préférences › Interface). Legacy : le texte du Legacy Viewer, avec son bouton « i ».
 ui-options-aurora-hover-tips-legacy = Texte (Legacy)
+ui-options-particle-intersections = Intersection des particules
+ui-options-particle-intersections-help = Aurora estompe les particules près des surfaces. Le mode Legacy les coupe à la surface sans fondu.
+ui-options-particle-intersections-aurora = Fondu (Aurora)
+ui-options-particle-intersections-legacy = Découpé (Legacy)
 ui-options-aurora-bridge = Bridge Aurora
 ui-options-aurora-use-bridge = Utiliser le bridge Aurora
 ui-options-aurora-use-bridge-help = Un petit objet scripté qu’Aurora crée et vous fait porter : verrouillage de position, altitudes des avatars dans le radar, infos des scripts et des objets, demandes de pose et portails partagés. Désactivé, Aurora ne le crée plus, ne le porte plus et retire celui qui est porté : ces fonctions sont alors indisponibles.
@@ -12985,8 +12989,3 @@ ui-options-camera-vr-view-first-person = Première personne
 ui-options-camera-vr-view-desktop-camera = Position de la caméra
 
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
-
-ui-options-particle-intersections = Intersection des particules
-ui-options-particle-intersections-help = Aurora estompe les particules près des surfaces. Le mode Legacy les coupe à la surface sans fondu.
-ui-options-particle-intersections-aurora = Fondu (Aurora)
-ui-options-particle-intersections-legacy = Découpé (Legacy)

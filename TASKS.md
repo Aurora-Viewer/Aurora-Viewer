@@ -1339,13 +1339,67 @@ Suggested order (1, 2, 5, 7, 8, 10, 11, 13 and 15 are done): 17 and 19, then the
     - ⬜ to verify on Agni (QA): a real media earring / gauge worn, detached and reattached: no question; a media HUD: no question; another avatar wearing a media item: unchanged; a site already on the block list stays blocked on a worn item; the option off brings the question back
 - 🟡 Colour of lights: already linear in the packet (LLLightParams::setLinearColor), no more power of 2.2; local lights ×0.9 under a classic sky (multiPointLightF)
 - 🟡 Prims with the "Light" material (LL_MCODE_LIGHT) rendered fullbright like LLVOVolume
-- ✅ Particle rendering parity (#1944; PR #2040; related #1924 / #1049; task `particle-render-parity`, 2026-11-02): validated by the human on 2026-11-02 (build 1115e8c1). Preferences > Aurora > World and interface offers Particle intersection: Faded (Aurora, the default) or Clipped (Legacy), persisted and included in the bulk style choices. All 64 supported blend pairs retain depth order, including effects on zero-alpha texels; real particle glow enters the existing bloom mask instead of brightening RGB. Particle textures follow LLVOPartGroup's projected area with its 10x priority boost, allowing full detail when needed instead of a fixed 128px request. Lighting, tint interpolation and haze follow alphaF/fullbrightF. Ribbons retain both endpoints' positions, source-Z width axes, width, colour and glow; picking follows their actual triangles. Ordinary billboard axes follow the reference eye-ray/world-Z rule.
-  - Verification: full `scripts/check.ps1` green (6,927 passed, 35 ignored; formatting, Clippy and PowerShell parsing clean). GPU regression covers all blend pairs, sRGB tinting, zero-alpha masks, glow and optional fading; scene tests cover twisted/tapered ribbons, picking, projected detail and preference persistence. Native Vulkan captures checked with SMAA and MSAA 4x; English and Japanese preference layouts checked. Offline `AURORA_DEMO_PARTICLES=parity|parity-legacy` frames the isolated fixtures at frame 600 and applies the render preference explicitly; the hard/soft capture changes 899 pixels at the intersection. No GPU validation errors.
-  - Performance: Dev, 1600x900, about 4,075 particles, 120 FPS cap, last five warmed summaries: particle simulation 0.062 -> 0.060 ms; instance preparation 0.072 -> 0.092 ms; GPU transparency 0.025 -> 0.026 ms. Total GPU time 1.126 -> 1.118 ms is within run-to-run noise, not a claimed speedup.
-  - Human validation: the human confirmed the particle fixes work perfectly on 2026-11-02 and will add comparison screenshots to the PR.
-  - 🟡 Portable performance follow-up (2026-11-03): conservatively trim invisible geometry without merging glow barriers, prepare/reuse large ordered draw chunks on two workers, skip empty glow work, and reduce repeated blend/detail preparation. Small lists retain direct draws; no new GPU requirements or device-generated commands. Particle-only glow now works without a glowing object. In 24 warmed alternating passes, the mixed scene saves 0.145 ms (about 8%) of render-thread time at 720p and 1440p with essentially unchanged GPU time; ordinary fountains retain similar render timings. The atmosphere shader refactor was rejected after a measured GPU regression. Whole-workspace checks pass (6,934 tests, 35 ignored), pixel equivalence passes at 1x/4x, and native MSAA 2x/4x/8x, TAA, both intersection modes and NVIDIA/AMD integrated rendering pass. Six uncapped mixed passes show a paired FPS change of +5.7% and process CPU/frame change of +1.4%. PR #2040 records human validation of optimized build 6f7742c7.
-  - Integration (PR #2040, 2026-11-03): rebase onto current main while retaining contributor PR #2024's ribbon UV orientation and procedural texture loading alongside endpoint geometry. GPU pixel probes verify both texture axes on ribbons and ordinary sprites. Full `scripts/check.ps1` green after conflict resolution (6,985 passed, 35 ignored; formatting, Clippy and script parsing clean); native offline leash, both intersection modes, TAA and MSAA 4x -> 8x -> 2x -> 4x captures inspected with no GPU validation errors. The performance figures above are the earlier pre-rebase measurements. Transparency ordering (#1937) is deliberately unchanged.
-  - Conflict refresh (2026-11-03): merge main `98010603` into the current PR head `e2447a1f`; retain both the particle benchmark camera hook and main's per-frame font-preview cleanup. GPU recovery and the other main changes merge intact. Full `scripts/check.ps1` green: 7079 passed, 36 ignored; formatting, PowerShell parsing and Clippy clean.
+- 🟡 Particle rendering parity (#1944; PR #2040; related #1924 / #1049;
+  task `particle-render-parity`, 2026-11-02): implemented and checked offline; remaining grid QA below.
+  - Preferences > Aurora > World and interface offers Particle intersection: Faded (Aurora, the default)
+    or Clipped (Legacy), persisted and included in the bulk style choices.
+  - Rendering: all 64 supported blend pairs retain depth order, including effects on zero-alpha texels.
+    Actual particle glow enters the existing bloom mask. Lighting, tint interpolation and haze follow
+    alphaF/fullbrightF.
+  - Textures: projected-area demand follows LLVOPartGroup with its 10x priority boost, allowing full
+    detail for nearby or large particles instead of a fixed 128px request.
+  - Geometry: ribbons retain both endpoint positions, source-Z width axes, widths, colours and glow;
+    picking uses their actual triangles. Ordinary billboards follow the reference eye-ray/world-Z rule.
+  - Verification: full `scripts/check.ps1` green (6,927 passed, 35 ignored; formatting, Clippy and
+    PowerShell parsing clean). GPU regression covers all blend pairs, sRGB tinting, zero-alpha masks,
+    glow and optional fading; scene tests cover twisted/tapered ribbons, picking, projected detail and
+    preference persistence. Native Vulkan captures checked with SMAA and MSAA 4x; English and Japanese
+    preference layouts checked. Offline `AURORA_DEMO_PARTICLES=parity|parity-legacy` frames the isolated
+    fixtures at frame 600 and applies the render preference explicitly; the hard/soft capture changes 899
+    pixels at the intersection. No GPU validation errors.
+  - Main comparison (2026-11-03): 24 fresh alternating measured passes, main `5396aeee` versus PR
+    `c4b9da70` plus the local `e8f7d27d` shader correction. Mixed scene: +0.380 / +0.440 ms total GPU at
+    720p / 1440p and +1.160 ms render-thread elapsed at both resolutions; ordinary fountains remain close
+    to main. These builds render different effects. Full setup and per-pass ranges are in PR #2040; this
+    comparison does not isolate individual features.
+  - Human validation: the particle fixes were confirmed on 2026-11-02 (build `1115e8c1`); the blend-mode
+    appearance was compared with the Legacy Viewer and confirmed on 2026-11-03. Record the remaining grid
+    coverage below before marking the whole task complete.
+  - 🟡 Portable performance follow-up (2026-11-03): conservatively trim invisible geometry without merging
+    glow barriers, prepare/reuse large ordered draw chunks on two workers, skip empty glow work, and
+    reduce repeated blend/detail preparation. Small lists retain direct draws; no new GPU requirements or
+    device-generated commands. Particle-only glow now works without a glowing object. Historical
+    comparison against the previous PR implementation with the same particle-glow correction, not main:
+    in 24 warmed alternating passes, the mixed scene saves 0.145 ms (about 8%) of render-thread time at
+    720p and 1440p with essentially unchanged GPU time; ordinary fountains retain similar render timings.
+    The atmosphere shader refactor was rejected after a measured GPU regression. Whole-workspace checks
+    pass (6,934 tests, 35 ignored), pixel equivalence passes at 1x/4x, and native MSAA 2x/4x/8x, TAA,
+    both intersection modes and NVIDIA/AMD integrated rendering pass. Against that same previous PR
+    implementation, six uncapped mixed passes show a paired FPS change of +5.7% and process CPU/frame
+    change of +1.4%. PR #2040 records human validation of optimized build 6f7742c7.
+  - Integration (PR #2040, 2026-11-03): rebase onto current main while retaining contributor PR #2024's
+    ribbon UV orientation and procedural texture loading alongside endpoint geometry. GPU pixel probes
+    verify both texture axes on ribbons and ordinary sprites. Full `scripts/check.ps1` green after
+    conflict resolution (6,985 passed, 35 ignored; formatting, Clippy and script parsing clean); native
+    offline leash, both intersection modes, TAA and MSAA 4x -> 8x -> 2x -> 4x captures inspected with no
+    GPU validation errors. These integration checks predate the later main comparison recorded above.
+    Transparency ordering (#1937) is deliberately unchanged.
+  - Conflict refresh (2026-11-03): merge main `98010603` into the current PR head `e2447a1f`; retain both
+    the particle benchmark camera hook and main's per-frame font-preview cleanup. GPU recovery and the
+    other main changes merge intact. Full `scripts/check.ps1` green: 7079 passed, 36 ignored; formatting,
+    PowerShell parsing and Clippy clean.
+  - Review cleanup (2026-11-03): clarify historical performance baselines, record remaining grid QA,
+    group the three translation catalogues consistently, localize the Japanese Legacy label, and move
+    particle documentation into frame/rendering flow. Full `scripts/check.ps1` green: 7087 passed,
+    36 ignored. Rendering and pipeline construction are unchanged; no benchmarks were run.
+  - ⬜ Grid QA: compare representative real emitters with the Legacy Viewer: custom blends and zero-alpha
+    masks, particle-only glow, large or nearby textures, moving textured ribbons, and both Faded /
+    Clipped intersection settings.
+  - ⬜ Maintainer decision: acceptance of the measured additional cost of the full particle implementation
+    remains pending.
+  - ⬜ Pipeline compilation follow-up: measure cold startup and MSAA / SSR pipeline-ready times, including
+    Metal, or assess on-demand non-default pipeline creation. No new benchmarks or pipeline changes are
+    included in the review cleanup.
 - 🟡 Leash chains stood up as tall strips (#1049; task `ribbon-chain-size`): ribbon links emitted in the same frame (several per burst, or several bursts in one frame) share their position and motion, so the segment to their parent stays empty; Aurora drew such a link as a camera-facing billboard `size.x` × `size.y`, and leash scripts give ribbons a long y scale since ribbons ignore it. Now drawn as nothing, like the zero-area quad of `LLVOPartGroup::getGeometry`. Demo `AURORA_DEMO_PARTICLES=leash`: tall strips before, a thin sagging chain after. Full `scripts/check.ps1` green. Validated by the human in demo on 2026-10-26.
   - ⬜ QA on the grid: a real collar leash held by another avatar, in its ribbon and classic modes, still and walking; the chain runs from collar to hand with no tall strips, at 30 and 144+ FPS; cuff chains to a post (LockGuard-style); compare with the Legacy Viewer side by side.
 - 🟡 Ribbon particles drawn as dashes (#1924; task `ribbon-particle-uv`; validated by the human in demo on 2026-11-02): a ribbon segment mapped its texture like a billboard (u across the width, v along the segment), so a leash texture drawn along u became a crossbar on every link. Now u runs along the segment from its parent end and v across, like the texture coordinates of `LLVOPartGroup::getGeometry`. Demo `AURORA_DEMO_PARTICLES=leash` gets a chain texture along u: dashes before, one line after; demo particles now draw their procedural textures (they all fell back to the default dot). Full `scripts/check.ps1` green.
