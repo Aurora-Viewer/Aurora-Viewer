@@ -14,6 +14,8 @@ impl App {
     /// llviewermenu.cpp): People closes when that tab shows, otherwise it
     /// opens, or expands, on the tab.
     pub(super) fn people_tab_shortcut(&mut self, tab: u8) {
+        let classic = self.settings.classic_people || (self.demo && crate::demo::people::legacy());
+        let tab = people_tab_shown(tab, classic);
         let ctx = &self.egui_ctx;
         let shown = self.panels.people && self.panels.people_tab == tab && !crate::ui::widgets::floater_minimized(ctx, "people");
         if shown {
@@ -105,6 +107,14 @@ impl App {
     }
 }
 
+/// The tab People shows for the one asked: the classic layout has no Contact
+/// sets pane and shows Friends instead (ui/people.rs), so the same shortcut
+/// pressed again finds its tab showing and closes People.
+fn people_tab_shown(tab: u8, classic: bool) -> u8 {
+    use crate::ui::people::{TAB_FRIENDS, TAB_SETS};
+    if classic && tab == TAB_SETS { TAB_FRIENDS } else { tab }
+}
+
 /// What double-click teleport becomes: on, or off when it was on. Walking or
 /// running on a double click gives way to teleporting, as the Legacy
 /// Viewer's binding takes the double click.
@@ -133,9 +143,17 @@ fn reset_rear_offsets(s: &mut crate::camera::CameraSettings) {
 
 #[cfg(test)]
 mod tests {
-    use super::{double_click_teleport_toggled, reset_rear_offsets};
+    use super::{double_click_teleport_toggled, people_tab_shown, reset_rear_offsets};
     use crate::autopilot::DoubleClick;
     use crate::camera::{CameraPreset, CameraSettings};
+    use crate::ui::people::{TAB_FRIENDS, TAB_GROUPS, TAB_SETS};
+
+    #[test]
+    fn contact_sets_asks_the_classic_layout_for_the_friends_it_shows() {
+        assert_eq!(people_tab_shown(TAB_SETS, true), TAB_FRIENDS);
+        assert_eq!(people_tab_shown(TAB_SETS, false), TAB_SETS);
+        assert_eq!(people_tab_shown(TAB_GROUPS, true), TAB_GROUPS);
+    }
 
     #[test]
     fn reset_camera_angles_puts_the_wheel_offsets_back_to_the_rear_view() {
