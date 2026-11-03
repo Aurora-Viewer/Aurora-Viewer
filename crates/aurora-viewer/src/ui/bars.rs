@@ -247,6 +247,9 @@ pub struct StatusInfo<'a> {
     /// The agent's region allows setting home there
     /// (World.EnableSetHomeLocation).
     pub can_set_home: bool,
+    /// RLVa leaves Teleport Home allowed (enable_teleport_home,
+    /// LLFloaterWorldMap's Go Home button).
+    pub can_go_home: bool,
     /// The agent's region has a ServerReleaseNotes page (Help › Server
     /// release notes) and a SimConsoleAsync console (Advanced › Region
     /// console, estate managers).
@@ -360,12 +363,34 @@ const TOP_SLOT: Vec2 = Vec2::new(22.0, 20.0);
 const TOP_ICON: f32 = 16.0;
 
 fn icon_button_response(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &str, size: f32) -> egui::Response {
+    icon_button_greyable(ui, p, icons, icon, tip, size, true).0
+}
+
+/// An icon button whose left click may be greyed (an RLVa restriction)
+/// while its right-click menu stays: the response, and whether it was
+/// clicked while enabled.
+fn icon_button_greyable(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    icon: &str,
+    tip: &str,
+    size: f32,
+    enabled: bool,
+) -> (egui::Response, bool) {
     let (rect, resp) = ui.allocate_exact_size(TOP_SLOT, egui::Sense::click());
-    if resp.hovered() {
+    let hot = resp.hovered() && enabled;
+    if hot {
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     if let Some(t) = icons.get(icon) {
-        let tint = if resp.hovered() { p.ink } else { p.muted };
+        let tint = if !enabled {
+            p.muted_dim
+        } else if hot {
+            p.ink
+        } else {
+            p.muted
+        };
         let r = egui::Rect::from_center_size(rect.center(), Vec2::splat(size));
         ui.painter().image(
             t.id(),
@@ -374,7 +399,8 @@ fn icon_button_response(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &st
             tint,
         );
     }
-    resp.on_hover_text(tip)
+    let clicked = enabled && resp.clicked();
+    (resp.on_hover_text(tip), clicked)
 }
 
 /// The right click of a home button: World › Set Home to Here, offered by
@@ -700,7 +726,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             &mut panels.experiences,
         );
         menu::separator(ui, p);
-        if menu::item(ui, p, "home-filled", aurora_i18n::tr!("common-go-home")) {
+        if menu::item_if(ui, p, "home-filled", aurora_i18n::tr!("common-go-home"), st.can_go_home) {
             *action = BarAction::TeleportHome;
         }
         menu::separator(ui, p);
@@ -1829,8 +1855,16 @@ pub fn top_bars(
                         action = a;
                     }
                 }
-                let home = icon_button_response(ui, p, icons, "Home_Off", aurora_i18n::tr!("common-go-home"), TOP_ICON);
-                if home.clicked() {
+                let (home, go) = icon_button_greyable(
+                    ui,
+                    p,
+                    icons,
+                    "Home_Off",
+                    aurora_i18n::tr!("common-go-home"),
+                    TOP_ICON,
+                    st.can_go_home,
+                );
+                if go {
                     action = BarAction::TeleportHome;
                 }
                 if home_menu(&home, p, st.can_set_home) {

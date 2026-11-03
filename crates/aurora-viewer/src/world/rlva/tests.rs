@@ -765,7 +765,8 @@ fn rlva_maturity_deferred_teleports_keep_the_actor_recheck_locks_and_cancel_on_d
     maturity.request(SIM_ACCESS_MATURE, SIM_ACCESS_PG);
     maturity.take_commands();
     maturity.hold(NetCommand::TeleportHome, A);
-    command(&mut world.rlva, A, "@tplm=n");
+    // home is locked only by @tplm and @tploc together (teleportViaLandmark)
+    command(&mut world.rlva, A, "@tplm=n,tploc=n");
     assert_eq!(maturity.answer(Some(SIM_ACCESS_MATURE)), Outcome::Synced);
     let (actor, teleport) = maturity.take_commands().pop().unwrap();
     assert_eq!(actor, A);
@@ -773,7 +774,7 @@ fn rlva_maturity_deferred_teleports_keep_the_actor_recheck_locks_and_cancel_on_d
         world.rlva_allows_command(&teleport, actor),
         "the original issuer can still force through its own lock"
     );
-    command(&mut world.rlva, B, "@tplm=n");
+    command(&mut world.rlva, B, "@tplm=n,tploc=n");
     assert!(
         !world.rlva_allows_command(&teleport, actor),
         "a new other issuer's lock applies before the delayed send"
@@ -1745,14 +1746,53 @@ fn rlva_local_teleports_use_global_xy_and_sit_radius_uses_xyz_across_region_edge
     command(&mut world.rlva, A, "@sittp=y");
     command(&mut world.rlva, A, "@sittp:10=y");
     assert!(
-        world.rlva_allows_command(&teleport(handle, Vec3::new(250.0, 128.0, 1000.0)), Uuid::nil()),
-        "tplocal measures XY, not height"
+        !world.rlva_allows_command(&teleport(handle, Vec3::new(250.0, 128.0, 1000.0)), Uuid::nil()),
+        "tplocal measures in 3D: going straight up does not get around it"
     );
+    assert!(world.rlva_allows_command(&teleport(handle, Vec3::new(250.0, 128.0, 45.0)), Uuid::nil()));
     assert!(!world.rlva_allows_command(&teleport(neighbor, Vec3::new(250.0, 128.0, 30.0)), Uuid::nil()));
     assert!(
         world.rlva_allows_command(&teleport(neighbor, Vec3::new(250.0, 128.0, 30.0)), A),
         "a forced action bypasses its own issuer"
     );
+}
+
+#[test]
+fn rlva_teleport_home_landmarks_and_bare_tplocal_follow_the_legacy_rules() {
+    use glam::Vec3;
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    world.agent.position = Vec3::new(128.0, 128.0, 30.0);
+    let here = world.agent_global().unwrap();
+    let at = |dx: f64, dz: f64| here + glam::DVec3::new(dx, 0.0, dz);
+    // LLAgent::teleportViaLandmark: home only under both @tplm and @tploc
+    command(&mut world.rlva, A, "@tplm=n");
+    assert!(world.rlva_can_teleport_home() && !world.rlva_can_teleport_landmark());
+    assert!(world.rlva_allows_command(&NetCommand::TeleportHome, Uuid::nil()));
+    command(&mut world.rlva, A, "@tploc=n");
+    assert!(!world.rlva_can_teleport_home());
+    assert!(!world.rlva_allows_command(&NetCommand::TeleportHome, Uuid::nil()));
+    command(&mut world.rlva, A, "@tplm=y");
+    assert!(world.rlva_can_teleport_home() && world.rlva_can_teleport_landmark());
+    assert!(!world.rlva_can_teleport_global(at(1000.0, 0.0)), "@tploc closes distant places");
+    assert!(world.rlva_can_teleport_global(at(100.0, 0.0)), "a local teleport ignores @tploc");
+    // RLV_MODIFIER_TPLOCAL_DEFAULT: a bare @tplocal allows 1.5 m, in 3D
+    command(&mut world.rlva, A, "@tploc=y,tplocal=n");
+    assert!(world.rlva_can_teleport_global(at(1.0, 0.0)));
+    assert!(!world.rlva_can_teleport_global(at(2.0, 0.0)));
+    assert!(!world.rlva_can_teleport_global(at(0.0, 2.0)));
+    assert!(world.rlva_can_teleport_global(at(1000.0, 0.0)), "beyond a region it is not local");
+    // seated under @unsit, nothing goes, home and landmarks included
+    command(&mut world.rlva, A, "@tplocal=y,unsit=n");
+    world.agent.ground_sit = true;
+    assert!(!world.rlva_can_teleport_home() && !world.rlva_can_teleport_landmark());
+    assert!(!world.rlva_can_teleport_global(at(1.0, 0.0)));
+    world.agent.ground_sit = false;
+    world.rlva.configure(false);
+    assert!(world.rlva_can_teleport_home() && world.rlva_can_teleport_landmark() && world.rlva_can_teleport_global(at(0.0, 2.0)));
 }
 
 #[test]
