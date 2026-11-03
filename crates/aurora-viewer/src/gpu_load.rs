@@ -6,17 +6,12 @@
 //! crash with another viewer open (and a second one beside the Legacy Viewer) lost the
 //! device at 2.9 GB used of a 7.3 GB budget, with no timeout in Windows'
 //! event log: the card was shared and busy, and the budget alone never
-//! showed it. Windows counts, per adapter and per process, the memory used
-//! (`GPU Adapter Memory`) and the time each engine is busy (`GPU Engine`),
-//! the numbers Task Manager shows. A thread reads them every [`PERIOD`]
-//! (through PDH, by the counters' English names whatever the system's
-//! language) and keeps two figures for the card this viewer draws on:
-//! - the memory every program holds there: when together they hold more
-//!   than the card keeps, the viewer's textures give back its part of the excess
-//!   ([`oversubscribed`], `scene/textures.rs`);
-//! - how busy the other programs keep its 3D and compute engines, which
-//!   holds a window that is not in front to [`crate::instances::BEHIND_FPS`]
-//!   ([`Load::busy_elsewhere`]).
+//! showed it. Windows counts, per adapter, the memory used
+//! (`GPU Adapter Memory`), the number Task Manager shows. A thread reads it
+//! every [`PERIOD`] (through PDH, by the counter's English name whatever the
+//! system's language) for the card this viewer draws on: when every program
+//! holds together more than the card keeps, the viewer's textures give back
+//! its part of the excess ([`oversubscribed`], `scene/textures.rs`).
 //!
 //! The Legacy Viewer reads neither. Windows only: elsewhere nothing is read
 //! and the viewer goes on with the driver's budget alone.
@@ -33,37 +28,21 @@ const PERIOD: Duration = Duration::from_secs(2);
 /// programs that ask for a little more): what the viewers together may not
 /// take.
 const SYSTEM_SHARE: u64 = 10;
-/// Busy percentage of an engine from which other programs count as using the
-/// card (a browser tab or the desktop idles at a few percent).
-pub const BUSY_ELSEWHERE: f32 = 25.0;
-
 /// What the counters said at the last reading.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Load {
     /// Bytes of the card's own memory every program holds, this one
     /// included; None until the first reading or without counters.
     pub adapter_used: Option<u64>,
-    /// Busiest 3D or compute engine of the card, in percent of its time,
-    /// counting the other programs only.
-    pub others_busy: f32,
     /// Counts the readings (and the loss of the counters): a figure derived
     /// from one reading is applied once, not at every pass of the caller.
     pub seq: u64,
-}
-
-impl Load {
-    /// The other programs keep the card busy.
-    pub fn busy_elsewhere(&self) -> bool {
-        self.others_busy >= BUSY_ELSEWHERE
-    }
 }
 
 #[derive(Default)]
 struct Shared {
     /// `u64::MAX` before the first reading.
     adapter_used: AtomicU64,
-    /// Hundredths of a percent.
-    others_busy: AtomicU64,
     /// Readings made so far, stored last.
     seq: AtomicU64,
 }
@@ -109,7 +88,6 @@ impl GpuLoad {
         let used = self.shared.adapter_used.load(Ordering::Relaxed);
         Load {
             adapter_used: (used != u64::MAX).then_some(used),
-            others_busy: self.shared.others_busy.load(Ordering::Relaxed) as f32 / 100.0,
             seq,
         }
     }
@@ -118,49 +96,6 @@ impl GpuLoad {
 /// The name Windows gives the card in its counters' instances.
 pub fn luid_text(luid: u64) -> String {
     format!("luid_0x{:08x}_0x{:08x}", luid >> 32, luid & 0xffff_ffff)
-}
-
-/// One instance of `GPU Engine`: `pid_<pid>_luid_0x<high>_0x<low>_phys_<n>_eng_<k>_engtype_<kind>`.
-#[derive(Debug, PartialEq, Eq)]
-struct Engine<'a> {
-    pid: u32,
-    luid: &'a str,
-    index: &'a str,
-    kind: &'a str,
-}
-
-fn parse_engine(name: &str) -> Option<Engine<'_>> {
-    let rest = name.strip_prefix("pid_")?;
-    let (pid, rest) = rest.split_once("_luid_")?;
-    let (luid_tail, rest) = rest.split_once("_phys_")?;
-    let (_, rest) = rest.split_once("_eng_")?;
-    let (index, kind) = rest.split_once("_engtype_")?;
-    // "luid_" was consumed with the split: the text starts at the high part
-    let luid = &name[name.find("luid_")?..][..5 + luid_tail.len()];
-    Some(Engine {
-        pid: pid.parse().ok()?,
-        luid,
-        index,
-        kind,
-    })
-}
-
-/// Busiest 3D or compute engine of the card `luid` among the programs other
-/// than `own_pid`: the instances' percentages added per engine, the highest
-/// engine kept.
-pub fn others_busy(engines: &[(String, f64)], own_pid: u32, luid: &str) -> f32 {
-    let mut per_engine: Vec<(&str, &str, f64)> = Vec::new();
-    for (name, value) in engines {
-        let Some(e) = parse_engine(name) else { continue };
-        if e.pid == own_pid || !e.luid.eq_ignore_ascii_case(luid) || !(e.kind.starts_with("3D") || e.kind.starts_with("Compute")) {
-            continue;
-        }
-        match per_engine.iter_mut().find(|(i, k, _)| *i == e.index && *k == e.kind) {
-            Some(entry) => entry.2 += value,
-            None => per_engine.push((e.index, e.kind, *value)),
-        }
-    }
-    per_engine.iter().map(|e| e.2).fold(0.0, f64::max).clamp(0.0, 100.0) as f32
 }
 
 /// Bytes of dedicated memory in use on the card `luid` (`GPU Adapter Memory`
@@ -198,24 +133,18 @@ mod reader {
 
     pub(super) fn run(luid: u64, shared: Weak<Shared>) {
         let luid = luid_text(luid);
-        let pid = std::process::id();
         let (mut first, mut lost) = (true, false);
         loop {
             // (the instances of a wildcard are listed when the counter is
             // added: a new query each time sees the programs started since)
             let Some(shared) = Weak::upgrade(&shared) else { return };
             match sample() {
-                Some((engines, memory)) => {
+                Some(memory) => {
                     let used = adapter_used(&memory, &luid);
-                    let busy = others_busy(&engines, pid, &luid);
                     shared.adapter_used.store(used.unwrap_or(u64::MAX), Ordering::Relaxed);
-                    shared.others_busy.store((busy * 100.0) as u64, Ordering::Relaxed);
                     shared.seq.fetch_add(1, Ordering::Release);
                     if first || lost {
-                        log::info!(
-                            "GPU load: {} MB in use on the card by every program, the others keep its busiest engine {busy:.0} % busy",
-                            used.unwrap_or(0) >> 20
-                        );
+                        log::info!("GPU load: {} MB in use on the card by every program", used.unwrap_or(0) >> 20);
                     }
                     (first, lost) = (false, false);
                 }
@@ -224,7 +153,6 @@ mod reader {
                     // textures down, for the whole session: forgotten, and
                     // tried again)
                     shared.adapter_used.store(u64::MAX, Ordering::Relaxed);
-                    shared.others_busy.store(0, Ordering::Relaxed);
                     shared.seq.fetch_add(1, Ordering::Release);
                     if !lost {
                         log::info!("GPU load: the system's GPU counters could not be read, trying again");
@@ -237,16 +165,14 @@ mod reader {
         }
     }
 
-    /// (`GPU Engine` utilisation, `GPU Adapter Memory` dedicated usage) per
-    /// instance, a second apart for the rate.
-    fn sample() -> Option<(Vec<(String, f64)>, Vec<(String, f64)>)> {
+    /// `GPU Adapter Memory` dedicated usage per adapter instance.
+    fn sample() -> Option<Vec<(String, f64)>> {
         let mut query: PDH_HQUERY = std::ptr::null_mut();
         // SAFETY: the out pointer is valid.
         if unsafe { PdhOpenQueryW(std::ptr::null(), 0, &mut query) } != 0 {
             return None;
         }
         let result = (|| {
-            let engine = add(query, "\\GPU Engine(*)\\Utilization Percentage")?;
             let memory = add(query, "\\GPU Adapter Memory(*)\\Dedicated Usage")?;
             // SAFETY: the query is open.
             if unsafe { PdhCollectQueryData(query) } != 0 {
@@ -257,7 +183,7 @@ mod reader {
             if unsafe { PdhCollectQueryData(query) } != 0 {
                 return None;
             }
-            Some((read(engine), read(memory)))
+            Some(read(memory))
         })();
         // SAFETY: the query is open and not used after this.
         unsafe { PdhCloseQuery(query) };
@@ -313,7 +239,7 @@ mod tests {
 
     const GB: u64 = 1 << 30;
 
-    fn engines(items: &[(&str, f64)]) -> Vec<(String, f64)> {
+    fn named(items: &[(&str, f64)]) -> Vec<(String, f64)> {
         items.iter().map(|(n, v)| (n.to_string(), *v)).collect()
     }
 
@@ -324,61 +250,9 @@ mod tests {
     }
 
     #[test]
-    fn an_engine_instance_is_taken_apart() {
-        let e = parse_engine("pid_17168_luid_0x00000000_0x0001095E_phys_0_eng_3_engtype_3D").expect("engine");
-        assert_eq!(e.pid, 17168);
-        assert_eq!(e.luid, "luid_0x00000000_0x0001095E");
-        assert_eq!((e.index, e.kind), ("3", "3D"));
-        assert!(parse_engine("luid_0x00000000_0x0001095E_phys_0").is_none());
-        assert!(parse_engine("pid_x_luid_0x0_0x1_phys_0_eng_0_engtype_3D").is_none());
-    }
-
-    #[test]
-    fn only_the_others_busy_time_on_this_card_counts() {
-        let luid = "luid_0x00000000_0x0001095e";
-        let found = engines(&[
-            // this process, not counted
-            ("pid_10_luid_0x00000000_0x0001095E_phys_0_eng_0_engtype_3D", 40.0),
-            // two other programs on the same 3D engine: added
-            ("pid_20_luid_0x00000000_0x0001095E_phys_0_eng_0_engtype_3D", 30.0),
-            ("pid_21_luid_0x00000000_0x0001095E_phys_0_eng_0_engtype_3D", 20.0),
-            // another engine, lower; a copy engine and another card, ignored
-            ("pid_20_luid_0x00000000_0x0001095E_phys_0_eng_1_engtype_Compute", 10.0),
-            ("pid_20_luid_0x00000000_0x0001095E_phys_0_eng_2_engtype_Copy", 90.0),
-            ("pid_20_luid_0x00000000_0x0000AAAA_phys_0_eng_0_engtype_3D", 99.0),
-            ("garbage", 99.0),
-        ]);
-        assert_eq!(others_busy(&found, 10, luid), 50.0);
-        assert_eq!(others_busy(&[], 10, luid), 0.0);
-        // more than the engine has (rounding of the counters)
-        assert_eq!(
-            others_busy(
-                &engines(&[("pid_20_luid_0x00000000_0x0001095E_phys_0_eng_0_engtype_3D", 130.0)]),
-                10,
-                luid
-            ),
-            100.0
-        );
-        assert!(
-            Load {
-                others_busy: 50.0,
-                ..Load::default()
-            }
-            .busy_elsewhere()
-        );
-        assert!(
-            !Load {
-                others_busy: 5.0,
-                ..Load::default()
-            }
-            .busy_elsewhere()
-        );
-    }
-
-    #[test]
     fn the_memory_of_the_card_is_the_one_its_name_gives() {
         let luid = "luid_0x00000000_0x0001095e";
-        let found = engines(&[
+        let found = named(&[
             ("luid_0x00000000_0x0001095E_phys_0", 6.0 * GB as f64),
             ("luid_0x00000000_0x0000AAAA_phys_0", 1.0 * GB as f64),
         ]);

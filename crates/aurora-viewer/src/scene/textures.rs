@@ -956,6 +956,7 @@ pub struct TextureStreamer {
     card_luid: u64,
     /// The card was asked for: not asked again when it has no answer.
     card_asked: bool,
+    card_sharing: bool,
     relief: texture_budget::Relief,
     target_ramp: texture_budget::TargetRamp,
     last_budget: Instant,
@@ -1248,6 +1249,7 @@ impl TextureStreamer {
             card_total: None,
             card_luid: 0,
             card_asked: false,
+            card_sharing: false,
             relief: Default::default(),
             target_ramp: Default::default(),
             last_budget: Instant::now(),
@@ -2968,9 +2970,11 @@ impl TextureStreamer {
         }
     }
 
-    /// Other programs keep the card busy (gpu_load.rs).
-    pub fn gpu_busy_elsewhere(&self) -> bool {
-        self.gpu.get().busy_elsewhere()
+    /// Whether the card is read as every program uses it (gpu_load.rs): off
+    /// in demo and timed runs, whose textures must not follow what other
+    /// programs do on the PC.
+    pub fn set_card_sharing(&mut self, on: bool) {
+        self.card_sharing = on;
     }
 
     /// Bytes of video memory the driver counts for this viewer, as of the
@@ -3000,7 +3004,7 @@ impl TextureStreamer {
         let (used, live) = (renderer.textures.page_bytes(), renderer.textures.bytes());
         let video = renderer.video_memory.read(&renderer.device);
         self.video_usage = video.map_or(0, |v| v.usage);
-        if !self.card_asked {
+        if self.card_sharing && !self.card_asked {
             self.card_asked = true;
             if let Some((luid, total, dedicated)) = renderer.video_memory.card() {
                 self.card_luid = luid;
@@ -3019,7 +3023,7 @@ impl TextureStreamer {
         });
         let load = self.gpu.get();
         let over = match (self.card_total, load.adapter_used) {
-            (Some(total), Some(held)) => crate::gpu_load::oversubscribed(total, held, self.video_usage),
+            (Some(total), Some(held)) if self.card_sharing => crate::gpu_load::oversubscribed(total, held, self.video_usage),
             _ => 0,
         };
         let target = texture_budget::forced_target().unwrap_or_else(|| {

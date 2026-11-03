@@ -18,8 +18,9 @@
 //! - the memory the texture streamer may count on is its fair share of what
 //!   the viewers have together ([`share_cap`], `scene/textures.rs`), each
 //!   viewer leaving room to the others that are loading (in front);
-//! - a window that is not in front draws at [`BEHIND_FPS`] at most, unless
-//!   the user turned the background cap off ([`throttle`]): two viewers
+//! - a window that is not in front draws at [`BEHIND_FPS`] at most while
+//!   another viewer is in front, unless the user turned the background cap
+//!   off ([`throttle`]): two viewers
 //!   drawing a busy scene at full rate kept the GPU so busy that frames took
 //!   73 ms before the driver gave up on it. The Legacy Viewer has neither: it
 //!   does not know that another viewer is running.
@@ -58,8 +59,9 @@ pub struct Peers {
 }
 
 impl Peers {
-    pub fn any(&self) -> bool {
-        !self.list.is_empty()
+    /// One of them has the focus: the card is theirs to load.
+    pub fn in_front(&self) -> bool {
+        self.list.iter().any(|p| p.active)
     }
 
     /// The bytes held by the ones that are loading: in front and holding
@@ -265,9 +267,8 @@ pub fn share_cap(budget: u64, peers: &Peers) -> u64 {
     (budget as u128).saturating_sub(room).max(slice) as u64
 }
 
-/// The frame cap (0 = none) with the card shared (`shared`: another viewer
-/// runs, or other programs keep the card busy, gpu_load.rs): a window that is
-/// not in front draws at [`BEHIND_FPS`] at most. `exempt` leaves the cap
+/// The frame cap (0 = none) with the card shared (`shared`: another viewer is
+/// in front): a window that is not in front draws at [`BEHIND_FPS`] at most. `exempt` leaves the cap
 /// alone: `timed` runs (captures, profiles) are measured in windows that
 /// never had the focus, and the user may have turned the background cap off.
 pub fn throttle(cap: f32, focused: bool, shared: bool, exempt: bool) -> f32 {
@@ -438,7 +439,7 @@ mod tests {
         assert_eq!(seen_by_b.list, vec![own(2000, true)]);
         // b closes
         let _ = std::fs::remove_file(file(2));
-        assert!(!pass(&root, &file(1), own(2000, true), t0 + 4).any());
+        assert!(pass(&root, &file(1), own(2000, true), t0 + 4).list.is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 }
