@@ -5057,6 +5057,10 @@ controls-view-side = 側面
 controls-view-rear = 後方
 controls-view-shoulder = 肩越し
 controls-turn-left = 左に回転
+controls-roll-left = 左に傾ける
+controls-roll-right = 右に傾ける
+controls-roll-level = カメラの傾きをリセット
+controls-roll-angle = 傾き { $angle }
 controls-forward = 前に歩く
 controls-turn-right = 右に回転
 controls-up = ジャンプ／上昇
@@ -12934,8 +12938,3 @@ ui-options-camera-vr-view-first-person = 一人称
 ui-options-camera-vr-view-desktop-camera = カメラの位置
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
-
-controls-roll-left = 左に傾ける
-controls-roll-right = 右に傾ける
-controls-roll-level = カメラの傾きをリセット
-controls-roll-angle = 傾き { $angle }

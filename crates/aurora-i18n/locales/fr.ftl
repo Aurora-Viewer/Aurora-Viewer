@@ -5065,6 +5065,10 @@ controls-view-side = Côté
 controls-view-rear = Arrière
 controls-view-shoulder = Épaule
 controls-turn-left = Tourner à gauche
+controls-roll-left = Incliner à gauche
+controls-roll-right = Incliner à droite
+controls-roll-level = Remettre la caméra à niveau
+controls-roll-angle = Roulis { $angle }
 controls-forward = Avancer
 controls-turn-right = Tourner à droite
 controls-up = Sauter / monter
@@ -12950,8 +12954,3 @@ ui-options-camera-vr-view-first-person = Première personne
 ui-options-camera-vr-view-desktop-camera = Position de la caméra
 
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
-
-controls-roll-left = Incliner à gauche
-controls-roll-right = Incliner à droite
-controls-roll-level = Remettre la caméra à niveau
-controls-roll-angle = Roulis { $angle }

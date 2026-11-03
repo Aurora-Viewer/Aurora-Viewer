@@ -5060,6 +5060,10 @@ controls-view-side = Side
 controls-view-rear = Rear
 controls-view-shoulder = Shoulder
 controls-turn-left = Turn left
+controls-roll-left = Roll left
+controls-roll-right = Roll right
+controls-roll-level = Level the camera (reset roll)
+controls-roll-angle = Roll { $angle }
 controls-forward = Walk forward
 controls-turn-right = Turn right
 controls-up = Jump / fly up
@@ -12954,8 +12958,3 @@ ui-options-camera-vr-view-first-person = First person
 ui-options-camera-vr-view-desktop-camera = Camera position
 
 app-vr-leave = Press { $key } to return to desktop mode
-
-controls-roll-left = Roll left
-controls-roll-right = Roll right
-controls-roll-level = Level the camera (reset roll)
-controls-roll-angle = Roll { $angle }

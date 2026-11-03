@@ -1520,7 +1520,7 @@ mod tests {
             time += 1.0 / 60.0;
             let mut button = Rect::NOTHING;
             let mut out = Output::default();
-            let _ = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 700.0))),
                     time: Some(time),
@@ -1538,6 +1538,8 @@ mod tests {
                         });
                 },
             );
+            // no renderer here: the font atlas would trip TexturesDelta's drop check
+            output.textures_delta.clear();
             (ctx.memory(|m| m.area_rect(window).expect("the controls floater")), button, out)
         };
         for _ in 0..8 {
@@ -1599,7 +1601,7 @@ mod tests {
                 free: None,
             };
             let mut out = Output::default();
-            let _ = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))),
                     time: Some(time),
@@ -1611,6 +1613,7 @@ mod tests {
                     roll_controls(ui, &p, &view, &mut out);
                 },
             );
+            output.textures_delta.clear();
             out.actions
         };
         frame(vec![], false);
