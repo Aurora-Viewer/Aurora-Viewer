@@ -1207,6 +1207,14 @@ pub enum NetEvent {
     InventoryItemsMissing {
         items: Vec<Uuid>,
     },
+    /// Answer to `UploadBake`: the new texture.
+    BakeUploaded {
+        request: Uuid,
+        result: Result<Uuid, String>,
+    },
+    /// The simulator lacks one of our bakes (RebakeAvatarTextures): the
+    /// texture it named, or all of them when it named none.
+    RebakeRequested(Uuid),
     /// Answer to a server appearance (bake) request: success, or the COF
     /// version the server expected.
     AppearanceRequestResult {
@@ -2162,6 +2170,14 @@ pub enum NetCommand {
         item: Uuid,
         favorite: bool,
     },
+    /// Upload one of our own bakes, on a grid that does not bake
+    /// (`UploadBakedTexture`): answered by `BakeUploaded`.
+    UploadBake {
+        request: Uuid,
+        j2c: Vec<u8>,
+    },
+    /// Send our appearance with our own bakes (AgentSetAppearance).
+    SetAppearance(Box<crate::local_bakes::Appearance>),
     /// Ask the server to rebuild our appearance from the Current Outfit
     /// folder (UpdateAvatarAppearance capability).
     RequestServerAppearance {

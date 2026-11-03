@@ -460,7 +460,9 @@ pub(crate) mod tests {
                     if len == 0 {
                         Llsd::Undef
                     } else {
-                        aurora_llsd::from_xml(&bytes[start..start + len]).expect("LLSD request")
+                        // a raw upload (a bake) is kept as its bytes
+                        aurora_llsd::from_xml(&bytes[start..start + len])
+                            .unwrap_or_else(|_| Llsd::Binary(bytes[start..start + len].to_vec()))
                     },
                 ));
                 let body = aurora_llsd::to_xml(&reply);

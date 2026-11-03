@@ -241,6 +241,8 @@ struct Session<'a> {
     notecard_copy_tx: mpsc::UnboundedSender<(u32, Result<(), String>)>,
     inventory_move_tx: mpsc::UnboundedSender<inventory_moves::Request>,
     inventory_udp_tx: mpsc::UnboundedSender<inventory_udp::Request>,
+    /// AgentSetAppearance messages sent this session (their SerialNum).
+    appearance_serial: u32,
     notecard_copies: HashMap<u32, (Uuid, Uuid, bool)>,
     /// When an AgentUpdate leaves (agent_update.rs).
     agent_update: AgentUpdateRule,
@@ -469,6 +471,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         notecard_copy_tx,
         inventory_move_tx,
         inventory_udp_tx,
+        appearance_serial: 0,
         notecard_copies: HashMap::new(),
         inventory_merchant_pending: false,
         next_inventory_callback: 0,
@@ -2853,6 +2856,33 @@ impl Session<'_> {
                     let _ = events.send(NetEvent::OutfitUpdated { request, result });
                 });
             }
+            NetCommand::UploadBake { request, j2c } => {
+                let Some(cap) = self.main_cap("UploadBakedTexture") else {
+                    emit(
+                        self.sh,
+                        NetEvent::BakeUploaded {
+                            request,
+                            result: Err(aurora_i18n::tr!("local-bakes-the-bake-could-not-be-uploaded").into()),
+                        },
+                    );
+                    return;
+                };
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                tokio::spawn(async move {
+                    let result = crate::local_bakes::upload(&http, &cap, j2c).await;
+                    if let Err(e) = &result {
+                        log::warn!("local bake: {e}");
+                    }
+                    let _ = events.send(NetEvent::BakeUploaded { request, result });
+                });
+            }
+            NetCommand::SetAppearance(appearance) => {
+                // pre-incremented: the first is 1 (LLAgent::sendAgentSetAppearance)
+                self.appearance_serial = self.appearance_serial.wrapping_add(1);
+                let m = crate::local_bakes::agent_set_appearance(self.agent_id(), self.session_id(), self.appearance_serial, &appearance);
+                self.send_main(&m, true);
+            }
             NetCommand::RequestServerAppearance { cof_version } => self.request_server_appearance(cof_version),
             NetCommand::IncrementCofVersion => self.increment_cof_version(),
             NetCommand::AvatarTexturesRequest(id) => self.send_generic("avatartexturesrequest", &[id.to_string()]),
@@ -4320,6 +4350,9 @@ impl Session<'_> {
                     rights: m.rights.iter().map(|r| (r.agent_related, r.related_rights)).collect(),
                 },
             );
+        } else if id == RebakeAvatarTextures::ID {
+            let m: RebakeAvatarTextures = pkt.decode()?;
+            emit(self.sh, NetEvent::RebakeRequested(m.texture_data.texture_id));
         } else if id == AvatarPropertiesReply::ID {
             let m: AvatarPropertiesReply = pkt.decode()?;
             let pd = &m.properties_data;
@@ -6087,6 +6120,7 @@ mod event_queue_tests {
             notecard_copy_tx,
             inventory_move_tx,
             inventory_udp_tx,
+            appearance_serial: 0,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
@@ -6426,6 +6460,7 @@ mod script_dialog_tests {
             notecard_copy_tx,
             inventory_move_tx,
             inventory_udp_tx,
+            appearance_serial: 0,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
