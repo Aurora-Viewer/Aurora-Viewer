@@ -674,6 +674,17 @@ impl InventoryUi {
         });
     }
 
+    /// Me › New Inventory Window (Inventory.NewWindow): the additional
+    /// window opens, or comes to the front when it is already open (Aurora
+    /// keeps one, where the Legacy Viewer adds another).
+    pub fn open_additional_window(&mut self, ctx: &egui::Context) {
+        if self.additional_open() {
+            super::widgets::expand_floater(ctx, &floater_id(ADDITIONAL_WINDOW));
+        } else {
+            self.toggle_additional_window(ctx);
+        }
+    }
+
     /// RLVa's @showinv closes the additional window with the main one
     /// (RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>, rlvhandler.cpp).
     pub fn close_additional_window(&mut self) {
