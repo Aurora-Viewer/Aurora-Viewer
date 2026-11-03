@@ -14,8 +14,9 @@
 //! session is not reported as a Rust panic (aurora-viewer logging.rs).
 
 use std::cell::Cell;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 thread_local! {
     static GUARDED: Cell<bool> = const { Cell::new(false) };
@@ -78,15 +79,59 @@ fn guarded<T>(wait: impl FnOnce() -> T) -> Option<T> {
 /// Shared between the device-lost callback, the main thread and the render
 /// thread.
 #[derive(Clone, Debug, Default)]
-pub struct DeviceLost(Arc<AtomicBool>);
+pub struct DeviceLost {
+    lost: Arc<AtomicBool>,
+    work: Arc<Mutex<Work>>,
+}
+
+/// The GPU work the render thread last gave the device and the last it saw
+/// finished: at a loss, [`DeviceLost::work_at_loss`] tells a hang from a
+/// fault, which the crash reports could not ([`hang_or_fault`]).
+#[derive(Debug, Default)]
+struct Work {
+    /// Frame and time of the newest submission.
+    submitted: Option<(u64, Instant)>,
+    /// Frame and time of the newest submission the GPU finished.
+    finished: Option<(u64, Instant)>,
+}
 
 impl DeviceLost {
     pub fn set(&self) {
-        self.0.store(true, Ordering::Release);
+        self.lost.store(true, Ordering::Release);
     }
 
     pub fn get(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+        self.lost.load(Ordering::Acquire)
+    }
+
+    /// Frame `frame` was just submitted (renderer.rs, after `queue.submit`).
+    pub fn submitted(&self, frame: u64) {
+        if let Ok(mut w) = self.work.lock() {
+            w.submitted = Some((frame, Instant::now()));
+        }
+    }
+
+    /// The GPU finished frame `frame` (`on_submitted_work_done`).
+    pub fn finished(&self, frame: u64) {
+        if let Ok(mut w) = self.work.lock()
+            && w.finished.is_none_or(|(done, _)| done < frame)
+        {
+            w.finished = Some((frame, Instant::now()));
+        }
+    }
+
+    /// What the GPU had in hand at the loss (the device-lost callback logs
+    /// it): see [`hang_or_fault`].
+    pub fn work_at_loss(&self) -> String {
+        let now = Instant::now();
+        let Ok(w) = self.work.lock() else {
+            return "unknown".to_owned();
+        };
+        let age = |at: Instant| now.saturating_duration_since(at);
+        hang_or_fault(
+            w.submitted.map(|(frame, at)| (frame, age(at))),
+            w.finished.map(|(frame, at)| (frame, age(at))),
+        )
     }
 
     /// Waits for the GPU to finish the work submitted (read-backs: photos,
@@ -114,6 +159,44 @@ impl DeviceLost {
         }
         result
     }
+}
+
+/// A loss that comes this long after a submission the GPU never finished
+/// is the driver's watchdog (a Windows TDR resets the GPU after 2 s).
+const WATCHDOG: Duration = Duration::from_millis(1500);
+
+/// Hang or fault: the line the device-lost callback logs, from the newest
+/// submission and the newest finished one, each with its age at the loss.
+/// A submission the GPU had not finished after the watchdog's delay is a
+/// hang (a pass that never ends, or too long); a loss with the last
+/// submission finished, or right after it, is a fault the driver found in
+/// that work (an invalid access on NVIDIA: VK_ERROR_DEVICE_LOST at once).
+/// The crash reports showed neither: the main thread's own stall warning
+/// (STALL_AFTER, 2 s like the watchdog) comes too late for most hangs.
+fn hang_or_fault(submitted: Option<(u64, Duration)>, finished: Option<(u64, Duration)>) -> String {
+    let secs = |d: Duration| format!("{:.3} s", d.as_secs_f64());
+    let Some((frame, age)) = submitted else {
+        return "nothing submitted yet (lost while starting)".to_owned();
+    };
+    let done = finished.is_some_and(|(f, _)| f >= frame);
+    let last = match finished {
+        Some((f, a)) => format!("frame {f} finished {} before", secs(a)),
+        None => "none finished yet".to_owned(),
+    };
+    // (no colon, semicolon or apostrophe: the crash report's table keeps
+    // the line as it is, aurora-viewer crash/summary.rs `label`)
+    let verdict = if done {
+        "a fault found after that frame ended (not a hang)"
+    } else if age >= WATCHDOG {
+        "a hang (the watchdog of the driver reset the card while that frame ran)"
+    } else {
+        "a fault in the work of that frame (not a hang)"
+    };
+    format!(
+        "last submission frame {frame}, {} before, {}, {last}, {verdict}",
+        secs(age),
+        if done { "finished" } else { "not finished" }
+    )
 }
 
 /// The renderers made so far in the run, for `AURORA_DEMO_GPU_LOST`'s list,
@@ -246,6 +329,42 @@ mod tests {
         std::panic::set_hook(before);
         assert!(bug.is_err());
         assert!(!in_guarded_poll());
+    }
+
+    /// The line of the loss tells a watchdog reset (the last frame not
+    /// finished after the watchdog's delay) from a fault (the last frame
+    /// finished, or lost right after its submission).
+    #[test]
+    fn the_loss_names_a_hang_or_a_fault_from_the_work_in_hand() {
+        let ms = Duration::from_millis;
+        assert_eq!(hang_or_fault(None, None), "nothing submitted yet (lost while starting)");
+        let hang = hang_or_fault(Some((812, ms(2040))), Some((811, ms(2055))));
+        assert_eq!(
+            hang,
+            "last submission frame 812, 2.040 s before, not finished, frame 811 finished 2.055 s before, \
+             a hang (the watchdog of the driver reset the card while that frame ran)"
+        );
+        let fault = hang_or_fault(Some((812, ms(9))), Some((812, ms(1))));
+        assert!(fault.ends_with("a fault found after that frame ended (not a hang)"), "{fault}");
+        let early = hang_or_fault(Some((812, ms(120))), Some((811, ms(130))));
+        assert!(early.ends_with("a fault in the work of that frame (not a hang)"), "{early}");
+        let first = hang_or_fault(Some((0, ms(3000))), None);
+        assert!(first.contains("none finished yet") && first.contains("a hang"), "{first}");
+        // the shared copies see the same work
+        let lost = DeviceLost::default();
+        let render_thread = lost.clone();
+        render_thread.submitted(5);
+        render_thread.finished(4);
+        render_thread.finished(3);
+        assert!(
+            lost.work_at_loss().starts_with("last submission frame 5, 0."),
+            "{}",
+            lost.work_at_loss()
+        );
+        assert!(
+            lost.work_at_loss().contains("frame 4 finished"),
+            "the newest finished frame is kept"
+        );
     }
 
     #[test]

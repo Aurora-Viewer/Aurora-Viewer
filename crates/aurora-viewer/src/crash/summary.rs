@@ -148,6 +148,11 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
     // aurora-render's device lost callback (main_thread.rs).
     if device_lost_in(&tail) {
         rows.push(("GPU device lost", "yes (driver reset or GPU removed)".into()));
+        // the work the GPU had in hand: a hang or a fault (aurora-render
+        // device_lost.rs; frame numbers and ages, nothing personal)
+        if let Some(work) = logged(&tail, "] GPU work at the loss: ") {
+            rows.push(("GPU work at the loss", label(work, 200)));
+        }
     }
     if let Some(seconds) = text("gpu-stall.txt").lines().next().and_then(|line| {
         line.strip_prefix("GPU stall: no frame for ")?
@@ -682,6 +687,19 @@ mod tests {
         // a loss in a running session stays the plain kind
         std::fs::write(dir.join("gpu-lost.txt"), "").unwrap();
         assert_eq!(build(&record, &dir).title, "Crash: GPU device lost (0.7.1+3.gabcdef)");
+        // the work the GPU had in hand (aurora-render device_lost.rs): a row
+        std::fs::write(
+            dir.join("session.log"),
+            format!(
+                "{NOTICE}\n[t ERROR aurora_render::main_thread] GPU device lost (Unknown): reset\n[t ERROR aurora_render::main_thread] GPU work at the loss: last submission frame 812, 2.040 s before, not finished, frame 811 finished 2.055 s before, a hang (the watchdog of the driver reset the card while that frame ran)\n"
+            ),
+        )
+        .unwrap();
+        let body = build(&record, &dir).body;
+        assert!(
+            body.contains("| GPU work at the loss | last submission frame 812, 2.040 s before, not finished, frame 811 finished 2.055 s before, a hang (the watchdog of the driver reset the card while that frame ran) |"),
+            "{body}"
+        );
     }
 
     #[test]

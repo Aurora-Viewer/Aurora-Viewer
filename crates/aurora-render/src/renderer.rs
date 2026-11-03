@@ -8581,13 +8581,20 @@ impl Backend {
             .queue
             .submit(upload_cmds.into_iter().chain(extra_cmds).chain(output_transition));
         self.gpu_frames.submitted(index, submission);
-        if self.gpu_frames.enabled {
-            // the news as soon as a poll sees the frame done (the start of
-            // the next frame's job): a GPU that is not the limit does not
-            // hold the main thread until this thread is through a frame
-            let frames = self.gpu_frames.clone();
-            self.queue.on_submitted_work_done(move || frames.finished_through(index));
-        }
+        // what the GPU has in hand, for the line of a device loss
+        // (device_lost.rs: a hang or a fault)
+        self.lost.submitted(index);
+        let lost = self.lost.clone();
+        // the news as soon as a poll sees the frame done (the start of the
+        // next frame's job): a GPU that is not the limit does not hold the
+        // main thread until this thread is through a frame
+        let frames = self.gpu_frames.enabled.then(|| self.gpu_frames.clone());
+        self.queue.on_submitted_work_done(move || {
+            lost.finished(index);
+            if let Some(frames) = frames {
+                frames.finished_through(index);
+            }
+        });
         self.motion_cut = false;
         self.motion_kept = self.gtao_normals_now;
         // staging chunks whose copies are now submitted are mapped again
