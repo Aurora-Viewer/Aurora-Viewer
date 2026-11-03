@@ -1201,6 +1201,116 @@ fn specular_aa_gloss(gloss: f32, variance: f32) -> f32 {
     return clamp(sqrt(e2 / 368.0), 0.0, 1.0);
 }
 
+// PCSS BEGIN
+// Directional PCSS: parallel-plane blocker search and distance-dependent
+// percentage-closer filtering (Fernando, NVIDIA, 2005). The angular source
+// radius is an artistic effective sun/moon size; the footprint is in metres
+// and bounded so caster culling and atlas sampling cover every tap.
+const PCSS_SOURCE_TAN: f32 = 0.02;
+const PCSS_MAX_RADIUS: f32 = 0.25;
+const SHADOW_FILTER_PCF: u32 = 0x20000u;
+const PCSS_DISK: array<vec2<f32>, 32> = array(
+    vec2<f32>(0.176776695, 0.000000000),
+    vec2<f32>(-0.176776695, 0.000000000),
+    vec2<f32>(-0.225772188, 0.206825818),
+    vec2<f32>(0.225772188, -0.206825818),
+    vec2<f32>(0.034558052, -0.393771179),
+    vec2<f32>(-0.034558052, 0.393771179),
+    vec2<f32>(0.284571220, 0.371172764),
+    vec2<f32>(-0.284571220, -0.371172764),
+    vec2<f32>(-0.522223187, -0.092373929),
+    vec2<f32>(0.522223187, 0.092373929),
+    vec2<f32>(0.494695392, -0.314684715),
+    vec2<f32>(-0.494695392, 0.314684715),
+    vec2<f32>(-0.165465927, 0.615525001),
+    vec2<f32>(0.165465927, -0.615525001),
+    vec2<f32>(-0.315561468, -0.607594404),
+    vec2<f32>(0.315561468, 0.607594404),
+    vec2<f32>(0.684642162, 0.250030219),
+    vec2<f32>(-0.684642162, -0.250030219),
+    vec2<f32>(-0.712256086, 0.294008958),
+    vec2<f32>(0.712256086, -0.294008958),
+    vec2<f32>(0.343354499, -0.733728620),
+    vec2<f32>(-0.343354499, 0.733728620),
+    vec2<f32>(0.253730241, 0.808931990),
+    vec2<f32>(-0.253730241, -0.808931990),
+    vec2<f32>(-0.764745892, -0.443185876),
+    vec2<f32>(0.764745892, 0.443185876),
+    vec2<f32>(0.897133984, -0.197232390),
+    vec2<f32>(-0.897133984, 0.197232390),
+    vec2<f32>(-0.547506905, 0.778772232),
+    vec2<f32>(0.547506905, -0.778772232),
+    vec2<f32>(-0.126486773, -0.976089697),
+    vec2<f32>(0.126486773, 0.976089697)
+);
+
+fn pcss_tile_uv(uv: vec2<f32>, texel: f32) -> vec2<f32> {
+    return clamp(uv, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+}
+
+// Compare against the receiver plane at the actual clamped sample position.
+// Correct the blocker separation into metres, not normalized cascade depth.
+fn pcss_gap(uv: vec2<f32>, offset: vec2<f32>, tile: vec2<f32>, texel: f32,
+    receiver: f32, bias: f32, gradient: vec2<f32>, depth_per_metre: f32) -> f32 {
+    let local = pcss_tile_uv(uv + offset, texel);
+    let at = vec2<i32>(floor((local + tile) * 0.5 * vec2<f32>(textureDimensions(shadow_map))));
+    let depth = textureLoad(shadow_map, at, 0);
+    let centre = (vec2<f32>(at) + 0.5) / vec2<f32>(textureDimensions(shadow_map)) * 2.0 - tile;
+    let expected = receiver + dot(gradient, centre - uv);
+    if (depth < expected - bias) { return (expected - depth) / depth_per_metre; }
+    return -1.0;
+}
+
+fn pcss_compare(uv: vec2<f32>, offset: vec2<f32>, tile: vec2<f32>, texel: f32,
+    receiver: f32, bias: f32, gradient: vec2<f32>) -> f32 {
+    let local = pcss_tile_uv(uv + offset, texel);
+    let reference = receiver + dot(gradient, local - uv) - bias;
+    return textureSampleCompareLevel(shadow_map, shadow_sampler, (local + tile) * 0.5, reference);
+}
+
+// Negative means no blocker was found: retain the old dense PCF rather than
+// declaring a thin caster unshadowed after a sparse blocker search missed it.
+fn pcss_shadow(uv: vec2<f32>, tile: vec2<f32>, texel: f32, radius: f32,
+    receiver: f32, bias: f32, gradient: vec2<f32>, depth_per_metre: f32) -> f32 {
+    var separation = 0.0;
+    var blockers = 0.0;
+    // Dense near samples protect small/thin casters; the wider disk also
+    // finds blockers whose penumbra reaches outside their hard silhouette.
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let gap = pcss_gap(uv, vec2<f32>(f32(x), f32(y)) * texel, tile, texel, receiver, bias, gradient, depth_per_metre);
+            if (gap >= 0.0) { separation += gap; blockers += 1.0; }
+        }
+    }
+    let search = PCSS_MAX_RADIUS / (2.0 * radius);
+    for (var i = 0u; i < 16u; i++) {
+        let gap = pcss_gap(uv, PCSS_DISK[(i / 2u) * 4u + 2u + (i & 1u)] * search, tile, texel, receiver, bias, gradient, depth_per_metre);
+        if (gap >= 0.0) { separation += gap; blockers += 1.0; }
+    }
+    if (blockers == 0.0) { return -2.0; }
+    let world_radius = min(PCSS_MAX_RADIUS, separation / blockers * PCSS_SOURCE_TAN);
+    let half_uv = max(0.5 * texel, world_radius / (2.0 * radius));
+    var sum = 0.0;
+    if (half_uv <= texel) {
+        // A contiguous tent at sub-texel radii: no noise or sample gaps at
+        // contact, and nine compares instead of the broad penumbra's 32.
+        for (var y = -1; y <= 1; y++) {
+            for (var x = -1; x <= 1; x++) {
+                let weight = f32((2 - abs(x)) * (2 - abs(y)));
+                sum += weight * pcss_compare(uv, vec2<f32>(f32(x), f32(y)) * half_uv, tile, texel, receiver, bias, gradient);
+            }
+        }
+        return sum / 16.0;
+    }
+    // Fixed light-space pattern: no frame randomization or dependence on
+    // the screen resolution, and the same physical support in each cascade.
+    for (var i = 0u; i < 32u; i++) {
+        sum += pcss_compare(uv, PCSS_DISK[i] * half_uv, tile, texel, receiver, bias, gradient);
+    }
+    return sum / 32.0;
+}
+// PCSS END
+
 // Taps per axis for a filter spanning `span` (tile coordinates), so that
 // two taps are never more than a texel apart: 4 when they already are not,
 // up to 7 (a span of six texels, the most `cascade_shadow` gives).
@@ -1259,6 +1369,20 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     var receiver_bias = 2.0 * texel * radius * 2.0 * depth_per_metre;
     if ((frame.light_mode.z & SHADOW_BIAS_LEGACY) != 0u) {
         receiver_bias = 0.0005;
+    }
+    // Receiver-plane correction follows the geometric receiver, independently
+    // of the camera and shadow-map depth padding. Grazing planes retain PCF.
+    if ((frame.light_mode.z & (SHADOW_FILTER_PCF | SHADOW_FILTER_GAPS)) == 0u) {
+        let axis_z = vec3<f32>(m[0].z, m[1].z, m[2].z) / max(depth_per_metre, 1e-8);
+        let denominator = dot(n, axis_z);
+        if (abs(denominator) > 0.15) {
+            let axis_x = vec3<f32>(m[0].x, m[1].x, m[2].x) * radius;
+            let axis_y = vec3<f32>(m[0].y, m[1].y, m[2].y) * radius;
+            let gradient = vec2<f32>(-dot(n, axis_x), dot(n, axis_y))
+                * (2.0 * radius * depth_per_metre / denominator);
+            let soft = pcss_shadow(uv, tile, texel, radius, ndc.z, receiver_bias, gradient, max(depth_per_metre, 1e-8));
+            if (soft >= 0.0) { return soft; }
+        }
     }
     var sum = 0.0;
     for (var y = 0u; y < taps; y++) {

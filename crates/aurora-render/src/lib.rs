@@ -36,6 +36,8 @@ mod motion_history;
 mod occlusion;
 pub mod pacing;
 mod packet;
+#[cfg(test)]
+mod pcss_tests;
 mod pick;
 pub mod pipeline_cache;
 #[cfg(test)]

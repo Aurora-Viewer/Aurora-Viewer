@@ -5166,7 +5166,14 @@ impl Backend {
             }
             let center = corners.iter().fold(Vec3::ZERO, |a, c| a + *c) / 8.0;
             let radius = corners.iter().map(|c| c.distance(center)).fold(0.0f32, f32::max).max(1.0);
-            let radius = (radius * 16.0).ceil() / 16.0;
+            // Leave room inside the atlas tile for the complete PCSS footprint
+            // and receiver offset, even at a frustum corner.
+            let guard = if crate::shadow_cull::pcss_enabled() {
+                crate::shadow_cull::PCSS_MAX_RADIUS + 0.02 + 0.04 * i as f32
+            } else {
+                0.0
+            };
+            let radius = ((radius + guard) * 16.0).ceil() / 16.0;
             let up = if light_dir.z.abs() > 0.99 { Vec3::Y } else { Vec3::Z };
             let eye = center - light_dir * (radius + crate::shadow_cull::CASCADE_DEPTH_PAD);
             let mut view = glam::camera::rh::view::look_at_mat4(eye, center, up);
@@ -6001,6 +6008,9 @@ impl Backend {
             Ok("before") => 0x300,
             _ => 0,
         });
+        if !crate::shadow_cull::pcss_enabled() {
+            main.light_sets.mode[2] |= 0x20000; // SHADOW_FILTER_PCF
+        }
         // AURORA_SHADOW_BIAS=legacy|new|alt: the receiver bias of before (a
         // fixed 0.0005 of the cascade's depth range), the one in texels, or
         // one second in two each (common.wgsl SHADOW_BIAS_LEGACY)
