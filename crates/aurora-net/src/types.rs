@@ -385,6 +385,10 @@ pub struct OpenSimExtras {
     pub max_prim_scale: Option<f32>,
 }
 
+/// The largest chat range or prim size a region may give: the Legacy
+/// Viewer's OS_MAX_PRIM_SCALE (indra/llmath/xform.h).
+const MAX_REGION_FIGURE: f32 = 65536.0;
+
 impl OpenSimExtras {
     /// Read from SimulatorFeatures' "OpenSimExtras" map.
     pub fn from_llsd(extras: &aurora_llsd::Llsd) -> Self {
@@ -396,13 +400,14 @@ impl OpenSimExtras {
             None => grid_url,
         };
         // a positive, finite figure, or nothing (a region's own word on
-        // these is trusted no further)
+        // these is trusted no further), capped like OS_MAX_PRIM_SCALE so a
+        // ring or a size stays drawable
         let figure = |key: &str| {
             let v = &extras[key];
             match v {
                 aurora_llsd::Llsd::Integer(_) | aurora_llsd::Llsd::Real(_) | aurora_llsd::Llsd::String(_) => {
                     let n = v.as_f64() as f32;
-                    (n.is_finite() && n > 0.0).then_some(n)
+                    (n.is_finite() && n > 0.0).then_some(n.min(MAX_REGION_FIGURE))
                 }
                 _ => None,
             }
@@ -2388,7 +2393,7 @@ pub struct ExperienceLogEvent {
 
 #[cfg(test)]
 mod opensim_extras_tests {
-    use super::OpenSimExtras;
+    use super::{MAX_REGION_FIGURE, OpenSimExtras};
     use aurora_llsd::Llsd;
 
     #[test]
@@ -2433,6 +2438,9 @@ mod opensim_extras_tests {
             (None, Some(30.0), Some(256.0))
         );
         assert_eq!((read.min_prim_scale, read.max_prim_scale), (Some(0.001), Some(256.0)));
+        // a huge but finite figure is capped, so a ring or a size stays drawable
+        let huge = Llsd::Map([("say-range".to_owned(), Llsd::Real(1e38))].into_iter().collect());
+        assert_eq!(OpenSimExtras::from_llsd(&huge).say_range, Some(MAX_REGION_FIGURE));
         // Second Life: no OpenSimExtras at all
         assert_eq!(OpenSimExtras::from_llsd(&Llsd::Undef), OpenSimExtras::default());
     }
