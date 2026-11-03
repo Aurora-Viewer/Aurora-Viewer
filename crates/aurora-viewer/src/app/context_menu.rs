@@ -476,6 +476,9 @@ impl App {
             CtxAction::NewPhysics => self.new_physics(),
             CtxAction::Freeze(id) => self.ask_moderation(id, false),
             CtxAction::Eject(id) => self.ask_moderation(id, true),
+            CtxAction::EstateKick(id) => self.ask_estate(id, land_moderation::EstateAct::Kick),
+            CtxAction::EstateTeleportHome(id) => self.ask_estate(id, land_moderation::EstateAct::TeleportHome),
+            CtxAction::EstateBan(id) => self.ask_estate(id, land_moderation::EstateAct::Ban),
             CtxAction::EditWorn(item) => {
                 if self.world.inventory.items.get(&item).is_some_and(crate::wearable_editor::supported) {
                     self.open_wearable_editor(item);
